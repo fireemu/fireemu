@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 WRAPPER = Path(__file__).with_name("nextest-private-tmpdir.sh")
@@ -45,7 +46,7 @@ class WrapperTest(unittest.TestCase):
         )
 
     def run_wrapped_on_sweep(self, script, scheduled, env=None):
-        """Exec the wrapper only after its stable PID has the requested sweep bucket."""
+        """Exec the wrapper with a stable PID in the requested modulo-16 bucket."""
         environment = {**os.environ, "TMPDIR": str(self.parent) + "/", **(env or {})}
         launcher = "import os, sys; sys.stdin.read(1); os.execv(sys.argv[1], sys.argv[1:])"
         argv = [sys.executable, "-c", launcher, SHELL, str(WRAPPER), SHELL, "-c", script]
@@ -58,12 +59,30 @@ class WrapperTest(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                start_new_session=True,
             )
-            if (process.pid % 16 == 0) == scheduled:
-                stdout, stderr = process.communicate("x", timeout=30)
-                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
-            process.kill()
-            process.communicate(timeout=5)
+            try:
+                if (process.pid % 16 == 0) == scheduled:
+                    stdout, stderr = process.communicate("x", timeout=30)
+                    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+            finally:
+                # This group belongs to this launcher, including children after exec.
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=5)
+                except ProcessLookupError:
+                    pass
+                except subprocess.TimeoutExpired:
+                    pass
+                finally:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=5)
+                    process.stdin.close()
+                    process.stdout.close()
+                    process.stderr.close()
         self.fail(f"could not start a wrapper with scheduled={scheduled} within 30 seconds")
 
     def start_wrapped(self, script):
@@ -134,16 +153,21 @@ class WrapperTest(unittest.TestCase):
         self.assertEqual(self.private_dirs(), [])
 
     def test_an_unset_tmpdir_falls_back_to_tmp(self):
-        environment = {k: v for k, v in os.environ.items() if k != "TMPDIR"}
+        # Keep the literal production fallback covered without touching the shared /tmp root.
+        source = WRAPPER.read_text()
+        self.assertIn('parent=${TMPDIR:-/tmp}', source)
+        isolated = self.parent / "wrapper.sh"
+        isolated.write_text(source.replace('parent=${TMPDIR:-/tmp}', f'parent=${{TMPDIR:-{self.parent}}}'))
+        environment = {k: v for k, v in os.environ.items() if k not in ("TMPDIR", "FIREEMU_TEST_TMP_ROOT")}
         result = subprocess.run(
-            [SHELL, str(WRAPPER), SHELL, "-c", 'printf "%s" "$TMPDIR"'],
+            [SHELL, str(isolated), SHELL, "-c", 'printf "%s" "$TMPDIR"'],
             env=environment,
             capture_output=True,
             text=True,
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout.startswith(f"/tmp/fireemu-test-tmp-{os.getuid()}/run-"), result.stdout)
+        self.assertEqual(Path(result.stdout).parent, self.root)
 
     def test_a_dead_wrappers_directory_is_reclaimed_and_a_live_ones_is_kept(self):
         self.root.mkdir(mode=0o700)
@@ -194,21 +218,37 @@ class WrapperTest(unittest.TestCase):
         self.assertTrue(fresh.exists(), "a directory younger than a day is kept")
         self.assertFalse(old.exists(), "the same directory older than a day is reclaimed")
 
-    def test_stale_reclamation_is_sampled_and_still_runs_on_the_selected_bucket(self):
+    def test_stale_reclamation_precedes_the_child_on_repeated_non_sweep_pids(self):
         self.root.mkdir(mode=0o700)
         dead = subprocess.Popen(["true"])
         dead.wait()
         stale = self.root / f"run-{dead.pid}.AAAAAA"
-        stale.mkdir()
-        backdate(stale)
+        live = self.root / f"run-{os.getpid()}.BBBBBB"
+        live.mkdir()
+        backdate(live)
+        for _ in range(3):
+            stale.mkdir()
+            backdate(stale)
+            result = self.run_wrapped_on_sweep(
+                f'test ! -d "$FIREEMU_TEST_TMP_ROOT/{stale.name}"', scheduled=False
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(stale.exists(), "cleanup cannot depend on PID allocation")
+            self.assertTrue(live.exists(), "a live owner must always be kept")
 
-        deferred = self.run_wrapped_on_sweep("exit 0", scheduled=False)
-        self.assertEqual(deferred.returncode, 0, deferred.stderr)
-        self.assertTrue(stale.exists(), "an unscheduled wrapper does not scan or reclaim stale runs")
-
-        scheduled = self.run_wrapped_on_sweep("exit 0", scheduled=True)
-        self.assertEqual(scheduled.returncode, 0, scheduled.stderr)
-        self.assertFalse(stale.exists(), "a scheduled wrapper still reclaims a confirmed stale run")
+    def test_a_timed_out_sweep_launcher_and_its_child_are_terminated_and_reaped(self):
+        communicate = subprocess.Popen.communicate
+        with mock.patch.object(
+            subprocess.Popen, "communicate", autospec=True,
+            side_effect=lambda process, *args, **kwargs: communicate(process, *args, **{**kwargs, "timeout": 1}),
+        ) as shortened:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.run_wrapped_on_sweep('echo $$ > "$TMPDIR/../child-pid"; exec sleep 60', scheduled=False)
+        process = shortened.call_args.args[0]
+        self.assertIsNotNone(process.poll(), "the launcher must have been reaped before returning")
+        child = int((self.root / "child-pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(child, 0)
 
     @unittest.skipIf(os.getuid() == 0, "root may signal pid 1")
     def test_a_directory_whose_pid_exists_but_cannot_be_signalled_is_kept(self):
