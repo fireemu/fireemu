@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use fireemu_core_database::hash::{children_hash_without_priority, node_hash};
+use fireemu_core_database::hash::{base64, children_hash_without_priority, node_hash};
 use fireemu_core_database::key::name_compare;
 use fireemu_core_database::{
     Bound, BoundKey, Content, Json, Leaf, Limit, Node, Number, OrderBy, Priority, QueryParams,
@@ -240,16 +240,20 @@ fn window_hash_benchmark() {
     let iterations = 50;
     let old_ns = median(
         (0..5)
-            .map(|_| elapsed_per(iterations, || {
-                black_box(old());
-            }))
+            .map(|_| {
+                elapsed_per(iterations, || {
+                    black_box(old());
+                })
+            })
             .collect(),
     );
     let borrowed_ns = median(
         (0..5)
-            .map(|_| elapsed_per(iterations, || {
-                black_box(borrowed());
-            }))
+            .map(|_| {
+                elapsed_per(iterations, || {
+                    black_box(borrowed());
+                })
+            })
             .collect(),
     );
     println!(
@@ -259,8 +263,108 @@ fn window_hash_benchmark() {
     );
 }
 
+fn legacy_leaf_hash(value: &str) -> String {
+    let mut text = String::new();
+    text.push_str(&format!("string:{value}"));
+    base64(&legacy_sha1(text.as_bytes()))
+}
+
+#[allow(clippy::many_single_char_names)] // RFC 3174 notation copied from the old implementation
+fn legacy_sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let mut message = data.to_vec();
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    message.push(0x80);
+    while message.len() % 64 != 56 {
+        message.push(0);
+    }
+    message.extend_from_slice(&bit_len.to_be_bytes());
+    for block in message.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for (i, chunk) in block.chunks_exact(4).enumerate() {
+            w[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let temp = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+    }
+    let mut out = [0u8; 20];
+    for (i, v) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_be_bytes());
+    }
+    out
+}
+
+fn leaf_hash_benchmarks() {
+    println!("leaf_hash,value_bytes,iterations,stream_ns,legacy_ns,stream_heap_scratch_bytes,stream_stack_buffer_bytes,legacy_heap_scratch_lower_bound_bytes");
+    for value_len in [1_024, 65_536, 1_048_576] {
+        let value = "x".repeat(value_len);
+        let node = Node::leaf(Leaf::String(value.clone()));
+        assert_eq!(node_hash(Some(&node)), legacy_leaf_hash(&value));
+        let iterations = (1_000_000 / value_len).clamp(1, 1_000);
+        let streamed = median(
+            (0..5)
+                .map(|_| {
+                    elapsed_per(iterations, || {
+                        black_box(node_hash(Some(black_box(&node))));
+                    })
+                })
+                .collect(),
+        );
+        let legacy = median(
+            (0..5)
+                .map(|_| {
+                    elapsed_per(iterations, || {
+                        black_box(legacy_leaf_hash(black_box(&value)));
+                    })
+                })
+                .collect(),
+        );
+        let preimage_len = value_len + "string:".len();
+        let padded_len = (preimage_len + 9).div_ceil(64) * 64;
+        println!(
+            "leaf_hash,{value_len},{iterations},{},{},0,64,{}",
+            streamed.as_nanos(),
+            legacy.as_nanos(),
+            preimage_len + padded_len
+        );
+    }
+}
+
 fn main() {
     println!("kind,siblings,limit,bounds,priority,iterations,candidate_ns,full_sort_ns");
     query_benchmarks();
     window_hash_benchmark();
+    leaf_hash_benchmarks();
 }

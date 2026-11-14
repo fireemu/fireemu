@@ -34,16 +34,17 @@ pub fn node_hash(node: Option<&Node>) -> String {
             node.priority.as_deref(),
         );
     }
-    let mut text = String::new();
+    let mut text = Sha1Writer::new();
     if let Some(priority) = &node.priority {
-        text.push_str("priority:");
-        text.push_str(&priority_text(priority));
-        text.push(':');
+        text.write_str("priority:")
+            .expect("writing to SHA-1 cannot fail");
+        write_priority(&mut text, priority);
+        text.write_char(':').expect("writing to SHA-1 cannot fail");
     }
     if let Content::Leaf(leaf) = &node.content {
-        text.push_str(&leaf_text(leaf));
+        write_leaf(&mut text, leaf);
     }
-    base64(&sha1(text.as_bytes()))
+    base64(&text.finish())
 }
 
 /// Hashes selected children as a synthetic parent with no priority, without cloning them.
@@ -61,37 +62,43 @@ pub fn children_hash_without_priority(children: Vec<(&str, &Node)>) -> String {
 fn hash_children(mut children: Vec<(&str, &Node)>, priority: Option<&Priority>) -> String {
     let order = QueryParams::ordered_by(OrderBy::Priority);
     children.sort_by(|(ka, a), (kb, b)| order.compare_children(ka, a, kb, b));
-    let mut text = String::new();
+    let mut text = Sha1Writer::new();
     if let Some(priority) = priority {
-        text.push_str("priority:");
-        text.push_str(&priority_text(priority));
-        text.push(':');
+        text.write_str("priority:")
+            .expect("writing to SHA-1 cannot fail");
+        write_priority(&mut text, priority);
+        text.write_char(':').expect("writing to SHA-1 cannot fail");
     }
     for (key, child) in children {
         // A stored child is never empty, so its hash is never the empty string.
-        let _ = write!(text, ":{key}:{}", node_hash(Some(child)));
+        write!(text, ":{key}:{}", node_hash(Some(child))).expect("writing to SHA-1 cannot fail");
     }
-    base64(&sha1(text.as_bytes()))
+    base64(&text.finish())
 }
 
-fn priority_text(priority: &Priority) -> String {
+fn write_priority(text: &mut impl std::fmt::Write, priority: &Priority) {
     match priority {
-        Priority::Number(n) => number_text(*n),
-        Priority::String(s) => format!("string:{s}"),
+        Priority::Number(number) => write_number(text, *number),
+        Priority::String(string) => {
+            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail")
+        }
     }
 }
 
-fn leaf_text(leaf: &Leaf) -> String {
+fn write_leaf(text: &mut impl std::fmt::Write, leaf: &Leaf) {
     match leaf {
-        Leaf::Bool(b) => format!("boolean:{b}"),
-        Leaf::Number(n) => number_text(*n),
-        Leaf::String(s) => format!("string:{s}"),
+        Leaf::Bool(value) => write!(text, "boolean:{value}").expect("writing to SHA-1 cannot fail"),
+        Leaf::Number(number) => write_number(text, *number),
+        Leaf::String(string) => {
+            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail")
+        }
     }
 }
 
-/// `number:` and the big-endian IEEE 754 bits of the double value in lowercase hex.
-fn number_text(number: Number) -> String {
-    format!("number:{:016x}", number.as_f64().to_bits())
+/// Writes `number:` and the big-endian IEEE 754 bits of the double value in lowercase hex.
+fn write_number(text: &mut impl std::fmt::Write, number: Number) {
+    write!(text, "number:{:016x}", number.as_f64().to_bits())
+        .expect("writing to SHA-1 cannot fail");
 }
 
 /// Standard base64 with padding.
@@ -118,23 +125,85 @@ pub fn base64(bytes: &[u8]) -> String {
 
 /// SHA-1 (RFC 3174) of `data`. The same algorithm as `fireemu-core-auth`'s, kept here so
 /// the core stays dependency-free.
-#[allow(clippy::many_single_char_names)] // RFC 3174 notation
 pub fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [
-        0x6745_2301,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
-    let mut message = data.to_vec();
-    let bit_len = (data.len() as u64).wrapping_mul(8);
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
+    let mut writer = Sha1Writer::new();
+    writer.update(data);
+    writer.finish()
+}
+
+/// Incremental SHA-1 state with one fixed block of scratch space.
+struct Sha1Writer {
+    hash: [u32; 5],
+    buffer: [u8; 64],
+    buffer_len: usize,
+    message_len: u64,
+}
+
+impl Sha1Writer {
+    fn new() -> Self {
+        Self {
+            hash: [
+                0x6745_2301,
+                0xEFCD_AB89,
+                0x98BA_DCFE,
+                0x1032_5476,
+                0xC3D2_E1F0,
+            ],
+            buffer: [0; 64],
+            buffer_len: 0,
+            message_len: 0,
+        }
     }
-    message.extend_from_slice(&bit_len.to_be_bytes());
-    for block in message.chunks_exact(64) {
+
+    fn update(&mut self, mut input: &[u8]) {
+        self.message_len = self.message_len.wrapping_add(input.len() as u64);
+        if self.buffer_len > 0 {
+            let take = (64 - self.buffer_len).min(input.len());
+            self.buffer[self.buffer_len..self.buffer_len + take].copy_from_slice(&input[..take]);
+            self.buffer_len += take;
+            input = &input[take..];
+            if self.buffer_len == 64 {
+                let block = self.buffer;
+                self.process_block(&block);
+                self.buffer_len = 0;
+            }
+        }
+        while input.len() >= 64 {
+            let block: &[u8; 64] = input[..64].try_into().expect("block length is 64");
+            self.process_block(block);
+            input = &input[64..];
+        }
+        if !input.is_empty() {
+            self.buffer[..input.len()].copy_from_slice(input);
+            self.buffer_len = input.len();
+        }
+    }
+
+    fn finish(mut self) -> [u8; 20] {
+        let bit_len = self.message_len.wrapping_mul(8);
+        self.buffer[self.buffer_len] = 0x80;
+        self.buffer_len += 1;
+        if self.buffer_len > 56 {
+            self.buffer[self.buffer_len..].fill(0);
+            let block = self.buffer;
+            self.process_block(&block);
+            self.buffer = [0; 64];
+        } else {
+            self.buffer[self.buffer_len..56].fill(0);
+        }
+        self.buffer[56..].copy_from_slice(&bit_len.to_be_bytes());
+        let block = self.buffer;
+        self.process_block(&block);
+
+        let mut output = [0u8; 20];
+        for (index, word) in self.hash.iter().enumerate() {
+            output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
+        }
+        output
+    }
+
+    #[allow(clippy::many_single_char_names)] // RFC 3174 notation
+    fn process_block(&mut self, block: &[u8; 64]) {
         let mut w = [0u32; 80];
         for (i, chunk) in block.chunks_exact(4).enumerate() {
             w[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -142,7 +211,7 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
         }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
+        let [mut a, mut b, mut c, mut d, mut e] = self.hash;
         for (i, wi) in w.iter().enumerate() {
             let (f, k) = match i {
                 0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
@@ -162,15 +231,37 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
             b = a;
             a = temp;
         }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
+        self.hash[0] = self.hash[0].wrapping_add(a);
+        self.hash[1] = self.hash[1].wrapping_add(b);
+        self.hash[2] = self.hash[2].wrapping_add(c);
+        self.hash[3] = self.hash[3].wrapping_add(d);
+        self.hash[4] = self.hash[4].wrapping_add(e);
     }
-    let mut out = [0u8; 20];
-    for (i, v) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_be_bytes());
+}
+
+impl std::fmt::Write for Sha1Writer {
+    fn write_str(&mut self, input: &str) -> std::fmt::Result {
+        self.update(input.as_bytes());
+        Ok(())
     }
-    out
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::{sha1, Sha1Writer};
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn sha1_writer_is_independent_of_input_chunk_boundaries(
+            input in prop::collection::vec(any::<u8>(), 0..4096),
+            chunk_size in 1usize..129,
+        ) {
+            let mut writer = Sha1Writer::new();
+            for chunk in input.chunks(chunk_size) {
+                writer.update(chunk);
+            }
+            prop_assert_eq!(writer.finish(), sha1(&input));
+        }
+    }
 }

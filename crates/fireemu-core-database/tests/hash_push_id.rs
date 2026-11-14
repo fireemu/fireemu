@@ -38,6 +38,35 @@ fn sha1_matches_the_rfc_3174_vectors() {
     );
 }
 
+#[test]
+fn sha1_matches_frozen_padding_boundary_vectors() {
+    let cases = [
+        (55, "8ae2d46729cfe68ff927af5eec9c7d1b66d65ac2"),
+        (56, "636e2ec698dac903498e648bd2f3af641d3c88cb"),
+        (63, "6d942da0c4392b123528f2905c713a3ce28364bd"),
+        (64, "c6138d514ffa2135bfce0ed0b8fac65669917ec7"),
+        (65, "69bd728ad6e13cd76ff19751fde427b00e395746"),
+        (119, "41c89d06001bab4ab78736b44efe7ce18ce6ae08"),
+        (120, "d3dbd653bd8597b7475321b60a36891278e6a04a"),
+        (127, "89d7312a903f65cd2b3e34a975e55dbea9033353"),
+        (128, "e6434bc401f98603d7eda504790c98c67385d535"),
+        (129, "3352e41cc30b40ae80108970492b21014049e625"),
+        (4096, "e9dded8c84614e894501965af60c2525794a8c7d"),
+        (65_536, "f04977267a391b2c8f7ad8e070f149bc19b0fc25"),
+    ];
+    let hex = |digest: [u8; 20]| {
+        use std::fmt::Write as _;
+        digest.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    };
+    for (len, expected) in cases {
+        let input: Vec<u8> = (0..len).map(|index| index as u8).collect();
+        assert_eq!(hex(sha1(&input)), expected, "input length {len}");
+    }
+}
+
 /// `ETag`s the official emulator (firebase-database-emulator v4.11.2) answered for these
 /// values with `X-Firebase-ETag: true`.
 #[test]
