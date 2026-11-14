@@ -18,7 +18,7 @@ use fireemu_core_types::time::LogicalInstant;
 
 const DOCUMENTS: usize = 4_000;
 const OVERFLOW_DOCUMENTS: usize = 4_200;
-const DIMENSIONS: [usize; 6] = [1, 2, 3, 16, 768, 2_048];
+const DIMENSIONS: [usize; 9] = [1, 2, 3, 16, 128, 256, 512, 768, 2_048];
 const LIMIT: u32 = 10;
 const SAMPLES: usize = 11;
 const CANDIDATE_CACHE_BYTES: usize = 8 * 1024 * 1024;
@@ -222,34 +222,36 @@ fn main() {
         }
     }
 
-    let overflow = seeded_state(OVERFLOW_DOCUMENTS, 16);
-    let query = find_nearest(16, DistanceMeasure::Cosine);
-    let started = Instant::now();
-    let cold = overflow
-        .run_query_with_stats(&query, None)
-        .expect("over-cap cold query");
-    println!(
-        "find_nearest phase=over-cap-cold documents={OVERFLOW_DOCUMENTS} dimensions=16 cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} elapsed={:.3}ms",
-        OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
-        duration_ms(started.elapsed()),
-    );
-    assert_nearest_result(&overflow, &cold.0, OVERFLOW_DOCUMENTS, &query);
-    let mut samples = Vec::with_capacity(SAMPLES);
-    for _ in 0..SAMPLES {
+    for dimensions in [16, 128] {
+        let overflow = seeded_state(OVERFLOW_DOCUMENTS, dimensions);
+        let query = find_nearest(dimensions, DistanceMeasure::Cosine);
         let started = Instant::now();
-        let result = overflow
-            .run_query_with_stats(black_box(&query), None)
-            .expect("over-cap warm query");
-        samples.push(started.elapsed());
-        assert_nearest_result(&overflow, &result.0, OVERFLOW_DOCUMENTS, &query);
-        black_box(result);
+        let cold = overflow
+            .run_query_with_stats(&query, None)
+            .expect("over-cap cold query");
+        println!(
+            "find_nearest phase=over-cap-cold documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} elapsed={:.3}ms",
+            OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
+            duration_ms(started.elapsed()),
+        );
+        assert_nearest_result(&overflow, &cold.0, OVERFLOW_DOCUMENTS, &query);
+        let mut samples = Vec::with_capacity(SAMPLES);
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            let result = overflow
+                .run_query_with_stats(black_box(&query), None)
+                .expect("over-cap warm query");
+            samples.push(started.elapsed());
+            assert_nearest_result(&overflow, &result.0, OVERFLOW_DOCUMENTS, &query);
+            black_box(result);
+        }
+        samples.sort_unstable();
+        println!(
+            "find_nearest phase=over-cap-warm documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} samples={SAMPLES} median={:.3}ms",
+            OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
+            duration_ms(samples[SAMPLES / 2]),
+        );
     }
-    samples.sort_unstable();
-    println!(
-        "find_nearest phase=over-cap-warm documents={OVERFLOW_DOCUMENTS} dimensions=16 cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} samples={SAMPLES} median={:.3}ms",
-        OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
-        duration_ms(samples[SAMPLES / 2]),
-    );
 }
 
 #[derive(Clone)]
