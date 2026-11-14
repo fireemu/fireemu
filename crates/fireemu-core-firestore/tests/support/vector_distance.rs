@@ -234,49 +234,235 @@ fn prepared_cosine_uses_independent_component_pairs_and_keeps_scalar_results() {
 }
 
 #[test]
-fn generated_pict_cases_preserve_prepared_distance_bits() {
-    // Generated from the checked-in campaign model and required-seed set. Each row runs the
-    // actual Prepared evaluator against the frozen scalar oracle; lifecycle rows are also covered
-    // by the stateful cache tests below.
-    const CASES: &str = "factor\tscalar\tcold\tlatest\tunchanged\n\
-query-only\tscalar\tcold\tlatest\tunchanged\n\
-factor\tscalar\twarm\tlatest\tunchanged\n\
-factor\tscalar\tover-cap\tlatest\tunchanged\n\
-factor\tscalar\tcold\thistorical\tunchanged\n\
-factor\tscalar\tcold\tlatest\timport\n\
-factor\tscalar\twarm\tlatest\tclone-divergence\n\
-factor\tscalar\tcold\tlatest\trefused-write\n\
-components\tsafe-array\tcold\tlatest\tunchanged\n\
-components\texplicit-simd-prototype\twarm\tlatest\tunchanged\n\
-query-only\texplicit-simd-prototype\tcold\thistorical\trefused-write\n\
-components\tsafe-array\tcold\thistorical\tchanged-commit\n\
-query-only\tsafe-array\tcold\thistorical\timport\n\
-components\texplicit-simd-prototype\tover-cap\tlatest\tclone-divergence\n\
-factor\tsafe-array\twarm\tlatest\tchanged-commit\n\
-factor\texplicit-simd-prototype\tover-cap\tlatest\tchanged-commit\n\
-components\texplicit-simd-prototype\tcold\thistorical\timport\n\
-components\tsafe-array\tover-cap\tlatest\timport\n\
-components\tsafe-array\tover-cap\tlatest\trefused-write\n\
-components\tsafe-array\tcold\thistorical\tclone-divergence\n\
-components\tscalar\tcold\thistorical\tchanged-commit\n\
-query-only\tscalar\tcold\thistorical\tchanged-commit\n\
-factor\tsafe-array\twarm\tlatest\timport";
+fn generated_pict_cases_exercise_store_lifecycle_and_match_frozen_nearest_results() {
+    const CASES: &str = "dataset\tcache_state\tread_version\tlifecycle\tvector_case\n\
+small\tcold\tlatest\tunchanged\tnormal\n\
+small\twarm\tlatest\tunchanged\tnormal\n\
+over-cap\twarm\tlatest\tunchanged\tnormal\n\
+small\tcold\thistorical\tunchanged\tnormal\n\
+small\twarm\tlatest\tchanged-commit\tnormal\n\
+small\twarm\thistorical\timport\tnormal\n\
+small\twarm\tlatest\trefused-write\tnormal\n\
+small\twarm\tlatest\tclone-divergence\tnormal\n\
+small\tcold\tlatest\tunchanged\tzero-candidate\n\
+small\twarm\tlatest\tunchanged\tzero-candidate\n\
+small\tcold\tlatest\tunchanged\tzero-query\n\
+small\twarm\tlatest\tunchanged\tzero-query\n\
+small\tcold\thistorical\tchanged-commit\tzero-candidate\n\
+over-cap\twarm\thistorical\tchanged-commit\tzero-query\n\
+small\tcold\tlatest\timport\tzero-query\n\
+small\tcold\thistorical\trefused-write\tzero-candidate\n\
+over-cap\twarm\tlatest\timport\tzero-candidate\n\
+over-cap\twarm\tlatest\trefused-write\tzero-query";
 
     let cases = CASES.lines().collect::<Vec<_>>();
-    assert_eq!(cases.len(), 23);
-    for (index, case) in cases.into_iter().enumerate() {
+    assert_eq!(cases.len(), 19);
+    for case in cases.into_iter().skip(1) {
         let fields = case.split('\t').collect::<Vec<_>>();
         assert_eq!(fields.len(), 5, "PICT row {case}");
-        let base = [3.0, -2.0, 1.0, 8.0, -4.0];
-        let query = [1.0, 4.0, -3.0, -2.0, 5.0];
-        let candidate = base.map(|value| if index % 2 == 0 { value } else { -value });
-        let prepared = PreparedVectorDistance::new(&query, DistanceMeasure::Cosine);
-        assert_eq!(
-            prepared.evaluate(&candidate).map(f64::to_bits),
-            reference::vector_distance(&candidate, &query, DistanceMeasure::Cosine)
-                .map(f64::to_bits),
-            "PICT row {index}: {case}",
-        );
+        run_generated_pict_case(fields.try_into().unwrap_or_else(|_| panic!("PICT row {case}")));
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_generated_pict_case([dataset, cache_state, read_version, lifecycle, vector_case]: [&str; 5]) {
+    let document_count = if dataset == "over-cap" { 4_200 } else { 5 };
+    let mut vectors = (0..document_count)
+        .map(|index| {
+            let id = format!("pict-{index:04}");
+            let value = if vector_case == "zero-candidate" && index == document_count - 1 {
+                vec![0.0, -0.0, 0.0]
+            } else {
+                let base = f64::from(u32::try_from(index % 97).unwrap()) + 1.0;
+                vec![base, base * 2.0 - 3.0, 7.0 - base]
+            };
+            (id, value)
+        })
+        .collect::<Vec<_>>();
+    let initial_writes = vectors
+        .iter()
+        .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+        .collect::<Vec<_>>();
+    let mut state = FirestoreState::new();
+    let initial_version = state
+        .commit(&initial_writes, None, LogicalInstant::UNIX_EPOCH)
+        .unwrap()
+        .version;
+    let initial_vectors = vectors.clone();
+    let query_vector = if vector_case == "zero-query" {
+        vec![0.0, 0.0, -0.0]
+    } else {
+        vec![1.0, 2.0, 3.0]
+    };
+    let mut query = candidate_cache_query(query_vector.clone());
+    if vector_case == "zero-candidate" {
+        // The emulator profile skips invalid candidates, allowing exact ranking checks for the
+        // remaining documents while strict-profile rejection remains covered by a separate test.
+        query.production_refusals = false;
+    }
+
+    if cache_state == "warm" {
+        let mut warmup = candidate_cache_query(vec![1.0, 2.0, 3.0]);
+        if vector_case == "zero-candidate" {
+            warmup.production_refusals = false;
+        }
+        state.run_query(&warmup, None).unwrap();
+        assert!(state.candidate_normalization_cache.get().is_some());
+    } else {
+        assert!(state.candidate_normalization_cache.get().is_none());
+    }
+    let original_slot = state.candidate_normalization_cache.get().cloned();
+
+    match lifecycle {
+        "unchanged" => {
+            let (id, vector) = &vectors[0];
+            state
+                .commit(
+                    &[candidate_cache_write(id, vector.clone())],
+                    None,
+                    LogicalInstant::from_unix_seconds(1),
+                )
+                .unwrap();
+            assert_eq!(state.candidate_normalization_cache.get().is_some(), cache_state == "warm");
+        }
+        "changed-commit" => {
+            vectors[0].1 = vec![-5.0, 2.0, 3.0];
+            state
+                .commit(
+                    &[candidate_cache_write(&vectors[0].0, vectors[0].1.clone())],
+                    None,
+                    LogicalInstant::from_unix_seconds(1),
+                )
+                .unwrap();
+            assert!(state.candidate_normalization_cache.get().is_none());
+        }
+        "import" => {
+            vectors[1].1 = vec![-7.0, 2.0, 3.0];
+            state
+                .import_documents(
+                    vec![ImportedDocument {
+                        path: candidate_cache_path(&vectors[1].0),
+                        fields: BTreeMap::from([(
+                            "embedding".to_owned(),
+                            Value::Vector(vectors[1].1.clone()),
+                        )]),
+                        create_time: None,
+                        update_time: None,
+                    }],
+                    LogicalInstant::from_unix_seconds(1),
+                )
+                .unwrap();
+            assert!(state.candidate_normalization_cache.get().is_none());
+        }
+        "refused-write" => {
+            let refused = Write {
+                op: WriteOp::Verify { path: candidate_cache_path("missing") },
+                precondition: Some(Precondition::Exists(true)),
+                transforms: Vec::new(),
+            };
+            assert!(state
+                .commit(&[refused], None, LogicalInstant::from_unix_seconds(1))
+                .is_err());
+            assert_cache_slot_unchanged(&state, original_slot.as_ref());
+        }
+        "clone-divergence" => {
+            assert_eq!(dataset, "small");
+            assert_eq!(cache_state, "warm");
+            assert_eq!(read_version, "latest");
+            assert_eq!(vector_case, "normal");
+            let mut left = state.clone();
+            let mut right = state;
+            let left_vector = vec![7.0, -1.0, 2.0];
+            let right_vector = vec![-4.0, 6.0, 1.0];
+            left.commit(
+                &[candidate_cache_write(&vectors[0].0, left_vector.clone())],
+                None,
+                LogicalInstant::from_unix_seconds(1),
+            ).unwrap();
+            right.commit(
+                &[candidate_cache_write(&vectors[0].0, right_vector.clone())],
+                None,
+                LogicalInstant::from_unix_seconds(1),
+            ).unwrap();
+            let mut left_vectors = vectors.clone();
+            let mut right_vectors = vectors.clone();
+            left_vectors[0].1 = left_vector;
+            right_vectors[0].1 = right_vector;
+            assert_query_matches_frozen(&left, &query, &left_vectors, None);
+            assert_query_matches_frozen(&right, &query, &right_vectors, None);
+            assert_eq!(left.version, right.version);
+            return;
+        }
+        _ => panic!("unsupported PICT lifecycle {lifecycle}"),
+    }
+
+    let version = match read_version {
+        "latest" => None,
+        "historical" => Some(initial_version),
+        _ => panic!("unsupported PICT read version {read_version}"),
+    };
+    let slot_before_read = state.candidate_normalization_cache.get().cloned();
+    let expected_vectors = if read_version == "historical" {
+        &initial_vectors
+    } else {
+        &vectors
+    };
+    assert_query_matches_frozen(&state, &query, expected_vectors, version);
+    if read_version == "historical" {
+        assert_cache_slot_unchanged(&state, slot_before_read.as_ref());
+    }
+    if dataset == "over-cap" {
+        if let Some(cache) = state.candidate_normalization_cache.get() {
+            assert!(cache.entries.len() <= CANDIDATE_NORMALIZATION_MAX_ROWS);
+            assert!(cache.entries.len() < document_count);
+        }
+    }
+}
+
+fn assert_cache_slot_unchanged(
+    state: &FirestoreState,
+    expected: Option<&Arc<CandidateNormalizationCache>>,
+) {
+    match (expected, state.candidate_normalization_cache.get()) {
+        (Some(expected), Some(actual)) => assert!(Arc::ptr_eq(expected, actual)),
+        (None, None) => {}
+        _ => panic!("cache slot changed unexpectedly"),
+    }
+}
+
+fn assert_query_matches_frozen(
+    state: &FirestoreState,
+    query: &Query,
+    vectors: &[(String, Vec<f64>)],
+    version: Option<CommitVersion>,
+) {
+    if query.find_nearest.as_ref().unwrap().query_vector.iter().all(|value| *value == 0.0) {
+        assert!(state.run_query(query, version).is_err());
+        return;
+    }
+    let actual = state.run_query(query, version).unwrap();
+    let query_vector = &query.find_nearest.as_ref().unwrap().query_vector;
+    let mut expected = vectors
+        .iter()
+        .filter_map(|(id, vector)| {
+            reference::vector_distance(vector, query_vector, DistanceMeasure::Cosine)
+                .map(|distance| (id.as_str(), distance.to_bits()))
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable_by(|left, right| {
+        f64::from_bits(left.1)
+            .partial_cmp(&f64::from_bits(right.1))
+            .unwrap()
+            .then_with(|| left.0.cmp(right.0))
+    });
+    expected.truncate(usize::try_from(query.find_nearest.as_ref().unwrap().limit).unwrap());
+    assert_eq!(actual.len(), expected.len());
+    for (document, (expected_id, expected_bits)) in actual.iter().zip(expected) {
+        assert_eq!(document.path.document_id().as_str(), expected_id);
+        let Value::Double(actual_distance) = document.fields["distance"] else {
+            panic!("nearest result lost its computed distance");
+        };
+        assert_eq!(actual_distance.to_bits(), expected_bits);
     }
 }
 
@@ -790,6 +976,40 @@ fn candidate_factor_cache_starts_without_a_large_reserved_row_buffer() {
     let cache = CandidateNormalizationCache::new(&field);
     assert_eq!(cache.entries.capacity(), 0);
     assert!(cache.estimated_bytes < 1_024);
+}
+
+#[test]
+fn candidate_factor_cache_never_publishes_an_over_budget_builder() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let mut cache = CandidateNormalizationCache::new(&field);
+    assert!(cache.admit(
+        &candidate_cache_path("one"),
+        CommitVersion::from_value(1),
+        Some((1.0, 1.0)),
+    ));
+    cache.estimated_bytes = CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES + 1;
+    assert!(cache.finish().is_none());
+}
+
+#[test]
+fn candidate_factor_cache_discards_synthetic_over_budget_capacity_growth() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let mut cache = CandidateNormalizationCache::new(&field);
+    assert!(cache.admit(
+        &candidate_cache_path("one"),
+        CommitVersion::from_value(1),
+        Some((1.0, 1.0)),
+    ));
+    let old_capacity = cache.entries.capacity();
+    let entry_bytes = core::mem::size_of::<CandidateNormalizationEntry>();
+    let over_budget_capacity = old_capacity.saturating_add(
+        CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES / entry_bytes + 1,
+    );
+    assert!(!cache.account_capacity_growth(old_capacity, over_budget_capacity));
+    assert!(cache.poisoned);
+    assert_eq!(cache.entries.capacity(), 0);
+    assert!(cache.estimated_bytes <= CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES);
+    assert!(cache.finish().is_none());
 }
 
 #[test]

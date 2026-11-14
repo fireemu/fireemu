@@ -1223,6 +1223,7 @@ struct CandidateNormalizationCache {
     field: FieldPath,
     entries: Vec<CandidateNormalizationEntry>,
     estimated_bytes: usize,
+    poisoned: bool,
 }
 
 impl CandidateNormalizationCache {
@@ -1234,7 +1235,24 @@ impl CandidateNormalizationCache {
             field: field.clone(),
             entries,
             estimated_bytes,
+            poisoned: false,
         }
+    }
+
+    fn account_capacity_growth(&mut self, old_capacity: usize, actual_capacity: usize) -> bool {
+        let capacity_growth = actual_capacity
+            .saturating_sub(old_capacity)
+            .saturating_mul(core::mem::size_of::<CandidateNormalizationEntry>());
+        let estimated_bytes = self.estimated_bytes.saturating_add(capacity_growth);
+        if estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES {
+            self.entries = Vec::new();
+            self.estimated_bytes =
+                core::mem::size_of::<Self>().saturating_add(field_retained_estimate(&self.field));
+            self.poisoned = true;
+            return false;
+        }
+        self.estimated_bytes = estimated_bytes;
+        true
     }
 
     fn lookup(
@@ -1266,7 +1284,7 @@ impl CandidateNormalizationCache {
         version: CommitVersion,
         factors: Option<(f64, f64)>,
     ) -> bool {
-        if self.entries.len() >= CANDIDATE_NORMALIZATION_MAX_ROWS {
+        if self.poisoned || self.entries.len() >= CANDIDATE_NORMALIZATION_MAX_ROWS {
             return false;
         }
         let path_bytes = document_path_retained_estimate(path);
@@ -1297,15 +1315,11 @@ impl CandidateNormalizationCache {
             return false;
         }
         self.entries.shrink_to(target_capacity);
-        let actual_capacity_bytes = self
-            .entries
-            .capacity()
-            .saturating_sub(old_capacity)
-            .saturating_mul(core::mem::size_of::<CandidateNormalizationEntry>());
-        let estimated_bytes = self
-            .estimated_bytes
-            .saturating_add(actual_capacity_bytes)
-            .saturating_add(path_bytes);
+        let actual_capacity = self.entries.capacity();
+        if !self.account_capacity_growth(old_capacity, actual_capacity) {
+            return false;
+        }
+        let estimated_bytes = self.estimated_bytes.saturating_add(path_bytes);
         if estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES {
             return false;
         }
@@ -1319,7 +1333,10 @@ impl CandidateNormalizationCache {
     }
 
     fn finish(mut self) -> Option<Self> {
-        if self.entries.is_empty() {
+        if self.poisoned
+            || self.entries.is_empty()
+            || self.estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES
+        {
             return None;
         }
         self.entries
