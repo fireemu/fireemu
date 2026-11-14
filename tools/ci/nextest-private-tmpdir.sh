@@ -73,6 +73,7 @@ Darwin)
     ;;
 esac
 
+# Sweep before every child (zero deferral), independently of PID allocation.
 for stale in "$root"/run-*; do
     [ -L "$stale" ] && continue
     [ -d "$stale" ] || continue
@@ -86,6 +87,8 @@ for stale in "$root"/run-*; do
     pid=${name#run-}
     pid=${pid%.*}
     case $pid in '' | *[!0-9]*) continue ;; esac
+    # The shell builtin avoids a diagnostic-capturing subshell for a live owner.
+    if kill -0 "$pid" 2>/dev/null; then continue; fi
     # Reclaim only when the pid is certainly gone: success prints nothing, and EPERM or any
     # other answer keeps the directory.
     answer=$(
