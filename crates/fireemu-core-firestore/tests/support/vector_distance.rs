@@ -691,6 +691,72 @@ fn changed_commit_invalidates_latest_cache_and_historical_queries_bypass_it() {
 }
 
 #[test]
+fn transaction_nearest_queries_bypass_latest_cache_at_matching_and_older_versions() {
+    let mut state = FirestoreState::new();
+    let original = [("one", vec![1.0, 0.0]), ("two", vec![0.5, 1.0])];
+    state
+        .commit(
+            &original
+                .iter()
+                .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+                .collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let query_vector = [1.0, 0.0];
+    let query = candidate_cache_query(query_vector.to_vec());
+    state.run_query(&query, None).unwrap();
+    let first_cache = state
+        .candidate_normalization_cache
+        .get()
+        .expect("latest query warmed the candidate cache")
+        .clone();
+
+    let transaction = state
+        .begin_transaction(true, LogicalInstant::UNIX_EPOCH)
+        .unwrap();
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let (same_version, _) = state
+        .run_query_in_transaction_with_stats(&transaction, &query)
+        .unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), original.len() + 1));
+    assert_candidate_distances(&same_version, &original, &query_vector);
+    assert!(std::sync::Arc::ptr_eq(
+        &first_cache,
+        state.candidate_normalization_cache.get().unwrap(),
+    ));
+
+    let changed = [("one", vec![0.0, 100.0]), original[1].clone()];
+    state
+        .commit(
+            &[candidate_cache_write("one", changed[0].1.clone())],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    assert!(state.candidate_normalization_cache.get().is_none());
+    let latest = state.run_query(&query, None).unwrap();
+    assert_candidate_distances(&latest, &changed, &query_vector);
+    let latest_cache = state
+        .candidate_normalization_cache
+        .get()
+        .expect("changed latest query repopulated the cache")
+        .clone();
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let (older_version, _) = state
+        .run_query_in_transaction_with_stats(&transaction, &query)
+        .unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), original.len() + 1));
+    assert_candidate_distances(&older_version, &original, &query_vector);
+    assert!(std::sync::Arc::ptr_eq(
+        &latest_cache,
+        state.candidate_normalization_cache.get().unwrap(),
+    ));
+}
+
+#[test]
 fn detached_cache_slots_prevent_same_version_clone_divergence() {
     let mut base = FirestoreState::new();
     let original = [
