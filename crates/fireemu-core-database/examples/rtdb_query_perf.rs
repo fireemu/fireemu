@@ -129,6 +129,27 @@ fn reference_full_sort<'a>(query: &QueryParams, node: &'a Node) -> Vec<(&'a str,
     selected
 }
 
+fn borrowed_full_sort<'a>(
+    query_without_limit: &QueryParams,
+    limit: Option<Limit>,
+    node: &'a Node,
+) -> Vec<(&'a str, &'a Node)> {
+    let mut selected = query_without_limit.run(Some(node));
+    match limit {
+        None => {}
+        Some(Limit::First(n)) => selected.truncate(n as usize),
+        Some(Limit::Last(n)) => {
+            let skip = selected.len().saturating_sub(n as usize);
+            selected.drain(..skip);
+        }
+    }
+    selected
+}
+
+fn selected_keys<'a>(items: &[(&'a str, &Node)]) -> Vec<&'a str> {
+    items.iter().map(|(key, _)| *key).collect()
+}
+
 fn elapsed_per(iterations: usize, mut run: impl FnMut()) -> Duration {
     let start = Instant::now();
     for _ in 0..iterations {
@@ -142,7 +163,43 @@ fn median(mut values: Vec<Duration>) -> Duration {
     values[values.len() / 2]
 }
 
+fn measure_query_paths(
+    query: &QueryParams,
+    full_sort_query: &QueryParams,
+    tree: &Node,
+    iterations: usize,
+) -> (Duration, Duration, Duration) {
+    let mut topk_samples = Vec::with_capacity(5);
+    let mut borrowed_samples = Vec::with_capacity(5);
+    let mut legacy_samples = Vec::with_capacity(5);
+    for sample in 0..5 {
+        for offset in 0..3 {
+            match (sample + offset) % 3 {
+                0 => topk_samples.push(elapsed_per(iterations, || {
+                    black_box(query.run(Some(black_box(tree))));
+                })),
+                1 => borrowed_samples.push(elapsed_per(iterations, || {
+                    black_box(borrowed_full_sort(
+                        black_box(full_sort_query),
+                        query.limit,
+                        black_box(tree),
+                    ));
+                })),
+                _ => legacy_samples.push(elapsed_per(iterations, || {
+                    black_box(reference_full_sort(black_box(query), black_box(tree)));
+                })),
+            }
+        }
+    }
+    (
+        median(topk_samples),
+        median(borrowed_samples),
+        median(legacy_samples),
+    )
+}
+
 fn query_benchmarks() {
+    println!("query,siblings,limit,bounds,priority,iterations,topk_ns,borrowed_full_sort_ns,legacy_full_sort_ns");
     for size in [100, 1_000, 10_000] {
         for string_priorities in [false, true] {
             let tree = flat_tree(size, string_priorities);
@@ -168,39 +225,33 @@ fn query_benchmarks() {
                     .limit_to_first(limit);
                     let expected = reference_full_sort(&query, &tree);
                     let got = query.run(Some(&tree));
+                    let mut full_sort_query = query.clone();
+                    full_sort_query.limit = None;
+                    let borrowed = borrowed_full_sort(&full_sort_query, query.limit, &tree);
                     assert_eq!(
-                        got.iter().map(|(key, _)| *key).collect::<Vec<_>>(),
-                        expected.iter().map(|(key, _)| *key).collect::<Vec<_>>()
+                        selected_keys(&got),
+                        selected_keys(&borrowed),
+                        "heap/full-sort mismatch"
+                    );
+                    assert_eq!(
+                        selected_keys(&got),
+                        selected_keys(&expected),
+                        "candidate/legacy mismatch"
                     );
                     let iterations = (50_000 / size).clamp(5, 500);
-                    let candidate = median(
-                        (0..5)
-                            .map(|_| {
-                                elapsed_per(iterations, || {
-                                    black_box(query.run(Some(black_box(&tree))));
-                                })
-                            })
-                            .collect(),
-                    );
-                    let baseline = median(
-                        (0..5)
-                            .map(|_| {
-                                elapsed_per(iterations, || {
-                                    black_box(reference_full_sort(&query, black_box(&tree)));
-                                })
-                            })
-                            .collect(),
-                    );
+                    let (topk, borrowed, legacy) =
+                        measure_query_paths(&query, &full_sort_query, &tree, iterations);
                     println!(
-                        "query,{size},{limit},{},{},{iterations},{},{}",
+                        "query,{size},{limit},{},{},{iterations},{},{},{}",
                         if selective { "selective" } else { "no-bounds" },
                         if string_priorities {
                             "long-string"
                         } else {
                             "number"
                         },
-                        candidate.as_nanos(),
-                        baseline.as_nanos()
+                        topk.as_nanos(),
+                        borrowed.as_nanos(),
+                        legacy.as_nanos()
                     );
                 }
             }
@@ -209,6 +260,7 @@ fn query_benchmarks() {
 }
 
 fn window_hash_benchmark() {
+    println!("window_hash,siblings,depth,iterations,borrowed_ns,clone_reference_ns");
     let tree = Node {
         content: Content::Children(
             (0..100)
@@ -263,6 +315,8 @@ fn window_hash_benchmark() {
     );
 }
 
+// Keep the old formatted leaf allocation as part of the legacy benchmark reference.
+#[allow(clippy::format_push_string)]
 fn legacy_leaf_hash(value: &str) -> String {
     let mut text = String::new();
     text.push_str(&format!("string:{value}"));
@@ -363,7 +417,6 @@ fn leaf_hash_benchmarks() {
 }
 
 fn main() {
-    println!("kind,siblings,limit,bounds,priority,iterations,candidate_ns,full_sort_ns");
     query_benchmarks();
     window_hash_benchmark();
     leaf_hash_benchmarks();

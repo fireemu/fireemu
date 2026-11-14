@@ -80,17 +80,19 @@ fn write_priority(text: &mut impl std::fmt::Write, priority: &Priority) {
     match priority {
         Priority::Number(number) => write_number(text, *number),
         Priority::String(string) => {
-            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail")
+            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail");
         }
     }
 }
 
 fn write_leaf(text: &mut impl std::fmt::Write, leaf: &Leaf) {
     match leaf {
-        Leaf::Bool(value) => write!(text, "boolean:{value}").expect("writing to SHA-1 cannot fail"),
+        Leaf::Bool(value) => {
+            write!(text, "boolean:{value}").expect("writing to SHA-1 cannot fail");
+        }
         Leaf::Number(number) => write_number(text, *number),
         Leaf::String(string) => {
-            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail")
+            write!(text, "string:{string}").expect("writing to SHA-1 cannot fail");
         }
     }
 }

@@ -62,7 +62,9 @@ fn sha1_matches_frozen_padding_boundary_vectors() {
         })
     };
     for (len, expected) in cases {
-        let input: Vec<u8> = (0..len).map(|index| index as u8).collect();
+        let input: Vec<u8> = (0..len)
+            .map(|index| u8::try_from(index % 256).expect("index modulo 256 fits in u8"))
+            .collect();
         assert_eq!(hex(sha1(&input)), expected, "input length {len}");
     }
 }

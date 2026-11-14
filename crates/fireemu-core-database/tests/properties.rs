@@ -247,11 +247,34 @@ fn generated_pict_rows_match_the_full_sort_and_synthetic_hash_references() {
 
 fn assert_pict_row(columns: &[&str], line: &str) {
     let tree = pict_tree(columns);
+    assert_value_factor_shape(columns, &tree, line);
     let query = pict_query(columns);
     query.validate().unwrap();
     let mut selected = query.run(tree.root());
     let got: Vec<String> = selected.iter().map(|(key, _)| (*key).to_owned()).collect();
     assert_eq!(got, reference_query(&query, tree.root()), "PICT row {line}");
+    if columns
+        == [
+            "value",
+            "start",
+            "firstsmall",
+            "utf16-boundary",
+            "mixed",
+            "query-order",
+        ]
+    {
+        assert_eq!(
+            selected.len(),
+            2,
+            "seeded value row must select both strings: {line}"
+        );
+    }
+    if columns[0] == "value" && columns[1] == "none" && columns[2] != "first0" {
+        assert!(
+            !selected.is_empty(),
+            "unbounded value row must select children: {line}"
+        );
+    }
 
     match columns[5] {
         "priority-order" => selected
@@ -279,6 +302,61 @@ fn assert_pict_row(columns: &[&str], line: &str) {
         expected_hash,
         "PICT window hash row {line}"
     );
+}
+
+fn assert_value_factor_shape(columns: &[&str], tree: &Tree, line: &str) {
+    if columns[0] != "value" {
+        return;
+    }
+    let Content::Children(children) = &tree.root().expect("PICT tree has a root").content else {
+        panic!("Value-order PICT tree root must contain children: {line}");
+    };
+    match columns[4] {
+        "equal" => assert!(
+            children
+                .values()
+                .all(|child| matches!(&child.content, Content::Leaf(Leaf::Number(_)))),
+            "equal Value-order factor must contain scalar numbers: {line}"
+        ),
+        "mixed" if columns[3] == "utf16-boundary" => {
+            let values: Vec<_> = children
+                .values()
+                .map(|child| match &child.content {
+                    Content::Leaf(Leaf::String(value)) => value.as_str(),
+                    other => panic!(
+                        "UTF-16 Value-order factor must contain strings, got {other:?}: {line}"
+                    ),
+                })
+                .collect();
+            let mut values = values;
+            values.sort_unstable();
+            assert_eq!(values, ["\u{e000}", "😀"], "UTF-16 value boundary: {line}");
+        }
+        "mixed" => {
+            let mut has_bool = false;
+            let mut has_number = false;
+            let mut has_string = false;
+            for child in children.values() {
+                match &child.content {
+                    Content::Leaf(Leaf::Bool(_)) => has_bool = true,
+                    Content::Leaf(Leaf::Number(_)) => has_number = true,
+                    Content::Leaf(Leaf::String(_)) => has_string = true,
+                    other => panic!("mixed Value-order factor must contain scalar leaves, got {other:?}: {line}"),
+                }
+            }
+            assert!(
+                has_bool && has_number && has_string,
+                "mixed Value-order factor must cover boolean, number, and string: {line}"
+            );
+        }
+        "nested" => assert!(
+            children
+                .values()
+                .all(|child| matches!(&child.content, Content::Children(_))),
+            "nested Value-order factor must contain child nodes: {line}"
+        ),
+        value => panic!("unknown PICT values factor {value}"),
+    }
 }
 
 fn pict_tree(columns: &[&str]) -> Tree {
@@ -311,10 +389,18 @@ fn pict_tree(columns: &[&str]) -> Tree {
     let mut object = serde_json::Map::new();
     object.insert(".priority".to_owned(), serde_json::json!(77));
     for (index, (key, value)) in keys.iter().zip(values).enumerate() {
-        object.insert(
-            (*key).to_owned(),
-            serde_json::json!({"v": value, ".priority": (keys.len() - index) as i64}),
-        );
+        let priority = serde_json::json!((keys.len() - index) as i64);
+        let child = if columns[0] == "value" {
+            if let serde_json::Value::Object(mut nested) = value {
+                nested.insert(".priority".to_owned(), priority);
+                serde_json::Value::Object(nested)
+            } else {
+                serde_json::json!({".value": value, ".priority": priority})
+            }
+        } else {
+            serde_json::json!({"v": value, ".priority": priority})
+        };
+        object.insert((*key).to_owned(), child);
     }
     let mut tree = Tree::new(Limits::default());
     tree.set(
