@@ -66,7 +66,7 @@ export async function validateTreeContents(root, expectedManifest, stage) {
   return { files, directories, bytes, sha256: digest.digest('hex') };
 }
 
-export async function validateConfigOwner(configPath, ownerRoot, expectedSourcePath, stage) {
+export async function validateConfigOwner(configPath, ownerRoot, stage) {
   const owner = await realpath(ownerRoot);
   const config = await realpath(configPath);
   if (!isWithin(owner, config)) throw Error(`${stage} config path escapes its copy owner`);
@@ -76,10 +76,9 @@ export async function validateConfigOwner(configPath, ownerRoot, expectedSourceP
   if (typeof configuredSource !== 'string') throw Error(`${stage} config has no Functions source path`);
   const source = await realpath(resolve(dirname(config), configuredSource));
   if (!isWithin(owner, source)) throw Error(`${stage} Functions source escapes its copy owner`);
-  const expectedSource = await realpath(expectedSourcePath);
-  if (source !== expectedSource) throw Error(`${stage} Functions source does not match its owned copy`);
   return {
     configSha256: createHash('sha256').update(contents).digest('hex'),
     sourcePath: relative(owner, source),
+    source,
   };
 }

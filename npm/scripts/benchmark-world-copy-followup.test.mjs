@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
@@ -63,10 +63,11 @@ for (const stage of ['snapshot', 'generation']) {
     await writeFile(externalConfig, JSON.stringify({ functions: { source } }));
     t.after(() => rm(root, { recursive: true, force: true }));
 
-    const valid = await validateConfigOwner(configPath, owner, source, stage);
+    const valid = await validateConfigOwner(configPath, owner, stage);
     assert.equal(valid.sourcePath, relative(owner, source));
-    await assert.rejects(validateConfigOwner(externalConfig, owner, source, stage), /config path escapes .* owner/i);
+    assert.equal(valid.source, await realpath(source));
+    await assert.rejects(validateConfigOwner(externalConfig, owner, stage), /config path escapes .* owner/i);
     await writeFile(configPath, JSON.stringify({ functions: { source: other } }));
-    await assert.rejects(validateConfigOwner(configPath, owner, source, stage), /functions source escapes .* owner/i);
+    await assert.rejects(validateConfigOwner(configPath, owner, stage), /functions source escapes .* owner/i);
   });
 }

@@ -94,10 +94,10 @@ try {
       if (generation.stats.bytes !== fileCount * bytesPerFile + (await stat(generation.configPath)).size) throw Error(`unexpected generation byte total ${generation.stats.bytes}`);
 
       // Validate after both timers so snapshot reads cannot prewarm generation input files.
-      const snapshotIntegrity = await validateTreeContents(snapshot.config.functions.source, expectedManifest, 'snapshot');
-      const snapshotConfig = await validateConfigOwner(join(snapshot.baseline, 'fireemu.json'), snapshot.baseline, snapshot.config.functions.source, 'snapshot');
-      const generationIntegrity = await validateTreeContents(generation.config.functions.source, expectedManifest, 'generation');
-      const generationConfig = await validateConfigOwner(generation.configPath, generation.cwd, generation.config.functions.source, 'generation');
+      const snapshotConfig = await validateConfigOwner(join(snapshot.baseline, 'fireemu.json'), snapshot.baseline, 'snapshot');
+      const generationConfig = await validateConfigOwner(generation.configPath, generation.cwd, 'generation');
+      const snapshotIntegrity = await validateTreeContents(snapshotConfig.source, expectedManifest, 'snapshot');
+      const generationIntegrity = await validateTreeContents(generationConfig.source, expectedManifest, 'generation');
       samples.push({
         pool: limit,
         snapshot: { elapsedMs: snapshotElapsedMs, stats: snapshot.stats },
