@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-15
+
 ### Changed
 
 - Startup generates the App Check key while Auth and Rules are prepared, `fireemu/testing` worlds rescan fewer directories on create and reset, and Firestore equality queries reuse a bounded candidate index between writes. Answers are unchanged.
@@ -1367,7 +1369,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/fireemu/fireemu/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/fireemu/fireemu/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/fireemu/fireemu/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/fireemu/fireemu/compare/v0.49.0...v0.50.0
