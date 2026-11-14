@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, readlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative } from 'node:path';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -578,6 +578,7 @@ const graphReuseCases = [
   { copy: 'FileCopy', graph: 'SharedAncestorReuse', outcome: 'Failure' },
   { copy: 'FileCopy', graph: 'DirectCapture', outcome: 'Success' },
   { copy: 'TreeClone', graph: 'DirectCapture', outcome: 'Failure' },
+  { copy: 'FileCopy', graph: 'SharedAncestorReuse', outcome: 'Success' },
 ];
 
 for (const row of graphReuseCases) {
@@ -652,9 +653,13 @@ for (const row of graphReuseCases) {
       ? join(generatedTarget, 'dependency', 'index.cjs')
       : join(generatedTarget, 'index.cjs');
     await writeFile(generatedDependency, "module.exports='generation mutation'");
+    assert.equal(await readFile(join(absoluteTarget, row.graph === 'SharedAncestorReuse' ? 'dependency/index.cjs' : 'index.cjs'), 'utf8'), "module.exports='creation dependency'");
     const reset = await prepareGeneration(snapshot, join(worldRoot, 'generation-2'));
     const resetFirebase = JSON.parse(await readFile(JSON.parse(await readFile(reset.configPath, 'utf8')).firebaseJson, 'utf8'));
-    for (const codebase of resetFirebase.functions) assert.equal(createRequire(join(codebase.source, 'package.json'))('./index.cjs'), 'creation dependency');
+    for (const codebase of resetFirebase.functions) {
+      assert.ok((await realpath(join(row.graph === 'SharedAncestorReuse' ? dirname(codebase.source) : codebase.source, 'node_modules', 'dependency'))).startsWith(reset.cwd), 'reset dependency belongs to the reset generation');
+      assert.equal(createRequire(join(codebase.source, 'package.json'))('./index.cjs'), 'creation dependency');
+    }
   });
 }
 
@@ -694,6 +699,31 @@ for (const row of generatedRelocationCases) {
       snapshot.relocationLinks = [...snapshot.relocationLinks, 'missing-link'];
       await assert.rejects(prepareGeneration(snapshot, generationDirectory), { code: 'ENOENT' });
       await assert.rejects(stat(generationDirectory), { code: 'ENOENT' });
+      snapshot.relocationLinks.pop();
+
+      const baselineLink = join(snapshot.config.functions.source, 'node_modules', 'dependency');
+      const baselineLinkValue = await readlink(baselineLink);
+      const baselineTarget = await realpath(baselineLink);
+      const baselineConfig = await readFile(join(snapshot.baseline, 'fireemu.json'), 'utf8');
+      const copiedLink = join(generationDirectory, 'inputs', relative(snapshot.baseline, baselineLink));
+      const controller = new AbortController();
+      const reason = Error('cancel during generation link relocation');
+      const originalReadlink = readlink;
+      t.mock.method(fsp, 'readlink', async (...args) => {
+        const value = await originalReadlink(...args);
+        if (args[0] === copiedLink) controller.abort(reason);
+        return value;
+      });
+      syncBuiltinESMExports();
+      t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+
+      await assert.rejects(prepareGeneration(snapshot, generationDirectory, controller.signal), error => error === reason);
+      assert.equal(controller.signal.reason, reason, 'cancellation happens during generation link relocation');
+      await assert.rejects(stat(generationDirectory), { code: 'ENOENT' });
+      assert.equal(await readlink(baselineLink), baselineLinkValue);
+      assert.equal(await realpath(baselineLink), baselineTarget);
+      assert.equal(await readFile(join(baselineTarget, 'index.js'), 'utf8'), 'module.exports = 7;');
+      assert.equal(await readFile(join(snapshot.baseline, 'fireemu.json'), 'utf8'), baselineConfig);
       return;
     }
 
