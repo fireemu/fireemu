@@ -1278,6 +1278,12 @@ fn sweep_orphan_function_snapshots(root: &Path) -> Result<usize, String> {
 
 #[cfg(unix)]
 fn schedule_orphan_function_snapshot_sweep(root: PathBuf) -> tokio::task::JoinHandle<()> {
+    #[cfg(test)]
+    assert_ne!(
+        root,
+        std::env::temp_dir(),
+        "tests must own their sweep root"
+    );
     tokio::task::spawn_blocking(move || {
         if let Err(reason) = sweep_orphan_function_snapshots(&root) {
             eprintln!("warning: {reason}");
@@ -1983,11 +1989,11 @@ fn start_reload_supervisors(
 }
 
 async fn join_codebase_starts<T: Send + 'static>(
-    starts: Vec<(String, tokio::task::JoinHandle<Result<T, String>>)>,
+    starts: Vec<(String, AbortOnDropJoinHandle<Result<T, String>>)>,
 ) -> Vec<Result<T, String>> {
     let mut outcomes = Vec::with_capacity(starts.len());
     for (label, start) in starts {
-        outcomes.push(match start.await {
+        outcomes.push(match start.join().await {
             Ok(outcome) => outcome,
             Err(error) => Err(format!(
                 "the Functions codebase {label:?}: startup task failed: {error}"
@@ -3697,8 +3703,74 @@ pub(crate) fn default_node() -> Result<Option<DefaultNode>, String> {
 }
 
 /// A codebase's runners being started: one for the codebase, or one per function it serves.
+struct AbortOnDropJoinHandle<T> {
+    task: Option<tokio::task::JoinHandle<T>>,
+    abort: tokio::task::AbortHandle,
+    cancel_on_drop: bool,
+}
+
+impl<T> AbortOnDropJoinHandle<T> {
+    fn new(task: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            abort: task.abort_handle(),
+            task: Some(task),
+            cancel_on_drop: true,
+        }
+    }
+
+    async fn join(mut self) -> Result<T, tokio::task::JoinError> {
+        let task = self.task.take().expect("startup task is joined once");
+        let result = task.await;
+        self.cancel_on_drop = false;
+        result
+    }
+}
+
+impl<T> Drop for AbortOnDropJoinHandle<T> {
+    fn drop(&mut self) {
+        if self.cancel_on_drop {
+            self.abort.abort();
+        }
+    }
+}
+
 type CodebaseStart =
-    tokio::task::JoinHandle<Result<Vec<fireemu_adapter_functions::runtime::CodebaseSpec>, String>>;
+    AbortOnDropJoinHandle<Result<Vec<fireemu_adapter_functions::runtime::CodebaseSpec>, String>>;
+
+#[cfg(test)]
+tokio::task_local! {
+    // Each startup regression owns its sweep root and observes completed baseline scans.
+    static STARTUP_TEST_STATE: (PathBuf, Arc<AtomicU64>);
+}
+
+pub(super) async fn baseline_then_start<'a, C, B, T, Scan, Start>(
+    codebases: &'a [C],
+    should_scan: impl Fn(&C) -> bool,
+    mut scan: Scan,
+    mut start: Start,
+) -> Vec<(Option<B>, T)>
+where
+    Scan: FnMut(&'a C) -> std::pin::Pin<Box<dyn std::future::Future<Output = B> + Send + 'a>>,
+    Start: FnMut(&'a C, Option<&B>) -> T,
+{
+    let mut baselines = Vec::with_capacity(codebases.len());
+    for codebase in codebases {
+        let baseline = should_scan(codebase).then(|| scan(codebase));
+        let baseline = match baseline {
+            Some(scan) => Some(scan.await),
+            None => None,
+        };
+        baselines.push(baseline);
+    }
+    codebases
+        .iter()
+        .zip(baselines)
+        .map(|(codebase, baseline)| {
+            let started = start(codebase, baseline.as_ref());
+            (baseline, started)
+        })
+        .collect()
+}
 
 fn launch_codebases(
     cfg: &RuntimeConfig,
@@ -3718,7 +3790,7 @@ fn launch_codebases(
             let hosts = hosts.clone();
             let runner_secret = runner_secret.to_owned();
             let node_probe_cache = node_probe_cache.clone();
-            let start = tokio::spawn(async move {
+            let start = AbortOnDropJoinHandle::new(tokio::spawn(async move {
                 start_codebase_units(
                     &cfg,
                     &codebase,
@@ -3729,7 +3801,7 @@ fn launch_codebases(
                     clock_snapshot,
                 )
                 .await
-            });
+            }));
             (label, start)
         })
         .collect()
@@ -3921,69 +3993,121 @@ pub async fn start(
     // An edit during startup may conservatively reload, but cannot become a lost baseline.
     // Known limit: A -> B -> A edits entirely within the load can restore the baseline bytes.
     let scan_budget = FunctionsSourceScanBudget::new();
+    let mut clock_snapshot = None;
+    let baseline_starts = baseline_then_start(
+        &codebases,
+        reload_supervised,
+        |codebase| {
+            let scan_budget = &scan_budget;
+            Box::pin(async move {
+                let baseline = scan_budget
+                    .scan_with_python_cache(
+                        Path::new(&codebase.source),
+                        &reload_ignore_patterns(codebase),
+                        crate::python_functions::codebase_language(codebase) == RuntimeLanguage::Python,
+                    )
+                    .await;
+                #[cfg(test)]
+                let _ = STARTUP_TEST_STATE.try_with(|(_, scans)| {
+                    scans.fetch_add(1, Ordering::SeqCst);
+                });
+                let stamp = baseline?;
+                let snapshot = if crate::python_functions::codebase_language(codebase)
+                    == RuntimeLanguage::Python
+                {
+                    let mut retry_delay = Duration::from_millis(750);
+                    Some(snapshot_consistent_reload_source(
+                        Path::new(&codebase.source),
+                        codebase,
+                        scan_budget,
+                        stamp.content_signature,
+                        &mut retry_delay,
+                        &mut false,
+                    )
+                    .await
+                    .ok_or_else(|| {
+                        format!(
+                            "functions[{}]: initial source snapshot failed or changed during capture",
+                            codebase.codebase
+                        )
+                    })?)
+                } else {
+                    None
+                };
+                Ok((stamp, snapshot))
+            })
+                as std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<Output = Result<(FunctionsSourceStamp, Option<FunctionsSourceSnapshot>), String>>
+                            + Send
+                            + '_,
+                    >,
+                >
+        },
+        |codebase, baseline| {
+            let mut codebase = codebase.clone();
+            if crate::python_functions::codebase_language(&codebase) == RuntimeLanguage::Python {
+                let (_, snapshot) = baseline
+                    .ok_or_else(|| {
+                        format!(
+                            "functions[{}]: missing initial source scan",
+                            codebase.codebase
+                        )
+                    })?
+                    .as_ref()
+                    .map_err(Clone::clone)?;
+                codebase.source = snapshot
+                    .as_ref()
+                    .expect("a successful Python scan has a source snapshot")
+                    .to_string_lossy()
+                    .into_owned();
+            }
+            Ok::<_, String>(launch_codebases(
+                cfg,
+                std::slice::from_ref(&codebase),
+                hosts,
+                runner_secret,
+                callable_trusted_protocol,
+                &node_probe_cache,
+                // Match the baseline: sample once after every scan, before any runner starts.
+                *clock_snapshot.get_or_insert_with(|| clock.lock().expect("clock lock").snapshot()),
+            )
+            .into_iter()
+            .next()
+            .expect("one codebase produces one start task"))
+        },
+    )
+    .await;
     let mut initial_stamps = BTreeMap::new();
-    for codebase in codebases
-        .iter()
-        .filter(|codebase| reload_supervised(codebase))
-    {
-        initial_stamps.insert(
-            codebase.codebase.clone(),
-            scan_budget
-                .scan_with_python_cache(
-                    Path::new(&codebase.source),
-                    &reload_ignore_patterns(codebase),
-                    crate::python_functions::codebase_language(codebase) == RuntimeLanguage::Python,
-                )
-                .await,
-        );
+    let mut initial_snapshots = BTreeMap::new();
+    let mut launches = Vec::with_capacity(baseline_starts.len());
+    for (codebase, (baseline, started)) in codebases.iter().zip(baseline_starts) {
+        if let Some(baseline) = baseline {
+            let baseline = baseline.map(|(stamp, snapshot)| {
+                if let Some(snapshot) = snapshot {
+                    initial_snapshots.insert(codebase.codebase.clone(), snapshot);
+                }
+                stamp
+            });
+            initial_stamps.insert(codebase.codebase.clone(), baseline);
+        }
+        launches.push(started?);
     }
     #[cfg(unix)]
-    drop(schedule_orphan_function_snapshot_sweep(std::env::temp_dir()));
-    let mut staged_codebases = codebases.clone();
-    let mut initial_snapshots = BTreeMap::new();
-    for codebase in &mut staged_codebases {
-        if crate::python_functions::codebase_language(codebase) != RuntimeLanguage::Python {
-            continue;
+    {
+        #[cfg(not(test))]
+        let sweep_root = Some(std::env::temp_dir());
+        #[cfg(test)]
+        let sweep_root = STARTUP_TEST_STATE.try_with(|(root, _)| root.clone()).ok();
+        if let Some(sweep_root) = sweep_root {
+            let sweep = schedule_orphan_function_snapshot_sweep(sweep_root);
+            #[cfg(not(test))]
+            drop(sweep);
+            #[cfg(test)]
+            let _ = sweep.await;
         }
-        let stamp = initial_stamps
-            .get(&codebase.codebase)
-            .ok_or_else(|| {
-                format!(
-                    "functions[{}]: missing initial source scan",
-                    codebase.codebase
-                )
-            })?
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let mut retry_delay = Duration::from_millis(750);
-        let snapshot = snapshot_consistent_reload_source(
-            Path::new(&codebase.source),
-            codebase,
-            &scan_budget,
-            stamp.content_signature,
-            &mut retry_delay,
-            &mut false,
-        )
-        .await
-        .ok_or_else(|| {
-            format!(
-                "functions[{}]: initial source snapshot failed or changed during capture",
-                codebase.codebase
-            )
-        })?;
-        codebase.source = snapshot.to_string_lossy().into_owned();
-        initial_snapshots.insert(codebase.codebase.clone(), snapshot);
     }
-    let starts = launch_codebases(
-        cfg,
-        &staged_codebases,
-        hosts,
-        runner_secret,
-        callable_trusted_protocol,
-        &node_probe_cache,
-        clock.lock().expect("clock lock").snapshot(),
-    );
-    let outcomes = join_codebase_starts(starts).await;
+    let outcomes = join_codebase_starts(launches).await;
     if let Some(error) = outcomes.iter().find_map(|outcome| outcome.as_ref().err()) {
         for spec in outcomes
             .iter()
@@ -10336,6 +10460,59 @@ root	unchanged	small	firstGen";
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_sweeps_only_an_explicit_test_owned_root() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-owned-sweep-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let orphan = root.join(snapshot_directory_name(u32::try_from(i32::MAX).unwrap(), 0));
+        std::fs::create_dir(&orphan).unwrap();
+        std::fs::set_permissions(&orphan, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+            "schemaVersion": 1, "profile": "strict"
+        }))
+        .unwrap();
+        cfg.functions_source = Some(root.join("missing-source").display().to_string());
+        let clock = Arc::new(Mutex::new(VirtualClock::new(cfg.clock_start)));
+        let backend = Arc::new(LocalBackend::new(
+            Gateway {
+                ctx: PlanningContext {
+                    edition: cfg.edition,
+                    api_mode: cfg.api_mode,
+                    policy: cfg.index_policy(),
+                },
+                indexes: IndexSet::default(),
+                enforce_limits: cfg.enforce_limits,
+            },
+            Arc::clone(&clock),
+            cfg.seed,
+        ));
+        let hosts = no_hosts();
+        for explicit_root in [false, true] {
+            let startup = super::start(&cfg, &clock, &backend, &hosts, "test", false);
+            let result = if explicit_root {
+                super::STARTUP_TEST_STATE
+                    .scope((root.clone(), Arc::new(super::AtomicU64::new(0))), startup)
+                    .await
+            } else {
+                startup.await
+            };
+            let error = result.err().expect("the missing source refuses startup");
+            assert!(error.contains("is not a directory"), "{error}");
+            assert_eq!(orphan.exists(), !explicit_root);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn oversized_codebase_does_not_hold_the_shared_scan_gate() {
         let root = std::env::temp_dir().join(format!(
@@ -15531,7 +15708,15 @@ Add-Type -TypeDefinition $native -ErrorAction Stop
 
     #[cfg(windows)]
     fn windows_snapshot_acl_cases() -> Vec<WindowsSnapshotAclCase<'static>> {
-        let mut lines = include_str!("../tests/fixtures/windows_snapshot_acl_cases.tsv").lines();
+        static FIXTURE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let fixture = FIXTURE.get_or_init(|| {
+            std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/windows_snapshot_acl_cases.tsv"),
+            )
+            .expect("read Windows snapshot ACL PICT fixture")
+        });
+        let mut lines = fixture.lines();
         assert_eq!(
             lines.next(),
             Some("SnapshotDacl\tParentDacl\tAncestorRights\tReparsePosition\tChecker")
@@ -18856,14 +19041,593 @@ module.exports = { tick, observer };
         let outcomes = tokio::time::timeout(
             Duration::from_secs(1),
             super::join_codebase_starts(vec![
-                ("first".to_owned(), first),
-                ("second".to_owned(), second),
+                ("first".to_owned(), super::AbortOnDropJoinHandle::new(first)),
+                (
+                    "second".to_owned(),
+                    super::AbortOnDropJoinHandle::new(second),
+                ),
             ]),
         )
         .await
         .expect("both tasks reach the barrier because they run concurrently");
 
         assert_eq!(outcomes, vec![Ok("first"), Err("second failed".to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn every_baseline_finishes_before_any_codebase_start_is_launched() {
+        let codebases = vec!["first".to_owned(), "second".to_owned()];
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let second_scan_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let observed_events = Arc::clone(&events);
+        let scan_gate = Arc::clone(&second_scan_gate);
+        let launch_events = Arc::clone(&events);
+        let starts = tokio::spawn(async move {
+            super::baseline_then_start(
+                &codebases,
+                |_| true,
+                |codebase: &String| {
+                    let label = codebase.clone();
+                    let events = Arc::clone(&observed_events);
+                    let gate = Arc::clone(&scan_gate);
+                    Box::pin(async move {
+                        if label == "second" {
+                            events.lock().unwrap().push("second-scan-began");
+                            gate.acquire().await.unwrap().forget();
+                        }
+                        events.lock().unwrap().push(if label == "first" {
+                            "first-scan-finished"
+                        } else {
+                            "second-scan-finished"
+                        });
+                    })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                },
+                |codebase, _| {
+                    launch_events.lock().unwrap().push(if codebase == "first" {
+                        "first-start-launched"
+                    } else {
+                        "second-start-launched"
+                    });
+                    codebase.clone()
+                },
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if events.lock().unwrap().contains(&"second-scan-began") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the second scan starts before any launch");
+        let before_second_baseline = events.lock().unwrap().clone();
+        assert_eq!(
+            before_second_baseline,
+            vec!["first-scan-finished", "second-scan-began"]
+        );
+
+        second_scan_gate.add_permits(1);
+        let starts = tokio::time::timeout(Duration::from_secs(1), starts)
+            .await
+            .expect("both baseline/start pairs finish")
+            .unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                "first-scan-finished",
+                "second-scan-began",
+                "second-scan-finished",
+                "first-start-launched",
+                "second-start-launched",
+            ]
+        );
+        assert_eq!(
+            starts,
+            vec![
+                (Some(()), "first".to_owned()),
+                (Some(()), "second".to_owned())
+            ]
+        );
+    }
+
+    /// Replays the generated PICT rows covering supervised scans, scan/launch errors, and
+    /// explicit/implicit App Check preparation combinations through the real startup sequencer.
+    #[tokio::test]
+    async fn generated_pict_startup_rows_replay_baseline_and_launch_order() {
+        #[derive(Debug)]
+        struct Case {
+            supervised: bool,
+            scan_ok: bool,
+            launch_ok: bool,
+        }
+
+        let fixture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/startup_performance.generated.tsv"),
+        )
+        .expect("read startup PICT fixture");
+        let mut lines = fixture
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("Baseline\tScan\tLaunch\tAppCheck\tPreparation")
+        );
+        let mut cases = 0;
+        for line in lines {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5, "malformed PICT row: {line}");
+            let case = Case {
+                supervised: fields[0] == "supervised",
+                scan_ok: fields[1] == "ok",
+                launch_ok: fields[2] == "ok",
+            };
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let scan_events = Arc::clone(&events);
+            let launch_events = Arc::clone(&events);
+            let result = super::baseline_then_start(
+                std::slice::from_ref(&case),
+                |case| case.supervised,
+                |case| {
+                    let ok = case.scan_ok;
+                    let events = Arc::clone(&scan_events);
+                    Box::pin(async move {
+                        events.lock().unwrap().push("scan");
+                        if ok {
+                            Ok(())
+                        } else {
+                            Err("scan failed".to_owned())
+                        }
+                    })
+                        as std::pin::Pin<
+                            Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                        >
+                },
+                |case, _| {
+                    launch_events.lock().unwrap().push("launch");
+                    if case.launch_ok {
+                        Ok(())
+                    } else {
+                        Err("launch failed".to_owned())
+                    }
+                },
+            )
+            .await;
+            let expected_baseline = if case.supervised {
+                Some(if case.scan_ok {
+                    Ok(())
+                } else {
+                    Err("scan failed".to_owned())
+                })
+            } else {
+                None
+            };
+            assert_eq!(
+                result,
+                vec![(
+                    expected_baseline,
+                    if case.launch_ok {
+                        Ok(())
+                    } else {
+                        Err("launch failed".to_owned())
+                    }
+                )],
+                "PICT case: {line}"
+            );
+            assert_eq!(
+                *events.lock().unwrap(),
+                if case.supervised {
+                    vec!["scan", "launch"]
+                } else {
+                    vec!["launch"]
+                },
+                "PICT case: {line}"
+            );
+            cases += 1;
+        }
+        assert_eq!(cases, 7, "all generated PICT rows must run");
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_startup_join_aborts_pending_start_tasks() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct MarkDropped(Arc<AtomicBool>);
+        impl Drop for MarkDropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let dropped_in_task = Arc::clone(&dropped);
+        let (started, started_rx) = tokio::sync::oneshot::channel();
+        let startup = tokio::spawn(async move {
+            let task = tokio::spawn(async move {
+                let _dropped = MarkDropped(dropped_in_task);
+                let _ = started.send(());
+                std::future::pending::<Result<(), String>>().await
+            });
+            super::join_codebase_starts(vec![(
+                "first".to_owned(),
+                super::AbortOnDropJoinHandle::new(task),
+            )])
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("the pending start task begins")
+            .unwrap();
+        startup.abort();
+        let _ = startup.await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !dropped.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the join aborts the pending start task");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Keep clock setup and real module observations together.
+    async fn overlapped_startup_shares_one_initial_clock_with_real_node_modules() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+        use std::sync::atomic::{AtomicI64, Ordering};
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-clock-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let sweep_root = root.join("orphan-sweep");
+        std::fs::create_dir(&sweep_root).unwrap();
+        for name in ["alpha", "beta"] {
+            let source = root.join(name);
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("package.json"), r#"{"main":"index.js"}"#).unwrap();
+            std::fs::write(
+                source.join("index.js"),
+                format!(
+                    r"const started = Date.now();
+exports.{name} = () => console.log('captured=' + started);
+exports.{name}.__endpoint = {{platform:'gcfv2',scheduleTrigger:{{schedule:'* * * * *'}}}};
+"
+                ),
+            )
+            .unwrap();
+        }
+        for profile in ["strict", "emulator"] {
+            let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+                "schemaVersion": 1, "profile": profile,
+                "daemon": {"clockStart": "2026-01-01T00:00:00Z", "clock": "realtime"},
+                "functions": {"clock": {"date": "virtual"}}
+            }))
+            .unwrap();
+            cfg.functions_loaded = ["alpha", "beta"]
+                .into_iter()
+                .map(|name| crate::config::FunctionsCodebase {
+                    codebase: name.to_owned(),
+                    source: root.join(name).display().to_string(),
+                    runtime: None,
+                    ignore: Vec::new(),
+                })
+                .collect();
+            // Each completed scan advances an hour; each read advances a second.
+            // This exposes both early sampling and separate per-codebase snapshots.
+            let scans = Arc::new(super::AtomicU64::new(0));
+            let completed_scans = Arc::clone(&scans);
+            let readings = Arc::new(AtomicI64::new(0));
+            let source = Arc::clone(&readings);
+            let clock = Arc::new(Mutex::new(VirtualClock::following_with(
+                cfg.clock_start,
+                Arc::new(move || {
+                    i128::from(source.fetch_add(1_000_000_000, Ordering::SeqCst))
+                        + i128::from(completed_scans.load(Ordering::SeqCst)) * 3_600_000_000_000
+                }),
+                0,
+            )));
+            let backend = Arc::new(LocalBackend::new(
+                Gateway {
+                    ctx: PlanningContext {
+                        edition: cfg.edition,
+                        api_mode: cfg.api_mode,
+                        policy: cfg.index_policy(),
+                    },
+                    indexes: IndexSet::default(),
+                    enforce_limits: cfg.enforce_limits,
+                },
+                Arc::clone(&clock),
+                cfg.seed,
+            ));
+            let hosts = no_hosts();
+            let runtime = super::STARTUP_TEST_STATE
+                .scope(
+                    (sweep_root.clone(), Arc::clone(&scans)),
+                    super::start(&cfg, &clock, &backend, &hosts, "test", false),
+                )
+                .await
+                .unwrap();
+            assert_eq!(scans.load(Ordering::SeqCst), 2);
+            let mut captured = Vec::new();
+            for name in ["alpha", "beta"] {
+                let runner = runtime.runner_for(name);
+                let invocation = runner
+                    .invoke(
+                        json!({"type":"invoke", "invocationId":name, "function":name,
+                            "entryPoint":name, "trigger":"schedule", "event":{"data":{}}}),
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                assert_eq!(
+                    invocation.outcome,
+                    fireemu_adapter_functions::runner::InvokeOutcome::Ok
+                );
+                captured.push(
+                    runner
+                        .logs_since(None)
+                        .lines
+                        .into_iter()
+                        .find(|line| line.message().starts_with("captured="))
+                        .expect("the handler reports its module's initial Date.now()")
+                        .message()
+                        .to_owned(),
+                );
+            }
+            runtime.shutdown().await;
+            assert_eq!(
+                captured[0], captured[1],
+                "{profile}: module initialization must share one clock snapshot"
+            );
+            let initial_millis: i128 = captured[0]
+                .strip_prefix("captured=")
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(
+                initial_millis >= cfg.clock_start.as_nanos() / 1_000_000 + 7_200_000,
+                "{profile}: the initial clock must include the time spent in both baseline scans"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Keep the process fixture and its ownership checks together.
+    async fn cancelling_a_startup_join_cleans_pending_and_completed_real_runners() {
+        for completed in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "fireemu-startup-cancel-{}-{}",
+                std::process::id(),
+                super::fresh_nonce()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let script = root.join("runner.py");
+            std::fs::write(&script, r"import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
+record = {'pid': os.getpid(), 'child': child.pid, 'sandbox': str(pathlib.Path(os.environ['CLOUDSDK_CONFIG']).parent)}
+(root / 'owned.partial').write_text(json.dumps(record))
+(root / 'owned.partial').rename(root / 'owned.json')
+while not (root / 'hello').exists(): time.sleep(0.01)
+body = json.dumps({'type': 'hello', 'manifest': {'functions': []}}).encode()
+sys.stdout.buffer.write(str(len(body)).encode() + b'\n' + body)
+sys.stdout.buffer.flush()
+while sys.stdin.buffer.read(1): pass
+").unwrap();
+            if completed {
+                std::fs::write(root.join("hello"), "").unwrap();
+            }
+            let codebases = vec!["first", "second"];
+            let runner_root = root.clone();
+            let runner_abort = Arc::new(Mutex::new(None));
+            let save_abort = Arc::clone(&runner_abort);
+            let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+            let mut finished_tx = Some(finished_tx);
+            let startup = tokio::spawn(async move {
+                let starts = super::baseline_then_start(
+                    &codebases,
+                    |_| true,
+                    |_| {
+                        Box::pin(async {})
+                            as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                    },
+                    |name, _| {
+                        if *name == "first" {
+                            return super::AbortOnDropJoinHandle::new(tokio::spawn(
+                                std::future::pending::<Result<super::Runner, String>>(),
+                            ));
+                        }
+                        let root = runner_root.clone();
+                        let script = script.clone();
+                        let finished = finished_tx.take().unwrap();
+                        let task = tokio::spawn(async move {
+                            let runner = fireemu_adapter_functions::runner::Runner::spawn(
+                                &[
+                                    "python3".to_owned(),
+                                    script.display().to_string(),
+                                    root.display().to_string(),
+                                ],
+                                None,
+                                &[],
+                                Duration::from_secs(60),
+                            )
+                            .await
+                            .unwrap();
+                            let _ = finished.send(());
+                            Ok(runner)
+                        });
+                        *save_abort.lock().unwrap() = Some(task.abort_handle());
+                        super::AbortOnDropJoinHandle::new(task)
+                    },
+                )
+                .await;
+                super::join_codebase_starts(
+                    codebases
+                        .into_iter()
+                        .zip(starts)
+                        .map(|(name, (_, start))| (name.to_owned(), start))
+                        .collect(),
+                )
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !root.join("owned.json").exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                if completed {
+                    finished_rx.await.unwrap();
+                }
+            })
+            .await
+            .expect("a real runner overlaps the pending first launch");
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("owned.json")).unwrap()).unwrap();
+            let sandbox = std::path::Path::new(record["sandbox"].as_str().unwrap());
+            assert!(
+                sandbox.is_dir(),
+                "the runner owns its sandbox before cancellation"
+            );
+            startup.abort();
+            let _ = startup.await;
+            let cleanup = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut running = false;
+                    for key in ["pid", "child"] {
+                        let status = Command::new("/bin/ps")
+                            .args(["-p", &record[key].to_string(), "-o", "stat="])
+                            .output()
+                            .unwrap();
+                        let state = String::from_utf8_lossy(&status.stdout);
+                        running |= !state.trim().is_empty() && !state.trim().starts_with('Z');
+                    }
+                    if !running && !sandbox.exists() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            // Keep the fixture bounded even when a mutation disables the production abort guard.
+            runner_abort.lock().unwrap().take().unwrap().abort();
+            std::fs::remove_dir_all(&root).unwrap();
+            cleanup.expect("cancellation removes the runner, descendant, and owned sandbox");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sibling_startup_failure_cleans_a_successful_real_runner() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-failure-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let sweep_root = root.join("orphan-sweep");
+        std::fs::create_dir(&sweep_root).unwrap();
+        for name in ["first", "second"] {
+            let source = root.join(name);
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("package.json"), r#"{"main":"index.js"}"#).unwrap();
+            let script = if name == "first" {
+                r"const fs = require('node:fs');
+const path = require('node:path');
+const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+fs.writeFileSync('../owned.partial', JSON.stringify({pid:process.pid,child:child.pid,sandbox:path.dirname(process.env.CLOUDSDK_CONFIG)}));
+fs.renameSync('../owned.partial', '../owned.json');
+exports.first = () => {};
+exports.first.__endpoint = {platform:'gcfv2',scheduleTrigger:{schedule:'* * * * *'}};
+"
+            } else {
+                r"const fs = require('node:fs');
+const deadline = Date.now() + 10000;
+while (!fs.existsSync('../owned.json') && Date.now() < deadline) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+}
+throw new Error('intentional sibling startup failure');
+"
+            };
+            std::fs::write(source.join("index.js"), script).unwrap();
+        }
+        for profile in ["strict", "emulator"] {
+            let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+                "schemaVersion": 1, "profile": profile
+            }))
+            .unwrap();
+            cfg.functions_loaded = ["first", "second"]
+                .into_iter()
+                .map(|name| crate::config::FunctionsCodebase {
+                    codebase: name.to_owned(),
+                    source: root.join(name).display().to_string(),
+                    runtime: None,
+                    ignore: Vec::new(),
+                })
+                .collect();
+            let clock = Arc::new(Mutex::new(VirtualClock::new(cfg.clock_start)));
+            let backend = Arc::new(LocalBackend::new(
+                Gateway {
+                    ctx: PlanningContext {
+                        edition: cfg.edition,
+                        api_mode: cfg.api_mode,
+                        policy: cfg.index_policy(),
+                    },
+                    indexes: IndexSet::default(),
+                    enforce_limits: cfg.enforce_limits,
+                },
+                Arc::clone(&clock),
+                cfg.seed,
+            ));
+            let hosts = no_hosts();
+            let error = super::STARTUP_TEST_STATE
+                .scope(
+                    (sweep_root.clone(), Arc::new(super::AtomicU64::new(0))),
+                    super::start(&cfg, &clock, &backend, &hosts, "test", false),
+                )
+                .await
+                .err()
+                .expect("the second module fails startup");
+            assert!(error.contains("second"), "{error}");
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("owned.json")).unwrap()).unwrap();
+            let sandbox = std::path::Path::new(record["sandbox"].as_str().unwrap());
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut running = false;
+                    for key in ["pid", "child"] {
+                        let status = Command::new("/bin/ps")
+                            .args(["-p", &record[key].to_string(), "-o", "stat="])
+                            .output()
+                            .unwrap();
+                        let state = String::from_utf8_lossy(&status.stdout);
+                        running |= !state.trim().is_empty() && !state.trim().starts_with('Z');
+                    }
+                    if !running && !sandbox.exists() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("sibling failure removes the successful runner, descendant, and owned sandbox");
+            std::fs::remove_file(root.join("owned.json")).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

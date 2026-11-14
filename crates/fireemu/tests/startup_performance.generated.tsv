@@ -1,0 +1,9 @@
+# Generated from startup PICT factors Baseline, Scan, Launch, AppCheck, Preparation; see docs.local/coverage-ledger/perf+startup.md.
+Baseline	Scan	Launch	AppCheck	Preparation
+supervised	ok	ok	explicit	slow
+supervised	error	error	explicit	quick
+unsupervised	ok	ok	implicit	slow
+supervised	ok	ok	implicit	quick
+unsupervised	ok	error	implicit	slow
+supervised	error	ok	implicit	slow
+unsupervised	ok	error	explicit	quick
