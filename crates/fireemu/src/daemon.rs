@@ -2336,7 +2336,6 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
             })
         });
         let app_check_signer = match app_check_key.as_ref() {
-            Some(_) => None,
             None if want_app_check => {
                 let signer = fireemu_adapter_http::signing::AppCheckRsaSigner::lazy(
                     fireemu_adapter_http::signing::AppCheckKeySource::OperatingSystem,
@@ -2360,7 +2359,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                     .map_err(|e| format!("cannot start the App Check key generation: {e}"))?;
                 Some(signer)
             }
-            None => None,
+            Some(_) | None => None,
         };
         let (prepared, explicit_app_check_signer) =
             prepare_auth_rules_while_app_check_key_generates(app_check_key, || {
@@ -2749,12 +2748,12 @@ mod tests {
     /// baseline/launch settings remain linked to the explicit/implicit key preparation case.
     #[tokio::test]
     async fn generated_pict_startup_rows_replay_combined_startup_settings() {
-        struct Case {
-            supervised: bool,
-            scan_ok: bool,
-            launch_ok: bool,
-            explicit_app_check: bool,
-            slow_preparation: bool,
+        struct Case<'a> {
+            baseline: &'a str,
+            scan: &'a str,
+            launch: &'a str,
+            app_check: &'a str,
+            preparation: &'a str,
         }
 
         let mut lines = include_str!("../tests/startup_performance.generated.tsv")
@@ -2769,20 +2768,20 @@ mod tests {
             let fields = line.split('\t').collect::<Vec<_>>();
             assert_eq!(fields.len(), 5, "malformed PICT row: {line}");
             let case = Case {
-                supervised: fields[0] == "supervised",
-                scan_ok: fields[1] == "ok",
-                launch_ok: fields[2] == "ok",
-                explicit_app_check: fields[3] == "explicit",
-                slow_preparation: fields[4] == "slow",
+                baseline: fields[0],
+                scan: fields[1],
+                launch: fields[2],
+                app_check: fields[3],
+                preparation: fields[4],
             };
             let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
             let scan_events = std::sync::Arc::clone(&events);
             let launch_events = std::sync::Arc::clone(&events);
             let started = crate::functions::baseline_then_start(
                 std::slice::from_ref(&case),
-                |case| case.supervised,
+                |case| case.baseline == "supervised",
                 |case| {
-                    let scan_ok = case.scan_ok;
+                    let scan_ok = case.scan == "ok";
                     let events = std::sync::Arc::clone(&scan_events);
                     Box::pin(async move {
                         events.lock().unwrap().push("scan");
@@ -2798,7 +2797,7 @@ mod tests {
                 },
                 |case| {
                     launch_events.lock().unwrap().push("launch");
-                    if case.launch_ok {
+                    if case.launch == "ok" {
                         Ok(())
                     } else {
                         Err("launch failed".to_owned())
@@ -2808,7 +2807,7 @@ mod tests {
             .await;
             assert_eq!(
                 *events.lock().unwrap(),
-                if case.supervised {
+                if case.baseline == "supervised" {
                     vec!["scan", "launch"]
                 } else {
                     vec!["launch"]
@@ -2816,14 +2815,14 @@ mod tests {
                 "baseline/launch PICT factors: {line}"
             );
             assert_eq!(started.len(), 1);
-            assert_eq!(started[0].0.is_some(), case.supervised);
+            assert_eq!(started[0].0.is_some(), case.baseline == "supervised");
             assert_eq!(
                 started[0].0.as_ref().is_some_and(Result::is_err),
-                !case.scan_ok && case.supervised
+                case.scan == "error" && case.baseline == "supervised"
             );
-            assert_eq!(started[0].1.is_err(), !case.launch_ok);
+            assert_eq!(started[0].1.is_err(), case.launch == "error");
 
-            let task = case.explicit_app_check.then(|| {
+            let task = (case.app_check == "explicit").then(|| {
                 tokio::spawn(async {
                     tokio::task::yield_now().await;
                     Ok::<_, String>("explicit-key")
@@ -2831,15 +2830,21 @@ mod tests {
             });
             let (prepared, signer) =
                 super::prepare_auth_rules_while_app_check_key_generates(task, || {
-                    if case.slow_preparation {
+                    if case.preparation == "slow" {
                         std::thread::sleep(std::time::Duration::from_millis(1));
                     }
-                    Ok((case.explicit_app_check, case.slow_preparation))
+                    Ok((case.app_check == "explicit", case.preparation == "slow"))
                 })
                 .await
                 .unwrap();
-            assert_eq!(prepared, (case.explicit_app_check, case.slow_preparation));
-            assert_eq!(signer, case.explicit_app_check.then_some("explicit-key"));
+            assert_eq!(
+                prepared,
+                (case.app_check == "explicit", case.preparation == "slow")
+            );
+            assert_eq!(
+                signer,
+                (case.app_check == "explicit").then_some("explicit-key")
+            );
             cases += 1;
         }
         assert_eq!(cases, 7, "all generated PICT rows must run");
