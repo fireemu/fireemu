@@ -285,7 +285,10 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     for(const {modules,level} of dependencies){
       let ancestor=destination;for(let count=0;count<level;count++)ancestor=dirname(ancestor);
       const target=join(ancestor,'node_modules'),canonical=await checked(signal,()=>realpath(modules));
-      if(graph.has(canonical))await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
+      if(graph.has(canonical)){
+        await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
+        relocationLinks.push(relative(baseline,target));
+      }
       else await captureTree(modules,target);
     }
     return destination;

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, delimiter, relative } from 'node:path';
+import { join, dirname, delimiter, relative } from 'node:path';
+import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -569,6 +570,93 @@ test('snapshot retains copied symbolic-link paths for later generation relocatio
   assert.ok(target.startsWith(generation.cwd), 'dependency link resolves inside this generation');
   assert.equal(await readFile(join(target, 'index.js'), 'utf8'), 'module.exports = 1;');
 });
+
+const graphReuseCases = [
+  { copy: 'TreeClone', graph: 'DirectCapture', outcome: 'Success' },
+  { copy: 'FileCopy', graph: 'DirectCapture', outcome: 'Failure' },
+  { copy: 'TreeClone', graph: 'SharedAncestorReuse', outcome: 'Success' },
+  { copy: 'FileCopy', graph: 'SharedAncestorReuse', outcome: 'Failure' },
+  { copy: 'FileCopy', graph: 'DirectCapture', outcome: 'Success' },
+  { copy: 'TreeClone', graph: 'DirectCapture', outcome: 'Failure' },
+];
+
+for (const row of graphReuseCases) {
+  test(`PICT graph-reuse case ${JSON.stringify(row)}`, { skip: process.platform === 'win32' && row.copy === 'TreeClone' }, async t => {
+    const saved = { ...cloneSupport };
+    if (row.copy === 'TreeClone') Object.assign(cloneSupport, { file: false, tree: true, treeCommand: 'cp', treeArguments: (source, destination) => process.platform === 'darwin' ? ['-c', '-R', '-p', source, destination] : ['-R', source, destination] });
+    else Object.assign(cloneSupport, { file: false, tree: false });
+    t.after(() => Object.assign(cloneSupport, saved));
+
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'fireemu-world-graph-reuse-')));
+    const workspace = join(root, 'workspace'), worldRoot = join(root, 'world');
+    await mkdir(workspace, { recursive: true });
+    await mkdir(worldRoot);
+    t.after(() => rm(root, { recursive: true, force: true }));
+
+    const sourceNames = row.graph === 'SharedAncestorReuse' ? ['functions-a', 'functions-b'] : ['functions-a'];
+    const sources = sourceNames.map(name => join(workspace, name));
+    for (const source of sources) {
+      await mkdir(source, { recursive: true });
+      await writeFile(join(source, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+      await writeFile(join(source, 'index.cjs'), "module.exports=require('dependency')");
+    }
+
+    if (row.graph === 'SharedAncestorReuse') {
+      const dependency = join(workspace, 'node_modules', 'dependency');
+      await mkdir(dependency, { recursive: true });
+      await writeFile(join(dependency, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+      await writeFile(join(dependency, 'index.cjs'), "module.exports='creation dependency'");
+    } else {
+      const dependency = join(root, 'shared', 'dependency');
+      await mkdir(dependency, { recursive: true });
+      await writeFile(join(dependency, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+      await writeFile(join(dependency, 'index.cjs'), "module.exports='creation dependency'");
+      await mkdir(join(sources[0], 'node_modules'));
+      await symlink(dependency, join(sources[0], 'node_modules', 'dependency'), directoryLink);
+    }
+
+    const config = { functions: sources.map((source, index) => ({ source: relative(root, source), codebase: String.fromCharCode(97 + index) })) };
+    const snapshot = await snapshotInputs({ cwd: root, config, services: ['functions'], env: { NODE_PATH: '' } }, worldRoot);
+    const baselineFirebase = JSON.parse(await readFile(snapshot.config.firebaseJson, 'utf8'));
+    const baselineSources = baselineFirebase.functions.map(codebase => codebase.source);
+    const relocationLink = row.graph === 'SharedAncestorReuse'
+      ? join(dirname(baselineSources[1]), 'node_modules')
+      : join(baselineSources[0], 'node_modules', 'dependency');
+    const relocationEntry = relative(snapshot.baseline, relocationLink);
+
+    const absoluteTarget = await realpath(relocationLink);
+    await unlink(relocationLink);
+    await symlink(absoluteTarget, relocationLink, directoryLink);
+
+    if (row.outcome === 'Failure') {
+      assert.ok(snapshot.relocationLinks.includes(relocationEntry), 'every copied or graph-reused junction is in the relocation manifest');
+      snapshot.relocationLinks = [...snapshot.relocationLinks, 'missing-relocation-link'];
+      const generationDirectory = join(worldRoot, 'failed-generation');
+      await assert.rejects(prepareGeneration(snapshot, generationDirectory), { code: 'ENOENT' });
+      await assert.rejects(stat(generationDirectory), { code: 'ENOENT' });
+      return;
+    }
+
+    const generation = await prepareGeneration(snapshot, join(worldRoot, 'generation-1'));
+    const generatedFirebase = JSON.parse(await readFile(JSON.parse(await readFile(generation.configPath, 'utf8')).firebaseJson, 'utf8'));
+    const generatedSources = generatedFirebase.functions.map(codebase => codebase.source);
+    const generatedLink = row.graph === 'SharedAncestorReuse'
+      ? join(dirname(generatedSources[1]), 'node_modules')
+      : join(generatedSources[0], 'node_modules', 'dependency');
+    const generatedTarget = await realpath(generatedLink);
+    assert.ok(generatedTarget.startsWith(generation.cwd), 'junction target belongs to this generation');
+    assert.ok(snapshot.relocationLinks.includes(relocationEntry), 'every copied or graph-reused junction is in the relocation manifest');
+    for (const source of generatedSources) assert.equal(createRequire(join(source, 'package.json'))('./index.cjs'), 'creation dependency');
+
+    const generatedDependency = row.graph === 'SharedAncestorReuse'
+      ? join(generatedTarget, 'dependency', 'index.cjs')
+      : join(generatedTarget, 'index.cjs');
+    await writeFile(generatedDependency, "module.exports='generation mutation'");
+    const reset = await prepareGeneration(snapshot, join(worldRoot, 'generation-2'));
+    const resetFirebase = JSON.parse(await readFile(JSON.parse(await readFile(reset.configPath, 'utf8')).firebaseJson, 'utf8'));
+    for (const codebase of resetFirebase.functions) assert.equal(createRequire(join(codebase.source, 'package.json'))('./index.cjs'), 'creation dependency');
+  });
+}
 
 const generatedRelocationCases = [
   { copy: 'TreeClone', link: 'Relative', owner: 'InternalBaseline', outcome: 'Success' },
