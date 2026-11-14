@@ -255,6 +255,11 @@ function summarize(rows) {
 }
 
 async function main() {
+  const harnessPath = await realpath(fileURLToPath(import.meta.url));
+  const harness = {
+    sourceCommit: process.env.CHECKSUM_UPLOAD_HARNESS_COMMIT ?? null,
+    sha256: createHash('sha256').update(await readFile(harnessPath)).digest('hex'),
+  };
   const baselinePath = process.env.FIREEMU_BASELINE_BINARY;
   const candidatePath = process.env.FIREEMU_CANDIDATE_BINARY;
   assert.ok(baselinePath, 'set FIREEMU_BASELINE_BINARY to the frozen baseline binary');
@@ -323,6 +328,7 @@ async function main() {
     schemaVersion: 1,
     method: `${PAIRS} fresh paired test-world process pairs; alternating backend start/upload order; startup and warm-up excluded`,
     loopbackOnly: true,
+    harness,
     binaries,
     fixtures: fixtures.map(({ size, md5Hash, crc32c, sha256 }) => ({ size, md5Hash, crc32c, sha256 })),
     startup,
