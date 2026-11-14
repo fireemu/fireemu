@@ -309,7 +309,7 @@ fn window_hash_benchmark() {
             .collect(),
     );
     println!(
-        "window_hash,100,100,deep,none,50,{},{}",
+        "window_hash,100,8,50,{},{}",
         borrowed_ns.as_nanos(),
         old_ns.as_nanos()
     );
