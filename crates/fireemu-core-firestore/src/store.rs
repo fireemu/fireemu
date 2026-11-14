@@ -10,9 +10,9 @@
 use core::cmp::Ordering;
 use core::fmt;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use fireemu_core_limits::catalogs::FIRESTORE_STANDARD_2026_08_25;
 use fireemu_core_limits::evaluate::{
@@ -1059,6 +1059,148 @@ pub enum LimitScope {
     OfficialEmulator,
 }
 
+/// A hashable subset of Firestore values whose equality is exact and does not require numeric
+/// normalization or compound-value traversal.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum EqualityKey {
+    Boolean(bool),
+    Bytes(Vec<u8>),
+    String(String),
+    Timestamp(Timestamp),
+}
+
+impl EqualityKey {
+    fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::Boolean(value) => Some(Self::Boolean(*value)),
+            Value::Bytes(value) => Some(Self::Bytes(value.clone())),
+            Value::String(value) => Some(Self::String(value.clone())),
+            Value::Timestamp(value) => Some(Self::Timestamp(*value)),
+            Value::Null
+            | Value::Integer(_)
+            | Value::Double(_)
+            | Value::Reference(_)
+            | Value::GeoPoint(_)
+            | Value::Array(_)
+            | Value::Vector(_)
+            | Value::Map(_) => None,
+        }
+    }
+
+    fn payload_bytes(&self) -> usize {
+        match self {
+            Self::Bytes(value) => value.len(),
+            Self::String(value) => value.len(),
+            Self::Boolean(_) | Self::Timestamp(_) => 0,
+        }
+    }
+}
+
+/// One lazily built current-state scope/field index. It stores only live path references and
+/// is capped by a conservative estimate before any entry is retained.
+#[derive(Debug)]
+struct EqualityCandidateIndex {
+    scope: QueryScope,
+    field: FieldPath,
+    by_value: HashMap<EqualityKey, Vec<Arc<DocumentPath>>>,
+    estimated_bytes: usize,
+}
+
+struct EqualityCandidateIndexBuilder {
+    index: EqualityCandidateIndex,
+    overflowed: bool,
+}
+
+impl EqualityCandidateIndexBuilder {
+    fn new(scope: &QueryScope, field: &FieldPath) -> Self {
+        let scope_bytes = match scope {
+            QueryScope::Collection {
+                parent,
+                collection_id,
+            }
+            | QueryScope::CollectionGroup {
+                parent,
+                collection_id,
+            } => collection_id.as_str().len().saturating_add(
+                parent
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(DocumentPath::resource_name_segments)
+                    .map(str::len)
+                    .fold(0usize, usize::saturating_add),
+            ),
+            QueryScope::KindlessAllDescendants { parent }
+            | QueryScope::KindlessChildren { parent } => parent
+                .as_ref()
+                .into_iter()
+                .flat_map(DocumentPath::resource_name_segments)
+                .map(str::len)
+                .fold(0usize, usize::saturating_add),
+        };
+        Self {
+            index: EqualityCandidateIndex {
+                scope: scope.clone(),
+                field: field.clone(),
+                by_value: HashMap::new(),
+                estimated_bytes: 256usize
+                    .saturating_add(field.canonical().len())
+                    .saturating_add(scope_bytes),
+            },
+            overflowed: false,
+        }
+    }
+
+    fn add(&mut self, state: &FirestoreState, path: &DocumentPath, document: &Document) {
+        #[cfg(test)]
+        EQUALITY_INDEX_BUILD_PATHS.with(|count| count.set(count.get() + 1));
+        if self.overflowed {
+            return;
+        }
+        let Some(value) = get_field(&document.fields, &self.index.field) else {
+            return;
+        };
+        let Some(key) = EqualityKey::from_value(value) else {
+            return;
+        };
+        let new_bucket = !self.index.by_value.contains_key(&key);
+        // This deliberately overestimates hash buckets, vector capacity, path references,
+        // and owned scalar key bytes. Once the bound is reached, the partial map is dropped.
+        let path_bytes = path
+            .resource_name_segments()
+            .map(str::len)
+            .fold(0usize, usize::saturating_add);
+        let entry_bytes = 128usize
+            .saturating_add(path_bytes)
+            .saturating_add(if new_bucket {
+                256usize.saturating_add(key.payload_bytes())
+            } else {
+                0
+            });
+        self.index.estimated_bytes = self.index.estimated_bytes.saturating_add(entry_bytes);
+        if self.index.estimated_bytes > EQUALITY_INDEX_MAX_ESTIMATED_BYTES {
+            self.index.by_value.clear();
+            self.overflowed = true;
+            return;
+        }
+        self.index
+            .by_value
+            .entry(key)
+            .or_default()
+            .push(state.retained_scope_path(path));
+    }
+
+    fn finish(self) -> Option<EqualityCandidateIndex> {
+        if self.overflowed {
+            None
+        } else {
+            debug_assert!(self.index.estimated_bytes <= EQUALITY_INDEX_MAX_ESTIMATED_BYTES);
+            Some(self.index)
+        }
+    }
+}
+
+const EQUALITY_INDEX_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
+
 /// Reclaimable usage at one immutable database version and retention floor.
 #[derive(Debug, Clone, Copy)]
 struct CompactionForecast {
@@ -1133,6 +1275,9 @@ impl TtlExpirySelection {
 #[derive(Debug, Clone)]
 pub struct FirestoreState {
     index_catalog: Arc<crate::index::IndexSet>,
+    /// One lazily built scalar equality candidate index for the current state. `OnceLock`'s
+    /// clone makes a detached slot while sharing only the immutable index allocation.
+    equality_candidate_index: OnceLock<Option<Arc<EqualityCandidateIndex>>>,
     /// Version history per path; `None` entries are tombstones.
     history: DocumentHistory,
     /// Retained and live path projections used by scope queries and listing.
@@ -1199,6 +1344,7 @@ impl Default for FirestoreState {
     fn default() -> Self {
         Self {
             index_catalog: Arc::new(crate::index::IndexSet::default()),
+            equality_candidate_index: OnceLock::new(),
             history: BTreeMap::new(),
             path_indexes: PathIndexes::default(),
             ttl_expiry_indexes: BTreeMap::new(),
@@ -1729,6 +1875,27 @@ impl FirestoreState {
             .1
             .as_ref()
             .map(|retained| Arc::clone(&retained.document))
+    }
+
+    fn equality_candidate_index(
+        &self,
+        scope: &QueryScope,
+        field: &FieldPath,
+    ) -> Option<Arc<EqualityCandidateIndex>> {
+        self.equality_candidate_index
+            .get()?
+            .as_ref()
+            .filter(|index| &index.scope == scope && &index.field == field)
+            .inspect(|index| {
+                debug_assert!(index.estimated_bytes <= EQUALITY_INDEX_MAX_ESTIMATED_BYTES);
+            })
+            .map(Arc::clone)
+    }
+
+    fn invalidate_equality_candidate_index(&mut self) {
+        if self.equality_candidate_index.get().is_some() {
+            self.equality_candidate_index = OnceLock::new();
+        }
     }
 
     fn insert_scope_path(&mut self, path: &DocumentPath) {
@@ -2343,6 +2510,7 @@ impl FirestoreState {
         let path_indexes = Self::rebuild_scope_paths(&history);
         let mut snapshot = Self {
             index_catalog: Arc::clone(&self.index_catalog),
+            equality_candidate_index: OnceLock::new(),
             history,
             ttl_expiry_indexes: BTreeMap::new(),
             path_indexes,
@@ -2431,6 +2599,7 @@ impl FirestoreState {
                 stamped: true,
             });
         }
+        self.invalidate_equality_candidate_index();
         self.version = next_version;
         self.commit_times.push_back((next_version, commit_time));
         let mut changes = Vec::with_capacity(staged.len());
@@ -4421,6 +4590,7 @@ impl FirestoreState {
         self.history_usage = uncompacted;
         self.history_accounting_exact = accounting_exact;
         if changed {
+            self.invalidate_equality_candidate_index();
             self.version = next_version;
             self.commit_times.push_back((next_version, commit_time));
             for (path, before, doc) in staged_changes {
@@ -5722,14 +5892,54 @@ impl FirestoreState {
         // scanning the scope. `select_from` still applies the scope, the whole filter, the
         // order, cursors and limits, so the candidates only need the right source order.
         let named = query.filter.as_ref().and_then(pinned_document_names);
-        let paths: Box<dyn Iterator<Item = &DocumentPath> + '_> = match &named {
-            Some(candidates) if descending_name => Box::new(candidates.iter().rev()),
-            Some(candidates) => Box::new(candidates.iter()),
-            None if descending_name => self.scope_paths_descending(scope, version),
-            None => self.scope_paths(scope, version),
+        let equality = if version.is_none() && named.is_none() {
+            query.filter.as_ref().and_then(single_scalar_equality)
+        } else {
+            None
         };
+        let equality_index = equality
+            .as_ref()
+            .and_then(|(field, _)| self.equality_candidate_index(scope, field));
+        // A no-limit scan consumes the full scope, so it can build the bounded cache alongside
+        // the selection without a second cold pass. Limited reads remain ordinary scans until
+        // an exhaustive equality query has populated this scope/field slot.
+        let mut index_builder = if equality_index.is_none()
+            && self.equality_candidate_index.get().is_none()
+            && query.limit.is_none()
+        {
+            equality
+                .as_ref()
+                .map(|(field, _)| EqualityCandidateIndexBuilder::new(scope, field))
+        } else {
+            None
+        };
+        let equality_candidates = equality_index.as_ref().map(|index| {
+            equality
+                .as_ref()
+                .and_then(|(_, key)| index.by_value.get(key))
+                .map_or(&[][..], Vec::as_slice)
+        });
+        let paths: Box<dyn Iterator<Item = &DocumentPath> + '_> =
+            match (&named, equality_candidates, descending_name) {
+                (Some(candidates), _, true) => Box::new(candidates.iter().rev()),
+                (Some(candidates), _, false) => Box::new(candidates.iter()),
+                (None, Some(candidates), true) => {
+                    Box::new(candidates.iter().rev().map(AsRef::as_ref))
+                }
+                (None, Some(candidates), false) => Box::new(candidates.iter().map(AsRef::as_ref)),
+                (None, None, true) => self.scope_paths_descending(scope, version),
+                (None, None, false) => self.scope_paths(scope, version),
+            };
         let documents = paths
-            .inspect(|_| visited.set(visited.get() + 1))
+            .inspect(|path| {
+                visited.set(visited.get() + 1);
+                if let Some((builder, Some(document))) = index_builder
+                    .as_mut()
+                    .map(|builder| (builder, self.get(path)))
+                {
+                    builder.add(self, path, document);
+                }
+            })
             .filter_map(|path| match version {
                 Some(version) => self.get_at(path, version),
                 None => self.get(path),
@@ -5746,6 +5956,20 @@ impl FirestoreState {
             consumption,
             sink,
         )?;
+        if let Some(builder) = index_builder {
+            let mut index = builder.finish();
+            // The source scan can be reversed for a cold `ORDER BY __name__ DESC` query.
+            // Cached buckets always use ascending path order so either query direction can
+            // choose the correct source order when the immutable index is reused.
+            if descending_name {
+                if let Some(index) = &mut index {
+                    for candidates in index.by_value.values_mut() {
+                        candidates.reverse();
+                    }
+                }
+            }
+            let _ = self.equality_candidate_index.set(index.map(Arc::new));
+        }
         stats.index_paths_visited = visited.get();
         Ok(stats)
     }
@@ -6107,6 +6331,23 @@ fn pinned_document_names(filter: &FilterExpr) -> Option<Vec<DocumentPath>> {
     }
 }
 
+/// A deliberately narrow candidate source: only a standalone scalar equality is indexable.
+/// Conjunctions, disjunctions, numeric equivalence, and compound values retain scan semantics.
+fn single_scalar_equality(filter: &FilterExpr) -> Option<(&FieldPath, EqualityKey)> {
+    let FilterExpr::Field {
+        field,
+        op: FieldOp::Equal,
+        value,
+    } = filter
+    else {
+        return None;
+    };
+    if field.is_document_name() {
+        return None;
+    }
+    Some((field, EqualityKey::from_value(value)?))
+}
+
 fn clone_field_tree(fields: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
     #[cfg(test)]
     FIELD_TREE_CLONES.with(|count| count.set(count.get().saturating_add(1)));
@@ -6116,11 +6357,23 @@ fn clone_field_tree(fields: &BTreeMap<String, Value>) -> BTreeMap<String, Value>
 #[cfg(test)]
 thread_local! {
     static FIELD_TREE_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ORDER_KEY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static EQUALITY_INDEX_BUILD_PATHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 fn take_field_tree_clone_count() -> usize {
     FIELD_TREE_CLONES.with(std::cell::Cell::take)
+}
+
+#[cfg(test)]
+fn take_order_key_build_count() -> usize {
+    ORDER_KEY_BUILDS.with(std::cell::Cell::take)
+}
+
+#[cfg(test)]
+fn take_equality_index_build_path_count() -> usize {
+    EQUALITY_INDEX_BUILD_PATHS.with(std::cell::Cell::take)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -6174,12 +6427,20 @@ where
                 continue;
             }
         }
-        let Some(key) = order_key(document, &order) else {
-            continue;
+        let key = if streaming && query.start_at.is_none() && query.end_at.is_none() {
+            if !order_fields_present(document, &order) {
+                continue;
+            }
+            None
+        } else {
+            let Some(key) = order_key(document, &order) else {
+                continue;
+            };
+            if !cursor_admits(&key, query.start_at.as_ref(), query.end_at.as_ref(), &order) {
+                continue;
+            }
+            Some(key)
         };
-        if !cursor_admits(&key, query.start_at.as_ref(), query.end_at.as_ref(), &order) {
-            continue;
-        }
         stats.matched += 1;
         if streaming {
             if skipped < offset {
@@ -6196,7 +6457,7 @@ where
             continue;
         }
         let candidate = Candidate {
-            key,
+            key: key.expect("non-streaming selection retains its order key"),
             doc: document,
             order: &order,
         };
@@ -6972,7 +7233,15 @@ fn eval_filter(filter: &FilterExpr, doc: &Document) -> Result<bool, FirestoreErr
 }
 
 fn order_key<'a>(doc: &'a Document, order: &[OrderClause]) -> Option<Vec<FieldRef<'a>>> {
+    #[cfg(test)]
+    ORDER_KEY_BUILDS.with(|count| count.set(count.get() + 1));
     order.iter().map(|o| field_value(doc, &o.field)).collect()
+}
+
+fn order_fields_present(doc: &Document, order: &[OrderClause]) -> bool {
+    order
+        .iter()
+        .all(|clause| field_value(doc, &clause.field).is_some())
 }
 
 fn compare_keys(a: &[FieldRef<'_>], b: &[FieldRef<'_>], order: &[OrderClause]) -> Ordering {
@@ -6987,6 +7256,437 @@ fn compare_keys(a: &[FieldRef<'_>], b: &[FieldRef<'_>], order: &[OrderClause]) -
         }
     }
     Ordering::Equal
+}
+
+#[cfg(test)]
+mod streaming_order_key_tests {
+    use super::*;
+
+    fn test_path(id: &str) -> DocumentPath {
+        DocumentPath::parse(
+            &fireemu_core_types::ids::ProjectId::try_new("demo-app").unwrap(),
+            &fireemu_core_types::ids::DatabaseId::default_database(),
+            &format!("items/{id}"),
+        )
+        .unwrap()
+    }
+
+    fn test_write(id: &str, n: Option<i64>) -> Write {
+        let fields = n.map_or_else(BTreeMap::new, |n| {
+            BTreeMap::from([("n".to_owned(), Value::Integer(n))])
+        });
+        Write {
+            op: WriteOp::Set {
+                path: test_path(id),
+                fields,
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn unbounded_aggregation_checks_order_field_presence_without_allocating_order_keys() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = FirestoreState::new();
+        state
+            .commit(
+                &[
+                    test_write("one", Some(1)),
+                    test_write("two", None),
+                    test_write("three", Some(3)),
+                ],
+                None,
+                now,
+            )
+            .unwrap();
+        let mut query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("items").unwrap(),
+        ));
+        query.order_by.push(OrderClause {
+            field: FieldPath::parse("n").unwrap(),
+            direction: Direction::Ascending,
+        });
+        let aggregations = [Aggregation::Count { up_to: None }];
+
+        let _ = take_order_key_build_count();
+        let (values, _) = state
+            .run_aggregation_with_stats(&query, &aggregations, None)
+            .unwrap();
+        assert_eq!(values, vec![Value::Integer(2)]);
+        assert_eq!(take_order_key_build_count(), 0);
+
+        query.start_at = Some(crate::query::Cursor {
+            values: vec![Value::Integer(1)],
+            before: false,
+        });
+        let _ = take_order_key_build_count();
+        let (values, _) = state
+            .run_aggregation_with_stats(&query, &aggregations, None)
+            .unwrap();
+        assert_eq!(values, vec![Value::Integer(1)]);
+        assert!(take_order_key_build_count() > 0);
+    }
+}
+
+#[cfg(test)]
+mod equality_index_scope_tests {
+    use super::*;
+
+    fn write(collection: &str, id: &str, value: &str) -> Write {
+        let path = DocumentPath::parse(
+            &fireemu_core_types::ids::ProjectId::try_new("demo-app").unwrap(),
+            &fireemu_core_types::ids::DatabaseId::default_database(),
+            &format!("{collection}/{id}"),
+        )
+        .unwrap();
+        Write {
+            op: WriteOp::Set {
+                path,
+                fields: BTreeMap::from([("group".to_owned(), Value::String(value.to_owned()))]),
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        }
+    }
+
+    fn query(collection: &str) -> Query {
+        Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new(collection).unwrap(),
+        ))
+        .with_filter(FilterExpr::Field {
+            field: FieldPath::parse("group").unwrap(),
+            op: FieldOp::Equal,
+            value: Value::String("wanted".to_owned()),
+        })
+    }
+
+    #[test]
+    fn cold_index_build_visits_only_the_query_scope_and_is_not_reused_for_another_scope() {
+        let mut db = FirestoreState::new();
+        let writes = [
+            write("items", "a", "wanted"),
+            write("items", "b", "other"),
+            write("elsewhere", "a", "wanted"),
+            write("elsewhere", "b", "wanted"),
+            write("elsewhere", "c", "wanted"),
+        ];
+        db.commit(&writes, None, LogicalInstant::UNIX_EPOCH)
+            .unwrap();
+
+        let _ = take_equality_index_build_path_count();
+        let (items, query_stats) = db.run_query_with_stats(&query("items"), None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(query_stats.index_paths_visited, 2);
+        assert_eq!(take_equality_index_build_path_count(), 2);
+
+        let (elsewhere, query_stats) = db.run_query_with_stats(&query("elsewhere"), None).unwrap();
+        assert_eq!(elsewhere.len(), 3);
+        assert_eq!(query_stats.index_paths_visited, 3);
+        assert_eq!(take_equality_index_build_path_count(), 0);
+    }
+
+    #[test]
+    fn failed_or_limited_selection_never_publishes_a_partial_index() {
+        let mut db = FirestoreState::new();
+        let writes = [
+            write("items", "a", "wanted"),
+            write("items", "b", "other"),
+            write("items", "c", "other"),
+            write("items", "d", "other"),
+            write("items", "e", "other"),
+        ];
+        db.commit(&writes, None, LogicalInstant::UNIX_EPOCH)
+            .unwrap();
+
+        let mut invalid = query("items");
+        invalid.order_by.push(OrderClause {
+            field: FieldPath::parse("group").unwrap(),
+            direction: Direction::Ascending,
+        });
+        invalid.offset = 1;
+        invalid.find_nearest = Some(crate::query::FindNearest {
+            vector_field: FieldPath::parse("embedding").unwrap(),
+            query_vector: vec![1.0],
+            distance_measure: DistanceMeasure::Euclidean,
+            limit: 1,
+            distance_result_field: None,
+            distance_threshold: None,
+        });
+        assert!(db.run_query_with_stats(&invalid, None).is_err());
+        assert!(db.equality_candidate_index.get().is_none());
+
+        let mut limited = query("items");
+        limited.limit = Some(1);
+        let (_, query_stats) = db.run_query_with_stats(&limited, None).unwrap();
+        assert_eq!(query_stats.index_paths_visited, 1);
+        assert!(db.equality_candidate_index.get().is_none());
+
+        let (_, query_stats) = db.run_query_with_stats(&query("items"), None).unwrap();
+        assert_eq!(query_stats.index_paths_visited, 5);
+        assert!(db
+            .equality_candidate_index
+            .get()
+            .is_some_and(Option::is_some));
+    }
+}
+
+#[cfg(test)]
+mod equality_index_benchmark {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    const DOCUMENTS: usize = 5_000;
+    const UNRELATED_DOCUMENTS: usize = 20_000;
+    const SMALL_DOCUMENTS: usize = 50;
+    const SAMPLES: usize = 51;
+
+    fn path(collection: &str, index: usize) -> DocumentPath {
+        DocumentPath::parse(
+            &fireemu_core_types::ids::ProjectId::try_new("demo-app").unwrap(),
+            &fireemu_core_types::ids::DatabaseId::default_database(),
+            &format!("{collection}/d{index:05}"),
+        )
+        .unwrap()
+    }
+
+    fn set(collection: &str, index: usize, n: i64) -> Write {
+        Write {
+            op: WriteOp::Set {
+                path: path(collection, index),
+                fields: BTreeMap::from([
+                    (
+                        "group".to_owned(),
+                        Value::String(format!("group-{:03}", index % 250)),
+                    ),
+                    ("n".to_owned(), Value::Integer(n)),
+                ]),
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        }
+    }
+
+    fn set_small(index: usize, n: i64) -> Write {
+        let mut write = set("small", index, n);
+        let WriteOp::Set { fields, .. } = &mut write.op else {
+            unreachable!("set_small creates a set write")
+        };
+        fields.insert("group".to_owned(), Value::String("group-042".to_owned()));
+        write
+    }
+
+    fn seeded() -> FirestoreState {
+        let mut state = FirestoreState::new();
+        let writes = (0..DOCUMENTS)
+            .map(|index| set("items", index, i64::try_from(index).unwrap()))
+            .chain(
+                (0..UNRELATED_DOCUMENTS)
+                    .map(|index| set("unrelated", index, i64::try_from(index).unwrap())),
+            )
+            .chain(
+                (0..SMALL_DOCUMENTS).map(|index| set_small(index, i64::try_from(index).unwrap())),
+            )
+            .collect::<Vec<_>>();
+        for chunk in writes.chunks(500) {
+            state
+                .commit(chunk, None, LogicalInstant::UNIX_EPOCH)
+                .unwrap();
+        }
+        state
+    }
+
+    fn query() -> Query {
+        Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("items").unwrap(),
+        ))
+        .with_filter(FilterExpr::Field {
+            field: FieldPath::parse("group").unwrap(),
+            op: FieldOp::Equal,
+            value: Value::String("group-042".to_owned()),
+        })
+    }
+
+    fn median(samples: &mut [Duration]) -> Duration {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    #[test]
+    #[ignore = "bounded release-mode equality-cache benchmark"]
+    #[allow(clippy::too_many_lines)]
+    fn report_cold_warm_scan_write_and_estimated_memory_costs() {
+        let base = seeded();
+        let query = query();
+
+        let mut cold_samples = Vec::with_capacity(SAMPLES);
+        let warm_database = base.clone();
+        let _ = warm_database.run_query_with_stats(&query, None).unwrap();
+        let estimated_bytes = warm_database
+            .equality_candidate_index
+            .get()
+            .and_then(Option::as_ref)
+            .expect("cache built for the benchmark fixture")
+            .estimated_bytes;
+        let mut warm_samples = Vec::with_capacity(SAMPLES);
+        let mut same_version_scan_proxy_samples = Vec::with_capacity(SAMPLES);
+        let mut cold_build_paths = 0;
+        for sample in 0..SAMPLES {
+            let cold = base.clone();
+            let _ = take_equality_index_build_path_count();
+            let run_cold = || cold.run_query_with_stats(&query, None).unwrap();
+            let run_warm = || warm_database.run_query_with_stats(&query, None).unwrap();
+            let run_scan_proxy = || {
+                warm_database
+                    .run_query_with_stats(&query, Some(warm_database.current_version()))
+                    .unwrap()
+            };
+            let timed = |run: &dyn Fn() -> (Vec<Document>, QueryStats),
+                         samples: &mut Vec<Duration>| {
+                let started = Instant::now();
+                let (rows, stats) = run();
+                samples.push(started.elapsed());
+                assert_eq!(rows.len(), DOCUMENTS / 250);
+                (rows, stats)
+            };
+
+            // Alternate the order so cold, warm, and scan-proxy measurements do not always
+            // run first or last in a batch. State/query setup stays outside each timed region.
+            let (cold_rows, cold_stats, warm_rows, warm_query_stats, scan_rows, scan_stats) =
+                if sample % 2 == 0 {
+                    let (cold_rows, cold_stats) = timed(&run_cold, &mut cold_samples);
+                    cold_build_paths = take_equality_index_build_path_count();
+                    let (warm_rows, warm_query_stats) = timed(&run_warm, &mut warm_samples);
+                    let (scan_rows, scan_stats) =
+                        timed(&run_scan_proxy, &mut same_version_scan_proxy_samples);
+                    (
+                        cold_rows,
+                        cold_stats,
+                        warm_rows,
+                        warm_query_stats,
+                        scan_rows,
+                        scan_stats,
+                    )
+                } else {
+                    let (scan_rows, scan_stats) =
+                        timed(&run_scan_proxy, &mut same_version_scan_proxy_samples);
+                    let (warm_rows, warm_query_stats) = timed(&run_warm, &mut warm_samples);
+                    let (cold_rows, cold_stats) = timed(&run_cold, &mut cold_samples);
+                    cold_build_paths = take_equality_index_build_path_count();
+                    (
+                        cold_rows,
+                        cold_stats,
+                        warm_rows,
+                        warm_query_stats,
+                        scan_rows,
+                        scan_stats,
+                    )
+                };
+            assert_eq!(cold_rows, warm_rows);
+            assert_eq!(cold_rows, scan_rows);
+            assert_eq!(cold_stats.index_paths_visited, DOCUMENTS as u64);
+            assert_eq!(cold_build_paths, DOCUMENTS);
+            assert_eq!(warm_query_stats.index_paths_visited, cold_rows.len() as u64);
+            assert_eq!(scan_stats.index_paths_visited, DOCUMENTS as u64);
+        }
+
+        let mut cold_write_samples = Vec::with_capacity(SAMPLES);
+        let mut sole_owner_warm_write_samples = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            // Each warmed state owns its cache alone. Clone the uncached base first, then
+            // build before timing, so cached Arc ownership does not mask invalidation cost.
+            let mut cold = base.clone();
+            let mut warm = base.clone();
+            let _ = warm.run_query_with_stats(&query, None).unwrap();
+            let cold_write = [set("items", 0, -i64::try_from(sample + 1).unwrap())];
+            let warm_write = [set("items", 0, -i64::try_from(sample + 1).unwrap())];
+            if sample % 2 == 0 {
+                let started = Instant::now();
+                cold.commit(&cold_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                cold_write_samples.push(started.elapsed());
+                let started = Instant::now();
+                warm.commit(&warm_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                sole_owner_warm_write_samples.push(started.elapsed());
+            } else {
+                let started = Instant::now();
+                warm.commit(&warm_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                sole_owner_warm_write_samples.push(started.elapsed());
+                let started = Instant::now();
+                cold.commit(&cold_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                cold_write_samples.push(started.elapsed());
+            }
+        }
+
+        let mut small_query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("small").unwrap(),
+        ))
+        .with_filter(FilterExpr::Field {
+            field: FieldPath::parse("group").unwrap(),
+            op: FieldOp::Equal,
+            value: Value::String("group-042".to_owned()),
+        });
+        small_query.limit = Some(10);
+        let mut one_shot_samples = Vec::with_capacity(SAMPLES);
+        let mut one_shot_scan_samples = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            let mut current = base.clone();
+            let mut scan = base.clone();
+            let write = [set_small(0, -i64::try_from(sample + 1).unwrap())];
+            current
+                .commit(&write, None, LogicalInstant::UNIX_EPOCH)
+                .unwrap();
+            scan.commit(&write, None, LogicalInstant::UNIX_EPOCH)
+                .unwrap();
+            let (rows, stats, scan_rows, scan_stats) = if sample % 2 == 0 {
+                let started = Instant::now();
+                let (rows, stats) = current.run_query_with_stats(&small_query, None).unwrap();
+                one_shot_samples.push(started.elapsed());
+                let started = Instant::now();
+                let (scan_rows, scan_stats) = scan
+                    .run_query_with_stats(&small_query, Some(scan.current_version()))
+                    .unwrap();
+                one_shot_scan_samples.push(started.elapsed());
+                (rows, stats, scan_rows, scan_stats)
+            } else {
+                let started = Instant::now();
+                let (scan_rows, scan_stats) = scan
+                    .run_query_with_stats(&small_query, Some(scan.current_version()))
+                    .unwrap();
+                one_shot_scan_samples.push(started.elapsed());
+                let started = Instant::now();
+                let (rows, stats) = current.run_query_with_stats(&small_query, None).unwrap();
+                one_shot_samples.push(started.elapsed());
+                (rows, stats, scan_rows, scan_stats)
+            };
+            assert_eq!(rows.len(), 10);
+            assert_eq!(stats.index_paths_visited, 10);
+            assert_eq!(format!("{rows:#?}"), format!("{scan_rows:#?}"));
+            assert_eq!(scan_stats.index_paths_visited, 10);
+        }
+
+        println!(
+            "equality-cache documents={DOCUMENTS} unrelated_documents={UNRELATED_DOCUMENTS} small_documents={SMALL_DOCUMENTS} matches={} build_paths={cold_build_paths} cache_estimated_bytes={estimated_bytes} paired_order=alternating cold_median_us={} warm_median_us={} same_version_scan_proxy_median_us={} cold_write_median_us={} sole_owner_warm_write_median_us={} one_shot_query_after_write_median_us={} same_version_scan_proxy_one_shot_median_us={}",
+            DOCUMENTS / 250,
+            median(&mut cold_samples).as_micros(),
+            median(&mut warm_samples).as_micros(),
+            median(&mut same_version_scan_proxy_samples).as_micros(),
+            median(&mut cold_write_samples).as_micros(),
+            median(&mut sole_owner_warm_write_samples).as_micros(),
+            median(&mut one_shot_samples).as_micros(),
+            median(&mut one_shot_scan_samples).as_micros(),
+        );
+    }
 }
 
 /// Compares an order key with a cursor's values, clause by clause.
