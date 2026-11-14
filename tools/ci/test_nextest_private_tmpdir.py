@@ -44,6 +44,28 @@ class WrapperTest(unittest.TestCase):
             timeout=30,
         )
 
+    def run_wrapped_on_sweep(self, script, scheduled, env=None):
+        """Exec the wrapper only after its stable PID has the requested sweep bucket."""
+        environment = {**os.environ, "TMPDIR": str(self.parent) + "/", **(env or {})}
+        launcher = "import os, sys; sys.stdin.read(1); os.execv(sys.argv[1], sys.argv[1:])"
+        argv = [sys.executable, "-c", launcher, SHELL, str(WRAPPER), SHELL, "-c", script]
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            process = subprocess.Popen(
+                argv,
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if (process.pid % 16 == 0) == scheduled:
+                stdout, stderr = process.communicate("x", timeout=30)
+                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+            process.kill()
+            process.communicate(timeout=5)
+        self.fail(f"could not start a wrapper with scheduled={scheduled} within 30 seconds")
+
     def start_wrapped(self, script):
         """A wrapped long-running test in its own process group, killed at the end of the test
         whatever happens, so a failing assertion never leaves it running."""
@@ -147,7 +169,7 @@ class WrapperTest(unittest.TestCase):
         link.symlink_to(outside)
         for entry in self.root.iterdir():
             backdate(entry)
-        self.assertEqual(self.run_wrapped("exit 0").returncode, 0)
+        self.assertEqual(self.run_wrapped_on_sweep("exit 0", scheduled=True).returncode, 0)
         self.assertFalse(stale.exists(), "the killed wrapper's directory is removed")
         self.assertTrue(live.exists(), "a running wrapper's directory is kept")
         self.assertTrue(foreign.exists(), "a name the wrapper did not make is left alone")
@@ -168,9 +190,25 @@ class WrapperTest(unittest.TestCase):
         old = self.root / f"run-{dead.pid}.BBBBBB"
         old.mkdir()
         backdate(old)
-        self.assertEqual(self.run_wrapped("exit 0").returncode, 0)
+        self.assertEqual(self.run_wrapped_on_sweep("exit 0", scheduled=True).returncode, 0)
         self.assertTrue(fresh.exists(), "a directory younger than a day is kept")
         self.assertFalse(old.exists(), "the same directory older than a day is reclaimed")
+
+    def test_stale_reclamation_is_sampled_and_still_runs_on_the_selected_bucket(self):
+        self.root.mkdir(mode=0o700)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        stale = self.root / f"run-{dead.pid}.AAAAAA"
+        stale.mkdir()
+        backdate(stale)
+
+        deferred = self.run_wrapped_on_sweep("exit 0", scheduled=False)
+        self.assertEqual(deferred.returncode, 0, deferred.stderr)
+        self.assertTrue(stale.exists(), "an unscheduled wrapper does not scan or reclaim stale runs")
+
+        scheduled = self.run_wrapped_on_sweep("exit 0", scheduled=True)
+        self.assertEqual(scheduled.returncode, 0, scheduled.stderr)
+        self.assertFalse(stale.exists(), "a scheduled wrapper still reclaims a confirmed stale run")
 
     @unittest.skipIf(os.getuid() == 0, "root may signal pid 1")
     def test_a_directory_whose_pid_exists_but_cannot_be_signalled_is_kept(self):
@@ -179,7 +217,7 @@ class WrapperTest(unittest.TestCase):
         other = self.root / "run-1.AAAAAA"
         (other / "data").mkdir(parents=True)
         backdate(other)
-        self.assertEqual(self.run_wrapped("exit 0").returncode, 0)
+        self.assertEqual(self.run_wrapped_on_sweep("exit 0", scheduled=True).returncode, 0)
         self.assertTrue((other / "data").is_dir(), "only a pid that is certainly gone is reclaimed")
 
     def test_a_terminated_run_still_removes_the_private_directory(self):

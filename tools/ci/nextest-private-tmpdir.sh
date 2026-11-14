@@ -73,6 +73,10 @@ Darwin)
     ;;
 esac
 
+# A wrapper's PID gives best-effort SIGKILL cleanup a lock-free sweep schedule across 16 PID
+# buckets. The root is validated on every invocation, and every candidate keeps the existing
+# ownership, age, and PID checks. Actual frequency follows OS PID allocation.
+if [ $(( $$ % 16 )) -eq 0 ]; then
 for stale in "$root"/run-*; do
     [ -L "$stale" ] && continue
     [ -d "$stale" ] || continue
@@ -101,6 +105,7 @@ for stale in "$root"/run-*; do
     chmod -R u+rwx "$stale" 2>/dev/null
     rm -rf "$stale"
 done
+fi
 
 dir=$(mktemp -d "$root/run-$$.XXXXXX") || refuse "cannot create a directory in $root"
 
