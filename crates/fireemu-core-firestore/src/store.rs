@@ -1202,7 +1202,13 @@ impl EqualityCandidateIndexBuilder {
 const EQUALITY_INDEX_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
 const CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
 const CANDIDATE_NORMALIZATION_MAX_ROWS: usize = 4_096;
+// Paired production results justify a conservative 512-component minimum; smaller widths had mixed path costs.
+const CANDIDATE_NORMALIZATION_MIN_DIMENSIONS: usize = 512;
 type ListingTrieNodeIter<'a> = Box<dyn Iterator<Item = &'a ListingTrieDocument> + 'a>;
+
+fn candidate_normalization_cache_eligible(dimensions: usize) -> bool {
+    dimensions >= CANDIDATE_NORMALIZATION_MIN_DIMENSIONS
+}
 
 #[derive(Debug, Clone)]
 struct CandidateNormalizationEntry {
@@ -1261,6 +1267,8 @@ impl CandidateNormalizationCache {
         path: &DocumentPath,
         version: CommitVersion,
     ) -> CandidateNormalizationLookup {
+        #[cfg(test)]
+        CANDIDATE_NORMALIZATION_CACHE_LOOKUPS.with(|count| count.set(count.get() + 1));
         if &self.field != field {
             return CandidateNormalizationLookup::Miss;
         }
@@ -6064,12 +6072,15 @@ impl FirestoreState {
             ));
         }
         let cosine_measure = find_nearest.distance_measure == DistanceMeasure::Cosine;
-        let candidate_cache = (version.is_none() && cosine_measure)
-            .then(|| self.candidate_normalization_cache.get())
-            .flatten()
-            .filter(|cache| cache.field == find_nearest.vector_field);
+        let candidate_cache = (version.is_none()
+            && cosine_measure
+            && candidate_normalization_cache_eligible(find_nearest.query_vector.len()))
+        .then(|| self.candidate_normalization_cache.get())
+        .flatten()
+        .filter(|cache| cache.field == find_nearest.vector_field);
         let can_build_candidate_cache = version.is_none()
             && cosine_measure
+            && candidate_normalization_cache_eligible(find_nearest.query_vector.len())
             && self.candidate_normalization_cache.get().is_none();
         let mut candidate_cache_builder = None;
         let distance =
@@ -9425,6 +9436,7 @@ mod vector_distance_tests {
 thread_local! {
     static NORMALIZATION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static NORMALIZED_COMPONENT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CANDIDATE_NORMALIZATION_CACHE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PAIRED_COSINE_LANES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RETENTION_PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
