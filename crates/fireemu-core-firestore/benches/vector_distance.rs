@@ -222,7 +222,7 @@ fn main() {
         }
     }
 
-    for dimensions in [16, 128] {
+    for dimensions in [16, 128, 512] {
         let overflow = seeded_state(OVERFLOW_DOCUMENTS, dimensions);
         let query = find_nearest(dimensions, DistanceMeasure::Cosine);
         let started = Instant::now();
