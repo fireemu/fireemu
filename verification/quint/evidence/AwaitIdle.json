@@ -954,7 +954,7 @@
     },
     "crates/fireemu-core-firestore/src/store.rs": {
       "kind": "sha256",
-      "value": "a8536d995b1aeb64167de473d81204f72dbfcba846c60f8d450fba2644a97723"
+      "value": "f99877f2bd3e31ccad61b2a76fdfe3029e606b2cef39226917828d6b7d0cec9a"
     },
     "crates/fireemu-core-firestore/src/store/path-indexes.generated.tsv": {
       "kind": "sha256",
