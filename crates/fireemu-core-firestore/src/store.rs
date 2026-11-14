@@ -37,6 +37,11 @@ use crate::size::document_size;
 use crate::size::{document_size_bytes, field_value_size};
 use crate::value::{normalize_fields_for_storage, stored_fields_eq, Timestamp, Value, ValueKind};
 
+mod path_indexes;
+#[cfg(test)]
+use path_indexes::ListingTrie;
+use path_indexes::{ListingTrieDocument, ListingTrieIter, ListingTrieNodeIter, PathIndexes};
+
 /// How far back a snapshot selector may reach: the documented Firestore `read_time` window
 /// of one hour (no PITR). The store owns this value because it decides which versions stay
 /// reachable; the gRPC adapter re-declares the same number on the wire
@@ -1054,11 +1059,6 @@ pub enum LimitScope {
     OfficialEmulator,
 }
 
-type DirectCollectionPaths =
-    BTreeMap<(Option<DocumentPath>, CollectionId), BTreeSet<Arc<DocumentPath>>>;
-type CollectionGroupPaths = BTreeMap<CollectionId, BTreeSet<Arc<DocumentPath>>>;
-type ListingTrieIter<'a> = Box<dyn Iterator<Item = (&'a DocumentId, &'a ListingTrieDocument)> + 'a>;
-
 /// A hashable subset of Firestore values whose equality is exact and does not require numeric
 /// normalization or compound-value traversal.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1200,155 +1200,6 @@ impl EqualityCandidateIndexBuilder {
 }
 
 const EQUALITY_INDEX_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
-type ListingTrieNodeIter<'a> = Box<dyn Iterator<Item = &'a ListingTrieDocument> + 'a>;
-
-#[derive(Debug, Clone, Default)]
-struct ListingTrie {
-    collections: BTreeMap<CollectionId, ListingTrieCollection>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ListingTrieCollection {
-    documents: BTreeMap<DocumentId, ListingTrieDocument>,
-    live_candidates: BTreeSet<DocumentId>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ListingTrieDocument {
-    retained_subtree_paths: usize,
-    live_subtree_paths: usize,
-    retained_here: Option<Arc<DocumentPath>>,
-    representative: Option<Arc<DocumentPath>>,
-    children: ListingTrie,
-}
-
-impl ListingTrie {
-    /// Indexes `path` under every prefix, holding the caller's allocation rather than a copy.
-    fn insert_retained(&mut self, path: &Arc<DocumentPath>) {
-        Self::insert_retained_pairs(self, path.pairs(), path);
-    }
-
-    fn insert_retained_pairs(
-        trie: &mut Self,
-        pairs: &[(CollectionId, DocumentId)],
-        path: &Arc<DocumentPath>,
-    ) {
-        let Some(((collection, document), rest)) = pairs.split_first() else {
-            return;
-        };
-        let node = trie
-            .collections
-            .entry(collection.clone())
-            .or_default()
-            .documents
-            .entry(document.clone())
-            .or_default();
-        node.retained_subtree_paths += 1;
-        // A representative only names this prefix, which every path below it shares, so the
-        // newest path serves. Taking it also frees a representative that outlived its own
-        // path once that path returns with a new allocation.
-        node.representative = Some(Arc::clone(path));
-        if rest.is_empty() {
-            node.retained_here = Some(Arc::clone(path));
-        } else {
-            Self::insert_retained_pairs(&mut node.children, rest, path);
-        }
-    }
-
-    fn remove_retained(&mut self, path: &DocumentPath) {
-        Self::remove_retained_pairs(self, path.pairs());
-    }
-
-    fn remove_retained_pairs(trie: &mut Self, pairs: &[(CollectionId, DocumentId)]) {
-        let Some(((collection, document), rest)) = pairs.split_first() else {
-            return;
-        };
-        let mut remove_collection = false;
-        if let Some(collection_node) = trie.collections.get_mut(collection) {
-            let mut remove_document = false;
-            if let Some(node) = collection_node.documents.get_mut(document) {
-                node.retained_subtree_paths = node.retained_subtree_paths.saturating_sub(1);
-                if rest.is_empty() {
-                    node.retained_here = None;
-                } else {
-                    Self::remove_retained_pairs(&mut node.children, rest);
-                }
-                remove_document = node.retained_subtree_paths == 0;
-            }
-            if remove_document {
-                collection_node.documents.remove(document);
-                collection_node.live_candidates.remove(document);
-            }
-            remove_collection = collection_node.documents.is_empty();
-        }
-        if remove_collection {
-            trie.collections.remove(collection);
-        }
-    }
-
-    fn adjust_live(&mut self, path: &DocumentPath, increase: bool) {
-        Self::adjust_live_pairs(self, path.pairs(), increase);
-    }
-
-    fn adjust_live_pairs(trie: &mut Self, pairs: &[(CollectionId, DocumentId)], increase: bool) {
-        let Some(((collection, document), rest)) = pairs.split_first() else {
-            return;
-        };
-        let Some(collection_node) = trie.collections.get_mut(collection) else {
-            debug_assert!(!increase, "live paths must first enter the retained trie");
-            return;
-        };
-        let Some(node) = collection_node.documents.get_mut(document) else {
-            debug_assert!(!increase, "live paths must first enter the retained trie");
-            return;
-        };
-        let was_live = node.live_subtree_paths > 0;
-        {
-            if increase {
-                node.live_subtree_paths += 1;
-            } else {
-                node.live_subtree_paths = node.live_subtree_paths.saturating_sub(1);
-            }
-            if !rest.is_empty() {
-                Self::adjust_live_pairs(&mut node.children, rest, increase);
-            }
-        }
-        let is_live = node.live_subtree_paths > 0;
-        if was_live != is_live {
-            if is_live {
-                collection_node.live_candidates.insert(document.clone());
-            } else {
-                collection_node.live_candidates.remove(document);
-            }
-        }
-    }
-
-    fn collection(
-        &self,
-        parent: Option<&DocumentPath>,
-        collection_id: &CollectionId,
-    ) -> Option<&ListingTrieCollection> {
-        self.collections_under(parent)?.get(collection_id)
-    }
-
-    fn collections_under(
-        &self,
-        parent: Option<&DocumentPath>,
-    ) -> Option<&BTreeMap<CollectionId, ListingTrieCollection>> {
-        let mut trie = self;
-        if let Some(parent) = parent {
-            for (collection, document) in parent.pairs() {
-                trie = &trie
-                    .collections
-                    .get(collection)?
-                    .documents
-                    .get(document)?
-                    .children;
-            }
-        }
-        Some(&trie.collections)
-    }
-}
 
 /// Reclaimable usage at one immutable database version and retention floor.
 #[derive(Debug, Clone, Copy)]
@@ -1429,18 +1280,8 @@ pub struct FirestoreState {
     equality_candidate_index: OnceLock<Option<Arc<EqualityCandidateIndex>>>,
     /// Version history per path; `None` entries are tombstones.
     history: DocumentHistory,
-    /// Retained paths grouped by their exact parent and innermost collection.
-    direct_collection_paths: DirectCollectionPaths,
-    /// Live paths grouped by their exact parent and innermost collection.
-    live_direct_collection_paths: DirectCollectionPaths,
-    /// Retained document hierarchy for name-ordered listing candidates.
-    listing_trie: ListingTrie,
-    /// Retained paths grouped by their innermost collection for collection-group queries.
-    collection_group_paths: CollectionGroupPaths,
-    /// Live paths grouped by their innermost collection for latest collection-group queries.
-    live_collection_group_paths: CollectionGroupPaths,
-    /// Every live path in resource-name order for latest kindless descendant queries.
-    live_paths: BTreeSet<Arc<DocumentPath>>,
+    /// Retained and live path projections used by scope queries and listing.
+    path_indexes: PathIndexes,
     ttl_expiry_indexes: BTreeMap<CollectionId, TtlExpiryIndex>,
     /// Which limits commits refuse.
     limit_scope: LimitScope,
@@ -1505,12 +1346,7 @@ impl Default for FirestoreState {
             index_catalog: Arc::new(crate::index::IndexSet::default()),
             equality_candidate_index: OnceLock::new(),
             history: BTreeMap::new(),
-            direct_collection_paths: BTreeMap::new(),
-            live_direct_collection_paths: BTreeMap::new(),
-            listing_trie: ListingTrie::default(),
-            collection_group_paths: BTreeMap::new(),
-            live_collection_group_paths: BTreeMap::new(),
-            live_paths: BTreeSet::new(),
+            path_indexes: PathIndexes::default(),
             ttl_expiry_indexes: BTreeMap::new(),
             limit_scope: LimitScope::default(),
             write_route: crate::index_usage::WriteRoute::default(),
@@ -2062,31 +1898,12 @@ impl FirestoreState {
         }
     }
 
-    /// Indexes a newly retained path. This is the path's one shared index allocation: the
-    /// live indexes and the listing trie hold the same `Arc`, never a copy of their own (the
-    /// `history` key is a separate copy).
     fn insert_scope_path(&mut self, path: &DocumentPath) {
-        let shared = Arc::new(path.clone());
-        self.direct_collection_paths
-            .entry((path.parent_document(), path.collection_id().clone()))
-            .or_default()
-            .insert(Arc::clone(&shared));
-        self.listing_trie.insert_retained(&shared);
-        self.collection_group_paths
-            .entry(path.collection_id().clone())
-            .or_default()
-            .insert(shared);
+        self.path_indexes.insert_retained(path);
     }
 
-    /// The shared allocation of a retained path. A live path is always retained first, so
-    /// the fallback copy only guards that invariant.
     fn retained_scope_path(&self, path: &DocumentPath) -> Arc<DocumentPath> {
-        let retained = self
-            .collection_group_paths
-            .get(path.collection_id())
-            .and_then(|paths| paths.get(path));
-        debug_assert!(retained.is_some(), "live paths must first be retained");
-        retained.map_or_else(|| Arc::new(path.clone()), Arc::clone)
+        self.path_indexes.retained_path(path)
     }
 
     /// Captures at most `limit` expired paths for one policy in the supplied catalog.
@@ -2197,7 +2014,8 @@ impl FirestoreState {
                 continue;
             }
             let entries = self
-                .live_collection_group_paths
+                .path_indexes
+                .live_collection_group_paths()
                 .get(group)
                 .into_iter()
                 .flatten()
@@ -2244,111 +2062,22 @@ impl FirestoreState {
     }
 
     fn insert_live_scope_path(&mut self, path: &DocumentPath) {
-        let shared = self.retained_scope_path(path);
-        self.live_direct_collection_paths
-            .entry((path.parent_document(), path.collection_id().clone()))
-            .or_default()
-            .insert(Arc::clone(&shared));
-        self.live_collection_group_paths
-            .entry(path.collection_id().clone())
-            .or_default()
-            .insert(Arc::clone(&shared));
-        self.live_paths.insert(shared);
-        self.listing_trie.adjust_live(path, true);
+        self.path_indexes.insert_live(path);
     }
 
     fn remove_scope_path(&mut self, path: &DocumentPath) {
-        let direct_key = (path.parent_document(), path.collection_id().clone());
-        if let std::collections::btree_map::Entry::Occupied(mut entry) =
-            self.direct_collection_paths.entry(direct_key)
-        {
-            entry.get_mut().remove(path);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
-        self.listing_trie.remove_retained(path);
-        if let std::collections::btree_map::Entry::Occupied(mut entry) = self
-            .collection_group_paths
-            .entry(path.collection_id().clone())
-        {
-            entry.get_mut().remove(path);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
+        self.path_indexes.remove_retained(path);
     }
 
     fn remove_live_scope_path(&mut self, path: &DocumentPath) {
-        let direct_key = (path.parent_document(), path.collection_id().clone());
-        if let std::collections::btree_map::Entry::Occupied(mut entry) =
-            self.live_direct_collection_paths.entry(direct_key)
-        {
-            entry.get_mut().remove(path);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
-        if let std::collections::btree_map::Entry::Occupied(mut entry) = self
-            .live_collection_group_paths
-            .entry(path.collection_id().clone())
-        {
-            entry.get_mut().remove(path);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
-        self.live_paths.remove(path);
-        self.listing_trie.adjust_live(path, false);
+        self.path_indexes.remove_live(path);
     }
 
-    fn rebuild_scope_paths(
-        history: &DocumentHistory,
-    ) -> (
-        DirectCollectionPaths,
-        CollectionGroupPaths,
-        DirectCollectionPaths,
-        CollectionGroupPaths,
-        BTreeSet<Arc<DocumentPath>>,
-        ListingTrie,
-    ) {
-        let mut direct = BTreeMap::new();
-        let mut groups = BTreeMap::new();
-        let mut live_direct = BTreeMap::new();
-        let mut live_groups = BTreeMap::new();
-        let mut live_paths = BTreeSet::new();
-        let mut listing_trie = ListingTrie::default();
-        for (path, versions) in history {
-            let shared = Arc::new(path.clone());
-            direct
-                .entry((path.parent_document(), path.collection_id().clone()))
-                .or_insert_with(BTreeSet::new)
-                .insert(Arc::clone(&shared));
-            listing_trie.insert_retained(&shared);
-            groups
-                .entry(path.collection_id().clone())
-                .or_insert_with(BTreeSet::new)
-                .insert(Arc::clone(&shared));
-            if matches!(versions.last(), Some((_, Some(_)))) {
-                live_direct
-                    .entry((path.parent_document(), path.collection_id().clone()))
-                    .or_insert_with(BTreeSet::new)
-                    .insert(Arc::clone(&shared));
-                live_groups
-                    .entry(path.collection_id().clone())
-                    .or_insert_with(BTreeSet::new)
-                    .insert(Arc::clone(&shared));
-                live_paths.insert(shared);
-                listing_trie.adjust_live(path, true);
-            }
-        }
-        (
-            direct,
-            groups,
-            live_direct,
-            live_groups,
-            live_paths,
-            listing_trie,
+    fn rebuild_scope_paths(history: &DocumentHistory) -> PathIndexes {
+        PathIndexes::rebuild(
+            history
+                .iter()
+                .map(|(path, versions)| (path, matches!(versions.last(), Some((_, Some(_)))))),
         )
     }
 
@@ -2363,9 +2092,9 @@ impl FirestoreState {
                 collection_id,
             } => Box::new(
                 if version.is_some() {
-                    &self.direct_collection_paths
+                    self.path_indexes.direct_collection_paths()
                 } else {
-                    &self.live_direct_collection_paths
+                    self.path_indexes.live_direct_collection_paths()
                 }
                 .get(&(parent.clone(), collection_id.clone()))
                 .into_iter()
@@ -2376,9 +2105,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.collection_group_paths
+                    self.path_indexes.collection_group_paths()
                 } else {
-                    &self.live_collection_group_paths
+                    self.path_indexes.live_collection_group_paths()
                 };
                 let Some(paths) = paths.get(collection_id) else {
                     return Box::new(core::iter::empty());
@@ -2417,7 +2146,8 @@ impl FirestoreState {
                 } else if let Some(parent) = parent {
                     let lower = Arc::new(parent.clone());
                     Box::new(
-                        self.live_paths
+                        self.path_indexes
+                            .live_paths()
                             .range((
                                 core::ops::Bound::Excluded(lower),
                                 core::ops::Bound::Unbounded,
@@ -2426,7 +2156,7 @@ impl FirestoreState {
                             .take_while(move |path| is_strict_descendant(path, parent)),
                     )
                 } else {
-                    Box::new(self.live_paths.iter().map(AsRef::as_ref))
+                    Box::new(self.path_indexes.live_paths().iter().map(AsRef::as_ref))
                 }
             }
         }
@@ -2447,9 +2177,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.direct_collection_paths
+                    self.path_indexes.direct_collection_paths()
                 } else {
-                    &self.live_direct_collection_paths
+                    self.path_indexes.live_direct_collection_paths()
                 };
                 Box::new(
                     paths
@@ -2463,9 +2193,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.collection_group_paths
+                    self.path_indexes.collection_group_paths()
                 } else {
-                    &self.live_collection_group_paths
+                    self.path_indexes.live_collection_group_paths()
                 };
                 let Some(paths) = paths.get(collection_id) else {
                     return Box::new(core::iter::empty());
@@ -2499,13 +2229,20 @@ impl FirestoreState {
                 } else if let Some(parent) = parent {
                     let (lower, upper) = descendant_bounds(parent);
                     Box::new(
-                        self.live_paths
+                        self.path_indexes
+                            .live_paths()
                             .range::<DocumentPath, _>((Excluded(&lower), Excluded(&upper)))
                             .rev()
                             .map(AsRef::as_ref),
                     )
                 } else {
-                    Box::new(self.live_paths.iter().rev().map(AsRef::as_ref))
+                    Box::new(
+                        self.path_indexes
+                            .live_paths()
+                            .iter()
+                            .rev()
+                            .map(AsRef::as_ref),
+                    )
                 }
             }
         }
@@ -2529,9 +2266,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.direct_collection_paths
+                    self.path_indexes.direct_collection_paths()
                 } else {
-                    &self.live_direct_collection_paths
+                    self.path_indexes.live_direct_collection_paths()
                 };
                 Box::new(
                     paths
@@ -2549,9 +2286,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.collection_group_paths
+                    self.path_indexes.collection_group_paths()
                 } else {
-                    &self.live_collection_group_paths
+                    self.path_indexes.live_collection_group_paths()
                 };
                 let Some(paths) = paths.get(collection_id) else {
                     return Box::new(core::iter::empty());
@@ -2584,7 +2321,8 @@ impl FirestoreState {
                     }
                 } else {
                     let paths = self
-                        .live_paths
+                        .path_indexes
+                        .live_paths()
                         .range::<DocumentPath, _>((Excluded(after), Unbounded))
                         .map(AsRef::as_ref);
                     if let Some(parent) = parent {
@@ -2615,9 +2353,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.direct_collection_paths
+                    self.path_indexes.direct_collection_paths()
                 } else {
-                    &self.live_direct_collection_paths
+                    self.path_indexes.live_direct_collection_paths()
                 };
                 Box::new(
                     paths
@@ -2636,9 +2374,9 @@ impl FirestoreState {
                 collection_id,
             } => {
                 let paths = if version.is_some() {
-                    &self.collection_group_paths
+                    self.path_indexes.collection_group_paths()
                 } else {
-                    &self.live_collection_group_paths
+                    self.path_indexes.live_collection_group_paths()
                 };
                 let Some(paths) = paths.get(collection_id) else {
                     return Box::new(core::iter::empty());
@@ -2676,7 +2414,8 @@ impl FirestoreState {
                     )
                 } else {
                     Box::new(
-                        self.live_paths
+                        self.path_indexes
+                            .live_paths()
                             .range::<DocumentPath, _>((lower, Excluded(before)))
                             .rev()
                             .map(AsRef::as_ref),
@@ -2768,25 +2507,13 @@ impl FirestoreState {
                 Some((path.clone(), vec![(*version, Some(document.clone()))]))
             })
             .collect();
-        let (
-            direct_collection_paths,
-            collection_group_paths,
-            live_direct_collection_paths,
-            live_collection_group_paths,
-            live_paths,
-            listing_trie,
-        ) = Self::rebuild_scope_paths(&history);
+        let path_indexes = Self::rebuild_scope_paths(&history);
         let mut snapshot = Self {
             index_catalog: Arc::clone(&self.index_catalog),
             equality_candidate_index: OnceLock::new(),
             history,
             ttl_expiry_indexes: BTreeMap::new(),
-            direct_collection_paths,
-            live_direct_collection_paths,
-            listing_trie,
-            collection_group_paths,
-            live_collection_group_paths,
-            live_paths,
+            path_indexes,
             limit_scope: self.limit_scope,
             write_route: self.write_route,
             version: self.version,
@@ -5363,9 +5090,9 @@ impl FirestoreState {
             return Vec::new();
         };
         let paths = if version.is_some() {
-            &self.direct_collection_paths
+            self.path_indexes.direct_collection_paths()
         } else {
-            &self.live_direct_collection_paths
+            self.path_indexes.live_direct_collection_paths()
         };
         paths
             .get(&(parent.cloned(), collection_id))
@@ -5415,9 +5142,9 @@ impl FirestoreState {
             return (Vec::new(), QueryStats::default());
         };
         let paths_by_scope = if version.is_some() {
-            &self.direct_collection_paths
+            self.path_indexes.direct_collection_paths()
         } else {
-            &self.live_direct_collection_paths
+            self.path_indexes.live_direct_collection_paths()
         };
         let Some(paths) = paths_by_scope.get(&(parent.cloned(), collection_id)) else {
             return (Vec::new(), QueryStats::default());
@@ -5529,7 +5256,11 @@ impl FirestoreState {
         let Ok(collection_id) = CollectionId::try_new(collection_id) else {
             return (false, Vec::new());
         };
-        let Some(candidates) = self.listing_trie.collection(parent, &collection_id) else {
+        let Some(candidates) = self
+            .path_indexes
+            .listing_trie()
+            .collection(parent, &collection_id)
+        else {
             return (false, Vec::new());
         };
         let depth = parent.map_or(1, |path| path.pairs().len() + 1);
@@ -5589,7 +5320,11 @@ impl FirestoreState {
         let Ok(collection_id) = CollectionId::try_new(collection_id) else {
             return (Vec::new(), QueryStats::default());
         };
-        let Some(candidates) = self.listing_trie.collection(parent, &collection_id) else {
+        let Some(candidates) = self
+            .path_indexes
+            .listing_trie()
+            .collection(parent, &collection_id)
+        else {
             return (Vec::new(), QueryStats::default());
         };
         let candidate_count = if version.is_some() {
@@ -5672,9 +5407,9 @@ impl FirestoreState {
             return Vec::new();
         };
         let group_paths = if version == self.version {
-            &self.live_collection_group_paths
+            self.path_indexes.live_collection_group_paths()
         } else {
-            &self.collection_group_paths
+            self.path_indexes.collection_group_paths()
         };
         let Some(paths) = group_paths.get(&collection_id) else {
             return Vec::new();
@@ -5721,7 +5456,8 @@ impl FirestoreState {
         parent: Option<&DocumentPath>,
         version: Option<CommitVersion>,
     ) -> Vec<String> {
-        self.listing_trie
+        self.path_indexes
+            .listing_trie()
             .collections_under(parent)
             .into_iter()
             .flat_map(|collections| collections.iter())
@@ -8394,7 +8130,8 @@ mod scope_index_tests {
             }
         }
         let actual_direct = state
-            .direct_collection_paths
+            .path_indexes
+            .direct_collection_paths()
             .iter()
             .map(|(scope, paths)| {
                 (
@@ -8404,7 +8141,8 @@ mod scope_index_tests {
             })
             .collect::<BTreeMap<_, _>>();
         let actual_groups = state
-            .collection_group_paths
+            .path_indexes
+            .collection_group_paths()
             .iter()
             .map(|(scope, paths)| {
                 (
@@ -8414,7 +8152,8 @@ mod scope_index_tests {
             })
             .collect::<BTreeMap<_, _>>();
         let actual_live_direct = state
-            .live_direct_collection_paths
+            .path_indexes
+            .live_direct_collection_paths()
             .iter()
             .map(|(scope, paths)| {
                 (
@@ -8424,7 +8163,8 @@ mod scope_index_tests {
             })
             .collect::<BTreeMap<_, _>>();
         let actual_live_groups = state
-            .live_collection_group_paths
+            .path_indexes
+            .live_collection_group_paths()
             .iter()
             .map(|(scope, paths)| {
                 (
@@ -8434,7 +8174,8 @@ mod scope_index_tests {
             })
             .collect::<BTreeMap<_, _>>();
         let actual_live_paths = state
-            .live_paths
+            .path_indexes
+            .live_paths()
             .iter()
             .map(|path| path.as_ref().clone())
             .collect::<BTreeSet<_>>();
@@ -8444,7 +8185,7 @@ mod scope_index_tests {
         assert_eq!(actual_live_groups, live_groups);
         assert_eq!(actual_live_paths, live_paths);
 
-        assert_trie_projection(state, &state.listing_trie, &mut Vec::new());
+        assert_trie_projection(state, state.path_indexes.listing_trie(), &mut Vec::new());
         assert_eq!(scope_path_sharing_violations(state), Vec::<String>::new());
     }
 
@@ -8469,7 +8210,8 @@ mod scope_index_tests {
     /// a representative that is still retained must be the canonical allocation.
     fn scope_path_sharing_violations(state: &FirestoreState) -> Vec<String> {
         let canonical = state
-            .collection_group_paths
+            .path_indexes
+            .collection_group_paths()
             .values()
             .flatten()
             .map(|path| (path.as_ref(), Arc::as_ptr(path)))
@@ -8483,23 +8225,31 @@ mod scope_index_tests {
             }
         };
         for (family, scope) in [
-            ("direct", &state.direct_collection_paths),
-            ("live direct", &state.live_direct_collection_paths),
+            ("direct", &state.path_indexes.direct_collection_paths()),
+            (
+                "live direct",
+                &state.path_indexes.live_direct_collection_paths(),
+            ),
         ] {
             for path in scope.values().flatten() {
                 check(family, path, &mut held);
             }
         }
-        for path in state.live_collection_group_paths.values().flatten() {
+        for path in state
+            .path_indexes
+            .live_collection_group_paths()
+            .values()
+            .flatten()
+        {
             check("live group", path, &mut held);
         }
-        for path in &state.live_paths {
+        for path in state.path_indexes.live_paths() {
             check("live paths", path, &mut held);
         }
         let mut retained_here = Vec::new();
         let mut representatives = Vec::new();
         collect_trie_paths(
-            &state.listing_trie,
+            state.path_indexes.listing_trie(),
             &mut retained_here,
             &mut representatives,
         );
@@ -8632,7 +8382,10 @@ mod scope_index_tests {
         assert_eq!(scope_path_sharing_violations(&state), Vec::<String>::new());
         // Control: give one live index a fresh, equal allocation of the same path.
         let duplicate = Arc::new(path("root/a"));
-        assert!(state.live_paths.replace(duplicate).is_some());
+        assert!(state
+            .path_indexes
+            .replace_live_path_for_test(duplicate)
+            .is_some());
         assert_eq!(
             scope_path_sharing_violations(&state),
             vec![
@@ -8840,7 +8593,11 @@ mod scope_index_tests {
 
         let mut nodes = 0;
         let mut representatives = BTreeSet::new();
-        collect_trie_representatives(&state.listing_trie, &mut nodes, &mut representatives);
+        collect_trie_representatives(
+            state.path_indexes.listing_trie(),
+            &mut nodes,
+            &mut representatives,
+        );
         assert_eq!(nodes, crate::path::MAX_SUBCOLLECTION_DEPTH);
         assert_eq!(representatives.len(), 1);
     }
