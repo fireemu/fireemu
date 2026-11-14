@@ -7366,6 +7366,54 @@ mod equality_index_scope_tests {
     }
 
     #[test]
+    fn equality_index_retains_exact_byte_cap_and_overflows_one_byte_above() {
+        let mut state = FirestoreState::new();
+        let scope = query("items").scope;
+        let field = FieldPath::parse("group").unwrap();
+        let write = write("items", "a", "");
+        let path = write.op.path();
+        state.insert_scope_path(path);
+        let mut document = Document {
+            path: path.clone(),
+            fields: BTreeMap::from([("group".to_owned(), Value::String(String::new()))]),
+            create_time: LogicalInstant::UNIX_EPOCH,
+            update_time: LogicalInstant::UNIX_EPOCH,
+            version: CommitVersion::default(),
+        };
+        let mut probe = EqualityCandidateIndexBuilder::new(&scope, &field);
+        probe.add(&state, path, &document);
+        let fixed_bytes = probe.index.estimated_bytes;
+
+        for excess in [0, 1] {
+            document.fields.insert(
+                "group".to_owned(),
+                Value::String(
+                    "x".repeat(EQUALITY_INDEX_MAX_ESTIMATED_BYTES - fixed_bytes + excess),
+                ),
+            );
+            let mut builder = EqualityCandidateIndexBuilder::new(&scope, &field);
+            builder.add(&state, path, &document);
+            assert_eq!(
+                builder.index.estimated_bytes,
+                EQUALITY_INDEX_MAX_ESTIMATED_BYTES + excess
+            );
+            if excess == 0 {
+                assert!(!builder.overflowed, "the exact byte cap must be retained");
+                let index = builder.finish().expect("the exact byte cap must finish");
+                assert_eq!(index.by_value.len(), 1);
+                assert_eq!(
+                    index.by_value.values().next().unwrap(),
+                    &vec![Arc::new(path.clone())]
+                );
+            } else {
+                assert!(builder.overflowed);
+                assert!(builder.index.by_value.is_empty());
+                assert!(builder.finish().is_none());
+            }
+        }
+    }
+
+    #[test]
     fn cold_index_build_visits_only_the_query_scope_and_is_not_reused_for_another_scope() {
         let mut db = FirestoreState::new();
         let writes = [
