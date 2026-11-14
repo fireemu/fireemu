@@ -45,7 +45,7 @@ fn crc32c_update_raw(state: u32, bytes: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod crc32c_update_tests {
-    use super::{crc32c_update_raw, Crc32c};
+    use super::{Crc32c, crc32c_update_raw};
 
     fn forced_scalar_raw_update(mut state: u32, bytes: &[u8]) -> u32 {
         for &byte in bytes {
@@ -76,6 +76,38 @@ mod crc32c_update_tests {
                     chunked_state = crc32c_update_raw(chunked_state, chunk);
                 }
                 assert_eq!(chunked_state, expected, "chunked len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn long_hardware_paths_match_forced_scalar_at_every_alignment() {
+        for len in [767_usize, 768, 769, 24_575, 24_576, 24_577, 49_153] {
+            for offset in 0..8 {
+                let storage: Vec<_> = (0..len + offset)
+                    .map(|index| {
+                        u8::try_from((index.wrapping_mul(31) + len + offset * 17) % 256).unwrap()
+                    })
+                    .collect();
+                let bytes = &storage[offset..offset + len];
+
+                for initial in [0, 1, 0x1234_5678] {
+                    let expected = forced_scalar_raw_update(initial, bytes);
+                    assert_eq!(
+                        crc32c_update_raw(initial, bytes),
+                        expected,
+                        "one-shot len {len}, offset {offset}, initial {initial:#x}",
+                    );
+
+                    let mut chunked = initial;
+                    for chunk in bytes.chunks(997) {
+                        chunked = crc32c_update_raw(chunked, chunk);
+                    }
+                    assert_eq!(
+                        chunked, expected,
+                        "997-byte chunks len {len}, offset {offset}, initial {initial:#x}",
+                    );
+                }
             }
         }
     }

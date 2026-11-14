@@ -1,0 +1,11 @@
+Backend	Workload	Size	Offset	Partition	RawState	Bytes
+scalar	raw_update	zero	offset0	single	all_ones	all_zero
+rust_intrinsic	raw_update	tail7	offset7	chunks997	arbitrary	byte_range
+c_intrinsic	raw_update	tail8	offset3	chunks8	zero	all_ff
+dependency	finalized_digest	boundary65	offset5	varied	all_ones	patterned
+scalar	finalized_digest	page4096	offset1	chunks997	zero	byte_range
+rust_intrinsic	finalized_digest	boundary257	offset6	chunks7	all_ones	all_ff
+c_intrinsic	finalized_digest	tail3	offset4	chunks1	arbitrary	patterned
+dependency	raw_update	boundary33	offset2	chunks1	arbitrary	all_zero
+dependency	raw_update	block768	offset0	chunks997	arbitrary	patterned
+dependency	raw_update	long24576	offset7	chunks997	arbitrary	byte_range

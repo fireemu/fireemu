@@ -1,0 +1,15 @@
+[package]
+name = "checksum-hardware-experiment"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+
+[workspace]
+
+[dependencies]
+crc32c = "=0.6.9"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
