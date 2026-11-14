@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { snapshotInputs, prepareGeneration, cloneSupport, copySupport } from '../fireemu/testing-snapshot.mjs';
+import { validateTreeContents, validateConfigOwner } from './benchmark-world-copy-integrity.mjs';
 
 function argument(name, fallback, maximum) {
   const prefix = `--${name}=`;
@@ -16,6 +17,7 @@ function argument(name, fallback, maximum) {
 
 const fileCount = argument('files', 2_000, 10_000);
 const bytesPerFile = argument('bytes', 1_024, 8_192);
+if (bytesPerFile < 4) throw Error('bytes must be at least 4 so every fixture file has a unique payload prefix');
 const pairs = argument('pairs', 5, 8);
 const outputArg = process.argv.find(value => value.startsWith('--output='));
 const outputPath = outputArg?.slice('--output='.length);
@@ -23,25 +25,53 @@ const root = await mkdtemp(join(tmpdir(), 'fireemu-world-copy-bench-'));
 const source = join(root, 'source');
 const originalCloneSupport = { ...cloneSupport };
 const originalCopyLimit = copySupport.maxConcurrentFiles;
-const sourceBytes = Buffer.alloc(bytesPerFile, 0x61);
+const expectedManifest = Object.create(null);
+
+function payloadFor(index) {
+  const bytes = Buffer.alloc(bytesPerFile, 0x61);
+  bytes.writeUInt32BE(index, 0);
+  return bytes;
+}
+
+function manifestHash(manifest) {
+  const digest = createHash('sha256');
+  for (const path of Object.keys(manifest).sort()) {
+    const entry = manifest[path];
+    digest.update(`${path}\0${entry.type}\0${entry.size ?? ''}\0${entry.sha256 ?? ''}\0`);
+  }
+  return digest.digest('hex');
+}
 
 try {
   cloneSupport.file = false;
   cloneSupport.tree = false;
   await mkdir(source);
-  for (let index = 0; index < 32; index++) await mkdir(join(source, `bucket-${String(index).padStart(2, '0')}`));
+  for (let index = 0; index < 32; index++) {
+    const bucket = `bucket-${String(index).padStart(2, '0')}`;
+    await mkdir(join(source, bucket));
+    expectedManifest[bucket] = { type: 'directory' };
+  }
   for (let index = 0; index < fileCount; index++) {
-    const bucket = join(source, `bucket-${String(index % 32).padStart(2, '0')}`);
-    await writeFile(join(bucket, `file-${String(index).padStart(5, '0')}.dat`), sourceBytes);
+    const bucketName = `bucket-${String(index % 32).padStart(2, '0')}`;
+    const name = `file-${String(index).padStart(5, '0')}.dat`;
+    const bytes = payloadFor(index);
+    await writeFile(join(source, bucketName, name), bytes);
+    expectedManifest[`${bucketName}/${name}`] = {
+      type: 'file',
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
   }
   const sourceHash = createHash('sha256');
   for (let index = 0; index < fileCount; index++) {
     const bucket = `bucket-${String(index % 32).padStart(2, '0')}`;
     const name = `file-${String(index).padStart(5, '0')}.dat`;
-    sourceHash.update(`${bucket}/${name}\0`).update(sourceBytes);
+    sourceHash.update(`${bucket}/${name}\0`).update(payloadFor(index));
   }
   const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const implementationHash = createHash('sha256').update(await readFile(new URL('../fireemu/testing-snapshot.mjs', import.meta.url))).digest('hex');
+  const benchmarkHash = createHash('sha256').update(await readFile(new URL(import.meta.url))).digest('hex');
+  const integrityHash = createHash('sha256').update(await readFile(new URL('./benchmark-world-copy-integrity.mjs', import.meta.url))).digest('hex');
   const samples = [];
 
   const measure = async limit => {
@@ -62,7 +92,18 @@ try {
       if (generation.stats.method !== 'copy') throw Error(`generation used ${generation.stats.method}, expected portable copy`);
       if (generation.stats.files !== fileCount + 1) throw Error(`expected ${fileCount + 1} generation files, observed ${generation.stats.files}`);
       if (generation.stats.bytes !== fileCount * bytesPerFile + (await stat(generation.configPath)).size) throw Error(`unexpected generation byte total ${generation.stats.bytes}`);
-      samples.push({ pool: limit, snapshot: { elapsedMs: snapshotElapsedMs, stats: snapshot.stats }, generationCopy: { elapsedMs: generationElapsedMs, stats: generation.stats } });
+
+      // Validate after both timers so snapshot reads cannot prewarm generation input files.
+      const snapshotIntegrity = await validateTreeContents(snapshot.config.functions.source, expectedManifest, 'snapshot');
+      const snapshotConfig = await validateConfigOwner(join(snapshot.baseline, 'fireemu.json'), snapshot.baseline, snapshot.config.functions.source, 'snapshot');
+      const generationIntegrity = await validateTreeContents(generation.config.functions.source, expectedManifest, 'generation');
+      const generationConfig = await validateConfigOwner(generation.configPath, generation.cwd, generation.config.functions.source, 'generation');
+      samples.push({
+        pool: limit,
+        snapshot: { elapsedMs: snapshotElapsedMs, stats: snapshot.stats },
+        generationCopy: { elapsedMs: generationElapsedMs, stats: generation.stats },
+        integrity: { snapshot: { tree: snapshotIntegrity, config: snapshotConfig }, generation: { tree: generationIntegrity, config: generationConfig } },
+      });
     } finally {
       await rm(world, { recursive: true, force: true });
     }
@@ -78,6 +119,8 @@ try {
     benchmark: 'world-copy-followup',
     sourceCommit,
     implementationHash,
+    benchmarkHash,
+    integrityHash,
     platform: process.platform,
     arch: process.arch,
     node: process.version,
@@ -85,6 +128,7 @@ try {
     bytesPerFile,
     sourceBytes: fileCount * bytesPerFile,
     sourceTreeHash: sourceHash.digest('hex'),
+    expectedTreeHash: manifestHash(expectedManifest),
     samples,
     mediansMs: Object.fromEntries(['snapshot', 'generationCopy'].map(phase => [phase, Object.fromEntries([1, 4].map(limit => {
       const values = samples.filter(sample => sample.pool === limit).map(sample => sample[phase].elapsedMs).sort((a, b) => a - b);
