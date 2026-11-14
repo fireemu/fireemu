@@ -36,7 +36,10 @@ class WrapperTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_wrapped(self, script, env=None):
-        environment = {**os.environ, "TMPDIR": str(self.parent) + "/", **(env or {})}
+        environment = {
+            **os.environ, "TMPDIR": str(self.parent) + "/",
+            "FIREEMU_TEST_TMP_ROOT": str(self.root), **(env or {}),
+        }
         return subprocess.run(
             [SHELL, str(WRAPPER), SHELL, "-c", script],
             env=environment,
@@ -47,7 +50,10 @@ class WrapperTest(unittest.TestCase):
 
     def run_wrapped_on_sweep(self, script, scheduled, env=None):
         """Exec the wrapper with a stable PID in the requested modulo-16 bucket."""
-        environment = {**os.environ, "TMPDIR": str(self.parent) + "/", **(env or {})}
+        environment = {
+            **os.environ, "TMPDIR": str(self.parent) + "/",
+            "FIREEMU_TEST_TMP_ROOT": str(self.root), **(env or {}),
+        }
         launcher = "import os, sys; sys.stdin.read(1); os.execv(sys.argv[1], sys.argv[1:])"
         argv = [sys.executable, "-c", launcher, SHELL, str(WRAPPER), SHELL, "-c", script]
         deadline = time.monotonic() + 30
@@ -88,7 +94,7 @@ class WrapperTest(unittest.TestCase):
     def start_wrapped(self, script):
         """A wrapped long-running test in its own process group, killed at the end of the test
         whatever happens, so a failing assertion never leaves it running."""
-        environment = dict(os.environ, TMPDIR=str(self.parent) + "/")
+        environment = dict(os.environ, TMPDIR=str(self.parent) + "/", FIREEMU_TEST_TMP_ROOT=str(self.root))
         process = subprocess.Popen(
             [SHELL, str(WRAPPER), SHELL, "-c", script],
             env=environment,
@@ -110,6 +116,29 @@ class WrapperTest(unittest.TestCase):
 
     def private_dirs(self):
         return sorted(self.root.iterdir()) if self.root.exists() else []
+
+    def test_every_helper_uses_owned_roots_despite_inherited_overrides(self):
+        observed = self.parent / "observed"
+        script = f'printf "%s\\n%s\\n" "$FIREEMU_TEST_TMP_ROOT" "$TMPDIR" > "{observed}"'
+        with mock.patch.dict(os.environ, {
+            "TMPDIR": str(self.parent / "inherited-parent"),
+            "FIREEMU_TEST_TMP_ROOT": str(self.parent / "inherited-root"),
+        }):
+            for helper in ("run_wrapped", "run_wrapped_on_sweep", "start_wrapped"):
+                with self.subTest(helper=helper):
+                    if helper == "run_wrapped_on_sweep":
+                        result = self.run_wrapped_on_sweep(script, scheduled=False)
+                    elif helper == "start_wrapped":
+                        result = self.start_wrapped(script)
+                        result.wait(timeout=10)
+                    else:
+                        result = self.run_wrapped(script)
+                    self.assertEqual(result.returncode, 0)
+                    root, tmpdir = observed.read_text().splitlines()
+                    self.assertEqual(Path(root), self.root)
+                    self.assertEqual(Path(tmpdir).parent, self.root)
+                    self.assertEqual(self.private_dirs(), [])
+                    observed.unlink()
 
     def test_the_test_sees_a_private_directory_under_the_run_root(self):
         result = self.run_wrapped('printf "%s" "$TMPDIR"')
@@ -245,7 +274,9 @@ class WrapperTest(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.run_wrapped_on_sweep('echo $$ > "$TMPDIR/../child-pid"; exec sleep 60', scheduled=False)
         process = shortened.call_args.args[0]
-        self.assertIsNotNone(process.poll(), "the launcher must have been reaped before returning")
+        self.assertIsNotNone(process.returncode, "the launcher must have been reaped before returning")
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(process.pid, os.WNOHANG)
         child = int((self.root / "child-pid").read_text())
         with self.assertRaises(ProcessLookupError):
             os.kill(child, 0)
@@ -476,7 +507,7 @@ class WrapperTest(unittest.TestCase):
         self.assert_untouched(victim)
 
     def test_a_tmpdir_with_several_trailing_slashes_still_works(self):
-        result = self.run_wrapped('printf "%s" "$TMPDIR"', env={"TMPDIR": str(self.parent) + "///"})
+        result = self.run_wrapped('printf "%s" "$TMPDIR"', env={"TMPDIR": str(self.parent) + "///", "FIREEMU_TEST_TMP_ROOT": ""})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(Path(result.stdout).parent, self.root)
 
@@ -520,7 +551,10 @@ class VoltaShimTest(unittest.TestCase):
     def run_wrapped(self, env, script='printf "%s" "$PATH"'):
         parent = self.base / "tmp"
         parent.mkdir(exist_ok=True)
-        environment = {"PATH": env["PATH"], "TMPDIR": f"{parent}/"}
+        environment = {
+            "PATH": env["PATH"], "TMPDIR": f"{parent}/",
+            "FIREEMU_TEST_TMP_ROOT": str(parent / f"fireemu-test-tmp-{os.getuid()}"),
+        }
         environment.update({key: value for key, value in env.items() if key != "PATH"})
         return subprocess.run(
             [SHELL, str(WRAPPER), SHELL, "-c", script],
@@ -529,6 +563,18 @@ class VoltaShimTest(unittest.TestCase):
             text=True,
             timeout=30,
         )
+
+    def test_the_helper_explicitly_sets_both_owned_roots(self):
+        with mock.patch.dict(os.environ, {
+            "TMPDIR": str(self.base / "inherited-parent"),
+            "FIREEMU_TEST_TMP_ROOT": str(self.base / "inherited-root"),
+        }), mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+            result = self.run_wrapped({"PATH": "/usr/bin:/bin"}, 'printf "%s" "$FIREEMU_TEST_TMP_ROOT"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["TMPDIR"], f"{self.base / 'tmp'}/")
+        self.assertEqual(environment["FIREEMU_TEST_TMP_ROOT"], str(self.base / "tmp" / f"fireemu-test-tmp-{os.getuid()}"))
+        self.assertEqual(result.stdout, environment["FIREEMU_TEST_TMP_ROOT"])
 
     def test_a_shim_without_an_install_is_dropped_and_never_run(self):
         empty_home = self.base / "empty-home"
