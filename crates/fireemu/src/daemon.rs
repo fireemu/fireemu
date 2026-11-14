@@ -2040,6 +2040,84 @@ async fn clock_ticker(clock: std::sync::Weak<Mutex<VirtualClock>>) {
     }
 }
 
+struct PreparedAuthRules {
+    barrier: Arc<fireemu_core_session::barrier::AdmissionBarrier>,
+    registry: Arc<fireemu_core_auth::store::AuthRegistry>,
+    rules: Arc<RulesetSlot>,
+    database_rules: std::collections::BTreeMap<String, Arc<RulesetSlot>>,
+    storage_rules: super::LoadedStorageRules,
+}
+
+async fn prepare_auth_rules_while_app_check_key_generates<K: Send + 'static, P>(
+    task: Option<tokio::task::JoinHandle<Result<K, String>>>,
+    prepare: impl FnOnce() -> Result<P, String>,
+) -> Result<(P, Option<K>), String> {
+    let prepared = prepare();
+    let key = match task {
+        Some(task) => Some(
+            task.await
+                .map_err(|error| format!("App Check RSA key: {error}"))??,
+        ),
+        None => None,
+    };
+    Ok((prepared?, key))
+}
+
+fn prepare_auth_rules(
+    cfg: &RuntimeConfig,
+    backend: &Arc<LocalBackend>,
+    auth_store: &Arc<Mutex<AuthStore>>,
+) -> Result<PreparedAuthRules, String> {
+    let barrier = backend.barrier();
+    let registry = Arc::new(
+        fireemu_core_auth::store::AuthRegistry::with_project_numbers_and_lifecycle_incarnation(
+            &cfg.auth_project,
+            auth_store.clone(),
+            cfg.auth_project_numbers.clone(),
+            crate::random_u128()?,
+        ),
+    );
+    registry.set_new_project_mfa_seed(cfg.effective_auth_mfa());
+    registry.set_new_project_authorized_domains_seed(cfg.auth_authorized_domains.clone());
+    registry.set_new_project_provider_config_seeds(cfg.auth_provider_seeds.clone());
+    apply_auth_password_policy_overrides(cfg, &registry)?;
+    apply_auth_config_overrides(cfg, &registry)?;
+    let mut compilations = RulesCompilationCache::default();
+    let rules_literals = cfg.profile.lone_surrogates();
+    let rules = Arc::new(
+        RulesetSlot::new(load_rules(cfg, &mut compilations)?).with_lone_surrogates(rules_literals),
+    );
+    let mut database_rules = std::collections::BTreeMap::new();
+    for (database, files) in &cfg.firestore_databases {
+        if database == fireemu_core_types::ids::DatabaseId::DEFAULT {
+            continue;
+        }
+        let loaded = match &files.rules {
+            Some(path) => {
+                let source = std::fs::read_to_string(path)
+                    .map_err(|error| format!("rules source {path}: {error}"))?;
+                compilations
+                    .load(&source)
+                    .map_err(|error| format!("rules source {path} does not parse: {error}"))?
+            }
+            None => LoadedRules::default(),
+        };
+        database_rules.insert(
+            database.clone(),
+            Arc::new(RulesetSlot::new(loaded).with_lone_surrogates(rules_literals)),
+        );
+    }
+    let storage_rules = load_storage_rules(cfg, &mut compilations)?;
+    drop(compilations);
+    Ok(PreparedAuthRules {
+        barrier,
+        registry,
+        rules,
+        database_rules,
+        storage_rules,
+    })
+}
+
 pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
     let Options {
         mut cfg,
@@ -2257,8 +2335,8 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                 )
             })
         });
-        let app_check_signer = match app_check_key {
-            Some(task) => Some(task.await.map_err(|e| format!("App Check RSA key: {e}"))??),
+        let app_check_signer = match app_check_key.as_ref() {
+            Some(_) => None,
             None if want_app_check => {
                 let signer = fireemu_adapter_http::signing::AppCheckRsaSigner::lazy(
                     fireemu_adapter_http::signing::AppCheckKeySource::OperatingSystem,
@@ -2284,50 +2362,19 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
             }
             None => None,
         };
-        let barrier = backend.barrier();
-        // Session projects other than the default get their own Auth store (same signer).
-        let registry = Arc::new(
-            fireemu_core_auth::store::AuthRegistry::with_project_numbers_and_lifecycle_incarnation(
-                &cfg.auth_project,
-                auth_store.clone(),
-                cfg.auth_project_numbers.clone(),
-                crate::random_u128()?,
-            ),
-        );
-        // A project created after start begins with the declared multi-factor configuration.
-        registry.set_new_project_mfa_seed(cfg.effective_auth_mfa());
-        registry.set_new_project_authorized_domains_seed(cfg.auth_authorized_domains.clone());
-        registry.set_new_project_provider_config_seeds(cfg.auth_provider_seeds.clone());
-        apply_auth_password_policy_overrides(&cfg, &registry)?;
-        apply_auth_config_overrides(&cfg, &registry)?;
-        let mut compilations = RulesCompilationCache::default();
-        let rules_literals = cfg.profile.lone_surrogates();
-        let rules = Arc::new(
-            RulesetSlot::new(load_rules(&cfg, &mut compilations)?)
-                .with_lone_surrogates(rules_literals),
-        );
-        let mut database_rules = std::collections::BTreeMap::new();
-        for (database, files) in &cfg.firestore_databases {
-            if database == fireemu_core_types::ids::DatabaseId::DEFAULT {
-                continue;
-            }
-            let loaded = match &files.rules {
-                Some(path) => {
-                    let source = std::fs::read_to_string(path)
-                        .map_err(|error| format!("rules source {path}: {error}"))?;
-                    compilations
-                        .load(&source)
-                        .map_err(|error| format!("rules source {path} does not parse: {error}"))?
-                }
-                None => LoadedRules::default(),
-            };
-            database_rules.insert(
-                database.clone(),
-                Arc::new(RulesetSlot::new(loaded).with_lone_surrogates(rules_literals)),
-            );
-        }
-        let storage_rules = load_storage_rules(&cfg, &mut compilations)?;
-        drop(compilations);
+        let (prepared, explicit_app_check_signer) =
+            prepare_auth_rules_while_app_check_key_generates(app_check_key, || {
+                prepare_auth_rules(&cfg, &backend, &auth_store)
+            })
+            .await?;
+        let app_check_signer = explicit_app_check_signer.or(app_check_signer);
+        let PreparedAuthRules {
+            barrier,
+            registry,
+            rules,
+            database_rules,
+            storage_rules,
+        } = prepared;
         start_firestore_config_reload_supervisors(
             &cfg,
             &backend,
@@ -2627,6 +2674,177 @@ fn configured_pubsub_handle(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn auth_and_rules_preparation_runs_while_explicit_app_check_key_is_pending() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let (key_release, key_gate) = tokio::sync::oneshot::channel();
+        let key_completed = Arc::new(AtomicBool::new(false));
+        let key_completed_in_task = Arc::clone(&key_completed);
+        let key_task = tokio::spawn(async move {
+            key_gate.await.unwrap();
+            key_completed_in_task.store(true, Ordering::Release);
+            Ok::<_, String>("signer-ready")
+        });
+        let (prepared, prepared_rx) = tokio::sync::oneshot::channel();
+        let preparation_key_completed = Arc::clone(&key_completed);
+        let startup = tokio::spawn(async move {
+            super::prepare_auth_rules_while_app_check_key_generates(Some(key_task), || {
+                assert!(
+                    !preparation_key_completed.load(Ordering::Acquire),
+                    "the rules preparation must run before joining the signer"
+                );
+                let _ = prepared.send(());
+                Ok::<_, String>("auth-and-rules-ready")
+            })
+            .await
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), prepared_rx)
+            .await
+            .expect("Auth and Rules preparation starts while signing is pending")
+            .unwrap();
+        assert!(
+            !startup.is_finished(),
+            "readiness still requires the explicit signer"
+        );
+
+        key_release.send(()).unwrap();
+        let (prepared, signer) = startup.await.unwrap().unwrap();
+        assert_eq!(prepared, "auth-and-rules-ready");
+        assert_eq!(signer, Some("signer-ready"));
+    }
+
+    #[tokio::test]
+    async fn explicit_key_errors_keep_precedence_over_auth_and_rules_errors() {
+        let (key_release, key_gate) = tokio::sync::oneshot::channel();
+        let key_task = tokio::spawn(async move {
+            key_gate.await.unwrap();
+            Err::<(), _>("key generation failed".to_owned())
+        });
+        let (prepared, prepared_rx) = tokio::sync::oneshot::channel();
+        let startup = tokio::spawn(async move {
+            super::prepare_auth_rules_while_app_check_key_generates(Some(key_task), || {
+                let _ = prepared.send(());
+                Err::<(), _>("rules compilation failed".to_owned())
+            })
+            .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), prepared_rx)
+            .await
+            .expect("rules preparation runs while the explicit key is generated")
+            .unwrap();
+        assert!(
+            !startup.is_finished(),
+            "the key task must still be awaited after a rules error"
+        );
+        key_release.send(()).unwrap();
+        assert_eq!(startup.await.unwrap().unwrap_err(), "key generation failed");
+    }
+
+    /// Replays each generated PICT row through both production startup ordering helpers so the
+    /// baseline/launch settings remain linked to the explicit/implicit key preparation case.
+    #[tokio::test]
+    async fn generated_pict_startup_rows_replay_combined_startup_settings() {
+        struct Case {
+            supervised: bool,
+            scan_ok: bool,
+            launch_ok: bool,
+            explicit_app_check: bool,
+            slow_preparation: bool,
+        }
+
+        let mut lines = include_str!("../tests/startup_performance.generated.tsv")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("Baseline\tScan\tLaunch\tAppCheck\tPreparation")
+        );
+        let mut cases = 0;
+        for line in lines {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5, "malformed PICT row: {line}");
+            let case = Case {
+                supervised: fields[0] == "supervised",
+                scan_ok: fields[1] == "ok",
+                launch_ok: fields[2] == "ok",
+                explicit_app_check: fields[3] == "explicit",
+                slow_preparation: fields[4] == "slow",
+            };
+            let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let scan_events = std::sync::Arc::clone(&events);
+            let launch_events = std::sync::Arc::clone(&events);
+            let started = crate::functions::baseline_then_start(
+                std::slice::from_ref(&case),
+                |case| case.supervised,
+                |case| {
+                    let scan_ok = case.scan_ok;
+                    let events = std::sync::Arc::clone(&scan_events);
+                    Box::pin(async move {
+                        events.lock().unwrap().push("scan");
+                        if scan_ok {
+                            Ok(())
+                        } else {
+                            Err("scan failed".to_owned())
+                        }
+                    })
+                        as std::pin::Pin<
+                            Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                        >
+                },
+                |case| {
+                    launch_events.lock().unwrap().push("launch");
+                    if case.launch_ok {
+                        Ok(())
+                    } else {
+                        Err("launch failed".to_owned())
+                    }
+                },
+            )
+            .await;
+            assert_eq!(
+                *events.lock().unwrap(),
+                if case.supervised {
+                    vec!["scan", "launch"]
+                } else {
+                    vec!["launch"]
+                },
+                "baseline/launch PICT factors: {line}"
+            );
+            assert_eq!(started.len(), 1);
+            assert_eq!(started[0].0.is_some(), case.supervised);
+            assert_eq!(
+                started[0].0.as_ref().is_some_and(Result::is_err),
+                !case.scan_ok && case.supervised
+            );
+            assert_eq!(started[0].1.is_err(), !case.launch_ok);
+
+            let task = case.explicit_app_check.then(|| {
+                tokio::spawn(async {
+                    tokio::task::yield_now().await;
+                    Ok::<_, String>("explicit-key")
+                })
+            });
+            let (prepared, signer) =
+                super::prepare_auth_rules_while_app_check_key_generates(task, || {
+                    if case.slow_preparation {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Ok((case.explicit_app_check, case.slow_preparation))
+                })
+                .await
+                .unwrap();
+            assert_eq!(prepared, (case.explicit_app_check, case.slow_preparation));
+            assert_eq!(signer, case.explicit_app_check.then_some("explicit-key"));
+            cases += 1;
+        }
+        assert_eq!(cases, 7, "all generated PICT rows must run");
+    }
+
     #[tokio::test]
     async fn the_clock_ticker_publishes_the_running_time_until_the_clock_is_gone() {
         use fireemu_core_session::clock::{ClockObserver, VirtualClock};

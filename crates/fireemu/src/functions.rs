@@ -1621,11 +1621,11 @@ fn start_reload_supervisors(
 }
 
 async fn join_codebase_starts<T: Send + 'static>(
-    starts: Vec<(String, tokio::task::JoinHandle<Result<T, String>>)>,
+    starts: Vec<(String, AbortOnDropJoinHandle<Result<T, String>>)>,
 ) -> Vec<Result<T, String>> {
     let mut outcomes = Vec::with_capacity(starts.len());
     for (label, start) in starts {
-        outcomes.push(match start.await {
+        outcomes.push(match start.join().await {
             Ok(outcome) => outcome,
             Err(error) => Err(format!(
                 "the Functions codebase {label:?}: startup task failed: {error}"
@@ -3319,8 +3319,61 @@ pub(crate) fn default_node() -> Result<Option<DefaultNode>, String> {
 }
 
 /// A codebase's runners being started: one for the codebase, or one per function it serves.
+struct AbortOnDropJoinHandle<T> {
+    task: Option<tokio::task::JoinHandle<T>>,
+    abort: tokio::task::AbortHandle,
+    cancel_on_drop: bool,
+}
+
+impl<T> AbortOnDropJoinHandle<T> {
+    fn new(task: tokio::task::JoinHandle<T>) -> Self {
+        Self {
+            abort: task.abort_handle(),
+            task: Some(task),
+            cancel_on_drop: true,
+        }
+    }
+
+    async fn join(mut self) -> Result<T, tokio::task::JoinError> {
+        let task = self.task.take().expect("startup task is joined once");
+        let result = task.await;
+        self.cancel_on_drop = false;
+        result
+    }
+}
+
+impl<T> Drop for AbortOnDropJoinHandle<T> {
+    fn drop(&mut self) {
+        if self.cancel_on_drop {
+            self.abort.abort();
+        }
+    }
+}
+
 type CodebaseStart =
-    tokio::task::JoinHandle<Result<Vec<fireemu_adapter_functions::runtime::CodebaseSpec>, String>>;
+    AbortOnDropJoinHandle<Result<Vec<fireemu_adapter_functions::runtime::CodebaseSpec>, String>>;
+
+pub(super) async fn baseline_then_start<'a, C, B, T, Scan, Start>(
+    codebases: &'a [C],
+    should_scan: impl Fn(&C) -> bool,
+    mut scan: Scan,
+    mut start: Start,
+) -> Vec<(Option<B>, T)>
+where
+    Scan: FnMut(&'a C) -> std::pin::Pin<Box<dyn std::future::Future<Output = B> + Send + 'a>>,
+    Start: FnMut(&'a C) -> T,
+{
+    let mut started = Vec::with_capacity(codebases.len());
+    for codebase in codebases {
+        let baseline = should_scan(codebase).then(|| scan(codebase));
+        let baseline = match baseline {
+            Some(scan) => Some(scan.await),
+            None => None,
+        };
+        started.push((baseline, start(codebase)));
+    }
+    started
+}
 
 fn launch_codebases(
     cfg: &RuntimeConfig,
@@ -3340,7 +3393,7 @@ fn launch_codebases(
             let hosts = hosts.clone();
             let runner_secret = runner_secret.to_owned();
             let node_probe_cache = node_probe_cache.clone();
-            let start = tokio::spawn(async move {
+            let start = AbortOnDropJoinHandle::new(tokio::spawn(async move {
                 start_codebase_units(
                     &cfg,
                     &codebase,
@@ -3351,7 +3404,7 @@ fn launch_codebases(
                     clock_snapshot,
                 )
                 .await
-            });
+            }));
             (label, start)
         })
         .collect()
@@ -3543,30 +3596,47 @@ pub async fn start(
     // An edit during startup may conservatively reload, but cannot become a lost baseline.
     // Known limit: A -> B -> A edits entirely within the load can restore the baseline bytes.
     let scan_budget = FunctionsSourceScanBudget::new();
+    let baseline_starts = baseline_then_start(
+        &codebases,
+        reload_supervised,
+        |codebase| {
+            Box::pin(scan_budget.scan(Path::new(&codebase.source), &codebase.ignore))
+                as std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<Output = Result<FunctionsSourceStamp, String>>
+                            + Send
+                            + '_,
+                    >,
+                >
+        },
+        |codebase| {
+            let clock_snapshot = clock.lock().expect("clock lock").snapshot();
+            launch_codebases(
+                cfg,
+                std::slice::from_ref(codebase),
+                hosts,
+                runner_secret,
+                callable_trusted_protocol,
+                &node_probe_cache,
+                clock_snapshot,
+            )
+            .into_iter()
+            .next()
+            .expect("one codebase produces one start task")
+        },
+    )
+    .await;
     let mut initial_stamps = BTreeMap::new();
-    for codebase in codebases
-        .iter()
-        .filter(|codebase| reload_supervised(codebase))
-    {
-        initial_stamps.insert(
-            codebase.codebase.clone(),
-            scan_budget
-                .scan(Path::new(&codebase.source), &codebase.ignore)
-                .await,
-        );
+    let mut launches = Vec::with_capacity(baseline_starts.len());
+    for (codebase, (baseline, started)) in codebases.iter().zip(baseline_starts) {
+        if let Some(baseline) = baseline {
+            initial_stamps.insert(codebase.codebase.clone(), baseline);
+        }
+        launches.push(started);
     }
     #[cfg(unix)]
     drop(schedule_orphan_function_snapshot_sweep(std::env::temp_dir()));
-    let starts = launch_codebases(
-        cfg,
-        &codebases,
-        hosts,
-        runner_secret,
-        callable_trusted_protocol,
-        &node_probe_cache,
-        clock.lock().expect("clock lock").snapshot(),
-    );
-    let outcomes = join_codebase_starts(starts).await;
+    let outcomes = join_codebase_starts(launches).await;
     if let Some(error) = outcomes.iter().find_map(|outcome| outcome.as_ref().err()) {
         for spec in outcomes
             .iter()
@@ -18414,14 +18484,258 @@ module.exports = { tick, observer };
         let outcomes = tokio::time::timeout(
             Duration::from_secs(1),
             super::join_codebase_starts(vec![
-                ("first".to_owned(), first),
-                ("second".to_owned(), second),
+                ("first".to_owned(), super::AbortOnDropJoinHandle::new(first)),
+                (
+                    "second".to_owned(),
+                    super::AbortOnDropJoinHandle::new(second),
+                ),
             ]),
         )
         .await
         .expect("both tasks reach the barrier because they run concurrently");
 
         assert_eq!(outcomes, vec![Ok("first"), Err("second failed".to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn each_codebase_start_is_launched_before_the_next_baseline_finishes() {
+        let codebases = vec!["first".to_owned(), "second".to_owned()];
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let second_scan_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let observed_events = Arc::clone(&events);
+        let scan_gate = Arc::clone(&second_scan_gate);
+        let launch_events = Arc::clone(&events);
+        let starts = tokio::spawn(async move {
+            super::baseline_then_start(
+                &codebases,
+                |_| true,
+                |codebase: &String| {
+                    let label = codebase.clone();
+                    let events = Arc::clone(&observed_events);
+                    let gate = Arc::clone(&scan_gate);
+                    Box::pin(async move {
+                        if label == "second" {
+                            events.lock().unwrap().push("second-scan-began");
+                            gate.acquire().await.unwrap().forget();
+                        }
+                        events.lock().unwrap().push(if label == "first" {
+                            "first-scan-finished"
+                        } else {
+                            "second-scan-finished"
+                        });
+                    })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                },
+                |codebase| {
+                    launch_events.lock().unwrap().push(if codebase == "first" {
+                        "first-start-launched"
+                    } else {
+                        "second-start-launched"
+                    });
+                    codebase.clone()
+                },
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if events.lock().unwrap().contains(&"second-scan-began") {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the second scan starts after the first start is launched");
+        let before_second_baseline = events.lock().unwrap().clone();
+        assert_eq!(
+            before_second_baseline,
+            vec![
+                "first-scan-finished",
+                "first-start-launched",
+                "second-scan-began"
+            ]
+        );
+
+        second_scan_gate.add_permits(1);
+        let starts = tokio::time::timeout(Duration::from_secs(1), starts)
+            .await
+            .expect("both baseline/start pairs finish")
+            .unwrap();
+        assert_eq!(
+            starts,
+            vec![
+                (Some(()), "first".to_owned()),
+                (Some(()), "second".to_owned())
+            ]
+        );
+    }
+
+    /// Replays the generated PICT rows covering supervised scans, scan/launch errors, and
+    /// explicit/implicit App Check preparation combinations through the real startup sequencer.
+    #[tokio::test]
+    async fn generated_pict_startup_rows_replay_baseline_and_launch_order() {
+        #[derive(Debug)]
+        struct Case {
+            supervised: bool,
+            scan_ok: bool,
+            launch_ok: bool,
+        }
+
+        let mut lines = include_str!("../tests/startup_performance.generated.tsv")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'));
+        assert_eq!(
+            lines.next(),
+            Some("Baseline\tScan\tLaunch\tAppCheck\tPreparation")
+        );
+        let mut cases = 0;
+        for line in lines {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5, "malformed PICT row: {line}");
+            let case = Case {
+                supervised: fields[0] == "supervised",
+                scan_ok: fields[1] == "ok",
+                launch_ok: fields[2] == "ok",
+            };
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let scan_events = Arc::clone(&events);
+            let launch_events = Arc::clone(&events);
+            let result = super::baseline_then_start(
+                std::slice::from_ref(&case),
+                |case| case.supervised,
+                |case| {
+                    let ok = case.scan_ok;
+                    let events = Arc::clone(&scan_events);
+                    Box::pin(async move {
+                        events.lock().unwrap().push("scan");
+                        if ok {
+                            Ok(())
+                        } else {
+                            Err("scan failed".to_owned())
+                        }
+                    })
+                        as std::pin::Pin<
+                            Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                        >
+                },
+                |case| {
+                    launch_events.lock().unwrap().push("launch");
+                    if case.launch_ok {
+                        Ok(())
+                    } else {
+                        Err("launch failed".to_owned())
+                    }
+                },
+            )
+            .await;
+            let expected_baseline = if case.supervised {
+                Some(if case.scan_ok {
+                    Ok(())
+                } else {
+                    Err("scan failed".to_owned())
+                })
+            } else {
+                None
+            };
+            assert_eq!(
+                result,
+                vec![(
+                    expected_baseline,
+                    if case.launch_ok {
+                        Ok(())
+                    } else {
+                        Err("launch failed".to_owned())
+                    }
+                )],
+                "PICT case: {line}"
+            );
+            assert_eq!(
+                *events.lock().unwrap(),
+                if case.supervised {
+                    vec!["scan", "launch"]
+                } else {
+                    vec!["launch"]
+                },
+                "PICT case: {line}"
+            );
+            cases += 1;
+        }
+        assert_eq!(cases, 7, "all generated PICT rows must run");
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_a_later_baseline_aborts_earlier_start_tasks() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct MarkDropped(Arc<AtomicBool>);
+        impl Drop for MarkDropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let codebases = vec!["first".to_owned(), "second".to_owned()];
+        let dropped = Arc::new(AtomicBool::new(false));
+        let dropped_in_task = Arc::clone(&dropped);
+        let scan_gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (first_started, first_started_rx) = tokio::sync::oneshot::channel();
+        let (second_scan_started, second_scan_started_rx) = tokio::sync::oneshot::channel();
+        let mut first_started = Some(first_started);
+        let mut second_scan_started = Some(second_scan_started);
+        let second_scan_gate = Arc::clone(&scan_gate);
+        let startup = tokio::spawn(async move {
+            super::baseline_then_start(
+                &codebases,
+                |_| true,
+                |codebase: &String| {
+                    let is_second = codebase == "second";
+                    let gate = Arc::clone(&second_scan_gate);
+                    let started = is_second.then(|| second_scan_started.take().unwrap());
+                    Box::pin(async move {
+                        if let Some(started) = started {
+                            let _ = started.send(());
+                            gate.acquire().await.unwrap().forget();
+                        }
+                    })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                },
+                |codebase| {
+                    let task = if codebase == "first" {
+                        let started = first_started.take().unwrap();
+                        let dropped_in_task = Arc::clone(&dropped_in_task);
+                        tokio::spawn(async move {
+                            let _dropped = MarkDropped(dropped_in_task);
+                            let _ = started.send(());
+                            std::future::pending::<()>().await;
+                        })
+                    } else {
+                        tokio::spawn(async {})
+                    };
+                    super::AbortOnDropJoinHandle::new(task)
+                },
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), first_started_rx)
+            .await
+            .expect("the first start task begins")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), second_scan_started_rx)
+            .await
+            .expect("startup reaches the next baseline while the first task remains pending")
+            .unwrap();
+        startup.abort();
+        let _ = startup.await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !dropped.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the pipeline aborts all earlier start tasks");
     }
 
     #[test]
