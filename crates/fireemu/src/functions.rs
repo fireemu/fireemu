@@ -1041,6 +1041,12 @@ fn sweep_orphan_function_snapshots(root: &Path) -> Result<usize, String> {
 
 #[cfg(unix)]
 fn schedule_orphan_function_snapshot_sweep(root: PathBuf) -> tokio::task::JoinHandle<()> {
+    #[cfg(test)]
+    assert_ne!(
+        root,
+        std::env::temp_dir(),
+        "tests must own their sweep root"
+    );
     tokio::task::spawn_blocking(move || {
         if let Err(reason) = sweep_orphan_function_snapshots(&root) {
             eprintln!("warning: {reason}");
@@ -3658,16 +3664,16 @@ pub async fn start(
     #[cfg(unix)]
     {
         #[cfg(not(test))]
-        let sweep_root = std::env::temp_dir();
+        let sweep_root = Some(std::env::temp_dir());
         #[cfg(test)]
-        let sweep_root = STARTUP_TEST_STATE
-            .try_with(|(root, _)| root.clone())
-            .unwrap_or_else(|_| std::env::temp_dir());
-        let sweep = schedule_orphan_function_snapshot_sweep(sweep_root);
-        #[cfg(not(test))]
-        drop(sweep);
-        #[cfg(test)]
-        let _ = sweep.await;
+        let sweep_root = STARTUP_TEST_STATE.try_with(|(root, _)| root.clone()).ok();
+        if let Some(sweep_root) = sweep_root {
+            let sweep = schedule_orphan_function_snapshot_sweep(sweep_root);
+            #[cfg(not(test))]
+            drop(sweep);
+            #[cfg(test)]
+            let _ = sweep.await;
+        }
     }
     let outcomes = join_codebase_starts(launches).await;
     if let Some(error) = outcomes.iter().find_map(|outcome| outcome.as_ref().err()) {
@@ -10001,6 +10007,59 @@ root	unchanged	small	firstGen";
             .unwrap();
 
         assert!(!orphan.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn startup_sweeps_only_an_explicit_test_owned_root() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-owned-sweep-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let orphan = root.join(snapshot_directory_name(u32::try_from(i32::MAX).unwrap(), 0));
+        std::fs::create_dir(&orphan).unwrap();
+        std::fs::set_permissions(&orphan, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+            "schemaVersion": 1, "profile": "strict"
+        }))
+        .unwrap();
+        cfg.functions_source = Some(root.join("missing-source").display().to_string());
+        let clock = Arc::new(Mutex::new(VirtualClock::new(cfg.clock_start)));
+        let backend = Arc::new(LocalBackend::new(
+            Gateway {
+                ctx: PlanningContext {
+                    edition: cfg.edition,
+                    api_mode: cfg.api_mode,
+                    policy: cfg.index_policy(),
+                },
+                indexes: IndexSet::default(),
+                enforce_limits: cfg.enforce_limits,
+            },
+            Arc::clone(&clock),
+            cfg.seed,
+        ));
+        let hosts = no_hosts();
+        for explicit_root in [false, true] {
+            let startup = super::start(&cfg, &clock, &backend, &hosts, "test", false);
+            let result = if explicit_root {
+                super::STARTUP_TEST_STATE
+                    .scope((root.clone(), Arc::new(super::AtomicU64::new(0))), startup)
+                    .await
+            } else {
+                startup.await
+            };
+            let error = result.err().expect("the missing source refuses startup");
+            assert!(error.contains("is not a directory"), "{error}");
+            assert_eq!(orphan.exists(), !explicit_root);
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
