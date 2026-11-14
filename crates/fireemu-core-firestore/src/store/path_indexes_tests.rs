@@ -134,6 +134,41 @@ fn listing_trie_tracks_retained_prefixes_and_live_candidates() {
 }
 
 #[test]
+fn historical_collection_group_partition_keeps_a_document_deleted_after_the_snapshot() {
+    let mut state = FirestoreState::new();
+    let paths = [
+        "root/a/children/a",
+        "root/a/children/b",
+        "root/a/children/c",
+    ]
+    .map(path);
+    state
+        .commit(
+            &paths.iter().cloned().map(set_write).collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let snapshot = state.current_version();
+    state
+        .commit(
+            &[delete_write(paths[1].clone())],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    assert!(snapshot < state.current_version());
+    assert_eq!(
+        state.collection_group_partition_paths_at(None, "children", snapshot, 1),
+        vec![paths[1].clone()]
+    );
+    assert_eq!(
+        state.collection_group_partition_paths_at(None, "children", state.current_version(), 1),
+        vec![paths[2].clone()]
+    );
+}
+
+#[test]
 fn generated_pict_rows_drive_scoped_query_snapshot_order_and_cursor_behavior() {
     const CASES: &str = include_str!("path-indexes.generated.tsv");
     let all_paths = [

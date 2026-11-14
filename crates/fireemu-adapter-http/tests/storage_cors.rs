@@ -926,6 +926,48 @@ async fn json_resumable_upload_exposes_location_independently_of_bucket_cors() {
 }
 
 #[tokio::test]
+async fn json_cors_exposes_location_only_for_resumable_upload_posts() {
+    // Exhaust all PICT combinations of method, namespace, and upload type.
+    for (method, namespace, upload_type, exposes_location) in [
+        ("GET", "/storage/v1", "media", false),
+        ("POST", "/upload/storage/v1", "resumable", true),
+        ("GET", "/upload/storage/v1", "resumable", false),
+        ("POST", "/storage/v1", "resumable", false),
+        ("POST", "/upload/storage/v1", "media", false),
+        ("POST", "/storage/v1", "media", false),
+        ("GET", "/storage/v1", "resumable", false),
+        ("GET", "/upload/storage/v1", "media", false),
+    ] {
+        let (addr, task) = serve(configured(TokenAcceptance::Verified, &json!([]))).await;
+        let path =
+            format!("{namespace}/b/{CONFIGURED}/o?uploadType={upload_type}&name=location.txt");
+        let answer = send(addr, method, &path, &[("Origin", ORIGIN)]).await;
+        task.abort();
+        let _ = task.await;
+        assert_eq!(
+            answer.header("access-control-allow-origin"),
+            Some(ORIGIN),
+            "{method} {path}"
+        );
+        assert_eq!(
+            answer.header("access-control-allow-credentials"),
+            Some("true"),
+            "{method} {path}"
+        );
+        let exposed = answer
+            .header("access-control-expose-headers")
+            .expect("JSON API CORS exposes headers");
+        assert_eq!(
+            exposed
+                .split(',')
+                .any(|header| header.trim().eq_ignore_ascii_case("location")),
+            exposes_location,
+            "{method} {path}: {exposed}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn xml_fallback_paths_that_resemble_json_namespaces_keep_bucket_cors() {
     for config in ["empty", "matching"] {
         let s = state(TokenAcceptance::Verified);
