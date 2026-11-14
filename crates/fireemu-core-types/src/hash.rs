@@ -1,38 +1,4 @@
-//! Dependency-free digest and byte encoding primitives shared by the core crates.
-
-const CRC32C_TABLES: [[u32; 256]; 8] = crc32c_tables();
-
-#[allow(clippy::cast_possible_truncation)]
-const fn crc32c_tables() -> [[u32; 256]; 8] {
-    const POLYNOMIAL: u32 = 0x82f6_3b78;
-    let mut tables = [[0u32; 256]; 8];
-    let mut i = 0;
-    while i < 256 {
-        let mut value = i as u32;
-        let mut bit = 0;
-        while bit < 8 {
-            value = if value & 1 == 1 {
-                (value >> 1) ^ POLYNOMIAL
-            } else {
-                value >> 1
-            };
-            bit += 1;
-        }
-        tables[0][i] = value;
-        i += 1;
-    }
-    let mut table = 1;
-    while table < 8 {
-        i = 0;
-        while i < 256 {
-            let previous = tables[table - 1][i];
-            tables[table][i] = (previous >> 8) ^ tables[0][(previous & 0xff) as usize];
-            i += 1;
-        }
-        table += 1;
-    }
-    tables
-}
+//! Digest and byte encoding primitives shared by the core crates.
 
 /// Incremental CRC32C (Castagnoli) digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,24 +21,7 @@ impl Crc32c {
 
     /// Adds bytes to the digest.
     pub fn update(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            let value = u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ]) ^ u64::from(self.state);
-            self.state = CRC32C_TABLES[7][(value & 0xff) as usize]
-                ^ CRC32C_TABLES[6][((value >> 8) & 0xff) as usize]
-                ^ CRC32C_TABLES[5][((value >> 16) & 0xff) as usize]
-                ^ CRC32C_TABLES[4][((value >> 24) & 0xff) as usize]
-                ^ CRC32C_TABLES[3][((value >> 32) & 0xff) as usize]
-                ^ CRC32C_TABLES[2][((value >> 40) & 0xff) as usize]
-                ^ CRC32C_TABLES[1][((value >> 48) & 0xff) as usize]
-                ^ CRC32C_TABLES[0][(value >> 56) as usize];
-        }
-        for &byte in chunks.remainder() {
-            let index = ((self.state ^ u32::from(byte)) & 0xff) as usize;
-            self.state = (self.state >> 8) ^ CRC32C_TABLES[0][index];
-        }
+        self.state = crc32c_update_raw(self.state, bytes);
     }
 
     /// Returns the final digest without mutating the state.
@@ -88,6 +37,68 @@ pub fn crc32c(bytes: &[u8]) -> u32 {
     let mut digest = Crc32c::new();
     digest.update(bytes);
     digest.finalize()
+}
+
+fn crc32c_update_raw(state: u32, bytes: &[u8]) -> u32 {
+    !crc32c::crc32c_append(!state, bytes)
+}
+
+#[cfg(test)]
+mod crc32c_update_tests {
+    use super::{crc32c_update_raw, Crc32c};
+
+    fn forced_scalar_raw_update(mut state: u32, bytes: &[u8]) -> u32 {
+        for &byte in bytes {
+            state ^= u32::from(byte);
+            for _ in 0..8 {
+                state = if state & 1 == 1 {
+                    (state >> 1) ^ 0x82f6_3b78
+                } else {
+                    state >> 1
+                };
+            }
+        }
+        state
+    }
+
+    #[test]
+    fn raw_update_matches_forced_scalar_at_tail_and_chunk_boundaries() {
+        for initial in [0, 1, 0x1234_5678, u32::MAX] {
+            for len in 0..=257 {
+                let bytes: Vec<_> = (0_usize..len)
+                    .map(|index| u8::try_from((index.wrapping_mul(31) + 7) % 256).unwrap())
+                    .collect();
+                let expected = forced_scalar_raw_update(initial, &bytes);
+                assert_eq!(crc32c_update_raw(initial, &bytes), expected, "len {len}");
+
+                let mut chunked_state = initial;
+                for chunk in bytes.chunks(7) {
+                    chunked_state = crc32c_update_raw(chunked_state, chunk);
+                }
+                assert_eq!(chunked_state, expected, "chunked len {len}");
+            }
+        }
+    }
+
+    #[test]
+    fn public_digest_retains_castagnoli_finalization() {
+        let mut digest = Crc32c::new();
+        digest.update(b"123456789");
+        assert_eq!(digest.finalize(), 0xe306_9283);
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn arbitrary_raw_states_match_forced_scalar(
+            initial in proptest::prelude::any::<u32>(),
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..8192),
+        ) {
+            proptest::prop_assert_eq!(
+                crc32c_update_raw(initial, &bytes),
+                forced_scalar_raw_update(initial, &bytes),
+            );
+        }
+    }
 }
 
 const MD5_SHIFT: [u32; 64] = [

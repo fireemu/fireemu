@@ -383,7 +383,9 @@
       "manifest": "crates/fireemu-core-types/Cargo.toml",
       "procMacro": false,
       "features": [],
-      "dependencies": []
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#crc32c@0.6.9"
+      ]
     },
     {
       "id": "path+crates/fireemu-export-publication/Cargo.toml#fireemu-export-publication@0.51.0",
@@ -970,6 +972,18 @@
       "procMacro": false,
       "features": [],
       "dependencies": []
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#crc32c@0.6.9",
+      "name": "crc32c",
+      "version": "0.6.9",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [],
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1"
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.2",
@@ -2792,6 +2806,18 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
+      "name": "rustc_version",
+      "version": "0.4.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [],
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28"
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustix-linux-procfs@0.1.1",
       "name": "rustix-linux-procfs",
       "version": "0.1.1",
@@ -2909,6 +2935,19 @@
         "registry+https://github.com/rust-lang/crates.io-index#salsa20@0.10.2",
         "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9"
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "name": "semver",
+      "version": "1.0.28",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [
+        "default",
+        "std"
+      ],
+      "dependencies": []
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",

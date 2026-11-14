@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# CI 31.1 #5: every fireemu-core-* crate must have zero normal external dependencies (ADR-001).
-# Path dependencies on other fireemu-core-* crates are allowed; everything else fails.
+# CI 31.1 #5: enforce ADR-001's small, explicit normal dependency allowlist.
+# Path dependencies on other fireemu-core-* crates are allowed. crc32c is allowed only for
+# fireemu-core-types so CRC32C can use its safe runtime-dispatched backend.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 status=0
@@ -16,11 +17,16 @@ for d in pkg["dependencies"]:
     if d["kind"] is None and not d["name"].startswith("fireemu-core-"):
         print(d["name"])
 ' "$crate")"
-  if [[ -n "$deps" ]]; then
-    echo "error: $crate has external normal dependencies: $deps" >&2
+  allowed=""
+  if [[ "$crate" == "fireemu-core-types" ]]; then
+    allowed="crc32c"
+  fi
+  unexpected="$(python3 -c 'import sys; allowed=set(sys.argv[1].split()); print("\n".join(sorted(set(sys.stdin.read().split()) - allowed)))' "$allowed" <<<"$deps")"
+  if [[ -n "$unexpected" ]]; then
+    echo "error: $crate has external normal dependencies outside its allowlist: $unexpected" >&2
     status=1
   else
-    echo "ok: $crate has no external normal dependencies"
+    echo "ok: $crate external normal dependencies match its allowlist"
   fi
 done
 exit $status
