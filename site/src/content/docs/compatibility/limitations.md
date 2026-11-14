@@ -35,6 +35,7 @@ App Hosting and Data Connect are not currently supported. Firebase Extensions su
 - Verifying the signature of a signed URL or a POST policy (their expiry and conditions are checked).
 - Object ACLs other than `allUsers` read, IAM and bucket-level public access.
 - Object composition (`compose`) and notification configuration.
+- **Unrecorded Storage CORS difference under `strict`.** `conformance/storage-strictness-obs/recordings/run-1.json` records JSON API object metadata/media GET and an object URL preflight with configured bucket CORS (C6–C8). The JSON API and upload CORS header set remains unverified against production for absent or empty bucket CORS configuration, bucket, list and ACL endpoints, upload preflights with requested headers, and exposing `Location` on resumable uploads. Fireemu retains its current behavior for those cases; see [Bucket CORS](../../products/storage/#bucket-cors).
 
 ### Realtime Database
 
@@ -51,7 +52,7 @@ See [Realtime Database](../../products/realtime-database/#differences-from-the-o
 - Triggers for products Fireemu does not deliver events for, such as Data Connect (deferred). Remote Config handlers run only through the local injection action, and its production event shape is unobserved.
 - Dart codebases, and protobuf CloudEvents ingress other than Firestore events. Firestore events reach the Python SDK as protobuf, and Node 2nd-gen functions as protobuf under `strict`.
 - The exact shape of Storage archive events remains unrecorded.
-- Python codebases serve HTTP, callable, Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, scheduled, task-queue and Auth blocking functions. They see real time only (no virtual clock), do not reload source changes (Node source changes reload automatically), and run on macOS and Linux only. Their callables' App Check tokens are verified by the Python SDK against the App Check emulator's keys (no limited-use consumption, and an explicit App Check configuration refuses to start). See [Cloud Functions (Python)](../../products/functions-python/).
+- Python codebases serve HTTP, callable, Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, scheduled, task-queue and Auth blocking functions. They see real time only (no virtual clock), reload application source changes while ignoring edits to their `venv` and Python bytecode caches, and run on macOS and Linux only. Restart Fireemu after changing installed dependencies. Their callables' App Check tokens are verified by the Python SDK against the App Check emulator's keys (no limited-use consumption, and an explicit App Check configuration refuses to start). See [Cloud Functions (Python)](../../products/functions-python/).
 
 ### Cloud Pub/Sub
 

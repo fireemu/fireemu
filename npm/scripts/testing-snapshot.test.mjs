@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, delimiter } from 'node:path';
+import { join, delimiter, relative, isAbsolute } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -86,6 +86,78 @@ async function packageAt(modules, name, value) {
   await writeFile(join(path, 'index.js'), `module.exports=${JSON.stringify(value)};`);
   return path;
 }
+
+for (const copying of ['copy', 'file', 'tree', 'fallback']) {
+  test(`snapshot and reset privately own relative, external and symlinked Storage signed URL keys: ${copying}`, { skip: process.platform === 'win32' }, async t => {
+    await withCloneSupport(t, copying === 'tree' ? plainCopy : copying === 'fallback'
+      ? { tree: true, treeCommand: 'false', treeArguments: () => [] }
+      : { file: copying === 'file' });
+    if (copying === 'file') {
+      const real = fsp.copyFile;
+      t.mock.method(fsp, 'copyFile', (source, destination) => real(source, destination, fsConstants.COPYFILE_EXCL));
+    }
+    const f = await fixture(t);
+    const external = await realpath(await mkdtemp(join(tmpdir(), 'fireemu-external-keys-')));
+    t.after(() => rm(external, { recursive: true, force: true }));
+    assert.ok(relative(f.root, external).startsWith('..'), 'external keys are outside options.cwd');
+    const relativeKey = join(f.root, 'keys', 'relative.pem');
+    const absoluteKey = join(external, 'absolute.pem');
+    const targetKey = join(external, 'target.pem');
+    const linkedKey = join(f.root, 'linked.pem');
+    await mkdir(join(f.root, 'keys'));
+    const originals = ['relative creation key', 'external creation key', 'symlink creation key'];
+    for (const [index, path] of [relativeKey, absoluteKey, targetKey].entries()) {
+      await writeFile(path, originals[index]);
+      await chmod(path, 0o644);
+    }
+    await symlink(targetKey, linkedKey, 'file');
+    const config = {
+      schemaVersion: 1,
+      storage: { signedUrlKeys: ['keys/relative.pem', absoluteKey, linkedKey] },
+    };
+    const snapshot = await snapshotInputs({ ...f.options, config }, f.world);
+    assert.deepEqual(config.storage.signedUrlKeys, ['keys/relative.pem', absoluteKey, linkedKey]);
+    assert.equal(snapshot.config.storage.signedUrlKeys.length, originals.length);
+    for (const [index, path] of snapshot.config.storage.signedUrlKeys.entries()) {
+      assert.equal(await readFile(path, 'utf8'), originals[index]);
+      assert.equal((await stat(path)).mode & 0o777, 0o600, 'baseline key mode');
+      const rel = relative(snapshot.baseline, path);
+      assert.ok(rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
+    }
+
+    await writeFile(relativeKey, 'caller changed relative key');
+    await rm(absoluteKey);
+    await writeFile(targetKey, 'caller changed symlink target');
+    for (const name of ['generation', 'reset']) {
+      if (name === 'reset') await rm(targetKey);
+      const generation = await prepareGeneration(snapshot, join(f.world, name));
+      assert.equal(generation.stats.method, copying === 'file' || copying === 'tree' ? 'clone' : 'copy');
+      const prepared = JSON.parse(await readFile(generation.configPath, 'utf8'));
+      assert.equal(prepared.storage.signedUrlKeys.length, originals.length);
+      for (const [index, path] of prepared.storage.signedUrlKeys.entries()) {
+        assert.equal(await readFile(path, 'utf8'), originals[index]);
+        assert.equal((await stat(path)).mode & 0o777, 0o600, `${name} key mode`);
+        const rel = relative(generation.cwd, path);
+        assert.ok(rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
+        if (name === 'generation') await writeFile(path, 'generation-local mutation');
+      }
+    }
+  });
+}
+
+test('Storage signed URL key snapshots preserve an empty list and reject missing files', async t => {
+  const f = await fixture(t);
+  const empty = await snapshotInputs({ ...f.options, config: { schemaVersion: 1, storage: { signedUrlKeys: [] } } }, f.world);
+  assert.deepEqual(empty.config.storage.signedUrlKeys, []);
+
+  const missing = join(f.root, 'missing.pem');
+  const missingWorld = join(f.root, 'missing-world');
+  await mkdir(missingWorld);
+  await assert.rejects(
+    snapshotInputs({ ...f.options, config: { schemaVersion: 1, storage: { signedUrlKeys: [missing] } } }, missingWorld),
+    error => error.message.includes(missing) && error.message.includes('ENOENT'),
+  );
+});
 
 for (const explicit of [false, true]) {
   test(`native world preserves ordinary environment and isolates opted-in globals: ${explicit}`, { skip: !process.env.FIREEMU_TEST_BINARY }, async t => {
