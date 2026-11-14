@@ -78,11 +78,20 @@ async function startWorld(binaryPath, projectId, tempRoot) {
     env: { NODE_PATH: '' },
     tempRoot,
   });
-  const startupMs = performance.now() - started;
-  const origin = verifyLoopback(world);
-  const ready = JSON.parse(await readFile(join(world.directory, 'generation-1', 'ready.json'), 'utf8'));
-  assert.ok(Number.isSafeInteger(ready.pid) && ready.pid > 1, 'test world has no owned process PID');
-  return { world, origin, pid: ready.pid, startupMs };
+  try {
+    const startupMs = performance.now() - started;
+    const origin = verifyLoopback(world);
+    const ready = JSON.parse(await readFile(join(world.directory, 'generation-1', 'ready.json'), 'utf8'));
+    assert.ok(Number.isSafeInteger(ready.pid) && ready.pid > 1, 'test world has no owned process PID');
+    return { world, origin, pid: ready.pid, startupMs };
+  } catch (error) {
+    try {
+      await world.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'test-world readiness failed and cleanup also failed');
+    }
+    throw error;
+  }
 }
 
 function requestUrl(origin, path) {
