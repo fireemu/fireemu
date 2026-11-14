@@ -2756,7 +2756,12 @@ mod tests {
             preparation: &'a str,
         }
 
-        let mut lines = include_str!("../tests/startup_performance.generated.tsv")
+        let fixture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/startup_performance.generated.tsv"),
+        )
+        .expect("read startup PICT fixture");
+        let mut lines = fixture
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(

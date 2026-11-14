@@ -3596,6 +3596,7 @@ pub async fn start(
     // An edit during startup may conservatively reload, but cannot become a lost baseline.
     // Known limit: A -> B -> A edits entirely within the load can restore the baseline bytes.
     let scan_budget = FunctionsSourceScanBudget::new();
+    let clock_snapshot = clock.lock().expect("clock lock").snapshot();
     let baseline_starts = baseline_then_start(
         &codebases,
         reload_supervised,
@@ -3610,7 +3611,6 @@ pub async fn start(
                 >
         },
         |codebase| {
-            let clock_snapshot = clock.lock().expect("clock lock").snapshot();
             launch_codebases(
                 cfg,
                 std::slice::from_ref(codebase),
@@ -15159,7 +15159,15 @@ Add-Type -TypeDefinition $native -ErrorAction Stop
 
     #[cfg(windows)]
     fn windows_snapshot_acl_cases() -> Vec<WindowsSnapshotAclCase<'static>> {
-        let mut lines = include_str!("../tests/fixtures/windows_snapshot_acl_cases.tsv").lines();
+        static FIXTURE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let fixture = FIXTURE.get_or_init(|| {
+            std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/windows_snapshot_acl_cases.tsv"),
+            )
+            .expect("read Windows snapshot ACL PICT fixture")
+        });
+        let mut lines = fixture.lines();
         assert_eq!(
             lines.next(),
             Some("SnapshotDacl\tParentDacl\tAncestorRights\tReparsePosition\tChecker")
@@ -18583,7 +18591,12 @@ module.exports = { tick, observer };
             launch_ok: bool,
         }
 
-        let mut lines = include_str!("../tests/startup_performance.generated.tsv")
+        let fixture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/startup_performance.generated.tsv"),
+        )
+        .expect("read startup PICT fixture");
+        let mut lines = fixture
             .lines()
             .filter(|line| !line.is_empty() && !line.starts_with('#'));
         assert_eq!(
@@ -18736,6 +18749,325 @@ module.exports = { tick, observer };
         })
         .await
         .expect("dropping the pipeline aborts all earlier start tasks");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn overlapped_startup_shares_one_initial_clock_with_real_node_modules() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+        use std::sync::atomic::{AtomicI64, Ordering};
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-clock-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        for name in ["alpha", "beta"] {
+            let source = root.join(name);
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("package.json"), r#"{"main":"index.js"}"#).unwrap();
+            std::fs::write(
+                source.join("index.js"),
+                format!(
+                    r"const started = Date.now();
+exports.{name} = () => console.log('captured=' + started);
+exports.{name}.__endpoint = {{platform:'gcfv2',scheduleTrigger:{{schedule:'* * * * *'}}}};
+"
+                ),
+            )
+            .unwrap();
+        }
+        for profile in ["strict", "emulator"] {
+            let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+                "schemaVersion": 1, "profile": profile,
+                "daemon": {"clockStart": "2026-01-01T00:00:00Z", "clock": "realtime"},
+                "functions": {"clock": {"date": "virtual"}}
+            }))
+            .unwrap();
+            cfg.functions_loaded = ["alpha", "beta"]
+                .into_iter()
+                .map(|name| crate::config::FunctionsCodebase {
+                    codebase: name.to_owned(),
+                    source: root.join(name).display().to_string(),
+                    runtime: None,
+                    ignore: Vec::new(),
+                })
+                .collect();
+            // Advance the realtime source on every read, deterministically exposing a second snapshot.
+            let readings = Arc::new(AtomicI64::new(0));
+            let source = Arc::clone(&readings);
+            let clock = Arc::new(Mutex::new(VirtualClock::following_with(
+                cfg.clock_start,
+                Arc::new(move || i128::from(source.fetch_add(1_000_000_000, Ordering::SeqCst))),
+                0,
+            )));
+            let backend = Arc::new(LocalBackend::new(
+                Gateway {
+                    ctx: PlanningContext {
+                        edition: cfg.edition,
+                        api_mode: cfg.api_mode,
+                        policy: cfg.index_policy(),
+                    },
+                    indexes: IndexSet::default(),
+                    enforce_limits: cfg.enforce_limits,
+                },
+                Arc::clone(&clock),
+                cfg.seed,
+            ));
+            let runtime = super::start(&cfg, &clock, &backend, &no_hosts(), "test", false)
+                .await
+                .unwrap();
+            let mut captured = Vec::new();
+            for name in ["alpha", "beta"] {
+                let runner = runtime.runner_for(name);
+                let invocation = runner
+                    .invoke(
+                        json!({"type":"invoke", "invocationId":name, "function":name,
+                            "entryPoint":name, "trigger":"schedule", "event":{"data":{}}}),
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                assert_eq!(
+                    invocation.outcome,
+                    fireemu_adapter_functions::runner::InvokeOutcome::Ok
+                );
+                captured.push(
+                    runner
+                        .logs_since(None)
+                        .lines
+                        .into_iter()
+                        .find(|line| line.message().starts_with("captured="))
+                        .expect("the handler reports its module's initial Date.now()")
+                        .message()
+                        .to_owned(),
+                );
+            }
+            runtime.shutdown().await;
+            assert_eq!(
+                captured[0], captured[1],
+                "{profile}: module initialization must share one clock snapshot"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Keep the process fixture and its ownership checks together.
+    async fn cancelling_a_later_baseline_cleans_pending_and_completed_real_runners() {
+        for completed in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "fireemu-startup-cancel-{}-{}",
+                std::process::id(),
+                super::fresh_nonce()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let script = root.join("runner.py");
+            std::fs::write(&script, r"import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
+record = {'pid': os.getpid(), 'child': child.pid, 'sandbox': str(pathlib.Path(os.environ['CLOUDSDK_CONFIG']).parent)}
+(root / 'owned.partial').write_text(json.dumps(record))
+(root / 'owned.partial').rename(root / 'owned.json')
+while not (root / 'hello').exists(): time.sleep(0.01)
+body = json.dumps({'type': 'hello', 'manifest': {'functions': []}}).encode()
+sys.stdout.buffer.write(str(len(body)).encode() + b'\n' + body)
+sys.stdout.buffer.flush()
+while sys.stdin.buffer.read(1): pass
+").unwrap();
+            if completed {
+                std::fs::write(root.join("hello"), "").unwrap();
+            }
+            let codebases = vec!["first", "second"];
+            let scan_root = root.clone();
+            let runner_root = root.clone();
+            let runner_abort = Arc::new(Mutex::new(None));
+            let save_abort = Arc::clone(&runner_abort);
+            let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+            let mut finished_tx = Some(finished_tx);
+            let startup = tokio::spawn(async move {
+                super::baseline_then_start(
+                    &codebases,
+                    |_| true,
+                    |name| {
+                        let later = *name == "second";
+                        let root = scan_root.clone();
+                        Box::pin(async move {
+                            if later {
+                                std::fs::write(root.join("later-baseline"), "").unwrap();
+                                std::future::pending::<()>().await;
+                            }
+                        })
+                            as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                    },
+                    |_| {
+                        let root = runner_root.clone();
+                        let script = script.clone();
+                        let finished = finished_tx.take().unwrap();
+                        let task = tokio::spawn(async move {
+                            let runner = fireemu_adapter_functions::runner::Runner::spawn(
+                                &[
+                                    "python3".to_owned(),
+                                    script.display().to_string(),
+                                    root.display().to_string(),
+                                ],
+                                None,
+                                &[],
+                                Duration::from_secs(60),
+                            )
+                            .await
+                            .unwrap();
+                            let _ = finished.send(());
+                            runner
+                        });
+                        *save_abort.lock().unwrap() = Some(task.abort_handle());
+                        super::AbortOnDropJoinHandle::new(task)
+                    },
+                )
+                .await
+            });
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !root.join("owned.json").exists() || !root.join("later-baseline").exists() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                if completed {
+                    finished_rx.await.unwrap();
+                }
+            })
+            .await
+            .expect("a real runner overlaps the later baseline");
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("owned.json")).unwrap()).unwrap();
+            let sandbox = std::path::Path::new(record["sandbox"].as_str().unwrap());
+            assert!(
+                sandbox.is_dir(),
+                "the runner owns its sandbox before cancellation"
+            );
+            startup.abort();
+            let _ = startup.await;
+            let cleanup = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut running = false;
+                    for key in ["pid", "child"] {
+                        let status = Command::new("/bin/ps")
+                            .args(["-p", &record[key].to_string(), "-o", "stat="])
+                            .output()
+                            .unwrap();
+                        let state = String::from_utf8_lossy(&status.stdout);
+                        running |= !state.trim().is_empty() && !state.trim().starts_with('Z');
+                    }
+                    if !running && !sandbox.exists() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            // Keep the fixture bounded even when a mutation disables the production abort guard.
+            runner_abort.lock().unwrap().take().unwrap().abort();
+            std::fs::remove_dir_all(&root).unwrap();
+            cleanup.expect("cancellation removes the runner, descendant, and owned sandbox");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn sibling_startup_failure_cleans_a_successful_real_runner() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_firestore::index::{IndexSet, PlanningContext};
+
+        let root = std::env::temp_dir().join(format!(
+            "fireemu-startup-failure-{}-{}",
+            std::process::id(),
+            super::fresh_nonce()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        for name in ["first", "second"] {
+            let source = root.join(name);
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("package.json"), r#"{"main":"index.js"}"#).unwrap();
+            let script = if name == "first" {
+                r"const fs = require('node:fs');
+const path = require('node:path');
+const child = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+fs.writeFileSync('../owned.partial', JSON.stringify({pid:process.pid,child:child.pid,sandbox:path.dirname(process.env.CLOUDSDK_CONFIG)}));
+fs.renameSync('../owned.partial', '../owned.json');
+exports.first = () => {};
+exports.first.__endpoint = {platform:'gcfv2',scheduleTrigger:{schedule:'* * * * *'}};
+"
+            } else {
+                r"const fs = require('node:fs');
+const deadline = Date.now() + 10000;
+while (!fs.existsSync('../owned.json') && Date.now() < deadline) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+}
+throw new Error('intentional sibling startup failure');
+"
+            };
+            std::fs::write(source.join("index.js"), script).unwrap();
+        }
+        for profile in ["strict", "emulator"] {
+            let mut cfg = crate::config::RuntimeConfig::from_json(&json!({
+                "schemaVersion": 1, "profile": profile
+            }))
+            .unwrap();
+            cfg.functions_loaded = ["first", "second"]
+                .into_iter()
+                .map(|name| crate::config::FunctionsCodebase {
+                    codebase: name.to_owned(),
+                    source: root.join(name).display().to_string(),
+                    runtime: None,
+                    ignore: Vec::new(),
+                })
+                .collect();
+            let clock = Arc::new(Mutex::new(VirtualClock::new(cfg.clock_start)));
+            let backend = Arc::new(LocalBackend::new(
+                Gateway {
+                    ctx: PlanningContext {
+                        edition: cfg.edition,
+                        api_mode: cfg.api_mode,
+                        policy: cfg.index_policy(),
+                    },
+                    indexes: IndexSet::default(),
+                    enforce_limits: cfg.enforce_limits,
+                },
+                Arc::clone(&clock),
+                cfg.seed,
+            ));
+            let error = super::start(&cfg, &clock, &backend, &no_hosts(), "test", false)
+                .await
+                .err()
+                .expect("the second module fails startup");
+            assert!(error.contains("second"), "{error}");
+            let record: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("owned.json")).unwrap()).unwrap();
+            let sandbox = std::path::Path::new(record["sandbox"].as_str().unwrap());
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let mut running = false;
+                    for key in ["pid", "child"] {
+                        let status = Command::new("/bin/ps")
+                            .args(["-p", &record[key].to_string(), "-o", "stat="])
+                            .output()
+                            .unwrap();
+                        let state = String::from_utf8_lossy(&status.stdout);
+                        running |= !state.trim().is_empty() && !state.trim().starts_with('Z');
+                    }
+                    if !running && !sandbox.exists() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("sibling failure removes the successful runner, descendant, and owned sandbox");
+            std::fs::remove_file(root.join("owned.json")).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
