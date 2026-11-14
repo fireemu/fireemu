@@ -230,8 +230,7 @@ fn main() {
             .run_query_with_stats(&query, None)
             .expect("over-cap cold query");
         println!(
-            "find_nearest phase=over-cap-cold documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} elapsed={:.3}ms",
-            OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
+            "find_nearest phase=over-cap-cold documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} configured_cache_row_cap={CANDIDATE_CACHE_ROWS} elapsed={:.3}ms",
             duration_ms(started.elapsed()),
         );
         assert_nearest_result(&overflow, &cold.0, OVERFLOW_DOCUMENTS, &query);
@@ -247,8 +246,7 @@ fn main() {
         }
         samples.sort_unstable();
         println!(
-            "find_nearest phase=over-cap-warm documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} cache_rows={CANDIDATE_CACHE_ROWS} uncached_rows={} samples={SAMPLES} median={:.3}ms",
-            OVERFLOW_DOCUMENTS - CANDIDATE_CACHE_ROWS,
+            "find_nearest phase=over-cap-warm documents={OVERFLOW_DOCUMENTS} dimensions={dimensions} configured_cache_row_cap={CANDIDATE_CACHE_ROWS} samples={SAMPLES} median={:.3}ms",
             duration_ms(samples[SAMPLES / 2]),
         );
     }
