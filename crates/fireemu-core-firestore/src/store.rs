@@ -6221,9 +6221,18 @@ impl FirestoreState {
             sink,
         )?;
         if let Some(builder) = index_builder {
-            let _ = self
-                .equality_candidate_index
-                .set(builder.finish().map(Arc::new));
+            let mut index = builder.finish();
+            // The source scan can be reversed for a cold `ORDER BY __name__ DESC` query.
+            // Cached buckets always use ascending path order so either query direction can
+            // choose the correct source order when the immutable index is reused.
+            if descending_name {
+                if let Some(index) = &mut index {
+                    for candidates in index.by_value.values_mut() {
+                        candidates.reverse();
+                    }
+                }
+            }
+            let _ = self.equality_candidate_index.set(index.map(Arc::new));
         }
         stats.index_paths_visited = visited.get();
         Ok(stats)
@@ -7781,65 +7790,105 @@ mod equality_index_benchmark {
         let query = query();
 
         let mut cold_samples = Vec::with_capacity(SAMPLES);
-        let mut cold_build_paths = 0;
-        for _ in 0..SAMPLES {
-            let db = base.clone();
-            let _ = take_equality_index_build_path_count();
-            let started = Instant::now();
-            let (rows, query_stats) = db.run_query_with_stats(&query, None).unwrap();
-            cold_samples.push(started.elapsed());
-            cold_build_paths = take_equality_index_build_path_count();
-            assert_eq!(rows.len(), DOCUMENTS / 250);
-            assert_eq!(query_stats.index_paths_visited, DOCUMENTS as u64);
-            assert_eq!(cold_build_paths, DOCUMENTS);
-        }
-
-        let warm_state = base.clone();
-        let _ = warm_state.run_query_with_stats(&query, None).unwrap();
-        let estimated_bytes = warm_state
+        let warm_database = base.clone();
+        let _ = warm_database.run_query_with_stats(&query, None).unwrap();
+        let estimated_bytes = warm_database
             .equality_candidate_index
             .get()
             .and_then(Option::as_ref)
             .expect("cache built for the benchmark fixture")
             .estimated_bytes;
         let mut warm_samples = Vec::with_capacity(SAMPLES);
-        for _ in 0..SAMPLES {
-            let started = Instant::now();
-            let (rows, stats) = warm_state.run_query_with_stats(&query, None).unwrap();
-            warm_samples.push(started.elapsed());
-            assert_eq!(rows.len(), DOCUMENTS / 250);
-            assert_eq!(stats.index_paths_visited, rows.len() as u64);
-        }
-
-        let mut scan_samples = Vec::with_capacity(SAMPLES);
-        for _ in 0..SAMPLES {
-            let started = Instant::now();
-            let (rows, stats) = warm_state
-                .run_query_with_stats(&query, Some(warm_state.current_version()))
-                .unwrap();
-            scan_samples.push(started.elapsed());
-            assert_eq!(rows.len(), DOCUMENTS / 250);
-            assert_eq!(stats.index_paths_visited, DOCUMENTS as u64);
-        }
-
-        let cold_write_base = base.clone();
-        let warm_write_base = base.clone();
-        let _ = warm_write_base.run_query_with_stats(&query, None).unwrap();
-        let mut cold_write_samples = Vec::with_capacity(SAMPLES);
-        let mut warm_write_samples = Vec::with_capacity(SAMPLES);
+        let mut same_version_scan_proxy_samples = Vec::with_capacity(SAMPLES);
+        let mut cold_build_paths = 0;
         for sample in 0..SAMPLES {
-            let mut cold = cold_write_base.clone();
-            let mut warm = warm_write_base.clone();
+            let cold = base.clone();
+            let _ = take_equality_index_build_path_count();
+            let run_cold = || cold.run_query_with_stats(&query, None).unwrap();
+            let run_warm = || warm_database.run_query_with_stats(&query, None).unwrap();
+            let run_scan_proxy = || {
+                warm_database
+                    .run_query_with_stats(&query, Some(warm_database.current_version()))
+                    .unwrap()
+            };
+            let timed = |run: &dyn Fn() -> (Vec<Document>, QueryStats),
+                         samples: &mut Vec<Duration>| {
+                let started = Instant::now();
+                let (rows, stats) = run();
+                samples.push(started.elapsed());
+                assert_eq!(rows.len(), DOCUMENTS / 250);
+                (rows, stats)
+            };
+
+            // Alternate the order so cold, warm, and scan-proxy measurements do not always
+            // run first or last in a batch. State/query setup stays outside each timed region.
+            let (cold_rows, cold_stats, warm_rows, warm_query_stats, scan_rows, scan_stats) =
+                if sample % 2 == 0 {
+                    let (cold_rows, cold_stats) = timed(&run_cold, &mut cold_samples);
+                    cold_build_paths = take_equality_index_build_path_count();
+                    let (warm_rows, warm_query_stats) = timed(&run_warm, &mut warm_samples);
+                    let (scan_rows, scan_stats) =
+                        timed(&run_scan_proxy, &mut same_version_scan_proxy_samples);
+                    (
+                        cold_rows,
+                        cold_stats,
+                        warm_rows,
+                        warm_query_stats,
+                        scan_rows,
+                        scan_stats,
+                    )
+                } else {
+                    let (scan_rows, scan_stats) =
+                        timed(&run_scan_proxy, &mut same_version_scan_proxy_samples);
+                    let (warm_rows, warm_query_stats) = timed(&run_warm, &mut warm_samples);
+                    let (cold_rows, cold_stats) = timed(&run_cold, &mut cold_samples);
+                    cold_build_paths = take_equality_index_build_path_count();
+                    (
+                        cold_rows,
+                        cold_stats,
+                        warm_rows,
+                        warm_query_stats,
+                        scan_rows,
+                        scan_stats,
+                    )
+                };
+            assert_eq!(cold_rows, warm_rows);
+            assert_eq!(cold_rows, scan_rows);
+            assert_eq!(cold_stats.index_paths_visited, DOCUMENTS as u64);
+            assert_eq!(cold_build_paths, DOCUMENTS);
+            assert_eq!(warm_query_stats.index_paths_visited, cold_rows.len() as u64);
+            assert_eq!(scan_stats.index_paths_visited, DOCUMENTS as u64);
+        }
+
+        let mut cold_write_samples = Vec::with_capacity(SAMPLES);
+        let mut sole_owner_warm_write_samples = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            // Each warmed state owns its cache alone. Clone the uncached base first, then
+            // build before timing, so cached Arc ownership does not mask invalidation cost.
+            let mut cold = base.clone();
+            let mut warm = base.clone();
+            let _ = warm.run_query_with_stats(&query, None).unwrap();
             let cold_write = [set("items", 0, -i64::try_from(sample + 1).unwrap())];
             let warm_write = [set("items", 0, -i64::try_from(sample + 1).unwrap())];
-            let started = Instant::now();
-            cold.commit(&cold_write, None, LogicalInstant::UNIX_EPOCH)
-                .unwrap();
-            cold_write_samples.push(started.elapsed());
-            let started = Instant::now();
-            warm.commit(&warm_write, None, LogicalInstant::UNIX_EPOCH)
-                .unwrap();
-            warm_write_samples.push(started.elapsed());
+            if sample % 2 == 0 {
+                let started = Instant::now();
+                cold.commit(&cold_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                cold_write_samples.push(started.elapsed());
+                let started = Instant::now();
+                warm.commit(&warm_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                sole_owner_warm_write_samples.push(started.elapsed());
+            } else {
+                let started = Instant::now();
+                warm.commit(&warm_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                sole_owner_warm_write_samples.push(started.elapsed());
+                let started = Instant::now();
+                cold.commit(&cold_write, None, LogicalInstant::UNIX_EPOCH)
+                    .unwrap();
+                cold_write_samples.push(started.elapsed());
+            }
         }
 
         let mut small_query = Query::new(QueryScope::collection(
@@ -7858,34 +7907,46 @@ mod equality_index_benchmark {
             let mut current = base.clone();
             let mut scan = base.clone();
             let write = [set_small(0, -i64::try_from(sample + 1).unwrap())];
-            let started = Instant::now();
             current
                 .commit(&write, None, LogicalInstant::UNIX_EPOCH)
                 .unwrap();
-            let (rows, stats) = current.run_query_with_stats(&small_query, None).unwrap();
-            one_shot_samples.push(started.elapsed());
-            assert_eq!(rows.len(), 10);
-            assert_eq!(stats.index_paths_visited, 10);
-
-            let started = Instant::now();
             scan.commit(&write, None, LogicalInstant::UNIX_EPOCH)
                 .unwrap();
-            let (scan_rows, scan_stats) = scan
-                .run_query_with_stats(&small_query, Some(scan.current_version()))
-                .unwrap();
-            one_shot_scan_samples.push(started.elapsed());
+            let (rows, stats, scan_rows, scan_stats) = if sample % 2 == 0 {
+                let started = Instant::now();
+                let (rows, stats) = current.run_query_with_stats(&small_query, None).unwrap();
+                one_shot_samples.push(started.elapsed());
+                let started = Instant::now();
+                let (scan_rows, scan_stats) = scan
+                    .run_query_with_stats(&small_query, Some(scan.current_version()))
+                    .unwrap();
+                one_shot_scan_samples.push(started.elapsed());
+                (rows, stats, scan_rows, scan_stats)
+            } else {
+                let started = Instant::now();
+                let (scan_rows, scan_stats) = scan
+                    .run_query_with_stats(&small_query, Some(scan.current_version()))
+                    .unwrap();
+                one_shot_scan_samples.push(started.elapsed());
+                let started = Instant::now();
+                let (rows, stats) = current.run_query_with_stats(&small_query, None).unwrap();
+                one_shot_samples.push(started.elapsed());
+                (rows, stats, scan_rows, scan_stats)
+            };
+            assert_eq!(rows.len(), 10);
+            assert_eq!(stats.index_paths_visited, 10);
             assert_eq!(format!("{rows:#?}"), format!("{scan_rows:#?}"));
             assert_eq!(scan_stats.index_paths_visited, 10);
         }
 
         println!(
-            "equality-cache documents={DOCUMENTS} unrelated_documents={UNRELATED_DOCUMENTS} small_documents={SMALL_DOCUMENTS} matches={} build_paths={cold_build_paths} cache_estimated_bytes={estimated_bytes} cold_median_us={} warm_median_us={} scan_median_us={} cold_write_median_us={} cached_write_median_us={} one_shot_after_write_median_us={} one_shot_scan_median_us={}",
+            "equality-cache documents={DOCUMENTS} unrelated_documents={UNRELATED_DOCUMENTS} small_documents={SMALL_DOCUMENTS} matches={} build_paths={cold_build_paths} cache_estimated_bytes={estimated_bytes} paired_order=alternating cold_median_us={} warm_median_us={} same_version_scan_proxy_median_us={} cold_write_median_us={} sole_owner_warm_write_median_us={} one_shot_query_after_write_median_us={} same_version_scan_proxy_one_shot_median_us={}",
             DOCUMENTS / 250,
             median(&mut cold_samples).as_micros(),
             median(&mut warm_samples).as_micros(),
-            median(&mut scan_samples).as_micros(),
+            median(&mut same_version_scan_proxy_samples).as_micros(),
             median(&mut cold_write_samples).as_micros(),
-            median(&mut warm_write_samples).as_micros(),
+            median(&mut sole_owner_warm_write_samples).as_micros(),
             median(&mut one_shot_samples).as_micros(),
             median(&mut one_shot_scan_samples).as_micros(),
         );

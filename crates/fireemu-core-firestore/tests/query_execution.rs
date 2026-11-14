@@ -2176,6 +2176,64 @@ fn equality_candidate_index_falls_back_for_numeric_equivalence_and_null() {
 }
 
 #[test]
+fn equality_candidates_retain_canonical_name_order_across_cache_build_directions() {
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let mut db = FirestoreState::new();
+    let writes = (0..10)
+        .map(|index| {
+            set(
+                &format!("items/d{index:02}"),
+                BTreeMap::from([
+                    ("group".to_owned(), Value::String("wanted".to_owned())),
+                    ("n".to_owned(), Value::Integer(index)),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    db.commit(&writes, None, now).unwrap();
+    let corpus = initial_documents(&writes, now);
+
+    for build_direction in [Direction::Ascending, Direction::Descending] {
+        let cache_state = db.clone();
+        let mut build_query = Query::new(QueryScope::collection(None, collection("items")));
+        build_query.filter = Some(FilterExpr::Field {
+            field: fp("group"),
+            op: FieldOp::Equal,
+            value: Value::String("wanted".to_owned()),
+        });
+        build_query.order_by.push(OrderClause {
+            field: FieldPath::document_name(),
+            direction: build_direction,
+        });
+        let (cold, cold_stats) = cache_state
+            .run_query_with_stats(&build_query, None)
+            .unwrap();
+        assert_eq!(cold, reference_run(&corpus, &build_query));
+        assert_eq!(cold_stats.index_paths_visited, 10);
+
+        for query_direction in [Direction::Ascending, Direction::Descending] {
+            let mut paged = build_query.clone();
+            paged.order_by[0].direction = query_direction;
+            paged.offset = 2;
+            paged.limit = Some(3);
+            let (warm, query_stats) = cache_state.run_query_with_stats(&paged, None).unwrap();
+            assert_eq!(
+                warm,
+                reference_run(&corpus, &paged),
+                "build order {build_direction:?}, query order {query_direction:?}"
+            );
+            assert_eq!(query_stats.index_paths_visited, 5);
+        }
+
+        let (aggregates, aggregate_stats) = cache_state
+            .run_aggregation_with_stats(&build_query, &[Aggregation::Count { up_to: None }], None)
+            .unwrap();
+        assert_eq!(aggregates, vec![Value::Integer(10)]);
+        assert_eq!(aggregate_stats.index_paths_visited, 10);
+    }
+}
+
+#[test]
 fn equality_candidates_are_detached_across_divergent_same_version_clones() {
     let mut original = FirestoreState::new();
     let now = LogicalInstant::from_unix_seconds(1_788_000_000);
@@ -2240,6 +2298,49 @@ fn equality_candidates_are_detached_across_divergent_same_version_clones() {
     );
 }
 
+fn check_warm_name_order_directions(
+    db: &FirestoreState,
+    query: &Query,
+    corpus: &[Document],
+    build_direction: Direction,
+    row: &str,
+) {
+    let mut build_query = query.clone();
+    build_query.order_by = vec![OrderClause {
+        field: FieldPath::document_name(),
+        direction: build_direction,
+    }];
+    build_query.start_at = None;
+    build_query.end_at = None;
+    build_query.offset = 0;
+    build_query.limit = None;
+    let (cold, _) = db.run_query_with_stats(&build_query, None).unwrap();
+    assert_eq!(
+        cold,
+        reference_run(corpus, &build_query),
+        "cold PICT row: {row}"
+    );
+
+    for query_direction in [Direction::Ascending, Direction::Descending] {
+        let mut paged = build_query.clone();
+        paged.order_by[0].direction = query_direction;
+        paged.offset = 1;
+        paged.limit = Some(2);
+        let (warm, _) = db.run_query_with_stats(&paged, None).unwrap();
+        assert_eq!(
+            warm,
+            reference_run(corpus, &paged),
+            "warm build order {build_direction:?}, query order {query_direction:?}, PICT row: {row}"
+        );
+    }
+
+    let expected_count = i64::try_from(reference_run(corpus, &build_query).len()).unwrap();
+    let (aggregates, _) = db
+        .run_aggregation_with_stats(&build_query, &[Aggregation::Count { up_to: None }], None)
+        .unwrap();
+    assert_eq!(aggregates, vec![Value::Integer(expected_count)]);
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn pict_equality_partitions_match_the_scan_reference() {
@@ -2259,7 +2360,7 @@ fn pict_equality_partitions_match_the_scan_reference() {
     let generated = include_str!("fixtures/perf-firestore-pict.tsv");
     let mut rows = 0;
     for line in generated.lines().skip(1) {
-        let [version, filter, operand_kind, document_state, page]: [&str; 5] = line
+        let [version, filter, operand_kind, document_state, page, build_order]: [&str; 6] = line
             .split('\t')
             .collect::<Vec<_>>()
             .try_into()
@@ -2301,7 +2402,10 @@ fn pict_equality_partitions_match_the_scan_reference() {
             current_corpus[0]
                 .fields
                 .insert("group".to_owned(), wanted.clone());
-            current_corpus[0].version = fireemu_core_firestore::store::CommitVersion::from_value(2);
+            if let Some(updated) = db.get(&path("items/d00")) {
+                current_corpus[0].update_time = updated.update_time;
+                current_corpus[0].version = updated.version;
+            }
         }
 
         let equality = FilterExpr::Field {
@@ -2381,6 +2485,14 @@ fn pict_equality_partitions_match_the_scan_reference() {
             format!("{selected_docs:#?}"),
             "PICT row: {line}"
         );
+        if version == "Current" && filter == "SingleEq" {
+            let build_direction = match build_order {
+                "Ascending" => Direction::Ascending,
+                "Descending" => Direction::Descending,
+                other => panic!("unknown generated build order {other}"),
+            };
+            check_warm_name_order_directions(&db, &query, &current_corpus, build_direction, line);
+        }
         if version == "Current" && filter == "SingleEq" {
             let warm = db.run_query(&query, None).unwrap();
             assert_eq!(

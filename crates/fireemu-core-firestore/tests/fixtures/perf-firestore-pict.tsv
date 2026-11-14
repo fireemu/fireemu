@@ -1,40 +1,40 @@
-Version	Filter	Operand	Doc	Page
-Current	SingleEq	String	Equal	NoCursor
-Current	AndEq	Boolean	Equal	FieldOrderCursor
-Current	Or	String	Equal	NameOrderCursor
-Current	Unsupported	Compound	Different	OffsetLimit
-Current	SingleEq	Null	Null	NoCursor
-Current	SingleEq	Integer	Equal	FieldOrderCursor
-Current	SingleEq	DoubleNaN	Equal	NoCursor
-Historical	SingleEq	Timestamp	OldVersion	NameOrderCursor
-Historical	Or	Integer	Equal	OffsetLimit
-Transaction	SingleEq	Boolean	Equal	NoCursor
-Transaction	AndEq	String	Missing	FieldOrderCursor
-Transaction	Unsupported	DoubleNaN	Different	NameOrderCursor
-Historical	Unsupported	Null	OldVersion	FieldOrderCursor
-Historical	AndEq	DoubleNaN	Missing	OffsetLimit
-Current	Unsupported	Integer	Missing	NoCursor
-Transaction	Or	Compound	Missing	NameOrderCursor
-Historical	Or	Compound	Null	FieldOrderCursor
-Transaction	Unsupported	Null	Equal	OffsetLimit
-Transaction	AndEq	Integer	Null	NameOrderCursor
-Historical	AndEq	Compound	Equal	NoCursor
-Historical	Or	Boolean	Different	NoCursor
-Historical	Unsupported	String	Null	OffsetLimit
-Historical	AndEq	Integer	Different	FieldOrderCursor
-Transaction	SingleEq	Timestamp	Different	OffsetLimit
-Transaction	Or	DoubleNaN	OldVersion	NoCursor
-Current	AndEq	Integer	OldVersion	OffsetLimit
-Historical	Or	Null	Different	NameOrderCursor
-Current	Unsupported	DoubleNaN	Null	FieldOrderCursor
-Historical	Unsupported	Boolean	Missing	NameOrderCursor
-Current	AndEq	Boolean	OldVersion	OffsetLimit
-Current	AndEq	Null	Missing	NoCursor
-Current	Or	Timestamp	Missing	FieldOrderCursor
-Historical	Or	Boolean	Null	FieldOrderCursor
-Historical	SingleEq	Compound	OldVersion	NoCursor
-Current	Unsupported	Timestamp	Null	NoCursor
-Current	AndEq	String	OldVersion	NameOrderCursor
-Transaction	SingleEq	String	Different	NoCursor
-Transaction	SingleEq	Timestamp	Missing	NameOrderCursor
-Transaction	AndEq	Timestamp	Equal	NoCursor
+Version	Filter	Operand	Doc	Page	BuildOrder
+Current	SingleEq	String	Equal	NoCursor	Ascending
+Current	SingleEq	String	Equal	NoCursor	Descending
+Current	AndEq	Boolean	Equal	FieldOrderCursor	Ascending
+Current	Or	String	Equal	NameOrderCursor	Descending
+Current	Unsupported	Compound	Different	OffsetLimit	Ascending
+Current	SingleEq	Null	Null	NoCursor	Descending
+Current	SingleEq	Integer	Equal	FieldOrderCursor	Ascending
+Current	SingleEq	DoubleNaN	Equal	NoCursor	Descending
+Historical	SingleEq	Timestamp	OldVersion	NameOrderCursor	Descending
+Historical	Or	Integer	Equal	OffsetLimit	Ascending
+Transaction	SingleEq	Boolean	Equal	NoCursor	Ascending
+Transaction	AndEq	String	Missing	FieldOrderCursor	Descending
+Transaction	Unsupported	DoubleNaN	Different	NameOrderCursor	Descending
+Historical	Unsupported	Null	OldVersion	FieldOrderCursor	Ascending
+Transaction	AndEq	Timestamp	Null	OffsetLimit	Ascending
+Transaction	AndEq	Null	Equal	OffsetLimit	Descending
+Historical	AndEq	Integer	Different	NoCursor	Descending
+Transaction	Or	Compound	Equal	NoCursor	Descending
+Current	Or	Null	Missing	NameOrderCursor	Ascending
+Historical	AndEq	Compound	Null	NameOrderCursor	Ascending
+Current	Or	DoubleNaN	OldVersion	OffsetLimit	Ascending
+Historical	Or	Boolean	Null	OffsetLimit	Descending
+Current	Unsupported	Timestamp	Equal	FieldOrderCursor	Descending
+Historical	Or	Timestamp	Different	FieldOrderCursor	Descending
+Historical	Unsupported	Timestamp	Missing	NoCursor	Ascending
+Current	SingleEq	Boolean	Missing	OffsetLimit	Ascending
+Transaction	AndEq	Compound	OldVersion	NoCursor	Ascending
+Historical	Unsupported	String	Different	OffsetLimit	Descending
+Current	SingleEq	Null	Different	OffsetLimit	Ascending
+Transaction	SingleEq	Compound	Missing	FieldOrderCursor	Ascending
+Current	Unsupported	String	Null	FieldOrderCursor	Ascending
+Transaction	Unsupported	Integer	Null	NameOrderCursor	Ascending
+Historical	Unsupported	Boolean	OldVersion	NameOrderCursor	Ascending
+Historical	AndEq	DoubleNaN	Missing	FieldOrderCursor	Ascending
+Current	SingleEq	Integer	OldVersion	FieldOrderCursor	Descending
+Transaction	AndEq	Integer	Missing	FieldOrderCursor	Ascending
+Current	AndEq	Boolean	Different	FieldOrderCursor	Ascending
+Current	SingleEq	String	OldVersion	NameOrderCursor	Ascending
+Current	SingleEq	DoubleNaN	Null	NoCursor	Ascending
