@@ -2,8 +2,11 @@
 
 mod support;
 
-use fireemu_core_database::hash::{etag, node_hash, sha1, NULL_ETAG};
+use fireemu_core_database::hash::{
+    children_hash_without_priority, etag, node_hash, sha1, NULL_ETAG,
+};
 use fireemu_core_database::push_id::{PushIdGenerator, PUSH_CHARS};
+use fireemu_core_database::{Content, Node};
 use proptest::prelude::*;
 use serde_json::json;
 use support::{p, tree_with};
@@ -79,6 +82,77 @@ fn an_absent_value_has_the_null_etag_and_an_empty_hash() {
     assert_eq!(etag(None), NULL_ETAG);
     assert_eq!(NULL_ETAG, "null_etag");
     assert_eq!(node_hash(None), "");
+}
+
+#[test]
+fn borrowed_children_hash_matches_the_synthetic_parent_definition() {
+    let tree = tree_with(json!({
+        ".priority": 900,
+        "b": {"nested": {".value": "héllo😀", ".priority": 4}, ".priority": 9},
+        "a": {".value": 2, ".priority": 1},
+        "c": {".value": false, ".priority": 3}
+    }));
+    let Content::Children(children) = &tree.root().unwrap().content else {
+        unreachable!();
+    };
+    let mut selected: Vec<(&str, &Node)> = children
+        .iter()
+        .filter(|(key, _)| key.as_str() != "c")
+        .map(|(key, child)| (key.as_str(), child))
+        .collect();
+    selected.reverse();
+    let expected = node_hash(Some(&Node {
+        content: Content::Children(
+            selected
+                .iter()
+                .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                .collect(),
+        ),
+        priority: None,
+    }));
+    assert_eq!(children_hash_without_priority(selected), expected);
+    assert_eq!(children_hash_without_priority(Vec::new()), "");
+}
+
+proptest! {
+    #[test]
+    fn borrowed_children_hash_matches_the_old_synthetic_node_for_every_subset(
+        selected_mask in any::<u8>(), reverse in any::<bool>()
+    ) {
+        let tree = tree_with(json!({
+            ".priority": 123,
+            "0": {"nested": {".value": "héllo😀", ".priority": 4}, ".priority": 9},
+            "2": {".value": 2, ".priority": 1},
+            "10": {".value": false, ".priority": 3},
+            "-0": {".value": "x", ".priority": 2}
+        }));
+        let Content::Children(children) = &tree.root().unwrap().content else {
+            unreachable!();
+        };
+        let mut selected: Vec<(&str, &Node)> = children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| selected_mask & (1 << index) != 0)
+            .map(|(_, (key, child))| (key.as_str(), child))
+            .collect();
+        if reverse {
+            selected.reverse();
+        }
+        let expected = if selected.is_empty() {
+            String::new()
+        } else {
+            node_hash(Some(&Node {
+                content: Content::Children(
+                    selected
+                        .iter()
+                        .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                        .collect(),
+                ),
+                priority: None,
+            }))
+        };
+        prop_assert_eq!(children_hash_without_priority(selected), expected);
+    }
 }
 
 #[test]

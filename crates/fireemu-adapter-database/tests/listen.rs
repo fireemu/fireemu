@@ -4,6 +4,8 @@
 
 use fireemu_adapter_database::realtime::{Opened, Session};
 use fireemu_adapter_database::rest::{Database, Handled, HttpRequest, RestOptions};
+use fireemu_core_database::hash::children_hash_without_priority;
+use fireemu_core_database::{Limits, OrderBy, Path, QueryParams, ServerValueContext, Tree};
 
 const NOW: i64 = 1_792_417_166_902;
 
@@ -174,6 +176,63 @@ fn a_matching_hash_skips_the_first_value() {
             "invalid_parameters",
             r#""Invalid token in path""#
         )]
+    );
+}
+
+#[test]
+fn tagged_window_hash_uses_priority_order_without_parent_priority() {
+    let fixture = r#"{".priority":100,"a":{"nested":{".value":"héllo😀",".priority":4},".priority":9},"b":{".value":1,".priority":1}}"#;
+    let parsed = fireemu_adapter_database::json_parse::parse(fixture).unwrap();
+    let mut expected_tree = Tree::new(Limits::default());
+    expected_tree
+        .set(
+            &Path::root(),
+            &parsed,
+            ServerValueContext { now_millis: NOW },
+        )
+        .unwrap();
+    let query = QueryParams::ordered_by(OrderBy::Key).limit_to_first(2);
+    let expected =
+        children_hash_without_priority(query.run(expected_tree.root()).into_iter().collect());
+
+    let mut db = Database::new(RestOptions::default(), 1);
+    rest(&mut db, "PUT", "/s.json?ns=window-hash", fixture);
+    let mut matching = open(&mut db, "window-hash");
+    assert_eq!(
+        send(
+            &mut db,
+            &mut matching,
+            &request(
+                1,
+                "q",
+                &format!(
+                    r#"{{"p":"/s","q":{{"i":".key","l":2,"vf":"l"}},"t":8,"h":"{expected}"}}"#
+                )
+            )
+        ),
+        vec![reply(1, "ok", "{}")]
+    );
+
+    let mut mismatching = open(&mut db, "window-hash");
+    assert_eq!(
+        send(
+            &mut db,
+            &mut mismatching,
+            &request(
+                2,
+                "q",
+                r#"{"p":"/s","q":{"i":".key","l":2,"vf":"l"},"t":9,"h":"wrong"}"#
+            )
+        ),
+        vec![
+            push(
+                "d",
+                "s",
+                r#"{"a":{".priority":9.0,"nested":{".value":"héllo😀",".priority":4.0}},"b":{".value":1,".priority":1.0}}"#,
+                Some(9),
+            ),
+            reply(2, "ok", "{}"),
+        ]
     );
 }
 

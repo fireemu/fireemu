@@ -25,23 +25,51 @@ pub fn node_hash(node: Option<&Node>) -> String {
     let Some(node) = node else {
         return String::new();
     };
+    if let Content::Children(children) = &node.content {
+        return hash_children(
+            children
+                .iter()
+                .map(|(key, child)| (key.as_str(), child))
+                .collect(),
+            node.priority.as_deref(),
+        );
+    }
     let mut text = String::new();
     if let Some(priority) = &node.priority {
         text.push_str("priority:");
         text.push_str(&priority_text(priority));
         text.push(':');
     }
-    match &node.content {
-        Content::Leaf(leaf) => text.push_str(&leaf_text(leaf)),
-        Content::Children(children) => {
-            let order = QueryParams::ordered_by(OrderBy::Priority);
-            let mut sorted: Vec<(&String, &Node)> = children.iter().collect();
-            sorted.sort_by(|(ka, a), (kb, b)| order.compare_children(ka, a, kb, b));
-            for (key, child) in sorted {
-                // A stored child is never empty, so its hash is never the empty string.
-                let _ = write!(text, ":{key}:{}", node_hash(Some(child)));
-            }
-        }
+    if let Content::Leaf(leaf) = &node.content {
+        text.push_str(&leaf_text(leaf));
+    }
+    base64(&sha1(text.as_bytes()))
+}
+
+/// Hashes selected children as a synthetic parent with no priority, without cloning them.
+///
+/// The children are ordered by priority, regardless of the query order that selected them.
+/// An empty selection represents an absent value and therefore has the empty hash.
+pub fn children_hash_without_priority(children: Vec<(&str, &Node)>) -> String {
+    if children.is_empty() {
+        String::new()
+    } else {
+        hash_children(children, None)
+    }
+}
+
+fn hash_children(mut children: Vec<(&str, &Node)>, priority: Option<&Priority>) -> String {
+    let order = QueryParams::ordered_by(OrderBy::Priority);
+    children.sort_by(|(ka, a), (kb, b)| order.compare_children(ka, a, kb, b));
+    let mut text = String::new();
+    if let Some(priority) = priority {
+        text.push_str("priority:");
+        text.push_str(&priority_text(priority));
+        text.push(':');
+    }
+    for (key, child) in children {
+        // A stored child is never empty, so its hash is never the empty string.
+        let _ = write!(text, ":{key}:{}", node_hash(Some(child)));
     }
     base64(&sha1(text.as_bytes()))
 }

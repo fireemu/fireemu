@@ -31,7 +31,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use fireemu_core_database::hash::node_hash;
+use fireemu_core_database::hash::{children_hash_without_priority, node_hash};
 use fireemu_core_database::{Content, Json, Leaf, Limit, Node, OrderBy, Path, QueryParams, Tree};
 
 use crate::json_text::{priority_at, render, value_at, wire_json, Style};
@@ -96,15 +96,7 @@ impl Listen {
             }
             None => node_hash(tree.get(&self.path)),
             Some(children) if children.is_empty() => node_hash(None),
-            Some(children) => node_hash(Some(&Node {
-                content: Content::Children(
-                    children
-                        .into_iter()
-                        .map(|(key, child)| (key.to_owned(), child.clone()))
-                        .collect(),
-                ),
-                priority: None,
-            })),
+            Some(children) => children_hash_without_priority(children),
         }
     }
 

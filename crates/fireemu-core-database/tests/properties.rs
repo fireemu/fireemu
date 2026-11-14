@@ -13,6 +13,7 @@ mod support;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use fireemu_core_database::hash::{children_hash_without_priority, node_hash};
 use fireemu_core_database::key::{key_as_int, name_compare};
 use fireemu_core_database::{
     Content, Format, Json, Leaf, Limits, Node, Number, OrderBy, Path, QueryParams, Tree,
@@ -228,6 +229,154 @@ proptest! {
         let exported = stripped.get_json(&Path::root(), Format::Export);
         let text = format!("{exported:?}");
         prop_assert!(!text.contains(".priority"), "{}", text);
+    }
+}
+
+#[test]
+fn generated_pict_rows_match_the_full_sort_and_synthetic_hash_references() {
+    let table = include_str!("fixtures/rtdb-query-pict.tsv");
+    let mut rows = 0;
+    for line in table.lines().skip(1).filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        assert_eq!(columns.len(), 6, "bad PICT row: {line}");
+        assert_pict_row(&columns, line);
+        rows += 1;
+    }
+    assert!(rows > 0, "generated PICT table has no rows");
+}
+
+fn assert_pict_row(columns: &[&str], line: &str) {
+    let tree = pict_tree(columns);
+    let query = pict_query(columns);
+    query.validate().unwrap();
+    let mut selected = query.run(tree.root());
+    let got: Vec<String> = selected.iter().map(|(key, _)| (*key).to_owned()).collect();
+    assert_eq!(got, reference_query(&query, tree.root()), "PICT row {line}");
+
+    match columns[5] {
+        "priority-order" => selected
+            .sort_by(|(ka, a), (kb, b)| QueryParams::default().compare_children(ka, a, kb, b)),
+        "empty" => assert!(selected.is_empty(), "PICT empty-window row {line}"),
+        "nested-priority" => assert_eq!(columns[4], "nested", "PICT row {line}"),
+        "query-order" => {}
+        value => panic!("unknown PICT hash order {value}"),
+    }
+    let expected_hash = if selected.is_empty() {
+        String::new()
+    } else {
+        node_hash(Some(&Node {
+            content: Content::Children(
+                selected
+                    .iter()
+                    .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                    .collect(),
+            ),
+            priority: None,
+        }))
+    };
+    assert_eq!(
+        children_hash_without_priority(selected),
+        expected_hash,
+        "PICT window hash row {line}"
+    );
+}
+
+fn pict_tree(columns: &[&str]) -> Tree {
+    let keys: Vec<&str> = match columns[3] {
+        "numeric-tie" => vec!["2", "02", "10"],
+        "utf16-boundary" => vec!["😀", "\u{e000}"],
+        "ordinary" => vec!["a", "b", "c"],
+        value => panic!("unknown PICT key set {value}"),
+    };
+    let values: Vec<serde_json::Value> = match columns[4] {
+        "equal" => vec![serde_json::json!(1); keys.len()],
+        "mixed" if columns[3] == "utf16-boundary" => {
+            vec![serde_json::json!("😀"), serde_json::json!("\u{e000}")]
+        }
+        "mixed" => keys
+            .iter()
+            .enumerate()
+            .map(|(index, _)| match index % 3 {
+                0 => serde_json::json!(false),
+                1 => serde_json::json!(1),
+                _ => serde_json::json!("😀"),
+            })
+            .collect(),
+        "nested" => keys
+            .iter()
+            .map(|_| serde_json::json!({"nested": {".value": "n", ".priority": 4}}))
+            .collect(),
+        value => panic!("unknown PICT value set {value}"),
+    };
+    let mut object = serde_json::Map::new();
+    object.insert(".priority".to_owned(), serde_json::json!(77));
+    for (index, (key, value)) in keys.iter().zip(values).enumerate() {
+        object.insert(
+            (*key).to_owned(),
+            serde_json::json!({"v": value, ".priority": (keys.len() - index) as i64}),
+        );
+    }
+    let mut tree = Tree::new(Limits::default());
+    tree.set(
+        &Path::root(),
+        &support::j(serde_json::Value::Object(object)),
+        NOW,
+    )
+    .unwrap();
+    tree
+}
+
+fn pict_query(columns: &[&str]) -> QueryParams {
+    let order = match columns[0] {
+        "key" => OrderBy::Key,
+        "priority" => OrderBy::Priority,
+        "value" => OrderBy::Value,
+        "child" => OrderBy::Child(Path::from_keys(["v"])),
+        value => panic!("unknown PICT order {value}"),
+    };
+    let lower = || {
+        if matches!(&order, OrderBy::Key) {
+            Json::string(if columns[3] == "utf16-boundary" {
+                "😀"
+            } else {
+                "2"
+            })
+        } else if columns[3] == "utf16-boundary" && columns[4] == "mixed" {
+            Json::string("😀")
+        } else {
+            Json::int(1)
+        }
+    };
+    let upper = || {
+        if matches!(&order, OrderBy::Key) {
+            Json::string(if columns[3] == "utf16-boundary" {
+                "\u{e000}"
+            } else {
+                "a"
+            })
+        } else if columns[3] == "utf16-boundary" && columns[4] == "mixed" {
+            Json::string("\u{e000}")
+        } else {
+            Json::int(3)
+        }
+    };
+    let mut query = QueryParams::ordered_by(order.clone());
+    query = match columns[1] {
+        "none" => query,
+        "start" => query.start_at(lower(), None),
+        "end" => query.end_before(lower(), None),
+        "both" => query.start_at(lower(), None).end_at(upper(), None),
+        "inverted" => query.start_at(upper(), None).end_before(lower(), None),
+        value => panic!("unknown PICT bound {value}"),
+    };
+    match columns[2] {
+        "none" => query,
+        "first0" => query.limit_to_first(0),
+        "firstsmall" => query.limit_to_first(2),
+        "lastsmall" => query.limit_to_last(2),
+        "firstmax" => query.limit_to_first(u32::MAX),
+        "lastmax" => query.limit_to_last(u32::MAX),
+        value => panic!("unknown PICT limit {value}"),
     }
 }
 
@@ -516,7 +665,10 @@ fn query() -> impl Strategy<Value = QueryParams> {
         (
             Just(order),
             prop::collection::vec(bound, 0..3),
-            prop::option::of((any::<bool>(), 0u32..5)),
+            prop::option::of((
+                any::<bool>(),
+                prop::sample::select(vec![0, 1, 2, 4, u32::MAX]),
+            )),
         )
             .prop_map(|(order, bounds, limit)| {
                 let mut q = QueryParams::ordered_by(order);
