@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Startup generates the App Check key while Auth and Rules are prepared, `fireemu/testing` worlds rescan fewer directories on create and reset, and Firestore equality queries reuse a bounded candidate index between writes. Answers are unchanged.
+
 ### Fixed
 
 - Storage in the strict profile answers JSON API and upload CORS independently of `storage.cors` bucket rules, which apply to the XML API (signed URLs and the form upload). Location is exposed on resumable uploads. Cases without a production recording are listed under the compatibility limitations.
