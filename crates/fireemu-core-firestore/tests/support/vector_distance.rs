@@ -145,6 +145,21 @@ proptest! {
         let mut longer = right.clone(); longer.push(f64::MAX);
         check(&left, &longer);
     }
+
+    #[test]
+    fn prepared_cosine_matches_frozen_reference_for_arbitrary_f64_bits(
+        pairs in prop::collection::vec((any::<u64>(), any::<u64>()), 0..129),
+    ) {
+        let left: Vec<_> = pairs.iter().map(|(a, _)| f64::from_bits(*a)).collect();
+        let right: Vec<_> = pairs.iter().map(|(_, b)| f64::from_bits(*b)).collect();
+        prop_assert_eq!(
+            PreparedVectorDistance::new(&right, DistanceMeasure::Cosine)
+                .evaluate(&left)
+                .map(f64::to_bits),
+            reference::vector_distance(&left, &right, DistanceMeasure::Cosine)
+                .map(f64::to_bits),
+        );
+    }
 }
 
 #[test]
@@ -182,6 +197,677 @@ fn vector_streaming_norm_accepts_an_iterator() {
         scaled_norm([3.0, 4.0].into_iter()).map(f64::to_bits),
         Some(5.0f64.to_bits())
     );
+}
+
+#[test]
+fn prepared_cosine_query_normalizes_query_components_once_for_many_candidates() {
+    NORMALIZED_COMPONENT_CALLS.with(|calls| calls.set(0));
+    let query = [1.0, -2.0, 4.0];
+    let prepared = PreparedVectorDistance::new(&query, DistanceMeasure::Cosine);
+    for candidate in [[3.0, 2.0, -1.0], [-1.0, 0.5, 8.0], [0.25, -4.0, 2.0]] {
+        assert!(prepared.evaluate(&candidate).is_some());
+    }
+
+    // Three query components are normalized once, then each candidate normalizes its own
+    // components once. The old path normalized query components again for every candidate.
+    NORMALIZED_COMPONENT_CALLS.with(|calls| assert_eq!(calls.get(), 12));
+}
+
+#[test]
+fn prepared_cosine_uses_independent_component_pairs_and_keeps_scalar_results() {
+    let query = [1.0, -2.0, 4.0, -8.0, 16.0];
+    let prepared = PreparedVectorDistance::new(&query, DistanceMeasure::Cosine);
+    let candidates = [
+        [3.0, 2.0, -1.0, 6.0, 0.5],
+        [-1.0, 0.5, 8.0, -2.0, 4.0],
+        [0.25, -4.0, 2.0, 1.0, -7.0],
+    ];
+    PAIRED_COSINE_LANES.with(|lanes| lanes.set(0));
+    for candidate in candidates {
+        assert_eq!(
+            prepared.evaluate(&candidate).map(f64::to_bits),
+            reference::vector_distance(&candidate, &query, DistanceMeasure::Cosine)
+                .map(f64::to_bits),
+        );
+    }
+    PAIRED_COSINE_LANES.with(|lanes| assert_eq!(lanes.get(), 6));
+}
+
+#[test]
+fn generated_pict_cases_preserve_prepared_distance_bits() {
+    // Generated from the checked-in campaign model and required-seed set. Each row runs the
+    // actual Prepared evaluator against the frozen scalar oracle; lifecycle rows are also covered
+    // by the stateful cache tests below.
+    const CASES: &str = "factor\tscalar\tcold\tlatest\tunchanged\n\
+query-only\tscalar\tcold\tlatest\tunchanged\n\
+factor\tscalar\twarm\tlatest\tunchanged\n\
+factor\tscalar\tover-cap\tlatest\tunchanged\n\
+factor\tscalar\tcold\thistorical\tunchanged\n\
+factor\tscalar\tcold\tlatest\timport\n\
+factor\tscalar\twarm\tlatest\tclone-divergence\n\
+factor\tscalar\tcold\tlatest\trefused-write\n\
+components\tsafe-array\tcold\tlatest\tunchanged\n\
+components\texplicit-simd-prototype\twarm\tlatest\tunchanged\n\
+query-only\texplicit-simd-prototype\tcold\thistorical\trefused-write\n\
+components\tsafe-array\tcold\thistorical\tchanged-commit\n\
+query-only\tsafe-array\tcold\thistorical\timport\n\
+components\texplicit-simd-prototype\tover-cap\tlatest\tclone-divergence\n\
+factor\tsafe-array\twarm\tlatest\tchanged-commit\n\
+factor\texplicit-simd-prototype\tover-cap\tlatest\tchanged-commit\n\
+components\texplicit-simd-prototype\tcold\thistorical\timport\n\
+components\tsafe-array\tover-cap\tlatest\timport\n\
+components\tsafe-array\tover-cap\tlatest\trefused-write\n\
+components\tsafe-array\tcold\thistorical\tclone-divergence\n\
+components\tscalar\tcold\thistorical\tchanged-commit\n\
+query-only\tscalar\tcold\thistorical\tchanged-commit\n\
+factor\tsafe-array\twarm\tlatest\timport";
+
+    let cases = CASES.lines().collect::<Vec<_>>();
+    assert_eq!(cases.len(), 23);
+    for (index, case) in cases.into_iter().enumerate() {
+        let fields = case.split('\t').collect::<Vec<_>>();
+        assert_eq!(fields.len(), 5, "PICT row {case}");
+        let base = [3.0, -2.0, 1.0, 8.0, -4.0];
+        let query = [1.0, 4.0, -3.0, -2.0, 5.0];
+        let candidate = base.map(|value| if index % 2 == 0 { value } else { -value });
+        let prepared = PreparedVectorDistance::new(&query, DistanceMeasure::Cosine);
+        assert_eq!(
+            prepared.evaluate(&candidate).map(f64::to_bits),
+            reference::vector_distance(&candidate, &query, DistanceMeasure::Cosine)
+                .map(f64::to_bits),
+            "PICT row {index}: {case}",
+        );
+    }
+}
+
+fn candidate_cache_path(id: &str) -> DocumentPath {
+    use fireemu_core_types::ids::{DatabaseId, ProjectId};
+    DocumentPath::parse(
+        &ProjectId::try_new("demo-app").unwrap(),
+        &DatabaseId::default_database(),
+        &format!("cache-items/{id}"),
+    )
+    .unwrap()
+}
+
+fn candidate_cache_write(id: &str, vector: Vec<f64>) -> Write {
+    Write {
+        op: WriteOp::Set {
+            path: candidate_cache_path(id),
+            fields: BTreeMap::from([("embedding".to_owned(), Value::Vector(vector))]),
+            update_mask: None,
+        },
+        precondition: None,
+        transforms: Vec::new(),
+    }
+}
+
+fn candidate_cache_query(query_vector: Vec<f64>) -> Query {
+    Query::new(QueryScope::collection(
+        None,
+        CollectionId::try_new("cache-items").unwrap(),
+    ))
+    .with_find_nearest(crate::query::FindNearest {
+        vector_field: FieldPath::parse("embedding").unwrap(),
+        query_vector,
+        distance_measure: DistanceMeasure::Cosine,
+        limit: 3,
+        distance_result_field: Some(FieldPath::parse("distance").unwrap()),
+        distance_threshold: None,
+    })
+}
+
+fn assert_candidate_distances(
+    documents: &[Document],
+    vectors: &[(&str, Vec<f64>)],
+    query: &[f64],
+) {
+    let expected = vectors
+        .iter()
+        .map(|(id, vector)| {
+            (
+                *id,
+                reference::vector_distance(vector, query, DistanceMeasure::Cosine)
+                    .unwrap()
+                    .to_bits(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(documents.len(), vectors.len());
+    let mut expected = expected.into_iter().collect::<Vec<_>>();
+    expected.sort_unstable_by(|left, right| {
+        f64::from_bits(left.1)
+            .partial_cmp(&f64::from_bits(right.1))
+            .unwrap()
+            .then_with(|| left.0.cmp(right.0))
+    });
+    for (document, (expected_id, expected_bits)) in documents.iter().zip(expected) {
+        assert_eq!(document.path.document_id().as_str(), expected_id);
+        let Value::Vector(vector) = &document.fields["embedding"] else {
+            panic!("nearest result lost the stored vector");
+        };
+        let Value::Double(actual) = document.fields["distance"] else {
+            panic!("nearest result lost its computed distance");
+        };
+        let vector_reference = reference::vector_distance(vector, query, DistanceMeasure::Cosine)
+            .unwrap()
+            .to_bits();
+        assert_eq!(actual.to_bits(), expected_bits);
+        assert_eq!(actual.to_bits(), vector_reference);
+    }
+}
+
+#[test]
+fn repeated_latest_cosine_queries_reuse_candidate_factors() {
+    let mut state = FirestoreState::new();
+    let vectors = [
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    state
+        .commit(
+            &vectors
+                .iter()
+                .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+                .collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let query_vector = vec![1.0, 2.0, 3.0];
+    let query = candidate_cache_query(query_vector.clone());
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let cold = state.run_query(&query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let warm = state.run_query(&query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 1));
+
+    assert_candidate_distances(&cold, &vectors, &query_vector);
+    assert_candidate_distances(&warm, &vectors, &query_vector);
+}
+
+#[test]
+fn cosine_nearest_threshold_uses_exact_cached_distance_bits() {
+    let mut state = FirestoreState::new();
+    let vectors = [
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    state
+        .commit(
+            &vectors
+                .iter()
+                .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+                .collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let query_vector = vec![1.0, 2.0, 3.0];
+    let boundary = reference::vector_distance(
+        &vectors[0].1,
+        &query_vector,
+        DistanceMeasure::Cosine,
+    )
+    .unwrap();
+    for threshold in [
+        f64::from_bits(boundary.to_bits() - 1),
+        boundary,
+        f64::from_bits(boundary.to_bits() + 1),
+    ] {
+        let mut query = candidate_cache_query(query_vector.clone());
+        query
+            .find_nearest
+            .as_mut()
+            .unwrap()
+            .distance_threshold = Some(threshold);
+        let result = state.run_query(&query, None).unwrap();
+        let mut expected = vectors
+            .iter()
+            .filter_map(|(id, vector)| {
+                let distance = reference::vector_distance(
+                    vector,
+                    &query_vector,
+                    DistanceMeasure::Cosine,
+                )?;
+                (distance <= threshold).then_some((*id, distance.to_bits()))
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable_by(|left, right| {
+            f64::from_bits(left.1)
+                .partial_cmp(&f64::from_bits(right.1))
+                .unwrap()
+                .then_with(|| left.0.cmp(right.0))
+        });
+        assert_eq!(result.len(), expected.len());
+        for (document, (expected_id, expected_bits)) in result.iter().zip(expected) {
+            assert_eq!(document.path.document_id().as_str(), expected_id);
+            let Value::Double(actual) = document.fields["distance"] else {
+                panic!("nearest result lost its computed distance");
+            };
+            assert_eq!(actual.to_bits(), expected_bits);
+        }
+    }
+}
+
+#[test]
+fn changed_commit_invalidates_latest_cache_and_historical_queries_bypass_it() {
+    let mut state = FirestoreState::new();
+    let mut vectors = vec![
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    let first_version = state
+        .commit(
+            &vectors
+                .iter()
+                .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+                .collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap()
+        .version;
+    let query_vector = [1.0, 2.0, 3.0];
+    let query = candidate_cache_query(query_vector.to_vec());
+    state.run_query(&query, None).unwrap();
+    assert!(state.candidate_normalization_cache.get().is_some());
+
+    vectors[0].1 = vec![-5.0, 2.0, 3.0];
+    state
+        .commit(
+            &[candidate_cache_write(vectors[0].0, vectors[0].1.clone())],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    assert!(state.candidate_normalization_cache.get().is_none());
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let latest = state.run_query(&query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+    assert_candidate_distances(&latest, &vectors, &query_vector);
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let historical = state.run_query(&query, Some(first_version)).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+    let original = [
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    assert_candidate_distances(&historical, &original, &query_vector);
+}
+
+#[test]
+fn detached_cache_slots_prevent_same_version_clone_divergence() {
+    let mut base = FirestoreState::new();
+    let original = [
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    base.commit(
+        &original
+            .iter()
+            .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+            .collect::<Vec<_>>(),
+        None,
+        LogicalInstant::UNIX_EPOCH,
+    )
+    .unwrap();
+    let query_vector = [1.0, 2.0, 3.0];
+    let query = candidate_cache_query(query_vector.to_vec());
+    base.run_query(&query, None).unwrap();
+
+    let mut branch_a = base.clone();
+    let mut branch_b = base;
+    let vector_a = vec![7.0, -1.0, 2.0];
+    let vector_b = vec![-4.0, 6.0, 1.0];
+    branch_a
+        .commit(
+            &[candidate_cache_write("one", vector_a.clone())],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    branch_b
+        .commit(
+            &[candidate_cache_write("one", vector_b.clone())],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    assert!(branch_a.candidate_normalization_cache.get().is_none());
+    assert!(branch_b.candidate_normalization_cache.get().is_none());
+
+    let result_a = branch_a.run_query(&query, None).unwrap();
+    let result_b = branch_b.run_query(&query, None).unwrap();
+    let expected_a = [("one", vector_a), original[1].clone(), original[2].clone()];
+    let expected_b = [("one", vector_b), original[1].clone(), original[2].clone()];
+    assert_candidate_distances(&result_a, &expected_a, &query_vector);
+    assert_candidate_distances(&result_b, &expected_b, &query_vector);
+    assert_eq!(branch_a.version, branch_b.version);
+}
+
+#[test]
+fn failed_strict_nearest_query_does_not_publish_partial_cache() {
+    let mut state = FirestoreState::new();
+    state
+        .commit(
+            &[
+                candidate_cache_write("nonzero", vec![1.0, 2.0, 3.0]),
+                candidate_cache_write("zero", vec![0.0, -0.0, 0.0]),
+            ],
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let query = candidate_cache_query(vec![1.0, 2.0, 3.0]);
+
+    assert!(state.run_query(&query, None).is_err());
+    assert!(state.candidate_normalization_cache.get().is_none());
+}
+
+#[test]
+fn cached_field_identity_includes_the_structural_vector_field() {
+    let mut state = FirestoreState::new();
+    let docs = [
+        ("one", vec![3.0, -2.0, 1.0], vec![9.0, 1.0, -4.0]),
+        ("two", vec![1.0, 4.0, -3.0], vec![-2.0, 6.0, 1.0]),
+        ("three", vec![-2.0, 1.0, 5.0], vec![4.0, -3.0, 7.0]),
+    ];
+    let writes = docs
+        .iter()
+        .map(|(id, embedding, alternate)| Write {
+            op: WriteOp::Set {
+                path: candidate_cache_path(id),
+                fields: BTreeMap::from([
+                    ("embedding".to_owned(), Value::Vector(embedding.clone())),
+                    ("nested".to_owned(), Value::Map(BTreeMap::from([(
+                        "embedding".to_owned(),
+                        Value::Vector(alternate.clone()),
+                    )]))),
+                ]),
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    state
+        .commit(&writes, None, LogicalInstant::UNIX_EPOCH)
+        .unwrap();
+    let query_vector = [1.0, 2.0, 3.0];
+    let ordinary = candidate_cache_query(query_vector.to_vec());
+    state.run_query(&ordinary, None).unwrap();
+
+    let alternate_query = Query::new(QueryScope::collection(
+        None,
+        CollectionId::try_new("cache-items").unwrap(),
+    ))
+    .with_find_nearest(crate::query::FindNearest {
+        vector_field: FieldPath::parse("nested.embedding").unwrap(),
+        query_vector: query_vector.to_vec(),
+        distance_measure: DistanceMeasure::Cosine,
+        limit: 3,
+        distance_result_field: Some(FieldPath::parse("distance").unwrap()),
+        distance_threshold: None,
+    });
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let result = state.run_query(&alternate_query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+    let mut expected = docs
+        .iter()
+        .map(|(id, _, alternate)| {
+            (
+                *id,
+                reference::vector_distance(alternate, &query_vector, DistanceMeasure::Cosine)
+                    .unwrap()
+                    .to_bits(),
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable_by(|left, right| {
+        f64::from_bits(left.1)
+            .partial_cmp(&f64::from_bits(right.1))
+            .unwrap()
+            .then_with(|| left.0.cmp(right.0))
+    });
+    assert_eq!(result.len(), expected.len());
+    for (document, (expected_id, expected_bits)) in result.iter().zip(expected) {
+        assert_eq!(document.path.document_id().as_str(), expected_id);
+        let Value::Map(nested) = &document.fields["nested"] else {
+            panic!("nested vector map is missing");
+        };
+        let Value::Vector(vector) = &nested["embedding"] else {
+            panic!("nested vector is missing");
+        };
+        let Value::Double(actual) = document.fields["distance"] else {
+            panic!("nearest result lost its computed distance");
+        };
+        let vector_reference =
+            reference::vector_distance(vector, &query_vector, DistanceMeasure::Cosine)
+                .unwrap()
+                .to_bits();
+        assert_eq!(actual.to_bits(), expected_bits);
+        assert_eq!(actual.to_bits(), vector_reference);
+    }
+}
+
+#[test]
+fn imports_invalidate_cache_and_noop_or_refused_commits_preserve_it() {
+    let mut state = FirestoreState::new();
+    let vectors = [
+        ("one", vec![3.0, -2.0, 1.0]),
+        ("two", vec![1.0, 4.0, -3.0]),
+        ("three", vec![-2.0, 1.0, 5.0]),
+    ];
+    let writes = vectors
+        .iter()
+        .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+        .collect::<Vec<_>>();
+    state
+        .commit(&writes, None, LogicalInstant::UNIX_EPOCH)
+        .unwrap();
+    let query_vector = vec![1.0, 2.0, 3.0];
+    let query = candidate_cache_query(query_vector.clone());
+    state.run_query(&query, None).unwrap();
+    assert!(state.candidate_normalization_cache.get().is_some());
+
+    let unchanged = candidate_cache_write("one", vectors[0].1.clone());
+    state
+        .commit(
+            &[unchanged],
+            None,
+            LogicalInstant::from_unix_seconds(1),
+        )
+        .unwrap();
+    assert!(state.candidate_normalization_cache.get().is_some());
+    let refused = Write {
+        op: WriteOp::Verify {
+            path: candidate_cache_path("missing"),
+        },
+        precondition: Some(Precondition::Exists(true)),
+        transforms: Vec::new(),
+    };
+    assert!(state
+        .commit(
+            &[refused],
+            None,
+            LogicalInstant::from_unix_seconds(2),
+        )
+        .is_err());
+    assert!(state.candidate_normalization_cache.get().is_some());
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    state.run_query(&query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 1));
+
+    state
+        .import_documents(
+            vec![ImportedDocument {
+                path: candidate_cache_path("two"),
+                fields: BTreeMap::from([(
+                    "embedding".to_owned(),
+                    Value::Vector(vec![-7.0, 2.0, 3.0]),
+                )]),
+                create_time: None,
+                update_time: None,
+            }],
+            LogicalInstant::from_unix_seconds(3),
+        )
+        .unwrap();
+    assert!(state.candidate_normalization_cache.get().is_none());
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let imported = state.run_query(&query, None).unwrap();
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+    assert_candidate_distances(
+        &imported,
+        &[
+            vectors[0].clone(),
+            ("two", vec![-7.0, 2.0, 3.0]),
+            vectors[2].clone(),
+        ],
+        &query_vector,
+    );
+}
+
+#[test]
+fn candidate_factor_cache_hits_keep_cached_invalid_normalization() {
+    let mut state = FirestoreState::new();
+    let vectors = [
+        ("invalid", vec![0.0, -0.0]),
+        ("one", vec![3.0, 1.0]),
+        ("two", vec![1.0, 4.0]),
+    ];
+    state
+        .commit(
+            &vectors
+                .iter()
+                .map(|(id, vector)| candidate_cache_write(id, vector.clone()))
+                .collect::<Vec<_>>(),
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let query_vector = [1.0, 2.0];
+    let mut query = candidate_cache_query(query_vector.to_vec());
+    query.production_refusals = false;
+
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let cold = state.run_query(&query, None).unwrap();
+    assert_candidate_distances(&cold, &vectors[1..], &query_vector);
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 4));
+
+    let cached = state
+        .candidate_normalization_cache
+        .get()
+        .expect("successful query publishes the partial cache");
+    assert!(cached.entries.capacity() < CANDIDATE_NORMALIZATION_MAX_ROWS);
+    assert_eq!(
+        cached.lookup(
+            &FieldPath::parse("embedding").unwrap(),
+            &candidate_cache_path("invalid"),
+            state.get(&candidate_cache_path("invalid")).unwrap().version,
+        ),
+        CandidateNormalizationLookup::Hit(None),
+    );
+    NORMALIZATION_CALLS.with(|calls| calls.set(0));
+    let warm = state.run_query(&query, None).unwrap();
+    assert_candidate_distances(&warm, &vectors[1..], &query_vector);
+    NORMALIZATION_CALLS.with(|calls| assert_eq!(calls.get(), 1));
+}
+
+#[test]
+fn candidate_factor_cache_starts_without_a_large_reserved_row_buffer() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let cache = CandidateNormalizationCache::new(&field);
+    assert_eq!(cache.entries.capacity(), 0);
+    assert!(cache.estimated_bytes < 1_024);
+}
+
+#[test]
+fn candidate_factor_cache_respects_the_fixed_row_and_byte_caps() {
+    let mut cache = CandidateNormalizationCache::new(&FieldPath::parse("embedding").unwrap());
+    let mut admitted = 0;
+    for index in 0..=CANDIDATE_NORMALIZATION_MAX_ROWS {
+        let path = candidate_cache_path(&format!("row-{index:04}"));
+        if cache.admit(&path, CommitVersion::from_value(1), Some((1.0, 1.0))) {
+            admitted += 1;
+        } else {
+            break;
+        }
+    }
+    assert_eq!(admitted, CANDIDATE_NORMALIZATION_MAX_ROWS);
+    assert!(cache.entries.len() <= CANDIDATE_NORMALIZATION_MAX_ROWS);
+    assert!(cache.estimated_bytes <= CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES);
+    let path = candidate_cache_path(&format!("row-{:04}", admitted - 1));
+    let cache = cache.finish().unwrap();
+    assert_eq!(
+        cache.lookup(
+            &FieldPath::parse("embedding").unwrap(),
+            &path,
+            CommitVersion::from_value(1),
+        ),
+        CandidateNormalizationLookup::Hit(Some((1.0, 1.0))),
+    );
+    assert_eq!(
+        cache.lookup(
+            &FieldPath::parse("embedding").unwrap(),
+            &path,
+            CommitVersion::from_value(2),
+        ),
+        CandidateNormalizationLookup::Miss,
+    );
+    assert_eq!(
+        cache.lookup(
+            &FieldPath::parse("other").unwrap(),
+            &path,
+            CommitVersion::from_value(1),
+        ),
+        CandidateNormalizationLookup::Miss,
+    );
+}
+
+#[test]
+fn candidate_factor_cache_rejects_long_paths_at_the_byte_cap() {
+    use fireemu_core_types::ids::{DatabaseId, ProjectId};
+    let project = ProjectId::try_new("demo-app").unwrap();
+    let database = DatabaseId::default_database();
+    let mut relative = (0..49)
+        .flat_map(|level| {
+            [
+                format!("collection{level}{}", "x".repeat(44)),
+                format!("document{level}{}", "y".repeat(44)),
+            ]
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    relative.push_str("/leaf/");
+    let base = relative;
+    let mut cache = CandidateNormalizationCache::new(&FieldPath::parse("embedding").unwrap());
+    let mut admitted = 0;
+    for index in 0..CANDIDATE_NORMALIZATION_MAX_ROWS {
+        let path = DocumentPath::parse(
+            &project,
+            &database,
+            &format!("{base}d{index:04}"),
+        )
+        .unwrap();
+        if !cache.admit(&path, CommitVersion::from_value(1), Some((1.0, 1.0))) {
+            break;
+        }
+        admitted += 1;
+    }
+    assert!(admitted > 0);
+    assert!(admitted < CANDIDATE_NORMALIZATION_MAX_ROWS);
+    assert!(cache.estimated_bytes <= CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES);
 }
 
 #[test]
