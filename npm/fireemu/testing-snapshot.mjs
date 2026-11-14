@@ -12,6 +12,31 @@ const runFile = promisify(execFile);
 
 function checkSignal(signal){signal?.throwIfAborted();}
 
+function combineSignals(signals){
+  const controller=new AbortController();
+  const removers=[];
+  let disposed=false;
+  const dispose=()=>{
+    if(disposed)return;
+    disposed=true;
+    for(const remove of removers)remove();
+    removers.length=0;
+  };
+  const relay=signal=>{
+    if(!controller.signal.aborted)controller.abort(signal.reason);
+    dispose();
+  };
+  for(const signal of signals){
+    if(!signal)continue;
+    if(signal.aborted){relay(signal);break;}
+    const listener=()=>relay(signal);
+    signal.addEventListener('abort',listener,{once:true});
+    removers.push(()=>signal.removeEventListener('abort',listener));
+    if(signal.aborted){relay(signal);break;}
+  }
+  return {signal:controller.signal,dispose};
+}
+
 /** Whether the selected services need the Functions sources and dependencies in the snapshot. */
 export function functionsSelected(services){
   return services===undefined||services.some(name=>name==='functions'||name.startsWith('functions:'));
@@ -27,6 +52,9 @@ export const cloneSupport={
   treeCommand:'/bin/cp',
   treeArguments:(source,destination)=>['-c','-R','-p',source,destination],
 };
+
+// Internal bound shared by portable snapshots and deterministic copy benchmarks.
+export const copySupport={maxConcurrentFiles:4};
 
 /** Counters for one snapshot or generation copy; `noClone` remembers source devices that cannot clone. */
 function createCopyStats(){
@@ -119,8 +147,44 @@ async function copyRegularFile(input,output,info,{signal,stats}){
 
 async function copyInputTree(source,destination,{signal,dereference=true,filter,directoryModes,stats=createCopyStats()}={}){
   const directories=[];
-  const visit=async(input,output,ancestors=new Set())=>{
+  const maxConcurrentFiles=copySupport.maxConcurrentFiles;
+  if(!Number.isSafeInteger(maxConcurrentFiles)||maxConcurrentFiles<1)throw RangeError('portable snapshot copy bound must be a positive safe integer');
+  const activeCopies=new Set();
+  const copyController=new AbortController();
+  const combined=combineSignals([signal,copyController.signal]);
+  const copySignal=combined.signal;
+  let copyFailed=false,copyError;
+  const stopCopies=error=>{
+    if(copyFailed)return;
+    copyFailed=true;
+    copyError=error;
+    copyController.abort(error);
+  };
+  const checkCopyState=()=>{
+    if(copyFailed)throw copyError;
     checkSignal(signal);
+  };
+  const settleOneCopy=async()=>{
+    await Promise.race(activeCopies);
+    checkCopyState();
+  };
+  const copyLeaf=async(input,output,info)=>{
+    checkCopyState();
+    while(activeCopies.size>=maxConcurrentFiles)await settleOneCopy();
+    checkCopyState();
+    let operation;
+    operation=(async()=>{
+      try{await copyRegularFile(input,output,info,{signal:copySignal,stats});}
+      catch(error){
+        stopCopies(error);
+        await fsp.rm(output,{force:true}).catch(()=>{});
+      }
+    })();
+    activeCopies.add(operation);
+    void operation.then(()=>activeCopies.delete(operation));
+  };
+  const visit=async(input,output,ancestors=new Set())=>{
+    checkCopyState();
     if(filter&&!await checked(signal,()=>filter(input)))return;
     let info=await checked(signal,()=>lstat(input));
     if(info.isSymbolicLink()){
@@ -156,15 +220,16 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
     }
     if(!info.isFile())throw Error(`Cannot copy unsupported non-regular input ${JSON.stringify(input)}`);
     await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
-    try{await copyRegularFile(input,output,info,{signal,stats});}
-    catch(error){
-      await rm(output,{force:true}).catch(()=>{});
-      throw error;
-    }
+    await copyLeaf(input,output,info);
   };
-  await visit(source,destination);
-  if(directoryModes)directoryModes.push(...directories);
-  else await restoreDirectoryModes(directories,signal);
+  try{
+    try{await visit(source,destination);}
+    catch(error){stopCopies(error);}
+    await Promise.all(activeCopies);
+    if(copyFailed)throw copyError;
+    if(directoryModes)directoryModes.push(...directories);
+    else await restoreDirectoryModes(directories,signal);
+  }finally{combined.dispose();}
 }
 
 async function readConfiguration(path, options, signal) {
