@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, delimiter } from 'node:path';
+import { join, delimiter, relative } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -549,6 +549,75 @@ test('statistics keep symbolic links apart from files and count rewritten Fireba
   assert.equal(generation.stats.files, files.length, 'links are not files');
   assert.equal(generation.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0), 'rewritten configuration bytes are included');
 });
+
+test('snapshot retains copied symbolic-link paths for later generation relocation', async t => {
+  const f = await fixture(t);
+  const dependency = join(f.modules, 'dependency');
+  await mkdir(dependency);
+  await writeFile(join(dependency, 'index.js'), 'module.exports = 1;');
+  await mkdir(join(f.source, 'node_modules'));
+  await symlink(dependency, join(f.source, 'node_modules', 'dependency'), directoryLink);
+  const options = { cwd: f.root, functionsSource: f.source, services: ['functions'], env: { NODE_PATH: '' } };
+  const snapshot = await snapshotInputs(options, f.world);
+  const linkInBaseline = join(snapshot.config.functions.source, 'node_modules', 'dependency');
+  const relativeLink = relative(snapshot.baseline, linkInBaseline);
+  assert.deepEqual(snapshot.relocationLinks, [relativeLink]);
+
+  const generation = await prepareGeneration(snapshot, join(f.world, 'generation'));
+  const linkInGeneration = join(generation.cwd, relativeLink);
+  const target = await realpath(linkInGeneration);
+  assert.ok(target.startsWith(generation.cwd), 'dependency link resolves inside this generation');
+  assert.equal(await readFile(join(target, 'index.js'), 'utf8'), 'module.exports = 1;');
+});
+
+const generatedRelocationCases = [
+  { copy: 'TreeClone', link: 'Relative', owner: 'InternalBaseline', outcome: 'Success' },
+  { copy: 'TreeClone', link: 'AbsoluteJunction', owner: 'CapturedDependency', outcome: 'Success' },
+  { copy: 'FileCopy', link: 'Relative', owner: 'InternalBaseline', outcome: 'CancelledOrFailed' },
+  { copy: 'FileCopy', link: 'AbsoluteJunction', owner: 'CapturedDependency', outcome: 'CancelledOrFailed' },
+  { copy: 'FileCopy', link: 'AbsoluteJunction', owner: 'InternalBaseline', outcome: 'Success' },
+  { copy: 'TreeClone', link: 'AbsoluteJunction', owner: 'CapturedDependency', outcome: 'CancelledOrFailed' },
+];
+
+for (const row of generatedRelocationCases) {
+  test(`PICT relocation case ${JSON.stringify(row)}`, { skip: process.platform === 'win32' && (row.copy === 'TreeClone' || row.link === 'Relative') }, async t => {
+    const saved = { ...cloneSupport };
+    if (row.copy === 'TreeClone') Object.assign(cloneSupport, { file: false, tree: true, treeCommand: 'cp', treeArguments: (source, destination) => process.platform === 'darwin' ? ['-c', '-R', '-p', source, destination] : ['-R', source, destination] });
+    else Object.assign(cloneSupport, { file: false, tree: false });
+    t.after(() => Object.assign(cloneSupport, saved));
+
+    const f = await fixture(t);
+    const target = row.owner === 'InternalBaseline' ? join(f.source, 'target') : join(f.modules, 'dependency');
+    const link = join(f.source, 'node_modules', 'dependency');
+    await mkdir(target);
+    await writeFile(join(target, 'index.js'), 'module.exports = 7;');
+    await mkdir(join(f.source, 'node_modules'));
+    await symlink(row.link === 'Relative' ? relative(join(f.source, 'node_modules'), target) : target, link, directoryLink);
+    const snapshot = await snapshotInputs({ cwd: f.root, functionsSource: f.source, services: ['functions'], env: { NODE_PATH: '' } }, f.world);
+    const generationDirectory = join(f.world, 'generation');
+    if (row.link === 'AbsoluteJunction') {
+      const baselineLink = join(snapshot.config.functions.source, 'node_modules', 'dependency');
+      const baselineTarget = await realpath(baselineLink);
+      await unlink(baselineLink);
+      await symlink(baselineTarget, baselineLink, directoryLink);
+    }
+
+    if (row.outcome === 'CancelledOrFailed') {
+      snapshot.relocationLinks = [...snapshot.relocationLinks, 'missing-link'];
+      await assert.rejects(prepareGeneration(snapshot, generationDirectory), { code: 'ENOENT' });
+      await assert.rejects(stat(generationDirectory), { code: 'ENOENT' });
+      return;
+    }
+
+    const generation = await prepareGeneration(snapshot, generationDirectory);
+    const copiedLink = join(generation.cwd, relative(snapshot.baseline, join(snapshot.config.functions.source, 'node_modules', 'dependency')));
+    const copiedTarget = await realpath(copiedLink);
+    assert.ok(copiedTarget.startsWith(generation.cwd), 'link target belongs to the generated world');
+    assert.equal(await readFile(join(copiedTarget, 'index.js'), 'utf8'), 'module.exports = 7;');
+    await writeFile(join(copiedTarget, 'index.js'), 'generation mutation');
+    assert.equal(await readFile(join(snapshot.config.functions.source, row.owner === 'InternalBaseline' ? 'target' : 'node_modules/dependency', 'index.js'), 'utf8'), 'module.exports = 7;');
+  });
+}
 
 async function withCloneSupport(t, overrides) {
   const saved = { ...cloneSupport };

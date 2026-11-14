@@ -206,6 +206,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   await checked(signal,()=>mkdir(baseline,{mode:0o700}));
   let sequence=0;
   const directoryModes=[];
+  const relocationLinks=[];
   const writeTracked=async(path,text)=>{
     let before;
     try{before=(await stat(path)).size;}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -258,6 +259,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
           await checked(signal,()=>unlink(targetLink));
           const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
           await checked(signal,()=>symlink(process.platform==='win32'?copied:relative(dirname(targetLink),copied),targetLink,process.platform==='win32'&&kind==='dir'?'junction':kind));
+          relocationLinks.push(relative(baseline,targetLink));
         }catch(cause){
           throw Error(`Cannot snapshot dependency link ${JSON.stringify(sourceLink)} -> ${JSON.stringify(linkValue)}: ${cause.message}`,{cause});
         }
@@ -346,7 +348,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   let seed;
   if(options.import){seed=join(baseline,'seed');await copyInputTree(resolve(cwd,options.import),seed,{signal,dereference:true,directoryModes,stats});}
   await restoreDirectoryModes(directoryModes,signal);
-  return {baseline,config,seed,nodePaths,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
+  return {baseline,config,seed,nodePaths,relocationLinks,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
 }
 
 // Clone the whole baseline with the platform tool. Returns false, leaving nothing behind, when the
@@ -381,22 +383,17 @@ async function prepareGenerationInputs(snapshot,directory,signal){
   };
   const rewrite=value=>typeof value==='string'&&value.startsWith(`${snapshot.baseline}${sep}`)?`${inputs}${value.slice(snapshot.baseline.length)}`:Array.isArray(value)?value.map(rewrite):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,rewrite(item)])):value;
   // Windows junctions are absolute; copying them verbatim would expose the baseline.
-  const relocateLinks=async path=>{
-    for(const entry of await checked(signal,()=>readdir(path,{withFileTypes:true}))){
-      checkSignal(signal);
-      const child=join(path,entry.name);
-      if(entry.isSymbolicLink()){
-        const target=await checked(signal,()=>readlink(child));
-        const relocated=rewrite(target);
-        if(relocated!==target){
-          const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
-          await checked(signal,()=>unlink(child));
-          await checked(signal,()=>symlink(relocated,child,process.platform==='win32'&&kind==='dir'?'junction':kind));
-        }
-      }else if(entry.isDirectory())await relocateLinks(child);
+  for(const path of snapshot.relocationLinks??[]){
+    checkSignal(signal);
+    const child=join(inputs,path);
+    const target=await checked(signal,()=>readlink(child));
+    const relocated=rewrite(target);
+    if(relocated!==target){
+      const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
+      await checked(signal,()=>unlink(child));
+      await checked(signal,()=>symlink(relocated,child,process.platform==='win32'&&kind==='dir'?'junction':kind));
     }
-  };
-  await relocateLinks(inputs);
+  }
   const config=rewrite(snapshot.config);
   if(config.firebaseJson){const firebase=rewrite(JSON.parse(await checked(signal,()=>readFile(config.firebaseJson,'utf8'))));await rewriteFile(config.firebaseJson,JSON.stringify(firebase));}
   await rewriteFile(join(inputs,'fireemu.json'),JSON.stringify(config));
