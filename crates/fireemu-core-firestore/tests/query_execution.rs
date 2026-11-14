@@ -15,7 +15,7 @@ use fireemu_core_firestore::query::{
 };
 use fireemu_core_firestore::store::{
     get_field, normalize_aggregation_query, Aggregation, Document, FirestoreState, HistoryLimits,
-    ListedDocument, Write, WriteOp,
+    ImportedDocument, ListedDocument, Write, WriteOp,
 };
 use fireemu_core_firestore::value::{GeoPoint, Timestamp, Value};
 use fireemu_core_types::determinism::{DeterministicRng, SplitMix64};
@@ -1965,6 +1965,456 @@ fn scalar_aggregations_retain_no_document_payload() {
     let (docs, stats) = db.run_query_with_stats(&base, None).unwrap();
     assert_eq!(docs.len(), 500);
     assert_eq!(stats.cloned_documents, 500);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn warmed_scalar_equality_candidates_match_the_scan_reference_and_follow_writes() {
+    let mut db = FirestoreState::new();
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let mut writes = (0..100)
+        .map(|index| {
+            set(
+                &format!("items/d{index:03}"),
+                BTreeMap::from([
+                    (
+                        "group".to_owned(),
+                        Value::String(format!("g{:02}", index % 10)),
+                    ),
+                    ("n".to_owned(), Value::Integer(index)),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    writes.extend((0..250).map(|index| {
+        set(
+            &format!("other/d{index:03}"),
+            BTreeMap::from([
+                ("group".to_owned(), Value::String("g03".to_owned())),
+                ("n".to_owned(), Value::Integer(index)),
+            ]),
+        )
+    }));
+    db.commit(&writes, None, now).unwrap();
+    let corpus = (0..100)
+        .map(|index| Document {
+            path: path(&format!("items/d{index:03}")),
+            fields: BTreeMap::from([
+                (
+                    "group".to_owned(),
+                    Value::String(format!("g{:02}", index % 10)),
+                ),
+                ("n".to_owned(), Value::Integer(index)),
+            ]),
+            create_time: now,
+            update_time: now,
+            version: fireemu_core_firestore::store::CommitVersion::from_value(1),
+        })
+        .collect::<Vec<_>>();
+    let mut query = Query::new(QueryScope::collection(None, collection("items")));
+    query.filter = Some(FilterExpr::Field {
+        field: fp("group"),
+        op: FieldOp::Equal,
+        value: Value::String("g03".to_owned()),
+    });
+    query.order_by.push(OrderClause {
+        field: fp("n"),
+        direction: Direction::Descending,
+    });
+    query.start_at = Some(Cursor {
+        values: vec![Value::Integer(83)],
+        before: true,
+    });
+    query.offset = 1;
+    query.limit = Some(3);
+
+    // An exhaustive query builds the bounded cache during its ordinary scope scan. The
+    // subsequent paged query is selective while preserving ordering and cursor behavior.
+    let seed_query = Query {
+        start_at: None,
+        offset: 0,
+        limit: None,
+        ..query.clone()
+    };
+    let (_, seed_stats) = db.run_query_with_stats(&seed_query, None).unwrap();
+    assert_eq!(seed_stats.index_paths_visited, 100);
+    let (warm, stats) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(warm, reference_run(&corpus, &query));
+    assert_eq!(stats.index_paths_visited, 10);
+    assert_eq!(stats.scanned, 10);
+
+    let mut other_scope = Query::new(QueryScope::collection(None, collection("other")));
+    other_scope.filter = query.filter.clone();
+    let (_, other_stats) = db.run_query_with_stats(&other_scope, None).unwrap();
+    assert_eq!(other_stats.index_paths_visited, 250);
+
+    // A failed write leaves the current cache valid; a successful write invalidates it before
+    // the next selection so a moved value is neither omitted nor returned from its old bucket.
+    let mut bad = set(
+        "items/d001",
+        BTreeMap::from([
+            ("group".to_owned(), Value::String("g03".to_owned())),
+            ("n".to_owned(), Value::Integer(1)),
+        ]),
+    );
+    bad.precondition = Some(fireemu_core_firestore::store::Precondition::Exists(false));
+    assert!(db.commit(&[bad], None, now).is_err());
+
+    db.commit(
+        &[set(
+            "items/d001",
+            BTreeMap::from([
+                ("group".to_owned(), Value::String("g03".to_owned())),
+                ("n".to_owned(), Value::Integer(1)),
+            ]),
+        )],
+        None,
+        now,
+    )
+    .unwrap();
+    let unpaged = Query {
+        start_at: None,
+        offset: 0,
+        limit: None,
+        ..query.clone()
+    };
+    let (after_write, _) = db.run_query_with_stats(&unpaged, None).unwrap();
+    let mut updated_corpus = corpus.clone();
+    updated_corpus[1]
+        .fields
+        .insert("group".to_owned(), Value::String("g03".to_owned()));
+    if let Some(updated) = db.get(&path("items/d001")) {
+        updated_corpus[1].update_time = updated.update_time;
+        updated_corpus[1].version = updated.version;
+    }
+    assert_eq!(
+        format!("{after_write:#?}"),
+        format!("{:#?}", reference_run(&updated_corpus, &unpaged))
+    );
+
+    let old_version = fireemu_core_firestore::store::CommitVersion::from_value(1);
+    let (_, historical_stats) = db
+        .run_query_with_stats(&unpaged, Some(old_version))
+        .unwrap();
+    assert_eq!(historical_stats.index_paths_visited, 100);
+    assert_eq!(historical_stats.scanned, 100);
+
+    db.commit(&[delete("items/d003")], None, now).unwrap();
+    let after_delete = db.run_query(&unpaged, None).unwrap();
+    assert!(!after_delete
+        .iter()
+        .any(|document| document.path == path("items/d003")));
+
+    let snapshot = db.visible_snapshot();
+    let snapshot_rows = snapshot.run_query(&unpaged, None).unwrap();
+    assert_eq!(
+        snapshot_rows
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>(),
+        after_delete
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let transaction = db.begin_transaction(true, now).unwrap();
+    let (transaction_rows, transaction_stats) = db
+        .run_query_in_transaction_with_stats(&transaction, &unpaged)
+        .unwrap();
+    assert_eq!(
+        transaction_rows
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>(),
+        after_delete
+            .iter()
+            .map(|document| document.path.clone())
+            .collect::<Vec<_>>()
+    );
+    // The transaction reads the retained scope index, which still includes the deleted path;
+    // visibility filtering drops that tombstone after this candidate counter is incremented.
+    assert_eq!(transaction_stats.index_paths_visited, 100);
+
+    db.import_documents(
+        vec![ImportedDocument {
+            path: path("items/imported"),
+            fields: BTreeMap::from([
+                ("group".to_owned(), Value::String("g03".to_owned())),
+                ("n".to_owned(), Value::Integer(201)),
+            ]),
+            create_time: None,
+            update_time: None,
+        }],
+        now,
+    )
+    .unwrap();
+    let after_import = db.run_query(&unpaged, None).unwrap();
+    assert!(after_import
+        .iter()
+        .any(|document| document.path == path("items/imported")));
+}
+
+#[test]
+fn equality_candidate_index_falls_back_for_numeric_equivalence_and_null() {
+    let db = large_collection(20);
+    let mut query = Query::new(QueryScope::collection(None, collection("items")));
+    query.filter = Some(FilterExpr::Field {
+        field: fp("n"),
+        op: FieldOp::Equal,
+        value: Value::Double(3.0),
+    });
+    let (_, numeric) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(numeric.index_paths_visited, 20);
+    query.filter = Some(FilterExpr::Field {
+        field: fp("n"),
+        op: FieldOp::Equal,
+        value: Value::Null,
+    });
+    let (_, null) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(null.index_paths_visited, 20);
+}
+
+#[test]
+fn equality_candidates_are_detached_across_divergent_same_version_clones() {
+    let mut original = FirestoreState::new();
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let writes = (0..10)
+        .map(|index| {
+            set(
+                &format!("items/d{index:02}"),
+                BTreeMap::from([("group".to_owned(), Value::String("old".to_owned()))]),
+            )
+        })
+        .collect::<Vec<_>>();
+    original.commit(&writes, None, now).unwrap();
+    let base_query = |group: &str| {
+        let mut query = Query::new(QueryScope::collection(None, collection("items")));
+        query.filter = Some(FilterExpr::Field {
+            field: fp("group"),
+            op: FieldOp::Equal,
+            value: Value::String(group.to_owned()),
+        });
+        query
+    };
+    let old = base_query("old");
+    let _ = original.run_query_with_stats(&old, None).unwrap();
+
+    let mut left = original.clone();
+    let mut right = original;
+    left.commit(
+        &[set(
+            "items/d00",
+            BTreeMap::from([("group".to_owned(), Value::String("left".to_owned()))]),
+        )],
+        None,
+        now,
+    )
+    .unwrap();
+    right
+        .commit(
+            &[set(
+                "items/d01",
+                BTreeMap::from([("group".to_owned(), Value::String("right".to_owned()))]),
+            )],
+            None,
+            now,
+        )
+        .unwrap();
+
+    let left_rows = left.run_query(&base_query("left"), None).unwrap();
+    let right_rows = right.run_query(&base_query("right"), None).unwrap();
+    assert_eq!(
+        left_rows
+            .iter()
+            .map(|doc| doc.path.clone())
+            .collect::<Vec<_>>(),
+        vec![path("items/d00")]
+    );
+    assert_eq!(
+        right_rows
+            .iter()
+            .map(|doc| doc.path.clone())
+            .collect::<Vec<_>>(),
+        vec![path("items/d01")]
+    );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn pict_equality_partitions_match_the_scan_reference() {
+    fn operand(kind: &str) -> Value {
+        match kind {
+            "Boolean" => Value::Boolean(true),
+            "String" => Value::String("wanted".to_owned()),
+            "Timestamp" => Value::Timestamp(Timestamp::new(1_788_000_000, 0).unwrap()),
+            "Integer" => Value::Integer(7),
+            "DoubleNaN" => Value::Double(f64::NAN),
+            "Null" => Value::Null,
+            "Compound" => Value::Array(vec![Value::Integer(7)]),
+            other => panic!("unknown generated operand {other}"),
+        }
+    }
+
+    let generated = include_str!("fixtures/perf-firestore-pict.tsv");
+    let mut rows = 0;
+    for line in generated.lines().skip(1) {
+        let [version, filter, operand_kind, document_state, page]: [&str; 5] = line
+            .split('\t')
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("PICT fixture row has five columns");
+        let wanted = operand(operand_kind);
+        let mut db = FirestoreState::new();
+        let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+        let mut initial = Vec::new();
+        for index in 0..4 {
+            let mut fields = BTreeMap::from([("n".to_owned(), Value::Integer(index))]);
+            let value = match (index, document_state) {
+                (0, "Equal") | (1, _) => Some(wanted.clone()),
+                (0, "Different") => Some(Value::String("different".to_owned())),
+                (0, "Null") => Some(Value::Null),
+                (0, "OldVersion") => Some(Value::String("old".to_owned())),
+                (0, "Missing") => None,
+                (_, _) => Some(Value::String("other".to_owned())),
+            };
+            if let Some(value) = value {
+                fields.insert("group".to_owned(), value);
+            }
+            initial.push(set(&format!("items/d{index:02}"), fields));
+        }
+        db.commit(&initial, None, now).unwrap();
+        let mut current_corpus = initial_documents(&initial, now);
+        if document_state == "OldVersion" {
+            db.commit(
+                &[set(
+                    "items/d00",
+                    BTreeMap::from([
+                        ("n".to_owned(), Value::Integer(0)),
+                        ("group".to_owned(), wanted.clone()),
+                    ]),
+                )],
+                None,
+                now,
+            )
+            .unwrap();
+            current_corpus[0]
+                .fields
+                .insert("group".to_owned(), wanted.clone());
+            current_corpus[0].version = fireemu_core_firestore::store::CommitVersion::from_value(2);
+        }
+
+        let equality = FilterExpr::Field {
+            field: fp("group"),
+            op: FieldOp::Equal,
+            value: wanted.clone(),
+        };
+        let mut query = Query::new(QueryScope::collection(None, collection("items")));
+        query.filter = Some(match filter {
+            "SingleEq" => equality,
+            "AndEq" => FilterExpr::And(vec![
+                equality,
+                FilterExpr::Field {
+                    field: fp("n"),
+                    op: FieldOp::Equal,
+                    value: Value::Integer(1),
+                },
+            ]),
+            "Or" => FilterExpr::Or(vec![
+                equality,
+                FilterExpr::Field {
+                    field: fp("group"),
+                    op: FieldOp::Equal,
+                    value: Value::String("other".to_owned()),
+                },
+            ]),
+            "Unsupported" => FilterExpr::Unary {
+                field: fp("group"),
+                op: UnaryOp::IsNotNull,
+            },
+            other => panic!("unknown generated filter {other}"),
+        });
+        match page {
+            "NoCursor" => {}
+            "FieldOrderCursor" => {
+                query.order_by.push(OrderClause {
+                    field: fp("n"),
+                    direction: Direction::Ascending,
+                });
+                query.start_at = Some(Cursor {
+                    values: vec![Value::Integer(1)],
+                    before: false,
+                });
+            }
+            "NameOrderCursor" => {
+                query.order_by.push(OrderClause {
+                    field: FieldPath::document_name(),
+                    direction: Direction::Descending,
+                });
+                query.start_at = Some(Cursor {
+                    values: vec![Value::Reference(path("items/d02").resource_name())],
+                    before: true,
+                });
+            }
+            "OffsetLimit" => {
+                query.offset = 1;
+                query.limit = Some(2);
+            }
+            other => panic!("unknown generated page {other}"),
+        }
+
+        let selected_version = match version {
+            "Current" => None,
+            "Historical" | "Transaction" => {
+                Some(fireemu_core_firestore::store::CommitVersion::from_value(1))
+            }
+            other => panic!("unknown generated version {other}"),
+        };
+        let got = db.run_query(&query, selected_version).unwrap();
+        let selected_docs = if selected_version.is_none() {
+            reference_run(&current_corpus, &query)
+        } else {
+            reference_run(&initial_documents(&initial, now), &query)
+        };
+        assert_eq!(
+            format!("{got:#?}"),
+            format!("{selected_docs:#?}"),
+            "PICT row: {line}"
+        );
+        if version == "Current" && filter == "SingleEq" {
+            let warm = db.run_query(&query, None).unwrap();
+            assert_eq!(
+                format!("{warm:#?}"),
+                format!("{selected_docs:#?}"),
+                "warm PICT row: {line}"
+            );
+        }
+        rows += 1;
+    }
+    assert_eq!(rows, 39, "every generated PICT row is exercised");
+}
+
+fn initial_documents(writes: &[Write], now: LogicalInstant) -> Vec<Document> {
+    writes
+        .iter()
+        .map(|write| {
+            let WriteOp::Set {
+                path: document_path,
+                fields,
+                ..
+            } = &write.op
+            else {
+                unreachable!("PICT fixture corpus contains only sets")
+            };
+            Document {
+                path: document_path.clone(),
+                fields: fields.clone(),
+                create_time: now,
+                update_time: now,
+                version: fireemu_core_firestore::store::CommitVersion::from_value(1),
+            }
+        })
+        .collect()
 }
 
 #[test]
