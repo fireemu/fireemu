@@ -11,9 +11,9 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 ### Fixed
 
 - In the emulator profile, an ID token without a usable `iat` is checked against a per-account `validSince` kept as firebase-tools 15.28.2 keeps it: a password, an email change through `accounts:update`, a verified identity provider taking over an account, a batch import and a privileged `validSince` assign the current second (also after a clock rewind), and disabling, second-factor withdrawal and other updates leave it. An artifact import gives every account the import second, as firebase-tools' own import does. Strict, integer-claim tokens and the reported `validSince` are unchanged.
-- A password sign-in against an imported hash (for example MD5 with 8192 rounds and a long password) derives the hash before taking the Auth store lock, so other Auth requests no longer wait for it. The sign-in still decides against the credential it finds when it commits.
+- A password sign-in against an imported hash (for example MD5 with 8192 rounds and a long password) derives the hash after request admission, outside the Auth store lock, with at most two derivations running process-wide. The sign-in still decides against the credential it finds when it commits.
 - Outside duplicate-email mode, an account imported with the same email as another can change its password again (strict profile); duplicate-email mode keeps one password account per address.
-- `STANDARD_SCRYPT` imports accept `parallelization` up to 16, as production does (1, 4, 5 and 16 were recorded on 2026-11-15), with the total work bounded locally.
+- `STANDARD_SCRYPT` imports accept `parallelization` up to 16, as production does (1, 4, 5 and 16 were recorded on 2026-11-15), with total CPU work bounded locally (not peak memory); peak algorithm buffers per derivation are at most 112 MiB plus 1,024 output bytes, excluding inputs, stack and allocator overhead.
 - An Auth export can always be restored by fireemu: a restore accepts exactly the hash parameters `accounts:batchCreate` accepts and names the parameter it refuses, and an export refuses, naming the account, a credential it could not restore. HMAC and Firebase SCRYPT credentials keep their `signerKey` and mark it with `"secrets": ["signerKey"]`; older exports load unchanged.
 
 ## [0.53.0] - 2026-11-15

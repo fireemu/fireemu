@@ -7357,6 +7357,141 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[allow(clippy::too_many_lines)] // Keep the full export fixture and its permission assertions together.
+    fn auth_exports_with_signer_keys_have_owner_only_permissions() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_auth::mfa::TotpPolicy;
+        use fireemu_core_auth::store::{AuthRegistry, AuthStore};
+        use fireemu_core_firestore::index::{IndexSet, IndexValidationPolicy, PlanningContext};
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_storage::store::StorageState;
+        use fireemu_core_types::determinism::SplitMix64;
+        use fireemu_core_types::edition::{FirestoreApiMode, FirestoreEdition};
+        use std::sync::{Arc, Mutex};
+
+        use std::os::unix::fs::PermissionsExt as _;
+        let root =
+            std::env::temp_dir().join(format!("fireemu-auth-secret-export-{}", std::process::id()));
+        let clock = Arc::new(Mutex::new(VirtualClock::new(LogicalInstant::UNIX_EPOCH)));
+        let auth = Arc::new(AuthRegistry::new(
+            "demo-app",
+            Arc::new(Mutex::new(AuthStore::new(
+                "demo-app",
+                SplitMix64::new(1),
+                TotpPolicy::default(),
+            ))),
+        ));
+        let backend = Arc::new(LocalBackend::new(
+            Gateway {
+                enforce_limits: true,
+                ctx: PlanningContext {
+                    edition: FirestoreEdition::Standard,
+                    api_mode: FirestoreApiMode::Native,
+                    policy: IndexValidationPolicy::Production,
+                },
+                indexes: IndexSet::default(),
+            },
+            clock.clone(),
+            1,
+        ));
+        let storage = Arc::new(fireemu_adapter_http::storage::StorageState {
+            store: Mutex::new(StorageState::new(1)),
+            clock: clock.clone(),
+            auth: auth.clone(),
+            tenancy: None,
+            rules: Arc::new(fireemu_adapter_http::storage::StorageRulesRegistry::default()),
+            project: "demo-app".to_owned(),
+            events: None,
+            barrier: None,
+            firestore: None,
+            faults: None,
+            clock_observer: None,
+            app_check_policy: None,
+            admin_capability: None,
+            server_requests: fireemu_adapter_http::storage::StorageServerRequests::default(),
+            token_acceptance: fireemu_core_auth::jwt::TokenAcceptance::default(),
+            allow_unsigned_id_tokens: false,
+            control_token: None,
+        });
+        let database = Arc::new(Mutex::new(fireemu_adapter_database::rest::Database::new(
+            fireemu_adapter_database::rest::RestOptions::default(),
+            1,
+        )));
+        let endpoints = super::Endpoints {
+            backend: &backend,
+            auth: &auth,
+            storage: &storage,
+            clock: &clock,
+            database: &database,
+            project: "demo-app",
+            blocking: None,
+            auth_operation_gate: None,
+        };
+        auth.ensure_tenant("demo-app", "tenant-a").unwrap();
+        for (tenant, spec) in [
+            (
+                None,
+                r#"{"algorithm":"HMAC","family":"SHA256","key":"AQID","order":"PASSWORD_AND_SALT"}"#,
+            ),
+            (
+                Some("tenant-a"),
+                r#"{"algorithm":"SCRYPT","key":"AQID","separator":"Bw==","rounds":1,"memoryCost":1}"#,
+            ),
+        ] {
+            let hash = hash_with(spec, &[1; 32]);
+            let (_, record) = exported_with(&hash);
+            let user = super::imported_user(&record, std::path::Path::new("offline.json")).unwrap();
+            tenant
+                .map_or_else(
+                    || auth.store_for("demo-app"),
+                    |tenant| auth.tenant_store("demo-app", tenant),
+                )
+                .unwrap()
+                .lock()
+                .unwrap()
+                .import_user(user)
+                .unwrap();
+        }
+        let directory = root.join("export");
+        super::export(
+            &directory,
+            super::Products {
+                firestore: false,
+                auth: true,
+                storage: false,
+                database: false,
+            },
+            &endpoints,
+            "test",
+        )
+        .unwrap();
+        for name in ["accounts.json", "accounts-tenant-a.json"] {
+            let path = directory.join(super::AUTH_PATH).join(name);
+            let document: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(
+                document["users"][0]["fireemuImportedPassword"]["secrets"],
+                serde_json::json!(["signerKey"])
+            );
+            let spec: serde_json::Value = serde_json::from_str(
+                document["users"][0]["fireemuImportedPassword"]["spec"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(spec["key"], "AQID");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "{name}"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// HMAC and Firebase SCRYPT exports keep their signerKey and say so; an artifact written
     /// before the marker loads, and a marker that disagrees with the spec is refused.
     #[test]

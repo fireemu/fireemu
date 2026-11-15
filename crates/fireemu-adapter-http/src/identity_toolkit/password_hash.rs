@@ -236,6 +236,31 @@ pub(crate) fn verify(spec: &HashSpec, password: &str, salt: &[u8], hash: &[u8]) 
         .is_some_and(|derived| derived.len() == hash.len() && bool::from(derived.ct_eq(hash)))
 }
 
+// Two process-wide slots bound CPU pressure and scrypt buffers to two derivations even on high-core hosts. Waiters hold no permit while acquiring an Auth store lock.
+const MAX_CONCURRENT_DERIVATIONS: usize = 2;
+static DERIVATION_SLOTS: (std::sync::Mutex<usize>, std::sync::Condvar) =
+    (std::sync::Mutex::new(0), std::sync::Condvar::new());
+
+// The counted semaphore releases its slot on every return, including unwinding.
+struct DerivationPermit;
+
+impl Drop for DerivationPermit {
+    fn drop(&mut self) {
+        let mut active = DERIVATION_SLOTS
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active -= 1;
+        DERIVATION_SLOTS.1.notify_one();
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    #[allow(clippy::type_complexity)] // Test observers capture per-test counters and synchronization.
+    pub(super) static DERIVATION_OBSERVER: std::cell::RefCell<Option<Box<dyn Fn(bool)>>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The core store's view of this module: an imported hash matches when its spec decodes and
 /// the password derives the stored hash.
 pub(crate) struct ImportedHashes;
@@ -256,7 +281,31 @@ impl fireemu_core_auth::store::ImportedHashVerifier for ImportedHashes {
         {
             return Err(fireemu_core_auth::store::ImportedHashFailure);
         }
-        Ok(verify(&spec, password, &imported.salt, &imported.hash))
+        let active = DERIVATION_SLOTS
+            .0
+            .lock()
+            .map_err(|_| fireemu_core_auth::store::ImportedHashFailure)?;
+        let mut active = DERIVATION_SLOTS
+            .1
+            .wait_while(active, |active| *active >= MAX_CONCURRENT_DERIVATIONS)
+            .map_err(|_| fireemu_core_auth::store::ImportedHashFailure)?;
+        *active += 1;
+        drop(active);
+        let _permit = DerivationPermit;
+        #[cfg(test)]
+        DERIVATION_OBSERVER.with_borrow(|observer| {
+            if let Some(observer) = observer {
+                observer(true);
+            }
+        });
+        let result = verify(&spec, password, &imported.salt, &imported.hash);
+        #[cfg(test)]
+        DERIVATION_OBSERVER.with_borrow(|observer| {
+            if let Some(observer) = observer {
+                observer(false);
+            }
+        });
+        Ok(result)
     }
 }
 
@@ -509,7 +558,7 @@ pub(crate) fn spec_from_options(options: &Value) -> Result<HashSpec, &'static st
 
 /// Work bounds for imported hashes. Every algorithm keeps the parameter ranges production
 /// validates at import, re-checked at sign-in so a spec restored from an export cannot bypass
-/// them (closure re-review 2026-09-24). Standard scrypt memory and total work, PBKDF output and
+/// them (closure re-review 2026-09-24). Standard scrypt block memory and total CPU work, PBKDF output and
 /// bcrypt cost have no observed production bound; the local ones keep one sign-in from
 /// exhausting the process. Standard scrypt parallelization 1, 4, 5 and 16 were recorded as
 /// accepted (AUTH-EDGES-OBS-20261115-01); above 16 is unrecorded and refused.
@@ -520,8 +569,7 @@ const MAX_FIREBASE_SCRYPT_ROUNDS: u32 = 8;
 const MAX_FIREBASE_SCRYPT_MEMORY_COST: u8 = 14;
 const MAX_STANDARD_SCRYPT_MEMORY_BYTES: u64 = 32 << 20;
 const MAX_STANDARD_SCRYPT_PARALLELIZATION: u32 = 16;
-/// The block memory times parallelization: the derivation's total work, capped at what the
-/// earlier bounds allowed (32 MiB blocks, four lanes).
+/// Block memory times parallelization bounds CPU work, not peak memory, at the earlier allowance of 32 MiB blocks and four lanes. scrypt 0.11 processes lanes sequentially but allocates V=128*r*N, B=128*r*p and T=128*r simultaneously. With N>=2 and these bounds, peak algorithm buffers per derivation are at most 112 MiB plus 1024 output bytes (excluding inputs, stack and allocator overhead).
 const MAX_STANDARD_SCRYPT_WORK_BYTES: u64 = 128 << 20;
 const MAX_STANDARD_SCRYPT_DK_LEN: usize = 1024;
 const MAX_ARGON2_MEMORY_KIB: u32 = 32_768;
@@ -1176,6 +1224,81 @@ mod tests {
             fallback: &EqualBytes,
         };
         assert_eq!(none.verify(&hash_of(0, b"old", b"s"), "old"), Ok(true));
+    }
+
+    #[test]
+    fn imported_derivations_are_bounded_and_waiters_complete() {
+        use fireemu_core_auth::store::{ImportedHashVerifier, ImportedPasswordHash};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc, Condvar, Mutex,
+        };
+        use std::time::Duration;
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (entered, entries) = mpsc::channel();
+        let imported = ImportedPasswordHash {
+            spec: encode(&HashSpec::Argon2 {
+                variant: argon2::Algorithm::Argon2id,
+                version: argon2::Version::V0x13,
+                iterations: 1,
+                memory_kib: 32768,
+                parallelism: 1,
+                hash_len: 32,
+                associated_data: Vec::new(),
+            }),
+            salt: b"synthetic-salt".to_vec(),
+            hash: vec![0; 32],
+        };
+        let mut threads = Vec::new();
+        for _ in 0..6 {
+            let (active, peak, release, entered, imported) = (
+                active.clone(),
+                peak.clone(),
+                release.clone(),
+                entered.clone(),
+                imported.clone(),
+            );
+            threads.push(std::thread::spawn(move || {
+                DERIVATION_OBSERVER.with_borrow_mut(|observer| {
+                    *observer = Some(Box::new(move |entering| {
+                        if entering {
+                            let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                            peak.fetch_max(count, Ordering::SeqCst);
+                            entered.send(()).unwrap();
+                            let ready = release.0.lock().unwrap();
+                            drop(release.1.wait_while(ready, |ready| !*ready).unwrap());
+                        } else {
+                            active.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    }));
+                });
+                assert_eq!(ImportedHashes.verify(&imported, "password"), Ok(false));
+                DERIVATION_OBSERVER.with_borrow_mut(|observer| *observer = None);
+            }));
+        }
+        // Always release and join workers before asserting, even when a mutation lets too many enter.
+        let first = entries.recv_timeout(Duration::from_secs(30));
+        let second = entries.recv_timeout(Duration::from_secs(30));
+        let excess = entries.recv_timeout(Duration::from_millis(200));
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert!(
+            first.is_ok() && second.is_ok(),
+            "two derivations must run concurrently"
+        );
+        assert!(
+            excess.is_err(),
+            "a third derivation entered before a permit was released"
+        );
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(entries.try_iter().count(), 4);
     }
 
     /// The derivation runs with the store unlocked; only the snapshot read takes the lock.
