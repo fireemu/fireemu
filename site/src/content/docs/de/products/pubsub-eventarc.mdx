@@ -1,0 +1,165 @@
+---
+title: Pub/Sub und Eventarc
+description: Veröffentlichen und empfangen Sie Cloud-Pub/Sub-Nachrichten, Eventarc-Custom-Events und Cloud Tasks lokal, aus Functions und Servercode.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../components/Facts.astro';
+
+Fireemu stellt die API `google.pubsub.v1` über gRPC und REST, einen Eventarc-Listener für Custom Events und einen Cloud-Tasks-Emulator für Task-Queue-Funktionen bereit.
+
+<Facts items={[
+  { label: 'Status', value: 'Unterstützt' },
+  { label: 'Standardports', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
+  { label: 'Startet', value: 'Pub/Sub, wenn konfiguriert; Eventarc und Cloud Tasks mit Functions' },
+  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#production-verification' },
+]} />
+
+## Was Sie testen können
+
+- [Pub/Sub-Topics, -Subscriptions und -Zustellung](#cloud-pubsub), einschließlich Push, Filtern, Ordering Keys, StreamingPull, Snapshots und Seek.
+- [Dead-Letter-Weiterleitung](#dead-letter-topics), mit oder ohne die IAM-Berechtigungen der Produktion.
+- [Pub/Sub-Anfragen mit und ohne Credentials](#authentication).
+- [Custom Events, die an `onCustomEventPublished`-Funktionen zugestellt werden](#eventarc).
+- [Aufgaben, die an `onTaskDispatched`-Funktionen zugestellt werden](#cloud-tasks).
+
+## Verbinden
+
+| Dienst | Standardadresse | Umgebungsvariable | Startet |
+|---|---|---|---|
+| Cloud Pub/Sub | `127.0.0.1:8085` | `PUBSUB_EMULATOR_HOST` | Wenn er konfiguriert ist: `emulators.pubsub` in `firebase.json`, `daemon.pubsubPort`, `--pubsub-port` oder `--only pubsub` |
+| Eventarc | `127.0.0.1:9299` | `CLOUD_EVENTARC_EMULATOR_HOST` | Wenn eine Functions-Codebasis geladen ist |
+| Cloud Tasks | `127.0.0.1:9499` | `CLOUD_TASKS_EMULATOR_HOST` | Wenn eine Functions-Codebasis geladen ist |
+
+`fireemu exec` setzt `PUBSUB_EMULATOR_HOST`, das die Google-Cloud-Clientbibliotheken lesen (siehe [Umgebungsvariablen](../../reference/environment-variables/)). Fireemu setzt `CLOUD_EVENTARC_EMULATOR_HOST` und `CLOUD_TASKS_EMULATOR_HOST`, wenn es diese Listener startet.
+
+## Cloud Pub/Sub
+
+Topics, Subscriptions, Publish, Pull und Acknowledgement, Push-Zustellung, Filter, Ordering Keys, Dead-Letter-Topics, StreamingPull, Snapshots und Seek werden unterstützt. Was nicht unterstützt wird, steht unter [Unterschiede zur Produktion](#differences-from-production).
+
+### Message-Storage-Policy eines Topics
+
+Unter `profile = "emulator"` wird die `messageStoragePolicy` eines Topics (`allowedPersistenceRegions` und `enforceInTransit`) gespeichert, von Get und List zurückgegeben und von `UpdateTopic` geändert (REST `PATCH` mit `updateMask`, Masken `messageStoragePolicy` und ihre beiden Mitglieder), genau so, wie sie gesendet wurde, wie es der offizielle Emulator tut:
+
+- Eine unbekannte, wiederholte oder leere Regionenliste und eine leere Policy bleiben alle erhalten.
+- Eine Maske, die die Policy nennt, aber keine sendet, entfernt sie.
+- Es wird nichts durchgesetzt: Nachrichten werden nicht nach Region geroutet.
+
+Das Profil `strict` lehnt das Feld mit `UNIMPLEMENTED` (REST 501) und einer Erklärung ab. Die Produktion prüft jede Region gegen die Pub/Sub-Regionenliste von Google Cloud (sie antwortete mit `INVALID_ARGUMENT` für `no-such-region1` und akzeptierte `us-central1`), und Fireemu hat keine belegte Kopie dieser Liste, gegen die es prüfen könnte. Lassen Sie das Feld unter `strict` weg oder wählen Sie das Profil emulator, um es zu behalten.
+
+### Schlüsselname und Tags eines Topics
+
+Unter `profile = "emulator"` werden `kmsKeyName` und `tags` eines Topics so gespeichert, wie sie gesendet wurden, und über REST und gRPC ohne Validierung oder Durchsetzung zurückgegeben. `UpdateTopic` kann `kms_key_name` ersetzen oder löschen; Tags sind unveränderlich.
+
+Das Profil strict lehnt diese Felder ab, weil die Validierung der Produktion von Inventaren und Berechtigungen aus Cloud KMS und Resource Manager abhängt, die Fireemu nicht hat. Der offizielle Emulator 0.8.35 speichert diese Werte unvalidiert und lehnt jede Update-Maske ab; das Verhalten der Produktion ist nicht aufgezeichnet.
+
+### Dead-Letter-Topics
+
+Unter `strict` wird eine Nachricht, die `maxDeliveryAttempts` ausschöpft, ohne Projektnummer und ohne IAM-Berechtigungen an das Dead-Letter-Topic weitergeleitet, mit den Metadaten-Attributen, die die Produktion hinzufügt.
+
+Die Produktion leitet erst weiter, nachdem der Pub/Sub-Service-Agent `roles/pubsub.subscriber` auf der Subscription und `roles/pubsub.publisher` auf dem Dead-Letter-Topic hält. Um dieselben Berechtigungen über `SetIamPolicy` zu verlangen, setzen Sie `pubsub.deadLetterAuthorization` auf `"iam"` (oder `productionExact`, oder nennen Sie `pubsub.projectNumbers`). Das Start-Banner nennt dann den Service-Agent, dem die Berechtigungen zu erteilen sind.
+
+### Zwischengespeichertes 404 im REST-Frontend (`pubsub.restNegativeCache`)
+
+Das REST-Frontend der Produktion kann ein `GET` einer Subscription direkt nach deren Erstellung mit einem zwischengespeicherten `404` beantworten. `pubsub.restNegativeCache` ist in jedem Profil standardmäßig `"off"`, und `productionExact` wählt es nicht aus.
+
+Setzen Sie den Schlüssel auf `"production"` (nur Profil strict), um zu modellieren, dass ein echtes `404` eines `GET` oder `PATCH` einen Cache-Eintrag für `GET`, `PATCH` oder `DELETE` derselben Subscription auf **derselben Verbindung** scharf schaltet, sodass das `PATCH` oder `DELETE` nicht ausgeführt wird.
+
+Was das Modell leistet und was offen bleibt:
+
+- **Das Fenster.** Die Kante ist nicht scharf: Eine Aufzeichnung verfehlte jedes Lesen von 10,25 s bis 10,50 s, eine andere traf bei 10,40 bis 10,50 s neben Fehlschlägen im selben Alter, und frühere Aufzeichnungen trafen bis 10,20 s. Die Produktion ist um 10,2 bis 10,5 s nichtdeterministisch; das deterministische Fenster von 10,35 s bei fireemu ist ein bekannter Unterschied.
+- **Ein `GET` 200 vor dem 404.** Ein `GET` 200 sieben Sekunden vor dem 404 nahm es in beiden v5-Läufen aus; vier und 13 Sekunden bleiben offen. Das Modell nimmt ein `GET` 200 innerhalb seines Fensters aus.
+- **DELETE und nie angelegte Namen.** Das Scharfschalten durch DELETE 404 und die Aktivierung für nie angelegte Namen bleiben offen; das Modell schaltet bei DELETE nicht scharf und schaltet für nie angelegte Namen scharf.
+- **Was nie aus dem Eintrag beantwortet wird.** Eine andere Verbindung, ein `:pull` oder `:getIamPolicy`, ein Snapshot, ein Topic, gRPC und eine Anfrage mit Query-String.
+- **Was ihn nicht scharf schaltet.** Eine fehlgeschlagene Erstellung und ein `:seek`, das mit `404` antwortet.
+
+Der Ablauf verwendet die logische Uhr des Daemons. Ist die Uhr eingefroren, stellen Sie sie über das Fenster von 10,35 Sekunden hinaus vor, verwenden Sie eine andere Verbindung oder deaktivieren Sie den Cache, um sich von einem zwischengespeicherten 404 zu erholen.
+
+### Authentifizierung
+
+Unter `strict` wird eine Anfrage ohne jedes Credential akzeptiert, sodass Clients, die `PUBSUB_EMULATOR_HOST` ohne Credentials verwenden, funktionieren. Eine Anfrage, die ein Credential vorlegt, wird geprüft, und Fireemu kann ein echtes Google-OAuth-Token nicht offline verifizieren, daher wird eine solche Anfrage mit 401 abgelehnt. Verwenden Sie gegen den Emulator einen Client ohne Credentials, zum Beispiel den Java-Client mit `NoCredentialsProvider`.
+
+Für Tests, die ein Credential brauchen, setzen Sie ein lokales Fixture-Bearer-Token. Der Endpunkt akzeptiert dann nur `Authorization: Bearer <token>` mit genau diesem Wert und lehnt Anfragen ohne Credential ab, wie es die Produktion tut:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[pubsub.authentication]
+# Require this non-empty local bearer token for strict-profile Pub/Sub requests.
+localBearerToken = "fixture-token"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "pubsub": {
+    "authentication": {
+      "localBearerToken": "fixture-token"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Verwenden Sie einen ausgedachten Wert; verwenden Sie nie ein Produktions-Credential wieder.
+
+## Eventarc
+
+Ist eine Functions-Codebasis geladen, startet Fireemu einen Eventarc-Listener auf `127.0.0.1:9299` und setzt `CLOUD_EVENTARC_EMULATOR_HOST`. Mit `onCustomEventPublished` deklarierte Funktionen erhalten die Events, die an ihren Channel veröffentlicht werden.
+
+Das Admin SDK fragt sein Credential vor dem Veröffentlichen immer nach einem Access-Token, und CI hat kein Google-Credential. Geben Sie der App ein gefälschtes Credential:
+
+```js
+import { initializeApp } from 'firebase-admin/app';
+import { getEventarc } from 'firebase-admin/eventarc';
+
+const app = initializeApp({
+  projectId: 'demo-app',
+  credential: { getAccessToken: async () => ({ access_token: 'owner', expires_in: 3600 }) },
+});
+await getEventarc(app).channel('locations/us-central1/channels/firebase').publish({
+  type: 'com.example.thing.done',
+  source: 'https://example.com/things',
+  data: { id: 'e1' },
+});
+```
+
+Standardmäßig prüft der Listener das Credential nicht (`eventarc.authentication: "permissive"`), wie es auch der offizielle Emulator nicht tut. Mit `"production"` (oder `productionExact`) wird ein fehlendes, fehlerhaftes oder JWT-förmiges Bearer mit dem 401 der Produktion abgelehnt.
+
+## Cloud Tasks
+
+Ist eine Functions-Codebasis geladen, startet Fireemu einen Cloud-Tasks-Emulator auf `127.0.0.1:9499` und setzt `CLOUD_TASKS_EMULATOR_HOST`. Task-Queue-Funktionen (`onTaskDispatched`) erhalten die für sie eingereihten Aufgaben, mit ihren Ratenbegrenzungen und ihrer Retry-Konfiguration. Die `scheduleTime` einer Aufgabe hält sie unter `strict` zurück; zu wartenden Aufgaben, **Run now** und der virtuellen Uhr siehe [Task-Queues](../functions/#task-queues).
+
+## Unterschiede zur Produktion
+
+### Nicht unterstützte Pub/Sub-Features
+
+Schemas, die Zustellung über BigQuery- und Cloud-Storage-Subscriptions sowie einige APIs wie `UpdateTopic` werden nicht unterstützt. Unter dem Profil emulator ändert `UpdateTopic` die Felder, die unter [Message-Storage-Policy eines Topics](#topic-message-storage-policy) und [Schlüsselname und Tags eines Topics](#topic-key-name-and-tags) beschrieben sind.
+
+### Felder, die das Profil `strict` ablehnt
+
+- `messageStoragePolicy`: siehe [Message-Storage-Policy eines Topics](#topic-message-storage-policy).
+- `kmsKeyName` und `tags`: siehe [Schlüsselname und Tags eines Topics](#topic-key-name-and-tags).
+
+### Weitere Unterschiede
+
+- Die Dead-Letter-Weiterleitung braucht keine IAM-Berechtigungen, sofern Sie sie nicht anfordern; siehe [Dead-Letter-Topics](#dead-letter-topics).
+- Der negative REST-Cache ist standardmäßig aus. Eingeschaltet ist sein Fenster von 10,35 s deterministisch, das der Produktion nicht; siehe [Zwischengespeichertes 404 im REST-Frontend](#cached-404-on-the-rest-frontend-pubsubrestnegativecache).
+- Eine Pub/Sub-Anfrage mit einem echten Google-OAuth-Token wird unter `strict` mit 401 abgelehnt, weil das Token offline nicht verifiziert werden kann; siehe [Authentifizierung](#authentication).
+- Der Eventarc-Listener prüft das Credential nicht, sofern `eventarc.authentication` nicht `"production"` ist; siehe [Eventarc](#eventarc).
+
+## Siehe auch
+
+- [Cloud Functions](../functions/)
+- [Task-Queues](../functions/#task-queues)
+- [Profile](../../guides/profiles/)
+- [Umgebungsvariablen](../../reference/environment-variables/)
