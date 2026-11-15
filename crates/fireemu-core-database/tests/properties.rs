@@ -13,6 +13,7 @@ mod support;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+use fireemu_core_database::hash::{children_hash_without_priority, node_hash};
 use fireemu_core_database::key::{key_as_int, name_compare};
 use fireemu_core_database::{
     Content, Format, Json, Leaf, Limits, Node, Number, OrderBy, Path, QueryParams, Tree,
@@ -228,6 +229,240 @@ proptest! {
         let exported = stripped.get_json(&Path::root(), Format::Export);
         let text = format!("{exported:?}");
         prop_assert!(!text.contains(".priority"), "{}", text);
+    }
+}
+
+#[test]
+fn generated_pict_rows_match_the_full_sort_and_synthetic_hash_references() {
+    let table = include_str!("fixtures/rtdb-query-pict.tsv");
+    let mut rows = 0;
+    for line in table.lines().skip(1).filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        assert_eq!(columns.len(), 6, "bad PICT row: {line}");
+        assert_pict_row(&columns, line);
+        rows += 1;
+    }
+    assert!(rows > 0, "generated PICT table has no rows");
+}
+
+fn assert_pict_row(columns: &[&str], line: &str) {
+    let tree = pict_tree(columns);
+    assert_value_factor_shape(columns, &tree, line);
+    let query = pict_query(columns);
+    query.validate().unwrap();
+    let mut selected = query.run(tree.root());
+    let got: Vec<String> = selected.iter().map(|(key, _)| (*key).to_owned()).collect();
+    assert_eq!(got, reference_query(&query, tree.root()), "PICT row {line}");
+    if columns
+        == [
+            "value",
+            "start",
+            "firstsmall",
+            "utf16-boundary",
+            "mixed",
+            "query-order",
+        ]
+    {
+        assert_eq!(
+            selected.len(),
+            2,
+            "seeded value row must select both strings: {line}"
+        );
+    }
+    if columns[0] == "value" && columns[1] == "none" && columns[2] != "first0" {
+        assert!(
+            !selected.is_empty(),
+            "unbounded value row must select children: {line}"
+        );
+    }
+
+    match columns[5] {
+        "priority-order" => selected
+            .sort_by(|(ka, a), (kb, b)| QueryParams::default().compare_children(ka, a, kb, b)),
+        "empty" => assert!(selected.is_empty(), "PICT empty-window row {line}"),
+        "nested-priority" => assert_eq!(columns[4], "nested", "PICT row {line}"),
+        "query-order" => {}
+        value => panic!("unknown PICT hash order {value}"),
+    }
+    let expected_hash = if selected.is_empty() {
+        String::new()
+    } else {
+        node_hash(Some(&Node {
+            content: Content::Children(
+                selected
+                    .iter()
+                    .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                    .collect(),
+            ),
+            priority: None,
+        }))
+    };
+    assert_eq!(
+        children_hash_without_priority(selected),
+        expected_hash,
+        "PICT window hash row {line}"
+    );
+}
+
+fn assert_value_factor_shape(columns: &[&str], tree: &Tree, line: &str) {
+    if columns[0] != "value" {
+        return;
+    }
+    let Content::Children(children) = &tree.root().expect("PICT tree has a root").content else {
+        panic!("Value-order PICT tree root must contain children: {line}");
+    };
+    match columns[4] {
+        "equal" => assert!(
+            children
+                .values()
+                .all(|child| matches!(&child.content, Content::Leaf(Leaf::Number(_)))),
+            "equal Value-order factor must contain scalar numbers: {line}"
+        ),
+        "mixed" if columns[3] == "utf16-boundary" => {
+            let values: Vec<_> = children
+                .values()
+                .map(|child| match &child.content {
+                    Content::Leaf(Leaf::String(value)) => value.as_str(),
+                    other => panic!(
+                        "UTF-16 Value-order factor must contain strings, got {other:?}: {line}"
+                    ),
+                })
+                .collect();
+            let mut values = values;
+            values.sort_unstable();
+            assert_eq!(values, ["\u{e000}", "😀"], "UTF-16 value boundary: {line}");
+        }
+        "mixed" => {
+            let mut has_bool = false;
+            let mut has_number = false;
+            let mut has_string = false;
+            for child in children.values() {
+                match &child.content {
+                    Content::Leaf(Leaf::Bool(_)) => has_bool = true,
+                    Content::Leaf(Leaf::Number(_)) => has_number = true,
+                    Content::Leaf(Leaf::String(_)) => has_string = true,
+                    other => panic!("mixed Value-order factor must contain scalar leaves, got {other:?}: {line}"),
+                }
+            }
+            assert!(
+                has_bool && has_number && has_string,
+                "mixed Value-order factor must cover boolean, number, and string: {line}"
+            );
+        }
+        "nested" => assert!(
+            children
+                .values()
+                .all(|child| matches!(&child.content, Content::Children(_))),
+            "nested Value-order factor must contain child nodes: {line}"
+        ),
+        value => panic!("unknown PICT values factor {value}"),
+    }
+}
+
+fn pict_tree(columns: &[&str]) -> Tree {
+    let keys: Vec<&str> = match columns[3] {
+        "numeric-tie" => vec!["2", "02", "10"],
+        "utf16-boundary" => vec!["😀", "\u{e000}"],
+        "ordinary" => vec!["a", "b", "c"],
+        value => panic!("unknown PICT key set {value}"),
+    };
+    let values: Vec<serde_json::Value> = match columns[4] {
+        "equal" => vec![serde_json::json!(1); keys.len()],
+        "mixed" if columns[3] == "utf16-boundary" => {
+            vec![serde_json::json!("😀"), serde_json::json!("\u{e000}")]
+        }
+        "mixed" => keys
+            .iter()
+            .enumerate()
+            .map(|(index, _)| match index % 3 {
+                0 => serde_json::json!(false),
+                1 => serde_json::json!(1),
+                _ => serde_json::json!("😀"),
+            })
+            .collect(),
+        "nested" => keys
+            .iter()
+            .map(|_| serde_json::json!({"nested": {".value": "n", ".priority": 4}}))
+            .collect(),
+        value => panic!("unknown PICT value set {value}"),
+    };
+    let mut object = serde_json::Map::new();
+    object.insert(".priority".to_owned(), serde_json::json!(77));
+    for (index, (key, value)) in keys.iter().zip(values).enumerate() {
+        let priority = serde_json::json!((keys.len() - index) as i64);
+        let child = if columns[0] == "value" {
+            if let serde_json::Value::Object(mut nested) = value {
+                nested.insert(".priority".to_owned(), priority);
+                serde_json::Value::Object(nested)
+            } else {
+                serde_json::json!({".value": value, ".priority": priority})
+            }
+        } else {
+            serde_json::json!({"v": value, ".priority": priority})
+        };
+        object.insert((*key).to_owned(), child);
+    }
+    let mut tree = Tree::new(Limits::default());
+    tree.set(
+        &Path::root(),
+        &support::j(serde_json::Value::Object(object)),
+        NOW,
+    )
+    .unwrap();
+    tree
+}
+
+fn pict_query(columns: &[&str]) -> QueryParams {
+    let order = match columns[0] {
+        "key" => OrderBy::Key,
+        "priority" => OrderBy::Priority,
+        "value" => OrderBy::Value,
+        "child" => OrderBy::Child(Path::from_keys(["v"])),
+        value => panic!("unknown PICT order {value}"),
+    };
+    let lower = || {
+        if matches!(&order, OrderBy::Key) {
+            Json::string(if columns[3] == "utf16-boundary" {
+                "😀"
+            } else {
+                "2"
+            })
+        } else if columns[3] == "utf16-boundary" && columns[4] == "mixed" {
+            Json::string("😀")
+        } else {
+            Json::int(1)
+        }
+    };
+    let upper = || {
+        if matches!(&order, OrderBy::Key) {
+            Json::string(if columns[3] == "utf16-boundary" {
+                "\u{e000}"
+            } else {
+                "a"
+            })
+        } else if columns[3] == "utf16-boundary" && columns[4] == "mixed" {
+            Json::string("\u{e000}")
+        } else {
+            Json::int(3)
+        }
+    };
+    let mut query = QueryParams::ordered_by(order.clone());
+    query = match columns[1] {
+        "none" => query,
+        "start" => query.start_at(lower(), None),
+        "end" => query.end_before(lower(), None),
+        "both" => query.start_at(lower(), None).end_at(upper(), None),
+        "inverted" => query.start_at(upper(), None).end_before(lower(), None),
+        value => panic!("unknown PICT bound {value}"),
+    };
+    match columns[2] {
+        "none" => query,
+        "first0" => query.limit_to_first(0),
+        "firstsmall" => query.limit_to_first(2),
+        "lastsmall" => query.limit_to_last(2),
+        "firstmax" => query.limit_to_first(u32::MAX),
+        "lastmax" => query.limit_to_last(u32::MAX),
+        value => panic!("unknown PICT limit {value}"),
     }
 }
 
@@ -516,7 +751,10 @@ fn query() -> impl Strategy<Value = QueryParams> {
         (
             Just(order),
             prop::collection::vec(bound, 0..3),
-            prop::option::of((any::<bool>(), 0u32..5)),
+            prop::option::of((
+                any::<bool>(),
+                prop::sample::select(vec![0, 1, 2, 4, u32::MAX]),
+            )),
         )
             .prop_map(|(order, bounds, limit)| {
                 let mut q = QueryParams::ordered_by(order);

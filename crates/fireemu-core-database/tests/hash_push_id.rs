@@ -2,8 +2,11 @@
 
 mod support;
 
-use fireemu_core_database::hash::{etag, node_hash, sha1, NULL_ETAG};
+use fireemu_core_database::hash::{
+    children_hash_without_priority, etag, node_hash, sha1, NULL_ETAG,
+};
 use fireemu_core_database::push_id::{PushIdGenerator, PUSH_CHARS};
+use fireemu_core_database::{Content, Node};
 use proptest::prelude::*;
 use serde_json::json;
 use support::{p, tree_with};
@@ -33,6 +36,37 @@ fn sha1_matches_the_rfc_3174_vectors() {
         )),
         "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
     );
+}
+
+#[test]
+fn sha1_matches_frozen_padding_boundary_vectors() {
+    let cases = [
+        (55, "8ae2d46729cfe68ff927af5eec9c7d1b66d65ac2"),
+        (56, "636e2ec698dac903498e648bd2f3af641d3c88cb"),
+        (63, "6d942da0c4392b123528f2905c713a3ce28364bd"),
+        (64, "c6138d514ffa2135bfce0ed0b8fac65669917ec7"),
+        (65, "69bd728ad6e13cd76ff19751fde427b00e395746"),
+        (119, "41c89d06001bab4ab78736b44efe7ce18ce6ae08"),
+        (120, "d3dbd653bd8597b7475321b60a36891278e6a04a"),
+        (127, "89d7312a903f65cd2b3e34a975e55dbea9033353"),
+        (128, "e6434bc401f98603d7eda504790c98c67385d535"),
+        (129, "3352e41cc30b40ae80108970492b21014049e625"),
+        (4096, "e9dded8c84614e894501965af60c2525794a8c7d"),
+        (65_536, "f04977267a391b2c8f7ad8e070f149bc19b0fc25"),
+    ];
+    let hex = |digest: [u8; 20]| {
+        use std::fmt::Write as _;
+        digest.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    };
+    for (len, expected) in cases {
+        let input: Vec<u8> = (0..len)
+            .map(|index| u8::try_from(index % 256).expect("index modulo 256 fits in u8"))
+            .collect();
+        assert_eq!(hex(sha1(&input)), expected, "input length {len}");
+    }
 }
 
 /// `ETag`s the official emulator (firebase-database-emulator v4.11.2) answered for these
@@ -79,6 +113,77 @@ fn an_absent_value_has_the_null_etag_and_an_empty_hash() {
     assert_eq!(etag(None), NULL_ETAG);
     assert_eq!(NULL_ETAG, "null_etag");
     assert_eq!(node_hash(None), "");
+}
+
+#[test]
+fn borrowed_children_hash_matches_the_synthetic_parent_definition() {
+    let tree = tree_with(json!({
+        ".priority": 900,
+        "b": {"nested": {".value": "héllo😀", ".priority": 4}, ".priority": 9},
+        "a": {".value": 2, ".priority": 1},
+        "c": {".value": false, ".priority": 3}
+    }));
+    let Content::Children(children) = &tree.root().unwrap().content else {
+        unreachable!();
+    };
+    let mut selected: Vec<(&str, &Node)> = children
+        .iter()
+        .filter(|(key, _)| key.as_str() != "c")
+        .map(|(key, child)| (key.as_str(), child))
+        .collect();
+    selected.reverse();
+    let expected = node_hash(Some(&Node {
+        content: Content::Children(
+            selected
+                .iter()
+                .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                .collect(),
+        ),
+        priority: None,
+    }));
+    assert_eq!(children_hash_without_priority(selected), expected);
+    assert_eq!(children_hash_without_priority(Vec::new()), "");
+}
+
+proptest! {
+    #[test]
+    fn borrowed_children_hash_matches_the_old_synthetic_node_for_every_subset(
+        selected_mask in any::<u8>(), reverse in any::<bool>()
+    ) {
+        let tree = tree_with(json!({
+            ".priority": 123,
+            "0": {"nested": {".value": "héllo😀", ".priority": 4}, ".priority": 9},
+            "2": {".value": 2, ".priority": 1},
+            "10": {".value": false, ".priority": 3},
+            "-0": {".value": "x", ".priority": 2}
+        }));
+        let Content::Children(children) = &tree.root().unwrap().content else {
+            unreachable!();
+        };
+        let mut selected: Vec<(&str, &Node)> = children
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| selected_mask & (1 << index) != 0)
+            .map(|(_, (key, child))| (key.as_str(), child))
+            .collect();
+        if reverse {
+            selected.reverse();
+        }
+        let expected = if selected.is_empty() {
+            String::new()
+        } else {
+            node_hash(Some(&Node {
+                content: Content::Children(
+                    selected
+                        .iter()
+                        .map(|(key, child)| ((*key).to_owned(), (*child).clone()))
+                        .collect(),
+                ),
+                priority: None,
+            }))
+        };
+        prop_assert_eq!(children_hash_without_priority(selected), expected);
+    }
 }
 
 #[test]
