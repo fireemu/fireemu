@@ -8,7 +8,7 @@
     "build": "astro build --force",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "node --test src/data/*.test.mjs",
+    "test": "node --test src/data/*.test.mjs src/i18n/*.test.mjs",
     "check:links": "node scripts/check-links.mjs"
   },
   "dependencies": {

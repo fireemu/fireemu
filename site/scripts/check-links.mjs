@@ -1,9 +1,14 @@
 // Checks every internal link in the built site (dist/): the target page exists, and a #fragment
 // names an id on that page. Stylesheets, scripts and images a page loads must exist too (a stale
 // build cache can leave a page pointing at a stylesheet of an earlier build). Run after `pnpm build`. Exits 1 and lists each broken link.
+//
+// Locales: every locale has a landing page and a page (translated or English fallback) for every
+// English docs page, and a translated page links to pages of its own locale, not to the English
+// page of a path that exists in that locale.
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { localeCodes, splitLocale } from '../src/i18n/locales.mjs';
 
 const dist = fileURLToPath(new URL('../dist/', import.meta.url));
 const base = (process.env.FIREEMU_SITE_BASE ?? '/fireemu').replace(/\/$/, '');
@@ -38,6 +43,31 @@ function fileFor(pathname) {
 
 const broken = [];
 let checked = 0;
+
+const docsDir = fileURLToPath(new URL('../src/content/docs/', import.meta.url));
+/** The English docs pages as site paths ("guides/time/"), from the content files. */
+function rootDocs(dir = docsDir, out = []) {
+	for (const name of readdirSync(dir)) {
+		const path = join(dir, name);
+		const rel = relative(docsDir, path);
+		if (statSync(path).isDirectory()) {
+			if (dir === docsDir && localeCodes.includes(name)) continue;
+			rootDocs(path, out);
+		} else if (/\.mdx?$/.test(name)) {
+			out.push(`${rel.replace(/\.mdx?$/, '').replace(/(^|\/)index$/, '')}/`.replace(/^\/$/, ''));
+		}
+	}
+	return out;
+}
+for (const locale of localeCodes) {
+	checked += 1;
+	if (!existsSync(join(dist, locale, 'index.html'))) broken.push(`${locale}/: no landing page`);
+	for (const page of rootDocs()) {
+		checked += 1;
+		if (!existsSync(join(dist, locale, page, 'index.html'))) broken.push(`${locale}/${page}: neither translated nor a fallback`);
+	}
+}
+
 for (const file of pages(dist)) {
 	const html = readFileSync(file, 'utf8');
 	const pageUrl = new URL(`${base}/${relative(dist, file).replace(/index\.html$/, '')}`, 'http://site');
@@ -54,6 +84,13 @@ for (const file of pages(dist)) {
 		const url = new URL(raw, pageUrl);
 		checked += 1;
 		const target = fileFor(url.pathname);
+		const fromLocale = splitLocale(`/${from}`).locale;
+		if (target && fromLocale !== 'root' && url.pathname.startsWith(`${base}/`)) {
+			const { locale, rest } = splitLocale(url.pathname.slice(base.length));
+			if (locale === 'root' && target.endsWith('.html') && existsSync(join(dist, fromLocale, rest, 'index.html'))) {
+				broken.push(`${from}: ${raw} -> leaves the ${fromLocale} locale (use the ${fromLocale}/ page)`);
+			}
+		}
 		if (!target) {
 			broken.push(`${from}: ${raw} -> no such page`);
 			continue;
