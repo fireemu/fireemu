@@ -390,12 +390,16 @@ pub struct UserRecord {
     /// Whether the account was created through the Admin API (create or import). Production
     /// then reports `disabled` and `validSince` in every read of it.
     pub admin_created: bool,
-    /// Whether the account came in through an import (the Admin batch import or an artifact
-    /// restore) rather than being created. firebase-tools gives an imported account a
-    /// `validSince` always, and an account created through the Admin API only when it is
-    /// created with a password (`operations.js:164-169`, `:341`); the emulator profile's token
-    /// verification reads it (see `jwt::official_valid_since_is_set`).
-    pub imported: bool,
+    /// The `validSince` firebase-tools 15.28.2 would hold for this account, in Unix seconds,
+    /// which only the emulator profile's ID-token check reads (`operations.js:1727`). It is
+    /// separate from [`Self::tokens_valid_after`], the production bound. `None` is no
+    /// `validSince`. A setter assigns the second of its event, never a maximum, so a clock that
+    /// went backwards lowers it: a password set or reset (`:169`, `:634`, `:861`), an email
+    /// change through `accounts:update` (`:861`), a verified identity provider taking over the
+    /// account (`:2019`), a batch import (`:341`) and an artifact import, which firebase-tools
+    /// runs as a batch import (`emulator/auth/index.js:85`). A privileged `validSince` is
+    /// copied over it as given (`:885`). Every other change keeps it.
+    pub emulator_valid_since: Option<i64>,
     /// Whether a custom-token sign-in created the account. Production then reports
     /// `customAuth` and `validSince` in every read of it (sandbox recording 2026-09-24).
     pub custom_auth: bool,
@@ -2807,7 +2811,9 @@ impl AuthStore {
                 tokens_revoked: user.tokens_valid_after > Self::whole_second(user.created_at),
                 federated: user.federated,
                 admin_created: true,
-                imported: true,
+                // `operations.js:341`: the upload second, which the import passes as the
+                // production bound; an artifact import assigns its own second afterwards.
+                emulator_valid_since: Some(Self::unix_second(user.tokens_valid_after)),
                 custom_auth: false,
                 email_link_signin: false,
                 email_link_created: false,
@@ -3527,7 +3533,7 @@ impl AuthStore {
             tokens_revoked: false,
             federated: Vec::new(),
             admin_created: false,
-            imported: false,
+            emulator_valid_since: None,
             custom_auth: false,
             email_link_signin: false,
             email_link_created: false,
@@ -4273,6 +4279,7 @@ impl AuthStore {
             user.provider = Provider::Federated(provider_id.to_owned());
             user.tokens_valid_after = Self::whole_second(now);
             user.tokens_revoked = true;
+            user.emulator_valid_since = Some(Self::unix_second(now));
         }
         if let Some(phone) = old_phone {
             Self::remove_index_owner(&mut self.local_ids_for_phone, &phone, uid);
@@ -4673,6 +4680,7 @@ impl AuthStore {
         // validSince does (an Admin password update left a refresh token TOKEN_EXPIRED in the
         // sandbox recording of 2026-09-23).
         user.tokens_valid_after = user.tokens_valid_after.max(Self::whole_second(now));
+        user.emulator_valid_since = Some(Self::unix_second(now));
         self.activate_email_owner(uid);
         Ok(())
     }
@@ -5665,7 +5673,42 @@ impl AuthStore {
             .ok_or(AuthError::UserNotFound)?;
         user.tokens_valid_after = Self::whole_second(at);
         user.tokens_revoked = true;
+        user.emulator_valid_since = Some(Self::unix_second(at));
         self.activate_email_owner(uid);
+        Ok(())
+    }
+
+    /// Sets the emulator profile's `validSince` of `uid` (see
+    /// [`UserRecord::emulator_valid_since`]) to the second of `at` and changes nothing else:
+    /// an email change through `accounts:update` (`operations.js:861`) and an artifact import,
+    /// which firebase-tools runs as a batch import at that second (`emulator/auth/index.js:85`,
+    /// `operations.js:341`).
+    pub fn assign_emulator_valid_since(
+        &mut self,
+        uid: &LocalId,
+        at: LogicalInstant,
+    ) -> Result<(), AuthError> {
+        self.write_emulator_valid_since(uid, Some(Self::unix_second(at)))
+    }
+
+    /// Removes the emulator profile's `validSince` of `uid` and changes nothing else: a
+    /// privileged `validSince` that JavaScript reads as false (the number 0) is copied as given
+    /// (`operations.js:885`), and the account then has none (`:1727`).
+    pub fn clear_emulator_valid_since(&mut self, uid: &LocalId) -> Result<(), AuthError> {
+        self.write_emulator_valid_since(uid, None)
+    }
+
+    fn write_emulator_valid_since(
+        &mut self,
+        uid: &LocalId,
+        valid_since: Option<i64>,
+    ) -> Result<(), AuthError> {
+        let user = self
+            .users
+            .get_mut(uid)
+            .map(Arc::make_mut)
+            .ok_or(AuthError::UserNotFound)?;
+        user.emulator_valid_since = valid_since;
         Ok(())
     }
 
@@ -5675,6 +5718,12 @@ impl AuthStore {
     fn whole_second(at: LogicalInstant) -> LogicalInstant {
         let seconds = at.as_nanos().div_euclid(1_000_000_000);
         LogicalInstant::from_nanos(seconds * 1_000_000_000)
+    }
+
+    /// `toUnixTimestamp` (`Math.floor(ms / 1000)`) of `at`, saturated at the `i64` range.
+    fn unix_second(at: LogicalInstant) -> i64 {
+        let seconds = at.as_nanos().div_euclid(1_000_000_000);
+        i64::try_from(seconds).unwrap_or(if seconds < 0 { i64::MIN } else { i64::MAX })
     }
 
     /// Whether a token with `auth_time` is still valid for `uid` at `now`.
@@ -13360,5 +13409,22 @@ mod provider_seed_snapshot_tests {
         assert!(source.provider_config_seeds.oidc.as_ref().unwrap()[0]
             .client_secret
             .is_some());
+    }
+}
+
+#[cfg(test)]
+mod emulator_valid_since_tests {
+    use super::AuthStore;
+    use fireemu_core_types::time::LogicalInstant;
+
+    /// `Math.floor(ms / 1000)`: floors toward negative infinity and saturates outside `i64`.
+    #[test]
+    fn unix_second_floors_and_saturates() {
+        let second = |nanos: i128| AuthStore::unix_second(LogicalInstant::from_nanos(nanos));
+        assert_eq!(second(1_999_999_999), 1);
+        assert_eq!(second(-1), -1);
+        assert_eq!(second(0), 0);
+        assert_eq!(second(i128::MAX), i64::MAX);
+        assert_eq!(second(i128::MIN), i64::MIN);
     }
 }

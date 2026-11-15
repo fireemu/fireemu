@@ -1808,9 +1808,9 @@ fn an_administrative_email_change_revokes_sessions_and_a_profile_change_does_not
     );
 }
 
-/// Disabling and re-enabling an account keeps its sessions in the strict profile, as production
-/// does (AUTH-ACCOUNT recording 2026-09-23, admin/disable), while the emulator profile revokes
-/// them as the official emulator does.
+/// Disabling and re-enabling an account keeps its ID token usable in the strict profile, as
+/// production does (AUTH-ACCOUNT recording 2026-09-23, admin/disable), and in the emulator
+/// profile, as firebase-tools 15.28.2 does.
 #[test]
 fn disable_and_re_enable_keeps_sessions_only_in_the_strict_profile() {
     for strict in [true, false] {
@@ -1850,14 +1850,10 @@ fn disable_and_re_enable_keeps_sessions_only_in_the_strict_profile() {
             &format!("{V1}/accounts:lookup"),
             &json!({"idToken": account["idToken"]}),
         );
-        if strict {
-            assert_eq!(status, 200, "{looked}");
-        } else {
-            assert_eq!(
-                (status, looked["error"]["message"].clone()),
-                (400, json!("TOKEN_EXPIRED"))
-            );
-        }
+        // The emulator profile follows firebase-tools 15.28.2, whose disable copies `disabled`
+        // only (`operations.js:878`) and so leaves `validSince`, which the ID token is checked
+        // against (`:1727`): the token held from before is usable again in both profiles.
+        assert_eq!(status, 200, "strict={strict}: {looked}");
     }
 }
 

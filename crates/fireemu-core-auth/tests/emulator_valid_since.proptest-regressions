@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5af7fa754bee26d633e5f6055b56f8c7fa4fcc44aa4b513b551ff2186d68bd05 # shrinks to with_password = false, events = [Tick(-1), SetPassword]

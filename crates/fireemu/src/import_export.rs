@@ -632,6 +632,13 @@ pub fn apply(mut prepared: Prepared, endpoints: &Endpoints) -> Result<(), Artifa
 
 #[allow(clippy::too_many_lines)]
 fn apply_auth(auth: &PreparedAuth, endpoints: &Endpoints) -> Result<(), ArtifactError> {
+    // firebase-tools 15.28.2 imports accounts through `accounts:batchCreate`
+    // (`emulator/auth/index.js:85`), which gives every row the upload second as its
+    // `validSince` whatever the file says (`operations.js:291`, `:341`). The emulator
+    // profile's bound follows that for every artifact, old or new, from fireemu or from
+    // firebase-tools: nothing in the file is read for it, so no presence is inferred from a
+    // timestamp. The file's `validSince` stays the production bound.
+    let imported_at = endpoints.now();
     let policy_path = PathBuf::from(AUTH_PATH).join(PASSWORD_POLICIES_FILE);
     let mut current_tenant_policies = BTreeMap::new();
     for tenant in endpoints.auth.tenants(endpoints.project) {
@@ -734,6 +741,7 @@ fn apply_auth(auth: &PreparedAuth, endpoints: &Endpoints) -> Result<(), Artifact
             &auth.password_updated_at,
             None,
             Path::new(ACCOUNTS_FILE),
+            imported_at,
         )?;
         candidate
     };
@@ -831,6 +839,7 @@ fn apply_auth(auth: &PreparedAuth, endpoints: &Endpoints) -> Result<(), Artifact
             &auth.password_updated_at,
             Some(tenant),
             Path::new(&format!("accounts-{tenant}.json")),
+            imported_at,
         )?;
         let _ = candidate.take_user_events();
         tenant_candidates.push((tenant.clone(), candidate, metadata));
@@ -1009,6 +1018,7 @@ fn install_auth_users(
     password_updated_at: &BTreeMap<(Option<String>, String), LogicalInstant>,
     tenant: Option<&str>,
     filename: &Path,
+    imported_at: LogicalInstant,
 ) -> Result<(), ArtifactError> {
     for user in users {
         let id = user.local_id.clone();
@@ -1022,6 +1032,8 @@ fn install_auth_users(
         if let Some(at) = password_updated_at.get(&(tenant.map(str::to_owned), id)) {
             store.set_password_updated_at(&uid, *at);
         }
+        // The account was installed just above, so it exists.
+        let _ = store.assign_emulator_valid_since(&uid, imported_at);
     }
     Ok(())
 }
@@ -7015,6 +7027,96 @@ mod tests {
         }
         assert_eq!(restored.users_by_email("shared@example.com").len(), 2);
         assert!(!restored.config().allow_duplicate_emails);
+    }
+
+    /// An artifact import is firebase-tools' batch import (`emulator/auth/index.js:85`): every
+    /// account, of the default store and of a tenant, gets the import second as the emulator
+    /// profile's `validSince` (`operations.js:291`, `:341`), whatever the file's `validSince`
+    /// says, while that file value stays the production bound. The file carries no fireemu
+    /// marker for it, so an artifact written before this rule loads the same way.
+    #[test]
+    fn an_artifact_import_gives_every_account_the_import_second() {
+        use fireemu_core_auth::{
+            jwt::{encode_payload_with, verify_id_token, FutureClaims, JwtError},
+            mfa::TotpPolicy,
+            store::AuthStore,
+        };
+        use fireemu_core_export::auth::UserRecord;
+        use fireemu_core_types::{
+            determinism::SplitMix64,
+            json::{parse, JsonValue},
+            time::LogicalInstant,
+        };
+        let imported_at = LogicalInstant::from_unix_seconds(1_788_004_860);
+        let path = std::path::Path::new("accounts.json");
+        let token = |store: &AuthStore, uid: &str, iat: Option<i64>| {
+            let local = store.user_by_id(uid).unwrap().local_id.clone();
+            let claims = store.id_token_claims(&local, None, imported_at).unwrap();
+            let JsonValue::Object(mut object) = parse(&claims.canonical_json()).unwrap() else {
+                panic!("claims are an object");
+            };
+            object.remove("iat");
+            object.remove("auth_time");
+            let mut payload = String::new();
+            fireemu_core_auth::claims::ClaimValue::from_json(&JsonValue::Object(object))
+                .write_canonical_json(&mut payload);
+            if let Some(iat) = iat {
+                payload.pop();
+                std::fmt::Write::write_fmt(&mut payload, format_args!(",\"iat\":{iat}}}")).unwrap();
+            }
+            encode_payload_with(&payload, None)
+        };
+        // An earlier production bound in the file, a later one, and none at all.
+        let records = [
+            ("early", Some("1000")),
+            ("late", Some("1788009999")),
+            ("none", None),
+        ];
+        for tenant in [None, Some("tenant-a")] {
+            let mut store = AuthStore::new("demo-app", SplitMix64::new(3), TotpPolicy::default());
+            store.set_future_id_token_claims(FutureClaims::Accept);
+            let users: Vec<_> = records
+                .iter()
+                .map(|(uid, valid_since)| {
+                    let record = UserRecord {
+                        local_id: (*uid).to_owned(),
+                        created_at: Some("100000".to_owned()),
+                        valid_since: valid_since.map(str::to_owned),
+                        tenant_id: tenant.map(str::to_owned),
+                        ..UserRecord::default()
+                    };
+                    super::imported_user(&record, path).unwrap()
+                })
+                .collect();
+            super::install_auth_users(
+                &mut store,
+                &users,
+                &std::collections::BTreeMap::new(),
+                tenant,
+                path,
+                imported_at,
+            )
+            .unwrap();
+            let second = 1_788_004_860;
+            for (uid, valid_since) in records {
+                let verify = |iat| {
+                    verify_id_token(&token(&store, uid, iat), &store, imported_at).map(|_| ())
+                };
+                assert_eq!(verify(None), Err(JwtError::Revoked), "{tenant:?} {uid}");
+                assert_eq!(
+                    verify(Some(second - 1)),
+                    Err(JwtError::Revoked),
+                    "{tenant:?} {uid}"
+                );
+                assert_eq!(verify(Some(second)), Ok(()), "{tenant:?} {uid}");
+                let production = store.user_by_id(uid).unwrap().tokens_valid_after;
+                let expected = valid_since
+                    .map_or(LogicalInstant::from_nanos(100_000_000_000), |s| {
+                        LogicalInstant::from_unix_seconds(s.parse().unwrap())
+                    });
+                assert_eq!(production, expected, "{tenant:?} {uid}: production bound");
+            }
+        }
     }
 
     /// firebase-tools gives every imported account a `validSince` (`operations.js:341`), so an

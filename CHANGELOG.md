@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- In the emulator profile, an ID token without a usable `iat` is checked against a per-account `validSince` kept as firebase-tools 15.28.2 keeps it: a password, an email change through `accounts:update`, a verified identity provider taking over an account, a batch import and a privileged `validSince` assign the current second (also after a clock rewind), and disabling, second-factor withdrawal and other updates leave it. An artifact import gives every account the import second, as firebase-tools' own import does. Strict, integer-claim tokens and the reported `validSince` are unchanged.
+
 ## [0.54.0] - 2026-11-15
 
 ### Changed

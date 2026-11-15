@@ -173,7 +173,7 @@ pub enum FutureClaims {
     /// follows that line exactly: a future time claim is accepted, `auth_time` is never read,
     /// and `iat` is compared as JavaScript compares it (`Number(iat)`, see `js_number`; a
     /// value that is not a number fails the comparison) for an account that has a `validSince`
-    /// (see `official_valid_since_is_set`) and is not compared at all for any other. A usable
+    /// (see `UserRecord::emulator_valid_since`) and is not compared at all for any other. A usable
     /// `auth_time` never stands in for an `iat` that does not compare. An `exp` that is present
     /// still ends the token's life, with the surface's allowance (ledger 22), and is read the
     /// same way: only an `exp` that is not a number counts as none.
@@ -343,26 +343,10 @@ fn string_to_number(text: &str) -> Option<f64> {
     mantissa_ok.then(|| text.parse::<f64>().ok()).flatten()
 }
 
-/// A `validSince` instant as the whole-second number firebase-tools compares with.
+/// `Number(user.validSince)`: the stored decimal second as the number firebase-tools compares.
 #[allow(clippy::cast_precision_loss)]
-fn valid_since_seconds(instant: LogicalInstant) -> f64 {
-    instant.as_nanos().div_euclid(1_000_000_000) as f64
-}
-
-/// Whether firebase-tools holds a `validSince` for this account, which is the only case in which
-/// `parseIdToken` compares `iat` at all (`operations.js:1727`). It sets one when a password is
-/// set or reset (`:169`, `:861`, `:634`, so also at a password sign-up and for a removed
-/// password, which leaves it), when tokens are revoked (`:861`, and the email change and the
-/// disable that revoke), when an email is changed through `accounts:update` (`:861`; this store
-/// revokes the tokens there) and on an import (`:341`). An account made through the Admin API
-/// without a password, or by an anonymous, custom-token or federated sign-in, has none. This
-/// store holds a `tokens_valid_after` for every account, so the cases are rebuilt from what it
-/// remembers.
-fn official_valid_since_is_set(store: &AuthStore, user: &crate::store::UserRecord) -> bool {
-    store.has_password(&user.local_id)
-        || user.removed_password_updated_at.is_some()
-        || user.tokens_revoked
-        || user.imported
+fn valid_since_seconds(seconds: i64) -> f64 {
+    seconds as f64
 }
 
 /// Token signing mode (`auth.idTokenSigning`).
@@ -1242,14 +1226,13 @@ fn verify_id_token_account(
         (FutureClaims::Refuse, None) => return Err(JwtError::Malformed),
         // `operations.js:1727`: the token is compared by its `iat` alone, and only for an
         // account that has a `validSince`; `auth_time` is not read. `NaN` fails the comparison.
-        (FutureClaims::Accept, _) => {
-            official_valid_since_is_set(store, user)
-                && !decoded
-                    .payload
-                    .get("iat")
-                    .and_then(js_number)
-                    .is_some_and(|iat| iat >= valid_since_seconds(user.tokens_valid_after))
-        }
+        (FutureClaims::Accept, _) => user.emulator_valid_since.is_some_and(|valid_since| {
+            !decoded
+                .payload
+                .get("iat")
+                .and_then(js_number)
+                .is_some_and(|iat| iat >= valid_since_seconds(valid_since))
+        }),
     };
     if revoked {
         return Err(JwtError::Revoked);
