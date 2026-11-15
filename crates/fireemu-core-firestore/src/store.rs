@@ -1106,6 +1106,12 @@ struct EqualityCandidateIndex {
     estimated_bytes: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    #[allow(clippy::type_complexity)]
+    static EQUALITY_PUBLICATION_HOOK: std::cell::RefCell<Option<(Arc<std::sync::Barrier>, Option<Arc<EqualityCandidateIndex>>, Option<bool>)>> = const { std::cell::RefCell::new(None) };
+}
+
 struct EqualityCandidateIndexBuilder {
     index: EqualityCandidateIndex,
     overflowed: bool,
@@ -5968,7 +5974,22 @@ impl FirestoreState {
                     }
                 }
             }
-            let _ = self.equality_candidate_index.set(index.map(Arc::new));
+            let index = index.map(Arc::new);
+            #[cfg(test)]
+            EQUALITY_PUBLICATION_HOOK.with(|hook| {
+                if let Some((barrier, build, _)) = hook.borrow_mut().as_mut() {
+                    *build = index.clone();
+                    barrier.wait();
+                }
+            });
+            let result = self.equality_candidate_index.set(index);
+            #[cfg(test)]
+            EQUALITY_PUBLICATION_HOOK.with(|hook| {
+                if let Some((_, _, published)) = hook.borrow_mut().as_mut() {
+                    *published = Some(result.is_ok());
+                }
+            });
+            let _ = result;
         }
         stats.index_paths_visited = visited.get();
         Ok(stats)
@@ -7363,6 +7384,62 @@ mod equality_index_scope_tests {
             op: FieldOp::Equal,
             value: Value::String("wanted".to_owned()),
         })
+    }
+
+    #[test]
+    fn concurrent_builders_publish_only_one_index_and_read_the_same_result() {
+        let mut db = FirestoreState::new();
+        db.commit(
+            &[write("items", "a", "wanted"), write("items", "b", "other")],
+            None,
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+        let query = query("items");
+        let reference = db.run_query(&query, Some(db.current_version())).unwrap();
+        assert_eq!(reference.len(), 1);
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let readers = std::thread::scope(|threads| {
+            let readers: Vec<_> = (0..2)
+                .map(|_| {
+                    let barrier = Arc::clone(&barrier);
+                    let db = &db;
+                    let query = &query;
+                    threads.spawn(move || {
+                        EQUALITY_PUBLICATION_HOOK.with(|hook| {
+                            *hook.borrow_mut() = Some((barrier, None, None));
+                        });
+                        let result = db.run_query(query, None).unwrap();
+                        let (build, published) = EQUALITY_PUBLICATION_HOOK.with(|hook| {
+                            let (_, build, published) = hook.borrow_mut().take().unwrap();
+                            (build.unwrap(), published.unwrap())
+                        });
+                        let observed = db
+                            .equality_candidate_index(
+                                &query.scope,
+                                &FieldPath::parse("group").unwrap(),
+                            )
+                            .unwrap();
+                        (result, build, published, observed)
+                    })
+                })
+                .collect();
+            readers
+                .into_iter()
+                .map(|reader| reader.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(!Arc::ptr_eq(&readers[0].1, &readers[1].1));
+        assert_ne!(readers[0].2, readers[1].2);
+        let published = db
+            .equality_candidate_index(&query.scope, &FieldPath::parse("group").unwrap())
+            .unwrap();
+        for (result, build, won, observed) in readers {
+            assert_eq!(result, reference);
+            assert_eq!(Arc::ptr_eq(&build, &published), won);
+            assert!(Arc::ptr_eq(&observed, &published));
+        }
+        assert_eq!(db.run_query(&query, None).unwrap(), reference);
     }
 
     #[test]
