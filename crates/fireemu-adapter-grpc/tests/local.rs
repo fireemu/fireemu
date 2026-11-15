@@ -14679,3 +14679,74 @@ async fn grpc_expression_function_depth_is_limited_to_32() {
         assert!(handle.await.unwrap_err().is_cancelled());
     }
 }
+
+#[tokio::test]
+async fn batch_new_transaction_stream_has_a_separate_head() {
+    for strict in [true, false] {
+        let (mut client, _, _, handle) = start_profile_with_state(strict, None).await;
+        client
+            .commit(pb::CommitRequest {
+                database: DB.to_owned(),
+                writes: vec![update_write("batch-shape/found", &[("v", i(1))])],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for read_only in [false, true] {
+            for documents in [
+                vec!["found", "missing"],
+                vec!["missing", "missing2"],
+                vec![],
+            ] {
+                let names: Vec<_> = documents
+                    .iter()
+                    .map(|name| format!("{DOCS}/batch-shape/{name}"))
+                    .collect();
+                let mode = if read_only {
+                    pb::transaction_options::Mode::ReadOnly(
+                        pb::transaction_options::ReadOnly::default(),
+                    )
+                } else {
+                    pb::transaction_options::Mode::ReadWrite(
+                        pb::transaction_options::ReadWrite::default(),
+                    )
+                };
+                let mut stream = client
+                    .batch_get_documents(pb::BatchGetDocumentsRequest {
+                        database: DB.to_owned(),
+                        documents: names.clone(),
+                        consistency_selector: Some(
+                            pb::batch_get_documents_request::ConsistencySelector::NewTransaction(
+                                pb::TransactionOptions { mode: Some(mode) },
+                            ),
+                        ),
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+                let head = stream.next().await.unwrap().unwrap();
+                assert!(!head.transaction.is_empty());
+                assert!(head.read_time.is_none());
+                assert!(head.result.is_none());
+                for name in names {
+                    let frame = stream.next().await.unwrap().unwrap();
+                    assert!(frame.transaction.is_empty());
+                    assert!(frame.read_time.is_some());
+                    match frame.result.unwrap() {
+                        pb::batch_get_documents_response::Result::Found(doc) => {
+                            assert_eq!(name, format!("{DOCS}/batch-shape/found"));
+                            assert_eq!(doc.name, name);
+                        }
+                        pb::batch_get_documents_response::Result::Missing(missing) => {
+                            assert_ne!(name, format!("{DOCS}/batch-shape/found"));
+                            assert_eq!(missing, name);
+                        }
+                    }
+                }
+                assert!(stream.next().await.is_none());
+            }
+        }
+        handle.abort();
+    }
+}

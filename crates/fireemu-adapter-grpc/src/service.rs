@@ -513,38 +513,45 @@ impl Firestore for GatewayService {
             let local = local.clone();
             let rules = self.rules.clone();
             let request = request.into_inner();
+            let new_transaction = matches!(
+                request.consistency_selector,
+                Some(pb::batch_get_documents_request::ConsistencySelector::NewTransaction(_))
+            );
             let outcome = blocking_read(local, rules, caller, move |local, guard| {
                 local.batch_get_documents(&request, guard)
             })
             .await?;
             let read_time = Some(crate::encode::encode_instant(outcome.read_time));
-            if outcome.items.is_empty() && !outcome.transaction.is_empty() {
-                // An empty batch still has to hand back the new transaction.
-                let only = pb::BatchGetDocumentsResponse {
-                    transaction: outcome.transaction,
-                    read_time,
-                    result: None,
-                };
-                return Ok(Response::new(Box::pin(tokio_stream::iter(vec![Ok(only)]))));
-            }
             let mask = outcome.mask;
             let transaction = outcome.transaction;
-            let responses: Vec<Result<pb::BatchGetDocumentsResponse, Status>> = outcome
-                .items
-                .iter()
-                .enumerate()
-                .map(|(i, item)| {
-                    Ok(pb::BatchGetDocumentsResponse {
-                        transaction: if i == 0 {
-                            transaction.clone()
-                        } else {
-                            Vec::new()
-                        },
-                        read_time,
-                        result: Some(item.encode(mask.as_deref())),
-                    })
+            let mut responses = Vec::new();
+            if new_transaction {
+                // Empty batches and read-only transactions were not recorded; use the same head as the recorded batch.
+                // An error while reading a later document is also unrecorded: the batch is read eagerly above, so the
+                // error is returned before any frame is sent and the new transaction is abandoned by the backend.
+                responses.push(Ok(pb::BatchGetDocumentsResponse {
+                    transaction: transaction.clone(),
+                    read_time: None,
+                    result: None,
+                }));
+            } else if outcome.items.is_empty() && !transaction.is_empty() {
+                responses.push(Ok(pb::BatchGetDocumentsResponse {
+                    transaction: transaction.clone(),
+                    read_time,
+                    result: None,
+                }));
+            }
+            responses.extend(outcome.items.iter().enumerate().map(|(i, item)| {
+                Ok(pb::BatchGetDocumentsResponse {
+                    transaction: if !new_transaction && i == 0 {
+                        transaction.clone()
+                    } else {
+                        Vec::new()
+                    },
+                    read_time,
+                    result: Some(item.encode(mask.as_deref())),
                 })
-                .collect();
+            }));
             return Ok(Response::new(Box::pin(tokio_stream::iter(responses))));
         }
         let response = self

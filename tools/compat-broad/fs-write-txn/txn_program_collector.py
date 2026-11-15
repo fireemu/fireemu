@@ -419,8 +419,7 @@ class Ledger:
         if not isinstance(frames, list):
             raise ValueError("batch answer is not a list of entries")
         if starts:
-            # The transaction the batch begins arrives once, first: in an entry of its own that names no document, or
-            # in the first document's entry.
+            # The transaction the batch begins arrives once, first, in an entry of its own.
             head = frames[0] if frames else None
             if not isinstance(head, dict) or not _present(head, "transaction"):
                 raise ValueError("the batch that begins a transaction does not answer with the transaction first")
@@ -431,20 +430,19 @@ class Ledger:
             self.tokens[step["tokenOutput"]] = {"value": minted, "state": "open", "transport": transport, "start": copy.deepcopy(timing), "lastUse": copy.deepcopy(timing), **({"database": request["database"]} if request["database"] != self.plan["database"] else {})}
             self.modes[step["tokenOutput"]] = step["newTransaction"]
             self.since[step["tokenOutput"]] = {role: len(states) for role, states in self.history.items()}
-            if not _present(head, "found") and not _present(head, "missing"):
-                if {key for key in head if _present(head, key)} - {"transaction", "readTime"}:
-                    raise ValueError("the entry that carries the new transaction is neither a bare head nor a document entry")
-                frames = frames[1:]
+            if {key for key in head if _present(head, key)} - {"transaction"}:
+                raise ValueError("the entry that carries the new transaction is not a bare head")
+            frames = frames[1:]
         if len(frames) != len(request["documents"]):
             raise ValueError("batch answer does not carry one entry per requested document")
-        for index, frame in enumerate(frames):
+        for frame in frames:
             # Native protobuf decoding adds the oneof discriminator `result` and an empty `transaction`.
             if not isinstance(frame, dict) or _present(frame, "found") == _present(frame, "missing") or set(frame) - {"found", "missing", "readTime", "transaction", "result"}:
                 raise ValueError("batch entry is neither found nor missing")
             kind = "found" if _present(frame, "found") else "missing"
             if frame.get("result", kind) not in (kind, None):
                 raise ValueError("batch entry carries a discriminator that disagrees")
-            if _present(frame, "transaction") and not (starts and index == 0 and frame["transaction"] == minted):
+            if _present(frame, "transaction"):
                 raise ValueError("batch entry carries an unrequested transaction")
             name = frame["found"].get("name") if kind == "found" and isinstance(frame["found"], dict) else frame.get("missing")
             if name not in request["documents"] or name in seen:
