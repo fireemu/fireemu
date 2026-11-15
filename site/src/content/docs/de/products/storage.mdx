@@ -17,17 +17,17 @@ Beide Dialekte teilen sich einen Speicher, sodass ein über den einen hochgelade
   { label: 'Status', value: 'Unterstützt' },
   { label: 'Standardport', value: '9199' },
   { label: 'Startet', value: 'Standardmäßig' },
-  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#production-verification' },
+  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#verifikation-gegen-die-produktion' },
 ]} />
 
 ## Was Sie testen können
 
-- [Bucket-Namen](#buckets-that-do-not-exist): Ein Schreibzugriff auf einen Bucket, den nichts deklariert hat, gibt einen Hinweis aus oder scheitert mit dem 404 der Produktion.
+- [Bucket-Namen](#buckets-die-nicht-existieren): Ein Schreibzugriff auf einen Bucket, den nichts deklariert hat, gibt einen Hinweis aus oder scheitert mit dem 404 der Produktion.
 - [Bucket-CORS](#bucket-cors) für Browser-Uploads und -Downloads auf der XML-API.
-- [Signierte URLs](#signed-url-signatures): Ablauf, signierte Header und, mit einem registrierten Schlüssel, die V4-Signatur.
-- [Security Rules](#security-rules), einschließlich [`list`-Rules, die anhand des angefragten Präfixes entschieden werden](#listing-a-prefix-with-single-segment-attachment-rules).
-- [Anfragen, die die Produktion ablehnt](#production-behavior), etwa eine öffentliche URL für ein privates Objekt oder ein Formular-Upload ohne signierte Policy.
-- [Ein voller Speicher](#limit-the-stored-bytes), mit einer lokalen Obergrenze für gespeicherte Bytes.
+- [Signierte URLs](#signaturen-signierter-urls): Ablauf, signierte Header und, mit einem registrierten Schlüssel, die V4-Signatur.
+- [Security Rules](#security-rules), einschließlich [`list`-Rules, die anhand des angefragten Präfixes entschieden werden](#ein-präfix-mit-attachment-rules-für-ein-einzelnes-segment-auflisten).
+- [Anfragen, die die Produktion ablehnt](#verhalten-der-produktion), etwa eine öffentliche URL für ein privates Objekt oder ein Formular-Upload ohne signierte Policy.
+- [Ein voller Speicher](#gespeicherte-bytes-begrenzen), mit einer lokalen Obergrenze für gespeicherte Bytes.
 
 ## Verbinden
 
@@ -95,13 +95,13 @@ maxStoredBytes = 1073741824
 | Einstellung | Wirkung |
 |---|---|
 | `storage.rules` | Die Datei mit den Storage Security Rules; siehe [Security Rules](#security-rules). |
-| `storage.defaultBucket` | Welcher der beiden Standard-Buckets des Projekts unter `strict` existiert ([unten](#buckets-that-do-not-exist)). |
+| `storage.defaultBucket` | Welcher der beiden Standard-Buckets des Projekts unter `strict` existiert ([unten](#buckets-die-nicht-existieren)). |
 | `storage.buckets`, `storage.publicBuckets` | Deklarieren Buckets und Buckets, deren öffentliche URL kein Credential braucht. Vom Profil `emulator` ignoriert. |
-| `storage.undeclaredBuckets` | Was eine Objektoperation auf einem Bucket, den nichts deklariert hat, unter `strict` tut: `"warn"` (Standard) bedient das erste Schreiben, legt den Bucket an und gibt einen Hinweis aus; `"create"` tut dasselbe stillschweigend; `"refuse"` antwortet mit dem 404 der Produktion und wird von `productionExact` ausgewählt; ein expliziter Schlüssel gewinnt ([unten](#buckets-that-do-not-exist)). Das Profil `emulator` legt den Bucket immer stillschweigend an. |
+| `storage.undeclaredBuckets` | Was eine Objektoperation auf einem Bucket, den nichts deklariert hat, unter `strict` tut: `"warn"` (Standard) bedient das erste Schreiben, legt den Bucket an und gibt einen Hinweis aus; `"create"` tut dasselbe stillschweigend; `"refuse"` antwortet mit dem 404 der Produktion und wird von `productionExact` ausgewählt; ein expliziter Schlüssel gewinnt ([unten](#buckets-die-nicht-existieren)). Das Profil `emulator` legt den Bucket immer stillschweigend an. |
 | `storage.cors` | CORS-Konfiguration pro Bucket im `cors`-JSON von Cloud Storage, unter `strict` auf die XML-API und, als nicht aufgezeichnetes Verhalten, auf Firebase-Medienlesezugriffe angewendet ([unten](#bucket-cors)). Ein nicht aufgeführter XML-Bucket behält die großzügige Antwort, sofern `productionExact` nicht gesetzt ist; Bei einem Bucket mit nicht leeren Rules ignoriert ein Objektlesezugriff oder Objekt-Preflight der JSON API die Rules (wie aufgezeichnet); andere JSON-API-Routen sowie fehlende oder leere Einträge behalten das Basisverhalten. |
-| `storage.signedUrlKeys` | Öffentliche Schlüssel (oder der private Schlüssel oder das Dienstkonto-JSON, mit dem ein Test signiert hat), gegen die V4-signierte URLs unter `strict` verifiziert werden ([unten](#signed-url-signatures)). Ist sie nicht gesetzt, wird die Signatur nicht verifiziert. |
-| `storage.maxStoredBytes` | Eine lokale Obergrenze für gespeicherte Bytes. Ein Schreibvorgang, der sie überschreiten würde, wird mit HTTP 402 abgelehnt (`storage.maxStoredBytes limit exceeded`); siehe [Gespeicherte Bytes begrenzen](#limit-the-stored-bytes). Die Produktion hat keine solche Grenze. |
-| `storage.maxObjectBytes` | Größengrenze pro Objekt, Standard 256 MiB (Maximum 2143289343). Größere Uploads werden mit HTTP 413 abgelehnt; siehe [Gespeicherte Bytes begrenzen](#limit-the-stored-bytes). |
+| `storage.signedUrlKeys` | Öffentliche Schlüssel (oder der private Schlüssel oder das Dienstkonto-JSON, mit dem ein Test signiert hat), gegen die V4-signierte URLs unter `strict` verifiziert werden ([unten](#signaturen-signierter-urls)). Ist sie nicht gesetzt, wird die Signatur nicht verifiziert. |
+| `storage.maxStoredBytes` | Eine lokale Obergrenze für gespeicherte Bytes. Ein Schreibvorgang, der sie überschreiten würde, wird mit HTTP 402 abgelehnt (`storage.maxStoredBytes limit exceeded`); siehe [Gespeicherte Bytes begrenzen](#gespeicherte-bytes-begrenzen). Die Produktion hat keine solche Grenze. |
+| `storage.maxObjectBytes` | Größengrenze pro Objekt, Standard 256 MiB (Maximum 2143289343). Größere Uploads werden mit HTTP 413 abgelehnt; siehe [Gespeicherte Bytes begrenzen](#gespeicherte-bytes-begrenzen). |
 | `storage.bufferedBodyBudgetBytes` | Prozessweites Budget für gepufferte Request-Bodys, Standard 1 GiB. Eine Anfrage darüber hinaus erhält HTTP 503 mit `Retry-After: 1`. |
 | `storage.spillObjectBytes` | Committete Objekte ab dieser Byte-Zahl werden in temporären Dateien statt im Arbeitsspeicher gehalten. Standardmäßig nicht gesetzt; die Produktion hat keine solche Einstellung. Eine Sitzung für einen fortsetzbaren Upload (resumable) hält ihre empfangenen Bytes in einer temporären Datei, sobald sie diese Größe erreichen. Ein Single-Shot-Upload wird weiterhin im Arbeitsspeicher gepuffert, bevor er gespeichert wird, sodass ein einzelner großer Upload nach dem Commit einen Body im Speicher hält; die Einstellung hilft, wenn viele große Objekte gespeichert werden. |
 
@@ -129,7 +129,7 @@ Ein Bucket existiert, wenn er einer von diesen ist:
 - von einem deployten Storage-Trigger genannt;
 - ein Bucket, der importierte Daten enthält.
 
-Unter `strict` mit `storage.undeclaredBuckets: "warn"` gibt ein Schreibzugriff auf jeden anderen Bucket den Hinweis aus, sodass ein Tippfehler im Bucket-Namen sichtbar wird. Um den Hinweis für einen Bucket zu unterdrücken, der in der Produktion existiert, tragen Sie ihn in `storage.buckets` ein ([Konfigurieren](#configure)).
+Unter `strict` mit `storage.undeclaredBuckets: "warn"` gibt ein Schreibzugriff auf jeden anderen Bucket den Hinweis aus, sodass ein Tippfehler im Bucket-Namen sichtbar wird. Um den Hinweis für einen Bucket zu unterdrücken, der in der Produktion existiert, tragen Sie ihn in `storage.buckets` ein ([Konfigurieren](#konfigurieren)).
 
 Jeder Name muss einer sein, den Cloud Storage akzeptiert. `storage.publicBuckets` listet Buckets auf, deren Objekte die öffentliche URL ohne Credential ausliefert, und gilt zugleich als deren Deklaration. `storage.buckets` und `storage.publicBuckets` werden vom Profil `emulator` ignoriert.
 
@@ -330,7 +330,7 @@ Unter `strict` werden Vorbedingungen für Generation und Metageneration sowie de
 
 ### Anfragen, die `strict` ablehnt
 
-Unter `strict` lehnt der Storage-Emulator auch ab, was die Produktion ablehnt und der offizielle Emulator akzeptiert. Ein Bucket, der nicht existiert, ist die Ausnahme; siehe [Buckets, die nicht existieren](#buckets-that-do-not-exist).
+Unter `strict` lehnt der Storage-Emulator auch ab, was die Produktion ablehnt und der offizielle Emulator akzeptiert. Ein Bucket, der nicht existiert, ist die Ausnahme; siehe [Buckets, die nicht existieren](#buckets-die-nicht-existieren).
 
 | Anfrage | Antwort von `strict` |
 |---|---|
@@ -366,7 +366,7 @@ Ein Bucket, dessen IAM `allUsers` die Rolle Objektbetrachter gewährt, was die P
 <details>
 <summary>Eine abgelaufene signierte URL</summary>
 
-Eine V4- oder V2-signierte URL nach Ablauf ihrer Lebensdauer antwortet mit 400 `ExpiredToken`, und eine V4-Lebensdauer über sieben Tage oder ein nicht lesbares `X-Goog-Date` antwortet mit 400. Die Signatur selbst wird nicht verifiziert, sofern `storage.signedUrlKeys` nicht den Schlüssel registriert, mit dem sie erzeugt wurde ([Signaturen signierter URLs](#signed-url-signatures)), weil das den Schlüssel des signierenden Dienstkontos erfordert; ohne einen wird jede Signatur akzeptiert.
+Eine V4- oder V2-signierte URL nach Ablauf ihrer Lebensdauer antwortet mit 400 `ExpiredToken`, und eine V4-Lebensdauer über sieben Tage oder ein nicht lesbares `X-Goog-Date` antwortet mit 400. Die Signatur selbst wird nicht verifiziert, sofern `storage.signedUrlKeys` nicht den Schlüssel registriert, mit dem sie erzeugt wurde ([Signaturen signierter URLs](#signaturen-signierter-urls)), weil das den Schlüssel des signierenden Dienstkontos erfordert; ohne einen wird jede Signatur akzeptiert.
 
 </details>
 
@@ -378,7 +378,7 @@ Eine V4- oder V2-signierte URL nach Ablauf ihrer Lebensdauer antwortet mit 400 `
 Dieser Upload-Pfad speichert `Content-Type`; andere Objekt-Metadaten und Header für bedingte Schreibvorgänge werden nicht unterstützt. Für diese Verwendung werden nur `Content-Type` und `x-goog-content-length-range` weitergeleitet; beliebige signierte Erweiterungs-Header werden nicht unterstützt. Der Bereich ist inklusive.
 
 - **Gegen die Produktion gemessen** (ein echtes Firebase-Projekt, 2026-11-03, `getSignedUrl` V4 `write` für `image/png` mit `x-goog-content-length-range: 0,10485760`, zwei Aufzeichnungen von 16 Fällen). Ein in der Anfrage fehlender signierter Header ergibt `400 MalformedSecurityHeader`, der ihn nennt (`content-type` und der Range-Header wurden gemessen). Ein Body über oder unter dem Bereich ergibt `400 EntityTooLarge` oder `400 EntityTooSmall`. Eine abgelaufene URL ergibt `400 ExpiredToken`, das das Ende der signierten Lebensdauer nennt. Diese Ablehnungen und die Erfolgs-Header (`ETag`, `x-goog-generation`, `x-goog-metageneration`, `x-goog-hash`, `x-goog-stored-content-length`, `x-goog-stored-content-encoding`) haben in beiden Profilen Body und Werte der Produktion. Unter `strict` ergibt eine URL, die jeden Signaturparameter außer der Signatur nennt, `400 MissingSecurityHeader`, und der Range-Header, der gesendet wird, ohne zu den signierten Headern zu gehören, ergibt `400 MalformedSecurityHeader`; das Profil `emulator` akzeptiert beides weiterhin, wie zuvor (was firebase-tools 15.28.2 damit tut, wurde nicht gemessen).
-- **Standardmäßig nicht verifiziert, ein dokumentierter Unterschied.** Die Produktion antwortet mit `403 SignatureDoesNotMatch`, wenn die Signatur verändert wurde, wenn `Content-Type` oder der Range-Wert vom signierten abweicht und wenn der Objektname vom signierten abweicht. fireemu hat keinen Schlüssel, mit dem es eine Signatur prüfen könnte, sofern `storage.signedUrlKeys` nicht einen registriert (siehe [Signaturen signierter URLs](#signed-url-signatures)), und akzeptiert andernfalls alle vier in beiden Profilen, sodass Änderungen an der Methode oder an Werten signierter Header nicht authentifiziert werden können; verwenden Sie dieses Verhalten nicht als Autorisierungsprüfung.
+- **Standardmäßig nicht verifiziert, ein dokumentierter Unterschied.** Die Produktion antwortet mit `403 SignatureDoesNotMatch`, wenn die Signatur verändert wurde, wenn `Content-Type` oder der Range-Wert vom signierten abweicht und wenn der Objektname vom signierten abweicht. fireemu hat keinen Schlüssel, mit dem es eine Signatur prüfen könnte, sofern `storage.signedUrlKeys` nicht einen registriert (siehe [Signaturen signierter URLs](#signaturen-signierter-urls)), und akzeptiert andernfalls alle vier in beiden Profilen, sodass Änderungen an der Methode oder an Werten signierter Header nicht authentifiziert werden können; verwenden Sie dieses Verhalten nicht als Autorisierungsprüfung.
 - **CORS.** Für die XML-API ist CORS ohne `storage.cors` oder `productionExact` in beiden Profilen großzügig: Ein erfolgreicher `OPTIONS`-Preflight antwortet mit `204` mit CORS-Headern, und ein `PUT`, der einen `Origin` trägt, erhält sie. Die Produktion hängt von der CORS-Konfiguration des Buckets ab und antwortete für einen Bucket ohne eine mit `200` ohne CORS-Header; führen Sie den Bucket mit `[]` in `storage.cors` auf oder aktivieren Sie `productionExact`, um das unter `strict` zu erhalten ([Bucket-CORS](#bucket-cors)).
 - **Wiederholte Signaturparameter.** Unter `strict` wird jedes Vorkommen von `X-Goog-SignedHeaders` durchgesetzt, einschließlich wiederholter, abweichend geschriebener und prozentkodierter Namen. Widersprüchliche wiederholte Werte von `X-Goog-Date`, `X-Goog-Expires` oder `Expires` liefern `400 InvalidArgument`; entfernen Sie die widersprüchlichen Parameter. Diese Ablehnung wurde in der Produktion nicht beobachtet. Das Profil `emulator` behält seine bestehende Interpretation der Query bei.
 
@@ -433,7 +433,7 @@ Beide Einstellungen akzeptieren positive ganze Zahlen von Bytes; das Maximum ist
 
 ### Gespeicherte Bytes insgesamt
 
-Der Storage-Emulator hält jedes Objekt im Arbeitsspeicher, und standardmäßig begrenzt nichts, wie viel. Um das zu begrenzen, setzen Sie `storage.maxStoredBytes` auf eine Zahl von Bytes von mindestens 1 ([Konfigurieren](#configure)). Diese Grenze ist lokal in Fireemu; die Produktion hat keine.
+Der Storage-Emulator hält jedes Objekt im Arbeitsspeicher, und standardmäßig begrenzt nichts, wie viel. Um das zu begrenzen, setzen Sie `storage.maxStoredBytes` auf eine Zahl von Bytes von mindestens 1 ([Konfigurieren](#konfigurieren)). Diese Grenze ist lokal in Fireemu; die Produktion hat keine.
 
 - Jedes Objekt zählt seine Bytes einmal, und ein Copy zählt erneut. Das Ersetzen eines Objekts zählt nur den Größenunterschied.
 - Ein Upload, die letzte Anfrage eines fortsetzbaren Uploads oder ein Copy, durch die die Gesamtmenge über die Grenze hinaus wüchse, wird mit HTTP 402 und der Meldung `storage.maxStoredBytes limit exceeded` abgelehnt (in der JSON API mit dem Reason `storageCapacityExceeded`). Es gibt kein `Retry-After`. Löschen Sie Objekte, um Platz zu schaffen. Die Firebase-Client-SDKs melden ein 402 sofort als `storage/quota-exceeded`, ohne zu wiederholen; auch die Cloud-Storage-Clientbibliotheken wiederholen es nicht.
@@ -457,18 +457,18 @@ Objekt-Versionierung wird auf der JSON API bereitgestellt: `PATCH /storage/v1/b/
 
 ### Lokales Verhalten
 
-- Ein Bucket, den nichts deklariert hat, wird beim ersten Schreiben angelegt, sofern `storage.undeclaredBuckets` nicht `"refuse"` ist. Siehe [Buckets, die nicht existieren](#buckets-that-do-not-exist).
+- Ein Bucket, den nichts deklariert hat, wird beim ersten Schreiben angelegt, sofern `storage.undeclaredBuckets` nicht `"refuse"` ist. Siehe [Buckets, die nicht existieren](#buckets-die-nicht-existieren).
 - Die XML-API beantwortet CORS für einen nicht in `storage.cors` aufgeführten Bucket großzügig, sofern `productionExact` nicht gesetzt ist. Siehe [Bucket-CORS](#bucket-cors).
-- Eine V4-Signatur wird nur gegen einen in `storage.signedUrlKeys` registrierten Schlüssel geprüft. Siehe [Signaturen signierter URLs](#signed-url-signatures).
-- Die Objektgrößengrenze, das Budget für gepufferte Bodys und `storage.maxStoredBytes` sind lokale Grenzen. Siehe [Gespeicherte Bytes begrenzen](#limit-the-stored-bytes).
+- Eine V4-Signatur wird nur gegen einen in `storage.signedUrlKeys` registrierten Schlüssel geprüft. Siehe [Signaturen signierter URLs](#signaturen-signierter-urls).
+- Die Objektgrößengrenze, das Budget für gepufferte Bodys und `storage.maxStoredBytes` sind lokale Grenzen. Siehe [Gespeicherte Bytes begrenzen](#gespeicherte-bytes-begrenzen).
 
 ### Den Storage-Port auf localhost halten
 
 :::caution
 Wie der offizielle Emulator spiegelt der Storage-Port bei einem fehlenden Medienlesezugriff den angeforderten Objektnamen im HTML-Body seines 404 wider. Eine auf Ihrem Rechner geöffnete Webseite könnte auf diesem Origin Skripte ausführen.
 
-- Standardmäßig liegt jeder Listener auf Loopback, sodass nur Prozesse auf Ihrem Rechner ihn erreichen. Der Host-Guard beantwortet außerdem eine Anfrage, die einen anderen `Host` als `localhost`, eine IP-Adresse oder einen Namen nennt, den Sie in `network.allowedHosts` aufgeführt haben, mit 403, als Schutz gegen DNS-Rebinding (siehe [Hostnamen, auf die die Emulatoren antworten](../../guides/ci-and-containers/#host-names-the-emulators-answer)).
-- Der Port ist von anderen Hosts nur erreichbar, wenn Sie sich dafür entscheiden: `network.allowNonLoopbackHosts` in `fireemu.toml` zusammen mit einem `emulators.storage.host` außerhalb von Loopback in `firebase.json` (siehe [Die Emulatoren aus einem Container bereitstellen](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)). Ein solcher Listener arbeitet ohne Credential, setzen Sie ihn also nicht in einem nicht vertrauenswürdigen Netzwerk aus.
+- Standardmäßig liegt jeder Listener auf Loopback, sodass nur Prozesse auf Ihrem Rechner ihn erreichen. Der Host-Guard beantwortet außerdem eine Anfrage, die einen anderen `Host` als `localhost`, eine IP-Adresse oder einen Namen nennt, den Sie in `network.allowedHosts` aufgeführt haben, mit 403, als Schutz gegen DNS-Rebinding (siehe [Hostnamen, auf die die Emulatoren antworten](../../guides/ci-and-containers/#hostnamen-auf-die-die-emulatoren-antworten)).
+- Der Port ist von anderen Hosts nur erreichbar, wenn Sie sich dafür entscheiden: `network.allowNonLoopbackHosts` in `fireemu.toml` zusammen mit einem `emulators.storage.host` außerhalb von Loopback in `firebase.json` (siehe [Die Emulatoren aus einem Container bereitstellen](../../guides/ci-and-containers/#die-emulatoren-aus-einem-container-bereitstellen)). Ein solcher Listener arbeitet ohne Credential, setzen Sie ihn also nicht in einem nicht vertrauenswürdigen Netzwerk aus.
 - Das Profil `strict` sendet auf den Antworten der JSON API kein `X-Content-Type-Options: nosniff`, wo die Produktion keines sendet, und fügt diese zusätzliche Schutzschicht daher nicht hinzu; das Profil `emulator` behält den Header des offiziellen Emulators.
 
 :::

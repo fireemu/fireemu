@@ -1,0 +1,593 @@
+---
+title: Cloud Firestore
+description: Führen Sie Cloud Firestore lokal aus und testen Sie Abfragen, zusammengesetzte Indizes, Transaktionen, Listener und Security Rules gegen das Verhalten der Produktion.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu stellt Cloud Firestore über gRPC, REST und den WebChannel-Transport, den das Web SDK verwendet, mit Firestore Security Rules bereit.
+
+<Facts items={[
+  { label: 'Status', value: 'Unterstützt' },
+  { label: 'Standardport', value: '8080' },
+  { label: 'Startet', value: 'Standardmäßig' },
+  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#verifikation-gegen-die-produktion' },
+]} />
+
+## Was Sie testen können
+
+- [Zusammengesetzte Indizes](#zusammengesetzte-indizes): Eine Abfrage, deren Index nicht deklariert ist, wird mit `FAILED_PRECONDITION` abgelehnt, und [ein CI-Job kann an der Liste der fehlenden Indizes scheitern](#einen-ci-job-bei-einem-fehlenden-index-scheitern-lassen).
+- [Abfragegrenzen](#abfragegrenzen) der Standard Edition.
+- [Wiederverbinden von Listenern](#listen-streams), indem gehaltene `Listen`-Streams mit dem Status der Produktion beendet werden.
+- [Transaktionen, `read_time`-Lesezugriffe und fortgesetzte Listener](#transaktionen-und-verlauf) über eine Stunde Dokumentverlauf.
+- [Security Rules](#security-rules), einschließlich der getrennten Rules jeder [benannten Datenbank](#benannte-datenbanken).
+- [Enterprise-Textsuche](#enterprise-textsuche) und eine Teilmenge der [Enterprise-Pipelines](#enterprise-pipelines).
+
+## Verbinden
+
+Firestore lauscht standardmäßig auf `127.0.0.1:8080` (`--firestore-port` oder `firebase.json` ändern das; siehe [alle Standardports](../../getting-started/install/#standardports)).
+
+```js
+// Web SDK
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+connectFirestoreEmulator(getFirestore(app), '127.0.0.1', 8080);
+```
+
+Das Admin SDK braucht keinen Code. Unter `fireemu exec` ist `FIRESTORE_EMULATOR_HOST` für Ihren Befehl auf das `host:port` von Firestore gesetzt (siehe [Umgebungsvariablen](../../reference/environment-variables/)). Setzen Sie sie bei `fireemu up` selbst, zum Beispiel `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`. Weitere SDKs und die Regeln zur Projekt-ID finden Sie unter [Ihre App verbinden](../../getting-started/connect/).
+
+## Konfigurieren
+
+Wählen Sie die Datenbank-Edition und den API-Modus in `fireemu.toml`. `fireemu init` schreibt die Standard Edition mit der Native API:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+# "standard" or "enterprise"
+edition = "standard"
+# "native" or "mongodb-compatible"
+apiMode = "native"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`edition` akzeptiert `standard` und `enterprise`. Die Enterprise-Pipeline-API unterstützt eine begrenzte Teilmenge von Leseoperationen; siehe [Enterprise-Textsuche](#enterprise-textsuche), [Enterprise-Pipelines](#enterprise-pipelines) und [Einschränkungen](../../compatibility/limitations/).
+
+Die übrigen Schlüssel von `firestore` sind dort beschrieben, wo sie zutreffen:
+
+| Schlüssel | Abschnitt |
+|---|---|
+| `firestore.missingIndexes` | [Zusammengesetzte Indizes](#zusammengesetzte-indizes) |
+| `firestore.enforceLimits` | [Abfragegrenzen](#abfragegrenzen) |
+| `firestore.listenStreamLifetime` | [Listen-Streams](#listen-streams) |
+| `firestore.history` | [Transaktionen und Verlauf](#transaktionen-und-verlauf) |
+
+## Zusammengesetzte Indizes
+
+Die Produktion lehnt eine Abfrage ab, deren zusammengesetzter Index nicht definiert ist. Der offizielle Emulator prüft zusammengesetzte Indizes nicht und führt jede Abfrage aus, sodass ein fehlender Index erst auffällt, wenn die Abfrage die Produktion erreicht. Fireemu prüft jede Abfrage gegen die in `firestore.indexes.json` deklarierten Indizes (auf die `firebase.json` verweist), wie es die Produktion tut.
+
+| `firestore.missingIndexes` | Verhalten |
+|---|---|
+| `refuse` (Standard) | Die Abfrage wird mit `FAILED_PRECONDITION` und dem Konsolenlink abgelehnt, wie die Produktion sie ablehnt. |
+| `report` | Die Abfrage wird ausgeführt. Jeder fehlende Index wird pro Datenbank einmal auf der Standardfehlerausgabe gemeldet, mit dem Ablehnungstext der Produktion und dem Eintrag für `firestore.indexes.json`, der hinzuzufügen ist. |
+
+Das Profil `emulator` führt die Abfrage immer aus, wie es der offizielle Emulator tut, und meldet Vorschläge für fehlende Indizes auf der Standardfehlerausgabe.
+
+Eine OR-Abfrage kann für jeden Zweig einen eigenen zusammengesetzten Index erfordern. Zusätzliche Diagnosen listen alle verschiedenen fehlenden Zweig-Indizes in einem Versuch auf:
+
+- Unter `strict` mit `refuse` erhält das SDK weiterhin seine bestehende Antwort `FAILED_PRECONDITION` und den ersten Link zur Erstellung. Die zusätzlichen Zweigdefinitionen stehen auf der Standardfehlerausgabe.
+- Unter `report` sammelt auch der Bericht der Steuer-API die verschiedenen fehlenden Definitionen.
+
+### Einen CI-Job bei einem fehlenden Index scheitern lassen
+
+Der Bericht auf der Standardfehlerausgabe geht in einem CI-Log leicht unter. Unter `strict` mit `"report"` listet die Steuer-API außerdem jeden Index auf, der gefehlt hat, sodass ein Job an einer nicht leeren Liste scheitern kann. Schalten Sie den Bericht ein:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+# "strict" (the default) or "emulator"; "report" below needs strict
+profile = "strict"
+
+[firestore]
+# "refuse" (the default): refuse the query with FAILED_PRECONDITION
+# "report": run the query, and list each missing index
+missingIndexes = "report"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firestore": {
+    "missingIndexes": "report"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`fireemu exec` übergibt seinem Befehl `FIREEMU_CONTROL_URL` (endet auf `/v1/`) und `FIREEMU_CONTROL_TOKEN`, sodass das Skript, das Ihre Tests ausführt, die Liste prüfen kann, wenn sie fertig sind:
+
+```sh
+npx fireemu exec -- sh -c '
+  npm test
+  status=$?
+  curl -fsS -H "Authorization: Bearer $FIREEMU_CONTROL_TOKEN" \
+    "${FIREEMU_CONTROL_URL}firestore/missingIndexes" > missing-indexes.json || exit 1
+  [ "$(jq .count missing-indexes.json)" = 0 ] || { jq .indexesJson missing-indexes.json; exit 1; }
+  exit $status
+'
+```
+
+`GET /v1/firestore/missingIndexes` antwortet:
+
+```json
+{
+  "count": 1,
+  "truncated": false,
+  "dropped": 0,
+  "missingIndexes": [
+    {
+      "project": "demo-app",
+      "database": "(default)",
+      "name": "projects/demo-app/databases/(default)",
+      "index": {
+        "collectionGroup": "notes",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "owner", "order": "ASCENDING" },
+          { "fieldPath": "created", "order": "ASCENDING" }
+        ]
+      },
+      "message": "The query requires an index. You can create it here: https://console.firebase.google.com/..."
+    }
+  ],
+  "indexesJson": {
+    "projects/demo-app/databases/(default)": {
+      "indexes": [{ "collectionGroup": "notes", "queryScope": "COLLECTION", "fields": ["..."] }]
+    }
+  }
+}
+```
+
+#### Antwortformat
+
+- Jeder Eintrag ist ein Index pro Datenbank, in der Reihenfolge, in der er zuerst gebraucht wurde, mit dem Ablehnungstext der Produktion.
+- `indexesJson` gruppiert die Einträge pro Datenbank in der Form, die `firestore.indexes.json` hält, sodass Sie das Array `indexes` einer Datenbank in diese Datei übernehmen können.
+
+#### Sitzungen und Löschen
+
+- `GET /v1/sessions/{session}/firestore/missingIndexes` listet nur das Projekt der Sitzung. `GET /v1/firestore/missingIndexes` listet jedes Projekt.
+- Ein `reset` der Sitzung löscht die Liste nicht, sodass eine Suite, die zwischen den Fällen zurücksetzt, trotzdem jeden Index meldet, den sie verfehlt hat. Das Löschen einer Sitzung löscht die Einträge ihres Projekts.
+- `DELETE` auf einer der beiden Routen löscht die Liste und den Zähler der verworfenen Einträge und antwortet mit `{"cleared": <count>}`. Die Sitzungsroute löscht nur das Projekt dieser Sitzung. Die Route ohne Sitzung löscht die Einträge jeder Sitzung, sodass eine Testwelt, die sich einen Daemon mit anderen teilt, die Sitzungsroute verwenden sollte. Ein Index, der danach erneut gebraucht wird, wird erneut gemeldet.
+- Rufen Sie mit `fireemu/testing` `world.control('GET', '/v1/sessions/default/firestore/missingIndexes')` und `world.control('DELETE', ...)` auf demselben Pfad auf, damit Lesen und Löschen innerhalb des Projekts Ihrer Welt bleiben.
+
+#### Grenzen und Ablehnungen
+
+- Die Liste fasst höchstens 1.000 Einträge. Darüber hinaus ist `truncated` `true`, und `dropped` zählt die bedienten Abfragen, deren Index nicht aufgeführt ist. Ein Projekt, bei dem jeder Index verworfen wurde, wird mit `409` und einer Meldung beantwortet, dass die Liste voll ist, nie mit einer leeren Liste, sodass eine Prüfung von `count` nicht auf einer unvollständigen Liste bestehen kann. Löschen Sie die Liste und starten Sie den Lauf erneut.
+- Wo nichts gemeldet wird (das Profil `emulator`, `strict` mit `"refuse"` oder Firestore nicht ausgewählt), antwortet `GET` mit `409` mit `FAILED_PRECONDITION`, sodass eine Prüfung, die von der Liste abhängt, nicht auf einer leeren Antwort bestehen kann. `DELETE` antwortet weiterhin mit `{"cleared": 0}`.
+- Eine Seite in einem Browser braucht für beide Methoden `Authorization: Bearer <control token>`, wie beim Ressourcenbericht, weil die Einträge die Felder nennen, nach denen Ihre Abfragen filtern und sortieren.
+
+### Prüfungen von `firestore.indexes.json`
+
+Unter `strict` lehnt Fireemu beim Start ab, was `firebase deploy` ablehnt. Ändert sich die Datei, während Fireemu läuft, behält es die vorherigen Indizes. Die Meldung nennt den Eintrag und beginnt mit dem Pfad der Datei, wie in `./firestore.indexes.json: indexes[0] (collection group notes): ...`. Jede Ablehnung unten wird mit dem Eintrag gezeigt, der sie auslöst, und einem, den die Produktion akzeptiert.
+
+**Ein zusammengesetzter Index mit nur einem Feld.** Die Produktion antwortet „this index is not necessary, configure using single field index controls“. Deklarieren Sie ihn stattdessen unter `fieldOverrides`, womit auch eine Collection-Group-Abfrage auf einem Feld aktiviert wird. `(field, __name__ DESC)`, `(__name__ DESC)` und ein einzelnes Vektorfeld werden akzeptiert, wie die Produktion sie akzeptiert.
+
+```json title="Abgelehnt"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): this index is not necessary, configure using single field index controls
+```
+
+```json title="Akzeptiert"
+{ "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "notes", "fieldPath": "owner",
+      "indexes": [{ "queryScope": "COLLECTION", "order": "ASCENDING" }] }
+] }
+```
+
+**Ein Eintrag ohne Array `fields`.** So sieht ein falsch geschriebener Schlüssel wie `feilds` aus.
+
+```json title="Abgelehnt"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "feilds": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): Must contain "fields" (an array of index fields)
+```
+
+```json title="Akzeptiert"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+**Ein Eintrag in `fieldOverrides` ohne Array `indexes`.** Eine reine TTL-Überschreibung braucht `"indexes": []`.
+
+```json title="Abgelehnt"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.expireAt): Must contain "indexes" (an array, empty for a TTL-only override)
+```
+
+```json title="Akzeptiert"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+] }
+```
+
+**Ein Index in `fieldOverrides`, der nur eine `vectorConfig` hat.** Jeder Override-Index braucht genau eines von `order` und `arrayConfig`. Deklarieren Sie ein einzelnes Vektorfeld stattdessen als zusammengesetzten Index, wie es die Produktion tut.
+
+```json title="Abgelehnt"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "emb",
+    "indexes": [{ "queryScope": "COLLECTION", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.emb): Must contain exactly one of "arrayConfig,order" in each of its indexes
+```
+
+```json title="Akzeptiert"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "emb", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+Fireemu liest diese Formen so, wie `firebase deploy` sie liest:
+
+- Ein fehlendes oder leeres `queryScope` wird als `COLLECTION` gelesen.
+- Die älteren Schlüssel `collectionId` und `mode` der Felder werden als `collectionGroup` und `order` / `arrayConfig` gelesen.
+
+Unter beiden Profilen enthält eine Datei höchstens 200 zusammengesetzte Indizes, 100 Felder pro Index und ein Array-Feld pro Index. `indexes.create` der Admin-API wendet dieselben Prüfungen an und zählt die Indizes der Datei und die zur Laufzeit angelegten gemeinsam gegen die 200.
+
+Das Profil `emulator` lehnt diese Einträge nicht ab, weil der offizielle Emulator die Datei nie liest. Es liest die Modi der zusammengesetzten Felder eines Eintrags mit dem Vorrang und der Truthiness, die `firebase deploy` verwendet, und ignoriert die Suchkonfiguration eines Field-Overrides, der auch einen Order- oder Array-Modus setzt.
+
+## Abfragegrenzen
+
+Unter dem Profil `strict` werden die Abfragegrenzen der Standard Edition so durchgesetzt, wie die Produktion sie durchsetzt. Wenn Sie `firestore.enforceLimits` auf `false` setzen, passieren Abfragen, die die Produktion ablehnt, lassen Sie es daher eingeschaltet, sofern Sie keinen besonderen Grund haben.
+
+Unter `strict` schaltet der Schlüssel nur diese Abfragegrenzen um (höchstens 30 Disjunktionen, 10 `not-in`-Werte und so weiter). Er betrifft weder die Grenzen für Schreibvorgänge, Transaktionen und Indizes noch das Verhalten von REST und WebChannel. Unter dem Profil `emulator` verlangt `true` auch jene Grenzen der Produktion.
+
+## Listen-Streams
+
+Die Produktion beendet den nativen gRPC-Stream `Listen` eines Endbenutzers eine Stunde nach seiner Öffnung mit `INTERNAL`. Standardmäßig hält Fireemu den Stream offen, egal wie lange er gehalten wird (`firestore.listenStreamLifetime: "unlimited"`). Um das Wiederverbinden eines Clients zu testen, tun Sie eines der folgenden:
+
+- Setzen Sie `firestore.listenStreamLifetime` auf `"oneHour"` (der Standard mit `productionExact`).
+- Rufen Sie `POST /v1/firestore/listen:expire` auf der Steuer-API auf, um jeden gehaltenen Endbenutzer-Stream auf einmal mit dem Status der Produktion zu beenden.
+
+Das Öffnen eines WebChannel-Listen oder -Write, das wegen Credentials oder [App Check](../app-check/) abgelehnt wird, schließt die HTTP-Transportaushandlung mit 200 ab und liefert dann einen terminalen Protokollfehler `UNAUTHENTICATED` oder `PERMISSION_DENIED`, den das Web SDK lesen kann. Ein ungültiges Ersatz-Token oder das einer anderen App bei App Check erhält nur seinen terminalen Fehler, ohne zurückgehaltene Dokumente erneut abzuspielen. Abgelehnte Öffnungen verbrauchen keine Kapazität zugelassener Sitzungen. Dieses Transportverhalten folgt dem SDK-Protokoll; es ist keine aufgezeichnete Aussage zur Parität mit der Produktion.
+
+## Transaktionen und Verlauf
+
+Wie die Produktion behält Fireemu jede Version eines Dokuments, die in der letzten Stunde geschrieben wurde, sodass ein `read_time`-Lesezugriff, eine schreibgeschützte Transaktion oder ein fortgesetzter Listener sie sehen kann. Transaktionen sperren, was sie lesen, wie es die Produktion tut. Umkämpfte gRPC- und WebChannel-Schreibvorgänge warten, ohne Runtime-Worker zu belegen. Das Abbrechen eines wartenden Commit beendet das Deadlock-Warten dieser Anfrage; ihre Transaktion behält Lesesperren, bis sie committet, zurückgerollt wird oder abläuft.
+
+### Lokale Verlaufsgrenzen
+
+Ein Test, der dieselben Dokumente viele Male aktualisiert, hält viele Versionen im Arbeitsspeicher. Diese lokalen Grenzen, die die Produktion nicht hat, begrenzen das:
+
+- Jede Datenbank behält höchstens 1 GiB logische Verlaufsbytes und 1.000.000 Versionen, jede Sitzung 1 GiB und 1.000.000 Versionen und der Daemon 4 GiB und 4.000.000 Versionen. Logische Bytes folgen dem Speichergrößenmodell von Firestore und sind nicht der Arbeitsspeicher des Prozesses, der um ein Mehrfaches größer sein kann.
+- Auf einer fixierten Uhr (`daemon.clockStart`) vergeht Zeit nicht von selbst, daher behält eine Datenbank höchstens 1.024 Versionen eines einzelnen Dokuments. Diese Grenze funktioniert wie `maxVersionsPerPath` unten: Sobald ein Dokument sie überschreitet, werden ältere Snapshots für die gesamte Datenbank freigegeben.
+- Strict Listen behält die neuesten 4.096 Grenzdatensätze pro aktiver Datenbank. Ein fortgesetzter Stream gibt das `read_time` der ursprünglichen Grenze zurück und sendet dann die neue Snapshot-Zeit mit `CURRENT`. Die Token-Bytes sind opak und können sich ohne Schreibvorgang ändern. Ein abgelaufener Datensatz oder abgelaufener Dokumentverlauf löst `RESET` und eine vollständige Wiedergabe aus; Reset, Wiederherstellung und Neustart des Daemons verwerfen die Datensätze. Diese Grenze ist lokal in Fireemu und keine Grenze der Produktion.
+- Ein Commit, der eine Grenze überschreiten würde, wird insgesamt mit `RESOURCE_EXHAUSTED` und der Meldung `Firestore retained history capacity is exhausted` abgelehnt.
+
+Versionen, die älter als eine Stunde sind, werden vom nächsten Commit freigegeben, nachdem die Uhr sie passiert hat.
+
+### Die Verlaufsgrenzen senken
+
+Um weniger Arbeitsspeicher zu verwenden, senken Sie die Grenzen in `firestore.history`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+edition = "standard"
+apiMode = "native"
+
+[firestore.history]
+maxVersionsPerPath = 16
+maxBytes = 268435456
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native",
+    "history": {
+      "maxVersionsPerPath": 16,
+      "maxBytes": 268435456
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- `maxVersionsPerPath` (1 bis 1.000.000) legt die meisten Versionen eines Dokuments fest, die eine Datenbank behält, auf beiden Uhren, anstelle der obigen Standardwerte.
+- `maxBytes` (1 MiB bis 1 GiB) senkt die logischen Verlaufsbytes, die eine Datenbank behält. Ein Import (`--import`) wird nicht dagegen geprüft: Ein größerer Import startet mit einer Zeile `warning:`, die die Datenbank, ihre Bytes und die Grenze nennt (eine Snapshot-Wiederherstellung darüber hinaus protokolliert dieselbe Zeile), und jeder spätere Schreibvorgang, der den Verlauf vergrößern würde, wird mit `RESOURCE_EXHAUSTED` abgelehnt.
+
+Ohne diese Schlüssel gelten die Standardwerte.
+
+### Was die Versionsgrenze freigibt
+
+Die Versionsgrenze gilt für jedes Dokument getrennt, doch ihre Wirkung erreicht die gesamte Datenbank. Snapshots bleiben für jedes Dokument exakt. Sobald also ein Dokument mehr Versionen hat als die Grenze, behält die Datenbank keinen Snapshot, der älter ist als die älteste behaltene Version dieses Dokuments. Danach:
+
+- Ein `read_time`-Lesezugriff, der älter als dieser Punkt ist, wird mit `FAILED_PRECONDITION` abgelehnt (`The requested 'read_time' is no longer retained by this database.`). Ebenso eine neue schreibgeschützte Transaktion bei einem solchen `read_time` (`read_time is no longer retained by this database`).
+- Eine Transaktion, die bereits auf einem älteren Snapshot geöffnet ist, scheitert beim nächsten Lesen oder Commit mit `ABORTED` (`The referenced transaction has expired or is no longer valid.`), auch wenn sie nur andere Dokumente berührt.
+- Ein Listener, der von einem älteren Punkt aus fortsetzt, wird zurückgesetzt und erhält das vollständige Ergebnis erneut.
+
+Client-SDKs wiederholen `ABORTED`-Transaktionen, vermeiden Sie also sehr kleine Grenzen: Wählen Sie eine Grenze über der Anzahl, wie oft irgendein Dokument aktualisiert wird, während Ihre längste Transaktion offen ist.
+
+`fireemu doctor --connect <control URL>` meldet die behaltenen Versionen und Bytes eines laufenden Daemons. Seine Zeilen `history.*` nennen die behaltenen Versionen und logischen Bytes gegenüber den Grenzen der Sitzung und des Daemons und wie viele Bytes die nächste Verdichtung freigeben würde.
+
+## Security Rules
+
+Rules werden aus der in `firebase.json` genannten Datei `firestore.rules` oder aus `rules.source` in `fireemu.toml` gelesen. Unter `strict` lehnt ein Projekt ohne Rules jede Client-Anfrage ab, wie es ein Produktionsprojekt ohne Rules-Release tut. Siehe [Security Rules](../../guides/security-rules/).
+
+## Benannte Datenbanken
+
+Deklarieren Sie jede benannte Datenbank im Array `firestore` der `firebase.json`, mit den Dateien `rules` und `indexes`, die sie verwendet, oder legen Sie sie über die Admin-API an. Unter `strict`:
+
+- Eine Anfrage an eine Datenbank, die weder deklariert noch angelegt ist, erhält `NOT_FOUND`, wie in der Produktion.
+- Die ID einer deklarierten Datenbank muss eine sein, die die Produktion anlegen könnte (4 bis 63 Zeichen aus `[a-z0-9-]`, beginnend mit einem Buchstaben), sonst startet Fireemu nicht.
+
+Die Produktion steuert eine Datenbank nur durch deren eigenes Rules-Release. Eine zur Laufzeit angelegte Datenbank hat daher keine Security Rules und lehnt jede Client-Anfrage ab, bis Sie welche für sie setzen; die Rules der Datenbank `(default)` gelten nicht für sie. Deklarieren Sie die Datenbank in `firebase.json` mit ihrer `rules`-Datei oder laden Sie sie zur Laufzeit:
+
+```
+PUT /emulator/v1/projects/{project}/databases/{database}:securityRules
+{"rules": {"files": [{"name": "firestore.rules", "content": "..."}]}}
+```
+
+Das ist die Route, die `PUT /emulator/v1/projects/{project}:securityRules` für die Datenbank `(default)` verwendet, mit demselben Body und denselben Antworten. Die so gesetzten Rules gelten, bis die Datenbank gelöscht wird; sie sind nicht Teil eines Snapshots.
+
+Das Profil `emulator` behält das Verhalten des offiziellen Emulators bei: Eine Datenbank, die keine eigenen Rules hat, wird von den Rules der Datenbank `(default)` bedient (mit der obigen Route für sie geladene Rules gelten für sie).
+
+## Enterprise-Textsuche
+
+Unterstützte Textdefinitionen in `firestore.indexes.json` (`searchConfig.textSpec`) gelangen in Enterprise-Datenbanken in den lokalen Textkatalog und bedienen `collection(...).search({ query: documentMatches(...) })`. Suchindizes bleiben von der gewöhnlichen Abfrageplanung getrennt. Die Standard Edition akzeptiert weiterhin eine gültige Suchindex-Konfiguration, ohne die Suche zu bedienen, und die Geo-Suche wird nicht unterstützt.
+
+Die lokale Engine `fireemu-lexical-v1` verwendet deterministische Unicode-Normalisierung und Wortsegmentierung, UND-Terme, positionsabhängige Phrasen, Ausschlüsse und Einschränkungen auf indizierte Felder.
+
+- Sortierung nach Erstellungszeit wird unterstützt, und die Score-Sortierung folgt den aufgezeichneten Ergebnisreihenfolgen der Produktion. Numerische Werte von `score()` sind Näherungen.
+- Es gibt kein Stemming, keine Synonymerweiterung, keine Tippfehlerkorrektur und keine automatische Spracherkennung.
+- `productionExact` lehnt die Suche ab, bis das entsprechende Verhalten der Produktion aufgezeichnet ist.
+- Explizite Steueraktionen von Fireemu bringen einen generationsbezogenen Build voran, schließen ihn ab, lassen ihn scheitern und reparieren ihn.
+
+Einrichtung, Steuerung und exakte Grenzen finden Sie im [Leitfaden zur lokalen Textsuche](https://github.com/fireemu/fireemu/blob/main/docs/text-search.md).
+
+## Enterprise-Pipelines
+
+In einer Enterprise-Datenbank führt fireemu Pipelines aus dem Admin SDK (gRPC) und aus `firebase/firestore/lite/pipelines` des Web SDK (REST `:executePipeline`) aus.
+
+Enterprise-Pipelines sind für den aufgezeichneten Korpus von 1.951 aufgezeichneten Fällen gegen die Produktion verifiziert:
+
+| Fälle | Ergebnis |
+|---|---|
+| 1.906 | Übereinstimmung. |
+| 17 | Übereinstimmung innerhalb der eigenen Schwankung der Produktion (Antwort-Framing und zufällige `sample`-Positionen). |
+| 26 | Unterscheiden sich nur auf eine Weise, die der Projekteigentümer akzeptiert hat (die Reihenfolge von Aggregat-Gruppen, die zulässige Auswahl von Gruppen unter einem `limit` oder `offset` nach unsortierten Gruppen, die Reihenfolge von Zeilen, die bei jedem Sortierschlüssel gleichauf liegen, und ein Wert, der von der Uhr abhängt). |
+| 2 | gRPC-Anfragen, die der Recorder nicht senden konnte; sie sind durch eine spätere Beobachtung abgedeckt. |
+
+Nicht aufgezeichnete Formen werden nicht beansprucht, und das Profil strict lehnt viele davon als unbeobachtet ab; die Tabelle [Verifikation gegen die Produktion](../../compatibility/#verifikation-gegen-die-produktion) listet die nicht beanspruchten Punkte auf.
+
+### Unterstützte Stages und Ausdrücke
+
+Die unterstützte Teilmenge beginnt mit einer Eingabe `collection`, `collection_group`, `documents` oder einer endlichen `database`, gefolgt von den Stages `where`, `select`, `sort`, `add_fields`, `remove_fields`, `distinct`, `aggregate`, `offset`, `limit` und `unnest` in beliebiger Reihenfolge und Anzahl. Aggregate umfassen `count`, `count_distinct`, `sum`, `average`, `minimum` und `maximum`, mit oder ohne Gruppen.
+
+| Ausdruck | Unterstützt |
+|---|---|
+| Felder | Verschachtelte Pfade (`a.b`) und `__name__` (die Dokumentreferenz) |
+| Literale | Werte jedes Typs, einschließlich Arrays und Maps von Literalen und Vektoren aus Doubles |
+| Vergleiche | `equal`, `not_equal`, `less_than`, `less_than_or_equal`, `greater_than` und `greater_than_or_equal`, überall wo ein Ausdruck stehen kann |
+| Konstruktion | `array(...)` und `map(...)` |
+| Array-Zugriff | `array_length`, `array_first`, `array_last`, `array_get`, `array_slice`, `array_first_n`, `array_last_n`, `array_index_of`, `array_index_of_all`, `join`, `maximum_n` und `minimum_n` |
+| Array-Helfer | `array_concat` und `array_reverse` |
+| Zeitstempelfunktionen | `current_timestamp`, `timestamp_add`, `timestamp_subtract`, `timestamp_trunc`, `timestamp_diff`, `timestamp_extract`, `unix_micros_to_timestamp`, `unix_millis_to_timestamp`, `unix_seconds_to_timestamp`, `timestamp_to_unix_micros`, `timestamp_to_unix_millis` und `timestamp_to_unix_seconds` |
+| Map-Funktionen | `map_get`, `map_set`, `map_remove`, `map_merge`, `map_keys`, `map_values` und `map_entries` |
+| Reguläre Ausdrücke | `regex_contains`, `regex_match`, `regex_find` und `regex_find_all` |
+| Dokumentfunktionen | `documentId`, `collectionId` und `parent` |
+| Logik, Existenz, Typ und Mitgliedschaft | `and`, `or`, `not`, `xor`, `nor`, `exists`, `is_absent`, `is_error`, `type`, `is_type`, `array_contains`, `array_contains_all`, `array_contains_any`, `equal_any` und `not_equal_any` |
+| String | `byte_length`, `string_index_of`, `string_repeat`, `string_replace_all`, `string_replace_one`, `string_reverse`, `concat`, `to_lower`, `to_upper`, `starts_with`, `ends_with`, `string_contains`, `char_length`, `substring`, `trim`, `ltrim`, `rtrim` und `split` |
+| Vektor-Skalare | `vector_length`, `dot_product`, `euclidean_distance` und `cosine_distance` |
+| Lazy Control | `if_absent`, `if_null`, `if_error`, `conditional` und `switch_on` |
+| Mathematik | `add`, `subtract`, `multiply`, `divide`, `mod`, `abs`, `round`, `floor`, `ceil` und `pow` |
+
+### Weitere aufgezeichnete Formen
+
+- **Leere Konstruktoren.** Die aufgezeichneten leeren Konstruktoren `array()` und `map()` liefern leere Werte. Andere Konstruktorformen bleiben außerhalb dieser Beobachtungen.
+- **`like`, `rand`, `array_filter` und `array_transform`.** Diese zusätzlichen aufgezeichneten Formen werden unterstützt. Eingabetypen, Platzierung von Lambdas und Kombinationen bleiben begrenzt. Zufallswerte bilden die Zufallsfolge der Produktion nicht nach.
+- **Skalare `minimum`, `maximum`, `sum` und `negate`.** Aufgezeichnete skalare Formen werden unterstützt, einschließlich erfasster Fälle mit Ganzzahlen, endlichen Doubles, gemischten numerischen Werten und null/absent. Das aufgezeichnete `sum([])` liefert null. Andere Typen, nicht endliche Eingaben und numerische Extreme bleiben außerhalb dieser endlichen Kompatibilitätsaussage.
+- **Generische Formen.** Weitere aufgezeichnete generische Formen sind `cmp`, `storage_size`, `coalesce`, `get_field`, `offset`, `reverse`, `length`, `string_concat`, `namespace`, `has_ancestor`, `reference_slice`, `replace_document_id` und `autogen_document_id`. Jede Beobachtung deckt ihre deklarierten Eingabetypen ab: Zum Beispiel unterstützt `storage_size` derzeit Strings, während aufgezeichnete Formen von `reverse` Strings, Bytes und Arrays abdecken. Erzeugte Dokument-IDs folgen dem endlichen Vertrag aus 20 ASCII-alphanumerischen Zeichen; diese Beobachtungen belegen weder Entropie noch globale Eindeutigkeit.
+
+Die oben genannten Funktionen für Arrays, Maps, reguläre Ausdrücke und Zeitstempel, `unnest` und das Verhalten bei der Anzahl null sind in beiden Profilen verfügbar. Der Produktionsvergleich deckt die aufgezeichneten Fälle ab, nicht jeden Eingabetyp oder jede Kombination.
+
+**Map-Funktionen.** `map_set` behält einen expliziten Null-Wert und entfernt einen Schlüssel, dessen Wert absent ist. Eine Null- oder absent-Eingabe-Map liefert ein absent-Ergebnis, während die übrigen aufgeführten Map-Funktionen für diese Eingabe null liefern. Dieses Entfernen folgt der dokumentierten API und wurde in der Produktion nicht beobachtet. Map-Schlüssel, -Werte und -Einträge verwenden die deterministische Map-Reihenfolge von Fireemu, und zusammengehörige Schlüssel und Werte bleiben gepaart. Die aufgezeichnete Map der Produktion stimmt für ihre zwei Schlüssel überein; die Reihenfolge der Produktion für andere Maps ist unverifiziert.
+
+**Weitere mathematische Funktionen.** Das Profil emulator wertet außerdem `sqrt`, `exp`, `ln`, `log`, `log10` und `trunc` mit ausgelassener oder null-Genauigkeit aus. Eine Trunkierungsgenauigkeit ungleich null und endliche subnormale Ausgaben der Exponentialfunktion sind unbeobachtet. Strict lässt endliche aufgezeichnete numerische Formen und Fehlerformen in ihren unterstützten Kontexten zu; nicht aufgezeichnete numerische Fälle, Domänenfälle, Null-, Typ- und Rangfolgefälle bleiben gesperrt. Diese Funktionen belegen keine allgemeine Parität mit der Produktion.
+
+**String- und Vektorfunktionen.** Die String-Funktionen arbeiten auf ihren unterstützten Formen; strict lehnt nicht aufgezeichnete Typen und Suchoffsets außerhalb von ASCII ab, und Wiederholung und Ersetzung unterliegen einer lokalen Grenze für die Ausgabegröße. Strict `array_index_of_all` akzeptiert die beobachteten Ganzzahlformen. Vektor-Skalarfunktionen lehnen nicht aufgezeichnete, leere, nicht passende oder nicht endliche binäre Vektoren und nicht unterstützte numerische Extreme ab; diese Grenzen belegen keine allgemeine Kompatibilität mit der Produktion.
+
+**Array-Funktionen und Bytes.** Die zusätzlichen Array-Funktionen und `unnest` decken die aufgezeichneten Eingabeformen ab; nicht aufgezeichnete Kombinationen und die Reihenfolge bleiben unverifiziert. Strict Firestore REST akzeptiert die aufgezeichneten Standard- und URL-sicheren Base64-Formen und den Protobuf-Alias `bytes_value` und lehnt aufgezeichnete CR/LF- und Mischalphabet-Formen ab. Das gewöhnliche Profil emulator behält für die Entwicklung eine großzügige Dekodierung bei; seine zusätzlich akzeptierten Formen sind keine Aussage zur Kompatibilität mit der Produktion.
+
+### Details zum Verhalten
+
+#### Zeitstempel
+
+Pipeline-Zeitstempel verwenden Mikrosekunden-Genauigkeit. `current_timestamp` tastet die konfigurierte Uhr einmal pro Anfrage ab und bleibt während der gesamten Auswertung dieser Pipeline fest. Zonenbewusstes Trunkieren und Extrahieren verwenden benannte IANA-Zonen; die Produktionsaufzeichnungen decken nur bestimmte Zonenfälle ab. Mehrdeutige oder nicht existierende lokale Grenzen der Sommerzeit werden als unbeobachtet abgelehnt, und benutzerdefinierte GMT-Offset-Semantik ist nicht implementiert. Andere Zeitzonen, Grenzen und Eingabekombinationen sind durch diese Aufzeichnungen nicht als mit der Produktion kompatibel belegt.
+
+#### Reguläre Ausdrücke
+
+Die Regex-Funktionen folgen in beiden Profilen den Produktionsaufzeichnungen vom 2026-11-10.
+
+- `\d`, `\D`, `\w`, `\W`, `\b` und `\B` sind nur ASCII.
+- `\s` sind die ASCII-Leerraumzeichen plus der vertikale Tabulator und trifft kein geschütztes Leerzeichen (no-break space). Die Mitglieder von `\s` außer Leerzeichen, Tabulator und vertikalem Tabulator (Zeilenvorschub, Seitenvorschub, Wagenrücklauf) werden angenommen, nicht aufgezeichnet.
+- `\pL` und `\p{Nd}` sind Unicode.
+- `(?i)` faltet nur ASCII-Buchstaben. `(?u)` und `(?-u)` werden akzeptiert und ändern nichts. `(?U)` macht einen Quantifizierer nicht lazy.
+- POSIX-Klassen wie `[[:digit:]]` und das Flag `(?m)` werden, wie in der Produktion, mit `Unsupported regex syntax.` abgelehnt.
+- `regex_find` und `regex_find_all` akzeptieren höchstens eine Capture-Gruppe und lehnen mehr mit `At most one capture group is supported.` ab; eine nicht getroffene Gruppe ergibt null. `regex_contains` und `regex_match` akzeptieren beliebig viele Gruppen. `regex_match` verlangt eine Übereinstimmung des ganzen Strings.
+
+Die Eingaben unter `strict`, die keine Aufzeichnung abdeckt (Klammerwiederholungen, andere Flags und Flag-Kombinationen, `\A` und `\z`, Escapes wie `\n`, andere Eigenschaftsnamen, verschachtelte Klassen und Klassen-Mengenoperationen, `(?i)` oder `(?U)` mit einer Klasse), werden als unbeobachtet abgelehnt. Das Profil `emulator` wertet sie mit der lokalen Engine aus, deren Ergebnis dafür nicht als Parität mit der Produktion belegt ist.
+
+Die Produktion zeichnete keine Grenze für die Musterlänge auf. Lokal wird ein Muster, das länger als 128 KiB ist oder dessen ASCII-Umschreibung länger als 1 MiB ist, in beiden Profilen als unbeobachtet abgelehnt, ebenso ein Muster, das die Grenze der kompilierten Größe der Engine überschreitet.
+
+#### Anzahl null
+
+Ein `limit` von null reicht keine Zeilen an die nächste Stage weiter, und ein `offset` von null reicht alle Zeilen durch, in beiden Profilen. Das Profil strict folgt für diese Eingaben den aufgezeichneten Fällen der Produktion.
+
+#### Aufgezeichnete Fehler
+
+Das Profil strict bildet die aufgezeichnete Antwort `INTERNAL` der Produktion für `array_reverse()` ohne Argumente und mit leeren Optionen nach, ebenso für einen doppelten Select-Alias, wenn eine Schreibweise in Anführungszeichen steht und die andere nicht. Fireemu schreibt eine feste Erklärung ohne Anfragewerte auf die Standardfehlerausgabe. Ein `array_reverse()` ohne Argumente mit nicht leeren Optionen behält seine bisherige Ablehnung, und das Profil emulator behält sein bisheriges Validierungsverhalten bei. Diese Fehler decken nur die aufgezeichneten Formen ab; passen Sie den Aufruf oder den Alias an, um fortzufahren.
+
+Strict natives gRPC bildet außerdem die aufgezeichneten Fehler `INTERNAL` für endliche Ganzzahlformen von `bit_not`, `bit_left_shift` und `bit_right_shift` nach. Die Konsole erklärt dieses Verhalten, ohne Anfragewerte einzuschließen. Diese Beobachtungen belegen die Fehlerkompatibilität für die deklarierten nativen Anfrageformen; die erfolgreiche Semantik der Bit-Operationen und die Fehlerparität bei REST bleiben unverifiziert. Das Profil emulator behält seine bisherige Ablehnung bei.
+
+Weitere aufgezeichnete Fälle der Validierungspriorität stimmen überein, und strukturiertes `ErrorInfo` bleibt für den erfassten geordneten REST-Typfehler bei `collection_id` erhalten. Andere Rangfolge-Kombinationen und mehrdeutige native Map-Reihenfolge bleiben gesperrt.
+
+Der erfasste native gRPC-Select-Aufruf `geo_distance` mit zwei gültigen Geo-Punkten liefert seine Diagnose `INVALID_ARGUMENT`, die nur für die Suche gilt; die Geo-Suche bleibt außerhalb dieser Kompatibilitätsaussage zu Pipelines.
+
+In beiden Profilen liefert der aufgezeichnete verschachtelte skalare Aufruf von Aggregat-`sum` auf einer Ganzzahl `INVALID_ARGUMENT` mit der Diagnose `array_sum` der Produktion: expected Array, got LONG. Übergeben Sie diesem skalaren Aufruf ein Array; andere Argumentformen behalten ihre bestehenden Sperren.
+
+#### Ergebnisse, Framing und Reihenfolge
+
+- Ein `where` behält eine Zeile nur, wenn seine Bedingung (ein Vergleich, ein Feld oder eine andere unterstützte Funktion) `true` ist.
+- Ein `select` setzt höchstens 64 Felder, wie in der Produktion.
+- Ergebnisse ohne `select` tragen Name, Erstellungszeit und Aktualisierungszeit des Dokuments, und Antworten tragen normalerweise die Ausführungszeit; eine Eingabe `documents`, die nur Fehlendes enthält, behält ihre gewählte Ausführungszeit.
+- Eine kleine Antwort kommt so, wie die Produktion sie rahmt: alle Ergebnisse in einer Antwortnachricht über gRPC oder in einem Array-Element über REST. Fireemu schneidet eine größere Antwort bei etwa 1 MiB an Ergebnissen ab; Produktionsaufzeichnungen zeigen variable Grenzen; das Framing großer Antworten ist nicht verifiziert.
+- `select({__name__: field("__name__")})` antwortet mit dem Dokumentnamen, einschließlich der aufgezeichneten Formen neben anderen Aliasen oder mit Aliasen und Werten in Anführungszeichen; nicht aufgezeichnete Formen bleiben unter `strict` `UNIMPLEMENTED`.
+- Ohne `sort` folgen aufgezeichnete Collection-Lesezugriffe aufsteigend dem CRC-32 der Dokument-IDs; Collection Groups verwenden zuerst den Elternpfad und dann diese Reihenfolge. IDs außerhalb von ASCII und CRC-32-Gleichstände sind unverifiziert, ebenso die Reihenfolge von Aggregat-Gruppen und die Reihenfolge von Gleichständen unter einem Limit.
+- Ein gespeichertes `-0.0` wird als `-0.0` zurückgelesen, wie in der Produktion; der offizielle Emulator speichert es als `0.0`.
+
+### Unterschiede zwischen den Profilen
+
+Die aufgezeichneten übereinstimmenden Antworten decken bestimmte Anfrageformen aus den Beobachtungen von FS-ENT-ORACLE ab, einschließlich Vergleichen, Literalwerten, Select-Aliasen, Dokumentfunktionen, Stage-Reihenfolge und den unterstützten String- und Mathematikfunktionen. Andere aufgezeichnete und nicht aufgezeichnete Formen bleiben unverifiziert.
+
+Unter `strict` wird eine Ablehnung im Allgemeinen nur dann beantwortet, wenn die Anfrage die Form einer Anfrage hat, die die Produktion abgelehnt hat, mit dem Text dieser Anfrage, und sonst mit `UNIMPLEMENTED`; die unten beschriebenen Ausnahmen bei der gRPC-Tiefe gelten ebenfalls. Eine Form behält die Stages, Funktionsnamen, Werttypen und die Einträge jeder Map der Reihe nach und ersetzt nur schlichte Feldnamen und Werte derselben Art, sodass `select({total: documentId(field)})` wie das aufgezeichnete `select({v: documentId(field)})` beantwortet wird. Ein REST-Body behält seine Schlüsselreihenfolge; über gRPC hat eine Map mit zwei oder mehr Einträgen keine Reihenfolge, daher beantwortet `strict` dort im Allgemeinen keine Ablehnung einer solchen Anfrage, außer bei dem unten beschriebenen aufgezeichneten gRPC-Fall zur Select-Breite.
+
+Wo die Produktion nicht beobachtet wurde, unterscheiden sich die Profile:
+
+| Eingabe | `strict` | `emulator` |
+|---|---|---|
+| Eine Dokumentfunktion einer Collection-Referenz mit einem Namen außerhalb von ASCII | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der Index in UTF-16-Einheiten gezählt |
+| Aufgezeichnete Ablehnungen reservierter Map-Schlüssel | `INVALID_ARGUMENT` für die aufgezeichneten Formen; nicht aufgezeichnete Formen bleiben gesperrt | `INVALID_ARGUMENT`, der zuerst einen reservierten Schlüssel nennt |
+| Aufgezeichnete Anfragen mit falschem Typ bei Dokumentfunktionen | `INVALID_ARGUMENT` für die aufgezeichneten REST-Formen; ungeordnete gRPC-Vektor-Maps bleiben `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der den Typ nennt |
+| Ein Schlüssel von `map(...)`, der ein Double, null oder ein anderer Typ als eine Ganzzahl oder ein Boolean ist | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der den Typ nennt |
+| Ein Vektor-Literal mit Ganzzahl- oder NaN-Elementen, ohne Element, ohne `value` oder mit einem anderen Schlüssel | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der offizielle Text |
+| Ein Vektor-Literal mit einem unendlichen Element | `UNIMPLEMENTED` | Der Vektor |
+| Ein Schlüssel `__type__`, der kein String ist, oder ein Referenz-Literal, das kein Dokument nennt | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der offizielle Text |
+| Zwei Ablehnungen in einer Pipeline | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, eine davon |
+| Eine Ablehnung, die die Produktion nur in einer anderen Stage aufgezeichnet hat, etwa ein Literal, das ein Feld innerhalb einer `where`-Bedingung enthält | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der offizielle Text |
+| Ein Vektor-Literal mit einem Element negativer Null | `UNIMPLEMENTED` | Der Vektor |
+| Aufgezeichnete Ablehnungen leerer oder reservierter Literal-Schlüssel, einschließlich `__name__` und Fällen mit mehreren Schlüsseln | `INVALID_ARGUMENT` über REST und bei eindeutigem gRPC; drei ungeordnete gRPC-Fälle mit mehreren Schlüsseln bleiben `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der einen Schlüssel nennt |
+| Aufgezeichnete Argumente von `limit` und `offset` mit falschem Typ und ein negatives `offset` | `INVALID_ARGUMENT` für die aufgezeichneten Formen; andere Formen bleiben gesperrt | `INVALID_ARGUMENT`, der offizielle Text |
+| Ein `limit` von 0 oder ein `offset` von 0 | Das aufgezeichnete Verhalten bei Anzahl null | Dasselbe Verhalten bei Anzahl null |
+| Ein `select`-Alias in einem anderen in anderer Reihenfolge als dem `{m, m.r}` der Produktion, etwa `{a.b, a}` | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der über REST den späteren Alias nennt (wie der offizielle Emulator) und über gRPC das Kind |
+| Ein nicht aufgezeichnetes `select` mit zwei Feldern, die bei der Auswertung beide scheitern, etwa `{a: documentId("s"), b: parent(true)}` | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, das erste in Schlüsselreihenfolge |
+| Ein Vektor innerhalb eines Arrays oder ein Schlüssel `__type__` neben anderen Schlüsseln in einem Literal | `UNIMPLEMENTED` | Die offizielle Antwort |
+| Eine nicht aufgezeichnete falsche Argumentanzahl für eine unterstützte Funktion | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, der Text von fireemu |
+| Funktionsoptionen | Die aufgezeichnete einzelne ganzzahlige Option `x` bei `document_id(__name__)` wird in ihrer zweistufigen Projektionsform akzeptiert; andere Optionen bleiben gesperrt | Ignoriert, wie der offizielle Emulator sie ignoriert |
+| Eine leere `select`-Map oder die Prüfung einer späteren Stage nach einem Funktions- oder Stage-Wert, den fireemu nicht prüft (die Produktion nennt zuerst eine unbekannte Funktion) | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, die leere Map oder die spätere Prüfung |
+| Ein Regex-Konstrukt, das keine Aufzeichnung abdeckt, etwa `a{2}`, `\n`, `(?x)` oder `(?i)[a-c]` | `UNIMPLEMENTED` | Das Ergebnis der lokalen Engine |
+| Eine leere Map oder eine andere Ablehnung neben einem Funktionsaufruf, der an seinen Konstanten scheitert, etwa `map(1.5, i)`, oder neben jedem anderen Teil, den `strict` nicht beantwortet | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, die leere Map oder die andere Ablehnung |
+| Eine nicht aufgezeichnete Argumentanzahl oder Optionen einer Stage | `UNIMPLEMENTED` | Hängt von der Stage und der Argumentform ab |
+| Ein leeres `array()` oder `map()` | Das aufgezeichnete leere Array oder die leere Map | Ein leeres Array oder eine leere Map |
+| Ein `aggregate` ohne sein Argument für Gruppen | `INVALID_ARGUMENT` mit dem Arity-Text der Produktion für die aufgezeichnete Form (direkt nach der Collection, eine nicht leere Map schlichter Aliasse auf `count`), sonst `UNIMPLEMENTED` | `INVALID_ARGUMENT` mit demselben Text |
+
+### Unions, Sampling, Subqueries und weitere Stages
+
+**`union`.** Endliche `union`-Zweige können Collection-Eingaben mit zeilenlokalem `where` und `select` verwenden; nicht unterstützte untergeordnete Stages und Eingaben werden abgelehnt. Quell-Lesezugriffe teilen sich einen Snapshot, und verschachtelte Zweige haben lokale Tiefen- und Größengrenzen.
+
+**`sample`.** `sample(size, mode)` unterstützt `documents`-Sampling ohne Zurücklegen und `percent`-Sampling in Eingabereihenfolge: zum Beispiel verwendet `sample(0.5, "percent")` eine Wahrscheinlichkeit von 0,5 pro Zeile, während `sample(2, "documents")` bis zu zwei Zeilen auswählt. Zufallsergebnisse variieren und bilden die Zufallsfolge der Produktion nicht nach.
+
+**`replace_with` und `find_nearest`.** Ein endliches `replace_with` unterstützt den vollständigen Ersatz und die implementierten Merge-Modi Überschreiben und Behalten; der vollständige Ersatz verwirft die Metadaten des Quelldokuments. Ein endliches `find_nearest` unterstützt euklidische, Kosinus- und Skalarprodukt-Maße mit den lokal erforderlichen Optionen für Limit und Distanzfeld. Andere Formen bleiben unverifiziert oder werden abgelehnt.
+
+**Lesezeiten und Transaktionen.** Sowohl die gRPC- als auch die REST-Route bedienen endliche Eingaben `documents`, `collection` und `collection_group` mit einer Lesezeit, einer bestehenden Transaktion oder einer neuen Transaktion sowie Auto-Commit einer bestehenden oder neuen Transaktion, in den aufgezeichneten Formen. Eine Lesezeit mit Auto-Commit sowie `database`-, `union`- oder `search`-Eingaben mit einem Selektor bleiben abgelehnt. Nicht unterstützte Ausführungsformen werden ausdrücklich abgelehnt. Aufgezeichnete Validierungsfehler können `INVALID_ARGUMENT` liefern, ohne eine vorgeschlagene Funktion ausführbar zu machen. Aufgezeichnete Übereinstimmungen belegen Kompatibilität nur für die aufgezeichneten Anfrageformen; andere Formen bleiben unverifiziert.
+
+**Weitere Aggregate und Subqueries.** Endliche aufgezeichnete Formen von `array_agg`, `array_agg_distinct`, `first`, `last` und `count_if` werden unterstützt. Begrenzte Formen von Subcollection- und korrelierten skalaren Subqueries teilen sich einen Quell-Snapshot; nicht unterstützte Eingaben, Stages und Bindungen werden abgelehnt, und lokale Ressourcengrenzen gelten. Die Reihenfolge von Aggregaten und nicht aufgezeichnete Formen werden nicht als Parität mit der Produktion beansprucht.
+
+Eine unterstützte korrelierte skalare Subquery kann vor der Prüfung der Kardinalität einen zusätzlichen Filter auf String-Gleichheit anwenden. Die aufgezeichnete Anfrage mit einem einzelnen Ergebnis liefert den ausgewählten Wert, und die aufgezeichnete Anfrage mit mehreren Ergebnissen erhält die Diagnose `INVALID_ARGUMENT` der Produktion. Diese Beobachtungen decken nur diese aufgezeichneten Anfrageformen ab; das Verhalten bei null Ergebnissen und andere skalare Formen bleiben unverifiziert.
+
+**Tiefe und Breite.** Gewöhnliches REST meldet die aufgezeichnete Tiefendiagnose für tief verschachteltes Pipeline-JSON, und strict gRPC lässt die aufgezeichnete Ablehnung eines `select` mit 65 Feldern zu. gRPC-Funktionsausdrücke über 32 Ebenen werden in beiden Profilen abgelehnt; strict gRPC bildet außerdem Protobuf-Rekursionsfehler auf die aufgezeichnete Invalid-Argument-Diagnose ab. Die gRPC-Grenzen und -Diagnosen verallgemeinern über die beobachteten Ketten hinaus; die Rangfolge von Fehlern und andere nicht aufgezeichnete Fälle bleiben unverifiziert.
+
+**Fehlende verschachtelte Aliasse.** Das Auswählen eines fehlenden verschachtelten Alias bewahrt seine leeren übergeordneten Maps. Die Produktion zeichnete drei Fälle mit Punkt-Aliasen auf; andere Formen fehlender Ausdrücke sind aus diesen Beobachtungen verallgemeinert.
+
+## Unterschiede zur Produktion
+
+### Lokale Grenzen
+
+Die Produktion hat keine dieser Grenzen. Jede ist in ihrem Abschnitt beschrieben:
+
+- Der behaltene Dokumentverlauf ist pro Datenbank, pro Sitzung und pro Daemon begrenzt, und strict Listen behält eine begrenzte Anzahl von Grenzdatensätzen. Siehe [Transaktionen und Verlauf](#transaktionen-und-verlauf).
+- Die Liste der fehlenden Indizes der Steuer-API fasst eine begrenzte Anzahl von Einträgen. Siehe [Grenzen und Ablehnungen](#grenzen-und-ablehnungen).
+- Regex-Muster in Pipelines haben eine lokale Längengrenze, und verschachtelte `union`-Zweige, Subqueries sowie Wiederholung und Ersetzung von Strings haben lokale Grenzen für Tiefe, Größe oder Ressourcen. Siehe [Enterprise-Pipelines](#enterprise-pipelines).
+
+### Verhalten, das standardmäßig abweicht
+
+- Ein nativer gRPC-Stream `Listen` bleibt offen, egal wie lange er gehalten wird, wo die Produktion ihn nach einer Stunde beendet. Siehe [Listen-Streams](#listen-streams).
+- Die WebChannel-Antwort auf das Öffnen eines abgelehnten Listen oder Write folgt dem SDK-Protokoll und ist keine aufgezeichnete Aussage zur Parität mit der Produktion. Siehe [Listen-Streams](#listen-streams).
+
+### Umfang von Enterprise
+
+- Die Textsuche verwendet eine lokale Engine ohne Stemming, Synonymerweiterung, Tippfehlerkorrektur und automatische Spracherkennung, und die Geo-Suche wird nicht unterstützt. Siehe [Enterprise-Textsuche](#enterprise-textsuche).
+- Pipelines decken eine begrenzte Teilmenge von Leseoperationen ab, und nur aufgezeichnete Anfrageformen werden als mit der Produktion kompatibel beansprucht. Siehe [Enterprise-Pipelines](#enterprise-pipelines) und [Einschränkungen](../../compatibility/limitations/).
+
+### Verifikation gegen die Produktion
+
+Schreibvorgänge und Grenzen, Abfragen und Indizes, Transaktionen, Echtzeit-Listener, Security Rules, Datenbankadministration, Enterprise-Volltextsuche und Enterprise-Pipelines sind gegen Aufzeichnungen aus echtem Firestore verifiziert, jeweils für die aufgezeichneten Fälle jedes Bereichs. Siehe die [Kompatibilitätstabellen](../../compatibility/#verifikation-gegen-die-produktion).
+
+## Siehe auch
+
+- [Security Rules](../../guides/security-rules/)
+- [Profile](../../guides/profiles/)
+- [Kompatibilität](../../compatibility/) und [Einschränkungen](../../compatibility/limitations/)
+- [Konfigurationsreferenz](../../reference/configuration/)

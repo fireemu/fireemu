@@ -16,11 +16,11 @@ Fireemu enthält eine lokale App-Check-Implementierung: einen Austausch von Debu
 
 ## Was Sie testen können
 
-- Den Austausch von Debug-Tokens, der unter `strict` ohne Konfiguration funktioniert ([Ein Debug-Token ohne Konfiguration tauschen](#exchange-a-debug-token-with-no-configuration)).
-- Die Durchsetzung für Authentication, Firestore und Storage: `off`, `unenforced` oder `enforced` ([Apps registrieren und durchsetzen](#register-apps-and-enforce)).
+- Den Austausch von Debug-Tokens, der unter `strict` ohne Konfiguration funktioniert ([Ein Debug-Token ohne Konfiguration tauschen](#ein-debug-token-ohne-konfiguration-tauschen)).
+- Die Durchsetzung für Authentication, Firestore und Storage: `off`, `unenforced` oder `enforced` ([Apps registrieren und durchsetzen](#apps-registrieren-und-durchsetzen)).
 - Callable Functions mit `enforceAppCheck`, einschließlich `request.app` ([Callable Functions](#callable-functions)).
 - Die Ablehnung eines fehlenden, fehlerhaften, abgelaufenen oder falsch signierten Tokens.
-- `getAppCheck().verifyToken()` innerhalb einer `onRequest`-Funktion ([Mit dem Admin SDK verifizieren](#verify-with-the-admin-sdk-getappcheckverifytoken)).
+- `getAppCheck().verifyToken()` innerhalb einer `onRequest`-Funktion ([Mit dem Admin SDK verifizieren](#mit-dem-admin-sdk-verifizieren-getappcheckverifytoken)).
 
 ## Verbinden
 
@@ -45,7 +45,7 @@ curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aw
 
 Ein String, der keine UUIDv4 ist, wird abgelehnt: `403 PERMISSION_DENIED`, `App attestation failed.`
 
-`appCheck.debugTokens` steuert das. Setzen Sie es selbst neben `appCheck.enabled: true` auf `"any"`, tauscht auch jede UUIDv4 für die Apps, die Sie registriert haben, unabhängig von den Digests, die sie tragen. In diesem Fall ist es `"any"`; unter `productionExact`, unter dem Profil `emulator` und in jedem `appCheck`-Block, der den Schlüssel nicht setzt, ist es `"registered"`, die Regel der Produktion. Bei `"registered"` wird nichts bereitgestellt, bis Sie [App Check aktivieren](#register-apps-and-enforce).
+`appCheck.debugTokens` steuert das. Setzen Sie es selbst neben `appCheck.enabled: true` auf `"any"`, tauscht auch jede UUIDv4 für die Apps, die Sie registriert haben, unabhängig von den Digests, die sie tragen. In diesem Fall ist es `"any"`; unter `productionExact`, unter dem Profil `emulator` und in jedem `appCheck`-Block, der den Schlüssel nicht setzt, ist es `"registered"`, die Regel der Produktion. Bei `"registered"` wird nichts bereitgestellt, bis Sie [App Check aktivieren](#apps-registrieren-und-durchsetzen).
 
 ### Ein Token aus dem Web SDK erhalten
 
@@ -294,7 +294,7 @@ Replay-Schutz wird nicht unterstützt. Ein Aufruf, der ein gültiges Token an ei
 
 Tokens werden mit einem Schlüssel signiert, der zu einer Daemon-Instanz gehört. Node-Callables und andere vom Daemon verifizierte Dienste lehnen sie nach einem Sitzungs-Reset oder einer Snapshot-Wiederherstellung ab.
 
-Python-Callables verifizieren Token-Signaturen und Claims anhand der Signaturschlüssel und der Echtzeit, ohne den aktuellen App-Zustand oder die Projektepoche zu prüfen, sodass das Zurücksetzen eines Projekts oder das Deaktivieren einer App ein sonst gültiges Token vor seinem Ablauf nicht widerruft. Python lehnt außerdem den Verbrauch von Tokens und eine explizite App-Check-Konfiguration ab; Einrichtung und Einschränkungen siehe [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli).
+Python-Callables verifizieren Token-Signaturen und Claims anhand der Signaturschlüssel und der Echtzeit, ohne den aktuellen App-Zustand oder die Projektepoche zu prüfen, sodass das Zurücksetzen eines Projekts oder das Deaktivieren einer App ein sonst gültiges Token vor seinem Ablauf nicht widerruft. Python lehnt außerdem den Verbrauch von Tokens und eine explizite App-Check-Konfiguration ab; Einrichtung und Einschränkungen siehe [Cloud Functions (Python)](../functions-python/#unterschiede-zur-produktion-und-zur-firebase-cli).
 
 ## Gewöhnliche HTTP-Funktionen (`onRequest`)
 
@@ -407,16 +407,16 @@ Diese liegen bewusst außerhalb des Umfangs:
 - **Echte Attestierung** über Play Integrity, App Attest, DeviceCheck oder reCAPTCHA. Das lokale App Check verwendet Debug-Tokens.
 - **Limited-Use-Tokens und Replay-Schutz.** Ein Callable mit `consumeAppCheckToken: true` wird mit 501 `APP_CHECK_REPLAY_UNSUPPORTED` abgelehnt, und `verifyToken(token, { consume: true })` antwortet mit `app-check/unimplemented`, sodass ein Test nicht mit einem Token bestehen kann, das die Produktion verbraucht hätte.
 - **Tokens, die ihren Daemon überleben.** Sie werden mit einem Schlüssel signiert, der zu einer Daemon-Instanz gehört (siehe [Callable Functions](#callable-functions)).
-- **Python-Callables** haben weitere Einschränkungen; siehe [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli).
+- **Python-Callables** haben weitere Einschränkungen; siehe [Cloud Functions (Python)](../functions-python/#unterschiede-zur-produktion-und-zur-firebase-cli).
 
 Zwei Verhaltensweisen unterscheiden sich dort, wo sie oben beschrieben sind:
 
-- `verifyToken` lehnt in jedem Profil ein Token für eine App ab, die nicht registriert oder deaktiviert ist; die Produktion akzeptiert es, bis es abläuft ([Mit dem Admin SDK verifizieren](#verify-with-the-admin-sdk-getappcheckverifytoken)).
-- Mit `"loopback"` lässt ein `enforced` Storage-Dienst lokale Anfragen ohne Browser ohne Token zu ([Storage-Anfragen aus serverseitigem Code](#storage-requests-from-server-side-code)).
+- `verifyToken` lehnt in jedem Profil ein Token für eine App ab, die nicht registriert oder deaktiviert ist; die Produktion akzeptiert es, bis es abläuft ([Mit dem Admin SDK verifizieren](#mit-dem-admin-sdk-verifizieren-getappcheckverifytoken)).
+- Mit `"loopback"` lässt ein `enforced` Storage-Dienst lokale Anfragen ohne Browser ohne Token zu ([Storage-Anfragen aus serverseitigem Code](#storage-anfragen-aus-serverseitigem-code)).
 
 ## Siehe auch
 
 - [Authentication](../auth/), [Firestore](../firestore/) und [Storage](../storage/): die Dienste, die App Check durchsetzen kann.
-- [Functions](../functions/) und [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli): Callables und `onRequest`-Handler.
+- [Functions](../functions/) und [Cloud Functions (Python)](../functions-python/#unterschiede-zur-produktion-und-zur-firebase-cli): Callables und `onRequest`-Handler.
 - [Profile](../../guides/profiles/): `strict`, `emulator` und `productionExact`.
 - [Konfigurationsschema](../../reference/configuration/): jede Einstellung von `appCheck`.

@@ -42,7 +42,7 @@ profile = "strict"
 ## Ein Setup wählen
 
 - **Die meisten Projekte:** `strict` mit den Entwicklungsstandards. Ihre Tests laufen ohne Schlüssel oder Einrichtungsaufrufe und stoßen dennoch auf die Validierung, die Ablehnungen und die Fehlerformen der Produktion.
-- **Vor einem Release oder in einem separaten CI-Job:** `strict` mit [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose), um zu erkennen, was die Entwicklungsstandards durchlassen, etwa ein unsigniertes Token.
+- **Vor einem Release oder in einem separaten CI-Job:** `strict` mit [`productionExact: true`](#wo-fireemu-bewusst-von-der-produktion-abweicht), um zu erkennen, was die Entwicklungsstandards durchlassen, etwa ein unsigniertes Token.
 - **Den offiziellen Emulator prüfen:** `emulator`, nur als zusätzliches Ziel.
 
 ## Wo Fireemu bewusst von der Produktion abweicht
@@ -170,7 +170,7 @@ Dieses Verhalten weicht von der Produktion ab und wird von `productionExact` nic
 
 | Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
 |---|---|
-| Pub/Sub akzeptiert Anfragen ohne jedes Credential, sodass Clients, die `PUBSUB_EMULATOR_HOST` verwenden, funktionieren | Setzen Sie `pubsub.authentication.localBearerToken`; Anfragen ohne Credential werden dann abgelehnt, wie es die Produktion ablehnt. Siehe [Pub/Sub und Eventarc](../../products/pubsub-eventarc/#authentication). |
+| Pub/Sub akzeptiert Anfragen ohne jedes Credential, sodass Clients, die `PUBSUB_EMULATOR_HOST` verwenden, funktionieren | Setzen Sie `pubsub.authentication.localBearerToken`; Anfragen ohne Credential werden dann abgelehnt, wie es die Produktion ablehnt. Siehe [Pub/Sub und Eventarc](../../products/pubsub-eventarc/#authentifizierung). |
 | Ein Pub/Sub-Push-Endpunkt darf auf Loopback (`127.0.0.1`, `localhost`, `[::1]`) schlichtes `http://` sein; die Produktion verlangt HTTPS | Verwenden Sie in der Subscription eine `https://`-URL außerhalb von Loopback; Fireemu stellt Push-Nachrichten nur an Loopback zu, daher gibt es keine Einstellung, mit der es eine solche erreicht |
 
 ## Siehe auch

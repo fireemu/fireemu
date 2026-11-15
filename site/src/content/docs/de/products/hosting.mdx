@@ -11,21 +11,21 @@ Fireemu stellt Firebase-Hosting-Sites aus dem Eintrag `hosting` der `firebase.js
   { label: 'Status', value: 'Unterstützt' },
   { label: 'Standardport', value: '5000' },
   { label: 'Startet', value: 'Wenn firebase.json ein Verzeichnis hosting.public enthält' },
-  { label: 'Verifikation gegen die Produktion', value: 'Für die aufgezeichneten Fälle verifiziert', href: 'compatibility/#production-verification' },
+  { label: 'Verifikation gegen die Produktion', value: 'Für die aufgezeichneten Fälle verifiziert', href: 'compatibility/#verifikation-gegen-die-produktion' },
 ]} />
 
-Hosting ist **für seine aufgezeichneten Fälle gegen die Produktion verifiziert**. Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf 279 Anfragen antwortete, die zweimal auf Preview-Channels aufgezeichnet wurden (ein Korpus mit 201 Anfragen und ein Folgekorpus mit 78 Anfragen), abgesehen von den [bekannten Unterschieden](#known-differences-and-unrecorded-answers). Das Profil `emulator` wird offline mit `firebase-tools` 15.28.2 an einer endlichen Menge von Fällen verglichen und erhebt keinen Anspruch gegenüber der Produktion. Siehe [Profile](#profiles) und [Verifikationsstatus](#verification-status).
+Hosting ist **für seine aufgezeichneten Fälle gegen die Produktion verifiziert**. Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf 279 Anfragen antwortete, die zweimal auf Preview-Channels aufgezeichnet wurden (ein Korpus mit 201 Anfragen und ein Folgekorpus mit 78 Anfragen), abgesehen von den [bekannten Unterschieden](#bekannte-unterschiede-und-nicht-aufgezeichnete-antworten). Das Profil `emulator` wird offline mit `firebase-tools` 15.28.2 an einer endlichen Menge von Fällen verglichen und erhebt keinen Anspruch gegenüber der Produktion. Siehe [Profile](#profile) und [Verifikationsstatus](#verifikationsstatus).
 
-Hosting ist seit v0.45.0 verfügbar. Verhalten, das sich in einem späteren Release geändert hat, ist unter [Änderungen in v0.47.0](#changes-in-v0470) und [Änderungen in v0.49.0](#changes-in-v0490) aufgeführt.
+Hosting ist seit v0.45.0 verfügbar. Verhalten, das sich in einem späteren Release geändert hat, ist unter [Änderungen in v0.47.0](#änderungen-in-v0470) und [Änderungen in v0.49.0](#änderungen-in-v0490) aufgeführt.
 
 ## Was Sie testen können
 
-- Statische Dateien, Clean URLs, abschließende Schrägstriche und die 404-Seite ([Reihenfolge der Anfragebehandlung](#request-order)).
-- Regeln für `redirects`, `rewrites` und `headers`, mit ihren Globs und Captures ([Schlüssel des Objekts `hosting`](#keys-of-the-hosting-object)).
+- Statische Dateien, Clean URLs, abschließende Schrägstriche und die 404-Seite ([Reihenfolge der Anfragebehandlung](#reihenfolge-der-anfragebehandlung)).
+- Regeln für `redirects`, `rewrites` und `headers`, mit ihren Globs und Captures ([Schlüssel des Objekts `hosting`](#schlüssel-des-objekts-hosting)).
 - Lokalisierte Inhalte, ausgewählt nach Sprache und Land (`i18n`).
-- Mehrere Sites aus einer `firebase.json`, jede auf einem eigenen Port ([Hosting starten](#start-hosting)).
-- Rewrites auf Funktionen desselben Laufs ([Rewrites auf Funktionen](#rewrites-to-functions)).
-- Antwort-Header, Content-Types, Komprimierung und bedingte Anfragen der Produktion unter `strict` ([Profile](#profiles)).
+- Mehrere Sites aus einer `firebase.json`, jede auf einem eigenen Port ([Hosting starten](#hosting-starten)).
+- Rewrites auf Funktionen desselben Laufs ([Rewrites auf Funktionen](#rewrites-auf-funktionen)).
+- Antwort-Header, Content-Types, Komprimierung und bedingte Anfragen der Produktion unter `strict` ([Profile](#profile)).
 
 ## Hosting starten
 
@@ -86,10 +86,10 @@ Diese Schlüssel des Objekts `hosting` werden beachtet:
 
 | Schlüssel | Verhalten |
 |---|---|
-| `public` | Das bereitgestellte Verzeichnis. Erforderlich. Dateien werden über ein gehaltenes Handle auf dieses Verzeichnis geöffnet; ein symbolischer Link, der es verlässt, eine nicht reguläre Datei und unsichere Pfade werden abgelehnt. Unter `strict` werden berechtigte Pfade mit Dot-Segmenten vor dem Datei-Lookup auf ihren normalisierten Pfad umgeleitet; siehe [Profile](#profiles). |
+| `public` | Das bereitgestellte Verzeichnis. Erforderlich. Dateien werden über ein gehaltenes Handle auf dieses Verzeichnis geöffnet; ein symbolischer Link, der es verlässt, eine nicht reguläre Datei und unsichere Pfade werden abgelehnt. Unter `strict` werden berechtigte Pfade mit Dot-Segmenten vor dem Datei-Lookup auf ihren normalisierten Pfad umgeleitet; siehe [Profile](#profile). |
 | `ignore` | Glob-Muster von Dateien, die auf jeder Route fehlen, so abgeglichen, wie `firebase-tools` sie abgleicht, wenn es die zu deployenden Dateien auswählt. `**/firebase-debug.log`, `**/firebase-debug.*.log` und `.firebase/*` werden immer ignoriert, weil `firebase deploy` sie nie hochlädt. |
 | `redirects` | Werden in der Reihenfolge geprüft, bevor eine Datei bereitgestellt wird. Eine Regel hat `source`, `glob` oder `regex`, ein `destination` und einen `type` (Standard 301). `:name`-Captures in einer `source` füllen dieselben Namen im `destination`. Der Query-String bleibt erhalten. |
-| `rewrites` | Werden verwendet, wenn keine Datei passt. `source`, `glob` oder `regex` wählen die Anfrage aus; das Ziel ist eine `destination`-Datei, eine `function` oder ein `run`-Dienst (siehe [Rewrites auf Funktionen](#rewrites-to-functions)). Die erste passende Regel gewinnt. |
+| `rewrites` | Werden verwendet, wenn keine Datei passt. `source`, `glob` oder `regex` wählen die Anfrage aus; das Ziel ist eine `destination`-Datei, eine `function` oder ein `run`-Dienst (siehe [Rewrites auf Funktionen](#rewrites-auf-funktionen)). Die erste passende Regel gewinnt. |
 | `headers` | Regeln mit `source`, `glob` oder `regex` und einer `headers`-Liste aus `key` und `value`. Sie werden den Antworten für Dateien und Rewrites hinzugefügt, vorbehaltlich der profilspezifischen Regeln unten; `strict` ignoriert ein konfiguriertes `Content-Encoding`. |
 | `cleanUrls` | `/about.html` wird mit 301 auf `/about` umgeleitet, und `/about` liefert `about.html`. |
 | `trailingSlash` | `true` fügt URLs von Verzeichnissen einen abschließenden Schrägstrich hinzu, `false` entfernt ihn (301), und nicht gesetzt lässt eine Verzeichnis-URL ohne Schrägstrich auf die mit Schrägstrich umleiten, sofern `cleanUrls` nicht aktiv ist. |
@@ -99,9 +99,9 @@ Diese Schlüssel des Objekts `hosting` werden beachtet:
 
 Eine Anfrage wird in dieser Reihenfolge behandelt:
 
-1. **Reservierte Routen.** `/__/firebase/init.json` und `/__/firebase/init.js` sind reservierte Routen: `init.json` enthält die Projekt-ID und einen nicht geheimen lokalen API-Schlüssel (`fireemu-local-only`), und `init.js?useEmulator=true` richtet die Firebase SDKs außerdem auf die Emulatoren dieses Laufs aus (Authentication, Firestore, Functions, Storage und die Realtime Database, sofern sie laufen). Unter `emulator` haben sie Vorrang vor einem Catch-all-Redirect; unter `strict` werden sie nach den Redirects beantwortet, so wie die Produktion antwortete (siehe [Profile](#profiles)).
+1. **Reservierte Routen.** `/__/firebase/init.json` und `/__/firebase/init.js` sind reservierte Routen: `init.json` enthält die Projekt-ID und einen nicht geheimen lokalen API-Schlüssel (`fireemu-local-only`), und `init.js?useEmulator=true` richtet die Firebase SDKs außerdem auf die Emulatoren dieses Laufs aus (Authentication, Firestore, Functions, Storage und die Realtime Database, sofern sie laufen). Unter `emulator` haben sie Vorrang vor einem Catch-all-Redirect; unter `strict` werden sie nach den Redirects beantwortet, so wie die Produktion antwortete (siehe [Profile](#profile)).
 2. **Redirects.** Ein passender Eintrag in `redirects` antwortet mit seinem Status und einer `Location`.
-3. **Dateien.** Eine Datei wird bereitgestellt, wenn eine passt, einschließlich `index.html` für ein Verzeichnis; `HEAD` wird nur mit den Headern beantwortet. Identity-Bodys werden aus der geöffneten Datei gestreamt; unter `strict` können berechtigte Dateien stattdessen gepuffert und als gzip ausgeliefert werden. Header und Content-Types hängen vom Profil ab: `emulator` verwendet die Tabelle von `mime-types` und fügt für komprimierbare Typen `Vary: Accept-Encoding` hinzu, während `strict` die unter [Profile](#profiles) beschriebenen Header und Typen in der Form der Produktion verwendet.
+3. **Dateien.** Eine Datei wird bereitgestellt, wenn eine passt, einschließlich `index.html` für ein Verzeichnis; `HEAD` wird nur mit den Headern beantwortet. Identity-Bodys werden aus der geöffneten Datei gestreamt; unter `strict` können berechtigte Dateien stattdessen gepuffert und als gzip ausgeliefert werden. Header und Content-Types hängen vom Profil ab: `emulator` verwendet die Tabelle von `mime-types` und fügt für komprimierbare Typen `Vary: Accept-Encoding` hinzu, während `strict` die unter [Profile](#profile) beschriebenen Header und Typen in der Form der Produktion verwendet.
 4. **Rewrites.** Ein passender Eintrag in `rewrites` antwortet: Eine `destination`-Datei wird mit 200 ausgeliefert (ein Rewrite auf `/404.html` antwortet mit 404), und eine Regel mit `function` oder `run` wird an die lokale Functions-Laufzeit weitergeleitet.
 5. **Nicht gefunden.** `404.html` aus dem öffentlichen Verzeichnis wird mit Status 404 ausgeliefert oder, ohne eine, eine eingebaute Seite: unter `strict` ein kurzer Platzhalter von fireemu und unter `emulator` eine Seite „Cannot GET“.
 
@@ -135,7 +135,7 @@ Ein Rewrite mit dem Ziel `function` oder `run` wird an den Functions-Emulator de
 Hosting antwortet unter den beiden Kompatibilitätsprofilen unterschiedlich.
 
 - Das Profil `emulator` antwortet so, wie der Emulator von `firebase-tools` 15.28.2 antwortet.
-- Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf die 279 Anfragen der beiden Produktionskorpora antwortete (jeweils zwei Aufzeichnungen auf Einweg-Preview-Channels, aufgeführt unter [Verifikationsstatus](#verification-status)), mit Ausnahme von zwei Entwicklungsstandards, die `productionExact` ausschaltet: `hosting.cacheControl` und `hosting.clientCountry` (siehe [Entwicklungsstandards](#development-defaults)).
+- Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf die 279 Anfragen der beiden Produktionskorpora antwortete (jeweils zwei Aufzeichnungen auf Einweg-Preview-Channels, aufgeführt unter [Verifikationsstatus](#verifikationsstatus)), mit Ausnahme von zwei Entwicklungsstandards, die `productionExact` ausschaltet: `hosting.cacheControl` und `hosting.clientCountry` (siehe [Entwicklungsstandards](#entwicklungsstandards)).
 
 Die Tabelle beschreibt `strict` mit `productionExact`; die Zeilen, die die beiden Standardwerte ändern, sagen das.
 
@@ -195,17 +195,17 @@ Einige Antworten von strict stammen aus einer Lesart der Aufzeichnungen, nicht a
 
 - `hosting.source` (Web-Frameworks) und jede Site ohne `public`.
 - App Hosting. `--only apphosting` wird als zurückgestellt abgelehnt; siehe [Einschränkungen](../../compatibility/limitations/).
-- Andere Schlüssel als die in der [Tabelle der Schlüssel](#keys-of-the-hosting-object) werden nicht beachtet. `appAssociation: "AUTO"` erzeugt die beiden Association-Dokumente nur unter `strict`; eine Datei, die Sie in `public` ablegen, wird wie jede andere ausgeliefert.
+- Andere Schlüssel als die in der [Tabelle der Schlüssel](#schlüssel-des-objekts-hosting) werden nicht beachtet. `appAssociation: "AUTO"` erzeugt die beiden Association-Dokumente nur unter `strict`; eine Datei, die Sie in `public` ablegen, wird wie jede andere ausgeliefert.
 - Die gehosteten SDK-Skripte unter `/__/firebase/<version>/`, deployte Cloud-Run-Dienste und deployte Funktionen (kein Live-Fallback).
 - Unter `emulator` wird eine Datei ohne Endung oder mit unbekannter Endung als `application/octet-stream` ausgeliefert. Unter `strict` ist es `text/plain; charset=utf-8` oder, komprimiert, `text/html; charset=UTF-8`. Das `Content-Type` einer benutzerdefinierten Header-Regel ersetzt das, das Fireemu wählt.
 
 ## Verifikationsstatus
 
-Der Bereich `HOSTING` der [Kompatibilitätstabellen](../../compatibility/#production-verification) ist für die aufgezeichneten Fälle **Verified**.
+Der Bereich `HOSTING` der [Kompatibilitätstabellen](../../compatibility/#verifikation-gegen-die-produktion) ist für die aufgezeichneten Fälle **Verified**.
 
 - **Was aufgezeichnet wurde.** Die Produktion wurde zweimal mit denselben 201 Anfragen beobachtet (statische Dateien, Redirects, Rewrites, Glob-Abgleich, Header und Caching, Clean URLs, abschließende Schrägstriche, Lokalisierung, reservierte Pfade, Content-Types, Komprimierung, App Association) und zweimal mit einem Folgesatz von 78 Anfragen (die Standard-404-Seite und die gehostete Auth-Handler-Seite als Längen und Status, Dot-Segmente und Backslashes, Redirect-Parameternamen mit Ziffern und wiederholte Redirect-Parameternamen, vorkomprimierte Dateien mit einer Regel `Content-Encoding` sowie welche Größen, Content-Types und Formen von `Accept-Encoding` die Produktion mit gzip komprimiert). Die Aufzeichnungen entstanden auf Preview-Channels einer Einweg-Site, nie auf einem Live-Channel, und die Abschlussprüfung vom 2026-11-11 nahm den ersten Satz an Belegen an.
-- **Wie die Antworten verglichen werden.** In jedem Paar stimmen die beiden Aufzeichnungen bei jeder Anfrage miteinander überein, außer bei einem produktionsinternen Redirect-Host, und das Profil `strict` unter `productionExact` stimmt bei jeder Anfrage mit beiden überein, außer bei den [bekannten Unterschieden](#known-differences-and-unrecorded-answers). Von den 201 Zeilen jedes Eltern-Vergleichs tragen 18 einen bekannten Unterschied, und von den 78 Zeilen jedes Folgevergleichs 42, getrennt von den Übereinstimmungen gezählt.
-- **Was die Aussage abdeckt.** Sie deckt die aufgezeichneten Anfragen und die daraus gelesenen Regeln ab (die [nicht aufgezeichneten und abgeleiteten Antworten](#known-differences-and-unrecorded-answers) sind getrennt aufgeführt). `emulator` erhebt keinen Anspruch gegenüber der Produktion, und Rewrites auf Funktionen und Cloud Run, `ignore` und die lokalen Sicherheitseigenschaften gehören nicht dazu. Brotli bleibt ein bekannter Unterschied.
+- **Wie die Antworten verglichen werden.** In jedem Paar stimmen die beiden Aufzeichnungen bei jeder Anfrage miteinander überein, außer bei einem produktionsinternen Redirect-Host, und das Profil `strict` unter `productionExact` stimmt bei jeder Anfrage mit beiden überein, außer bei den [bekannten Unterschieden](#bekannte-unterschiede-und-nicht-aufgezeichnete-antworten). Von den 201 Zeilen jedes Eltern-Vergleichs tragen 18 einen bekannten Unterschied, und von den 78 Zeilen jedes Folgevergleichs 42, getrennt von den Übereinstimmungen gezählt.
+- **Was die Aussage abdeckt.** Sie deckt die aufgezeichneten Anfragen und die daraus gelesenen Regeln ab (die [nicht aufgezeichneten und abgeleiteten Antworten](#bekannte-unterschiede-und-nicht-aufgezeichnete-antworten) sind getrennt aufgeführt). `emulator` erhebt keinen Anspruch gegenüber der Produktion, und Rewrites auf Funktionen und Cloud Run, `ignore` und die lokalen Sicherheitseigenschaften gehören nicht dazu. Brotli bleibt ein bekannter Unterschied.
 - **Die Offline-Suite.** Die Offline-Konformitätssuite vergleicht Fireemu weiterhin mit `firebase-tools` 15.28.2 an einem endlichen Korpus, einschließlich über 3.000 erzeugter Zeilen des echten Dateilistings, das für `ignore` verwendet wird.
 
 Betrachten Sie einen Hosting-Test, der hier besteht, als Prüfung Ihrer `firebase.json` und Ihres Routings: Antworten von Preview-Channels sind nicht die des Live-Channels.
@@ -224,8 +224,8 @@ Diese Änderungen sind in v0.47.0 und später enthalten; v0.45.0 und v0.46.0 ver
 
 Diese Änderungen sind in v0.49.0 und später enthalten; frühere Releases antworteten unter `strict` und `emulator` gleich und hatten keinen Schlüssel `hosting.cacheControl` oder `hosting.clientCountry` (siehe das [Changelog](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)):
 
-- Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf den Produktionskorpus antwortete; jede Antwort steht unter [Profile](#profiles). Das Profil `emulator` ist unverändert.
-- `hosting.cacheControl` und `hosting.clientCountry` sind neue [Entwicklungsstandards](#development-defaults); `productionExact` stellt beide auf das Verhalten der Produktion um.
+- Das Profil `strict`, der Standard, antwortet so, wie Firebase Hosting auf den Produktionskorpus antwortete; jede Antwort steht unter [Profile](#profile). Das Profil `emulator` ist unverändert.
+- `hosting.cacheControl` und `hosting.clientCountry` sind neue [Entwicklungsstandards](#entwicklungsstandards); `productionExact` stellt beide auf das Verhalten der Produktion um.
 - Unter `strict` werden `/__/firebase/init.json` und `init.js` nach den Redirects beantwortet, und `appAssociation: "AUTO"` erzeugt die beiden Association-Dokumente.
 
 Die gzip-Komprimierung unter `strict` ist neuer als v0.49.0: Sie steht im [Changelog](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md) unter dem darauffolgenden Release.
@@ -234,5 +234,5 @@ Die gzip-Komprimierung unter `strict` ist neuer als v0.49.0: Sie steht im [Chang
 
 - [Functions](../functions/): die Codebasis, die ein Rewrite mit `function` oder `run` erreicht.
 - [Profile](../../guides/profiles/): `strict`, `emulator` und `productionExact`.
-- [Kompatibilitätstabellen](../../compatibility/#production-verification) und [Einschränkungen](../../compatibility/limitations/).
+- [Kompatibilitätstabellen](../../compatibility/#verifikation-gegen-die-produktion) und [Einschränkungen](../../compatibility/limitations/).
 - [Konfigurationsschema](../../reference/configuration/): die Schlüssel `hosting` und `daemon.hostingPort`.

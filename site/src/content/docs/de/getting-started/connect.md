@@ -39,7 +39,7 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 Variablen für Emulatoren, die nicht ausgewählt sind, bleiben so, wie Ihre Umgebung sie hatte. Eine Variable, die Ihre Shell bereits für einen Emulator trägt, den der Lauf nicht startet, bleibt bestehen und wird mit einer Warnung gemeldet.
 
 - `fireemu exec --plan -- <command>` listet auf, was der Befehl sehen wird.
-- [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables) lässt einen solchen Lauf scheitern, bevor er startet.
+- [`--deny-inherited-emulator-env`](../../reference/cli/#geerbte-emulator-variablen) lässt einen solchen Lauf scheitern, bevor er startet.
 
 ## Client-SDKs verbinden
 
@@ -64,9 +64,9 @@ connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
 connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 ```
 
-Die Standardports sind unter [Installieren und starten](../install/#default-ports) aufgeführt. Zwei Produkte verbinden sich anders:
+Die Standardports sind unter [Installieren und starten](../install/#standardports) aufgeführt. Zwei Produkte verbinden sich anders:
 
-- **Realtime Database.** Der Client braucht eine eigene `databaseURL`; siehe [Realtime Database](../../products/realtime-database/#connect).
+- **Realtime Database.** Der Client braucht eine eigene `databaseURL`; siehe [Realtime Database](../../products/realtime-database/#verbinden).
 - **Hosting.** Es ist schlichtes HTTP und braucht keine SDK-Einrichtung ([Firebase Hosting](../../products/hosting/)).
 
 ## Unit-Tests für Security Rules ausführen

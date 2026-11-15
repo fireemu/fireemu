@@ -28,7 +28,7 @@ Was `--import` akzeptiert:
 - Ein leeres `--import`-Verzeichnis startet ohne Daten, sodass der erste Lauf keinen separaten Befehl braucht.
 - Ein fehlendes Verzeichnis wird abgelehnt, damit ein falsch getippter Pfad keine leere Suite starten kann, es sei denn, dorthin schreibt auch `--export-on-exit`.
 - Ein Verzeichnis, das Dateien, aber keine `firebase-export-metadata.json` enthält, wird abgelehnt.
-- Importe der Realtime Database werden validiert, bevor ein Produkt Daten installiert. Unter `strict` wird ein einzelnes Surrogat in einem importierten JSON-String-Wert abgelehnt; das Profil `emulator` ersetzt es durch `?`, wie es der offizielle Emulator tut. Ungültige Schlüssel werden in beiden Profilen abgelehnt. Siehe [Import in die Realtime Database](../../products/realtime-database/#export-import-and-snapshots).
+- Importe der Realtime Database werden validiert, bevor ein Produkt Daten installiert. Unter `strict` wird ein einzelnes Surrogat in einem importierten JSON-String-Wert abgelehnt; das Profil `emulator` ersetzt es durch `?`, wie es der offizielle Emulator tut. Ungültige Schlüssel werden in beiden Profilen abgelehnt. Siehe [Import in die Realtime Database](../../products/realtime-database/#export-import-und-snapshots).
 
 Was `--export-on-exit` tut:
 
@@ -111,5 +111,5 @@ Siehe die [vollständige Anleitung zu Export und Import](https://github.com/fire
 
 - [Testwelten](../test-worlds/)
 - [CLI-Referenz](../../reference/cli/)
-- [Realtime Database](../../products/realtime-database/#export-import-and-snapshots)
+- [Realtime Database](../../products/realtime-database/#export-import-und-snapshots)
 - [Fehlerbehebung](../troubleshooting/)

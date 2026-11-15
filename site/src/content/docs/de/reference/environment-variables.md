@@ -9,7 +9,7 @@ Diese Liste stammt aus dem Quellcode der Binärdatei `fireemu` und des npm-Paket
 
 `exec` übergibt seinem Befehl die Variablen der laufenden Emulatoren und sonst nichts Eigenes. Namen und Formate folgen dem, was `firebase emulators:exec` schreibt.
 
-Variablen für Emulatoren, die nicht ausgewählt sind, bleiben so, wie Ihre Umgebung sie hatte, sodass ein fehlender Emulator ein SDK nie versehentlich in die Produktion schickt. `exec` gibt für jede eine Warnung aus, und `--deny-inherited-emulator-env` lehnt den Lauf stattdessen ab (siehe [Geerbte Emulator-Variablen](../cli/#inherited-emulator-variables)).
+Variablen für Emulatoren, die nicht ausgewählt sind, bleiben so, wie Ihre Umgebung sie hatte, sodass ein fehlender Emulator ein SDK nie versehentlich in die Produktion schickt. `exec` gibt für jede eine Warnung aus, und `--deny-inherited-emulator-env` lehnt den Lauf stattdessen ab (siehe [Geerbte Emulator-Variablen](../cli/#geerbte-emulator-variablen)).
 
 | Variable | Wert | Wann |
 |---|---|---|
@@ -28,7 +28,7 @@ Variablen für Emulatoren, die nicht ausgewählt sind, bleiben so, wie Ihre Umge
 | `GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT` | Die Projekt-ID | Immer |
 | `FIREBASE_CONFIG` | Aus der Projekt-ID gesetzt | Sofern Ihre Umgebung sie nicht bereits hat |
 | `FIREEMU_CONTROL_URL` | Basis-URL der Steuer-API, endet auf `/v1/` | Immer |
-| `FIREEMU_CONTROL_TOKEN` | Bearer-Token für die Steuer-API; wird von `fireemu/testing` und von den Skripten in [Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index) verwendet | Immer |
+| `FIREEMU_CONTROL_TOKEN` | Bearer-Token für die Steuer-API; wird von `fireemu/testing` und von den Skripten in [Cloud Firestore](../../products/firestore/#einen-ci-job-bei-einem-fehlenden-index-scheitern-lassen) verwendet | Immer |
 
 `fireemu up` setzt keine Variablen in Ihrer Shell. Seine Startausgabe gibt jedes `host:port` aus (zum Beispiel `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`), und die Emulator UI zeigt sie auf der Seite „Overview“ unter „Environment for SDKs“.
 
@@ -51,6 +51,6 @@ Nur eine kurze Liste von Variablen wird vom Daemon geerbt. Credentials werden ab
 | `FIREBASE_CONFIG` | Findet `exec` sie gesetzt, behält es Ihren Wert, statt einen aus der Projekt-ID zu schreiben. |
 | `PATH`, `VOLTA_HOME` | Wo nach Node.js gesucht wird, wenn `FIREEMU_NODE` nicht gesetzt ist. |
 | `HOME`, `XDG_CACHE_HOME`, `LOCALAPPDATA` | Wo der Cache des Signierschlüssels der Authentication-Sitzung liegt (ein Verzeichnis nur für den Eigentümer); ohne verwendbaren Cache wird der Schlüssel bei jedem Start im Arbeitsspeicher erzeugt. |
-| `SUDO_UID` | Läuft Fireemu als root, ist der hier genannte Benutzer ebenfalls ein vertrauenswürdiger Eigentümer gefundener Konfigurationsdateien. Siehe [Prüfung des Dateieigentümers](../../guides/configuration/#file-ownership-checks). |
+| `SUDO_UID` | Läuft Fireemu als root, ist der hier genannte Benutzer ebenfalls ein vertrauenswürdiger Eigentümer gefundener Konfigurationsdateien. Siehe [Prüfung des Dateieigentümers](../../guides/configuration/#prüfung-des-dateieigentümers). |
 | `ComSpec` | Unter Windows die Shell, die die Skriptform `fireemu exec "script"` ausführt. Standard: `cmd.exe`. |
 | `FIREEMU_TRACE_WEBCHANNEL`, `FIREEMU_TRACE_STORAGE` | Jeder Wert gibt einen Anfrage-Trace (`[webchannel] ...`, `[storage] ...`) auf der Standardfehlerausgabe aus, um ein Client-Problem zu diagnostizieren. Nicht für reguläre Läufe. |

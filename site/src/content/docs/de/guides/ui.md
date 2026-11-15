@@ -88,5 +88,5 @@ Schlägt der Zugriff auf die Zwischenablage fehl, bietet die Seite „Overview�
 
 - [Zeit und geplante Funktionen](../time/)
 - [Security Rules](../security-rules/)
-- [Testwelten](../test-worlds/#inspect-a-world-in-the-ui)
+- [Testwelten](../test-worlds/#eine-welt-in-der-ui-untersuchen)
 - [CLI-Referenz](../../reference/cli/)

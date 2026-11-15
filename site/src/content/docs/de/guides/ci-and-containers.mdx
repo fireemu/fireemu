@@ -25,7 +25,7 @@ jobs:
       - run: npx fireemu exec -- npm test
 ```
 
-Fireemu braucht kein Java und beim Start keinen Download: Das npm-Paket installiert eine native Binärdatei für die Plattform des Runners. Der Lint-Schritt wird unter [Die Konfiguration vor den Tests prüfen](#check-the-configuration-before-the-tests) beschrieben.
+Fireemu braucht kein Java und beim Start keinen Download: Das npm-Paket installiert eine native Binärdatei für die Plattform des Runners. Der Lint-Schritt wird unter [Die Konfiguration vor den Tests prüfen](#die-konfiguration-vor-den-tests-prüfen) beschrieben.
 
 ### Einen productionExact-Job hinzufügen
 
@@ -79,7 +79,7 @@ Drei Prüfungen lassen einen Job frühzeitig scheitern, bevor ein Test gegen das
 | Prüfung | Was sie tut |
 |---|---|
 | `config lint --deny-ineffective` | Endet mit Status 1 und lässt den Job scheitern, wenn die Konfiguration einen Schlüssel setzt, den Fireemu akzeptiert, aber nie liest. Schlüssel, die Sie absichtlich behalten, listen Sie mit `--allow <key>` oder `--allow-file <path>` auf (siehe [`config lint`](../../reference/cli/#config-lint)). |
-| `exec --plan` | Gibt aus, was der Lauf auflöst, sodass das Job-Log die Projekt-ID, die Dienste und ihre Ports, die gelesenen Dateien, das für Functions verwendete Node und die geerbten Emulator-Variablen zeigt. Es startet nichts und endet mit Status 1, wenn der Lauf aus einem erkennbaren Grund scheitern würde. Mit `--json` füttern Sie ein anderes Werkzeug (siehe [Einen Lauf planen](../../reference/cli/#plan-a-run)). |
+| `exec --plan` | Gibt aus, was der Lauf auflöst, sodass das Job-Log die Projekt-ID, die Dienste und ihre Ports, die gelesenen Dateien, das für Functions verwendete Node und die geerbten Emulator-Variablen zeigt. Es startet nichts und endet mit Status 1, wenn der Lauf aus einem erkennbaren Grund scheitern würde. Mit `--json` füttern Sie ein anderes Werkzeug (siehe [Einen Lauf planen](../../reference/cli/#einen-lauf-planen)). |
 | `--deny-inherited-emulator-env` | Lässt den Lauf scheitern, wenn die Umgebung des Jobs eine Emulator-Variable (`PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST` einer anderen Suite usw.) für einen Dienst enthält, den dieser Lauf nicht startet. Ohne diese Option warnt der Lauf und behält die Variable. Verwenden Sie `--allow-inherited-emulator-env <NAME>` für eine Variable, die Sie absichtlich setzen. |
 
 ### Container-Jobs
@@ -90,7 +90,7 @@ In einem `container:`-Job von GitHub Actions oder in jedem Container, der als ro
 npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
 ```
 
-Siehe [Konfigurationsdateien](../configuration/#file-ownership-checks).
+Siehe [Konfigurationsdateien](../configuration/#prüfung-des-dateieigentümers).
 
 ## Die Emulatoren aus einem Container bereitstellen
 
@@ -145,7 +145,7 @@ In `firebase.json`:
 - Nur Firestore, Authentication, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub und die Realtime Database dürfen außerhalb von Loopback lauschen. Der Hub, die UI und der Logging-Emulator bleiben auf Loopback.
 - Authentication, dessen Port auch die Steuer-API bedient, lauscht auf Loopback oder auf allen Schnittstellen (`0.0.0.0` oder `::`), nicht auf einer anderen einzelnen Adresse.
 - Ein Listener auf `0.0.0.0` oder `::` wird in der Umgebung und im Hub als `127.0.0.1` beziehungsweise `::1` angekündigt, wie es die offizielle CLI tut.
-- Bei eingeschalteter Option antworten die Emulatoren auch auf einen einzelnen `Host`-Namen aus einem Label wie einen Compose-Dienstnamen (`fireemu:8080`). Andere Namen müssen in `network.allowedHosts` aufgeführt sein; siehe [Hostnamen, auf die die Emulatoren antworten](#host-names-the-emulators-answer).
+- Bei eingeschalteter Option antworten die Emulatoren auch auf einen einzelnen `Host`-Namen aus einem Label wie einen Compose-Dienstnamen (`fireemu:8080`). Andere Namen müssen in `network.allowedHosts` aufgeführt sein; siehe [Hostnamen, auf die die Emulatoren antworten](#hostnamen-auf-die-die-emulatoren-antworten).
 
 ### Wer einen veröffentlichten Port erreichen kann
 
@@ -242,7 +242,7 @@ Tragen Sie genaue Tunnelnamen ein statt der gesamten Domain des Tunnel-Anbieters
 
 ## Siehe auch
 
-- [Konfigurationsdateien](../configuration/#file-ownership-checks)
+- [Konfigurationsdateien](../configuration/#prüfung-des-dateieigentümers)
 - [Profile und productionExact](../profiles/)
 - [CLI-Referenz](../../reference/cli/)
 - [Fehlerbehebung](../troubleshooting/)

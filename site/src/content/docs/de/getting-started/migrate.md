@@ -43,11 +43,11 @@ Ein Test, der mit dem offiziellen Emulator bestanden hat, unter `strict` aber fe
 - Verwenden Sie für einen Ablehnungstest die Standardwerte `iat: 0` / `exp: 3600` des SDK-Helfers mit einer Uhr nach dem Ablauf. Von Fireemu ausgestellte Tokens, die die normale Verifikation bestehen, werden weiterhin akzeptiert.
 - Verwenden Sie `auth.idTokenSigning = "session-rsa"`, um alle unsignierten ID-Tokens abzulehnen.
 
-Siehe [Unsignierte Mock-ID-Tokens](../../products/auth/#unsigned-mock-id-tokens).
+Siehe [Unsignierte Mock-ID-Tokens](../../products/auth/#unsignierte-mock-id-tokens).
 
 ### Benannte Datenbanken
 
-Deklarieren Sie jede benannte Datenbank im Array `firestore` der `firebase.json`, mit ihren Dateien für `rules` und `indexes`, oder legen Sie sie über die Admin-API an, so wie die Produktion es verlangt. Eine zur Laufzeit angelegte Datenbank hat keine Security Rules, bis Sie welche für sie laden (siehe [Firestore](../../products/firestore/#named-databases)).
+Deklarieren Sie jede benannte Datenbank im Array `firestore` der `firebase.json`, mit ihren Dateien für `rules` und `indexes`, oder legen Sie sie über die Admin-API an, so wie die Produktion es verlangt. Eine zur Laufzeit angelegte Datenbank hat keine Security Rules, bis Sie welche für sie laden (siehe [Firestore](../../products/firestore/#benannte-datenbanken)).
 
 ### Zusammengesetzte Indizes
 
@@ -65,13 +65,13 @@ Setzen Sie diese passend zu Ihrem Produktionsprojekt, statt das Profil zu wechse
 | Einstellung | Was sie unter `strict` bewirkt |
 |---|---|
 | `auth.improvedEmailPrivacy` | Schutz vor E-Mail-Enumeration, bei einem neuen Produktionsprojekt eingeschaltet. Setzen Sie `false` nur, wenn Ihr Produktionsprojekt ihn ausgeschaltet hat; Anmeldungen antworten dann mit `EMAIL_NOT_FOUND` und `INVALID_PASSWORD`, wie es der offizielle Auth-Emulator tut. |
-| `auth.mfa` | Die Multi-Faktor-Konfiguration Ihres Projekts. `strict` startet mit aktivierten SMS und TOTP; `productionExact` startet mit ausgeschaltetem Multi-Faktor, wie ein neues Produktionsprojekt. Siehe [Authentication](../../products/auth/#multi-factor-authentication). |
+| `auth.mfa` | Die Multi-Faktor-Konfiguration Ihres Projekts. `strict` startet mit aktivierten SMS und TOTP; `productionExact` startet mit ausgeschaltetem Multi-Faktor, wie ein neues Produktionsprojekt. Siehe [Authentication](../../products/auth/#multi-faktor-authentifizierung). |
 | `firestore.enforceLimits` | Die Produktion erzwingt immer die Abfragegrenzen der Standard Edition. Mit `false` gelangen Abfragen durch, die die Produktion ablehnt; lassen Sie es daher eingeschaltet, sofern Sie keinen besonderen Grund haben. Unter `strict` schaltet es nur die Abfragegrenzen um. |
 
 ## Unterschiede zur offiziellen CLI
 
 - Ein fehlgeschlagenes `--export-on-exit` lässt den Lauf mit Status 1 enden, wenn der Befehl erfolgreich war. Die offizielle CLI warnt nur und endet mit 0; Fireemu weicht ab, damit ein CI-Job, der von den gespeicherten Daten abhängt, nicht ohne sie bestehen kann.
-- Unter Unix wird eine gefundene `fireemu.toml` oder `firebase.json` nur geladen, wenn ihr Eigentümer vertrauenswürdig ist. Siehe [Konfigurationsdateien](../../guides/configuration/#file-ownership-checks).
+- Unter Unix wird eine gefundene `fireemu.toml` oder `firebase.json` nur geladen, wenn ihr Eigentümer vertrauenswürdig ist. Siehe [Konfigurationsdateien](../../guides/configuration/#prüfung-des-dateieigentümers).
 - Unter `strict` verhält sich ein Projekt ohne Security Rules wie ein Produktionsprojekt ohne Rules-Release: Client-Anfragen werden abgelehnt. Siehe [Security Rules](../../guides/security-rules/).
 
 ## Siehe auch

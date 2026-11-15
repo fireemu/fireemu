@@ -11,15 +11,15 @@ Fireemu führt Python-Codebasen neben Node.js-Codebasen aus. Diese Seite behande
   { label: 'Laufzeiten', value: 'python310 bis python314' },
   { label: 'Getestetes SDK', value: 'firebase-functions 0.6.0' },
   { label: 'Plattformen', value: 'Linux und macOS' },
-  { label: 'Verifikation gegen die Produktion', value: 'Aufgezeichnete Fälle in sechs Event-Familien', href: 'compatibility/#production-verification' },
+  { label: 'Verifikation gegen die Produktion', value: 'Aufgezeichnete Fälle in sechs Event-Familien', href: 'compatibility/#verifikation-gegen-die-produktion' },
 ]} />
 
 ## Was Sie testen können
 
-- [HTTP-, Callable-, Event-, geplante, Task-Queue- und Auth-Blocking-Funktionen](#supported-triggers), geschrieben mit dem Python SDK.
-- [Auth-Blocking-Funktionen](#auth-blocking-functions-and-the-audience-check), mit oder ohne den Audience-Fehler der Produktion.
-- [Die Anfrage, die ein CloudEvent-Handler erhält](#event-bodies), über `flask.request`.
-- [App Check, Secrets, Neuladen und Planung](#differences-from-production-and-the-firebase-cli), so wie der Python-Runner sie behandelt.
+- [HTTP-, Callable-, Event-, geplante, Task-Queue- und Auth-Blocking-Funktionen](#unterstützte-trigger), geschrieben mit dem Python SDK.
+- [Auth-Blocking-Funktionen](#auth-blocking-funktionen-und-die-audience-prüfung), mit oder ohne den Audience-Fehler der Produktion.
+- [Die Anfrage, die ein CloudEvent-Handler erhält](#event-bodys), über `flask.request`.
+- [App Check, Secrets, Neuladen und Planung](#unterschiede-zur-produktion-und-zur-firebase-cli), so wie der Python-Runner sie behandelt.
 
 ## Einrichtung
 
@@ -59,7 +59,7 @@ Das getestete SDK ist `firebase-functions` 0.6.0. Nur Linux und macOS.
 | Task-Queue-Funktionen | `tasks_fn.on_task_dispatched` |
 | Auth-Blocking-Funktionen | `identity_fn.before_user_created`, `before_user_signed_in` |
 
-Ein Callable sieht den Benutzer des Auth-Emulators. Ein Trigger für ein Produkt, das fireemu nicht bereitstellt, wird beim Laden der Codebasis gemeldet und läuft nie; die Erkennung lehnt eine solche Codebasis ab, sofern `functions.unservedTriggers` nicht `"report"` ist, wie bei den Produkten, die auf der Seite Cloud Functions unter [Unterstützte Trigger](../functions/#supported-triggers) aufgeführt sind.
+Ein Callable sieht den Benutzer des Auth-Emulators. Ein Trigger für ein Produkt, das fireemu nicht bereitstellt, wird beim Laden der Codebasis gemeldet und läuft nie; die Erkennung lehnt eine solche Codebasis ab, sofern `functions.unservedTriggers` nicht `"report"` ist, wie bei den Produkten, die auf der Seite Cloud Functions unter [Unterstützte Trigger](../functions/#unterstützte-trigger) aufgeführt sind.
 
 ## Auth-Blocking-Funktionen und die Audience-Prüfung
 
@@ -87,7 +87,7 @@ Das Body-Layout der Realtime Database ist nicht aufgezeichnet. Cloud-Run-Autoris
 
 ## Verifikation gegen die Produktion
 
-Python-Codebasen sind für die aufgezeichneten Fälle von sechs Event-Familien gegen die Produktion verifiziert, jeweils aus zwei unabhängigen Produktionsaufzeichnungen unter dem Profil `strict`: Firestore (Created- und Updated-Events), Pub/Sub, Cloud Storage (das Finalized-Event), Eventarc-Custom-Events, Cloud Scheduler und Cloud Tasks (HTTP-Durchleitung). Der Vergleich deckt die Werte und Anfrage-Projektionen ab, die das Python SDK sieht; siehe die [Kompatibilitätstabellen](../../compatibility/#production-verification).
+Python-Codebasen sind für die aufgezeichneten Fälle von sechs Event-Familien gegen die Produktion verifiziert, jeweils aus zwei unabhängigen Produktionsaufzeichnungen unter dem Profil `strict`: Firestore (Created- und Updated-Events), Pub/Sub, Cloud Storage (das Finalized-Event), Eventarc-Custom-Events, Cloud Scheduler und Cloud Tasks (HTTP-Durchleitung). Der Vergleich deckt die Werte und Anfrage-Projektionen ab, die das Python SDK sieht; siehe die [Kompatibilitätstabellen](../../compatibility/#verifikation-gegen-die-produktion).
 
 Python-Auth-Blocking-Funktionen sind nicht verifiziert, und das Deployment einer Python-Codebasis in die Produktion wurde nicht verglichen. Die Unterschiede des Profils emulator zum aufgezeichneten Verhalten von `strict` sind in diesen Tabellen und in den folgenden Abschnitten als bekannte Unterschiede aufgeführt.
 
@@ -97,7 +97,7 @@ Python-Codebasen unterscheiden sich in diesen Punkten von der Produktion und von
 
 ### Ein Prozess pro Codebasis
 
-Standardmäßig bedient ein Python-Prozess die gesamte Codebasis, wo die Produktion jeder Funktion ihre eigene Instanz gibt und die CLI ihren eigenen Prozess. `functions.isolation = "function"` startet stattdessen einen Prozess pro Funktion (siehe [Prozessisolation](../functions/#process-isolation-functionsisolation)); der Rest dieses Abschnitts und der Abschnitt [Secrets](#secrets) beschreiben den Standard.
+Standardmäßig bedient ein Python-Prozess die gesamte Codebasis, wo die Produktion jeder Funktion ihre eigene Instanz gibt und die CLI ihren eigenen Prozess. `functions.isolation = "function"` startet stattdessen einen Prozess pro Funktion (siehe [Prozessisolation](../functions/#prozessisolation-functionsisolation)); der Rest dieses Abschnitts und der Abschnitt [Secrets](#secrets) beschreiben den Standard.
 
 - Zustand auf Modulebene wird zwischen Funktionen geteilt.
 - Der `@init`-Callback läuft einmal pro Prozess, beim ersten Aufruf einer beliebigen Funktion.

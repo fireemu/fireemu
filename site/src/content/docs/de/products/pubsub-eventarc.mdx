@@ -12,14 +12,14 @@ Fireemu stellt die API `google.pubsub.v1` über gRPC und REST, einen Eventarc-Li
   { label: 'Status', value: 'Unterstützt' },
   { label: 'Standardports', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
   { label: 'Startet', value: 'Pub/Sub, wenn konfiguriert; Eventarc und Cloud Tasks mit Functions' },
-  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#production-verification' },
+  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#verifikation-gegen-die-produktion' },
 ]} />
 
 ## Was Sie testen können
 
 - [Pub/Sub-Topics, -Subscriptions und -Zustellung](#cloud-pubsub), einschließlich Push, Filtern, Ordering Keys, StreamingPull, Snapshots und Seek.
 - [Dead-Letter-Weiterleitung](#dead-letter-topics), mit oder ohne die IAM-Berechtigungen der Produktion.
-- [Pub/Sub-Anfragen mit und ohne Credentials](#authentication).
+- [Pub/Sub-Anfragen mit und ohne Credentials](#authentifizierung).
 - [Custom Events, die an `onCustomEventPublished`-Funktionen zugestellt werden](#eventarc).
 - [Aufgaben, die an `onTaskDispatched`-Funktionen zugestellt werden](#cloud-tasks).
 
@@ -35,7 +35,7 @@ Fireemu stellt die API `google.pubsub.v1` über gRPC und REST, einen Eventarc-Li
 
 ## Cloud Pub/Sub
 
-Topics, Subscriptions, Publish, Pull und Acknowledgement, Push-Zustellung, Filter, Ordering Keys, Dead-Letter-Topics, StreamingPull, Snapshots und Seek werden unterstützt. Was nicht unterstützt wird, steht unter [Unterschiede zur Produktion](#differences-from-production).
+Topics, Subscriptions, Publish, Pull und Acknowledgement, Push-Zustellung, Filter, Ordering Keys, Dead-Letter-Topics, StreamingPull, Snapshots und Seek werden unterstützt. Was nicht unterstützt wird, steht unter [Unterschiede zur Produktion](#unterschiede-zur-produktion).
 
 ### Message-Storage-Policy eines Topics
 
@@ -143,18 +143,18 @@ Ist eine Functions-Codebasis geladen, startet Fireemu einen Cloud-Tasks-Emulator
 
 ### Nicht unterstützte Pub/Sub-Features
 
-Schemas, die Zustellung über BigQuery- und Cloud-Storage-Subscriptions sowie einige APIs wie `UpdateTopic` werden nicht unterstützt. Unter dem Profil emulator ändert `UpdateTopic` die Felder, die unter [Message-Storage-Policy eines Topics](#topic-message-storage-policy) und [Schlüsselname und Tags eines Topics](#topic-key-name-and-tags) beschrieben sind.
+Schemas, die Zustellung über BigQuery- und Cloud-Storage-Subscriptions sowie einige APIs wie `UpdateTopic` werden nicht unterstützt. Unter dem Profil emulator ändert `UpdateTopic` die Felder, die unter [Message-Storage-Policy eines Topics](#message-storage-policy-eines-topics) und [Schlüsselname und Tags eines Topics](#schlüsselname-und-tags-eines-topics) beschrieben sind.
 
 ### Felder, die das Profil `strict` ablehnt
 
-- `messageStoragePolicy`: siehe [Message-Storage-Policy eines Topics](#topic-message-storage-policy).
-- `kmsKeyName` und `tags`: siehe [Schlüsselname und Tags eines Topics](#topic-key-name-and-tags).
+- `messageStoragePolicy`: siehe [Message-Storage-Policy eines Topics](#message-storage-policy-eines-topics).
+- `kmsKeyName` und `tags`: siehe [Schlüsselname und Tags eines Topics](#schlüsselname-und-tags-eines-topics).
 
 ### Weitere Unterschiede
 
 - Die Dead-Letter-Weiterleitung braucht keine IAM-Berechtigungen, sofern Sie sie nicht anfordern; siehe [Dead-Letter-Topics](#dead-letter-topics).
-- Der negative REST-Cache ist standardmäßig aus. Eingeschaltet ist sein Fenster von 10,35 s deterministisch, das der Produktion nicht; siehe [Zwischengespeichertes 404 im REST-Frontend](#cached-404-on-the-rest-frontend-pubsubrestnegativecache).
-- Eine Pub/Sub-Anfrage mit einem echten Google-OAuth-Token wird unter `strict` mit 401 abgelehnt, weil das Token offline nicht verifiziert werden kann; siehe [Authentifizierung](#authentication).
+- Der negative REST-Cache ist standardmäßig aus. Eingeschaltet ist sein Fenster von 10,35 s deterministisch, das der Produktion nicht; siehe [Zwischengespeichertes 404 im REST-Frontend](#zwischengespeichertes-404-im-rest-frontend-pubsubrestnegativecache).
+- Eine Pub/Sub-Anfrage mit einem echten Google-OAuth-Token wird unter `strict` mit 401 abgelehnt, weil das Token offline nicht verifiziert werden kann; siehe [Authentifizierung](#authentifizierung).
 - Der Eventarc-Listener prüft das Credential nicht, sofern `eventarc.authentication` nicht `"production"` ist; siehe [Eventarc](#eventarc).
 
 ## Siehe auch

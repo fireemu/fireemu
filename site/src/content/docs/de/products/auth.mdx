@@ -12,18 +12,18 @@ Fireemu stellt Firebase Authentication mit den Features der Identity Platform be
   { label: 'Status', value: 'Unterstützt' },
   { label: 'Standardport', value: '9099' },
   { label: 'Startet', value: 'Standardmäßig' },
-  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#production-verification' },
+  { label: 'Verifikation gegen die Produktion', value: 'Siehe die Kompatibilitätstabellen', href: 'compatibility/#verifikation-gegen-die-produktion' },
 ]} />
 
 ## Was Sie testen können
 
-- **Anmelde- und Kontoabläufe ohne echte Nachrichten.** E-Mail-Aktionslinks und SMS-Codes werden ausgegeben und über REST bereitgestellt ([Lokale Verifizierungsnachrichten](#local-verification-messages)).
-- **Ihre Projektkonfiguration**, in `fireemu.toml` deklariert, statt in jedem Test über die Admin-API gesetzt ([Ihr Projekt konfigurieren](#configure-your-project)).
-- **TOTP-Second-Factors** neben SMS, verwendet über den `TotpMultiFactorGenerator` des SDK ([Durchgang](#test-totp-enrollment-and-sign-in)).
-- **OIDC- und SAML-Anbieterressourcen**, deklariert in `auth.providers`. Unter `strict` wird die Anmeldung über einen nicht deklarierten oder deaktivierten Anbieter `oidc.*` oder `saml.*` abgelehnt, wie es die Produktion ablehnt, und `auth.idpAssertions = "signed"` verifiziert signierte Assertions lokal ([OIDC- und SAML-Anbieter](#oidc-and-saml-providers)).
-- **Mandantenprüfungen, wie die Produktion sie anwendet.** Unter `strict` wird eine Anfrage, die einen Mandanten nennt, den das Projekt nicht hat, abgelehnt, statt den Mandanten anzulegen ([Mandantenfähigkeit](#multi-tenancy)).
-- **Blocking-Funktionen**, einschließlich `beforeEmailSent` unter `strict` ([Blocking-Funktionen](#blocking-functions)).
-- **Quota-Fehler bei der Registrierung** ([Verhalten bei überschrittener Quota](#quota-exceeded-behavior)).
+- **Anmelde- und Kontoabläufe ohne echte Nachrichten.** E-Mail-Aktionslinks und SMS-Codes werden ausgegeben und über REST bereitgestellt ([Lokale Verifizierungsnachrichten](#lokale-verifizierungsnachrichten)).
+- **Ihre Projektkonfiguration**, in `fireemu.toml` deklariert, statt in jedem Test über die Admin-API gesetzt ([Ihr Projekt konfigurieren](#ihr-projekt-konfigurieren)).
+- **TOTP-Second-Factors** neben SMS, verwendet über den `TotpMultiFactorGenerator` des SDK ([Durchgang](#totp-registrierung-und--anmeldung-testen)).
+- **OIDC- und SAML-Anbieterressourcen**, deklariert in `auth.providers`. Unter `strict` wird die Anmeldung über einen nicht deklarierten oder deaktivierten Anbieter `oidc.*` oder `saml.*` abgelehnt, wie es die Produktion ablehnt, und `auth.idpAssertions = "signed"` verifiziert signierte Assertions lokal ([OIDC- und SAML-Anbieter](#oidc--und-saml-anbieter)).
+- **Mandantenprüfungen, wie die Produktion sie anwendet.** Unter `strict` wird eine Anfrage, die einen Mandanten nennt, den das Projekt nicht hat, abgelehnt, statt den Mandanten anzulegen ([Mandantenfähigkeit](#mandantenfähigkeit)).
+- **Blocking-Funktionen**, einschließlich `beforeEmailSent` unter `strict` ([Blocking-Funktionen](#blocking-funktionen)).
+- **Quota-Fehler bei der Registrierung** ([Verhalten bei überschrittener Quota](#verhalten-bei-überschrittener-quota)).
 
 Der Authentication-Emulator von `firebase-tools` 15.28.2 unterstützt zweite Faktoren per Telefon (SMS), Mandanten, Fixture-Anmeldung über `oidc.*` und `saml.*` sowie die Blocking-Funktionen `beforeCreate` und `beforeSignIn`. Fireemu fügt TOTP-Second-Factors, deklarierte OIDC- und SAML-Anbieterressourcen, die Mandantenprüfungen der Produktion unter `strict` und die Blocking-Funktion `beforeEmailSent` unter `strict` hinzu.
 
@@ -341,7 +341,7 @@ adjacentIntervals = 1
 
 Ein Test erhält das TOTP-Secret vom SDK selbst: `TotpMultiFactorGenerator.generateSecret(session)` liefert ein `TotpSecret`, dessen `secretKey` das gemeinsame Base32-Secret ist, mit `hashingAlgorithm`, `codeLength` und `codeIntervalSeconds`. Das SDK hat keine Funktion, die einen Code berechnet, daher berechnet der Test den Code nach RFC 6238 mit diesen Werten, wie es eine Authenticator-App tun würde. Ein Anmelde-Hinweis (`resolver.hints`) enthält `uid`, `displayName` und `enrollmentTime` des Faktors, nie das Secret.
 
-Das Registrieren eines zweiten Faktors braucht eine verifizierte E-Mail-Adresse, wie in der Produktion (sonst `auth/unverified-email`). Der Test verifiziert sie mit dem Aktionslink, den der Emulator ausgestellt hat und der aus der Route `oobCodes` gelesen wird ([Lokale Verifizierungsnachrichten](#local-verification-messages)). Dieser Ablauf lief gegen ein lokales `fireemu up` (0.48.0, Profil `strict`, Standard-MFA-Konfiguration) mit `firebase` 12.18.0:
+Das Registrieren eines zweiten Faktors braucht eine verifizierte E-Mail-Adresse, wie in der Produktion (sonst `auth/unverified-email`). Der Test verifiziert sie mit dem Aktionslink, den der Emulator ausgestellt hat und der aus der Route `oobCodes` gelesen wird ([Lokale Verifizierungsnachrichten](#lokale-verifizierungsnachrichten)). Dieser Ablauf lief gegen ein lokales `fireemu up` (0.48.0, Profil `strict`, Standard-MFA-Konfiguration) mit `firebase` 12.18.0:
 
 ```js
 import { initializeApp } from 'firebase/app';
@@ -489,7 +489,7 @@ Den unterstützten Umfang der Admin-API finden Sie in der [Kompatibilitätsdokum
 
 ## Tokens
 
-Fireemu akzeptiert standardmäßig einige unsignierte Tokens, sodass Tests keine Signierschlüssel brauchen. Jeder Standard hat seine eigene Einstellung, und [`productionExact`](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose) schaltet sie alle auf das Verhalten der Produktion um:
+Fireemu akzeptiert standardmäßig einige unsignierte Tokens, sodass Tests keine Signierschlüssel brauchen. Jeder Standard hat seine eigene Einstellung, und [`productionExact`](../../guides/profiles/#wo-fireemu-bewusst-von-der-produktion-abweicht) schaltet sie alle auf das Verhalten der Produktion um:
 
 | Entwicklungsstandard | Einstellung | Mit `productionExact` |
 |---|---|---|
@@ -497,7 +497,7 @@ Fireemu akzeptiert standardmäßig einige unsignierte Tokens, sodass Tests keine
 | Das unsignierte Mock-ID-Token von `@firebase/rules-unit-testing` wird von den Security Rules von Firestore, Storage und Realtime Database akzeptiert | `auth.allowUnsignedIdTokens` | Der Mock-Token-Fallback ist deaktiviert, da die Produktion ein unsigniertes Token ablehnt; von Fireemu ausgestellte Tokens, die die normale Verifikation bestehen, werden weiterhin akzeptiert |
 | Die Anmeldung über Identitätsanbieter akzeptiert Fixture-Assertions und das Anmelde-Widget | `auth.idpAssertions` (`"fixture"`) | `"signed"`: OIDC-ID-Tokens müssen mit einem Schlüssel aus `auth.idpSigners` verifizieren und SAML-Antworten mit den Zertifikaten des Anbieters |
 
-Fixture-Assertions überspringen nur die Signaturprüfung. Unter `strict` wird die Anmeldung über einen Anbieter `oidc.*` oder `saml.*` weiterhin abgelehnt, wenn der Anbieter keine Konfiguration hat (deklarieren Sie ihn in `auth.providers` oder legen Sie ihn über die Admin-API an) oder deaktiviert ist, mit dem `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` oder `... is disabled.` der Produktion. Eingebaute Anbieter wie `google.com` melden ohne Konsolenkonfiguration an; siehe [Weitere Entwicklungserleichterungen](../../guides/profiles/#other-development-conveniences).
+Fixture-Assertions überspringen nur die Signaturprüfung. Unter `strict` wird die Anmeldung über einen Anbieter `oidc.*` oder `saml.*` weiterhin abgelehnt, wenn der Anbieter keine Konfiguration hat (deklarieren Sie ihn in `auth.providers` oder legen Sie ihn über die Admin-API an) oder deaktiviert ist, mit dem `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` oder `... is disabled.` der Produktion. Eingebaute Anbieter wie `google.com` melden ohne Konsolenkonfiguration an; siehe [Weitere Entwicklungserleichterungen](../../guides/profiles/#weitere-entwicklungserleichterungen).
 
 ### Custom Tokens
 
@@ -567,17 +567,17 @@ Dies ist eine lokale Simulation mit festem Zeitfenster, nicht die vollständige 
 
 ### Außerhalb des unterstützten Umfangs
 
-Anmeldeabläufe, die mit externen Identitätsanbietern kommunizieren, der gehostete Austausch von Autorisierungscodes und die Live-Schlüsselermittlung liegen außerhalb des unterstützten Umfangs. Signierte OIDC- und SAML-Assertions von Anbietern, die Sie konfigurieren, werden lokal verifiziert; siehe [OIDC- und SAML-Anbieter](#oidc-and-saml-providers). Die [Einschränkungen](../../compatibility/limitations/) enthalten die vollständige Liste.
+Anmeldeabläufe, die mit externen Identitätsanbietern kommunizieren, der gehostete Austausch von Autorisierungscodes und die Live-Schlüsselermittlung liegen außerhalb des unterstützten Umfangs. Signierte OIDC- und SAML-Assertions von Anbietern, die Sie konfigurieren, werden lokal verifiziert; siehe [OIDC- und SAML-Anbieter](#oidc--und-saml-anbieter). Die [Einschränkungen](../../compatibility/limitations/) enthalten die vollständige Liste.
 
 ### Lokales Verhalten, das auf dieser Seite beschrieben ist
 
 Dieses Verhalten weicht von der Produktion ab und ist dort beschrieben, wo es zutrifft:
 
 - Unsignierte Custom Tokens, das unsignierte Mock-ID-Token und Fixture-Assertions von Identitätsanbietern werden akzeptiert, bis `productionExact` oder ihre eigene Einstellung sie ausschaltet ([Tokens](#tokens)).
-- MFA und Mandantenfähigkeit sind in einem neuen Projekt an; mit `productionExact` starten beide aus ([Multi-Faktor-Authentifizierung](#multi-factor-authentication), [Mandantenfähigkeit](#multi-tenancy)).
-- `localhost` gehört zu den standardmäßig autorisierten Domains ([Autorisierte Domains](#authorized-domains)).
-- `verifyIdToken` und `verifySessionCookie` innerhalb einer lokalen Funktion überspringen die Signaturverifikation ([Tokens innerhalb von Funktionen](#tokens-inside-functions)).
-- Die Quota für die Registrierung ist eine lokale Simulation mit festem Zeitfenster ([Verhalten bei überschrittener Quota](#quota-exceeded-behavior)).
+- MFA und Mandantenfähigkeit sind in einem neuen Projekt an; mit `productionExact` starten beide aus ([Multi-Faktor-Authentifizierung](#multi-faktor-authentifizierung), [Mandantenfähigkeit](#mandantenfähigkeit)).
+- `localhost` gehört zu den standardmäßig autorisierten Domains ([Autorisierte Domains](#autorisierte-domains)).
+- `verifyIdToken` und `verifySessionCookie` innerhalb einer lokalen Funktion überspringen die Signaturverifikation ([Tokens innerhalb von Funktionen](#tokens-innerhalb-von-funktionen)).
+- Die Quota für die Registrierung ist eine lokale Simulation mit festem Zeitfenster ([Verhalten bei überschrittener Quota](#verhalten-bei-überschrittener-quota)).
 
 ## Siehe auch
 

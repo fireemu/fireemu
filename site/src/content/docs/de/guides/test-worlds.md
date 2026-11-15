@@ -250,7 +250,7 @@ Ein interaktives Beispiel finden Sie unter [Testwelten](https://github.com/firee
 
 ## Export und Import
 
-Aktivieren Sie `hub: true`, um eine Testwelt zu exportieren und ihre Daten in eine frische zu importieren; siehe [Unabhängige Testwelten exportieren](../data/#export-independent-test-worlds).
+Aktivieren Sie `hub: true`, um eine Testwelt zu exportieren und ihre Daten in eine frische zu importieren; siehe [Unabhängige Testwelten exportieren](../data/#unabhängige-testwelten-exportieren).
 
 ## Kosten des Snapshots
 
@@ -298,6 +298,6 @@ Siehe [Grenzen der Abhängigkeits-Snapshots](https://github.com/fireemu/fireemu/
 ## Siehe auch
 
 - [Zeit und geplante Funktionen](../time/)
-- [Daten exportieren und importieren](../data/#export-independent-test-worlds)
+- [Daten exportieren und importieren](../data/#unabhängige-testwelten-exportieren)
 - [Emulator UI](../ui/)
 - [Cloud Functions](../../products/functions/)

@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Fireemu liest zwei Arten von Dateien:
 
-- **`fireemu.toml`** enthält die eigenen Einstellungen von Fireemu, etwa das [Profil](../profiles/), die Projektkonfiguration von Authentication und die Uhr. Sie enthält `schemaVersion = 1`. Dieselben Einstellungen können Sie als JSON in `fireemu.json` schreiben; ein Verzeichnis, das beide enthält, wird abgelehnt (siehe [Welche Dateien geladen werden](#which-files-are-loaded)). Siehe das [Konfigurationsschema](../../reference/configuration/).
+- **`fireemu.toml`** enthält die eigenen Einstellungen von Fireemu, etwa das [Profil](../profiles/), die Projektkonfiguration von Authentication und die Uhr. Sie enthält `schemaVersion = 1`. Dieselben Einstellungen können Sie als JSON in `fireemu.json` schreiben; ein Verzeichnis, das beide enthält, wird abgelehnt (siehe [Welche Dateien geladen werden](#welche-dateien-geladen-werden)). Siehe das [Konfigurationsschema](../../reference/configuration/).
 - **`firebase.json`** ist die Datei, die die Firebase CLI verwendet. Fireemu liest Ports, Security Rules, Indizes und Functions-Codebasen bei jedem Start daraus.
 
 ## Beide Dateien verwenden
@@ -82,7 +82,7 @@ So liest `fireemu exec --config packages/api/fireemu.toml -- npm test`, vom Repo
 
 Um den Unterschied zu vermeiden, führen Sie Fireemu in dem Verzeichnis aus, das die Konfiguration enthält, oder legen Sie die Pfade in eine `firebase.json`, auf die `firebaseJson` verweist.
 
-[`fireemu up --plan`](../../reference/cli/#plan-a-run) zeigt für jeden Pfad den absoluten Pfad, den der Lauf öffnet, und das Verzeichnis, gegen das er aufgelöst wurde. Es warnt, wenn sich ein Pfad der kanonischen Konfiguration anders auflösen würde als vom eigenen Verzeichnis der Konfigurationsdatei aus.
+[`fireemu up --plan`](../../reference/cli/#einen-lauf-planen) zeigt für jeden Pfad den absoluten Pfad, den der Lauf öffnet, und das Verzeichnis, gegen das er aufgelöst wurde. Es warnt, wenn sich ein Pfad der kanonischen Konfiguration anders auflösen würde als vom eigenen Verzeichnis der Konfigurationsdatei aus.
 
 ## Prüfung des Dateieigentümers
 
@@ -118,7 +118,7 @@ Zwei verbreitete Setups stoßen auf diese Regel:
 Zwei Befehle zeigen, wozu sich eine Konfiguration auflöst:
 
 - `fireemu capabilities` gibt das Capability-Manifest für das Profil aus, zu dem sich Ihre Konfiguration auflöst.
-- `fireemu up --plan` und `fireemu exec --plan -- <command>` geben alles aus, was der Lauf aus Ihren Dateien, der Kommandozeile und der Umgebung auflöst (Projekt, Dienste, Ports, Dateien, Functions-Laufzeit, geerbte Variablen), ohne ihn zu starten. Siehe [Einen Lauf planen](../../reference/cli/#plan-a-run).
+- `fireemu up --plan` und `fireemu exec --plan -- <command>` geben alles aus, was der Lauf aus Ihren Dateien, der Kommandozeile und der Umgebung auflöst (Projekt, Dienste, Ports, Dateien, Functions-Laufzeit, geerbte Variablen), ohne ihn zu starten. Siehe [Einen Lauf planen](../../reference/cli/#einen-lauf-planen).
 
 ## Eine Referenzdatei erzeugen
 

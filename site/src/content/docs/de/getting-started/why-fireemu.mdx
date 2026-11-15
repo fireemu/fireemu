@@ -21,7 +21,7 @@ Die Firebase Local Emulator Suite ist das offizielle Werkzeug von Google. Sie de
 | TOTP-Multi-Faktor-Authentifizierung | Der Authentication-Emulator akzeptiert zweite Faktoren per Telefon (SMS); andere Faktortypen werden mit `MFA provider not supported!` beantwortet | Beide Profile: TOTP und SMS, über die MFA-Konfiguration des Projekts |
 | App Check | Kein App-Check-Emulator | Beide Profile: Austausch von Debug-Tokens und Durchsetzung für Authentication, Firestore, Storage und Callable Functions; keine Attestierungsanbieter ([Details](../../products/app-check/)) |
 
-Weitere Unterschiede, die ein Testergebnis verändern, jeweils mit der Antwort der Produktion daneben, finden Sie in den [Kompatibilitätstabellen](../../compatibility/#fireemu-the-official-emulator-and-production).
+Weitere Unterschiede, die ein Testergebnis verändern, jeweils mit der Antwort der Produktion daneben, finden Sie in den [Kompatibilitätstabellen](../../compatibility/#fireemu-der-offizielle-emulator-und-die-produktion).
 
 ## Was Fireemu hinzufügt
 
@@ -39,7 +39,7 @@ Jedes Verhalten wird gegen Aufzeichnungen aus echten Firebase-Projekten geprüft
 
 ### Entwicklungsstandards
 
-Manches Verhalten der Produktion ist in einem Test aufwendig: Die Produktion braucht signierte Tokens, Signierschlüssel oder ein Feature, das über einen Admin-API-Aufruf aktiviert wird. Für jedes davon behält Fireemu einen Entwicklungsstandard, der bewusst von der Produktion abweicht und ohne Einrichtung funktioniert, weil eine exakte Nachbildung Tests verlangsamen würde, ohne mehr Fehler zu finden. Jeder ist dokumentiert und hat eine eigene Einstellung. `productionExact`, ein erweiterter Schalter, stellt für alle das Verhalten der Produktion wieder her. Siehe [Wo Fireemu bewusst von der Produktion abweicht](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose).
+Manches Verhalten der Produktion ist in einem Test aufwendig: Die Produktion braucht signierte Tokens, Signierschlüssel oder ein Feature, das über einen Admin-API-Aufruf aktiviert wird. Für jedes davon behält Fireemu einen Entwicklungsstandard, der bewusst von der Produktion abweicht und ohne Einrichtung funktioniert, weil eine exakte Nachbildung Tests verlangsamen würde, ohne mehr Fehler zu finden. Jeder ist dokumentiert und hat eine eigene Einstellung. `productionExact`, ein erweiterter Schalter, stellt für alle das Verhalten der Produktion wieder her. Siehe [Wo Fireemu bewusst von der Produktion abweicht](../../guides/profiles/#wo-fireemu-bewusst-von-der-produktion-abweicht).
 
 ## Für Tests gebaut
 

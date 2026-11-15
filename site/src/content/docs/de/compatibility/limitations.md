@@ -15,7 +15,7 @@ App Hosting und Data Connect werden derzeit nicht unterstützt. Die Unterstützu
 
 ## Teilweise unterstützte Produkte
 
-- **Realtime Database.** Wird bereitgestellt und nur für die aufgezeichneten Fälle gegen die Produktion verifiziert (siehe [Verifikation gegen die Produktion](../#production-verification)). Eine breitere Kompatibilität mit der Produktion ist nicht verifiziert, und es gibt keinen Paritätsanspruch gegenüber dem offiziellen Emulator. Details: [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) und die Liste unten.
+- **Realtime Database.** Wird bereitgestellt und nur für die aufgezeichneten Fälle gegen die Produktion verifiziert (siehe [Verifikation gegen die Produktion](../#verifikation-gegen-die-produktion)). Eine breitere Kompatibilität mit der Produktion ist nicht verifiziert, und es gibt keinen Paritätsanspruch gegenüber dem offiziellen Emulator. Details: [Realtime Database](../../products/realtime-database/#unterschiede-zum-offiziellen-emulator) und die Liste unten.
 
 ## Nicht unterstützte Features
 
@@ -39,13 +39,13 @@ App Hosting und Data Connect werden derzeit nicht unterstützt. Die Unterstützu
 
 ### Realtime Database
 
-- Nur für die aufgezeichneten Fälle gegen die Produktion verifiziert (siehe [Verifikation gegen die Produktion](../#production-verification)); eine breitere Kompatibilität mit der Produktion ist nicht verifiziert, und es gibt keinen Paritätsanspruch gegenüber dem offiziellen Emulator. Der Vergleich beschränkt sich auf aufgezeichnete Fälle des offiziellen Emulators.
+- Nur für die aufgezeichneten Fälle gegen die Produktion verifiziert (siehe [Verifikation gegen die Produktion](../#verifikation-gegen-die-produktion)); eine breitere Kompatibilität mit der Produktion ist nicht verifiziert, und es gibt keinen Paritätsanspruch gegenüber dem offiziellen Emulator. Der Vergleich beschränkt sich auf aufgezeichnete Fälle des offiziellen Emulators.
 - Die aufgeführten nicht unterstützten Syntax- und Auswertungsfälle (Konstrukte regulärer Ausdrücke, Groß-/Kleinschreibungs-Abbildungen und die übrigen dort genannten Unterschiede) werden beim Laden der Rules abgelehnt oder erzeugen Rule-Fehler. `query.endBefore`, `query.isOrderByChild()`, die Namen `OrderByKey`, `OrderByValue` und `OrderByPriority`, `http.encodeURL()`, Methodenlesezugriffe ohne Aufruf und ternäre Aufrufziele werden so geladen und ausgewertet, wie es für die Produktion aufgezeichnet wurde.
 - Die acht aufgezeichneten Muster, die der offizielle Emulator wegen seiner Ressourcengrenze bei der Determinisierung ablehnt, werden auch von Fireemu beim Laden von Rules abgelehnt, selbst in nicht ausgewerteten Ausdruckszweigen. Das belegt weder eine vollständige Äquivalenz bei regulären Ausdrücken noch eine Äquivalenz mit der Produktion.
 - Die Zustellung von Functions-Triggern wurde für eine begrenzte Menge aufgezeichneter Handler und Schreibvorgänge beobachtet; breitere Fälle bleiben unverifiziert.
 - Verhalten, das vom offiziellen Emulator übernommen wurde, wo die Produktion nicht beobachtet wurde, kann sich ändern.
 
-Siehe [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator).
+Siehe [Realtime Database](../../products/realtime-database/#unterschiede-zum-offiziellen-emulator).
 
 ### Cloud Functions
 
@@ -79,7 +79,7 @@ Security Rules und API-Verhalten werden anhand der Dokumentation und anhand von 
 
 ## Lokale Grenzen
 
-Einige Grenzen gibt es nur in Fireemu, um den Speicherverbrauch zu begrenzen: die [Grenzen für den Firestore-Verlauf](../../products/firestore/#transactions-and-history) und das optionale [Limit für gespeicherte Bytes in Storage](../../products/storage/#limit-the-stored-bytes).
+Einige Grenzen gibt es nur in Fireemu, um den Speicherverbrauch zu begrenzen: die [Grenzen für den Firestore-Verlauf](../../products/firestore/#transaktionen-und-verlauf) und das optionale [Limit für gespeicherte Bytes in Storage](../../products/storage/#gespeicherte-bytes-begrenzen).
 
 ## Änderungen zwischen Versionen
 
