@@ -150,15 +150,15 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
   const maxConcurrentFiles=copySupport.maxConcurrentFiles;
   if(!Number.isSafeInteger(maxConcurrentFiles)||maxConcurrentFiles<1)throw RangeError('portable snapshot copy bound must be a positive safe integer');
   const activeCopies=new Set();
-  const copyController=new AbortController();
-  const combined=combineSignals([signal,copyController.signal]);
+  const combined=combineSignals([signal]);
   const copySignal=combined.signal;
   let copyFailed=false,copyError;
-  const stopCopies=error=>{
-    if(copyFailed)return;
+  let nextCopy=0,failedCopy=Infinity;
+  const stopCopies=(error,index=nextCopy)=>{
+    if(index>=failedCopy)return;
     copyFailed=true;
     copyError=error;
-    copyController.abort(error);
+    failedCopy=index;
   };
   const checkCopyState=()=>{
     if(copyFailed)throw copyError;
@@ -172,11 +172,13 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
     checkCopyState();
     while(activeCopies.size>=maxConcurrentFiles)await settleOneCopy();
     checkCopyState();
+    const index=nextCopy++;
     let operation;
     operation=(async()=>{
       try{await copyRegularFile(input,output,info,{signal:copySignal,stats});}
       catch(error){
-        stopCopies(error);
+        // Earlier leaves must finish: their errors precede this one in serial traversal.
+        stopCopies(error,index);
         await fsp.rm(output,{force:true}).catch(()=>{});
       }
     })();

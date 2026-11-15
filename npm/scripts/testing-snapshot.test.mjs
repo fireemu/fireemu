@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, realpath, rea
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative } from 'node:path';
 import { createRequire } from 'node:module';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate } from 'node:timers/promises';
+import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs, { constants as fsConstants } from 'node:fs';
@@ -418,6 +419,72 @@ test('generation preparation abort removes its partial copy after the stream set
   await assert.rejects(stat(generation), { code: 'ENOENT' });
 });
 
+for (const api of ['snapshot', 'generation']) {
+  for (const laterFailure of ['leaf', 'traversal']) {
+    test(`${api} preserves an earlier slow leaf error before a later ${laterFailure} error`, { timeout: 10_000 }, async t => {
+      await withCloneSupport(t, { file: false, tree: false });
+      const f = await fixture(t);
+      const earlier = join(f.source, '00-earlier.txt'), later = join(f.source, '01-later.txt');
+      await writeFile(earlier, 'earlier');
+      await writeFile(later, 'later');
+      const earlierError = Object.assign(Error('earlier read denied'), { code: 'EACCES' });
+      const laterError = Object.assign(Error('later read failed'), { code: 'EIO' });
+      let earlierStream, pending, markLaterFailure;
+      const laterFailed = new Promise(resolve => { markLaterFailure = resolve; });
+      const streams = new Set();
+      t.after(async () => {
+        for (const stream of streams) stream.destroy();
+        if (pending) await pending.catch(() => {});
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      });
+      const realReaddir = fsp.readdir;
+      t.mock.method(fsp, 'readdir', async (path, options) => {
+        const entries = await realReaddir(path, options);
+        return path === f.source ? entries.sort((a, b) => a.name.localeCompare(b.name)) : entries;
+      });
+      const realLstat = fsp.lstat;
+      t.mock.method(fsp, 'lstat', async path => {
+        if (path === later && laterFailure === 'traversal') {
+          markLaterFailure();
+          return { isSymbolicLink: () => false, isDirectory: () => false, isFile: () => false };
+        }
+        return realLstat(path);
+      });
+      const realCreateReadStream = fs.createReadStream;
+      t.mock.method(fs, 'createReadStream', (path, options) => {
+        if (path !== earlier && path !== later) return realCreateReadStream(path, options);
+        const stream = new Readable({ signal: options.signal, read() {} });
+        streams.add(stream);
+        stream.once('close', () => streams.delete(stream));
+        if (path === earlier) earlierStream = stream;
+        else stream.destroy(laterError);
+        return stream;
+      });
+      const realRm = fsp.rm;
+      t.mock.method(fsp, 'rm', async (path, options) => {
+        if (String(path).endsWith('/01-later.txt')) markLaterFailure();
+        return realRm(path, options);
+      });
+      syncBuiltinESMExports();
+      pending = api === 'snapshot'
+        ? snapshotInputs({ cwd: f.root, functionsSource: f.source, services: ['functions'], env: { NODE_PATH: '' } }, f.world)
+        : prepareGeneration({ baseline: f.source, config: { daemon: {} }, nodePaths: [] }, join(f.world, 'generation'));
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+      await laterFailed;
+      await setImmediate();
+      assert.ok(earlierStream, 'the earlier leaf was admitted before the later failure');
+      const settledBeforeEarlierFailure = settled;
+      earlierStream.destroy(earlierError);
+      await assert.rejects(pending, error => api === 'snapshot' ? error.cause === earlierError : error === earlierError);
+      assert.equal(settledBeforeEarlierFailure, false, 'the earlier copy finishes before rejection');
+      assert.equal(streams.size, 0, 'all admitted input streams close before rejection');
+      if (api === 'generation') await assert.rejects(stat(join(f.world, 'generation')), { code: 'ENOENT' });
+    });
+  }
+}
+
 test('a leaf failure drains admitted copies before generation cleanup and stops later admission', { timeout: 10_000 }, async t => {
   if (process.getuid?.() === 0 || process.platform === 'win32') return t.skip('permissions are not enforced');
   await withCloneSupport(t, { file: true });
@@ -485,7 +552,7 @@ test('a leaf failure drains admitted copies before generation cleanup and stops 
   assert.ok(admittedAtCleanup <= 4, 'the admitted set stays within the pool bound');
   assert.ok(calls.includes('01.txt') && calls.some(name => name !== '01.txt'), `a failing and held copy were admitted: ${calls}`);
   assert.ok(failedCopySignal, 'the failing leaf reached its portable stream fallback');
-  assert.equal(failedCopySignal.aborted, true, 'the shared signal is cancelled before failed-output cleanup starts');
+  assert.equal(failedCopySignal.aborted, false, 'internal failures leave earlier copies running to preserve their errors');
   releaseCleanup();
   await delay(50);
   assert.equal(settled, false, 'generation rejection waits for every already admitted copy');
