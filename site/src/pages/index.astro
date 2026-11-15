@@ -134,20 +134,28 @@ const services = [
 ];
 
 const workflow = [
-	{ title: 'Install', body: 'Add Fireemu to the project.', href: to('getting-started/install/') },
+	{
+		title: 'Install',
+		body: 'Add the fireemu package to your project and create fireemu.toml with init.',
+		guide: 'Install and run',
+		href: to('getting-started/install/'),
+	},
 	{
 		title: 'Connect',
-		body: 'Point your SDK at the local services.',
+		body: 'Point the Firebase SDKs at the local services. Under exec, the Admin SDK needs no code.',
+		guide: 'Connect your app',
 		href: to('getting-started/connect/'),
 	},
 	{
 		title: 'Run tests',
-		body: 'Use exec for your test command.',
+		body: 'Wrap your test command in exec. Fireemu starts, runs the command, and exits with its status.',
+		guide: 'Run a command',
 		href: to('getting-started/install/#run-a-command-against-the-emulators'),
 	},
 	{
 		title: 'Use in CI',
-		body: 'Review isolation and environment settings.',
+		body: 'Run the same command in CI. Review the isolation and environment settings first.',
+		guide: 'CI and containers',
 		href: to('guides/ci-and-containers/'),
 	},
 ];
@@ -202,37 +210,6 @@ const resources = [
 				</div>
 			</aside>
 		</section>
-
-		<dl class="lp-facts" aria-label="Fireemu at a glance">
-			<div>
-				<dt>{verifiedAreas}</dt>
-				<dd>
-					areas verified against recordings from real Firebase projects.{' '}
-					<a href={to('compatibility/#production-verification')}>Records</a>
-				</dd>
-			</div>
-			<div>
-				<dt>140<small> ms</small></dt>
-				<dd>
-					from start until the SDK can use Firestore, in one benchmark run.{' '}
-					<a href={to('compatibility/performance/')}>Conditions</a>
-				</dd>
-			</div>
-			<div>
-				<dt>11<small> MiB</small></dt>
-				<dd>
-					idle memory with an empty database, in the same run.{' '}
-					<a href={to('compatibility/performance/')}>Method</a>
-				</dd>
-			</div>
-			<div>
-				<dt>1<small> binary</small></dt>
-				<dd>
-					A single native executable, installed from npm. It reads your existing{' '}
-					<code>firebase.json</code>.
-				</dd>
-			</div>
-		</dl>
 
 		<section class="lp-section" id="production">
 			<div class="lp-label"><h2>Bring more of production into local tests.</h2></div>
@@ -409,9 +386,13 @@ const resources = [
 						workflow.map((step, index) => (
 							<li>
 								<span class="lp-stepno">{String(index + 1).padStart(2, '0')}</span>
-								<h3>{step.title}</h3>
-								<p>{step.body}</p>
-								<a href={step.href}>Read guide</a>
+								<div>
+									<h3>{step.title}</h3>
+									<p>{step.body}</p>
+								</div>
+								<a href={step.href}>
+									{step.guide} <span aria-hidden="true">→</span>
+								</a>
 							</li>
 						))
 					}
