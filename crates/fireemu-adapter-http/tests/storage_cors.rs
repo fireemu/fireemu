@@ -1640,6 +1640,13 @@ fn strict_v3_ubla_acl_follows_bucket_creation_patch_reset_and_restore() {
                 if strict { 200 } else { 501 },
             ),
             (
+                // The FS-CONFIG-LIFECYCLE harness body: int64 as a decimal string, as GCS writes it.
+                "POST",
+                "/storage/v1/b".into(),
+                json!({"name":"created-string-retention","location":"US-CENTRAL1","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true},"publicAccessPrevention":"enforced"},"softDeletePolicy":{"retentionDurationSeconds":"0"}}),
+                if strict { 200 } else { 501 },
+            ),
+            (
                 "PATCH",
                 format!("/storage/v1/b/{CONFIGURED}"),
                 json!({"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}),

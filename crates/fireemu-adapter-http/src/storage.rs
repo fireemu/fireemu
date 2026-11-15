@@ -5779,7 +5779,9 @@ fn gcs_bucket(
                 && method == "POST"
                 && ((key == "location" && value == "US-CENTRAL1")
                     || (key == "softDeletePolicy"
-                        && value == &json!({"retentionDurationSeconds": 0})))
+                        // int64 JSON fields arrive as numbers or, as GCS writes them, decimal strings.
+                        && (value == &json!({"retentionDurationSeconds": 0})
+                            || value == &json!({"retentionDurationSeconds": "0"}))))
             {
                 continue;
             }
