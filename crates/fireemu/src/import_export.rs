@@ -5714,6 +5714,37 @@ mod tests {
         TrustedTempDir::new(&format!("import-budget-{name}"))
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn strict_survivor_storage_import_distinguishes_missing_metadata_from_a_file() {
+        let root = std::env::temp_dir().join(format!("storage-empty-ubla-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let section_dir = root.join("storage_export");
+        std::fs::create_dir_all(&section_dir).unwrap();
+        std::fs::write(
+            section_dir.join("buckets.json"),
+            br#"{"buckets":[{"id":"empty-bucket","uniformBucketLevelAccess":true}]}"#,
+        )
+        .unwrap();
+        let section = fireemu_core_export::metadata::Section {
+            version: "1".into(),
+            path: "storage_export".into(),
+            metadata_file: None,
+        };
+        let (objects, buckets) = super::read_storage_section(&root, &section, 1024).unwrap();
+        assert!(objects.is_empty());
+        assert_eq!(buckets.len(), 1);
+        assert!(buckets[&fireemu_core_storage::name::BucketName::try_new("empty-bucket").unwrap()]);
+        let metadata = section_dir.join("metadata");
+        std::fs::write(&metadata, b"not a directory").unwrap();
+        let error = super::read_storage_section(&root, &section, 1024)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("storage_export/metadata"), "{error}");
+        assert!(error.contains("cannot read it:"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// A database file the import would refuse (an invalid key, too deep, a bad server value)
     /// is refused while the import is prepared, before any section is installed (review
     /// RTDB-04 S4), with the official emulator's text.

@@ -1729,3 +1729,176 @@ fn strict_v3_ubla_acl_follows_bucket_creation_patch_reset_and_restore() {
         }
     }
 }
+
+#[test]
+fn strict_survivor_emulator_acl_ignores_stored_uniform_access() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    let s = state(TokenAcceptance::EmulatorMock);
+    seed(&s, CONFIGURED);
+    s.store
+        .lock()
+        .unwrap()
+        .set_uniform_bucket_level_access(&BucketName::try_new(CONFIGURED).unwrap(), true);
+    let response = handle(
+        &s,
+        StorageRequest {
+            method: "GET".into(),
+            path: format!("/storage/v1/b/{CONFIGURED}/o/a.txt/acl"),
+            query: String::new(),
+            host: None,
+            headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+            app_check: vec![],
+            body: vec![],
+            remote_peer: false,
+        },
+    );
+    assert_eq!(response.status, 404);
+}
+
+#[test]
+fn strict_survivor_empty_bucket_patch_preserves_uniform_access() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    let s = state(TokenAcceptance::Verified);
+    let bucket = BucketName::try_new(CONFIGURED).unwrap();
+    s.store
+        .lock()
+        .unwrap()
+        .set_uniform_bucket_level_access(&bucket, true);
+    let response = handle(
+        &s,
+        StorageRequest {
+            method: "PATCH".into(),
+            path: format!("/storage/v1/b/{CONFIGURED}"),
+            query: String::new(),
+            host: None,
+            headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+            app_check: vec![],
+            body: b"{}".to_vec(),
+            remote_peer: false,
+        },
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&response.body).unwrap()["iamConfiguration"]
+            ["uniformBucketLevelAccess"]["enabled"],
+        true
+    );
+    assert!(s.store.lock().unwrap().uniform_bucket_level_access(&bucket));
+}
+
+#[test]
+fn strict_survivor_bucket_provisioning_requires_exact_method_field_and_value() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    // Full-strength PICT rows include the required provisioning and refusal seeds.
+    for (strict, method, field, valid) in [
+        (true, "POST", "location", true),
+        (true, "POST", "softDeletePolicy", true),
+        (true, "PATCH", "name", true),
+        (false, "PATCH", "location", true),
+        (true, "PATCH", "location", false),
+        (false, "POST", "other", false),
+        (false, "PATCH", "other", true),
+        (true, "POST", "other", false),
+        (true, "PATCH", "location", true),
+        (false, "PATCH", "location", false),
+        (true, "POST", "softDeletePolicy", false),
+        (false, "POST", "name", false),
+        (true, "PATCH", "other", false),
+        (false, "PATCH", "name", false),
+        (true, "POST", "location", false),
+        (false, "PATCH", "name", true),
+        (true, "PATCH", "name", false),
+        (true, "POST", "other", true),
+        (true, "POST", "name", true),
+        (false, "PATCH", "softDeletePolicy", false),
+        (false, "PATCH", "other", false),
+        (true, "POST", "name", false),
+        (false, "POST", "name", true),
+        (false, "POST", "location", true),
+        (false, "PATCH", "softDeletePolicy", true),
+        (false, "POST", "location", false),
+        (true, "PATCH", "softDeletePolicy", true),
+        (true, "PATCH", "softDeletePolicy", false),
+        (false, "POST", "softDeletePolicy", false),
+        (false, "POST", "other", true),
+        (false, "POST", "softDeletePolicy", true),
+        (true, "PATCH", "other", true),
+    ] {
+        let s = state(if strict {
+            TokenAcceptance::Verified
+        } else {
+            TokenAcceptance::EmulatorMock
+        });
+        seed(&s, CONFIGURED);
+        let value = match (field, valid) {
+            ("softDeletePolicy", true) => json!({"retentionDurationSeconds": 0}),
+            ("name", _) => json!(CONFIGURED),
+            (_, true) => json!("US-CENTRAL1"),
+            (_, false) => json!("invalid"),
+        };
+        let body = if method == "POST" {
+            json!({"name": CONFIGURED, field: value})
+        } else {
+            json!({field: value})
+        };
+        let expected = if method == "POST" && !strict {
+            501
+        } else if strict
+            && method == "POST"
+            && (field == "name" || (valid && matches!(field, "location" | "softDeletePolicy")))
+        {
+            200
+        } else {
+            400
+        };
+        let response = handle(
+            &s,
+            StorageRequest {
+                method: method.into(),
+                path: if method == "POST" {
+                    "/storage/v1/b".into()
+                } else {
+                    format!("/storage/v1/b/{CONFIGURED}")
+                },
+                query: String::new(),
+                host: None,
+                headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+                app_check: vec![],
+                body: serde_json::to_vec(&body).unwrap(),
+                remote_peer: false,
+            },
+        );
+        assert_eq!(
+            response.status, expected,
+            "strict={strict} {method} {field} valid={valid}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn strict_survivor_media_error_at_400_has_no_media_exposed_headers() {
+    let (addr, task) = serve(state(TokenAcceptance::Verified)).await;
+    let answer = send(
+        addr,
+        "GET",
+        &format!("/storage/v1/b/{CONFIGURED}/o/a.txt?alt=media&generation=invalid"),
+        &[("Origin", ORIGIN)],
+    )
+    .await;
+    task.abort();
+    let _ = task.await;
+    assert_eq!(answer.status, 400);
+    let exposed = answer.header("access-control-expose-headers").unwrap();
+    assert!(
+        !exposed
+            .split(',')
+            .any(|header| header.trim().eq_ignore_ascii_case("Content-Disposition")),
+        "{exposed}"
+    );
+    assert!(
+        !exposed
+            .split(',')
+            .any(|header| header.trim().eq_ignore_ascii_case("Last-Modified")),
+        "{exposed}"
+    );
+}

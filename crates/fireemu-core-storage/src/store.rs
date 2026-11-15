@@ -3844,6 +3844,78 @@ mod spill_tests;
 mod tests {
     use super::*;
 
+    #[test]
+    fn strict_survivor_uniform_access_overwrite_and_selected_reset() {
+        let selected = BucketName::try_new("selected-bucket").unwrap();
+        let other = BucketName::try_new("other-bucket").unwrap();
+        let mut state = StorageState::new(1);
+        assert!(!state.uniform_bucket_level_access(&selected));
+        state.set_uniform_bucket_level_access(&selected, true);
+        assert!(state.uniform_bucket_level_access(&selected));
+        state.set_uniform_bucket_level_access(&selected, false);
+        assert!(!state.uniform_bucket_level_access(&selected));
+        assert!(
+            state.bucket_known(&selected),
+            "explicit false still declares a bucket"
+        );
+        for remove_many in [false, true] {
+            state.set_uniform_bucket_level_access(&selected, true);
+            state.set_uniform_bucket_level_access(&other, true);
+            if remove_many {
+                assert_eq!(state.remove_buckets_where(|b| b == selected.as_str()), 0);
+            } else {
+                assert_eq!(state.remove_bucket(&selected), 0);
+            }
+            assert!(!state.uniform_bucket_level_access(&selected));
+            assert!(!state.bucket_known(&selected));
+            assert!(state.uniform_bucket_level_access(&other));
+        }
+    }
+
+    #[test]
+    fn strict_survivor_upload_origin_tracks_session_lifecycle() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = StorageState::new(1);
+        let id = state
+            .begin_upload(
+                &BucketName::try_new("bucket-one").unwrap(),
+                &ObjectName::try_new("object").unwrap(),
+                NewMetadata::default(),
+                Precondition::default(),
+                None,
+                now,
+            )
+            .unwrap();
+        assert_eq!(state.upload_origin(&id, now).unwrap(), None);
+        for origin in [
+            Some("http://localhost:3000"),
+            Some("http://localhost:4000"),
+            None,
+        ] {
+            state
+                .set_upload_origin(&id, origin.map(str::to_owned), now)
+                .unwrap();
+            assert_eq!(state.upload_origin(&id, now).unwrap(), origin);
+        }
+        state
+            .set_upload_origin(&id, Some("http://localhost:3000".into()), now)
+            .unwrap();
+        state.cancel_upload(&id, now).unwrap();
+        assert_eq!(
+            state.upload_origin(&id, now).unwrap(),
+            Some("http://localhost:3000")
+        );
+        let expired = LogicalInstant::from_unix_seconds(UPLOAD_SESSION_TTL_SECONDS + 1);
+        assert_eq!(
+            state.upload_origin(&id, expired),
+            Err(StorageError::UploadNotFound)
+        );
+        assert_eq!(
+            state.set_upload_origin(&id, Some("http://localhost:4000".into()), expired),
+            Err(StorageError::UploadNotFound)
+        );
+    }
+
     fn reference_list_matching(
         state: &StorageState,
         bucket: &BucketName,
