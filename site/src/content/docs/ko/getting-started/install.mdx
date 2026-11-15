@@ -1,0 +1,180 @@
+---
+title: 설치와 실행
+description: npm으로 Fireemu를 설치하고, fireemu.toml을 만들고, 에뮬레이터를 시작해 테스트를 실행합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+`fireemu` npm 패키지를 설치하고 `fireemu.toml`을 만든 다음, 에뮬레이터를 시작하거나 에뮬레이터를 대상으로 명령을 실행합니다.
+
+## 시작하기 전에
+
+- **Node.js 20 이상**(패키지의 `engines` 필드는 `>=20`입니다). `fireemu` 런처와 Functions 러너를 실행합니다.
+- **지원되는 플랫폼.** 패키지는 사용 중인 플랫폼용으로 미리 빌드된 바이너리를 설치하며, Java나 다른 런타임은 필요하지 않습니다.
+
+| OS | 아키텍처 |
+|---|---|
+| macOS 13 이상 | Apple silicon, Intel |
+| Linux(Alpine과 distroless를 포함한 모든 glibc 또는 musl 배포판) | x86-64, arm64 |
+| Windows 10 이상 | x86-64 |
+
+Cloud Functions를 실행하려면 코드베이스에 `firebase-functions` v6 또는 v7도 필요합니다. Python 코드베이스에는 Python 3.10에서 3.14까지와, `firebase-functions`가 설치된 자체 `venv`가 필요합니다(macOS와 Linux. [Cloud Functions](../../products/functions-python/) 참고).
+
+## 설치
+
+Fireemu를 프로젝트의 개발 의존성으로 추가합니다.
+
+```sh
+npm install --save-dev fireemu
+```
+
+## `fireemu.toml` 만들기
+
+```sh
+npx fireemu init
+```
+
+`init`은 현재 디렉터리에 `fireemu.toml`을 만듭니다. 대화형으로 실행하면 사용할 [호환성 프로필](../../guides/profiles/)(기본값인 `strict`를 권장합니다)과 기존 `firebase.json`을 재사용할지를 묻습니다. 재사용하면 Fireemu는 파일을 복사하지 않고 참조합니다. Security Rules, 인덱스, Functions 코드베이스, 포트는 Fireemu를 시작할 때마다 그 파일에서 읽습니다.
+
+CI나 스크립트에서는 비대화형 형식을 사용합니다.
+
+```sh
+npx fireemu init --yes
+```
+
+기존 `fireemu.toml`은 `--force`를 지정하지 않으면 덮어쓰지 않습니다. 기존 `fireemu.json`은 보존되므로, `fireemu.toml`을 만들기 전에 삭제하십시오.
+
+`npx fireemu init --yes`는 정확히 다음 파일을 씁니다(각 줄을 설명하기 위해 여기에 주석을 추가했습니다).
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Editor hint: points TOML-aware editors at the JSON Schema for completion and validation.
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json
+# The configuration format version. The only value is 1.
+schemaVersion = 1
+# "strict" follows production (the default and recommended); "emulator" follows the pinned official emulator.
+profile = "strict"
+# The same schema URL as a data key, so JSON-oriented tools find it.
+"$schema" = "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json"
+# "native" (Firestore Native mode API) or "mongodb-compatible".
+firestore.apiMode = "native"
+# "standard" or "enterprise".
+firestore.edition = "standard"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "$schema": "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json",
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+JSON 탭은 이에 해당하는 `fireemu.json`이며, `init`은 이 파일을 쓰지 않습니다.
+
+`./firebase.json`이 있거나 `--firebase-json <file>`을 지정하면 `init`은 그 파일을 참조하고 `firebaseJson = "firebase.json"` 한 줄을 더 추가하므로, 포트, Security Rules, 인덱스, Functions 코드베이스는 그 파일에서 읽습니다.
+
+모든 키는 [구성 스키마](../../reference/configuration/)에 나열되어 있습니다. `npx fireemu init --reference`는 모든 키를 설명하며 로드되지 않는 `fireemu.reference.toml`도 함께 씁니다.
+
+## 에뮬레이터 시작
+
+```sh
+npx fireemu up
+```
+
+`up`은 `Ctrl+C`를 누를 때까지 에뮬레이터를 계속 실행합니다. `http://127.0.0.1:4000/ui/`에서 [Emulator UI](../../guides/ui/)를 열어 데이터를 확인하고 관리할 수 있습니다.
+
+시작 출력의 처음 몇 줄에는 로드된 구성 파일의 이름이 표시되고, Firestore와 Storage에 대해서는 Security Rules가 로드되었는지가 표시됩니다.
+
+## 에뮬레이터를 대상으로 명령 실행
+
+테스트 스위트처럼 명령이 실행되는 동안에만 에뮬레이터를 실행하려면 `exec`를 사용합니다.
+
+```sh
+npx fireemu exec -- npm test
+```
+
+`exec`는 네 가지를 수행합니다.
+
+1. 에뮬레이터를 시작합니다.
+2. 모든 리스너가 준비되면 Firebase SDK 에뮬레이터 환경 변수를 설정하고 명령을 실행합니다([앱 연결하기](../connect/) 참고).
+3. 명령이 종료되면 모든 것을 중지합니다.
+4. 명령의 종료 상태로 종료합니다.
+
+Unix에서는 `SIGINT`와 `SIGTERM`이 명령에 전달됩니다. `exec`는 `--ui`를 추가하지 않으면 UI를 시작하지 않습니다.
+
+공식 명령 이름은 별칭으로 사용할 수 있습니다.
+
+```sh
+npx fireemu emulators:start
+npx fireemu emulators:exec -- npm test
+```
+
+## 서비스 선택
+
+Firestore, Authentication, Storage, App Check는 기본으로 시작합니다. 나머지 서비스는 구성된 경우에만 시작합니다.
+
+| 서비스 | 시작 조건 |
+|---|---|
+| Functions, 그리고 함께 시작되는 Eventarc와 Cloud Tasks | 코드베이스가 구성된 경우 |
+| Pub/Sub | `emulators.pubsub`, `daemon.pubsubPort`, `--pubsub-port` 중 하나가 설정된 경우 |
+| Realtime Database | `emulators.database`, `daemon.databasePort`, `--database-port` 중 하나가 설정된 경우 |
+| Hosting | `firebase.json`에 `hosting.public` 디렉터리가 있는 경우 |
+
+`--only`로 시작할 서비스를 정확히 지정합니다.
+
+```sh
+npx fireemu up --only auth,firestore,storage
+npx fireemu exec --only firestore -- npm test
+
+# One Functions codebase
+npx fireemu up --only functions:<codebase>
+```
+
+## 기본 포트
+
+Fireemu는 Local Emulator Suite와 같은 기본 포트를 사용합니다. `firebase.json`이나 명령줄에서 설정한 포트가 우선합니다.
+
+| 서비스 | 포트 | 옵션 |
+|---|---|---|
+| Emulator UI | 4000 | `--ui-port` |
+| Emulator Hub | 4400 | `--hub-port` |
+| Logging | 4500 | `--logging-port` |
+| Firebase Hosting | 5000 | `--hosting-port` |
+| Cloud Functions | 5001 | `--functions-port` |
+| Cloud Firestore | 8080 | `--firestore-port` |
+| Cloud Pub/Sub | 8085 | `--pubsub-port` |
+| Realtime Database | 9000 | `--database-port` |
+| Authentication | 9099 | `--http-port` |
+| Cloud Storage | 9199 | `--storage-port` |
+| Eventarc | 9299 | `--eventarc-port` |
+| Cloud Tasks | 9499 | `--tasks-port` |
+
+## 도움말 보기
+
+모든 명령은 자신의 옵션을 문서화합니다.
+
+```sh
+npx fireemu --help
+npx fireemu exec --help
+```
+
+에뮬레이터가 시작되지 않으면 `npx fireemu doctor`를 실행하십시오. [문제 해결](../../guides/troubleshooting/)을 참고하십시오.
+
+## 관련 문서
+
+- 에뮬레이터에 [앱 연결하기](../connect/).
+- 이미 `firebase emulators:exec`를 사용 중이라면 [Local Emulator Suite에서 이전하기](../migrate/).
+- [CLI 레퍼런스](../../reference/cli/)

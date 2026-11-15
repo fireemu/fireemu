@@ -1,0 +1,59 @@
+---
+title: 호환성 표
+description: Fireemu가 지원하는 제품과 API, 프로덕션 Firebase와 대조해 검증한 영역, 공식 에뮬레이터와의 비교를 확인합니다.
+tableOfContents:
+  maxHeadingLevel: 2
+---
+
+import ProductTable from '../../../../components/ProductTable.astro';
+import ProductionAreas from '../../../../components/ProductionAreas.astro';
+import CapabilityTable from '../../../../components/CapabilityTable.astro';
+
+이 표들은 사이트를 빌드할 때 저장소의 기록에서 생성됩니다. 기록은 [호환성 계약](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), [프로덕션 검증 기록](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure), [기능 매니페스트](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json)입니다.
+
+제품 이름만으로는 알 수 없으므로, 애플리케이션이 사용하는 API와 조건의 지원 여부를 각각 확인하십시오.
+
+## 제품
+
+Fireemu가 비교 대상으로 삼는 공식 에뮬레이터 릴리스인 `firebase-tools` 15.28.2의 Local Emulator Suite에 포함된 모든 제품과, Fireemu가 추가하는 표면입니다.
+
+<ProductTable />
+
+### 호환성 주장
+
+Fireemu는 firebase-tools 15.28.2가 제공하고 Fireemu가 동등하게 제공하는 Local Emulator Suite 제품(Cloud Firestore, Firebase Authentication, Cloud Storage for Firebase, Cloud Functions, Cloud Pub/Sub와 Eventarc, 그리고 Firestore와 Storage 표면의 Security Rules)과 호환됩니다. 이는 `emulator` 호환성 프로필과 [`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json)에 기록된 근거를 전제로 합니다. 다음 이유로 전체 스위트 호환이나 조건 없는 상위 집합이라는 주장은 하지 않습니다.
+
+- Realtime Database와 Firebase Hosting은 공식 에뮬레이터에 대한 동등성 주장 없이 제공됩니다(해결되지 않은 차이이며, 둘 다 기록된 사례에 대해서는 프로덕션과 대조해 검증했습니다).
+- App Hosting과 Data Connect는 보류 중입니다.
+- Firebase Extensions는 계획에 없습니다.
+
+## Fireemu, 공식 에뮬레이터, 프로덕션
+
+테스트 결과를 가장 자주 바꾸는 차이입니다. Fireemu 열은 기본 `strict` 프로필 기준입니다.
+
+| 동작 | 프로덕션 | 공식 에뮬레이터 | Fireemu |
+|---|---|---|---|
+| 복합 인덱스가 없는 쿼리 | 거부 | 실행 | 거부. `firestore.missingIndexes: "report"`에서는 실행하고 누락된 인덱스를 보고 |
+| Security Rules가 없는 프로젝트에 대한 Firestore 클라이언트 요청 | 거부 | 허용 | 거부 |
+| TOTP 다단계 인증 | 지원 | 사용 불가 | 지원(프로젝트의 MFA 구성을 통해) |
+| 존재하지 않는 테넌트를 지정한 요청 | 거부 | 테넌트를 생성 | 거부 |
+| `beforeEmailSent` 차단 함수 | 실행 | 실행하지 않음 | 실행 |
+| App Check | 지원 | 사용 불가 | 디버그 토큰. 증명(attestation) 제공자와 재생 방지 없음 |
+| 예약 함수 | Cloud Scheduler의 일정대로 실행 | 일정대로 실행하지 않음 | 직접 제어하는 가상 시계로 실행 |
+| Security Rules의 서명되지 않은 모의 ID 토큰 | 거부 | 수락 | 기본적으로 수락. `productionExact`에서는 거부 |
+| 선언된 Storage 업로드 체크섬 | 검증 | 검증하지 않음 | 검증 |
+
+## 프로덕션 검증
+
+Fireemu는 실제 Firebase 프로젝트에서 수집한 녹화와 자신의 응답을 비교합니다.
+
+- **프로덕션과 대조해 검증됨.** 해당 영역의 고정된 목록에 있는 모든 조건이 녹화와 일치하거나, 검토와 문서화를 거친 방식으로만 다릅니다(알려진 차이).
+- **진행 중.** 해당 영역은 아직 작업 중입니다. 표시된 수치는 녹화된 조건을 나타낼 뿐이며 영역 전체의 검증을 의미하지 않습니다.
+
+<ProductionAreas />
+
+## 기능 매니페스트
+
+기능 매니페스트는 각 기능에 대해 무엇이 구현되었고 무엇이 구현되지 않았는지 기록합니다. `npx fireemu capabilities`는 구성이 선택한 프로필에 대한 매니페스트를 출력합니다.
+
+<CapabilityTable />
