@@ -5,7 +5,7 @@ description: Python製のCloud Functions for Firebaseコードベースをロー
 
 import Facts from '../../../../components/Facts.astro';
 
-FireemuはNode.jsのコードベースと並べてPythonのコードベースを実行します。このページではPython固有の内容を扱います。Node.jsランナーについては[Cloud Functions](../functions/)のページで説明しており、そこにある節のうちPythonコードベースにも当てはまるもの([callableでのApp Check](../functions/#app-check-in-callables)など)は、その旨が記されています。
+FireemuはNode.jsのコードベースと並べてPythonのコードベースを実行します。このページではPython固有の内容を扱います。Node.jsランナーについては[Cloud Functions](../functions/)のページで説明しており、そこにある節のうちPythonコードベースにも当てはまるもの([callableでのApp Check](../functions/#callableでのapp-check)など)は、その旨が記されています。
 
 <Facts items={[
   { label: 'ランタイム', value: 'python310からpython314' },
@@ -16,10 +16,10 @@ FireemuはNode.jsのコードベースと並べてPythonのコードベースを
 
 ## テストできること
 
-- Python SDKで書かれた[HTTP、callable、イベント、スケジュール、タスクキュー、Auth blockingの各関数](#supported-triggers)。
-- 本番のオーディエンス失敗がある場合とない場合の[Auth blocking関数](#auth-blocking-functions-and-the-audience-check)。
-- `flask.request`を通じた[CloudEventハンドラーが受け取るリクエスト](#event-bodies)。
-- Pythonランナーが扱う[App Check、シークレット、リロード、スケジューリング](#differences-from-production-and-the-firebase-cli)。
+- Python SDKで書かれた[HTTP、callable、イベント、スケジュール、タスクキュー、Auth blockingの各関数](#対応するトリガー)。
+- 本番のオーディエンス失敗がある場合とない場合の[Auth blocking関数](#auth-blocking関数とオーディエンスチェック)。
+- `flask.request`を通じた[CloudEventハンドラーが受け取るリクエスト](#イベント本文)。
+- Pythonランナーが扱う[App Check、シークレット、リロード、スケジューリング](#本番およびfirebase-cliとの違い)。
 
 ## セットアップ
 
@@ -59,7 +59,7 @@ npx fireemu up
 | タスクキュー関数 | `tasks_fn.on_task_dispatched` |
 | Auth blocking関数 | `identity_fn.before_user_created`、`before_user_signed_in` |
 
-callableはAuthエミュレータのユーザーを参照します。fireemuが提供しないプロダクトのトリガーはコードベースの読み込み時に報告され、実行されることはありません。`functions.unservedTriggers`が`"report"`でない限り、ディスカバリーはそのようなコードベースを拒否します。これはCloud Functionsのページの[対応するトリガー](../functions/#supported-triggers)に挙げたプロダクトと同じ扱いです。
+callableはAuthエミュレータのユーザーを参照します。fireemuが提供しないプロダクトのトリガーはコードベースの読み込み時に報告され、実行されることはありません。`functions.unservedTriggers`が`"report"`でない限り、ディスカバリーはそのようなコードベースを拒否します。これはCloud Functionsのページの[対応するトリガー](../functions/#対応するトリガー)に挙げたプロダクトと同じ扱いです。
 
 ## Auth blocking関数とオーディエンスチェック
 
@@ -87,7 +87,7 @@ Realtime Databaseの本文レイアウトは未記録です。`Function-Executio
 
 ## 本番検証
 
-Pythonコードベースは、6つのイベントファミリーの記録済みケースについて、`strict`プロファイルでの2つの独立した本番記録を使って本番に対して検証されています。対象は、Firestore(作成イベントと更新イベント)、Pub/Sub、Cloud Storage(finalizedイベント)、Eventarcカスタムイベント、Cloud Scheduler、Cloud Tasks(HTTPパススルー)です。比較は、Python SDKが参照する値とリクエストの射影を対象とします。[互換性の表](../../compatibility/#production-verification)を参照してください。
+Pythonコードベースは、6つのイベントファミリーの記録済みケースについて、`strict`プロファイルでの2つの独立した本番記録を使って本番に対して検証されています。対象は、Firestore(作成イベントと更新イベント)、Pub/Sub、Cloud Storage(finalizedイベント)、Eventarcカスタムイベント、Cloud Scheduler、Cloud Tasks(HTTPパススルー)です。比較は、Python SDKが参照する値とリクエストの射影を対象とします。[互換性の表](../../compatibility/#本番との照合)を参照してください。
 
 PythonのAuth blocking関数は検証されておらず、Pythonコードベースの本番へのデプロイも比較されていません。記録された`strict`の動作とemulatorプロファイルとの違いは、それらの表と以下の各節に既知の差異として記載しています。
 
@@ -97,7 +97,7 @@ Pythonコードベースは、次の点で本番およびFirebase CLIと異な�
 
 ### コードベースごとに1プロセス
 
-デフォルトでは、1つのPythonプロセスがコードベース全体を提供します。本番では各関数に専用のインスタンスが与えられ、CLIでは専用のプロセスが与えられます。`functions.isolation = "function"`にすると、代わりに関数ごとに1つのプロセスが起動します([プロセス分離](../functions/#process-isolation-functionsisolation)を参照)。この節の残りと[シークレット](#secrets)の節は、デフォルトの動作を説明します。
+デフォルトでは、1つのPythonプロセスがコードベース全体を提供します。本番では各関数に専用のインスタンスが与えられ、CLIでは専用のプロセスが与えられます。`functions.isolation = "function"`にすると、代わりに関数ごとに1つのプロセスが起動します([プロセス分離](../functions/#プロセス分離functionsisolation)を参照)。この節の残りと[シークレット](#シークレット)の節は、デフォルトの動作を説明します。
 
 - モジュールレベルの状態は関数間で共有されます。
 - `@init`コールバックは、プロセスごとに1回、いずれかの関数の最初の呼び出し時に実行されます。

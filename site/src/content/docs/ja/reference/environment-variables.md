@@ -9,7 +9,7 @@ description: FireemuがコマンドとFunctionsのコードのために設定す
 
 `exec`は、実行しているエミュレータの変数を、実行するコマンドに渡します。それ以外のものは、独自には何も渡しません。名前と形式は、`firebase emulators:exec`が書き出すものに従います。
 
-選択されていないエミュレータの変数は、環境にあったままの状態で残るため、エミュレータが欠けていても、SDKが誤って本番に接続することはありません。`exec`はそれぞれについて警告を出し、`--deny-inherited-emulator-env`を指定すると、代わりに実行を拒否します([継承されたエミュレータ変数](../cli/#inherited-emulator-variables)を参照)。
+選択されていないエミュレータの変数は、環境にあったままの状態で残るため、エミュレータが欠けていても、SDKが誤って本番に接続することはありません。`exec`はそれぞれについて警告を出し、`--deny-inherited-emulator-env`を指定すると、代わりに実行を拒否します([継承されたエミュレータ変数](../cli/#継承されたエミュレータ変数)を参照)。
 
 | 変数 | 値 | 設定される条件 |
 |---|---|---|
@@ -28,7 +28,7 @@ description: FireemuがコマンドとFunctionsのコードのために設定す
 | `GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT` | プロジェクトID | 常に |
 | `FIREBASE_CONFIG` | プロジェクトIDから設定されます | 環境にすでにある場合を除く |
 | `FIREEMU_CONTROL_URL` | コントロールAPIのベースURL。末尾は`/v1/` | 常に |
-| `FIREEMU_CONTROL_TOKEN` | コントロールAPIのBearerトークン。`fireemu/testing`と、[Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index)のスクリプトが使います | 常に |
+| `FIREEMU_CONTROL_TOKEN` | コントロールAPIのBearerトークン。`fireemu/testing`と、[Cloud Firestore](../../products/firestore/#不足インデックスでciジョブを失敗させる)のスクリプトが使います | 常に |
 
 `fireemu up`は、シェルに変数を設定しません。起動時の出力に各`host:port`が表示され(たとえば`FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`)、Emulator UIのOverviewページの「Environment for SDKs」にも表示されます。
 
@@ -51,6 +51,6 @@ Functionsのコードベースは、実行中のサービスについて同じ�
 | `FIREBASE_CONFIG` | `exec`は、これが設定されているのを見つけると、プロジェクトIDから値を書き込む代わりに、その値を保持します。 |
 | `PATH`, `VOLTA_HOME` | `FIREEMU_NODE`が設定されていないときに、Node.jsを探す場所。 |
 | `HOME`, `XDG_CACHE_HOME`, `LOCALAPPDATA` | Authenticationのセッション署名鍵のキャッシュを保存する場所(所有者のみのディレクトリ)。使えるキャッシュがない場合、鍵は起動のたびにメモリ内で生成されます。 |
-| `SUDO_UID` | Fireemuがrootとして実行されている場合、ここで指定されたユーザーも、見つかった設定ファイルの信頼できる所有者になります。[ファイル所有者の検査](../../guides/configuration/#file-ownership-checks)を参照してください。 |
+| `SUDO_UID` | Fireemuがrootとして実行されている場合、ここで指定されたユーザーも、見つかった設定ファイルの信頼できる所有者になります。[ファイル所有者の検査](../../guides/configuration/#ファイル所有者のチェック)を参照してください。 |
 | `ComSpec` | Windowsで、`fireemu exec "script"`のスクリプト形式を実行するシェル。デフォルト: `cmd.exe`。 |
 | `FIREEMU_TRACE_WEBCHANNEL`, `FIREEMU_TRACE_STORAGE` | 任意の値を設定すると、クライアントの問題を診断するために、リクエストのトレース(`[webchannel] ...`、`[storage] ...`)が標準エラー出力に表示されます。通常の実行用ではありません。 |

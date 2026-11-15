@@ -42,7 +42,7 @@ profile = "strict"
 ## セットアップを選ぶ
 
 - **ほとんどのプロジェクト:** 開発用デフォルトの`strict`。テストはキーやセットアップ用の呼び出しなしで実行でき、それでも本番の検証、拒否、エラーの形に一致します。
-- **リリース前、または別のCIジョブ:** [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose)の`strict`。署名なしトークンのように、開発用デフォルトが通してしまうものを検出します。
+- **リリース前、または別のCIジョブ:** [`productionExact: true`](#fireemuが意図的に本番から外れる箇所)の`strict`。署名なしトークンのように、開発用デフォルトが通してしまうものを検出します。
 - **公式エミュレータの確認:** `emulator`。追加のテスト対象としてのみ使います。
 
 ## Fireemuが意図的に本番から外れる箇所
@@ -136,7 +136,7 @@ allowUnsignedCustomTokens = true
 | reCAPTCHAの`ENFORCE`状態は保存され返されるが強制されないため、reCAPTCHAトークンなしのサインインが受け付けられる | 設定なし |
 | `accounts:batchCreate`に行数の上限はない。Admin SDKは送信前に1回の呼び出しあたり1000ユーザーを検査する | 設定なし |
 | サインアップのレート制限(本番はIPごとに新規アカウントを制限する)はシミュレートされない | `auth.quotaSimulation.mode`を`"enforce"`に設定する |
-| 関数内のAdmin SDKの`verifyIdToken`は、`FIREBASE_AUTH_EMULATOR_HOST`が設定されている間はSDKが署名検証を省略するため、署名なしのIDトークンを受け付ける。本番はこれを拒否する | 設定なし。[Auth](../../products/auth/#tokens)を参照 |
+| 関数内のAdmin SDKの`verifyIdToken`は、`FIREBASE_AUTH_EMULATOR_HOST`が設定されている間はSDKが署名検証を省略するため、署名なしのIDトークンを受け付ける。本番はこれを拒否する | 設定なし。[Auth](../../products/auth/#トークン)を参照 |
 
 #### Cloud Firestore
 
@@ -170,7 +170,7 @@ allowUnsignedCustomTokens = true
 
 | 開発時の動作 | 本番の動作を得る方法 |
 |---|---|
-| Pub/Subは認証情報なしのリクエストを受け付けるため、`PUBSUB_EMULATOR_HOST`を使うクライアントが動作する | `pubsub.authentication.localBearerToken`を設定する。すると、認証情報のないリクエストは本番と同様に拒否される。[Pub/SubとEventarc](../../products/pubsub-eventarc/#authentication)を参照。 |
+| Pub/Subは認証情報なしのリクエストを受け付けるため、`PUBSUB_EMULATOR_HOST`を使うクライアントが動作する | `pubsub.authentication.localBearerToken`を設定する。すると、認証情報のないリクエストは本番と同様に拒否される。[Pub/SubとEventarc](../../products/pubsub-eventarc/#認証)を参照。 |
 | Pub/Subのプッシュエンドポイントは、ループバック(`127.0.0.1`、`localhost`、`[::1]`)上のプレーンな`http://`でもよい。本番はHTTPSを要求する | サブスクリプションにループバック以外の`https://` URLを使う。Fireemuはプッシュメッセージをループバックにのみ配信するため、そこに届くようにする設定はない |
 
 ## 関連

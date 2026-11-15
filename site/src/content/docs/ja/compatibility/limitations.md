@@ -3,7 +3,7 @@ title: 制限事項
 description: ローカルの結果に頼る前に、Fireemuが対応していないことと、どのローカルエミュレータにも再現できないことを確認します。
 ---
 
-Fireemuは、本番のFirebaseのすべての機能と動作をまだ再現していません。ここに挙げるのは主な制限事項で、網羅的な一覧ではありません。個々のAPIは[機能マニフェスト](../#capability-manifest)で確認するか、次を実行してください。
+Fireemuは、本番のFirebaseのすべての機能と動作をまだ再現していません。ここに挙げるのは主な制限事項で、網羅的な一覧ではありません。個々のAPIは[機能マニフェスト](../#機能マニフェスト)で確認するか、次を実行してください。
 
 ```sh
 npx fireemu capabilities
@@ -15,13 +15,13 @@ App HostingとData Connectには現在対応していません。Firebase Extens
 
 ## 部分的に対応しているプロダクト
 
-- **Realtime Database。** 記録されたケースに限って提供し、本番と照合して検証しています([本番との照合](../#production-verification)を参照)。それ以外の本番との互換性は未検証で、公式エミュレータとの同等性も主張しません。詳細は[Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator)と、以下のリストを参照してください。
+- **Realtime Database。** 記録されたケースに限って提供し、本番と照合して検証しています([本番との照合](../#本番との照合)を参照)。それ以外の本番との互換性は未検証で、公式エミュレータとの同等性も主張しません。詳細は[Realtime Database](../../products/realtime-database/#公式エミュレータとの違い)と、以下のリストを参照してください。
 
 ## 非対応の機能
 
 ### Cloud Firestore
 
-- Enterprise Pipeline APIが対応する読み取り操作は、限られたサブセットです([Enterpriseパイプライン](../../products/firestore/#enterprise-pipelines)を参照)。
+- Enterprise Pipeline APIが対応する読み取り操作は、限られたサブセットです([Enterpriseパイプライン](../../products/firestore/#enterpriseパイプライン)を参照)。
 - Enterpriseのテキスト検索は、有限なローカルの語彙検索と、明示的なビルド制御を提供します。解析とランキングは近似です。`productionExact`は、観測されていない検索のセマンティクスを拒否します。
 
 ### Authentication
@@ -35,17 +35,17 @@ App HostingとData Connectには現在対応していません。Firebase Extens
 - 署名付きURLまたはPOSTポリシーの署名の検証(有効期限と条件は検査されます)。
 - `allUsers`の読み取り以外のオブジェクトACL、IAM、およびバケットレベルの公開アクセス。
 - オブジェクトの合成(`compose`)と通知の設定。
-- **`strict`で記録されたStorage CORS。** `conformance/storage-strictness-obs/recordings/run-2.json`には、バケットのCORSがない場合、空の場合、設定されている場合のそれぞれについて、JSON APIのメタデータ、メディア、バケット、一覧、UBLAのACLエラーの応答、アップロードのプリフライト、レジューマブルアップロードの開始、キャンセル、キャンセル済みセッションの読み取りが記録されています。strictは`productionExact`を必要とせず、記録されたCORSの値を使います。emulatorプロファイルは従来の動作を維持します。要求ヘッダーの大文字小文字の混在の保持、UBLAのPATCHと切り替えの動作、公開リストを他の応答に適用することは、記録されていない前提です。作成時には、記録されたリージョンと、無効化されたソフト削除のヒントを受け付けますが、それらのサービスはモデル化しません。ローカルのテストは、UBLAのエクスポート/インポートと、空の作成済みバケットを対象としています。[バケットCORS](../../products/storage/#bucket-cors)を参照してください。
+- **`strict`で記録されたStorage CORS。** `conformance/storage-strictness-obs/recordings/run-2.json`には、バケットのCORSがない場合、空の場合、設定されている場合のそれぞれについて、JSON APIのメタデータ、メディア、バケット、一覧、UBLAのACLエラーの応答、アップロードのプリフライト、レジューマブルアップロードの開始、キャンセル、キャンセル済みセッションの読み取りが記録されています。strictは`productionExact`を必要とせず、記録されたCORSの値を使います。emulatorプロファイルは従来の動作を維持します。要求ヘッダーの大文字小文字の混在の保持、UBLAのPATCHと切り替えの動作、公開リストを他の応答に適用することは、記録されていない前提です。作成時には、記録されたリージョンと、無効化されたソフト削除のヒントを受け付けますが、それらのサービスはモデル化しません。ローカルのテストは、UBLAのエクスポート/インポートと、空の作成済みバケットを対象としています。[バケットCORS](../../products/storage/#バケットのcors)を参照してください。
 
 ### Realtime Database
 
-- 記録されたケースに限って本番と照合して検証しています([本番との照合](../#production-verification)を参照)。それ以外の本番との互換性は未検証で、公式エミュレータとの同等性も主張しません。比較は、記録された公式エミュレータのケースに限られます。
+- 記録されたケースに限って本番と照合して検証しています([本番との照合](../#本番との照合)を参照)。それ以外の本番との互換性は未検証で、公式エミュレータとの同等性も主張しません。比較は、記録された公式エミュレータのケースに限られます。
 - 記載されている非対応の構文と評価のケース(正規表現の構文要素、大文字小文字の変換、およびそこに挙げた他の違い)は、ルールの読み込み時に拒否されるか、ルールエラーになります。`query.endBefore`、`query.isOrderByChild()`、`OrderByKey`、`OrderByValue`、`OrderByPriority`という名前、`http.encodeURL()`、呼び出しのないメソッドの読み取り、および三項演算子の呼び出し先は、本番が動作すると記録された通りに読み込まれ、評価されます。
 - 公式エミュレータの決定化のリソース制限によって拒否される、記録済みの8つのパターンは、Fireemuがルールを読み込むときにも、評価されない式の分岐の中を含めて拒否されます。これによって、正規表現の完全な同等性や、本番との同等性が確立されるわけではありません。
 - Functionsのトリガー配信は、限られた記録済みのハンドラーと書き込みについて観測されています。それ以外のケースは未検証です。
 - 本番が観測されていない部分について公式エミュレータから取り入れた動作は、変更される可能性があります。
 
-[Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator)を参照してください。
+[Realtime Database](../../products/realtime-database/#公式エミュレータとの違い)を参照してください。
 
 ### Cloud Functions
 
@@ -79,7 +79,7 @@ Security RulesとAPIの動作は、ドキュメントと、Firebaseの実際の�
 
 ## ローカルでの上限
 
-メモリ使用量を抑えるために、Fireemuにだけ存在する上限があります。[Firestoreの履歴の上限](../../products/firestore/#transactions-and-history)と、任意の[Storageの保存バイト数の上限](../../products/storage/#limit-the-stored-bytes)です。
+メモリ使用量を抑えるために、Fireemuにだけ存在する上限があります。[Firestoreの履歴の上限](../../products/firestore/#トランザクションと履歴)と、任意の[Storageの保存バイト数の上限](../../products/storage/#保存バイト数を制限する)です。
 
 ## バージョン間の変更
 

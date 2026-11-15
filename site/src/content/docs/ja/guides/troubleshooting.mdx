@@ -5,7 +5,7 @@ description: インストールを確認し、症状やエラーメッセージ�
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-まず `fireemu doctor` を実行し、次に症状やエラーメッセージを以下で調べてください。
+まず`fireemu doctor`を実行し、次に症状やエラーメッセージを以下で調べてください。
 
 ## インストールを確認する
 
@@ -13,9 +13,9 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 npx fireemu doctor
 ```
 
-`doctor` は、見つけた Fireemu のバイナリ、UI、Functions ランナー、Node.js を報告し、問題ごとに対処方法を提案します。
+`doctor`は、見つけたFireemuのバイナリ、UI、Functionsランナー、Node.jsを報告し、問題ごとに対処方法を提案します。
 
-実行中のスイートが伝える内容(保持している Firestore の履歴や Storage のバイト数など)も報告させるには、その control URL を渡します。起動時に表示されます。
+実行中のスイートが伝える内容(保持しているFirestoreの履歴やStorageのバイト数など)も報告させるには、そのcontrol URLを渡します。起動時に表示されます。
 
 ```sh
 npx fireemu doctor --connect http://127.0.0.1:<port>
@@ -25,62 +25,62 @@ npx fireemu doctor --connect http://127.0.0.1:<port>
 
 | 症状 | 確認すること |
 |---|---|
-| 起動が `bind 127.0.0.1:9000: Address already in use` で失敗する | `firebase.json` に `emulators.database` があるため、Realtime Database が 9000 で起動しますが、別のプロセス(デフォルトでは PHP-FPM)がそのポートを使っています。`--database-port` を使うか、`--only` で除外してください。 |
-| `firebase.json` または `fireemu.toml` が使われない | 起動時の出力の `config:` 行に、読み込まれたファイルが示されます。[読み込まれるファイル](../configuration/#which-files-are-loaded)と、コンテナー内や `sudo` で実行する場合の所有権のルールを参照してください。 |
-| Firestore や Storage のリクエストがすべて拒否される | `strict` では、Security Rules のないプロジェクトは、本番と同様にクライアントのリクエストを拒否します。起動時の `firestore rules:` 行と `storage rules:` 行を確認してください。[Security Rules](../security-rules/)を参照してください。 |
-| リクエストが拒否されたが理由が分からない | 標準エラーの `note: firestore: Security Rules denied ...` 行、または UI の Rules ページを確認してください。 |
-| クエリがローカルでは動くが本番では失敗する | `emulator` では、インデックスが欠けていてもクエリは拒否されませんが、標準エラーに提案が表示されます。強制するには `strict` に切り替えてください。OR クエリは分岐ごとにインデックスが必要なことがあり、欠けているすべての分岐の定義が標準エラーに一覧されます。`firestore.missingIndexes` が `"report"` の場合は、標準エラーでインデックス欠落のレポートを探すか、control API の `GET /v1/firestore/missingIndexes` から読み取ってください([Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index)を参照)。 |
-| 権限の問題でエクスポートが失敗する | `fireemu doctor --export-dir <dir>` を実行してください。既存の祖先のチェーン全体を変更せずに検査します。共有された親の下のプライベートな子では不十分です。[エクスポート先](../data/#where-to-export)を参照してください。 |
-| 無関係なグローバルリポジトリのコピー中にテストが失敗する | v0.27.0 以降、Functions のワールドは環境の `NODE_PATH` をクリアします。それより古いバージョンでは、スナップショットがそれをコピーしていました。アップグレードするか、ローカルのみの依存関係には空の `NODE_PATH` を渡すか、必要なルートを明示的に絞り込んでください。[依存関係のスナップショット](../test-worlds/#dependency-snapshots-and-global-node_path)を参照してください。 |
-| テストワールドのスナップショット準備がタイムアウトする | 使っていない依存関係を絞り込むか、`snapshotTimeoutMs` を引き上げてください(デフォルトは 60,000 ms、最大 2,147,483,647)。`startupTimeoutMs` が対象とするのは、準備後のデーモンの起動完了だけです。[独立したテストワールド](../test-worlds/#snapshots-and-timeouts)を参照してください。 |
-| Windows で Functions のリロードがスナップショットの ACL 検証失敗を報告する | ジャンクションなどのリパースポイントを含まない、プライベートな一時ディレクトリを使ってください。その権限は、自分のアカウントと信頼できるシステムアカウントにアクセスを限定し、祖先は他のアカウントによる変更を許可していない必要があります。Windows PowerShell が `SystemRoot` 配下で利用できることを確認し、ソースの変更をやり直してください。[ソースのリロード](../../products/functions/#source-reload)を参照してください。 |
-| UI が開かない | ポート 4000 が使用中の場合、`up` は UI なしで起動します。`--ui-port` を使ってください。`exec` は `--ui` を付けた場合にのみ UI を起動します。 |
-| スケジュール関数が実行されない | スケジュールは仮想クロックに従います。`daemon.clockStart` を固定している(または `daemon.clock = "frozen"` にしている)とクロックは止まったままなので、クロックを動かすか、UI から関数を実行してください。固定した開始時刻がなければ、実時間に追従します。[時刻とスケジュール関数](../time/)を参照してください。 |
+| 起動が`bind 127.0.0.1:9000: Address already in use`で失敗する | `firebase.json`に`emulators.database`があるため、Realtime Databaseが9000で起動しますが、別のプロセス(デフォルトではPHP-FPM)がそのポートを使っています。`--database-port`を使うか、`--only`で除外してください。 |
+| `firebase.json`または`fireemu.toml`が使われない | 起動時の出力の`config:`行に、読み込まれたファイルが示されます。[読み込まれるファイル](../configuration/#読み込まれるファイル)と、コンテナー内や`sudo`で実行する場合の所有権のルールを参照してください。 |
+| FirestoreやStorageのリクエストがすべて拒否される | `strict`では、Security Rulesのないプロジェクトは、本番と同様にクライアントのリクエストを拒否します。起動時の`firestore rules:`行と`storage rules:`行を確認してください。[Security Rules](../security-rules/)を参照してください。 |
+| リクエストが拒否されたが理由が分からない | 標準エラーの`note: firestore: Security Rules denied ...`行、またはUIのRulesページを確認してください。 |
+| クエリがローカルでは動くが本番では失敗する | `emulator`では、インデックスが欠けていてもクエリは拒否されませんが、標準エラーに提案が表示されます。強制するには`strict`に切り替えてください。ORクエリは分岐ごとにインデックスが必要なことがあり、欠けているすべての分岐の定義が標準エラーに一覧されます。`firestore.missingIndexes`が`"report"`の場合は、標準エラーでインデックス欠落のレポートを探すか、control APIの`GET /v1/firestore/missingIndexes`から読み取ってください([Cloud Firestore](../../products/firestore/#不足インデックスでciジョブを失敗させる)を参照)。 |
+| 権限の問題でエクスポートが失敗する | `fireemu doctor --export-dir <dir>`を実行してください。既存の祖先のチェーン全体を変更せずに検査します。共有された親の下のプライベートな子では不十分です。[エクスポート先](../data/#エクスポート先)を参照してください。 |
+| 無関係なグローバルリポジトリのコピー中にテストが失敗する | v0.27.0以降、Functionsのワールドは環境の`NODE_PATH`をクリアします。それより古いバージョンでは、スナップショットがそれをコピーしていました。アップグレードするか、ローカルのみの依存関係には空の`NODE_PATH`を渡すか、必要なルートを明示的に絞り込んでください。[依存関係のスナップショット](../test-worlds/#依存関係のスナップショットとグローバルなnode_path)を参照してください。 |
+| テストワールドのスナップショット準備がタイムアウトする | 使っていない依存関係を絞り込むか、`snapshotTimeoutMs`を引き上げてください(デフォルトは60,000 ms、最大2,147,483,647)。`startupTimeoutMs`が対象とするのは、準備後のデーモンの起動完了だけです。[独立したテストワールド](../test-worlds/#スナップショットとタイムアウト)を参照してください。 |
+| WindowsでFunctionsのリロードがスナップショットのACL検証失敗を報告する | ジャンクションなどのリパースポイントを含まない、プライベートな一時ディレクトリを使ってください。その権限は、自分のアカウントと信頼できるシステムアカウントにアクセスを限定し、祖先は他のアカウントによる変更を許可していない必要があります。Windows PowerShellが`SystemRoot`配下で利用できることを確認し、ソースの変更をやり直してください。[ソースのリロード](../../products/functions/#ソースのリロード)を参照してください。 |
+| UIが開かない | ポート4000が使用中の場合、`up`はUIなしで起動します。`--ui-port`を使ってください。`exec`は`--ui`を付けた場合にのみUIを起動します。 |
+| スケジュール関数が実行されない | スケジュールは仮想クロックに従います。`daemon.clockStart`を固定している(または`daemon.clock = "frozen"`にしている)とクロックは止まったままなので、クロックを動かすか、UIから関数を実行してください。固定した開始時刻がなければ、実時間に追従します。[時刻とスケジュール関数](../time/)を参照してください。 |
 
 ## エラーメッセージ
 
 <details>
 <summary><code>FAILED_PRECONDITION: The query requires an index</code></summary>
 
-`strict`(デフォルト)で `firestore.missingIndexes = "refuse"` の場合、複合インデックスが宣言されていないクエリは、本番と同様に拒否されます。SDK は `FAILED_PRECONDITION` ステータス(REST では HTTP 400 と `"status": "FAILED_PRECONDITION"`)と次のメッセージを受け取ります。
+`strict`(デフォルト)で`firestore.missingIndexes = "refuse"`の場合、複合インデックスが宣言されていないクエリは、本番と同様に拒否されます。SDKは`FAILED_PRECONDITION`ステータス(RESTではHTTP 400と`"status": "FAILED_PRECONDITION"`)と次のメッセージを受け取ります。
 
 ```text
 The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/<project>/firestore/indexes?create_composite=...
 ```
 
-インデックスを `firestore.indexes.json`(`firebase.json` から参照)に追加して、再起動してください。最初の失敗で止まらず、1 回の実行で欠けているすべてのインデックスを収集するには、`firestore.missingIndexes = "report"` を設定します。クエリは実行され、欠けているインデックスごとに、追加するエントリが標準エラーに 1 回ずつ表示されます。`emulator` プロファイルは、これらのクエリを拒否しません。[複合インデックス](../../products/firestore/#composite-indexes)を参照してください。
+インデックスを`firestore.indexes.json`(`firebase.json`から参照)に追加して、再起動してください。最初の失敗で止まらず、1回の実行で欠けているすべてのインデックスを収集するには、`firestore.missingIndexes = "report"`を設定します。クエリは実行され、欠けているインデックスごとに、追加するエントリが標準エラーに1回ずつ表示されます。`emulator`プロファイルは、これらのクエリを拒否しません。[複合インデックス](../../products/firestore/#複合インデックス)を参照してください。
 
 </details>
 
 <details>
-<summary><code>/v1/firestore/missingIndexes</code> からの <code>409 FAILED_PRECONDITION</code></summary>
+<summary><code>/v1/firestore/missingIndexes</code> からの<code>409 FAILED_PRECONDITION</code></summary>
 
-control API は 2 つの場合に `409` で応答します。何も証明しない応答で一覧のチェックが通ってしまうことはありません。
+control APIは2つの場合に`409`で応答します。何も証明しない応答で一覧のチェックが通ってしまうことはありません。
 
 ```text
 FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to "report" and Firestore selected; ...
 ```
 
-何も報告されていません。実行が `emulator` プロファイルを使っているか、`strict` で `"refuse"` になっているか、Firestore が選択されていません。`profile = "strict"` と `firestore.missingIndexes = "report"` を設定してください。
+何も報告されていません。実行が`emulator`プロファイルを使っているか、`strict`で`"refuse"`になっているか、Firestoreが選択されていません。`profile = "strict"`と`firestore.missingIndexes = "report"`を設定してください。
 
 ```text
 FAILED_PRECONDITION : <n> quer(y|ies) of this project were served with a missing composite index that is not listed, because the list is full; the list is incomplete, not empty. DELETE it and run again
 ```
 
-一覧が保持するのは最大 1,000 件です。それより多くの異なるインデックスが欠けていた場合、`200` の応答は `"truncated": true` と `dropped` の件数を持ちます。プロジェクトのすべてのエントリが破棄された場合は、代わりにこの `409` が返ります。すでに分かっているインデックスを修正し、一覧を `DELETE` して、もう一度実行してください。[欠けているインデックスで CI ジョブを失敗させる](../../products/firestore/#fail-a-ci-job-on-a-missing-index)を参照してください。
+一覧が保持するのは最大1,000件です。それより多くの異なるインデックスが欠けていた場合、`200`の応答は`"truncated": true`と`dropped`の件数を持ちます。プロジェクトのすべてのエントリが破棄された場合は、代わりにこの`409`が返ります。すでに分かっているインデックスを修正し、一覧を`DELETE`して、もう一度実行してください。[欠けているインデックスでCIジョブを失敗させる](../../products/firestore/#不足インデックスでciジョブを失敗させる)を参照してください。
 
 </details>
 
 <details>
 <summary><code>403 ... fireemu does not answer Host</code>(<code>network.allowedHosts</code>)</summary>
 
-リクエストが、Fireemu が応答しない `Host` を指していました。DNS リバインディングに対する防御です。応答は、ステータス `PERMISSION_DENIED` の HTTP 403 です。
+リクエストが、Fireemuが応答しない`Host`を指していました。DNSリバインディングに対する防御です。応答は、ステータス`PERMISSION_DENIED`のHTTP 403です。
 
 ```text
-fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/ja/guides/ci-and-containers/#host-names-the-emulators-answer
+fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/guides/ci-and-containers/#host-names-the-emulators-answer
 ```
 
-クライアントがその名前を使う場合(トンネル、`/etc/hosts` の名前、Compose のサービス名)は、列挙してください。
+クライアントがその名前を使う場合(トンネル、`/etc/hosts`の名前、Composeのサービス名)は、列挙してください。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -104,23 +104,23 @@ allowedHosts = ["emulator.ci.example"]
 </TabItem>
 </Tabs>
 
-Compose のサービスのような単一ラベルの名前には、`network.allowNonLoopbackHosts = true` も必要です。
+Composeのサービスのような単一ラベルの名前には、`network.allowNonLoopbackHosts = true`も必要です。
 
-Fireemu は、名前ごとに 1 回、標準エラーに `refused Host` の警告も書き出します。[エミュレーターが応答するホスト名](../ci-and-containers/#host-names-the-emulators-answer)を参照してください。
+Fireemuは、名前ごとに1回、標準エラーに`refused Host`の警告も書き出します。[エミュレーターが応答するホスト名](../ci-and-containers/#エミュレーターが応答するホスト名)を参照してください。
 
 </details>
 
 ## さらに詳しい情報を得る
 
-`--log-verbosity debug` で起動してください。解決済みの設定も表示されます。
+`--log-verbosity debug`で起動してください。解決済みの設定も表示されます。
 
 ## 問題を報告する
 
-次の内容を添えて、[GitHub で issue を作成](https://github.com/fireemu/fireemu/issues)してください。
+次の内容を添えて、[GitHubでissueを作成](https://github.com/fireemu/fireemu/issues)してください。
 
-- Fireemu と Firebase SDK のバージョン、プロファイル、関係する Firebase プロダクト。
+- FireemuとFirebase SDKのバージョン、プロファイル、関係するFirebaseプロダクト。
 - 最小限の再現手順。
-- 互換性の問題の場合は、本番の Firebase と比較したのか公式エミュレーターと比較したのか、および期待された結果と実際の結果。
+- 互換性の問題の場合は、本番のFirebaseと比較したのか公式エミュレーターと比較したのか、および期待された結果と実際の結果。
 
 設定ファイルやログを共有する前に、認証情報と個人情報を取り除いてください。
 
@@ -128,5 +128,5 @@ Fireemu は、名前ごとに 1 回、標準エラーに `refused Host` の警�
 
 - [設定ファイル](../configuration/)
 - [Security Rules](../security-rules/)
-- [CI とコンテナー](../ci-and-containers/)
+- [CIとコンテナー](../ci-and-containers/)
 - [制限事項](../../compatibility/limitations/)

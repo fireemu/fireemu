@@ -39,7 +39,7 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 選択されていないエミュレータの変数は、環境にあったままの状態で残ります。実行で起動しないエミュレータについて、シェルがすでに持っている変数はそのまま残り、警告が出ます。
 
 - `fireemu exec --plan -- <command>`は、コマンドから見える内容を一覧表示します。
-- [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables)を指定すると、そのような実行は開始前に失敗します。
+- [`--deny-inherited-emulator-env`](../../reference/cli/#継承されたエミュレータ変数)を指定すると、そのような実行は開始前に失敗します。
 
 ## クライアントSDKを接続する
 
@@ -64,9 +64,9 @@ connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
 connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 ```
 
-デフォルトポートは[インストールと実行](../install/#default-ports)に一覧があります。接続方法が異なるプロダクトが2つあります。
+デフォルトポートは[インストールと実行](../install/#デフォルトポート)に一覧があります。接続方法が異なるプロダクトが2つあります。
 
-- **Realtime Database。** クライアントに専用の`databaseURL`が必要です。[Realtime Database](../../products/realtime-database/#connect)を参照してください。
+- **Realtime Database。** クライアントに専用の`databaseURL`が必要です。[Realtime Database](../../products/realtime-database/#接続)を参照してください。
 - **Hosting。** 通常のHTTPで、SDKの設定は不要です([Firebase Hosting](../../products/hosting/))。
 
 ## Security Rulesのユニットテストを実行する

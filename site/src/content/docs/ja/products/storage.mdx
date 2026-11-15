@@ -22,12 +22,12 @@ Fireemuは、2つのAPI方言の両方でCloud Storage for Firebaseを提供し�
 
 ## テストできること
 
-- [バケット名](#buckets-that-do-not-exist): 何も宣言していないバケットへの書き込みは、メモを出力するか、本番と同じ404で失敗します。
-- XML APIでのブラウザーからのアップロードとダウンロードに対する[バケットのCORS](#bucket-cors)。
-- [署名付きURL](#signed-url-signatures): 有効期限、署名付きヘッダー、そして鍵を登録した場合はV4署名。
-- [セキュリティルール](#security-rules)。[要求されたプレフィックスから判定される`list`ルール](#listing-a-prefix-with-single-segment-attachment-rules)を含みます。
-- 非公開オブジェクトへの公開URLや、署名付きポリシーのないフォームアップロードなど、[本番が拒否するリクエスト](#production-behavior)。
-- 保存バイト数にローカルの上限を設ける[満杯のストア](#limit-the-stored-bytes)。
+- [バケット名](#存在しないバケット): 何も宣言していないバケットへの書き込みは、メモを出力するか、本番と同じ404で失敗します。
+- XML APIでのブラウザーからのアップロードとダウンロードに対する[バケットのCORS](#バケットのcors)。
+- [署名付きURL](#署名付きurlの署名): 有効期限、署名付きヘッダー、そして鍵を登録した場合はV4署名。
+- [セキュリティルール](#セキュリティルール)。[要求されたプレフィックスから判定される`list`ルール](#単一セグメントのアタッチメントルールでプレフィックスを一覧する)を含みます。
+- 非公開オブジェクトへの公開URLや、署名付きポリシーのないフォームアップロードなど、[本番が拒否するリクエスト](#本番の動作)。
+- 保存バイト数にローカルの上限を設ける[満杯のストア](#保存バイト数を制限する)。
 
 ## 接続
 
@@ -94,14 +94,14 @@ maxStoredBytes = 1073741824
 
 | 設定 | 効果 |
 |---|---|
-| `storage.rules` | Storageセキュリティルールのファイル。[セキュリティルール](#security-rules)を参照してください。 |
-| `storage.defaultBucket` | `strict`で、プロジェクトの2つのデフォルトバケットのうちどちらが存在するか（[後述](#buckets-that-do-not-exist)）。 |
+| `storage.rules` | Storageセキュリティルールのファイル。[セキュリティルール](#セキュリティルール)を参照してください。 |
+| `storage.defaultBucket` | `strict`で、プロジェクトの2つのデフォルトバケットのうちどちらが存在するか（[後述](#存在しないバケット)）。 |
 | `storage.buckets`、`storage.publicBuckets` | バケットと、公開URLが認証情報を必要としないバケットを宣言します。`emulator`プロファイルでは無視されます。 |
-| `storage.undeclaredBuckets` | `strict`で、何も宣言していないバケットに対するオブジェクト操作がどう扱われるか。`"warn"`（デフォルト）は最初の書き込みを受け付けてバケットを作成し、メモを1回出力します。`"create"`は同じことをメモなしで行います。`"refuse"`は本番の404で応答し、`productionExact`によって選択されます。明示したキーが優先されます（[後述](#buckets-that-do-not-exist)）。`emulator`プロファイルは、常にバケットを黙って作成します。 |
-| `storage.cors` | Cloud Storageの`cors` JSON形式による、バケットごとのCORS設定。`strict`ではXML APIに、また記録されていない動作としてFirebaseのメディア読み取りに適用されます（[後述](#bucket-cors)）。XMLのバケットで一覧にないものは、`productionExact`を設定しない限り、許容的な応答を維持します。空でないルールを持つバケットでは、JSON APIのオブジェクト読み取りやオブジェクトのプリフライトはルールを無視し（記録どおり）、その他のJSON APIルートや、存在しない、または空のエントリは、基本の動作を維持します。 |
-| `storage.signedUrlKeys` | `strict`でV4署名付きURLの検証に使う公開鍵（またはテストが署名に使った秘密鍵やサービスアカウントのJSON）（[後述](#signed-url-signatures)）。未設定の場合、署名は検証されません。 |
-| `storage.maxStoredBytes` | 保存バイト数のローカルの上限。上限を超える書き込みはHTTP 402（`storage.maxStoredBytes limit exceeded`）で拒否されます。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。本番にこのような上限はありません。 |
-| `storage.maxObjectBytes` | オブジェクトごとのサイズ上限。デフォルトは256 MiB（最大2143289343）。これを超えるアップロードはHTTP 413で拒否されます。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。 |
+| `storage.undeclaredBuckets` | `strict`で、何も宣言していないバケットに対するオブジェクト操作がどう扱われるか。`"warn"`（デフォルト）は最初の書き込みを受け付けてバケットを作成し、メモを1回出力します。`"create"`は同じことをメモなしで行います。`"refuse"`は本番の404で応答し、`productionExact`によって選択されます。明示したキーが優先されます（[後述](#存在しないバケット)）。`emulator`プロファイルは、常にバケットを黙って作成します。 |
+| `storage.cors` | Cloud Storageの`cors` JSON形式による、バケットごとのCORS設定。`strict`ではXML APIに、また記録されていない動作としてFirebaseのメディア読み取りに適用されます（[後述](#バケットのcors)）。XMLのバケットで一覧にないものは、`productionExact`を設定しない限り、許容的な応答を維持します。空でないルールを持つバケットでは、JSON APIのオブジェクト読み取りやオブジェクトのプリフライトはルールを無視し（記録どおり）、その他のJSON APIルートや、存在しない、または空のエントリは、基本の動作を維持します。 |
+| `storage.signedUrlKeys` | `strict`でV4署名付きURLの検証に使う公開鍵（またはテストが署名に使った秘密鍵やサービスアカウントのJSON）（[後述](#署名付きurlの署名)）。未設定の場合、署名は検証されません。 |
+| `storage.maxStoredBytes` | 保存バイト数のローカルの上限。上限を超える書き込みはHTTP 402（`storage.maxStoredBytes limit exceeded`）で拒否されます。[保存バイト数を制限する](#保存バイト数を制限する)を参照してください。本番にこのような上限はありません。 |
+| `storage.maxObjectBytes` | オブジェクトごとのサイズ上限。デフォルトは256 MiB（最大2143289343）。これを超えるアップロードはHTTP 413で拒否されます。[保存バイト数を制限する](#保存バイト数を制限する)を参照してください。 |
 | `storage.bufferedBodyBudgetBytes` | バッファリングされるリクエストボディに対する、プロセス全体の予算。デフォルトは1 GiB。これを超えたリクエストには、`Retry-After: 1`を付けたHTTP 503が返されます。 |
 | `storage.spillObjectBytes` | このバイト数以上のコミット済みオブジェクトを、メモリではなく一時ファイルに保持します。デフォルトでは未設定で、本番にこのような設定はありません。再開可能なアップロードセッションは、受信したバイト数がこのサイズに達すると、一時ファイルに保持します。単発のアップロードは、保存される前にメモリ上でバッファリングされるため、大きな単発アップロードは、コミット後も1つのボディがメモリに残ります。この設定は、大きなオブジェクトを多数保存する場合に役立ちます。 |
 
@@ -129,7 +129,7 @@ maxStoredBytes = 1073741824
 - デプロイされたStorageトリガーが指定している。
 - インポートされたデータを保持するバケット。
 
-`storage.undeclaredBuckets: "warn"`を指定した`strict`では、それ以外のバケットへの書き込みはメモを出力するため、バケット名のタイプミスに気づけます。本番に存在するバケットについてメモを止めるには、`storage.buckets`に記載してください（[設定](#configure)）。
+`storage.undeclaredBuckets: "warn"`を指定した`strict`では、それ以外のバケットへの書き込みはメモを出力するため、バケット名のタイプミスに気づけます。本番に存在するバケットについてメモを止めるには、`storage.buckets`に記載してください（[設定](#設定)）。
 
 各名前はCloud Storageが受け付けるものでなければなりません。`storage.publicBuckets`は、公開URLが認証情報なしでオブジェクトを提供するバケットを列挙し、同時にそれらを宣言したことにもなります。`storage.buckets`と`storage.publicBuckets`は、`emulator`プロファイルでは無視されます。
 
@@ -330,7 +330,7 @@ match /teams/{team}/requests/{id} {
 
 ### `strict`が拒否するリクエスト
 
-`strict`では、Storageエミュレーターは、本番が拒否し公式エミュレーターが受け付けるものも拒否します。存在しないバケットは例外です。[存在しないバケット](#buckets-that-do-not-exist)を参照してください。
+`strict`では、Storageエミュレーターは、本番が拒否し公式エミュレーターが受け付けるものも拒否します。存在しないバケットは例外です。[存在しないバケット](#存在しないバケット)を参照してください。
 
 | リクエスト | `strict`の応答 |
 |---|---|
@@ -366,7 +366,7 @@ IAMで`allUsers`にオブジェクト閲覧者ロールを付与するバケッ�
 <details>
 <summary>期限切れの署名付きURL</summary>
 
-有効期間を過ぎたV4またはV2の署名付きURLは400 `ExpiredToken`で応答し、7日を超えるV4の有効期間や読み取れない`X-Goog-Date`は400で応答します。署名そのものは、作成に使った鍵が`storage.signedUrlKeys`に登録されていない限り検証されません（[署名付きURLの署名](#signed-url-signatures)）。署名したサービスアカウントの鍵が必要なためで、鍵がなければ、どの署名も受け付けられます。
+有効期間を過ぎたV4またはV2の署名付きURLは400 `ExpiredToken`で応答し、7日を超えるV4の有効期間や読み取れない`X-Goog-Date`は400で応答します。署名そのものは、作成に使った鍵が`storage.signedUrlKeys`に登録されていない限り検証されません（[署名付きURLの署名](#署名付きurlの署名)）。署名したサービスアカウントの鍵が必要なためで、鍵がなければ、どの署名も受け付けられます。
 
 </details>
 
@@ -379,7 +379,7 @@ IAMで`allUsers`にオブジェクト閲覧者ロールを付与するバケッ�
 
 - **本番に対する測定**（実際のFirebaseプロジェクト、2026-11-03、`image/png`に対する`getSignedUrl` V4 `write`と`x-goog-content-length-range: 0,10485760`、16ケースの2つの記録）。リクエストにない署名付きヘッダーは、それを名指しする`400 MalformedSecurityHeader`です（`content-type`と範囲ヘッダーを測定しました）。範囲を上回る、または下回るボディは`400 EntityTooLarge`または`400 EntityTooSmall`です。期限切れのURLは、署名された有効期間の終端を名指しする`400 ExpiredToken`です。これらの拒否と、成功時のヘッダー（`ETag`、`x-goog-generation`、`x-goog-metageneration`、`x-goog-hash`、`x-goog-stored-content-length`、`x-goog-stored-content-encoding`）は、どちらのプロファイルでも本番のボディと値を持ちます。`strict`では、署名以外のすべての署名パラメーターを指定するURLは`400 MissingSecurityHeader`で、署名付きヘッダーに含まれずに送られた範囲ヘッダーは`400 MalformedSecurityHeader`です。`emulator`プロファイルは、以前と同じくどちらも受け付けます（firebase-tools 15.28.2がそれらをどう扱うかは測定していません）。
 - **デフォルトでは検証されない、文書化された違い。** 本番は、署名が改変された場合、`Content-Type`や範囲の値が署名されたものと異なる場合、オブジェクト名が署名されたものと異なる場合に、`403 SignatureDoesNotMatch`で応答します。fireemuには、`storage.signedUrlKeys`で登録しない限り署名を確認するための鍵がなく、そうでなければ、どちらのプロファイルでもこの4つすべてを受け付けます。そのため、メソッドや署名付きヘッダー値の変更を認証できません。この動作を認可のチェックとして使わないでください。
-- **CORS。** XML APIでは、`storage.cors`も`productionExact`もない場合、CORSはどちらのプロファイルでも許容的です。成功した`OPTIONS`のプリフライトはCORSヘッダー付きの`204`で応答し、`Origin`を持つ`PUT`にもそれらが付きます。本番はバケットのCORS設定に依存し、設定のないバケットにはCORSヘッダーなしの`200`で応答しました。`strict`でそれを得るには、`storage.cors`でそのバケットを`[]`で記載するか、`productionExact`を有効にします（[バケットのCORS](#bucket-cors)）。
+- **CORS。** XML APIでは、`storage.cors`も`productionExact`もない場合、CORSはどちらのプロファイルでも許容的です。成功した`OPTIONS`のプリフライトはCORSヘッダー付きの`204`で応答し、`Origin`を持つ`PUT`にもそれらが付きます。本番はバケットのCORS設定に依存し、設定のないバケットにはCORSヘッダーなしの`200`で応答しました。`strict`でそれを得るには、`storage.cors`でそのバケットを`[]`で記載するか、`productionExact`を有効にします（[バケットのCORS](#バケットのcors)）。
 - **繰り返された署名パラメーター。** `strict`では、繰り返されたもの、大文字小文字が異なるもの、パーセントエンコードされた名前を含め、`X-Goog-SignedHeaders`のすべての出現が適用されます。競合する`X-Goog-Date`、`X-Goog-Expires`、`Expires`の値が繰り返されると`400 InvalidArgument`が返されます。競合するパラメーターを削除してください。この拒否は、本番では観測されていません。`emulator`プロファイルは、既存のクエリの解釈を維持します。
 
 </details>
@@ -433,7 +433,7 @@ Cloud Storageが決して受け付けないバケット名（たとえば`ab`、
 
 ### 保存される合計バイト数
 
-Storageエミュレーターはすべてのオブジェクトをメモリに保持し、デフォルトではその量に制限がありません。上限を設けるには、`storage.maxStoredBytes`を1以上のバイト数に設定します（[設定](#configure)）。この上限はFireemuのローカルのもので、本番にはありません。
+Storageエミュレーターはすべてのオブジェクトをメモリに保持し、デフォルトではその量に制限がありません。上限を設けるには、`storage.maxStoredBytes`を1以上のバイト数に設定します（[設定](#設定)）。この上限はFireemuのローカルのもので、本番にはありません。
 
 - 各オブジェクトのバイト数は1回だけ数えられ、コピーは再度数えられます。オブジェクトを置き換えた場合は、サイズの差分のみが数えられます。
 - 合計が上限を超えて増加するアップロード、再開可能なアップロードの最終リクエスト、コピーは、HTTP 402とメッセージ`storage.maxStoredBytes limit exceeded`（JSON APIではreason `storageCapacityExceeded`）で拒否されます。`Retry-After`はありません。オブジェクトを削除して空きを作ってください。FirebaseのクライアントSDKは、402を再試行せずにすぐ`storage/quota-exceeded`として報告し、Cloud Storageのクライアントライブラリも再試行しません。
@@ -457,18 +457,18 @@ Storageエミュレーターはすべてのオブジェクトをメモリに保�
 
 ### ローカルの動作
 
-- 何も宣言していないバケットは、`storage.undeclaredBuckets`が`"refuse"`でない限り、最初の書き込みで作成されます。[存在しないバケット](#buckets-that-do-not-exist)を参照してください。
-- `storage.cors`に記載のないバケットに対して、`productionExact`を設定しない限り、XML APIはCORSに許容的に応答します。[バケットのCORS](#bucket-cors)を参照してください。
-- V4署名は、`storage.signedUrlKeys`に登録された鍵に対してのみ確認されます。[署名付きURLの署名](#signed-url-signatures)を参照してください。
-- オブジェクトのサイズ上限、バッファリングされたボディの予算、`storage.maxStoredBytes`は、ローカルの制限です。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。
+- 何も宣言していないバケットは、`storage.undeclaredBuckets`が`"refuse"`でない限り、最初の書き込みで作成されます。[存在しないバケット](#存在しないバケット)を参照してください。
+- `storage.cors`に記載のないバケットに対して、`productionExact`を設定しない限り、XML APIはCORSに許容的に応答します。[バケットのCORS](#バケットのcors)を参照してください。
+- V4署名は、`storage.signedUrlKeys`に登録された鍵に対してのみ確認されます。[署名付きURLの署名](#署名付きurlの署名)を参照してください。
+- オブジェクトのサイズ上限、バッファリングされたボディの予算、`storage.maxStoredBytes`は、ローカルの制限です。[保存バイト数を制限する](#保存バイト数を制限する)を参照してください。
 
 ### Storageのポートをlocalhostに限定する
 
 :::caution
 公式エミュレーターと同様に、Storageのポートは、存在しないメディア読み取りに対する404のHTMLボディに、要求されたオブジェクト名を反映します。お使いのマシンで開いたWebページが、そのオリジンでスクリプトを実行できる可能性があります。
 
-- デフォルトでは、すべてのリスナーはループバック上にあるため、お使いのマシン上のプロセスだけが到達できます。Hostガードは、`localhost`、IPアドレス、`network.allowedHosts`に記載した名前以外の`Host`を指定するリクエストにも、DNSリバインディングへの対策として403で応答します（[エミュレーターが応答するホスト名](../../guides/ci-and-containers/#host-names-the-emulators-answer)を参照）。
-- このポートに他のホストから到達できるのは、自分でオプトインした場合だけです。`fireemu.toml`の`network.allowNonLoopbackHosts`と、`firebase.json`のループバックでない`emulators.storage.host`を併用します（[コンテナーからエミュレーターを提供する](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)を参照）。このようなリスナーは認証情報なしで応答するため、信頼できないネットワークに公開しないでください。
+- デフォルトでは、すべてのリスナーはループバック上にあるため、お使いのマシン上のプロセスだけが到達できます。Hostガードは、`localhost`、IPアドレス、`network.allowedHosts`に記載した名前以外の`Host`を指定するリクエストにも、DNSリバインディングへの対策として403で応答します（[エミュレーターが応答するホスト名](../../guides/ci-and-containers/#エミュレーターが応答するホスト名)を参照）。
+- このポートに他のホストから到達できるのは、自分でオプトインした場合だけです。`fireemu.toml`の`network.allowNonLoopbackHosts`と、`firebase.json`のループバックでない`emulators.storage.host`を併用します（[コンテナーからエミュレーターを提供する](../../guides/ci-and-containers/#コンテナーからエミュレーターを提供する)を参照）。このようなリスナーは認証情報なしで応答するため、信頼できないネットワークに公開しないでください。
 - `strict`プロファイルは、本番が送らないJSON APIの応答に`X-Content-Type-Options: nosniff`を送らないため、その多層防御は追加されません。`emulator`プロファイルは、公式エミュレーターのヘッダーを維持します。
 
 :::

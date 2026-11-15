@@ -43,11 +43,11 @@ Fireemuは既存の`firebase.json`を読み込み、同じデフォルトポー�
 - 拒否のテストでは、SDKヘルパーのデフォルトである`iat: 0` / `exp: 3600`を使い、有効期限後の時刻にクロックを設定します。通常の検証を通るFireemu発行のトークンは、引き続き受け付けられます。
 - `auth.idTokenSigning = "session-rsa"`を使うと、署名なしのIDトークンはすべて拒否されます。
 
-[署名なしのモックIDトークン](../../products/auth/#unsigned-mock-id-tokens)を参照してください。
+[署名なしのモックIDトークン](../../products/auth/#署名なしのモックidトークン)を参照してください。
 
 ### 名前付きデータベース
 
-本番で作成が必要なのと同じように、名前付きデータベースはそれぞれ`firebase.json`の`firestore`配列で`rules`ファイルと`indexes`ファイルとともに宣言するか、Admin APIで作成してください。実行時に作成されたデータベースには、ルールを読み込むまでSecurity Rulesがありません([Firestore](../../products/firestore/#named-databases)を参照)。
+本番で作成が必要なのと同じように、名前付きデータベースはそれぞれ`firebase.json`の`firestore`配列で`rules`ファイルと`indexes`ファイルとともに宣言するか、Admin APIで作成してください。実行時に作成されたデータベースには、ルールを読み込むまでSecurity Rulesがありません([Firestore](../../products/firestore/#名前付きデータベース)を参照)。
 
 ### 複合インデックス
 
@@ -65,13 +65,13 @@ Fireemuは既存の`firebase.json`を読み込み、同じデフォルトポー�
 | 設定 | `strict`での動作 |
 |---|---|
 | `auth.improvedEmailPrivacy` | メール列挙保護で、新しい本番プロジェクトではオンです。本番プロジェクトでオフにしている場合にのみ`false`にしてください。その場合、サインインは公式のAuthエミュレータと同様に`EMAIL_NOT_FOUND`と`INVALID_PASSWORD`を返します。 |
-| `auth.mfa` | プロジェクトの多要素認証の設定です。`strict`ではSMSとTOTPが有効な状態で始まり、`productionExact`では新しい本番プロジェクトと同様に多要素認証がオフの状態で始まります。[Authentication](../../products/auth/#multi-factor-authentication)を参照してください。 |
+| `auth.mfa` | プロジェクトの多要素認証の設定です。`strict`ではSMSとTOTPが有効な状態で始まり、`productionExact`では新しい本番プロジェクトと同様に多要素認証がオフの状態で始まります。[Authentication](../../products/auth/#多要素認証)を参照してください。 |
 | `firestore.enforceLimits` | 本番では常にStandardエディションのクエリ制限が適用されます。`false`にすると本番が拒否するクエリが通るため、特別な理由がない限りオンのままにしてください。`strict`では、クエリ制限だけを切り替えます。 |
 
 ## 公式CLIとの違い
 
 - `--export-on-exit`が失敗した場合、コマンド自体が成功していても、実行は終了コード1で終了します。公式CLIは警告を出して終了コード0で終了するだけです。Fireemuは、保存されたデータに依存するCIジョブがそのデータなしに成功することがないよう、この点で異なります。
-- Unixでは、見つかった`fireemu.toml`または`firebase.json`は、所有者が信頼できる場合にのみ読み込まれます。[設定ファイル](../../guides/configuration/#file-ownership-checks)を参照してください。
+- Unixでは、見つかった`fireemu.toml`または`firebase.json`は、所有者が信頼できる場合にのみ読み込まれます。[設定ファイル](../../guides/configuration/#ファイル所有者のチェック)を参照してください。
 - `strict`では、Security Rulesのないプロジェクトは、ルールをリリースしていない本番プロジェクトと同様に動作し、クライアントのリクエストは拒否されます。[Security Rules](../../guides/security-rules/)を参照してください。
 
 ## 関連項目

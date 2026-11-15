@@ -18,8 +18,8 @@ Fireemuは、gRPCとRESTで`google.pubsub.v1` APIを、カスタムイベント�
 ## テストできること
 
 - プッシュ、フィルター、順序キー、StreamingPull、スナップショット、シークを含む[Pub/Subのトピック、サブスクリプション、配信](#cloud-pubsub)。
-- 本番のIAM付与がある場合とない場合の[デッドレター転送](#dead-letter-topics)。
-- [認証情報の有無によるPub/Subリクエスト](#authentication)。
+- 本番のIAM付与がある場合とない場合の[デッドレター転送](#デッドレタートピック)。
+- [認証情報の有無によるPub/Subリクエスト](#認証)。
 - [`onCustomEventPublished`関数に配信されるカスタムイベント](#eventarc)。
 - [`onTaskDispatched`関数に配信されるタスク](#cloud-tasks)。
 
@@ -35,7 +35,7 @@ Fireemuは、gRPCとRESTで`google.pubsub.v1` APIを、カスタムイベント�
 
 ## Cloud Pub/Sub
 
-トピック、サブスクリプション、発行、プルと確認応答、プッシュ配信、フィルター、順序キー、デッドレタートピック、StreamingPull、スナップショット、シークに対応しています。対応していないものについては、[本番との違い](#differences-from-production)を参照してください。
+トピック、サブスクリプション、発行、プルと確認応答、プッシュ配信、フィルター、順序キー、デッドレタートピック、StreamingPull、スナップショット、シークに対応しています。対応していないものについては、[本番との違い](#本番との違い)を参照してください。
 
 ### トピックのメッセージストレージポリシー
 
@@ -137,29 +137,29 @@ await getEventarc(app).channel('locations/us-central1/channels/firebase').publis
 
 ## Cloud Tasks
 
-Functionsコードベースが読み込まれると、Fireemuは`127.0.0.1:9499`でCloud Tasksエミュレータを起動し、`CLOUD_TASKS_EMULATOR_HOST`を設定します。タスクキュー関数(`onTaskDispatched`)は、レート制限とリトライ設定を伴って、自分向けにエンキューされたタスクを受け取ります。`strict`では、タスクの`scheduleTime`によってタスクが保留されます。待機中のタスク、**Run now**、仮想クロックについては、[タスクキュー](../functions/#task-queues)を参照してください。
+Functionsコードベースが読み込まれると、Fireemuは`127.0.0.1:9499`でCloud Tasksエミュレータを起動し、`CLOUD_TASKS_EMULATOR_HOST`を設定します。タスクキュー関数(`onTaskDispatched`)は、レート制限とリトライ設定を伴って、自分向けにエンキューされたタスクを受け取ります。`strict`では、タスクの`scheduleTime`によってタスクが保留されます。待機中のタスク、**Run now**、仮想クロックについては、[タスクキュー](../functions/#タスクキュー)を参照してください。
 
 ## 本番との違い
 
 ### 対応していないPub/Sub機能
 
-スキーマ、BigQueryおよびCloud Storageのサブスクリプション配信、`UpdateTopic`などの一部のAPIには対応していません。emulatorプロファイルでは、`UpdateTopic`は[トピックのメッセージストレージポリシー](#topic-message-storage-policy)と[トピックのキー名とタグ](#topic-key-name-and-tags)で説明したフィールドを変更します。
+スキーマ、BigQueryおよびCloud Storageのサブスクリプション配信、`UpdateTopic`などの一部のAPIには対応していません。emulatorプロファイルでは、`UpdateTopic`は[トピックのメッセージストレージポリシー](#トピックのメッセージストレージポリシー)と[トピックのキー名とタグ](#トピックのキー名とタグ)で説明したフィールドを変更します。
 
 ### `strict`プロファイルが拒否するフィールド
 
-- `messageStoragePolicy`: [トピックのメッセージストレージポリシー](#topic-message-storage-policy)を参照してください。
-- `kmsKeyName`と`tags`: [トピックのキー名とタグ](#topic-key-name-and-tags)を参照してください。
+- `messageStoragePolicy`: [トピックのメッセージストレージポリシー](#トピックのメッセージストレージポリシー)を参照してください。
+- `kmsKeyName`と`tags`: [トピックのキー名とタグ](#トピックのキー名とタグ)を参照してください。
 
 ### その他の違い
 
-- デッドレター転送は、求めない限りIAM付与を必要としません。[デッドレタートピック](#dead-letter-topics)を参照してください。
-- RESTのネガティブキャッシュはデフォルトでオフです。オンにした場合、その10.35秒のウィンドウは決定的ですが、本番のウィンドウはそうではありません。[RESTフロントエンドでのキャッシュされた404](#cached-404-on-the-rest-frontend-pubsubrestnegativecache)を参照してください。
-- 本物のGoogle OAuthトークンを使ったPub/Subリクエストは、トークンをオフラインでは検証できないため、`strict`では401で拒否されます。[認証](#authentication)を参照してください。
+- デッドレター転送は、求めない限りIAM付与を必要としません。[デッドレタートピック](#デッドレタートピック)を参照してください。
+- RESTのネガティブキャッシュはデフォルトでオフです。オンにした場合、その10.35秒のウィンドウは決定的ですが、本番のウィンドウはそうではありません。[RESTフロントエンドでのキャッシュされた404](#restフロントエンドでのキャッシュされた404-pubsubrestnegativecache)を参照してください。
+- 本物のGoogle OAuthトークンを使ったPub/Subリクエストは、トークンをオフラインでは検証できないため、`strict`では401で拒否されます。[認証](#認証)を参照してください。
 - Eventarcリスナーは、`eventarc.authentication`が`"production"`でない限り認証情報を検査しません。[Eventarc](#eventarc)を参照してください。
 
 ## 関連
 
 - [Cloud Functions](../functions/)
-- [タスクキュー](../functions/#task-queues)
+- [タスクキュー](../functions/#タスクキュー)
 - [プロファイル](../../guides/profiles/)
 - [環境変数](../../reference/environment-variables/)

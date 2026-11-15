@@ -1,35 +1,35 @@
 ---
 title: Firebase Hosting
-description: firebase.json から Firebase Hosting のサイトをローカルで配信します。リダイレクト、リライト、ヘッダー、クリーン URL、ローカライズ、ローカルの関数へのリライトに対応します。
+description: firebase.jsonからFirebase Hostingのサイトをローカルで配信します。リダイレクト、リライト、ヘッダー、クリーンURL、ローカライズ、ローカルの関数へのリライトに対応します。
 ---
 
 import Facts from '../../../../components/Facts.astro';
 
-Fireemu は `firebase.json` の `hosting` エントリから Firebase Hosting のサイトを配信します。静的ファイル、リダイレクト、リライト、カスタムヘッダー、クリーン URL、末尾スラッシュの扱い、ローカライズされたコンテンツに対応します。設定した各サイトは専用のローカルリスナーを持ち、リライトで同じ実行内の Functions コードベースの関数にリクエストを送れます。
+Fireemuは`firebase.json`の`hosting`エントリからFirebase Hostingのサイトを配信します。静的ファイル、リダイレクト、リライト、カスタムヘッダー、クリーンURL、末尾スラッシュの扱い、ローカライズされたコンテンツに対応します。設定した各サイトは専用のローカルリスナーを持ち、リライトで同じ実行内のFunctionsコードベースの関数にリクエストを送れます。
 
 <Facts items={[
   { label: 'ステータス', value: '対応' },
   { label: 'デフォルトポート', value: '5000' },
-  { label: '起動条件', value: 'firebase.json に hosting.public ディレクトリがある場合' },
+  { label: '起動条件', value: 'firebase.jsonにhosting.publicディレクトリがある場合' },
   { label: '本番検証', value: '記録したケースで検証済み', href: 'compatibility/#production-verification' },
 ]} />
 
-Hosting は**記録したケースについて本番と照合して検証済み**です。デフォルトの `strict` プロファイルは、プレビューチャンネルで 2 回記録した 279 件のリクエスト(201 件のコーパスと 78 件のフォローアップコーパス)に対して Firebase Hosting が返した応答と同じ応答を返します。ただし[既知の差異](#known-differences-and-unrecorded-answers)は除きます。`emulator` プロファイルは `firebase-tools` 15.28.2 と有限のケースでオフライン比較しており、本番との一致は主張しません。[プロファイル](#profiles)と[検証ステータス](#verification-status)を参照してください。
+Hostingは**記録したケースについて本番と照合して検証済み**です。デフォルトの`strict`プロファイルは、プレビューチャンネルで2回記録した279件のリクエスト(201件のコーパスと78件のフォローアップコーパス)に対してFirebase Hostingが返した応答と同じ応答を返します。ただし[既知の差異](#既知の差異と未記録の応答)は除きます。`emulator`プロファイルは`firebase-tools` 15.28.2と有限のケースでオフライン比較しており、本番との一致は主張しません。[プロファイル](#プロファイル)と[検証ステータス](#検証ステータス)を参照してください。
 
-Hosting は v0.45.0 から利用できます。後のリリースで変わった挙動は[v0.47.0 での変更](#changes-in-v0470)と[v0.49.0 での変更](#changes-in-v0490)に記載しています。
+Hostingはv0.45.0から利用できます。後のリリースで変わった挙動は[v0.47.0での変更](#v0470での変更)と[v0.49.0での変更](#v0490での変更)に記載しています。
 
 ## テストできること
 
-- 静的ファイル、クリーン URL、末尾スラッシュ、404 ページ([リクエストの処理順序](#request-order))。
-- `redirects`、`rewrites`、`headers` のルールと、そのグロブおよびキャプチャ([`hosting` オブジェクトのキー](#keys-of-the-hosting-object))。
+- 静的ファイル、クリーンURL、末尾スラッシュ、404ページ([リクエストの処理順序](#リクエストの処理順序))。
+- `redirects`、`rewrites`、`headers`のルールと、そのグロブおよびキャプチャ([`hosting`オブジェクトのキー](#hostingオブジェクトのキー))。
 - 言語と国で選ばれるローカライズされたコンテンツ(`i18n`)。
-- 1 つの `firebase.json` から複数のサイトを、それぞれ別のポートで配信([Hosting を起動する](#start-hosting))。
-- 同じ実行内の関数へのリライト([関数へのリライト](#rewrites-to-functions))。
-- `strict` での本番のレスポンスヘッダー、コンテンツタイプ、圧縮、条件付きリクエスト([プロファイル](#profiles))。
+- 1つの`firebase.json`から複数のサイトを、それぞれ別のポートで配信([Hostingを起動する](#hostingを起動する))。
+- 同じ実行内の関数へのリライト([関数へのリライト](#関数へのリライト))。
+- `strict`での本番のレスポンスヘッダー、コンテンツタイプ、圧縮、条件付きリクエスト([プロファイル](#プロファイル))。
 
-## Hosting を起動する
+## Hostingを起動する
 
-`firebase.json` に `public` ディレクトリを持つ `hosting` オブジェクト、またはサイトオブジェクトの配列があると、Hosting が起動します。サイトが 1 つの場合はセレクターは不要です。
+`firebase.json`に`public`ディレクトリを持つ`hosting`オブジェクト、またはサイトオブジェクトの配列があると、Hostingが起動します。サイトが1つの場合はセレクターは不要です。
 
 ```json
 {
@@ -43,7 +43,7 @@ Hosting は v0.45.0 から利用できます。後のリリースで変わった
 npx fireemu up
 ```
 
-複数のサイトでは、各エントリに `site` または `target` を指定します。target は、選択した Firebase プロジェクトの `.firebaserc` を通して解決されます。
+複数のサイトでは、各エントリに`site`または`target`を指定します。targetは、選択したFirebaseプロジェクトの`.firebaserc`を通して解決されます。
 
 ```json
 {
@@ -66,50 +66,50 @@ npx fireemu up
 }
 ```
 
-### ポートと URL
+### ポートとURL
 
-- デフォルトのポートは 5000 です。ポートが使用中でポートを設定していない場合、Fireemu は上方向に空きを探し、`firebase-tools` と同様に 5001 は使いません。設定したポートは移動されません。ポートは `firebase.json` の `emulators.hosting.port`、Fireemu 設定ファイルの `daemon.hostingPort`、または `--hosting-port` で設定します。
-- 最初のサイトは設定済みの Hosting ポート(デフォルトは 5000)を使います。以降のサイトは、Firebase CLI のローカル規約に従い、プライマリから 4 つ後のポートから順に使い、5001 と使用中のポートはスキップします。
-- 起動時の出力に各サイトの URL が表示されます。readiness descriptor は最初のサイトの `hostingUrl` を保持し、すべてのサイトの URL を持つ `hostingSites` を追加します。
-- Emulator Hub は、プライマリのバインドアドレスを `hosting` の下に(Hub の `GET /emulators`)、2 番目以降のポートを `reservedPorts` に一覧します。
+- デフォルトのポートは5000です。ポートが使用中でポートを設定していない場合、Fireemuは上方向に空きを探し、`firebase-tools`と同様に5001は使いません。設定したポートは移動されません。ポートは`firebase.json`の`emulators.hosting.port`、Fireemu設定ファイルの`daemon.hostingPort`、または`--hosting-port`で設定します。
+- 最初のサイトは設定済みのHostingポート(デフォルトは5000)を使います。以降のサイトは、Firebase CLIのローカル規約に従い、プライマリから4つ後のポートから順に使い、5001と使用中のポートはスキップします。
+- 起動時の出力に各サイトのURLが表示されます。readiness descriptorは最初のサイトの`hostingUrl`を保持し、すべてのサイトのURLを持つ`hostingSites`を追加します。
+- Emulator Hubは、プライマリのバインドアドレスを`hosting`の下に(Hubの`GET /emulators`)、2番目以降のポートを`reservedPorts`に一覧します。
 
-### 選択と public ディレクトリ
+### 選択とpublicディレクトリ
 
-- `--only` は他のプロダクトと同様にサービスを選択します。`--only hosting` は設定済みのサイトを配信し、選択したサイトの `public` キーがない場合は起動を拒否します。
-- `hosting.public` は `firebase.json` のあるディレクトリを基準に解決されます。ディレクトリが存在しなくても、`firebase-tools` と同様にエラーにはならず、サイトは起動して 404 を返します。
+- `--only`は他のプロダクトと同様にサービスを選択します。`--only hosting`は設定済みのサイトを配信し、選択したサイトの`public`キーがない場合は起動を拒否します。
+- `hosting.public`は`firebase.json`のあるディレクトリを基準に解決されます。ディレクトリが存在しなくても、`firebase-tools`と同様にエラーにはならず、サイトは起動して404を返します。
 
 ## 設定
 
-### `hosting` オブジェクトのキー
+### `hosting`オブジェクトのキー
 
-`hosting` オブジェクトの次のキーが有効です。
+`hosting`オブジェクトの次のキーが有効です。
 
 | キー | 挙動 |
 |---|---|
-| `public` | 配信するディレクトリです。必須です。ファイルはそのディレクトリへの保持されたハンドルを通して開かれ、ディレクトリの外に出るシンボリックリンク、通常ファイルでないもの、安全でないパスは拒否されます。`strict` では、対象となるドットセグメントのパスはファイル検索の前に正規化されたパスへリダイレクトされます。[プロファイル](#profiles)を参照してください。 |
-| `ignore` | すべてのルートで存在しないものとして扱うファイルのグロブパターンです。`firebase-tools` がデプロイ対象のファイルを選ぶときと同じ方法で照合されます。`**/firebase-debug.log`、`**/firebase-debug.*.log`、`.firebase/*` は、`firebase deploy` がアップロードしないため、常に無視されます。 |
-| `redirects` | ファイルを配信する前に順番に確認されます。ルールは `source`、`glob`、`regex` のいずれか、`destination`、`type`(デフォルトは 301)を持ちます。`source` の `:name` キャプチャは、`destination` の同名の部分に入ります。クエリ文字列は保持されます。 |
-| `rewrites` | どのファイルにも一致しないときに使われます。`source`、`glob`、`regex` がリクエストを選び、転送先は `destination` のファイル、`function`、または `run` サービスです([関数へのリライト](#rewrites-to-functions)を参照)。最初に一致したルールが優先されます。 |
-| `headers` | `source`、`glob`、`regex` と、`key` と `value` の `headers` リストを持つルールです。以下のプロファイル別のルールに従って、ファイルとリライトのレスポンスに追加されます。`strict` では、設定された `Content-Encoding` は無視されます。 |
-| `cleanUrls` | `/about.html` は `/about` へリダイレクト(301)され、`/about` は `about.html` を配信します。 |
-| `trailingSlash` | `true` はディレクトリ URL に末尾スラッシュを付け、`false` は取り除きます(301)。未設定の場合、`cleanUrls` が有効でない限り、スラッシュなしのディレクトリ URL はスラッシュ付きの URL へリダイレクトされます。 |
-| `i18n` | `{ "root": "/locales" }`(スラッシュの書き方は問いません。`locales`、`/locales/`)は、通常のパスより先に `locales/<language>_<country>/…`、`locales/ALL_<country>/…`、`locales/<language>_ALL/…`、`locales/<language>/…` を配信します。選択は `Accept-Language` と `X-Country-Code` ヘッダー、または `firebase-language-override` と `firebase-country-override` の Cookie に基づきます。 |
+| `public` | 配信するディレクトリです。必須です。ファイルはそのディレクトリへの保持されたハンドルを通して開かれ、ディレクトリの外に出るシンボリックリンク、通常ファイルでないもの、安全でないパスは拒否されます。`strict`では、対象となるドットセグメントのパスはファイル検索の前に正規化されたパスへリダイレクトされます。[プロファイル](#プロファイル)を参照してください。 |
+| `ignore` | すべてのルートで存在しないものとして扱うファイルのグロブパターンです。`firebase-tools`がデプロイ対象のファイルを選ぶときと同じ方法で照合されます。`**/firebase-debug.log`、`**/firebase-debug.*.log`、`.firebase/*`は、`firebase deploy`がアップロードしないため、常に無視されます。 |
+| `redirects` | ファイルを配信する前に順番に確認されます。ルールは`source`、`glob`、`regex`のいずれか、`destination`、`type`(デフォルトは301)を持ちます。`source`の`:name`キャプチャは、`destination`の同名の部分に入ります。クエリ文字列は保持されます。 |
+| `rewrites` | どのファイルにも一致しないときに使われます。`source`、`glob`、`regex`がリクエストを選び、転送先は`destination`のファイル、`function`、または`run`サービスです([関数へのリライト](#関数へのリライト)を参照)。最初に一致したルールが優先されます。 |
+| `headers` | `source`、`glob`、`regex`と、`key`と`value`の`headers`リストを持つルールです。以下のプロファイル別のルールに従って、ファイルとリライトのレスポンスに追加されます。`strict`では、設定された`Content-Encoding`は無視されます。 |
+| `cleanUrls` | `/about.html`は`/about`へリダイレクト(301)され、`/about`は`about.html`を配信します。 |
+| `trailingSlash` | `true`はディレクトリURLに末尾スラッシュを付け、`false`は取り除きます(301)。未設定の場合、`cleanUrls`が有効でない限り、スラッシュなしのディレクトリURLはスラッシュ付きのURLへリダイレクトされます。 |
+| `i18n` | `{ "root": "/locales" }`(スラッシュの書き方は問いません。`locales`、`/locales/`)は、通常のパスより先に`locales/<language>_<country>/…`、`locales/ALL_<country>/…`、`locales/<language>_ALL/…`、`locales/<language>/…`を配信します。選択は`Accept-Language`と`X-Country-Code`ヘッダー、または`firebase-language-override`と`firebase-country-override`のCookieに基づきます。 |
 
 ### リクエストの処理順序
 
 リクエストは次の順序で処理されます。
 
-1. **予約ルート。** `/__/firebase/init.json` と `/__/firebase/init.js` は予約ルートです。`init.json` はプロジェクト ID と、秘密ではないローカル用 API キー(`fireemu-local-only`)を返し、`init.js?useEmulator=true` は Firebase SDK をこの実行のエミュレーター(Authentication、Firestore、Functions、Storage、Realtime Database。起動している場合)に向けます。`emulator` ではキャッチオールのリダイレクトより優先され、`strict` では本番の応答と同様にリダイレクトの後で応答されます([プロファイル](#profiles)を参照)。
-2. **リダイレクト。** `redirects` に一致するエントリがあれば、そのステータスと `Location` で応答します。
-3. **ファイル。** 一致するファイル(ディレクトリの場合は `index.html` を含む)があれば配信します。`HEAD` にはヘッダーのみで応答します。identity ボディは開いたファイルからストリーミングされます。`strict` では、対象となるファイルはバッファされ、gzip で配信されることがあります。ヘッダーとコンテンツタイプはプロファイルによって異なります。`emulator` は `mime-types` のテーブルを使い、圧縮可能なタイプに `Vary: Accept-Encoding` を追加します。`strict` は[プロファイル](#profiles)で説明する、本番と同じ形のヘッダーとタイプを使います。
-4. **リライト。** `rewrites` に一致するエントリがあれば応答します。`destination` のファイルは 200 で配信され(`/404.html` へのリライトは 404 を返します)、`function` または `run` のルールはローカルの Functions ランタイムに転送されます。
-5. **見つからない場合。** public ディレクトリの `404.html` がステータス 404 で配信されます。ない場合は組み込みのページが返ります。`strict` では fireemu 用の短い代替ページ、`emulator` では「Cannot GET」ページです。
+1. **予約ルート。** `/__/firebase/init.json`と`/__/firebase/init.js`は予約ルートです。`init.json`はプロジェクトIDと、秘密ではないローカル用APIキー(`fireemu-local-only`)を返し、`init.js?useEmulator=true`はFirebase SDKをこの実行のエミュレーター(Authentication、Firestore、Functions、Storage、Realtime Database。起動している場合)に向けます。`emulator`ではキャッチオールのリダイレクトより優先され、`strict`では本番の応答と同様にリダイレクトの後で応答されます([プロファイル](#プロファイル)を参照)。
+2. **リダイレクト。** `redirects`に一致するエントリがあれば、そのステータスと`Location`で応答します。
+3. **ファイル。** 一致するファイル(ディレクトリの場合は`index.html`を含む)があれば配信します。`HEAD`にはヘッダーのみで応答します。identityボディは開いたファイルからストリーミングされます。`strict`では、対象となるファイルはバッファされ、gzipで配信されることがあります。ヘッダーとコンテンツタイプはプロファイルによって異なります。`emulator`は`mime-types`のテーブルを使い、圧縮可能なタイプに`Vary: Accept-Encoding`を追加します。`strict`は[プロファイル](#プロファイル)で説明する、本番と同じ形のヘッダーとタイプを使います。
+4. **リライト。** `rewrites`に一致するエントリがあれば応答します。`destination`のファイルは200で配信され(`/404.html`へのリライトは404を返します)、`function`または`run`のルールはローカルのFunctionsランタイムに転送されます。
+5. **見つからない場合。** publicディレクトリの`404.html`がステータス404で配信されます。ない場合は組み込みのページが返ります。`strict`ではfireemu用の短い代替ページ、`emulator`では「Cannot GET」ページです。
 
-`/__/firebase/<version>/<file>`(ホストされた Firebase SDK スクリプト)には 503 を返します。Fireemu はこれをダウンロードしないためです。バンドルした SDK か、自分で配信するコピーを使ってください。
+`/__/firebase/<version>/<file>`(ホストされたFirebase SDKスクリプト)には503を返します。Fireemuはこれをダウンロードしないためです。バンドルしたSDKか、自分で配信するコピーを使ってください。
 
 ## 関数へのリライト
 
-`function` または `run` を転送先とするリライトは、同じ実行内の Functions エミュレーターに転送されます。コードベースが読み込まれている必要があります。
+`function`または`run`を転送先とするリライトは、同じ実行内のFunctionsエミュレーターに転送されます。コードベースが読み込まれている必要があります。
 
 ```json
 {
@@ -125,114 +125,114 @@ npx fireemu up
 }
 ```
 
-- 関数 ID は、`function` に続く文字列、その `functionId`、または `run` の `serviceId` です。リージョンは転送先の `region`、なければルールの `region`、それもなければ `us-central1` です。
-- `run` のリライトは、Cloud Run サービスと同じ ID を持つローカルの関数に送られます。Fireemu が Cloud Run サービスを検索することはありません。
-- リクエストはメソッド、パス、クエリ、ヘッダーを保ちます。ボディは 32 MiB までです。Fireemu は `x-original-url` と `x-forwarded-host` を追加します。`Cache-Control` のないレスポンスには `private` が付き、`Vary` は `Accept-Encoding, Authorization, Cookie` に設定されます。
-- Functions コードベースが読み込まれていない場合、リライトは 503 を返し、到達できないアップストリームには 502 を返します。デプロイ済みの関数へのフォールバックはありません。
+- 関数IDは、`function`に続く文字列、その`functionId`、または`run`の`serviceId`です。リージョンは転送先の`region`、なければルールの`region`、それもなければ`us-central1`です。
+- `run`のリライトは、Cloud Runサービスと同じIDを持つローカルの関数に送られます。FireemuがCloud Runサービスを検索することはありません。
+- リクエストはメソッド、パス、クエリ、ヘッダーを保ちます。ボディは32 MiBまでです。Fireemuは`x-original-url`と`x-forwarded-host`を追加します。`Cache-Control`のないレスポンスには`private`が付き、`Vary`は`Accept-Encoding, Authorization, Cookie`に設定されます。
+- Functionsコードベースが読み込まれていない場合、リライトは503を返し、到達できないアップストリームには502を返します。デプロイ済みの関数へのフォールバックはありません。
 
 ## プロファイル
 
-Hosting は 2 つの互換性プロファイルで応答が異なります。
+Hostingは2つの互換性プロファイルで応答が異なります。
 
-- `emulator` プロファイルは、`firebase-tools` 15.28.2 のエミュレーターと同じように応答します。
-- デフォルトの `strict` プロファイルは、2 つの本番コーパスの 279 件のリクエスト(それぞれを使い捨てのプレビューチャンネルで 2 回ずつ記録。[検証ステータス](#verification-status)に一覧あり)に対して Firebase Hosting が応答したとおりに応答します。ただし、`productionExact` がオフにする 2 つの開発用デフォルト(`hosting.cacheControl` と `hosting.clientCountry`)は例外です([開発用デフォルト](#development-defaults)を参照)。
+- `emulator`プロファイルは、`firebase-tools` 15.28.2のエミュレーターと同じように応答します。
+- デフォルトの`strict`プロファイルは、2つの本番コーパスの279件のリクエスト(それぞれを使い捨てのプレビューチャンネルで2回ずつ記録。[検証ステータス](#検証ステータス)に一覧あり)に対してFirebase Hostingが応答したとおりに応答します。ただし、`productionExact`がオフにする2つの開発用デフォルト(`hosting.cacheControl`と`hosting.clientCountry`)は例外です([開発用デフォルト](#開発用デフォルト)を参照)。
 
-表は `productionExact` を有効にした `strict` を説明しています。2 つのデフォルトで変わる行にはその旨を記しています。
+表は`productionExact`を有効にした`strict`を説明しています。2つのデフォルトで変わる行にはその旨を記しています。
 
 | 領域 | `strict` | `emulator` |
 |---|---|---|
-| レスポンスヘッダー | `productionExact` では、ファイルに `Cache-Control: max-age=3600` が付きます(`headers` ルールが設定している場合を除く)。デフォルトでは付きません(`hosting.cacheControl`)。ファイルには `Accept-Ranges: bytes`、`Vary: x-fh-requested-host, accept-encoding`、引用符付きの SHA-256 `ETag` が付きます。リクエストの `Accept-Encoding` にテキスト `gzip` が含まれ(大文字小文字を区別し、品質値は問いません。`x-gzip` と `gzip;q=0` は該当し、`GZIP` と `*` は該当しません)、かつ圧縮後のボディがファイルより小さい場合、ファイルは `Content-Encoding: gzip` で応答されます。コンテンツタイプは問わず(テキストだけでなく画像、zip、フォントも)、約 100 バイトのファイルから対象で、ファイル自身の `ETag` を使います。`Range` は圧縮後のボディに対して適用されます。`br` を要求するリクエストは、`gzip` も含んでいれば gzip を受け取り、含んでいなければファイルそのままを受け取ります。32 MiB を超えるファイル、`304`、ルーターが生成した応答は圧縮されません。`headers` ルールが設定した `Content-Encoding` は、本番と同様に配信されません。事前圧縮された `*.br` ファイルは、再圧縮しても小さくならないため、そのまま(`application/octet-stream`)送られます。`i18n` サイトのファイルの `Vary` は `accept-language, x-country-code` で始まります。リダイレクトには、ルールで設定したヘッダーが付きます。 | `ETag` と `Last-Modified` のみ、圧縮可能なタイプには `Vary: Accept-Encoding` が付きます。このプロファイルでは Fireemu は圧縮しません。 |
-| `Content-Type` | JSON タイプは charset なし(`application/json`、`application/manifest+json`)、`.js` と `.mjs` は `text/javascript; charset=utf-8`、`.ico` は `image/x-icon`、`.br` は `application/octet-stream`、未知の拡張子または拡張子なしは `text/plain; charset=utf-8` です。 | エミュレーターの `mime-types` テーブルです。未知の拡張子は `application/octet-stream` です。 |
-| 条件付きリクエストと Range リクエスト | `If-None-Match` と `If-Modified-Since` は 304 で応答します(ファイル自体の `Cache-Control` のみ付きます)。単一の `Range` は `Content-Range` 付きの 206 で応答します。ファイルへの `OPTIONS` は、`Allow: GET, HEAD, OPTIONS` 付きの空の 200 で応答します。 | ファイル全体です。 |
-| `/404.html` | `/404.html` へのリクエストはファイルを 200 で配信します。それ以外の存在しないパスは 404 で配信します。`404.html` のないサイトは、一致しないパスすべてに、fireemu 用に書いた短い 1 ページで応答します(本番のページはより長く、そのバイト列は同梱していません)。ステータス、コンテンツタイプ、キャッシュヘッダーは本番のものです。 | どちらも 404 で応答します。`404.html` がない場合のページは、オラクルの短いものです。 |
-| リダイレクト | ボディは `text/plain` です。キャプチャされた各パス部分は、`Location` に入れる前にパーセントデコードされ(`%2f` は `/` になり、続くスラッシュの連続は 1 つにまとめられます)、クエリ文字列は送られたまま付加されます。`:name` に数字を含む source(`/p/:a1`)は、本番と同様に何にも一致しません。名前が繰り返された場合は一致し、最後の値が優先されます。 | ボディは `text/html`、キャプチャ部分はエンコードされたまま(`%2f` は `%252f` になる)、クエリは再エンコードされ、`:a1` はパラメーター名です。 |
-| 予約パス | `/__/auth/handler` は、リダイレクトの外で、fireemu 用に書いた代替ページと本番のステータスおよびヘッダーを付けて 200 を返します。`/__/firebase/init.json` と `init.js` はそれらの対象となり、キャッシュ可能なファイル(`ETag`、`Last-Modified`、ルールで設定したヘッダー)です。 | `init.json` と `init.js` はリダイレクトより前に処理されます。`/__/auth/handler` は配信されません。 |
-| `appAssociation: "AUTO"` | `/.well-known/assetlinks.json` と `/.well-known/apple-app-site-association` が生成されます(`[]` と空の `applinks` ドキュメント)。 | 配信されません。 |
-| `i18n` | `productionExact` では、国は本番と同様にリクエストの発信元から決まるため、`X-Country-Code` ヘッダーと `firebase-country-override` Cookie は**無視されます**。デフォルトでは、エミュレータープロファイルと同様に受け付けられます(`hosting.clientCountry`)。`Accept-Language` は品質値付きで読まれます(`de;q=0.9, fr;q=0.8` は、`de` がなければ `fr` を見つけます)。`firebase-language-override` Cookie は有効です。 | 国のヘッダーと Cookie は有効です。品質値は読まれません。 |
-| `headers`、`rewrites`、`redirects` のグロブ | ドットファイルは `*` と `**` に一致し、末尾スラッシュの後の空の部分は `*` と、何にも一致しうるパターンに一致します。 | 固定された `superstatic` と同様に、ドットファイルと空の部分は一致しません。 |
-| ドットセグメントを含むリクエスト(`/../x`、`/a/./b`、`/a/b/..`) | 正規化されたパスへの `302` です(`Cache-Control: private`、空のボディ)。リクエストが届いたホスト上の絶対 URL で返されます。本番は自身のコンテンツオリジンで同じ 302 を返します。生の `\` はドットセグメントを探す前に `/` として読まれ(`/.\b` は `/b` になる)、`\` を含みドットセグメントのないパスはリダイレクトされず、残るエスケープは大文字で書かれます。`public` の外は何も読まれません。 | 固定されたオラクルの挙動と同じです。`/a/./b` にはそのファイル、それ以外の大半には `404` です。 |
-| 不正なパーセントエスケープ | プレーンテキスト `400 Bad Request` を付けた `400` で、チャンク形式で送られます。 | `Malformed URL` を付けた `400` です。 |
+| レスポンスヘッダー | `productionExact`では、ファイルに`Cache-Control: max-age=3600`が付きます(`headers`ルールが設定している場合を除く)。デフォルトでは付きません(`hosting.cacheControl`)。ファイルには`Accept-Ranges: bytes`、`Vary: x-fh-requested-host, accept-encoding`、引用符付きのSHA-256 `ETag`が付きます。リクエストの`Accept-Encoding`にテキスト`gzip`が含まれ(大文字小文字を区別し、品質値は問いません。`x-gzip`と`gzip;q=0`は該当し、`GZIP`と`*`は該当しません)、かつ圧縮後のボディがファイルより小さい場合、ファイルは`Content-Encoding: gzip`で応答されます。コンテンツタイプは問わず(テキストだけでなく画像、zip、フォントも)、約100バイトのファイルから対象で、ファイル自身の`ETag`を使います。`Range`は圧縮後のボディに対して適用されます。`br`を要求するリクエストは、`gzip`も含んでいればgzipを受け取り、含んでいなければファイルそのままを受け取ります。32 MiBを超えるファイル、`304`、ルーターが生成した応答は圧縮されません。`headers`ルールが設定した`Content-Encoding`は、本番と同様に配信されません。事前圧縮された`*.br`ファイルは、再圧縮しても小さくならないため、そのまま(`application/octet-stream`)送られます。`i18n`サイトのファイルの`Vary`は`accept-language, x-country-code`で始まります。リダイレクトには、ルールで設定したヘッダーが付きます。 | `ETag`と`Last-Modified`のみ、圧縮可能なタイプには`Vary: Accept-Encoding`が付きます。このプロファイルではFireemuは圧縮しません。 |
+| `Content-Type` | JSONタイプはcharsetなし(`application/json`、`application/manifest+json`)、`.js`と`.mjs`は`text/javascript; charset=utf-8`、`.ico`は`image/x-icon`、`.br`は`application/octet-stream`、未知の拡張子または拡張子なしは`text/plain; charset=utf-8`です。 | エミュレーターの`mime-types`テーブルです。未知の拡張子は`application/octet-stream`です。 |
+| 条件付きリクエストとRangeリクエスト | `If-None-Match`と`If-Modified-Since`は304で応答します(ファイル自体の`Cache-Control`のみ付きます)。単一の`Range`は`Content-Range`付きの206で応答します。ファイルへの`OPTIONS`は、`Allow: GET, HEAD, OPTIONS`付きの空の200で応答します。 | ファイル全体です。 |
+| `/404.html` | `/404.html`へのリクエストはファイルを200で配信します。それ以外の存在しないパスは404で配信します。`404.html`のないサイトは、一致しないパスすべてに、fireemu用に書いた短い1ページで応答します(本番のページはより長く、そのバイト列は同梱していません)。ステータス、コンテンツタイプ、キャッシュヘッダーは本番のものです。 | どちらも404で応答します。`404.html`がない場合のページは、オラクルの短いものです。 |
+| リダイレクト | ボディは`text/plain`です。キャプチャされた各パス部分は、`Location`に入れる前にパーセントデコードされ(`%2f`は`/`になり、続くスラッシュの連続は1つにまとめられます)、クエリ文字列は送られたまま付加されます。`:name`に数字を含むsource(`/p/:a1`)は、本番と同様に何にも一致しません。名前が繰り返された場合は一致し、最後の値が優先されます。 | ボディは`text/html`、キャプチャ部分はエンコードされたまま(`%2f`は`%252f`になる)、クエリは再エンコードされ、`:a1`はパラメーター名です。 |
+| 予約パス | `/__/auth/handler`は、リダイレクトの外で、fireemu用に書いた代替ページと本番のステータスおよびヘッダーを付けて200を返します。`/__/firebase/init.json`と`init.js`はそれらの対象となり、キャッシュ可能なファイル(`ETag`、`Last-Modified`、ルールで設定したヘッダー)です。 | `init.json`と`init.js`はリダイレクトより前に処理されます。`/__/auth/handler`は配信されません。 |
+| `appAssociation: "AUTO"` | `/.well-known/assetlinks.json`と`/.well-known/apple-app-site-association`が生成されます(`[]`と空の`applinks`ドキュメント)。 | 配信されません。 |
+| `i18n` | `productionExact`では、国は本番と同様にリクエストの発信元から決まるため、`X-Country-Code`ヘッダーと`firebase-country-override` Cookieは**無視されます**。デフォルトでは、エミュレータープロファイルと同様に受け付けられます(`hosting.clientCountry`)。`Accept-Language`は品質値付きで読まれます(`de;q=0.9, fr;q=0.8`は、`de`がなければ`fr`を見つけます)。`firebase-language-override` Cookieは有効です。 | 国のヘッダーとCookieは有効です。品質値は読まれません。 |
+| `headers`、`rewrites`、`redirects`のグロブ | ドットファイルは`*`と`**`に一致し、末尾スラッシュの後の空の部分は`*`と、何にも一致しうるパターンに一致します。 | 固定された`superstatic`と同様に、ドットファイルと空の部分は一致しません。 |
+| ドットセグメントを含むリクエスト(`/../x`、`/a/./b`、`/a/b/..`) | 正規化されたパスへの`302`です(`Cache-Control: private`、空のボディ)。リクエストが届いたホスト上の絶対URLで返されます。本番は自身のコンテンツオリジンで同じ302を返します。生の`\`はドットセグメントを探す前に`/`として読まれ(`/.\b`は`/b`になる)、`\`を含みドットセグメントのないパスはリダイレクトされず、残るエスケープは大文字で書かれます。`public`の外は何も読まれません。 | 固定されたオラクルの挙動と同じです。`/a/./b`にはそのファイル、それ以外の大半には`404`です。 |
+| 不正なパーセントエスケープ | プレーンテキスト`400 Bad Request`を付けた`400`で、チャンク形式で送られます。 | `Malformed URL`を付けた`400`です。 |
 
 ### 開発用デフォルト
 
-Hosting の本番の挙動のうち 2 つはローカル開発を不便にするため、デフォルトは公式エミュレーターの応答とし、`productionExact` で本番の挙動に戻します(他の[開発用デフォルト](../../guides/profiles/)と同じルールです)。
+Hostingの本番の挙動のうち2つはローカル開発を不便にするため、デフォルトは公式エミュレーターの応答とし、`productionExact`で本番の挙動に戻します(他の[開発用デフォルト](../../guides/profiles/)と同じルールです)。
 
 | キー | デフォルト | 本番の挙動 |
 |---|---|---|
-| `hosting.cacheControl` | `"none"`。ブラウザーは編集したファイルをすぐに表示します。 | `"production"` は、`headers` ルールが `Cache-Control` を設定していないファイルに `Cache-Control: max-age=3600` を追加します。`Cache-Control` を設定するルールは、どのモードでも優先されます。 |
-| `hosting.clientCountry` | `"honoured"`。`X-Country-Code` ヘッダーまたは `firebase-country-override` Cookie で国別のコンテンツをテストできます。 | `"ignored"` はどちらも読みません。本番は国をエッジで決めるためです。`Accept-Language` の品質値と `firebase-language-override` Cookie は、どちらのモードでも読まれます。 |
+| `hosting.cacheControl` | `"none"`。ブラウザーは編集したファイルをすぐに表示します。 | `"production"`は、`headers`ルールが`Cache-Control`を設定していないファイルに`Cache-Control: max-age=3600`を追加します。`Cache-Control`を設定するルールは、どのモードでも優先されます。 |
+| `hosting.clientCountry` | `"honoured"`。`X-Country-Code`ヘッダーまたは`firebase-country-override` Cookieで国別のコンテンツをテストできます。 | `"ignored"`はどちらも読みません。本番は国をエッジで決めるためです。`Accept-Language`の品質値と`firebase-language-override` Cookieは、どちらのモードでも読まれます。 |
 
-どちらのキーも `strict` プロファイルにのみ適用され(`emulator` プロファイルは常に公式エミュレーターのとおりに応答します)、明示的に指定したキーは `productionExact` より優先されます。
+どちらのキーも`strict`プロファイルにのみ適用され(`emulator`プロファイルは常に公式エミュレーターのとおりに応答します)、明示的に指定したキーは`productionExact`より優先されます。
 
 ## 本番との差異
 
 ### 既知の差異と未記録の応答
 
-クロージャの記録([親コーパス](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/known-differences.json)、[フォローアップコーパス](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/followup-known-differences.json))に、`strict` が再現しない既知の差異が一覧されています。
+クロージャの記録([親コーパス](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/known-differences.json)、[フォローアップコーパス](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/followup-known-differences.json))に、`strict`が再現しない既知の差異が一覧されています。
 
-- **Brotli コンテンツエンコーディング。** 本番は `Accept-Encoding` に `br` を含むリクエストに `br` で応答します。`strict` は、ヘッダーに `gzip` も含まれていれば gzip で、含まれていなければファイルそのままで応答します。
-- **100 から 1,500 バイトのファイルの gzip ボディの長さ。** `strict` では別の deflate エンコーダーを使うため、1 から 5 バイト長くなります。この差異は、両方の応答が同じボディの gzip であり、長さの差が最大 8 バイトである間に限って許容されます(コーディネーター裁定 27)。
-- **`/__/firebase/<version>/` 配下のホストされた SDK ファイル。**
-- **本番のデフォルトの 404 ページと、ホストされた `/__/auth/handler` ページのボディ。** これらのバイト列は同梱していないため、`strict` は本番が送ったステータスとヘッダーを付けて、fireemu 用に書いたページを配信します。
-- **`apiKey` と `projectId` 以外の `init.json` のキー。**
-- **https の `Strict-Transport-Security` ヘッダーと、プレビューチャンネルの `X-Robots-Tag`。**
-- **ドットセグメントを含むリクエストに本番が返す 302 のホスト。** リクエストごとに変わる内部ホストです。`Location` のパスが比較されます。
+- **Brotliコンテンツエンコーディング。** 本番は`Accept-Encoding`に`br`を含むリクエストに`br`で応答します。`strict`は、ヘッダーに`gzip`も含まれていればgzipで、含まれていなければファイルそのままで応答します。
+- **100から1,500バイトのファイルのgzipボディの長さ。** `strict`では別のdeflateエンコーダーを使うため、1から5バイト長くなります。この差異は、両方の応答が同じボディのgzipであり、長さの差が最大8バイトである間に限って許容されます(コーディネーター裁定27)。
+- **`/__/firebase/<version>/`配下のホストされたSDKファイル。**
+- **本番のデフォルトの404ページと、ホストされた`/__/auth/handler`ページのボディ。** これらのバイト列は同梱していないため、`strict`は本番が送ったステータスとヘッダーを付けて、fireemu用に書いたページを配信します。
+- **`apiKey`と`projectId`以外の`init.json`のキー。**
+- **httpsの`Strict-Transport-Security`ヘッダーと、プレビューチャンネルの`X-Robots-Tag`。**
+- **ドットセグメントを含むリクエストに本番が返す302のホスト。** リクエストごとに変わる内部ホストです。`Location`のパスが比較されます。
 
-記録との比較では、201 件のうち 18 件と、フォローアップの 78 件のうち 42 件に既知の差異があります。
+記録との比較では、201件のうち18件と、フォローアップの78件のうち42件に既知の差異があります。
 
-一部の strict の応答は、そのケースを観測したものではなく、記録の読み取りに基づいています。本番を観測していないのは次のとおりです。
+一部のstrictの応答は、そのケースを観測したものではなく、記録の読み取りに基づいています。本番を観測していないのは次のとおりです。
 
-- 11 から 99 バイトのファイルの gzip(本番は 1 バイトと 10 バイトはそのままにし、100 バイト以上は圧縮しました。`strict` は圧縮後のボディが小さくなる場合に圧縮します)。
-- 未知の拡張子のファイルは、圧縮されると `text/html; charset=UTF-8` になる(4,500 バイトのファイル 2 件で確認。圧縮なしの 2 バイトでは `text/plain` が記録されています)。
-- ドットセグメントのリダイレクトにおける、`%5c` 以外のエスケープの大文字の 16 進数。
-- 圧縮後のボディに対するその他の Range。
-- 満たせない `Range` は `Content-Range: bytes */<size>` 付きの `416` で応答します。
+- 11から99バイトのファイルのgzip(本番は1バイトと10バイトはそのままにし、100バイト以上は圧縮しました。`strict`は圧縮後のボディが小さくなる場合に圧縮します)。
+- 未知の拡張子のファイルは、圧縮されると`text/html; charset=UTF-8`になる(4,500バイトのファイル2件で確認。圧縮なしの2バイトでは`text/plain`が記録されています)。
+- ドットセグメントのリダイレクトにおける、`%5c`以外のエスケープの大文字の16進数。
+- 圧縮後のボディに対するその他のRange。
+- 満たせない`Range`は`Content-Range: bytes */<size>`付きの`416`で応答します。
 - 複数の範囲を指定したリクエストは、全体で応答されます。
-- `Range` 付きの `HEAD` は、部分の長さを持ちボディなしの `206` で応答します。
+- `Range`付きの`HEAD`は、部分の長さを持ちボディなしの`206`で応答します。
 - ドットセグメントと制御文字またはスペースを含むパスは、リダイレクトされません。
 
 ### 非対応
 
-- `hosting.source`(Web フレームワーク)と、`public` のないサイト。
-- App Hosting。`--only apphosting` は延期として拒否されます。[制限事項](../../compatibility/limitations/)を参照してください。
-- [キーの表](#keys-of-the-hosting-object)にないキーは処理されません。`appAssociation: "AUTO"` は `strict` でのみ 2 つの association ドキュメントを生成します。`public` に置いたファイルは他のファイルと同様に配信されます。
-- `/__/firebase/<version>/` 配下のホストされた SDK スクリプト、デプロイ済みの Cloud Run サービス、デプロイ済みの関数(ライブへのフォールバックはありません)。
-- `emulator` では、拡張子なしまたは未知の拡張子のファイルは `application/octet-stream` として配信されます。`strict` では `text/plain; charset=utf-8`、圧縮時は `text/html; charset=UTF-8` です。カスタムヘッダールールの `Content-Type` は、Fireemu が選ぶものを置き換えます。
+- `hosting.source`(Webフレームワーク)と、`public`のないサイト。
+- App Hosting。`--only apphosting`は延期として拒否されます。[制限事項](../../compatibility/limitations/)を参照してください。
+- [キーの表](#hostingオブジェクトのキー)にないキーは処理されません。`appAssociation: "AUTO"`は`strict`でのみ2つのassociationドキュメントを生成します。`public`に置いたファイルは他のファイルと同様に配信されます。
+- `/__/firebase/<version>/`配下のホストされたSDKスクリプト、デプロイ済みのCloud Runサービス、デプロイ済みの関数(ライブへのフォールバックはありません)。
+- `emulator`では、拡張子なしまたは未知の拡張子のファイルは`application/octet-stream`として配信されます。`strict`では`text/plain; charset=utf-8`、圧縮時は`text/html; charset=UTF-8`です。カスタムヘッダールールの`Content-Type`は、Fireemuが選ぶものを置き換えます。
 
 ## 検証ステータス
 
-[互換性の表](../../compatibility/#production-verification)の `HOSTING` 領域は、記録したケースについて**検証済み**です。
+[互換性の表](../../compatibility/#本番との照合)の`HOSTING`領域は、記録したケースについて**検証済み**です。
 
-- **記録した内容。** 本番を、同じ 201 件のリクエスト(静的ファイル、リダイレクト、リライト、グロブの一致、ヘッダーとキャッシュ、クリーン URL、末尾スラッシュ、ローカライズ、予約パス、コンテンツタイプ、圧縮、app association)で 2 回、さらにフォローアップの 78 件のリクエスト(デフォルトの 404 ページとホストされた auth ハンドラーページの長さとステータス、ドットセグメントとバックスラッシュ、数字を含むリダイレクトパラメーター名と繰り返されたリダイレクトパラメーター名、`Content-Encoding` ルールを持つ事前圧縮ファイル、本番が gzip するサイズ、コンテンツタイプ、`Accept-Encoding` の形)で 2 回観測しました。記録は使い捨てのサイトのプレビューチャンネルで行い、ライブチャンネルでは一度も行っていません。2026-11-11 のクロージャレビューで、最初の証拠一式が承認されました。
-- **応答の比較方法。** 各ペアで、2 つの記録は本番内部のリダイレクトホストを除くすべてのリクエストで互いに一致し、`productionExact` を有効にした `strict` プロファイルは、[既知の差異](#known-differences-and-unrecorded-answers)を除くすべてのリクエストで両方と一致します。各親比較の 201 行のうち 18 行、各フォローアップ比較の 78 行のうち 42 行に既知の差異があり、一致とは別に数えています。
-- **主張の範囲。** 記録したリクエストと、そこから読み取ったルールが対象です([未記録および推測による応答](#known-differences-and-unrecorded-answers)は別に一覧しています)。`emulator` は本番との一致を主張しません。関数と Cloud Run へのリライト、`ignore`、ローカルの安全性に関する性質は対象外です。Brotli は既知の差異のままです。
-- **オフラインスイート。** オフラインの適合性スイートは、引き続き Fireemu を `firebase-tools` 15.28.2 と有限のコーパスで比較します。`ignore` に使う実際のファイル一覧から生成した 3,000 行超を含みます。
+- **記録した内容。** 本番を、同じ201件のリクエスト(静的ファイル、リダイレクト、リライト、グロブの一致、ヘッダーとキャッシュ、クリーンURL、末尾スラッシュ、ローカライズ、予約パス、コンテンツタイプ、圧縮、app association)で2回、さらにフォローアップの78件のリクエスト(デフォルトの404ページとホストされたauthハンドラーページの長さとステータス、ドットセグメントとバックスラッシュ、数字を含むリダイレクトパラメーター名と繰り返されたリダイレクトパラメーター名、`Content-Encoding`ルールを持つ事前圧縮ファイル、本番がgzipするサイズ、コンテンツタイプ、`Accept-Encoding`の形)で2回観測しました。記録は使い捨てのサイトのプレビューチャンネルで行い、ライブチャンネルでは一度も行っていません。2026-11-11のクロージャレビューで、最初の証拠一式が承認されました。
+- **応答の比較方法。** 各ペアで、2つの記録は本番内部のリダイレクトホストを除くすべてのリクエストで互いに一致し、`productionExact`を有効にした`strict`プロファイルは、[既知の差異](#既知の差異と未記録の応答)を除くすべてのリクエストで両方と一致します。各親比較の201行のうち18行、各フォローアップ比較の78行のうち42行に既知の差異があり、一致とは別に数えています。
+- **主張の範囲。** 記録したリクエストと、そこから読み取ったルールが対象です([未記録および推測による応答](#既知の差異と未記録の応答)は別に一覧しています)。`emulator`は本番との一致を主張しません。関数とCloud Runへのリライト、`ignore`、ローカルの安全性に関する性質は対象外です。Brotliは既知の差異のままです。
+- **オフラインスイート。** オフラインの適合性スイートは、引き続きFireemuを`firebase-tools` 15.28.2と有限のコーパスで比較します。`ignore`に使う実際のファイル一覧から生成した3,000行超を含みます。
 
-ここで通る Hosting のテストは、`firebase.json` とルーティングの確認として扱ってください。プレビューチャンネルの応答は、ライブチャンネルのものではありません。
+ここで通るHostingのテストは、`firebase.json`とルーティングの確認として扱ってください。プレビューチャンネルの応答は、ライブチャンネルのものではありません。
 
-## v0.47.0 での変更
+## v0.47.0での変更
 
-これらの変更は v0.47.0 以降に含まれます。v0.45.0 と v0.46.0 では挙動が異なります([変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)を参照)。
+これらの変更はv0.47.0以降に含まれます。v0.45.0とv0.46.0では挙動が異なります([変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)を参照)。
 
-- 先頭または末尾にスラッシュを付けて書いた `i18n.root`(Firebase のドキュメントが示す形式の `/locales`)は、`locales` と同じファイルを見つけます。空の root は、`superstatic` と同様に root なしとして扱われます。以前は、先頭スラッシュのない root のみが機能していました。
-- コンテンツタイプは、`firebase-tools` エミュレーターの `mime-types`/`mime-db` のテーブル(そこから生成)と、その `Vary: Accept-Encoding` のルールから決まります。以前は短い組み込みテーブルを使っていたため、`.woff2`、`.gif`、`.ico` などそれ以外の拡張子は `application/octet-stream`、`.js` は `text/javascript` で配信されていました。
-- `ignore` パターンは、macOS と Windows の `firebase-tools` と同様に大文字小文字を無視します(`glob` パッケージがコンパイルするときと同じ、`i` フラグ付きの JavaScript 正規表現)。Linux では大文字小文字を区別したままです。
-- `headers`、`rewrites`、グロブの `redirects` の source は、スラッシュの連続を 1 つとして扱い、固定された `superstatic` と同様に、末尾にスラッシュが 1 つあるパスにもパターンが一致します。`/%64ata.json` のようなパーセントエンコードされた別名には、固定されたエミュレーターと同様に、依然としてヘッダールールが適用されません。
-- `source` が空のルールは何にも一致せず、`superstatic` と同様にその `regex` へフォールスルーします。
+- 先頭または末尾にスラッシュを付けて書いた`i18n.root`(Firebaseのドキュメントが示す形式の`/locales`)は、`locales`と同じファイルを見つけます。空のrootは、`superstatic`と同様にrootなしとして扱われます。以前は、先頭スラッシュのないrootのみが機能していました。
+- コンテンツタイプは、`firebase-tools`エミュレーターの`mime-types`/`mime-db`のテーブル(そこから生成)と、その`Vary: Accept-Encoding`のルールから決まります。以前は短い組み込みテーブルを使っていたため、`.woff2`、`.gif`、`.ico`などそれ以外の拡張子は`application/octet-stream`、`.js`は`text/javascript`で配信されていました。
+- `ignore`パターンは、macOSとWindowsの`firebase-tools`と同様に大文字小文字を無視します(`glob`パッケージがコンパイルするときと同じ、`i`フラグ付きのJavaScript正規表現)。Linuxでは大文字小文字を区別したままです。
+- `headers`、`rewrites`、グロブの`redirects`のsourceは、スラッシュの連続を1つとして扱い、固定された`superstatic`と同様に、末尾にスラッシュが1つあるパスにもパターンが一致します。`/%64ata.json`のようなパーセントエンコードされた別名には、固定されたエミュレーターと同様に、依然としてヘッダールールが適用されません。
+- `source`が空のルールは何にも一致せず、`superstatic`と同様にその`regex`へフォールスルーします。
 
-## v0.49.0 での変更
+## v0.49.0での変更
 
-これらの変更は v0.49.0 以降に含まれます。それ以前のリリースでは `strict` と `emulator` の応答は同じで、`hosting.cacheControl` と `hosting.clientCountry` のキーはありませんでした([変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)を参照)。
+これらの変更はv0.49.0以降に含まれます。それ以前のリリースでは`strict`と`emulator`の応答は同じで、`hosting.cacheControl`と`hosting.clientCountry`のキーはありませんでした([変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)を参照)。
 
-- デフォルトの `strict` プロファイルは、Firebase Hosting が本番コーパスに応答したとおりに応答します。個々の応答は[プロファイル](#profiles)を参照してください。`emulator` プロファイルは変わりません。
-- `hosting.cacheControl` と `hosting.clientCountry` は新しい[開発用デフォルト](#development-defaults)です。`productionExact` は両方を本番の挙動に切り替えます。
-- `strict` では、`/__/firebase/init.json` と `init.js` はリダイレクトの後で応答され、`appAssociation: "AUTO"` は 2 つの association ドキュメントを生成します。
+- デフォルトの`strict`プロファイルは、Firebase Hostingが本番コーパスに応答したとおりに応答します。個々の応答は[プロファイル](#プロファイル)を参照してください。`emulator`プロファイルは変わりません。
+- `hosting.cacheControl`と`hosting.clientCountry`は新しい[開発用デフォルト](#開発用デフォルト)です。`productionExact`は両方を本番の挙動に切り替えます。
+- `strict`では、`/__/firebase/init.json`と`init.js`はリダイレクトの後で応答され、`appAssociation: "AUTO"`は2つのassociationドキュメントを生成します。
 
-`strict` での gzip コンテンツエンコーディングは v0.49.0 より新しく、[変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)では次のリリースに記載されています。
+`strict`でのgzipコンテンツエンコーディングはv0.49.0より新しく、[変更履歴](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)では次のリリースに記載されています。
 
 ## 関連
 
-- [Functions](../functions/): `function` または `run` のリライトが到達するコードベース。
+- [Functions](../functions/): `function`または`run`のリライトが到達するコードベース。
 - [プロファイル](../../guides/profiles/): `strict`、`emulator`、`productionExact`。
-- [互換性の表](../../compatibility/#production-verification)と[制限事項](../../compatibility/limitations/)。
-- [設定スキーマ](../../reference/configuration/): `hosting` と `daemon.hostingPort` のキー。
+- [互換性の表](../../compatibility/#本番との照合)と[制限事項](../../compatibility/limitations/)。
+- [設定スキーマ](../../reference/configuration/): `hosting`と`daemon.hostingPort`のキー。

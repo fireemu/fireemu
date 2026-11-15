@@ -16,13 +16,13 @@ Fireemuは`firebase.json`で宣言されたFunctionsコードベースを読み�
 
 ## テストできること
 
-- 両世代の[HTTP、callable、イベント、スケジュール、タスクキュー、blockingの各トリガー](#supported-triggers)。
-- デプロイ時と同じように解決される[パラメータとシークレット](#parameters-and-secrets)。
-- [関数を呼び出せるのは誰か](#who-can-call-a-function): `invoker`の設定とcallableの認証情報。
-- [callableでのApp Check強制](#app-check-in-callables)。
-- [タスクキュー](#task-queues): 遅延タスク、レート制限、リトライ、Cloud Tasksの応答。
-- 仮想クロック上、またはオンデマンドで実行する[スケジュール関数](#scheduled-functions)。
-- 本番と同じ形の[関数ごとのプロセス](#process-isolation-functionsisolation)。
+- 両世代の[HTTP、callable、イベント、スケジュール、タスクキュー、blockingの各トリガー](#対応するトリガー)。
+- デプロイ時と同じように解決される[パラメータとシークレット](#パラメータとシークレット)。
+- [関数を呼び出せるのは誰か](#関数を呼び出せるのは誰か): `invoker`の設定とcallableの認証情報。
+- [callableでのApp Check強制](#callableでのapp-check)。
+- [タスクキュー](#タスクキュー): 遅延タスク、レート制限、リトライ、Cloud Tasksの応答。
+- 仮想クロック上、またはオンデマンドで実行する[スケジュール関数](#スケジュール関数)。
+- 本番と同じ形の[関数ごとのプロセス](#プロセス分離functionsisolation)。
 
 ## 接続
 
@@ -68,9 +68,9 @@ connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 | Realtime Database | `database.ref()`と`database.instance().ref()`の`onCreate`、`onUpdate`、`onDelete`、`onWrite` | `onValueCreated`、`Updated`、`Deleted`、`Written` |
 | Eventarcとアラート | | `onCustomEventPublished`、`onAlertPublished` |
 
-これらの一部は条件を満たす場合にのみ動作します。[トリガーに関する注意点](#trigger-caveats)を参照してください。
+これらの一部は条件を満たす場合にのみ動作します。[トリガーに関する注意点](#トリガーに関する注意点)を参照してください。
 
-Realtime Databaseトリガーの本番観測は、固定の管理者シーケンスと未認証シーケンス、およびメール/パスワードユーザーによるRESTとWeb SDK経由の12件の書き込みを対象としています。これには、祖先書き込みとマルチパス書き込み、呼び出し失敗後の再配信が含まれます。配信タイミング、他のプロバイダー、記録されていない書き込みやハンドラーの形は未検証のままです。書き込みとそのイベントがどのように受け付けられるかは、[ローカルFunctionsトリガー](../realtime-database/#local-functions-triggers)で説明しています。
+Realtime Databaseトリガーの本番観測は、固定の管理者シーケンスと未認証シーケンス、およびメール/パスワードユーザーによるRESTとWeb SDK経由の12件の書き込みを対象としています。これには、祖先書き込みとマルチパス書き込み、呼び出し失敗後の再配信が含まれます。配信タイミング、他のプロバイダー、記録されていない書き込みやハンドラーの形は未検証のままです。書き込みとそのイベントがどのように受け付けられるかは、[ローカルFunctionsトリガー](../realtime-database/#ローカルのfunctionsトリガー)で説明しています。
 
 ## パラメータとシークレット
 
@@ -107,7 +107,7 @@ callable関数の`enforceAppCheck`は、設定なしで動作します。任意�
 
 - トークンなし、または形式が不正なトークンでの通常の呼び出しは401で拒否されます。厳密なv2ストリーミング呼び出しは、200のSSEエラーレコードを受け取ります。
 - リプレイ消費は利用できません。`consumeAppCheckToken: true`のNode callableに有効なトークンを送ると、`APP_CHECK_REPLAY_UNSUPPORTED`で拒否されます。
-- Python callableは、[Pythonについて説明している検証と制限](../functions-python/#differences-from-production-and-the-firebase-cli)に従います。
+- Python callableは、[Pythonについて説明している検証と制限](../functions-python/#本番およびfirebase-cliとの違い)に従います。
 
 [App Check](../app-check/)を参照してください。
 
@@ -185,7 +185,7 @@ FULLビュー、アクティブ/リトライの観測、無効なビュー、未
 
 ### 現在の処理が落ち着くのを待つ
 
-現在の処理が落ち着くのを待てばよいテストでは、`{ "scope": "runnable" }`を付けて`POST /v1/sessions/default:awaitIdle`を送ります(v0.26.0以降)。将来のスケジュールとリトライのバックオフはこのスコープをブロックしません。レート/同時実行で待機中の期限到来タスクとアクティブなHTTPリクエストはブロックします。スコープを省略すると、すべての処理を待ちます。[実行可能な処理を待つ](../../guides/test-worlds/#wait-for-runnable-work)を参照してください。
+現在の処理が落ち着くのを待てばよいテストでは、`{ "scope": "runnable" }`を付けて`POST /v1/sessions/default:awaitIdle`を送ります(v0.26.0以降)。将来のスケジュールとリトライのバックオフはこのスコープをブロックしません。レート/同時実行で待機中の期限到来タスクとアクティブなHTTPリクエストはブロックします。スコープを省略すると、すべての処理を待ちます。[実行可能な処理を待つ](../../guides/test-worlds/#実行可能な処理を待つ)を参照してください。
 
 ## スケジュール関数
 
@@ -209,7 +209,7 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/functions/nightly:run
 curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 86400}'
 ```
 
-未知の名前、またはスケジュールされていない名前は`400 INVALID_ARGUMENT`で応答します。手動実行は次の実行回を消費しません。[スケジュール関数を今すぐ実行する](../../guides/time/#run-a-scheduled-function-now)を参照してください。
+未知の名前、またはスケジュールされていない名前は`400 INVALID_ARGUMENT`で応答します。手動実行は次の実行回を消費しません。[スケジュール関数を今すぐ実行する](../../guides/time/#スケジュール関数をすぐに実行する)を参照してください。
 
 `strict`で第1世代スケジュールの`firebase-schedule-<function>-<region>`トピックにメッセージを発行した場合も、元のPub/Subデータ、属性、順序キー、メッセージIDを保持したままハンドラーが呼び出されます。通常のスケジュール実行回と手動実行は、引き続き1回だけ呼び出します。
 
@@ -372,9 +372,9 @@ Fireemuが提供できないエクスポート(オプションが解決できな
 
 ### 本番検証
 
-Node.jsコードベースは、HTTP関数とcallable関数、イベントトリガー、スケジュール関数について、デプロイされた関数の記録に対して検証されています。[互換性の表](../../compatibility/#production-verification)を参照してください。
+Node.jsコードベースは、HTTP関数とcallable関数、イベントトリガー、スケジュール関数について、デプロイされた関数の記録に対して検証されています。[互換性の表](../../compatibility/#本番との照合)を参照してください。
 
-Pythonコードベースには、6つのイベントファミリーについて独自の検証の記述があります。Pythonのページにある[本番検証](../functions-python/#production-verification)を参照してください。
+Pythonコードベースには、6つのイベントファミリーについて独自の検証の記述があります。Pythonのページにある[本番検証](../functions-python/#本番検証)を参照してください。
 
 ## 関連
 

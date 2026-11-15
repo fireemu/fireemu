@@ -16,11 +16,11 @@ Fireemuには、ローカルのApp Check実装が含まれています。デバ�
 
 ## テストできること
 
-- `strict`で設定なしに動作するデバッグトークンの交換（[設定なしでデバッグトークンを交換する](#exchange-a-debug-token-with-no-configuration)）。
-- Authentication、Firestore、Storageに対する強制: `off`、`unenforced`、`enforced`（[アプリを登録して強制する](#register-apps-and-enforce)）。
-- `request.app`を含む、`enforceAppCheck`を指定したcallable関数（[Callable関数](#callable-functions)）。
+- `strict`で設定なしに動作するデバッグトークンの交換（[設定なしでデバッグトークンを交換する](#設定なしでデバッグトークンを交換する)）。
+- Authentication、Firestore、Storageに対する強制: `off`、`unenforced`、`enforced`（[アプリを登録して強制する](#アプリを登録して強制する)）。
+- `request.app`を含む、`enforceAppCheck`を指定したcallable関数（[Callable関数](#callable関数)）。
 - 存在しない、形式が不正な、期限切れの、または署名が不正なトークンの拒否。
-- `onRequest`関数内の`getAppCheck().verifyToken()`（[Admin SDKで検証する](#verify-with-the-admin-sdk-getappcheckverifytoken)）。
+- `onRequest`関数内の`getAppCheck().verifyToken()`（[Admin SDKで検証する](#admin-sdkで検証するgetappcheckverifytoken)）。
 
 ## 接続
 
@@ -45,7 +45,7 @@ curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aw
 
 UUIDv4でない文字列は拒否されます: `403 PERMISSION_DENIED`、`App attestation failed.`
 
-これを制御するのは`appCheck.debugTokens`です。`appCheck.enabled: true`と並べて自分で`"any"`を設定すると、登録したアプリについても、どのダイジェストを持っていても、任意のUUIDv4を交換できます。その場合は`"any"`になり、`productionExact`の下、`emulator`プロファイルの下、およびこのキーを設定していない`appCheck`ブロックでは、本番のルールである`"registered"`になります。`"registered"`の場合は、[App Checkを有効にする](#register-apps-and-enforce)まで何も提供されません。
+これを制御するのは`appCheck.debugTokens`です。`appCheck.enabled: true`と並べて自分で`"any"`を設定すると、登録したアプリについても、どのダイジェストを持っていても、任意のUUIDv4を交換できます。その場合は`"any"`になり、`productionExact`の下、`emulator`プロファイルの下、およびこのキーを設定していない`appCheck`ブロックでは、本番のルールである`"registered"`になります。`"registered"`の場合は、[App Checkを有効にする](#アプリを登録して強制する)まで何も提供されません。
 
 ### Web SDKからトークンを取得する
 
@@ -294,7 +294,7 @@ Nodeのcallableに`enforceAppCheck: true`を指定すると、有効なトーク
 
 トークンは、1つのデーモンインスタンスに属する鍵で署名されます。Nodeのcallableと、その他のデーモンが検証するサービスは、セッションのリセットやスナップショットのリストアの後、それらを拒否します。
 
-Pythonのcallableは、署名鍵と実時間を使ってトークンの署名とクレームを検証し、現在のアプリの状態やプロジェクトのエポックは確認しません。そのため、プロジェクトのリセットやアプリの無効化では、有効期限が切れるまで、それ以外は有効なトークンが失効しません。Pythonは、トークンの消費と明示的なApp Check設定も拒否します。セットアップと制限については、[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)を参照してください。
+Pythonのcallableは、署名鍵と実時間を使ってトークンの署名とクレームを検証し、現在のアプリの状態やプロジェクトのエポックは確認しません。そのため、プロジェクトのリセットやアプリの無効化では、有効期限が切れるまで、それ以外は有効なトークンが失効しません。Pythonは、トークンの消費と明示的なApp Check設定も拒否します。セットアップと制限については、[Cloud Functions (Python)](../functions-python/#本番およびfirebase-cliとの違い)を参照してください。
 
 ## 通常のHTTP関数（`onRequest`）
 
@@ -398,7 +398,7 @@ export async function verifyHttpAppCheck(token) {
 
 ## Firestore WebChannelの拒否
 
-Firestore WebChannelでのApp Checkの拒否は、HTTP 200のトランスポートネゴシエーションの後に、終端の`PERMISSION_DENIED`プロトコルエラーとして届きます。HTTP 403を返すRESTの拒否とは異なります。既存のチャネル上の無効なトークンや、別のアプリの置き換えトークンは、保持されたドキュメントを再生できません。[Listenストリーム](../firestore/#listen-streams)を参照してください。
+Firestore WebChannelでのApp Checkの拒否は、HTTP 200のトランスポートネゴシエーションの後に、終端の`PERMISSION_DENIED`プロトコルエラーとして届きます。HTTP 403を返すRESTの拒否とは異なります。既存のチャネル上の無効なトークンや、別のアプリの置き換えトークンは、保持されたドキュメントを再生できません。[Listenストリーム](../firestore/#listenストリーム)を参照してください。
 
 ## 本番との違い
 
@@ -406,17 +406,17 @@ Firestore WebChannelでのApp Checkの拒否は、HTTP 200のトランスポー�
 
 - **Play Integrity、App Attest、DeviceCheck、reCAPTCHAによる実際の構成証明。** ローカルのApp Checkはデバッグトークンを使います。
 - **limited-useトークンとリプレイ保護。** `consumeAppCheckToken: true`を指定したcallableは501 `APP_CHECK_REPLAY_UNSUPPORTED`で拒否され、`verifyToken(token, { consume: true })`は`app-check/unimplemented`で応答するため、本番なら消費されるトークンでテストが通ることはありません。
-- **デーモンより長く生きるトークン。** トークンは1つのデーモンインスタンスに属する鍵で署名されます（[Callable関数](#callable-functions)を参照）。
-- **Pythonのcallable**には、さらに制限があります。[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)を参照してください。
+- **デーモンより長く生きるトークン。** トークンは1つのデーモンインスタンスに属する鍵で署名されます（[Callable関数](#callable関数)を参照）。
+- **Pythonのcallable**には、さらに制限があります。[Cloud Functions (Python)](../functions-python/#本番およびfirebase-cliとの違い)を参照してください。
 
 2つの動作は、上述の箇所で説明したとおり異なります。
 
-- `verifyToken`は、登録されていない、または無効なアプリのトークンを、すべてのプロファイルで拒否します。本番は、有効期限が切れるまでそれを受け付けます（[Admin SDKで検証する](#verify-with-the-admin-sdk-getappcheckverifytoken)）。
-- `"loopback"`では、`enforced`のStorageサービスは、ローカルの非ブラウザーのリクエストをトークンなしで許可します（[サーバーサイドコードからのStorageリクエスト](#storage-requests-from-server-side-code)）。
+- `verifyToken`は、登録されていない、または無効なアプリのトークンを、すべてのプロファイルで拒否します。本番は、有効期限が切れるまでそれを受け付けます（[Admin SDKで検証する](#admin-sdkで検証するgetappcheckverifytoken)）。
+- `"loopback"`では、`enforced`のStorageサービスは、ローカルの非ブラウザーのリクエストをトークンなしで許可します（[サーバーサイドコードからのStorageリクエスト](#サーバーサイドコードからのstorageリクエスト)）。
 
 ## 関連情報
 
 - [Authentication](../auth/)、[Firestore](../firestore/)、[Storage](../storage/): App Checkが強制できるサービス。
-- [Functions](../functions/)と[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli): callableと`onRequest`ハンドラー。
+- [Functions](../functions/)と[Cloud Functions (Python)](../functions-python/#本番およびfirebase-cliとの違い): callableと`onRequest`ハンドラー。
 - [プロファイル](../../guides/profiles/): `strict`、`emulator`、`productionExact`。
 - [設定スキーマ](../../reference/configuration/): `appCheck`のすべての設定。

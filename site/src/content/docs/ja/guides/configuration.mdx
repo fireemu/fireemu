@@ -7,7 +7,7 @@ import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Fireemuは2種類のファイルを読み込みます。
 
-- **`fireemu.toml`** は、[プロファイル](../profiles/)、Authenticationのプロジェクト設定、クロックなど、Fireemu自身の設定を保持します。`schemaVersion = 1`を含みます。同じ設定をJSONとして`fireemu.json`に書くこともできます。両方があるディレクトリは拒否されます([読み込まれるファイル](#which-files-are-loaded)を参照)。[設定スキーマ](../../reference/configuration/)を参照してください。
+- **`fireemu.toml`** は、[プロファイル](../profiles/)、Authenticationのプロジェクト設定、クロックなど、Fireemu自身の設定を保持します。`schemaVersion = 1`を含みます。同じ設定をJSONとして`fireemu.json`に書くこともできます。両方があるディレクトリは拒否されます([読み込まれるファイル](#読み込まれるファイル)を参照)。[設定スキーマ](../../reference/configuration/)を参照してください。
 - **`firebase.json`** は、Firebase CLIが使うファイルです。Fireemuは、起動のたびに、ポート、Security Rules、インデックス、Functionsコードベースをここから読み取ります。
 
 ## 両方のファイルを使う
@@ -82,7 +82,7 @@ firebaseJson = "firebase.json"
 
 この違いを避けるには、設定があるディレクトリからFireemuを実行するか、`firebaseJson`が参照する`firebase.json`にパスを書いてください。
 
-[`fireemu up --plan`](../../reference/cli/#plan-a-run)は、すべてのパスについて、実行が開く絶対パスと、解決の基準になったディレクトリを表示します。正規設定のパスが、設定ファイル自身のディレクトリからの解決と異なる結果になる場合は、警告を表示します。
+[`fireemu up --plan`](../../reference/cli/#実行を計画する)は、すべてのパスについて、実行が開く絶対パスと、解決の基準になったディレクトリを表示します。正規設定のパスが、設定ファイル自身のディレクトリからの解決と異なる結果になる場合は、警告を表示します。
 
 ## ファイル所有者のチェック
 
@@ -118,7 +118,7 @@ firebaseJson = "firebase.json"
 設定が何に解決されるかを表示するコマンドが2つあります。
 
 - `fireemu capabilities`は、設定が解決するプロファイルのケイパビリティマニフェストを表示します。
-- `fireemu up --plan`と`fireemu exec --plan -- <command>`は、ファイル、コマンドライン、環境から実行が解決するすべて(プロジェクト、サービス、ポート、ファイル、Functionsランタイム、継承された変数)を、実行を開始せずに表示します。[実行を計画する](../../reference/cli/#plan-a-run)を参照してください。
+- `fireemu up --plan`と`fireemu exec --plan -- <command>`は、ファイル、コマンドライン、環境から実行が解決するすべて(プロジェクト、サービス、ポート、ファイル、Functionsランタイム、継承された変数)を、実行を開始せずに表示します。[実行を計画する](../../reference/cli/#実行を計画する)を参照してください。
 
 ## リファレンスファイルを生成する
 

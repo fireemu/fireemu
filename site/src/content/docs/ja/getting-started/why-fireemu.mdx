@@ -21,7 +21,7 @@ Firebase Local Emulator SuiteはGoogleの公式ツールです。Fireemuより�
 | TOTP多要素認証 | Authenticationエミュレータは電話(SMS)の第2要素を受け付けます。ほかの要素タイプには`MFA provider not supported!`と応答します | 両方のプロファイル: プロジェクトのMFA設定を通じて、TOTPとSMSの両方 |
 | App Check | App Checkエミュレータはありません | 両方のプロファイル: デバッグトークンの交換と、Authentication、Firestore、Storage、callable functionsに対する強制。アテステーションプロバイダーはありません([詳細](../../products/app-check/)) |
 
-テスト結果を変えるほかの違いは、本番の応答を併記して[互換性の表](../../compatibility/#fireemu-the-official-emulator-and-production)にまとめてあります。
+テスト結果を変えるほかの違いは、本番の応答を併記して[互換性の表](../../compatibility/#fireemu公式エミュレータ本番)にまとめてあります。
 
 ## Fireemuが追加するもの
 
@@ -39,7 +39,7 @@ Local Emulator Suiteは、Firebaseアプリのローカル開発向けに作ら�
 
 ### 開発用デフォルト
 
-本番の動作の一部は、テストではコストが高くなります。本番では署名付きトークンや署名鍵が必要だったり、Admin API呼び出しで機能を有効にする必要があったりします。これらについてFireemuは、設定なしで動作し、意図的に本番と異なる開発用デフォルトを備えています。正確に再現してもより多くのバグが見つかるわけではなく、テストが遅くなるだけだからです。それぞれが文書化されており、個別の設定があります。上級者向けのスイッチである`productionExact`は、これらすべてについて本番の動作に戻します。[Fireemuが意図的に本番と異なる点](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose)を参照してください。
+本番の動作の一部は、テストではコストが高くなります。本番では署名付きトークンや署名鍵が必要だったり、Admin API呼び出しで機能を有効にする必要があったりします。これらについてFireemuは、設定なしで動作し、意図的に本番と異なる開発用デフォルトを備えています。正確に再現してもより多くのバグが見つかるわけではなく、テストが遅くなるだけだからです。それぞれが文書化されており、個別の設定があります。上級者向けのスイッチである`productionExact`は、これらすべてについて本番の動作に戻します。[Fireemuが意図的に本番と異なる点](../../guides/profiles/#fireemuが意図的に本番から外れる箇所)を参照してください。
 
 ## テストのために作られている
 

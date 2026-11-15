@@ -17,13 +17,13 @@ Fireemuは、Identity Platformの機能を含むFirebase Authenticationを提供
 
 ## テストできること
 
-- **実際のメッセージを送らないサインインとアカウントのフロー。** メールのアクションリンクとSMSコードは出力され、RESTでも取得できます（[ローカルの検証メッセージ](#local-verification-messages)）。
-- **プロジェクト設定。** テストのたびにAdmin APIで設定する代わりに、`fireemu.toml`で宣言します（[プロジェクトを設定する](#configure-your-project)）。
-- **TOTP第2要素。** SMSと併用でき、SDKの`TotpMultiFactorGenerator`から利用します（[手順](#test-totp-enrollment-and-sign-in)）。
-- **`auth.providers`で宣言するOIDCとSAMLのプロバイダーリソース。** `strict`では、宣言されていない、または無効な`oidc.*`や`saml.*`プロバイダー経由のサインインは本番と同様に拒否され、`auth.idpAssertions = "signed"`を指定すると署名付きアサーションをローカルで検証します（[OIDCとSAMLプロバイダー](#oidc-and-saml-providers)）。
-- **本番と同じテナントチェック。** `strict`では、プロジェクトに存在しないテナントを指定したリクエストはテナントを作成せずに拒否されます（[マルチテナンシー](#multi-tenancy)）。
-- **ブロッキング関数。** `strict`での`beforeEmailSent`を含みます（[ブロッキング関数](#blocking-functions)）。
-- **サインアップのクォータエラー**（[クォータ超過時の動作](#quota-exceeded-behavior)）。
+- **実際のメッセージを送らないサインインとアカウントのフロー。** メールのアクションリンクとSMSコードは出力され、RESTでも取得できます（[ローカルの検証メッセージ](#ローカルの検証メッセージ)）。
+- **プロジェクト設定。** テストのたびにAdmin APIで設定する代わりに、`fireemu.toml`で宣言します（[プロジェクトを設定する](#プロジェクトを設定する)）。
+- **TOTP第2要素。** SMSと併用でき、SDKの`TotpMultiFactorGenerator`から利用します（[手順](#totpの登録とサインインをテストする)）。
+- **`auth.providers`で宣言するOIDCとSAMLのプロバイダーリソース。** `strict`では、宣言されていない、または無効な`oidc.*`や`saml.*`プロバイダー経由のサインインは本番と同様に拒否され、`auth.idpAssertions = "signed"`を指定すると署名付きアサーションをローカルで検証します（[OIDCとSAMLプロバイダー](#oidcとsamlプロバイダー)）。
+- **本番と同じテナントチェック。** `strict`では、プロジェクトに存在しないテナントを指定したリクエストはテナントを作成せずに拒否されます（[マルチテナンシー](#マルチテナンシー)）。
+- **ブロッキング関数。** `strict`での`beforeEmailSent`を含みます（[ブロッキング関数](#ブロッキング関数)）。
+- **サインアップのクォータエラー**（[クォータ超過時の動作](#クォータ超過時の動作)）。
 
 `firebase-tools` 15.28.2のAuthenticationエミュレーターは、電話（SMS）第2要素、テナント、フィクスチャの`oidc.*`と`saml.*`によるサインイン、`beforeCreate`と`beforeSignIn`のブロッキング関数に対応しています。Fireemuはこれに加えて、TOTP第2要素、宣言されたOIDCとSAMLのプロバイダーリソース、`strict`での本番と同じテナントチェック、`strict`での`beforeEmailSent`ブロッキング関数に対応します。
 
@@ -341,7 +341,7 @@ adjacentIntervals = 1
 
 テストは、TOTPシークレットをSDK自体から取得します。`TotpMultiFactorGenerator.generateSecret(session)`は`TotpSecret`を返し、その`secretKey`はbase32の共有シークレットで、`hashingAlgorithm`、`codeLength`、`codeIntervalSeconds`も含まれます。SDKにコードを計算する関数はないため、テストは認証アプリと同様に、これらの値を使ってRFC 6238のコードを計算します。サインインのヒント（`resolver.hints`）には、要素の`uid`、`displayName`、`enrollmentTime`が入っており、シークレットは入っていません。
 
-第2要素の登録には、本番と同様に確認済みのメールアドレスが必要です（そうでない場合は`auth/unverified-email`）。テストでは、エミュレーターが発行したアクションリンクを使ってメールを確認します。このリンクは`oobCodes`ルートから読み取ります（[ローカルの検証メッセージ](#local-verification-messages)）。このフローは、ローカルの`fireemu up`（0.48.0、`strict`プロファイル、デフォルトのMFA設定）に対して`firebase` 12.18.0で実行したものです。
+第2要素の登録には、本番と同様に確認済みのメールアドレスが必要です（そうでない場合は`auth/unverified-email`）。テストでは、エミュレーターが発行したアクションリンクを使ってメールを確認します。このリンクは`oobCodes`ルートから読み取ります（[ローカルの検証メッセージ](#ローカルの検証メッセージ)）。このフローは、ローカルの`fireemu up`（0.48.0、`strict`プロファイル、デフォルトのMFA設定）に対して`firebase` 12.18.0で実行したものです。
 
 ```js
 import { initializeApp } from 'firebase/app';
@@ -489,7 +489,7 @@ enabledProviders = ["PHONE_SMS"]
 
 ## トークン
 
-Fireemuはデフォルトで署名なしのトークンをいくつか受け付けるため、テストに署名鍵は必要ありません。各デフォルトには専用の設定があり、[`productionExact`](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose)はそれらをすべて本番の動作に切り替えます。
+Fireemuはデフォルトで署名なしのトークンをいくつか受け付けるため、テストに署名鍵は必要ありません。各デフォルトには専用の設定があり、[`productionExact`](../../guides/profiles/#fireemuが意図的に本番から外れる箇所)はそれらをすべて本番の動作に切り替えます。
 
 | 開発用のデフォルト | 設定 | `productionExact`の場合 |
 |---|---|---|
@@ -497,7 +497,7 @@ Fireemuはデフォルトで署名なしのトークンをいくつか受け付�
 | `@firebase/rules-unit-testing`の署名なしモックIDトークンを、Firestore、Storage、Realtime Databaseのセキュリティルールが受け付ける | `auth.allowUnsignedIdTokens` | 本番が署名なしトークンを拒否するのと同様に、モックトークンのフォールバックは無効になります。通常の検証に通る、fireemuが発行したトークンは引き続き受け付けられます |
 | IDプロバイダーのサインインが、フィクスチャのアサーションとサインインウィジェットを受け付ける | `auth.idpAssertions`（`"fixture"`） | `"signed"`。OIDCのIDトークンは`auth.idpSigners`の鍵で、SAMLレスポンスはプロバイダーの証明書で検証される必要があります |
 
-フィクスチャのアサーションが省略するのは、署名のチェックだけです。`strict`では、`oidc.*`や`saml.*`プロバイダー経由のサインインは、プロバイダーに設定がない場合（`auth.providers`で宣言するか、Admin APIで作成してください）や無効な場合には、本番と同じ`OPERATION_NOT_ALLOWED : The identity provider configuration is not found.`や`... is disabled.`で拒否されます。`google.com`のような組み込みプロバイダーは、コンソールでの設定なしでサインインできます。[その他の開発用の利便性](../../guides/profiles/#other-development-conveniences)を参照してください。
+フィクスチャのアサーションが省略するのは、署名のチェックだけです。`strict`では、`oidc.*`や`saml.*`プロバイダー経由のサインインは、プロバイダーに設定がない場合（`auth.providers`で宣言するか、Admin APIで作成してください）や無効な場合には、本番と同じ`OPERATION_NOT_ALLOWED : The identity provider configuration is not found.`や`... is disabled.`で拒否されます。`google.com`のような組み込みプロバイダーは、コンソールでの設定なしでサインインできます。[その他の開発用の利便性](../../guides/profiles/#その他の開発上の利便性)を参照してください。
 
 ### カスタムトークン
 
@@ -567,17 +567,17 @@ defaultQuotaPerHour = 5
 
 ### 対応範囲外
 
-外部のIDプロバイダーと通信するサインインのフロー、ホスト型の認可コード交換、ライブのキー探索は、対応範囲外です。設定したプロバイダーの署名付きOIDCとSAMLアサーションはローカルで検証されます。[OIDCとSAMLプロバイダー](#oidc-and-saml-providers)を参照してください。完全な一覧は[制限事項](../../compatibility/limitations/)にあります。
+外部のIDプロバイダーと通信するサインインのフロー、ホスト型の認可コード交換、ライブのキー探索は、対応範囲外です。設定したプロバイダーの署名付きOIDCとSAMLアサーションはローカルで検証されます。[OIDCとSAMLプロバイダー](#oidcとsamlプロバイダー)を参照してください。完全な一覧は[制限事項](../../compatibility/limitations/)にあります。
 
 ### このページで説明しているローカルの動作
 
 次の動作は本番と異なり、該当する箇所で説明しています。
 
-- 署名なしのカスタムトークン、署名なしのモックIDトークン、フィクスチャのIDプロバイダーアサーションは、`productionExact`またはそれぞれの設定でオフにするまで受け付けられます（[トークン](#tokens)）。
-- 新しいプロジェクトではMFAとマルチテナンシーがオンです。`productionExact`では、どちらもオフで開始します（[多要素認証](#multi-factor-authentication)、[マルチテナンシー](#multi-tenancy)）。
-- デフォルトの承認済みドメインに`localhost`が含まれます（[承認済みドメイン](#authorized-domains)）。
-- ローカルの関数内の`verifyIdToken`と`verifySessionCookie`は、署名検証を省略します（[関数内のトークン](#tokens-inside-functions)）。
-- サインアップのクォータは、ローカルの固定ウィンドウによるシミュレーションです（[クォータ超過時の動作](#quota-exceeded-behavior)）。
+- 署名なしのカスタムトークン、署名なしのモックIDトークン、フィクスチャのIDプロバイダーアサーションは、`productionExact`またはそれぞれの設定でオフにするまで受け付けられます（[トークン](#トークン)）。
+- 新しいプロジェクトではMFAとマルチテナンシーがオンです。`productionExact`では、どちらもオフで開始します（[多要素認証](#多要素認証)、[マルチテナンシー](#マルチテナンシー)）。
+- デフォルトの承認済みドメインに`localhost`が含まれます（[承認済みドメイン](#承認済みドメイン)）。
+- ローカルの関数内の`verifyIdToken`と`verifySessionCookie`は、署名検証を省略します（[関数内のトークン](#関数内のトークン)）。
+- サインアップのクォータは、ローカルの固定ウィンドウによるシミュレーションです（[クォータ超過時の動作](#クォータ超過時の動作)）。
 
 ## 関連情報
 

@@ -1,15 +1,15 @@
 ---
-title: CI とコンテナー
-description: GitHub Actions でテストを Fireemu のもとで実行し、コンテナーからエミュレーターを提供し、エミュレーターが応答するホスト名を選びます。
+title: CIとコンテナー
+description: GitHub ActionsでテストをFireemuのもとで実行し、コンテナーからエミュレーターを提供し、エミュレーターが応答するホスト名を選びます。
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-CI ジョブでテストを Fireemu のもとで実行し、コンテナーからホストや他のコンテナーへエミュレーターを提供し、クライアントが使うホスト名を一覧します。
+CIジョブでテストをFireemuのもとで実行し、コンテナーからホストや他のコンテナーへエミュレーターを提供し、クライアントが使うホスト名を一覧します。
 
-## GitHub Actions でテストを実行する
+## GitHub Actionsでテストを実行する
 
-`fireemu exec` はテストコマンドの終了ステータスを返すため、CI ジョブに開始と停止の別ステップは必要ありません。
+`fireemu exec`はテストコマンドの終了ステータスを返すため、CIジョブに開始と停止の別ステップは必要ありません。
 
 ```yaml
 jobs:
@@ -25,11 +25,11 @@ jobs:
       - run: npx fireemu exec -- npm test
 ```
 
-Fireemu は Java も起動時のダウンロードも必要としません。npm パッケージが、ランナーのプラットフォーム向けのネイティブバイナリをインストールします。lint ステップについては[テストの前に設定を確認する](#check-the-configuration-before-the-tests)で説明します。
+FireemuはJavaも起動時のダウンロードも必要としません。npmパッケージが、ランナーのプラットフォーム向けのネイティブバイナリをインストールします。lintステップについては[テストの前に設定を確認する](#テストの前に設定を確認する)で説明します。
 
-### productionExact のジョブを追加する
+### productionExactのジョブを追加する
 
-署名のないテストトークンなど、開発用デフォルトが通してしまうものも確認するには、[`productionExact`](../profiles/) を設定した 2 つ目の設定ファイル(たとえば `fireemu.production-exact.toml`)で実行するジョブを追加します。
+署名のないテストトークンなど、開発用デフォルトが通してしまうものも確認するには、[`productionExact`](../profiles/)を設定した2つ目の設定ファイル(たとえば`fireemu.production-exact.toml`)で実行するジョブを追加します。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -64,11 +64,11 @@ firebaseJson = "firebase.json"
 npx fireemu exec --config fireemu.production-exact.toml -- npm test
 ```
 
-JSON 形式の場合は、ファイル名を `fireemu.production-exact.json` にします。
+JSON形式の場合は、ファイル名を`fireemu.production-exact.json`にします。
 
 ### テストの前に設定を確認する
 
-3 つのチェックにより、誤った設定でテストが走る前にジョブを早期に失敗させられます。
+3つのチェックにより、誤った設定でテストが走る前にジョブを早期に失敗させられます。
 
 ```yaml
       - run: npx fireemu config lint --deny-ineffective
@@ -78,26 +78,26 @@ JSON 形式の場合は、ファイル名を `fireemu.production-exact.json` に
 
 | チェック | 動作 |
 |---|---|
-| `config lint --deny-ineffective` | 設定に、Fireemu が受け付けるものの読み取らないキーがある場合、終了コード 1 でジョブを失敗させます。意図して残すキーは `--allow <key>` または `--allow-file <path>` で列挙します([`config lint`](../../reference/cli/#config-lint)を参照)。 |
-| `exec --plan` | 実行が解決する内容を表示し、ジョブログにプロジェクト ID、サービスとそのポート、読み込まれたファイル、Functions に使う Node、継承するエミュレーター変数が残るようにします。何も起動せず、実行が、検出できる理由で失敗する場合は終了コード 1 で終了します。ほかのツールに渡すには `--json` を使います([実行を計画する](../../reference/cli/#plan-a-run)を参照)。 |
-| `--deny-inherited-emulator-env` | ジョブの環境に、この実行が起動しないサービスのエミュレーター変数(`PUBSUB_EMULATOR_HOST`、別のスイートの `FIRESTORE_EMULATOR_HOST` など)がある場合、実行を失敗させます。指定しない場合は、警告を出してその変数を残します。意図して設定した変数には `--allow-inherited-emulator-env <NAME>` を使います。 |
+| `config lint --deny-ineffective` | 設定に、Fireemuが受け付けるものの読み取らないキーがある場合、終了コード1でジョブを失敗させます。意図して残すキーは`--allow <key>`または`--allow-file <path>`で列挙します([`config lint`](../../reference/cli/#config-lint)を参照)。 |
+| `exec --plan` | 実行が解決する内容を表示し、ジョブログにプロジェクトID、サービスとそのポート、読み込まれたファイル、Functionsに使うNode、継承するエミュレーター変数が残るようにします。何も起動せず、実行が、検出できる理由で失敗する場合は終了コード1で終了します。ほかのツールに渡すには`--json`を使います([実行を計画する](../../reference/cli/#実行を計画する)を参照)。 |
+| `--deny-inherited-emulator-env` | ジョブの環境に、この実行が起動しないサービスのエミュレーター変数(`PUBSUB_EMULATOR_HOST`、別のスイートの`FIRESTORE_EMULATOR_HOST`など)がある場合、実行を失敗させます。指定しない場合は、警告を出してその変数を残します。意図して設定した変数には`--allow-inherited-emulator-env <NAME>`を使います。 |
 
 ### コンテナージョブ
 
-GitHub Actions の `container:` ジョブや、チェックアウトをバインドマウントして root で動くコンテナーでは、チェックアウトの所有者がコンテナーの root が信頼しないホストユーザーになります。そのため、検出された `fireemu.toml` や `firebase.json` は警告付きでスキップされます。ファイルを明示的に指定するか、チェックアウトを `chown` してください。
+GitHub Actionsの`container:`ジョブや、チェックアウトをバインドマウントしてrootで動くコンテナーでは、チェックアウトの所有者がコンテナーのrootが信頼しないホストユーザーになります。そのため、検出された`fireemu.toml`や`firebase.json`は警告付きでスキップされます。ファイルを明示的に指定するか、チェックアウトを`chown`してください。
 
 ```sh
 npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
 ```
 
-[設定ファイル](../configuration/#file-ownership-checks)を参照してください。
+[設定ファイル](../configuration/#ファイル所有者のチェック)を参照してください。
 
 ## コンテナーからエミュレーターを提供する
 
 デフォルトではすべてのリスナーがループバック上にあり、公開されたコンテナーのポートからは到達できません。エミュレーターをホストや他のコンテナーに提供するには、次のようにします。
 
-1. `fireemu.toml` の `network.allowNonLoopbackHosts` で有効にします。
-2. `firebase.json` で、プロダクトのエミュレーターにホストを指定します。
+1. `fireemu.toml`の`network.allowNonLoopbackHosts`で有効にします。
+2. `firebase.json`で、プロダクトのエミュレーターにホストを指定します。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -129,7 +129,7 @@ allowNonLoopbackHosts = true
 </TabItem>
 </Tabs>
 
-`firebase.json` では次のようにします。
+`firebase.json`では次のようにします。
 
 ```json
 {
@@ -142,10 +142,10 @@ allowNonLoopbackHosts = true
 
 ### ループバック以外でリッスンするもの
 
-- ループバック以外でリッスンできるのは、Firestore、Authentication、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub、Realtime Database だけです。Hub、UI、Logging エミュレーターはループバックのままです。
-- ポートが control API も兼ねる Authentication は、ループバックまたはすべてのインターフェース(`0.0.0.0` または `::`)でリッスンし、それ以外の 1 つのアドレスではリッスンしません。
-- `0.0.0.0` または `::` でのリスナーは、公式 CLI と同様に、環境変数と Hub では `127.0.0.1` または `::1` として通知されます。
-- このオプションを有効にすると、エミュレーターは Compose のサービス名(`fireemu:8080`)のような単一ラベルの `Host` にも応答します。それ以外の名前は `network.allowedHosts` に列挙する必要があります。[エミュレーターが応答するホスト名](#host-names-the-emulators-answer)を参照してください。
+- ループバック以外でリッスンできるのは、Firestore、Authentication、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub、Realtime Databaseだけです。Hub、UI、Loggingエミュレーターはループバックのままです。
+- ポートがcontrol APIも兼ねるAuthenticationは、ループバックまたはすべてのインターフェース(`0.0.0.0`または`::`)でリッスンし、それ以外の1つのアドレスではリッスンしません。
+- `0.0.0.0`または`::`でのリスナーは、公式CLIと同様に、環境変数とHubでは`127.0.0.1`または`::1`として通知されます。
+- このオプションを有効にすると、エミュレーターはComposeのサービス名(`fireemu:8080`)のような単一ラベルの`Host`にも応答します。それ以外の名前は`network.allowedHosts`に列挙する必要があります。[エミュレーターが応答するホスト名](#エミュレーターが応答するホスト名)を参照してください。
 
 ### 公開したポートに到達できる相手
 
@@ -154,49 +154,49 @@ allowNonLoopbackHosts = true
 
 :::
 
-- 起動時に、ループバック以外のリスナーごとに `warning:` 行が表示されます。
-- 公開されたポートに到達できるクライアントは、プロダクトの API で、ローカルのクライアントができることをすべて行えます。Admin SDK の `Bearer owner` 認証情報と、Auth エミュレーター独自のルートも含みます。
-- Realtime Database では、この中に `database.defaultAccess = "locked"` も含まれます。これは、よく知られた `owner` 認証情報を受け付けるため、ループバック以外ではアクセス制御になりません。
-- `emulator` プロファイルでは、どの bearer トークンもデータリクエストでは Realtime Database の管理者となり、その `/.settings/rules.json` は、Firestore と Storage のルールのルートと同様に、ループバックのピアにのみ応答します。
+- 起動時に、ループバック以外のリスナーごとに`warning:`行が表示されます。
+- 公開されたポートに到達できるクライアントは、プロダクトのAPIで、ローカルのクライアントができることをすべて行えます。Admin SDKの`Bearer owner`認証情報と、Authエミュレーター独自のルートも含みます。
+- Realtime Databaseでは、この中に`database.defaultAccess = "locked"`も含まれます。これは、よく知られた`owner`認証情報を受け付けるため、ループバック以外ではアクセス制御になりません。
+- `emulator`プロファイルでは、どのbearerトークンもデータリクエストではRealtime Databaseの管理者となり、その`/.settings/rules.json`は、FirestoreとStorageのルールのルートと同様に、ループバックのピアにのみ応答します。
 - ブラウザーのページは引き続きループバックのオリジン(`http://localhost:...`)から来る必要があるため、別のホストから配信されたページは公開されたポートを使えません。
 
-### Fireemu 独自のコントロール
+### Fireemu独自のコントロール
 
-- control API、App Check のデバッグトークン管理、および Firestore、Storage、Realtime Database の Security Rules を読み込むルートや Firestore のデータを消去するルートは、ループバックのピアにのみ応答し、それ以外のピアには 403 を返します。`@firebase/rules-unit-testing` は、`loadFirestoreRules`、`loadStorageRules`、`clearFirestore` を通してルールと消去のルートを呼び出します。
-- それらを使うコードは、コンテナーの内部、または Podman の pod や `--network container:<name>` のようにネットワーク名前空間を共有するコンテナーの中で実行してください。
-- その名前空間内のフォワーダー(`kubectl port-forward`、サイドカープロキシ)はループバックから接続します。そのため、このオプションを有効にすると、control API へのすべてのリクエストに、プロセスからでもページからでも `Authorization: Bearer <control token>` が必要になります。免除されるのは `/health/` だけです。
-- Security Rules を読み込むルートと Firestore のデータを消去するルートにはトークンが要求されないため、`@firebase/rules-unit-testing` は引き続き動作します。このようなフォワーダー経由でエミュレーターに到達するクライアントは、公式エミュレーターと同様にそれらを呼び出せます。
-- `fireemu exec` は、コマンドにトークンを `FIREEMU_CONTROL_TOKEN` で渡し、`fireemu/testing` と UI もそれを送ります。
+- control API、App Checkのデバッグトークン管理、およびFirestore、Storage、Realtime DatabaseのSecurity Rulesを読み込むルートやFirestoreのデータを消去するルートは、ループバックのピアにのみ応答し、それ以外のピアには403を返します。`@firebase/rules-unit-testing`は、`loadFirestoreRules`、`loadStorageRules`、`clearFirestore`を通してルールと消去のルートを呼び出します。
+- それらを使うコードは、コンテナーの内部、またはPodmanのpodや`--network container:<name>`のようにネットワーク名前空間を共有するコンテナーの中で実行してください。
+- その名前空間内のフォワーダー(`kubectl port-forward`、サイドカープロキシ)はループバックから接続します。そのため、このオプションを有効にすると、control APIへのすべてのリクエストに、プロセスからでもページからでも`Authorization: Bearer <control token>`が必要になります。免除されるのは`/health/`だけです。
+- Security Rulesを読み込むルートとFirestoreのデータを消去するルートにはトークンが要求されないため、`@firebase/rules-unit-testing`は引き続き動作します。このようなフォワーダー経由でエミュレーターに到達するクライアントは、公式エミュレーターと同様にそれらを呼び出せます。
+- `fireemu exec`は、コマンドにトークンを`FIREEMU_CONTROL_TOKEN`で渡し、`fireemu/testing`とUIもそれを送ります。
 
 ## エミュレーターが応答するホスト名
 
-Web ページは、読み込み後に、自分が制御する名前を `127.0.0.1` に向け直せます(DNS リバインディング)。するとブラウザーはエミュレーターへのリクエストを同一オリジンとして扱い、`Origin` を送らないため、ページは、エミュレーターが認証情報なしで提供するローカルデータを読み取れてしまいます。
+Webページは、読み込み後に、自分が制御する名前を`127.0.0.1`に向け直せます(DNSリバインディング)。するとブラウザーはエミュレーターへのリクエストを同一オリジンとして扱い、`Origin`を送らないため、ページは、エミュレーターが認証情報なしで提供するローカルデータを読み取れてしまいます。
 
-これを防ぐため、プロダクトのエミュレーター(Firestore、Authentication と control API、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub、Realtime Database、Hosting)は、`Host` ヘッダーが次のいずれでもないホストを指す HTTP/1 リクエストに `403` を返します。
+これを防ぐため、プロダクトのエミュレーター(Firestore、Authenticationとcontrol API、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub、Realtime Database、Hosting)は、`Host`ヘッダーが次のいずれでもないホストを指すHTTP/1リクエストに`403`を返します。
 
-- `localhost` と `.localhost` 配下の名前。
-- 任意の IP アドレス。そのため、Android エミュレーターの `10.0.2.2`、LAN アドレス、ブリッジアドレスは使えます。
-- `.internal` 配下の名前。コンテナーランタイムがコンテナーにホスト用として与える名前の予約済みサフィックスです。`host.docker.internal` と `gateway.docker.internal`(Docker)、`host.containers.internal`(Podman)、`host.lima.internal`(Lima と Colima)、`host.orb.internal`(OrbStack)。
-- `.firebaseio.com` と `.firebasedatabase.app` 配下の名前。Realtime Database がこれで名前空間を選択します。
-- `.cloudworkstations.dev` 配下の名前。Firebase Studio と Cloud Workstations のプレビュー URL とポート URL です。
-- `.app.github.dev` 配下の名前。GitHub Codespaces の転送ポート URL です。
-- 特殊用途のサフィックス `.test`、`.local`、`.home.arpa` 配下の名前。パブリック DNS は応答しません。`myapp.test` のような `/etc/hosts` のエイリアス、`my-mac.local` のような mDNS 名、デフォルトの `svc.cluster.local` 配下の Kubernetes サービス名、ホームネットワークの名前です。
-- `network.allowNonLoopbackHosts` が有効な場合、Compose のサービス名のような単一ラベルの名前。
-- `network.allowedHosts` の名前。
+- `localhost`と`.localhost`配下の名前。
+- 任意のIPアドレス。そのため、Androidエミュレーターの`10.0.2.2`、LANアドレス、ブリッジアドレスは使えます。
+- `.internal`配下の名前。コンテナーランタイムがコンテナーにホスト用として与える名前の予約済みサフィックスです。`host.docker.internal`と`gateway.docker.internal`(Docker)、`host.containers.internal`(Podman)、`host.lima.internal`(LimaとColima)、`host.orb.internal`(OrbStack)。
+- `.firebaseio.com`と`.firebasedatabase.app`配下の名前。Realtime Databaseがこれで名前空間を選択します。
+- `.cloudworkstations.dev`配下の名前。Firebase StudioとCloud WorkstationsのプレビューURLとポートURLです。
+- `.app.github.dev`配下の名前。GitHub Codespacesの転送ポートURLです。
+- 特殊用途のサフィックス`.test`、`.local`、`.home.arpa`配下の名前。パブリックDNSは応答しません。`myapp.test`のような`/etc/hosts`のエイリアス、`my-mac.local`のようなmDNS名、デフォルトの`svc.cluster.local`配下のKubernetesサービス名、ホームネットワークの名前です。
+- `network.allowNonLoopbackHosts`が有効な場合、Composeのサービス名のような単一ラベルの名前。
+- `network.allowedHosts`の名前。
 
-特殊用途と `.internal` の名前は、ローカルの名前解決が信頼できる間だけ安全です。信頼できないネットワークでは、悪意のあるリゾルバー(たとえば公共 Wi-Fi で DHCP により配られるもの。RFC 8375 の 6.1 節が `.home.arpa` について指摘するリスク)や LAN 上の mDNS ピア(`.local` の場合)がそれらに応答し、ページをエミュレーターにリバインドできます。`network.allowedHosts` は名前を追加するだけで、これらのデフォルトを取り除く設定はありません。
+特殊用途と`.internal`の名前は、ローカルの名前解決が信頼できる間だけ安全です。信頼できないネットワークでは、悪意のあるリゾルバー(たとえば公共Wi-FiでDHCPにより配られるもの。RFC 8375の6.1節が`.home.arpa`について指摘するリスク)やLAN上のmDNSピア(`.local`の場合)がそれらに応答し、ページをエミュレーターにリバインドできます。`network.allowedHosts`は名前を追加するだけで、これらのデフォルトを取り除く設定はありません。
 
 チェックの適用方法は次のとおりです。
 
-- `Host` のないリクエスト(HTTP/1.0)と HTTP/2 のリクエスト(gRPC クライアント)は、ブラウザーが送らないため、チェックされません。
-- 比較では、大文字小文字、ポート、末尾のドット 1 つを無視します。
-- Hub、UI、Logging エミュレーターは、ループバックの名前にのみ応答します。
-- 公式エミュレーターは `Host` をチェックしません。本番には対応するものがないため、このチェックは両方のプロファイルで同じです。
-- 拒否されたリクエストには、設定名を示すメッセージ付きの `403` が返り、デーモンは拒否された名前ごとに(最大 32 名まで)`warning: refused Host "<name>"` 行を 1 行ログに出します。そのため、SDK がレスポンスボディを隠すクライアントでも痕跡が残ります。
+- `Host`のないリクエスト(HTTP/1.0)とHTTP/2のリクエスト(gRPCクライアント)は、ブラウザーが送らないため、チェックされません。
+- 比較では、大文字小文字、ポート、末尾のドット1つを無視します。
+- Hub、UI、Loggingエミュレーターは、ループバックの名前にのみ応答します。
+- 公式エミュレーターは`Host`をチェックしません。本番には対応するものがないため、このチェックは両方のプロファイルで同じです。
+- 拒否されたリクエストには、設定名を示すメッセージ付きの`403`が返り、デーモンは拒否された名前ごとに(最大32名まで)`warning: refused Host "<name>"`行を1行ログに出します。そのため、SDKがレスポンスボディを隠すクライアントでも痕跡が残ります。
 
 ### ホスト名を追加する
 
-クライアントが使うその他の名前を追加します。たとえば、トンネル、特殊用途サフィックス以外の `/etc/hosts` の名前、独自のクラスタードメイン配下の Kubernetes サービスなどです。エントリは、名前、先頭にドットを付けたそのドメインとすべてのサブドメインを表す名前、またはすべての `Host` に応答する `"*"`(防御をオフにします)のいずれかです。
+クライアントが使うその他の名前を追加します。たとえば、トンネル、特殊用途サフィックス以外の`/etc/hosts`の名前、独自のクラスタードメイン配下のKubernetesサービスなどです。エントリは、名前、先頭にドットを付けたそのドメインとすべてのサブドメインを表す名前、またはすべての`Host`に応答する`"*"`(防御をオフにします)のいずれかです。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -226,23 +226,23 @@ allowedHosts = ["emulator.ci.example", ".corp.example"]
 
 - エントリにはスキーム、ポート、パスを含めません。
 - 名前を列挙しても、その名前を指すリクエストを通すだけです。ブラウザーのオリジンチェックは変わらないため、特権ルートを使うにはページがループバックのオリジンから来る必要があります。
-- Fireemu は、`"*"` と、`".com"` のようにトップレベルドメイン全体にあたるエントリについて、起動時に `warning:` 行を表示します。そこには任意の Web ページが名前を登録できるためです。
-- ポリシーはデーモンの起動時に読み込まれます。`network.allowedHosts` を変更したら再起動してください。
+- Fireemuは、`"*"`と、`".com"`のようにトップレベルドメイン全体にあたるエントリについて、起動時に`warning:`行を表示します。そこには任意のWebページが名前を登録できるためです。
+- ポリシーはデーモンの起動時に読み込まれます。`network.allowedHosts`を変更したら再起動してください。
 
 ### 一般的な環境向けのエントリ
 
 | 環境 | エントリ |
 |---|---|
-| 独自のクラスタードメイン配下の Kubernetes サービス | `".svc.<cluster domain>"`(または正確なサービス名) |
-| ngrok | 正確なトンネル名。たとえば `"abc123.ngrok-free.app"` |
+| 独自のクラスタードメイン配下のKubernetesサービス | `".svc.<cluster domain>"`(または正確なサービス名) |
+| ngrok | 正確なトンネル名。たとえば`"abc123.ngrok-free.app"` |
 | Cloudflare Tunnel | トンネルの正確な公開ホスト名 |
-| `.test`、`.local`、`.home.arpa` 以外の `/etc/hosts` の名前 | その名前 |
+| `.test`、`.local`、`.home.arpa`以外の`/etc/hosts`の名前 | その名前 |
 
-トンネルプロバイダーのドメイン全体ではなく、正確なトンネル名を列挙してください。そのドメイン配下では誰でもトンネルを開けるためです。Firebase Studio の `.cloudworkstations.dev`、Codespaces の `.app.github.dev`、mDNS の `.local`、Kubernetes の `svc.cluster.local`、`.test` の名前にはエントリは不要です。
+トンネルプロバイダーのドメイン全体ではなく、正確なトンネル名を列挙してください。そのドメイン配下では誰でもトンネルを開けるためです。Firebase Studioの`.cloudworkstations.dev`、Codespacesの`.app.github.dev`、mDNSの`.local`、Kubernetesの`svc.cluster.local`、`.test`の名前にはエントリは不要です。
 
 ## 関連
 
-- [設定ファイル](../configuration/#file-ownership-checks)
-- [プロファイルと productionExact](../profiles/)
-- [CLI リファレンス](../../reference/cli/)
+- [設定ファイル](../configuration/#ファイル所有者のチェック)
+- [プロファイルとproductionExact](../profiles/)
+- [CLIリファレンス](../../reference/cli/)
 - [トラブルシューティング](../troubleshooting/)
