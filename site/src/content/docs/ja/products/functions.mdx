@@ -1,0 +1,384 @@
+---
+title: Cloud Functions
+description: Cloud Functions for Firebaseをローカルで実行し、HTTP、callable、イベント、スケジュール、タスクキュー、blockingの各関数をテストします。
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemuは`firebase.json`で宣言されたFunctionsコードベースを読み込み、Node.jsで実行します。Eventarc/Cloud Tasksエミュレータは、コードベースが読み込まれると起動します。Pythonコードベース(`python310`から`python314`)も実行できます。詳しくは[Cloud Functions (Python)](../functions-python/)を参照してください。特に断りがない限り、このページはNode.jsコードベースについて説明します。
+
+<Facts items={[
+  { label: 'ステータス', value: '対応済み' },
+  { label: 'デフォルトポート', value: '5001' },
+  { label: '起動条件', value: 'コードベースが設定されているとき' },
+  { label: '本番検証', value: '互換性の表を参照', href: 'compatibility/#production-verification' },
+]} />
+
+## テストできること
+
+- 両世代の[HTTP、callable、イベント、スケジュール、タスクキュー、blockingの各トリガー](#supported-triggers)。
+- デプロイ時と同じように解決される[パラメータとシークレット](#parameters-and-secrets)。
+- [関数を呼び出せるのは誰か](#who-can-call-a-function): `invoker`の設定とcallableの認証情報。
+- [callableでのApp Check強制](#app-check-in-callables)。
+- [タスクキュー](#task-queues): 遅延タスク、レート制限、リトライ、Cloud Tasksの応答。
+- 仮想クロック上、またはオンデマンドで実行する[スケジュール関数](#scheduled-functions)。
+- 本番と同じ形の[関数ごとのプロセス](#process-isolation-functionsisolation)。
+
+## 接続
+
+Functionsを実行するには、コードベースで`firebase-functions` v6またはv7が必要です。
+
+```sh
+# Only Functions (with Eventarc and Cloud Tasks); add the services your functions use,
+# for example --only functions,firestore,auth
+npx fireemu up --only functions
+
+# All codebases declared in firebase.json, with the default services
+npx fireemu up
+
+# One codebase
+npx fireemu up --only functions:<codebase>
+
+# One directory, whatever firebase.json declares
+npx fireemu up --functions ./functions
+```
+
+Functionsはデフォルトで`127.0.0.1:5001`で待ち受けます(`--functions-port`または`firebase.json`で変更できます)。Web SDKを次のように接続します。
+
+```js
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
+```
+
+`fireemu exec`の下では、`FIREEMU_FUNCTIONS_HOST`がコマンドに渡す`host:port`を保持します([環境変数](../../reference/environment-variables/)を参照)。
+
+## 対応するトリガー
+
+以下はNode.jsの`firebase-functions`のエクスポートです。トリガーの種類とエクスポートごとの対応状況は、[Functions対応インベントリ](https://github.com/fireemu/fireemu/blob/main/docs/functions-export-inventory.md)を参照してください。
+
+| トリガー | v1 (`firebase-functions/v1`) | v2 (`firebase-functions/v2/*`) |
+|---|---|---|
+| HTTPとcallable | `https.onRequest`、`https.onCall` | `onRequest`、`onCall`、`onCallGenkit` |
+| Firestore | `firestore.document()`のイベント | `onDocumentCreated`、`Updated`、`Deleted`、`Written`、およびそれらの`WithAuthContext`版 |
+| Storage | `storage.object()`のイベント | `onObjectFinalized`、`Deleted`、`MetadataUpdated`、`Archived` |
+| Pub/Sub | `pubsub.topic().onPublish` | `onMessagePublished` |
+| スケジュール | `pubsub.schedule()` | `onSchedule` |
+| タスクキュー | `tasks.taskQueue().onDispatch` | `onTaskDispatched` |
+| Authentication | `auth.user()`のイベント、`beforeCreate`、`beforeSignIn` | `beforeUserCreated`、`beforeUserSignedIn`、`strict`では`beforeEmailSent` |
+| Realtime Database | `database.ref()`と`database.instance().ref()`の`onCreate`、`onUpdate`、`onDelete`、`onWrite` | `onValueCreated`、`Updated`、`Deleted`、`Written` |
+| Eventarcとアラート | | `onCustomEventPublished`、`onAlertPublished` |
+
+これらの一部は条件を満たす場合にのみ動作します。[トリガーに関する注意点](#trigger-caveats)を参照してください。
+
+Realtime Databaseトリガーの本番観測は、固定の管理者シーケンスと未認証シーケンス、およびメール/パスワードユーザーによるRESTとWeb SDK経由の12件の書き込みを対象としています。これには、祖先書き込みとマルチパス書き込み、呼び出し失敗後の再配信が含まれます。配信タイミング、他のプロバイダー、記録されていない書き込みやハンドラーの形は未検証のままです。書き込みとそのイベントがどのように受け付けられるかは、[ローカルFunctionsトリガー](../realtime-database/#local-functions-triggers)で説明しています。
+
+## パラメータとシークレット
+
+`defineString`、`defineInt`、`defineBoolean`、`defineFloat`、`defineList`は、デプロイ時と同じように解決されます。ファイルは以下の順に適用され、後のファイルが前のファイルを上書きし、そのあとでパラメータの`default`が適用されます。値もデフォルトもないパラメータがあると、`firebase deploy`が同じように停止するため、コードベースの起動を拒否し、そのパラメータ名と値を置くべきファイルを示します。シークレット(`defineSecret`)は`.secret.local`から取得され、それを宣言した関数にのみ渡されます。
+
+| ファイル(コードベースのディレクトリ内) | 内容 | 優先順位 | デプロイされるか |
+|---|---|---|---|
+| `.env` | パラメータの値 | 最も低い | はい。`firebase deploy`が読み込む |
+| `.env.<projectId>`(または`.env.<alias>`) | 1つのプロジェクト用の値 | `.env`より優先 | はい。そのプロジェクトをデプロイするとき |
+| `.env.local` | ローカル実行用の値 | 最も高い | いいえ。ここにしかない値は本番では存在しません。Fireemuと公式エミュレータが適用します |
+| `.secret.local` | `defineSecret`の値 | ここでのシークレットの唯一の取得元 | いいえ。デプロイにはSecret Manager内のシークレットが必要です |
+| `defineString`などの`default` | フォールバック | すべてのファイルより下 | コード内 |
+
+- `.env.<projectId>`と`.env.<alias>`の両方があると、`firebase deploy`と同様に起動が停止します。
+- FireemuはSecret Managerに接続しません。関数が宣言していても`.secret.local`にないシークレットは空文字列として読み取られ、起動時の警告でそのシークレットと関数が示されます。
+- どちらのプロファイルでも、`.secret.local`に名前がある継承された環境変数は、関数が宣言したシークレットが供給される前に削除されます。
+- `.runtimeconfig.json`は、それを読み取るコードベース向けに`CLOUD_RUNTIME_CONFIG`としてコードに渡されます。`firebase-functions` v7では`functions.config()`が削除されているため、v7のコードベースはこれを読み取りません。
+
+## 関数を呼び出せるのは誰か
+
+`invoker`が`"private"`またはサービスアカウントのリストである関数と、すべてのタスクキュー関数は、公開URLへの呼び出しに対して、付随する認証情報に応じて次のように応答します。
+
+| 公開URLへのリクエスト | 応答 |
+|---|---|
+| 認証情報なし | 403。Cloud Runが関数の実行前に拒否するのと同じです |
+| Googleが発行したIDトークンの形のBearer(`iss`が`https://accounts.google.com`のJWT) | 通過。FireemuはIDトークンをGoogleで検証できません |
+| それ以外のBearer(サインイン済みクライアントSDKが送るFirebase Auth IDトークンを含む) | 401。Cloud Runもこれを受け付けません |
+
+タスクのディスパッチ、Emulator UI、コントロールAPI(`POST /v1/sessions/default/functions/{name}:run`、コンソールのinvokeとenqueue)は公開URLへの呼び出しではありません。UIとコントロールAPIはプロジェクトオーナーとして動作します。`ingressSettings`は記録されますが強制されません。`emulator`プロファイルは、公式エミュレータと同様に、すべての関数をすべての呼び出し元に提供します。
+
+## callableでのApp Check
+
+callable関数の`enforceAppCheck`は、設定なしで動作します。任意のUUIDv4でデバッグトークン交換からトークンを取得し、`X-Firebase-AppCheck`で送信してください。
+
+- トークンなし、または形式が不正なトークンでの通常の呼び出しは401で拒否されます。厳密なv2ストリーミング呼び出しは、200のSSEエラーレコードを受け取ります。
+- リプレイ消費は利用できません。`consumeAppCheckToken: true`のNode callableに有効なトークンを送ると、`APP_CHECK_REPLAY_UNSUPPORTED`で拒否されます。
+- Python callableは、[Pythonについて説明している検証と制限](../functions-python/#differences-from-production-and-the-firebase-cli)に従います。
+
+[App Check](../app-check/)を参照してください。
+
+### `strict`でのcallable認証情報
+
+`strict`では、デーモンがNodeとPythonのcallableの`Authorization`を転送前に検証します。
+
+| 呼び出しの`Authorization` | 結果 |
+|---|---|
+| 欠落または空 | ハンドラーは未認証で呼び出される |
+| プロジェクトユーザーの検証済みIDトークンではない、空でない認証情報 | ハンドラーの前にHTTP 401と、`{"error":{"message":"Unauthenticated","status":"UNAUTHENTICATED"}}`を含む`application/json; charset=utf-8`で拒否される。厳密なv2ストリーミングリクエストは、代わりにSSEエラーレコードを伴うHTTP 200を受け取る |
+| 複数の`Authorization`ヘッダー | 401のHTMLフロントエンドページ |
+
+有効なプロジェクトIDトークンを送るか認証情報を省略し、重複したヘッダーを取り除いてください。これは、マニフェストがcallableコードを`onRequest`として提供する場合にも当てはまります。`onRequest(opts, onCall(...))`では、ネストされたcallableラッパーが、デーモンが検証していない認証情報を拒否します。通常の`onRequest`ハンドラーは、元の認証情報を変更なしで受け取り続けます。
+
+## タスクキュー
+
+タスクキュー関数は、記録されたケース(TASK-QUEUE-FUNCTIONS)について検証されており、既知の差異は[記録](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/closure/TASK-QUEUE-FUNCTIONS.json)に一覧があります。デーモンが発行したIDトークンによるstrictのディスパッチでは、Node SDKが`request.auth`を構築し、ハンドラーとそのタイマーは引き続き`FUNCTIONS_EMULATOR="true"`を参照します。emulatorプロファイルでは`request.auth`は未設定のままです。
+
+### 遅延タスク
+
+`scheduleTime`(または`scheduleDelaySeconds`)付きでエンキューされたタスクは、`strict`ではCloud Tasksと同様にその時刻まで待機します。RFC 3339ではない、または720時間より先の`scheduleTime`は400で拒否されます。`emulator`プロファイルは、公式エミュレータと同様に、即座にディスパッチします。
+
+待たずに遅延タスクをテストするには、次のいずれかを行います。
+
+- `functions.clock.tasks`を`"virtual"`に設定してクロックを進めます([時間とスケジュール関数](../../guides/time/)を参照)。
+- 待機中のタスクを解放します。Emulator UIのFunctionsページに、待機中のタスクが期限時刻と**Run now**ボタン付きで一覧表示されます。コントロールAPIでは、`POST /v1/sessions/default/functions/{queue}:run`(待機中のすべてのタスク)か、同じ呼び出しに`{"task": "<task id>"}`を付けて(1つのタスク)指定します。
+
+解放されたタスクにも、レート制限と同時実行制限は引き続き適用されます。
+
+### `getTask`でタスクを読み取る
+
+`strict`では、`getTask`は保留中、実行中、リトライ中のタスクを返します。
+
+- デフォルトの`responseView=BASIC`はリクエスト本文を省略します。`responseView=FULL`は元のバイト列をbase64で返します。
+- 保留中の応答は、2つの本番記録のとおり、値がゼロのディスパッチ回数と応答回数を省略します。
+- 最近完了または削除された名前には、記録された最近のタスクの404メッセージが返されます。未知の名前は、汎用のnot-found応答のままです。
+- 最近の参照履歴は既存の履歴上限で制限され、名前の即時再利用では1時間、設定された名前保持期間に従う場合はその期間続きます。
+
+FULLビュー、アクティブ/リトライの観測、無効なビュー、未知の名前のGET応答、履歴の期限切れは、ローカルでテストされていますが記録されていません。getTaskの完全な同等性は主張していません。
+
+### レート制限とバースト
+
+タスクを受け付けると、必要に応じてその関数のランナーが起動します。`strict`では、トークンの補充はナノ秒単位の整数の周期を使い、トークンとスケジュールの期限で起床します。120件のタスクが同時に期限を迎える本番記録では、レート1で開始バーストが10、レート500でバーストが100と読み戻されました。ほかのレートは空の状態で開始し、容量は`floor(max(rate, 1.1))`個の整数トークンです。これらの本番でのバーストは記録されていません。
+
+`emulator`プロファイルは1秒ごとの更新を維持し、firebase-tools 15.28.2と同様に、エンキュー時の正確な名前でタスクを削除します。ディスパッチ済みのタスクも1回は削除されます。
+
+### ディスパッチのヘッダーと本文
+
+`strict`では、`X-CloudTasks-QueueName`は装飾のないキューID、`X-CloudTasks-TaskETA`は小数点以下6桁のUnix秒、`User-Agent`は`Google-Cloud-Tasks`です。タスクが指定したヘッダーでは、そのユーザーエージェントや、`X-CloudTasks-*`、`X-Google-*`、`X-AppEngine-*`系のヘッダーを上書きできません。`emulator`プロファイルは、公式エミュレータの内部キュー名とヘッダーの上書きを維持します。
+
+タスクのディスパッチは、JSONのメンバー順序や空白を含め、エンキューされた本文のバイト列を保持します。strictプロファイルは、空、非JSON、バイナリの本文バイト列も受け付けます。emulatorプロファイルはJSONのみの受け付けを維持します。供給された本文を処理できるかどうかは、引き続きハンドラーが判断します。
+
+### `createTask`と`deleteTask`
+
+`strict`では、`createTask`と`deleteTask`は、各122ステップの2つの記録(2026-11-11)でのCloud Tasksの応答と同じように応答します。
+
+- 応答はTask自体です。`BASIC`または`FULL`ビュー、19桁の生成名(本番は19桁または20桁でした)、過去の`scheduleTime`は現在時刻になります。
+- エラーは`google.rpc`のJSONエラーで、本番と同じ順序で本番のチェックが行われます。未知のフィールド、`payload_type`、タスク名とID、15秒から30分までの`dispatchDeadline`、最大720時間先までの`scheduleTime`、最大1 MiBのタスクです。
+- キューにあるタスクの名前は409で拒否されます。
+- リトライは、期限切れの後に`X-CloudTasks-TaskPreviousResponse: 504`を伴い、先にキューの`minBackoff`だけ待機します。
+- 応答はCloud Tasksが出力したとおりに出力されます。同じフィールド順の複数行JSON、`application/json; charset=UTF-8`、引数エラーの`details`です。
+- `oidcToken`を指定したタスクには3セグメントの`Authorization: Bearer`トークンが配信されるため、ハンドラーで`request.auth`が存在します。トークンはエミュレータが発行する署名なしのもので、クレームはGoogleのものではありません。
+
+次の4つの設定は開発用のデフォルトで、`productionExact`が本番の値に設定します。明示的に指定したキーは`productionExact`より優先されます。[プロファイル](../../guides/profiles/)を参照してください。
+
+| 設定 | 開発用デフォルト | 本番 |
+|---|---|---|
+| `functions.taskNameReuse` | 完了したタスクの名前はすぐに空く | 本番モードでは最大3600秒間拒否される |
+| `functions.taskDispatchDeadlineSeconds` | 省略時または`"0s"`のとき60秒 | 本番のデフォルトは600 |
+| `functions.taskRetryDefaults` | 3回の試行 | 本番のデフォルトキューは合計100回の試行を許可する |
+| `functions.taskRetryBackoff` | | 本番のリトライ間隔は、十数回の失敗後に宣言された最大値を超えて伸びる |
+
+完了した名前の履歴は、全キューをまたいで65,536個の名前と、キュー名とタスク名のテキスト8 MiBに制限されます。どちらかの上限を超えると、3600秒の期間が切れる前であっても、古い名前から削除されます。この上限は`"retained"`モードにも適用されます。
+
+### 現在の処理が落ち着くのを待つ
+
+現在の処理が落ち着くのを待てばよいテストでは、`{ "scope": "runnable" }`を付けて`POST /v1/sessions/default:awaitIdle`を送ります(v0.26.0以降)。将来のスケジュールとリトライのバックオフはこのスコープをブロックしません。レート/同時実行で待機中の期限到来タスクとアクティブなHTTPリクエストはブロックします。スコープを省略すると、すべての処理を待ちます。[実行可能な処理を待つ](../../guides/test-worlds/#wait-for-runnable-work)を参照してください。
+
+## スケジュール関数
+
+スケジュールはFireemuの仮想クロック上で実行されます。`daemon.clockStart`で開始時刻を固定しない限り、このクロックは実時間に従うので、時間の経過とともに実行回が到来します。開始時刻を固定すると、クロックは止まったままになり、クロックを進めて実行回を到来させます。[時間とスケジュール関数](../../guides/time/)を参照してください。
+
+### 今すぐ実行
+
+待たずにスケジュール関数を実行する、または遅延タスクを解放するには、次のようにします。
+
+| | スケジュール関数 | タスクキュー関数(`scheduleTime`を待つタスク) |
+|---|---|---|
+| Emulator UIのFunctionsページ | すぐに実行する、またはクロックを次の実行回まで進める | 待機中のタスクが、期限時刻と**Run now**ボタン付きで表示される |
+| コントロールAPI | `POST /v1/sessions/default/functions/{name}:run` | 同じルートで待機中のすべてのタスクを解放する。`{"task": "<task id>"}`を付けると1つを解放する(未知のIDは404) |
+| 仮想クロック | `daemon.clockStart`を固定するか`daemon.clock = "frozen"`を設定し、`{"seconds": 86400}`(`{"millis": n}`、`clock:advanceTo`、`clock:set`も使えます)を付けて`POST /v1/sessions/default/clock:advance`を呼ぶか、Runtimeページを使う | 固定した`daemon.clockStart`とともに`functions.clock.tasks = "virtual"`を設定し、クロックを進める |
+
+コントロールAPIはUIのポートにはありません。そのアドレスは、起動時の出力の`control API:`行にあります。Authenticationが動作している場合はAuthenticationのポート(デフォルトは9099)、そうでなければ別のポートです。`fireemu exec`の下では`$FIREEMU_CONTROL_URL`で、`Authorization: Bearer $FIREEMU_CONTROL_TOKEN`を付けます(トークンが必要なのは`network.allowNonLoopbackHosts`が設定されている場合のみです)。`fireemu up`の例を示します。
+
+```sh
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/functions/nightly:run
+# {"enqueued":true,"function":"nightly"}
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 86400}'
+```
+
+未知の名前、またはスケジュールされていない名前は`400 INVALID_ARGUMENT`で応答します。手動実行は次の実行回を消費しません。[スケジュール関数を今すぐ実行する](../../guides/time/#run-a-scheduled-function-now)を参照してください。
+
+`strict`で第1世代スケジュールの`firebase-schedule-<function>-<region>`トピックにメッセージを発行した場合も、元のPub/Subデータ、属性、順序キー、メッセージIDを保持したままハンドラーが呼び出されます。通常のスケジュール実行回と手動実行は、引き続き1回だけ呼び出します。
+
+## イベントキューが満杯のとき
+
+ランタイムが保持する未配信イベントは、最大4096件(ペイロードは64 MiB)です。収まらないイベントが黙って失われることはなく、その動作はイベントの発生元によって異なります。
+
+- **Firestore、Storage、Pub/Subエミュレータ、コントロールのPub/Sub発行:** 書き込みまたは発行は拒否され、何も配信されません。コントロールの発行は`429 RESOURCE_EXHAUSTED`で応答します。
+- **Authentication:** ユーザーの作成または削除は、どちらの場合もコミットされます。そのイベントは上限付きキューに保持され、空きが戻ると古いものから配信されます。保持イベントが4096件を超えた分だけが破棄され、その破棄は計数されログに記録されます。
+
+<details>
+<summary>詳細</summary>
+
+- Firestore、Storage、Pub/Subエミュレータ、コントロールのPub/Sub発行(`POST /v1/sessions/{session}/pubsub/topics/{topic}:publish`)は、まずファンアウト全体を予約します。つまり、購読しているすべての関数へのすべてのメッセージと、`duplicate`フォールトが要求するコピー分です。収まらない場合、書き込みまたは発行は拒否され(コントロールの発行は`429 RESOURCE_EXHAUSTED`で応答しメッセージIDを発行しません)、何も配信されません。
+- Authのユーザーの作成または削除は、キューに空きがあるかどうかにかかわらずコミットされます。関数が遅れているからといって本番がサインアップを拒否することはないためです。キューがまだ受け取れないイベントは保持され、空きが戻ると古いものから、まとまった形で配信されます。`GET /v1/sessions/{session}/functions`は保持数を`authEventsPending`として示し、`await-idle`はそれを待ちます。保持されるイベントは最大4096件で、それを超えた分は破棄され、リソースレポートで`admission.auth_event_dropped`として計数され、ログに記録されます。セッションのリセットは、保持イベントをキューの残りとともに破棄します。
+
+</details>
+
+## ランナーの出力
+
+関数のログとランナーの標準エラー出力は、ローカルのログに転送されます。ランナーが起動ハンドシェイクの前に終了した場合、診断には終了ステータス、取得した標準エラー出力、標準出力の末尾の一部(上限あり)も含まれます。アプリケーションが書き出した出力から任意のシークレットが自動的に除去されることはありません。関数のコード内で認証情報を出力したり、環境をダンプしたりしないでください。
+
+## ソースのリロード
+
+NodeとPythonのコードベースは、ソースの変更を自動的にリロードします。
+
+- すでに受け付けられた呼び出しは、呼び出しのデッドラインに従いつつ、選択された世代で完了します。完了しない旧世代は、最後に残った呼び出しのデッドラインの1秒後に停止されます。デバッガーモードは除きます。
+- ウォッチャーの最初のスキャンより前の編集も検出され、リロード用のスナップショットはシャットダウン時に削除されます。
+- 検出されたトリガーマニフェストを変更する場合はFireemuの再起動が必要です。拒否されたリロードでは通常、前の世代が維持されます。
+- Nodeでは、固定の`--inspect-functions <port>`は例外です。置き換えのランナーがそのポートにバインドできるようになる前に、前のランナーを停止する必要があります。
+- Pythonはインスペクターオプションを無視し、リロードに失敗した場合は前の世代を維持します。Pythonの仮想環境は元のコードベースにリンクされたままです。インストール済みの依存関係を変更したあとは再起動してください。Pythonのバイトコードキャッシュは、監視とリロード用スナップショットから除外されます。
+
+Windowsでは、リロード用スナップショットは、ソースやローカルのシークレットファイルがコピーされる前に、保護されたDACLで作成されます。Fireemuはスナップショットディレクトリ、一時的な親ディレクトリ、祖先に安全でない権限やリパースポイントがないかを確認し、30秒以内に確認できない場合はスナップショットを拒否します。これにはWindows PowerShellが必要です。[トラブルシューティング](../../guides/troubleshooting/)を参照してください。
+
+## プロセス分離(`functions.isolation`)
+
+本番ではすべての関数が専用のインスタンスで実行されます。
+
+- 関数の識別情報(`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE`、`K_SERVICE`)と、その関数が宣言したシークレットは、最初から環境に入っています。
+- 関数ごとに独自のモジュールグラフを持ちます。
+- 第2世代のインスタンスは、その1つの関数の呼び出しを、同時に最大`concurrency`件まで処理します(第1世代は1件です)。
+- インスタンスは最初のリクエストで起動します。
+
+`functions.isolation`は、どこまで厳密にこれに従うかを選択します。
+
+| `functions.isolation` | プロセス | 意味 |
+|---|---|---|
+| `"codebase"`(デフォルト。`productionExact`は例外) | コードベースごとに1つのランナープロセス | 起動が最も軽い。関数は1つのモジュールグラフを共有するため、モジュールレベルの状態、キャッシュ、シングルトンはすべての関数から見えます。プロセス環境も共有するため、`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE`、`K_SERVICE`は最も最近開始された呼び出しを指します。そのため、別の関数が呼ばれている間に`await`のあとでこれらを読む関数は、他の関数の値を見ることになります。`.secret.local`のローカルシークレットを使う呼び出しは単独で実行されるので、デプロイされた関数にあるはずの並行性も隠してしまいます。シークレットは、それを宣言していないすべての関数に対して、ユーザーコードの読み込み中も呼び出しの実行中も隠されます。 |
+| `"function"`(`productionExact`でのデフォルト) | 各コードベースの関数ごとに1つのランナープロセス | 本番と同じ形です。各プロセスは独立してコードベースを読み込み、その関数の識別情報と、その関数が宣言したローカルシークレットが環境に入った状態で起動する(そのためそれらを読むモジュールレベルのコードにも見える)ので、その関数だけを、関数に設定された並行性で提供します。呼び出しごとの書き換え、隠蔽、キューイングは行いません。ある関数のプロセスがクラッシュまたは再起動しても、他の関数には影響しません。 |
+
+```json
+{ "schemaVersion": 1, "functions": { "isolation": "function" } }
+```
+
+### `"function"`でのプロセスの起動方法
+
+`"function"`では、Fireemuはまずディスカバリープロセスを起動してコードベースのエクスポートを読み取り、それを再び停止します。その後、関数専用のプロセスが、本番のインスタンスと同様に、その関数への最初のリクエスト、イベント、タスクで起動します。その間に届いた処理はプロセスを待ち、順序どおりに1回だけ配信されます。コールドスタートによってイベントが破棄されたり順序が入れ替わったりすることはありません。
+
+次の2種類の関数は、代わりにコードベースとともに起動します。
+
+- blocking Auth関数。サインアップが短いデッドラインの中でコールドスタートのコストを払ってはならないためです。
+- `--inspect-functions`が指定されたときのすべての関数。各プロセスがデバッガーのポートを前もって報告するためです。
+
+プロセスは一度起動すると起動したままになり、アイドル中のプロセスの停止はまだ行われません。プロセスが終了した関数は、コードベースのプロセスと同様に、次に使われたときに再び起動されます。ソースのリロードは、コードベースのすべてのプロセスをまとめて置き換えます。リロードによってコードベースが提供する関数が変わる場合は拒否され、前のプロセスが動き続けます。すべてのプロセスのログ行は、コードベースのプロセスと同様に転送され、コントロールAPIのステータスには、プロセスごとに1エントリが`function`と`started`かどうかとともに一覧表示されます。これはPythonコードベースにも適用されます。
+
+### コスト
+
+使用される関数ごとに、1つのプロセスと、読み込まれたコードベースのコピーが1つ必要です。Node 24と`firebase-functions` 7を使ったノートPCでの測定値です(常駐メモリは各プロセスで共有ページを数えるため、実際の合計より大きく見えます)。
+
+| コードベース | `"codebase"` | `"function"`、すべての関数を起動 |
+|---|---|---|
+| 10関数 | 起動と停止に1.3秒、121 MiB、1プロセス | 2.5秒、1.2 GiB、10プロセス |
+| 22関数 | 1.0秒、126 MiB、1プロセス | 3.0秒、2.7 GiB、22プロセス |
+
+プロセスは最初の使用時に起動するため、少数の関数にしか触れない実行ではそれらの分だけ負担が生じ、各関数の最初の呼び出しはコールドスタート(約1秒)を支払います。すべての関数を呼び出すテストスイートは、右側の列に行き着きます。このため、開発とCIでは`"codebase"`がデフォルトのままで、`productionExact`は`"function"`を選択します。
+
+### `"function"`が拒否される場合
+
+- コードベースで提供される関数が64個を超える場合。`functions.isolation`をデフォルトの`"codebase"`に設定すると、1つのプロセスで提供できます。
+- `functions.runner`と一緒に明示的に指定した場合(カスタムランナーコマンドはコードベースごとに1回起動されます)。
+- 固定の`--inspect-functions <port>`と一緒に明示的に指定した場合(プロセス同士はポートを共有できません。ポートなしの`--inspect-functions`では、各プロセスが独自のポートを持ちます)。
+
+`productionExact`だけが`"function"`を選んだ場合、後の2つのケースでは拒否せずに`"codebase"`を使います。明示的な`functions.isolation = "codebase"`は常に優先されます。
+
+## デバッグ
+
+`--inspect-functions`を使うと、FunctionsランナーをNodeインスペクターの下で実行できます。
+
+```sh
+npx fireemu up --inspect-functions 9229
+```
+
+## 関数の固定リストを提供する(`functions.manifest`)
+
+`functions.manifest`は、ディスカバリーが報告する提供対象の集合を置き換えるJSONファイルを指定します。`functions`配列を保持し、各エントリには`name`と`trigger`があります。`trigger`の`type`は`http`、`firestore`、`database`、`storage`、`pubsub`、`schedule`、`auth`、`blockingAuth`、`tasks`、`eventarc`のいずれかで、任意で`region`、`generation`、`entryPoint`、`timeoutSeconds`、`retry`、`concurrency`を指定できます。
+
+Fireemuは引き続きコードベースを読み込んでディスカバリーを行うため、ランナーは起動し、コードは検査されます。提供される関数、そのトリガーの種類、オプションはファイルの内容に従います。ファイルにないエクスポートは提供されず、関数はファイルが与えたトリガーで提供されます。
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "functions": { "manifest": "manifest.json" }
+}
+```
+
+```json
+{
+  "functions": [
+    { "name": "hello", "trigger": { "type": "http", "callable": false } },
+    {
+      "name": "ping",
+      "trigger": {
+        "type": "http",
+        "callable": true,
+        "enforceAppCheck": false,
+        "consumeAppCheckToken": "disabled"
+      }
+    }
+  ]
+}
+```
+
+`hello`(`onRequest`)、`ping`(`onCall`)、`worker`(`onTaskDispatched`)をエクスポートするコードベースでは、`functions loaded: hello, ping`と表示されて起動し、`worker`は提供されません。このキーがなければ、3つともすべて提供されます。
+
+### ファイルで変更できること、できないこと
+
+- パスは、設定ファイルがどのディレクトリにあっても、作業ディレクトリから読み取られます(正規ファイルのほかのファイル設定と同じです。[設定ファイル](../../guides/configuration/)を参照)。ファイルがない、JSONではない、または無効なエントリがある場合は、パスまたは関数を示して起動が停止します(`functions manifest manifest.json: No such file or directory`、`manifest: function "hello": unsupported trigger type "carrierpigeon"`)。`strict`では、本番が拒否する宣言はここでも拒否されます。
+- 適用されるのは1つのコードベースです。複数を読み込む実行は起動を拒否します(`functions.manifest replaces discovery for one codebase, and this run loads 2 (a, b); name the one to load with --only functions:<codebase> or drop functions.manifest`)。
+- ファイルは、コードが何であるかを変更できません。ファイル内のblocking Auth関数は、ディスカバリーが見つけたものと一致している必要があり、一致しない場合は起動が拒否されます(`... invents Blocking Auth hook ... it must match codebase discovery`)。
+- [App Check](../app-check/)が有効な間(`strict`のデフォルト、`emulator`では`appCheck.enabled: true`、`appCheck.enabled`が`false`のときは無効)は、callableの扱いもファイルでは変更できません。次のものは起動時に拒否されます。
+  - `"callable": false`で列挙されたcallable、または`"callable": true`で列挙された`onRequest`関数。
+  - タスクキュー、blocking関数、イベントトリガーとして列挙されたcallable(`... declares "ping" as a non-HTTP function, but the codebase declares it callable ...`。これは、http関数として`callable: true`とコードが宣言するApp Checkオプションを付けて列挙する、ファイルから削除する、またはタスクキューにするつもりなら`onTaskDispatched`でエクスポートする、のいずれかを促します)。
+  - `enforceAppCheck`または`consumeAppCheckToken`がコードと異なるcallable。
+  - コードベースがエクスポートしていないHTTP関数。
+
+### App Checkがオフのとき
+
+App Checkがオフの場合、上記のcallableチェックは実行されず、blocking Authの一致確認のみが適用されます。誤ったラベルのエントリが指すcallableラッパーに届くオーバーライドはありません。
+
+- ランナーにトークン検証のスキップは指示されません(それを行うのはApp Checkプロトコルだけです)。
+- デーモンは、転送するすべてのリクエスト(タスクのディスパッチを含む)から、エミュレータ内部の認証オーバーライドフィールド(`x-callable-context-auth`、`x-original-auth`)を取り除きます。
+- ラッパーのトークンチェックはAuthエミュレータのもので、タスクで到達する`onTaskDispatched`関数の場合とまったく同じです。
+
+`strict`では、そのようなキューに送られたタスク、またはファイルが`onRequest`関数(`"callable": false`)として列挙したcallableへのリクエストも、callableリクエストが通るBearerチェックを通ります(プリフライトと認証情報なしのリクエストは通りません)。そのため、プロジェクトのユーザーのものではないBearerは、コードの実行前に401で応答されます。タスクの場合は失敗したディスパッチであり、キューのリトライポリシーに従って、諦めるまでリトライされます。拒否のたびに関数名を示す行(認証情報は決して出力しません)が出力され、起動時にも関数名を示す警告が出力されます。公式エミュレータも、`functions.yaml`とコードを比較しません。
+
+## 本番との違い
+
+### トリガーに関する注意点
+
+- **Realtime Database、第2世代。** ローカルのRealtime Databaseインスタンスは`us-central1`にあるため、他のリージョンの第2世代データベーストリガーは発火せず、読み込み時にその旨の警告が表示されます。
+- **Fireemuがイベントを配信しないプロダクト。** Data Connect(保留中)などのプロダクトのトリガーは実行できません。デフォルトでは、ディスカバリーはそれをエクスポートするコードベースを拒否します(`functions.unservedTriggers = "refuse"`)。`"report"`に設定すると、それぞれを報告して残りを読み込みます。[Emulator UI](../../guides/ui/)のFunctionsページと、コントロールAPIの`GET /v1/sessions/default/functions`には、無視されたすべてのエクスポートが理由とともに一覧表示されます。
+- **Remote Config。** ハンドラーはローカルのインジェクションアクション経由でのみ実行され、本番のイベントの形は観測されていません。
+- **Storageアーカイブイベント。** バージョニングが有効になったバケット(`PATCH /storage/v1/b/{bucket}`に`{"versioning":{"enabled":true}}`)でのみ発火し、その形は記録されていません。
+- **`beforeEmailSent`。** `strict`でのみ実行されます。
+
+### 実行されないエクスポート
+
+Fireemuが提供できないエクスポート(オプションが解決できない関数や、認識できないイベントタイプ)はスキップされます。それぞれ、起動時に標準エラー出力へ`warning:`として出力され、続いてサマリー行が出力されます。本番ならデプロイされて実行される関数がここでは一切実行されないため、「副作用がないこと」を検証するテストが間違った理由で成功してしまいます。警告を読んでください。`functions.unservedTriggers`は、Fireemuが提供しないプロダクトを引き続き拒否します。
+
+### 本番検証
+
+Node.jsコードベースは、HTTP関数とcallable関数、イベントトリガー、スケジュール関数について、デプロイされた関数の記録に対して検証されています。[互換性の表](../../compatibility/#production-verification)を参照してください。
+
+Pythonコードベースには、6つのイベントファミリーについて独自の検証の記述があります。Pythonのページにある[本番検証](../functions-python/#production-verification)を参照してください。
+
+## 関連
+
+- [Cloud Functions (Python)](../functions-python/)
+- [時間とスケジュール関数](../../guides/time/)
+- [Pub/Sub、Eventarc、Cloud Tasks](../pubsub-eventarc/)
+- [プロファイル](../../guides/profiles/)

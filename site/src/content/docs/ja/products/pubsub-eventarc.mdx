@@ -1,0 +1,165 @@
+---
+title: Pub/SubとEventarc
+description: Cloud Pub/Subメッセージ、Eventarcカスタムイベント、Cloud TasksをFunctionsやサーバーコードからローカルで発行・受信します。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemuは、gRPCとRESTで`google.pubsub.v1` APIを、カスタムイベント用のEventarcリスナーを、タスクキュー関数用のCloud Tasksエミュレータを提供します。
+
+<Facts items={[
+  { label: 'ステータス', value: '対応済み' },
+  { label: 'デフォルトポート', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
+  { label: '起動条件', value: 'Pub/Subは設定時。EventarcとCloud TasksはFunctionsとともに' },
+  { label: '本番検証', value: '互換性の表を参照', href: 'compatibility/#production-verification' },
+]} />
+
+## テストできること
+
+- プッシュ、フィルター、順序キー、StreamingPull、スナップショット、シークを含む[Pub/Subのトピック、サブスクリプション、配信](#cloud-pubsub)。
+- 本番のIAM付与がある場合とない場合の[デッドレター転送](#dead-letter-topics)。
+- [認証情報の有無によるPub/Subリクエスト](#authentication)。
+- [`onCustomEventPublished`関数に配信されるカスタムイベント](#eventarc)。
+- [`onTaskDispatched`関数に配信されるタスク](#cloud-tasks)。
+
+## 接続
+
+| サービス | デフォルトアドレス | 環境変数 | 起動条件 |
+|---|---|---|---|
+| Cloud Pub/Sub | `127.0.0.1:8085` | `PUBSUB_EMULATOR_HOST` | 設定されたとき: `firebase.json`の`emulators.pubsub`、`daemon.pubsubPort`、`--pubsub-port`、または`--only pubsub` |
+| Eventarc | `127.0.0.1:9299` | `CLOUD_EVENTARC_EMULATOR_HOST` | Functionsコードベースが読み込まれたとき |
+| Cloud Tasks | `127.0.0.1:9499` | `CLOUD_TASKS_EMULATOR_HOST` | Functionsコードベースが読み込まれたとき |
+
+`fireemu exec`は、Google Cloudクライアントライブラリが読み取る`PUBSUB_EMULATOR_HOST`を設定します([環境変数](../../reference/environment-variables/)を参照)。Fireemuは、`CLOUD_EVENTARC_EMULATOR_HOST`と`CLOUD_TASKS_EMULATOR_HOST`を、それらのリスナーを起動するときに設定します。
+
+## Cloud Pub/Sub
+
+トピック、サブスクリプション、発行、プルと確認応答、プッシュ配信、フィルター、順序キー、デッドレタートピック、StreamingPull、スナップショット、シークに対応しています。対応していないものについては、[本番との違い](#differences-from-production)を参照してください。
+
+### トピックのメッセージストレージポリシー
+
+`profile = "emulator"`では、トピックの`messageStoragePolicy`(`allowedPersistenceRegions`と`enforceInTransit`)は、公式エミュレータと同様に、送信されたとおりに保存され、getとlistで返され、`UpdateTopic`(`updateMask`付きのREST `PATCH`、マスクは`messageStoragePolicy`とその2つのメンバー)で変更されます。
+
+- 未知のリージョン、重複したリージョン、空のリージョンリスト、および空のポリシーは、いずれもそのまま保持されます。
+- ポリシーを指すマスクでポリシーが送られない場合は、ポリシーが削除されます。
+- 何も強制されません。メッセージはリージョンによってルーティングされません。
+
+`strict`プロファイルは、このフィールドを`UNIMPLEMENTED`(RESTでは501)と説明付きで拒否します。本番はすべてのリージョンをGoogle CloudのPub/Subリージョン一覧と照合します(`no-such-region1`には`INVALID_ARGUMENT`で応答し、`us-central1`は受け付けました)。Fireemuには、照合できる出典付きの一覧がありません。`strict`ではこのフィールドを省略するか、保持したい場合はemulatorプロファイルを選択してください。
+
+### トピックのキー名とタグ
+
+`profile = "emulator"`では、トピックの`kmsKeyName`と`tags`は送信されたとおりに保存され、検証も強制もなしにRESTとgRPCで返されます。`UpdateTopic`は`kms_key_name`を置換またはクリアできます。タグは変更できません。
+
+strictプロファイルは、本番の検証がFireemuにはないCloud KMSとResource Managerのインベントリと権限に依存するため、これらのフィールドを拒否します。公式エミュレータ0.8.35はこれらの値を検証せずに保存し、すべての更新マスクを拒否します。本番の動作は記録されていません。
+
+### デッドレタートピック
+
+`strict`では、`maxDeliveryAttempts`を使い切ったメッセージは、プロジェクト番号なし、IAM付与なしで、本番が追加するメタデータ属性を付けてデッドレタートピックに転送されます。
+
+本番は、Pub/Subサービスエージェントがサブスクリプションに対する`roles/pubsub.subscriber`とデッドレタートピックに対する`roles/pubsub.publisher`を保持して初めて転送します。`SetIamPolicy`を通じて同じ付与を必須にするには、`pubsub.deadLetterAuthorization`を`"iam"`に設定します(または`productionExact`を設定するか、`pubsub.projectNumbers`を指定します)。その場合、起動時のバナーに、付与すべきサービスエージェントが表示されます。
+
+### RESTフロントエンドでのキャッシュされた404 (`pubsub.restNegativeCache`)
+
+本番のRESTフロントエンドは、サブスクリプションの作成直後に、そのサブスクリプションの`GET`に対してキャッシュされた`404`で応答することがあります。`pubsub.restNegativeCache`は、すべてのプロファイルでデフォルトが`"off"`で、`productionExact`もこれを選択しません。
+
+このキーを`"production"`に設定すると(strictプロファイルのみ)、実際の`404`を返した`GET`または`PATCH`が、**同じ接続**での同じサブスクリプションの`GET`、`PATCH`、`DELETE`に対するキャッシュエントリを作り、`PATCH`や`DELETE`は実行されなくなる動作がモデル化されます。
+
+モデルが行うことと、未解決のまま残っていること:
+
+- **ウィンドウ。** 境界は明確ではありません。ある記録では10.25秒から10.50秒のすべての読み取りが外れ、別の記録では同じ経過時間の外れに隣接して10.40秒から10.50秒でヒットし、それ以前の記録では10.20秒までヒットしました。本番は10.2秒から10.5秒付近で非決定的であり、fireemuの決定的な10.35秒のウィンドウは既知の差異です。
+- **404より前の`GET` 200。** 404の7秒前の`GET` 200は、v5の両方の実行でそれを免除しました。4秒前と13秒前は未解決です。モデルは、ウィンドウ内の`GET` 200を免除します。
+- **DELETEと一度も作成されていない名前。** DELETE 404によるエントリの作成と、一度も作成されていない名前での有効化は未解決です。モデルはDELETEではエントリを作らず、一度も作成されていない名前ではエントリを作ります。
+- **エントリから応答されないもの。** 別の接続、`:pull`や`:getIamPolicy`、スナップショット、トピック、gRPC、クエリ文字列付きのリクエスト。
+- **エントリを作らないもの。** 失敗した作成と、`404`で応答する`:seek`。
+
+有効期限はデーモンの論理クロックを使います。クロックが凍結されている場合は、10.35秒のウィンドウを過ぎるまで進める、別の接続を使う、またはキャッシュを無効にすることで、キャッシュされた404から復旧できます。
+
+### 認証
+
+`strict`では、認証情報のないリクエストは受け付けられるため、認証情報なしで`PUBSUB_EMULATOR_HOST`を使うクライアントも動作します。認証情報を提示したリクエストは検査されますが、Fireemuは本物のGoogle OAuthトークンをオフラインでは検証できないため、そのようなリクエストは401で拒否されます。エミュレータに対しては、たとえば`NoCredentialsProvider`を使うJavaクライアントのように、認証情報なしのクライアントを使ってください。
+
+認証情報が必要なテストでは、ローカルのフィクスチャ用Bearerトークンを設定します。すると、エンドポイントはその値と完全に一致する`Authorization: Bearer <token>`のみを受け付け、本番と同様に認証情報のないリクエストを拒否します。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[pubsub.authentication]
+# Require this non-empty local bearer token for strict-profile Pub/Sub requests.
+localBearerToken = "fixture-token"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "pubsub": {
+    "authentication": {
+      "localBearerToken": "fixture-token"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+作り物の値を使ってください。本番の認証情報を再利用してはいけません。
+
+## Eventarc
+
+Functionsコードベースが読み込まれると、Fireemuは`127.0.0.1:9299`でEventarcリスナーを起動し、`CLOUD_EVENTARC_EMULATOR_HOST`を設定します。`onCustomEventPublished`で宣言された関数は、そのチャンネルに発行されたイベントを受け取ります。
+
+Admin SDKは発行の前に必ず認証情報にアクセストークンを要求しますが、CIにはGoogleの認証情報がありません。アプリにダミーの認証情報を与えてください。
+
+```js
+import { initializeApp } from 'firebase-admin/app';
+import { getEventarc } from 'firebase-admin/eventarc';
+
+const app = initializeApp({
+  projectId: 'demo-app',
+  credential: { getAccessToken: async () => ({ access_token: 'owner', expires_in: 3600 }) },
+});
+await getEventarc(app).channel('locations/us-central1/channels/firebase').publish({
+  type: 'com.example.thing.done',
+  source: 'https://example.com/things',
+  data: { id: 'e1' },
+});
+```
+
+デフォルトでは、公式エミュレータが検査しないのと同様に、リスナーは認証情報を検査しません(`eventarc.authentication: "permissive"`)。`"production"`(または`productionExact`)にすると、存在しない、不正な形式の、またはJWTの形のBearerは、本番と同じ401で拒否されます。
+
+## Cloud Tasks
+
+Functionsコードベースが読み込まれると、Fireemuは`127.0.0.1:9499`でCloud Tasksエミュレータを起動し、`CLOUD_TASKS_EMULATOR_HOST`を設定します。タスクキュー関数(`onTaskDispatched`)は、レート制限とリトライ設定を伴って、自分向けにエンキューされたタスクを受け取ります。`strict`では、タスクの`scheduleTime`によってタスクが保留されます。待機中のタスク、**Run now**、仮想クロックについては、[タスクキュー](../functions/#task-queues)を参照してください。
+
+## 本番との違い
+
+### 対応していないPub/Sub機能
+
+スキーマ、BigQueryおよびCloud Storageのサブスクリプション配信、`UpdateTopic`などの一部のAPIには対応していません。emulatorプロファイルでは、`UpdateTopic`は[トピックのメッセージストレージポリシー](#topic-message-storage-policy)と[トピックのキー名とタグ](#topic-key-name-and-tags)で説明したフィールドを変更します。
+
+### `strict`プロファイルが拒否するフィールド
+
+- `messageStoragePolicy`: [トピックのメッセージストレージポリシー](#topic-message-storage-policy)を参照してください。
+- `kmsKeyName`と`tags`: [トピックのキー名とタグ](#topic-key-name-and-tags)を参照してください。
+
+### その他の違い
+
+- デッドレター転送は、求めない限りIAM付与を必要としません。[デッドレタートピック](#dead-letter-topics)を参照してください。
+- RESTのネガティブキャッシュはデフォルトでオフです。オンにした場合、その10.35秒のウィンドウは決定的ですが、本番のウィンドウはそうではありません。[RESTフロントエンドでのキャッシュされた404](#cached-404-on-the-rest-frontend-pubsubrestnegativecache)を参照してください。
+- 本物のGoogle OAuthトークンを使ったPub/Subリクエストは、トークンをオフラインでは検証できないため、`strict`では401で拒否されます。[認証](#authentication)を参照してください。
+- Eventarcリスナーは、`eventarc.authentication`が`"production"`でない限り認証情報を検査しません。[Eventarc](#eventarc)を参照してください。
+
+## 関連
+
+- [Cloud Functions](../functions/)
+- [タスクキュー](../functions/#task-queues)
+- [プロファイル](../../guides/profiles/)
+- [環境変数](../../reference/environment-variables/)

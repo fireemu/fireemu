@@ -1,0 +1,167 @@
+---
+title: Cloud Functions (Python)
+description: Python製のCloud Functions for Firebaseコードベースをローカルで実行し、本番やNode.jsコードベースとの違いを確認します。
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+FireemuはNode.jsのコードベースと並べてPythonのコードベースを実行します。このページではPython固有の内容を扱います。Node.jsランナーについては[Cloud Functions](../functions/)のページで説明しており、そこにある節のうちPythonコードベースにも当てはまるもの([callableでのApp Check](../functions/#app-check-in-callables)など)は、その旨が記されています。
+
+<Facts items={[
+  { label: 'ランタイム', value: 'python310からpython314' },
+  { label: 'テスト済みSDK', value: 'firebase-functions 0.6.0' },
+  { label: 'プラットフォーム', value: 'LinuxとmacOS' },
+  { label: '本番検証', value: '6つのイベントファミリーの記録済みケース', href: 'compatibility/#production-verification' },
+]} />
+
+## テストできること
+
+- Python SDKで書かれた[HTTP、callable、イベント、スケジュール、タスクキュー、Auth blockingの各関数](#supported-triggers)。
+- 本番のオーディエンス失敗がある場合とない場合の[Auth blocking関数](#auth-blocking-functions-and-the-audience-check)。
+- `flask.request`を通じた[CloudEventハンドラーが受け取るリクエスト](#event-bodies)。
+- Pythonランナーが扱う[App Check、シークレット、リロード、スケジューリング](#differences-from-production-and-the-firebase-cli)。
+
+## セットアップ
+
+次のいずれかに当てはまるコードベースがPythonです(Firebase CLIが使う順序です)。
+
+- `firebase.json`の`runtime`が`python310`、`python311`、`python312`、`python313`、`python314`のいずれかである。
+- `runtime`が宣言されておらず、`package.json`がなく、`requirements.txt`がある。
+
+Fireemuは、コードベース自身の仮想環境のインタープリター、つまり常に`<source>/venv/bin/python`で実行します。環境の作成やパッケージのインストールは行いません。
+
+```sh
+cd functions
+python3.12 -m venv venv
+venv/bin/pip install -r requirements.txt   # includes firebase-functions
+npx fireemu up
+```
+
+何かを起動する前に、fireemuは環境を確認し、次の場合は停止します。
+
+- `venv`がない、または`firebase_functions`をインポートできない場合は、Firebase CLIのメッセージで停止します。
+- インタープリターのPythonが宣言された`runtime`と異なる場合は、両方のバージョンを示すメッセージで停止します。
+
+テスト済みのSDKは`firebase-functions` 0.6.0です。LinuxとmacOSのみです。
+
+## 対応するトリガー
+
+| トリガー | Python SDK |
+|---|---|
+| HTTP | `https_fn.on_request` |
+| Callable | `https_fn.on_call` |
+| Firestoreドキュメントトリガー | `on_document_created`、`updated`、`deleted`、`written`、および`_with_auth_context`版 |
+| Pub/Sub | `pubsub_fn.on_message_published` |
+| Cloud Storage | `storage_fn.on_object_finalized`、`deleted`、`archived`、`metadata_updated` |
+| Eventarcカスタムイベント | `eventarc_fn.on_custom_event_published` |
+| Realtime Database | `db_fn.on_value_created`、`updated`、`deleted`、`written` |
+| スケジュール関数 | `scheduler_fn.on_schedule` |
+| タスクキュー関数 | `tasks_fn.on_task_dispatched` |
+| Auth blocking関数 | `identity_fn.before_user_created`、`before_user_signed_in` |
+
+callableはAuthエミュレータのユーザーを参照します。fireemuが提供しないプロダクトのトリガーはコードベースの読み込み時に報告され、実行されることはありません。`functions.unservedTriggers`が`"report"`でない限り、ディスカバリーはそのようなコードベースを拒否します。これはCloud Functionsのページの[対応するトリガー](../functions/#supported-triggers)に挙げたプロダクトと同じ扱いです。
+
+## Auth blocking関数とオーディエンスチェック
+
+firebase-functions (Python) 0.6.0とfirebase-tools 15.28.2では、本番は`cloudfunctions.net`をオーディエンスとするトークンを配信しますが、Python SDKはこれを拒否します。関数はフェイルクローズドとなり、サインアップは503 `Error code: 47`を返します。
+
+デフォルトでは、fireemuは公式エミュレータと同様に関数を実行し、この本番の失敗についての診断行を出力します。この失敗を再現するには、`productionExact`を`true`に設定するか、strictプロファイルで`functions.authBlockingToken`を`"production"`に設定してください。
+
+Node関数は本番と同じ形のトークンを受け取りますが検証しないため、従来どおりに動作します。以降のfirebase-functionsまたはfirebase-toolsのリリースでオーディエンスの規則が変わる可能性があります。この設定は、コードベース自身の仮想環境にインストールされたSDKに従い、記録されているのは0.6.0のみです。
+
+## イベント本文
+
+CloudEventハンドラーは`flask.request`を読み取れます。これは、バイナリモードの`ce-*`ヘッダー、コンテンツタイプ、長さ、本文を含め、配信する`POST /`を表します。Firestoreはprotobufの本文を使います。
+
+`strict`では次のとおりです。
+
+- Pub/Subは、ソート済みでコンパクトなJSONに改行を付けたものを使います。
+- Storageは、記録されたインデント付きJSONレイアウトを使います。
+- Eventarcは、パブリッシャーのJSON本文テキストを保持します。
+- トレースコンテキストは、CloudEvent属性ではなく通常の`traceparent`ヘッダーです。
+- Firestoreには`dataschema`があります(`strict`のみ。作成イベントについて記録されており、ほかのイベントタイプは未観測です)。
+
+JSONのイベント本文について、emulatorプロファイルはデーモンがフレーミングしたJSON値のテキストを維持しますが、Pub/SubだけはSDKのスネークケースのエイリアスを追加し、本文をコンパクトにします。
+
+Realtime Databaseの本文レイアウトは未記録です。`Function-Execution-Id`、`Forwarded`、`X-Forwarded-For`などのCloud Runの認可ヘッダーとIDヘッダーは再現されません。
+
+## 本番検証
+
+Pythonコードベースは、6つのイベントファミリーの記録済みケースについて、`strict`プロファイルでの2つの独立した本番記録を使って本番に対して検証されています。対象は、Firestore(作成イベントと更新イベント)、Pub/Sub、Cloud Storage(finalizedイベント)、Eventarcカスタムイベント、Cloud Scheduler、Cloud Tasks(HTTPパススルー)です。比較は、Python SDKが参照する値とリクエストの射影を対象とします。[互換性の表](../../compatibility/#production-verification)を参照してください。
+
+PythonのAuth blocking関数は検証されておらず、Pythonコードベースの本番へのデプロイも比較されていません。記録された`strict`の動作とemulatorプロファイルとの違いは、それらの表と以下の各節に既知の差異として記載しています。
+
+## 本番およびFirebase CLIとの違い
+
+Pythonコードベースは、次の点で本番およびFirebase CLIと異なります。
+
+### コードベースごとに1プロセス
+
+デフォルトでは、1つのPythonプロセスがコードベース全体を提供します。本番では各関数に専用のインスタンスが与えられ、CLIでは専用のプロセスが与えられます。`functions.isolation = "function"`にすると、代わりに関数ごとに1つのプロセスが起動します([プロセス分離](../functions/#process-isolation-functionsisolation)を参照)。この節の残りと[シークレット](#secrets)の節は、デフォルトの動作を説明します。
+
+- モジュールレベルの状態は関数間で共有されます。
+- `@init`コールバックは、プロセスごとに1回、いずれかの関数の最初の呼び出し時に実行されます。
+- 呼び出しが重なった場合、`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE`、`K_SERVICE`は最も最近開始された関数を指します。
+
+### 時間
+
+時間は実時間です。Pythonのコードは仮想クロックに移されないため、`datetime.now()`は`daemon.clock`の設定を無視します。Functionsランナーに仮想の日付を求める設定は、Pythonコードベースでは拒否されます。
+
+### ソースのリロード
+
+Pythonのソースの変更は自動的にリロードされます。
+
+- 有効な編集は、一貫したソースのスナップショットから置き換えを開始します。
+- 無効な編集では、最後に正常だった世代が提供され続け、その後の有効な編集で復旧できます。
+- ソース内にあるファイルまたはディレクトリへの通常のシンボリックリンク(ソースディレクトリ外を指すターゲットを含む)は、各スナップショットでリンク名の下に実体化されます。エイリアス経由の編集もリロードを引き起こします。
+- `venv`内の変更はリロードを引き起こさないため、インストール済みの依存関係や仮想環境を変更したあとはFireemuを再起動してください。
+- Pythonのバイトコードキャッシュ(`__pycache__`、`.pyc`、`.pyo`)は無視されます。
+
+### `async def`ハンドラー
+
+`async def`ハンドラーは実行されません。Python SDKはハンドラーをawaitしないため、本番では`async`のイベント関数やスケジュール関数の本体は黙ってスキップされます(`async`のHTTP関数は500で応答します)。Fireemuは、そのような呼び出しをこの理由で失敗として報告し、`async`のHTTP関数もこの理由とともに500で応答します。ハンドラーは`def`で宣言してください。
+
+### スケジュール関数
+
+スケジュール関数は、Cloud Schedulerが呼び出すのと同じように、SDKのリクエストラッパーを通じて呼び出されます。例外を送出するハンドラーはSDKによってログに記録され、その試行は失敗します。ハンドラーが参照するスケジュール時刻は、strictプロファイルではロサンゼルス時間、emulatorプロファイルではUTCで書かれます(同じ時点です)。
+
+### シークレット
+
+`.secret.local`のシークレットは、それを宣言した関数が実行されている間だけ環境に存在します。
+
+- シークレットを持つ関数は、到着順に単独で実行されます。
+- シークレットを持たないすべての関数は、すべてのローカルシークレットが隠された状態で、同様の他の関数と並んで実行されます。シークレットを持たない関数同士が互いを待たせることはありません。
+- この分離は、呼び出しとそのレスポンスの間だけ続きます。関数が後に実行したままにする処理(起動したスレッドや子プロセスなど)は共有プロセスで実行され、その時点で環境にあるものをすべて参照できます。Nodeランナーも同じ動作です。
+- シークレットを持つ関数が同じコードベースの別の関数を同期的に呼び出す(たとえば自身のURLへのHTTPリクエスト)と、自分が保持しているゲートを待ち、終了しません。これはNodeランナーと同じです。そのような関数は非同期で呼び出すか、呼び出し側にシークレットを持たせないでください。
+
+### イベント時刻の形式
+
+PythonのStorageとEventarcのハンドラーは、イベントの`time`を小数秒のパターンで解析するため、本番のSDKは秒単位の時刻では失敗します。strictプロファイルは、本番と同じ形で時刻を配信します。emulatorプロファイルは、公式エミュレータのイベントが常にミリ秒を持つのに合わせて、秒単位の時刻に`.000`を付加します。
+
+### デバッガー
+
+`--inspect-functions`は、Firebase CLIと同様に、警告を出して無視されます。
+
+### App Check
+
+PythonのcallableのApp Checkは、本番と同様にPython SDK自身が検査します。SDKはAdmin SDKで`X-Firebase-AppCheck`トークンを検証し、FireemuはこのチェックをApp Checkエミュレータの鍵に向けます。そのため、エミュレータが署名したトークンだけが受け付けられ、`enforce_app_check=True`のcallableは、それ以外のすべての呼び出しに401で応答します。
+
+- ランナーは、これらの鍵をループバックアドレスからのみ、リダイレクトを辿らず、プロキシも使わずに、自分で取得します。
+- SDKのチェックに加えて、有効期限と、エミュレータが発行するのとまったく同じ形式の発行者を要求し、プロジェクト番号が`projects/<number>`のオーディエンスと一致している必要があります。オーディエンスの規則はSDK自身のもの(`projects/<project id>`)です。
+- これにはPyJWT 2.10.1以降が必要で、Admin SDK自身の制約がすでにこれを含意しています。それより古いものでは何も通知されず、ヘッダーは取り除かれます。
+- 実行にApp Checkエミュレータがある場合に動作します。strictプロファイルはFunctionsとともにこれを起動します。ない場合は、関数の前にヘッダーが取り除かれ、どのcallableもトークンを参照しません。
+
+Nodeとの違い:
+
+- Python SDKは、トークンを鍵だけで検査します。Node callableのトークンは、デーモンによってプロジェクトの現在のエポックとアプリの状態に対しても検査されるため、Pythonのトークンは、プロジェクトをリセットしたりアプリを無効にしたりしても、期限が切れるまで有効なままです。
+- SDKの起動時セルフテストはありません。
+- SDKはトークンの時刻を実時間に対して検査しますが、エミュレータは独自のクロックで署名します。そのため、クロックを実時間より先に進めてから発行されたトークンは、まだ有効ではないとして拒否されます。
+- 使用回数制限付きトークンの消費(`verify_token(..., consume=True)`)は拒否されます。
+- App Checkを明示的にオンにする設定(設定ファイルの`appCheck`)は、Pythonコードベースでは起動を拒否します。
+
+## 関連
+
+- [Cloud Functions](../functions/)
+- [App Check](../app-check/)
+- [時間とスケジュール関数](../../guides/time/)
+- [プロファイル](../../guides/profiles/)

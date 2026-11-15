@@ -1,0 +1,171 @@
+---
+title: 設定ファイル
+description: fireemu.tomlとfirebase.jsonを設定し、実行時にどのファイルが読み込まれるか、相対パスがどこで解決されるかを確認します。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemuは2種類のファイルを読み込みます。
+
+- **`fireemu.toml`** は、[プロファイル](../profiles/)、Authenticationのプロジェクト設定、クロックなど、Fireemu自身の設定を保持します。`schemaVersion = 1`を含みます。同じ設定をJSONとして`fireemu.json`に書くこともできます。両方があるディレクトリは拒否されます([読み込まれるファイル](#which-files-are-loaded)を参照)。[設定スキーマ](../../reference/configuration/)を参照してください。
+- **`firebase.json`** は、Firebase CLIが使うファイルです。Fireemuは、起動のたびに、ポート、Security Rules、インデックス、Functionsコードベースをここから読み取ります。
+
+## 両方のファイルを使う
+
+Fireemu固有の設定は、`firebase.json`ではなく`fireemu.toml`に置いてください。両方を使うには、`fireemu.toml`で`firebase.json`を指定します。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+`npx fireemu init --firebase-json firebase.json`を実行すると、これが書き出されます。
+
+## 読み込まれるファイル
+
+`up`、`exec`、`emulators:start`、`emulators:exec`は、次の順序で設定ファイルを選びます。
+
+1. **明示的なフラグ。** `--config <file>`と`--firebase-json <file>`は、指定されたファイルだけを読み込み、探索は行いません。`--config`は、`.toml`のパス(大文字小文字を区別せず、`.TOML`を含む)をTOMLとして、それ以外の拡張子をすべてJSONとして解析します。TOML設定には`schemaVersion = 1`が必要で、JSONのみである`firebase.json`として読み込まれることはありません。`--firebase-json`は常にJSONを読み込みます。
+2. **カレントディレクトリのFireemu設定。** そうでなければ、カレントディレクトリにある単一の`fireemu.toml`または`fireemu.json`が、`--config`で渡されたかのように読み込まれます。
+   - 両方のファイルがある場合、起動は拒否されます。一方を削除するか、`--config`でファイルを選択してください。
+   - 読み込んだファイルからの相対で解決される`firebaseJson`エントリが、読み込む`firebase.json`を指定します。`firebaseJson`エントリのない`fireemu.toml`の隣にある`firebase.json`は読み込まれず、起動時の出力にその旨が表示されます。
+   - 親ディレクトリにある`fireemu.toml`や`fireemu.json`は、その中のパスがカレントディレクトリからの相対であるため、使われません。
+   - 正規ファイル内の相対パス(`rules.source`、`storage.rules`、`functions.source`、`firestore.indexFile`など、ファイルを指す設定)は、ファイルがどのディレクトリにあっても、作業ディレクトリから読み取られます。`firebaseJson`と`firebase.json`内のパスだけが、そのファイル自身のディレクトリから読み取られます。
+3. **最も近い`firebase.json`。** そうでなければ、最も近い`firebase.json`が、`--firebase-json`で渡されたかのように読み込まれます。Firebase CLIが見つけるのと同様に、カレントディレクトリにあるもの、なければ親ディレクトリで最初に見つかったものです。そのパスと、隣にある`.firebaserc`は、そのディレクトリから読み取られます。
+4. **組み込みのデフォルト。** そうでなければ、組み込みのデフォルトが適用され、Security Rulesは読み込まれません。
+
+`--no-config-discovery`は、手順2と3をスキップします。起動時の出力の`config:`行に、読み込まれたファイルが示されます。
+
+探索には次の効果があります。
+
+- プロジェクトIDは、探索された`firebase.json`の隣にある`.firebaserc`から取得されます。
+- そのエミュレータのポート、Hub、UI、単一プロジェクトの設定が適用されます。
+- `functions`エントリがあると、Functionsランタイムが起動します。
+- `fireemu capabilities`は、探索された`fireemu.toml`のプロファイルも報告します。
+
+テストの隣にある`firebase.json`が無視されていた従来の動作に依存していた場合は、`--no-config-discovery`を渡してください。
+
+## 相対パス
+
+相対パスは、書かれているファイルによって、異なるディレクトリを基準に解決されます。
+
+| パスが書かれている場所 | 解決の基準 |
+|---|---|
+| `fireemu.toml`または`fireemu.json`: `rules.source`、`firestore.indexFile`、`storage.rules`、`functions.source`など、ファイルを指す設定 | `fireemu`を実行する作業ディレクトリ |
+| `--functions <dir>`とその他のパスオプション | 作業ディレクトリ |
+| `fireemu.toml`または`fireemu.json`の`firebaseJson` | その設定ファイルのディレクトリ |
+| `firebase.json`内のすべてのパス(`firestore.rules`、`functions.source`、`hosting.public`など) | その`firebase.json`のディレクトリ |
+
+そのため、リポジトリのルートから実行した`fireemu exec --config packages/api/fireemu.toml -- npm test`は、`rules.source = "firestore.rules"`を`packages/api`ではなくリポジトリのルートから読み取ります。Fireemuは互換性のためにこの動作を維持しています。将来のスキーマバージョンでは、すべてのパスが設定ファイルを基準に解決されるようになる可能性があります。
+
+この違いを避けるには、設定があるディレクトリからFireemuを実行するか、`firebaseJson`が参照する`firebase.json`にパスを書いてください。
+
+[`fireemu up --plan`](../../reference/cli/#plan-a-run)は、すべてのパスについて、実行が開く絶対パスと、解決の基準になったディレクトリを表示します。正規設定のパスが、設定ファイル自身のディレクトリからの解決と異なる結果になる場合は、警告を表示します。
+
+## ファイル所有者のチェック
+
+探索されたファイルは、実行するFunctionsのコードや適用するルールを指定できます。そのためUnixでは、gitがリポジトリの所有者を確認するのと同様に、探索で見つかったものの所有者を検索時に確認します。Firebase CLIはこれを確認しません。Windowsでは所有者は確認されません。
+
+信頼される所有者は、あなた自身、root、そして`sudo`でrootとして実行している場合は`SUDO_UID`のユーザーです。
+
+- **設定ファイル。** 所有者が信頼されていない、または任意のユーザーが書き込める`fireemu.toml`、`fireemu.json`、`firebase.json`は、警告を出してスキップされます。グループ書き込みは許可されているため、ユーザープライベートグループのumask(002、DebianとUbuntuのデフォルト)で作成されたファイルは読み込まれます。
+- **`.firebaserc`。** プロジェクトとターゲットのエイリアスのみを指定し、コードやルールは指定しないため、所有者は確認されません。それ自身またはそのディレクトリに任意のユーザーが書き込める場合にのみ、スキップされます。
+- **親ディレクトリ。** 検索は、所有者が信頼されていない、または任意のユーザーが書き込める親ディレクトリ(`/tmp`など)の手前で止まります。また、入る権限がないなど、検査できない親ディレクトリでも、警告なしで止まります。
+- **カレントディレクトリ。** そこで実行すると選んだのはあなたなので、所有者は確認されません。任意のユーザーが書き込めるカレントディレクトリは、まったく検索されません。
+- **シンボリックリンク。** シンボリックリンクは、それが指すファイルで判定されます。ターゲットを保持するディレクトリは確認されません。
+- **読み取り。** 各候補は一度だけ開かれます。何かを読む前に、開いたファイルで所有者とモードが確認され、そのテキストは同じファイルから読み取られます。16 MiBを超える探索済みファイルは、エラーで拒否されます。
+
+スキップされたファイルやディレクトリは警告に名前が示され、何も見つからなかったかのように実行が続きます。探索されたファイルのエラーには、検索でそのファイルが見つかったことが示されます。
+
+- スキップされたファイルをそれでも読み込むには、`--config`または`--firebase-json`で名前を指定します。
+- 警告を抑えるには、`--no-config-discovery`を渡します。
+
+この規則に当たりやすい設定が2つあります。
+
+- **バインドマウントされたチェックアウトを持つrootコンテナ。** GitHub Actionsの`container:`ジョブや、rootでの`docker run -v "$PWD":/app`などです。ファイルは、コンテナのrootが信頼しないホストユーザーが所有しています。明示的なフラグを使うか、チェックアウトを`chown`してください。`.firebaserc`は引き続きプロジェクトを指定します。ルートレスのPodmanは、あなたのユーザーをコンテナのrootにマップするので、影響を受けません。
+- **`sudo`。** `SUDO_UID`のユーザーが所有するファイルは信頼されます。
+
+## 設定を検証する
+
+`fireemu.toml`は起動時に検証されます。Fireemuが受け付けない値があると、エラーで停止します。
+
+- `up`、`exec`、`config show`は、どちらの形式でも、スキーマに載っていないキーと型の誤った値を拒否します。エラーには、ファイル、キー、本来あるべき型が示されます。たとえば`fireemu.toml: daemon.firestorePort must be an integer, found a string`のようになります。
+- 整数の設定は、値が整数であっても浮動小数点数を拒否します。エラーメッセージが示すように、`8080.0`ではなく`8080`と書いてください。
+- [設定スキーマ](../../reference/configuration/)はJSON Schemaで、エディタでも使えます。
+
+設定が何に解決されるかを表示するコマンドが2つあります。
+
+- `fireemu capabilities`は、設定が解決するプロファイルのケイパビリティマニフェストを表示します。
+- `fireemu up --plan`と`fireemu exec --plan -- <command>`は、ファイル、コマンドライン、環境から実行が解決するすべて(プロジェクト、サービス、ポート、ファイル、Functionsランタイム、継承された変数)を、実行を開始せずに表示します。[実行を計画する](../../reference/cli/#plan-a-run)を参照してください。
+
+## リファレンスファイルを生成する
+
+`fireemu init --reference`は、スキーマから生成されるコメント付きのリファレンスである`fireemu.reference.toml`も書き出します。既存の`fireemu.json`がある場合は、代わりに`fireemu.reference.jsonc`を書き出すため、リファレンスのキーは設定の形式に合います。Fireemuはこのファイルを読み込みません。
+
+- 通常の`fireemu.toml`は最小限のままです。リファレンスのキーをコピーするとそのキーが明示的になり、`productionExact`が切り替えなくなります。
+- リファレンスでは、次のキーはコメントアウトされたままです。デフォルトのないキー、存在すること自体が動作を選択するキー、`productionExact`が制御するキー、将来の互換性のために受け付けられるが現在は効果がないキー(コメントにその旨が記されています)。
+- `fireemu config lint --deny-ineffective`は、設定が、受け付けられるが効果のないキーを設定している場合に、CIジョブを失敗させます。`--allow`と`--allow-file`で、意図的に残すものを列挙します([`config lint`](../../reference/cli/#config-lint)を参照)。
+- 初期化するときは、`--reference`を`--profile`や`--firebase-json`と組み合わせてください。既存の`fireemu.toml`または`fireemu.json`があり、それらのオプションのどちらもない場合は、リファレンスだけが書き出されます。
+- 既存の出力ファイルを置き換えるには`--force`が必要です。
+
+### スキーマの注釈
+
+リリース版のバイナリでは、生成されるスキーマの注釈は、GitHubリポジトリにあるそのリリースのスキーマファイル(`https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`)を参照するため、エディタは、インストールされたバージョンが受け付けるキーに対してファイルを検査します。ソースからビルドしたバイナリ(リリース間のビルドを含み、そのバージョンのタグより新しいスキーマを埋め込んでいます)は、代わりに`main`の場所を書き出します。
+
+任意のリリースタグ、`main`、または古い`https://fireemu.dev/spec/config/fireemu.schema.json`の場所を指す`$schema`または`#:schema`も、引き続き読み込まれます。エディタでの検証のために、古い注釈は、実行しているバージョンのタグに置き換えてください。
+
+Fireemuは同梱のスキーマに対して検証し、注釈のURLを取得しません。`fireemu config schema --out <path>`は、GitHubに接続できないエディタやツールのために、その同梱スキーマをファイルに書き出します。
+
+## TOMLの値とJSONのnull
+
+TOMLファイルは、JSONファイルと同じJSON Schema、検証、デフォルトを使います。
+
+- ファイルの先頭を`#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json`(実行しているバージョンのタグ)で始めると、TaploまたはEven Better TOMLでスキーマが選択されます。
+- タイムスタンプの値は引用符で囲んでください。スキーマにdatetime型がないため、TOMLのdatetimeはキー名とともに拒否されます。
+
+TOMLには`null`がありません。以下のnull許容の設定すべてで、そのキーを含むテーブルでキーを省略してください。null許容の配列要素では、その要素を省略します。存在自体に意味がある場合は、含むテーブルや配列は残してください。空の配列と空のテーブルは、既存の意味を保ちます。
+
+| null許容のJSONキー | nullとTOMLでの省略の意味 |
+|---|---|
+| `limits.queryCatalog`、`firestore.textSearch.visibilityLag` | 受け付けられるが、実行時の効果はない。省略すると、これらのキーの明示的な値と起動時の注記も削除される。 |
+| `limits.firestorePlan.compositeIndexLimitOverride`、`limits.firestorePlan.singleFieldConfigLimitOverride`、`limits.firestorePlan.enterpriseIndexLimitOverride` | オーバーライドなし。nullでないオーバーライドは現在拒否される。 |
+| `auth.providers`、`auth.providers.oidc`、`auth.providers.saml` | プロバイダーのシード宣言なし。空の配列は空の置き換えを明示的に宣言するもので、省略とは異なる。 |
+| `auth.providers.oidc[].displayName`、`auth.providers.oidc[].clientSecret`、`auth.providers.saml[].displayName` | 任意のプロバイダー値なし。 |
+| `auth.authorizedDomains` | シードなし。デフォルトのドメインを維持する。空の配列はドメインなしを宣言する。 |
+| `auth.authorizedDomains[]` | この要素を無視する。TOMLの配列から除外する。 |
+| `auth.mfa`、`auth.multiTenant`、`auth.tenants` | 宣言なし。該当するデフォルトを維持する。 |
+| `auth.mfa.enabledProviders`、`auth.mfa.providerConfigs` | 宣言されたMFA設定に、この種類のプロバイダーはない。MFAを宣言する場合は`auth.mfa`テーブルを維持する。 |
+| `auth.mfa.providerConfigs[].totpProviderConfig` | このプロバイダーエントリを無視する。そのエントリでキーを省略する。 |
+| `auth.mfa.providerConfigs[].totpProviderConfig.adjacentIntervals` | 宣言されたTOTPプロバイダーで、隣接する間隔をゼロにする。そのテーブルは維持する。 |
+| `auth.blockingFunctions.triggers.beforeCreate`、`auth.blockingFunctions.triggers.beforeSignIn` | 明示的なトリガー選択で、このトリガーを無効にする。`[auth.blockingFunctions.triggers]`は維持する。そのテーブル全体を省略すると、代わりにディスカバリーが有効になる。 |
+| `auth.quota.signUpQuotaConfig` | インポートされたオーバーライドを含め、一時的なクォータのオーバーライドを解除する。`[auth.quota]`は空のまま維持する。クォータのテーブル全体を省略すると、インポートされたオーバーライドが維持される。 |
+| `auth.passwordPolicy.constraints.maxLength`、`auth.passwordPolicyOverrides[].passwordPolicy.constraints.maxLength` | カスタムの最大長なし。 |
+
+## 関連
+
+- [設定リファレンス](../../reference/configuration/)
+- [プロファイルとproductionExact](../profiles/)
+- [CLIリファレンス](../../reference/cli/)
+- [CIとコンテナ](../ci-and-containers/)

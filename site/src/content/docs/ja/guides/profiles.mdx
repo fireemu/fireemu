@@ -1,0 +1,181 @@
+---
+title: プロファイルとproductionExact
+description: strictプロファイルとemulatorプロファイルのどちらかを選び、デフォルトが意図的に本番と異なる箇所を確認し、productionExactで本番の動作に切り替えます。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+プロファイルは、Fireemuがどちらの動作に従うかを選択します。本番のFirebase(`strict`、デフォルト)か、公式エミュレータ(`emulator`)です。どちらのプロファイルでも、一部のデフォルトは、セットアップなしでテストを実行できるよう、意図的に本番と異なります。`productionExact`は、それらを本番の動作に切り替えます。
+
+## プロファイルを選ぶ
+
+| プロファイル | 動作 |
+|---|---|
+| `strict` | サポート範囲内で、本番Firebaseの動作と制約にできる限り一致させます。デフォルトであり、公式エミュレータからの移行時も含め、推奨されます。 |
+| `emulator` | 公式エミュレータの固定バージョン(`firebase-tools` 15.28.2)の動作を対象とします。公式エミュレータとの整合性を確認するため、たとえば追加のテスト対象としてのみ使ってください。移行には必要ありません。 |
+
+`emulator`プロファイルは本番が拒否する動作を受け付けるため、そこで成功したテストが本番では失敗することがあります。テストには`strict`を使ってください。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict"
+}
+```
+
+</TabItem>
+</Tabs>
+
+## セットアップを選ぶ
+
+- **ほとんどのプロジェクト:** 開発用デフォルトの`strict`。テストはキーやセットアップ用の呼び出しなしで実行でき、それでも本番の検証、拒否、エラーの形に一致します。
+- **リリース前、または別のCIジョブ:** [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose)の`strict`。署名なしトークンのように、開発用デフォルトが通してしまうものを検出します。
+- **公式エミュレータの確認:** `emulator`。追加のテスト対象としてのみ使います。
+
+## Fireemuが意図的に本番から外れる箇所
+
+Fireemuの目標は本番に一致させることです。本番の動作の中には、テストにセットアップを加えるだけのものがあります。署名付きトークンと署名鍵が必要なこと、Admin APIの呼び出しで機能を有効にすること、1時間待つことなどです。これらをそのまま真似ると、より多くのバグを検出できるわけではないのに、CIや開発者のマシンでFireemuが使いにくくなります。
+
+これらの動作について、どちらのプロファイルでもデフォルトはセットアップなしで動く開発用デフォルトです。それぞれに専用の設定があり、下の表に一覧しているので、本番とのこうした差異はすべて文書化された選択になっています。
+
+### productionExactで本番の動作を有効にする
+
+それらすべてについて一度に本番の動作を得るには、`productionExact`を`true`に設定します(`strict`プロファイルのみ)。明示的な設定は、これより優先されます。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Use production behavior for development defaults: true or false; requires strict.
+productionExact = true
+
+[auth]
+# Accept unsigned emulator custom tokens: true or false.
+allowUnsignedCustomTokens = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "auth": {
+    "allowUnsignedCustomTokens": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### 開発用デフォルト
+
+| 開発用デフォルト | 設定 | `productionExact`の場合 |
+|---|---|---|
+| 署名なしのエミュレータ用カスタムトークンが受け付けられる | `auth.allowUnsignedCustomTokens` | 拒否される |
+| Firestore、Storage、Realtime DatabaseのSecurity Rulesが、`@firebase/rules-unit-testing`の署名なしモックIDトークン(`authenticatedContext()`、クライアントSDKの`mockUserToken`)を受け付ける | `auth.allowUnsignedIdTokens` | 本番が署名なしトークンを拒否するのと同様に、モックトークンのフォールバックは無効になる。通常の検証に通るfireemu発行のトークンは引き続き受け付けられる |
+| ルールファイルのないRealtime Databaseインスタンスは、公式エミュレータが提供するのと同様に、すべてのリクエストに対して開放されている | `database.defaultAccess` (`"open"`) | `"locked"`: エミュレータの`owner`認証情報のみが読み書きできる。本番ではロックモードの新しいデータベースに管理者のみが入れるのと同様 |
+| Hostingはデフォルトの`Cache-Control`なしでファイルを提供するため、ブラウザが編集したファイルをすぐに表示する | `hosting.cacheControl` (`"none"`) | `"production"`は、Hosting本番と同様に、`headers`ルールがCache-Controlを設定していないファイルに`Cache-Control: max-age=3600`を追加する(strictプロファイルのみ) |
+| Hostingのローカライズされたコンテンツが`X-Country-Code`ヘッダーと`firebase-country-override`クッキーに従うため、国別コンテンツをテストできる | `hosting.clientCountry` (`"honoured"`) | `"ignored"`: 本番は国をエッジで決定するため、どちらも何も選択しない(strictプロファイルのみ) |
+| コードベースのすべての関数が1つのランナープロセスで実行されるため、関数同士がモジュールグラフを共有し、識別情報の変数は最後に開始された呼び出しを指す | `functions.isolation` (`"codebase"`) | `"function"`: 関数ごとに1つのランナープロセスが、最初のトリガーで起動し、独自の識別情報、シークレット、モジュールグラフを持つ。起動した関数ごとに約120 MiBのメモリと、最初の呼び出しでのコールドスタートがかかる |
+| Auth blocking関数はエミュレータのトークンを使う | `functions.authBlockingToken` (`"emulated"`) | `"production"`は署名付きトークンを配信し、PythonランナーはSDKの規則でそれを検証する。Node関数は本番と同じ形のトークンを受け取るが検証しないため、従来どおりに動作する。`strict`が必要 |
+| 完了したCloud Tasksタスクの名前がすぐに空く | `functions.taskNameReuse` (`"immediate"`、`emulator`プロファイルでは`"retained"`) | `"production"`は、Cloud Tasksのドキュメントどおり、最大3600秒間その名前を拒否する("existed too recently")。完了した名前の履歴は全キューをまたいで65,536個の名前と、キュー名とタスク名のテキスト8 MiBに制限される。どちらかの上限を超えると、3600秒のウィンドウが切れる前でも古い名前から削除される。同じ上限が`"retained"`にも適用される。`strict`が必要 |
+| `dispatchDeadline`のないタスクは60秒後に打ち切られる | `functions.taskDispatchDeadlineSeconds` (`60`) | `600`。記録でCloud Tasksがそのようなタスクに与えた値。15から1800までの任意の値を設定できる。`strict`が必要 |
+| 失敗し続けるタスクは、キューが宣言した間隔でリトライされる | `functions.taskRetryBackoff` (`"declared"`) | `"production"`は、十数回の失敗後に間隔が宣言された最大値を超えて伸びることを許す(記録どおり4秒、8秒、10秒)。宣言より早まることはない。`strict`が必要 |
+| リトライ値を宣言しないタスクキュー関数には、公式エミュレータの3回の試行が与えられる | `functions.taskRetryDefaults` (`"emulated"`) | `"production"`は、デフォルトキューの読み戻しどおり100回の試行(同じバックオフ値)を与える。宣言された値は常に維持される。`strict`が必要 |
+| IDプロバイダーのサインインは、組み込み、`oidc.*`、`saml.*`の各プロバイダーについて、フィクスチャのアサーションとサインインウィジェット(`/emulator/auth/handler`)を受け付ける。`strict`では、本番が要求するとおり、`oidc.*`または`saml.*`プロバイダーは引き続き設定されて有効になっている必要がある(`auth.providers`またはAdmin API) | `auth.idpAssertions` (`"fixture"`) | `"signed"`: OIDCのIDトークンは`auth.idpSigners`の鍵で、SAMLのレスポンスはプロバイダーの証明書で検証できなければならず、フィクスチャと組み込みプロバイダーは拒否される |
+| Eventarcリスナーは任意の認証情報も認証情報なしも受け付けるため、Admin SDKはダミーの認証情報で発行する([Eventarcの認証](https://github.com/fireemu/fireemu/blob/main/docs/eventarc-authentication.md)を参照) | `eventarc.authentication` (`"permissive"`) | `"production"`: 存在しない、不正な形式の、またはJWTの形のBearerは、本番と同じ401で拒否される |
+| テナントIDには`tenant-a`のような任意の読みやすい名前を使える | `auth.tenantIdFormat` (`"readable"`) | `"generated"`: `acme-x7k2q`のような、本番が生成する形式 |
+| マルチテナンシーがオン: Admin APIでテナントを作成でき、`auth.tenants`は`updateConfig`の呼び出しなしで読み込まれる | `auth.multiTenant.allowTenants` (`true`) | 新しい本番プロジェクトと同様に、有効化されるまで未設定: テナント関連のルートは拒否され、`auth.tenants`には`allowTenants: true`が必要 |
+| 多要素認証がオン(SMSとTOTP)。コンソールの切り替え、`updateConfig`の呼び出し、`auth.mfa`ブロックは不要 | `auth.mfa` (`state: "ENABLED"`) | 新しい本番プロジェクトと同様に、有効化されるまでオフ: 登録は`OPERATION_NOT_ALLOWED : SMS based MFA not enabled.`または`TOTP based MFA not enabled.`で拒否される |
+| エンドユーザーのFirestore `Listen`ストリームは、どれだけ長く保持されても開いたまま。コントロールAPIの`POST /v1/firestore/listen:expire`は、保持されているすべてのエンドユーザーストリームを本番のステータスで一度に終了させ、クライアントの再接続をテストできる | `firestore.listenStreamLifetime` (`"unlimited"`) | `"oneHour"`: 開いてから1時間後に`INTERNAL`で終了する |
+| App Checkはアプリを登録しなくても動作する。形式が正しいデバッグトークン(UUIDv4)なら任意のアプリに対して交換できるため、`enforceAppCheck`のcallableは`appCheck`ブロックなしで呼び出せる。トークンがない、または形式が不正な場合は引き続き拒否される | `appCheck.debugTokens` (`"any"`) | `"registered"`: `appCheck.apps`のうち、デバッグトークンのダイジェストが登録されているアプリのみが交換でき、`appCheck`ブロックがなければApp Checkは提供されない。`appCheck`ブロックでも復活する |
+| 宣言されていないStorageバケットは、最初の書き込み時に注記付きで作成される | `storage.undeclaredBuckets` (`"warn"`) | `"refuse"`: オブジェクト操作は拒否される。明示的なキーが優先される |
+| 一覧にないStorageバケットには、緩いCORSヘッダーが付く | `storage.cors` | 一覧にないバケットにはCORSヘッダーが付かない。明示的なエントリが優先される |
+| デッドレター転送は、プロジェクト番号もIAM付与も必要としない | `pubsub.deadLetterAuthorization` (`"implicit"`) | `"iam"`: Pub/Subサービスエージェントがサブスクリプションに対する`roles/pubsub.subscriber`とデッドレタートピックに対する`roles/pubsub.publisher`を付与された後にのみ、メッセージが転送される。`pubsub.projectNumbers`を指定してもこれが選択される |
+
+起動時のバナーと`fireemu capabilities`は、`productionExact`が設定されているかどうかと、表中のキー付き開発用デフォルトそれぞれの有効値とその出所を報告します。一覧にないバケットのCORSは、キー付きの開発用デフォルトではありません。
+
+ほとんどのプロジェクトでは`productionExact`は必要ありません。本番とのより厳密な比較のための上級者向けスイッチです。
+
+複合インデックスが定義されていないクエリは、これらのデフォルトには含まれません。`strict`は本番と同様にそれを拒否し、`firestore.missingIndexes: "report"`は、実行して不足しているインデックスを標準エラー出力に報告する、明示的なオプトアウトです。`productionExact`はこのキーを変更しません。
+
+### その他の開発上の利便性
+
+これらの動作は本番と異なり、`productionExact`では切り替わりません。各行に、本番の動作を得る方法、または方法がないことを示します。
+
+#### Authentication
+
+| 開発時の動作 | 本番の動作を得る方法 |
+|---|---|
+| `localhost`がアクションリンクの継続URL用のデフォルトの承認済みドメインに含まれる。新しい本番プロジェクトには含まれないことがある | `auth.authorizedDomains`を宣言する。これはデフォルトを置き換える |
+| すべてのサインイン方法が有効な状態で始まる(メールリンクサインインを含む)。新しい本番プロジェクトではどれも有効になっていない(`firebase deploy --only auth`は、列挙したプロバイダーを有効にするだけで、無効にはしない) | プロジェクトに合わせて`auth.signIn`を宣言する。たとえばメールリンクサインインを拒否するには`email.passwordRequired: true` |
+| `google.com`などの組み込みIDプロバイダーは、コンソールで有効にしなくてもサインインできる。`oidc.*`と`saml.*`プロバイダーは、引き続き設定されて有効になっている必要があり、そうでなければ本番と同じようにサインインが拒否される | `auth.idpAssertions: "signed"`(`productionExact`が設定する)は組み込みプロバイダーを拒否する |
+| プロジェクトが宣言するまで、任意のWeb APIキーが受け付けられる。本番は別のプロジェクトのキーには`API_KEY_INVALID`で応答する | `auth.apiKeys`を宣言する |
+| 電話番号の確認は、reCAPTCHA、Play Integrity、APNsの証明なしに任意の番号へコードを送る。本番はテスト用番号以外でこれらを要求する | 設定なし。クライアントSDKはエミュレータモードで検証器を実行するため、アプリの経路は実行される。証明を省略した生のRESTクライアントはここでは通る |
+| reCAPTCHAの`ENFORCE`状態は保存され返されるが強制されないため、reCAPTCHAトークンなしのサインインが受け付けられる | 設定なし |
+| `accounts:batchCreate`に行数の上限はない。Admin SDKは送信前に1回の呼び出しあたり1000ユーザーを検査する | 設定なし |
+| サインアップのレート制限(本番はIPごとに新規アカウントを制限する)はシミュレートされない | `auth.quotaSimulation.mode`を`"enforce"`に設定する |
+| 関数内のAdmin SDKの`verifyIdToken`は、`FIREBASE_AUTH_EMULATOR_HOST`が設定されている間はSDKが署名検証を省略するため、署名なしのIDトークンを受け付ける。本番はこれを拒否する | 設定なし。[Auth](../../products/auth/#tokens)を参照 |
+
+#### Cloud Firestore
+
+| 開発時の動作 | 本番の動作を得る方法 |
+|---|---|
+| Firestoreは、デーモンのものとは別のプロジェクトを指定するリクエストを、そのプロジェクト自身の空のデータから提供し、並列テストを分離する。`projectId`のタイプミスは、本番の`PERMISSION_DENIED`のように失敗するのではなく、データを分割する | `projects.unknownProjects`を`"refuse"`に設定する |
+| `firestore.indexes.json`の複合インデックスは即座に`READY`になり、Admin API経由で作成したものは約1.5秒後に`READY`になる。本番はインデックスの構築に数分かかる。`CREATING`状態と、そのインデックスを必要とするクエリの"currently building"による拒否は維持される | 設定なし。本番に対するのと同様に、`READY`になるまでインデックスをポーリングする。仮想クロックを進めても構築は完了する |
+| 管理されたエクスポート、インポート、一括削除の操作は最初のポーリングで完了する。本番は数分かかる | 設定なし。本番に対するのと同様に、`done`になるまで操作をポーリングする |
+| 別のライターが待っているロックを保持するトランザクションは、アクティビティなしで60秒(実時間)後にロールバックされる。本番自身のアイドル上限は約110秒から123秒で、それより早く競合する保持者に何が起きるかは記録されていない | 設定なし |
+
+#### Cloud Storage
+
+| 開発時の動作 | 本番の動作を得る方法 |
+|---|---|
+| 署名付きURLまたはPOSTポリシーは、任意の署名で受け付けられる(有効期限と条件は検査される)。検証には署名したサービスアカウントの鍵が必要なため | V4署名付きURLについては、署名に使った鍵を`storage.signedUrlKeys`に登録する。POSTポリシーの署名は検証されない |
+| JSON APIは、認証情報のないリクエストや、Firebase IDトークン以外の任意の認証情報を持つリクエストを、オーナーとして提供する。ローカル実行ではアクセストークンを判定できないため | 利用不可 |
+| バケットレベルの公開付与(IAMの`allUsers`)は、APIでは行えない | バケットを`storage.publicBuckets`に列挙する |
+| 公開URL(`GET /{bucket}/{object}`)は、`x-goog-api-client`を送るリクエストには認証情報なしで提供される。Goクライアントライブラリ(とFirebase Admin Go SDK)は、エミュレータホストに対して認証情報なしでこれを通して読み取るため。ブラウザのフェッチは拒否される | 利用不可 |
+| Security Ruleは、本番でStorageサービスエージェントに必要なFirestoreアクセス権の付与なしに、`firestore.get()`と`firestore.exists()`を呼び出せる | 利用不可 |
+| `<project>.appspot.com`と`<project>.firebasestorage.app`の両方のデフォルトバケット名が存在する。本番プロジェクトにはどちらか一方しかない | `storage.defaultBucket`をプロジェクトにあるほうに設定する。もう一方の名前は宣言されておらず、存在するようになるまでそのバケットリソースは404で応答する。`storage.undeclaredBuckets`は、最初の書き込みで注記付きで作成する(`"warn"`)か、黙って作成する(`"create"`)か、拒否する(`"refuse"`、上書きしない限り`productionExact`が選択する)かを制御する |
+
+#### Cloud Functions
+
+| 開発時の動作 | 本番の動作を得る方法 |
+|---|---|
+| Functionsコードベースの`.env.local`は、本番では決してデプロイされないにもかかわらず、`.env`と`.env.<projectId>`の後に適用される | 代わりに値を`.env`または`.env.<projectId>`に置く。`.env.local`にしかないキーは、本番では未設定になる |
+| `retry`が有効な関数が失敗すると、合計4回リトライされ(`events.maxAttempts`、仮想クロック上で10秒から600秒のバックオフ)、その後デッドレターになる。本番は最大24時間(第2世代)または7日間(第1世代)リトライする | `events.maxAttempts`を引き上げる。時間枠を再現する値はない |
+| 公開されていない関数(`invoker: "private"`またはサービスアカウントのリスト)とタスクキュー関数は、公開関数URLで、Googleが発行したIDトークンに見える任意のBearer(`iss`が`https://accounts.google.com`のJWT)を受け付ける。署名とIAMロールに対するGoogleの検証がローカルでは実行できないため。Firebase AuthのIDトークンは、Cloud Runと同様に401で拒否される。認証情報のない呼び出しは、本番と同様に403で拒否される。コンソールとコントロールAPIは、コントロールトークンでそのような関数を呼び出す | なし。拒否を確認するには、認証情報なしで呼び出す。`ingressSettings`は強制されない |
+
+#### Pub/Sub
+
+| 開発時の動作 | 本番の動作を得る方法 |
+|---|---|
+| Pub/Subは認証情報なしのリクエストを受け付けるため、`PUBSUB_EMULATOR_HOST`を使うクライアントが動作する | `pubsub.authentication.localBearerToken`を設定する。すると、認証情報のないリクエストは本番と同様に拒否される。[Pub/SubとEventarc](../../products/pubsub-eventarc/#authentication)を参照。 |
+| Pub/Subのプッシュエンドポイントは、ループバック(`127.0.0.1`、`localhost`、`[::1]`)上のプレーンな`http://`でもよい。本番はHTTPSを要求する | サブスクリプションにループバック以外の`https://` URLを使う。Fireemuはプッシュメッセージをループバックにのみ配信するため、そこに届くようにする設定はない |
+
+## 関連
+
+- [設定ファイル](../configuration/)
+- [設定リファレンス](../../reference/configuration/)
+- [CIとコンテナ](../ci-and-containers/)
+- [制限事項](../../compatibility/limitations/)
