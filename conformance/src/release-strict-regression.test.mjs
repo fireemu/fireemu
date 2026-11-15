@@ -3623,28 +3623,38 @@ test("failed command prints and records redacted output tails", async () => {
   }
 });
 
-test("RTDB entry timeout stops its owned native child", async () => {
+test("RTDB entry timeout stops its owned native child", async (t) => {
   const { chmodSync } = await import("node:fs");
   const { setTimeout: delay } = await import("node:timers/promises");
   const dir = mkdtempSync(join(tmpdir(), "fireemu-rtdb-timeout-"));
+  let pid;
+  let pending;
   try {
     mkdirSync(join(dir, "logs"));
     const fake = join(dir, "node");
     writeFileSync(
       fake,
-      `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio: 'ignore'});\nfs.writeFileSync(process.env.RTDB_CHILD_PID, String(child.pid));\nsetInterval(() => {}, 1000);\n`,
+      `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nsetTimeout(() => {\nconst child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'rtdb-timeout-child-marker'], {stdio: 'ignore'});\nfs.writeFileSync(process.env.RTDB_CHILD_PID + ".tmp", String(child.pid));\nfs.renameSync(process.env.RTDB_CHILD_PID + ".tmp", process.env.RTDB_CHILD_PID);\n}, 600);\nsetInterval(() => {}, 1000);\n`,
     );
     chmodSync(fake, 0o700);
     const run = clone(RUNS.find((entry) => entry.id === "R23"));
     run.commands[0].timeoutMs = 300;
-    const result = await runEntry(run, {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    pending = runEntry(run, {
       binary: join(dir, "installed binary"),
       functionsNode: process.execPath,
       out: dir,
       env: { PATH: dir, RTDB_CHILD_PID: join(dir, "pid") },
     });
+    const deadline = Date.now() + 10000;
+    while (!existsSync(join(dir, "pid")) && Date.now() < deadline) await delay(25);
+    assert.ok(existsSync(join(dir, "pid")), "child did not write its pid within 10 seconds");
+    pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+    await delay(300);
+    t.mock.timers.tick(300);
+    const result = await Promise.race([pending, delay(900).then(() => undefined)]);
+    assert.ok(result, "producer timeout did not finish within the bound");
     assert.ok(result.record.errors.some((error) => error.includes("timeout")));
-    const pid = Number(readFileSync(join(dir, "pid"), "utf8"));
     let live = true;
     for (let i = 0; i < 20 && live; i++) {
       try {
@@ -3656,6 +3666,18 @@ test("RTDB entry timeout stops its owned native child", async () => {
     }
     assert.equal(live, false, `owned child ${pid} survived timeout`);
   } finally {
+    t.mock.timers.tick(300);
+    if (!pid && existsSync(join(dir, "pid"))) pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+    const status =
+      pid &&
+      spawnSync("/bin/ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], { encoding: "utf8" })
+        .stdout;
+    if (status?.includes("rtdb-timeout-child-marker")) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    if (pending) await pending;
     rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -3785,7 +3807,7 @@ test("local successful producer leaves detached cleanup to the namespace", async
   }
 });
 
-test("RTDB timeout remains bounded when a detached child retains the log pipe", async () => {
+test("RTDB timeout remains bounded when a detached child retains the log pipe", async (t) => {
   const { chmodSync } = await import("node:fs");
   const { setTimeout: delay } = await import("node:timers/promises");
   const dir = mkdtempSync(join(tmpdir(), "fireemu-rtdb-pipe-"));
@@ -3796,23 +3818,30 @@ test("RTDB timeout remains bounded when a detached child retains the log pipe", 
     const fake = join(dir, "node");
     writeFileSync(
       fake,
-      `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nconst child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'rtdb-owned-pipe-marker'], {stdio: ['ignore', 'ignore', 'inherit'], detached: true});\nfs.writeFileSync(process.env.RTDB_CHILD_PID, String(child.pid));\nsetInterval(() => {}, 1000);\n`,
+      `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nconst fs = require('node:fs');\nsetTimeout(() => {\nconst child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'rtdb-owned-pipe-marker'], {stdio: ['ignore', 'ignore', 'inherit'], detached: true});\nfs.writeFileSync(process.env.RTDB_CHILD_PID + ".tmp", String(child.pid));\nfs.renameSync(process.env.RTDB_CHILD_PID + ".tmp", process.env.RTDB_CHILD_PID);\n}, 600);\nsetInterval(() => {}, 1000);\n`,
     );
     chmodSync(fake, 0o700);
     const run = clone(RUNS.find((entry) => entry.id === "R23"));
     run.commands[0].timeoutMs = 300;
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     pending = runEntry(run, {
       binary: join(dir, "installed binary"),
       functionsNode: process.execPath,
       out: dir,
       env: { PATH: dir, RTDB_CHILD_PID: join(dir, "pid") },
     });
-    const result = await Promise.race([pending, delay(1200).then(() => undefined)]);
+    const deadline = Date.now() + 10000;
+    while (!existsSync(join(dir, "pid")) && Date.now() < deadline) await delay(25);
+    assert.ok(existsSync(join(dir, "pid")), "child did not write its pid within 10 seconds");
     pid = Number(readFileSync(join(dir, "pid"), "utf8"));
+    await delay(300);
+    t.mock.timers.tick(300);
+    const result = await Promise.race([pending, delay(900).then(() => undefined)]);
     assert.ok(result, "producer timeout did not close the inherited pipe within the bound");
     assert.ok(result.record.errors.some((error) => error.includes("timeout")));
     assert.doesNotThrow(() => process.kill(pid, 0));
   } finally {
+    t.mock.timers.tick(300);
     if (!pid && existsSync(join(dir, "pid"))) pid = Number(readFileSync(join(dir, "pid"), "utf8"));
     const status =
       pid &&
