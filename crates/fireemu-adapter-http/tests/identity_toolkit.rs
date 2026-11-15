@@ -23273,3 +23273,52 @@ fn a_disabled_account_refuses_its_token_until_re_enabled_in_both_profiles() {
         assert_eq!(status, 200, "strict={strict}: {looked}");
     }
 }
+
+/// In duplicate-email mode a password account cannot move onto an address another password
+/// account holds, even when the same update drops its password: the store judges the move on
+/// the account as it is (`validate_email_update`), before the update applies.
+#[test]
+fn duplicate_email_mode_refuses_a_password_account_move_even_when_it_drops_the_password() {
+    let s = state();
+    let (status, body) = admin(
+        &s,
+        "PATCH",
+        "/identitytoolkit.googleapis.com/admin/v2/projects/demo-app/config?updateMask=signIn.allowDuplicateEmails,emailPrivacyConfig.enableImprovedEmailPrivacy",
+        &json!({"signIn": {"allowDuplicateEmails": true}, "emailPrivacyConfig": {"enableImprovedEmailPrivacy": false}}),
+    );
+    assert_eq!(status, 200, "{body}");
+    for (local_id, email) in [
+        ("holder", "held@example.com"),
+        ("mover", "mover@example.com"),
+    ] {
+        let (status, created) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts"),
+            &json!({"localId": local_id, "email": email, "password": "password123"}),
+        );
+        assert_eq!(status, 200, "{created}");
+    }
+    let (status, refused) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "mover", "email": "held@example.com"}),
+    );
+    assert_eq!(
+        (status, refused["error"]["message"].as_str()),
+        (400, Some("EMAIL_EXISTS")),
+        "{refused}"
+    );
+    let (status, refused) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "mover", "email": "held@example.com", "deleteProvider": ["password"]}),
+    );
+    assert_eq!(
+        (status, refused["error"]["message"].as_str()),
+        (400, Some("EMAIL_EXISTS")),
+        "{refused}"
+    );
+}

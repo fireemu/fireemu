@@ -628,12 +628,8 @@ pub fn imported_hash_spec_error(spec: &str) -> Option<String> {
             block_size,
             parallelization,
             dk_len,
-        } if *log_n == 0
-            || *block_size == 0
-            || *parallelization == 0
-            || *dk_len == 0
-            || !within_work_bounds(&decoded, &[]) =>
-        {
+            // The work bounds also require parallelization and dkLen of at least 1.
+        } if *log_n == 0 || *block_size == 0 || !within_work_bounds(&decoded, &[]) => {
             Some(format!(
                 "standard scrypt logN {log_n}, blockSize {block_size}, parallelization \
                  {parallelization}, dkLen {dk_len} are outside the import bounds"
