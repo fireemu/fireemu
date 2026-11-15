@@ -24,6 +24,13 @@ export default defineConfig({
 			title: 'Fireemu',
 			description:
 				'A local Firebase emulator for tests and CI that follows production Firebase behavior.',
+			// The emu mark on a dark tile, so it reads on light and dark browser tabs.
+			// The cleaned source drawing is src/assets/emu.png.
+			favicon: '/favicon.png',
+			head: [
+				{ tag: 'link', attrs: { rel: 'icon', href: `${base}/favicon.ico`, sizes: '48x48' } },
+				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${base}/apple-touch-icon.png` } },
+			],
 			editLink: { baseUrl: 'https://github.com/fireemu/fireemu/edit/main/site/' },
 			lastUpdated: false,
 			// tokens.css holds the palette and maps it onto Starlight's variables; custom.css styles
