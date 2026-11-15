@@ -3,7 +3,7 @@ title: 限制
 description: 在依赖本地结果之前，确认 Fireemu 不支持什么，以及任何本地模拟器都无法重现什么。
 ---
 
-Fireemu 尚未重现生产环境 Firebase 的所有功能和行为。以下是主要限制；该列表并不详尽。请在 [能力清单](../#capability-manifest) 中查看各个 API，或运行：
+Fireemu 尚未重现生产环境 Firebase 的所有功能和行为。以下是主要限制；该列表并不详尽。请在 [能力清单](../#能力清单) 中查看各个 API，或运行：
 
 ```sh
 npx fireemu capabilities
@@ -15,7 +15,7 @@ npx fireemu capabilities
 
 ## 部分支持的产品
 
-- **Realtime Database。** 已提供，并且仅针对其记录的用例对照生产环境验证（参见 [生产环境验证](../#production-verification)）。更广泛的生产环境兼容性未经验证，也没有针对官方模拟器的对等声明。详情：[Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) 以及下面的列表。
+- **Realtime Database。** 已提供，并且仅针对其记录的用例对照生产环境验证（参见 [生产环境验证](../#生产环境验证)）。更广泛的生产环境兼容性未经验证，也没有针对官方模拟器的对等声明。详情：[Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) 以及下面的列表。
 
 ## 不支持的功能
 
@@ -39,7 +39,7 @@ npx fireemu capabilities
 
 ### Realtime Database
 
-- 仅针对其记录的用例对照生产环境验证（参见 [生产环境验证](../#production-verification)）；更广泛的生产环境兼容性未经验证，也没有针对官方模拟器的对等声明。比较仅限于记录的官方模拟器用例。
+- 仅针对其记录的用例对照生产环境验证（参见 [生产环境验证](../#生产环境验证)）；更广泛的生产环境兼容性未经验证，也没有针对官方模拟器的对等声明。比较仅限于记录的官方模拟器用例。
 - 列出的不支持的语法和求值用例（正则表达式构造、大小写映射以及那里列出的其他差异）会在加载规则时被拒绝或产生规则错误。`query.endBefore`、`query.isOrderByChild()`、`OrderByKey`、`OrderByValue` 和 `OrderByPriority` 名称、`http.encodeURL()`、未调用的方法读取以及三元表达式被调用者，会按照记录的生产环境行为加载和求值。
 - 官方模拟器的确定化资源限制所拒绝的八个已记录模式，在 Fireemu 加载规则时同样会被拒绝，包括在未求值的表达式分支中。这并不能证明正则表达式或生产环境完全等价。
 - Functions 触发器投递仅针对有限的已记录处理程序和写入进行了观测；更广泛的用例仍未验证。

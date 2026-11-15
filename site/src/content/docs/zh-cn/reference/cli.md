@@ -157,7 +157,7 @@ npx fireemu up --plan --json --only firestore,auth --project demo-ci
 
 - 项目 ID 及选定它的规则（`--project`、`.firebaserc` 中的别名、`.firebaserc` 的默认项目、`daemon.authProject` 或内置默认值）、已加载的配置文件，以及已应用的命令行覆盖。[`config show`](#config-show) 只读取文件，因此不包含这些覆盖。
 - 每个服务及其地址，或其不启动的原因（`--only`、没有 Functions 代码库、未配置 Pub/Sub）。它不探测端口；运行会在启动时绑定其端口。
-- 环境：本次运行为其服务设置的变量，以及父环境中携带且保留下来的模拟器变量（参见 [继承的模拟器变量](#inherited-emulator-variables)）。继承的端点中的凭据会被替换为 `***`。
+- 环境：本次运行为其服务设置的变量，以及父环境中携带且保留下来的模拟器变量（参见 [继承的模拟器变量](#继承的模拟器变量)）。继承的端点中的凭据会被替换为 `***`。
 - 运行时打开的每个规则、索引、文本索引和源文件：绝对路径、所写的路径，以及解析相对路径所依据的目录。规范配置中的路径相对于工作目录解析，`firebase.json` 中的路径相对于其所在目录解析（[相对路径](../../guides/configuration/#relative-paths)）；当规范配置位于工作目录以外的目录时，计划会发出警告，因为从其所在目录运行同一文件会读取其他文件。
 - 对于每个 Functions 代码库，本次运行将使用的 Node 或 Python 可执行文件及版本（由启动时使用的同一代码选定，因此 `FIREEMU_NODE`、`PATH`、`VOLTA_HOME`、`engines.node` 和代码库的 `venv` 都会被考虑），以及已安装的 `firebase-functions` 和 `firebase-admin` 版本。计划会运行 `node --version` 和 Python 代码库的解释器来确定这些信息。
 - 生效的开发默认值，其中 [`productionExact`](../../guides/profiles/) 会切换的项标记为 `relaxed`，以及配置中设置但 [不起作用](#config-lint) 的设置。
@@ -170,7 +170,7 @@ npx fireemu up --plan --json --only firestore,auth --project demo-ci
 
 - 默认情况下，它会为每个这样的变量打印一条 `warning:`，保留该变量，然后运行。
 - 当环境中带有本次运行不启动的服务的模拟器变量时，`--deny-inherited-emulator-env` 会在任何内容启动之前拒绝运行（退出码 1）。本次运行启动的服务的变量会被替换为它自己的值，永远不会被拒绝。它也适用于 `up`，此时这些变量属于启动它的 Shell，以及 `emulator` profile 下的 Functions 运行器。
-- `--allow-inherited-emulator-env <NAME>` 有意保留某个变量，例如当一个套件有意使用另一个套件的 Pub/Sub 时的 `PUBSUB_EMULATOR_HOST`。它会消除该变量的警告和拒绝，可以重复使用，并且会拒绝不是模拟器变量的名称。[`--plan`](#plan-a-run) 会列出每个继承的变量及其处理方式。
+- `--allow-inherited-emulator-env <NAME>` 有意保留某个变量，例如当一个套件有意使用另一个套件的 Pub/Sub 时的 `PUBSUB_EMULATOR_HOST`。它会消除该变量的警告和拒绝，可以重复使用，并且会拒绝不是模拟器变量的名称。[`--plan`](#规划一次运行) 会列出每个继承的变量及其处理方式。
 
 该检查识别 Firebase 和 Google Cloud SDK 读取的每个模拟器主机变量，包括用于 Fireemu 不提供（因而永远不会启动）的服务的 `DATA_CONNECT_EMULATOR_HOST` 和 `FIREBASE_DATA_CONNECT_EMULATOR_HOST`。Hub 和 Logging 模拟器是尽力而为的（默认端口被占用只会禁用它们）：启动前检查将它们视为已启动，并在监听器绑定后、任何 Functions 运行器或命令启动之前，针对实际绑定成功的监听器再次运行检查。`functions.runner` 覆盖会显示为参数被替换为 `[redacted]` 的形式，因为参数可能包含凭据。
 
@@ -231,7 +231,7 @@ options: every option of `up` (listed under up above); only --config and --fireb
 
 ## config show
 
-`fireemu config show` 按架构顺序打印每个配置键及其生效值和来源。它使用与 `fireemu up` 相同的配置发现，但不包含 `up` 的命令行覆盖（`--project`、`--only` 和端口标志），也不启动模拟器。要同时查看文件和覆盖的结果，请使用 [`fireemu up --plan`](#plan-a-run)。
+`fireemu config show` 按架构顺序打印每个配置键及其生效值和来源。它使用与 `fireemu up` 相同的配置发现，但不包含 `up` 的命令行覆盖（`--project`、`--only` 和端口标志），也不启动模拟器。要同时查看文件和覆盖的结果，请使用 [`fireemu up --plan`](#规划一次运行)。
 
 使用 `--config <path>` 或 `--firebase-json <path>` 选择文件，使用 `--json` 输出包含 `key`、`value`、`source` 和架构描述的记录。
 

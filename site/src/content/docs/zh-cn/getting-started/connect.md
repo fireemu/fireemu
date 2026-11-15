@@ -39,7 +39,7 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 未选中的模拟器的变量保持您环境中的原样。如果 Shell 中已经带有本次运行不启动的模拟器的变量，该变量会保留，并以警告形式报告。
 
 - `fireemu exec --plan -- <command>` 列出命令将看到的内容。
-- [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables) 会使这类运行在启动前失败。
+- [`--deny-inherited-emulator-env`](../../reference/cli/#继承的模拟器变量) 会使这类运行在启动前失败。
 
 ## 连接客户端 SDK
 

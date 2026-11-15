@@ -9,7 +9,7 @@ description: 查阅 Fireemu 为您的命令和 Functions 代码设置的环境�
 
 `exec` 为其命令提供正在运行的模拟器的变量，除此之外不设置自己的任何变量。名称和格式遵循 `firebase emulators:exec` 写入的内容。
 
-未选中的模拟器的变量保持您环境中的原样，因此缺失的模拟器绝不会意外地让 SDK 连到生产环境。`exec` 会为每个这样的变量打印一条警告，而 `--deny-inherited-emulator-env` 则会拒绝运行（参见 [继承的模拟器变量](../cli/#inherited-emulator-variables)）。
+未选中的模拟器的变量保持您环境中的原样，因此缺失的模拟器绝不会意外地让 SDK 连到生产环境。`exec` 会为每个这样的变量打印一条警告，而 `--deny-inherited-emulator-env` 则会拒绝运行（参见 [继承的模拟器变量](../cli/#继承的模拟器变量)）。
 
 | 变量 | 值 | 条件 |
 |---|---|---|

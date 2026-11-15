@@ -1,0 +1,167 @@
+---
+title: Cloud Functions（Python）
+description: 在本地运行 Python 的 Cloud Functions for Firebase 代码库，并了解它们与生产环境以及与 Node.js 代码库的不同之处。
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 在 Node.js 代码库旁运行 Python 代码库。本页介绍 Python 特有的内容。[Cloud Functions](../functions/) 页面描述 Node.js 运行器；其中同样适用于 Python 代码库的部分（例如 [可调用函数中的 App Check](../functions/#app-check-in-callables)）会注明这一点。
+
+<Facts items={[
+  { label: '运行时', value: 'python310 至 python314' },
+  { label: '已测试的 SDK', value: 'firebase-functions 0.6.0' },
+  { label: '平台', value: 'Linux 和 macOS' },
+  { label: '生产环境验证', value: '六个事件系列中的已记录用例', href: 'compatibility/#production-verification' },
+]} />
+
+## 可以测试什么
+
+- 使用 Python SDK 编写的 [HTTP、可调用、事件、定时、任务队列和 Auth 阻塞函数](#支持的触发器)。
+- [Auth 阻塞函数](#auth-阻塞函数与受众检查)，可选择是否重现生产环境的受众检查失败。
+- CloudEvent 处理程序通过 `flask.request` [收到的请求](#事件正文)。
+- Python 运行器处理的 [App Check、密钥、重新加载和调度](#与生产环境和-firebase-cli-的差异)。
+
+## 设置
+
+满足以下任一条件的代码库是 Python 代码库（与 Firebase CLI 使用的顺序相同）：
+
+- 其在 `firebase.json` 中的 `runtime` 为 `python310`、`python311`、`python312`、`python313` 或 `python314`；
+- 它未声明 `runtime`，没有 `package.json`，并且有 `requirements.txt`。
+
+Fireemu 使用代码库自身虚拟环境的解释器运行它，始终为 `<source>/venv/bin/python`。它从不创建该环境，也不安装包：
+
+```sh
+cd functions
+python3.12 -m venv venv
+venv/bin/pip install -r requirements.txt   # includes firebase-functions
+npx fireemu up
+```
+
+在任何内容启动之前，fireemu 会检查环境，并在以下情况下停止：
+
+- 当 `venv` 缺失或无法导入 `firebase_functions` 时，显示 Firebase CLI 的消息；
+- 当解释器的 Python 版本与声明的 `runtime` 不同时，显示列出两个版本的消息。
+
+已测试的 SDK 为 `firebase-functions` 0.6.0。仅支持 Linux 和 macOS。
+
+## 支持的触发器
+
+| 触发器 | Python SDK |
+|---|---|
+| HTTP | `https_fn.on_request` |
+| 可调用函数 | `https_fn.on_call` |
+| Firestore 文档触发器 | `on_document_created`、`updated`、`deleted`、`written` 以及 `_with_auth_context` 变体 |
+| Pub/Sub | `pubsub_fn.on_message_published` |
+| Cloud Storage | `storage_fn.on_object_finalized`、`deleted`、`archived`、`metadata_updated` |
+| Eventarc 自定义事件 | `eventarc_fn.on_custom_event_published` |
+| Realtime Database | `db_fn.on_value_created`、`updated`、`deleted`、`written` |
+| 定时函数 | `scheduler_fn.on_schedule` |
+| 任务队列函数 | `tasks_fn.on_task_dispatched` |
+| Auth 阻塞函数 | `identity_fn.before_user_created`、`before_user_signed_in` |
+
+可调用函数看到的是 Auth 模拟器的用户。针对 fireemu 不提供的产品的触发器会在代码库加载时报告，并且永远不会运行；与 Cloud Functions 页面上 [支持的触发器](../functions/#supported-triggers) 中列出的产品一样，除非 `functions.unservedTriggers` 为 `"report"`，否则发现过程会拒绝这样的代码库。
+
+## Auth 阻塞函数与受众检查
+
+在 firebase-functions（Python）0.6.0 和 firebase-tools 15.28.2 下，生产环境投递的令牌带有 Python SDK 会拒绝的 `cloudfunctions.net` 受众：函数以失败关闭方式失败，注册返回 503 `Error code: 47`。
+
+默认情况下，fireemu 会像官方模拟器一样运行该函数，并打印一行关于此生产环境故障的诊断信息。若要重现该故障，请将 `productionExact` 设为 `true`，或在 strict profile 下将 `functions.authBlockingToken` 设为 `"production"`。
+
+Node 函数收到相同的生产环境形态令牌但不验证它，因此行为与以前相同。以后的 firebase-functions 或 firebase-tools 版本可能会改变受众规则；此设置遵循安装在代码库自身虚拟环境中的 SDK，并且只记录了 0.6.0。
+
+## 事件正文
+
+CloudEvent 处理程序可以读取 `flask.request`：它表示进行投递的 `POST /`，包括二进制模式的 `ce-*` 标头、内容类型、长度和正文。Firestore 使用 protobuf 正文。
+
+在 `strict` 下：
+
+- Pub/Sub 使用带换行符的已排序紧凑 JSON。
+- Storage 使用其已记录的缩进 JSON 布局。
+- Eventarc 保留发布者的 JSON 正文文本。
+- 跟踪上下文是普通的 `traceparent` 标头，而不是 CloudEvent 属性。
+- Firestore 带有 `dataschema`（仅在 `strict` 下；针对 created 事件已记录，其他事件类型未经观测）。
+
+对于 JSON 事件正文，emulator profile 保留守护进程分帧的 JSON 值文本，但 Pub/Sub 会添加 SDK 的 snake-case 别名并压缩正文。
+
+Realtime Database 的正文布局未被记录。Cloud Run 的授权和身份标头（例如 `Function-Execution-Id`、`Forwarded` 和 `X-Forwarded-For`）不会被重现。
+
+## 生产环境验证
+
+Python 代码库已针对六个事件系列的已记录用例对照生产环境验证，每个系列都来自 `strict` profile 下两次独立的生产环境记录：Firestore（created 和 updated 事件）、Pub/Sub、Cloud Storage（finalized 事件）、Eventarc 自定义事件、Cloud Scheduler 和 Cloud Tasks（HTTP 透传）。比较涵盖 Python SDK 看到的值和请求投影；参见 [兼容性表](../../compatibility/#生产环境验证)。
+
+Python 的 Auth 阻塞函数未经验证，也未比较将 Python 代码库部署到生产环境的过程。emulator profile 与已记录的 `strict` 行为之间的差异，作为已知差异列在这些表和下面的各节中。
+
+## 与生产环境和 Firebase CLI 的差异
+
+Python 代码库在以下方面与生产环境和 Firebase CLI 不同。
+
+### 每个代码库一个进程
+
+默认情况下，一个 Python 进程为整个代码库提供服务，而生产环境为每个函数提供独立的实例，CLI 为每个函数提供独立的进程。`functions.isolation = "function"` 则改为每个函数启动一个进程（参见 [进程隔离](../functions/#process-isolation-functionsisolation)）；本节其余部分和 [密钥](#密钥) 一节描述的是默认情况。
+
+- 模块级状态在函数之间共享。
+- `@init` 回调在每个进程中运行一次，在任意函数首次调用时运行。
+- 调用重叠时，`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE` 和 `K_SERVICE` 指的是最近启动的函数。
+
+### 时间
+
+时间为真实时间。Python 代码不会被移到虚拟时钟上，因此 `datetime.now()` 会忽略 `daemon.clock` 设置。为 Functions 运行器请求虚拟日期的配置在 Python 代码库中会被拒绝。
+
+### 源代码重新加载
+
+Python 源代码的更改会自动重新加载。
+
+- 有效的编辑会从一致的源代码快照启动一个替代实例。
+- 无效的编辑会让最后一个已知良好的版本继续提供服务，之后的有效编辑可以使其恢复。
+- 指向文件或目录的普通源代码符号链接（包括指向源目录之外的目标）会在每个快照中以其链接名称实体化；通过该别名进行的编辑会触发重新加载。
+- `venv` 内的更改不会触发重新加载，因此更改已安装的依赖或虚拟环境后请重启 Fireemu。
+- Python 字节码缓存（`__pycache__`、`.pyc` 和 `.pyo`）会被忽略。
+
+### `async def` 处理程序
+
+`async def` 处理程序不会被运行。Python SDK 从不 await 处理程序，因此在生产环境中，`async` 事件函数或定时函数的函数体会被悄无声息地跳过（`async` HTTP 函数会返回 500）。Fireemu 会将这样的调用报告为失败并说明该原因，`async` HTTP 函数会附带该原因返回 500。请使用 `def` 声明处理程序。
+
+### 定时函数
+
+定时函数会像 Cloud Scheduler 调用它那样，通过 SDK 的请求包装器被调用。引发异常的处理程序会被 SDK 记录日志，并使本次尝试失败。处理程序看到的计划时间在 strict profile 下以洛杉矶时间表示，在 emulator profile 下以 UTC 表示（同一时刻）。
+
+### 密钥
+
+来自 `.secret.local` 的密钥只在声明它们的函数运行期间存在于环境中：
+
+- 带密钥的函数单独运行，按到达顺序执行。
+- 每个不带密钥的函数在隐藏所有本地密钥的情况下，与其他此类函数一起运行。不带密钥的函数之间永远不会相互阻塞。
+- 隔离持续到调用及其响应结束。函数之后仍在运行的工作（例如它启动的线程或子进程）在共享进程中运行，可以看到那一刻环境中的任何内容；Node 运行器的行为相同。
+- 持有密钥的函数如果同步调用同一代码库的另一个函数（例如向其自身 URL 发出 HTTP 请求），会等待它自己持有的闸门而永远无法完成，与 Node 运行器相同。请异步调用此类函数，或不给调用方分配密钥。
+
+### 事件时间格式
+
+Python 的 Storage 和 Eventarc 处理程序使用带小数秒的模式解析事件的 `time`，因此生产环境的 SDK 在整秒时间上会失败。strict profile 按生产环境的方式投递时间。emulator profile 会为整秒时间添加 `.000`，因为官方模拟器的事件始终带有毫秒。
+
+### 调试器
+
+与 Firebase CLI 一样，`--inspect-functions` 会被忽略并显示警告。
+
+### App Check
+
+与生产环境一样，Python 可调用函数的 App Check 由 Python SDK 自己检查。它使用 Admin SDK 验证 `X-Firebase-AppCheck` 令牌，Fireemu 让这项检查指向 App Check 模拟器的密钥，因此只接受模拟器签名的令牌，而 `enforce_app_check=True` 的可调用函数会对其他所有调用返回 401。
+
+- 运行器自己获取这些密钥，仅从环回地址获取，不跟随重定向，也不使用代理。
+- 除了 SDK 的检查之外，它还要求过期时间和签发者完全符合模拟器签发的形式，并且其项目编号必须与 `projects/<number>` 受众一致；受众规则是 SDK 自己的规则（`projects/<project id>`）。
+- 这需要 PyJWT 2.10.1 或更高版本，Admin SDK 自身的约束已经隐含了这一点；如果版本较旧，则不会有任何提示，并且该标头会被移除。
+- 当本次运行有 App Check 模拟器时它才起作用，strict profile 会随 Functions 一起启动该模拟器。没有模拟器时，标头会在函数之前被移除，任何可调用函数都看不到令牌。
+
+与 Node 的差异：
+
+- Python SDK 仅根据密钥检查令牌。Node 可调用函数的令牌还会由守护进程根据项目当前的纪元和应用状态进行检查，因此与 Node 不同，在您重置项目或禁用应用之后，Python 令牌在过期之前仍然有效。
+- 没有启动时的 SDK 自检。
+- SDK 根据真实时间检查令牌的时间，而模拟器按自己的时钟对其签名，因此在您将时钟调到超前于真实时间之后签发的令牌会因尚未生效而被拒绝。
+- 限用令牌的消耗（`verify_token(..., consume=True)`）会被拒绝。
+- 显式开启 App Check 的配置（配置文件中的 `appCheck`）在有 Python 代码库时会拒绝启动。
+
+## 相关内容
+
+- [Cloud Functions](../functions/)
+- [App Check](../app-check/)
+- [时间和定时函数](../../guides/time/)
+- [Profile](../../guides/profiles/)
