@@ -10,7 +10,7 @@ It brings more of production into local tests:
 
 - **Missing-index query rejection.** Queries that need an undeclared composite index fail with `FAILED_PRECONDITION` under the default `strict` settings, so the missing index surfaces in the test run, before deployment.
 - **TOTP multi-factor authentication.** Test TOTP enrollment and sign-in through the Firebase SDK.
-- **Blocking functions and account policies.** Test blocking functions for sign-up, sign-in and password-reset emails, and account settings such as disabling user-initiated account deletion.
+- **Blocking functions and account policies.** Test blocking functions for sign-up, sign-in and password-reset emails (under `strict`), and account settings such as disabling user-initiated account deletion.
 - **A virtual clock.** Set and advance the emulator's clock to test token expiry and scheduled Node.js functions without waiting for real time to pass.
 - **Independent test worlds.** Each world has its own data, Security Rules, Functions, ports and clock, so integration tests run in parallel without sharing state.
 

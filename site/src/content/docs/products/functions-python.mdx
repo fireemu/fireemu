@@ -11,7 +11,7 @@ Fireemu runs Python codebases next to Node.js ones. This page covers what is spe
   { label: 'Runtimes', value: 'python310 to python314' },
   { label: 'Tested SDK', value: 'firebase-functions 0.6.0' },
   { label: 'Platforms', value: 'Linux and macOS' },
-  { label: 'Production verification', value: 'Six event families', href: 'compatibility/#production-verification' },
+  { label: 'Production verification', value: 'Recorded cases in six event families', href: 'compatibility/#production-verification' },
 ]} />
 
 ## What you can test
@@ -87,7 +87,7 @@ Realtime Database body layout is unrecorded. Cloud Run authorization and identit
 
 ## Production verification
 
-Python codebases are verified against production for six event families, each from two independent production recordings under the `strict` profile: Firestore, Pub/Sub, Cloud Storage, Eventarc custom events, Cloud Scheduler and Cloud Tasks. The comparison covers the values and request projections the Python SDK sees; see the [compatibility tables](../../compatibility/#production-verification).
+Python codebases are verified against production for the recorded cases of six event families, each from two independent production recordings under the `strict` profile: Firestore (created and updated events), Pub/Sub, Cloud Storage (the finalized event), Eventarc custom events, Cloud Scheduler and Cloud Tasks (HTTP pass-through). The comparison covers the values and request projections the Python SDK sees; see the [compatibility tables](../../compatibility/#production-verification).
 
 Python Auth blocking functions are not verified, and deployment of a Python codebase to production was not compared. The emulator profile's differences from the recorded `strict` behaviour are listed as known differences in those tables and in the sections below.
 

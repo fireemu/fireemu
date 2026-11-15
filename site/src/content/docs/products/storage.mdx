@@ -447,7 +447,7 @@ The Storage emulator keeps every object in memory, and by default nothing bounds
 
 ### Not supported
 
-- Verifying the signature of a signed URL or a POST policy.
+- Verifying the signature of a V2 signed URL or a POST policy. V4 signed URLs are verified only against keys registered in `storage.signedUrlKeys`.
 - Object ACLs other than `allUsers` read.
 - IAM and bucket-level public access.
 - Object composition (`compose`).

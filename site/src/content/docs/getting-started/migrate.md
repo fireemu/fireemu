@@ -7,7 +7,7 @@ Fireemu reads your existing `firebase.json`, serves the same default ports and a
 
 ## Before you start
 
-Check that the products you use are on the [supported list](../../#supported-products). The Local Emulator Suite also serves App Hosting, Data Connect and Extensions, which Fireemu does not, and Hosting and the Realtime Database are partial.
+Check that the products you use are on the [supported list](../../#supported-products). The Local Emulator Suite also serves App Hosting, Data Connect and Extensions, which Fireemu does not, and the Realtime Database is partial.
 
 ## Switch the commands
 
