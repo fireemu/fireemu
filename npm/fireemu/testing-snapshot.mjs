@@ -206,6 +206,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   await checked(signal,()=>mkdir(baseline,{mode:0o700}));
   let sequence=0;
   const directoryModes=[];
+  const relocationLinks=[];
   const writeTracked=async(path,text)=>{
     let before;
     try{before=(await stat(path)).size;}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -258,6 +259,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
           await checked(signal,()=>unlink(targetLink));
           const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
           await checked(signal,()=>symlink(process.platform==='win32'?copied:relative(dirname(targetLink),copied),targetLink,process.platform==='win32'&&kind==='dir'?'junction':kind));
+          relocationLinks.push(relative(baseline,targetLink));
         }catch(cause){
           throw Error(`Cannot snapshot dependency link ${JSON.stringify(sourceLink)} -> ${JSON.stringify(linkValue)}: ${cause.message}`,{cause});
         }
@@ -283,7 +285,10 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     for(const {modules,level} of dependencies){
       let ancestor=destination;for(let count=0;count<level;count++)ancestor=dirname(ancestor);
       const target=join(ancestor,'node_modules'),canonical=await checked(signal,()=>realpath(modules));
-      if(graph.has(canonical))await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
+      if(graph.has(canonical)){
+        await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
+        relocationLinks.push(relative(baseline,target));
+      }
       else await captureTree(modules,target);
     }
     return destination;
@@ -318,6 +323,20 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     for(const [section,key] of [['rules','source'],['firestore','indexFile'],['firestore','textIndexDefinitionFile'],['storage','rules'],...(withFunctions?[['functions','manifest']]:[])]){
       if(config[section]?.[key])config[section][key]=await copyFile(config[section][key],cwd);
     }
+    if(Array.isArray(config.storage?.signedUrlKeys)){
+      for(let index=0;index<config.storage.signedUrlKeys.length;index++){
+        const value=config.storage.signedUrlKeys[index];
+        if(typeof value!=='string')continue;
+        const source=resolve(cwd,value),destination=join(baseline,`input-${sequence++}-${basename(value)}`);
+        const info=await checked(signal,()=>stat(source));
+        if(!info.isFile())throw Error(`Cannot copy unsupported non-regular input ${JSON.stringify(source)}`);
+        // Key files must be private from creation; cloning would inherit the caller's mode.
+        try{await streamCopy(source,destination,{mode:0o600},signal);}
+        catch(error){await rm(destination,{force:true}).catch(()=>{});throw error;}
+        stats.files++;stats.bytes+=info.size;
+        config.storage.signedUrlKeys[index]=destination;
+      }
+    }
     if(withFunctions&&config.functions?.source)config.functions.source=await copySource(config.functions.source,cwd);
   }
   if(!withFunctions&&config.functions)config.functions=config.functions.clock===undefined?undefined:{clock:config.functions.clock};
@@ -346,7 +365,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   let seed;
   if(options.import){seed=join(baseline,'seed');await copyInputTree(resolve(cwd,options.import),seed,{signal,dereference:true,directoryModes,stats});}
   await restoreDirectoryModes(directoryModes,signal);
-  return {baseline,config,seed,nodePaths,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
+  return {baseline,config,seed,nodePaths,relocationLinks,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
 }
 
 // Clone the whole baseline with the platform tool. Returns false, leaving nothing behind, when the
@@ -381,22 +400,17 @@ async function prepareGenerationInputs(snapshot,directory,signal){
   };
   const rewrite=value=>typeof value==='string'&&value.startsWith(`${snapshot.baseline}${sep}`)?`${inputs}${value.slice(snapshot.baseline.length)}`:Array.isArray(value)?value.map(rewrite):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,item])=>[key,rewrite(item)])):value;
   // Windows junctions are absolute; copying them verbatim would expose the baseline.
-  const relocateLinks=async path=>{
-    for(const entry of await checked(signal,()=>readdir(path,{withFileTypes:true}))){
-      checkSignal(signal);
-      const child=join(path,entry.name);
-      if(entry.isSymbolicLink()){
-        const target=await checked(signal,()=>readlink(child));
-        const relocated=rewrite(target);
-        if(relocated!==target){
-          const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
-          await checked(signal,()=>unlink(child));
-          await checked(signal,()=>symlink(relocated,child,process.platform==='win32'&&kind==='dir'?'junction':kind));
-        }
-      }else if(entry.isDirectory())await relocateLinks(child);
+  for(const path of snapshot.relocationLinks??[]){
+    checkSignal(signal);
+    const child=join(inputs,path);
+    const target=await checked(signal,()=>readlink(child));
+    const relocated=rewrite(target);
+    if(relocated!==target){
+      const kind=(await checked(signal,()=>lstat(target))).isDirectory()?'dir':'file';
+      await checked(signal,()=>unlink(child));
+      await checked(signal,()=>symlink(relocated,child,process.platform==='win32'&&kind==='dir'?'junction':kind));
     }
-  };
-  await relocateLinks(inputs);
+  }
   const config=rewrite(snapshot.config);
   if(config.firebaseJson){const firebase=rewrite(JSON.parse(await checked(signal,()=>readFile(config.firebaseJson,'utf8'))));await rewriteFile(config.firebaseJson,JSON.stringify(firebase));}
   await rewriteFile(join(inputs,'fireemu.json'),JSON.stringify(config));

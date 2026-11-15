@@ -4180,11 +4180,44 @@ fn unknown_bucket_written(state: &StorageState, route: &Route, method: &str) -> 
 /// The bucket a request addresses and whether it is the Firebase API (`/v0`) or JSON API, for the CORS
 /// decision: the bucket of the route `method` and `path` resolve to. A preflight names no method
 /// of its own, so each verb a browser may ask for is tried. `None` for a path that names no bucket.
-/// Whether a JSON API request has the shape the STORAGE-STRICTNESS-OBS recording observed for JSON
-/// API CORS (cases C6-C8): a `GET` of an object (metadata or `alt=media`), or a preflight of that
-/// object URL. Other JSON API routes keep the base behaviour (UNRECORDED).
+/// Whether a JSON API request has the object-read shape the STORAGE-STRICTNESS-OBS recording
+/// observed (cases C6-C8): a `GET` of an object (metadata or `alt=media`), or a preflight of that
+/// object URL. The result selects the recorded object-specific expose-header list; all JSON routes
+/// use the shared API CORS policy.
 pub(crate) fn is_recorded_json_cors_shape(method: &str, path: &str) -> bool {
     matches!(method, "GET" | "OPTIONS") && matches!(route("GET", path), Ok(Route::GcsObject { .. }))
+}
+
+/// Whether a path resolves to the Cloud Storage JSON API, independent of bucket configuration.
+/// Canonical namespaces are identified by route shape under a supported JSON verb, so an XML
+/// fallback object such as `/storage/v1/a.txt` is not mistaken for the API. HEAD and unsupported
+/// endpoint methods use another supported verb to identify the named JSON route. Short aliases
+/// retain method-based classification because paths such as `PUT /b/foo` are ambiguous.
+pub(crate) fn is_json_api_endpoint(method: &str, path: &str) -> bool {
+    let methods: &[&str] = if is_canonical_json_api_path(path) {
+        &["GET", "POST", "PUT", "PATCH", "DELETE"]
+    } else if method == "OPTIONS" {
+        &["POST", "GET", "PUT", "DELETE"]
+    } else {
+        std::slice::from_ref(&method)
+    };
+    methods
+        .iter()
+        .filter_map(|method| route(method, path).ok())
+        .any(|route| is_json_api_route(&route))
+}
+
+/// Whether a path uses a canonical JSON API namespace, with segment boundaries so
+/// `/storage/v10/...` remains eligible for the XML-style fallback route.
+pub(crate) fn is_canonical_json_api_path(path: &str) -> bool {
+    ["/storage/v1", "/upload/storage/v1", "/download/storage/v1"]
+        .into_iter()
+        .any(|prefix| {
+            path == prefix
+                || path
+                    .strip_prefix(prefix)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
 }
 
 pub(crate) fn cors_bucket(method: &str, path: &str) -> Option<(String, bool, bool)> {
@@ -5347,7 +5380,7 @@ fn fb_resumable_command(
             Err(e) => Ok(fb_core_err(e)),
         };
     }
-    let mut checkpoint = None;
+    let mut finalizing_chunk = None;
     if commands.contains(&"upload") {
         let offset: u64 = match req.header("x-goog-upload-offset") {
             None => 0,
@@ -5355,27 +5388,24 @@ fn fb_resumable_command(
                 .parse()
                 .map_err(|_| fb_json_error(400, &format!("invalid X-Goog-Upload-Offset {v:?}")))?,
         };
-        // A finalizing chunk the stored-byte bound refuses is taken back, so the offset does
-        // not advance and the client can resend it once there is room.
         if commands.contains(&"finalize") {
-            checkpoint = store.upload_checkpoint(&id);
-        }
-        match store.append_upload_owned(&id, offset, chunk, now) {
-            Ok(_) => {}
-            Err(StorageError::UploadFinalized) => return Ok(plain_status(400)),
-            Err(StorageError::UploadNotFound) => return Ok(plain_status(404)),
-            // Production (recorded, lean-v5) answers a chunk at the wrong offset with this text.
-            Err(StorageError::UploadOffset { expected }) if state.is_strict() => {
-                return Ok(plain_text(
-                    400,
-                    &format!(
-                        "Client uploaded to the wrong offset ({offset} instead of {expected})."
-                    ),
-                ));
+            finalizing_chunk = Some((offset, chunk));
+        } else {
+            match store.append_upload_owned(&id, offset, chunk, now) {
+                Ok(_) => {}
+                Err(StorageError::UploadFinalized) => return Ok(plain_status(400)),
+                Err(StorageError::UploadNotFound) => return Ok(plain_status(404)),
+                // Production (recorded, lean-v5) answers a chunk at the wrong offset with this text.
+                Err(StorageError::UploadOffset { expected }) if state.is_strict() => {
+                    return Ok(plain_text(
+                        400,
+                        &format!(
+                            "Client uploaded to the wrong offset ({offset} instead of {expected})."
+                        ),
+                    ));
+                }
+                Err(e) => return Ok(fb_core_err(e)),
             }
-            Err(e) => return Ok(fb_core_err(e)),
-        }
-        if !commands.contains(&"finalize") {
             if state.is_strict() {
                 return Ok(plain_text(200, "").with_header("x-goog-upload-status", "active"));
             }
@@ -5387,32 +5417,49 @@ fn fb_resumable_command(
     if commands.contains(&"finalize") {
         // A repeated finalize answers with the outcome of the first one, as upstream
         // replays its recorded response code.
-        match store.upload_phase(&id, now) {
-            Ok(UploadPhase::Finalized(_)) => {
-                return Ok(plain_status(200).with_header("x-goog-upload-status", "final"));
+        let finalized = if let Some(chunk) = finalizing_chunk {
+            finalize_resumable_with_chunk(state, &mut store, &id, chunk, &req, now, signature)
+        } else {
+            // Finalize-only requests retain terminal replay handling in the Firebase caller.
+            match store.upload_phase(&id, now) {
+                Ok(UploadPhase::Finalized(_)) => {
+                    return Ok(plain_status(200).with_header("x-goog-upload-status", "final"));
+                }
+                Ok(UploadPhase::Denied(_)) => {
+                    return Ok(plain_status(403).with_header("x-goog-upload-status", "final"));
+                }
+                Ok(UploadPhase::Cancelled(_)) => return Ok(plain_status(400)),
+                Ok(UploadPhase::Active(_)) => {}
+                Err(e) => return Ok(fb_core_err(e)),
             }
-            Ok(UploadPhase::Denied(_)) => {
-                return Ok(plain_status(403).with_header("x-goog-upload-status", "final"));
-            }
-            Ok(UploadPhase::Cancelled(_)) => return Ok(plain_status(400)),
-            Ok(UploadPhase::Active(_)) => {}
-            Err(e) => return Ok(fb_core_err(e)),
-        }
-        let finalized = finalize_resumable(state, &mut store, &id, &req, now, signature);
-        if let (Err(FinalizeError::Store(StorageError::StoredBytesLimit)), Some(checkpoint)) =
-            (&finalized, checkpoint)
-        {
-            // The offset must not advance for a chunk that was refused: when the session
-            // cannot be taken back, say so instead of the bound.
-            if let Err(error) = store.rollback_upload(&id, checkpoint) {
-                return Ok(fb_core_err(error));
-            }
-        }
+            finalize_resumable(state, &mut store, &id, &req, now, signature)
+                .map_err(FinalizingChunkError::Finalize)
+        };
         let m = finalized.map_err(|e| match e {
-            FinalizeError::Denied(denial) => denial.with_header("x-goog-upload-status", "final"),
-            FinalizeError::Store(StorageError::UploadNotFound) => plain_status(404),
-            FinalizeError::Store(err) => fb_core_err(err),
-            FinalizeError::Auth((status, message)) => {
+            FinalizingChunkError::Append {
+                error: StorageError::UploadFinalized,
+                ..
+            } => plain_status(400),
+            FinalizingChunkError::Append {
+                error: StorageError::UploadNotFound,
+                ..
+            } => plain_status(404),
+            FinalizingChunkError::Append {
+                offset,
+                error: StorageError::UploadOffset { expected },
+            } if state.is_strict() => plain_text(
+                400,
+                &format!("Client uploaded to the wrong offset ({offset} instead of {expected})."),
+            ),
+            FinalizingChunkError::Append { error, .. } => fb_core_err(error),
+            FinalizingChunkError::Finalize(FinalizeError::Denied(denial)) => {
+                denial.with_header("x-goog-upload-status", "final")
+            }
+            FinalizingChunkError::Finalize(FinalizeError::Store(StorageError::UploadNotFound)) => {
+                plain_status(404)
+            }
+            FinalizingChunkError::Finalize(FinalizeError::Store(err)) => fb_core_err(err),
+            FinalizingChunkError::Finalize(FinalizeError::Auth((status, message))) => {
                 principal_refusal_response(Dialect::Firebase, status, &message)
             }
         })?;
@@ -5431,6 +5478,38 @@ enum FinalizeError {
     Denied(StorageResponse),
     Store(StorageError),
     Auth((u16, String)),
+}
+
+enum FinalizingChunkError {
+    Append { offset: u64, error: StorageError },
+    Finalize(FinalizeError),
+}
+
+/// Appends and finalizes one chunk, rolling it back only when the stored-byte bound refuses the commit; transport callers keep their error rendering.
+fn finalize_resumable_with_chunk(
+    state: &StorageState,
+    store: &mut StoreGuard<'_>,
+    id: &UploadId,
+    finalizing_chunk: (u64, Vec<u8>),
+    req: &StorageRequest,
+    now: LogicalInstant,
+    signature: &mut Option<SignatureCheckedToken>,
+) -> Result<ObjectMetadata, FinalizingChunkError> {
+    let (offset, chunk) = finalizing_chunk;
+    let checkpoint = store.upload_checkpoint(id);
+    store
+        .append_upload_owned(id, offset, chunk, now)
+        .map_err(|error| FinalizingChunkError::Append { offset, error })?;
+
+    let finalized = finalize_resumable(state, store, id, req, now, signature);
+    if let (Err(FinalizeError::Store(StorageError::StoredBytesLimit)), Some(checkpoint)) =
+        (&finalized, checkpoint)
+    {
+        store
+            .rollback_upload(id, checkpoint)
+            .map_err(|error| FinalizingChunkError::Finalize(FinalizeError::Store(error)))?;
+    }
+    finalized.map_err(FinalizingChunkError::Finalize)
 }
 
 /// Authorizes and commits a resumable upload against the bytes actually received (the
@@ -7061,26 +7140,22 @@ fn gcs_resumable_put(
         (Some(_), None) => false,
         (None, _) => true,
     };
-    // A finalizing chunk the stored-byte bound refuses is taken back (see the Firebase
-    // dialect's upload command).
-    let checkpoint = finalize.then(|| store.upload_checkpoint(&id)).flatten();
-    store
-        .append_upload_owned(&id, start, chunk, now)
-        .map_err(gcs_core_err)?;
     if finalize {
-        let finalized = finalize_resumable(state, &mut store, &id, &req, now, &mut None);
-        if let (Err(FinalizeError::Store(StorageError::StoredBytesLimit)), Some(checkpoint)) =
-            (&finalized, checkpoint)
-        {
-            store
-                .rollback_upload(&id, checkpoint)
-                .map_err(gcs_core_err)?;
-        }
+        let finalized = finalize_resumable_with_chunk(
+            state,
+            &mut store,
+            &id,
+            (start, chunk),
+            &req,
+            now,
+            &mut None,
+        );
         let m = finalized.map_err(|e| match e {
+            FinalizingChunkError::Append { error, .. } => gcs_core_err(error),
             // The JSON API dialect runs no rules, so a denial cannot happen here.
-            FinalizeError::Denied(denial) => denial,
-            FinalizeError::Store(err) => gcs_core_err(err),
-            FinalizeError::Auth((status, message)) => {
+            FinalizingChunkError::Finalize(FinalizeError::Denied(denial)) => denial,
+            FinalizingChunkError::Finalize(FinalizeError::Store(err)) => gcs_core_err(err),
+            FinalizingChunkError::Finalize(FinalizeError::Auth((status, message))) => {
                 principal_refusal_response(Dialect::Gcs, status, &message)
             }
         })?;
@@ -7088,6 +7163,9 @@ fn gcs_resumable_put(
         apply_predefined_acl(state, &mut store, params, &m);
         return Ok(StorageResponse::json(200, &gcs_json(&m, host)));
     }
+    store
+        .append_upload_owned(&id, start, chunk, now)
+        .map_err(gcs_core_err)?;
     let (received, _) = store.upload_status(&id, now).map_err(gcs_core_err)?;
     Ok(incomplete(
         received,
@@ -7877,5 +7955,55 @@ mod end_user_read_tests {
         // Not a Firebase read, or not an object read.
         assert!(!is_end_user_read(false, true, true, Some("Firebase a.b.c")));
         assert!(!is_end_user_read(true, false, true, Some("Firebase a.b.c")));
+    }
+}
+
+#[cfg(test)]
+mod json_api_endpoint_tests {
+    use super::is_json_api_endpoint;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        #[test]
+        fn recognized_canonical_json_routes_stay_json_across_methods(
+            bucket in "[a-z][a-z0-9-]{0,10}",
+            object in "[a-z][a-z0-9_-]{0,10}",
+        ) {
+            let paths = [
+                format!("/storage/v1/b/{bucket}/o/{object}"),
+                format!("/storage/v1/b/{bucket}/o/{object}/acl"),
+                format!("/upload/storage/v1/b/{bucket}/o"),
+                format!("/download/storage/v1/b/{bucket}/o/{object}"),
+            ];
+            for method in ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] {
+                for path in &paths {
+                    prop_assert!(is_json_api_endpoint(method, path), "{} {}", method, path);
+                }
+            }
+
+            let short_object = format!("/b/{bucket}/o/{object}");
+            prop_assert!(is_json_api_endpoint("GET", &short_object), "{}", short_object);
+            prop_assert!(!is_json_api_endpoint("PUT", "/b/foo"));
+        }
+
+        #[test]
+        fn canonical_looking_xml_paths_and_prefix_near_misses_stay_xml(
+            bucket in "[a-z][a-z0-9-]{0,10}",
+            object in "[a-z][a-z0-9_-]{0,10}",
+        ) {
+            let paths = [
+                format!("/storage/v1/{object}"),
+                format!("/upload/storage/v1/{object}"),
+                format!("/download/storage/v1/{object}"),
+                format!("/storage/v10/b/{bucket}/o/{object}"),
+            ];
+            for method in ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] {
+                for path in &paths {
+                    prop_assert!(!is_json_api_endpoint(method, path), "{} {}", method, path);
+                }
+            }
+        }
     }
 }

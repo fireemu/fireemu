@@ -85,6 +85,7 @@
     "crates/fireemu-adapter-grpc/src/rest/pipeline_json.rs",
     "crates/fireemu-adapter-grpc/src/rest/pipeline_json/tests.rs",
     "crates/fireemu-adapter-grpc/src/rest/transcode.rs",
+    "crates/fireemu-adapter-grpc/src/rest/unary_guards.tsv",
     "crates/fireemu-adapter-grpc/src/rules.rs",
     "crates/fireemu-adapter-grpc/src/serve.rs",
     "crates/fireemu-adapter-grpc/src/service.rs",
@@ -187,6 +188,9 @@
     "crates/fireemu-core-firestore/src/query.rs",
     "crates/fireemu-core-firestore/src/size.rs",
     "crates/fireemu-core-firestore/src/store.rs",
+    "crates/fireemu-core-firestore/src/store/path-indexes.generated.tsv",
+    "crates/fireemu-core-firestore/src/store/path_indexes.rs",
+    "crates/fireemu-core-firestore/src/store/path_indexes_tests.rs",
     "crates/fireemu-core-firestore/src/text_index.rs",
     "crates/fireemu-core-firestore/src/text_search.rs",
     "crates/fireemu-core-firestore/src/ttl.rs",
@@ -334,7 +338,7 @@
     },
     "crates/fireemu-adapter-functions/src/http.rs": {
       "kind": "sha256",
-      "value": "deec0df92f9add959f55072d00004f2511ffd09601540fac5023a130309eb12c"
+      "value": "bf184c1ed3cee892977ca1016be62f581815f398841603c3d28ba0721c9e67a2"
     },
     "crates/fireemu-adapter-functions/src/invoker.rs": {
       "kind": "sha256",
@@ -342,7 +346,7 @@
     },
     "crates/fireemu-adapter-functions/src/lib.rs": {
       "kind": "sha256",
-      "value": "c1bc88b39f64f41e53ede4d80ae49002a463daeff566b2116e32afc71f2830bf"
+      "value": "8d8cd642bc64397f61e300c1b8d5fec069bfcb83d2f001c116d4e08c044e6eb5"
     },
     "crates/fireemu-adapter-functions/src/manifest_json.rs": {
       "kind": "sha256",
@@ -366,19 +370,19 @@
     },
     "crates/fireemu-adapter-functions/src/runtime.rs": {
       "kind": "sha256",
-      "value": "b981b4b99d50c63120d3f2391be129a1f7104d024e74d6c8c8a666552532350e"
+      "value": "4f8dabc6f35c48598a1e078e4a7163277dd74cfc7c3fd4f0f70ad6189a709358"
     },
     "crates/fireemu-adapter-functions/src/task_scheduler.rs": {
       "kind": "sha256",
-      "value": "11015a86ddb997986ce047e67344d8d325d4551016a7543b545a93825238532e"
+      "value": "d81a0df1f00092c8798e03eec10075d20e71ae0998d26fc1434fc237c2977411"
     },
     "crates/fireemu-adapter-functions/src/tasks.rs": {
       "kind": "sha256",
-      "value": "b55a4728699570a723a9e4e2f23dabd269424564ac9a7a11cdd7667aef182d61"
+      "value": "812b52a8d6a8ec8c30e5a65d7411462f1a681eddc6fda300b3df58ab1e0627b0"
     },
     "crates/fireemu-adapter-functions/src/tasks_production.rs": {
       "kind": "sha256",
-      "value": "7d64fcada1f297c3a8e81380dc54962d4338004d32f1865f93bb4a51b0eed7c4"
+      "value": "d9b66f76e8977daeebc7108fdebc07f48a59d1d0c5683d7b3e3a2e295e5a7d27"
     },
     "crates/fireemu-adapter-functions/src/zone.rs": {
       "kind": "sha256",
@@ -526,7 +530,7 @@
     },
     "crates/fireemu-adapter-grpc/src/rest/mod.rs": {
       "kind": "sha256",
-      "value": "63fb2f7e68b996ca516dcdb0ec19982ee9e212e75c96b01df3743aaeade09d00"
+      "value": "3d765901169b63d24afc8c00b82ed8201eccb2b9e0cbd01c4923b6b3a5a87f05"
     },
     "crates/fireemu-adapter-grpc/src/rest/pipeline_json.rs": {
       "kind": "sha256",
@@ -540,9 +544,13 @@
       "kind": "sha256",
       "value": "0aae1c523eedba83a454f4d41edb54b22f4dd1ee9beeb72e5312b6f7784069af"
     },
+    "crates/fireemu-adapter-grpc/src/rest/unary_guards.tsv": {
+      "kind": "sha256",
+      "value": "0033df11f75970382d92490ee06ed7c85d2585ebbf02bba4223838e93e429bab"
+    },
     "crates/fireemu-adapter-grpc/src/rules.rs": {
       "kind": "sha256",
-      "value": "097e0b09259296e590125dd1587b5b3d49f768826635103614611e8371d00558"
+      "value": "ba46ef7d1f4b8ecd429113d87db085a094ec0a2f939638f44f7150451e049c72"
     },
     "crates/fireemu-adapter-grpc/src/serve.rs": {
       "kind": "sha256",
@@ -550,7 +558,7 @@
     },
     "crates/fireemu-adapter-grpc/src/service.rs": {
       "kind": "sha256",
-      "value": "d0fb43d48eb4833efb31745c6f4c3e75acf59c75622980535867e6f86b9b99e0"
+      "value": "576f58b110de9eb6641cf35cff9758f08fd144386a5aeff50258bc0cf077775c"
     },
     "crates/fireemu-adapter-grpc/src/service/explain.rs": {
       "kind": "sha256",
@@ -674,7 +682,7 @@
     },
     "crates/fireemu-adapter-http/src/storage.rs": {
       "kind": "sha256",
-      "value": "bb10ddae599db0ea3e6bceaab6c7613798ca317a1ab4d9ca236da9cd4505178e"
+      "value": "108b21983ec72e3f16c9312f345edc73f6ba86f160a46915d6f344b0aaaeb05a"
     },
     "crates/fireemu-adapter-http/src/storage_cors.rs": {
       "kind": "sha256",
@@ -686,7 +694,7 @@
     },
     "crates/fireemu-adapter-http/src/storage_server.rs": {
       "kind": "sha256",
-      "value": "679d6db55ab39aac2d4f122486b432f3698439b1d2bb4991daf29cb419f22e04"
+      "value": "1e248d16ad132951a8794ee614507d4084c0792157294492177d8b60f8078e0f"
     },
     "crates/fireemu-adapter-http/src/storage_signature.rs": {
       "kind": "sha256",
@@ -946,7 +954,19 @@
     },
     "crates/fireemu-core-firestore/src/store.rs": {
       "kind": "sha256",
-      "value": "97e90ab0a1f06b5732a5ff6432f4ab8dd3b688e00b40e383297cf4024e60cd5b"
+      "value": "bdad6ef0f0fa3c6cc33ea07f57c454fc22b4a40a3bef3cb14f1a28ef01de229d"
+    },
+    "crates/fireemu-core-firestore/src/store/path-indexes.generated.tsv": {
+      "kind": "sha256",
+      "value": "84fe2a8608013733d658cd3a346f7a76f1052d5d40f00e34a25051469135cde9"
+    },
+    "crates/fireemu-core-firestore/src/store/path_indexes.rs": {
+      "kind": "sha256",
+      "value": "0775eb9424f67fbb901e77219e073a8b1da68702b3439be4fdc02cadbcbfb01f"
+    },
+    "crates/fireemu-core-firestore/src/store/path_indexes_tests.rs": {
+      "kind": "sha256",
+      "value": "2fc3586901054deafa1c72e9e08c201c3b364e3119552fe53622a808a3a0478d"
     },
     "crates/fireemu-core-firestore/src/text_index.rs": {
       "kind": "sha256",
@@ -1274,7 +1294,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "cf32dcd9f650a89d30d997dc8f08112e90f2be87ee47671e9763428ff856a1b1"
+      "value": "558dac1a5b88234d693441ea68f39cf64f7d1696cd58c6902613b50b7a7e449b"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",

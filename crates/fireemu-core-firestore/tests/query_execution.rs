@@ -2314,12 +2314,29 @@ fn check_warm_name_order_directions(
     build_query.end_at = None;
     build_query.offset = 0;
     build_query.limit = None;
-    let (cold, _) = db.run_query_with_stats(&build_query, None).unwrap();
+    let (cold, cold_stats) = db.run_query_with_stats(&build_query, None).unwrap();
+    let expected = reference_run(corpus, &build_query);
+    assert_eq!(cold, expected, "cold PICT row: {row}");
     assert_eq!(
-        cold,
-        reference_run(corpus, &build_query),
-        "cold PICT row: {row}"
+        cold_stats.index_paths_visited,
+        corpus.len() as u64,
+        "build direction must start uncached, PICT row: {row}"
     );
+    let (warm, warm_stats) = db.run_query_with_stats(&build_query, None).unwrap();
+    assert_eq!(warm, expected, "warm PICT row: {row}");
+    if matches!(
+        &build_query.filter,
+        Some(FilterExpr::Field {
+            value: Value::Boolean(_) | Value::String(_) | Value::Bytes(_) | Value::Timestamp(_),
+            ..
+        })
+    ) {
+        assert_eq!(
+            warm_stats.index_paths_visited,
+            expected.len() as u64,
+            "eligible equality must use the warm cache, PICT row: {row}"
+        );
+    }
 
     for query_direction in [Direction::Ascending, Direction::Descending] {
         let mut paged = build_query.clone();
@@ -2348,7 +2365,8 @@ fn pict_equality_partitions_match_the_scan_reference() {
         match kind {
             "Boolean" => Value::Boolean(true),
             "String" => Value::String("wanted".to_owned()),
-            "Timestamp" => Value::Timestamp(Timestamp::new(1_788_000_000, 0).unwrap()),
+            "Timestamp" => Value::Timestamp(Timestamp::new(1_788_000_000, 123_456_000).unwrap()),
+            "Bytes" => Value::Bytes(vec![0, 255]),
             "Integer" => Value::Integer(7),
             "DoubleNaN" => Value::Double(f64::NAN),
             "Null" => Value::Null,
@@ -2364,7 +2382,7 @@ fn pict_equality_partitions_match_the_scan_reference() {
             .split('\t')
             .collect::<Vec<_>>()
             .try_into()
-            .expect("PICT fixture row has five columns");
+            .expect("PICT fixture row has six columns");
         let wanted = operand(operand_kind);
         let mut db = FirestoreState::new();
         let now = LogicalInstant::from_unix_seconds(1_788_000_000);
@@ -2377,6 +2395,14 @@ fn pict_equality_partitions_match_the_scan_reference() {
                 (0, "Null") => Some(Value::Null),
                 (0, "OldVersion") => Some(Value::String("old".to_owned())),
                 (0, "Missing") => None,
+                (2, _) if operand_kind == "Bytes" => Some(Value::Bytes(vec![0, 254])),
+                (3, _) if operand_kind == "Bytes" => Some(Value::Bytes(vec![0, 255, 0])),
+                (2, _) if operand_kind == "Timestamp" => Some(Value::Timestamp(
+                    Timestamp::new(1_788_000_000, 123_457_000).unwrap(),
+                )),
+                (3, _) if operand_kind == "Timestamp" => Some(Value::Timestamp(
+                    Timestamp::new(1_788_000_001, 123_456_000).unwrap(),
+                )),
                 (_, _) => Some(Value::String("other".to_owned())),
             };
             if let Some(value) = value {
@@ -2474,6 +2500,7 @@ fn pict_equality_partitions_match_the_scan_reference() {
             }
             other => panic!("unknown generated version {other}"),
         };
+        let uncached_db = db.clone();
         let got = db.run_query(&query, selected_version).unwrap();
         let selected_docs = if selected_version.is_none() {
             reference_run(&current_corpus, &query)
@@ -2491,7 +2518,13 @@ fn pict_equality_partitions_match_the_scan_reference() {
                 "Descending" => Direction::Descending,
                 other => panic!("unknown generated build order {other}"),
             };
-            check_warm_name_order_directions(&db, &query, &current_corpus, build_direction, line);
+            check_warm_name_order_directions(
+                &uncached_db,
+                &query,
+                &current_corpus,
+                build_direction,
+                line,
+            );
         }
         if version == "Current" && filter == "SingleEq" {
             let warm = db.run_query(&query, None).unwrap();
@@ -2503,7 +2536,216 @@ fn pict_equality_partitions_match_the_scan_reference() {
         }
         rows += 1;
     }
-    assert_eq!(rows, 39, "every generated PICT row is exercised");
+    assert_eq!(rows, 47, "every generated PICT row is exercised");
+}
+
+#[test]
+fn equality_cache_discards_an_over_cap_index_instead_of_publishing_a_partial_map() {
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let mut db = FirestoreState::new();
+    // Each distinct key costs 256 KiB before bucket overhead: 31 fit, while 32 exceed 8 MiB.
+    let writes = (0..32)
+        .map(|index| {
+            set(
+                &format!("items/d{index:02}"),
+                BTreeMap::from([
+                    (
+                        "group".to_owned(),
+                        Value::String(format!("{index:02}{}", "x".repeat(256 * 1024 - 2))),
+                    ),
+                    ("n".to_owned(), Value::Integer(index)),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    db.commit(&writes[..31], None, now).unwrap();
+    let mut query = Query::new(QueryScope::collection(None, collection("items")));
+    query.projection = Some(vec![fp("n")]);
+    query.filter = Some(FilterExpr::Field {
+        field: fp("group"),
+        op: FieldOp::Equal,
+        value: db.get(&path("items/d30")).unwrap().fields["group"].clone(),
+    });
+    let (cold, cold_stats) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(cold.len(), 1);
+    assert_eq!(cold_stats.index_paths_visited, 31);
+    let (warm, warm_stats) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(warm, cold);
+    assert_eq!(warm_stats.index_paths_visited, 1);
+
+    db.commit(&writes[31..], None, now).unwrap();
+    query.filter = Some(FilterExpr::Field {
+        field: fp("group"),
+        op: FieldOp::Equal,
+        value: db.get(&path("items/d31")).unwrap().fields["group"].clone(),
+    });
+    for _ in 0..3 {
+        let (rows, stats) = db.run_query_with_stats(&query, None).unwrap();
+        assert_eq!(rows.len(), 1, "the final key must survive cache overflow");
+        assert_eq!(rows[0].path, path("items/d31"));
+        assert_eq!(
+            rows[0].fields,
+            BTreeMap::from([("n".to_owned(), Value::Integer(31))])
+        );
+        assert_eq!(
+            stats.index_paths_visited, 32,
+            "an oversized cache must not be retained"
+        );
+    }
+    let (values, stats) = db
+        .run_aggregation_with_stats(&query, &[Aggregation::Count { up_to: None }], None)
+        .unwrap();
+    assert_eq!(values, vec![Value::Integer(1)]);
+    assert_eq!(stats.index_paths_visited, 32);
+}
+
+#[test]
+fn warm_equality_cache_is_invalidated_by_ttl_deletion_and_state_reset() {
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let mut db = FirestoreState::new();
+    let writes = (0..3)
+        .map(|index| {
+            set(
+                &format!("items/d{index:02}"),
+                BTreeMap::from([
+                    (
+                        "group".to_owned(),
+                        Value::String(if index < 2 { "wanted" } else { "other" }.to_owned()),
+                    ),
+                    (
+                        "expires".to_owned(),
+                        Value::Timestamp(
+                            Timestamp::new(if index == 0 { 0 } else { 100 }, 0).unwrap(),
+                        ),
+                    ),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    db.commit(&writes, None, now).unwrap();
+    let mut query = Query::new(QueryScope::collection(None, collection("items")));
+    query.filter = Some(FilterExpr::Field {
+        field: fp("group"),
+        op: FieldOp::Equal,
+        value: Value::String("wanted".to_owned()),
+    });
+    let _ = db.run_query(&query, None).unwrap();
+    let (warm, stats) = db.run_query_with_stats(&query, None).unwrap();
+    assert_eq!(warm.len(), 2);
+    assert_eq!(stats.index_paths_visited, 2);
+
+    let mut catalog = fireemu_core_firestore::ttl::TtlCatalog::new();
+    catalog.enable(collection("items"), fp("expires")).unwrap();
+    let mut expired = db
+        .select_ttl_expiry(
+            &catalog,
+            &collection("items"),
+            Timestamp::new(50, 0).unwrap(),
+            10,
+            None,
+        )
+        .unwrap();
+    let selected = expired.next_page(std::num::NonZeroUsize::new(10).unwrap());
+    assert_eq!(selected, vec![std::sync::Arc::new(path("items/d00"))]);
+    let deletions = selected
+        .iter()
+        .map(|path| Write {
+            op: WriteOp::Delete {
+                path: path.as_ref().clone(),
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    db.commit(&deletions, None, now).unwrap();
+    let corpus = initial_documents(&writes[1..], now);
+    for visits in [2, 1] {
+        let (rows, stats) = db.run_query_with_stats(&query, None).unwrap();
+        assert_eq!(rows, reference_run(&corpus, &query));
+        assert_eq!(stats.index_paths_visited, visits);
+    }
+
+    db = FirestoreState::new();
+    assert!(db.run_query(&query, None).unwrap().is_empty());
+    let fresh = [set(
+        "items/fresh",
+        BTreeMap::from([("group".to_owned(), Value::String("wanted".to_owned()))]),
+    )];
+    db.commit(&fresh, None, now).unwrap();
+    let corpus = initial_documents(&fresh, now);
+    for _ in 0..2 {
+        assert_eq!(
+            db.run_query(&query, None).unwrap(),
+            reference_run(&corpus, &query)
+        );
+    }
+}
+
+#[test]
+fn concurrent_equality_cache_publication_preserves_scope_field_and_direction() {
+    let now = LogicalInstant::from_unix_seconds(1_788_000_000);
+    let mut db = FirestoreState::new();
+    let writes = (0..12)
+        .map(|index| {
+            set(
+                &format!("{}/d{index:02}", if index < 6 { "items" } else { "other" }),
+                BTreeMap::from([
+                    (
+                        "group".to_owned(),
+                        Value::String(if index % 3 == 0 { "wanted" } else { "other" }.to_owned()),
+                    ),
+                    (
+                        "tag".to_owned(),
+                        Value::String(if index % 3 == 1 { "wanted" } else { "other" }.to_owned()),
+                    ),
+                ]),
+            )
+        })
+        .collect::<Vec<_>>();
+    db.commit(&writes, None, now).unwrap();
+    let corpus = initial_documents(&writes, now);
+    let mut queries = Vec::new();
+    for scope in ["items", "other"] {
+        for field in ["group", "tag"] {
+            for direction in [Direction::Ascending, Direction::Descending] {
+                let mut query = Query::new(QueryScope::collection(None, collection(scope)));
+                query.filter = Some(FilterExpr::Field {
+                    field: fp(field),
+                    op: FieldOp::Equal,
+                    value: Value::String("wanted".to_owned()),
+                });
+                query.order_by.push(OrderClause {
+                    field: FieldPath::document_name(),
+                    direction,
+                });
+                queries.push(query);
+            }
+        }
+    }
+    let barrier = std::sync::Barrier::new(queries.len());
+    std::thread::scope(|threads| {
+        let readers = queries
+            .iter()
+            .map(|query| {
+                threads.spawn(|| {
+                    let expected = reference_run(&corpus, query);
+                    barrier.wait();
+                    for _ in 0..8 {
+                        assert_eq!(db.run_query(query, None).unwrap(), expected);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for reader in readers {
+            reader.join().unwrap();
+        }
+    });
+    for query in &queries {
+        assert_eq!(
+            db.run_query(query, None).unwrap(),
+            reference_run(&corpus, query)
+        );
+    }
 }
 
 fn initial_documents(writes: &[Write], now: LogicalInstant) -> Vec<Document> {

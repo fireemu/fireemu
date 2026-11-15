@@ -38,3 +38,11 @@ Transaction	AndEq	Integer	Missing	FieldOrderCursor	Ascending
 Current	AndEq	Boolean	Different	FieldOrderCursor	Ascending
 Current	SingleEq	String	OldVersion	NameOrderCursor	Ascending
 Current	SingleEq	DoubleNaN	Null	NoCursor	Ascending
+Current	SingleEq	Bytes	Equal	NoCursor	Ascending
+Current	SingleEq	Bytes	Equal	NoCursor	Descending
+Current	SingleEq	Timestamp	Equal	NoCursor	Ascending
+Current	SingleEq	Timestamp	Equal	NoCursor	Descending
+Transaction	Or	Bytes	Missing	NameOrderCursor	Ascending
+Historical	AndEq	Bytes	OldVersion	FieldOrderCursor	Descending
+Current	Unsupported	Bytes	Different	OffsetLimit	Ascending
+Historical	Unsupported	Bytes	Null	NoCursor	Ascending
