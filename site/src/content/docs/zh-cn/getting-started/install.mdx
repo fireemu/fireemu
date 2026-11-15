@@ -1,0 +1,180 @@
+---
+title: 安装和运行
+description: 从 npm 安装 Fireemu，创建 fireemu.toml，启动模拟器并针对它们运行测试。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+安装 `fireemu` npm 包，创建 `fireemu.toml`，然后启动模拟器或针对它们运行命令。
+
+## 开始之前
+
+- **Node.js 20 或更高版本**（该包的 `engines` 字段为 `>=20`）。它运行 `fireemu` 启动器和 Functions 运行器。
+- **受支持的平台。** 该包会为您的平台安装预构建的二进制文件；不需要 Java 或其他运行时。
+
+| 操作系统 | 架构 |
+|---|---|
+| macOS 13 或更高版本 | Apple silicon、Intel |
+| Linux（任何 glibc 或 musl 发行版，包括 Alpine 和 distroless） | x86-64、arm64 |
+| Windows 10 或更高版本 | x86-64 |
+
+要运行 Cloud Functions，代码库中还需要 `firebase-functions` v6 或 v7。Python 代码库则需要 Python 3.10 至 3.14 以及包含 `firebase-functions` 的独立 `venv`（macOS 和 Linux；参见 [Cloud Functions](../../products/functions-python/)）。
+
+## 安装
+
+将 Fireemu 添加为项目的开发依赖。
+
+```sh
+npm install --save-dev fireemu
+```
+
+## 创建 `fireemu.toml`
+
+```sh
+npx fireemu init
+```
+
+`init` 会在当前目录中创建 `fireemu.toml`。在交互模式下，它会询问要使用哪个 [兼容性 profile](../../guides/profiles/)（推荐使用默认的 `strict`），以及是否复用现有的 `firebase.json`。复用时，Fireemu 引用该文件而不是复制它：每次 Fireemu 启动时都会从中读取安全规则、索引、Functions 代码库和端口。
+
+在 CI 或脚本中，请使用非交互形式：
+
+```sh
+npx fireemu init --yes
+```
+
+除非传入 `--force`，否则不会覆盖现有的 `fireemu.toml`。现有的 `fireemu.json` 会被保留；请在创建 `fireemu.toml` 之前将其删除。
+
+`npx fireemu init --yes` 写入的正是以下文件（此处添加的注释用于解释每一行）：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Editor hint: points TOML-aware editors at the JSON Schema for completion and validation.
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json
+# The configuration format version. The only value is 1.
+schemaVersion = 1
+# "strict" follows production (the default and recommended); "emulator" follows the pinned official emulator.
+profile = "strict"
+# The same schema URL as a data key, so JSON-oriented tools find it.
+"$schema" = "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json"
+# "native" (Firestore Native mode API) or "mongodb-compatible".
+firestore.apiMode = "native"
+# "standard" or "enterprise".
+firestore.edition = "standard"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "$schema": "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json",
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+JSON 选项卡是等效的 `fireemu.json`，`init` 不会写入它。
+
+当 `./firebase.json` 存在（或传入 `--firebase-json <file>`）时，`init` 会引用它并多添加一行 `firebaseJson = "firebase.json"`，这样端口、安全规则、索引和 Functions 代码库都从该文件读取。
+
+所有键都列在 [配置架构](../../reference/configuration/) 中。`npx fireemu init --reference` 还会写入 `fireemu.reference.toml`，它描述每个键，且不会被加载。
+
+## 启动模拟器
+
+```sh
+npx fireemu up
+```
+
+`up` 会让模拟器一直运行，直到您按下 `Ctrl+C`。打开 `http://127.0.0.1:4000/ui/` 上的 [Emulator UI](../../guides/ui/) 以查看和管理数据。
+
+启动输出的前几行会列出已加载的配置文件，并说明 Firestore 和 Storage 是否已加载安全规则。
+
+## 针对模拟器运行命令
+
+使用 `exec` 仅在某个命令（例如您的测试套件）运行期间运行模拟器：
+
+```sh
+npx fireemu exec -- npm test
+```
+
+`exec` 做四件事：
+
+1. 启动模拟器。
+2. 在所有监听器就绪后运行命令，并设置 Firebase SDK 模拟器环境变量（参见 [连接您的应用](../connect/)）。
+3. 命令退出时停止所有内容。
+4. 以命令的状态码退出。
+
+在 Unix 上，`SIGINT` 和 `SIGTERM` 会转发给命令。除非添加 `--ui`，否则 `exec` 不会启动 UI。
+
+官方命令名称可作为别名使用：
+
+```sh
+npx fireemu emulators:start
+npx fireemu emulators:exec -- npm test
+```
+
+## 选择服务
+
+Firestore、Authentication、Storage 和 App Check 默认启动。其他服务仅在配置后启动：
+
+| 服务 | 启动条件 |
+|---|---|
+| Functions，以及随之启动的 Eventarc 和 Cloud Tasks | 已配置代码库 |
+| Pub/Sub | 设置了 `emulators.pubsub`、`daemon.pubsubPort` 或 `--pubsub-port` |
+| Realtime Database | 设置了 `emulators.database`、`daemon.databasePort` 或 `--database-port` |
+| Hosting | `firebase.json` 中有 `hosting.public` 目录 |
+
+`--only` 精确选择要启动的服务：
+
+```sh
+npx fireemu up --only auth,firestore,storage
+npx fireemu exec --only firestore -- npm test
+
+# One Functions codebase
+npx fireemu up --only functions:<codebase>
+```
+
+## 默认端口
+
+Fireemu 使用与 Local Emulator Suite 相同的默认端口。在 `firebase.json` 或命令行中设置的端口优先。
+
+| 服务 | 端口 | 选项 |
+|---|---|---|
+| Emulator UI | 4000 | `--ui-port` |
+| Emulator Hub | 4400 | `--hub-port` |
+| 日志 | 4500 | `--logging-port` |
+| Firebase Hosting | 5000 | `--hosting-port` |
+| Cloud Functions | 5001 | `--functions-port` |
+| Cloud Firestore | 8080 | `--firestore-port` |
+| Cloud Pub/Sub | 8085 | `--pubsub-port` |
+| Realtime Database | 9000 | `--database-port` |
+| Authentication | 9099 | `--http-port` |
+| Cloud Storage | 9199 | `--storage-port` |
+| Eventarc | 9299 | `--eventarc-port` |
+| Cloud Tasks | 9499 | `--tasks-port` |
+
+## 获取帮助
+
+每个命令都记录了其选项：
+
+```sh
+npx fireemu --help
+npx fireemu exec --help
+```
+
+如果模拟器无法启动，请运行 `npx fireemu doctor`。参见 [故障排除](../../guides/troubleshooting/)。
+
+## 相关内容
+
+- [将您的应用连接](../connect/) 到模拟器。
+- 如果您已在使用 `firebase emulators:exec`，请参阅 [从 Local Emulator Suite 迁移](../migrate/)。
+- [CLI 参考](../../reference/cli/)

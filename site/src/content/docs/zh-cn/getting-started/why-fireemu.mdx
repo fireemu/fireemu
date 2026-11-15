@@ -1,0 +1,65 @@
+---
+title: 为什么选择 Fireemu
+description: 通过与 Firebase Local Emulator Suite 比较，判断 Fireemu 是否适合您的测试。
+---
+
+import VerifiedAreaCount from '../../../../components/VerifiedAreaCount.astro';
+
+Fireemu 是用于测试基于 Firebase 构建的应用的本地模拟器。它旨在与生产环境 Firebase 的行为一致，让您无需使用真实的 Firebase 项目即可在本地和 CI 中进行测试。
+
+Firebase Local Emulator Suite 是 Google 的官方工具。它覆盖的产品比 Fireemu 多，当您需要其中某个产品时，它是正确的选择。Fireemu 的目标更窄：在 CI 和开发者机器上运行、结果可延续到生产环境的测试。
+
+## 与 Local Emulator Suite 的比较
+
+| | Local Emulator Suite（`firebase-tools` 15.28.2） | Fireemu |
+|---|---|---|
+| 维护方 | Google | Fireemu 项目 |
+| 产品 | Firestore、Realtime Database、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Hosting、App Hosting、Data Connect、Extensions | Firestore、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Realtime Database 和 Hosting（两者均为部分支持）、App Check。App Hosting 和 Data Connect 尚不支持，不计划支持 Extensions（[状态](../../#supported-products)） |
+| 运行时 | Firestore 和 Realtime Database 模拟器作为 Java（`java -jar`）进程在 Node.js CLI 旁运行 | 单个原生二进制文件，通过 npm 包安装和启动（Node.js 20 或更高版本） |
+| 启动时间和内存，仅 Firestore | 3,043 ms 后 SDK 可以使用 Firestore；空闲内存（PSS）390 MiB | `emulator` profile：140 ms；11 MiB。在 GitHub Actions Linux 运行器上于提交 `f3b942c` 进行的一次 `standard` 运行，JDK 21.0.8，五组实测配对（[条件](../../compatibility/performance/)） |
+| 未定义复合索引的查询 | 查询执行 | `strict` profile（默认）：与生产环境的应答一样，返回带控制台链接的 `FAILED_PRECONDITION`；使用 `firestore.missingIndexes = "report"` 时查询执行并报告缺失的索引。`emulator` profile：查询执行，与 Local Emulator Suite 相同 |
+| TOTP 多重身份验证 | Authentication 模拟器接受电话（SMS）第二重验证；其他验证类型返回 `MFA provider not supported!` | 两种 profile：TOTP 和 SMS，通过项目的 MFA 配置 |
+| App Check | 无 App Check 模拟器 | 两种 profile：调试令牌交换，以及对 Authentication、Firestore、Storage 和可调用函数的强制执行；无证明提供方（[详情](../../products/app-check/)） |
+
+更多会改变测试结果的差异，以及每项对应的生产环境应答，见 [兼容性表](../../compatibility/#fireemu-the-official-emulator-and-production)。
+
+## Fireemu 增加了什么
+
+Local Emulator Suite 是为 Firebase 应用的本地开发而构建的。Fireemu 增加了生产环境会执行、且对 CI 很重要的检查：
+
+- **生产环境要求的配置。** 在 `strict` 下，未在 `firestore.indexes.json` 中声明复合索引的 Firestore 查询会被拒绝。
+- **官方模拟器未提供的功能。** TOTP 多重身份验证、使用调试令牌的 App Check，以及在 `strict` 下的 `beforeEmailSent` 阻塞函数。
+- **对测试执行条件的控制。** 设置任意开始时间并推进虚拟时钟，无需等待真实计划即可运行定时函数。
+
+## 生产环境优先
+
+当官方模拟器与生产环境 Firebase 存在差异时，Fireemu 在其默认的 `strict` profile 下遵循生产环境，并记录该差异。例外是下文所述的开发默认值。应答保留生产环境的措辞和状态码，因此您的应用在测试中处理的错误，就是部署后会遇到的错误。
+
+每项行为都会对照来自真实 Firebase 项目的记录进行检查。已有 <VerifiedAreaCount /> 个领域以这种方式进行了比较。[兼容性表](../../compatibility/) 列出了每个领域、它涵盖的内容以及涵盖的条件数量；[限制](../../compatibility/limitations/) 列出了未涵盖的内容。在两者存在差异时 Fireemu 遵循生产环境，但并不声称与其等价。
+
+### 开发默认值
+
+有些生产环境行为在测试中代价高昂：生产环境需要已签名的令牌、签名密钥，或通过 Admin API 调用启用的功能。对于其中每一项，Fireemu 都保留一个有意与生产环境不同、无需设置即可使用的开发默认值，因为精确重现它们会拖慢测试，却不会发现更多缺陷。每一项都有文档说明并有各自的设置。高级开关 `productionExact` 会为所有这些项恢复生产环境的行为。参见 [Fireemu 有意偏离生产环境之处](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose)。
+
+## 为测试而构建
+
+- **CI 只需一条命令。** `fireemu exec -- npm test` 会启动模拟器，在设置了模拟器环境变量的情况下运行测试，停止所有内容，并返回测试命令的退出状态。
+- **复用您的 `firebase.json`。** 每次启动时都会从中读取规则、索引、Functions 代码库和端口。
+- **解释拒绝原因。** 每次安全规则拒绝都会打印所求值的条件及其结果。
+- **相互独立的测试世界。** `fireemu/testing` 辅助工具会启动隔离的模拟器实例，每个实例拥有自己的时钟、规则、Functions 和数据，用于并行集成测试。
+- **单个原生二进制文件。** 实测数据及其条件参见 [性能](../../compatibility/performance/)。
+
+## 它不是什么
+
+Fireemu 不重现真实的配额计算、计费、IAM、组织政策、区域或网络差异以及服务的发布推出。本地性能无法预测生产环境的延迟。参见 [限制](../../compatibility/limitations/)。
+
+## 保留生产环境检查
+
+Fireemu 仍在开发中。对于您的应用使用的功能和关键工作流，请针对 Fireemu 和专用的 Firebase 测试项目（而不是您的线上项目）运行相同的测试，并在 CI 中仅依赖 Fireemu 之前比较结果。
+
+## 相关内容
+
+- [安装和运行](../install/)
+- [从 Local Emulator Suite 迁移](../migrate/)
+- [兼容性表](../../compatibility/)
+- [限制](../../compatibility/limitations/)
