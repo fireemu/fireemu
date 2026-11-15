@@ -8791,7 +8791,7 @@ async fn the_strict_server_sends_production_headers_on_framed_answers() {
     assert!(json_api.contains("vary: origin, x-origin"), "{json_api}");
     assert!(!json_api.contains("x-content-type-options"), "{json_api}");
     assert!(
-        json_api.contains("access-control-expose-headers: cache-control, content-length, content-type, date, etag, expires, server, transfer-encoding, vary, x-guploader-uploadid, x-goog-gcs-base-ts, x-google-trace"),
+        json_api.contains("access-control-expose-headers: cache-control, content-length, content-type, date, expires, pragma, server, transfer-encoding, vary, x-guploader-uploadid, x-goog-gcs-base-ts, x-google-trace"),
         "{json_api}"
     );
     // Firebase v0 retains its own CORS defaults independently of JSON API bucket settings.
@@ -8836,7 +8836,7 @@ async fn the_strict_server_sends_production_headers_on_framed_answers() {
     );
     assert!(buckets.contains("vary: origin, x-origin"), "{buckets}");
     assert!(
-        buckets.contains("access-control-expose-headers: content-type,x-firebase-storage-version,x-goog-upload-size-received,x-goog-upload-url,x-goog-upload-command,x-gupload-uploadid,x-goog-upload-header-content-length,x-goog-upload-header-content-type,x-goog-upload-protocol,x-goog-upload-status,x-goog-upload-chunk-granularity,x-goog-upload-control-url"),
+        buckets.contains("access-control-expose-headers: cache-control, content-length, content-type, date, expires, server, transfer-encoding, vary, x-guploader-uploadid, x-goog-gcs-base-ts, x-google-trace"),
         "{buckets}"
     );
     server.abort();

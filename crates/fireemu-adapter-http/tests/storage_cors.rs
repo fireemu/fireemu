@@ -798,7 +798,7 @@ json omitted normal nonMatching false
     );
     assert!(upload
         .header("access-control-expose-headers")
-        .is_some_and(|headers| headers.contains("x-goog-upload-url")));
+        .is_some_and(|headers| headers.contains("ETag")));
     task.abort();
     let _ = task.await;
 }
@@ -1343,6 +1343,389 @@ async fn emulator_keeps_its_answers_for_the_recorded_routes() {
         if case == "F2" {
             assert_eq!(answer.header("content-length"), None);
             assert!(answer.body.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn strict_v3_response_headers_match_recording() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let recording: Value = serde_json::from_slice(
+        &std::fs::read(root.join("conformance/storage-strictness-obs/recordings/run-2.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let mut local = Vec::new();
+    // These seven combinations are the seeded PICT table, including every strict default path.
+    for (strict, config, exact) in [
+        (true, "absent", false),
+        (true, "empty", false),
+        (true, "configured", false),
+        (false, "absent", false),
+        (true, "absent", true),
+        (false, "configured", true),
+        (false, "empty", true),
+    ] {
+        let s = state(if strict {
+            TokenAcceptance::Verified
+        } else {
+            TokenAcceptance::EmulatorMock
+        });
+        s.rules.set_unlisted_buckets_cors_none(exact);
+        if config != "absent" {
+            s.rules.set_bucket_cors(BTreeMap::from([(
+                CONFIGURED.to_owned(),
+                BucketCors::from_json(&if config == "empty" { json!([]) } else { rule() }).unwrap(),
+            )]));
+        }
+        seed_named(&s, CONFIGURED, "cors/o.txt", b"fire");
+        if strict {
+            let patched = handle(
+                &s,
+                StorageRequest {
+                    method: "PATCH".into(),
+                    path: format!("/storage/v1/b/{CONFIGURED}"),
+                    query: String::new(),
+                    host: None,
+                    headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+                    app_check: vec![],
+                    body: br#"{"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}"#
+                        .to_vec(),
+                    remote_peer: false,
+                },
+            );
+            assert_eq!(patched.status, 200);
+        }
+        let (addr, task) = serve(s).await;
+        let mut session = String::new();
+        for row in recording["rows"].as_array().unwrap().iter().filter(|row| {
+            row["case"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("V3-{config}-"))
+        }) {
+            let case = row["case"].as_str().unwrap();
+            let method = row["method"].as_str().unwrap();
+            let url = row["url"]
+                .as_str()
+                .unwrap()
+                .replace("fireemu-obs-RUN", CONFIGURED);
+            let path = &url[url
+                .find("/storage/")
+                .unwrap_or_else(|| url.find("/upload/").unwrap())..];
+            let path = if url.contains("/upload/") {
+                &url[url.find("/upload/").unwrap()..]
+            } else {
+                path
+            };
+            let path = if case.ends_with("-cancel") || case.ends_with("-session-read") {
+                session.as_str()
+            } else {
+                path
+            };
+            let headers: Vec<(&str, &str)> = row["requestHeaders"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str().unwrap()))
+                .collect();
+            let answer = send(addr, method, path, &headers).await;
+            if case.ends_with("-resumable") {
+                if let Some(location) = answer.header("location") {
+                    session = location[location.find("/upload/").unwrap()..].to_owned();
+                }
+            }
+            if strict {
+                assert_eq!(
+                    u64::from(answer.status),
+                    row["status"].as_u64().unwrap(),
+                    "{case}"
+                );
+                for (name, value) in row["headers"].as_object().unwrap() {
+                    let actual = answer
+                        .headers
+                        .iter()
+                        .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+                        .map(|(_, v)| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    assert_eq!(actual, value.as_str().unwrap(), "{case}: {name}");
+                }
+                let mut names: Vec<_> = answer
+                    .headers
+                    .iter()
+                    .map(|(name, _)| name.to_ascii_lowercase())
+                    .filter(|name| {
+                        name.starts_with("access-control-")
+                            || matches!(name.as_str(), "vary" | "location")
+                    })
+                    .collect();
+                names.sort();
+                names.dedup();
+                assert_eq!(json!(names), row["headerNames"], "{case}");
+                if let Some(body) = row["body"].as_str() {
+                    assert_eq!(
+                        serde_json::from_slice::<Value>(&answer.body).unwrap(),
+                        serde_json::from_str::<Value>(body).unwrap(),
+                        "{case}"
+                    );
+                }
+                if !exact {
+                    local.push(json!({"case":case,"method":method,"url":format!("http://{addr}{}", row["url"].as_str().unwrap().split("storage.googleapis.com").nth(1).unwrap().replace("fireemu-obs-RUN", CONFIGURED)),"status":answer.status,"headers":answer.headers.into_iter().collect::<BTreeMap<_,_>>(),"body":String::from_utf8(answer.body).unwrap()}));
+                }
+            } else {
+                assert_eq!(
+                    answer.header("access-control-allow-credentials"),
+                    None,
+                    "{case}"
+                );
+                assert_eq!(answer.header("access-control-expose-headers"), Some("content-type,x-firebase-storage-version,X-Goog-Upload-Size-Received,x-goog-upload-url,x-goog-upload-command,x-gupload-uploadid,x-goog-upload-header-content-length,x-goog-upload-header-content-type,x-goog-upload-protocol,x-goog-upload-status,x-goog-upload-chunk-granularity,x-goog-upload-control-url"), "{case}");
+            }
+        }
+        task.abort();
+        let _ = task.await;
+    }
+    std::fs::create_dir_all(root.join("target/codex-out")).unwrap();
+    std::fs::write(
+        root.join("target/codex-out/local-strict-raw.json"),
+        serde_json::to_vec(&local).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn strict_v3_preflight_preserves_requested_spelling_without_separator_spaces() {
+    let recording: Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../conformance/storage-strictness-obs/recordings/run-2.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let (addr, task) = serve(state(TokenAcceptance::Verified)).await;
+    for row in recording["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["method"] == "OPTIONS")
+    {
+        let answer = send(
+            addr,
+            "OPTIONS",
+            &format!("/upload/storage/v1/b/{CONFIGURED}/o"),
+            &[
+                ("Origin", ORIGIN),
+                ("Access-Control-Request-Method", "POST"),
+                (
+                    "Access-Control-Request-Headers",
+                    row["requestHeaders"]["access-control-request-headers"]
+                        .as_str()
+                        .unwrap(),
+                ),
+            ],
+        )
+        .await;
+        assert_eq!(
+            answer.header("access-control-allow-headers"),
+            row["headers"]["access-control-allow-headers"].as_str()
+        );
+    }
+    let answer = send(
+        addr,
+        "OPTIONS",
+        &format!("/upload/storage/v1/b/{CONFIGURED}/o"),
+        &[
+            ("Origin", ORIGIN),
+            ("Access-Control-Request-Method", "POST"),
+            ("Access-Control-Request-Headers", "Content-Type, X-Custom"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        answer.header("access-control-allow-headers"),
+        Some("Content-Type,X-Custom")
+    );
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
+async fn strict_v3_cancel_and_session_read_retain_the_initiating_origin() {
+    let recording: Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../conformance/storage-strictness-obs/recordings/run-2.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let (addr, task) = serve(state(TokenAcceptance::Verified)).await;
+    let start = send(
+        addr,
+        "POST",
+        &format!("/upload/storage/v1/b/{CONFIGURED}/o?uploadType=resumable&name=cancel.txt"),
+        &[("Origin", ORIGIN)],
+    )
+    .await;
+    let location = start.header("location").unwrap();
+    let path = &location[location.find("/upload/").unwrap()..];
+    for method in ["DELETE", "PUT"] {
+        let answer = send(addr, method, path, &[("Content-Range", "bytes */*")]).await;
+        let row = recording["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["method"] == method && row["status"] == 499)
+            .unwrap();
+        assert_eq!(answer.status, 499);
+        assert_eq!(
+            answer.header("access-control-allow-origin"),
+            row["headers"]["access-control-allow-origin"].as_str()
+        );
+        assert_eq!(
+            answer.header("access-control-expose-headers"),
+            row["headers"]["access-control-expose-headers"].as_str()
+        );
+    }
+    task.abort();
+    let _ = task.await;
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn strict_v3_ubla_acl_follows_bucket_creation_patch_reset_and_restore() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    let recording: Value = serde_json::from_slice(
+        &std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../conformance/storage-strictness-obs/recordings/run-2.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let acl = recording["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["case"] == "V3-absent-acl")
+        .unwrap();
+    for strict in [false, true] {
+        let s = state(if strict {
+            TokenAcceptance::Verified
+        } else {
+            TokenAcceptance::EmulatorMock
+        });
+        seed_named(&s, CONFIGURED, "cors/o.txt", b"fire");
+        let mut snapshot = None;
+        for (method, path, body, expected) in [
+            (
+                "GET",
+                format!("/storage/v1/b/{CONFIGURED}/o/cors%2Fo.txt/acl"),
+                json!(null),
+                404,
+            ),
+            (
+                "GET",
+                format!("/storage/v1/b/{CONFIGURED}?fields=iamConfiguration"),
+                json!(null),
+                200,
+            ),
+            (
+                "POST",
+                "/storage/v1/b".into(),
+                json!({"name":"created-ubla","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}),
+                if strict { 200 } else { 501 },
+            ),
+            (
+                "PATCH",
+                format!("/storage/v1/b/{CONFIGURED}"),
+                json!({"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}),
+                if strict { 200 } else { 400 },
+            ),
+            (
+                "GET",
+                format!("/storage/v1/b/{CONFIGURED}/o/cors%2Fo.txt/acl"),
+                json!(null),
+                if strict { 400 } else { 404 },
+            ),
+            (
+                "PATCH",
+                format!("/storage/v1/b/{CONFIGURED}"),
+                json!({"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":false}}}),
+                if strict { 200 } else { 400 },
+            ),
+            (
+                "GET",
+                format!("/storage/v1/b/{CONFIGURED}/o/cors%2Fo.txt/acl"),
+                json!(null),
+                404,
+            ),
+        ] {
+            let (path, query) = path.split_once('?').unwrap_or((&path, ""));
+            let response = handle(
+                &s,
+                StorageRequest {
+                    method: method.into(),
+                    path: path.into(),
+                    query: query.into(),
+                    host: None,
+                    headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+                    app_check: vec![],
+                    body: if body.is_null() {
+                        vec![]
+                    } else {
+                        serde_json::to_vec(&body).unwrap()
+                    },
+                    remote_peer: false,
+                },
+            );
+            assert_eq!(response.status, expected, "{strict}: {method} {path}");
+            if strict && method == "GET" && !path.ends_with("/acl") {
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&response.body).unwrap()["iamConfiguration"]
+                        ["uniformBucketLevelAccess"]["enabled"],
+                    recording["defaultBucketUniformAccess"]
+                );
+            }
+            if strict && expected == 400 {
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&response.body).unwrap(),
+                    serde_json::from_str::<Value>(acl["body"].as_str().unwrap()).unwrap()
+                );
+                snapshot = Some(
+                    s.store
+                        .lock()
+                        .unwrap()
+                        .capture_buckets(|b| b == CONFIGURED)
+                        .unwrap(),
+                );
+            }
+        }
+        if let Some(snapshot) = snapshot {
+            let b = BucketName::try_new(CONFIGURED).unwrap();
+            let mut store = s.store.lock().unwrap();
+            store
+                .restore_buckets(|name| name == CONFIGURED, &snapshot)
+                .unwrap();
+            assert!(store.uniform_bucket_level_access(&b));
+            assert!(
+                store.uniform_bucket_level_access(&BucketName::try_new("created-ubla").unwrap())
+            );
+            store.remove_bucket(&b);
+            assert!(!store.uniform_bucket_level_access(&b));
+            store
+                .restore_buckets(|name| name == CONFIGURED, &snapshot)
+                .unwrap();
+            store.remove_buckets_where(|name| name == CONFIGURED);
+            assert!(!store.uniform_bucket_level_access(&b));
+            store
+                .restore_buckets(|name| name == CONFIGURED, &snapshot)
+                .unwrap();
+            store.clear();
+            assert!(!store.uniform_bucket_level_access(&b));
         }
     }
 }

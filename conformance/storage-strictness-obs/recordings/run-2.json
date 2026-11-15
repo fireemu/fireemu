@@ -1,0 +1,657 @@
+{
+  "description": "STORAGE-STRICTNESS-OBS production recording (packet v3), masked as run-1: run-named bucket fireemu-obs-RUN, session URLs masked, successful bodies omitted. Only stable CORS values and relevant header names are retained.",
+  "defaultBucketUniformAccess": false,
+  "rows": [
+    {
+      "case": "V3-absent-metadata",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-absent-media",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt?alt=media",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Disposition, Content-Length, Content-Type, Date, ETag, Expires, Last-Modified, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Goog-Generation, X-Goog-Hash, X-Goog-Metageneration, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "media",
+      "known": true
+    },
+    {
+      "case": "V3-absent-bucket",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "bucket-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-absent-list",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-list",
+      "known": true
+    },
+    {
+      "case": "V3-absent-acl",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt/acl",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 400,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n    \"errors\": [\n      {\n        \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n        \"domain\": \"global\",\n        \"reason\": \"invalid\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-absent-preflight",
+      "method": "OPTIONS",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "access-control-request-headers": "content-type, x-upload-content-type, x-goog-upload-protocol",
+        "access-control-request-method": "POST",
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-headers": "content-type,x-upload-content-type,x-goog-upload-protocol",
+        "access-control-allow-methods": "DELETE,GET,HEAD,PATCH,POST,PUT",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-max-age": "3600",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+        "access-control-allow-origin",
+        "access-control-max-age",
+        "vary"
+      ],
+      "shape": "empty",
+      "known": true
+    },
+    {
+      "case": "V3-absent-resumable",
+      "method": "POST",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-absent.txt",
+      "requestHeaders": {
+        "content-type": "application/json",
+        "origin": "http://localhost:3000",
+        "x-upload-content-type": "text/plain"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Location, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "location",
+        "vary"
+      ],
+      "shape": "resumable-start",
+      "known": true
+    },
+    {
+      "case": "V3-empty-metadata",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-empty-media",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt?alt=media",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Disposition, Content-Length, Content-Type, Date, ETag, Expires, Last-Modified, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Goog-Generation, X-Goog-Hash, X-Goog-Metageneration, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "media",
+      "known": true
+    },
+    {
+      "case": "V3-empty-bucket",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "bucket-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-empty-list",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-list",
+      "known": true
+    },
+    {
+      "case": "V3-empty-acl",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt/acl",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 400,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n    \"errors\": [\n      {\n        \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n        \"domain\": \"global\",\n        \"reason\": \"invalid\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-empty-preflight",
+      "method": "OPTIONS",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "access-control-request-headers": "content-type, x-upload-content-type, x-goog-upload-protocol",
+        "access-control-request-method": "POST",
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-headers": "content-type,x-upload-content-type,x-goog-upload-protocol",
+        "access-control-allow-methods": "DELETE,GET,HEAD,PATCH,POST,PUT",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-max-age": "3600",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+        "access-control-allow-origin",
+        "access-control-max-age",
+        "vary"
+      ],
+      "shape": "empty",
+      "known": true
+    },
+    {
+      "case": "V3-empty-resumable",
+      "method": "POST",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-empty.txt",
+      "requestHeaders": {
+        "content-type": "application/json",
+        "origin": "http://localhost:3000",
+        "x-upload-content-type": "text/plain"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Location, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "location",
+        "vary"
+      ],
+      "shape": "resumable-start",
+      "known": true
+    },
+    {
+      "case": "V3-configured-metadata",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-configured-media",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt?alt=media",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Disposition, Content-Length, Content-Type, Date, ETag, Expires, Last-Modified, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Goog-Generation, X-Goog-Hash, X-Goog-Metageneration, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "media",
+      "known": true
+    },
+    {
+      "case": "V3-configured-bucket",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "bucket-metadata",
+      "known": true
+    },
+    {
+      "case": "V3-configured-list",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "shape": "object-list",
+      "known": true
+    },
+    {
+      "case": "V3-configured-acl",
+      "method": "GET",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o/cors%2Fo.txt/acl",
+      "requestHeaders": {
+        "origin": "http://localhost:3000"
+      },
+      "status": 400,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n    \"errors\": [\n      {\n        \"message\": \"Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access\",\n        \"domain\": \"global\",\n        \"reason\": \"invalid\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-configured-preflight",
+      "method": "OPTIONS",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o",
+      "requestHeaders": {
+        "access-control-request-headers": "content-type, x-upload-content-type, x-goog-upload-protocol",
+        "access-control-request-method": "POST",
+        "origin": "http://localhost:3000"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-headers": "content-type,x-upload-content-type,x-goog-upload-protocol",
+        "access-control-allow-methods": "DELETE,GET,HEAD,PATCH,POST,PUT",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-max-age": "3600",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+        "access-control-allow-origin",
+        "access-control-max-age",
+        "vary"
+      ],
+      "shape": "empty",
+      "known": true
+    },
+    {
+      "case": "V3-configured-resumable",
+      "method": "POST",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-configured.txt",
+      "requestHeaders": {
+        "content-type": "application/json",
+        "origin": "http://localhost:3000",
+        "x-upload-content-type": "text/plain"
+      },
+      "status": 200,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Length, Content-Type, Date, Expires, Location, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Google-Trace",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "location",
+        "vary"
+      ],
+      "shape": "resumable-start",
+      "known": true
+    },
+    {
+      "case": "V3-absent-cancel",
+      "method": "DELETE",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-absent.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {},
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-absent-session-read",
+      "method": "PUT",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-absent.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {
+        "content-range": "bytes */*"
+      },
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-empty-cancel",
+      "method": "DELETE",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-empty.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {},
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-empty-session-read",
+      "method": "PUT",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-empty.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {
+        "content-range": "bytes */*"
+      },
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-configured-cancel",
+      "method": "DELETE",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-configured.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {},
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    },
+    {
+      "case": "V3-configured-session-read",
+      "method": "PUT",
+      "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-RUN/o?uploadType=resumable&name=cors%2Fresumable-configured.txt&upload_id=<UPLOAD_ID>",
+      "requestHeaders": {
+        "content-range": "bytes */*"
+      },
+      "status": 499,
+      "headers": {
+        "access-control-allow-credentials": "true",
+        "access-control-allow-origin": "http://localhost:3000",
+        "access-control-expose-headers": "Cache-Control, Content-Type, Date, Expires, Pragma, Vary",
+        "vary": "Origin, X-Origin"
+      },
+      "headerNames": [
+        "access-control-allow-credentials",
+        "access-control-allow-origin",
+        "access-control-expose-headers",
+        "vary"
+      ],
+      "body": "{\n  \"error\": {\n    \"code\": 499,\n    \"message\": \"clientClosedRequest\",\n    \"errors\": [\n      {\n        \"message\": \"clientClosedRequest\",\n        \"domain\": \"global\",\n        \"reason\": \"clientClosedRequest\"\n      }\n    ]\n  }\n}\n",
+      "shape": "json-error",
+      "known": true
+    }
+  ]
+}

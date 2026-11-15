@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Storage strict-profile JSON API and upload CORS now follow the recorded response-specific expose lists, preflight requested headers and cancelled-session Origin. Buckets explicitly enabling uniform bucket-level access return the recorded object ACL GET error; the emulator profile is unchanged.
+
 ## [0.53.0] - 2026-11-15
 
 ### Changed

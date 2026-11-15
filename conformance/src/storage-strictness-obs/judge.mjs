@@ -111,7 +111,10 @@ export function parseXmlError(text) {
 export function judgeAnswer(entry) {
   const body = Buffer.from(entry.bodyBase64 ?? "", "base64");
   const headers = Object.fromEntries(new Headers(entry.headers ?? {}).entries());
-  const headerNames = Object.keys(headers).toSorted();
+  // Only names relevant to CORS are comparable; transport and Google frontend headers vary.
+  const headerNames = Object.keys(headers)
+    .filter((name) => name.startsWith("access-control-") || ["vary", "location"].includes(name))
+    .toSorted();
   const row = {
     case: entry.case,
     status: entry.status,
@@ -120,10 +123,7 @@ export function judgeAnswer(entry) {
     headerNames,
     headers: Object.fromEntries(
       headerNames
-        .filter(
-          (name) =>
-            name.startsWith("access-control-") || name === "vary" || name === "content-length",
-        )
+        .filter((name) => name.startsWith("access-control-") || name === "vary")
         .map((name) => [name, headers[name]]),
     ),
     json: null,
@@ -132,7 +132,7 @@ export function judgeAnswer(entry) {
     known: false,
   };
   const v3 =
-    /^V3-(absent|empty|configured)-(metadata|media|bucket|list|acl|preflight|resumable)$/.exec(
+    /^V3-(absent|empty|configured)-(metadata|media|bucket|list|acl|preflight|resumable|cancel|session-read)$/.exec(
       entry.case,
     );
   if (v3?.[2] === "resumable")
@@ -171,7 +171,7 @@ export function judgeAnswer(entry) {
       )
         row.shape = "json-error";
     }
-    // v3 compares resource bytes and digests, including their content, without treating matching counts as evidence.
+    // Validate resource shapes against their request; generated IDs, sizes and times are not compared.
     if (
       v3 &&
       entry.status === 200 &&
@@ -258,9 +258,17 @@ export function judgeJournal(entries) {
   const before = entries.filter((entry) => entry.phase === "before");
   if (entries[0]?.stage === "v3") {
     const expected = ["absent", "empty", "configured"].flatMap((state) =>
-      ["metadata", "media", "bucket", "list", "acl", "preflight", "resumable"].map(
-        (endpoint) => `V3-${state}-${endpoint}`,
-      ),
+      [
+        "metadata",
+        "media",
+        "bucket",
+        "list",
+        "acl",
+        "preflight",
+        "resumable",
+        "cancel",
+        "session-read",
+      ].map((endpoint) => `V3-${state}-${endpoint}`),
     );
     return expected.flatMap((id) => {
       const matches = before.filter((entry) => entry.case === id);

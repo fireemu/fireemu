@@ -526,7 +526,16 @@ async fn respond(
                 builder = builder.header("access-control-allow-origin", origin);
             }
             if let Some(requested) = req.headers().get("access-control-request-headers") {
-                builder = builder.header("access-control-allow-headers", requested);
+                if let Ok(requested) = requested.to_str() {
+                    builder = builder.header(
+                        "access-control-allow-headers",
+                        requested
+                            .split(',')
+                            .map(str::trim)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    );
+                }
             }
             return Ok(builder
                 .body(plain(Bytes::new()))
@@ -766,47 +775,78 @@ async fn respond(
     }
     let body = body_of(&response);
     let mut response_headers = response.headers;
-    if let Some(origin) = origin.as_deref().filter(|_| json_api_cors) {
-        // Preserve recorded object-read expose headers while applying the JSON API's shared CORS
-        // defaults to every JSON route. This changes only CORS headers, not route framing.
+    // Cancel and status answers retain the initiating upload Origin, even without a request Origin.
+    let session_origin = (response.status == 499)
+        .then(|| {
+            response_headers
+                .iter()
+                .find(|(name, _)| name == "access-control-allow-origin")
+                .map(|(_, value)| value.clone())
+        })
+        .flatten();
+    if let Some(origin) = session_origin
+        .as_deref()
+        .or(origin.as_deref())
+        .filter(|_| json_api_cors)
+    {
         let media = request_method == "GET"
+            && response.status < 400
             && crate::storage::query_params(&trace_query)
                 .get("alt")
                 .map(String::as_str)
                 == Some("media");
-        response_headers.retain(|(name, _)| !name.eq_ignore_ascii_case("vary"));
-        let mut json_headers = vec![
-            ("access-control-allow-origin".to_owned(), origin.to_owned()),
-            (
-                "access-control-allow-credentials".to_owned(),
-                "true".to_owned(),
-            ),
-            ("vary".to_owned(), "Origin, X-Origin".to_owned()),
-        ];
-        let mut exposed = if crate::storage::is_recorded_json_cors_shape(&request_method, &trace_path) {
-            match (media, request_method.as_str()) {
-                (true, _) => "Cache-Control, Content-Disposition, Content-Length, Content-Type, Date, ETag, Expires, Last-Modified, Pragma, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Goog-Generation, X-Goog-Hash, X-Goog-Metageneration, X-Google-Trace",
-                (_, "GET") => "Cache-Control, Content-Length, Content-Type, Date, ETag, Expires, Server, Transfer-Encoding, Vary, X-GUploader-UploadID, X-Goog-Gcs-Base-Ts, X-Google-Trace",
-                _ => EXPOSED_HEADERS,
-            }
+        let location = response_headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("location"));
+        let etag = response_headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("etag"))
+            || (response.status == 200
+                && serde_json::from_slice::<serde_json::Value>(&response.body)
+                    .is_ok_and(|value| value.get("etag").is_some()));
+        // run-2: canonical spelling, alphabetical order; upload cancellation has its own projection.
+        let exposed = if response.status == 499 {
+            "Cache-Control, Content-Type, Date, Expires, Pragma, Vary".to_owned()
         } else {
-            EXPOSED_HEADERS
-        }
-        .to_owned();
-        let resumable_json_upload = request_method == "POST"
-            && trace_path.starts_with("/upload/storage/v1/")
-            && crate::storage::query_params(&trace_query)
-                .get("uploadType")
-                .is_some_and(|kind| kind == "resumable");
-        if resumable_json_upload
-            && !exposed
-                .split(',')
-                .any(|header| header.trim().eq_ignore_ascii_case("location"))
-        {
-            exposed.push_str(", Location");
-        }
-        json_headers.push(("access-control-expose-headers".to_owned(), exposed));
-        response_headers = with_bucket_cors(response_headers, Some(json_headers));
+            [
+                ("Cache-Control", true),
+                ("Content-Disposition", media),
+                ("Content-Length", true),
+                ("Content-Type", true),
+                ("Date", true),
+                ("ETag", etag),
+                ("Expires", true),
+                ("Last-Modified", media),
+                ("Location", location),
+                ("Pragma", media || location || response.status >= 400),
+                ("Server", true),
+                ("Transfer-Encoding", true),
+                ("Vary", true),
+                ("X-GUploader-UploadID", true),
+                ("X-Goog-Gcs-Base-Ts", !location),
+                ("X-Goog-Generation", media),
+                ("X-Goog-Hash", media),
+                ("X-Goog-Metageneration", media),
+                ("X-Google-Trace", true),
+            ]
+            .into_iter()
+            .filter_map(|(name, present)| present.then_some(name))
+            .collect::<Vec<_>>()
+            .join(", ")
+        };
+        response_headers.retain(|(name, _)| !name.eq_ignore_ascii_case("vary"));
+        response_headers = with_bucket_cors(
+            response_headers,
+            Some(vec![
+                ("access-control-allow-origin".to_owned(), origin.to_owned()),
+                (
+                    "access-control-allow-credentials".to_owned(),
+                    "true".to_owned(),
+                ),
+                ("vary".to_owned(), "Origin, X-Origin".to_owned()),
+                ("access-control-expose-headers".to_owned(), exposed),
+            ]),
+        );
     }
     if let Some(configured) = &bucket_cors {
         let mut matched = origin

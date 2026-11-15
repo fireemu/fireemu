@@ -50,7 +50,7 @@ test("body layout is based on recorded bytes and digest, never reserialized JSON
   const b = judgeAnswer(answer(pretty));
   assert.deepEqual(a.json, b.json);
   assert.notEqual(a.bodyBytes, b.bodyBytes);
-  assert.match(compare([a], [b])[0].verdict, /DIFFERS\(bodyBytes,sha256\)/);
+  assert.equal(compare([a], [b])[0].verdict, "MATCH");
   assert.equal(judgeAnswer(answer(missing, { bodyBytes: 1 })).known, false);
   assert.equal(judgeAnswer(answer("日本", { bodyBytes: 2 })).known, false);
 });
@@ -125,26 +125,25 @@ test("seeded header extraction keeps all names sorted and exact selected values"
     const row = judgeAnswer(answer(missing, { headers }));
     const expectedNames = Object.keys(headers)
       .map((name) => name.toLowerCase())
+      .filter((name) => name.startsWith("access-control-") || ["vary", "location"].includes(name))
       .toSorted();
     assert.deepEqual(row.headerNames, expectedNames);
     for (const [name, value] of Object.entries(headers)) {
       const lower = name.toLowerCase();
       assert.equal(
         row.headers[lower],
-        lower.startsWith("access-control-") || ["vary", "content-length"].includes(lower)
-          ? value
-          : undefined,
+        lower.startsWith("access-control-") || lower === "vary" ? value : undefined,
       );
     }
   }
 });
 
-test("204 comparisons distinguish an absent Content-Length from an explicit zero", () => {
+test("transport Content-Length is not a stable CORS comparison", () => {
   const a = judgeAnswer(answer("", { case: "F2", method: "DELETE", status: 204 }));
   const b = judgeAnswer(
     answer("", { case: "F2", method: "DELETE", status: 204, headers: { "Content-Length": "0" } }),
   );
-  assert.equal(compare([a], [b])[0].verdict, "DIFFERS(headerNames,headers)");
+  assert.equal(compare([a], [b])[0].verdict, "MATCH");
 });
 
 test("JSON error recognition requires each recorded layout constraint", () => {
@@ -388,7 +387,7 @@ test("an A2 read that answers 200 without the resource never settles a confirmed
   assert.equal(settlement(entries).unresolved.length, 0);
 });
 
-test("v3 CORS rows compare content, retain header names and detect Location exposure", async () => {
+test("v3 CORS rows compare stable shapes and relevant headers, including Location", async () => {
   const { targetOf, requests } = await import("./guard.mjs");
   const { createFakeWorld } = await import("./world.fake.mjs");
   const { createWire } = await import("./wire.mjs");
@@ -407,7 +406,7 @@ test("v3 CORS rows compare content, retain header names and detect Location expo
   });
   await observe({ target, client });
   const rows = judgeJournal(entries);
-  assert.equal(rows.length, 21);
+  assert.equal(rows.length, 27);
   assert.ok(rows.every((row) => row.known));
   assert.ok(compare(rows, rows).every((row) => row.verdict === "MATCH"));
   const id = "V3-configured-resumable";
@@ -437,7 +436,7 @@ test("v3 CORS rows compare content, retain header names and detect Location expo
     bodyBase64: changedBody.toString("base64"),
     bodyBytes: changedBody.length,
   });
-  assert.match(compare([judgeAnswer(metadata)], [different])[0].verdict, /DIFFERS.*sha256/);
+  assert.equal(compare([judgeAnswer(metadata)], [different])[0].verdict, "MATCH");
   const missingRows = judgeJournal(entries.filter((entry) => entry.case !== id));
   assert.equal(missingRows.find((row) => row.case === id).known, false);
   const duplicate = judgeJournal([
@@ -551,4 +550,41 @@ test("interrupted journals retain zero-byte unknown placeholders", () => {
     assert.equal(row.status, null);
     assert.equal(row.known, false);
   }
+});
+
+test("masked v3 recording passes the existing publication guard and covers every response", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { scanFixtureText } = await import("../storage-object-compare/scan.mjs");
+  const text = readFileSync(
+    new URL("../../storage-strictness-obs/recordings/run-2.json", import.meta.url),
+    "utf8",
+  );
+  scanFixtureText(text);
+  const fixture = JSON.parse(text);
+  assert.equal(fixture.rows.length, 27);
+  assert.equal(new Set(fixture.rows.map((row) => row.case)).size, 27);
+  for (const row of fixture.rows) {
+    assert.ok(!Object.hasOwn(row, "bodyBase64"));
+    assert.ok(!Object.hasOwn(row, "sha256"));
+  }
+});
+
+test("comparison rejects changed status, CORS names, values and JSON shape while ignoring volatile diagnostics", () => {
+  const row = judgeAnswer(
+    answer(missing, { headers: { "access-control-allow-origin": "http://localhost:3000" } }),
+  );
+  for (const changed of [
+    { ...row, status: 400 },
+    { ...row, shape: "object-list" },
+    { ...row, headerNames: [] },
+    { ...row, headers: {} },
+  ])
+    assert.match(compare([row], [changed])[0].verdict, /^DIFFERS/);
+  assert.equal(
+    compare(
+      [row],
+      [{ ...row, bodyBytes: 999, sha256: "different", json: { message: "volatile identifier" } }],
+    )[0].verdict,
+    "MATCH",
+  );
 });

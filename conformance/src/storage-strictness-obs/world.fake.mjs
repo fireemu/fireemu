@@ -63,7 +63,17 @@ export function createFakeWorld(
         sessions.delete(url.searchParams.get("upload_id"));
         return empty(204);
       }
-      return empty(sessions.has(url.searchParams.get("upload_id")) ? 308 : 499);
+      return sessions.has(url.searchParams.get("upload_id"))
+        ? empty(308)
+        : json(499, {
+            error: {
+              code: 499,
+              message: "clientClosedRequest",
+              errors: [
+                { message: "clientClosedRequest", domain: "global", reason: "clientClosedRequest" },
+              ],
+            },
+          });
     }
     if (target.stage === "v3" && r.case.endsWith("-resumable")) {
       const id = `synthetic-session-${r.case}`;

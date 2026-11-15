@@ -2929,7 +2929,7 @@ fn route(method: &str, path: &str) -> Result<Route, String> {
         }
     }
     match (method, segments.as_slice()) {
-        ("GET", ["b"]) => Ok(Route::GcsListBuckets),
+        ("GET", ["b"]) | ("POST", ["storage", "v1", "b"]) => Ok(Route::GcsListBuckets),
         ("GET", ["b", b, "o"] | ["storage", "v1", "b", b, "o"]) => {
             Ok(Route::GcsList { bucket: d(b)? })
         }
@@ -3676,7 +3676,18 @@ pub fn handle_framed(state: &StorageState, req: StorageRequest) -> (StorageRespo
         return (response, true);
     }
     match shape {
-        Some(shape) => crate::storage_production::frame(&shape, response),
+        Some(mut shape) => {
+            if response.status == 499 {
+                if let Some((_, origin)) = response
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name == "access-control-allow-origin")
+                {
+                    shape.origin = Some(origin.clone());
+                }
+            }
+            crate::storage_production::frame(&shape, response)
+        }
         None => (response, false),
     }
 }
@@ -3751,6 +3762,24 @@ fn handle_request(
     let Ok(route) = route(&req.method, &req.path) else {
         return plain_status(400);
     };
+    // Admit before reading UBLA so reset and restore cannot change the route decision mid-request.
+    let _admitted = state.barrier.as_ref().map(|b| b.admit());
+    let route = if state.is_strict() && req.method == "GET" {
+        match self::route("POST", &req.path) {
+            Ok(Route::GcsAcl { bucket, name })
+                if bucket_name(&bucket).is_ok_and(|b| {
+                    state
+                        .store()
+                        .is_ok_and(|store| store.uniform_bucket_level_access(&b))
+                }) =>
+            {
+                Route::GcsAcl { bucket, name }
+            }
+            _ => route,
+        }
+    } else {
+        route
+    };
     let json_api_route = is_json_api_route(&route);
     // The short spelling of the bucket resource is served as the long one under strict and
     // answered as the official emulator answers it otherwise (see `Route::GcsBucketShort`).
@@ -3771,7 +3800,6 @@ fn handle_request(
     // session. Requests are synchronous, so the admission is short-lived. Internal rules
     // activation shares the barrier but is not a bucket data operation, so it returns before
     // client App Check, Auth and fault plans.
-    let _admitted = state.barrier.as_ref().map(|b| b.admit());
     if matches!(route, Route::SetRules) {
         if let Some(refusal) = set_rules_browser_guard(state, &req) {
             return refusal;
@@ -4052,6 +4080,19 @@ fn handle_request(
             }
             _ => Ok(plain_status(501)),
         },
+        Route::GcsListBuckets if method == "POST" => {
+            if state.is_strict() {
+                match serde_json::from_slice::<Value>(&req.body) {
+                    Ok(body) => match body.get("name").and_then(Value::as_str) {
+                        Some(bucket) => gcs_bucket(state, bucket, &method, &req, &params, &host),
+                        None => Err(gcs_json_error(400, "Required", "required")),
+                    },
+                    Err(error) => Err(gcs_parse_error(&req.body, &error)),
+                }
+            } else {
+                Ok(plain_status(501))
+            }
+        }
         Route::GcsListBuckets => gcs_list_buckets(state, &host),
         Route::GcsList { bucket } => gcs_list(state, &bucket, &params, &host),
         Route::GcsBucket { bucket } => gcs_bucket(state, &bucket, &method, &req, &params, &host),
@@ -4175,17 +4216,6 @@ fn unknown_bucket_written(state: &StorageState, route: &Route, method: &str) -> 
         .store()
         .map_or(true, |store| bucket_exists(state, &store, &parsed));
     (!exists).then(|| bucket.clone())
-}
-
-/// The bucket a request addresses and whether it is the Firebase API (`/v0`) or JSON API, for the CORS
-/// decision: the bucket of the route `method` and `path` resolve to. A preflight names no method
-/// of its own, so each verb a browser may ask for is tried. `None` for a path that names no bucket.
-/// Whether a JSON API request has the object-read shape the STORAGE-STRICTNESS-OBS recording
-/// observed (cases C6-C8): a `GET` of an object (metadata or `alt=media`), or a preflight of that
-/// object URL. The result selects the recorded object-specific expose-header list; all JSON routes
-/// use the shared API CORS policy.
-pub(crate) fn is_recorded_json_cors_shape(method: &str, path: &str) -> bool {
-    matches!(method, "GET" | "OPTIONS") && matches!(route("GET", path), Ok(Route::GcsObject { .. }))
 }
 
 /// Whether a path resolves to the Cloud Storage JSON API, independent of bucket configuration.
@@ -5583,7 +5613,7 @@ fn finalize_resumable(
 // JSON API dialect
 // ------------------------------------------------------------------------------------------
 
-/// The bucket resource the JSON API answers with. Only `versioning` is real state: the other
+/// The shared bucket resource. The strict handler also attaches stored UBLA state; the other
 /// fields are the stub the bucket listing has always served (the full resource of a GET was not
 /// recorded: FE v5 read `fields=versioning` only, and its bucket-create answer differs from this
 /// stub). `versioning` is a tri-state, RECORDED in FE v5 (`functions-events-formal-20261004T182904Z`):
@@ -5700,14 +5730,14 @@ fn gcs_bucket(
         let store = state.store()?;
         bucket_exists(state, &store, &b)
     };
-    if !exists {
+    if !exists && method != "POST" {
         return Err(gcs_json_error(
             404,
             "The specified bucket does not exist.",
             "notFound",
         ));
     }
-    if method == "PATCH" {
+    if method == "PATCH" || method == "POST" {
         let body: Value = if req.body.is_empty() {
             Value::Object(Map::new())
         } else {
@@ -5717,7 +5747,27 @@ fn gcs_bucket(
             return Err(gcs_json_error(400, "Invalid JSON payload", "invalid"));
         };
         let mut enabled = None;
+        let mut uniform_access = (method == "POST").then_some(false);
         for (key, value) in fields {
+            if state.is_strict() && key == "iamConfiguration" {
+                uniform_access = Some(
+                    value
+                        .get("uniformBucketLevelAccess")
+                        .and_then(|flag| flag.get("enabled"))
+                        .and_then(Value::as_bool)
+                        .ok_or_else(|| {
+                            gcs_json_error(
+                                400,
+                                "uniformBucketLevelAccess must have a boolean enabled",
+                                "invalid",
+                            )
+                        })?,
+                );
+                continue;
+            }
+            if method == "POST" && key == "name" {
+                continue;
+            }
             if key != "versioning" {
                 return Err(gcs_json_error(
                     400,
@@ -5740,12 +5790,20 @@ fn gcs_bucket(
                 )
             })?);
         }
+        if let Some(enabled) = uniform_access {
+            state.store()?.set_uniform_bucket_level_access(&b, enabled);
+        }
         if let Some(enabled) = enabled {
             state.store()?.set_versioning(&b, enabled);
         }
     }
     let versioning = state.store()?.versioning_state(&b);
-    let resource = bucket_resource(bucket, versioning, &rfc3339(state.now()), host);
+    let mut resource = bucket_resource(bucket, versioning, &rfc3339(state.now()), host);
+    if state.is_strict() {
+        let enabled = state.store()?.uniform_bucket_level_access(&b);
+        // The recording has both aliases; locking times and IAM policies are not modeled.
+        resource["iamConfiguration"] = json!({"uniformBucketLevelAccess": {"enabled": enabled}, "bucketPolicyOnly": {"enabled": enabled}, "publicAccessPrevention": "inherited"});
+    }
     let resource = match params.get("fields") {
         Some(fields) => project_fields(&resource, &FieldMask::parse(fields)),
         None => resource,
@@ -6698,6 +6756,9 @@ fn gcs_acl(
     req: &StorageRequest,
     host: &str,
 ) -> Outcome {
+    if state.is_strict() && req.method == "GET" {
+        return Err(gcs_json_error(400, "Cannot get legacy ACL for an object when uniform bucket-level access is enabled. Read more at https://cloud.google.com/storage/docs/uniform-bucket-level-access", "invalid"));
+    }
     let _ = host;
     let b = bucket_name(bucket)?;
     let n = object_name(name)?;
@@ -6856,7 +6917,15 @@ fn gcs_upload(
             return Ok(plain_status(404));
         }
         return match store.cancel_upload(&id, now) {
-            Ok(()) => Ok(production_client_closed_request()),
+            Ok(()) => {
+                let mut response = production_client_closed_request();
+                if state.is_strict() {
+                    if let Some(origin) = store.upload_origin(&id, now).map_err(gcs_core_err)? {
+                        response = response.with_header("access-control-allow-origin", origin);
+                    }
+                }
+                Ok(response)
+            }
             Err(StorageError::UploadNotFound) => Ok(plain_status(404)),
             Err(e) => Ok(gcs_core_err(e)),
         };
@@ -6929,6 +6998,12 @@ fn gcs_upload(
                     now,
                 )
                 .map_err(gcs_core_err)?;
+            if state.is_strict() {
+                state
+                    .store()?
+                    .set_upload_origin(&id, req.header("origin").map(str::to_owned), now)
+                    .map_err(gcs_core_err)?;
+            }
             // The session URL repeats the start request's query and adds `upload_id` (recorded,
             // probe-v2: `…&ifGenerationMatch=0&upload_id=…`); the start has no body.
             let session_url = format!(
@@ -7087,7 +7162,13 @@ fn gcs_resumable_put(
         // never published one, and a chunk sent into any terminal session is still a 400.
         Ok(UploadPhase::Finalized(_)) if status_check => {}
         // A cancelled session answers 499 to a status query and to a chunk alike (recorded).
-        Ok(UploadPhase::Cancelled(_)) => return Ok(production_client_closed_request()),
+        Ok(UploadPhase::Cancelled(_)) => {
+            let mut response = production_client_closed_request();
+            if let Some(origin) = store.upload_origin(&id, now).map_err(gcs_core_err)? {
+                response = response.with_header("access-control-allow-origin", origin);
+            }
+            return Ok(response);
+        }
         Ok(UploadPhase::Finalized(_) | UploadPhase::Denied(_)) => {
             return Ok(plain_status(400));
         }
@@ -7972,6 +8053,7 @@ mod json_api_endpoint_tests {
             object in "[a-z][a-z0-9_-]{0,10}",
         ) {
             let paths = [
+                "/storage/v1/b".to_owned(),
                 format!("/storage/v1/b/{bucket}/o/{object}"),
                 format!("/storage/v1/b/{bucket}/o/{object}/acl"),
                 format!("/upload/storage/v1/b/{bucket}/o"),
@@ -8001,7 +8083,9 @@ mod json_api_endpoint_tests {
             ];
             for method in ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] {
                 for path in &paths {
-                    prop_assert!(!is_json_api_endpoint(method, path), "{} {}", method, path);
+                    if path != "/storage/v1/b" {
+                        prop_assert!(!is_json_api_endpoint(method, path), "{} {}", method, path);
+                    }
                 }
             }
         }
