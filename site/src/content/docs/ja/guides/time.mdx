@@ -1,0 +1,164 @@
+---
+title: 時刻とスケジュール関数
+description: エミュレーターのクロックを任意の時刻から開始し、固定したり動かしたりして、待たずにスケジュール関数を実行します。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu は独自のクロックを持ち、すべてのサービスがそれを読み取ります。サーバータイムスタンプ、ドキュメントとオブジェクトの時刻、トークンの有効期限、スケジュール関数、Security Rules の `request.time` です。デフォルトでは、本番と同様に実時間で動きます。開始時刻の指定、移動、固定ができ、すべてのサービスが新しい時刻を参照します。
+
+## 実時間に追従する、またはクロックを固定する
+
+| 設定 | クロックの挙動 |
+|---|---|
+| `daemon.clockStart` なし(デフォルト) | デーモンの起動時点から実時間に追従します。 |
+| `daemon.clockStart` を固定 | その時刻から開始し、移動するまで止まったままになるため、実行を再現可能にします。 |
+| `daemon.clock` を `"realtime"` に設定 | 固定されたクロックが、開始時刻から進み続けます。 |
+| `daemon.clock` を `"frozen"` に設定 | 固定されていないクロックが停止します。 |
+
+移動(`clock:advance`、`clock:advanceTo`、`clock:set`、または Runtime ページ)は、実時間に追従するクロックに重ねるオフセットです。クロックは移動先から進み続けます。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+# Virtual clock behavior: "realtime" or "frozen".
+clock = "frozen"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z",
+    "clock": "frozen"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+仮想の `functions.clock`([Functions のアプリケーション時刻](#application-time-in-functions)を参照)には、固定された開始時刻、つまり止まったクロックが必要です。それを固定する `fireemu/testing` のワールドも同様です。
+
+## スケジュール関数を実行する
+
+スケジュールは、クロックが実行時刻に達したときに実行されます。
+
+- デフォルトのクロックでは、実時間が経過するにつれて実行されます。
+- 固定されたクロックでは、実時間では何も実行されません。[Emulator UI](../ui/) の Runtime ページから、または control API(`clock:advance`、`clock:advanceTo`、`clock:set`)でクロックを動かしてください。
+
+クロックを動かすたびに、`(前の時刻, 新しい時刻]` に含まれるすべての実行時刻が期限になります。タイムゾーン、キャッチアップ、重複の挙動は `scheduler` セクションで設定します。
+
+- `scheduler.catchUp` は、1 回の移動で複数の実行時刻を通過したときに何を実行するかを決めます。`all` はそのすべてを実行し(ジョブと移動ごとに最大 `scheduler.maxCatchUpRuns` 回)、`latest` は最新のものを実行し、`none` は何も実行しません。
+- `scheduler.overlap`(`allow`、`skip`、`queue`、`reject`、`skip-in-flight`)は、前の実行がまだ続いている間に実行時刻が来たときの動作を決めます。`strict` ではデフォルトが `skip-in-flight` で、本番の Cloud Scheduler の動作と同じです。`emulator` では `allow` です。
+
+UI の Functions ページから、スケジュール関数をすぐに実行するか、クロックを次の実行時刻まで進めることもできます。手動実行は次の実行時刻を消費しません。
+
+### スケジュールの詳細
+
+- 新しい時刻ちょうどの実行時刻は移動に含まれ、前の時刻ちょうどの実行時刻は含まれません。
+- `scheduler.catchUp: all` では、ジョブとクロックの移動ごとの `scheduler.maxCatchUpRuns` を超える実行は期限のまま残り、空きができたときに実行されます。`latest` と `none` は、実行を破棄したジョブとクロックの移動ごとに、`skipped: catch-up` の要約を 1 件記録します。
+- 巻き戻しは再実行しません。スケジュールがすでに通過した実行時刻は、クロックがそれらを越えて進んでも再度実行されず、スケジュールは、クロックが、最後に実行した、またはまだ未実行の実行時刻(そのカーソル)を過ぎた時点で再開します。その時点より前まで巻き戻した後は、バックログからまだ未実行の実行や、空きを待っている実行は未実行のままですが、クロックがそこを過ぎるまで再び期限になりません。セッションのリセットやスナップショットの復元では、すべてのスケジュールがクロックの現在時刻から始まるため、巻き戻した後は、その時刻とそれより後の時刻の間にある実行時刻が再び期限になります。
+- `scheduler.overlap` は、スケジューラーの実行と手動実行の両方に適用されます。ただし `skip-in-flight` は手動実行を拒否しません。`skip-in-flight`(`strict` のデフォルト)では、クロックの移動前に開始した関数のハンドラーがまだ実行中の間、本番の Cloud Scheduler と同様に、実行時刻は破棄されます(`skipped: in flight` として記録)。1 回のクロックの移動に含まれる実行時刻同士は、互いに数えません。
+- 関数は、実行のいずれかがキューに入っているか実行中の間はビジー扱いとなり、リトライ待ちの実行も含みます。そのため `skip` と `reject` では、保留中のリトライが次の実行時刻を抑止することがあります。Fireemu はここで、リトライの試行と重複した実行を区別しません。`catchUp: all` では、同じ関数の複数の実行時刻にまたがる 1 回のクロックの移動が自分自身と重複するため、`skip` はそのうち最も古いものを残し、`reject` は残りを拒否として数えます。
+- Functions のイベントキューが満杯(アクティブなイベントが 4,096 件または 64 MiB)の場合、期限になったスケジュール実行は期限のまま残り、空きができたときに実行されます。
+
+### スケジュール関数をすぐに実行する
+
+手動実行(`POST /v1/sessions/{session}/functions/{name}:run`)は、現在の仮想時刻のスタンプを付けて、スケジュール関数の実行を 1 回キューに入れます。次の実行時刻は消費せず、それは引き続き期限になり、他の実行と同様に `scheduler.overlap` の対象になります。これは Fireemu 独自のコントロールであり、本番の run-now についての主張ではありません。
+
+| 応答 | 条件 |
+|---|---|
+| `400 INVALID_ARGUMENT` | 未知の関数、スケジュールされていない関数、overlap ポリシーによる拒否、またはシャットダウン中のランタイム |
+| `429 RESOURCE_EXHAUSTED` | イベントキューが満杯 |
+
+タスクキュー関数(`onTaskDispatched`)では、同じルートが、`scheduleTime` を待っている Cloud Tasks を解放します。すべてを解放するか、`{"task": "<task id>"}` のボディで指定した 1 つを解放します(その ID の待機中のタスクがない場合は 404)。[タスクキュー](../../products/functions/#task-queues)を参照してください。
+
+## クロックを巻き戻す
+
+クロックは巻き戻せます(`"allowBackwards": true` を付けた `clock:set`、または Runtime ページの **Allow moving backwards**)。巻き戻しは、すでに実行された実行時刻を再実行しません。
+
+### 巻き戻し後の ID トークン
+
+- `strict` では、Authentication(`INVALID_ID_TOKEN`)、Firestore、Storage は、新しい時刻より後に発行された ID トークンを、クロックがその発行時刻に再び達するまで拒否します。
+- `emulator` プロファイルでは、発行時刻を確認しない公式エミュレーターと同様に、巻き戻し後も ID トークンは使えます。
+- どちらのプロファイルでも、期限切れのトークンは引き続き拒否されます。
+
+### 巻き戻し後の失効
+
+アカウントが作成される前、またはそのトークンが失効される前まで巻き戻すと、新しいサインインのトークンも失効扱いになります。代わりに、クロックを再び先へ進めるか、セッションをリセットしてください。
+
+逆に、巻き戻した後に行った失効やパスワード変更は、タイムライン上でそれより後の時刻に発行されたトークンを失効させません。`emulator` プロファイルはそれらを直ちに受け付け、`strict` はクロックがその発行時刻に達した時点で受け付けます。失効させる前に、クロックをそれらの発行時刻より先に進めるか、セッションをリセットしてください。
+
+## Functions のアプリケーション時刻
+
+デフォルトでは、関数のコードは実時間を参照します。`Date.now()`、タイマー、Cloud Tasks も仮想クロックに追従させるには、`functions.clock` を、固定した `daemon.clockStart` とともに設定します。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+
+[functions]
+# Directory of the Functions codebase.
+source = "./functions"
+
+[functions.clock]
+# Functions date clock: "real" or "virtual".
+date = "virtual"
+# Functions timer clock: "real" or "virtual".
+timers = "real"
+# Cloud Tasks clock: "real" or "virtual".
+tasks = "virtual"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z"
+  },
+  "functions": {
+    "source": "./functions",
+    "clock": {
+      "date": "virtual",
+      "timers": "real",
+      "tasks": "virtual"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 各モードは `real` または `virtual` を受け付けます。仮想タイマーには、仮想の `date` が必要です。
+- `tasks` を `virtual` にすると、`scheduleTime` 付きでキューに入れられた Cloud Tasks のタスクは、仮想クロックがその時刻に達したときに期限になるため、テストは待つ代わりにクロックを進めます。
+- `tasks` を `real` にすると、`strict` ではタスクは実時間を待ちます。[Emulator UI](../ui/) の Functions ページには待機中のタスクが一覧され、すぐに実行できます。
+- Python のコードベースは常に実時間を参照します。仮想クロックに移されることはなく、Functions ランナーに仮想の date を求める設定は、そのコードベースでは拒否されます。
+
+## 関連
+
+- [テストワールド](../test-worlds/): 独自のクロックが必要な並列テストのために、`fireemu/testing` ヘルパーは、それぞれ手動で動かす開始時刻に固定された独立したワールドを起動します。
+- [Emulator UI](../ui/)
+- [Cloud Functions](../../products/functions/#task-queues)
+- [設定リファレンス](../../reference/configuration/)
