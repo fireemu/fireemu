@@ -1,0 +1,65 @@
+---
+title: Fireemuを選ぶ理由
+description: Firebase Local Emulator Suiteと比較して、Fireemuがテストに合うかどうかを判断します。
+---
+
+import VerifiedAreaCount from '../../../../components/VerifiedAreaCount.astro';
+
+Fireemuは、Firebaseで構築したアプリケーションをテストするためのローカルエミュレータです。本番のFirebaseの動作に合わせることを目指しており、実際のFirebaseプロジェクトを使わずに、ローカルでもCIでもテストできます。
+
+Firebase Local Emulator SuiteはGoogleの公式ツールです。Fireemuより多くのプロダクトに対応しており、それらが必要な場合には適切な選択です。Fireemuの目的はより絞られています。CIでも開発者のマシンでも、結果が本番にそのまま当てはまるテストです。
+
+## Local Emulator Suiteとの比較
+
+| | Local Emulator Suite(`firebase-tools` 15.28.2) | Fireemu |
+|---|---|---|
+| 保守元 | Google | Fireemuプロジェクト |
+| プロダクト | Firestore、Realtime Database、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Hosting、App Hosting、Data Connect、Extensions | Firestore、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Realtime DatabaseとHosting(どちらも部分的)、App Check。App HostingとData Connectにはまだ対応しておらず、Extensionsは予定していません([状況](../../#supported-products)) |
+| ランタイム | FirestoreとRealtime Databaseのエミュレータは、Node.js CLIの隣でJava(`java -jar`)プロセスとして動作します | 単一のネイティブバイナリで、npmパッケージ経由でインストールして起動します(Node.js 20以降) |
+| 起動時間とメモリ(Firestoreのみ) | SDKがFirestoreを使えるようになるまで3,043 ms、アイドル時のメモリは390 MiB(PSS) | `emulator`プロファイル: 140 ms、11 MiB。GitHub ActionsのLinuxランナー、JDK 21.0.8、コミット`f3b942c`の`standard`で1回実行し、5組を計測した結果です([条件](../../compatibility/performance/)) |
+| 複合インデックスが定義されていないクエリ | クエリは実行されます | `strict`プロファイル(デフォルト): 本番の応答と同じく、コンソールへのリンクを添えた`FAILED_PRECONDITION`。`firestore.missingIndexes = "report"`ではクエリは実行され、不足しているインデックスが報告されます。`emulator`プロファイル: Local Emulator Suiteと同様にクエリは実行されます |
+| TOTP多要素認証 | Authenticationエミュレータは電話(SMS)の第2要素を受け付けます。ほかの要素タイプには`MFA provider not supported!`と応答します | 両方のプロファイル: プロジェクトのMFA設定を通じて、TOTPとSMSの両方 |
+| App Check | App Checkエミュレータはありません | 両方のプロファイル: デバッグトークンの交換と、Authentication、Firestore、Storage、callable functionsに対する強制。アテステーションプロバイダーはありません([詳細](../../products/app-check/)) |
+
+テスト結果を変えるほかの違いは、本番の応答を併記して[互換性の表](../../compatibility/#fireemu-the-official-emulator-and-production)にまとめてあります。
+
+## Fireemuが追加するもの
+
+Local Emulator Suiteは、Firebaseアプリのローカル開発向けに作られています。Fireemuは、本番が適用し、CIで重要になる検査を追加します。
+
+- **本番が必要とする設定。** `firestore.indexes.json`で宣言されていない複合インデックスを必要とするFirestoreクエリは、`strict`で拒否されます。
+- **公式エミュレータが提供しない機能。** TOTP多要素認証、デバッグトークンによるApp Check、そして`strict`では`beforeEmailSent`ブロッキング関数です。
+- **テスト実行条件の制御。** 任意の開始時刻を設定し、仮想クロックを進めることで、実際のスケジュールを待たずにスケジュール関数を実行できます。
+
+## 本番を優先する
+
+公式エミュレータと本番のFirebaseが異なる場合、デフォルトの`strict`プロファイルでは、Fireemuは本番に従い、その違いを記録します。例外は、後述の開発用デフォルトです。応答は本番の文言とステータスコードをそのまま保つため、テストでアプリケーションが扱うエラーは、デプロイ後に遭遇するエラーと同じです。
+
+それぞれの動作は、実際のFirebaseプロジェクトから取った記録と照合して検証しています。<VerifiedAreaCount />個の領域がこの方法で比較済みです。[互換性の表](../../compatibility/)には、その各領域について、対象範囲と対象条件の数を載せています。対象外のものは[制限事項](../../compatibility/limitations/)に載せています。両者が異なる場合にFireemuは本番に従いますが、本番と同等であるとは主張しません。
+
+### 開発用デフォルト
+
+本番の動作の一部は、テストではコストが高くなります。本番では署名付きトークンや署名鍵が必要だったり、Admin API呼び出しで機能を有効にする必要があったりします。これらについてFireemuは、設定なしで動作し、意図的に本番と異なる開発用デフォルトを備えています。正確に再現してもより多くのバグが見つかるわけではなく、テストが遅くなるだけだからです。それぞれが文書化されており、個別の設定があります。上級者向けのスイッチである`productionExact`は、これらすべてについて本番の動作に戻します。[Fireemuが意図的に本番と異なる点](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose)を参照してください。
+
+## テストのために作られている
+
+- **CI向けの1つのコマンド。** `fireemu exec -- npm test`は、エミュレータを起動し、エミュレータの環境変数を設定してテストを実行し、すべてを停止して、テストコマンドの終了ステータスを返します。
+- **`firebase.json`を再利用します。** ルール、インデックス、Functionsのコードベース、ポートは、起動のたびにそこから読み込まれます。
+- **拒否の理由を説明します。** Security Rulesの拒否は、評価された条件とその結果とともに出力されます。
+- **独立したテストワールド。** `fireemu/testing`ヘルパーは、独自のクロック、ルール、Functions、データを持つ分離されたエミュレータインスタンスを起動し、並列の結合テストに使えます。
+- **単一のネイティブバイナリ。** 計測値とその条件は[パフォーマンス](../../compatibility/performance/)を参照してください。
+
+## できないこと
+
+Fireemuは、実際のクォータ集計、課金、IAM、組織ポリシー、リージョンやネットワークによる差異、サービスのロールアウトを再現しません。ローカルでの性能は、本番のレイテンシを予測するものではありません。[制限事項](../../compatibility/limitations/)を参照してください。
+
+## 本番での確認を続ける
+
+Fireemuはまだ開発中です。アプリケーションが使う機能と重要なワークフローについて、同じテストをFireemuと専用のFirebaseテストプロジェクト(本番プロジェクトではなく)の両方に対して実行し、結果を比較してから、CIでFireemuだけに頼るようにしてください。
+
+## 関連項目
+
+- [インストールと実行](../install/)
+- [Local Emulator Suiteから移行する](../migrate/)
+- [互換性の表](../../compatibility/)
+- [制限事項](../../compatibility/limitations/)

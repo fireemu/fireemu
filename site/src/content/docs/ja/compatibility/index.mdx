@@ -1,0 +1,59 @@
+---
+title: 互換性の表
+description: FireemuがどのプロダクトとどのAPIに対応しているか、どの領域が本番のFirebaseと照合して検証済みか、公式エミュレータと比べてどうかを確認します。
+tableOfContents:
+  maxHeadingLevel: 2
+---
+
+import ProductTable from '../../../../components/ProductTable.astro';
+import ProductionAreas from '../../../../components/ProductionAreas.astro';
+import CapabilityTable from '../../../../components/CapabilityTable.astro';
+
+これらの表は、サイトのビルド時に、リポジトリ内の記録から生成されます。[互換性コントラクト](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json)、[本番との照合の記録](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure)、[機能マニフェスト](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json)です。
+
+アプリケーションが使う個々のAPIと条件について、対応状況を確認してください。プロダクト名だけでは分かりません。
+
+## プロダクト
+
+Fireemuの比較対象である公式エミュレータのリリース`firebase-tools` 15.28.2のLocal Emulator Suiteにあるすべてのプロダクトと、Fireemuが追加するサーフェスです。
+
+<ProductTable />
+
+### 互換性の主張
+
+Fireemuは、`firebase-tools` 15.28.2が同梱し、Fireemuが同等性をもって提供するLocal Emulator Suiteのプロダクト(Cloud Firestore、Firebase Authentication、Cloud Storage for Firebase、Cloud Functions、Cloud Pub/SubとEventarc、およびFirestoreとStorageのサーフェスにおけるSecurity Rules)と、`emulator`互換性プロファイルの下で、[`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json)に記録された証拠に基づいて、互換です。次の理由により、スイート全体の互換性や、無条件の上位互換であるという主張はしません。
+
+- Realtime DatabaseとFirebase Hostingは、公式エミュレータとの同等性の主張なしで提供しています(未解決のギャップです。どちらも、記録されたケースについては本番と照合して検証しています)。
+- App HostingとData Connectは延期しています。
+- Firebase Extensionsは予定していません。
+
+## Fireemu、公式エミュレータ、本番
+
+テスト結果を変えることが最も多い違いです。Fireemuの列は、デフォルトの`strict`プロファイルです。
+
+| 動作 | 本番 | 公式エミュレータ | Fireemu |
+|---|---|---|---|
+| 複合インデックスのないクエリ | 拒否される | 実行される | 拒否される。`firestore.missingIndexes: "report"`では、実行され、不足しているインデックスが報告される |
+| Security RulesのないプロジェクトへのクライアントからのFirestoreリクエスト | 拒否される | 許可される | 拒否される |
+| TOTP多要素認証 | 対応 | 利用不可 | 対応。プロジェクトのMFA設定を通じて |
+| 存在しないテナントを指定するリクエスト | 拒否される | テナントを作成する | 拒否される |
+| `beforeEmailSent`ブロッキング関数 | 実行される | 実行されない | 実行される |
+| App Check | 対応 | 利用不可 | デバッグトークン。アテステーションプロバイダーとリプレイ保護はなし |
+| スケジュール関数 | Cloud Schedulerのスケジュールで実行される | スケジュールでは実行されない | 自分で制御する仮想クロックで実行される |
+| Security Rulesでの署名なしのモックIDトークン | 拒否される | 受け付けられる | デフォルトでは受け付けられる。`productionExact`では拒否される |
+| 宣言されたStorageアップロードのチェックサム | 検証される | 検証されない | 検証される |
+
+## 本番との照合
+
+Fireemuは、実際のFirebaseプロジェクトから取った記録と、自身の応答を比較しています。
+
+- **本番と照合して検証済み。** その領域の固定されたインベントリのすべての条件が、記録と一致するか、レビュー済みで文書化された方法でのみ異なります(既知の差異)。
+- **作業中。** その領域は、まだ作業中です。件数は記録された条件を表すものであり、その領域全体の検証ではありません。
+
+<ProductionAreas />
+
+## 機能マニフェスト
+
+機能マニフェストには、各機能について、何が実装され、何が実装されていないかが記録されています。`npx fireemu capabilities`は、設定が選択するプロファイル向けのマニフェストを出力します。
+
+<CapabilityTable />
