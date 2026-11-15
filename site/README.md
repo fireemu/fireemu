@@ -6,6 +6,7 @@ The documentation site for Fireemu, built with [Astro Starlight](https://starlig
 pnpm -C site install --frozen-lockfile
 pnpm -C site test      # checks the compatibility data mapping
 pnpm -C site build     # writes site/dist
+pnpm -C site check:links  # after a build: every internal link and #anchor resolves
 pnpm -C site preview   # serves site/dist locally
 ```
 
