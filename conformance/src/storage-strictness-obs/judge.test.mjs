@@ -417,7 +417,13 @@ test("v3 CORS rows compare stable shapes and relevant headers, including Locatio
   assert.equal(startRow.headers.location, undefined);
   const changed = judgeAnswer({
     ...start,
-    headers: { ...start.headers, "access-control-expose-headers": "Content-Type, Xocation" },
+    headers: {
+      ...start.headers,
+      location: entries.find(
+        (entry) => entry.phase === "before" && entry.case === "V3-configured-cancel",
+      ).url,
+      "access-control-expose-headers": "Content-Type, Xocation",
+    },
   });
   assert.equal(changed.exposesLocation, false);
   assert.equal(compare([startRow], [changed])[0].verdict, "DIFFERS(headers)");
@@ -528,17 +534,50 @@ test("v3 media and resumable shapes require every recorded discriminator", () =>
     case: "V3-absent-resumable",
     method: "POST",
     status: 200,
-    headers: { location: "<masked>" },
+    url: "https://storage.googleapis.com/upload/storage/v1/b/b/o?uploadType=resumable&name=o",
+    headers: {
+      location:
+        "https://storage.googleapis.com/upload/storage/v1/b/b/o?uploadType=resumable&name=o&upload_id=first",
+    },
   };
   assert.equal(judgeAnswer(answer("", start)).shape, "resumable-start");
   for (const extra of [
     { headers: {} },
+    ...[
+      "<masked>",
+      "https://other.example/upload/storage/v1/b/b/o?uploadType=resumable&name=o&upload_id=first",
+      "https://storage.googleapis.com/wrong?uploadType=resumable&name=o&upload_id=first",
+      start.url,
+      `${start.url}&upload_id=`,
+      `${start.url}&upload_id=first&upload_id=second`,
+      `${start.url}&upload_id=first&unexpected=1`,
+      `${start.url.replace("resumable", "media")}&upload_id=first`,
+      `${start.url.replace("name=o", "name=other")}&upload_id=first`,
+      `${start.url}&upload_id=first#fragment`,
+    ].map((location) => ({ headers: { location } })),
     { method: "GET" },
     { status: 201 },
     { case: "V3-absent-preflight" },
   ])
     assert.equal(judgeAnswer(answer("", { ...start, ...extra })).shape, "unrecorded");
   assert.equal(judgeAnswer(answer("x", start)).shape, "unrecorded");
+  const row = judgeAnswer(answer("", start));
+  const volatile = judgeAnswer(
+    answer("", {
+      ...start,
+      headers: { location: start.headers.location.replace("first", "second") },
+    }),
+  );
+  assert.equal(compare([row], [volatile])[0].verdict, "MATCH");
+  assert.equal(
+    compare([row], [{ ...row, location: { ...row.location, host: "other.example" } }])[0].verdict,
+    "DIFFERS(location)",
+  );
+  assert.notEqual(
+    compare([row], [judgeAnswer(answer("", { ...start, headers: { location: "invalid" } }))])[0]
+      .verdict,
+    "MATCH",
+  );
 });
 
 test("interrupted journals retain zero-byte unknown placeholders", () => {
@@ -581,10 +620,39 @@ test("comparison rejects changed status, CORS names, values and JSON shape while
   ])
     assert.match(compare([row], [changed])[0].verdict, /^DIFFERS/);
   assert.equal(
-    compare(
-      [row],
-      [{ ...row, bodyBytes: 999, sha256: "different", json: { message: "volatile identifier" } }],
-    )[0].verdict,
+    compare([row], [{ ...row, bodyBytes: 999, sha256: "different" }])[0].verdict,
     "MATCH",
+  );
+});
+
+test("comparison retains the recorded ACL error code, message and reason", async () => {
+  const { readFileSync } = await import("node:fs");
+  const recording = JSON.parse(
+    readFileSync(
+      new URL("../../storage-strictness-obs/recordings/run-2.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const recorded = recording.rows.find((row) => row.case === "V3-absent-acl");
+  const row = judgeAnswer(answer(recorded.body, { case: recorded.case, status: recorded.status }));
+  for (const field of ["code", "message", "reason"]) {
+    assert.equal(
+      compare([row], [{ ...row, json: { ...row.json, [field]: "changed" } }])[0].verdict,
+      "DIFFERS(json)",
+    );
+  }
+  const body = JSON.parse(recorded.body);
+  body.error.message = "changed ACL message";
+  const changed = judgeAnswer(
+    answer(JSON.stringify(body), { case: recorded.case, status: recorded.status }),
+  );
+  assert.equal(changed.known, true);
+  assert.equal(compare([row], [changed])[0].verdict, "DIFFERS(json)");
+  const xml = judgeAnswer(
+    answer("<Error><Code>NoSuchBucket</Code><Message>missing</Message></Error>"),
+  );
+  assert.equal(
+    compare([xml], [{ ...xml, xml: { ...xml.xml, Message: "changed" } }])[0].verdict,
+    "DIFFERS(xml)",
   );
 });

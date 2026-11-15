@@ -10,7 +10,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ### Fixed
 
-- Storage strict-profile JSON API and upload CORS now follow the recorded response-specific expose lists, preflight requested headers and cancelled-session Origin. Buckets explicitly enabling uniform bucket-level access return the recorded object ACL GET error; the emulator profile is unchanged.
+- Storage strict-profile JSON API and upload CORS match the 27 recorded cases for metadata, media, bucket, list, ACL errors, upload preflight, resumable initiation, cancellation and cancelled-session reads with absent, empty and configured bucket CORS. The recorded bucket-creation payload is accepted, bucket JSON exposes access-configuration fields, and object ACL GET on a bucket with uniform bucket-level access enabled returns the recorded error. Local tests cover preservation of the flag and empty created buckets through export/import, with missing flags in old artifacts defaulting to false. Mixed-case requested-header preservation, UBLA PATCH/toggle behavior and generalized expose-list selection remain unrecorded assumptions. The emulator profile, including the loopback App Check refusal for bucket creation, is unchanged.
 
 ## [0.53.0] - 2026-11-15
 

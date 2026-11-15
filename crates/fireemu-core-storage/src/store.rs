@@ -2890,11 +2890,7 @@ impl StorageState {
         }
     }
 
-    /// Every bucket that holds an object, in name order.
-    ///
-    /// The store has no bucket registry: a bucket exists because an object names it. An
-    /// export therefore lists exactly the buckets with content, and importing a bucket with
-    /// no objects is a no-op.
+    /// Every bucket that holds an object or has explicit access configuration, in name order.
     #[must_use]
     pub fn buckets(&self) -> Vec<BucketName> {
         let mut out: Vec<BucketName> = Vec::new();
@@ -2903,6 +2899,9 @@ impl StorageState {
                 out.push(bucket.clone());
             }
         }
+        out.extend(self.uniform_bucket_level_access.keys().cloned());
+        out.sort();
+        out.dedup();
         out
     }
 

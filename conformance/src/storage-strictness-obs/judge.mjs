@@ -128,6 +128,7 @@ export function judgeAnswer(entry) {
     ),
     json: null,
     xml: null,
+    location: null,
     shape: "unrecorded",
     known: false,
   };
@@ -237,8 +238,40 @@ export function judgeAnswer(entry) {
     entry.status === 200 &&
     !body.length &&
     headerNames.includes("location")
-  )
-    row.shape = "resumable-start";
+  ) {
+    try {
+      const location = new URL(headers.location);
+      const request = new URL(entry.url);
+      const query = [...location.searchParams].toSorted(([a], [b]) => a.localeCompare(b));
+      const expected = [...request.searchParams, ["upload_id", "<UPLOAD_ID>"]].toSorted(
+        ([a], [b]) => a.localeCompare(b),
+      );
+      if (
+        ["http:", "https:"].includes(location.protocol) &&
+        location.origin === request.origin &&
+        location.pathname === request.pathname &&
+        !location.username &&
+        !location.password &&
+        !location.hash &&
+        location.searchParams.get("uploadType") === "resumable" &&
+        location.searchParams.getAll("upload_id").length === 1 &&
+        location.searchParams.get("upload_id") &&
+        JSON.stringify(
+          query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
+        ) === JSON.stringify(expected)
+      ) {
+        row.location = {
+          protocol: location.protocol,
+          host: location.host,
+          path: location.pathname,
+          query: query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
+        };
+        row.shape = "resumable-start";
+      }
+    } catch {
+      // An invalid or fully redacted Location is not evidence of a resumable URL.
+    }
+  }
   row.known =
     row.shape !== "unrecorded" &&
     !entry.unknown &&
@@ -272,17 +305,34 @@ export function judgeJournal(entries) {
     );
     return expected.flatMap((id) => {
       const matches = before.filter((entry) => entry.case === id);
-      return (matches.length ? matches : [{ case: id }]).map((entry) =>
-        judgeAnswer(
-          after.get(entry.n) ?? {
+      return (matches.length ? matches : [{ case: id }]).map((entry) => {
+        let response = after.get(entry.n);
+        if (id.endsWith("-resumable") && response?.headers?.location === "<redacted-session>") {
+          // Older journals redact the whole header, but record the issued URL when cancelling it.
+          // The recorder accepts cancellation only for that exact issued URL; retain its structure.
+          const cancellations = before.filter(
+            (candidate) =>
+              candidate.case === id.replace(/-resumable$/, "-cancel") &&
+              candidate.method === "DELETE" &&
+              candidate.n > entry.n &&
+              candidate.session === entry.session,
+          );
+          if (cancellations.length === 1)
+            response = {
+              ...response,
+              headers: { ...response.headers, location: cancellations[0].url },
+            };
+        }
+        return judgeAnswer(
+          response ?? {
             ...entry,
             unknown: true,
             status: null,
             bodyBytes: 0,
             bodyBase64: "",
           },
-        ),
-      );
+        );
+      });
     });
   }
   return before.map((entry) =>

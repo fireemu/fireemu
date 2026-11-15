@@ -35,7 +35,7 @@ App Hosting and Data Connect are not currently supported. Firebase Extensions su
 - Verifying the signature of a signed URL or a POST policy (their expiry and conditions are checked).
 - Object ACLs other than `allUsers` read, IAM and bucket-level public access.
 - Object composition (`compose`) and notification configuration.
-- **Recorded Storage CORS under `strict`.** `conformance/storage-strictness-obs/recordings/run-2.json` records JSON API metadata, media, bucket, list and UBLA ACL-error responses, upload preflights, resumable initiation, cancellation and cancelled-session reads with absent, empty and configured bucket CORS. Strict uses the recorded CORS values without requiring `productionExact`; the emulator profile retains its existing behavior. See [Bucket CORS](../../products/storage/#bucket-cors).
+- **Recorded Storage CORS under `strict`.** `conformance/storage-strictness-obs/recordings/run-2.json` records JSON API metadata, media, bucket, list and UBLA ACL-error responses, upload preflights, resumable initiation, cancellation and cancelled-session reads with absent, empty and configured bucket CORS. Strict uses the recorded CORS values without requiring `productionExact`; the emulator profile retains its existing behavior. Mixed-case requested-header preservation, UBLA PATCH/toggle behavior and applying the expose lists to other responses are unrecorded assumptions. Creation accepts the recorded region and disabled soft-delete hints without modeling those services. Local tests cover UBLA export/import and empty created buckets. See [Bucket CORS](../../products/storage/#bucket-cors).
 
 ### Realtime Database
 

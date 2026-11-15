@@ -256,7 +256,7 @@ impl PreparedAuth {
 }
 
 /// The objects with their bytes, and the buckets the Storage section listed.
-type PreparedStorage = (Vec<(ImportedObject, Vec<u8>)>, Vec<String>);
+type PreparedStorage = (Vec<(ImportedObject, Vec<u8>)>, BTreeMap<BucketName, bool>);
 
 /// Everything one export directory holds, parsed and ready to install.
 #[derive(Debug, Default)]
@@ -603,7 +603,7 @@ pub fn apply(mut prepared: Prepared, endpoints: &Endpoints) -> Result<(), Artifa
         }
     }
 
-    if let Some((objects, _)) = prepared.storage.take() {
+    if let Some((objects, buckets)) = prepared.storage.take() {
         let mut store = endpoints.storage.store.lock().map_err(|_| {
             ArtifactError::new(
                 "storage",
@@ -612,6 +612,9 @@ pub fn apply(mut prepared: Prepared, endpoints: &Endpoints) -> Result<(), Artifa
             )
         })?;
         store.clear();
+        for (bucket, enabled) in buckets {
+            store.set_uniform_bucket_level_access(&bucket, enabled);
+        }
         for (object, bytes) in objects {
             let name = object.name.as_str().to_owned();
             store.insert_imported(object, bytes).map_err(|e| {
@@ -2875,6 +2878,7 @@ fn read_database_section_within(
     Ok(namespaces)
 }
 
+#[allow(clippy::too_many_lines)]
 fn read_storage_section(
     dir: &Path,
     section: &Section,
@@ -2888,13 +2892,40 @@ fn read_storage_section(
     let buckets = BucketsFile::parse(&text)
         .map_err(|e| ArtifactError::new("storage", &buckets_path, e.to_string()))?;
 
+    let document: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| ArtifactError::new("storage", &buckets_path, e.to_string()))?;
+    let buckets = buckets
+        .buckets
+        .into_iter()
+        .zip(
+            document["buckets"]
+                .as_array()
+                .expect("validated buckets array"),
+        )
+        .map(|(name, entry)| {
+            let bucket = BucketName::try_new(name)
+                .map_err(|e| ArtifactError::new("storage", &buckets_path, e.to_string()))?;
+            let enabled = match entry.get("uniformBucketLevelAccess") {
+                None => false,
+                Some(value) => value.as_bool().ok_or_else(|| {
+                    ArtifactError::new(
+                        "storage",
+                        &buckets_path,
+                        "uniformBucketLevelAccess must be a boolean",
+                    )
+                })?,
+            };
+            Ok((bucket, enabled))
+        })
+        .collect::<Result<BTreeMap<_, _>, ArtifactError>>()?;
+
     let metadata_dir = section_dir.join(METADATA_DIR);
     let blobs_dir = section_dir.join(BLOBS_DIR);
     let mut objects = Vec::new();
     let entries = match std::fs::read_dir(&metadata_dir) {
         Ok(entries) => entries,
         // A section with buckets but no object at all is legitimate.
-        Err(_) if !metadata_dir.exists() => return Ok((objects, buckets.buckets)),
+        Err(_) if !metadata_dir.exists() => return Ok((objects, buckets)),
         Err(e) => {
             return Err(ArtifactError::new(
                 "storage",
@@ -2973,7 +3004,7 @@ fn read_storage_section(
         )?;
         objects.push((imported_object(&meta, &path)?, bytes));
     }
-    Ok((objects, buckets.buckets))
+    Ok((objects, buckets))
 }
 
 fn enforce_storage_object_count(count: usize, path: &Path) -> Result<(), ArtifactError> {
@@ -4159,8 +4190,12 @@ fn export_storage(
     }
 
     let buckets_path = section_dir.join(BUCKETS_FILE);
+    let document = serde_json::json!({"buckets": buckets.iter().map(|name| {
+        let bucket = BucketName::try_new(name.clone()).expect("stored bucket name");
+        serde_json::json!({"id": name, "uniformBucketLevelAccess": store.uniform_bucket_level_access(&bucket)})
+    }).collect::<Vec<_>>()});
     buckets_path
-        .write(BucketsFile { buckets }.to_json().as_bytes())
+        .write(document.to_string().as_bytes())
         .map_err(|e| ArtifactError::new("storage", &buckets_path, e))?;
 
     manifest.set(
@@ -4665,7 +4700,9 @@ mod tests {
         use fireemu_core_types::edition::{FirestoreApiMode, FirestoreEdition};
         use std::sync::{Arc, Mutex};
 
-        let root = super::trusted_temp::TrustedTempDir::new("storage-spill-roundtrip");
+        let root =
+            std::env::temp_dir().join(format!("storage-spill-roundtrip-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
         let process = ProcessSpill::create(&root.join("spill")).unwrap();
         let clock = Arc::new(Mutex::new(VirtualClock::new(LogicalInstant::UNIX_EPOCH)));
         let auth = Arc::new(AuthRegistry::new(
@@ -4846,6 +4883,70 @@ mod tests {
             )
             .unwrap(),
         );
+        // Seeded PICT rows; every row checks populated and empty created buckets.
+        for (spill, enabled, legacy) in [
+            (false, false, false),
+            (false, true, false),
+            (false, true, true),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let empty = BucketName::try_new("empty-created-bucket").unwrap();
+            {
+                let mut store = storage.store.lock().unwrap();
+                store.set_uniform_bucket_level_access(&bucket, enabled);
+                store.set_uniform_bucket_level_access(&empty, enabled);
+                store.set_spill(spill.then(|| (process.spill_dir(), 0)));
+            }
+            let dir = root.join(format!("ubla-{spill}-{enabled}-{legacy}"));
+            super::export(&dir, products, &endpoints, "test").unwrap();
+            let path = dir.join(super::STORAGE_PATH).join(super::BUCKETS_FILE);
+            let mut artifact: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let buckets = artifact["buckets"].as_array_mut().unwrap();
+            assert!(buckets.iter().any(|b| b["id"] == empty.as_str()));
+            for b in buckets {
+                assert_eq!(b["uniformBucketLevelAccess"], enabled);
+                if legacy {
+                    b.as_object_mut()
+                        .unwrap()
+                        .remove("uniformBucketLevelAccess");
+                }
+            }
+            std::fs::write(&path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+            // Import must replace previous flags, including an enabled flag absent from old artifacts.
+            storage
+                .store
+                .lock()
+                .unwrap()
+                .set_uniform_bucket_level_access(&bucket, true);
+            let prepared = super::prepare(
+                &dir,
+                products,
+                "demo-app",
+                false,
+                fireemu_core_storage::store::MAX_OBJECT_BYTES,
+            )
+            .unwrap();
+            super::apply(prepared, &endpoints).unwrap();
+            let store = storage.store.lock().unwrap();
+            for b in [&bucket, &empty] {
+                assert!(store.bucket_known(b), "{b:?}, legacy={legacy}");
+                assert_eq!(store.uniform_bucket_level_access(b), enabled && !legacy);
+            }
+            assert_eq!(
+                store
+                    .body_bytes(store.get(&bucket, &name).unwrap())
+                    .unwrap()
+                    .as_ref(),
+                b"body for export"
+            );
+            assert!(store
+                .all_objects()
+                .iter()
+                .all(|object| object.bucket != empty));
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// A password policy survives an export and import in each enforcement state, the

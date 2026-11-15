@@ -9,7 +9,7 @@ export function compare(production, local) {
     const l = local.filter((row) => row.case === id);
     if (p.length !== 1 || l.length !== 1 || p[0].known !== true || l[0].known !== true)
       return { case: id, verdict: "NEEDS-REVIEW" };
-    const fields = ["status", "shape", "headerNames", "headers"].filter(
+    const fields = ["status", "shape", "headerNames", "headers", "json", "xml", "location"].filter(
       (field) => JSON.stringify(p[0][field]) !== JSON.stringify(l[0][field]),
     );
     return { case: id, verdict: fields.length ? `DIFFERS(${fields.join(",")})` : "MATCH" };

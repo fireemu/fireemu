@@ -2929,7 +2929,7 @@ fn route(method: &str, path: &str) -> Result<Route, String> {
         }
     }
     match (method, segments.as_slice()) {
-        ("GET", ["b"]) | ("POST", ["storage", "v1", "b"]) => Ok(Route::GcsListBuckets),
+        ("GET", ["b"]) => Ok(Route::GcsListBuckets),
         ("GET", ["b", b, "o"] | ["storage", "v1", "b", b, "o"]) => {
             Ok(Route::GcsList { bucket: d(b)? })
         }
@@ -3764,7 +3764,12 @@ fn handle_request(
     };
     // Admit before reading UBLA so reset and restore cannot change the route decision mid-request.
     let _admitted = state.barrier.as_ref().map(|b| b.admit());
-    let route = if state.is_strict() && req.method == "GET" {
+    let route = if state.is_strict()
+        && req.method == "POST"
+        && req.path.trim_matches('/') == "storage/v1/b"
+    {
+        Route::GcsListBuckets
+    } else if state.is_strict() && req.method == "GET" {
         match self::route("POST", &req.path) {
             Ok(Route::GcsAcl { bucket, name })
                 if bucket_name(&bucket).is_ok_and(|b| {
@@ -4224,6 +4229,10 @@ fn unknown_bucket_written(state: &StorageState, route: &Route, method: &str) -> 
 /// endpoint methods use another supported verb to identify the named JSON route. Short aliases
 /// retain method-based classification because paths such as `PUT /b/foo` are ambiguous.
 pub(crate) fn is_json_api_endpoint(method: &str, path: &str) -> bool {
+    // This classifier is used only by the strict transport CORS policy.
+    if path.trim_matches('/') == "storage/v1/b" {
+        return true;
+    }
     let methods: &[&str] = if is_canonical_json_api_path(path) {
         &["GET", "POST", "PUT", "PATCH", "DELETE"]
     } else if method == "OPTIONS" {
@@ -5763,6 +5772,15 @@ fn gcs_bucket(
                             )
                         })?,
                 );
+                continue;
+            }
+            // Accept the recorded provisioning hints; region placement and soft deletion are not modeled.
+            if state.is_strict()
+                && method == "POST"
+                && ((key == "location" && value == "US-CENTRAL1")
+                    || (key == "softDeletePolicy"
+                        && value == &json!({"retentionDurationSeconds": 0})))
+            {
                 continue;
             }
             if method == "POST" && key == "name" {

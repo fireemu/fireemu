@@ -1636,7 +1636,7 @@ fn strict_v3_ubla_acl_follows_bucket_creation_patch_reset_and_restore() {
             (
                 "POST",
                 "/storage/v1/b".into(),
-                json!({"name":"created-ubla","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}),
+                json!({"name":"created-ubla","location":"US-CENTRAL1","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}},"softDeletePolicy":{"retentionDurationSeconds":0}}),
                 if strict { 200 } else { 501 },
             ),
             (
