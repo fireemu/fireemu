@@ -1,0 +1,171 @@
+---
+title: Konfigurationsdateien
+description: Richten Sie fireemu.toml und firebase.json ein und erfahren Sie, welche Dateien ein Lauf lädt und wo sich ihre relativen Pfade auflösen.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu liest zwei Arten von Dateien:
+
+- **`fireemu.toml`** enthält die eigenen Einstellungen von Fireemu, etwa das [Profil](../profiles/), die Projektkonfiguration von Authentication und die Uhr. Sie enthält `schemaVersion = 1`. Dieselben Einstellungen können Sie als JSON in `fireemu.json` schreiben; ein Verzeichnis, das beide enthält, wird abgelehnt (siehe [Welche Dateien geladen werden](#which-files-are-loaded)). Siehe das [Konfigurationsschema](../../reference/configuration/).
+- **`firebase.json`** ist die Datei, die die Firebase CLI verwendet. Fireemu liest Ports, Security Rules, Indizes und Functions-Codebasen bei jedem Start daraus.
+
+## Beide Dateien verwenden
+
+Halten Sie Fireemu-spezifische Einstellungen in `fireemu.toml` statt in `firebase.json`. Um beide zu verwenden, nennen Sie die `firebase.json` in `fireemu.toml`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+`npx fireemu init --firebase-json firebase.json` schreibt das für Sie.
+
+## Welche Dateien geladen werden
+
+`up`, `exec`, `emulators:start` und `emulators:exec` wählen ihre Konfigurationsdateien in dieser Reihenfolge:
+
+1. **Explizite Flags.** `--config <file>` und `--firebase-json <file>` laden genau die Dateien, die sie nennen, und es wird nichts gesucht. `--config` parst einen Pfad mit `.toml` als TOML (ohne Beachtung der Groß-/Kleinschreibung, auch `.TOML`) und jede andere Endung als JSON. Eine TOML-Konfiguration muss `schemaVersion = 1` setzen; sie wird nie als `firebase.json` gelesen, die ausschließlich JSON ist. `--firebase-json` liest immer JSON.
+2. **Eine Fireemu-Konfiguration im aktuellen Verzeichnis.** Andernfalls wird die einzige `fireemu.toml` oder `fireemu.json` im aktuellen Verzeichnis so geladen, als wäre sie mit `--config` übergeben worden.
+   - Existieren beide Dateien, wird der Start abgelehnt: Entfernen Sie eine oder wählen Sie eine Datei mit `--config`.
+   - Ihr Eintrag `firebaseJson`, relativ zur geladenen Datei aufgelöst, nennt die zu ladende `firebase.json`. Eine `firebase.json` neben einer `fireemu.toml` ohne Eintrag `firebaseJson` wird nicht geladen, und die Startausgabe weist darauf hin.
+   - Weder `fireemu.toml` noch `fireemu.json` in einem übergeordneten Verzeichnis wird verwendet, weil die darin enthaltenen Pfade relativ zum aktuellen Verzeichnis sind.
+   - Relative Pfade in einer kanonischen Datei (`rules.source`, `storage.rules`, `functions.source`, `firestore.indexFile` und die anderen Dateieinstellungen) werden aus dem Arbeitsverzeichnis gelesen, in welchem Verzeichnis die Datei auch liegt. Nur `firebaseJson` und die Pfade in einer `firebase.json` werden aus dem eigenen Verzeichnis der Datei gelesen.
+3. **Die nächstgelegene `firebase.json`.** Andernfalls wird die nächstgelegene `firebase.json` so geladen, als wäre sie mit `--firebase-json` übergeben worden: die im aktuellen Verzeichnis, sonst die erste in einem übergeordneten Verzeichnis gefundene, so wie die Firebase CLI sie findet. Ihre Pfade und die `.firebaserc` daneben werden aus ihrem Verzeichnis gelesen.
+4. **Eingebaute Standardwerte.** Andernfalls gelten die eingebauten Standardwerte, und es werden keine Security Rules geladen.
+
+`--no-config-discovery` überspringt die Schritte 2 und 3. Die Zeile `config:` der Startausgabe nennt die geladenen Dateien.
+
+Die Erkennung hat diese Auswirkungen:
+
+- Die Projekt-ID stammt aus der `.firebaserc` neben der gefundenen `firebase.json`.
+- Ihre Emulator-Ports, der Hub, die UI und die Einstellungen für ein einzelnes Projekt gelten.
+- Ein Eintrag `functions` startet die Functions-Laufzeit.
+- `fireemu capabilities` meldet auch das Profil einer gefundenen `fireemu.toml`.
+
+Wenn Sie sich auf das alte Verhalten verlassen haben, bei dem eine `firebase.json` neben Ihren Tests ignoriert wurde, übergeben Sie `--no-config-discovery`.
+
+## Relative Pfade
+
+Ein relativer Pfad wird gegen ein anderes Verzeichnis aufgelöst, je nachdem, in welcher Datei er steht:
+
+| Wo der Pfad steht | Aufgelöst gegen |
+|---|---|
+| `fireemu.toml` oder `fireemu.json`: `rules.source`, `firestore.indexFile`, `storage.rules`, `functions.source` und die anderen Dateieinstellungen | Das Arbeitsverzeichnis, in dem `fireemu` läuft |
+| `--functions <dir>` und die anderen Pfadoptionen | Das Arbeitsverzeichnis |
+| `firebaseJson` in `fireemu.toml` oder `fireemu.json` | Das Verzeichnis dieser Konfigurationsdatei |
+| Jeder Pfad in einer `firebase.json` (`firestore.rules`, `functions.source`, `hosting.public`, ...) | Das Verzeichnis dieser `firebase.json` |
+
+So liest `fireemu exec --config packages/api/fireemu.toml -- npm test`, vom Repository-Stammverzeichnis aus ausgeführt, `rules.source = "firestore.rules"` aus dem Repository-Stammverzeichnis, nicht aus `packages/api`. Fireemu behält dieses Verhalten aus Kompatibilitätsgründen bei. Eine künftige Schemaversion löst möglicherweise jeden Pfad gegen die Konfigurationsdatei auf.
+
+Um den Unterschied zu vermeiden, führen Sie Fireemu in dem Verzeichnis aus, das die Konfiguration enthält, oder legen Sie die Pfade in eine `firebase.json`, auf die `firebaseJson` verweist.
+
+[`fireemu up --plan`](../../reference/cli/#plan-a-run) zeigt für jeden Pfad den absoluten Pfad, den der Lauf öffnet, und das Verzeichnis, gegen das er aufgelöst wurde. Es warnt, wenn sich ein Pfad der kanonischen Konfiguration anders auflösen würde als vom eigenen Verzeichnis der Konfigurationsdatei aus.
+
+## Prüfung des Dateieigentümers
+
+Eine gefundene Datei kann auszuführenden Functions-Code und durchzusetzende Rules benennen. Unter Unix prüft die Suche daher, wem das Gefundene gehört, so wie git das Eigentum an Repositorys prüft. Die Firebase CLI prüft das nicht. Unter Windows wird das Eigentum nicht geprüft.
+
+Vertrauenswürdige Eigentümer sind Sie selbst, root und, wenn Sie über `sudo` als root arbeiten, der Benutzer in `SUDO_UID`.
+
+- **Konfigurationsdateien.** Eine `fireemu.toml`, `fireemu.json` oder `firebase.json`, deren Eigentümer nicht vertrauenswürdig ist oder die jeder Benutzer beschreiben kann, wird mit einer Warnung übersprungen. Gruppenschreibrechte sind erlaubt, sodass Dateien, die unter einer umask mit privater Benutzergruppe (002, dem Standard von Debian und Ubuntu) erstellt wurden, geladen werden.
+- **`.firebaserc`.** Sie nennt nur Projekt- und Target-Aliase, niemals Code oder Rules, daher wird ihr Eigentümer nicht geprüft. Sie wird nur übersprungen, wenn sie oder ihr Verzeichnis von jedem Benutzer beschrieben werden kann.
+- **Übergeordnete Verzeichnisse.** Die Suche endet vor einem übergeordneten Verzeichnis, dessen Eigentümer nicht vertrauenswürdig ist oder das jeder Benutzer beschreiben kann, etwa `/tmp`. Sie endet auch ohne Warnung an einem übergeordneten Verzeichnis, das sie nicht untersuchen kann, etwa einem, das Sie nicht betreten dürfen.
+- **Das aktuelle Verzeichnis.** Sein Eigentümer wird nicht geprüft, weil Sie sich entschieden haben, dort zu arbeiten. Ein aktuelles Verzeichnis, das jeder Benutzer beschreiben kann, wird gar nicht durchsucht.
+- **Symbolische Links.** Ein symbolischer Link wird anhand der Datei beurteilt, auf die er zeigt. Das Verzeichnis, das das Ziel enthält, wird nicht geprüft.
+- **Lesen.** Jeder Kandidat wird einmal geöffnet. Eigentümer und Modus werden an der geöffneten Datei geprüft, bevor etwas gelesen wird, und der Text wird dann aus derselben Datei gelesen. Eine gefundene Datei, die größer als 16 MiB ist, wird mit einem Fehler abgelehnt.
+
+Eine übersprungene Datei oder ein übersprungenes Verzeichnis wird in einer Warnung genannt, und der Lauf wird fortgesetzt, als wäre nichts gefunden worden. Fehler in einer gefundenen Datei sagen, dass die Suche die Datei gefunden hat.
+
+- Um eine übersprungene Datei trotzdem zu laden, nennen Sie sie mit `--config` oder `--firebase-json`.
+- Um die Warnung zu unterdrücken, übergeben Sie `--no-config-discovery`.
+
+Zwei verbreitete Setups stoßen auf diese Regel:
+
+- **Ein root-Container mit einem per Bind-Mount eingebundenen Checkout**, etwa ein `container:`-Job von GitHub Actions oder `docker run -v "$PWD":/app` als root. Die Dateien gehören einem Host-Benutzer, dem der root des Containers nicht vertraut. Verwenden Sie die expliziten Flags oder führen Sie `chown` auf dem Checkout aus. Die `.firebaserc` benennt das Projekt weiterhin. Rootless Podman bildet Ihren Benutzer auf den root des Containers ab und ist daher nicht betroffen.
+- **`sudo`.** Dateien, die dem Benutzer in `SUDO_UID` gehören, sind vertrauenswürdig.
+
+## Ihre Konfiguration validieren
+
+`fireemu.toml` wird beim Start validiert. Ein Wert, den Fireemu nicht akzeptiert, stoppt den Start mit einem Fehler.
+
+- `up`, `exec` und `config show` lehnen einen Schlüssel, den das Schema nicht auflistet, und einen Wert des falschen Typs ab, in beiden Formaten. Der Fehler nennt die Datei, den Schlüssel und den Typ, den er hätte haben sollen, zum Beispiel `fireemu.toml: daemon.firestorePort must be an integer, found a string`.
+- Ganzzahleinstellungen lehnen Gleitkommazahlen auch dann ab, wenn ihr Wert ganzzahlig ist: Schreiben Sie `8080` statt `8080.0`, wie die Fehlermeldung vorschlägt.
+- Das [Konfigurationsschema](../../reference/configuration/) ist ein JSON Schema, das Sie auch in Ihrem Editor verwenden können.
+
+Zwei Befehle zeigen, wozu sich eine Konfiguration auflöst:
+
+- `fireemu capabilities` gibt das Capability-Manifest für das Profil aus, zu dem sich Ihre Konfiguration auflöst.
+- `fireemu up --plan` und `fireemu exec --plan -- <command>` geben alles aus, was der Lauf aus Ihren Dateien, der Kommandozeile und der Umgebung auflöst (Projekt, Dienste, Ports, Dateien, Functions-Laufzeit, geerbte Variablen), ohne ihn zu starten. Siehe [Einen Lauf planen](../../reference/cli/#plan-a-run).
+
+## Eine Referenzdatei erzeugen
+
+`fireemu init --reference` schreibt außerdem `fireemu.reference.toml`, eine kommentierte Referenz, die aus dem Schema erzeugt wird. Bei einer vorhandenen `fireemu.json` schreibt es stattdessen `fireemu.reference.jsonc`, sodass die Schlüssel der Referenz zu Ihrem Konfigurationsformat passen. Fireemu lädt diese Datei nie.
+
+- Die normale `fireemu.toml` bleibt minimal. Einen Referenzschlüssel dorthin zu kopieren macht ihn explizit, wodurch `productionExact` ihn nicht mehr umschalten kann.
+- Diese Schlüssel bleiben in der Referenz auskommentiert: Schlüssel ohne Standardwert, Schlüssel, deren Vorhandensein ein Verhalten auswählt, Schlüssel, die von `productionExact` gesteuert werden, und Schlüssel, die aus Gründen der Vorwärtskompatibilität akzeptiert werden und derzeit keine Wirkung haben (in ihrem Kommentar entsprechend gekennzeichnet).
+- `fireemu config lint --deny-ineffective` lässt einen CI-Job scheitern, wenn die Konfiguration einen Schlüssel setzt, der ohne Wirkung akzeptiert wird. `--allow` und `--allow-file` listen die auf, die Sie absichtlich behalten (siehe [`config lint`](../../reference/cli/#config-lint)).
+- Kombinieren Sie `--reference` bei der Initialisierung mit `--profile` oder `--firebase-json`. Bei einer vorhandenen `fireemu.toml` oder `fireemu.json` und keiner dieser beiden Optionen wird nur die Referenz geschrieben.
+- Vorhandene Ausgabedateien erfordern `--force` zum Ersetzen.
+
+### Schema-Annotationen
+
+In einer veröffentlichten Binärdatei verweisen erzeugte Schema-Annotationen auf die Schemadatei dieses Releases im GitHub-Repository (`https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`), sodass ein Editor die Datei gegen die Schlüssel prüft, die die installierte Version akzeptiert. Eine aus dem Quellcode gebaute Binärdatei, einschließlich eines Builds zwischen Releases (der ein neueres Schema einbettet als das Tag seiner Version), schreibt stattdessen den Ort `main`.
+
+Ein `$schema` oder `#:schema`, das ein beliebiges Release-Tag, `main` oder den alten Ort `https://fireemu.dev/spec/config/fireemu.schema.json` nennt, wird weiterhin geladen. Ersetzen Sie für die Editor-Validierung eine alte Annotation durch das Tag der Version, die Sie ausführen.
+
+Fireemu validiert gegen sein mitgeliefertes Schema und ruft die URL der Annotation nicht ab. `fireemu config schema --out <path>` schreibt dieses mitgelieferte Schema in eine Datei, für einen Editor oder ein Werkzeug, das GitHub nicht erreichen kann.
+
+## TOML-Werte und JSON-null
+
+TOML-Dateien verwenden dasselbe JSON Schema, dieselbe Validierung und dieselben Standardwerte wie JSON-Dateien.
+
+- Beginnen Sie eine Datei mit `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json` (dem Tag der Version, die Sie ausführen), um das Schema in Taplo oder Even Better TOML auszuwählen.
+- Setzen Sie Zeitstempelwerte in Anführungszeichen. TOML-Datetimes werden mit dem Schlüsselnamen abgelehnt, weil das Schema keinen Datetime-Typ hat.
+
+TOML kennt kein `null`. Lassen Sie bei jeder nullbaren Einstellung unten den Schlüssel in seiner umgebenden Tabelle weg; bei nullbaren Array-Elementen lassen Sie das Element weg. Behalten Sie die umgebende Tabelle oder das umgebende Array, wenn ihr Vorhandensein beabsichtigt ist. Leere Arrays und leere Tabellen behalten ihre bisherige Bedeutung.
+
+| Nullbare JSON-Schlüssel | Bedeutung von null und des Weglassens in TOML |
+|---|---|
+| `limits.queryCatalog`, `firestore.textSearch.visibilityLag` | Werden ohne Laufzeitwirkung akzeptiert. Das Weglassen entfernt auch den expliziten Wert und den Starthinweis für diese Schlüssel. |
+| `limits.firestorePlan.compositeIndexLimitOverride`, `limits.firestorePlan.singleFieldConfigLimitOverride`, `limits.firestorePlan.enterpriseIndexLimitOverride` | Keine Überschreibung; Überschreibungen ungleich null werden derzeit abgelehnt. |
+| `auth.providers`, `auth.providers.oidc`, `auth.providers.saml` | Keine Seed-Deklaration für Anbieter. Ein leeres Array deklariert ausdrücklich einen leeren Ersatz und unterscheidet sich vom Weglassen. |
+| `auth.providers.oidc[].displayName`, `auth.providers.oidc[].clientSecret`, `auth.providers.saml[].displayName` | Kein optionaler Anbieterwert. |
+| `auth.authorizedDomains` | Kein Seed; die Standard-Domains bleiben erhalten. Ein leeres Array deklariert keine Domains. |
+| `auth.authorizedDomains[]` | Dieses Element ignorieren; lassen Sie es im TOML-Array weg. |
+| `auth.mfa`, `auth.multiTenant`, `auth.tenants` | Keine Deklaration; die jeweils geltenden Standardwerte bleiben erhalten. |
+| `auth.mfa.enabledProviders`, `auth.mfa.providerConfigs` | Keine Anbieter dieser Art in der deklarierten MFA-Konfiguration. Behalten Sie die Tabelle `auth.mfa`, wenn Sie MFA deklarieren. |
+| `auth.mfa.providerConfigs[].totpProviderConfig` | Diesen Anbietereintrag ignorieren; lassen Sie den Schlüssel in diesem Eintrag weg. |
+| `auth.mfa.providerConfigs[].totpProviderConfig.adjacentIntervals` | Null benachbarte Intervalle im deklarierten TOTP-Anbieter verwenden; behalten Sie seine Tabelle. |
+| `auth.blockingFunctions.triggers.beforeCreate`, `auth.blockingFunctions.triggers.beforeSignIn` | Diesen Trigger in einer expliziten Trigger-Auswahl deaktivieren. Behalten Sie `[auth.blockingFunctions.triggers]`; wird diese gesamte Tabelle weggelassen, ist stattdessen die Erkennung aktiviert. |
+| `auth.quota.signUpQuotaConfig` | Die temporäre Quota-Überschreibung löschen, einschließlich einer importierten Überschreibung. Behalten Sie `[auth.quota]` leer; wird die gesamte Quota-Tabelle weggelassen, bleibt eine importierte Überschreibung erhalten. |
+| `auth.passwordPolicy.constraints.maxLength`, `auth.passwordPolicyOverrides[].passwordPolicy.constraints.maxLength` | Keine benutzerdefinierte Maximallänge. |
+
+## Siehe auch
+
+- [Konfigurationsreferenz](../../reference/configuration/)
+- [Profile und productionExact](../profiles/)
+- [CLI-Referenz](../../reference/cli/)
+- [CI und Container](../ci-and-containers/)

@@ -1,0 +1,181 @@
+---
+title: Profile und productionExact
+description: Wählen Sie zwischen den Profilen strict und emulator, sehen Sie, wo die Standardwerte bewusst von der Produktion abweichen, und schalten Sie sie mit productionExact auf das Produktionsverhalten um.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ein Profil legt fest, wessen Verhalten Fireemu folgt: der Firebase-Produktion (`strict`, der Standard) oder dem offiziellen Emulator (`emulator`). Einige Standardwerte weichen in beiden Profilen bewusst von der Produktion ab, damit Tests ohne Einrichtung laufen. `productionExact` schaltet sie auf das Verhalten der Produktion um.
+
+## Ein Profil wählen
+
+| Profil | Verhalten |
+|---|---|
+| `strict` | Entspricht dem Verhalten und den Einschränkungen der Firebase-Produktion so genau wie möglich im unterstützten Umfang. Der Standard und empfohlen, auch bei der Migration vom offiziellen Emulator. |
+| `emulator` | Zielt auf das Verhalten einer angepinnten Version des offiziellen Emulators (`firebase-tools` 15.28.2). Verwenden Sie es nur, um die Übereinstimmung mit dem offiziellen Emulator zu prüfen, etwa als zusätzliches Testziel; für eine Migration wird es nicht gebraucht. |
+
+Das Profil `emulator` akzeptiert Verhalten, das die Produktion ablehnt, sodass ein Test dort bestehen und gegen die Produktion fehlschlagen kann. Verwenden Sie `strict` für Ihre Tests.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict"
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Ein Setup wählen
+
+- **Die meisten Projekte:** `strict` mit den Entwicklungsstandards. Ihre Tests laufen ohne Schlüssel oder Einrichtungsaufrufe und stoßen dennoch auf die Validierung, die Ablehnungen und die Fehlerformen der Produktion.
+- **Vor einem Release oder in einem separaten CI-Job:** `strict` mit [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose), um zu erkennen, was die Entwicklungsstandards durchlassen, etwa ein unsigniertes Token.
+- **Den offiziellen Emulator prüfen:** `emulator`, nur als zusätzliches Ziel.
+
+## Wo Fireemu bewusst von der Produktion abweicht
+
+Das Ziel von Fireemu ist, der Produktion zu entsprechen. Manches Verhalten der Produktion macht einen Test nur aufwendiger: Die Produktion braucht signierte Tokens und Signierschlüssel, ein Feature, das über einen Admin-API-Aufruf aktiviert wird, oder eine Stunde Wartezeit. Sie exakt zu kopieren würde Fireemu in CI und auf dem Rechner einer Entwicklerin oder eines Entwicklers schwerer nutzbar machen, ohne mehr Fehler zu finden.
+
+Für dieses Verhalten ist der Standard in beiden Profilen ein Entwicklungsstandard, der ohne Einrichtung funktioniert. Jeder hat eine eigene Einstellung und steht in der Tabelle unten, sodass jede solche Abweichung von der Produktion eine dokumentierte Entscheidung ist.
+
+### Das Produktionsverhalten mit productionExact einschalten
+
+Um das Verhalten der Produktion für alle auf einmal zu erhalten, setzen Sie `productionExact` auf `true` (nur Profil `strict`). Eine explizite Einstellung hat dennoch Vorrang:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Use production behavior for development defaults: true or false; requires strict.
+productionExact = true
+
+[auth]
+# Accept unsigned emulator custom tokens: true or false.
+allowUnsignedCustomTokens = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "auth": {
+    "allowUnsignedCustomTokens": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Entwicklungsstandards
+
+| Entwicklungsstandard | Einstellung | Mit `productionExact` |
+|---|---|---|
+| Unsignierte Emulator-Custom-Tokens werden akzeptiert | `auth.allowUnsignedCustomTokens` | Abgelehnt |
+| Security Rules von Firestore, Storage und Realtime Database akzeptieren das unsignierte Mock-ID-Token von `@firebase/rules-unit-testing` (`authenticatedContext()`, `mockUserToken` des Client-SDK) | `auth.allowUnsignedIdTokens` | Der Mock-Token-Fallback ist deaktiviert, da die Produktion ein unsigniertes Token ablehnt; von Fireemu ausgestellte Tokens, die die normale Verifikation bestehen, werden weiterhin akzeptiert |
+| Eine Realtime-Database-Instanz ohne Rules-Datei ist für jede Anfrage offen, so wie der offizielle Emulator sie bereitstellt | `database.defaultAccess` (`"open"`) | `"locked"`: nur das Credential `owner` des Emulators liest und schreibt, da die Produktion zu einer neuen Datenbank im Modus „locked“ nur Administratoren zulässt |
+| Hosting liefert eine Datei ohne standardmäßigen `Cache-Control`, sodass ein Browser eine bearbeitete Datei sofort anzeigt | `hosting.cacheControl` (`"none"`) | `"production"` fügt einer Datei, deren `headers`-Regeln keinen setzen, `Cache-Control: max-age=3600` hinzu, wie es Hosting in der Produktion tut (nur Profil strict) |
+| Lokalisierte Hosting-Inhalte folgen dem Header `X-Country-Code` und dem Cookie `firebase-country-override`, sodass Länderinhalte getestet werden können | `hosting.clientCountry` (`"honoured"`) | `"ignored"`: keines von beiden wählt etwas aus, weil die Produktion das Land an ihrem Edge bestimmt (nur Profil strict) |
+| Jede Funktion einer Codebasis läuft in einem Runner-Prozess, sodass Funktionen einen Modulgraphen teilen und die Identitätsvariablen den zuletzt gestarteten Aufruf benennen | `functions.isolation` (`"codebase"`) | `"function"`: ein Runner-Prozess pro Funktion, bei ihrem ersten Trigger gestartet, mit eigener Identität, eigenen Secrets und eigenem Modulgraphen; kostet etwa 120 MiB Speicher pro gestarteter Funktion und einen Kaltstart beim ersten Aufruf |
+| Auth-Blocking-Funktionen verwenden ein Emulator-Token | `functions.authBlockingToken` (`"emulated"`) | `"production"` liefert ein signiertes Token, und der Python-Runner verifiziert es nach den Regeln des SDK; Node-Funktionen erhalten dasselbe Token in der Form der Produktion, verifizieren es aber nicht und verhalten sich daher wie zuvor; erfordert `strict` |
+| Der Name einer abgeschlossenen Cloud-Tasks-Aufgabe ist sofort wieder frei | `functions.taskNameReuse` (`"immediate"`; `"retained"` im Profil `emulator`) | `"production"` lehnt den Namen bis zu 3600 Sekunden ab („existed too recently“), wie für Cloud Tasks dokumentiert; die Historie abgeschlossener Namen ist über alle Queues hinweg auf 65.536 Namen und 8 MiB Text für Queue- und Aufgabennamen begrenzt; die ältesten Namen werden verdrängt, wenn eine der Grenzen überschritten wird, auch bevor das 3600-Sekunden-Fenster abläuft. Dieselben Grenzen gelten für `"retained"`; erfordert `strict` |
+| Eine Aufgabe ohne `dispatchDeadline` wird nach 60 Sekunden abgebrochen | `functions.taskDispatchDeadlineSeconds` (`60`) | `600`, was Cloud Tasks einer solchen Aufgabe in den Aufzeichnungen gab; jeder Wert von 15 bis 1800 kann gesetzt werden; erfordert `strict` |
+| Eine Aufgabe, die wiederholt fehlschlägt, wird in den Abständen wiederholt, die ihre Queue deklariert | `functions.taskRetryBackoff` (`"declared"`) | `"production"` lässt die Abstände nach etwa einem Dutzend Fehlschlägen über das deklarierte Maximum hinaus wachsen (4, 8 und 10 s, wie aufgezeichnet), nie früher als deklariert; erfordert `strict` |
+| Eine Task-Queue-Funktion, die keinen Wiederholungswert deklariert, erhält die 3 Versuche des offiziellen Emulators | `functions.taskRetryDefaults` (`"emulated"`) | `"production"` gibt 100 Versuche (dieselben Backoff-Werte), wie die Standard-Queue beim Zurücklesen zeigte; ein deklarierter Wert bleibt immer erhalten; erfordert `strict` |
+| Die Anmeldung über Identitätsanbieter akzeptiert Fixture-Assertions und das Anmelde-Widget (`/emulator/auth/handler`) für eingebaute Anbieter sowie `oidc.*`- und `saml.*`-Anbieter; unter `strict` muss ein `oidc.*`- oder `saml.*`-Anbieter weiterhin konfiguriert und aktiviert sein (`auth.providers` oder die Admin-API), wie es die Produktion verlangt | `auth.idpAssertions` (`"fixture"`) | `"signed"`: OIDC-ID-Tokens müssen mit einem Schlüssel aus `auth.idpSigners` verifizieren, SAML-Antworten mit den Zertifikaten des Anbieters, und die Fixture- und eingebauten Anbieter werden abgelehnt |
+| Der Eventarc-Listener lässt jedes oder kein Credential zu, sodass das Admin SDK mit einem gefälschten Credential veröffentlicht (siehe [Eventarc-Authentifizierung](https://github.com/fireemu/fireemu/blob/main/docs/eventarc-authentication.md)) | `eventarc.authentication` (`"permissive"`) | `"production"`: ein fehlendes, fehlerhaftes oder JWT-förmiges Bearer wird mit dem 401 der Produktion abgelehnt |
+| Eine Mandanten-ID (Tenant-ID) kann ein beliebiger lesbarer Name sein, etwa `tenant-a` | `auth.tenantIdFormat` (`"readable"`) | `"generated"`: die erzeugte Form der Produktion, etwa `acme-x7k2q` |
+| Mandantenfähigkeit (Multi-Tenancy) ist eingeschaltet: Die Admin-API legt Mandanten an, und `auth.tenants` lädt ohne einen Aufruf von `updateConfig` | `auth.multiTenant.allowTenants` (`true`) | Nicht gesetzt, bis sie aktiviert wird, wie in einem neuen Produktionsprojekt: Mandantenrouten werden abgelehnt, und `auth.tenants` erfordert `allowTenants: true` |
+| Multi-Faktor-Authentifizierung ist eingeschaltet, SMS und TOTP, ohne Konsolenschalter, ohne Aufruf von `updateConfig` und ohne `auth.mfa`-Block | `auth.mfa` (`state: "ENABLED"`) | Ausgeschaltet, bis sie aktiviert wird, wie in einem neuen Produktionsprojekt: Die Registrierung wird mit `OPERATION_NOT_ALLOWED : SMS based MFA not enabled.` oder `TOTP based MFA not enabled.` abgelehnt |
+| Der Firestore-Stream `Listen` eines Endbenutzers bleibt offen, egal wie lange er gehalten wird. `POST /v1/firestore/listen:expire` auf der Steuer-API beendet alle gehaltenen Endbenutzer-Streams auf einmal mit dem Status der Produktion, um das Wiederverbinden eines Clients zu testen | `firestore.listenStreamLifetime` (`"unlimited"`) | `"oneHour"`: eine Stunde nach dem Öffnen mit `INTERNAL` beendet |
+| App Check funktioniert ohne Registrierung einer App: Jedes wohlgeformte Debug-Token (eine UUIDv4) wird für jede App getauscht, sodass eine `enforceAppCheck`-Callable ohne `appCheck`-Block aufgerufen werden kann; ein fehlendes oder fehlerhaftes Token wird weiterhin abgelehnt | `appCheck.debugTokens` (`"any"`) | `"registered"`: nur Apps aus `appCheck.apps` mit einem registrierten Digest des Debug-Tokens werden getauscht, und App Check wird ohne `appCheck`-Block nicht bereitgestellt. Auch ein `appCheck`-Block stellt es wieder her |
+| Ein nicht deklarierter Storage-Bucket wird beim ersten Schreiben mit einem Hinweis angelegt | `storage.undeclaredBuckets` (`"warn"`) | `"refuse"`: Objektoperationen werden abgelehnt; ein expliziter Schlüssel gewinnt |
+| Ein nicht aufgeführter Storage-Bucket erhält großzügige CORS-Header | `storage.cors` | Keine CORS-Header für einen nicht aufgeführten Bucket; ein expliziter Eintrag entscheidet |
+| Die Weiterleitung an Dead-Letter-Topics braucht weder eine Projektnummer noch IAM-Berechtigungen | `pubsub.deadLetterAuthorization` (`"implicit"`) | `"iam"`: Eine Nachricht wird erst weitergeleitet, nachdem dem Pub/Sub-Service-Agent `roles/pubsub.subscriber` auf der Subscription und `roles/pubsub.publisher` auf dem Dead-Letter-Topic gewährt wurden. Auch die Angabe von `pubsub.projectNumbers` wählt es aus |
+
+Das Start-Banner und `fireemu capabilities` melden, ob `productionExact` gesetzt ist, sowie den wirksamen Wert und die Quelle jedes mit einem Schlüssel versehenen Entwicklungsstandards in der Tabelle. Die CORS-Einstellung für nicht aufgeführte Buckets ist kein Entwicklungsstandard mit eigenem Schlüssel.
+
+Die meisten Projekte brauchen `productionExact` nicht; es ist ein erweiterter Schalter für einen strengeren Vergleich mit der Produktion.
+
+Eine Abfrage, deren zusammengesetzter Index nicht definiert ist, gehört nicht zu diesen Standardwerten. `strict` lehnt sie ab, wie es die Produktion tut, und `firestore.missingIndexes: "report"` ist ein ausdrücklicher Opt-out, der sie ausführt und den fehlenden Index auf der Standardfehlerausgabe meldet. `productionExact` ändert diesen Schlüssel nicht.
+
+### Weitere Entwicklungserleichterungen
+
+Dieses Verhalten weicht von der Produktion ab und wird von `productionExact` nicht umgeschaltet. Jede Zeile sagt, wie Sie das Verhalten der Produktion erhalten, oder dass es keine Möglichkeit gibt.
+
+#### Authentication
+
+| Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
+|---|---|
+| `localhost` gehört zu den standardmäßig autorisierten Domains für Continue-URLs von Aktionslinks; ein neues Produktionsprojekt enthält es möglicherweise nicht | Deklarieren Sie `auth.authorizedDomains`, was die Standardwerte ersetzt |
+| Jede Anmeldemethode ist anfangs aktiviert, einschließlich der Anmeldung per E-Mail-Link; ein neues Produktionsprojekt aktiviert keine (`firebase deploy --only auth` schaltet nur die aufgeführten Anbieter ein, nie aus) | Deklarieren Sie `auth.signIn` passend zu Ihrem Projekt, etwa `email.passwordRequired: true`, um die Anmeldung per E-Mail-Link abzulehnen |
+| Eingebaute Identitätsanbieter wie `google.com` melden an, ohne in der Konsole aktiviert zu sein. `oidc.*`- und `saml.*`-Anbieter müssen weiterhin konfiguriert und aktiviert sein, sonst wird die Anmeldung abgelehnt, wie es die Produktion ablehnt | `auth.idpAssertions: "signed"` (von `productionExact` gesetzt) lehnt die eingebauten Anbieter ab |
+| Jeder Web-API-Schlüssel wird akzeptiert, bis das Projekt einen deklariert; die Produktion antwortet für den Schlüssel eines anderen Projekts mit `API_KEY_INVALID` | Deklarieren Sie `auth.apiKeys` |
+| Die Telefonverifizierung sendet einen Code an jede Nummer, ohne reCAPTCHA-, Play-Integrity- oder APNs-Nachweis, den die Produktion außerhalb von Testnummern verlangt | Keine Einstellung. Client-SDKs führen ihren Verifier im Emulatormodus aus, sodass der App-Pfad geübt wird; ein roher REST-Client, der den Nachweis weglässt, besteht hier |
+| Ein reCAPTCHA-Zustand `ENFORCE` wird gespeichert und zurückgegeben, aber nicht durchgesetzt, sodass eine Anmeldung ohne reCAPTCHA-Token akzeptiert wird | Keine Einstellung |
+| `accounts:batchCreate` hat keine Zeilengrenze; das Admin SDK prüft vor dem Senden 1000 Benutzer pro Aufruf | Keine Einstellung |
+| Ratenbegrenzungen bei der Registrierung (die Produktion begrenzt neue Konten pro IP) werden nicht simuliert | Setzen Sie `auth.quotaSimulation.mode` auf `"enforce"` |
+| `verifyIdToken` des Admin SDK innerhalb einer Funktion akzeptiert ein unsigniertes ID-Token, weil das SDK die Signaturverifikation überspringt, solange `FIREBASE_AUTH_EMULATOR_HOST` gesetzt ist; die Produktion lehnt es ab | Keine Einstellung. Siehe [Auth](../../products/auth/#tokens) |
+
+#### Cloud Firestore
+
+| Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
+|---|---|
+| Firestore bedient eine Anfrage, die ein anderes Projekt als das des Daemons nennt, aus den eigenen leeren Daten dieses Projekts, was parallele Tests voneinander trennt; ein Tippfehler in einer `projectId` teilt Daten auf, statt wie das `PERMISSION_DENIED` der Produktion zu scheitern | Setzen Sie `projects.unknownProjects` auf `"refuse"` |
+| Zusammengesetzte Indizes aus `firestore.indexes.json` sind sofort `READY`, solche, die über die Admin-API angelegt werden, nach etwa 1,5 Sekunden; die Produktion baut einen Index minutenlang auf. Der Zustand `CREATING` und die Ablehnung „currently building“ einer Abfrage, die den Index braucht, bleiben erhalten | Keine Einstellung. Fragen Sie den Index ab, bis er `READY` ist, wie gegen die Produktion; auch das Vorstellen der virtuellen Uhr beendet einen Build |
+| Verwaltete Export-, Import- und Massenlösch-Operationen sind bei der ersten Abfrage fertig; die Produktion braucht Minuten | Keine Einstellung. Fragen Sie die Operation ab, bis sie `done` ist, wie gegen die Produktion |
+| Eine Transaktion, die eine Sperre hält, auf die ein anderer Schreiber wartet, wird nach 60 Sekunden ohne Aktivität (Wanduhr) zurückgerollt. Die eigene Leerlaufgrenze der Produktion liegt bei etwa 110 bis 123 Sekunden, und was sie einem umkämpften Halter früher antut, ist nicht aufgezeichnet | Keine Einstellung |
+
+#### Cloud Storage
+
+| Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
+|---|---|
+| Eine signierte URL oder eine POST-Policy wird mit jeder Signatur akzeptiert (Ablaufzeit und Bedingungen werden geprüft), weil die Verifikation den Schlüssel des signierenden Dienstkontos erfordert | Registrieren Sie für eine signierte V4-URL den Schlüssel, mit dem sie signiert wurde, in `storage.signedUrlKeys`; die Signatur einer POST-Policy wird nicht verifiziert |
+| Die JSON-API bedient eine Anfrage ohne Credential oder mit einem anderen Credential als einem Firebase-ID-Token als Eigentümer, weil ein lokaler Lauf ein Access-Token nicht beurteilen kann | Nicht verfügbar |
+| Eine öffentliche Berechtigung auf Bucket-Ebene (IAM `allUsers`) lässt sich nicht über eine API erteilen | Tragen Sie den Bucket in `storage.publicBuckets` ein |
+| Die öffentliche URL (`GET /{bucket}/{object}`) wird ohne Credential an eine Anfrage ausgeliefert, die `x-goog-api-client` sendet, weil die Go-Clientbibliothek (und das Firebase Admin Go SDK) gegen einen Emulator-Host ohne Credential darüber liest; ein Browser-Fetch wird abgelehnt | Nicht verfügbar |
+| Eine Security Rule darf `firestore.get()` und `firestore.exists()` aufrufen, ohne die Firestore-Zugriffsberechtigung, die die Produktion für den Storage-Service-Agent braucht | Nicht verfügbar |
+| Beide Standard-Bucket-Namen, `<project>.appspot.com` und `<project>.firebasestorage.app`, existieren, während ein Produktionsprojekt einen davon hat | Setzen Sie `storage.defaultBucket` auf den, den Ihr Projekt hat; der andere Name ist nicht deklariert, und seine Bucket-Ressource antwortet mit 404, bis er existiert; `storage.undeclaredBuckets` steuert, ob das erste Schreiben ihn mit einem Hinweis (`"warn"`) oder stillschweigend (`"create"`) anlegt oder abgelehnt wird (`"refuse"`, von `productionExact` ausgewählt, sofern nicht überschrieben) |
+
+#### Cloud Functions
+
+| Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
+|---|---|
+| `.env.local` in einer Functions-Codebasis wird nach `.env` und `.env.<projectId>` angewendet, obwohl die Produktion sie nie bereitstellt | Legen Sie den Wert stattdessen in `.env` oder `.env.<projectId>`; ein Schlüssel, der nur in `.env.local` existiert, ist in der Produktion nicht gesetzt |
+| Eine Funktion, die bei aktiviertem `retry` fehlschlägt, wird insgesamt 4-mal wiederholt (`events.maxAttempts`, Backoff von 10 s bis 600 s auf der virtuellen Uhr) und dann in den Dead-Letter-Bereich gelegt; die Produktion wiederholt bis zu 24 Stunden (2. Generation) oder 7 Tage (1. Generation) | Erhöhen Sie `events.maxAttempts`; kein Wert bildet ein Zeitfenster nach |
+| Eine Funktion, die nicht öffentlich ist (`invoker: "private"` oder eine Liste von Dienstkonten), und eine Task-Queue-Funktion akzeptieren auf der öffentlichen Funktions-URL jedes Bearer, das wie ein von Google ausgestelltes Identitätstoken aussieht (ein JWT, dessen `iss` `https://accounts.google.com` ist), weil die Prüfung seiner Signatur und seiner IAM-Rolle durch Google lokal nicht laufen kann. Ein Firebase-Auth-ID-Token wird mit 401 abgelehnt, wie Cloud Run es ablehnt. Ein Aufruf ohne Credentials wird mit 403 abgelehnt, wie es die Produktion ablehnt. Die Konsole und die Steuer-API rufen solche Funktionen mit dem Steuer-Token auf | Es gibt keine; senden Sie einen Aufruf ohne Credentials, um die Ablehnung zu sehen. `ingressSettings` wird nicht durchgesetzt |
+
+#### Pub/Sub
+
+| Entwicklungsverhalten | So erhalten Sie das Verhalten der Produktion |
+|---|---|
+| Pub/Sub akzeptiert Anfragen ohne jedes Credential, sodass Clients, die `PUBSUB_EMULATOR_HOST` verwenden, funktionieren | Setzen Sie `pubsub.authentication.localBearerToken`; Anfragen ohne Credential werden dann abgelehnt, wie es die Produktion ablehnt. Siehe [Pub/Sub und Eventarc](../../products/pubsub-eventarc/#authentication). |
+| Ein Pub/Sub-Push-Endpunkt darf auf Loopback (`127.0.0.1`, `localhost`, `[::1]`) schlichtes `http://` sein; die Produktion verlangt HTTPS | Verwenden Sie in der Subscription eine `https://`-URL außerhalb von Loopback; Fireemu stellt Push-Nachrichten nur an Loopback zu, daher gibt es keine Einstellung, mit der es eine solche erreicht |
+
+## Siehe auch
+
+- [Konfigurationsdateien](../configuration/)
+- [Konfigurationsreferenz](../../reference/configuration/)
+- [CI und Container](../ci-and-containers/)
+- [Einschränkungen](../../compatibility/limitations/)
