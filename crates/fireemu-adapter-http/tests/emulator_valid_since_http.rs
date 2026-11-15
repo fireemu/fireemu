@@ -599,3 +599,78 @@ fn a_verified_identity_provider_taking_over_an_account_assigns_the_second() {
         expect(&s, &t, uid, Some(NOW + 100), "after the takeover");
     }
 }
+
+/// The remaining setters, each after a rewind below an earlier setter so a maximum would show:
+/// an anonymous account upgraded by `signUp` with a password (`operations.js:169`), a password
+/// reset through its out-of-band code (`:634`), and a batch import over an existing account
+/// (`:341`, the overwrite starts from the row).
+#[test]
+fn upgrade_reset_and_overwrite_assign_the_rewound_second() {
+    let s = state(true);
+    let t = template(&s);
+    set_clock(&s, NOW + 800);
+    let anonymous = post(
+        &s,
+        &format!("{V1}/accounts:signUp"),
+        &json!({"returnSecureToken": true}),
+    );
+    let uid = anonymous["localId"].as_str().unwrap().to_owned();
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": uid, "validSince": (NOW + 800).to_string()}),
+    );
+    set_clock(&s, NOW + 40);
+    post(
+        &s,
+        &format!("{V1}/accounts:signUp"),
+        &json!({"idToken": anonymous["idToken"], "email": "upgraded@example.invalid", "password": "password1", "returnSecureToken": true}),
+    );
+    expect(
+        &s,
+        &t,
+        &uid,
+        Some(NOW + 40),
+        "anonymous upgraded with a password",
+    );
+
+    set_clock(&s, NOW + 800);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts"),
+        &json!({"localId": "reset", "email": "reset@example.invalid", "password": "password1"}),
+    );
+    set_clock(&s, NOW + 50);
+    post(
+        &s,
+        &format!("{V1}/accounts:sendOobCode"),
+        &json!({"requestType": "PASSWORD_RESET", "email": "reset@example.invalid"}),
+    );
+    let code = oob_code(&s, "PASSWORD_RESET");
+    post(
+        &s,
+        &format!("{V1}/accounts:resetPassword"),
+        &json!({"oobCode": code, "newPassword": "password2"}),
+    );
+    expect(&s, &t, "reset", Some(NOW + 50), "password reset");
+
+    set_clock(&s, NOW + 800);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts"),
+        &json!({"localId": "overwritten", "email": "overwritten@example.invalid", "password": "password1"}),
+    );
+    set_clock(&s, NOW + 60);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &json!({"users": [{"localId": "overwritten", "email": "overwritten@example.invalid"}], "allowOverwrite": true}),
+    );
+    expect(
+        &s,
+        &t,
+        "overwritten",
+        Some(NOW + 60),
+        "batch import over an existing account",
+    );
+}
