@@ -674,3 +674,65 @@ fn upgrade_reset_and_overwrite_assign_the_rewound_second() {
         "batch import over an existing account",
     );
 }
+
+/// Withdrawing a second factor sets no `validSince` in firebase-tools 15.28.2
+/// (`mfaEnrollmentWithdraw` writes `mfaInfo` only), so the emulator profile keeps the bound
+/// the import set; strict revokes earlier sessions as production does (covered by
+/// `strict_a_withdrawal_revokes_earlier_sessions_and_keeps_the_other_factor`). Security review
+/// of the validSince lane, 2026-11-15, suggested test 1.
+#[test]
+fn withdrawing_a_second_factor_sets_no_bound() {
+    let s = state(true);
+    let t = template(&s);
+    set_clock(&s, NOW + 60);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &json!({"users": [{"localId": "mfa", "email": "mfa@example.invalid", "emailVerified": true,
+            "mfaInfo": [{"phoneInfo": "+16505550101", "displayName": "Phone", "mfaEnrollmentId": "factor-1"}]}]}),
+    );
+    expect(&s, &t, "mfa", Some(NOW + 60), "imported with a factor");
+    set_clock(&s, NOW + 300);
+    let withdrawn = post(
+        &s,
+        "/identitytoolkit.googleapis.com/v2/accounts/mfaEnrollment:withdraw",
+        &json!({"idToken": hand_made(&t, "mfa", Some(json!(NOW + 200))), "mfaEnrollmentId": "factor-1"}),
+    );
+    assert!(withdrawn.get("idToken").is_some(), "{withdrawn}");
+    expect(&s, &t, "mfa", Some(NOW + 60), "after the withdrawal");
+}
+
+/// A privileged `validSince` sent with an email change: the change assigns the current second
+/// (`:861-862`) and the copy (`:885`) then replaces it, so the number 0 leaves no bound and the
+/// text "0" leaves 0. Security review of the validSince lane, 2026-11-15, suggested test 3.
+#[test]
+fn a_privileged_zero_with_an_email_change_replaces_the_changes_second() {
+    let s = state(true);
+    let t = template(&s);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts"),
+        &json!({"localId": "zero", "email": "zero@example.invalid"}),
+    );
+    set_clock(&s, NOW + 100);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "zero", "email": "zero2@example.invalid"}),
+    );
+    expect(&s, &t, "zero", Some(NOW + 100), "email change alone");
+    set_clock(&s, NOW + 200);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "zero", "email": "zero3@example.invalid", "validSince": 0}),
+    );
+    expect(&s, &t, "zero", None, "email change with the number 0");
+    set_clock(&s, NOW + 300);
+    admin(
+        &s,
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "zero", "email": "zero4@example.invalid", "validSince": "0"}),
+    );
+    expect(&s, &t, "zero", Some(0), "email change with the text \"0\"");
+}

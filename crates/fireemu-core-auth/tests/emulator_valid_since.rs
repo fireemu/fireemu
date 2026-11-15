@@ -375,3 +375,56 @@ fn the_direct_writers_assign_and_clear_only_the_emulator_bound() {
         .is_err());
     assert!(store.clear_emulator_valid_since(&missing).is_err());
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+    /// A tenant snapshot carries the emulator bound: whatever setters run after the capture,
+    /// a tenant restore brings back the bound held at the capture (security review of the
+    /// validSince lane, 2026-11-15, suggested test 4).
+    #[test]
+    fn a_tenant_restore_brings_back_the_captured_bound(
+        before in proptest::collection::vec(event(), 0..12),
+        after in proptest::collection::vec(event(), 1..12),
+    ) {
+        use std::sync::{Arc, Mutex};
+        let registry = fireemu_core_auth::store::AuthRegistry::new(
+            "demo-valid-since",
+            Arc::new(Mutex::new(emulator_store())),
+        );
+        let tenant = registry.ensure_tenant("demo-valid-since", "t").unwrap();
+        let mut clock = NOW;
+        let uid = tenant
+            .lock()
+            .unwrap()
+            .create_user_with_password(email(20), "password1", at(clock))
+            .unwrap();
+        let run = |events: &[Event], clock: &mut i64| {
+            let mut store = tenant.lock().unwrap();
+            for event in events {
+                match event {
+                    Event::Tick(delta) => *clock += delta,
+                    Event::SetPassword => store.set_password(&uid, "password9", at(*clock)).unwrap(),
+                    Event::ClearPassword => {
+                        store.clear_password(&uid).unwrap();
+                    }
+                    Event::Revoke => store.revoke_tokens(&uid, at(*clock)).unwrap(),
+                    Event::Explicit(offset) => {
+                        store.set_valid_since(&uid, at(*clock + offset)).unwrap();
+                    }
+                    Event::Capture | Event::Restore => {}
+                }
+            }
+        };
+        let bound = |tenant: &Arc<Mutex<AuthStore>>| {
+            tenant.lock().unwrap().user(&uid).unwrap().emulator_valid_since
+        };
+        run(&before, &mut clock);
+        let captured = bound(&tenant);
+        let snapshot = registry.capture_tenants_snapshot("demo-valid-since").unwrap();
+        run(&after, &mut clock);
+        registry.restore_tenants_snapshot("demo-valid-since", &snapshot).unwrap();
+        let restored = registry.tenant_store("demo-valid-since", "t").unwrap();
+        prop_assert_eq!(bound(&restored), captured);
+    }
+}

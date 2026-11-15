@@ -260,6 +260,57 @@ impl fireemu_core_auth::store::ImportedHashVerifier for ImportedHashes {
     }
 }
 
+/// A verification computed before the request takes the Auth store lock (closure security
+/// review 3, Should Fix 2): imported hashes can take seconds to derive, and holding the lock
+/// meanwhile stalls every Auth request.
+pub(crate) struct PreVerified {
+    imported: fireemu_core_auth::store::ImportedPasswordHash,
+    password: String,
+    result: Result<bool, fireemu_core_auth::store::ImportedHashFailure>,
+}
+
+/// Verifies the imported hash a password sign-in would check, from a snapshot taken under a
+/// short store lock that is released before the derivation runs. `None` when the request is
+/// not a password sign-in against an imported hash.
+pub(crate) fn preverify(
+    store: &std::sync::Mutex<fireemu_core_auth::store::AuthStore>,
+    email: Option<&str>,
+    password: Option<&str>,
+    verifier: &dyn fireemu_core_auth::store::ImportedHashVerifier,
+) -> Option<PreVerified> {
+    let (email, password) = (email?, password.filter(|p| !p.is_empty())?);
+    let imported = store.lock().ok()?.imported_password_for_sign_in(email)?;
+    let result = verifier.verify(&imported, password);
+    Some(PreVerified {
+        imported,
+        password: password.to_owned(),
+        result,
+    })
+}
+
+/// The verifier the sign-in uses under the lock: it answers from the snapshot only when the
+/// hash it is asked about is the one the snapshot verified (the commit-time check), and
+/// otherwise derives again.
+pub(crate) struct SnapshotHashes<'a> {
+    pub(crate) snapshot: Option<&'a PreVerified>,
+    pub(crate) fallback: &'a dyn fireemu_core_auth::store::ImportedHashVerifier,
+}
+
+impl fireemu_core_auth::store::ImportedHashVerifier for SnapshotHashes<'_> {
+    fn verify(
+        &self,
+        imported: &fireemu_core_auth::store::ImportedPasswordHash,
+        password: &str,
+    ) -> Result<bool, fireemu_core_auth::store::ImportedHashFailure> {
+        match self.snapshot {
+            Some(snapshot) if snapshot.imported == *imported && snapshot.password == password => {
+                snapshot.result
+            }
+            _ => self.fallback.verify(imported, password),
+        }
+    }
+}
+
 /// The spec as a canonical JSON string, which is what the core store keeps (it has no
 /// cryptography of its own).
 pub(crate) fn encode(spec: &HashSpec) -> String {
@@ -458,15 +509,20 @@ pub(crate) fn spec_from_options(options: &Value) -> Result<HashSpec, &'static st
 
 /// Work bounds for imported hashes. Every algorithm keeps the parameter ranges production
 /// validates at import, re-checked at sign-in so a spec restored from an export cannot bypass
-/// them (closure re-review 2026-09-24). Standard scrypt, PBKDF output and bcrypt cost have no
-/// observed production bound; the local ones keep one sign-in from exhausting the process.
+/// them (closure re-review 2026-09-24). Standard scrypt memory and total work, PBKDF output and
+/// bcrypt cost have no observed production bound; the local ones keep one sign-in from
+/// exhausting the process. Standard scrypt parallelization 1, 4, 5 and 16 were recorded as
+/// accepted (AUTH-EDGES-OBS-20261115-01); above 16 is unrecorded and refused.
 const MAX_DIGEST_ROUNDS: u32 = 8192;
 const MAX_PBKDF_ROUNDS: u32 = 120_000;
 const MAX_PBKDF_OUTPUT_BYTES: usize = 128;
 const MAX_FIREBASE_SCRYPT_ROUNDS: u32 = 8;
 const MAX_FIREBASE_SCRYPT_MEMORY_COST: u8 = 14;
 const MAX_STANDARD_SCRYPT_MEMORY_BYTES: u64 = 32 << 20;
-const MAX_STANDARD_SCRYPT_PARALLELIZATION: u32 = 4;
+const MAX_STANDARD_SCRYPT_PARALLELIZATION: u32 = 16;
+/// The block memory times parallelization: the derivation's total work, capped at what the
+/// earlier bounds allowed (32 MiB blocks, four lanes).
+const MAX_STANDARD_SCRYPT_WORK_BYTES: u64 = 128 << 20;
 const MAX_STANDARD_SCRYPT_DK_LEN: usize = 1024;
 const MAX_ARGON2_MEMORY_KIB: u32 = 32_768;
 const MAX_ARGON2_ITERATIONS: u32 = 16;
@@ -500,8 +556,11 @@ pub(crate) fn within_work_bounds(spec: &HashSpec, hash: &[u8]) -> bool {
                 .checked_shl(u32::from(*log_n))
                 .and_then(|n| n.checked_mul(u64::from(*block_size)))
                 .and_then(|n| n.checked_mul(128));
-            memory.is_some_and(|m| m <= MAX_STANDARD_SCRYPT_MEMORY_BYTES)
-                && (1..=MAX_STANDARD_SCRYPT_PARALLELIZATION).contains(parallelization)
+            memory.is_some_and(|m| {
+                m <= MAX_STANDARD_SCRYPT_MEMORY_BYTES
+                    && m.checked_mul(u64::from(*parallelization))
+                        .is_some_and(|work| work <= MAX_STANDARD_SCRYPT_WORK_BYTES)
+            }) && (1..=MAX_STANDARD_SCRYPT_PARALLELIZATION).contains(parallelization)
                 && (1..=MAX_STANDARD_SCRYPT_DK_LEN).contains(dk_len)
         }
         HashSpec::Bcrypt => std::str::from_utf8(hash)
@@ -524,11 +583,87 @@ pub(crate) fn within_work_bounds(spec: &HashSpec, hash: &[u8]) -> bool {
     }
 }
 
-/// Whether a stored spec text (an export's `fireemuImportedPassword`) decodes to parameters
-/// within the work bounds; a restore refuses anything else.
+/// Why a stored spec text (an export's `fireemuImportedPassword`) cannot be restored, or
+/// `None` when it can. A restore accepts exactly what `accounts:batchCreate` accepts, so every
+/// export fireemu writes can be imported again (closure review 3, Closure Should Fix 1); the
+/// local work bounds stay a sign-in check, which fails such a sign-in with an internal error.
 #[must_use]
-pub fn restorable_spec(spec: &str, hash: &[u8]) -> bool {
-    spec == UNSPECIFIED_SPEC || decode(spec).is_some_and(|spec| within_work_bounds(&spec, hash))
+pub fn imported_hash_spec_error(spec: &str) -> Option<String> {
+    if spec == UNSPECIFIED_SPEC {
+        return None;
+    }
+    let Some(decoded) = decode(spec) else {
+        return Some("the spec does not decode to a known algorithm".to_owned());
+    };
+    let outside = |name: &str, value: &dyn std::fmt::Display, range: &str| {
+        Some(format!(
+            "{name} {value} is outside the import range {range}"
+        ))
+    };
+    match &decoded {
+        HashSpec::Md5 { rounds } | HashSpec::Sha { rounds, .. } if *rounds > MAX_DIGEST_ROUNDS => {
+            outside("rounds", rounds, "0..=8192")
+        }
+        HashSpec::Hmac { family, key, .. } if key.is_empty() && *family != Family::Sha512 => {
+            Some("the HMAC signerKey is empty".to_owned())
+        }
+        HashSpec::Pbkdf { family, .. } if !matches!(family, Family::Sha1 | Family::Sha256) => Some(
+            format!("PBKDF family {family:?} is not PBKDF_SHA1 or PBKDF2_SHA256"),
+        ),
+        HashSpec::Pbkdf { rounds, .. } if !(1..=MAX_PBKDF_ROUNDS).contains(rounds) => {
+            outside("rounds", rounds, "1..=120000")
+        }
+        HashSpec::FirebaseScrypt { rounds, .. }
+            if !(1..=MAX_FIREBASE_SCRYPT_ROUNDS).contains(rounds) =>
+        {
+            outside("rounds", rounds, "1..=8")
+        }
+        HashSpec::FirebaseScrypt { memory_cost, .. }
+            if !(1..=MAX_FIREBASE_SCRYPT_MEMORY_COST).contains(memory_cost) =>
+        {
+            outside("memoryCost", memory_cost, "1..=14")
+        }
+        HashSpec::StandardScrypt {
+            log_n,
+            block_size,
+            parallelization,
+            dk_len,
+        } if *log_n == 0
+            || *block_size == 0
+            || *parallelization == 0
+            || *dk_len == 0
+            || !within_work_bounds(&decoded, &[]) =>
+        {
+            Some(format!(
+                "standard scrypt logN {log_n}, blockSize {block_size}, parallelization \
+                 {parallelization}, dkLen {dk_len} are outside the import bounds"
+            ))
+        }
+        HashSpec::Argon2 { .. } if !within_work_bounds(&decoded, &[]) => {
+            Some("argon2 parameters are outside the import ranges".to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// Whether a stored spec text can be restored ([`imported_hash_spec_error`] finds nothing).
+#[must_use]
+pub fn restorable_spec(spec: &str) -> bool {
+    imported_hash_spec_error(spec).is_none()
+}
+
+/// The `signerKey` secrets a stored spec carries: HMAC and Firebase SCRYPT keep the key that
+/// verifies the hash, which an export must carry for the account to be restorable.
+#[must_use]
+pub fn imported_hash_secret_fields(spec: &str) -> &'static [&'static str] {
+    match decode(spec) {
+        Some(HashSpec::Hmac { key, .. } | HashSpec::FirebaseScrypt { key, .. })
+            if !key.is_empty() =>
+        {
+            &["signerKey"]
+        }
+        _ => &[],
+    }
 }
 
 /// The spec of a hash imported without `hashAlgorithm`: production keeps it as the credential
@@ -685,7 +820,7 @@ mod tests {
                 hash: vec![7; 32],
                 salt: vec![1],
             };
-            assert!(!restorable_spec(&imported.spec, &imported.hash), "{spec:?}");
+            assert!(!restorable_spec(&imported.spec), "{spec:?}");
             assert!(
                 ImportedHashes.verify(&imported, "password123").is_err(),
                 "{spec:?}"
@@ -698,7 +833,7 @@ mod tests {
         };
         assert!(!within_work_bounds(&pbkdf, &[0; 4096]));
         assert!(within_work_bounds(&pbkdf, &[0; 20]));
-        assert!(restorable_spec(UNSPECIFIED_SPEC, &[1, 2, 3]));
+        assert!(restorable_spec(UNSPECIFIED_SPEC));
     }
 
     #[test]
@@ -764,7 +899,190 @@ mod tests {
                 !verify(&spec, "password124", &salt, &hash),
                 "{name} refuses another"
             );
+            // The bounds never refuse a recorded vector (closure review 3, Closure Should
+            // Fix 5): it restores, and its sign-in stays within the work bounds.
+            assert!(restorable_spec(&encode(&spec)), "{name} restores");
+            assert!(
+                within_work_bounds(&spec, &hash),
+                "{name} is within the work bounds"
+            );
             assert_eq!(decode(&encode(&spec)), Some(spec), "{name} round-trips");
+        }
+    }
+
+    /// The options of one batchCreate import, drawn around every parameter edge.
+    fn import_options() -> impl proptest::strategy::Strategy<Value = Value> {
+        use proptest::prelude::*;
+        let edge = |hi: u64| prop_oneof![Just(0_u64), Just(1), Just(hi), Just(hi + 1), 0..=hi + 2];
+        prop_oneof![
+            (
+                prop_oneof![Just("MD5"), Just("SHA1"), Just("SHA256"), Just("SHA512")],
+                edge(8192)
+            )
+                .prop_map(|(a, r)| json!({"hashAlgorithm": a, "rounds": r})),
+            (
+                prop_oneof![
+                    Just("HMAC_MD5"),
+                    Just("HMAC_SHA1"),
+                    Just("HMAC_SHA256"),
+                    Just("HMAC_SHA512")
+                ],
+                prop_oneof![Just(""), Just("AQID")]
+            )
+                .prop_map(|(a, k)| json!({"hashAlgorithm": a, "signerKey": k})),
+            (
+                prop_oneof![Just("PBKDF_SHA1"), Just("PBKDF2_SHA256")],
+                edge(120_000)
+            )
+                .prop_map(|(a, r)| json!({"hashAlgorithm": a, "rounds": r})),
+            (edge(8), edge(14)).prop_map(|(r, m)| json!({"hashAlgorithm": "SCRYPT",
+                "signerKey": "AQID", "saltSeparator": "Bw==", "rounds": r, "memoryCost": m})),
+            (0_u32..17, edge(64), edge(20), edge(1024)).prop_map(|(log_n, r, p, dk)| json!({
+                "hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1_u64 << log_n,
+                "blockSize": r, "parallelization": p, "dkLen": dk})),
+            (edge(32_768), edge(16), edge(16), edge(1024)).prop_map(|(m, t, p, h)| json!({
+                "hashAlgorithm": "ARGON2", "argon2Parameters": {"hashType": "ARGON2_ID",
+                "memoryCostKib": m, "iterations": t, "parallelism": p, "hashLengthBytes": h}})),
+            Just(json!({"hashAlgorithm": "BCRYPT"})),
+        ]
+    }
+
+    proptest::proptest! {
+        /// Export and import are symmetric: every spec batchCreate accepts restores.
+        #[test]
+        fn every_importable_spec_restores(options in import_options()) {
+            if let Ok(spec) = spec_from_options(&options) {
+                let text = encode(&spec);
+                proptest::prop_assert_eq!(imported_hash_spec_error(&text), None, "{}", text);
+            }
+        }
+    }
+
+    /// The restore refuses, naming the parameter, what batchCreate never creates; bcrypt
+    /// cost and PBKDF output length, which batchCreate accepts unbounded, restore.
+    #[test]
+    fn restore_ranges_match_the_import_ranges() {
+        let refused = [
+            (json!({"algorithm": "MD5", "rounds": 8193}), "rounds 8193"),
+            (
+                json!({"algorithm": "SHA", "family": "SHA1", "rounds": 8193, "order": "SALT_AND_PASSWORD"}),
+                "rounds 8193",
+            ),
+            (
+                json!({"algorithm": "HMAC", "family": "SHA256", "key": "", "order": "PASSWORD_AND_SALT"}),
+                "signerKey is empty",
+            ),
+            (
+                json!({"algorithm": "PBKDF", "family": "MD5", "rounds": 1}),
+                "PBKDF family",
+            ),
+            (
+                json!({"algorithm": "PBKDF", "family": "SHA1", "rounds": 0}),
+                "rounds 0",
+            ),
+            (
+                json!({"algorithm": "PBKDF", "family": "SHA256", "rounds": 120_001}),
+                "rounds 120001",
+            ),
+            (
+                json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 9, "memoryCost": 14}),
+                "rounds 9",
+            ),
+            (
+                json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 0, "memoryCost": 14}),
+                "rounds 0",
+            ),
+            (
+                json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 8, "memoryCost": 15}),
+                "memoryCost 15",
+            ),
+            (
+                json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 8, "memoryCost": 0}),
+                "memoryCost 0",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 0, "blockSize": 8, "parallelization": 1, "dkLen": 64}),
+                "logN 0",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 0, "parallelization": 1, "dkLen": 64}),
+                "blockSize 0",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 1, "parallelization": 0, "dkLen": 64}),
+                "parallelization 0",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 1, "parallelization": 17, "dkLen": 64}),
+                "parallelization 17",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 1, "parallelization": 1, "dkLen": 0}),
+                "dkLen 0",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 1, "parallelization": 1, "dkLen": 1025}),
+                "dkLen 1025",
+            ),
+            (
+                json!({"algorithm": "STANDARD_SCRYPT", "logN": 15, "blockSize": 8, "parallelization": 5, "dkLen": 64}),
+                "parallelization 5",
+            ),
+            (
+                json!({"algorithm": "ARGON2", "variant": "argon2id", "version": 19, "iterations": 17, "memoryKib": 64, "parallelism": 1, "hashLen": 32, "associatedData": ""}),
+                "argon2",
+            ),
+            (json!({"algorithm": "NOPE"}), "does not decode"),
+        ];
+        for (spec, cause) in refused {
+            let error = imported_hash_spec_error(&spec.to_string());
+            assert!(
+                error.as_deref().is_some_and(|e| e.contains(cause)),
+                "{spec}: {error:?}"
+            );
+        }
+        let restored = [
+            json!({"algorithm": "MD5", "rounds": 8192}),
+            json!({"algorithm": "HMAC", "family": "SHA512", "key": "", "order": "PASSWORD_AND_SALT"}),
+            json!({"algorithm": "PBKDF", "family": "SHA256", "rounds": 120_000}),
+            json!({"algorithm": "PBKDF", "family": "SHA1", "rounds": 1}),
+            json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 8, "memoryCost": 14}),
+            json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 1, "memoryCost": 1}),
+            json!({"algorithm": "STANDARD_SCRYPT", "logN": 4, "blockSize": 1, "parallelization": 16, "dkLen": 1024}),
+            json!({"algorithm": "STANDARD_SCRYPT", "logN": 1, "blockSize": 1, "parallelization": 1, "dkLen": 1}),
+            json!({"algorithm": "STANDARD_SCRYPT", "logN": 15, "blockSize": 8, "parallelization": 4, "dkLen": 64}),
+            json!({"algorithm": "BCRYPT"}),
+        ];
+        for spec in restored {
+            assert_eq!(imported_hash_spec_error(&spec.to_string()), None, "{spec}");
+        }
+    }
+
+    /// HMAC and Firebase SCRYPT carry their signerKey; nothing else is a secret.
+    #[test]
+    fn secret_fields_name_the_signer_key() {
+        let with_key = [
+            json!({"algorithm": "HMAC", "family": "SHA256", "key": "AQ==", "order": "PASSWORD_AND_SALT"}),
+            json!({"algorithm": "SCRYPT", "key": "AQ==", "separator": "", "rounds": 8, "memoryCost": 14}),
+        ];
+        for spec in with_key {
+            assert_eq!(
+                imported_hash_secret_fields(&spec.to_string()),
+                ["signerKey"],
+                "{spec}"
+            );
+        }
+        for spec in [
+            json!({"algorithm": "HMAC", "family": "SHA512", "key": "", "order": "PASSWORD_AND_SALT"}),
+            json!({"algorithm": "SCRYPT", "key": "", "separator": "", "rounds": 8, "memoryCost": 14}),
+            json!({"algorithm": "MD5", "rounds": 1}),
+            json!({"algorithm": "BCRYPT"}),
+            json!("not a spec"),
+        ] {
+            assert!(
+                imported_hash_secret_fields(&spec.to_string()).is_empty(),
+                "{spec}"
+            );
         }
     }
 
@@ -774,5 +1092,149 @@ mod tests {
         assert_eq!(base64_decode("-_8"), Some(vec![0xfb, 0xff]));
         assert_eq!(base64_decode("not base64!"), None);
         assert_eq!(base64_decode("A"), None);
+    }
+
+    /// A deterministic stand-in for a derivation: the password matches when it equals the
+    /// hash bytes; an empty salt is unevaluable.
+    struct EqualBytes;
+
+    impl fireemu_core_auth::store::ImportedHashVerifier for EqualBytes {
+        fn verify(
+            &self,
+            imported: &fireemu_core_auth::store::ImportedPasswordHash,
+            password: &str,
+        ) -> Result<bool, fireemu_core_auth::store::ImportedHashFailure> {
+            if imported.salt.is_empty() {
+                return Err(fireemu_core_auth::store::ImportedHashFailure);
+            }
+            Ok(imported.hash == password.as_bytes())
+        }
+    }
+
+    fn hash_of(
+        spec: u8,
+        hash: &[u8],
+        salt: &[u8],
+    ) -> fireemu_core_auth::store::ImportedPasswordHash {
+        fireemu_core_auth::store::ImportedPasswordHash {
+            spec: format!("spec{spec}"),
+            hash: hash.to_vec(),
+            salt: salt.to_vec(),
+        }
+    }
+
+    proptest::proptest! {
+        /// Model: a snapshot verifier always answers what a derivation of the hash it is asked
+        /// about answers, whatever the hash and password were when the snapshot was taken, as
+        /// long as the snapshot itself was honest (taken with the same verifier).
+        #[test]
+        fn a_snapshot_answer_equals_a_fresh_derivation(
+            snap_spec in 0_u8..3, snap_hash in proptest::collection::vec(b'a'..b'd', 0..3),
+            snap_salt in proptest::collection::vec(0_u8..2, 0..2),
+            snap_password in "[a-c]{0,2}",
+            ask_spec in 0_u8..3, ask_hash in proptest::collection::vec(b'a'..b'd', 0..3),
+            ask_salt in proptest::collection::vec(0_u8..2, 0..2),
+            ask_password in "[a-c]{0,2}",
+        ) {
+            use fireemu_core_auth::store::ImportedHashVerifier;
+            let snapshot_hash = hash_of(snap_spec, &snap_hash, &snap_salt);
+            let snapshot = PreVerified {
+                result: EqualBytes.verify(&snapshot_hash, &snap_password),
+                imported: snapshot_hash,
+                password: snap_password,
+            };
+            let asked = hash_of(ask_spec, &ask_hash, &ask_salt);
+            let answer = SnapshotHashes { snapshot: Some(&snapshot), fallback: &EqualBytes }
+                .verify(&asked, &ask_password);
+            proptest::prop_assert_eq!(answer, EqualBytes.verify(&asked, &ask_password));
+        }
+    }
+
+    /// The snapshot answers only for the hash and password it verified: a credential that
+    /// changed under the request (or another password) is derived again, never answered from
+    /// a stale result.
+    #[test]
+    fn a_stale_snapshot_is_not_used() {
+        use fireemu_core_auth::store::{ImportedHashFailure, ImportedHashVerifier};
+        // The snapshot's answer differs from any derivation, so each assertion shows which
+        // answer was used.
+        let snapshot = PreVerified {
+            imported: hash_of(0, b"old", b"s"),
+            password: "old".to_owned(),
+            result: Err(ImportedHashFailure),
+        };
+        let verifier = SnapshotHashes {
+            snapshot: Some(&snapshot),
+            fallback: &EqualBytes,
+        };
+        assert_eq!(
+            verifier.verify(&hash_of(0, b"old", b"s"), "old"),
+            Err(ImportedHashFailure)
+        );
+        assert_eq!(verifier.verify(&hash_of(0, b"new", b"s"), "old"), Ok(false));
+        assert_eq!(verifier.verify(&hash_of(1, b"old", b"s"), "old"), Ok(true));
+        assert_eq!(verifier.verify(&hash_of(0, b"old", b"t"), "old"), Ok(true));
+        assert_eq!(verifier.verify(&hash_of(0, b"old", b"s"), "ol"), Ok(false));
+        let none = SnapshotHashes {
+            snapshot: None,
+            fallback: &EqualBytes,
+        };
+        assert_eq!(none.verify(&hash_of(0, b"old", b"s"), "old"), Ok(true));
+    }
+
+    /// The derivation runs with the store unlocked; only the snapshot read takes the lock.
+    #[test]
+    fn preverify_derives_without_holding_the_store_lock() {
+        use fireemu_core_auth::mfa::TotpPolicy;
+        use fireemu_core_auth::store::{AuthStore, ImportedUser, Provider};
+        use fireemu_core_types::determinism::SplitMix64;
+        use std::sync::{Arc, Mutex};
+        struct ProbesLock(Arc<Mutex<AuthStore>>);
+        impl fireemu_core_auth::store::ImportedHashVerifier for ProbesLock {
+            fn verify(
+                &self,
+                _imported: &fireemu_core_auth::store::ImportedPasswordHash,
+                _password: &str,
+            ) -> Result<bool, fireemu_core_auth::store::ImportedHashFailure> {
+                Ok(self.0.try_lock().is_ok())
+            }
+        }
+        let mut store = AuthStore::new("demo-app", SplitMix64::new(7), TotpPolicy::default());
+        let at = fireemu_core_types::time::LogicalInstant::from_nanos(0);
+        store
+            .import_user(ImportedUser {
+                local_id: "u".to_owned(),
+                email: Some("u@example.com".to_owned()),
+                email_verified: false,
+                display_name: None,
+                photo_url: None,
+                phone_number: None,
+                disabled: false,
+                provider: Provider::Password,
+                custom_claims: fireemu_core_auth::claims::CustomClaims::default(),
+                created_at: at,
+                last_refresh_at: None,
+                last_sign_in_at: None,
+                tokens_valid_after: at,
+                federated: Vec::new(),
+                password: None,
+                imported_password: Some(hash_of(0, b"h", b"s")),
+                allow_shared_email: false,
+                totp_factors: Vec::new(),
+                phone_factors: Vec::new(),
+            })
+            .expect("import");
+        let store = Arc::new(Mutex::new(store));
+        let verifier = ProbesLock(store.clone());
+        let pre = preverify(&store, Some("u@example.com"), Some("pw"), &verifier)
+            .expect("an imported hash is snapshotted");
+        assert_eq!(
+            pre.result,
+            Ok(true),
+            "the lock was held during the derivation"
+        );
+        assert!(preverify(&store, Some("none@example.com"), Some("pw"), &verifier).is_none());
+        assert!(preverify(&store, Some("u@example.com"), Some(""), &verifier).is_none());
+        assert!(preverify(&store, None, Some("pw"), &verifier).is_none());
     }
 }
