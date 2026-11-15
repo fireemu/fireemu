@@ -1,0 +1,180 @@
+---
+title: Instalación y ejecución
+description: Instala Fireemu desde npm, crea fireemu.toml, inicia los emuladores y ejecuta tus pruebas contra ellos.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Instala el paquete npm `fireemu`, crea `fireemu.toml` y luego inicia los emuladores o ejecuta un comando contra ellos.
+
+## Antes de empezar
+
+- **Node.js 20 o posterior** (el campo `engines` del paquete es `>=20`). Ejecuta el launcher `fireemu` y el ejecutor de Functions.
+- **Una plataforma compatible.** El paquete instala un binario precompilado para tu plataforma; no se necesita Java ni ningún otro runtime.
+
+| SO | Arquitectura |
+|---|---|
+| macOS 13 o posterior | Apple silicon, Intel |
+| Linux (cualquier distribución glibc o musl, incluidas Alpine y distroless) | x86-64, arm64 |
+| Windows 10 o posterior | x86-64 |
+
+Para ejecutar Cloud Functions también necesitas `firebase-functions` v6 o v7 en el codebase. Un codebase de Python necesita Python 3.10 a 3.14 y su propio `venv` con `firebase-functions` (macOS y Linux; consulta [Cloud Functions](../../products/functions-python/)).
+
+## Instalación
+
+Añade Fireemu como dependencia de desarrollo de tu proyecto.
+
+```sh
+npm install --save-dev fireemu
+```
+
+## Crea `fireemu.toml`
+
+```sh
+npx fireemu init
+```
+
+`init` crea `fireemu.toml` en el directorio actual. De forma interactiva, pregunta qué [perfil de compatibilidad](../../guides/profiles/) usar (se recomienda `strict`, el predeterminado) y si reutilizar un `firebase.json` existente. Cuando lo reutilizas, Fireemu hace referencia al archivo en lugar de copiarlo: las Security Rules, los índices, los codebases de Functions y los puertos se leen de él cada vez que Fireemu se inicia.
+
+En CI o en un script, usa la forma no interactiva:
+
+```sh
+npx fireemu init --yes
+```
+
+Un `fireemu.toml` existente no se sobrescribe a menos que pases `--force`. Un `fireemu.json` existente se conserva; elimínalo antes de crear `fireemu.toml`.
+
+`npx fireemu init --yes` escribe exactamente este archivo (aquí se han añadido los comentarios para explicar cada línea):
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Editor hint: points TOML-aware editors at the JSON Schema for completion and validation.
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json
+# The configuration format version. The only value is 1.
+schemaVersion = 1
+# "strict" follows production (the default and recommended); "emulator" follows the pinned official emulator.
+profile = "strict"
+# The same schema URL as a data key, so JSON-oriented tools find it.
+"$schema" = "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json"
+# "native" (Firestore Native mode API) or "mongodb-compatible".
+firestore.apiMode = "native"
+# "standard" or "enterprise".
+firestore.edition = "standard"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "$schema": "https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json",
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+La pestaña JSON es el `fireemu.json` equivalente, que `init` no escribe.
+
+Cuando existe `./firebase.json` (o pasas `--firebase-json <file>`), `init` hace referencia a él y añade una línea más, `firebaseJson = "firebase.json"`, de modo que los puertos, las Security Rules, los índices y los codebases de Functions se leen de ese archivo.
+
+Todas las claves se enumeran en el [esquema de configuración](../../reference/configuration/). `npx fireemu init --reference` también escribe `fireemu.reference.toml`, que describe cada clave y no se carga.
+
+## Inicia los emuladores
+
+```sh
+npx fireemu up
+```
+
+`up` mantiene los emuladores en ejecución hasta que pulsas `Ctrl+C`. Abre la [UI del emulador](../../guides/ui/) en `http://127.0.0.1:4000/ui/` para inspeccionar y gestionar los datos.
+
+Las primeras líneas de la salida de arranque nombran los archivos de configuración que se cargaron e indican, para Firestore y Storage, si las Security Rules están cargadas.
+
+## Ejecuta un comando contra los emuladores
+
+Usa `exec` para ejecutar los emuladores solo mientras dura un comando, como tu suite de pruebas:
+
+```sh
+npx fireemu exec -- npm test
+```
+
+`exec` hace cuatro cosas:
+
+1. Inicia los emuladores.
+2. Ejecuta el comando cuando todos los listeners están listos, con las variables de entorno de emulador de los SDK de Firebase definidas (consulta [Conecta tu app](../connect/)).
+3. Detiene todo cuando el comando termina.
+4. Termina con el estado del comando.
+
+En Unix, `SIGINT` y `SIGTERM` se reenvían al comando. `exec` no inicia la UI a menos que añadas `--ui`.
+
+Los nombres de comando oficiales están disponibles como alias:
+
+```sh
+npx fireemu emulators:start
+npx fireemu emulators:exec -- npm test
+```
+
+## Elige los servicios
+
+Firestore, Authentication, Storage y App Check se inician por defecto. Los demás servicios se inician solo cuando están configurados:
+
+| Servicio | Se inicia cuando |
+|---|---|
+| Functions, y con él Eventarc y Cloud Tasks | Hay un codebase configurado |
+| Pub/Sub | Se define `emulators.pubsub`, `daemon.pubsubPort` o `--pubsub-port` |
+| Realtime Database | Se define `emulators.database`, `daemon.databasePort` o `--database-port` |
+| Hosting | `firebase.json` tiene un directorio `hosting.public` |
+
+`--only` elige exactamente qué servicios se inician:
+
+```sh
+npx fireemu up --only auth,firestore,storage
+npx fireemu exec --only firestore -- npm test
+
+# One Functions codebase
+npx fireemu up --only functions:<codebase>
+```
+
+## Puertos predeterminados
+
+Fireemu usa los mismos puertos predeterminados que la Local Emulator Suite. Un puerto definido en `firebase.json` o en la línea de comandos tiene prioridad.
+
+| Servicio | Puerto | Opción |
+|---|---|---|
+| Emulator UI | 4000 | `--ui-port` |
+| Emulator Hub | 4400 | `--hub-port` |
+| Logging | 4500 | `--logging-port` |
+| Firebase Hosting | 5000 | `--hosting-port` |
+| Cloud Functions | 5001 | `--functions-port` |
+| Cloud Firestore | 8080 | `--firestore-port` |
+| Cloud Pub/Sub | 8085 | `--pubsub-port` |
+| Realtime Database | 9000 | `--database-port` |
+| Authentication | 9099 | `--http-port` |
+| Cloud Storage | 9199 | `--storage-port` |
+| Eventarc | 9299 | `--eventarc-port` |
+| Cloud Tasks | 9499 | `--tasks-port` |
+
+## Obtén ayuda
+
+Cada comando documenta sus opciones:
+
+```sh
+npx fireemu --help
+npx fireemu exec --help
+```
+
+Si los emuladores no se inician, ejecuta `npx fireemu doctor`. Consulta [Solución de problemas](../../guides/troubleshooting/).
+
+## Relacionado
+
+- [Conecta tu app](../connect/) a los emuladores.
+- [Migra desde la Local Emulator Suite](../migrate/) si ya usas `firebase emulators:exec`.
+- [Referencia de la CLI](../../reference/cli/)

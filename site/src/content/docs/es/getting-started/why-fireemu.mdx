@@ -1,0 +1,65 @@
+---
+title: Por qué Fireemu
+description: Decide si Fireemu encaja con tus pruebas comparándolo con la Firebase Local Emulator Suite.
+---
+
+import VerifiedAreaCount from '../../../../components/VerifiedAreaCount.astro';
+
+Fireemu es un emulador local para probar aplicaciones creadas con Firebase. Su objetivo es igualar el comportamiento de Firebase en producción, para que puedas probar en local y en CI sin usar un proyecto real de Firebase.
+
+La Firebase Local Emulator Suite es la herramienta oficial de Google. Cubre más productos que Fireemu, y es la elección correcta cuando necesitas uno de ellos. Fireemu tiene un objetivo más acotado: pruebas cuyos resultados se trasladen a producción, en CI y en la máquina de un desarrollador.
+
+## Comparación con la Local Emulator Suite
+
+| | Local Emulator Suite (`firebase-tools` 15.28.2) | Fireemu |
+|---|---|---|
+| Mantenido por | Google | El proyecto Fireemu |
+| Productos | Firestore, Realtime Database, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Hosting, App Hosting, Data Connect, Extensions | Firestore, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Realtime Database y Hosting (ambos parciales), App Check. App Hosting y Data Connect aún no son compatibles, y Extensions no está previsto ([estado](../../#supported-products)) |
+| Runtime | Los emuladores de Firestore y de Realtime Database se ejecutan como procesos Java (`java -jar`) junto a la CLI de Node.js | Un único binario nativo, instalado e iniciado mediante el paquete npm (Node.js 20 o posterior) |
+| Arranque y memoria, solo Firestore | 3043 ms hasta que el SDK puede usar Firestore; 390 MiB de memoria en reposo (PSS) | Perfil `emulator`: 140 ms; 11 MiB. Una ejecución `standard` en el commit `f3b942c` en un runner Linux de GitHub Actions, JDK 21.0.8, cinco pares medidos ([condiciones](../../compatibility/performance/)) |
+| Una consulta cuyo índice compuesto no está definido | La consulta se ejecuta | Perfil `strict` (el predeterminado): `FAILED_PRECONDITION` con el enlace a la consola, como responde producción; con `firestore.missingIndexes = "report"` la consulta se ejecuta y se informa del índice que falta. Perfil `emulator`: la consulta se ejecuta, como en la Local Emulator Suite |
+| Autenticación multifactor TOTP | El emulador de Authentication acepta segundos factores de teléfono (SMS); los demás tipos de factor se responden con `MFA provider not supported!` | Ambos perfiles: TOTP y SMS, mediante la configuración de MFA del proyecto |
+| App Check | No hay emulador de App Check | Ambos perfiles: intercambio de debug tokens, y aplicación forzada para Authentication, Firestore, Storage y funciones callable; sin proveedores de atestación ([detalles](../../products/app-check/)) |
+
+Hay más diferencias que cambian el resultado de una prueba, con la respuesta de producción junto a cada una, en las [tablas de compatibilidad](../../compatibility/#fireemu-el-emulador-oficial-y-producción).
+
+## Qué añade Fireemu
+
+La Local Emulator Suite está pensada para el desarrollo local de una app de Firebase. Fireemu añade comprobaciones que aplica producción y que importan en CI:
+
+- **Configuración que exige producción.** Una consulta de Firestore cuyo índice compuesto no está declarado en `firestore.indexes.json` se rechaza con `strict`.
+- **Funciones que el emulador oficial no sirve.** Autenticación multifactor TOTP, App Check con debug tokens y, con `strict`, la función de bloqueo `beforeEmailSent`.
+- **Control de las condiciones de ejecución de las pruebas.** Define una hora de inicio arbitraria y mueve un reloj virtual para ejecutar funciones programadas sin esperar a la programación real.
+
+## Producción primero
+
+Donde el emulador oficial y Firebase en producción difieren, Fireemu sigue a producción con su perfil `strict` predeterminado, y registra la diferencia. Las excepciones son los valores predeterminados de desarrollo que se describen más abajo. Las respuestas conservan el texto y los códigos de estado de producción, de modo que los errores que tu aplicación gestiona en las pruebas son los errores que encontrará después de desplegar.
+
+Cada comportamiento se comprueba contra grabaciones de proyectos reales de Firebase. Se han comparado de este modo <VerifiedAreaCount /> áreas. Las [tablas de compatibilidad](../../compatibility/) enumeran cada una, qué cubre y cuántas condiciones cubre; [Limitaciones](../../compatibility/limitations/) enumera lo que no está cubierto. Fireemu sigue a producción donde ambos difieren, pero no afirma ser equivalente a ella.
+
+### Valores predeterminados de desarrollo
+
+Parte del comportamiento de producción resulta costoso en una prueba: producción necesita tokens firmados, claves de firma o una función habilitada mediante una llamada a la Admin API. Para cada uno de estos casos, Fireemu mantiene un valor predeterminado de desarrollo que difiere deliberadamente de producción y funciona sin configuración, porque reproducirlos exactamente ralentizaría las pruebas sin encontrar más errores. Cada uno está documentado y tiene su propio ajuste. `productionExact`, un interruptor avanzado, restaura el comportamiento de producción para todos ellos. Consulta [Dónde se aparta Fireemu de producción a propósito](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose).
+
+## Hecho para pruebas
+
+- **Un comando para CI.** `fireemu exec -- npm test` inicia los emuladores, ejecuta tus pruebas con las variables de entorno del emulador definidas, detiene todo y devuelve el estado de salida del comando de pruebas.
+- **Reutiliza tu `firebase.json`.** Las reglas, los índices, los codebases de Functions y los puertos se leen de él en cada arranque.
+- **Explica los rechazos.** Cada rechazo de Security Rules se imprime con las condiciones que se evaluaron y sus resultados.
+- **Mundos de prueba independientes.** El helper `fireemu/testing` inicia instancias aisladas del emulador, con su propio reloj, reglas, Functions y datos, para pruebas de integración en paralelo.
+- **Un único binario nativo.** Consulta [Rendimiento](../../compatibility/performance/) para ver las cifras medidas y sus condiciones.
+
+## Lo que no es
+
+Fireemu no reproduce la contabilidad real de cuotas, la facturación, IAM, las políticas de organización, las diferencias regionales o de red, ni los despliegues graduales de los servicios. El rendimiento local no predice la latencia de producción. Consulta [Limitaciones](../../compatibility/limitations/).
+
+## Mantén una comprobación contra producción
+
+Fireemu sigue en desarrollo. Para las funciones y los flujos críticos que usa tu aplicación, ejecuta las mismas pruebas contra Fireemu y contra un proyecto de prueba de Firebase dedicado (no tu proyecto en producción), y compara los resultados antes de confiar solo en Fireemu en CI.
+
+## Relacionado
+
+- [Instalación y ejecución](../install/)
+- [Migra desde la Local Emulator Suite](../migrate/)
+- [Tablas de compatibilidad](../../compatibility/)
+- [Limitaciones](../../compatibility/limitations/)

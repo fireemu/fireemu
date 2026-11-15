@@ -1,0 +1,59 @@
+---
+title: Tablas de compatibilidad
+description: Comprueba qué productos y APIs admite Fireemu, qué áreas están verificadas contra Firebase en producción y cómo se compara con el emulador oficial.
+tableOfContents:
+  maxHeadingLevel: 2
+---
+
+import ProductTable from '../../../../components/ProductTable.astro';
+import ProductionAreas from '../../../../components/ProductionAreas.astro';
+import CapabilityTable from '../../../../components/CapabilityTable.astro';
+
+Estas tablas se generan a partir de los registros del repositorio cuando se compila el sitio: el [contrato de compatibilidad](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), los [registros de verificación contra producción](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure) y el [manifiesto de capacidades](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json).
+
+Comprueba la compatibilidad de las APIs y condiciones concretas que usa tu aplicación; el nombre de un producto por sí solo no lo indica.
+
+## Productos
+
+Todos los productos de la Local Emulator Suite de `firebase-tools` 15.28.2, la versión del emulador oficial con la que se compara Fireemu, y las superficies que Fireemu añade.
+
+<ProductTable />
+
+### Declaración de compatibilidad
+
+Fireemu es compatible con los productos de la Local Emulator Suite que incluye firebase-tools 15.28.2 y que Fireemu sirve con paridad (Cloud Firestore, Firebase Authentication, Cloud Storage for Firebase, Cloud Functions, Cloud Pub/Sub y Eventarc, con Security Rules en las superficies de Firestore y Storage), bajo el perfil de compatibilidad `emulator` y la evidencia registrada en [`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json). No afirma ser una suite completa ni un superconjunto sin matices, porque:
+
+- Realtime Database y Firebase Hosting se sirven sin una declaración de paridad con el emulador oficial (una brecha abierta; ambos están verificados contra producción para los casos grabados);
+- App Hosting y Data Connect están aplazados;
+- Firebase Extensions no está previsto.
+
+## Fireemu, el emulador oficial y producción
+
+Las diferencias que con más frecuencia cambian el resultado de una prueba. La columna de Fireemu corresponde al perfil `strict` predeterminado.
+
+| Comportamiento | Producción | Emulador oficial | Fireemu |
+|---|---|---|---|
+| Consulta sin su índice compuesto | Rechazada | Se ejecuta | Rechazada; con `firestore.missingIndexes: "report"` se ejecuta e informa del índice que falta |
+| Solicitud de cliente de Firestore a un proyecto sin Security Rules | Rechazada | Permitida | Rechazada |
+| Autenticación multifactor TOTP | Compatible | No disponible | Compatible, mediante la configuración de MFA del proyecto |
+| Solicitud que nombra un tenant que no existe | Rechazada | Crea el tenant | Rechazada |
+| Función de bloqueo `beforeEmailSent` | Se ejecuta | No se ejecuta | Se ejecuta |
+| App Check | Compatible | No disponible | Debug tokens; sin proveedores de atestación ni protección contra repetición |
+| Funciones programadas | Se ejecutan según la programación de Cloud Scheduler | No se ejecutan según una programación | Se ejecutan con un reloj virtual que controlas |
+| ID tokens simulados sin firmar en Security Rules | Rechazados | Aceptados | Aceptados por defecto; rechazados con `productionExact` |
+| Sumas de comprobación declaradas en las subidas a Storage | Verificadas | No verificadas | Verificadas |
+
+## Verificación contra producción
+
+Fireemu compara sus respuestas con grabaciones tomadas de proyectos reales de Firebase.
+
+- **Verificada contra producción.** Cada condición del inventario congelado del área coincide con las grabaciones, o difiere solo de un modo revisado y documentado (una diferencia conocida).
+- **En curso.** Se sigue trabajando en el área. Sus recuentos describen condiciones grabadas, no la verificación de toda el área.
+
+<ProductionAreas />
+
+## Manifiesto de capacidades
+
+El manifiesto de capacidades registra, para cada función, qué está implementado y qué no. `npx fireemu capabilities` lo imprime para el perfil que selecciona tu configuración.
+
+<CapabilityTable />
