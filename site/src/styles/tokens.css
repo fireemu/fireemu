@@ -39,7 +39,8 @@
 	--fe-font: 'Inter Variable', Inter, 'Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', ui-sans-serif,
 		system-ui, sans-serif;
 	--fe-font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-	--fe-text-min: 0.875rem;
+	/* The smallest text on the site (15px). Nothing is set below it. */
+	--fe-text-min: 0.9375rem;
 }
 
 :root[data-theme='light'] {
@@ -133,8 +134,10 @@
 }
 
 :root {
-	--sl-text-xs: 0.875rem;
-	--sl-text-2xs: 0.8125rem;
+	--sl-text-sm: var(--fe-text-min);
+	--sl-text-xs: var(--fe-text-min);
+	--sl-text-2xs: var(--fe-text-min);
+	--sl-text-code-sm: var(--fe-text-min);
 	--sl-text-h1: 2.25rem;
 	--sl-text-h2: 1.625rem;
 	--sl-text-h3: 1.25rem;

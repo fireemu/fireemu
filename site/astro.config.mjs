@@ -51,7 +51,7 @@ export default defineConfig({
 					codeLineHeight: '1.8',
 					codePaddingBlock: '1.125rem',
 					codePaddingInline: '1.125rem',
-					uiFontSize: '0.875rem',
+					uiFontSize: '0.9375rem',
 					frames: {
 						frameBoxShadowCssValue: 'none',
 						editorTabBarBackground: 'var(--fe-code-bg)',

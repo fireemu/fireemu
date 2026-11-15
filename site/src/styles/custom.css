@@ -142,7 +142,7 @@ starlight-lang-select select {
 	margin-top: 1.5rem;
 }
 .sidebar-content .group-label .large {
-	font-size: 0.8125rem;
+	font-size: var(--fe-text-min);
 	font-weight: 600;
 	letter-spacing: 0.07em;
 	text-transform: uppercase;
@@ -180,7 +180,7 @@ starlight-lang-select select {
 }
 starlight-toc h2,
 mobile-starlight-toc .toggle {
-	font-size: 0.8125rem;
+	font-size: var(--fe-text-min);
 	font-weight: 600;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -239,7 +239,7 @@ h1#_top {
 .sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
 	background: var(--fe-code-bg);
 	color: var(--fe-code-fg);
-	font-size: max(0.875rem, 0.88em);
+	font-size: max(var(--fe-text-min), 0.9em);
 	padding: 0.1em 0.35em;
 	overflow-wrap: anywhere;
 }
@@ -378,7 +378,7 @@ starlight-tabs .tab > [role='tab'][aria-selected='true'] {
 	border: 1px solid currentColor;
 	padding: 0.0625rem 0.5rem;
 	font-family: var(--fe-font);
-	font-size: 0.8125rem;
+	font-size: var(--fe-text-min);
 	font-weight: 600;
 	line-height: 1.6;
 	white-space: nowrap;
