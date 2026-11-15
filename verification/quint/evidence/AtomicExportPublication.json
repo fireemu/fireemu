@@ -2103,7 +2103,7 @@
     },
     "crates/fireemu/src/import_export.rs": {
       "kind": "sha256",
-      "value": "de62becab83ff7010108a0c5414b494740d36213bfd84cd981bf3abca90bd621"
+      "value": "f10e786517d52b79c18b2d85ae7834c38701305574d7e5eb713a589269dfb1dd"
     },
     "crates/fireemu/src/init.rs": {
       "kind": "sha256",

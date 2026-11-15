@@ -7421,7 +7421,17 @@ mod tests {
             ));
         }
         assert!(super::imported_user(&marked, path).is_err());
-        // An unknown member is still refused.
+        // A repeated member is refused, as is an unknown one.
+        let mut repeated = plain.clone();
+        if let Json::Object(members) = &mut repeated.extra[0].1 {
+            let salt = members
+                .iter()
+                .find(|(name, _)| name == "salt")
+                .unwrap()
+                .clone();
+            members.push(salt);
+        }
+        assert!(super::imported_user(&repeated, path).is_err());
         let mut extra = plain;
         if let Json::Object(members) = &mut extra.extra[0].1 {
             members.push(("other".to_owned(), Json::Null));
