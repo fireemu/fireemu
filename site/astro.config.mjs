@@ -4,6 +4,9 @@ import starlight from '@astrojs/starlight';
 import { fileURLToPath } from 'node:url';
 import { codeThemes } from './src/data/code-themes.mjs';
 import { codeBreaks } from './src/data/code-breaks.mjs';
+import { localeFragments } from './src/data/locale-fragments.mjs';
+import { locales } from './src/i18n/locales.mjs';
+import { translateSidebar } from './src/i18n/sidebar.mjs';
 
 // The deployment target is set by the Pages workflow. The defaults build for
 // https://fireemu.github.io/fireemu/, the project page of the repository.
@@ -28,6 +31,10 @@ export default defineConfig({
 			// The emu mark on a dark tile, so it reads on light and dark browser tabs.
 			// The cleaned source drawing is src/assets/emu.png.
 			favicon: '/favicon.png',
+			// English stays at the unprefixed URLs; the other languages live under /<locale>/ and
+			// pages not yet translated fall back to the English content (src/i18n/locales.mjs).
+			defaultLocale: 'root',
+			locales,
 			head: [
 				{ tag: 'link', attrs: { rel: 'icon', href: `${base}/favicon.ico`, sizes: '48x48' } },
 				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${base}/apple-touch-icon.png` } },
@@ -74,8 +81,10 @@ export default defineConfig({
 				// The site footer under every page, and no duplicate <h1> on the landing page.
 				Footer: './src/components/Footer.astro',
 				PageTitle: './src/components/PageTitle.astro',
+				// The language picker next to the search box on narrow screens.
+				Search: './src/components/Search.astro',
 			},
-			sidebar: [
+			sidebar: translateSidebar([
 				{
 					label: 'Getting started',
 					items: [
@@ -129,9 +138,11 @@ export default defineConfig({
 						{ label: 'Environment variables', slug: 'reference/environment-variables' },
 					],
 				},
-			],
+			]),
 		}),
 		// Long inline code wraps at its separators, never mid-word (rewrites the built HTML).
 		codeBreaks(),
+		// Links into translated pages use the translated heading ids (src/data/locale-fragments.mjs).
+		localeFragments(base),
 	],
 });
