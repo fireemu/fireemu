@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, readlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative, isAbsolute } from 'node:path';
-import { createRequire, syncBuiltinESMExports } from 'node:module';
+import { createRequire } from 'node:module';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
