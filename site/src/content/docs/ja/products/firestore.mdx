@@ -1,0 +1,593 @@
+---
+title: Cloud Firestore
+description: Cloud Firestore をローカルで実行し、クエリ、複合インデックス、トランザクション、リスナー、Security Rules を本番の挙動に即してテストします。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu は Cloud Firestore を gRPC、REST、Web SDK が使う WebChannel トランスポートで提供し、Firestore Security Rules にも対応しています。
+
+<Facts items={[
+  { label: 'ステータス', value: '対応済み' },
+  { label: 'デフォルトポート', value: '8080' },
+  { label: '起動', value: 'デフォルトで起動' },
+  { label: '本番検証', value: '互換性の表を参照', href: 'compatibility/#production-verification' },
+]} />
+
+## テストできること
+
+- [複合インデックス](#composite-indexes): 宣言されていないインデックスを必要とするクエリは `FAILED_PRECONDITION` で拒否され、[CI ジョブは不足しているインデックスの一覧で失敗させる](#fail-a-ci-job-on-a-missing-index)こともできます。
+- Standard エディションの[クエリ制限](#query-limits)。
+- 保持されている `Listen` ストリームを本番と同じステータスで終了させることによる[リスナーの再接続](#listen-streams)。
+- 1 時間分のドキュメント履歴にわたる[トランザクション、`read_time` 読み取り、再開されたリスナー](#transactions-and-history)。
+- 各[名前付きデータベース](#named-databases)ごとの個別のルールを含む[Security Rules](#security-rules)。
+- [Enterprise のテキスト検索](#enterprise-text-search)と、[Enterprise パイプライン](#enterprise-pipelines)の一部。
+
+## 接続
+
+Firestore はデフォルトで `127.0.0.1:8080` で待ち受けます（`--firestore-port` または `firebase.json` で変更できます。[すべてのデフォルトポート](../../getting-started/install/#default-ports)を参照）。
+
+```js
+// Web SDK
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+connectFirestoreEmulator(getFirestore(app), '127.0.0.1', 8080);
+```
+
+Admin SDK にはコードの変更が不要です。`fireemu exec` の下では、コマンドに対して `FIRESTORE_EMULATOR_HOST` が Firestore の `host:port` に設定されます（[環境変数](../../reference/environment-variables/)を参照）。`fireemu up` の場合は、自分で設定してください。例: `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`。そのほかの SDK やプロジェクト ID のルールについては、[アプリを接続する](../../getting-started/connect/)を参照してください。
+
+## 設定
+
+データベースのエディションと API モードは `fireemu.toml` で選択します。`fireemu init` は、Native API の Standard エディションを書き出します。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+# "standard" or "enterprise"
+edition = "standard"
+# "native" or "mongodb-compatible"
+apiMode = "native"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`edition` には `standard` と `enterprise` を指定できます。Enterprise の Pipeline API が対応するのは読み取り操作の限られたサブセットです。[Enterprise のテキスト検索](#enterprise-text-search)、[Enterprise パイプライン](#enterprise-pipelines)、[制限事項](../../compatibility/limitations/)を参照してください。
+
+そのほかの `firestore` キーは、該当する箇所で説明します。
+
+| キー | セクション |
+|---|---|
+| `firestore.missingIndexes` | [複合インデックス](#composite-indexes) |
+| `firestore.enforceLimits` | [クエリ制限](#query-limits) |
+| `firestore.listenStreamLifetime` | [Listen ストリーム](#listen-streams) |
+| `firestore.history` | [トランザクションと履歴](#transactions-and-history) |
+
+## 複合インデックス
+
+本番は、複合インデックスが定義されていないクエリを拒否します。公式エミュレータは複合インデックスを確認せずにすべてのクエリを実行するため、インデックスの不足はクエリが本番に到達して初めて表面化します。Fireemu は本番と同様に、`firestore.indexes.json`（`firebase.json` から参照）で宣言されたインデックスに対して各クエリを確認します。
+
+| `firestore.missingIndexes` | 挙動 |
+|---|---|
+| `refuse`（デフォルト） | 本番が拒否するのと同様に、クエリはコンソールへのリンク付きの `FAILED_PRECONDITION` で拒否されます。 |
+| `report` | クエリは実行されます。不足しているインデックスごとに、データベースあたり 1 回だけ、本番の拒否メッセージと追加すべき `firestore.indexes.json` のエントリが標準エラーに報告されます。 |
+
+`emulator` プロファイルは、公式エミュレータと同様に常にクエリを実行し、不足インデックスの提案を標準エラーに報告します。
+
+OR クエリでは、ブランチごとに別々の複合インデックスが必要になることがあります。補足的な診断では、不足しているすべてのブランチのインデックスを 1 回の試行でまとめて一覧表示します。
+
+- `strict` で `refuse` の場合、SDK は従来どおりの `FAILED_PRECONDITION` レスポンスと最初の作成リンクを受け取ります。追加のブランチ定義は標準エラーに出力されます。
+- `report` の場合、control API のレポートも、重複のない不足定義を収集します。
+
+### 不足インデックスで CI ジョブを失敗させる
+
+標準エラーへのレポートは、CI ログの中では見落としやすいものです。`strict` で `"report"` を指定すると、control API は不足していたすべてのインデックスも一覧で返すため、一覧が空でないときにジョブを失敗させることができます。レポートを有効にします。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+# "strict" (the default) or "emulator"; "report" below needs strict
+profile = "strict"
+
+[firestore]
+# "refuse" (the default): refuse the query with FAILED_PRECONDITION
+# "report": run the query, and list each missing index
+missingIndexes = "report"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firestore": {
+    "missingIndexes": "report"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`fireemu exec` は、コマンドに `FIREEMU_CONTROL_URL`（末尾は `/v1/`）と `FIREEMU_CONTROL_TOKEN` を渡すので、テストを実行するスクリプトは、テスト終了後にこの一覧を確認できます。
+
+```sh
+npx fireemu exec -- sh -c '
+  npm test
+  status=$?
+  curl -fsS -H "Authorization: Bearer $FIREEMU_CONTROL_TOKEN" \
+    "${FIREEMU_CONTROL_URL}firestore/missingIndexes" > missing-indexes.json || exit 1
+  [ "$(jq .count missing-indexes.json)" = 0 ] || { jq .indexesJson missing-indexes.json; exit 1; }
+  exit $status
+'
+```
+
+`GET /v1/firestore/missingIndexes` は次のように応答します。
+
+```json
+{
+  "count": 1,
+  "truncated": false,
+  "dropped": 0,
+  "missingIndexes": [
+    {
+      "project": "demo-app",
+      "database": "(default)",
+      "name": "projects/demo-app/databases/(default)",
+      "index": {
+        "collectionGroup": "notes",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "owner", "order": "ASCENDING" },
+          { "fieldPath": "created", "order": "ASCENDING" }
+        ]
+      },
+      "message": "The query requires an index. You can create it here: https://console.firebase.google.com/..."
+    }
+  ],
+  "indexesJson": {
+    "projects/demo-app/databases/(default)": {
+      "indexes": [{ "collectionGroup": "notes", "queryScope": "COLLECTION", "fields": ["..."] }]
+    }
+  }
+}
+```
+
+#### レスポンスの形式
+
+- 各エントリは、データベースごとに 1 つのインデックスで、最初に必要になった順に並び、本番の拒否メッセージが付きます。
+- `indexesJson` は、エントリをデータベースごとにまとめ、`firestore.indexes.json` が持つ形式で返します。そのため、データベースの `indexes` 配列をそのファイルにマージできます。
+
+#### セッションとクリア
+
+- `GET /v1/sessions/{session}/firestore/missingIndexes` は、そのセッションのプロジェクトだけを一覧表示します。`GET /v1/firestore/missingIndexes` は、すべてのプロジェクトを一覧表示します。
+- セッションの `reset` は一覧をクリアしません。そのため、ケースごとにリセットするスイートでも、不足していたインデックスはすべて報告されます。セッションを削除すると、そのプロジェクトのエントリがクリアされます。
+- どちらのルートでも `DELETE` は、一覧と破棄件数をクリアし、`{"cleared": <count>}` を返します。セッション付きのルートは、そのセッションのプロジェクトだけをクリアします。セッションなしのルートはすべてのセッションのエントリをクリアするため、デーモンを他のテストと共有しているテストワールドでは、セッション付きのルートを使ってください。その後に再び必要になったインデックスは、再度報告されます。
+- `fireemu/testing` を使う場合は、`world.control('GET', '/v1/sessions/default/firestore/missingIndexes')` を呼び出し、同じパスに対して `world.control('DELETE', ...)` を呼び出します。これにより、読み取りとクリアがワールドのプロジェクトの範囲内にとどまります。
+
+#### 制限と拒否
+
+- 一覧が保持するエントリは最大 1,000 件です。それを超えると `truncated` が `true` になり、`dropped` は、処理済みで一覧にインデックスが載っていないクエリの数を数えます。すべてのインデックスが破棄されたプロジェクトには、空の一覧ではなく、一覧がいっぱいであるというメッセージ付きの `409` が返ります。そのため、`count` に対するチェックが不完全な一覧で通ってしまうことはありません。一覧をクリアして、もう一度実行してください。
+- 何も報告されない場合（`emulator` プロファイル、`strict` で `"refuse"`、または Firestore を選択していない場合）、`GET` は `FAILED_PRECONDITION` の `409` を返すため、一覧に依存するチェックが空の応答で通ってしまうことはありません。`DELETE` は引き続き `{"cleared": 0}` を返します。
+- ブラウザのページからは、リソースレポートと同様に、どちらのメソッドでも `Authorization: Bearer <control token>` が必要です。エントリには、クエリがフィルタや並べ替えに使うフィールド名が含まれるためです。
+
+### `firestore.indexes.json` のチェック
+
+`strict` では、`firebase deploy` が拒否するものを Fireemu も起動時に拒否します。Fireemu の実行中にファイルが変更された場合は、以前のインデックスを保持します。メッセージにはエントリが示され、`./firestore.indexes.json: indexes[0] (collection group notes): ...` のようにファイルのパスで始まります。以下の各拒否は、原因となるエントリと、本番が受け入れるエントリとあわせて示しています。
+
+**フィールドが 1 つだけの複合インデックス。** 本番は「this index is not necessary, configure using single field index controls」と応答します。代わりに `fieldOverrides` で宣言してください。1 つのフィールドに対するコレクショングループクエリを有効にする方法でもあります。`(field, __name__ DESC)`、`(__name__ DESC)`、および 1 つのベクトルフィールドは、本番が受け入れるのと同じように受け入れられます。
+
+```json title="Refused"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): this index is not necessary, configure using single field index controls
+```
+
+```json title="Accepted"
+{ "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "notes", "fieldPath": "owner",
+      "indexes": [{ "queryScope": "COLLECTION", "order": "ASCENDING" }] }
+] }
+```
+
+**`fields` 配列のないエントリ。** `feilds` のようにキーを綴り間違えると、このようになります。
+
+```json title="Refused"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "feilds": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): Must contain "fields" (an array of index fields)
+```
+
+```json title="Accepted"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+**`indexes` 配列のない `fieldOverrides` エントリ。** TTL のみのオーバーライドには `"indexes": []` が必要です。
+
+```json title="Refused"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.expireAt): Must contain "indexes" (an array, empty for a TTL-only override)
+```
+
+```json title="Accepted"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+] }
+```
+
+**`vectorConfig` しか持たない `fieldOverrides` のインデックス。** オーバーライドの各インデックスには、`order` と `arrayConfig` のうちちょうど 1 つが必要です。本番と同様に、単一のベクトルフィールドは複合インデックスとして宣言してください。
+
+```json title="Refused"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "emb",
+    "indexes": [{ "queryScope": "COLLECTION", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.emb): Must contain exactly one of "arrayConfig,order" in each of its indexes
+```
+
+```json title="Accepted"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "emb", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+Fireemu は、次の形式を `firebase deploy` と同じように読み取ります。
+
+- `queryScope` がない場合や空の場合は、`COLLECTION` として読み取られます。
+- 古い `collectionId` キーとフィールドの `mode` キーは、それぞれ `collectionGroup` と `order` / `arrayConfig` として読み取られます。
+
+どちらのプロファイルでも、1 つのファイルが持てる複合インデックスは最大 200 個、1 つのインデックスあたりのフィールドは最大 100 個、配列フィールドは 1 インデックスにつき 1 つまでです。Admin API の `indexes.create` も同じチェックを適用し、ファイルのインデックスと実行時に作成されたインデックスを合わせて 200 個の上限に数えます。
+
+`emulator` プロファイルは、公式エミュレータがこのファイルを一切読まないため、これらのエントリを拒否しません。エントリの複合フィールドモードは、`firebase deploy` が使う優先順位と真偽判定で読み取り、順序モードや配列モードも設定しているフィールドオーバーライドの検索設定は無視します。
+
+## クエリ制限
+
+`strict` プロファイルでは、Standard エディションのクエリ制限が本番と同じように適用されます。`firestore.enforceLimits` を `false` にすると、本番が拒否するクエリも通るようになるため、特別な理由がない限りオンのままにしてください。
+
+`strict` では、このキーが切り替えるのは次のクエリ制限だけです（ディスジャンクションは最大 30 個、`not-in` の値は 10 個まで、など）。書き込み、トランザクション、インデックスの制限や、REST と WebChannel の挙動には影響しません。`emulator` プロファイルでは、`true` にするとそれらの本番の制限も有効になります。
+
+## Listen ストリーム
+
+本番は、エンドユーザーのネイティブ gRPC `Listen` ストリームを、開いてから 1 時間後に `INTERNAL` で終了させます。デフォルトでは、Fireemu はどれだけ長く保持されていてもストリームを開いたままにします（`firestore.listenStreamLifetime: "unlimited"`）。クライアントの再接続をテストするには、次のいずれかを行います。
+
+- `firestore.listenStreamLifetime` を `"oneHour"` に設定します（`productionExact` ではこれがデフォルトです）。
+- control API で `POST /v1/firestore/listen:expire` を呼び出すと、保持されているすべてのエンドユーザーストリームを、本番のステータスで一度に終了させます。
+
+認証情報または [App Check](../app-check/) のために拒否された WebChannel の Listen または Write のオープンは、HTTP トランスポートのネゴシエーションを 200 で完了し、その後、Web SDK が読み取れる終端の `UNAUTHENTICATED` または `PERMISSION_DENIED` プロトコルエラーを返します。無効な App Check の置き換え、または別のアプリの App Check の置き換えは、保持されたドキュメントを再送せず、終端のエラーだけを受け取ります。拒否されたオープンは、受け入れ済みセッションの容量を消費しません。このトランスポートの挙動は SDK プロトコルに従うものであり、記録された本番との互換性を主張するものではありません。
+
+## トランザクションと履歴
+
+本番と同様に、Fireemu は直近 1 時間に書き込まれたドキュメントのすべてのバージョンを保持するため、`read_time` 読み取り、読み取り専用トランザクション、再開されたリスナーがそれらを参照できます。トランザクションは、本番と同様に、読み取ったものをロックします。競合する gRPC と WebChannel の書き込みは、ランタイムワーカーを占有せずに待機します。待機中の Commit をキャンセルすると、そのリクエストのデッドロック待機は終了しますが、そのトランザクションは、コミット、ロールバック、または期限切れになるまで読み取りロックを保持します。
+
+### ローカルの履歴制限
+
+同じドキュメントを何度も更新するテストでは、多くのバージョンがメモリに保持されます。本番にはない次のローカル制限が、その量に上限を設けます。
+
+- 各データベースが保持する論理的な履歴は最大 1 GiB かつ 1,000,000 バージョン、各セッションは 1 GiB かつ 1,000,000 バージョン、デーモン全体では 4 GiB かつ 4,000,000 バージョンです。論理バイト数は Firestore のストレージサイズのモデルに従うもので、プロセスのメモリ使用量ではありません。メモリ使用量は数倍大きくなることがあります。
+- 固定されたクロック（`daemon.clockStart`）では時間が自然には進まないため、データベースが 1 つのドキュメントについて保持するバージョンは最大 1,024 個です。この制限は、後述の `maxVersionsPerPath` と同じように働きます。ドキュメントがこれを超えると、データベース全体で古いスナップショットが解放されます。
+- strict の Listen は、稼働中のデータベースごとに直近 4,096 件の境界レコードを保持します。再開されたストリームは、元の境界の `read_time` をそのまま返し、その後、新しいスナップショット時刻を `CURRENT` とともに送信します。トークンのバイト列は不透明で、書き込みがなくても変わることがあります。期限切れのレコードまたは期限切れのドキュメント履歴は `RESET` と完全な再送を引き起こします。リセット、リストア、デーモンの再起動は、これらのレコードを破棄します。この上限は Fireemu のローカルなものであり、本番の制限ではありません。
+- 制限を超えるコミットは、全体が `RESOURCE_EXHAUSTED` とメッセージ `Firestore retained history capacity is exhausted` で拒否されます。
+
+1 時間より古いバージョンは、クロックがそれを過ぎた後の次のコミットで解放されます。
+
+### 履歴制限を下げる
+
+メモリ使用量を減らすには、`firestore.history` の制限を下げます。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+edition = "standard"
+apiMode = "native"
+
+[firestore.history]
+maxVersionsPerPath = 16
+maxBytes = 268435456
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native",
+    "history": {
+      "maxVersionsPerPath": 16,
+      "maxBytes": 268435456
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- `maxVersionsPerPath`（1 から 1,000,000）は、どちらのクロックでも、データベースが 1 つのドキュメントについて保持するバージョンの最大数を、上記のデフォルトの代わりに設定します。
+- `maxBytes`（1 MiB から 1 GiB）は、1 つのデータベースが保持する論理的な履歴のバイト数を下げます。インポート（`--import`）は、これに対して検査されません。上限を超えるインポートは、データベース名、そのバイト数、上限を示す `warning:` 行とともに開始され（これを超えるスナップショットのリストアも同じ行を記録します）、その後、履歴を増やす書き込みはすべて `RESOURCE_EXHAUSTED` で拒否されます。
+
+これらのキーがなければ、デフォルトが適用されます。
+
+### バージョン上限が解放するもの
+
+バージョン上限は各ドキュメントに個別に適用されますが、その影響はデータベース全体に及びます。スナップショットはすべてのドキュメントについて正確に保たれるため、いずれかのドキュメントのバージョン数が上限を超えると、データベースは、そのドキュメントの最も古い保持バージョンより古いスナップショットを保持しなくなります。その後は次のようになります。
+
+- その時点より古い `read_time` の読み取りは、`FAILED_PRECONDITION`（`The requested 'read_time' is no longer retained by this database.`）で拒否されます。そのような `read_time` での新しい読み取り専用トランザクションも同様です（`read_time is no longer retained by this database`）。
+- 古いスナップショットで既に開いているトランザクションは、他のドキュメントにしか触れていなくても、次の読み取りまたはコミットで `ABORTED`（`The referenced transaction has expired or is no longer valid.`）で失敗します。
+- 古い時点から再開するリスナーはリセットされ、完全な結果が再送されます。
+
+クライアント SDK は `ABORTED` のトランザクションを再試行するため、非常に小さい上限は避けてください。最も長いトランザクションが開いている間に、どのドキュメントも更新される回数より大きい上限を選びます。
+
+`fireemu doctor --connect <control URL>` は、稼働中のデーモンの保持バージョンとバイト数を報告します。`history.*` の行では、保持バージョン数と論理バイト数が、セッションとデーモンの制限に対して示され、次の圧縮で解放されるバイト数も示されます。
+
+## Security Rules
+
+ルールは、`firebase.json` に指定された `firestore.rules` ファイルから、または `fireemu.toml` の `rules.source` から読み込まれます。`strict` では、ルールのないプロジェクトは、ルールのリリースがない本番プロジェクトと同様に、すべてのクライアントリクエストを拒否します。[Security Rules](../../guides/security-rules/)を参照してください。
+
+## 名前付きデータベース
+
+各名前付きデータベースは、使用する `rules` ファイルと `indexes` ファイルとともに `firebase.json` の `firestore` 配列で宣言するか、Admin API で作成します。`strict` では次のとおりです。
+
+- 宣言も作成もされていないデータベースへのリクエストは、本番と同様に `NOT_FOUND` になります。
+- 宣言するデータベース ID は、本番で作成できるもの（先頭が英字で、`[a-z0-9-]` の 4 文字から 63 文字）でなければなりません。そうでない場合、Fireemu は起動しません。
+
+本番は、データベースを、そのデータベース自身のルールのリリースだけで管理します。そのため、実行時に作成されたデータベースには Security Rules がなく、ルールを設定するまですべてのクライアントリクエストを拒否します。`(default)` データベースのルールは適用されません。データベースを `rules` ファイルとともに `firebase.json` で宣言するか、実行時にロードしてください。
+
+```
+PUT /emulator/v1/projects/{project}/databases/{database}:securityRules
+{"rules": {"files": [{"name": "firestore.rules", "content": "..."}]}}
+```
+
+これは、`(default)` データベースに対して `PUT /emulator/v1/projects/{project}:securityRules` が使うのと同じルートで、本文も応答も同じです。この方法で設定したルールは、データベースが削除されるまで有効です。スナップショットには含まれません。
+
+`emulator` プロファイルは公式エミュレータの挙動を維持します。独自のルールを持たないデータベースは、`(default)` データベースのルールで処理されます（上のルートでロードしたルールは、そのデータベースに適用されます）。
+
+## Enterprise のテキスト検索
+
+`firestore.indexes.json`（`searchConfig.textSpec`）でサポートされているテキスト定義は、Enterprise データベースのローカルテキストカタログに登録され、`collection(...).search({ query: documentMatches(...) })` を処理します。検索インデックスは、通常のクエリプランニングとは別のままです。Standard エディションでは、有効な検索インデックス設定を引き続き受け付けますが、検索は処理せず、ジオ検索は未対応です。
+
+ローカルの `fireemu-lexical-v1` エンジンは、決定的な Unicode 正規化と単語分割、AND 条件の語、位置情報付きのフレーズ、除外、インデックス付きフィールドの制限を使用します。
+
+- 作成時刻による並べ替えに対応しており、スコア順は記録された本番の結果の順序に従います。`score()` の数値は近似値です。
+- ステミング、同義語展開、タイプミス訂正、言語の自動判別はありません。
+- `productionExact` は、対応する本番の挙動が記録されるまで、検索を拒否します。
+- Fireemu の明示的な control アクションが、世代単位のビルドを進行、完了、失敗、修復させます。
+
+セットアップ、制御、正確な制限については、[ローカルテキスト検索ガイド](https://github.com/fireemu/fireemu/blob/main/docs/text-search.md)を参照してください。
+
+## Enterprise パイプライン
+
+Enterprise データベースでは、fireemu は Admin SDK（gRPC）と、Web SDK の `firebase/firestore/lite/pipelines`（REST の `:executePipeline`）からのパイプラインを実行します。
+
+Enterprise パイプラインは、記録済みの 1,951 件のケースのコーパスについて、本番と照合して検証されています。
+
+| ケース数 | 結果 |
+|---|---|
+| 1,906 | 一致。 |
+| 17 | 本番自身のばらつきの範囲内で一致（レスポンスのフレーミングと `sample` のランダムな位置）。 |
+| 26 | プロジェクトオーナーが許容した点でのみ相違（集計グループの順序、ソートされていないグループの後の `limit` または `offset` の下でのグループの有効な選択、すべてのソートキーが同順位の行の順序、クロックに依存する値）。 |
+| 2 | 記録ツールが送信できなかった gRPC リクエスト。後の観測でカバーされています。 |
+
+記録されていない形式については互換性を主張せず、strict プロファイルはその多くを未観測として拒否します。主張していない項目は、[本番検証](../../compatibility/#production-verification)の表に一覧があります。
+
+### サポートされるステージと式
+
+サポートされるサブセットは、`collection`、`collection_group`、`documents`、または有限の `database` 入力で始まり、その後に `where`、`select`、`sort`、`add_fields`、`remove_fields`、`distinct`、`aggregate`、`offset`、`limit`、`unnest` の各ステージを、任意の順序と数で続けることができます。集計には `count`、`count_distinct`、`sum`、`average`、`minimum`、`maximum` が含まれ、グループの有無を問いません。
+
+| 式 | サポート |
+|---|---|
+| フィールド | ネストしたパス（`a.b`）と `__name__`（ドキュメント参照） |
+| リテラル | すべての型の値。リテラルの配列とマップ、double のベクトルを含みます |
+| 比較 | `equal`、`not_equal`、`less_than`、`less_than_or_equal`、`greater_than`、`greater_than_or_equal`（式が置ける場所ならどこでも） |
+| 構築 | `array(...)` と `map(...)` |
+| 配列アクセス | `array_length`、`array_first`、`array_last`、`array_get`、`array_slice`、`array_first_n`、`array_last_n`、`array_index_of`、`array_index_of_all`、`join`、`maximum_n`、`minimum_n` |
+| 配列ヘルパー | `array_concat` と `array_reverse` |
+| タイムスタンプ関数 | `current_timestamp`、`timestamp_add`、`timestamp_subtract`、`timestamp_trunc`、`timestamp_diff`、`timestamp_extract`、`unix_micros_to_timestamp`、`unix_millis_to_timestamp`、`unix_seconds_to_timestamp`、`timestamp_to_unix_micros`、`timestamp_to_unix_millis`、`timestamp_to_unix_seconds` |
+| マップ関数 | `map_get`、`map_set`、`map_remove`、`map_merge`、`map_keys`、`map_values`、`map_entries` |
+| 正規表現 | `regex_contains`、`regex_match`、`regex_find`、`regex_find_all` |
+| ドキュメント関数 | `documentId`、`collectionId`、`parent` |
+| 論理、存在、型、メンバーシップ | `and`、`or`、`not`、`xor`、`nor`、`exists`、`is_absent`、`is_error`、`type`、`is_type`、`array_contains`、`array_contains_all`、`array_contains_any`、`equal_any`、`not_equal_any` |
+| 文字列 | `byte_length`、`string_index_of`、`string_repeat`、`string_replace_all`、`string_replace_one`、`string_reverse`、`concat`、`to_lower`、`to_upper`、`starts_with`、`ends_with`、`string_contains`、`char_length`、`substring`、`trim`、`ltrim`、`rtrim`、`split` |
+| ベクトルのスカラー関数 | `vector_length`、`dot_product`、`euclidean_distance`、`cosine_distance` |
+| 遅延評価の制御 | `if_absent`、`if_null`、`if_error`、`conditional`、`switch_on` |
+| 数学 | `add`、`subtract`、`multiply`、`divide`、`mod`、`abs`、`round`、`floor`、`ceil`、`pow` |
+
+### そのほかの記録済みの形式
+
+- **空のコンストラクタ。** 記録された空の `array()` と `map()` のコンストラクタは、空の値を返します。それ以外のコンストラクタの形式は、これらの観測の範囲外のままです。
+- **`like`、`rand`、`array_filter`、`array_transform`。** これらの追加の記録済みの形式にも対応しています。入力の型、ラムダの配置、組み合わせには引き続き制約があります。乱数値は、本番の乱数列を再現しません。
+- **スカラーの `minimum`、`maximum`、`sum`、`negate`。** 記録されたスカラーの形式に対応しています。これには、取得された整数、有限の double、数値の混在、null/absent のケースが含まれます。記録された `sum([])` は null を返します。それ以外の型、非有限の入力、数値の極端な値は、この有限な互換性の主張の範囲外のままです。
+- **汎用形式。** 追加の記録済みの汎用形式には、`cmp`、`storage_size`、`coalesce`、`get_field`、`offset`、`reverse`、`length`、`string_concat`、`namespace`、`has_ancestor`、`reference_slice`、`replace_document_id`、`autogen_document_id` があります。各観測は、宣言された入力の型をカバーします。たとえば `storage_size` は現在、文字列に対応しており、記録された `reverse` の形式は、文字列、バイト列、配列をカバーします。生成されるドキュメント ID は、20 文字の ASCII 英数字という有限の規約に従います。これらの観測は、エントロピーやグローバルな一意性を保証するものではありません。
+
+上記の配列、マップ、正規表現、タイムスタンプの関数、`unnest`、ゼロ件の挙動は、どちらのプロファイルでも利用できます。本番との比較は、記録されたケースをカバーするもので、すべての入力型や組み合わせをカバーするものではありません。
+
+**マップ関数。** `map_set` は、明示的な null 値を保持し、値が absent のキーを削除します。入力のマップが null または absent の場合、結果は absent になりますが、一覧にあるその他のマップ関数は、その入力に対して null を返します。この削除はドキュメント化された API に従うもので、本番では観測されていません。マップのキー、値、エントリは Fireemu の決定的なマップ順序を使用し、対応するキーと値は組のままです。記録された本番のマップは、その 2 つのキーについては一致しますが、他のマップの本番での順序は未検証です。
+
+**そのほかの数学関数。** emulator プロファイルは、`sqrt`、`exp`、`ln`、`log`、`log10`、`trunc`（精度を省略した場合またはゼロの場合）も評価します。ゼロ以外の切り捨て精度と、有限の指数関数のサブノーマル出力は、未観測です。strict は、サポートされるコンテキストの範囲で、記録された有限の数値とエラーの形式を受け付けます。記録されていない数値、定義域、null、型、優先順位のケースは、引き続き制限されています。これらの関数は、本番との全般的な互換性を保証するものではありません。
+
+**文字列関数とベクトル関数。** 文字列関数は、サポートされる形式で動作します。strict は、記録されていない型と非 ASCII の検索オフセットを拒否し、繰り返しと置換にはローカルの出力サイズの上限が適用されます。strict の `array_index_of_all` は、観測された整数の形式を受け付けます。ベクトルのスカラー関数は、記録されていない、空の、不一致の、または非有限のバイナリベクトルと、サポートされない数値の極端な値を拒否します。これらの制約は、全般的な本番との互換性を保証するものではありません。
+
+**配列関数とバイト列。** 追加の配列関数と `unnest` は、記録された入力の形式をカバーします。記録されていない組み合わせと順序は、未検証のままです。strict の Firestore REST は、記録された標準および URL セーフの base64 形式と protobuf の `bytes_value` エイリアスを受け付け、記録された CR/LF と、アルファベットが混在する形式を拒否します。通常の emulator プロファイルは、開発用に寛容なデコードを維持します。その追加で受け付ける形式は、本番との互換性を主張するものではありません。
+
+### 挙動の詳細
+
+#### タイムスタンプ
+
+パイプラインのタイムスタンプは、マイクロ秒精度です。`current_timestamp` は、設定されたクロックをリクエストごとに 1 回サンプリングし、そのパイプラインの評価の間は固定されます。タイムゾーンを考慮した切り捨てと抽出には、名前付きの IANA ゾーンを使用します。本番の記録がカバーするのは、特定のゾーンのケースだけです。曖昧な、または存在しないローカルの夏時間の境界は、未観測として拒否され、カスタムの GMT オフセットの意味論は実装されていません。それ以外のタイムゾーン、境界、入力の組み合わせが本番と互換であることは、それらの記録では確認されていません。
+
+#### 正規表現
+
+正規表現関数は、どちらのプロファイルでも、2026-11-10 の本番の記録に従います。
+
+- `\d`、`\D`、`\w`、`\W`、`\b`、`\B` は ASCII のみです。
+- `\s` は ASCII の空白文字に垂直タブを加えたもので、ノーブレークスペースにはマッチしません。`\s` のメンバーのうち、スペース、タブ、垂直タブ以外（ラインフィード、フォームフィード、キャリッジリターン）は、記録されたものではなく推定です。
+- `\pL` と `\p{Nd}` は Unicode です。
+- `(?i)` は ASCII の英字のみを大文字小文字を同一視します。`(?u)` と `(?-u)` は受け付けられますが、何も変更しません。`(?U)` は量指定子を最短一致にしません。
+- `[[:digit:]]` のような POSIX クラスと `(?m)` フラグは、本番と同様に `Unsupported regex syntax.` で拒否されます。
+- `regex_find` と `regex_find_all` が受け付けるキャプチャグループは最大 1 つで、それを超える場合は `At most one capture group is supported.` で拒否します。マッチしなかったグループは null になります。`regex_contains` と `regex_match` は、グループをいくつでも受け付けます。`regex_match` は文字列全体のマッチが必要です。
+
+`strict` では、記録がカバーしていない入力（波括弧による繰り返し、その他のフラグとフラグの組み合わせ、`\A` と `\z`、`\n` のようなエスケープ、その他のプロパティ名、ネストしたクラスとクラスの集合演算、クラスを伴う `(?i)` または `(?U)`）は、未観測として拒否されます。`emulator` プロファイルは、それらをローカルエンジンで評価しますが、その結果が本番と同じであるとは確認されていません。
+
+本番ではパターン長の上限は記録されていません。ローカルでは、128 KiB を超えるパターン、または ASCII への書き換えが 1 MiB を超えるパターンは、どちらのプロファイルでも未観測として拒否されます。エンジンのコンパイル後サイズの上限を超えるパターンも同様です。
+
+#### ゼロ件
+
+`limit` が 0 の場合は次のステージに行を渡さず、`offset` が 0 の場合はすべての行を通過させます。これはどちらのプロファイルでも同じです。strict プロファイルは、これらの入力について記録された本番のケースに従います。
+
+#### 記録されたエラー
+
+strict プロファイルは、引数なしで空のオプションを持つ `array_reverse()` と、一方が引用符付き、もう一方が引用符なしで綴られた重複する select エイリアスについて、本番で記録された `INTERNAL` レスポンスを再現します。Fireemu は、リクエストの値を含めずに、固定の説明を標準エラーに書き込みます。空でないオプションを持つ引数なしの `array_reverse()` は、従来の拒否を維持し、emulator プロファイルは従来の検証の挙動を維持します。これらのエラーは記録された形式だけをカバーします。先に進むには、呼び出しまたはエイリアスを調整してください。
+
+strict のネイティブ gRPC は、`bit_not`、`bit_left_shift`、`bit_right_shift` の有限の整数形式について記録された `INTERNAL` エラーも再現します。コンソールは、リクエストの値を含めずにこの挙動を説明します。これらの観測が確立するのは、宣言されたネイティブのリクエストの形式に対するエラーの互換性です。ビット演算が成功した場合の意味論と REST のエラーの一致は、未検証のままです。emulator プロファイルは、従来の拒否を維持します。
+
+記録された検証の優先順位のケースがさらに一致し、取得された順序付きの REST の `collection_id` の型エラーについては、構造化された `ErrorInfo` が保持されます。それ以外の優先順位の組み合わせと、曖昧なネイティブのマップ順序は、引き続き制限されています。
+
+取得されたネイティブ gRPC の、2 つの有効なジオポイントを持つ `geo_distance` の select 呼び出しは、検索専用の `INVALID_ARGUMENT` 診断を返します。ジオ検索は、このパイプラインの互換性の主張の範囲外のままです。
+
+どちらのプロファイルでも、記録された、ネストした集計の整数に対するスカラー `sum` の呼び出しは、本番の `array_sum` 診断（expected Array, got LONG）とともに `INVALID_ARGUMENT` を返します。そのスカラー呼び出しには配列を渡してください。それ以外の引数の形式は、既存の制限を維持します。
+
+#### 結果、フレーミング、順序
+
+- `where` は、条件（比較、フィールド、またはサポートされるその他の関数）が `true` の場合にのみ、行を保持します。
+- `select` が設定できるフィールドは、本番と同様に最大 64 個です。
+- `select` のない結果にはドキュメントの名前、作成時刻、更新時刻が含まれ、応答には通常、実行時間が含まれます。不足分のみの `documents` 入力は、選択された実行時間を保持します。
+- 小さな応答は、本番のフレーミングどおりに返されます。gRPC では、すべての結果が 1 つのレスポンスメッセージにまとまり、REST では 1 つの配列要素にまとまります。Fireemu は、より大きな応答を結果の約 1 MiB で区切ります。本番の記録では境界が一定ではなく、大きな応答のフレーミングは検証されていません。
+- `select({__name__: field("__name__")})` はドキュメント名を返します。これには、他のエイリアスと並べた記録済みの形式や、引用符付きのエイリアスと値の形式も含まれます。記録されていない形式は、`strict` では `UNIMPLEMENTED` のままです。
+- `sort` がない場合、記録されたコレクションの読み取りは、ドキュメント ID の CRC-32 の昇順に従います。コレクショングループは、親のパス、次にその順序の順です。非 ASCII の ID と CRC-32 の同値は、集計グループの順序や limit の下での同順位の順序と同様に、未検証です。
+- 保存された `-0.0` は、本番と同様に `-0.0` として読み戻されます。公式エミュレータは `0.0` として保存します。
+
+### プロファイル間の違い
+
+記録された一致する応答は、FS-ENT-ORACLE の観測から得た特定のリクエストの形式をカバーしており、これには、比較、リテラル値、select のエイリアス、ドキュメント関数、ステージの順序、サポートされる文字列関数と数学関数が含まれます。それ以外の記録済みおよび未記録の形式は、未検証のままです。
+
+`strict` では、拒否は一般に、そのリクエストが本番が拒否したリクエストの形式であるときにのみ、そのリクエストのテキストで返され、そうでなければ `UNIMPLEMENTED` になります。後述の gRPC の深さに関する例外も適用されます。形式は、ステージ、関数名、値の種類、すべてのマップのエントリを順序どおりに保持し、通常のフィールド名と同じ種類の値だけを置き換えます。そのため、`select({total: documentId(field)})` は、記録された `select({v: documentId(field)})` と同じように応答されます。REST の本文はキーの順序を保持します。gRPC では 2 つ以上のエントリを持つマップに順序がないため、後述の記録された gRPC の select の幅のケースを除き、`strict` は一般に、そのようなリクエストに対する拒否を返しません。
+
+本番が観測されていない箇所では、プロファイルによって次のように異なります。
+
+| 入力 | `strict` | `emulator` |
+|---|---|---|
+| 非 ASCII の名前を持つコレクション参照のドキュメント関数 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、インデックスは UTF-16 単位で数えられます |
+| 記録された、予約されたマップキーの拒否 | 記録された形式については `INVALID_ARGUMENT`。記録されていない形式は制限されたまま | `INVALID_ARGUMENT`、予約されたキーを最初に名指しします |
+| 記録された、ドキュメント関数の型違いのリクエスト | 記録された REST の形式については `INVALID_ARGUMENT`。順序のない gRPC のベクトルマップは `UNIMPLEMENTED` のまま | `INVALID_ARGUMENT`、型を名指しします |
+| 整数または真偽値以外の型（double、null など）の `map(...)` キー | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、型を名指しします |
+| 整数または NaN の要素を持つ、要素がない、`value` がない、または別のキーを持つベクトルリテラル | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、公式のテキスト |
+| 無限大の要素を持つベクトルリテラル | `UNIMPLEMENTED` | そのベクトル |
+| 文字列ではない `__type__` キー、またはドキュメントを指していない参照リテラル | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、公式のテキスト |
+| 1 つのパイプライン内の 2 つの拒否 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、そのうちの 1 つ |
+| `where` 条件内でフィールドを保持するリテラルなど、本番が別のステージでのみ記録した拒否 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、公式のテキスト |
+| 負のゼロの要素を持つベクトルリテラル | `UNIMPLEMENTED` | そのベクトル |
+| `__name__` や複数キーのケースを含む、記録された空または予約されたリテラルキーの拒否 | REST と曖昧さのない gRPC では `INVALID_ARGUMENT`。順序のない 3 つの複数キーの gRPC ケースは `UNIMPLEMENTED` のまま | `INVALID_ARGUMENT`、1 つのキーを名指しします |
+| 記録された、型違いの `limit` と `offset` の引数、および負の `offset` | 記録された形式については `INVALID_ARGUMENT`。それ以外の形式は制限されたまま | `INVALID_ARGUMENT`、公式のテキスト |
+| `limit` が 0 または `offset` が 0 | 記録されたゼロ件の挙動 | 同じゼロ件の挙動 |
+| `{a.b, a}` のように、本番の `{m, m.r}` とは別の順序で、ある `select` のエイリアスが別のエイリアスの内側にあるもの | `UNIMPLEMENTED` | `INVALID_ARGUMENT`。REST では後のエイリアスを名指しし（公式エミュレータと同じ）、gRPC では子を名指しします |
+| `{a: documentId("s"), b: parent(true)}` のように、評価時にどちらも失敗する 2 つのフィールドを持つ、記録されていない `select` | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、キーの順で最初のもの |
+| 配列内のベクトル、またはリテラル内で他のキーと並ぶ `__type__` キー | `UNIMPLEMENTED` | 公式の応答 |
+| サポートされる関数に対する、記録されていない誤った引数の個数 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、fireemu のテキスト |
+| 関数のオプション | `document_id(__name__)` に対する、記録された単一の整数の `x` オプションは、2 ステージの射影形式で受け付けられます。それ以外のオプションは制限されたまま | 公式エミュレータが無視するのと同様に、無視されます |
+| 空の `select` マップ、または fireemu が検査しない関数やステージの値の後に続くステージの検査（本番は未知の関数を最初に名指しします） | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、空のマップ、または後のステージの検査 |
+| `a{2}`、`\n`、`(?x)`、`(?i)[a-c]` のように、記録がカバーしていない正規表現の構文要素 | `UNIMPLEMENTED` | ローカルエンジンの結果 |
+| `map(1.5, i)` のように、定数のために失敗する関数呼び出しと並ぶ空のマップまたはその他の拒否、あるいは `strict` が応答しないその他の部分と並ぶもの | `UNIMPLEMENTED` | `INVALID_ARGUMENT`、空のマップまたはその他の拒否 |
+| 記録されていないステージの引数の個数またはオプション | `UNIMPLEMENTED` | ステージと引数の形式によって異なります |
+| 空の `array()` または `map()` | 記録された空の配列またはマップ | 空の配列またはマップ |
+| グループ引数のない `aggregate` | 記録された形式（コレクションの直後で、プレーンなエイリアスから `count` への空でないマップ）については、本番の引数個数テキストとともに `INVALID_ARGUMENT`。それ以外は `UNIMPLEMENTED` | 同じテキストとともに `INVALID_ARGUMENT` |
+
+### union、サンプリング、サブクエリ、その他のステージ
+
+**`union`。** 有限の `union` ブランチは、行ローカルの `where` と `select` を持つコレクション入力を使用できます。サポートされない子ステージと入力は拒否されます。ソースの読み取りは同じスナップショットを共有し、ネストしたブランチにはローカルの深さとサイズの制限があります。
+
+**`sample`。** `sample(size, mode)` は、`documents` による非復元抽出と、入力順の `percent` によるサンプリングをサポートします。たとえば `sample(0.5, "percent")` は 1 行あたり 0.5 の確率を使用し、`sample(2, "documents")` は最大 2 行を選択します。ランダムな結果は変動し、本番の乱数列を再現しません。
+
+**`replace_with` と `find_nearest`。** 有限の `replace_with` は、完全な置換と、実装済みの上書きおよび保持のマージモードをサポートします。完全な置換では、ソースのドキュメントメタデータが破棄されます。有限の `find_nearest` は、ユークリッド、コサイン、内積の各尺度に対応し、ローカルで必須となる limit と距離フィールドのオプションが必要です。それ以外の形式は、未検証または拒否のままです。
+
+**読み取り時刻とトランザクション。** gRPC と REST の両方のルートが、記録された形式で、読み取り時刻、既存のトランザクション、または新しいトランザクションを伴う有限の `documents`、`collection`、`collection_group` 入力と、既存または新規のトランザクションの自動コミットを処理します。自動コミットを伴う読み取り時刻と、セレクタを伴う `database`、`union`、`search` の入力は、引き続き拒否されます。サポートされない実行形式は明示的に拒否されます。記録された検証の失敗では、提案された関数を実行可能にすることなく `INVALID_ARGUMENT` を返す場合があります。記録された一致が確立するのは、記録されたリクエストの形式に対する互換性だけです。それ以外の形式は、未検証のままです。
+
+**そのほかの集計とサブクエリ。** `array_agg`、`array_agg_distinct`、`first`、`last`、`count_if` の有限の記録済みの形式をサポートします。制限付きのサブコレクションと相関スカラーサブクエリの形式は、ソースのスナップショットを共有します。サポートされない入力、ステージ、バインディングは拒否され、ローカルのリソース制限が適用されます。集計の順序と記録されていない形式は、本番との一致を主張しません。
+
+サポートされる相関スカラーサブクエリは、カーディナリティを確認する前に、追加の文字列等価フィルタを適用することがあります。記録された単一結果のリクエストは選択された値を返し、記録された複数結果のリクエストは本番の `INVALID_ARGUMENT` 診断を受け取ります。これらの観測がカバーするのは、記録されたリクエストの形式だけです。結果が 0 件の場合の挙動とその他のスカラーの形式は、未検証のままです。
+
+**深さと幅。** 通常の REST は、深くネストしたパイプライン JSON に対して記録された深さの診断を報告し、strict の gRPC は、記録された 65 フィールドの `select` の拒否を受け付けます。32 レベルを超える gRPC の関数式は、どちらのプロファイルでも拒否されます。strict の gRPC は、protobuf の再帰の失敗も、記録された invalid-argument 診断に対応づけます。gRPC の制限と診断は、観測された連鎖を超えて一般化されています。エラーの優先順位とその他の記録されていないケースは、未検証のままです。
+
+**存在しないネストしたエイリアス。** 存在しないネストしたエイリアスを選択すると、その空の親マップが保持されます。本番は 3 つのドット付きエイリアスのケースを記録しており、存在しない式のその他の形式は、それらの観測から一般化されています。
+
+## 本番との違い
+
+### ローカルの制限
+
+本番には、これらの制限はありません。それぞれについて、該当するセクションで説明しています。
+
+- 保持されるドキュメント履歴は、データベース、セッション、デーモンごとに上限があり、strict の Listen は上限付きの数の境界レコードを保持します。[トランザクションと履歴](#transactions-and-history)を参照してください。
+- control API の不足インデックスの一覧が保持するエントリ数には上限があります。[制限と拒否](#limits-and-refusals)を参照してください。
+- パイプラインの正規表現パターンにはローカルの長さの制限があり、ネストした `union` ブランチ、サブクエリ、文字列の繰り返しと置換には、ローカルの深さ、サイズ、リソースの上限があります。[Enterprise パイプライン](#enterprise-pipelines)を参照してください。
+
+### デフォルトで異なる挙動
+
+- ネイティブ gRPC の `Listen` ストリームは、本番では 1 時間後に終了しますが、どれだけ長く保持されていても開いたままになります。[Listen ストリーム](#listen-streams)を参照してください。
+- 拒否された Listen または Write のオープンに対する WebChannel の応答は、SDK プロトコルに従うものであり、記録された本番との互換性を主張するものではありません。[Listen ストリーム](#listen-streams)を参照してください。
+
+### Enterprise の範囲
+
+- テキスト検索は、ステミング、同義語展開、タイプミス訂正、言語の自動判別のないローカルエンジンを使用し、ジオ検索は未対応です。[Enterprise のテキスト検索](#enterprise-text-search)を参照してください。
+- パイプラインがカバーするのは読み取り操作の限られたサブセットで、本番との互換性を主張するのは、記録されたリクエストの形式だけです。[Enterprise パイプライン](#enterprise-pipelines)と[制限事項](../../compatibility/limitations/)を参照してください。
+
+### 本番検証
+
+書き込みと制限、クエリとインデックス、トランザクション、リアルタイムリスナー、Security Rules、データベース管理、Enterprise の全文検索、Enterprise パイプラインは、それぞれの領域の記録されたケースについて、実際の Firestore から得た記録と照合して検証されています。[互換性の表](../../compatibility/#production-verification)を参照してください。
+
+## 関連項目
+
+- [Security Rules](../../guides/security-rules/)
+- [プロファイル](../../guides/profiles/)
+- [互換性](../../compatibility/)と[制限事項](../../compatibility/limitations/)
+- [設定リファレンス](../../reference/configuration/)
