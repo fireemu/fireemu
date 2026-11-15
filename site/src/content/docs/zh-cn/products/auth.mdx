@@ -1,0 +1,587 @@
+---
+title: Authentication
+description: 在本地测试 Firebase Authentication 和 Identity Platform 流程，包括 TOTP MFA、多租户、OIDC 和 SAML 提供方以及阻塞函数。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 提供带有 Identity Platform 功能的 Firebase Authentication：包括 TOTP 在内的多重身份验证、多租户、OIDC 和 SAML 提供方以及阻塞函数。客户端 SDK、Admin SDK 以及 Identity Toolkit 和 Secure Token REST 路由都通过同一个端口访问它。
+
+<Facts items={[
+  { label: '状态', value: '已支持' },
+  { label: '默认端口', value: '9099' },
+  { label: '启动条件', value: '默认启动' },
+  { label: '生产环境验证', value: '参见兼容性表格', href: 'compatibility/#production-verification' },
+]} />
+
+## 可测试的内容
+
+- **无需真实消息的登录和账号流程。** 电子邮件操作链接和短信验证码会被打印出来并通过 REST 提供（[本地验证消息](#本地验证消息)）。
+- **你的项目配置**，在 `fireemu.toml` 中声明，而不是在每个测试中通过 Admin API 设置（[配置你的项目](#配置你的项目)）。
+- **TOTP 第二重验证**，与短信并列，通过 SDK 的 `TotpMultiFactorGenerator` 使用（[演练](#测试-totp-注册和登录)）。
+- 在 `auth.providers` 中声明的 **OIDC 和 SAML 提供方资源**。在 `strict` 下，通过未声明或已停用的 `oidc.*` 或 `saml.*` 提供方登录会被拒绝，与生产环境的拒绝方式一致，并且 `auth.idpAssertions = "signed"` 会在本地验证已签名的断言（[OIDC 和 SAML 提供方](#oidc-和-saml-提供方)）。
+- **与生产环境一致的租户检查。** 在 `strict` 下，指定项目中不存在的租户的请求会被拒绝，而不是创建该租户（[多租户](#多租户)）。
+- **阻塞函数**，包括 `strict` 下的 `beforeEmailSent`（[阻塞函数](#阻塞函数)）。
+- **注册配额错误**（[超出配额的行为](#超出配额的行为)）。
+
+`firebase-tools` 15.28.2 的 Authentication 模拟器支持电话（短信）第二重验证、租户、fixture `oidc.*` 和 `saml.*` 登录，以及 `beforeCreate` 和 `beforeSignIn` 阻塞函数。Fireemu 增加了 TOTP 第二重验证、已声明的 OIDC 和 SAML 提供方资源、`strict` 下生产环境的租户检查，以及 `strict` 下的 `beforeEmailSent` 阻塞函数。
+
+[兼容性表格](../../compatibility/)显示了哪些区域与真实 Firebase 项目的记录进行了比较。[限制](../../compatibility/limitations/)列出了不支持的内容。
+
+## 连接
+
+Authentication 模拟器默认监听 `127.0.0.1:9099`（可通过 `--http-port` 或 `firebase.json` 更改）。
+
+```js
+// Web SDK
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+const auth = getAuth(app);
+connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+```
+
+Admin SDK 读取 `FIREBASE_AUTH_EMULATOR_HOST`。在 `fireemu exec` 下，它会为你的命令设置为 `127.0.0.1:9099`。使用 `fireemu up` 时，请自行设置：`FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`。参见[连接你的应用](../../getting-started/connect/)和[环境变量](../../reference/environment-variables/)。
+
+## 本地验证消息
+
+Fireemu 会在本地电子邮件操作链接和短信验证码发出时，将它们打印到守护进程的标准输出（以及 Logging 模拟器），因此你无需发送真实消息即可完成登录和账号管理流程。这些行包含本地模拟器账号的凭据；共享测试输出时，请相应地处理捕获的日志。例如，一次运行会打印：
+
+```text
+  auth codes:       email action links and SMS codes are printed here as they are issued (they are credentials: do not forward this output to CI or shared logs; auth.logActionCodes = false silences them)
+  auth: To verify the email address ada@example.test, follow this link: http://127.0.0.1:9099/emulator/action?mode=verifyEmail&lang=en&oobCode=oob-3fb5430a00cf9e1a0002&apiKey=fake-api-key
+  auth: To reset the password for ada@example.test, follow this link: http://127.0.0.1:9099/emulator/action?mode=resetPassword&lang=en&oobCode=oob-039b95aa9467d4c80003&apiKey=fake-api-key&newPassword=NEW_PASSWORD_HERE
+  auth: To verify the phone number +15555550100, use the code 551768.
+```
+
+测试从模拟器的 REST 路由读取相同的值，而不是解析控制台输出。每个路由返回该项目迄今为止发出的验证码：
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/oobCodes
+# {"oobCodes":[{"email":"ada@example.test","oobCode":"oob-3fb5430a00cf9e1a0002","oobLink":"http://127.0.0.1:9099/emulator/action?mode=verifyEmail&...","requestType":"VERIFY_EMAIL"}, ...]}
+
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
+# {"verificationCodes":[{"code":"551768","phoneNumber":"+15555550100","sessionInfo":"sms-4e2ee8b8ae04bce80004"}]}
+```
+
+`auth.logActionCodes = false` 会停止输出这些控制台行（适用于共享或被捕获的日志）；REST 路由仍然可用。`--log-verbosity quiet` 也会使其静默。
+
+## 配置你的项目
+
+`fireemu.toml` 的 `auth` 部分声明你的应用所依赖的项目配置，因此测试无需每次都通过 Admin API 设置它。
+
+| 方面 | 可配置的内容 | 设置 |
+|---|---|---|
+| 基本登录和账号 | 启用或停用电子邮件/密码、匿名和电话登录 | `auth.signIn` |
+| | 操作链接 continue URL 的已授权网域 | `auth.authorizedDomains` |
+| | 共享同一电子邮件地址的账号 | `auth.signIn.allowDuplicateEmails` |
+| | 密码要求以及登录时的强制执行 | `auth.passwordPolicy` |
+| | 最终用户账号的创建和删除 | `auth.client.permissions` |
+| | 电子邮件枚举保护 | `auth.improvedEmailPrivacy` |
+| 高级安全和多重身份验证 | 多重身份验证 | `auth.mfa`（在 `emulator` profile 中还有 `auth.totp`） |
+| | 用于验证自定义令牌和 OIDC ID 令牌的公钥 | `auth.customTokenSigners`、`auth.idpSigners` |
+| | fixture 身份提供方断言，或与生产环境一样验证的已签名断言 | `auth.idpAssertions` |
+| 企业和多租户 | 租户和多租户开关 | `auth.tenants`、`auth.multiTenant` |
+| | 按项目和按租户的覆盖设置 | `auth.passwordPolicyOverrides`、`auth.configOverrides` |
+| | 阻塞函数 | `auth.blockingFunctions` |
+| | OIDC 和 SAML 提供方 | `auth.providers.oidc`、`auth.providers.saml` |
+| 测试和模拟 | 测试电话号码和验证码 | `auth.signIn.phoneNumber.testPhoneNumbers` |
+| | 未签名的模拟器自定义令牌（默认接受；使用 `productionExact` 时拒绝） | `auth.allowUnsignedCustomTokens` |
+| | Firestore、Storage 和 Realtime Database 安全规则中未签名模拟 ID 令牌的回退（默认开启；使用 `productionExact` 时关闭） | `auth.allowUnsignedIdTokens` |
+| | 注册配额和本地超出配额模拟 | `auth.quota`、`auth.quotaSimulation` |
+| | 在控制台打印电子邮件操作链接和短信验证码（默认开启） | `auth.logActionCodes` |
+
+此示例启用电子邮件/密码和电话登录，停用匿名登录，要求密码至少 12 个字符并包含大写、小写和数字字符，并阻止用户删除自己的账号：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+
+[auth]
+# 启用电子邮件枚举保护：true 或 false。
+improvedEmailPrivacy = true
+
+[auth.signIn]
+# 允许重复的登录电子邮件：true 或 false。
+allowDuplicateEmails = false
+
+[auth.signIn.email]
+# 启用电子邮件登录：true 或 false。
+enabled = true
+# 电子邮件登录需要密码：true 或 false。
+passwordRequired = true
+
+[auth.signIn.anonymous]
+# 启用匿名登录：true 或 false。
+enabled = false
+
+[auth.signIn.phoneNumber]
+# 启用电话号码登录：true 或 false。
+enabled = true
+
+[auth.signIn.phoneNumber.testPhoneNumbers]
+# 将 E.164 格式的测试电话号码映射到验证码字符串。
+"+16505550101" = "123456"
+
+[auth.passwordPolicy]
+# 密码政策强制执行："OFF" 或 "ENFORCE"。
+enforcementState = "ENFORCE"
+# 登录时要求升级以符合政策：true 或 false。
+forceUpgradeOnSignin = true
+
+[auth.passwordPolicy.constraints]
+# 最小密码长度：6 到 30。
+minLength = 12
+# 需要大写字符：true 或 false。
+requireUppercase = true
+# 需要小写字符：true 或 false。
+requireLowercase = true
+# 需要数字字符：true 或 false。
+requireNumeric = true
+
+[auth.client.permissions]
+# 停用客户端用户注册：true 或 false。
+disabledUserSignup = false
+# 停用客户端用户删除：true 或 false。
+disabledUserDeletion = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "improvedEmailPrivacy": true,
+    "signIn": {
+      "allowDuplicateEmails": false,
+      "email": {
+        "enabled": true,
+        "passwordRequired": true
+      },
+      "anonymous": {
+        "enabled": false
+      },
+      "phoneNumber": {
+        "enabled": true,
+        "testPhoneNumbers": {
+          "+16505550101": "123456"
+        }
+      }
+    },
+    "passwordPolicy": {
+      "enforcementState": "ENFORCE",
+      "forceUpgradeOnSignin": true,
+      "constraints": {
+        "minLength": 12,
+        "requireUppercase": true,
+        "requireLowercase": true,
+        "requireNumeric": true
+      }
+    },
+    "client": {
+      "permissions": {
+        "disabledUserSignup": false,
+        "disabledUserDeletion": true
+      }
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+对于现有的 `fireemu.toml`，请将所需的设置添加到其 `auth` 部分，并根据应用的需求调整值。[配置 schema](../../reference/configuration/) 给出了每个设置的格式和可接受的值。
+
+### 已授权网域
+
+声明 `auth.authorizedDomains`（例如 `["localhost", "app.test"]`），即可在任一 profile 中设置项目范围的初始列表。
+
+- 该列表会替换默认值，因此如果你的测试使用 `localhost`，请将其包含在内。在 `strict` 下，空列表不授权任何主机。缺失或为 `null` 的设置会保留现有默认值（`localhost` 以及项目的 `firebaseapp.com` 和 `web.app` 网域）。
+- 验证使用所选 profile 下 Admin API 的规则，包括将数字和布尔条目转换为字符串以及省略 `null` 条目。编写列表时请使用字符串。
+- Fireemu 为便于开发，有意在默认值中保留 `localhost`。[记录的生产环境沙盒基线](https://github.com/fireemu/fireemu/blob/main/conformance/auth-action-production.json)不包含它，新的生产环境项目也可能省略它。此默认值是 Fireemu 独有的便利功能，声明列表会替换它。
+- 在 `strict` profile 中，为租户请求的操作链接会根据当前生效的同一项目列表检查其 `continueUrl` 主机（已授权网域属于项目；租户没有自己的已授权网域），如果运行了 `beforeSendEmail` 函数，则在请求提交时再次检查。`emulator` profile 不检查任何网域。租户范围遵循资源模型；生产环境仅针对项目范围记录了此检查。
+- 在 `strict` profile 中，对于通过 `tenantId` 查询指定租户的请求，`GET /v1/projects` 会报告同一当前生效的项目列表。Firebase JS SDK 会根据此列表检查其来源，并且在该调用中不发送租户。`emulator` profile 在此处忽略租户，与官方模拟器相同。
+- Admin 更新会改变当前生效的列表。会话重置会恢复已声明的列表（如果存在），并且在未声明初始列表时保留 Admin 写入的列表。
+- 之后创建的项目会逐字接收该声明，与默认项目当前生效的列表无关。因此，列出某个特定项目的 `firebaseapp.com` 或 `web.app` 网域，会使之后的项目获得同一网域。
+- 清除账号不会影响当前生效的列表。Auth 导出/导入会传递账号，但不包含网域列表或其声明。
+- `emulator` profile 接受该设置并公开该列表，同时继续允许列表之外的操作链接 continue URL。
+
+### 项目和租户特定的设置
+
+使用 `auth.passwordPolicyOverrides` 为各个项目或租户指定不同的密码政策。使用 `auth.configOverrides` 自定义账号创建和删除权限以及电子邮件枚举保护。
+
+这些设置不会创建项目或租户。在 `auth.configOverrides` 或 `auth.passwordPolicyOverrides` 中指定租户不会创建它；请在 `auth.tenants` 中声明它以使其被创建。
+
+### OIDC 和 SAML 提供方
+
+使用 `auth.providers.oidc` 和 `auth.providers.saml` 声明项目的 OIDC 和 SAML 资源，使用 Admin v2 资源字段以及仅含 ID 的 `name`，例如 `oidc.fixture` 或 `saml.fixture`。完整资源名称会被拒绝。以下示例在两种 profile 中初始化一个 OIDC 提供方：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[[auth.providers.oidc]]
+# 提供方 ID，格式为 oidc.<id>（完整资源名称会被拒绝）
+name = "oidc.fixture"
+enabled = true
+clientId = "local-client"
+issuer = "https://issuer.test"
+
+[auth.providers.oidc.responseType]
+idToken = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "auth": {
+    "providers": {
+      "oidc": [
+        {
+          "name": "oidc.fixture",
+          "enabled": true,
+          "clientId": "local-client",
+          "issuer": "https://issuer.test",
+          "responseType": { "idToken": true }
+        }
+      ]
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- **fixture 断言（默认）。** 两种 profile 都接受官方模拟器接受的 fixture 断言（JSON 或未签名的 ID 令牌、JSON SAML 响应、登录小组件）。`emulator` profile 无论提供方是否已声明都会接受它们。`strict` profile 会拒绝未声明（或已停用）的 `oidc.*` 或 `saml.*` 提供方，与生产环境相同。
+- **已签名的断言。** 当 `auth.idpAssertions` 设置为 `"signed"`（或使用 `productionExact`，或存在 `auth.idpSigners`）时，strict OIDC 登录需要 `auth.idpSigners` 中有匹配的公共签发者密钥；不会获取任何密钥。此时 strict SAML 使用已声明的提供方证书，并保留其现有的断言检查。
+- **已声明的数组会替换。** 每个已声明的数组会替换该类提供方。`[]` 显式地使其从空开始，而缺失或为 `null` 的类型不声明任何初始资源。
+- **实时更改。** Admin 操作会更改当前生效的资源，直到会话重置恢复已声明的类型。之后的会话项目和路由项目会继承该声明，与默认项目的实时更改无关。租户资源和内置提供方保持独立。
+- **重置、快照和导出。** 清除账号会保留当前生效的资源。快照和 Auth 导出/导入不传递任何提供方资源或声明。
+- **Emulator profile。** 它继续接受其未签名的 fixture 凭据，而不要求已配置或已启用的提供方资源。
+- **仅限规范文件。** 这些声明需要带有 `schemaVersion = 1` 的规范文档。没有该版本的 Firebase 部署 `auth.providers` 部分仍是部署数据，不会安装任何提供方种子。
+
+## 多重身份验证
+
+Fireemu 支持 TOTP 和短信第二重验证。官方 Authentication 模拟器仅支持电话（短信）第二重验证。
+
+在 `strict` 下，与生产环境一样，TOTP 仅通过项目的 MFA 配置启用。该配置默认开启（短信和 TOTP 已启用），因此注册第二重验证无需控制台开关、Admin API 调用或 `auth.mfa` 块。使用 `productionExact` 时，新项目与生产环境一样以 MFA 关闭状态开始，在启用之前注册会应答 `OPERATION_NOT_ALLOWED`。
+
+使用 `auth.mfa` 以 Identity Platform 所用的形式声明配置，以镜像你的项目或关闭 MFA（`auth.mfa.state = "DISABLED"`）。已声明的块始终起决定作用：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+
+[auth.mfa]
+# 项目 MFA 状态："STATE_UNSPECIFIED"、"DISABLED"、"ENABLED" 或 "MANDATORY"。
+state = "ENABLED"
+
+[[auth.mfa.providerConfigs]]
+# 提供方状态："STATE_UNSPECIFIED"、"DISABLED"、"ENABLED" 或 "MANDATORY"。
+state = "ENABLED"
+
+[auth.mfa.providerConfigs.totpProviderConfig]
+# 接受的相邻 TOTP 间隔：0 到 10。
+adjacentIntervals = 1
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "mfa": {
+      "state": "ENABLED",
+      "providerConfigs": [
+        {
+          "state": "ENABLED",
+          "totpProviderConfig": {
+            "adjacentIntervals": 1
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 在两种 profile 中，该配置都在守护进程启动时生效，并应用于之后创建的每个项目（而不是默认项目的当前值）。它的验证方式与 Admin API 验证 `mfa` 更新的方式相同，生产环境会拒绝的值会使守护进程在启动时停止。
+- 其他一切不变。Admin API 更新会替换当前配置，停用 MFA 会与生产环境一样拒绝 TOTP。租户遵循其自身的 `mfaConfig`，而不是此设置。除非配置设置了 `adjacentIntervals`，否则接受的 TOTP 窗口仍为 `auth.totp.windowSteps`。
+- `POST /v1/sessions/{session}/reset` 会将项目恢复到已声明的配置，未声明时则恢复到默认值（短信和 TOTP 已启用）。在没有 `auth.mfa` 的 `productionExact` 下，重置不会影响通过 Admin API 设置的配置，与项目配置的其余部分相同。`DELETE /emulator/v1/projects/{project}/accounts` 仅清除账号。
+- 导出不包含项目的 `mfa` 配置，因此导入的项目会保留其自身的 `auth.mfa` 或 Admin 设置的配置。
+- `emulator` profile 保持 `auth.totp` 可用。在 `strict` 下，默认情况下 `auth.totp` 就足够了；在 `productionExact` 下，或 `auth.mfa` 使 TOTP 保持关闭时，它会打印一条指明 `auth.mfa` 的启动警告。
+
+### 测试 TOTP 注册和登录
+
+测试从 SDK 本身获取 TOTP 密钥：`TotpMultiFactorGenerator.generateSecret(session)` 返回一个 `TotpSecret`，其 `secretKey` 是 base32 共享密钥，并带有 `hashingAlgorithm`、`codeLength` 和 `codeIntervalSeconds`。SDK 没有计算验证码的函数，因此测试会像身份验证器应用那样，使用这些值计算 RFC 6238 验证码。登录提示（`resolver.hints`）包含该因素的 `uid`、`displayName` 和 `enrollmentTime`，从不包含密钥。
+
+与生产环境一样，注册第二重验证需要已验证的电子邮件地址（否则为 `auth/unverified-email`）。测试使用模拟器发出的操作链接来验证它，该链接从 `oobCodes` 路由读取（[本地验证消息](#本地验证消息)）。此流程在本地 `fireemu up`（0.48.0、`strict` profile、默认 MFA 配置）上使用 `firebase` 12.18.0 运行过：
+
+```js
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth, connectAuthEmulator, createUserWithEmailAndPassword, sendEmailVerification,
+  applyActionCode, reauthenticateWithCredential, EmailAuthProvider, multiFactor,
+  TotpMultiFactorGenerator, signInWithEmailAndPassword, getMultiFactorResolver, signOut,
+} from 'firebase/auth';
+import { createHmac } from 'node:crypto';
+
+const BASE = 'http://127.0.0.1:9099';
+const auth = getAuth(initializeApp({ projectId: 'demo-shop', apiKey: 'fake-api-key' }));
+connectAuthEmulator(auth, BASE, { disableWarnings: true });
+
+// 根据 TotpSecret（base32 密钥、周期、位数、算法）计算 RFC 6238 验证码。
+function totp(secret, atMs = Date.now()) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const bits = [...secret.secretKey.replace(/=+$/, '')]
+    .map((c) => alphabet.indexOf(c).toString(2).padStart(5, '0')).join('');
+  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(atMs / 1000 / secret.codeIntervalSeconds)));
+  const h = createHmac(secret.hashingAlgorithm.toLowerCase(), key).update(counter).digest();
+  const o = h[h.length - 1] & 15;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 10 ** secret.codeLength).padStart(secret.codeLength, '0');
+}
+
+const email = 'grace@example.test';
+const password = 'demo-pass-123';
+const { user } = await createUserWithEmailAndPassword(auth, email, password);
+
+// 使用模拟器发出的操作码验证电子邮件。
+await sendEmailVerification(user);
+const { oobCodes } = await (await fetch(`${BASE}/emulator/v1/projects/demo-shop/oobCodes`)).json();
+await applyActionCode(auth, oobCodes.findLast((c) => c.email === email && c.requestType === 'VERIFY_EMAIL').oobCode);
+await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, password));
+
+// 注册：密钥来自 SDK，验证码来自上面的辅助函数。
+const secret = await TotpMultiFactorGenerator.generateSecret(await multiFactor(user).getSession());
+await multiFactor(user).enroll(
+  TotpMultiFactorGenerator.assertionForEnrollment(secret, totp(secret)), 'Authenticator');
+await signOut(auth);
+
+// 注册验证码已用掉其时间步；使用下一个时间步的验证码登录。
+const period = secret.codeIntervalSeconds * 1000;
+await new Promise((r) => setTimeout(r, period - (Date.now() % period) + 500));
+
+try {
+  await signInWithEmailAndPassword(auth, email, password);
+} catch (error) {
+  if (error.code !== 'auth/multi-factor-auth-required') throw error;
+  const resolver = getMultiFactorResolver(auth, error);
+  const hint = resolver.hints.find((h) => h.factorId === TotpMultiFactorGenerator.FACTOR_ID);
+  const credential = await resolver.resolveSignIn(
+    TotpMultiFactorGenerator.assertionForSignIn(hint.uid, totp(secret)));
+  console.log('signed in as', credential.user.email);
+}
+```
+
+TOTP 注册成功会消耗被接受的时间步。在同一时间步内重复使用该验证码登录会被拒绝，因此示例会等待下一个时间步。在使用虚拟时间的测试中，请改为将世界时钟推进密钥的实际周期，并为该新时刻生成登录验证码；参见 [TOTP 测试方法](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code)。
+
+## 多租户
+
+多租户默认开启，因此 Admin API 可以创建租户，`auth.tenants` 也无需先启用任何内容即可加载。使用 `productionExact` 时，新项目与生产环境一样开始，在通过 Admin API 或在文件中启用 `multiTenant.allowTenants` 之前，租户会被拒绝。在任一情况下，`auth.multiTenant.allowTenants: false` 都会将其关闭。`auth.tenants` 的每个条目是一个 Admin v2 `Tenant` 文档加上其 `tenantId`：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+
+[auth.multiTenant]
+# 允许项目中存在租户：true 或 false。
+allowTenants = true
+
+[[auth.tenants]]
+# 租户 ID：以字母开头；最多 63 个字母、数字或连字符。
+tenantId = "tenant-a"
+# 租户显示名称：4 到 20 个字母、数字或连字符，以字母开头。
+displayName = "acme"
+# 允许此租户进行密码注册。
+allowPasswordSignup = true
+
+[auth.tenants.mfaConfig]
+# 租户的多重身份验证状态。
+state = "ENABLED"
+# 为该租户启用的多重身份验证提供方。
+enabledProviders = ["PHONE_SMS"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "multiTenant": {
+      "allowTenants": true
+    },
+    "tenants": [
+      {
+        "tenantId": "tenant-a",
+        "displayName": "acme",
+        "allowPasswordSignup": true,
+        "mfaConfig": {
+          "state": "ENABLED",
+          "enabledProviders": [
+            "PHONE_SMS"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+默认情况下，租户 ID 可以是任何以字母开头、由字母、数字和连字符组成（最多 63 个字符）的可读名称，例如 `tenant-a`。使用 `productionExact` 或 `auth.tenantIdFormat: "generated"` 时，它必须采用生产环境生成的形式：显示名称、一个连字符和五个 `a-z0-9` 字符，例如 `acme-x7k2q`。
+
+- 文档由 Admin 租户创建路由读取文档时所用的代码读取，因此生产环境会拒绝的值会使守护进程在启动时停止。租户按文件顺序以空状态创建，`mfaConfig` 和 `passwordPolicyConfig` 等设置来自文档。在 `emulator` profile 中，文件比路由更严格：它还会拒绝未知成员以及缺失或无效的 `displayName`，与生产环境相同。
+- 已声明的租户具有使用该文档进行 Admin 创建时得到的内容：省略的 `allowPasswordSignup`、`enableEmailLinkSignin` 或 `enableAnonymousUser` 为关闭，多重身份验证为关闭。`emulator` profile 为指定未知 ID 的请求顺带创建的租户则获得官方模拟器的默认值（三者均开启，`PHONE_SMS` 多重身份验证），因此请声明你的测试所需的内容。
+- 在 `strict` profile 下，与生产环境一样，租户只会在允许租户的项目中创建。新项目默认允许租户；使用 `productionExact`，或声明了 `allowTenants: false` 时，`auth.tenants` 需要 `auth.multiTenant.allowTenants: true`（否则守护进程拒绝启动）。`emulator` profile 无需该开关即可接受租户。
+- 默认项目和每个会话项目（`POST /v1/sessions`）都以已声明的开关和租户开始。`POST /v1/sessions/{session}/reset`（包括默认会话的）会以空状态重新创建它们，并将开关恢复为已声明的值；没有这些键时，重置不会影响 Admin 设置的开关。`emulator` profile 为未知项目 ID 创建的命名空间（与官方模拟器相同）也以已声明的开关和租户开始：它由已经会创建命名空间的请求（在那里写入用户、提供方或项目设置）以及在那里写入租户的请求（创建租户，或指定尚不存在的租户）创建，而不会仅由读取创建。为该项目 ID 创建的会话（`POST /v1/sessions`）会替换该命名空间（包括租户），并以已声明的租户开始。
+- 使用 `--import` 时，导入的租户对其 ID 具有权威性，导入未包含的已声明租户仍会被创建。如果你不断重新导入自己的导出（`--import dir --export-on-exit dir`），那么一旦已声明租户的导出副本存在，对其的编辑就会被忽略：当导入的租户文档与已声明的文档不同时，守护进程会打印一条指明该租户的警告（会比较文件可以声明的每个设置）。开关则相反：已声明的 `allowTenants` 优先于导入。重置后恢复的是租户的已声明版本，而不是导入的版本。
+
+### 请求创建的租户
+
+在 `emulator` profile 下，带有 API 密钥或 Authorization 标头、并指定项目中不存在的租户的请求会创建该租户，并且租户数量不受限制，与官方模拟器相同。`strict` 会拒绝此类请求，与生产环境相同。Fireemu 拒绝的请求（错误的凭据、在模拟器路由上没有控制令牌的浏览器页面、App Check、未知的 API 密钥）不会创建任何内容。
+
+与官方模拟器一样，对 `127.0.0.1` 的租户路由发出的不带 `Origin` 标头的普通 `GET` 会创建租户，因此你在模拟器运行时访问的任何网页都可以向其添加租户（但不能读取它们）。在这一点很重要的场合，请使用 `strict` profile。
+
+### 不带 API 密钥的客户端请求
+
+在 `emulator` profile 中，Fireemu 作为本地扩展，会处理不带 API 密钥或 `Authorization` 标头的 Identity Toolkit 和 Secure Token 客户端请求；此类请求不能隐式创建缺失的租户。将 `auth.requireClientApiKey` 设置为 `true`，可对这些请求返回官方模拟器的 403。默认值为 `false`；`strict` profile 不变。
+
+有关支持的 Admin API 范围，参见[兼容性文档](https://github.com/fireemu/fireemu/blob/main/docs/compatibility-contract.md)。
+
+## 令牌
+
+Fireemu 默认接受少数几种未签名的令牌，因此测试不需要签名密钥。每个默认值都有自己的设置，[`productionExact`](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose) 会将它们全部切换为生产环境的行为：
+
+| 开发默认值 | 设置 | 使用 `productionExact` 时 |
+|---|---|---|
+| 接受 Admin SDK 在模拟器模式下生成的未签名自定义令牌 | `auth.allowUnsignedCustomTokens` | 拒绝；请使用你的服务账号的公钥配置 `auth.customTokenSigners` |
+| Firestore、Storage 和 Realtime Database 安全规则接受 `@firebase/rules-unit-testing` 的未签名模拟 ID 令牌 | `auth.allowUnsignedIdTokens` | 模拟令牌回退被停用，因为生产环境会拒绝未签名的令牌；通过正常验证的 fireemu 签发的令牌仍被接受 |
+| 身份提供方登录接受 fixture 断言和登录小组件 | `auth.idpAssertions`（`"fixture"`） | `"signed"`：OIDC ID 令牌必须能用 `auth.idpSigners` 密钥验证，SAML 响应必须能用提供方的证书验证 |
+
+fixture 断言仅跳过签名检查。在 `strict` 下，当 `oidc.*` 或 `saml.*` 提供方没有配置（在 `auth.providers` 中声明它，或通过 Admin API 创建它）或已停用时，通过它登录仍会被拒绝，并返回生产环境的 `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` 或 `... is disabled.`。`google.com` 等内置提供方无需控制台配置即可登录；参见[其他开发便利功能](../../guides/profiles/#other-development-conveniences)。
+
+### 自定义令牌
+
+Firebase Admin SDK 在模拟器模式下生成的未签名自定义令牌默认被接受，包括在推荐的 `strict` profile 下以及配置了 `auth.customTokenSigners` 时。若要求已签名的自定义令牌，请将 `auth.allowUnsignedCustomTokens` 设置为 `false`，并使用服务账号的公共 JWK 集配置 `auth.customTokenSigners`。该设置仅适用于自定义令牌登录；strict 声明检查和已签名令牌验证仍然适用。在 `emulator` profile 中，将其设置为 `false` 还会停用 JSON 伪自定义令牌。
+
+### 未签名的模拟 ID 令牌
+
+在评估 Firestore、Storage 和 Realtime Database 安全规则时，`@firebase/rules-unit-testing` 的未签名模拟 ID 令牌默认被接受，包括在 `strict` profile 下。这是 `authenticatedContext()` 以及客户端 SDK 的 `mockUserToken` 选项发送的令牌（`@firebase/util` 中的 `createMockUserToken`）。
+
+- 正常验证首先运行。只有在其失败之后，模拟令牌回退才能接受令牌。
+- 在 `strict` 下，该回退只接受与 SDK 完全一致的形式：标头恰好为 `{"alg":"none","type":"JWT"}` 且签名为空的 JWT。当令牌指定了主体（`sub`）且其受众（`aud`）是请求所发往的项目时，`request.auth` 由令牌的声明构建，与官方模拟器的构建方式相同。不检查其 `exp`，因为 SDK 默认设置 `iat: 0` 和 `exp: 3600`。
+- 其他所有令牌都照旧验证，包括过期时间。这涵盖了 fireemu 自身签发的未签名 ID 令牌（其标头带有 `typ` 而不是 `type`），声称带有签名但签名无法验证的令牌仍会被拒绝。
+- `emulator` profile 与官方模拟器一样接受任何未签名的令牌，并且其 Storage 还接受其他项目的令牌。
+- 将 `auth.allowUnsignedIdTokens` 设置为 `false`（在任一 profile 中）或设置 `productionExact` 可停用此回退。这两个设置都不会拒绝通过正常验证的 fireemu 签发的未签名 ID 令牌。带有 `auth.idTokenSigning = "session-rsa"` 的会话不接受任何未签名的令牌。
+- 该设置不影响 callable Functions、Identity Toolkit 或 App Check。
+
+仅将已签发令牌的标头改为 SDK 形式，其载荷仍可能通过正常验证；这不是拒绝测试。如需拒绝测试，请使用默认 `iat: 0` / `exp: 3600` 的 `createMockUserToken`，或使用这些时间、一个主体以及以路由项目为受众，构造那个确切的标头和空签名，并在时钟晚于过期时间的情况下运行（包括 Firestore 的 30 秒容差）。
+
+### 函数内的令牌
+
+在这里运行的函数中，Admin SDK 的 `verifyIdToken` 和 `verifySessionCookie` 会跳过签名验证，因为只要设置了 `FIREBASE_AUTH_EMULATOR_HOST`，SDK 就只接受未签名的令牌（针对官方模拟器时也是如此）。因此，以这种方式对调用者进行身份验证的处理程序会接受带有正确声明的手工制作的未签名令牌，而生产环境会拒绝它。`auth.idTokenSigning = "session-rsa"` 无法解决此问题，因为那时 SDK 也会拒绝已签名的令牌。不要依赖本地的 `verifyIdToken` 调用来证明伪造的令牌会被拒绝；请针对已部署的函数测试该路径。
+
+## 阻塞函数
+
+`beforeUserCreated` 和 `beforeUserSignedIn`（及其 v1 形式）与生产环境一样在请求内运行。在 `strict` 下，`beforeEmailSent` 还会在密码重置或电子邮件登录邮件之前运行。它们从已加载的 Functions 代码库注册。
+
+`auth.blockingFunctions` 是可选的。它选择由哪个已发现的函数处理 `beforeCreate` 和 `beforeSignIn`，以及向其转发哪些凭据。提供其 `triggers` 映射会关闭 `beforeEmailSent`。
+
+## 超出配额的行为
+
+要测试注册配额错误，请设置 `auth.quotaSimulation`：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[auth.quotaSimulation]
+# 注册配额模拟："off"、"observe" 或 "enforce"。
+mode = "enforce"
+# 默认每小时注册配额：0 到 1,000,000。
+defaultQuotaPerHour = 5
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "auth": {
+    "quotaSimulation": {
+      "mode": "enforce",
+      "defaultQuotaPerHour": 5
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+这是一个本地固定窗口模拟，而不是 Firebase 完整的配额核算或滥用防范。
+
+## 与生产环境的差异
+
+### 支持范围之外
+
+与外部身份提供方通信的登录流程、托管的授权码交换以及实时密钥发现不在支持范围内。你配置的提供方的已签名 OIDC 和 SAML 断言会在本地验证；参见 [OIDC 和 SAML 提供方](#oidc-和-saml-提供方)。完整列表见[限制](../../compatibility/limitations/)。
+
+### 本页描述的本地行为
+
+以下行为与生产环境不同，并在其适用之处进行了描述：
+
+- 未签名的自定义令牌、未签名的模拟 ID 令牌和 fixture 身份提供方断言会被接受，直到 `productionExact` 或其各自的设置将其关闭（[令牌](#令牌)）。
+- 新项目中 MFA 和多租户为开启状态；使用 `productionExact` 时两者都以关闭状态开始（[多重身份验证](#多重身份验证)、[多租户](#多租户)）。
+- `localhost` 位于默认的已授权网域中（[已授权网域](#已授权网域)）。
+- 本地函数内的 `verifyIdToken` 和 `verifySessionCookie` 会跳过签名验证（[函数内的令牌](#函数内的令牌)）。
+- 注册配额是一个本地固定窗口模拟（[超出配额的行为](#超出配额的行为)）。
+
+## 相关内容
+
+- [Profile](../../guides/profiles/)：`strict`、`emulator` 和 `productionExact`。
+- [配置 schema](../../reference/configuration/)：每个 `auth` 设置。
+- [兼容性表格](../../compatibility/)和[限制](../../compatibility/limitations/)。
+- [App Check](../app-check/)：针对 Authentication 请求的强制执行。
