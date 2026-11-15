@@ -11923,15 +11923,10 @@ fn update(
             let _ = store.clear_emulator_valid_since(&uid);
         }
     }
-    // A privileged password replacement or an explicit validSince advances `validSince` but
-    // keeps the refresh-session record, so a session issued in the revocation second is not
-    // older than the floored instant and older sessions fail as TOKEN_EXPIRED. Administrative
-    // email changes still retire the session immediately. Credential-removal flags retain their
-    // existing session behavior.
-    let removes_refresh_credential = email_changed && !self_service;
-    if !stateless_refresh_tokens && removes_refresh_credential {
-        store.revoke_refresh_tokens(&uid);
-    }
+    // A privileged password replacement, an administrative email change or an explicit
+    // validSince advances `validSince` but keeps the refresh-session record, so a session issued
+    // in the revocation second is not older than the floored instant and older sessions fail as
+    // TOKEN_EXPIRED (an email change: AUTH-EDGES-OBS-20261115-01, admin-email-old-refresh).
     // Production's Admin update answer carries no `newEmail` (sandbox recording 2026-09-23,
     // `auth-account/admin/update#change-email`).
     let new_email = store
@@ -14738,7 +14733,9 @@ fn sign_in_with_email_link(
         return auth_error(&e);
     }
     // Strict: an account whose address was never verified loses its password when the link
-    // proves the address, as production does (sandbox recording 2026-09-24).
+    // proves the address, as production does (sandbox recording 2026-09-24), and the sessions
+    // it had end: their ID and refresh tokens answer TOKEN_EXPIRED (AUTH-EDGES-OBS-20261115-01,
+    // link-unverified-old-id and link-unverified-old-refresh). A verified account keeps both.
     let unverified_owner = store
         .user_by_email(&email)
         .filter(|u| !u.email_verified && !u.disabled)
@@ -14748,8 +14745,14 @@ fn sign_in_with_email_link(
         Err(e) => return auth_error(&e),
     };
     if strict && unverified_owner.as_ref() == Some(&uid) {
-        if let Err(e) = store.clear_password(&uid) {
-            return auth_error(&e);
+        match store.clear_password(&uid) {
+            Ok(true) => {
+                if let Err(e) = store.revoke_tokens(&uid, at) {
+                    return auth_error(&e);
+                }
+            }
+            Ok(false) => {}
+            Err(e) => return auth_error(&e),
         }
     }
     if let Some(u) = store.user_mut(&uid) {

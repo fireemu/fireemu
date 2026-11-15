@@ -1799,7 +1799,7 @@ fn an_administrative_email_change_revokes_sessions_and_a_profile_change_does_not
             400,
             "TOKEN_EXPIRED".to_owned(),
             400,
-            "INVALID_REFRESH_TOKEN".to_owned()
+            "TOKEN_EXPIRED".to_owned()
         )
     );
     assert_eq!(
@@ -23320,5 +23320,376 @@ fn duplicate_email_mode_refuses_a_password_account_move_even_when_it_drops_the_p
         (status, refused["error"]["message"].as_str()),
         (400, Some("EMAIL_EXISTS")),
         "{refused}"
+    );
+}
+
+// ---- AUTH-EDGES-OBS-20261115-01 ------------------------------------------------------------
+//
+// The production recording keeps only the leading machine code of each refusal, so these tests
+// compare that code (the text before " : ").
+
+fn leading_code(body: &Value) -> Option<&str> {
+    message(body).map(|m| m.split(" : ").next().unwrap_or(m))
+}
+
+/// The answers of an old session: the client lookup with its ID token and the refresh of its
+/// refresh token, as (status, leading code) pairs.
+fn old_session_answers(
+    s: &AuthState,
+    session: &Value,
+) -> ((u16, Option<String>), (u16, Option<String>)) {
+    let (lookup, looked) = post(
+        s,
+        &format!("{V1}/accounts:lookup"),
+        &json!({"idToken": session["idToken"]}),
+    );
+    let (refresh, refreshed) = post(
+        s,
+        "/securetoken.googleapis.com/v1/token",
+        &json!({"grant_type": "refresh_token", "refresh_token": session["refreshToken"]}),
+    );
+    (
+        (lookup, leading_code(&looked).map(str::to_owned)),
+        (refresh, leading_code(&refreshed).map(str::to_owned)),
+    )
+}
+
+fn edges_sign_up(s: &AuthState, email: &str) -> Value {
+    let (status, body) = post(
+        s,
+        &format!("{V1}/accounts:signUp"),
+        &json!({"email": email, "password": "edges-password-1", "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{body}");
+    body
+}
+
+fn edges_admin_update(s: &AuthState, body: &Value) {
+    let (status, answer) = admin(s, "POST", &format!("{ADMIN}/accounts:update"), body);
+    assert_eq!(status, 200, "{answer}");
+}
+
+fn edges_lookup(s: &AuthState, uid: &Value) -> Value {
+    let (status, users) = admin(
+        s,
+        "POST",
+        &format!("{ADMIN}/accounts:lookup"),
+        &json!({"localId": [uid]}),
+    );
+    assert_eq!(status, 200, "{users}");
+    users["users"][0].clone()
+}
+
+fn edges_link(s: &AuthState, email: &str) -> Value {
+    let (status, link) = oob(
+        s,
+        &json!({"requestType": "EMAIL_SIGNIN", "email": email, "canHandleCodeInApp": true,
+                "continueUrl": "https://demo-app.firebaseapp.com/edge"}),
+    );
+    assert_eq!(status, 200, "{link}");
+    link
+}
+
+/// Strict: an email link that proves the address of a client-created, never-verified account
+/// removes its password, marks the address verified and ends the sessions it had: the old ID
+/// token and the old refresh token both answer `TOKEN_EXPIRED` (AUTH-EDGES-OBS-20261115-01,
+/// link-unverified, link-unverified-password, link-unverified-old-id,
+/// link-unverified-old-refresh and their read-backs). A verified account keeps its password
+/// and its sessions (link-verified, link-verified-password, link-verified-old-id,
+/// link-verified-old-refresh).
+#[test]
+fn strict_email_link_ends_the_sessions_only_of_an_unverified_account() {
+    let s = strict_state();
+    email_links_on(&s);
+    // The sandbox project runs with improved email privacy, as in AUTH-ACTION.
+    with_email_privacy(&s);
+    let unverified = edges_sign_up(&s, "unverified@example.com");
+    let verified = edges_sign_up(&s, "verified@example.com");
+    edges_admin_update(
+        &s,
+        &json!({"localId": verified["localId"], "emailVerified": true}),
+    );
+    advance(&s, 2);
+    for (account, email, proved) in [
+        (&unverified, "unverified@example.com", false),
+        (&verified, "verified@example.com", true),
+    ] {
+        let link = edges_link(&s, email);
+        let (status, body) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithEmailLink"),
+            &json!({"email": email, "oobCode": link["oobCode"]}),
+        );
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["localId"], account["localId"]);
+        let link_session = body;
+        let user = edges_lookup(&s, &account["localId"]);
+        assert_eq!(user["emailVerified"], true, "{user}");
+        assert_eq!(user["passwordHash"].is_string(), proved, "{user}");
+        assert_eq!(
+            user["providerUserInfo"][0]["providerId"], "password",
+            "{user}"
+        );
+        let (status, body) = password_sign_in(&s, email, "edges-password-1");
+        if proved {
+            assert_eq!(status, 200, "{body}");
+        } else {
+            assert_eq!(
+                (status, leading_code(&body)),
+                (400, Some("INVALID_LOGIN_CREDENTIALS"))
+            );
+        }
+        let expected = if proved {
+            ((200, None), (200, None))
+        } else {
+            (
+                (400, Some("TOKEN_EXPIRED".to_owned())),
+                (400, Some("TOKEN_EXPIRED".to_owned())),
+            )
+        };
+        assert_eq!(old_session_answers(&s, account), expected, "{email}");
+        // The link's own session stays usable.
+        assert_eq!(
+            old_session_answers(&s, &link_session),
+            ((200, None), (200, None)),
+            "{email}"
+        );
+    }
+}
+
+/// The emulator profile keeps the password and the sessions, as firebase-tools 15.28.2 does
+/// (`signInWithEmailLink` only sets `emailVerified`); production's removal is strict-only.
+#[test]
+fn emulator_email_link_keeps_the_password_and_the_sessions() {
+    let s = state();
+    let unverified = edges_sign_up(&s, "unverified@example.com");
+    advance(&s, 2);
+    let link = edges_link(&s, "unverified@example.com");
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithEmailLink"),
+        &json!({"email": "unverified@example.com", "oobCode": link["oobCode"]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        old_session_answers(&s, &unverified),
+        ((200, None), (200, None))
+    );
+    assert_eq!(
+        password_sign_in(&s, "unverified@example.com", "edges-password-1").0,
+        200
+    );
+}
+
+/// Strict: a sign-in link issued before its account was disabled is refused with `USER_DISABLED`
+/// and leaves the account as it was (AUTH-EDGES-OBS-20261115-01, issue-disabled,
+/// disable-link-owner, disabled-link, disabled-link-readback).
+#[test]
+fn strict_email_link_of_an_account_disabled_after_issue_is_refused() {
+    let s = strict_state();
+    email_links_on(&s);
+    let account = edges_sign_up(&s, "disabled@example.com");
+    let link = edges_link(&s, "disabled@example.com");
+    edges_admin_update(
+        &s,
+        &json!({"localId": account["localId"], "disableUser": true}),
+    );
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithEmailLink"),
+        &json!({"email": "disabled@example.com", "oobCode": link["oobCode"]}),
+    );
+    assert_eq!((status, leading_code(&body)), (400, Some("USER_DISABLED")));
+    let user = edges_lookup(&s, &account["localId"]);
+    assert_eq!(user["disabled"], true, "{user}");
+    assert!(user["passwordHash"].is_string(), "{user}");
+    assert_ne!(user["emailVerified"], true, "{user}");
+}
+
+/// Strict: an address-change code refused for a disabled owner is not consumed; once the owner
+/// is enabled again the same code applies the change (AUTH-EDGES-OBS-20261115-01, issue-change,
+/// disable-change-owner, change-disabled, enable-change-owner, change-retry and read-backs).
+#[test]
+fn strict_email_change_refused_for_a_disabled_owner_keeps_its_code() {
+    let s = strict_state();
+    let account = edges_sign_up(&s, "change@example.com");
+    edges_admin_update(
+        &s,
+        &json!({"localId": account["localId"], "emailVerified": true}),
+    );
+    let (status, code) = oob(
+        &s,
+        &json!({"requestType": "VERIFY_AND_CHANGE_EMAIL", "email": "change@example.com",
+                "newEmail": "changed@example.com"}),
+    );
+    assert_eq!(status, 200, "{code}");
+    edges_admin_update(
+        &s,
+        &json!({"localId": account["localId"], "disableUser": true}),
+    );
+    let apply = || {
+        post(
+            &s,
+            &format!("{V1}/accounts:update"),
+            &json!({"oobCode": code["oobCode"]}),
+        )
+    };
+    let (status, body) = apply();
+    assert_eq!((status, leading_code(&body)), (400, Some("USER_DISABLED")));
+    assert_eq!(
+        edges_lookup(&s, &account["localId"])["email"],
+        "change@example.com"
+    );
+    edges_admin_update(
+        &s,
+        &json!({"localId": account["localId"], "disableUser": false}),
+    );
+    let (status, body) = apply();
+    assert_eq!(status, 200, "{body}");
+    let user = edges_lookup(&s, &account["localId"]);
+    assert_eq!(user["email"], "changed@example.com", "{user}");
+    assert_eq!(user["emailVerified"], true, "{user}");
+}
+
+/// Strict: the Admin generator's continue URL for a known address (AUTH-EDGES-OBS-20261115-01,
+/// continue-backslash, continue-javascript, continue-relative, continue-untrusted). A backslash
+/// ends the authority, so `https://<authorized>\@other/` names the authorized host and is
+/// accepted; a `javascript:` URL whose authority is an authorized host is accepted; a relative
+/// URL is `INVALID_CONTINUE_URI` and an unlisted host `UNAUTHORIZED_DOMAIN`.
+#[test]
+fn strict_admin_continue_urls_follow_the_recording() {
+    let s = strict_state();
+    let account = edges_sign_up(&s, "verified@example.com");
+    edges_admin_update(
+        &s,
+        &json!({"localId": account["localId"], "emailVerified": true}),
+    );
+    for (url, expected) in [
+        (
+            "https://demo-app.firebaseapp.com\\@example.invalid/edge",
+            None,
+        ),
+        ("javascript://demo-app.firebaseapp.com/edge", None),
+        ("/edge", Some("INVALID_CONTINUE_URI")),
+        ("https://example.invalid/edge", Some("UNAUTHORIZED_DOMAIN")),
+        // Near misses: the RFC reading of the backslash URL, and a javascript URL on an
+        // unlisted host, are refused.
+        (
+            "https://demo-app.firebaseapp.com@example.invalid/edge",
+            Some("UNAUTHORIZED_DOMAIN"),
+        ),
+        (
+            "javascript://example.invalid/edge",
+            Some("UNAUTHORIZED_DOMAIN"),
+        ),
+    ] {
+        let (status, body) = oob(
+            &s,
+            &json!({"requestType": "PASSWORD_RESET", "email": "verified@example.com",
+                    "continueUrl": url}),
+        );
+        match expected {
+            None => {
+                assert_eq!(status, 200, "{url}: {body}");
+                assert!(body["oobCode"].is_string(), "{url}: {body}");
+            }
+            Some(code) => assert_eq!((status, leading_code(&body)), (400, Some(code)), "{url}"),
+        }
+        let user = edges_lookup(&s, &account["localId"]);
+        assert_eq!(user["emailVerified"], true, "{url}: {user}");
+    }
+}
+
+/// Strict: an Admin address change ends the account's sessions; the old ID token and the old
+/// refresh token both answer `TOKEN_EXPIRED` (AUTH-EDGES-OBS-20261115-01, admin-email-change,
+/// admin-email-old-id, admin-email-old-refresh).
+#[test]
+fn strict_admin_email_change_expires_the_old_refresh_token() {
+    let s = strict_state();
+    let session = edges_sign_up(&s, "session@example.com");
+    edges_admin_update(
+        &s,
+        &json!({"localId": session["localId"], "emailVerified": true}),
+    );
+    advance(&s, 2);
+    edges_admin_update(
+        &s,
+        &json!({"localId": session["localId"], "email": "sessionalias@example.com"}),
+    );
+    assert_eq!(
+        old_session_answers(&s, &session),
+        (
+            (400, Some("TOKEN_EXPIRED".to_owned())),
+            (400, Some("TOKEN_EXPIRED".to_owned()))
+        )
+    );
+    let user = edges_lookup(&s, &session["localId"]);
+    assert_eq!(user["email"], "sessionalias@example.com", "{user}");
+    assert_eq!(user["emailVerified"], true, "{user}");
+}
+
+/// Strict: the session end of an unverified account's email link uses the floored `validSince`
+/// of every other revocation, so a session issued in the link's own second is not older than it
+/// and survives (unrecorded; the same rule as a privileged password replacement). Pins the
+/// boundary of `strict_email_link_ends_the_sessions_only_of_an_unverified_account`.
+#[test]
+fn strict_email_link_in_the_sign_up_second_keeps_that_session() {
+    let s = strict_state();
+    email_links_on(&s);
+    with_email_privacy(&s);
+    let account = edges_sign_up(&s, "same-second@example.com");
+    let link = edges_link(&s, "same-second@example.com");
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithEmailLink"),
+        &json!({"email": "same-second@example.com", "oobCode": link["oobCode"]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(!edges_lookup(&s, &account["localId"])["passwordHash"].is_string());
+    assert_eq!(
+        old_session_answers(&s, &account),
+        ((200, None), (200, None))
+    );
+}
+
+/// Strict: an email link ends earlier sessions only when it removes a password. An unverified
+/// account without one keeps its sessions (unrecorded: AUTH-EDGES-OBS-20261115-01 recorded only
+/// password accounts; fireemu keeps the behaviour it had before that recording).
+#[test]
+fn strict_email_link_without_a_password_to_remove_keeps_the_sessions() {
+    use fireemu_adapter_http::identity_toolkit::CUSTOM_TOKEN_AUDIENCE;
+    let s = strict_state();
+    email_links_on(&s);
+    with_email_privacy(&s);
+    create(
+        &s,
+        &json!({"localId": "passwordless", "email": "passwordless@example.com"}),
+    );
+    let now = 1_788_004_860;
+    let token = custom_token_from_payload(&json!({
+        "uid": "passwordless", "iss": TEST_SIGNER, "sub": TEST_SIGNER,
+        "aud": CUSTOM_TOKEN_AUDIENCE, "iat": now, "exp": now + 3600,
+    }));
+    let (status, session) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithCustomToken"),
+        &json!({"token": token, "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{session}");
+    advance(&s, 2);
+    let link = edges_link(&s, "passwordless@example.com");
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithEmailLink"),
+        &json!({"email": "passwordless@example.com", "oobCode": link["oobCode"]}),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        edges_lookup(&s, &json!("passwordless"))["emailVerified"],
+        true
+    );
+    assert_eq!(
+        old_session_answers(&s, &session),
+        ((200, None), (200, None))
     );
 }
