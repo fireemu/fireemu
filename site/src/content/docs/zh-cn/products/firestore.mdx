@@ -1,0 +1,593 @@
+---
+title: Cloud Firestore
+description: 在本地运行 Cloud Firestore，并针对生产环境的行为测试查询、复合索引、事务、监听器和安全规则。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 通过 gRPC、REST 以及 Web SDK 使用的 WebChannel 传输提供 Cloud Firestore，并支持 Firestore 安全规则。
+
+<Facts items={[
+  { label: '状态', value: '已支持' },
+  { label: '默认端口', value: '8080' },
+  { label: '启动条件', value: '默认启动' },
+  { label: '生产环境验证', value: '参见兼容性表格', href: 'compatibility/#production-verification' },
+]} />
+
+## 可测试的内容
+
+- [复合索引](#复合索引)：其索引未声明的查询会以 `FAILED_PRECONDITION` 被拒绝，并且[CI 作业可以根据缺失索引列表失败](#缺少索引时让-ci-作业失败)。
+- Standard 版的[查询限制](#查询限制)。
+- [监听器重连](#listen-流)，通过以生产环境的状态结束保持中的 `Listen` 流来测试。
+- 基于一小时文档历史的[事务、`read_time` 读取和恢复的监听器](#事务与历史)。
+- [安全规则](#安全规则)，包括每个[命名数据库](#命名数据库)各自的规则。
+- [Enterprise 文本搜索](#enterprise-文本搜索)以及 [Enterprise 管道](#enterprise-管道)的一个子集。
+
+## 连接
+
+Firestore 默认监听 `127.0.0.1:8080`（可通过 `--firestore-port` 或 `firebase.json` 更改；参见[所有默认端口](../../getting-started/install/#default-ports)）。
+
+```js
+// Web SDK
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+connectFirestoreEmulator(getFirestore(app), '127.0.0.1', 8080);
+```
+
+Admin SDK 无需编写代码。在 `fireemu exec` 下，`FIRESTORE_EMULATOR_HOST` 会为你的命令设置为 Firestore 的 `host:port`（参见[环境变量](../../reference/environment-variables/)）。使用 `fireemu up` 时，请自行设置，例如 `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`。有关更多 SDK 和项目 ID 规则，参见[连接你的应用](../../getting-started/connect/)。
+
+## 配置
+
+在 `fireemu.toml` 中选择数据库版本和 API 模式。`fireemu init` 会写入带 Native API 的 Standard 版：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+# "standard" 或 "enterprise"
+edition = "standard"
+# "native" 或 "mongodb-compatible"
+apiMode = "native"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`edition` 接受 `standard` 和 `enterprise`。Enterprise Pipeline API 支持有限的读取操作子集；参见 [Enterprise 文本搜索](#enterprise-文本搜索)、[Enterprise 管道](#enterprise-管道)和[限制](../../compatibility/limitations/)。
+
+其他 `firestore` 键在其适用之处描述：
+
+| 键 | 章节 |
+|---|---|
+| `firestore.missingIndexes` | [复合索引](#复合索引) |
+| `firestore.enforceLimits` | [查询限制](#查询限制) |
+| `firestore.listenStreamLifetime` | [Listen 流](#listen-流) |
+| `firestore.history` | [事务与历史](#事务与历史) |
+
+## 复合索引
+
+生产环境会拒绝其复合索引未定义的查询。官方模拟器不检查复合索引并运行每个查询，因此缺失的索引要等查询到达生产环境时才会首次暴露。Fireemu 与生产环境一样，根据 `firestore.indexes.json`（由 `firebase.json` 引用）中声明的索引检查每个查询。
+
+| `firestore.missingIndexes` | 行为 |
+|---|---|
+| `refuse`（默认） | 查询以 `FAILED_PRECONDITION` 和控制台链接被拒绝，与生产环境的拒绝方式一致。 |
+| `report` | 查询会运行。每个缺失的索引在每个数据库中只在标准错误上报告一次，附带生产环境的拒绝文本以及需要添加的 `firestore.indexes.json` 条目。 |
+
+`emulator` profile 与官方模拟器一样始终运行查询，并在标准错误上报告缺失索引的建议。
+
+OR 查询可能需要为每个分支单独的复合索引。补充诊断会在一次尝试中列出所有不同的缺失分支索引：
+
+- 在使用 `refuse` 的 `strict` 下，SDK 仍会收到其现有的 `FAILED_PRECONDITION` 响应和第一个创建链接。其他分支定义位于标准错误上。
+- 在 `report` 下，控制 API 报告也会收集这些不同的缺失定义。
+
+### 缺少索引时让 CI 作业失败
+
+标准错误上的报告在 CI 日志中很容易被忽略。在使用 `"report"` 的 `strict` 下，控制 API 还会列出每个缺失的索引，因此作业可以在列表非空时失败。开启报告：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+# "strict"（默认）或 "emulator"；下面的 "report" 需要 strict
+profile = "strict"
+
+[firestore]
+# "refuse"（默认）：以 FAILED_PRECONDITION 拒绝查询
+# "report"：运行查询，并列出每个缺失的索引
+missingIndexes = "report"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firestore": {
+    "missingIndexes": "report"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`fireemu exec` 会向其命令提供 `FIREEMU_CONTROL_URL`（以 `/v1/` 结尾）和 `FIREEMU_CONTROL_TOKEN`，因此运行测试的脚本可以在测试完成后检查该列表：
+
+```sh
+npx fireemu exec -- sh -c '
+  npm test
+  status=$?
+  curl -fsS -H "Authorization: Bearer $FIREEMU_CONTROL_TOKEN" \
+    "${FIREEMU_CONTROL_URL}firestore/missingIndexes" > missing-indexes.json || exit 1
+  [ "$(jq .count missing-indexes.json)" = 0 ] || { jq .indexesJson missing-indexes.json; exit 1; }
+  exit $status
+'
+```
+
+`GET /v1/firestore/missingIndexes` 的应答：
+
+```json
+{
+  "count": 1,
+  "truncated": false,
+  "dropped": 0,
+  "missingIndexes": [
+    {
+      "project": "demo-app",
+      "database": "(default)",
+      "name": "projects/demo-app/databases/(default)",
+      "index": {
+        "collectionGroup": "notes",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "owner", "order": "ASCENDING" },
+          { "fieldPath": "created", "order": "ASCENDING" }
+        ]
+      },
+      "message": "The query requires an index. You can create it here: https://console.firebase.google.com/..."
+    }
+  ],
+  "indexesJson": {
+    "projects/demo-app/databases/(default)": {
+      "indexes": [{ "collectionGroup": "notes", "queryScope": "COLLECTION", "fields": ["..."] }]
+    }
+  }
+}
+```
+
+#### 响应格式
+
+- 每个条目是每个数据库中的一个索引，按首次需要的顺序排列，并附带生产环境的拒绝文本。
+- `indexesJson` 按数据库对条目进行分组，形式与 `firestore.indexes.json` 所保存的相同，因此你可以将某个数据库的 `indexes` 数组合并到该文件中。
+
+#### 会话与清除
+
+- `GET /v1/sessions/{session}/firestore/missingIndexes` 仅列出该会话的项目。`GET /v1/firestore/missingIndexes` 列出每个项目。
+- 会话 `reset` 不会清除该列表，因此在用例之间进行重置的测试套件仍会报告它缺失的每个索引。删除会话会清除其项目的条目。
+- 对任一路由执行 `DELETE` 会清除列表和丢弃计数，并应答 `{"cleared": <count>}`。会话路由仅清除该会话的项目。不带会话的路由会清除每个会话的条目，因此与他人共享守护进程的测试世界应使用会话路由。之后再次需要的索引会被再次报告。
+- 使用 `fireemu/testing` 时，调用 `world.control('GET', '/v1/sessions/default/firestore/missingIndexes')`，并在同一路径上调用 `world.control('DELETE', ...)`，这样读取和清除都保持在你的世界的项目之内。
+
+#### 限制与拒绝
+
+- 该列表最多保存 1,000 个条目。超过之后，`truncated` 为 `true`，`dropped` 计数其索引未被列出的已服务查询。如果某个项目的所有索引都被丢弃，则以 `409` 和列表已满的消息应答，绝不会返回空列表，因此对 `count` 的检查不会在不完整的列表上通过。请清除列表后再次运行。
+- 在不报告任何内容的情况下（`emulator` profile、使用 `"refuse"` 的 `strict`，或未选择 Firestore），`GET` 以 `409` 和 `FAILED_PRECONDITION` 应答，因此依赖该列表的检查不会在空应答上通过。`DELETE` 仍应答 `{"cleared": 0}`。
+- 浏览器中的页面对这两种方法都需要 `Authorization: Bearer <control token>`，与资源报告相同，因为条目会指明你的查询进行筛选和排序的字段。
+
+### 对 `firestore.indexes.json` 的检查
+
+在 `strict` 下，Fireemu 在启动时拒绝 `firebase deploy` 会拒绝的内容。当文件在 Fireemu 运行期间发生变化时，它会保留之前的索引。消息会指明条目，并以文件路径开头，例如 `./firestore.indexes.json: indexes[0] (collection group notes): ...`。下面的每种拒绝都会展示导致它的条目以及生产环境接受的条目。
+
+**只有单个字段的复合索引。** 生产环境应答 "this index is not necessary, configure using single field index controls"。请改为在 `fieldOverrides` 下声明它，这也是启用单字段集合组查询的方式。`(field, __name__ DESC)`、`(__name__ DESC)` 和单个向量字段会被接受，与生产环境相同。
+
+```json title="被拒绝"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): this index is not necessary, configure using single field index controls
+```
+
+```json title="被接受"
+{ "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "notes", "fieldPath": "owner",
+      "indexes": [{ "queryScope": "COLLECTION", "order": "ASCENDING" }] }
+] }
+```
+
+**没有 `fields` 数组的条目。** 拼错的键（例如 `feilds`）看起来就是这样。
+
+```json title="被拒绝"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "feilds": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): Must contain "fields" (an array of index fields)
+```
+
+```json title="被接受"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+**没有 `indexes` 数组的 `fieldOverrides` 条目。** 仅含 TTL 的覆盖需要 `"indexes": []`。
+
+```json title="被拒绝"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.expireAt): Must contain "indexes" (an array, empty for a TTL-only override)
+```
+
+```json title="被接受"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+] }
+```
+
+**只有 `vectorConfig` 的 `fieldOverrides` 索引。** 每个覆盖索引都需要 `order` 和 `arrayConfig` 二者之一且仅其一。请改为将单个向量字段声明为复合索引，与生产环境相同。
+
+```json title="被拒绝"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "emb",
+    "indexes": [{ "queryScope": "COLLECTION", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.emb): Must contain exactly one of "arrayConfig,order" in each of its indexes
+```
+
+```json title="被接受"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "emb", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+Fireemu 按照 `firebase deploy` 读取这些形式的方式读取它们：
+
+- 缺失或为空的 `queryScope` 被读作 `COLLECTION`。
+- 旧的 `collectionId` 和字段 `mode` 键被读作 `collectionGroup` 和 `order` / `arrayConfig`。
+
+在两种 profile 下，一个文件最多保存 200 个复合索引，每个索引最多 100 个字段，每个索引最多一个数组字段。Admin API 的 `indexes.create` 应用相同的检查，并将文件中的索引与运行时创建的索引合并计入 200 的上限。
+
+`emulator` profile 不会拒绝这些条目，因为官方模拟器从不读取该文件。它按照 `firebase deploy` 使用的优先级和真值判断读取条目的复合字段模式，并忽略同时设置了 order 或 array 模式的字段覆盖的搜索配置。
+
+## 查询限制
+
+在 `strict` profile 下，Standard 版的查询限制会像生产环境那样被强制执行。将 `firestore.enforceLimits` 设置为 `false` 会让生产环境拒绝的查询通过，因此除非有特定理由，否则请保持开启。
+
+在 `strict` 下，该键只切换这些查询限制（最多 30 个析取、10 个 `not-in` 值等）。它不影响写入、事务和索引的限制，也不影响 REST 和 WebChannel 的行为。在 `emulator` profile 下，`true` 还会要求启用那些生产环境限制。
+
+## Listen 流
+
+生产环境会在最终用户的原生 gRPC `Listen` 流打开一小时后以 `INTERNAL` 结束它。默认情况下，无论保持多久，Fireemu 都会保持该流打开（`firestore.listenStreamLifetime: "unlimited"`）。要测试客户端的重连，请执行以下操作之一：
+
+- 将 `firestore.listenStreamLifetime` 设置为 `"oneHour"`（使用 `productionExact` 时的默认值）。
+- 在控制 API 上调用 `POST /v1/firestore/listen:expire`，以生产环境的状态一次性结束所有保持中的最终用户流。
+
+因凭据或 [App Check](../app-check/) 而被拒绝的 WebChannel Listen 或 Write 打开请求，会以 200 完成 HTTP 传输协商，然后传递 Web SDK 可以读取的终止性 `UNAUTHENTICATED` 或 `PERMISSION_DENIED` 协议错误。无效的或来自其他应用的 App Check 替换只会收到其终止性错误，而不会重放保留的文档。被拒绝的打开请求不会占用已准入会话的容量。此传输行为遵循 SDK 协议；它不是经记录的生产环境一致性声明。
+
+## 事务与历史
+
+与生产环境一样，Fireemu 会保留过去一小时内写入的文档的每个版本，因此 `read_time` 读取、只读事务或恢复的监听器都可以看到它。事务会锁定它读取的内容，与生产环境相同。存在争用的 gRPC 和 WebChannel 写入会在不占用运行时 worker 的情况下等待。取消正在等待的 Commit 会结束该请求的死锁等待；其事务会保持读锁，直到提交、回滚或过期。
+
+### 本地历史限制
+
+多次更新相同文档的测试会在内存中保存许多版本。以下生产环境没有的本地限制会对其加以约束：
+
+- 每个数据库最多保留 1 GiB 逻辑历史字节和 1,000,000 个版本，每个会话 1 GiB 和 1,000,000 个版本，守护进程 4 GiB 和 4,000,000 个版本。逻辑字节遵循 Firestore 的存储大小模型，并非进程的内存，后者可能大好几倍。
+- 在固定时钟（`daemon.clockStart`）上，时间不会自行流逝，因此数据库对任一文档最多保留 1,024 个版本。此限制的作用与下文的 `maxVersionsPerPath` 相同：一旦某个文档超过该限制，整个数据库的较旧快照都会被释放。
+- strict Listen 为每个活动数据库保留最新的 4,096 条边界记录。恢复的流会回显原始边界的 `read_time`，然后发送带 `CURRENT` 的新快照时间。令牌字节是不透明的，可能在没有写入的情况下发生变化。过期的记录或过期的文档历史会触发 `RESET` 和完整重放；重置、恢复和守护进程重启会丢弃这些记录。此上限是 Fireemu 本地的，不是生产环境的限制。
+- 会越过限制的提交会以 `RESOURCE_EXHAUSTED` 和消息 `Firestore retained history capacity is exhausted` 被整体拒绝。
+
+超过一小时的版本会在时钟越过它们之后的下一次提交时被释放。
+
+### 降低历史限制
+
+要使用更少的内存，请在 `firestore.history` 中降低限制：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+edition = "standard"
+apiMode = "native"
+
+[firestore.history]
+maxVersionsPerPath = 16
+maxBytes = 268435456
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native",
+    "history": {
+      "maxVersionsPerPath": 16,
+      "maxBytes": 268435456
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- `maxVersionsPerPath`（1 到 1,000,000）设置数据库对一个文档保留的最大版本数，适用于任一时钟，取代上述默认值。
+- `maxBytes`（1 MiB 到 1 GiB）降低一个数据库保留的逻辑历史字节数。导入（`--import`）不会据此检查：更大的导入会以一行指明数据库、其字节数和限制的 `warning:` 开始（超过该限制的快照恢复也会记录同一行），之后每次会使历史增长的写入都会以 `RESOURCE_EXHAUSTED` 被拒绝。
+
+没有这些键时，默认值适用。
+
+### 版本上限会释放什么
+
+版本上限分别作用于每个文档，但其影响会波及整个数据库。快照对每个文档都保持精确，因此一旦任何文档的版本数超过上限，数据库就不会保留早于该文档最旧保留版本的快照。此后：
+
+- 早于该时间点的 `read_time` 读取会以 `FAILED_PRECONDITION`（`The requested 'read_time' is no longer retained by this database.`）被拒绝。在此类 `read_time` 上新建的只读事务也一样（`read_time is no longer retained by this database`）。
+- 已在较旧快照上打开的事务，其下一次读取或提交会以 `ABORTED`（`The referenced transaction has expired or is no longer valid.`）失败，即使它只涉及其他文档。
+- 从较旧时间点恢复的监听器会被重置，并再次收到完整结果。
+
+客户端 SDK 会重试 `ABORTED` 事务，因此请避免过小的上限：选择一个大于在你最长的事务打开期间任一文档被更新次数的上限。
+
+`fireemu doctor --connect <control URL>` 报告正在运行的守护进程所保留的版本和字节。其 `history.*` 行给出相对于会话和守护进程限制的保留版本数和逻辑字节数，以及下一次压缩将释放多少字节。
+
+## 安全规则
+
+规则从 `firebase.json` 中指定的 `firestore.rules` 文件读取，或从 `fireemu.toml` 中的 `rules.source` 读取。在 `strict` 下，没有规则的项目会拒绝每个客户端请求，与没有规则发布的生产环境项目相同。参见[安全规则](../../guides/security-rules/)。
+
+## 命名数据库
+
+在 `firebase.json` 的 `firestore` 数组中声明每个命名数据库及其使用的 `rules` 和 `indexes` 文件，或通过 Admin API 创建它。在 `strict` 下：
+
+- 对既未声明也未创建的数据库的请求会得到 `NOT_FOUND`，与生产环境相同。
+- 已声明的数据库 ID 必须是生产环境可以创建的 ID（4 到 63 个 `[a-z0-9-]` 字符，以字母开头），否则 Fireemu 不会启动。
+
+生产环境仅通过数据库自身的规则发布来管控该数据库。因此，在运行时创建的数据库没有安全规则，在你为其设置规则之前会拒绝每个客户端请求；`(default)` 数据库的规则不适用于它。请在 `firebase.json` 中连同其 `rules` 文件声明该数据库，或在运行时加载规则：
+
+```
+PUT /emulator/v1/projects/{project}/databases/{database}:securityRules
+{"rules": {"files": [{"name": "firestore.rules", "content": "..."}]}}
+```
+
+这就是 `PUT /emulator/v1/projects/{project}:securityRules` 用于 `(default)` 数据库的路由，具有相同的正文和应答。以这种方式设置的规则会持续到数据库被删除；它们不属于快照的一部分。
+
+`emulator` profile 保持官方模拟器的行为：没有自己规则的数据库由 `(default)` 数据库的规则提供服务（使用上述路由为其加载的规则适用于它）。
+
+## Enterprise 文本搜索
+
+`firestore.indexes.json` 中受支持的文本定义（`searchConfig.textSpec`）会在 Enterprise 数据库上进入本地文本目录，并为 `collection(...).search({ query: documentMatches(...) })` 提供服务。搜索索引与普通查询规划保持分离。Standard 版仍接受有效的搜索索引配置但不提供搜索服务，并且不支持地理搜索。
+
+本地 `fireemu-lexical-v1` 引擎使用确定性的 Unicode 规范化和分词、AND 词项、位置短语、排除项以及已索引字段限制。
+
+- 支持按创建时间排序，按分数排序遵循记录的生产环境结果顺序。数值 `score()` 值是近似值。
+- 没有词干提取、同义词扩展、拼写纠错或语言自动检测。
+- 在记录到相应的生产环境行为之前，`productionExact` 会拒绝搜索。
+- 显式的 Fireemu 控制操作会推进、完成、失败和修复按代划分的构建。
+
+有关设置、控制和确切限制，参见[本地文本搜索指南](https://github.com/fireemu/fireemu/blob/main/docs/text-search.md)。
+
+## Enterprise 管道
+
+在 Enterprise 数据库上，fireemu 运行来自 Admin SDK（gRPC）和 Web SDK 的 `firebase/firestore/lite/pipelines`（REST `:executePipeline`）的管道。
+
+Enterprise 管道已针对包含 1,951 个记录用例的记录语料库与生产环境进行验证：
+
+| 用例数 | 结果 |
+|---|---|
+| 1,906 | 一致。 |
+| 17 | 在生产环境自身的变化范围内一致（响应帧和随机的 `sample` 位置）。 |
+| 26 | 仅在项目所有者接受的方面存在差异（聚合组的顺序、在未排序的组之后 `limit` 或 `offset` 下对组的合法选择、在每个排序键上都相同的行的顺序，以及依赖于时钟的值）。 |
+| 2 | 记录器无法发送的 gRPC 请求；它们由之后的一次观察覆盖。 |
+
+未记录的形式不作声明，strict profile 会将其中许多作为未观察的形式拒绝；[生产环境验证](../../compatibility/#production-verification)表格列出了未声明的项目。
+
+### 支持的阶段和表达式
+
+受支持的子集以 `collection`、`collection_group`、`documents` 或有限的 `database` 输入开始，后跟任意顺序和数量的 `where`、`select`、`sort`、`add_fields`、`remove_fields`、`distinct`、`aggregate`、`offset`、`limit` 和 `unnest` 阶段。聚合包括 `count`、`count_distinct`、`sum`、`average`、`minimum` 和 `maximum`，可带或不带分组。
+
+| 表达式 | 支持的内容 |
+|---|---|
+| 字段 | 嵌套路径（`a.b`）和 `__name__`（文档引用） |
+| 字面量 | 所有类型的值，包括由字面量组成的数组和映射以及双精度向量 |
+| 比较 | `equal`、`not_equal`、`less_than`、`less_than_or_equal`、`greater_than` 和 `greater_than_or_equal`，可用于任何表达式所在的位置 |
+| 构造 | `array(...)` 和 `map(...)` |
+| 数组访问 | `array_length`、`array_first`、`array_last`、`array_get`、`array_slice`、`array_first_n`、`array_last_n`、`array_index_of`、`array_index_of_all`、`join`、`maximum_n` 和 `minimum_n` |
+| 数组辅助函数 | `array_concat` 和 `array_reverse` |
+| 时间戳函数 | `current_timestamp`、`timestamp_add`、`timestamp_subtract`、`timestamp_trunc`、`timestamp_diff`、`timestamp_extract`、`unix_micros_to_timestamp`、`unix_millis_to_timestamp`、`unix_seconds_to_timestamp`、`timestamp_to_unix_micros`、`timestamp_to_unix_millis` 和 `timestamp_to_unix_seconds` |
+| 映射函数 | `map_get`、`map_set`、`map_remove`、`map_merge`、`map_keys`、`map_values` 和 `map_entries` |
+| 正则表达式 | `regex_contains`、`regex_match`、`regex_find` 和 `regex_find_all` |
+| 文档函数 | `documentId`、`collectionId` 和 `parent` |
+| 逻辑、存在性、类型和成员关系 | `and`、`or`、`not`、`xor`、`nor`、`exists`、`is_absent`、`is_error`、`type`、`is_type`、`array_contains`、`array_contains_all`、`array_contains_any`、`equal_any` 和 `not_equal_any` |
+| 字符串 | `byte_length`、`string_index_of`、`string_repeat`、`string_replace_all`、`string_replace_one`、`string_reverse`、`concat`、`to_lower`、`to_upper`、`starts_with`、`ends_with`、`string_contains`、`char_length`、`substring`、`trim`、`ltrim`、`rtrim` 和 `split` |
+| 向量标量 | `vector_length`、`dot_product`、`euclidean_distance` 和 `cosine_distance` |
+| 惰性控制 | `if_absent`、`if_null`、`if_error`、`conditional` 和 `switch_on` |
+| 数学 | `add`、`subtract`、`multiply`、`divide`、`mod`、`abs`、`round`、`floor`、`ceil` 和 `pow` |
+
+### 更多已记录的形式
+
+- **空构造器。** 记录的空 `array()` 和 `map()` 构造器返回空值。其他构造器形式不在这些观察范围内。
+- **`like`、`rand`、`array_filter` 和 `array_transform`。** 这些额外记录的形式受支持。输入类型、lambda 位置和组合仍然受限。随机值不会重现生产环境的随机序列。
+- **标量 `minimum`、`maximum`、`sum` 和 `negate`。** 记录的标量形式受支持，包括捕获的整数、有限双精度、混合数值以及 null/absent 情况。记录的 `sum([])` 返回 null。其他类型、非有限输入和数值极端情况不在此有限的兼容性声明范围内。
+- **通用形式。** 其他记录的通用形式包括 `cmp`、`storage_size`、`coalesce`、`get_field`、`offset`、`reverse`、`length`、`string_concat`、`namespace`、`has_ancestor`、`reference_slice`、`replace_document_id` 和 `autogen_document_id`。每次观察涵盖其声明的输入类型：例如，`storage_size` 目前支持字符串，而记录的 `reverse` 形式涵盖字符串、字节和数组。生成的文档 ID 遵循有限的 20 字符 ASCII 字母数字约定；这些观察并不能确立熵或全局唯一性。
+
+上述数组、映射、正则表达式和时间戳函数、`unnest` 以及零计数行为在两种 profile 中都可用。生产环境比较涵盖记录的用例，而不是每种输入类型或组合。
+
+**映射函数。** `map_set` 保留显式的 null 值，并移除值为 absent 的键。null 或 absent 的输入映射产生 absent 结果，而其他列出的映射函数对该输入返回 null。该移除行为遵循文档化的 API，尚未在生产环境中观察到。映射的键、值和条目使用 Fireemu 的确定性映射顺序，对应的键和值保持配对。记录的生产环境映射在其两个键上一致；其他映射在生产环境中的顺序未经验证。
+
+**更多数学函数。** emulator profile 还会在省略精度或精度为零时计算 `sqrt`、`exp`、`ln`、`log`、`log10` 和 `trunc`。非零截断精度以及有限指数的次正规输出未被观察过。strict 在其支持的上下文中准入已记录的有限数值和错误形式；未记录的数值、定义域、null、类型和优先级情况仍受限制。这些函数并不能确立一般的生产环境一致性。
+
+**字符串和向量函数。** 字符串函数在其支持的形式上运行；strict 会拒绝未记录的类型和非 ASCII 搜索偏移量，repeat 和 replacement 应用本地输出大小上限。strict `array_index_of_all` 接受观察到的整数形式。向量标量函数会拒绝未记录的、空的、不匹配的或非有限的二进制向量以及不受支持的数值极端情况；这些限制并不能确立一般的生产环境兼容性。
+
+**数组函数和字节。** 额外的数组函数和 `unnest` 涵盖记录的输入形式；未记录的组合和顺序仍未经验证。strict Firestore REST 接受记录的标准和 URL 安全 base64 形式以及 protobuf `bytes_value` 别名，并拒绝记录的 CR/LF 和混合字母表形式。普通的 emulator profile 为便于开发保留宽松的解码；其额外接受的形式不是生产环境兼容性声明。
+
+### 行为细节
+
+#### 时间戳
+
+管道时间戳使用微秒精度。`current_timestamp` 在每个请求中对配置的时钟采样一次，并在该管道求值过程中保持不变。时区感知的截断和提取使用 IANA 命名时区；生产环境记录仅涵盖特定的时区情况。模糊或不存在的本地夏令时边界会作为未观察情况被拒绝，并且未实现自定义 GMT 偏移语义。其他时区、边界和输入组合并未通过这些记录被确立为与生产环境兼容。
+
+#### 正则表达式
+
+在两种 profile 中，regex 函数都遵循 2026-11-10 的生产环境记录。
+
+- `\d`、`\D`、`\w`、`\W`、`\b` 和 `\B` 仅限 ASCII。
+- `\s` 是 ASCII 空白字符加上垂直制表符，不匹配不换行空格。`\s` 中除空格、制表符和垂直制表符之外的成员（换行、换页、回车）是推定的，未被记录。
+- `\pL` 和 `\p{Nd}` 是 Unicode。
+- `(?i)` 仅折叠 ASCII 字母。`(?u)` 和 `(?-u)` 被接受且不改变任何内容。`(?U)` 不会使量词变为惰性。
+- `[[:digit:]]` 等 POSIX 类和 `(?m)` 标志会以 `Unsupported regex syntax.` 被拒绝，与生产环境相同。
+- `regex_find` 和 `regex_find_all` 最多接受一个捕获组，更多时以 `At most one capture group is supported.` 拒绝；未匹配的组产生 null。`regex_contains` 和 `regex_match` 接受任意数量的组。`regex_match` 要求完整字符串匹配。
+
+`strict` 下没有任何记录涵盖的输入（花括号重复、其他标志和标志组合、`\A` 和 `\z`、`\n` 等转义、其他属性名、嵌套类和类集合运算符、带类的 `(?i)` 或 `(?U)`）会作为未观察情况被拒绝。`emulator` profile 使用本地引擎对其求值，其结果并未被确立为与生产环境一致。
+
+生产环境未记录模式长度限制。在本地，长于 128 KiB 的模式，或其 ASCII 改写长于 1 MiB 的模式，在两种 profile 中都会作为未观察情况被拒绝，超过引擎编译大小限制的模式也一样。
+
+#### 零计数
+
+在两种 profile 中，为零的 `limit` 不向下一阶段传递任何行，为零的 `offset` 传递所有行。strict profile 对这些输入遵循记录的生产环境用例。
+
+#### 已记录的错误
+
+strict profile 会重现生产环境记录的 `INTERNAL` 响应，适用于无参数且选项为空的 `array_reverse()`，以及一种写法带引号而另一种不带引号的重复 select 别名。Fireemu 会向标准错误写入一条不含请求值的固定说明。带非空选项的零参数 `array_reverse()` 保持其之前的拒绝，emulator profile 保留其之前的验证行为。这些错误仅涵盖记录的形式；请调整调用或别名以继续。
+
+strict 原生 gRPC 还会重现 `bit_not`、`bit_left_shift` 和 `bit_right_shift` 有限整数形式的记录 `INTERNAL` 错误。控制台会解释此行为，但不包含请求值。这些观察确立了声明的原生请求形式的错误兼容性；成功的位运算语义和 REST 错误一致性仍未经验证。emulator profile 保留其之前的拒绝。
+
+其他记录的验证优先级用例一致，并且对于捕获的有序 REST `collection_id` 类型错误，结构化的 `ErrorInfo` 会被保留。其他优先级组合和模糊的原生映射顺序仍受限制。
+
+捕获的原生 gRPC `geo_distance` select 调用（带两个有效的地理点）会返回其仅限搜索的 `INVALID_ARGUMENT` 诊断；地理搜索仍不在此管道兼容性声明范围内。
+
+在两种 profile 中，记录的对整数进行的嵌套聚合标量 `sum` 调用会返回 `INVALID_ARGUMENT`，并附带生产环境的 `array_sum` 诊断：expected Array, got LONG。请向该标量调用提供数组；其他参数形式保留其现有的限制。
+
+#### 结果、帧与顺序
+
+- 只有当条件（比较、字段或其他受支持的函数）为 `true` 时，`where` 才保留该行。
+- 与生产环境一样，一个 `select` 最多设置 64 个字段。
+- 没有 `select` 的结果带有文档的名称、创建时间和更新时间，应答通常带有执行时间；仅含缺失项的 `documents` 输入保留其选定的执行时间。
+- 小的应答按照生产环境的方式分帧：通过 gRPC 时所有结果在一条响应消息中，通过 REST 时在一个数组元素中。Fireemu 会在约 1 MiB 结果处切分较大的应答；生产环境记录显示边界是可变的；大应答的分帧未经验证。
+- `select({__name__: field("__name__")})` 会应答文档名称，包括与其他别名并列或带引号的别名和值的记录形式；未记录的形式在 `strict` 下仍为 `UNIMPLEMENTED`。
+- 没有 `sort` 时，记录的集合读取遵循文档 ID 的 CRC-32 升序；集合组先按父路径，然后按该顺序。非 ASCII ID 和 CRC-32 相同的情况未经验证，聚合组顺序以及 limit 下相同项的顺序也未经验证。
+- 存储的 `-0.0` 读回时为 `-0.0`，与生产环境相同；官方模拟器将其存储为 `0.0`。
+
+### Profile 之间的差异
+
+记录的一致应答涵盖来自 FS-ENT-ORACLE 观察的特定请求形式，包括比较、字面量值、select 别名、文档函数、阶段顺序以及受支持的字符串和数学函数。其他已记录和未记录的形式仍未经验证。
+
+在 `strict` 下，通常只有当请求具有生产环境拒绝过的请求的形式时，才会以该请求的文本应答拒绝，否则为 `UNIMPLEMENTED`；下文描述的 gRPC 深度例外也适用。形式会按顺序保留阶段、函数名、值的种类以及每个映射的条目，只替换普通字段名和同种类的值，因此 `select({total: documentId(field)})` 的应答与记录的 `select({v: documentId(field)})` 相同。REST 正文保留其键顺序；通过 gRPC 时，包含两个或更多条目的映射没有顺序，因此 `strict` 通常不会在那里对此类请求应答拒绝，下文描述的已记录 gRPC select 宽度用例除外。
+
+在未观察过生产环境的情况下，各 profile 有所不同：
+
+| 输入 | `strict` | `emulator` |
+|---|---|---|
+| 对名称为非 ASCII 的集合引用使用文档函数 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，索引以 UTF-16 单元计数 |
+| 记录的保留映射键拒绝 | 对记录的形式返回 `INVALID_ARGUMENT`；未记录的形式仍受限制 | `INVALID_ARGUMENT`，首先指明保留键 |
+| 记录的文档函数类型错误请求 | 对记录的 REST 形式返回 `INVALID_ARGUMENT`；无序的 gRPC 向量映射仍为 `UNIMPLEMENTED` | `INVALID_ARGUMENT`，指明类型 |
+| 为双精度数、null 或整数和布尔值以外的其他类型的 `map(...)` 键 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，指明类型 |
+| 含整数或 NaN 元素、没有元素、没有 `value` 或带有其他键的向量字面量 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，官方文本 |
+| 含无穷大元素的向量字面量 | `UNIMPLEMENTED` | 该向量 |
+| 不是字符串的 `__type__` 键，或未指明任何文档的引用字面量 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，官方文本 |
+| 一个管道中有两个拒绝 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，其中之一 |
+| 生产环境仅在另一阶段记录过的拒绝，例如 `where` 条件中包含字段的字面量 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，官方文本 |
+| 含负零元素的向量字面量 | `UNIMPLEMENTED` | 该向量 |
+| 记录的空或保留字面量键拒绝，包括 `__name__` 和多键情况 | 通过 REST 和对无歧义的 gRPC 返回 `INVALID_ARGUMENT`；三个无序多键 gRPC 用例仍为 `UNIMPLEMENTED` | `INVALID_ARGUMENT`，指明一个键 |
+| 记录的错误类型的 `limit` 和 `offset` 参数以及负的 `offset` | 对记录的形式返回 `INVALID_ARGUMENT`；其他形式仍受限制 | `INVALID_ARGUMENT`，官方文本 |
+| 为 0 的 `limit` 或为 0 的 `offset` | 记录的零计数行为 | 相同的零计数行为 |
+| 一个 `select` 别名位于另一个别名内部，且顺序不同于生产环境的 `{m, m.r}`，例如 `{a.b, a}` | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，通过 REST 时指明较后的别名（与官方模拟器相同），通过 gRPC 时指明子项 |
+| 未记录的、两个字段求值时都失败的 `select`，例如 `{a: documentId("s"), b: parent(true)}` | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，按键顺序的第一个 |
+| 数组内的向量，或字面量中与其他键并列的 `__type__` 键 | `UNIMPLEMENTED` | 官方应答 |
+| 受支持函数的未记录的错误参数数量 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，fireemu 的文本 |
+| 函数选项 | `document_id(__name__)` 上记录的单整数 `x` 选项在其两阶段投影形式中被接受；其他选项仍受限制 | 被忽略，与官方模拟器忽略它们相同 |
+| 空的 `select` 映射，或在 fireemu 不检查的函数或阶段值之后的后续阶段检查（生产环境首先指明未知函数） | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，空映射或后续检查 |
+| 没有任何记录涵盖的 regex 构造，例如 `a{2}`、`\n`、`(?x)` 或 `(?i)[a-c]` | `UNIMPLEMENTED` | 本地引擎的结果 |
+| 与对其常量失败的函数调用（例如 `map(1.5, i)`）或与 `strict` 不应答的任何其他部分并列的空映射或其他拒绝 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`，空映射或其他拒绝 |
+| 未记录的阶段参数数量或选项 | `UNIMPLEMENTED` | 取决于阶段和参数形式 |
+| 空的 `array()` 或 `map()` | 记录的空数组或空映射 | 空数组或空映射 |
+| 没有分组参数的 `aggregate` | 对记录的形式（紧跟在集合之后、将普通别名映射到 `count` 的非空映射）返回带有生产环境元数文本的 `INVALID_ARGUMENT`，否则为 `UNIMPLEMENTED` | 带有相同文本的 `INVALID_ARGUMENT` |
+
+### Union、采样、子查询和其他阶段
+
+**`union`。** 有限的 `union` 分支可以使用带行内 `where` 和 `select` 的集合输入；不受支持的子阶段和输入会被拒绝。源读取共享一个快照，嵌套分支具有本地深度和大小限制。
+
+**`sample`。** `sample(size, mode)` 支持不放回的 `documents` 采样和按输入顺序的 `percent` 采样：例如，`sample(0.5, "percent")` 对每行使用 0.5 的概率，而 `sample(2, "documents")` 最多选择两行。随机结果会变化，不会重现生产环境的随机序列。
+
+**`replace_with` 和 `find_nearest`。** 有限的 `replace_with` 支持完全替换以及已实现的覆盖和保留合并模式；完全替换会丢弃源文档元数据。有限的 `find_nearest` 支持欧几里得、余弦和点积度量，以及本地要求的 limit 和距离字段选项。其他形式仍未经验证或被拒绝。
+
+**读取时间和事务。** gRPC 和 REST 路由都以记录的形式，为带读取时间、现有事务或新事务的有限 `documents`、`collection` 和 `collection_group` 输入提供服务，并支持现有或新事务的自动提交。带自动提交的读取时间，以及带选择器的 `database`、`union` 或 `search` 输入仍被拒绝。不受支持的执行形式会被明确拒绝。记录的验证失败可以返回 `INVALID_ARGUMENT`，而不会使建议的函数变为可执行。记录的一致结果仅为记录的请求形式确立兼容性；其他形式仍未经验证。
+
+**更多聚合和子查询。** `array_agg`、`array_agg_distinct`、`first`、`last` 和 `count_if` 的有限记录形式受支持。有界的子集合和相关标量子查询形式共享一个源快照；不受支持的输入、阶段和绑定会被拒绝，并适用本地资源限制。聚合顺序和未记录的形式不作为生产环境一致性声明。
+
+受支持的相关标量子查询可以在检查基数之前应用额外的字符串相等筛选。记录的单结果请求返回所选的值，记录的多结果请求收到生产环境的 `INVALID_ARGUMENT` 诊断。这些观察仅涵盖那些记录的请求形式；零结果行为和其他标量形式仍未经验证。
+
+**深度和宽度。** 普通 REST 对深度嵌套的管道 JSON 报告记录的深度诊断，strict gRPC 准入记录的 65 字段 `select` 拒绝。超过 32 层的 gRPC 函数表达式在两种 profile 中都会被拒绝；strict gRPC 还会将 protobuf 递归失败映射到记录的无效参数诊断。gRPC 的限制和诊断推广到观察到的链之外；错误优先级和其他未记录的情况仍未经验证。
+
+**缺失的嵌套别名。** 选择缺失的嵌套别名会保留其空的父映射。生产环境记录了三个带点别名的用例；其他缺失表达式的形式是从这些观察中推广而来的。
+
+## 与生产环境的差异
+
+### 本地限制
+
+生产环境没有以下任何限制。每一项都在其章节中描述：
+
+- 保留的文档历史按数据库、按会话和按守护进程设有上限，strict Listen 保留有限数量的边界记录。参见[事务与历史](#事务与历史)。
+- 控制 API 的缺失索引列表保存有限数量的条目。参见[限制与拒绝](#限制与拒绝)。
+- 管道 regex 模式有本地长度限制，嵌套的 `union` 分支、子查询以及字符串 repeat 和 replacement 具有本地深度、大小或资源上限。参见 [Enterprise 管道](#enterprise-管道)。
+
+### 默认情况下不同的行为
+
+- 原生 gRPC `Listen` 流无论保持多久都保持打开，而生产环境会在一小时后结束它。参见 [Listen 流](#listen-流)。
+- 对被拒绝的 Listen 或 Write 打开请求的 WebChannel 应答遵循 SDK 协议，不是经记录的生产环境一致性声明。参见 [Listen 流](#listen-流)。
+
+### Enterprise 范围
+
+- 文本搜索使用本地引擎，没有词干提取、同义词扩展、拼写纠错或语言自动检测，并且不支持地理搜索。参见 [Enterprise 文本搜索](#enterprise-文本搜索)。
+- 管道涵盖有限的读取操作子集，只有记录的请求形式被声明为与生产环境兼容。参见 [Enterprise 管道](#enterprise-管道)和[限制](../../compatibility/limitations/)。
+
+### 生产环境验证
+
+写入和限制、查询和索引、事务、实时监听器、安全规则、数据库管理、Enterprise 全文搜索和 Enterprise 管道都已针对真实 Firestore 的记录进行验证，范围为各区域的记录用例。参见[兼容性表格](../../compatibility/#production-verification)。
+
+## 相关内容
+
+- [安全规则](../../guides/security-rules/)
+- [Profile](../../guides/profiles/)
+- [兼容性](../../compatibility/)和[限制](../../compatibility/limitations/)
+- [配置参考](../../reference/configuration/)
