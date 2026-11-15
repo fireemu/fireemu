@@ -1,15 +1,17 @@
 ---
 title: Configuration schema
-description: The JSON Schema of fireemu.toml.
+description: Find the JSON Schema of fireemu.toml and the guide for each top-level configuration section.
 ---
 
-`fireemu.toml` is described by a JSON Schema. Download it from this site, or read it in the repository:
+`fireemu.toml` is described by a JSON Schema. The same settings can be written as TOML (`fireemu.toml`) or JSON (`fireemu.json`); see [Configuration files](../../guides/configuration/) for which file is loaded.
 
-- [fireemu.schema.json on this site](../../spec/config/fireemu.schema.json)
-- [spec/config/fireemu.schema.json on GitHub](https://github.com/fireemu/fireemu/blob/main/spec/config/fireemu.schema.json), and the same file at a release tag, `https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`, which is what `fireemu init` of a released binary writes into a new file (a build from source writes the `main` location)
-- `npx fireemu config schema --out fireemu.schema.json` writes the schema bundled in the binary you run: the keys it accepts are the keys it validates with
+Fireemu validates the file at startup, including rules the schema cannot express, and stops with an error on a value it does not accept. `npx fireemu config show` prints every key with its effective value and source.
 
-The same settings can be written as TOML (`fireemu.toml`) or JSON (`fireemu.json`); see [Configuration files](../../guides/configuration/) for which file is loaded. Fireemu validates the file at startup, including rules the schema cannot express, and stops with an error on a value it does not accept. `npx fireemu config show` prints every key with its effective value and source.
+## Get the schema
+
+- [fireemu.schema.json on this site](../../spec/config/fireemu.schema.json).
+- [spec/config/fireemu.schema.json on GitHub](https://github.com/fireemu/fireemu/blob/main/spec/config/fireemu.schema.json). The same file exists at each release tag, `https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`, which is what `fireemu init` of a released binary writes into a new file (a build from source writes the `main` location).
+- `npx fireemu config schema --out fireemu.schema.json` writes the schema bundled in the binary you run: the keys it accepts are the keys it validates with.
 
 ## Top-level sections
 
@@ -36,8 +38,13 @@ The same settings can be written as TOML (`fireemu.toml`) or JSON (`fireemu.json
 | `events` | Delivery of function trigger events: `maxAttempts` for functions declared with `retry` (default 4); `delivery` accepts only `exactly-once-test` | [Profiles and productionExact](../../guides/profiles/) |
 | `trace` | Accepted, currently no effect | |
 
-A key that is accepted with no effect prints a `note:` line when a run loads it. To fail a CI job on such a setting instead of relying on the log, run `fireemu config lint --deny-ineffective`, which lists them and exits 1 unless an `--allow` entry covers each one (see [`config lint`](../cli/#config-lint)).
+A key that is accepted with no effect prints a `note:` line when a run loads it. To fail a CI job on such a setting, run `fireemu config lint --deny-ineffective`. It lists them and exits 1 unless an `--allow` entry covers each one (see [`config lint`](../cli/#config-lint)).
 
 ## Storage size limits
 
-`storage.maxObjectBytes` sets the maximum size of one object (default 268435456 bytes, maximum 2143289343). The request body cap is this value plus 4194304 bytes. `storage.bufferedBodyBudgetBytes` sets the process-wide budget for buffered Storage request bodies (default 1073741824 bytes, maximum 2147483647). Both values must be positive whole numbers. See [Cloud Storage](../../products/storage/) for the separate stored-byte and resumable-upload limits.
+| Key | Sets | Default | Maximum |
+|---|---|---|---|
+| `storage.maxObjectBytes` | The maximum size of one object. The request body cap is this value plus 4194304 bytes | 268435456 bytes | 2143289343 |
+| `storage.bufferedBodyBudgetBytes` | The process-wide budget for buffered Storage request bodies | 1073741824 bytes | 2147483647 |
+
+Both values must be positive whole numbers. See [Cloud Storage](../../products/storage/) for the separate stored-byte and resumable-upload limits.

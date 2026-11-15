@@ -1,31 +1,79 @@
 ---
 title: Pub/Sub and Eventarc
-description: Cloud Pub/Sub, Eventarc and Cloud Tasks emulators for Functions and server code.
+description: Publish and receive Cloud Pub/Sub messages, Eventarc custom events and Cloud Tasks locally, from Functions and server code.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../components/Facts.astro';
+
+Fireemu serves the `google.pubsub.v1` API over gRPC and REST, an Eventarc listener for custom events, and a Cloud Tasks emulator for task queue functions.
+
+<Facts items={[
+  { label: 'Status', value: 'Supported' },
+  { label: 'Default ports', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
+  { label: 'Starts', value: 'Pub/Sub when configured; Eventarc and Cloud Tasks with Functions' },
+  { label: 'Production verification', value: 'See the compatibility tables', href: 'compatibility/#production-verification' },
+]} />
+
+## What you can test
+
+- [Pub/Sub topics, subscriptions and delivery](#cloud-pubsub), including push, filters, ordering keys, StreamingPull, snapshots and seek.
+- [Dead-letter forwarding](#dead-letter-topics), with or without production's IAM grants.
+- [Pub/Sub requests with and without credentials](#authentication).
+- [Custom events delivered to `onCustomEventPublished` functions](#eventarc).
+- [Tasks delivered to `onTaskDispatched` functions](#cloud-tasks).
+
+## Connect
+
+| Service | Default address | Environment variable | Starts |
+|---|---|---|---|
+| Cloud Pub/Sub | `127.0.0.1:8085` | `PUBSUB_EMULATOR_HOST` | When it is configured: `emulators.pubsub` in `firebase.json`, `daemon.pubsubPort`, `--pubsub-port`, or `--only pubsub` |
+| Eventarc | `127.0.0.1:9299` | `CLOUD_EVENTARC_EMULATOR_HOST` | When a Functions codebase is loaded |
+| Cloud Tasks | `127.0.0.1:9499` | `CLOUD_TASKS_EMULATOR_HOST` | When a Functions codebase is loaded |
+
+`fireemu exec` sets `PUBSUB_EMULATOR_HOST`, which the Google Cloud client libraries read (see [Environment variables](../../reference/environment-variables/)). Fireemu sets `CLOUD_EVENTARC_EMULATOR_HOST` and `CLOUD_TASKS_EMULATOR_HOST` when it starts those listeners.
 
 ## Cloud Pub/Sub
 
-Fireemu serves the `google.pubsub.v1` API over gRPC and REST at `127.0.0.1:8085`. Pub/Sub starts when it is configured: `emulators.pubsub` in `firebase.json`, `daemon.pubsubPort`, `--pubsub-port`, or `--only pubsub`.
-
-Topics, subscriptions, publish, pull and acknowledgement, push delivery, filters, ordering keys, dead-letter topics, StreamingPull, snapshots and seek are supported. Schemas, BigQuery and Cloud Storage subscription delivery, and some APIs such as `UpdateTopic` are not.
-
-`fireemu exec` sets `PUBSUB_EMULATOR_HOST`, which the Google Cloud client libraries read (see [Environment variables](../../reference/environment-variables/)).
+Topics, subscriptions, publish, pull and acknowledgement, push delivery, filters, ordering keys, dead-letter topics, StreamingPull, snapshots and seek are supported. For what is not, see [Differences from production](#differences-from-production).
 
 ### Topic message storage policy
 
-A topic's `messageStoragePolicy` (`allowedPersistenceRegions` and `enforceInTransit`) is stored, returned by get and list, and changed by `UpdateTopic` (REST `PATCH` with `updateMask`, masks `messageStoragePolicy` and its two members) under `profile = "emulator"`, exactly as sent, as the official emulator does: an unknown, repeated or empty region list, and an empty policy, are all kept. A mask that names the policy but sends none removes it. Nothing is enforced: messages are not routed by region. The `strict` profile refuses the field with `UNIMPLEMENTED` (REST 501) and an explanation, because production checks every region against Google Cloud's Pub/Sub region list (it answered `INVALID_ARGUMENT` for `no-such-region1` and accepted `us-central1`) and Fireemu has no cited copy of that list to check against. Leave the field out under `strict`, or select the emulator profile to keep it.
+Under `profile = "emulator"`, a topic's `messageStoragePolicy` (`allowedPersistenceRegions` and `enforceInTransit`) is stored, returned by get and list, and changed by `UpdateTopic` (REST `PATCH` with `updateMask`, masks `messageStoragePolicy` and its two members), exactly as sent, as the official emulator does:
+
+- An unknown, repeated or empty region list, and an empty policy, are all kept.
+- A mask that names the policy but sends none removes it.
+- Nothing is enforced: messages are not routed by region.
+
+The `strict` profile refuses the field with `UNIMPLEMENTED` (REST 501) and an explanation. Production checks every region against Google Cloud's Pub/Sub region list (it answered `INVALID_ARGUMENT` for `no-such-region1` and accepted `us-central1`), and Fireemu has no cited copy of that list to check against. Leave the field out under `strict`, or select the emulator profile to keep it.
 
 ### Topic key name and tags
 
-Under `profile = "emulator"`, topic `kmsKeyName` and `tags` are stored as sent and returned over REST and gRPC without validation or enforcement. `UpdateTopic` can replace or clear `kms_key_name`; tags are immutable. The strict profile refuses these fields because production validation depends on Cloud KMS and Resource Manager inventories and permissions that Fireemu does not have. The official emulator 0.8.35 stores these values unvalidated and refuses every update mask; production behavior is not recorded.
+Under `profile = "emulator"`, topic `kmsKeyName` and `tags` are stored as sent and returned over REST and gRPC without validation or enforcement. `UpdateTopic` can replace or clear `kms_key_name`; tags are immutable.
+
+The strict profile refuses these fields because production validation depends on Cloud KMS and Resource Manager inventories and permissions that Fireemu does not have. The official emulator 0.8.35 stores these values unvalidated and refuses every update mask; production behavior is not recorded.
 
 ### Dead-letter topics
 
-Under `strict` a message that exhausts `maxDeliveryAttempts` is forwarded to the dead-letter topic with no project number and no IAM grants, with the metadata attributes production adds. Production forwards only after the Pub/Sub service agent holds `roles/pubsub.subscriber` on the subscription and `roles/pubsub.publisher` on the dead-letter topic; set `pubsub.deadLetterAuthorization` to `"iam"` (or `productionExact`, or name `pubsub.projectNumbers`) to require the same grants through `SetIamPolicy`. The start banner then names the service agent to grant.
+Under `strict` a message that exhausts `maxDeliveryAttempts` is forwarded to the dead-letter topic with no project number and no IAM grants, with the metadata attributes production adds.
 
-`pubsub.restNegativeCache` is `"off"` by default, in every profile, and `productionExact` does not select it. Production's REST frontend can answer a `GET` of a subscription with a cached `404` right after the subscription was created. Setting the key to `"production"` (strict profile only) models a real `404` of a `GET` or `PATCH` arming a cache entry for `GET`, `PATCH` or `DELETE` of the same subscription on the **same connection**, so the `PATCH` or `DELETE` does not run. The edge is not sharp: one recording missed every read from 10.25 s to 10.50 s, another hit at 10.40 to 10.50 s next to misses at the same ages, and earlier recordings hit up to 10.20 s. Production is nondeterministic around 10.2 to 10.5 s; fireemu's deterministic 10.35 s window is a known difference. A `GET` 200 seven seconds before the 404 exempted it in both v5 runs; four and 13 seconds remain open. The model exempts a `GET` 200 within its window. DELETE 404 arming and activation for never-created names remain open; the model does not arm on DELETE and arms for never-created names. Another connection, a `:pull` or `:getIamPolicy`, a snapshot, a topic, gRPC and a request with a query string are never answered from the entry; a failed create and a `:seek` that answers `404` do not arm it. Expiry uses the daemon’s logical clock. If the clock is frozen, advance it past the 10.35-second window, use another connection, or disable the cache to recover from a cached 404.
+Production forwards only after the Pub/Sub service agent holds `roles/pubsub.subscriber` on the subscription and `roles/pubsub.publisher` on the dead-letter topic. To require the same grants through `SetIamPolicy`, set `pubsub.deadLetterAuthorization` to `"iam"` (or `productionExact`, or name `pubsub.projectNumbers`). The start banner then names the service agent to grant.
+
+### Cached 404 on the REST frontend (`pubsub.restNegativeCache`)
+
+Production's REST frontend can answer a `GET` of a subscription with a cached `404` right after the subscription was created. `pubsub.restNegativeCache` is `"off"` by default, in every profile, and `productionExact` does not select it.
+
+Setting the key to `"production"` (strict profile only) models a real `404` of a `GET` or `PATCH` arming a cache entry for `GET`, `PATCH` or `DELETE` of the same subscription on the **same connection**, so the `PATCH` or `DELETE` does not run.
+
+What the model does and what remains open:
+
+- **The window.** The edge is not sharp: one recording missed every read from 10.25 s to 10.50 s, another hit at 10.40 to 10.50 s next to misses at the same ages, and earlier recordings hit up to 10.20 s. Production is nondeterministic around 10.2 to 10.5 s; fireemu's deterministic 10.35 s window is a known difference.
+- **A `GET` 200 before the 404.** A `GET` 200 seven seconds before the 404 exempted it in both v5 runs; four and 13 seconds remain open. The model exempts a `GET` 200 within its window.
+- **DELETE and never-created names.** DELETE 404 arming and activation for never-created names remain open; the model does not arm on DELETE and arms for never-created names.
+- **What is never answered from the entry.** Another connection, a `:pull` or `:getIamPolicy`, a snapshot, a topic, gRPC and a request with a query string.
+- **What does not arm it.** A failed create and a `:seek` that answers `404`.
+
+Expiry uses the daemon’s logical clock. If the clock is frozen, advance it past the 10.35-second window, use another connection, or disable the cache to recover from a cached 404.
 
 ### Authentication
 
@@ -90,3 +138,28 @@ By default the listener does not check the credential (`eventarc.authentication:
 ## Cloud Tasks
 
 When a Functions codebase is loaded, Fireemu starts a Cloud Tasks emulator at `127.0.0.1:9499` and sets `CLOUD_TASKS_EMULATOR_HOST`. Task queue functions (`onTaskDispatched`) receive the tasks enqueued for them, with their rate limits and retry configuration. A task's `scheduleTime` holds it back under `strict`; see [Task queues](../functions/#task-queues) for waiting tasks, **Run now** and the virtual clock.
+
+## Differences from production
+
+### Pub/Sub features not supported
+
+Schemas, BigQuery and Cloud Storage subscription delivery, and some APIs such as `UpdateTopic` are not supported. Under the emulator profile, `UpdateTopic` changes the fields described under [Topic message storage policy](#topic-message-storage-policy) and [Topic key name and tags](#topic-key-name-and-tags).
+
+### Fields the `strict` profile refuses
+
+- `messageStoragePolicy`: see [Topic message storage policy](#topic-message-storage-policy).
+- `kmsKeyName` and `tags`: see [Topic key name and tags](#topic-key-name-and-tags).
+
+### Other differences
+
+- Dead-letter forwarding needs no IAM grants unless you ask for them; see [Dead-letter topics](#dead-letter-topics).
+- The REST negative cache is off by default. When on, its 10.35 s window is deterministic and production's is not; see [Cached 404 on the REST frontend](#cached-404-on-the-rest-frontend-pubsubrestnegativecache).
+- A Pub/Sub request with a real Google OAuth token is refused with 401 under `strict`, because the token cannot be verified offline; see [Authentication](#authentication).
+- The Eventarc listener does not check the credential unless `eventarc.authentication` is `"production"`; see [Eventarc](#eventarc).
+
+## Related
+
+- [Cloud Functions](../functions/)
+- [Task queues](../functions/#task-queues)
+- [Profiles](../../guides/profiles/)
+- [Environment variables](../../reference/environment-variables/)

@@ -6,7 +6,11 @@ import { headerNav, currentNavSlug } from './header-nav.mjs';
 const docs = new URL('../content/docs/', import.meta.url);
 
 test('every header link points at an existing docs page', () => {
-	for (const { slug } of headerNav) {
+	for (const { slug, href } of headerNav) {
+		if (!slug) {
+			assert.match(href, /^https:\/\//, 'a header link without a slug leaves the site');
+			continue;
+		}
 		const found = ['.md', '.mdx', '/index.md', '/index.mdx'].some((ext) =>
 			existsSync(new URL(`${slug}${ext}`, docs)),
 		);
@@ -15,7 +19,7 @@ test('every header link points at an existing docs page', () => {
 });
 
 test('the most specific section is current', () => {
-	assert.equal(currentNavSlug('/getting-started/why-fireemu/'), 'getting-started/why-fireemu');
+	assert.equal(currentNavSlug('/getting-started/why-fireemu/'), 'getting-started/install');
 	assert.equal(currentNavSlug('/getting-started/connect/'), 'getting-started/install');
 	assert.equal(currentNavSlug('/compatibility/limitations/'), 'compatibility');
 	assert.equal(currentNavSlug('/guides/time/'), 'guides/configuration');

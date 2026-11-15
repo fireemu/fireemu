@@ -1,11 +1,13 @@
 ---
 title: Profiles and productionExact
-description: Choose between production behavior and official-emulator behavior, and turn on every production check at once.
+description: Choose between the strict and emulator profiles, see where the defaults differ from production on purpose, and switch them to production behavior with productionExact.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-## Compatibility profiles
+A profile selects whose behavior Fireemu follows: production Firebase (`strict`, the default) or the official emulator (`emulator`). Some defaults differ from production on purpose in both profiles, so tests run without setup. `productionExact` switches them to production's behavior.
+
+## Choose a profile
 
 | Profile | Behavior |
 |---|---|
@@ -37,7 +39,7 @@ profile = "strict"
 </TabItem>
 </Tabs>
 
-## Choosing a setup
+## Choose a setup
 
 - **Most projects:** `strict` with the development defaults. Your tests run without keys or setup calls, and still meet production's validation, refusals and error shapes.
 - **Before a release, or in a separate CI job:** `strict` with [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose), to catch what the development defaults let through, such as an unsigned token.
@@ -45,9 +47,11 @@ profile = "strict"
 
 ## Where Fireemu departs from production on purpose
 
-Matching production is Fireemu's goal, but not every production behavior is worth reproducing by default. Some only add setup to a test: production needs signed tokens and signing keys, a feature enabled through an Admin API call, or an hour of waiting. Copying them exactly would make Fireemu harder to use in CI and on a developer's machine without catching more bugs.
+Fireemu's goal is to match production. Some production behaviors only add setup to a test: production needs signed tokens and signing keys, a feature enabled through an Admin API call, or an hour of waiting. Copying them exactly would make Fireemu harder to use in CI and on a developer's machine without catching more bugs.
 
-For these behaviors, the default in both profiles is a development default that works without setup. Each one has its own setting, and each is listed here, so a difference from production is always a documented choice rather than a gap.
+For these behaviors, the default in both profiles is a development default that works without setup. Each one has its own setting and is listed in the table below, so every such difference from production is a documented choice.
+
+### Turn on production behavior with productionExact
 
 To get production's behavior for all of them at once, set `productionExact` to `true` (`strict` profile only). An explicit setting still decides over it:
 
@@ -84,6 +88,8 @@ allowUnsignedCustomTokens = true
 </TabItem>
 </Tabs>
 
+### Development defaults
+
 | Development default | Setting | With `productionExact` |
 |---|---|---|
 | Unsigned emulator custom tokens are accepted | `auth.allowUnsignedCustomTokens` | Refused |
@@ -110,11 +116,13 @@ allowUnsignedCustomTokens = true
 
 The startup banner and `fireemu capabilities` report whether `productionExact` is set, and the effective value and source of each keyed development default in the table. Unlisted-bucket CORS is not a keyed development default.
 
-Most projects do not need `productionExact`; it is an advanced switch for a stricter comparison with production. A query whose composite index is not defined is not among these defaults: `strict` refuses it as production does, and `firestore.missingIndexes: "report"` is an explicit opt-out that runs it and reports the missing index on standard error. `productionExact` does not change that key.
+Most projects do not need `productionExact`; it is an advanced switch for a stricter comparison with production.
+
+A query whose composite index is not defined is not among these defaults. `strict` refuses it as production does, and `firestore.missingIndexes: "report"` is an explicit opt-out that runs it and reports the missing index on standard error. `productionExact` does not change that key.
 
 ### Other development conveniences
 
-These differ from production and are not switched by `productionExact`. Each table row says how to get production's behavior, or that there is no way.
+These behaviors differ from production and are not switched by `productionExact`. Each row says how to get production's behavior, or that there is no way.
 
 #### Authentication
 
@@ -164,3 +172,10 @@ These differ from production and are not switched by `productionExact`. Each tab
 |---|---|
 | Pub/Sub accepts requests without any credential, so clients that use `PUBSUB_EMULATOR_HOST` work | Set `pubsub.authentication.localBearerToken`; requests without a credential are then refused as production refuses them. See [Pub/Sub and Eventarc](../../products/pubsub-eventarc/#authentication). |
 | A Pub/Sub push endpoint may be plain `http://` on loopback (`127.0.0.1`, `localhost`, `[::1]`); production requires HTTPS | Use a non-loopback `https://` URL in the subscription; Fireemu delivers push messages only to loopback, so there is no setting that makes it reach one |
+
+## Related
+
+- [Configuration files](../configuration/)
+- [Configuration reference](../../reference/configuration/)
+- [CI and containers](../ci-and-containers/)
+- [Limitations](../../compatibility/limitations/)

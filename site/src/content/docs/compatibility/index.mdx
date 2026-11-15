@@ -1,6 +1,6 @@
 ---
 title: Compatibility tables
-description: What Fireemu supports, which areas are verified against production Firebase, and how it compares with the official emulator.
+description: Check which products and APIs Fireemu supports, which areas are verified against production Firebase, and how it compares with the official emulator.
 tableOfContents:
   maxHeadingLevel: 2
 ---
@@ -9,15 +9,17 @@ import ProductTable from '../../../components/ProductTable.astro';
 import ProductionAreas from '../../../components/ProductionAreas.astro';
 import CapabilityTable from '../../../components/CapabilityTable.astro';
 
-The tables on this page are generated from the records in the repository when the site is built: the [compatibility contract](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), the [production verification records](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure) and the [capability manifest](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json).
+These tables are generated from the records in the repository when the site is built: the [compatibility contract](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), the [production verification records](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure) and the [capability manifest](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json).
 
-Check support for the specific APIs and conditions your application uses, rather than relying on product names alone.
+Check support for the specific APIs and conditions your application uses; a product name alone does not tell you.
 
 ## Products
 
 Every product in the Local Emulator Suite of `firebase-tools` 15.28.2, the official emulator release Fireemu is compared with, and the surfaces Fireemu adds.
 
 <ProductTable />
+
+### Compatibility claim
 
 Fireemu is compatible with the Local Emulator Suite products that firebase-tools 15.28.2 ships and that Fireemu serves with parity (Cloud Firestore, Firebase Authentication, Cloud Storage for Firebase, Cloud Functions, Cloud Pub/Sub and Eventarc, with Security Rules on the Firestore and Storage surfaces), under the `emulator` compatibility profile and the evidence recorded in [`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json). It makes no complete-suite and no unqualified superset claim, because:
 
@@ -27,7 +29,7 @@ Fireemu is compatible with the Local Emulator Suite products that firebase-tools
 
 ## Fireemu, the official emulator and production
 
-Differences that most often change a test result. Fireemu's column is the default `strict` profile.
+The differences that most often change a test result. Fireemu's column is the default `strict` profile.
 
 | Behavior | Production | Official emulator | Fireemu |
 |---|---|---|---|
@@ -43,7 +45,10 @@ Differences that most often change a test result. Fireemu's column is the defaul
 
 ## Production verification
 
-Fireemu compares its answers with recordings taken from real Firebase projects. An area is **verified against production** when every condition in its frozen inventory matches the recordings, or differs only in a reviewed and documented way (a known difference). An area still being worked on is marked **In progress**, and its counts describe recorded conditions, not verification of the whole area.
+Fireemu compares its answers with recordings taken from real Firebase projects.
+
+- **Verified against production.** Every condition in the area's frozen inventory matches the recordings, or differs only in a reviewed and documented way (a known difference).
+- **In progress.** The area is still being worked on. Its counts describe recorded conditions, not verification of the whole area.
 
 <ProductionAreas />
 

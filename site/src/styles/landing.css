@@ -1,0 +1,454 @@
+/* Landing page layout. Colours, fonts, corners, header, code blocks and footer come from
+   tokens.css and custom.css, which the docs pages share; only the layout below is specific. */
+
+:root:has(.lp) {
+	--sl-content-width: 75rem;
+}
+@media (min-width: 105rem) {
+	:root:has(.lp) {
+		--sl-content-width: 84rem;
+	}
+}
+@media (min-width: 50rem) {
+	:root:has(.lp) {
+		--sl-content-pad-x: 2.5rem;
+	}
+}
+
+.lp {
+	color: var(--fe-fg);
+	line-height: 1.75;
+}
+.lp :is(h1, h2, h3, p) {
+	margin-top: 0;
+}
+.lp h1 {
+	max-width: 37.5rem;
+	margin-bottom: 1.5rem;
+	font-size: clamp(2.375rem, 4.4vw, 3.375rem);
+	font-weight: 600;
+	letter-spacing: -0.045em;
+	line-height: 1.08;
+	text-wrap: balance;
+}
+.lp h2 {
+	font-size: 1.75rem;
+	font-weight: 600;
+	letter-spacing: -0.035em;
+	line-height: 1.3;
+}
+.lp h3 {
+	margin-bottom: 0.625rem;
+	font-size: 1.25rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.4;
+}
+.lp p {
+	margin-bottom: 1rem;
+}
+.lp a {
+	color: inherit;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 4px;
+}
+.lp a:hover {
+	color: var(--fe-accent);
+}
+.lp :not(pre) > code {
+	background: var(--fe-code-bg);
+	padding: 0.1em 0.35em;
+	font-size: max(var(--fe-text-min), 0.9em);
+}
+.lp .expressive-code {
+	margin: 0;
+}
+
+/* ---- Hero ---- */
+
+.lp-hero {
+	display: grid;
+	grid-template-columns: 1.2fr 1fr;
+	gap: 3.5rem;
+	padding: 3.5rem 0 3.25rem;
+}
+.lp-hero > * {
+	min-width: 0;
+}
+.lp-lede {
+	max-width: 32rem;
+	color: var(--fe-fg-secondary);
+	font-size: 1.0625rem;
+}
+.lp-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 1.5rem;
+	margin: 1.75rem 0 1.5rem;
+}
+.lp a.lp-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 1.375rem;
+	min-height: 2.875rem;
+	padding: 0.625rem 1.125rem;
+	background: var(--fe-action-bg);
+	color: var(--fe-action-fg);
+	font-size: var(--fe-text-min);
+	font-weight: 600;
+	text-decoration: none;
+}
+.lp a.lp-btn:hover {
+	background: var(--fe-action-hover);
+	color: var(--fe-action-fg);
+}
+.lp-textlink {
+	font-size: var(--fe-text-min);
+}
+.lp-caveat,
+.lp-meta,
+.lp-boundary,
+.lp-outside {
+	color: var(--fe-fg-muted);
+	font-size: var(--fe-text-min);
+}
+.lp-meta {
+	margin: 0.875rem 0 0;
+}
+.lp-next {
+	margin-top: 1.75rem;
+}
+
+/* ---- Sections: label column and content column ---- */
+
+.lp-section {
+	display: grid;
+	grid-template-columns: 16.875rem minmax(0, 1fr);
+	gap: 3rem;
+	padding: 3.875rem 0;
+	border-bottom: 1px solid var(--fe-border);
+	scroll-margin-top: calc(var(--sl-nav-height) + 1.5rem);
+}
+.lp-section:last-child {
+	border-bottom: 0;
+	padding-bottom: 1rem;
+}
+.lp-section > * {
+	min-width: 0;
+}
+.lp-label h2 {
+	max-width: 16.25rem;
+	margin: 0;
+	border-top: 3px solid var(--fe-brand);
+	padding-top: 1rem;
+}
+.lp-label h2 span {
+	display: block;
+}
+.lp-label h2 span + span {
+	margin-top: 1.125rem;
+}
+.lp-intro {
+	max-width: 41.25rem;
+	margin-bottom: 1.5rem;
+	color: var(--fe-fg-secondary);
+	line-height: 1.8;
+}
+.lp-boundary {
+	max-width: 45rem;
+	margin: 1.5rem 0 0;
+}
+.lp-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem 1.25rem;
+	margin: 1.125rem 0 0;
+	font-size: var(--fe-text-min);
+}
+
+.lp-feature {
+	padding: 1.625rem 0;
+	border-bottom: 1px solid var(--fe-border);
+}
+.lp-feature:first-child {
+	padding-top: 0;
+}
+.lp-feature p {
+	max-width: 39.5rem;
+	margin-bottom: 0.5rem;
+	color: var(--fe-fg-secondary);
+}
+.lp-feature > a,
+.lp-pair a {
+	font-size: var(--fe-text-min);
+}
+.lp-feature .expressive-code {
+	max-width: 39.5rem;
+	margin: 1rem 0 0.875rem;
+}
+.lp-more {
+	margin: 1.5rem 0 0;
+}
+.lp-more a {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.625rem;
+	min-height: 2.75rem;
+	font-weight: 600;
+	text-decoration: none;
+}
+.lp-more a:hover {
+	text-decoration: underline;
+}
+
+.lp-pair {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1.875rem;
+	margin-bottom: 1.75rem;
+}
+.lp-pair p {
+	color: var(--fe-fg-secondary);
+}
+
+.lp-evidence {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 11.25rem;
+	gap: 1.75rem;
+}
+.lp-evidence .lp-intro {
+	margin-bottom: 1rem;
+}
+.lp-count {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	border-inline-start: 1px solid var(--fe-border);
+	padding-inline-start: 1.5rem;
+}
+.lp-count strong {
+	margin-bottom: 0.625rem;
+	font-size: 3.375rem;
+	font-weight: 500;
+	letter-spacing: -0.05em;
+	line-height: 1;
+}
+.lp-count span {
+	font-size: var(--fe-text-min);
+	line-height: 1.7;
+}
+.lp-steps,
+.lp-workflow {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-steps {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 1.75rem;
+	margin-top: 2.25rem;
+}
+.lp-steps li {
+	border-top: 1px solid var(--fe-border);
+	padding-top: 1rem;
+}
+.lp-steps span {
+	color: var(--fe-fg-muted);
+	font-family: var(--fe-font-mono);
+	font-size: var(--fe-text-min);
+}
+.lp-steps h3 {
+	margin: 0.625rem 0;
+	font-size: 1.125rem;
+}
+.lp-steps p {
+	margin: 0 0 0.5rem;
+	color: var(--fe-fg-secondary);
+	font-size: 0.9375rem;
+}
+.lp-differs {
+	margin-top: 2rem;
+	border-top: 1px solid var(--fe-border);
+	padding-top: 1.75rem;
+}
+.lp-differs h3 {
+	margin-bottom: 0.875rem;
+}
+.lp-differs p {
+	max-width: 40.625rem;
+}
+
+.lp-services {
+	margin: 0;
+}
+.lp-services > div {
+	display: grid;
+	grid-template-columns: 12.8125rem minmax(0, 1fr);
+	gap: 1.5rem;
+	border-top: 1px solid var(--fe-border);
+	padding: 1.25rem 0;
+}
+.lp-services > div:first-child {
+	border-top: 0;
+	padding-top: 0;
+}
+.lp-services dt {
+	font-weight: 600;
+	line-height: 1.55;
+}
+.lp-services dt a {
+	text-decoration: none;
+}
+.lp-services dt a:hover {
+	text-decoration: underline;
+}
+.lp-services dd {
+	margin: 0;
+}
+.lp-services dd p {
+	margin: 0;
+	line-height: 1.65;
+}
+.lp-services dd p.lp-limit {
+	margin-top: 0.375rem;
+	color: var(--fe-fg-muted);
+	font-size: var(--fe-text-min);
+}
+.lp-outside {
+	margin: 0;
+	border-top: 1px solid var(--fe-border);
+	padding-top: 1.375rem;
+	line-height: 1.8;
+}
+
+.lp-workflow li {
+	display: grid;
+	grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+	align-items: baseline;
+	gap: 0 1.5rem;
+	border-top: 1px solid var(--fe-border);
+	padding: 1.25rem 0;
+}
+.lp-workflow li:first-child {
+	border-top: 0;
+	padding-top: 0;
+}
+.lp-workflow h3 {
+	margin: 0 0 0.25rem;
+	font-size: 1.125rem;
+}
+.lp-workflow p {
+	max-width: 34rem;
+	margin: 0;
+	color: var(--fe-fg-secondary);
+}
+.lp .lp-workflow a {
+	font-size: var(--fe-text-min);
+	white-space: nowrap;
+}
+.lp-stepno {
+	color: var(--fe-fg-muted);
+	font-family: var(--fe-font-mono);
+	font-size: var(--fe-text-min);
+}
+
+.lp-resource-list {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	column-gap: 2rem;
+}
+.lp-resource-list a {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 2.8125rem;
+	border-bottom: 1px solid var(--fe-border);
+	font-size: var(--fe-text-min);
+	text-decoration: none;
+}
+
+/* ---- Narrow screens ---- */
+
+@media (max-width: 62.5rem) {
+	.lp-hero {
+		gap: 2rem;
+	}
+	.lp-section {
+		grid-template-columns: 13.75rem minmax(0, 1fr);
+		gap: 2rem;
+	}
+	.lp-evidence {
+		grid-template-columns: 1fr;
+	}
+	.lp-count {
+		display: none;
+	}
+	.lp-services > div {
+		grid-template-columns: 10.625rem minmax(0, 1fr);
+		gap: 1.125rem;
+	}
+}
+@media (max-width: 50rem) {
+	.lp-hero {
+		grid-template-columns: 1fr;
+		padding: 2.375rem 0 2.25rem;
+	}
+	.lp-section {
+		grid-template-columns: 1fr;
+		gap: 1.5rem;
+		padding: 2.625rem 0;
+	}
+	.lp-label h2 {
+		max-width: 28rem;
+	}
+	.lp-pair,
+	.lp-steps {
+		grid-template-columns: 1fr;
+		gap: 1.25rem;
+	}
+	.lp-services > div {
+		grid-template-columns: 1fr;
+		gap: 0.5rem;
+	}
+}
+@media (max-width: 30rem) {
+	.lp-resource-list {
+		grid-template-columns: 1fr;
+	}
+	.lp-workflow li {
+		grid-template-columns: 2.5rem minmax(0, 1fr);
+	}
+	.lp-workflow li > a {
+		grid-column: 2;
+		margin-top: 0.5rem;
+	}
+}
+
+/* The landing page has no Starlight title panel (PageTitle renders nothing there). */
+:root:has(.lp) main > .content-panel:first-child {
+	display: none;
+}
+:root:has(.lp) main > .content-panel + .content-panel {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.lp-workflow + .lp-boundary {
+	border-top: 1px solid var(--fe-border);
+	padding-top: 1.25rem;
+	margin-top: 1.25rem;
+}
+
+/* ---- Wide screens ---- */
+
+@media (min-width: 105rem) {
+	.lp-section {
+		grid-template-columns: 20rem minmax(0, 1fr);
+		gap: 4rem;
+	}
+	.lp-label h2 {
+		max-width: 19rem;
+	}
+}

@@ -54,6 +54,8 @@ jobs:
       - name: compatibility data mapping
         run: pnpm -C site test
       - run: pnpm -C site build
+      - name: internal links and anchors
+        run: pnpm -C site check:links
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site/dist

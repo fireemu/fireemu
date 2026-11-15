@@ -1,9 +1,9 @@
 ---
 title: CLI
-description: Commands and options of the fireemu command.
+description: Look up the commands and options of the fireemu command line.
 ---
 
-This reference lists common fireemu commands and options. Run `npx fireemu --help`, or `npx fireemu help <command>`, for the help of the version you have installed. The blocks below are the help text of the current release; `exec` and `capabilities` accept every option of `up`, which is listed once under [up](#up).
+The common `fireemu` commands and their options. The blocks below are the help text of the current release; run `npx fireemu --help`, or `npx fireemu help <command>`, for the help of the version you have installed. `exec` and `capabilities` accept every option of `up`, which is listed once under [up](#up).
 
 | Command | What it does |
 |---|---|
@@ -146,7 +146,7 @@ options: every option of `up` (listed under up above), and:
 
 ### Plan a run
 
-`--plan` on `up` or `exec` resolves the run exactly as start-up does, prints what it would do, and starts nothing. `--json` prints the same plan as JSON (`planVersion` 1). Put it in front of a CI job to see what a command line and a configuration add up to:
+`--plan` on `up` or `exec` resolves the run exactly as start-up does, prints what it would do and starts nothing. `--json` prints the same plan as JSON (`planVersion` 1). Run it before a CI job to see what a command line and a configuration add up to:
 
 ```sh
 npx fireemu exec --plan -- npm test
@@ -166,7 +166,7 @@ The command exits 1, with the plan still printed, when the run would fail for a 
 
 ### Inherited emulator variables
 
-`exec` gives its command your environment with the variables of the services it starts replaced, as `firebase emulators:exec` does. A variable for a service this run does not start keeps its value, so a missing emulator never sends an SDK to production, but it also means that a variable left in your shell by another suite (a second checkout or a parallel job) points your tests at that suite. Fireemu therefore reports it:
+`exec` gives its command your environment with the variables of the services it starts replaced, as `firebase emulators:exec` does. A variable for a service this run does not start keeps its value, so a missing emulator never sends an SDK to production. It also means that a variable left in your shell by another suite (a second checkout or a parallel job) points your tests at that suite, so Fireemu reports it:
 
 - By default it prints a `warning:` for each such variable, keeps it, and runs.
 - `--deny-inherited-emulator-env` refuses the run before anything starts (exit code 1) when the environment carries an emulator variable for a service the run does not start. The variables of services the run starts are replaced by its own values and are never refused. It applies to `up` too, where the variables belong to the shell that starts it and to a Functions runner under the `emulator` profile.
@@ -231,7 +231,9 @@ options: every option of `up` (listed under up above); only --config and --fireb
 
 ## config show
 
-`fireemu config show` prints every configuration key in schema order with its effective value and source, using the same configuration discovery as `fireemu up`, but without the command-line overrides of `up` (`--project`, `--only` and the port flags) and without starting the emulators. To see the result of the files and the overrides together, use [`fireemu up --plan`](#plan-a-run). Use `--config <path>` or `--firebase-json <path>` to select files, and `--json` for records containing `key`, `value`, `source`, and the schema description.
+`fireemu config show` prints every configuration key in schema order with its effective value and source. It uses the same configuration discovery as `fireemu up`, but without the command-line overrides of `up` (`--project`, `--only` and the port flags) and without starting the emulators. To see the result of the files and the overrides together, use [`fireemu up --plan`](#plan-a-run).
+
+Use `--config <path>` or `--firebase-json <path>` to select files, and `--json` for records containing `key`, `value`, `source`, and the schema description.
 
 - Sources distinguish explicit values, defaults, `productionExact`, derived values, and unset keys.
 - When the runtime does not expose a value, the command uses its explicit file value, its schema default (marked `default (schema)`), or `(unset)` (`null` with source `unset` in JSON).
@@ -245,9 +247,9 @@ options: every option of `up` (listed under up above); only --config and --fireb
 fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]
 ```
 
-`fireemu config lint` loads the configuration exactly as `fireemu config show` does (a configuration the daemon refuses fails with the same message and exit code 1) and lists the settings it sets that Fireemu accepts but does not read. Each line carries the same text as the `note:` line that `fireemu up` prints at start-up, and both come from one list of keys, so a key that starts to take effect leaves the lint and the note together. A configuration that sets none prints `no ineffective settings`.
+`fireemu config lint` lists the settings a configuration sets that Fireemu accepts but does not read. It loads the configuration exactly as `fireemu config show` does; a configuration the daemon refuses fails with the same message and exit code 1. Each line carries the same text as the `note:` line that `fireemu up` prints at start-up, and both come from one list of keys, so a key that starts to take effect leaves the lint and the note together. A configuration that sets none prints `no ineffective settings`.
 
-By default the report is informational and the exit code is 0. Add `--deny-ineffective` to a CI job to make it a check: the command exits 1, naming each setting, when the configuration sets one that no allow-list entry covers.
+By default the report is informational and the exit code is 0. Add `--deny-ineffective` in a CI job to make it a check: the command exits 1, naming each setting, when the configuration sets one that no allow-list entry covers.
 
 ```sh
 fireemu config lint --deny-ineffective --allow bind --allow 'firestore.textSearch.*'
@@ -261,4 +263,8 @@ fireemu config lint --deny-ineffective --allow bind --allow 'firestore.textSearc
 
 ## config schema
 
-`fireemu config schema` prints the JSON Schema that this binary validates configuration with, byte for byte and without the network. `--out <path>` writes it to a file instead (an existing regular file is replaced atomically, so the copy follows an upgrade; a symbolic link is refused, as `init --force` does) and prints nothing. `fireemu init` of a released binary writes the schema URL of its release into the files it generates; use `config schema` when an editor or tool needs the schema of the installed version and cannot fetch that URL.
+`fireemu config schema` prints the JSON Schema that this binary validates configuration with, byte for byte and without the network.
+
+`--out <path>` writes it to a file instead and prints nothing. An existing regular file is replaced atomically, so the copy follows an upgrade; a symbolic link is refused, as `init --force` does.
+
+`fireemu init` of a released binary writes the schema URL of its release into the files it generates. Use `config schema` when an editor or tool needs the schema of the installed version and cannot fetch that URL.

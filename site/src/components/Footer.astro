@@ -1,0 +1,22 @@
+---
+// Starlight's page footer (edit link, previous/next) followed by the site footer, so the landing
+// page and every docs page end the same way.
+import Default from '@astrojs/starlight/components/Footer.astro';
+
+const repo = 'https://github.com/fireemu/fireemu';
+---
+
+<Default><slot /></Default>
+<div class="site-foot not-content">
+	<div class="site-foot-row">
+		<span>fireemu <span class="muted">/ Local Firebase testing</span></span>
+		<div class="site-foot-links">
+			<a href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
+			<a href={`${repo}/blob/main/docs/development.md`}>Contributing</a>
+			<a href={`${repo}/blob/main/LICENSE`}>Apache-2.0</a>
+		</div>
+	</div>
+	<p class="site-foot-note">
+		Fireemu is an independent open-source project, not an official Google or Firebase product.
+	</p>
+</div>

@@ -2,6 +2,8 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { fileURLToPath } from 'node:url';
+import { codeThemes } from './src/data/code-themes.mjs';
+import { codeBreaks } from './src/data/code-breaks.mjs';
 
 // The deployment target is set by the Pages workflow. The defaults build for
 // https://fireemu.github.io/fireemu/, the project page of the repository.
@@ -23,16 +25,55 @@ export default defineConfig({
 			title: 'Fireemu',
 			description:
 				'A local Firebase emulator for tests and CI that follows production Firebase behavior.',
-			social: [
-				{ icon: 'github', label: 'GitHub', href: 'https://github.com/fireemu/fireemu' },
-				{ icon: 'npm', label: 'npm', href: 'https://www.npmjs.com/package/fireemu' },
+			// The emu mark on a dark tile, so it reads on light and dark browser tabs.
+			// The cleaned source drawing is src/assets/emu.png.
+			favicon: '/favicon.png',
+			head: [
+				{ tag: 'link', attrs: { rel: 'icon', href: `${base}/favicon.ico`, sizes: '48x48' } },
+				{ tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${base}/apple-touch-icon.png` } },
 			],
 			editLink: { baseUrl: 'https://github.com/fireemu/fireemu/edit/main/site/' },
 			lastUpdated: false,
-			customCss: ['./src/styles/custom.css'],
+			// tokens.css holds the palette and maps it onto Starlight's variables; custom.css styles
+			// the chrome and components. The landing page (src/pages/index.astro) uses both.
+			customCss: [
+				'@fontsource-variable/inter',
+				'./src/styles/tokens.css',
+				'./src/styles/custom.css',
+			],
+			expressiveCode: {
+				themes: codeThemes,
+				useStarlightUiThemeColors: true,
+				styleOverrides: {
+					borderRadius: '0',
+					borderColor: 'var(--fe-border)',
+					codeBackground: 'var(--fe-code-bg)',
+					codeFontSize: '0.9375rem',
+					codeLineHeight: '1.8',
+					codePaddingBlock: '1.125rem',
+					codePaddingInline: '1.125rem',
+					uiFontSize: '0.9375rem',
+					frames: {
+						frameBoxShadowCssValue: 'none',
+						editorTabBarBackground: 'var(--fe-code-bg)',
+						editorActiveTabBackground: 'var(--fe-code-bg)',
+						editorActiveTabIndicatorTopColor: 'transparent',
+						editorActiveTabIndicatorBottomColor: 'transparent',
+						editorTabBarBorderBottomColor: 'var(--fe-border)',
+						editorActiveTabForeground: 'var(--fe-fg-secondary)',
+						terminalTitlebarBackground: 'var(--fe-code-bg)',
+						terminalTitlebarBorderBottomColor: 'var(--fe-border)',
+						terminalTitlebarForeground: 'var(--fe-fg-secondary)',
+						terminalBackground: 'var(--fe-code-bg)',
+					},
+				},
+			},
 			components: {
-				// Section links in the header, so the landing page reaches the docs too.
+				// Text links in the header, so the landing page reaches the docs too.
 				SocialIcons: './src/components/HeaderNav.astro',
+				// The site footer under every page, and no duplicate <h1> on the landing page.
+				Footer: './src/components/Footer.astro',
+				PageTitle: './src/components/PageTitle.astro',
 			},
 			sidebar: [
 				{
@@ -90,5 +131,7 @@ export default defineConfig({
 				},
 			],
 		}),
+		// Long inline code wraps at its separators, never mid-word (rewrites the built HTML).
+		codeBreaks(),
 	],
 });
