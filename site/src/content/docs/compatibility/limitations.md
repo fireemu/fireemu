@@ -1,9 +1,9 @@
 ---
 title: Limitations
-description: What Fireemu does not support, and what no local emulator can reproduce.
+description: Check what Fireemu does not support and what no local emulator can reproduce before you rely on a local result.
 ---
 
-Fireemu does not yet reproduce every feature and behavior of production Firebase. This page lists the main limitations; it is not exhaustive. Check individual APIs in the [capability manifest](../#capability-manifest), or run:
+Fireemu does not yet reproduce every feature and behavior of production Firebase. These are the main limitations; the list is not exhaustive. Check individual APIs in the [capability manifest](../#capability-manifest), or run:
 
 ```sh
 npx fireemu capabilities
@@ -67,7 +67,9 @@ See [Realtime Database](../../products/realtime-database/#differences-from-the-o
 
 ## Local control limitations
 
-Sessions share clocks, rules, Functions and the admission barrier. Snapshots are held in memory for the daemon lifetime; they do not capture outstanding Functions work. `awaitIdle` does not wait for Text Index work or provide causal fences across sessions.
+- Sessions share clocks, rules, Functions and the admission barrier.
+- Snapshots are held in memory for the daemon lifetime; they do not capture outstanding Functions work.
+- `awaitIdle` does not wait for Text Index work or provide causal fences across sessions.
 
 ## Differences no local emulator removes
 
@@ -82,3 +84,9 @@ Some limits exist only in Fireemu, to bound memory use: the [Firestore history l
 ## Changes between versions
 
 Configuration and behavior may change between releases. See the [CHANGELOG](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md).
+
+## Related
+
+- [Compatibility tables](../)
+- [Profiles and productionExact](../../guides/profiles/)
+- [Performance](../performance/)

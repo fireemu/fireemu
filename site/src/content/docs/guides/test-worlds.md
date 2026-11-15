@@ -1,11 +1,15 @@
 ---
 title: Test worlds
-description: Start independent Fireemu worlds with their own clock, ports and data for parallel integration tests, with the fireemu/testing helper.
+description: Run parallel integration tests in independent worlds, each with its own clock, ports and data, using the fireemu/testing helper.
 ---
 
-A session inside one daemon shares the daemon's clock, Rules and Functions. For parallel tests that change any of them, the `fireemu/testing` helper starts independent worlds, each with its own daemon, ports, clock and data, even with the same project ID. A world pins its clock start, so its clock stands still and a test moves it by hand (see [Time and scheduled functions](../time/)).
+The `fireemu/testing` helper starts independent worlds for parallel tests. Each world has its own daemon, ports, clock and data, even with the same project ID. Use one when a test changes the clock, Rules or Functions: a session inside one daemon shares all three with the daemon.
 
-## Clock scope and reset: read this first
+A world pins its clock start, so its clock stands still and a test moves it by hand (see [Time and scheduled functions](../time/)).
+
+## Clock scope and reset
+
+Read these two sections before you write a test: they say what a clock move does not reach and what `reset()` makes stale.
 
 ### What a clock move reaches
 
@@ -52,13 +56,19 @@ await withTestWorld(
 );
 ```
 
-Several worlds in one test: with `Promise.all`, give each its own `withTestWorld()` so every world is disposed even when a sibling fails. Worlds that must coexist inside one test are created with `Promise.allSettled` and disposed in `finally`; `Promise.all([createTestWorld(), ...])` followed by `try/finally` leaks the worlds that started when one creation fails (see the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
-
-Separate worlds isolate their clocks, Rules, Functions and service state. The `fireemu/control` client also works in `fireemu exec` commands and shares URL resolution and authentication with `world.control()`, so callers do not need to concatenate control URLs (see the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md)).
-
 - `world.run` launches a command with the world's project and emulator hosts.
 - `world.reset()` starts the world again from its creation snapshot.
 - `world.dispose()` stops the world and removes its files. `withTestWorld` disposes it for you, also when the callback throws.
+
+Separate worlds isolate their clocks, Rules, Functions and service state.
+
+The `fireemu/control` client also works in `fireemu exec` commands and shares URL resolution and authentication with `world.control()`, so callers do not need to concatenate control URLs (see the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md)).
+
+### Several worlds in one test
+
+- With `Promise.all`, give each world its own `withTestWorld()` so every world is disposed even when a sibling fails.
+- Worlds that must coexist inside one test are created with `Promise.allSettled` and disposed in `finally`.
+- `Promise.all([createTestWorld(), ...])` followed by `try/finally` leaks the worlds that started when one creation fails (see the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
 ## Advance the clock and wait for work
 
@@ -79,9 +89,25 @@ await Promise.all([
 
 `reset()` and `dispose()` cancel a pending wait instead of waiting for its budget. The ordering rules are in the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#advance-the-clock-and-wait-for-work).
 
+## Wait for runnable work
+
+`POST /v1/sessions/default:awaitIdle` accepts `{ "scope": "runnable" }` (since v0.26.0). In a world:
+
+```js
+await world.control('POST', 'sessions/default:awaitIdle', { scope: 'runnable' });
+```
+
+- The `runnable` scope excludes future task schedules and future retry backoff from the wait. The default scope still waits for all work.
+- Due tasks blocked by rate or concurrency limits and active HTTP requests remain pending. Advance the applicable clock or wait for the active work; diagnostics identify the waiting phase and deadline.
+- It does not wait for arbitrary user-created JavaScript timers.
+
+See [idle scopes and task clocks](https://github.com/fireemu/fireemu/blob/main/docs/tasks-idle.md).
+
 ## Fixtures for Vitest and Playwright
 
 Create the world in a fixture, give each test its own named Admin SDK app, and delete the app at teardown. After `reset()`, delete the app, read `world.endpoints` again and create a new app. The default Admin app is cached process-wide and cannot be redirected to a world.
+
+### Clear the inherited Firestore host
 
 Firebase Admin's Firestore SDK gives `FIRESTORE_EMULATOR_HOST` precedence over `db.settings({ host })`. Run Vitest and Playwright directly, without wrapping the runner in an outer `fireemu exec`, and clear the inherited host once in the dedicated runner process before it starts workers. For example, on POSIX shells:
 
@@ -91,6 +117,8 @@ env -u FIRESTORE_EMULATOR_HOST npx playwright test
 ```
 
 The fixture guards below fail before connecting if a worker still has that variable. Do not change the shared `process.env` from each test. When a test intentionally keeps an emulator host in its environment, run that test through `world.run()` so its child receives the world's endpoints.
+
+### Fixture examples
 
 ```ts
 // Vitest: test/world.ts
@@ -203,11 +231,22 @@ const client = createControlClient({ origin: 'http://127.0.0.1:9000', token: 'yo
 const response: unknown = await client.request('GET', 'sessions/default');
 ```
 
-A misspelled service name, an unsupported clock mode or an unknown option is a compile error. World and client properties are readonly, `uiUrl` is `string | undefined`, and each service endpoint is optional because only the selected services start. Generic control requests resolve to `unknown`: narrow the response before reading fields. The types do not prove runtime limits (for example, `runDue` needs an integer budget from 1 through 10000); the helper checks those when it runs. See the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#typescript-consumers) for the details.
+- A misspelled service name, an unsupported clock mode or an unknown option is a compile error.
+- World and client properties are readonly, `uiUrl` is `string | undefined`, and each service endpoint is optional because only the selected services start.
+- Generic control requests resolve to `unknown`: narrow the response before reading fields.
+- The types do not prove runtime limits (for example, `runDue` needs an integer budget from 1 through 10000); the helper checks those when it runs.
+
+See the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#typescript-consumers) for the details.
 
 ## Inspect a world in the UI
 
-To inspect the same world in the debug UI, pass `ui: true` to `createTestWorld()` and open `world.uiUrl`. The UI is disabled by default. Each enabled world receives its own loopback port and shares its live Firestore, Auth, Storage and Functions state. Keep the world alive while inspecting it; `dispose()` also stops its UI. After `reset()`, read `world.uiUrl` again and reopen the page. See [test worlds](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#inspect-a-world-in-the-ui) for an interactive example.
+The UI is disabled by default. To inspect a world in the debug UI, pass `ui: true` to `createTestWorld()` and open `world.uiUrl`.
+
+- Each enabled world receives its own loopback port and shares its live Firestore, Auth, Storage and Functions state.
+- Keep the world alive while inspecting it; `dispose()` also stops its UI.
+- After `reset()`, read `world.uiUrl` again and reopen the page.
+
+See [test worlds](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#inspect-a-world-in-the-ui) for an interactive example.
 
 ## Export and import
 
@@ -215,9 +254,17 @@ Enable `hub: true` to export a test world and import its data into a fresh one; 
 
 ## Snapshot cost
 
-A world copies Functions sources, dependency links and `NODE_PATH` roots only when it loads Functions: `services` omitted (the default selection includes Functions when the configuration names a source or manifest), or listing `functions` or `functions:<codebase>`. A selection such as `['auth', 'firestore']` skips all of it and removes the Functions section from the snapshotted configuration. Auth blocking functions and event-triggered functions run in the Functions service, so select `functions` to use them.
+A world copies Functions sources, dependency links and `NODE_PATH` roots only when it loads Functions: `services` omitted (the default selection includes Functions when the configuration names a source or manifest), or listing `functions` or `functions:<codebase>`.
 
-`world.snapshotStats` reports what each copy cost: `initial` is the one-time copy of your inputs and each `generations` entry is the copy that started a generation (creation and every `reset()`), each with `files`, `directories`, `symlinks`, `bytes`, `method` (`copy`, `clone` or `mixed`) and `elapsedMs`. Set `FIREEMU_TEST_WORLD_STATS=1` to print one line per copy to stderr.
+A selection such as `['auth', 'firestore']` skips all of it and removes the Functions section from the snapshotted configuration. Auth blocking functions and event-triggered functions run in the Functions service, so select `functions` to use them.
+
+`world.snapshotStats` reports what each copy cost:
+
+- `initial` is the one-time copy of your inputs.
+- Each `generations` entry is the copy that started a generation (creation and every `reset()`).
+- Each has `files`, `directories`, `symlinks`, `bytes`, `method` (`copy`, `clone` or `mixed`) and `elapsedMs`.
+
+Set `FIREEMU_TEST_WORLD_STATS=1` to print one line per copy to stderr.
 
 ```js
 const { initial, generations } = world.snapshotStats;
@@ -228,7 +275,10 @@ Generation copies use copy-on-write where the platform supports it (macOS `cp -c
 
 ## Snapshots and timeouts
 
-`snapshotTimeoutMs` bounds the initial input snapshot and first generation preparation together, and each reset preparation separately. Its default is 60,000 ms; it accepts integers from 1 through 2,147,483,647. `startupTimeoutMs` separately defaults to 60,000 ms for daemon readiness after preparation.
+| Option | Bounds | Default |
+| --- | --- | --- |
+| `snapshotTimeoutMs` | The initial input snapshot and first generation preparation together, and each reset preparation separately. Accepts integers from 1 through 2,147,483,647. | 60,000 ms |
+| `startupTimeoutMs` | Daemon readiness after preparation. | 60,000 ms |
 
 - Timeout or cancellation stops file copying, waits for active copies to settle and cleans up partial snapshots, including read-only copied directories.
 - Configuration files must resolve to regular files. Copied trees can contain directories, regular files and supported dependency links, but other filesystem types are refused.
@@ -245,12 +295,9 @@ Functions worlds snapshot local sources and dependencies so caller edits do not 
 
 See [dependency snapshot limits](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds).
 
-## Wait for runnable work
+## Related
 
-`POST /v1/sessions/default:awaitIdle` accepts `{ "scope": "runnable" }` (since v0.26.0). In a world:
-
-```js
-await world.control('POST', 'sessions/default:awaitIdle', { scope: 'runnable' });
-```
-
-This excludes future task schedules and future retry backoff from the wait. The default scope still waits for all work. Due tasks blocked by rate or concurrency limits and active HTTP requests remain pending. Advance the applicable clock or wait for the active work; diagnostics identify the waiting phase and deadline. This does not wait for arbitrary user-created JavaScript timers. See [idle scopes and task clocks](https://github.com/fireemu/fireemu/blob/main/docs/tasks-idle.md).
+- [Time and scheduled functions](../time/)
+- [Export and import data](../data/#export-independent-test-worlds)
+- [Emulator UI](../ui/)
+- [Cloud Functions](../../products/functions/)

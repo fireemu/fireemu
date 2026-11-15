@@ -1,11 +1,11 @@
 ---
 title: Connect your app
-description: Point the Firebase client and Admin SDKs at the Fireemu emulators.
+description: Point the Firebase Admin SDK, the client SDKs and Security Rules unit tests at the Fireemu emulators.
 ---
 
 Fireemu serves the same protocols and default ports as the Local Emulator Suite, so you connect to it the same way.
 
-## Server code and the Admin SDK
+## Connect server code and the Admin SDK
 
 The Firebase Admin SDK and the Google Cloud client libraries read the emulator environment variables. `fireemu exec` sets them for the command it runs:
 
@@ -21,7 +21,9 @@ npx fireemu exec -- node ./scripts/seed.mjs
 | `GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT` | The project ID |
 | `FIREEMU_CONTROL_URL`, `FIREEMU_CONTROL_TOKEN` | Fireemu's control API, used by `fireemu/testing` |
 
-Variables for the other emulators (Realtime Database, Pub/Sub, Eventarc, Cloud Tasks, App Check, the Hub) are listed with the conditions in [Environment variables](../../reference/environment-variables/). A variable your shell already carries for an emulator the run does not start stays in place and is reported with a warning; `fireemu exec --plan -- <command>` lists what the command will see, and [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables) makes such a run fail before it starts. Variables for emulators that are not selected are left as your environment had them.
+Variables for the other emulators (Realtime Database, Pub/Sub, Eventarc, Cloud Tasks, App Check, the Hub) are listed with their conditions in [Environment variables](../../reference/environment-variables/).
+
+Under `exec`, the Admin SDK needs no connection code:
 
 ```js
 import { initializeApp } from 'firebase-admin/app';
@@ -32,9 +34,16 @@ initializeApp({ projectId: process.env.GCLOUD_PROJECT });
 await getFirestore().doc('notes/n1').set({ text: 'hello' });
 ```
 
-## Client SDKs
+### Variables already in your shell
 
-Client SDKs are connected in code, as with the Local Emulator Suite. Use the project ID Fireemu runs with: the `.firebaserc` default, else `daemon.authProject` in `fireemu.toml`, else `demo-app`.
+Variables for emulators that are not selected are left as your environment had them. A variable your shell already carries for an emulator the run does not start stays in place and is reported with a warning.
+
+- `fireemu exec --plan -- <command>` lists what the command will see.
+- [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables) makes such a run fail before it starts.
+
+## Connect client SDKs
+
+Connect client SDKs in code, as with the Local Emulator Suite. Use the project ID Fireemu runs with: the `.firebaserc` default, else `daemon.authProject` in `fireemu.toml`, else `demo-app`.
 
 ```js
 import { initializeApp } from 'firebase/app';
@@ -55,17 +64,32 @@ connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
 connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 ```
 
-The default ports are listed in [Install and run](../install/#default-ports). The Realtime Database client needs its own `databaseURL`; see [Realtime Database](../../products/realtime-database/#connect). Hosting is plain HTTP and needs no SDK setup ([Firebase Hosting](../../products/hosting/)).
+The default ports are listed in [Install and run](../install/#default-ports). Two products connect differently:
 
-## Security Rules unit tests
+- **Realtime Database.** The client needs its own `databaseURL`; see [Realtime Database](../../products/realtime-database/#connect).
+- **Hosting.** It is plain HTTP and needs no SDK setup ([Firebase Hosting](../../products/hosting/)).
 
-`@firebase/rules-unit-testing` works with Fireemu. Its unsigned mock ID tokens (`authenticatedContext()`) are accepted by default, also under the `strict` profile, and the routes it calls to load Firestore and Storage rules and to clear Firestore (`testEnv.clearFirestore()`) are served. So is `withFunctionTriggersDisabled`: the Hub accepts `PUT /functions/disableBackgroundTriggers` and `enableBackgroundTriggers` without a token from a client that sends no browser metadata (`Origin`, `Sec-Fetch-Site`). See [Security Rules](../../guides/security-rules/).
+## Run Security Rules unit tests
+
+`@firebase/rules-unit-testing` works with Fireemu:
+
+- Its unsigned mock ID tokens (`authenticatedContext()`) are accepted by default, also under the `strict` profile.
+- The routes it calls to load Firestore and Storage rules and to clear Firestore (`testEnv.clearFirestore()`) are served.
+- `withFunctionTriggersDisabled` is served: the Hub accepts `PUT /functions/disableBackgroundTriggers` and `enableBackgroundTriggers` without a token from a client that sends no browser metadata (`Origin`, `Sec-Fetch-Site`).
+
+See [Security Rules](../../guides/security-rules/).
 
 ## The project ID
 
-Fireemu takes the project ID from, in order:
+Fireemu takes the project ID from the first of these that is set:
 
-1. `--project` (`-P`) on the command line, as an ID or a `.firebaserc` alias;
-2. the default project of the `.firebaserc` next to the loaded `firebase.json`;
-3. `daemon.authProject` in `fireemu.toml`;
+1. `--project` (`-P`) on the command line, as an ID or a `.firebaserc` alias.
+2. The default project of the `.firebaserc` next to the loaded `firebase.json`.
+3. `daemon.authProject` in `fireemu.toml`.
 4. `demo-app`.
+
+## Related
+
+- [Environment variables](../../reference/environment-variables/)
+- [Security Rules](../../guides/security-rules/)
+- [CI and containers](../../guides/ci-and-containers/)

@@ -1,13 +1,34 @@
 ---
 title: Realtime Database
-description: The Firebase Realtime Database with Security Rules, export and import, verified against production for its recorded cases.
+description: Test Firebase Realtime Database reads, writes, listeners, Security Rules, export and import locally, and see which cases are verified against production.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../components/Facts.astro';
 
-Fireemu serves the Firebase Realtime Database at `127.0.0.1:9000`: the REST API, the realtime protocol the SDKs use, Security Rules, and export and import in the Firebase CLI's format. It is verified against production for its recorded cases; broader production compatibility remains unverified (see [Differences from production](#differences-from-production)). It is also compared with the official emulator (firebase-database-emulator v4.11.2, which firebase-tools 15.28.2 runs), against which it has no parity claim yet, so the [compatibility contract](../../compatibility/) lists that comparison as an open gap. Behavior copied from the official emulator where production has not been observed may change (see [Provisional behavior](#provisional-behavior)).
+Fireemu serves the Firebase Realtime Database at `127.0.0.1:9000`: the REST API, the realtime protocol the SDKs use, Security Rules, and export and import in the Firebase CLI's format. It is verified against production for its recorded cases; broader production compatibility remains unverified (see [Differences from production](#differences-from-production)).
 
-## Start it
+It is also compared with the official emulator (firebase-database-emulator v4.11.2, which firebase-tools 15.28.2 runs), against which it has no parity claim yet, so the [compatibility contract](../../compatibility/) lists that comparison as an open gap. Behavior copied from the official emulator where production has not been observed may change (see [Provisional behavior](#provisional-behavior)).
+
+<Facts items={[
+  { label: 'Status', value: 'Partial' },
+  { label: 'Default port', value: '9000' },
+  { label: 'Starts', value: 'When selected or configured' },
+  { label: 'Production verification', value: 'Recorded cases only', href: 'compatibility/#production-verification' },
+]} />
+
+## What you can test
+
+- [REST reads, writes, queries and event streams](#what-is-served), and the realtime protocol over WebSocket and long polling.
+- [Security Rules](#security-rules) over every transport, with [each kind of credential](#credentials).
+- [Rules unit tests](#unit-testing-with-firebaserules-unit-testing) with `@firebase/rules-unit-testing`, and [Rules coverage](#rules-coverage).
+- [`onDisconnect` writes](#ondisconnect-writes-and-rules) and how Rules judge them.
+- [Export, import and session snapshots](#export-import-and-snapshots) in the Firebase CLI's format.
+- [Database-triggered Functions](#local-functions-triggers) in both generations.
+
+## Connect
+
+### Start the database
 
 The database starts when it is selected or configured. Without any of the following, the default run leaves port 9000 free:
 
@@ -25,7 +46,7 @@ npx fireemu exec --only database -- npm test
 }
 ```
 
-A busy port stops the start (`error: bind 127.0.0.1:9000: Address already in use`); 9000 is also PHP-FPM's default, so choose another with `--database-port` or `emulators.database.port`, or leave the database out with `--only`.
+A busy port stops the start (`error: bind 127.0.0.1:9000: Address already in use`). 9000 is also PHP-FPM's default, so choose another with `--database-port` or `emulators.database.port`, or leave the database out with `--only`.
 
 The start banner shows the address and the rules in force:
 
@@ -34,11 +55,13 @@ The start banner shows the address and the rules in force:
   database rules:   demo-app-default-rtdb <- ./database.rules.json; another instance: every request is allowed (database.defaultAccess = open, default)
 ```
 
-## Connect
+### Point the SDKs at it
 
 `fireemu exec` sets `FIREBASE_DATABASE_EMULATOR_HOST` for the command it runs, and the Admin SDK reads it (see [Environment variables](../../reference/environment-variables/)).
 
-`exec` also sets `FIREBASE_CONFIG` with the `databaseURL` `https://<project>.firebaseio.com`, as firebase-tools does, so an Admin SDK app initialized without options reads and writes the instance `<project>`, not `<project>-default-rtdb`, which the single rules form and the client example below use. Pass `databaseURL: 'https://<project>-default-rtdb.firebaseio.com'` to `initializeApp` to share an instance with clients. Web and mobile clients connect explicitly:
+`exec` also sets `FIREBASE_CONFIG` with the `databaseURL` `https://<project>.firebaseio.com`, as firebase-tools does. An Admin SDK app initialized without options therefore reads and writes the instance `<project>`, not `<project>-default-rtdb`, which the single rules form and the client example below use. Pass `databaseURL: 'https://<project>-default-rtdb.firebaseio.com'` to `initializeApp` to share an instance with clients.
+
+Web and mobile clients connect explicitly:
 
 ```js
 import { initializeApp } from 'firebase/app';
@@ -49,6 +72,8 @@ const db = getDatabase(app);
 connectDatabaseEmulator(db, '127.0.0.1', 9000);
 ```
 
+### Instances
+
 A database instance is a namespace. Requests choose one with the `ns` query parameter or the first label of the host name, as on the official emulator. `demo-app-default-rtdb` is the default instance of the project `demo-app`: ID tokens are checked against that project, and against the daemon's project for an instance with any other name. A session reset and session snapshots cover `<project>` and `<project>-default-rtdb`.
 
 ## What is served
@@ -56,20 +81,26 @@ A database instance is a namespace. Requests choose one with the `ns` query para
 - The REST API (`.json` paths): reads, writes, updates, push ids, conditional requests with ETags, `shallow`, `print`, `format=export`, queries, and event streams (`Accept: text/event-stream`).
 - The realtime protocol over WebSocket and over long polling (`forceLongPolling()`), with listens, queries, transactions and server values.
 - `onDisconnect` writes (`set`, `update`, `remove`, `cancel`). They run when the connection ends, however it ends, as one update with their server values resolved at that moment. They do not run when Fireemu itself stops, as the official emulator does not run them when it stops, and a session reset drops those registered for the projects it resets.
-- Security Rules (below), `/.settings/rules.json`, `/.inspect/databases.json`, and `disableTriggers` on writes.
-- Export, import and session snapshots (below).
-
-An ordinary REST read validates `timeout` as a positive duration of at most 15 minutes (for example `1s`, `2seconds` or `3min`); this validates the option without installing a request deadline. Writes, shallow reads and conditional reads ignore it. `shallow=true` accepts `limitToFirst` and a plain-text `startAfter`, and refuses `limitToLast`, `startAt`, `endAt` and `orderBy`. Reads ignore `writeSizeLimit`, and writes ignore `format`. Invalid durations are refused; duration overflow can return 500.
-
-Conditional responses retain their ETags: an `if-none-match` PUT includes an ETag even with `print=silent`, and `X-Firebase-ETag: true` also requests it on a 304, a refused conditional PUT (412), and a POST. Under `strict`, a malformed percent escape in a path returns 400 with `application/octet-stream` and `Bad request.`; the `emulator` profile keeps the official emulator's response.
-
-The entries of one multi-path write (a REST `PATCH`, an SDK `update()`, and the `onDisconnect` writes of a connection that ends) reach a connection's listens in the official emulator's order: up to four entries in the order they were sent or registered, from five on in the order of the hash of their keys. A listen at or above the written location hears first. One production recording agrees for a set of six keys; the other forms follow the official emulator and have not been observed in production.
+- [Security Rules](#security-rules), `/.settings/rules.json`, `/.inspect/databases.json`, and `disableTriggers` on writes.
+- [Export, import and session snapshots](#export-import-and-snapshots).
 
 `tools/sdk-smoke-database` in the repository drives these through the pinned `firebase` and `firebase-admin` SDKs and compares the results with a recording of the official emulator.
 
+### REST options
+
+- An ordinary REST read validates `timeout` as a positive duration of at most 15 minutes (for example `1s`, `2seconds` or `3min`). This validates the option without installing a request deadline. Writes, shallow reads and conditional reads ignore it. Invalid durations are refused; duration overflow can return 500.
+- `shallow=true` accepts `limitToFirst` and a plain-text `startAfter`, and refuses `limitToLast`, `startAt`, `endAt` and `orderBy`.
+- Reads ignore `writeSizeLimit`, and writes ignore `format`.
+- Conditional responses retain their ETags: an `if-none-match` PUT includes an ETag even with `print=silent`, and `X-Firebase-ETag: true` also requests it on a 304, a refused conditional PUT (412), and a POST.
+- Under `strict`, a malformed percent escape in a path returns 400 with `application/octet-stream` and `Bad request.`; the `emulator` profile keeps the official emulator's response.
+
+### Order of multi-path writes
+
+The entries of one multi-path write (a REST `PATCH`, an SDK `update()`, and the `onDisconnect` writes of a connection that ends) reach a connection's listens in the official emulator's order: up to four entries in the order they were sent or registered, from five on in the order of the hash of their keys. A listen at or above the written location hears first. One production recording agrees for a set of six keys; the other forms follow the official emulator and have not been observed in production.
+
 ## Security Rules
 
-Loading invalid Rules reports the first syntax, duplicate-key or invalid-index-name error. For a document that parses, type and name errors are reported in rule order: `.read`, `.write`, `.validate`, then named children in file order and the wildcard child last, subject to bounded collection. Unsupported JavaScript constructs still fail; parsing more forms improves their error messages rather than enabling them. The recorded cases do not establish every malformed input.
+Rules support `.read`, `.write`, `.validate` and `.indexOn`, with `auth`, `now`, `root`, `data`, `newData`, `query` and `$` variables, over REST, event streams and the realtime protocol.
 
 ### Load rules
 
@@ -92,15 +123,34 @@ The array form loads each entry into its `instance`, or into the instances of it
 }
 ```
 
-A rules file that does not load stops the start with the file, line and column, as firebase-tools stops. A changed file is loaded again while Fireemu runs; a change that does not load keeps the rules in force and prints why. `GET` and `PUT /.settings/rules.json?ns=<instance>` read and replace an instance's rules with an administrator credential, which is how `@firebase/rules-unit-testing` loads them. The route requires a loopback peer, as the Firestore and Storage rules routes do. Non-loopback peers receive 403 before credentials are evaluated; repeated leading slashes and percent-encoded `.settings` paths are subject to the same restriction.
+A rules file that does not load stops the start with the file, line and column, as firebase-tools stops. A changed file is loaded again while Fireemu runs; a change that does not load keeps the rules in force and prints why.
 
-Rules support `.read`, `.write`, `.validate` and `.indexOn`, with `auth`, `now`, `root`, `data`, `newData`, `query` and `$` variables, over REST, event streams and the realtime protocol. Comparisons with the official emulator cover REST reads and writes, event streams with and without range/count queries, and realtime listens without a query (`q` absent or empty). They do not establish every queried WebSocket listen shape; long polling uses the shared realtime session behavior.
+`GET` and `PUT /.settings/rules.json?ns=<instance>` read and replace an instance's rules with an administrator credential, which is how `@firebase/rules-unit-testing` loads them. The route requires a loopback peer, as the Firestore and Storage rules routes do. Non-loopback peers receive 403 before credentials are evaluated; repeated leading slashes and percent-encoded `.settings` paths are subject to the same restriction.
 
-`onDisconnect` writes are checked both at registration and when the connection ends. Registration checks a `set` as one write and an `update` entry by entry, each against the current tree; if any entry fails, registration is refused. At disconnect, each pending entry is first checked alone against the then-current tree. Entries denied by `.write` or `.validate` are dropped. The retained entries are then checked together as one update; if that combined check fails, none of them is applied. In the recorded production case, cancelling a child of an onDisconnect value registered with a numeric priority drops the connection's entire update, including an unrelated write. Two recorded rounds also cover re-registration after a child cancellation, a nested priority and a string priority; two recorded rounds of each shape replayed under each profile. Other priority and cancellation shapes remain unverified in production.
+### Errors in a rules file
+
+Loading invalid Rules reports the first syntax, duplicate-key or invalid-index-name error. For a document that parses, type and name errors are reported in rule order: `.read`, `.write`, `.validate`, then named children in file order and the wildcard child last, subject to bounded collection. Unsupported JavaScript constructs still fail; parsing more forms improves their error messages rather than enabling them. The recorded cases do not establish every malformed input.
+
+### What has been compared
+
+Comparisons with the official emulator cover REST reads and writes, event streams with and without range/count queries, and realtime listens without a query (`q` absent or empty). They do not establish every queried WebSocket listen shape; long polling uses the shared realtime session behavior.
 
 Finite recorded production REST Rules, query-dependent Rules and query-bound cases are replayed in both profiles, along with recorded long-poll transaction frames. These observations cover the recorded requests and do not establish parity for every rule, query or transport shape.
 
-An event stream whose query bounds or limits it is judged with that query; one whose query only orders reads all the data and, as on the official emulator, is judged as a stream without a query and needs no index. A rules change, a write that changes what a data-dependent `.read` allows, or a client signing in or out cancels the listens and event streams the rules no longer allow.
+### Event streams and listens
+
+An event stream whose query bounds or limits it is judged with that query. One whose query only orders reads all the data and, as on the official emulator, is judged as a stream without a query and needs no index.
+
+A rules change, a write that changes what a data-dependent `.read` allows, or a client signing in or out cancels the listens and event streams the rules no longer allow.
+
+### `onDisconnect` writes and rules
+
+`onDisconnect` writes are checked both at registration and when the connection ends.
+
+- **At registration.** A `set` is checked as one write and an `update` entry by entry, each against the current tree. If any entry fails, registration is refused.
+- **At disconnect.** Each pending entry is first checked alone against the then-current tree. Entries denied by `.write` or `.validate` are dropped. The retained entries are then checked together as one update; if that combined check fails, none of them is applied.
+
+In the recorded production case, cancelling a child of an onDisconnect value registered with a numeric priority drops the connection's entire update, including an unrelated write. Two recorded rounds also cover re-registration after a child cancellation, a nested priority and a string priority; two recorded rounds of each shape replayed under each profile. Other priority and cancellation shapes remain unverified in production.
 
 ### Credentials
 
@@ -115,7 +165,7 @@ An event stream whose query bounds or limits it is judged with that query; one w
 
 Before applying this table, Fireemu refuses ambiguous HTTP requests with 400 in either profile: any repeated query parameter (including `auth` and `access_token`), more than one `Authorization` header, or any combination of query credentials and an `Authorization` header. Identical repeated credentials are still ambiguous. The official emulator instead selects a value, so this is a listed difference.
 
-An administrator REST request that also carries `auth_variable_override` (what the Admin SDK sends for `databaseAuthVariableOverride`) is evaluated by the rules as that `auth` value, as production evaluated it in the recorded cases; `null` reads as unauthenticated, and a malformed override or one that is neither an object nor `null` is refused.
+An administrator REST request that also carries `auth_variable_override` (what the Admin SDK sends for `databaseAuthVariableOverride`) is evaluated by the rules as that `auth` value, as production evaluated it in the recorded cases. `null` reads as unauthenticated, and a malformed override or one that is neither an object nor `null` is refused.
 
 `/.inspect/databases.json`, which `firebase emulators:export` reads, answers anyone under the `emulator` profile and only the `owner` credential under `strict` or with a locked database.
 
@@ -175,13 +225,18 @@ await assertFails(alice.ref('users/bob').set({ name: 'Mallory' }));
 await testEnv.cleanup();
 ```
 
-Run it with `npx fireemu exec --only database -- node test.mjs`. To test production's refusal of unsigned tokens, set `auth.allowUnsignedIdTokens` to `false` or set [`productionExact`](../../guides/profiles/). The realtime connection then refuses the mock token (`invalid_token`) and the SDK keeps retrying, so a read or write from `authenticatedContext()` does not settle instead of failing; check the refusal over REST (`?auth=<token>` answers 401) or give the assertion a timeout.
+Run it with `npx fireemu exec --only database -- node test.mjs`.
 
-### Limits
+To test production's refusal of unsigned tokens, set `auth.allowUnsignedIdTokens` to `false` or set [`productionExact`](../../guides/profiles/). The realtime connection then refuses the mock token (`invalid_token`) and the SDK keeps retrying, so a read or write from `authenticatedContext()` does not settle instead of failing. Check the refusal over REST (`?auth=<token>` answers 401) or give the assertion a timeout.
 
-- An expression nests at most 600 levels; `&&`, `||` and `+` chains of any length count once. This is a local safety budget: the official emulator itself fails between 2,000 and 4,000 levels.
-- A `matches()` call that exceeds the regular-expression engine's step or depth budget is an error, so the rule is false whether or not it is negated.
-- A write's path is at most 768 bytes and its data at most 32 levels deep, as production documents.
+### Rules coverage
+
+`/.inspect/coverage?ns=<instance>` (an HTML viewer) and `/.inspect/coverage.json?ns=<instance>` report, for each expression of the loaded rules, the results it produced, as the official emulator does.
+
+- Collection is always on and costs one hash lookup per recorded result.
+- So that a long run stays fast and small, each expression keeps its first 64 distinct results (and at most 64 KiB of string values); later new results are counted in `values-omitted` instead of being listed.
+- Snapshot values such as `data` and `root` are a new identity on every evaluation, so their lists fill quickly.
+- Loading changed rules starts a new report; loading the same text again keeps it.
 
 ## Export, import and snapshots
 
@@ -199,34 +254,78 @@ emulator-data/
     demo-app-default-rtdb.json
 ```
 
-`--import` writes each file as the `owner` credential with `disableTriggers=true`, as firebase-tools does, before the command starts. The file name, lowercased, is the instance. A file named after an invalid instance, or one the database would refuse (invalid JSON, an invalid key, data nested too deep), stops the start before any other product's data is installed. An export's database section is skipped, with a note, when the database is not selected.
+`--import` writes each file as the `owner` credential with `disableTriggers=true`, as firebase-tools does, before the command starts.
 
-Session snapshots and resets include the instances of the session's project. A restore or reset is seen by open listeners and event streams, cancels those the rules no longer allow on the restored data, and drops the `onDisconnect` writes registered for those instances. In [test worlds](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md), select `database` in `services`; `world.endpoints.database` and `FIREBASE_DATABASE_EMULATOR_HOST` route to it, and its data survives export, import and reset.
+- The file name, lowercased, is the instance.
+- A file named after an invalid instance, or one the database would refuse (invalid JSON, an invalid key, data nested too deep), stops the start before any other product's data is installed.
+- An export's database section is skipped, with a note, when the database is not selected.
 
-## Rules coverage
+Session snapshots and resets include the instances of the session's project. A restore or reset is seen by open listeners and event streams, cancels those the rules no longer allow on the restored data, and drops the `onDisconnect` writes registered for those instances.
 
-`/.inspect/coverage?ns=<instance>` (an HTML viewer) and `/.inspect/coverage.json?ns=<instance>` report, for each expression of the loaded rules, the results it produced, as the official emulator does. Collection is always on and costs one hash lookup per recorded result. So that a long run stays fast and small, each expression keeps its first 64 distinct results (and at most 64 KiB of string values); later new results are counted in `values-omitted` instead of being listed. Snapshot values such as `data` and `root` are a new identity on every evaluation, so their lists fill quickly. Loading changed rules starts a new report; loading the same text again keeps it.
+In [test worlds](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md), select `database` in `services`; `world.endpoints.database` and `FIREBASE_DATABASE_EMULATOR_HOST` route to it, and its data survives export, import and reset.
 
 ## Local Functions triggers
 
-Local v1 and v2 database handlers receive create, update, delete and write events scoped to their project, instance and reference pattern. The runner supplies the Firebase SDK snapshot objects. Unchanged writes do not emit a change event. Source mutations and their reserved event batch commit together. A write that cannot reach any trigger reference is applied without capturing snapshots, so a trigger on one path adds no cost to writes elsewhere. While the local event queue is full, a write whose events would fit an empty queue is refused with 503 and succeeds on a retry once deliveries drain. A write whose events can never fit (more than 4096 events or 64 MiB of serialized events, for example one `PUT` of 5,000 children under a `/users/{uid}` trigger) is applied, as production applies it, without its events, whatever the queue holds. The emulator profile drops an event larger than an invocation frame (16 MiB) alone, and the write's other events are delivered; the first drop prints a warning, and each is counted as `admission.database_fanout_dropped` in the resource diagnostics. The strict profile refuses a write that reaches a registered trigger reference and whose event (the node before the write plus the delta, as compact JSON) is larger than 1,048,576 bytes (1 MiB), with `400` and `This request would cause a function payload exceeding the maximum size allowed.`, and applies nothing, as production did to a 2 MiB value (recorded on 2026-11-08 and 2026-11-09: events of 1,023,9xx bytes were accepted and delivered, events of 1,049,9xx bytes were refused; production documents 1 MB per event, so 1 MiB is used; the exact threshold between those two sizes and the counting of an event are not verified); the SDK connection is answered `invalid_parameters` with the same text, a form that was not recorded. Strict events carry no priorities, as production's did: the node before the write has none, a created node's delta is its plain value, and a priority-only write sends the delta `{".priority": n}`; the emulator profile keeps the events it always sent. Local instances are in `us-central1`: a 2nd-gen trigger in another region does not fire, and a warning at load says so, as the official emulator warns; in production it fires only for instances in its own region. Session reset excludes concurrent database mutation while clearing source data and retiring the Functions epoch.
+Local v1 and v2 database handlers receive create, update, delete and write events scoped to their project, instance and reference pattern. The runner supplies the Firebase SDK snapshot objects.
 
-Production observations cover a fixed sequence of administrator and unauthenticated writes to v1 and v2 handlers. For those recorded deliveries, the strict profile uses the observed event ID, millisecond timestamp, source and authentication metadata forms. Event IDs are deterministic for a `daemon.seed` named in the configuration and the event sequence, so repeating a seed replays the same IDs; without `daemon.seed`, each daemon start draws its own session, so a restart does not repeat the previous run's IDs. Additional recordings cover 12 writes by an email/password user over REST and the web SDK, including ancestor and multi-path writes and redelivery after a failed invocation. The strict profile uses the recorded production metadata; the emulator profile retains its documented official-emulator event shape. Delivery latency, retry timing, cross-handler order, other providers and unrecorded write or handler shapes remain unverified.
+- Unchanged writes do not emit a change event.
+- Source mutations and their reserved event batch commit together.
+- A write that cannot reach any trigger reference is applied without capturing snapshots, so a trigger on one path adds no cost to writes elsewhere.
+- Session reset excludes concurrent database mutation while clearing source data and retiring the Functions epoch.
+
+### When the event queue is full
+
+- While the local event queue is full, a write whose events would fit an empty queue is refused with 503 and succeeds on a retry once deliveries drain.
+- A write whose events can never fit (more than 4096 events or 64 MiB of serialized events, for example one `PUT` of 5,000 children under a `/users/{uid}` trigger) is applied, as production applies it, without its events, whatever the queue holds.
+
+### Event size
+
+- **`emulator` profile.** An event larger than an invocation frame (16 MiB) is dropped alone, and the write's other events are delivered. The first drop prints a warning, and each is counted as `admission.database_fanout_dropped` in the resource diagnostics.
+- **`strict` profile.** A write that reaches a registered trigger reference and whose event (the node before the write plus the delta, as compact JSON) is larger than 1,048,576 bytes (1 MiB) is refused with `400` and `This request would cause a function payload exceeding the maximum size allowed.`, and applies nothing, as production did to a 2 MiB value. The SDK connection is answered `invalid_parameters` with the same text, a form that was not recorded.
+
+The strict threshold comes from recordings on 2026-11-08 and 2026-11-09: events of 1,023,9xx bytes were accepted and delivered, events of 1,049,9xx bytes were refused. Production documents 1 MB per event, so 1 MiB is used. The exact threshold between those two sizes and the counting of an event are not verified.
+
+### Priorities
+
+Strict events carry no priorities, as production's did: the node before the write has none, a created node's delta is its plain value, and a priority-only write sends the delta `{".priority": n}`. The emulator profile keeps the events it always sent.
+
+### Region
+
+Local instances are in `us-central1`. A 2nd-gen trigger in another region does not fire, and a warning at load says so, as the official emulator warns; in production it fires only for instances in its own region.
+
+### Event metadata and what was recorded
+
+Production observations cover a fixed sequence of administrator and unauthenticated writes to v1 and v2 handlers. For those recorded deliveries, the strict profile uses the observed event ID, millisecond timestamp, source and authentication metadata forms.
+
+Event IDs are deterministic for a `daemon.seed` named in the configuration and the event sequence, so repeating a seed replays the same IDs. Without `daemon.seed`, each daemon start draws its own session, so a restart does not repeat the previous run's IDs.
+
+Additional recordings cover 12 writes by an email/password user over REST and the web SDK, including ancestor and multi-path writes and redelivery after a failed invocation. The strict profile uses the recorded production metadata; the emulator profile retains its documented official-emulator event shape. Delivery latency, retry timing, cross-handler order, other providers and unrecorded write or handler shapes remain unverified.
 
 ## Emulator UI
 
-The Realtime Database page of the [Emulator UI](../../guides/ui/) browses the data at a path, replaces, patches or deletes it as the local administrator (so these edits do not test client permissions), reads and replaces the instance's rules, and runs an anonymous request to see how the rules answer it.
+The Realtime Database page of the [Emulator UI](../../guides/ui/) does four things:
+
+- browses the data at a path;
+- replaces, patches or deletes it as the local administrator (so these edits do not test client permissions);
+- reads and replaces the instance's rules;
+- runs an anonymous request to see how the rules answer it.
 
 ## Differences from production
 
-Fireemu is compared with production only for the recorded cases. They are:
+Fireemu is compared with production only for the recorded cases.
+
+### Recorded cases
 
 - **REST.** PUT, GET and PATCH values and priorities, finite POST-generated key and readback, DELETE, `shallow`, `print=silent` and small `writeSizeLimit` forms, `format=export`, finite `orderBy` query-bound forms including `startAt`, `endAt`, `startAfter`, `endBefore`, `equalTo`, `limitToFirst` and `limitToLast`, ETag and `if-match`, and the recorded errors. The recorded scope also includes 72 REST option and refusal cases (including `timeout`, `$priority`, method overrides, callbacks and downloads) and generated invalid REST credentials.
 - **Rules.** Finite Rules loading, `.validate`, cascading, `data`/`newData`/`root` and query-dependent Rules cases, plus owner and UID `.read` and `.write` evaluation: 70 Rules cases, seven further Rules documents, and nine documents for `query.endBefore`, `query.isOrderByChild()`, `OrderByKey`, `OrderByValue`, `OrderByPriority`, `http.encodeURL()`, method reads without a call and a ternary callee, with 33 reads and writes under them.
 - **Event streams.** Anonymous event streams.
 - **Web SDK.** Value listeners, reconnect with queued writes, child and value event order for two `orderByChild` windows with query-scoped unsubscribe and cancellation, `onDisconnect` set, remove, update, cancel and re-register with server values and a Rules change before firing, the recorded numeric-priority child-cancel case and the three recorded re-registration, nested-priority and string-priority shapes, one transaction schedule and email/password Auth over WebSocket and long polling. Additional recordings cover SDK child events with `prevName` for key, priority, value-range and `equalTo` windows, keyed bounds on tied values, parent/child listener fan-out, transactions on an absent node and an object and an aborted transaction, and `get` of windows and missing paths over WebSocket and long polling.
 - **Admin SDK.** The Node Admin SDK was recorded over WebSocket under deny-all Rules with a user OAuth access token; service-account credentials are not claimed.
-- **Functions triggers.** RTDB-triggered Functions created, updated, deleted and written handlers in both generations for the recorded admin and unauthenticated writes (the finite end-user trigger deliveries described above).
+- **Functions triggers.** RTDB-triggered Functions created, updated, deleted and written handlers in both generations for the recorded admin and unauthenticated writes (the finite end-user trigger deliveries described under [Local Functions triggers](#local-functions-triggers)).
+
+Additional finite server-value, Rules language, Rules method and Rules operator cases were recorded and replayed in both profiles; they do not establish parity for unrecorded inputs.
+
+### Known differences
 
 Within the recorded scope, these differences are known:
 
@@ -235,25 +334,54 @@ Within the recorded scope, these differences are known:
 - Under `strict`, event streams carry `Connection: close`, and the HTTP/1.1 connection closes after the `cancel` event and the end of the chunked response. The recorded event bytes match production, but the recorded production response was close-delimited without transfer encoding, whereas Fireemu uses native HTTP/1.1 chunked framing. This transfer-framing difference is an owner-approved development exception (2026-10-31); event contents, cancellation and EOF remain subject to their existing evidence requirements. The `emulator` profile retains its existing connection behavior; broader stream lifecycle behavior remains unverified.
 - Production's Google-signed Firebase ID tokens are not accepted. Tokens issued by Fireemu's Auth and the `owner` credential are, and `strict` refuses another `gauth` credential with production's `permission_denied`.
 
-Additional finite server-value, Rules language, Rules method and Rules operator cases were recorded and replayed in both profiles; they do not establish parity for unrecorded inputs.
+### Not verified
 
-The finite REST, Rules, SDK and trigger cases above were recorded; other push ID forms, server values, query bounds, timeouts and write-size options remain unverified. Rules validation, cascading, snapshots, query members, claims and index diagnostics beyond the recorded cases still use the official emulator as a provisional reference. SDK events, transactions, multi-location updates and onDisconnect shapes beyond the recorded cases, service-account Admin credentials, and broader Functions trigger delivery and timing are not claimed.
+The finite REST, Rules, SDK and trigger cases above were recorded. Beyond them:
 
-## Not supported yet
+- Other push ID forms, server values, query bounds, timeouts and write-size options remain unverified.
+- Rules validation, cascading, snapshots, query members, claims and index diagnostics beyond the recorded cases still use the official emulator as a provisional reference.
+- SDK events, transactions, multi-location updates and onDisconnect shapes beyond the recorded cases, service-account Admin credentials, and broader Functions trigger delivery and timing are not claimed.
+
+### Not supported yet
 
 - Android, Apple, Unity and the Java and Python Admin SDKs are outside the current Node and Web scope.
 
-## Provisional behavior
+### Limits
 
-Where production has not been observed, recorded official-emulator behavior is the provisional reference, subject to the known differences listed above. These comparisons do not establish production equivalence and may change after production observations. They cover number forms such as `1.0`, a write of an equal value, priorities, refusal texts, long-polling framing, how `onDisconnect` writes combine, the credentials of each profile, the regular-expression dialect, where the official emulator refuses a key of 768 bytes in a write's body but accepts it in the path, and the patterns it cannot determinize.
+- An expression nests at most 600 levels; `&&`, `||` and `+` chains of any length count once. This is a local safety budget: the official emulator itself fails between 2,000 and 4,000 levels.
+- A `matches()` call that exceeds the regular-expression engine's step or depth budget is an error, so the rule is false whether or not it is negated.
+- A write's path is at most 768 bytes and its data at most 32 levels deep, as production documents.
+
+### Provisional behavior
+
+Where production has not been observed, recorded official-emulator behavior is the provisional reference, subject to the known differences listed above. These comparisons do not establish production equivalence and may change after production observations. They cover:
+
+- number forms such as `1.0`;
+- a write of an equal value;
+- priorities;
+- refusal texts;
+- long-polling framing;
+- how `onDisconnect` writes combine;
+- the credentials of each profile;
+- the regular-expression dialect;
+- where the official emulator refuses a key of 768 bytes in a write's body but accepts it in the path;
+- the patterns it cannot determinize.
 
 ## Differences from the official emulator
 
-Comparison with the official emulator is limited to recorded cases. The listed unsupported syntax and evaluation cases are refused when rules load or produce rule errors; this does not establish equivalent resource-limit admission. Character classes (names, white space and the format characters the official emulator's reader skips) use Java 21's tables. Operators and methods were compared with the official emulator for the recorded operand types. Objects compare by identity, as in the official emulator: `auth` and `query` each equal themselves, and two snapshots are equal when they read the same version of the tree (`root` and `data` read the tree before a write, `newData` the tree after it) at the same location, so `data` at `/t/o` equals `root.child('t').child('o')` and never equals `newData`. A direct comparison of two snapshots or of `query` with itself is still refused when Rules load, as there; the comparison runs when a ternary lets it past that check. Objects read from `auth` members and the values `val()` gives for a location with children are new objects each time and equal nothing.
+Comparison with the official emulator is limited to recorded cases. The listed unsupported syntax and evaluation cases are refused when rules load or produce rule errors; this does not establish equivalent resource-limit admission.
+
+- Character classes (names, white space and the format characters the official emulator's reader skips) use Java 21's tables.
+- Operators and methods were compared with the official emulator for the recorded operand types.
+- Objects compare by identity, as in the official emulator. `auth` and `query` each equal themselves. Two snapshots are equal when they read the same version of the tree (`root` and `data` read the tree before a write, `newData` the tree after it) at the same location, so `data` at `/t/o` equals `root.child('t').child('o')` and never equals `newData`.
+- A direct comparison of two snapshots or of `query` with itself is still refused when Rules load, as there; the comparison runs when a ternary lets it past that check.
+- Objects read from `auth` members and the values `val()` gives for a location with children are new objects each time and equal nothing.
 
 ### Regular expressions
 
-The official emulator reads `matches()` patterns in a dialect of its own, an automaton grammar that is neither JavaScript's nor RE2's. Fireemu follows its grammar where it is recorded. For example, `a+?` means `(a+)?` (not a lazy repetition), `/a|q/` is searched as `.*a|q.*`, and under `i` an ASCII pattern folds case as there while the string being matched is left as it is. A construct whose meaning Fireemu does not reproduce yet is an error, so the rule is false whether or not it is negated. The emulator profile reads most of the constructs below as the official emulator does; the strict profile keeps all of them errors because production has not been asked:
+The official emulator reads `matches()` patterns in a dialect of its own, an automaton grammar that is neither JavaScript's nor RE2's. Fireemu follows its grammar where it is recorded. For example, `a+?` means `(a+)?` (not a lazy repetition), `/a|q/` is searched as `.*a|q.*`, and under `i` an ASCII pattern folds case as there while the string being matched is left as it is.
+
+A construct whose meaning Fireemu does not reproduce yet is an error, so the rule is false whether or not it is negated. The emulator profile reads most of the constructs below as the official emulator does; the strict profile keeps all of them errors because production has not been asked:
 
 | Construct | Example |
 |---|---|
@@ -268,24 +396,76 @@ The official emulator reads `matches()` patterns in a dialect of its own, an aut
 | An escaped letter with a format character such as U+200B after the backslash (the format character is dropped, as there) | `/\` U+200B `u0061/` |
 | A class range with an end beyond the Basic Multilingual Plane (read by the emulator profile by UTF-16 unit) | `/[a-😀]/` |
 
-On the emulator profile `\W` and `\D` are the complement of a language of strings, as in the official emulator's automaton: `\W` is every string except one word character, so `'ab'` and `''` match `/^\W$/` and `'a'` does not; a class that holds one is the union of its members as languages (`[\Wa]`), and a negated class (`[^\W]`) is single characters as usual. An escaped letter or digit other than `d`, `w`, `D` and `W` is that character (`\u0041` is `u0041`, `\b` is `b`, so `/[\uD800-\uDFFF]/` is the class of the characters from `0` to `u`, `D` and `F`). Beyond those, the emulator profile reads the official emulator's class grammar: a range whose end is before its start holds nothing, `[\\a]` holds `a`, a `-` before the closing bracket is a character, and a quantifier or other operator at the start of an alternative is that character. Where the official emulator and the strict profile read the pattern differently the strict profile denies the rule, never allows it. The constructs marked as not read stay errors on both profiles, so the emulator profile still refuses what the official emulator admits there: of the 323 rows of the recorded dialect corpus that fireemu denied and the official emulator allowed, 252 now decide as it does and 71 stay denied, all of them with the `i` flag and non-ASCII text (a declared difference: it would need a Java 21 case-folding table). The emulator profile reads a pattern by UTF-16 unit, so a character beyond the Basic Multilingual Plane is two class members and two units for `.`, and after a backslash a carriage return, U+2028 and U+2029 are a line feed while U+FEFF and U+0085 are themselves.
+How the emulator profile reads these constructs:
+
+- `\W` and `\D` are the complement of a language of strings, as in the official emulator's automaton: `\W` is every string except one word character, so `'ab'` and `''` match `/^\W$/` and `'a'` does not. A class that holds one is the union of its members as languages (`[\Wa]`), and a negated class (`[^\W]`) is single characters as usual.
+- An escaped letter or digit other than `d`, `w`, `D` and `W` is that character (`\u0041` is `u0041`, `\b` is `b`, so `/[\uD800-\uDFFF]/` is the class of the characters from `0` to `u`, `D` and `F`).
+- Beyond those, it reads the official emulator's class grammar: a range whose end is before its start holds nothing, `[\\a]` holds `a`, a `-` before the closing bracket is a character, and a quantifier or other operator at the start of an alternative is that character.
+- It reads a pattern by UTF-16 unit, so a character beyond the Basic Multilingual Plane is two class members and two units for `.`, and after a backslash a carriage return, U+2028 and U+2029 are a line feed while U+FEFF and U+0085 are themselves.
+
+Where the official emulator and the strict profile read the pattern differently the strict profile denies the rule, never allows it.
+
+The constructs marked as not read stay errors on both profiles, so the emulator profile still refuses what the official emulator admits there. Of the 323 rows of the recorded dialect corpus that fireemu denied and the official emulator allowed, 252 now decide as it does and 71 stay denied, all of them with the `i` flag and non-ASCII text (a declared difference: it would need a Java 21 case-folding table).
 
 The recorded syntactic-refusal cases, including `\s`, an unclosed class or group, or an unescaped `^` in the middle, are refused here with the same message as the official emulator. The separate recorded determinization-resource cases are described below.
 
 The eight recorded patterns refused by the official emulator's determinization resource limit are also rejected when fireemu loads rules, including in unevaluated expression branches. This does not establish complete regular-expression or production equivalence. These include determinization refusals ("could not determinize efficiently", a resource limit of the official emulator's automaton library). The recorded patterns include several counted repetitions of groups of alternatives in one pattern. Production's limit is not known; no production behavior is inferred from these comparisons.
 
-### Other differences
+### Lone surrogates
 
-- A lone escaped surrogate in a string literal (`'\uD83D'`) loads and is judged by UTF-16 units, as the official emulator does (`.length`, `+`, `==`, the orderings and the string methods; the coverage report shows it as U+FFFD). A path or key that holds one names nothing: `child()` reads absent, `hasChild` is false and an index is undefined, and `replace('', to)` of a string with a character beyond the Basic Multilingual Plane puts `to` between the two halves of its pair, as Java does. Production has not answered these shapes, so both profiles follow the official emulator.
-- A single rule evaluation that does more than 2^30 units of work is an error here too (every string a rule reads, joins, compares, searches, converts or replaces is charged by its length, a copy of the claims or of a nested value by its size, and a location built or shortened by `child`, `hasChild`, `hasChildren` or `parent()` by the bytes of its keys), which stops a quadratic `contains`, a repeated concatenation of a long stored string and a path built again and again; thirteen searches of a 10 MiB string are allowed, fifty fit and fifty-two do not (a known limit: the rule is denied, negated or not), and the Rules corpora use at most 628 units in one evaluation. The bound is per evaluation: one request can run many evaluations (a write validates each child it writes), and there is no limit on a request as a whole and no wall-clock limit, so a rule that is slow stays slow. A regular expression's matcher has its own bound of 200,000 steps for each `matches` call. A string a rule builds with replacement, concatenation or case conversion beyond 2^26 units (UTF-8 operations conservatively count bytes; UTF-16 operations count code units) is an error here, so the rule is false whether or not it is negated; this keeps a rule such as ten chained `replace('', '0123456789')` from allocating tens of gigabytes. The official emulator's heap decides its own limit: at 512 MB it answered seven such steps (about 39 million units) and failed the eighth with an internal error (500).
+- **In a string literal.** A lone escaped surrogate in a string literal (`'\uD83D'`) loads and is judged by UTF-16 units, as the official emulator does (`.length`, `+`, `==`, the orderings and the string methods; the coverage report shows it as U+FFFD). A path or key that holds one names nothing: `child()` reads absent, `hasChild` is false and an index is undefined, and `replace('', to)` of a string with a character beyond the Basic Multilingual Plane puts `to` between the two halves of its pair, as Java does. Production has not answered these shapes, so both profiles follow the official emulator.
+- **In stored values (emulator profile only).** A lone surrogate escape in a JSON string value is stored as `?`, one for each lone surrogate and a valid pair untouched, as the official emulator stores it. This holds for a write body (`PUT`, `PATCH` or `POST`, nested values, `.value` and `.priority` included), a WebSocket frame and an import file, and a bound of a query (`startAt="\ud83d"`, a listen's `sp` and `ep`) reads `?` the same way. A key that holds one is refused on both profiles, and a WebSocket path that holds one is answered `Invalid token in path`. The strict profile refuses all of them as before; production has not been asked.
+- **In token claims and `authvar` (not read on either profile, a declared difference).** This covers a token whose claims hold a lone surrogate (`"x":"\ud83d"`, a claim name included), and the `authvar` of a `gauth` frame that holds one. The official emulator keeps the surrogate in the claims as a Java string (`auth.token.x == '\uD83D'` holds) and echoes the authvar object. Here the strict profile answers 401 to such a token, the emulator profile judges the request as an anonymous one, and a `gauth` frame whose authvar holds a lone surrogate is the connection error.
+- **In WebSocket paths and merge keys.** A lone surrogate in the path of a WebSocket frame can never become a valid path (`.priority` included): the frame is answered `Invalid token in path` and writes, registers and cancels nothing. A WebSocket merge entry whose key is not a valid path is answered `invalid_parameters` (`Invalid token in path`, `Empty strings are not valid keys`, or the path length and depth texts) on the emulator profile; the strict profile answers the connection error as before. Invalid `onDisconnect` merge-entry keys still cause a connection error.
+
+### Evaluation budgets
+
+A single rule evaluation that does more than 2^30 units of work is an error here too. Work is charged as follows:
+
+- every string a rule reads, joins, compares, searches, converts or replaces, by its length;
+- a copy of the claims or of a nested value, by its size;
+- a location built or shortened by `child`, `hasChild`, `hasChildren` or `parent()`, by the bytes of its keys.
+
+This stops a quadratic `contains`, a repeated concatenation of a long stored string and a path built again and again. Thirteen searches of a 10 MiB string are allowed, fifty fit and fifty-two do not (a known limit: the rule is denied, negated or not), and the Rules corpora use at most 628 units in one evaluation.
+
+The bound is per evaluation: one request can run many evaluations (a write validates each child it writes), and there is no limit on a request as a whole and no wall-clock limit, so a rule that is slow stays slow. A regular expression's matcher has its own bound of 200,000 steps for each `matches` call.
+
+A string a rule builds with replacement, concatenation or case conversion beyond 2^26 units (UTF-8 operations conservatively count bytes; UTF-16 operations count code units) is an error here, so the rule is false whether or not it is negated. This keeps a rule such as ten chained `replace('', '0123456789')` from allocating tens of gigabytes. The official emulator's heap decides its own limit: at 512 MB it answered seven such steps (about 39 million units) and failed the eighth with an internal error (500).
+
+### Query variables and methods
+
 - `query.orderBy` loads on both profiles. It is the child ordering when the read orders by a child (`query.orderBy == 'a/b'`), `OrderByKey`, `OrderByValue` or `OrderByPriority` otherwise (a plain REST read is ordered by key, a stream and a listen by priority), and null in a write, a validation and a shallow read. An ordering by priority is the ordering by the child `.priority`, so `query.orderBy == '.priority'` and `query.isOrderByChild('.priority')` hold there.
-- `query.endBefore` is the exclusive end bound and `query.isOrderByChild(path)` whether the read orders by that child (empty segments are dropped; a path with no segment or an invalid key is an error). `http.encodeURL(s)` is Java's `URLEncoder.encode(s, "UTF-8")` with `%20` for a space, a lone surrogate encoded as `?`. A method read without a call (`auth.uid.contains`, `data.child`) is a value that is not null and equals nothing, and a callee that is not a member (`(c ? data.child : data.parent)('a')`) is called when its type holds a method, as the first method of that type is checked when Rules load. A call through such a value with an argument count its method does not take, which the official emulator answers with an internal error (500), is denied here. Production answered all of these recorded shapes as the official emulator does (both profiles follow them).
-- Emulator profile only: a lone surrogate escape in a JSON string value is stored as `?`, one for each lone surrogate and a valid pair untouched, as the official emulator stores it. This holds for a write body (`PUT`, `PATCH` or `POST`, nested values, `.value` and `.priority` included), a WebSocket frame and an import file, and a bound of a query (`startAt="\ud83d"`, a listen's `sp` and `ep`) reads `?` the same way. A key that holds one is refused on both profiles, and a WebSocket path that holds one is answered `Invalid token in path`. The strict profile refuses all of them as before; production has not been asked.
-- Not read on either profile (a declared difference): a token whose claims hold a lone surrogate (`"x":"\ud83d"`, a claim name included), and the `authvar` of a `gauth` frame that holds one. The official emulator keeps the surrogate in the claims as a Java string (`auth.token.x == '\uD83D'` holds) and echoes the authvar object. Here the strict profile answers 401 to such a token, the emulator profile judges the request as an anonymous one, and a `gauth` frame whose authvar holds a lone surrogate is the connection error. A lone surrogate in the path of a WebSocket frame can never become a valid path (`.priority` included): the frame is answered `Invalid token in path` and writes, registers and cancels nothing. A WebSocket merge entry whose key is not a valid path is answered `invalid_parameters` (`Invalid token in path`, `Empty strings are not valid keys`, or the path length and depth texts) on the emulator profile; the strict profile answers the connection error as before. Invalid `onDisconnect` merge-entry keys still cause a connection error.
-- A `\uXXXX` escape in an identifier is decoded as the official emulator reads it (`\u0061uth.uid` and `auth.\u0075id` name `auth.uid`). Other unsupported JavaScript constructs still fail when Rules load.
-- Where the official emulator answers a request with an internal error (500), Fireemu denies it: for example a string method on a value that turns out to be a snapshot (`(c ? root : 'a').length`), and `getPriority()` at a location the official emulator cannot read as a path (a key with `.`, `#`, `$`, `[`, `]` or a control character, a reserved name such as `.value` or `.info`, `.priority` before the end, or a path beyond 32 levels or 768 bytes).
+- `query.endBefore` is the exclusive end bound and `query.isOrderByChild(path)` whether the read orders by that child (empty segments are dropped; a path with no segment or an invalid key is an error).
+- `http.encodeURL(s)` is Java's `URLEncoder.encode(s, "UTF-8")` with `%20` for a space, a lone surrogate encoded as `?`.
+- A method read without a call (`auth.uid.contains`, `data.child`) is a value that is not null and equals nothing, and a callee that is not a member (`(c ? data.child : data.parent)('a')`) is called when its type holds a method, as the first method of that type is checked when Rules load. A call through such a value with an argument count its method does not take, which the official emulator answers with an internal error (500), is denied here.
+
+Production answered all of the recorded shapes in the last three items as the official emulator does (both profiles follow them).
+
+### Case conversion
+
 - `toLowerCase()` and `toUpperCase()` of a string holding a character whose case Java 21 and Fireemu's newer Unicode tables map differently is an error here: U+019B, U+0264, U+1C89, U+1C8A, U+A7CB to U+A7CF, U+A7D2 to U+A7D5 and U+A7DA to U+A7DC, and beyond the Basic Multilingual Plane U+10D50 to U+10D65, U+10D70 to U+10D85, U+16EA0 to U+16EB8 and U+16EBB to U+16ED3. The context-dependent sigma restriction below also applies.
 - `toLowerCase()` of a string holding `Σ` (U+03A3) is an error here unless each neighbour of the `Σ` is the string's edge, a space or a Latin, Greek or Cyrillic letter that has a case (`'ΑΣ'`, `'ΑΣ Α'`). Java chooses the final form `ς` by its word boundaries, which Fireemu does not reproduce, so `'Α:Σ'` and `'ΑΣ.'` are errors.
+
+### Malformed realtime queries
+
+Malformed realtime wire queries receive a connection-error control message, without automatically dropping the connection or sending a close frame. These are realtime protocol responses, not HTTP 400 responses.
+
+- They include unknown fields, a non-string index (`i`), non-boolean inclusive flags (`sin`, `ein`), a non-string limit side (`vf`), bound names (`sn`, `en`) other than strings or null, and a limit written as a floating-point number (even `2.0`).
+- Type checks still apply to flags, side and names when their corresponding bound or limit is absent.
+- A null bound name means no name. Otherwise-valid inclusive flags and names without a bound, and a side without a limit, have no effect.
+- A supplied integer limit must be positive and fit in 32 unsigned bits. Nonnumeric limits and integer limits outside that range receive `invalid_parameters` instead.
+- A supplied limit also requires side `l` or `r`; Fireemu refuses a missing or other side where the official emulator can read it as neither side.
+
+### Other differences
+
+- A `\uXXXX` escape in an identifier is decoded as the official emulator reads it (`\u0061uth.uid` and `auth.\u0075id` name `auth.uid`). Other unsupported JavaScript constructs still fail when Rules load.
+- Where the official emulator answers a request with an internal error (500), Fireemu denies it: for example a string method on a value that turns out to be a snapshot (`(c ? root : 'a').length`), and `getPriority()` at a location the official emulator cannot read as a path (a key with `.`, `#`, `$`, `[`, `]` or a control character, a reserved name such as `.value` or `.info`, `.priority` before the end, or a path beyond 32 levels or 768 bytes).
 - A request that gives a query parameter more than once, or more than one credential (`auth`, `access_token` and an `Authorization` header), is refused with 400. The official emulator takes the first value, and `auth` before the others.
-- Malformed realtime wire queries receive a connection-error control message, without automatically dropping the connection or sending a close frame. These include unknown fields, a non-string index (`i`), non-boolean inclusive flags (`sin`, `ein`), a non-string limit side (`vf`), bound names (`sn`, `en`) other than strings or null, and a limit written as a floating-point number (even `2.0`). Type checks still apply to flags, side and names when their corresponding bound or limit is absent. A null bound name means no name; otherwise-valid inclusive flags and names without a bound, and a side without a limit, have no effect. A supplied integer limit must be positive and fit in 32 unsigned bits. Nonnumeric limits and integer limits outside that range receive `invalid_parameters` instead. A supplied limit also requires side `l` or `r`; Fireemu refuses a missing or other side where the official emulator can read it as neither side. These are realtime protocol responses, not HTTP 400 responses.
 - A few rules both refuse are refused with another message or at another column.
+
+## Related
+
+- [Security Rules](../../guides/security-rules/)
+- [Export and import](../../guides/data/)
+- [Cloud Functions](../functions/)
+- [Compatibility](../../compatibility/)

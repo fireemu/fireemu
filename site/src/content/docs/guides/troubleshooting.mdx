@@ -1,9 +1,11 @@
 ---
 title: Troubleshooting
-description: Diagnose installation and startup problems, and report issues.
+description: Check an installation, look up a symptom or an error message, and report an issue.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Start with `fireemu doctor`, then look up the symptom or the error message below.
 
 ## Check the installation
 
@@ -13,7 +15,7 @@ npx fireemu doctor
 
 `doctor` reports the Fireemu binary, UI, Functions runner and Node.js it finds, and suggests a remedy for each problem.
 
-To also report what a running suite says, such as the Firestore history and Storage bytes it holds, pass its control URL, which is printed at startup:
+To also report what a running suite says, such as the Firestore history and Storage bytes it holds, pass its control URL. It is printed at startup:
 
 ```sh
 npx fireemu doctor --connect http://127.0.0.1:<port>
@@ -108,7 +110,9 @@ Fireemu also writes a `refused Host` warning on standard error, once per name. S
 
 </details>
 
-For more detail, start with `--log-verbosity debug`, which also prints the resolved configuration.
+## Get more detail
+
+Start with `--log-verbosity debug`, which also prints the resolved configuration.
 
 ## Report an issue
 
@@ -119,3 +123,10 @@ For more detail, start with `--log-verbosity debug`, which also prints the resol
 - for a compatibility issue, whether you compared against production Firebase or the official emulator, and the expected and actual results.
 
 Remove credentials and personal information before sharing configuration files or logs.
+
+## Related
+
+- [Configuration files](../configuration/)
+- [Security Rules](../security-rules/)
+- [CI and containers](../ci-and-containers/)
+- [Limitations](../../compatibility/limitations/)

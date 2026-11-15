@@ -1,11 +1,13 @@
 ---
 title: CI and containers
-description: Run Fireemu in GitHub Actions and in containers.
+description: Run your tests under Fireemu in GitHub Actions, serve the emulators from a container, and choose the host names they answer.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-## GitHub Actions
+Run your tests under Fireemu in a CI job, serve the emulators from a container to the host or to other containers, and list the host names your clients use.
+
+## Run tests in GitHub Actions
 
 `fireemu exec` returns your test command's exit status, so a CI job needs no separate start and stop steps:
 
@@ -23,9 +25,9 @@ jobs:
       - run: npx fireemu exec -- npm test
 ```
 
-The lint step fails the job when the configuration sets a key that Fireemu accepts but does not read. Use `--allow <key>` or `--allow-file <path>` to name keys kept on purpose; see [config lint](../../reference/cli/#config-lint).
+Fireemu needs no Java and no download at startup: the npm package installs a native binary for the runner's platform. The lint step is described under [Check the configuration before the tests](#check-the-configuration-before-the-tests).
 
-Fireemu needs no Java and no download at startup: the npm package installs a native binary for the runner's platform.
+### Add a productionExact job
 
 To also check what the development defaults let through, such as unsigned test tokens, add a job that runs with a second configuration file that sets [`productionExact`](../profiles/), for example `fireemu.production-exact.toml`:
 
@@ -74,13 +76,15 @@ Three checks fail a job early, before a test runs against the wrong setup:
       - run: npx fireemu exec --deny-inherited-emulator-env -- npm test
 ```
 
-- `config lint --deny-ineffective` exits 1 when the configuration sets a key that Fireemu accepts but never reads. List the keys you keep on purpose with `--allow <key>` or `--allow-file <path>` (see [`config lint`](../../reference/cli/#config-lint)).
-- `exec --plan` prints what the run resolves, so the job log shows the project ID, the services and their ports, the files that were read, the Node it would use for Functions and the emulator variables it inherits. It starts nothing, and it exits 1 when the run would fail for a reason it can see. Use `--json` to feed another tool (see [Plan a run](../../reference/cli/#plan-a-run)).
-- `--deny-inherited-emulator-env` fails the run when the job's environment carries an emulator variable (`PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST` of another suite, and so on) for a service this run does not start. Without it the run warns and keeps the variable. Use `--allow-inherited-emulator-env <NAME>` for a variable you set on purpose.
+| Check | What it does |
+|---|---|
+| `config lint --deny-ineffective` | Exits 1, failing the job, when the configuration sets a key that Fireemu accepts but never reads. List the keys you keep on purpose with `--allow <key>` or `--allow-file <path>` (see [`config lint`](../../reference/cli/#config-lint)). |
+| `exec --plan` | Prints what the run resolves, so the job log shows the project ID, the services and their ports, the files that were read, the Node it would use for Functions and the emulator variables it inherits. It starts nothing, and it exits 1 when the run would fail for a reason it can see. Use `--json` to feed another tool (see [Plan a run](../../reference/cli/#plan-a-run)). |
+| `--deny-inherited-emulator-env` | Fails the run when the job's environment carries an emulator variable (`PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST` of another suite, and so on) for a service this run does not start. Without it the run warns and keeps the variable. Use `--allow-inherited-emulator-env <NAME>` for a variable you set on purpose. |
 
 ### Container jobs
 
-In a GitHub Actions `container:` job, or any container that runs as root with a bind-mounted checkout, the checkout is owned by a host user that the container's root does not trust, so a discovered `fireemu.toml` or `firebase.json` is skipped with a warning. Name the files explicitly, or `chown` the checkout:
+In a GitHub Actions `container:` job, or any container that runs as root with a bind-mounted checkout, the checkout is owned by a host user that the container's root does not trust. A discovered `fireemu.toml` or `firebase.json` is therefore skipped with a warning. Name the files explicitly, or `chown` the checkout:
 
 ```sh
 npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
@@ -90,7 +94,10 @@ See [Configuration files](../configuration/#file-ownership-checks).
 
 ## Serve the emulators from a container
 
-By default every listener is on loopback, which a published container port cannot reach. To serve the emulators to the host or to other containers, opt in with `network.allowNonLoopbackHosts` in `fireemu.toml`, and give the product emulators a host in `firebase.json`:
+By default every listener is on loopback, which a published container port cannot reach. To serve the emulators to the host or to other containers:
+
+1. Opt in with `network.allowNonLoopbackHosts` in `fireemu.toml`.
+2. Give the product emulators a host in `firebase.json`.
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -122,6 +129,8 @@ allowNonLoopbackHosts = true
 </TabItem>
 </Tabs>
 
+In `firebase.json`:
+
 ```json
 {
   "emulators": {
@@ -131,17 +140,39 @@ allowNonLoopbackHosts = true
 }
 ```
 
-- Only Firestore, Authentication, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub and the Realtime Database may listen off loopback. The Hub, the UI and the Logging emulator stay on loopback. Authentication, whose port also serves the control API, listens on loopback or on every interface (`0.0.0.0` or `::`), not on one other address.
-- The emulators serve without a credential, so startup prints a `warning:` line for each listener off loopback. Any client that reaches a published port can do what a local client can on the product APIs, including the Admin SDK's `Bearer owner` credential and the Auth emulator's own routes. For the Realtime Database this includes `database.defaultAccess = "locked"`, which admits that well-known `owner` credential, so it is no access control off loopback. Under the `emulator` profile any bearer token is a Realtime Database administrator for data requests, and its `/.settings/rules.json`, like the Firestore and Storage rules routes, answers loopback peers only. Publish the ports only to a network you trust.
-- Fireemu's own controls (the control API, App Check debug-token management, and the routes that load Firestore, Storage and Realtime Database Security Rules or clear Firestore data) answer loopback peers only and return 403 to any other peer (`@firebase/rules-unit-testing` calls the rules and clear routes through `loadFirestoreRules`, `loadStorageRules` and `clearFirestore`). Run code that uses them inside the container, or in a container that shares its network namespace, such as a Podman pod or `--network container:<name>`.
-- Because a forwarder inside that namespace (`kubectl port-forward`, a sidecar proxy) connects from loopback, every control API request also needs `Authorization: Bearer <control token>` once the option is on, from a process as from a page; only `/health/` is exempt. The routes that load Security Rules or clear Firestore data are not held to the token, so `@firebase/rules-unit-testing` keeps working; a client that reaches the emulator through such a forwarder can call them, as it could on the official emulator. `fireemu exec` gives its command the token in `FIREEMU_CONTROL_TOKEN`, and `fireemu/testing` and the UI send it.
-- Browser pages must still come from a loopback origin (`http://localhost:...`), so a page served from another host cannot use the exposed ports.
+### What listens off loopback
+
+- Only Firestore, Authentication, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub and the Realtime Database may listen off loopback. The Hub, the UI and the Logging emulator stay on loopback.
+- Authentication, whose port also serves the control API, listens on loopback or on every interface (`0.0.0.0` or `::`), not on one other address.
 - A listener on `0.0.0.0` or `::` is advertised as `127.0.0.1` or `::1` in the environment and the Hub, as the official CLI does.
-- With the option on, the emulators also answer a single-label `Host` such as a Compose service name (`fireemu:8080`). Other names must be listed in `network.allowedHosts`; see below.
+- With the option on, the emulators also answer a single-label `Host` such as a Compose service name (`fireemu:8080`). Other names must be listed in `network.allowedHosts`; see [Host names the emulators answer](#host-names-the-emulators-answer).
+
+### Who can reach a published port
+
+:::caution
+The emulators serve without a credential. Publish the ports only to a network you trust.
+
+:::
+
+- Startup prints a `warning:` line for each listener off loopback.
+- Any client that reaches a published port can do what a local client can on the product APIs, including the Admin SDK's `Bearer owner` credential and the Auth emulator's own routes.
+- For the Realtime Database this includes `database.defaultAccess = "locked"`, which admits that well-known `owner` credential, so it is no access control off loopback.
+- Under the `emulator` profile any bearer token is a Realtime Database administrator for data requests, and its `/.settings/rules.json`, like the Firestore and Storage rules routes, answers loopback peers only.
+- Browser pages must still come from a loopback origin (`http://localhost:...`), so a page served from another host cannot use the exposed ports.
+
+### Fireemu's own controls
+
+- The control API, App Check debug-token management, and the routes that load Firestore, Storage and Realtime Database Security Rules or clear Firestore data answer loopback peers only and return 403 to any other peer. `@firebase/rules-unit-testing` calls the rules and clear routes through `loadFirestoreRules`, `loadStorageRules` and `clearFirestore`.
+- Run code that uses them inside the container, or in a container that shares its network namespace, such as a Podman pod or `--network container:<name>`.
+- A forwarder inside that namespace (`kubectl port-forward`, a sidecar proxy) connects from loopback. So once the option is on, every control API request also needs `Authorization: Bearer <control token>`, from a process as from a page; only `/health/` is exempt.
+- The routes that load Security Rules or clear Firestore data are not held to the token, so `@firebase/rules-unit-testing` keeps working. A client that reaches the emulator through such a forwarder can call them, as it could on the official emulator.
+- `fireemu exec` gives its command the token in `FIREEMU_CONTROL_TOKEN`, and `fireemu/testing` and the UI send it.
 
 ## Host names the emulators answer
 
-A web page can re-point a name it controls at `127.0.0.1` after it has loaded (DNS rebinding). The browser then treats requests to the emulators as same-origin and sends no `Origin`, so the page could read local data that the emulators serve without a credential. To prevent that, the product emulators (Firestore, Authentication and the control API, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub, the Realtime Database and Hosting) answer `403` to an HTTP/1 request whose `Host` header names any other host than:
+A web page can re-point a name it controls at `127.0.0.1` after it has loaded (DNS rebinding). The browser then treats requests to the emulators as same-origin and sends no `Origin`, so the page could read local data that the emulators serve without a credential.
+
+To prevent that, the product emulators (Firestore, Authentication and the control API, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub, the Realtime Database and Hosting) answer `403` to an HTTP/1 request whose `Host` header names any other host than:
 
 - `localhost` and names under `.localhost`;
 - any IP address, so `10.0.2.2` from the Android emulator, a LAN address or a bridge address works;
@@ -155,7 +186,15 @@ A web page can re-point a name it controls at `127.0.0.1` after it has loaded (D
 
 The special-use and `.internal` names are safe only while local name resolution can be trusted. On an untrusted network a malicious resolver (for example one handed out by DHCP on a public Wi-Fi, a risk RFC 8375 section 6.1 notes for `.home.arpa`) or an mDNS peer on the LAN (for `.local`) can answer them and rebind a page to the emulators. `network.allowedHosts` only adds names; no setting removes these defaults.
 
-A request without `Host` (HTTP/1.0) and HTTP/2 requests (gRPC clients) are not checked, because no browser sends them. The comparison ignores case, the port and one trailing dot. The Hub, the UI and the Logging emulator answer loopback names only. The official emulator does not check `Host`; production has no counterpart, so the check is the same in both profiles.
+How the check applies:
+
+- A request without `Host` (HTTP/1.0) and HTTP/2 requests (gRPC clients) are not checked, because no browser sends them.
+- The comparison ignores case, the port and one trailing dot.
+- The Hub, the UI and the Logging emulator answer loopback names only.
+- The official emulator does not check `Host`; production has no counterpart, so the check is the same in both profiles.
+- A refused request gets a `403` whose message names the setting, and the daemon logs one `warning: refused Host "<name>"` line per refused name (at most 32 names), so a client whose SDK hides the response body still leaves a trace.
+
+### Add host names
 
 Add the other names your clients use, for example a tunnel, a name in `/etc/hosts` outside the special-use suffixes, or a Kubernetes service under a custom cluster domain. An entry is a name, a name with a leading dot for that domain and all its subdomains, or `"*"` to answer every `Host` (which turns the defence off):
 
@@ -185,11 +224,12 @@ allowedHosts = ["emulator.ci.example", ".corp.example"]
 </TabItem>
 </Tabs>
 
-An entry has no scheme, port or path. Listing a name only lets requests naming it through; the browser-origin checks are unchanged, so a page must still come from a loopback origin to use the privileged routes. Fireemu prints a `warning:` line at start for `"*"` and for an entry that covers a whole top-level domain such as `".com"`, because any web page can register a name there.
+- An entry has no scheme, port or path.
+- Listing a name only lets requests naming it through. The browser-origin checks are unchanged, so a page must still come from a loopback origin to use the privileged routes.
+- Fireemu prints a `warning:` line at start for `"*"` and for an entry that covers a whole top-level domain such as `".com"`, because any web page can register a name there.
+- The policy is read when the daemon starts; restart it after changing `network.allowedHosts`.
 
-A refused request gets a `403` whose message names the setting, and the daemon logs one `warning: refused Host "<name>"` line per refused name (at most 32 names), so a client whose SDK hides the response body still leaves a trace.
-
-The entries for common environments:
+### Entries for common environments
 
 | Environment | Entry |
 |---|---|
@@ -198,4 +238,11 @@ The entries for common environments:
 | Cloudflare Tunnel | the exact public hostname of the tunnel |
 | A name in `/etc/hosts` outside `.test`, `.local` and `.home.arpa` | that name |
 
-List exact tunnel names rather than the tunnel provider's whole domain: anyone can open a tunnel under it. Firebase Studio's `.cloudworkstations.dev`, Codespaces' `.app.github.dev`, mDNS `.local`, Kubernetes `svc.cluster.local` and `.test` names need no entry. The policy is read when the daemon starts; restart it after changing `network.allowedHosts`.
+List exact tunnel names rather than the tunnel provider's whole domain: anyone can open a tunnel under it. Firebase Studio's `.cloudworkstations.dev`, Codespaces' `.app.github.dev`, mDNS `.local`, Kubernetes `svc.cluster.local` and `.test` names need no entry.
+
+## Related
+
+- [Configuration files](../configuration/#file-ownership-checks)
+- [Profiles and productionExact](../profiles/)
+- [CLI reference](../../reference/cli/)
+- [Troubleshooting](../troubleshooting/)

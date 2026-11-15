@@ -1,14 +1,16 @@
 ---
 title: Configuration files
-description: How Fireemu finds fireemu.toml and firebase.json, and what each one holds.
+description: Set up fireemu.toml and firebase.json, and find out which files a run loads and where their relative paths resolve.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
 Fireemu reads two kinds of files:
 
-- **`fireemu.toml`** holds Fireemu's own settings, such as the [profile](../profiles/), Authentication project configuration and the clock. It contains `schemaVersion = 1`. The same settings can be written as JSON in `fireemu.json`; a directory that has both is refused (see [Which files are loaded](#which-files-are-loaded)). See the [configuration schema](../../reference/configuration/).
+- **`fireemu.toml`** holds Fireemu's own settings, such as the [profile](../profiles/), Authentication project configuration and the clock. It contains `schemaVersion = 1`. You can write the same settings as JSON in `fireemu.json`; a directory that has both is refused (see [Which files are loaded](#which-files-are-loaded)). See the [configuration schema](../../reference/configuration/).
 - **`firebase.json`** is the file the Firebase CLI uses. Fireemu reads ports, Security Rules, indexes and Functions codebases from it, every time it starts.
+
+## Use both files
 
 Keep Fireemu-specific settings in `fireemu.toml` rather than in `firebase.json`. To use both, name the `firebase.json` in `fireemu.toml`:
 
@@ -43,20 +45,31 @@ firebaseJson = "firebase.json"
 
 ## Which files are loaded
 
-`up`, `exec`, `emulators:start` and `emulators:exec` choose their configuration files as follows.
+`up`, `exec`, `emulators:start` and `emulators:exec` choose their configuration files in this order:
 
-1. `--config <file>` and `--firebase-json <file>` load exactly the files they name, and nothing is searched for. `--config` parses a `.toml` path as TOML (case-insensitive, including `.TOML`) and every other extension as JSON. A TOML configuration must set `schemaVersion = 1`; it is never read as a `firebase.json`, which is JSON only. `--firebase-json` always reads JSON.
-2. Otherwise, the single `fireemu.toml` or `fireemu.json` in the current directory is loaded as if it were passed with `--config`. If both files exist, startup is refused: remove one or select a file with `--config`. Its `firebaseJson` entry, resolved relative to the loaded file, names the `firebase.json` to load. A `firebase.json` beside a `fireemu.toml` without a `firebaseJson` entry is not loaded, and the startup output says so. Neither `fireemu.toml` nor `fireemu.json` in a parent directory is used, because the paths it contains are relative to the current directory. Relative paths inside a canonical file (`rules.source`, `storage.rules`, `functions.source`, `firestore.indexFile` and the other file settings) are read from the working directory, whichever directory the file is in; only `firebaseJson` and the paths inside a `firebase.json` are read from the file's own directory.
-3. Otherwise, the nearest `firebase.json` is loaded as if it were passed with `--firebase-json`: the one in the current directory, else the first one found in a parent directory, as the Firebase CLI finds it. Its paths and the `.firebaserc` beside it are read from its directory.
-4. Otherwise, the built-in defaults apply, and no Security Rules are loaded.
+1. **Explicit flags.** `--config <file>` and `--firebase-json <file>` load exactly the files they name, and nothing is searched for. `--config` parses a `.toml` path as TOML (case-insensitive, including `.TOML`) and every other extension as JSON. A TOML configuration must set `schemaVersion = 1`; it is never read as a `firebase.json`, which is JSON only. `--firebase-json` always reads JSON.
+2. **A Fireemu configuration in the current directory.** Otherwise, the single `fireemu.toml` or `fireemu.json` in the current directory is loaded as if it were passed with `--config`.
+   - If both files exist, startup is refused: remove one or select a file with `--config`.
+   - Its `firebaseJson` entry, resolved relative to the loaded file, names the `firebase.json` to load. A `firebase.json` beside a `fireemu.toml` without a `firebaseJson` entry is not loaded, and the startup output says so.
+   - Neither `fireemu.toml` nor `fireemu.json` in a parent directory is used, because the paths it contains are relative to the current directory.
+   - Relative paths inside a canonical file (`rules.source`, `storage.rules`, `functions.source`, `firestore.indexFile` and the other file settings) are read from the working directory, whichever directory the file is in. Only `firebaseJson` and the paths inside a `firebase.json` are read from the file's own directory.
+3. **The nearest `firebase.json`.** Otherwise, the nearest `firebase.json` is loaded as if it were passed with `--firebase-json`: the one in the current directory, else the first one found in a parent directory, as the Firebase CLI finds it. Its paths and the `.firebaserc` beside it are read from its directory.
+4. **Built-in defaults.** Otherwise, the built-in defaults apply, and no Security Rules are loaded.
 
 `--no-config-discovery` skips steps 2 and 3. The `config:` line of the startup output names the files that were loaded.
 
-If you relied on the old behavior, where a `firebase.json` next to your tests was ignored, pass `--no-config-discovery`. Discovery means that the project ID comes from the `.firebaserc` beside the discovered `firebase.json`, that its emulator ports, Hub, UI and single-project settings apply, and that a `functions` entry starts the Functions runtime. `fireemu capabilities` also reports the profile of a discovered `fireemu.toml`.
+Discovery has these effects:
+
+- The project ID comes from the `.firebaserc` beside the discovered `firebase.json`.
+- Its emulator ports, Hub, UI and single-project settings apply.
+- A `functions` entry starts the Functions runtime.
+- `fireemu capabilities` also reports the profile of a discovered `fireemu.toml`.
+
+If you relied on the old behavior, where a `firebase.json` next to your tests was ignored, pass `--no-config-discovery`.
 
 ## Relative paths
 
-A relative path is resolved against a different directory depending on the file that wrote it:
+A relative path resolves against a different directory depending on the file it is written in:
 
 | Where the path is written | Resolved against |
 |---|---|
@@ -65,20 +78,29 @@ A relative path is resolved against a different directory depending on the file 
 | `firebaseJson` in `fireemu.toml` or `fireemu.json` | The directory of that configuration file |
 | Every path inside a `firebase.json` (`firestore.rules`, `functions.source`, `hosting.public`, ...) | The directory of that `firebase.json` |
 
-So `fireemu exec --config packages/api/fireemu.toml -- npm test`, run from the repository root, reads `rules.source = "firestore.rules"` from the repository root, not from `packages/api`. Fireemu keeps this behavior for compatibility. To avoid the difference, run it from the directory that holds the configuration, or put the paths in a `firebase.json` that `firebaseJson` references. [`fireemu up --plan`](../../reference/cli/#plan-a-run) shows, for every path, the absolute path the run opens and the directory it was resolved against, and warns when a path of the canonical configuration would resolve differently from the configuration file's own directory. A future schema version may resolve every path against the configuration file.
+So `fireemu exec --config packages/api/fireemu.toml -- npm test`, run from the repository root, reads `rules.source = "firestore.rules"` from the repository root, not from `packages/api`. Fireemu keeps this behavior for compatibility. A future schema version may resolve every path against the configuration file.
+
+To avoid the difference, run Fireemu from the directory that holds the configuration, or put the paths in a `firebase.json` that `firebaseJson` references.
+
+[`fireemu up --plan`](../../reference/cli/#plan-a-run) shows, for every path, the absolute path the run opens and the directory it was resolved against. It warns when a path of the canonical configuration would resolve differently from the configuration file's own directory.
 
 ## File ownership checks
 
-A discovered file can name Functions code to run and the rules to enforce, so on Unix the search checks who owns what it finds, as git checks repository ownership. The Firebase CLI does not check this. The trusted owners are you, root, and, when you run as root through `sudo`, the user in `SUDO_UID`.
+A discovered file can name Functions code to run and the rules to enforce. On Unix, the search therefore checks who owns what it finds, as git checks repository ownership. The Firebase CLI does not check this. On Windows, ownership is not checked.
 
-- A `fireemu.toml`, `fireemu.json` or `firebase.json` whose owner is not trusted, or that any user can write, is skipped with a warning. Group write is allowed, so files created under a user-private-group umask (002, the Debian and Ubuntu default) are loaded.
-- A `.firebaserc` names only project and target aliases, never code or rules, so its owner is not checked. It is skipped only when it, or its directory, can be written by any user.
-- The search stops before a parent directory whose owner is not trusted or that any user can write, such as `/tmp`. It also stops, without a warning, at a parent it cannot inspect, such as one you may not enter.
-- The owner of the current directory is not checked, because you chose to run there. A current directory that any user can write is not searched at all.
-- A symbolic link is judged by the file it points to. The directory that holds the target is not checked.
-- Each candidate is opened once. Its owner and mode are checked on the open file before anything is read, and its text is then read from the same file. A discovered file larger than 16 MiB is refused with an error.
+The trusted owners are you, root, and, when you run as root through `sudo`, the user in `SUDO_UID`.
 
-A skipped file or directory is named in a warning, and the run continues as if nothing had been found. To load a skipped file anyway, name it with `--config` or `--firebase-json`. To silence the warning, pass `--no-config-discovery`. Errors in a discovered file say that the search found the file. On Windows, ownership is not checked.
+- **Configuration files.** A `fireemu.toml`, `fireemu.json` or `firebase.json` whose owner is not trusted, or that any user can write, is skipped with a warning. Group write is allowed, so files created under a user-private-group umask (002, the Debian and Ubuntu default) are loaded.
+- **`.firebaserc`.** It names only project and target aliases, never code or rules, so its owner is not checked. It is skipped only when it, or its directory, can be written by any user.
+- **Parent directories.** The search stops before a parent directory whose owner is not trusted or that any user can write, such as `/tmp`. It also stops, without a warning, at a parent it cannot inspect, such as one you may not enter.
+- **The current directory.** Its owner is not checked, because you chose to run there. A current directory that any user can write is not searched at all.
+- **Symbolic links.** A symbolic link is judged by the file it points to. The directory that holds the target is not checked.
+- **Reading.** Each candidate is opened once. Its owner and mode are checked on the open file before anything is read, and its text is then read from the same file. A discovered file larger than 16 MiB is refused with an error.
+
+A skipped file or directory is named in a warning, and the run continues as if nothing had been found. Errors in a discovered file say that the search found the file.
+
+- To load a skipped file anyway, name it with `--config` or `--firebase-json`.
+- To silence the warning, pass `--no-config-discovery`.
 
 Two common setups run into this rule:
 
@@ -87,9 +109,16 @@ Two common setups run into this rule:
 
 ## Validate your configuration
 
-`fireemu.toml` is validated at startup, and a value Fireemu does not accept stops it with an error. A key the schema does not list and a value of the wrong type are refused in both formats by `up`, `exec` and `config show`, naming the file, the key and the type it should have had, for example `fireemu.toml: daemon.firestorePort must be an integer, found a string`. Integer settings refuse floats even when their value is integral: write `8080` rather than `8080.0`, as the error message suggests. The [configuration schema](../../reference/configuration/) is a JSON Schema you can also use in your editor.
+`fireemu.toml` is validated at startup. A value Fireemu does not accept stops it with an error.
 
-`fireemu capabilities` prints the capability manifest for the profile your configuration resolves to. `fireemu up --plan` and `fireemu exec --plan -- <command>` print everything the run resolves from your files, the command line and the environment (project, services, ports, files, Functions runtime, inherited variables) without starting it; see [Plan a run](../../reference/cli/#plan-a-run).
+- `up`, `exec` and `config show` refuse a key the schema does not list and a value of the wrong type, in both formats. The error names the file, the key and the type it should have had, for example `fireemu.toml: daemon.firestorePort must be an integer, found a string`.
+- Integer settings refuse floats even when their value is integral: write `8080` rather than `8080.0`, as the error message suggests.
+- The [configuration schema](../../reference/configuration/) is a JSON Schema you can also use in your editor.
+
+Two commands show what a configuration resolves to:
+
+- `fireemu capabilities` prints the capability manifest for the profile your configuration resolves to.
+- `fireemu up --plan` and `fireemu exec --plan -- <command>` print everything the run resolves from your files, the command line and the environment (project, services, ports, files, Functions runtime, inherited variables) without starting it. See [Plan a run](../../reference/cli/#plan-a-run).
 
 ## Generate a reference file
 
@@ -97,15 +126,24 @@ Two common setups run into this rule:
 
 - The normal `fireemu.toml` stays minimal. Copying a reference key into it makes that key explicit, which stops `productionExact` from switching it.
 - These keys stay commented out in the reference: keys without defaults, keys whose presence selects behavior, keys governed by `productionExact`, and keys accepted for forward compatibility that currently have no effect (marked as such in their comment).
-- `fireemu config lint --deny-ineffective` fails a CI job when the configuration sets a key that is accepted with no effect; `--allow` and `--allow-file` list the ones you keep on purpose (see [`config lint`](../../reference/cli/#config-lint)).
+- `fireemu config lint --deny-ineffective` fails a CI job when the configuration sets a key that is accepted with no effect. `--allow` and `--allow-file` list the ones you keep on purpose (see [`config lint`](../../reference/cli/#config-lint)).
 - Combine `--reference` with `--profile` or `--firebase-json` when initializing. With an existing `fireemu.toml` or `fireemu.json` and neither of those options, only the reference is written.
 - Existing output files require `--force` to replace.
 
-In a released binary, generated schema annotations refer to the schema file of that release, in the GitHub repository (`https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`), so an editor checks the file against the keys that installed version accepts. A binary built from source, including a build between releases (which embeds a newer schema than its version's tag), writes the `main` location instead. A `$schema` or `#:schema` naming any release tag, `main`, or the old `https://fireemu.dev/spec/config/fireemu.schema.json` location still loads; replace an old annotation with the tag of the version you run for editor validation. Fireemu validates against its bundled schema and does not fetch the annotation URL. `fireemu config schema --out <path>` writes that bundled schema to a file, for an editor or tool that cannot reach GitHub.
+### Schema annotations
+
+In a released binary, generated schema annotations refer to the schema file of that release, in the GitHub repository (`https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`), so an editor checks the file against the keys that installed version accepts. A binary built from source, including a build between releases (which embeds a newer schema than its version's tag), writes the `main` location instead.
+
+A `$schema` or `#:schema` naming any release tag, `main`, or the old `https://fireemu.dev/spec/config/fireemu.schema.json` location still loads. For editor validation, replace an old annotation with the tag of the version you run.
+
+Fireemu validates against its bundled schema and does not fetch the annotation URL. `fireemu config schema --out <path>` writes that bundled schema to a file, for an editor or tool that cannot reach GitHub.
 
 ## TOML values and JSON null
 
-TOML files use the same JSON Schema, validation and defaults as JSON files. Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json` (the tag of the version you run) to select the schema in Taplo or Even Better TOML. Quote timestamp values: TOML datetimes are refused with the key name because the schema has no datetime type.
+TOML files use the same JSON Schema, validation and defaults as JSON files.
+
+- Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json` (the tag of the version you run) to select the schema in Taplo or Even Better TOML.
+- Quote timestamp values. TOML datetimes are refused with the key name because the schema has no datetime type.
 
 TOML has no `null`. For every nullable setting below, omit the key in its containing table; for nullable array items, omit the item. Keep the containing table or array when its presence is intentional. Empty arrays and empty tables retain their existing meaning.
 
@@ -124,3 +162,10 @@ TOML has no `null`. For every nullable setting below, omit the key in its contai
 | `auth.blockingFunctions.triggers.beforeCreate`, `auth.blockingFunctions.triggers.beforeSignIn` | Disable this trigger in an explicit trigger selection. Keep `[auth.blockingFunctions.triggers]`; omitting that entire table enables discovery instead. |
 | `auth.quota.signUpQuotaConfig` | Clear the temporary quota override, including an imported override. Keep `[auth.quota]` empty; omitting the entire quota table preserves an imported override. |
 | `auth.passwordPolicy.constraints.maxLength`, `auth.passwordPolicyOverrides[].passwordPolicy.constraints.maxLength` | No custom maximum length. |
+
+## Related
+
+- [Configuration reference](../../reference/configuration/)
+- [Profiles and productionExact](../profiles/)
+- [CLI reference](../../reference/cli/)
+- [CI and containers](../ci-and-containers/)

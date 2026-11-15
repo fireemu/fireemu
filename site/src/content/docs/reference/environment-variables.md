@@ -1,13 +1,15 @@
 ---
 title: Environment variables
-description: The environment variables Fireemu sets for your command and the ones it reads.
+description: Look up the environment variables Fireemu sets for your command and for Functions code, and the ones it reads.
 ---
 
 This list is taken from the source of the `fireemu` binary and the npm package. Anything not listed here is an implementation detail and may change.
 
 ## Set by `fireemu exec`
 
-`exec` gives its command the variables of the emulators that are running, and nothing else of its own. Variables for emulators that are not selected are left as your environment had them, so a missing emulator never sends an SDK to production by accident; `exec` prints a warning for each one, and `--deny-inherited-emulator-env` refuses the run instead (see [Inherited emulator variables](../cli/#inherited-emulator-variables)). The names and formats follow what `firebase emulators:exec` writes.
+`exec` gives its command the variables of the emulators that are running, and nothing else of its own. The names and formats follow what `firebase emulators:exec` writes.
+
+Variables for emulators that are not selected are left as your environment had them, so a missing emulator never sends an SDK to production by accident. `exec` prints a warning for each one, and `--deny-inherited-emulator-env` refuses the run instead (see [Inherited emulator variables](../cli/#inherited-emulator-variables)).
 
 | Variable | Value | When |
 |---|---|---|
@@ -32,7 +34,9 @@ This list is taken from the source of the `fireemu` binary and the npm package. 
 
 ## Set for Functions code
 
-A Functions codebase runs with the same emulator host variables for the services that are running, plus `FUNCTIONS_EMULATOR=true`, the project ID variables and `FIREBASE_CONFIG`. Only a short list of variables is inherited from the daemon. Credentials are withheld on purpose: `GOOGLE_APPLICATION_CREDENTIALS`, `FIREBASE_TOKEN` and `CLOUDSDK_*` do not reach function code. The `FIREEMU_RUNNER*` variables are internal.
+A Functions codebase runs with the same emulator host variables for the services that are running, plus `FUNCTIONS_EMULATOR=true`, the project ID variables and `FIREBASE_CONFIG`.
+
+Only a short list of variables is inherited from the daemon. Credentials are withheld on purpose: `GOOGLE_APPLICATION_CREDENTIALS`, `FIREBASE_TOKEN` and `CLOUDSDK_*` do not reach function code. The `FIREEMU_RUNNER*` variables are internal.
 
 ## Read by Fireemu
 

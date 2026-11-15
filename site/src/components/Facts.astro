@@ -28,11 +28,12 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 <style>
 	.fe-facts {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
 		gap: 0 1.5rem;
 		margin: 1.75rem 0 0;
-		border-block: 1px solid var(--fe-border);
-		padding: 1rem 0;
+		/* Only a top rule: the section heading that follows draws the rule below. */
+		border-top: 1px solid var(--fe-border);
+		padding: 1rem 0 0;
 	}
 	.fe-facts div {
 		padding: 0.25rem 0;
