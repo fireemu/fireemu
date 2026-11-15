@@ -4,14 +4,16 @@
 interface Fact {
 	label: string;
 	value: string;
-	/** Optional link for the value, relative to the site base (e.g. "compatibility/"). */
+	/** Optional link for the value, relative to the site base (e.g. "compatibility/"); it stays in the page's locale. */
 	href?: string;
 }
 interface Props {
 	items: Fact[];
 }
 const { items } = Astro.props;
-const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+import { pageLocale } from '../i18n/ui.mjs';
+
+const { to } = pageLocale(Astro.url, import.meta.env.BASE_URL);
 ---
 
 <dl class="fe-facts not-content">
@@ -19,7 +21,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 		items.map(({ label, value, href }) => (
 			<div>
 				<dt>{label}</dt>
-				<dd>{href ? <a href={`${base}${href}`}>{value}</a> : value}</dd>
+				<dd>{href ? <a href={to(href)}>{value}</a> : value}</dd>
 			</div>
 		))
 	}

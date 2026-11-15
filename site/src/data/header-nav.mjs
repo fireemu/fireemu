@@ -1,18 +1,23 @@
 // Links shown in the site header on every page, including the landing page, which has no sidebar.
 // A link with a `slug` is a docs page, and `section` is the path prefix that marks it as current;
-// a link with an `href` leaves the site.
+// a link with an `href` leaves the site. `key` names the label in src/i18n/<locale>.json.
+import { splitLocale } from '../i18n/locales.mjs';
+
 export const headerNav = [
-	{ label: 'Docs', slug: 'getting-started/install', section: 'getting-started' },
-	{ label: 'Products', slug: 'products/firestore', section: 'products' },
-	{ label: 'Guides', slug: 'guides/configuration', section: 'guides' },
-	{ label: 'Compatibility', slug: 'compatibility', section: 'compatibility' },
+	{ label: 'Docs', key: 'nav.docs', slug: 'getting-started/install', section: 'getting-started' },
+	{ label: 'Products', key: 'nav.products', slug: 'products/firestore', section: 'products' },
+	{ label: 'Guides', key: 'nav.guides', slug: 'guides/configuration', section: 'guides' },
+	{ label: 'Compatibility', key: 'nav.compatibility', slug: 'compatibility', section: 'compatibility' },
 	{ label: 'npm', href: 'https://www.npmjs.com/package/fireemu' },
 	{ label: 'GitHub', href: 'https://github.com/fireemu/fireemu' },
 ];
 
-/** The link whose section is the longest prefix of `path` (relative to the site base). */
+/**
+ * The link whose section is the longest prefix of `path` (relative to the site base). A locale
+ * prefix such as /ja/ is ignored, so a translated page marks the same section.
+ */
 export function currentNavSlug(path) {
-	const clean = path.replace(/^\/+|\/+$/g, '');
+	const clean = splitLocale(path).rest.replace(/^\/+|\/+$/g, '');
 	let best;
 	for (const item of headerNav) {
 		if (!item.section) continue;

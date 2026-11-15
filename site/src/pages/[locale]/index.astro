@@ -1,0 +1,11 @@
+---
+// The landing page of each translated locale (/es/, /de/, /ja/, /zh-cn/, /ko/).
+import Landing from '../../components/Landing.astro';
+import { localeCodes } from '../../i18n/locales.mjs';
+
+export function getStaticPaths() {
+	return localeCodes.map((locale) => ({ params: { locale } }));
+}
+---
+
+<Landing />

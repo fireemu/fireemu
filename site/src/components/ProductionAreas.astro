@@ -1,5 +1,8 @@
 ---
 import { loadRepositoryData, productionAreaRows } from '../data/compat.mjs';
+import { pageLocale, statusLabel } from '../i18n/ui.mjs';
+
+const { locale, t } = pageLocale(Astro.url, import.meta.env.BASE_URL);
 
 const rows = productionAreaRows((await loadRepositoryData()).closures);
 const products = [...new Set(rows.map((row) => row.product))];
@@ -10,7 +13,7 @@ const products = [...new Set(rows.map((row) => row.product))];
 		<h3>{product}</h3>
 		<table>
 			<thead>
-				<tr><th>Area</th><th>Status</th><th>Conditions verified</th></tr>
+				<tr><th>{t('table.area')}</th><th>{t('table.status')}</th><th>{t('table.conditionsVerified')}</th></tr>
 			</thead>
 			<tbody>
 				{rows.filter((row) => row.product === product).map((row) => (
@@ -19,21 +22,21 @@ const products = [...new Set(rows.map((row) => row.product))];
 							<strong>{row.title}</strong>
 							<br /><small>{row.covers}</small>
 							<details>
-								<summary>{row.total} conditions</summary>
+								<summary>{t('table.conditions', { count: row.total })}</summary>
 								<ul class="conditions">
 									{row.conditions.map((c) => (
-										<li><code>{c.id}</code>{c.status === 'KNOWN_DIFFERENCE_APPROVED' && ' — known difference'}</li>
+										<li><code>{c.id}</code>{c.status === 'KNOWN_DIFFERENCE_APPROVED' && ` — ${t('table.knownDifference')}`}</li>
 									))}
 								</ul>
 							</details>
 							{row.knownDifferences.length > 0 && (
 								<details>
-									<summary>Known differences ({row.knownDifferences.length})</summary>
+									<summary>{t('table.knownDifferences', { count: row.knownDifferences.length })}</summary>
 									<ul>{row.knownDifferences.map((text) => <li>{text}</li>)}</ul>
 								</details>
 							)}
 						</td>
-						<td><span class:list={['status', row.status === 'Verified against production' ? 'status-supported' : 'status-partially']}>{row.status}</span></td>
+						<td><span class:list={['status', row.status === 'Verified against production' ? 'status-supported' : 'status-partially']}>{statusLabel(locale, row.status)}</span></td>
 						<td>{row.verified} / {row.total}</td>
 					</tr>
 				))}

@@ -1,20 +1,23 @@
 ---
 import { loadRepositoryData, productSurfaceRows } from '../data/compat.mjs';
+import { pageLocale, statusLabel } from '../i18n/ui.mjs';
+
+const { locale, t } = pageLocale(Astro.url, import.meta.env.BASE_URL);
 
 const rows = productSurfaceRows((await loadRepositoryData()).contract);
 ---
 
 <table>
 	<thead>
-		<tr><th>Product or surface</th><th>Fireemu</th><th>Default port</th><th>In the Local Emulator Suite</th></tr>
+		<tr><th>{t('table.productOrSurface')}</th><th>{t('table.fireemu')}</th><th>{t('table.defaultPort')}</th><th>{t('table.inSuite')}</th></tr>
 	</thead>
 	<tbody>
 		{rows.map((row) => (
 			<tr>
 				<td>{row.title}</td>
-				<td><span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{row.status}</span></td>
+				<td><span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{statusLabel(locale, row.status)}</span></td>
 				<td>{row.port ?? '—'}</td>
-				<td>{row.inSuite}</td>
+				<td>{statusLabel(locale, row.inSuite)}</td>
 			</tr>
 		))}
 	</tbody>

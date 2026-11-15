@@ -1,5 +1,8 @@
 ---
 import { loadRepositoryData, capabilityRows } from '../data/compat.mjs';
+import { pageLocale, statusLabel } from '../i18n/ui.mjs';
+
+const { locale, t } = pageLocale(Astro.url, import.meta.env.BASE_URL);
 
 const rows = capabilityRows((await loadRepositoryData()).capabilities);
 const products = [...new Set(rows.map((row) => row.product))];
@@ -10,31 +13,31 @@ const products = [...new Set(rows.map((row) => row.product))];
 		<h3>{product}</h3>
 		<table>
 			<thead>
-				<tr><th>Capability</th><th>Details</th></tr>
+				<tr><th>{t('table.capability')}</th><th>{t('table.details')}</th></tr>
 			</thead>
 			<tbody>
 				{rows.filter((row) => row.product === product).map((row) => (
 					<tr>
 						<td class="capability">
 							<code>{row.id}</code>
-							<span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{row.status}</span>
+							<span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{statusLabel(locale, row.status)}</span>
 						</td>
 						<td>
 							{row.implemented.length > 0 && (
 								<details>
-									<summary>Implemented ({row.implemented.length})</summary>
+									<summary>{t('table.implemented', { count: row.implemented.length })}</summary>
 									<ul>{row.implemented.map((text) => <li>{text}</li>)}</ul>
 								</details>
 							)}
 							{row.unimplemented.length > 0 && (
 								<details>
-									<summary>Not implemented ({row.unimplemented.length})</summary>
+									<summary>{t('table.notImplemented', { count: row.unimplemented.length })}</summary>
 									<ul>{row.unimplemented.map((text) => <li>{text}</li>)}</ul>
 								</details>
 							)}
 							{row.notes.length > 0 && (
 								<details>
-									<summary>Notes ({row.notes.length})</summary>
+									<summary>{t('table.notes', { count: row.notes.length })}</summary>
 									<ul>{row.notes.map((text) => <li>{text}</li>)}</ul>
 								</details>
 							)}
