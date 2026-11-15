@@ -2933,10 +2933,7 @@ fn route(method: &str, path: &str) -> Result<Route, String> {
         ("GET", ["b", b, "o"] | ["storage", "v1", "b", b, "o"]) => {
             Ok(Route::GcsList { bucket: d(b)? })
         }
-        // DELETE is buckets.delete, served under strict only (see the dispatch).
-        ("GET" | "PATCH" | "DELETE", ["storage", "v1", "b", b]) => {
-            Ok(Route::GcsBucket { bucket: d(b)? })
-        }
+        ("GET" | "PATCH", ["storage", "v1", "b", b]) => Ok(Route::GcsBucket { bucket: d(b)? }),
         ("GET" | "PATCH", ["b", b]) => Ok(Route::GcsBucketShort { bucket: d(b)? }),
         // PATCH is served on `/storage/v1` as production serves it; the official emulator
         // registers it on the short spelling only. The download spelling is GET only.
@@ -3767,11 +3764,23 @@ fn handle_request(
     };
     // Admit before reading UBLA so reset and restore cannot change the route decision mid-request.
     let _admitted = state.barrier.as_ref().map(|b| b.admit());
+    // Strict-only routes are mapped here, after admission classification: buckets.insert and
+    // buckets.delete must stay the unsupported catch-all for the emulator profile, so that routing
+    // them never opens the loopback server-side App Check path (the emulator refusal stays 403).
+    let strict_bucket_delete = state.is_strict() && req.method == "DELETE" && {
+        let segments: Vec<&str> = req.path.trim_matches('/').split('/').collect();
+        segments.len() == 4 && segments[..3] == ["storage", "v1", "b"] && !segments[3].is_empty()
+    };
     let route = if state.is_strict()
         && req.method == "POST"
         && req.path.trim_matches('/') == "storage/v1/b"
     {
         Route::GcsListBuckets
+    } else if strict_bucket_delete {
+        match self::route("GET", &req.path) {
+            Ok(bucket @ Route::GcsBucket { .. }) => bucket,
+            _ => route,
+        }
     } else if state.is_strict() && req.method == "GET" {
         match self::route("POST", &req.path) {
             Ok(Route::GcsAcl { bucket, name })
@@ -4103,10 +4112,6 @@ fn handle_request(
         }
         Route::GcsListBuckets => gcs_list_buckets(state, &host),
         Route::GcsList { bucket } => gcs_list(state, &bucket, &params, &host),
-        // Without strict a bucket DELETE stays the official emulator's 501 catch-all.
-        Route::GcsBucket { .. } if method == "DELETE" && !state.is_strict() => {
-            Ok(plain_status(501))
-        }
         Route::GcsBucket { bucket } => gcs_bucket(state, &bucket, &method, &req, &params, &host),
         Route::GcsObject { bucket, name } => {
             gcs_object(state, &bucket, &name, &method, &req, &params, &host)

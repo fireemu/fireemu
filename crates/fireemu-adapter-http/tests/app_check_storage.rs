@@ -1096,6 +1096,19 @@ fn emulator_bucket_creation_keeps_the_exact_loopback_app_check_refusal() {
 }
 
 #[test]
+fn emulator_bucket_delete_keeps_the_exact_loopback_app_check_refusal() {
+    // buckets.delete is served under strict only; the emulator profile must answer it exactly as
+    // an unsupported route, so routing it must not open the loopback server-side App Check path.
+    let mut h = harness(BaselineMode::Enforced);
+    h.storage.token_acceptance = fireemu_core_auth::jwt::TokenAcceptance::EmulatorMock;
+    let denied = h.call("DELETE", &format!("/storage/v1/b/{BUCKET}"), &[], &[], b"");
+    let baseline = h.call("DELETE", "/storage/v1/not-implemented", &[], &[], b"");
+    assert_eq!(denied.status, baseline.status);
+    assert_eq!(denied.headers, baseline.headers);
+    assert_eq!(denied.body, baseline.body);
+}
+
+#[test]
 fn a_loopback_json_api_request_without_browser_evidence_is_admitted_under_enforcement() {
     let h = harness(BaselineMode::Enforced);
     h.seed_object("server/seeded.txt");
