@@ -1200,6 +1200,183 @@ impl EqualityCandidateIndexBuilder {
 }
 
 const EQUALITY_INDEX_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
+const CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES: usize = 8 * 1024 * 1024;
+const CANDIDATE_NORMALIZATION_MAX_ROWS: usize = 4_096;
+// Paired production results justify a conservative 512-component minimum; smaller widths had mixed path costs.
+const CANDIDATE_NORMALIZATION_MIN_DIMENSIONS: usize = 512;
+
+fn candidate_normalization_cache_eligible(dimensions: usize) -> bool {
+    dimensions >= CANDIDATE_NORMALIZATION_MIN_DIMENSIONS
+}
+
+#[derive(Debug, Clone)]
+struct CandidateNormalizationEntry {
+    path: DocumentPath,
+    version: CommitVersion,
+    factors: Option<(f64, f64)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CandidateNormalizationLookup {
+    Miss,
+    Hit(Option<(f64, f64)>),
+}
+
+/// A bounded, immutable partial cache for one nearest-vector field.
+#[derive(Debug, Clone)]
+struct CandidateNormalizationCache {
+    field: FieldPath,
+    entries: Vec<CandidateNormalizationEntry>,
+    estimated_bytes: usize,
+    poisoned: bool,
+}
+
+impl CandidateNormalizationCache {
+    fn new(field: &FieldPath) -> Self {
+        let entries = Vec::new();
+        let estimated_bytes =
+            core::mem::size_of::<Self>().saturating_add(field_retained_estimate(field));
+        Self {
+            field: field.clone(),
+            entries,
+            estimated_bytes,
+            poisoned: false,
+        }
+    }
+
+    fn account_capacity_growth(&mut self, old_capacity: usize, actual_capacity: usize) -> bool {
+        let capacity_growth = actual_capacity
+            .saturating_sub(old_capacity)
+            .saturating_mul(core::mem::size_of::<CandidateNormalizationEntry>());
+        let estimated_bytes = self.estimated_bytes.saturating_add(capacity_growth);
+        if estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES {
+            self.entries = Vec::new();
+            self.estimated_bytes =
+                core::mem::size_of::<Self>().saturating_add(field_retained_estimate(&self.field));
+            self.poisoned = true;
+            return false;
+        }
+        self.estimated_bytes = estimated_bytes;
+        true
+    }
+
+    fn lookup(
+        &self,
+        field: &FieldPath,
+        path: &DocumentPath,
+        version: CommitVersion,
+    ) -> CandidateNormalizationLookup {
+        #[cfg(test)]
+        CANDIDATE_NORMALIZATION_CACHE_LOOKUPS.with(|count| count.set(count.get() + 1));
+        if &self.field != field {
+            return CandidateNormalizationLookup::Miss;
+        }
+        let Ok(index) = self
+            .entries
+            .binary_search_by(|entry| entry.path.cmp_resource_name(path))
+        else {
+            return CandidateNormalizationLookup::Miss;
+        };
+        let entry = &self.entries[index];
+        if entry.version == version {
+            CandidateNormalizationLookup::Hit(entry.factors)
+        } else {
+            CandidateNormalizationLookup::Miss
+        }
+    }
+
+    fn admit(
+        &mut self,
+        path: &DocumentPath,
+        version: CommitVersion,
+        factors: Option<(f64, f64)>,
+    ) -> bool {
+        if self.poisoned || self.entries.len() >= CANDIDATE_NORMALIZATION_MAX_ROWS {
+            return false;
+        }
+        let path_bytes = document_path_retained_estimate(path);
+        let old_capacity = self.entries.capacity();
+        let target_capacity = if self.entries.len() < old_capacity {
+            old_capacity
+        } else {
+            old_capacity
+                .saturating_mul(2)
+                .clamp(1, CANDIDATE_NORMALIZATION_MAX_ROWS)
+        };
+        let requested_entry_bytes = target_capacity
+            .saturating_sub(old_capacity)
+            .saturating_mul(core::mem::size_of::<CandidateNormalizationEntry>());
+        let projected_bytes = self
+            .estimated_bytes
+            .saturating_add(requested_entry_bytes)
+            .saturating_add(path_bytes);
+        if projected_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES {
+            return false;
+        }
+        if target_capacity > old_capacity
+            && self
+                .entries
+                .try_reserve_exact(target_capacity.saturating_sub(self.entries.len()))
+                .is_err()
+        {
+            return false;
+        }
+        self.entries.shrink_to(target_capacity);
+        let actual_capacity = self.entries.capacity();
+        if !self.account_capacity_growth(old_capacity, actual_capacity) {
+            return false;
+        }
+        let estimated_bytes = self.estimated_bytes.saturating_add(path_bytes);
+        if estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES {
+            return false;
+        }
+        self.entries.push(CandidateNormalizationEntry {
+            path: path.clone(),
+            version,
+            factors,
+        });
+        self.estimated_bytes = estimated_bytes;
+        true
+    }
+
+    fn finish(mut self) -> Option<Self> {
+        if self.poisoned
+            || self.entries.is_empty()
+            || self.estimated_bytes > CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES
+        {
+            return None;
+        }
+        self.entries
+            .sort_unstable_by(|left, right| left.path.cmp_resource_name(&right.path));
+        Some(self)
+    }
+}
+
+fn field_retained_estimate(field: &FieldPath) -> usize {
+    field.segments().iter().fold(
+        core::mem::size_of::<FieldPath>().saturating_add(
+            field
+                .segments()
+                .len()
+                .saturating_mul(core::mem::size_of::<String>()),
+        ),
+        |total, segment| total.saturating_add(segment.len()),
+    )
+}
+
+fn document_path_retained_estimate(path: &DocumentPath) -> usize {
+    let mut segment_bytes = 0usize;
+    let mut segment_count = 0usize;
+    for segment in path.resource_name_segments() {
+        segment_bytes = segment_bytes.saturating_add(segment.len());
+        segment_count = segment_count.saturating_add(1);
+    }
+    let depth = segment_count.saturating_sub(5) / 2;
+    core::mem::size_of::<DocumentPath>()
+        .saturating_add(segment_bytes.saturating_mul(2))
+        .saturating_add(segment_count.saturating_mul(core::mem::size_of::<String>()))
+        .saturating_add(depth.saturating_mul(core::mem::size_of::<(CollectionId, DocumentId)>()))
+}
 
 /// Reclaimable usage at one immutable database version and retention floor.
 #[derive(Debug, Clone, Copy)]
@@ -1278,6 +1455,9 @@ pub struct FirestoreState {
     /// One lazily built scalar equality candidate index for the current state. `OnceLock`'s
     /// clone makes a detached slot while sharing only the immutable index allocation.
     equality_candidate_index: OnceLock<Option<Arc<EqualityCandidateIndex>>>,
+    /// One lazily built, bounded cosine normalization cache for the current state. Cloning
+    /// the slot shares only completed immutable entries; each clone can invalidate itself.
+    candidate_normalization_cache: OnceLock<Arc<CandidateNormalizationCache>>,
     /// Version history per path; `None` entries are tombstones.
     history: DocumentHistory,
     /// Retained and live path projections used by scope queries and listing.
@@ -1345,6 +1525,7 @@ impl Default for FirestoreState {
         Self {
             index_catalog: Arc::new(crate::index::IndexSet::default()),
             equality_candidate_index: OnceLock::new(),
+            candidate_normalization_cache: OnceLock::new(),
             history: BTreeMap::new(),
             path_indexes: PathIndexes::default(),
             ttl_expiry_indexes: BTreeMap::new(),
@@ -1895,6 +2076,12 @@ impl FirestoreState {
     fn invalidate_equality_candidate_index(&mut self) {
         if self.equality_candidate_index.get().is_some() {
             self.equality_candidate_index = OnceLock::new();
+        }
+    }
+
+    fn invalidate_candidate_normalization_cache(&mut self) {
+        if self.candidate_normalization_cache.get().is_some() {
+            self.candidate_normalization_cache = OnceLock::new();
         }
     }
 
@@ -2511,6 +2698,7 @@ impl FirestoreState {
         let mut snapshot = Self {
             index_catalog: Arc::clone(&self.index_catalog),
             equality_candidate_index: OnceLock::new(),
+            candidate_normalization_cache: OnceLock::new(),
             history,
             ttl_expiry_indexes: BTreeMap::new(),
             path_indexes,
@@ -2600,6 +2788,7 @@ impl FirestoreState {
             });
         }
         self.invalidate_equality_candidate_index();
+        self.invalidate_candidate_normalization_cache();
         self.version = next_version;
         self.commit_times.push_back((next_version, commit_time));
         let mut changes = Vec::with_capacity(staged.len());
@@ -4591,6 +4780,7 @@ impl FirestoreState {
         self.history_accounting_exact = accounting_exact;
         if changed {
             self.invalidate_equality_candidate_index();
+            self.invalidate_candidate_normalization_cache();
             self.version = next_version;
             self.commit_times.push_back((next_version, commit_time));
             for (path, before, doc) in staged_changes {
@@ -5617,6 +5807,18 @@ impl FirestoreState {
                 COSINE_ZERO_VECTOR.into(),
             ));
         }
+        let cosine_measure = find_nearest.distance_measure == DistanceMeasure::Cosine;
+        let candidate_cache = (version.is_none()
+            && cosine_measure
+            && candidate_normalization_cache_eligible(find_nearest.query_vector.len()))
+        .then(|| self.candidate_normalization_cache.get())
+        .flatten()
+        .filter(|cache| cache.field == find_nearest.vector_field);
+        let can_build_candidate_cache = version.is_none()
+            && cosine_measure
+            && candidate_normalization_cache_eligible(find_nearest.query_vector.len())
+            && self.candidate_normalization_cache.get().is_none();
+        let mut candidate_cache_builder = None;
         let distance =
             PreparedVectorDistance::new(&find_nearest.query_vector, find_nearest.distance_measure);
         let zero_candidate = std::cell::Cell::new(false);
@@ -5641,7 +5843,26 @@ impl FirestoreState {
                 zero_candidate.set(true);
                 return;
             }
-            let Some(distance) = distance.evaluate(vector) else {
+            let candidate_distance = if cosine_measure {
+                let factors = candidate_cache.map_or(CandidateNormalizationLookup::Miss, |cache| {
+                    cache.lookup(&find_nearest.vector_field, &document.path, document.version)
+                });
+                if let CandidateNormalizationLookup::Hit(factors) = factors {
+                    distance.evaluate_with_left_factors(vector, factors)
+                } else {
+                    let factors = normalization_factors(vector);
+                    if can_build_candidate_cache {
+                        let builder = candidate_cache_builder.get_or_insert_with(|| {
+                            CandidateNormalizationCache::new(&find_nearest.vector_field)
+                        });
+                        builder.admit(&document.path, document.version, factors);
+                    }
+                    distance.evaluate_with_left_factors(vector, factors)
+                }
+            } else {
+                distance.evaluate(vector)
+            };
+            let Some(distance) = candidate_distance else {
                 return;
             };
             let admitted =
@@ -5675,6 +5896,12 @@ impl FirestoreState {
             return Err(FirestoreError::FailedPrecondition(
                 COSINE_ZERO_VECTOR.into(),
             ));
+        }
+        if let Some(cache) = candidate_cache_builder
+            .take()
+            .and_then(CandidateNormalizationCache::finish)
+        {
+            let _ = self.candidate_normalization_cache.set(Arc::new(cache));
         }
         stats.nearest_peak_candidates =
             u64::try_from(nearest_peak_candidates.get()).unwrap_or(u64::MAX);
@@ -7918,6 +8145,8 @@ fn normalization_factors(values: &[f64]) -> Option<(f64, f64)> {
 }
 
 fn normalized_component(value: f64, (scale, norm): (f64, f64)) -> Option<f64> {
+    #[cfg(test)]
+    NORMALIZED_COMPONENT_CALLS.with(|calls| calls.set(calls.get() + 1));
     let component = (value / scale) / norm;
     component.is_finite().then_some(component)
 }
@@ -7938,6 +8167,52 @@ fn cosine_similarity(
     for (left, right) in left.iter().zip(right) {
         let left = normalized_component(*left, left_factors)?;
         let right = normalized_component(*right, right_factors)?;
+        let product = left * right;
+        if !product.is_finite() {
+            return None;
+        }
+        dot += product;
+        if !dot.is_finite() {
+            return None;
+        }
+    }
+    Some(dot)
+}
+
+/// Cosine similarity when the query components have already been normalized once per query.
+fn cosine_similarity_with_query_components(
+    left: &[f64],
+    left_factors: (f64, f64),
+    right: &[f64],
+) -> Option<f64> {
+    if left.len() != right.len() {
+        return None;
+    }
+    let mut dot = 0.0;
+    let mut left_pairs = left.chunks_exact(2);
+    let mut right_pairs = right.chunks_exact(2);
+    for (left_pair, right_pair) in left_pairs.by_ref().zip(right_pairs.by_ref()) {
+        #[cfg(test)]
+        PAIRED_COSINE_LANES.with(|lanes| lanes.set(lanes.get() + 1));
+        // Pair operations are independent and may be SLP-vectorized. Products and the
+        // reduction are still checked and accumulated one at a time in scalar order.
+        let normalized = [
+            normalized_component(left_pair[0], left_factors)?,
+            normalized_component(left_pair[1], left_factors)?,
+        ];
+        let products = [normalized[0] * right_pair[0], normalized[1] * right_pair[1]];
+        for product in products {
+            if !product.is_finite() {
+                return None;
+            }
+            dot += product;
+            if !dot.is_finite() {
+                return None;
+            }
+        }
+    }
+    for (left, right) in left_pairs.remainder().iter().zip(right_pairs.remainder()) {
+        let left = normalized_component(*left, left_factors)?;
         let product = left * right;
         if !product.is_finite() {
             return None;
@@ -7971,7 +8246,7 @@ fn checked_dot(left: &[f64], right: &[f64]) -> Option<f64> {
 struct PreparedVectorDistance<'a> {
     query: &'a [f64],
     measure: DistanceMeasure,
-    query_factors: Option<(f64, f64)>,
+    query_components: Option<Vec<f64>>,
 }
 
 impl<'a> PreparedVectorDistance<'a> {
@@ -7979,8 +8254,13 @@ impl<'a> PreparedVectorDistance<'a> {
         Self {
             query,
             measure,
-            query_factors: if measure == DistanceMeasure::Cosine {
-                normalization_factors(query)
+            query_components: if measure == DistanceMeasure::Cosine {
+                normalization_factors(query).and_then(|factors| {
+                    query
+                        .iter()
+                        .map(|value| normalized_component(*value, factors))
+                        .collect()
+                })
             } else {
                 None
             },
@@ -7995,7 +8275,26 @@ impl<'a> PreparedVectorDistance<'a> {
             return None;
         }
         let left_factors = normalization_factors(vector)?;
-        let similarity = cosine_similarity(vector, left_factors, self.query, self.query_factors?)?;
+        self.evaluate_with_left_factors(vector, Some(left_factors))
+    }
+
+    fn evaluate_with_left_factors(
+        &self,
+        vector: &[f64],
+        left_factors: Option<(f64, f64)>,
+    ) -> Option<f64> {
+        if self.measure != DistanceMeasure::Cosine {
+            return self.evaluate(vector);
+        }
+        if vector.len() != self.query.len() {
+            return None;
+        }
+        let left_factors = left_factors?;
+        let similarity = cosine_similarity_with_query_components(
+            vector,
+            left_factors,
+            self.query_components.as_deref()?,
+        )?;
         Some((1.0 - similarity.clamp(-1.0, 1.0)).clamp(0.0, 2.0))
     }
 }
@@ -8941,6 +9240,9 @@ mod vector_distance_tests {
 #[cfg(test)]
 thread_local! {
     static NORMALIZATION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NORMALIZED_COMPONENT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CANDIDATE_NORMALIZATION_CACHE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PAIRED_COSINE_LANES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RETENTION_PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
