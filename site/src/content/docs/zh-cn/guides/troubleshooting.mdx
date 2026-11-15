@@ -1,0 +1,132 @@
+---
+title: 故障排除
+description: 检查安装、查找症状或错误消息，并报告问题。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+先运行 `fireemu doctor`，然后在下面查找对应的症状或错误消息。
+
+## 检查安装
+
+```sh
+npx fireemu doctor
+```
+
+`doctor` 报告它找到的 Fireemu 二进制文件、UI、Functions runner 和 Node.js，并为每个问题建议解决办法。
+
+如果还要报告正在运行的套件的情况（例如它持有的 Firestore 历史和 Storage 字节数），请传入其控制 URL。该 URL 会在启动时打印：
+
+```sh
+npx fireemu doctor --connect http://127.0.0.1:<port>
+```
+
+## 常见问题
+
+| 症状 | 检查什么 |
+|---|---|
+| 启动失败并显示 `bind 127.0.0.1:9000: Address already in use` | 你的 `firebase.json` 中有 `emulators.database`，因此 Realtime Database 在 9000 上启动，而该端口被另一个进程（默认是 PHP-FPM）占用。使用 `--database-port`，或用 `--only` 将其排除。 |
+| 你的 `firebase.json` 或 `fireemu.toml` 没有被使用 | 启动输出的 `config:` 行列出了被加载的文件。见[会加载哪些文件](../configuration/#会加载哪些文件)；如果在容器中或用 `sudo` 运行，还请参阅所有权规则。 |
+| 所有 Firestore 或 Storage 请求都被拒绝 | 在 `strict` 下，没有安全规则的项目会像生产环境一样拒绝客户端请求。检查启动时的 `firestore rules:` 和 `storage rules:` 行。见[安全规则](../security-rules/)。 |
+| 请求被拒绝但不知道原因 | 查看标准错误上的 `note: firestore: Security Rules denied ...` 行，或 UI 的 Rules 页面。 |
+| 查询在本地可以运行，但在生产环境中失败 | 在 `emulator` 下，缺失索引不会拒绝查询，但会在标准错误上打印建议；切换到 `strict` 以强制执行。OR 查询可能每个分支都需要一个索引；所有缺失的分支定义都会列在标准错误上。如果 `firestore.missingIndexes` 为 `"report"`，请在标准错误上查找缺失索引报告，或从控制 API 的 `GET /v1/firestore/missingIndexes` 读取（见 [Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index)）。 |
+| 导出因权限问题失败 | 运行 `fireemu doctor --export-dir <dir>`。它会检查完整的现有祖先目录链而不修改它；共享父目录下的私有子目录是不够的。见[导出目标](../data/#where-to-export)。 |
+| 测试在复制无关的全局仓库时失败 | 从 v0.27.0 起，Functions 世界会清除环境中的 `NODE_PATH`；在较旧的版本中，快照会复制它。请升级，或为仅本地依赖传入空的 `NODE_PATH`，或显式精简所需的根目录。见[依赖快照](../test-worlds/#依赖快照与全局-node_path)。 |
+| 测试世界的快照准备超时 | 精简未使用的依赖或调高 `snapshotTimeoutMs`（默认 60,000 ms，最大 2,147,483,647）。`startupTimeoutMs` 只涵盖准备完成后守护进程的就绪。见[相互独立的测试世界](../test-worlds/#快照与超时)。 |
+| 在 Windows 上 Functions 重新加载报告快照 ACL 验证失败 | 使用不含 junction 或其他重解析点的私有临时目录。其权限必须将访问限制为你的账号和受信任的系统账号，其祖先目录不得允许其他账号修改它。确保 `SystemRoot` 下可以使用 Windows PowerShell，然后重试源码更改。见[源码重新加载](../../products/functions/#source-reload)。 |
+| UI 打不开 | 端口 4000 被占用时，`up` 会在不启动 UI 的情况下启动。使用 `--ui-port`。`exec` 只有在使用 `--ui` 时才启动 UI。 |
+| 定时函数从不运行 | 日程跟随虚拟时钟。固定了 `daemon.clockStart`（或 `daemon.clock = "frozen"`）时，时钟是静止的，因此请推进时钟或从 UI 运行该函数；没有固定起点时，它跟随真实时间。见[时间与定时函数](../time/)。 |
+
+## 错误消息
+
+<details>
+<summary><code>FAILED_PRECONDITION: The query requires an index</code></summary>
+
+在 `strict`（默认）下且 `firestore.missingIndexes = "refuse"` 时，复合索引未声明的查询会像生产环境一样被拒绝。SDK 收到 `FAILED_PRECONDITION` 状态（通过 REST 时为 HTTP 400 和 `"status": "FAILED_PRECONDITION"`）以及以下消息：
+
+```text
+The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/<project>/firestore/indexes?create_composite=...
+```
+
+将该索引添加到 `firestore.indexes.json`（由 `firebase.json` 引用）并重启。若要在一次运行中收集所有缺失的索引，而不是在第一个处失败，请设置 `firestore.missingIndexes = "report"`：查询会运行，每个缺失的索引会在标准错误上打印一次，并附上需要添加的条目。`emulator` profile 从不拒绝这些查询。见[复合索引](../../products/firestore/#composite-indexes)。
+
+</details>
+
+<details>
+<summary>来自 <code>/v1/firestore/missingIndexes</code> 的 <code>409 FAILED_PRECONDITION</code></summary>
+
+控制 API 在两种情况下返回 `409`，这样对列表的检查就不会因为一个什么也证明不了的响应而通过：
+
+```text
+FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to "report" and Firestore selected; ...
+```
+
+当前没有在报告任何内容：本次运行使用的是 `emulator` profile，或者是带 `"refuse"` 的 `strict`，或者没有选择 Firestore。请设置 `profile = "strict"` 和 `firestore.missingIndexes = "report"`。
+
+```text
+FAILED_PRECONDITION : <n> quer(y|ies) of this project were served with a missing composite index that is not listed, because the list is full; the list is incomplete, not empty. DELETE it and run again
+```
+
+该列表最多保存 1,000 个条目。当缺失的不同索引更多时，`200` 响应会带有 `"truncated": true` 和 `dropped` 计数；当项目的每个条目都被丢弃时，响应改为这个 `409`。修复你已经知道的索引，`DELETE` 该列表，然后再次运行。见[缺失索引时让 CI 作业失败](../../products/firestore/#fail-a-ci-job-on-a-missing-index)。
+
+</details>
+
+<details>
+<summary><code>403 ... fireemu does not answer Host</code>（<code>network.allowedHosts</code>）</summary>
+
+请求指定了 Fireemu 不响应的 `Host`，这是针对 DNS rebinding 的防护。响应为 HTTP 403，状态为 `PERMISSION_DENIED`：
+
+```text
+fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/guides/ci-and-containers/#host-names-the-emulators-answer
+```
+
+如果你的某个客户端使用该名称（隧道、`/etc/hosts` 中的名称、Compose 服务名），请将其列出：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+allowedHosts = ["emulator.ci.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowedHosts": ["emulator.ci.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+像 Compose 服务这样的单标签名称还需要 `network.allowNonLoopbackHosts = true`。
+
+Fireemu 还会在标准错误上写出 `refused Host` 警告，每个名称一次。见[模拟器响应的主机名](../ci-and-containers/#模拟器响应的主机名)。
+
+</details>
+
+## 获取更多详细信息
+
+使用 `--log-verbosity debug` 启动，它还会打印解析后的配置。
+
+## 报告问题
+
+[在 GitHub 上提交 issue](https://github.com/fireemu/fireemu/issues)，并附上：
+
+- Fireemu 和 Firebase SDK 的版本、profile 以及涉及的 Firebase 产品；
+- 最小复现；
+- 对于兼容性问题，说明你是与生产环境 Firebase 还是与官方模拟器进行比较，以及预期结果和实际结果。
+
+在分享配置文件或日志之前，请移除凭据和个人信息。
+
+## 相关内容
+
+- [配置文件](../configuration/)
+- [安全规则](../security-rules/)
+- [CI 与容器](../ci-and-containers/)
+- [限制](../../compatibility/limitations/)

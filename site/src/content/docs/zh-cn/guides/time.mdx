@@ -1,0 +1,164 @@
+---
+title: 时间与定时函数
+description: 让模拟器时钟从选定的时间开始，冻结或推进它，并无需等待即可运行定时函数。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu 有自己的时钟，所有服务都读取它：服务器时间戳、文档和对象的时间、令牌过期、定时函数以及安全规则的 `request.time`。默认情况下，它与生产环境一样按真实时间运行。设置它的起点、推进它或冻结它，所有服务都会看到新的时间。
+
+## 跟随真实时间或冻结时钟
+
+| 配置 | 时钟行为 |
+|---|---|
+| 没有 `daemon.clockStart`（默认） | 从守护进程启动的那一刻起跟随真实时间。 |
+| 固定了 `daemon.clockStart` | 从该时间开始，在被推进之前保持静止，这使运行可以复现。 |
+| `daemon.clock` 设为 `"realtime"` | 固定起点的时钟从其起点开始继续走。 |
+| `daemon.clock` 设为 `"frozen"` | 未固定起点的时钟停止。 |
+
+一次推进（`clock:advance`、`clock:advanceTo`、`clock:set` 或 Runtime 页面）是叠加在跟随真实时间的时钟之上的偏移：时钟从落点处继续走。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+
+[daemon]
+# 让虚拟时钟从此日期时间开始。
+clockStart = "2026-01-31T23:59:00Z"
+# 虚拟时钟行为："realtime" 或 "frozen"。
+clock = "frozen"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z",
+    "clock": "frozen"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+虚拟的 `functions.clock`（见 [Functions 中的应用时间](#functions-中的应用时间)）需要固定的起点，因此也需要静止的时钟。`fireemu/testing` 的世界同样如此，它们会固定起点。
+
+## 运行定时函数
+
+当时钟到达某次触发时间时，日程就会运行。
+
+- 使用默认时钟时，这会随着真实时间流逝而发生。
+- 使用冻结的时钟时，真实时间不会触发任何运行。请从 [模拟器 UI](../ui/) 的 Runtime 页面或通过控制 API（`clock:advance`、`clock:advanceTo`、`clock:set`）推进时钟。
+
+每次推进都会使 `(previous time, new time]` 中的每次触发到期。在 `scheduler` 部分配置时区、补跑和重叠行为：
+
+- `scheduler.catchUp` 决定一次推进越过多次触发时运行什么：`all` 运行每一次（每个作业每次推进最多 `scheduler.maxCatchUpRuns` 次），`latest` 运行最新的一次，`none` 一次也不运行。
+- `scheduler.overlap`（`allow`、`skip`、`queue`、`reject`、`skip-in-flight`）决定在上一次运行仍在进行时又有一次运行到期会发生什么。在 `strict` 下默认是 `skip-in-flight`，与生产环境 Cloud Scheduler 的行为一致；在 `emulator` 下是 `allow`。
+
+UI 的 Functions 页面也可以立即运行定时函数，或把时钟推进到其下一次触发时间。手动运行不会消耗下一次触发。
+
+### 日程细节
+
+- 恰好位于新时间的触发包含在推进中，恰好位于之前时间的触发则不包含。
+- 使用 `scheduler.catchUp: all` 时，每个作业每次时钟推进中超出 `scheduler.maxCatchUpRuns` 的运行保持到期状态，并在有空间时运行。`latest` 和 `none` 会对每个作业每次丢弃运行的时钟推进记录一条 `skipped: catch-up` 摘要。
+- 回拨永远不会重放：当时钟再次向前越过日程已经经过的触发时，这些触发不会再次运行，日程会在时钟越过它最后运行或仍欠下的那次触发（其游标）后恢复。在回拨到该点之前后，积压中仍欠下的运行或因空间不足而保留的运行仍然欠着，但在时钟越过该点之前不会再次到期。会话重置或快照恢复则会让每个日程从时钟的当前时间开始，因此在回拨之后，从该时间到之后某个时间之间的触发会再次到期。
+- `scheduler.overlap` 同样适用于调度器运行和手动运行，`skip-in-flight` 除外，它从不拒绝手动运行。在 `skip-in-flight`（`strict` 的默认值）下，当该函数在时钟推进之前开始的处理程序仍在执行时，触发会被丢弃（记录为 `skipped: in flight`），与生产环境 Cloud Scheduler 的行为一致；同一次时钟推进中的各次触发之间不会相互计算。
+- 只要函数的任何一次运行处于排队或运行中（包括等待重试的运行），该函数就被视为忙碌，因此在 `skip` 和 `reject` 下，仍在挂起的重试可能会抑制下一次触发；Fireemu 在这里不区分重试尝试和重叠的运行。使用 `catchUp: all` 时，对同一函数多次触发进行的一次时钟推进会与自身重叠，因此 `skip` 保留其中最早的一次，`reject` 将其余的计为拒绝。
+- 如果 Functions 事件队列已满（4,096 个活跃事件或 64 MiB），到期的定时运行保持到期状态，并在有空间时运行一次。
+
+### 立即运行定时函数
+
+手动运行（`POST /v1/sessions/{session}/functions/{name}:run`）会将定时函数的一次运行加入队列，并标记为当前的虚拟时间。它不会消耗下一次触发，下一次触发仍会到期，并像任何运行一样受 `scheduler.overlap` 约束。这是 Fireemu 自己的控制功能，并不代表生产环境的立即运行的行为。
+
+| 响应 | 何时 |
+|---|---|
+| `400 INVALID_ARGUMENT` | 未知函数、非定时函数、被重叠策略拒绝，或运行时正在关闭 |
+| `429 RESOURCE_EXHAUSTED` | 事件队列已满 |
+
+对于任务队列函数（`onTaskDispatched`），同一路由会释放正在等待其 `scheduleTime` 的 Cloud Tasks：释放全部，或释放 `{"task": "<task id>"}` 请求体指定的那一个（没有等待中的任务具有该 id 时返回 404）。见[任务队列](../../products/functions/#task-queues)。
+
+## 回拨时钟
+
+时钟可以向后移动（使用带 `"allowBackwards": true` 的 `clock:set`，或在 Runtime 页面上选择 **Allow moving backwards**）。回拨永远不会重放已经运行过的触发。
+
+### 回拨后的 ID 令牌
+
+- 在 `strict` 下，Authentication（`INVALID_ID_TOKEN`）、Firestore 和 Storage 会拒绝在新时间之后签发的 ID 令牌，直到时钟再次到达其签发时间。
+- 在 `emulator` profile 中，ID 令牌在回拨后仍可使用，与官方模拟器相同，官方模拟器不检查其签发时间。
+- 在两个 profile 中，过期的令牌仍会被拒绝。
+
+### 回拨后的撤销
+
+回拨到账号创建之前，或其令牌被撤销之前，会使即使是新登录的令牌也被视为已撤销。请改为再次向前推进时钟或重置会话。
+
+反过来，在回拨之后进行的撤销或密码更改，不会撤销时间线上更晚时间签发的令牌：`emulator` profile 会立即接受它们，`strict` 会在时钟到达其签发时间后接受它们。请在撤销之前把时钟向前推进到越过其签发时间，或重置会话。
+
+## Functions 中的应用时间
+
+默认情况下，函数代码看到的是真实时间。要让 `Date.now()`、计时器和 Cloud Tasks 也跟随虚拟时钟，请设置 `functions.clock`，并同时固定 `daemon.clockStart`：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+
+[daemon]
+# 让虚拟时钟从此日期时间开始。
+clockStart = "2026-01-31T23:59:00Z"
+
+[functions]
+# Functions 代码库的目录。
+source = "./functions"
+
+[functions.clock]
+# Functions 日期时钟："real" 或 "virtual"。
+date = "virtual"
+# Functions 计时器时钟："real" 或 "virtual"。
+timers = "real"
+# Cloud Tasks 时钟："real" 或 "virtual"。
+tasks = "virtual"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z"
+  },
+  "functions": {
+    "source": "./functions",
+    "clock": {
+      "date": "virtual",
+      "timers": "real",
+      "tasks": "virtual"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 每种模式接受 `real` 或 `virtual`。虚拟计时器需要虚拟的 `date`。
+- 将 `tasks` 设为 `virtual` 时，带 `scheduleTime` 加入队列的 Cloud Tasks 任务在虚拟时钟到达该时间时到期，因此测试推进时钟即可，无需等待。
+- 将 `tasks` 设为 `real` 时，在 `strict` 下任务会等待挂钟时间。[模拟器 UI](../ui/) 的 Functions 页面会列出等待中的任务，并可以立即运行它们。
+- Python 代码库始终看到真实时间：它不会被移到虚拟时钟上，为 Functions runner 请求虚拟日期的配置对它会被拒绝。
+
+## 相关内容
+
+- [测试世界](../test-worlds/)：对于需要自己时钟的并行测试，`fireemu/testing` 辅助工具会启动相互独立的世界，每个世界都固定在一个由你手动推进的起始时间上。
+- [模拟器 UI](../ui/)
+- [Cloud Functions](../../products/functions/#task-queues)
+- [配置参考](../../reference/configuration/)

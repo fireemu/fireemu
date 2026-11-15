@@ -1,0 +1,181 @@
+---
+title: Profile 与 productionExact
+description: 在 strict 和 emulator 两个 profile 之间选择，了解默认值在哪些地方有意与生产环境不同，并用 productionExact 将其切换为生产环境行为。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+profile 决定 Fireemu 遵循谁的行为：生产环境 Firebase（`strict`，默认）或官方模拟器（`emulator`）。在两个 profile 中，都有一些默认值有意与生产环境不同，以便测试无需设置即可运行。`productionExact` 会将它们切换为生产环境的行为。
+
+## 选择 profile
+
+| Profile | 行为 |
+|---|---|
+| `strict` | 在支持的范围内尽可能贴近生产环境 Firebase 的行为和约束。这是默认值，也是推荐值，包括从官方模拟器迁移时。 |
+| `emulator` | 以官方模拟器的某个固定版本（`firebase-tools` 15.28.2）的行为为目标。仅在需要检查与官方模拟器是否一致时使用，例如作为额外的测试目标；迁移时不需要它。 |
+
+`emulator` profile 接受生产环境会拒绝的行为，因此测试可能在这里通过、在生产环境中失败。请对你的测试使用 `strict`。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict"
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 选择设置
+
+- **大多数项目：** 使用 `strict` 和开发默认值。测试无需密钥或设置调用即可运行，同时仍符合生产环境的验证、拒绝和错误形式。
+- **发布前，或在单独的 CI 作业中：** 使用 `strict` 并设置 [`productionExact: true`](#fireemu-有意与生产环境不同之处)，以发现开发默认值放行的问题，例如未签名的令牌。
+- **检查官方模拟器：** 使用 `emulator`，仅作为额外的目标。
+
+## Fireemu 有意与生产环境不同之处
+
+Fireemu 的目标是与生产环境一致。有些生产环境行为只会给测试增加设置工作：生产环境需要签名的令牌和签名密钥、通过 Admin API 调用启用某项功能，或者等待一个小时。完全照搬这些行为会使 Fireemu 在 CI 和开发者机器上更难使用，却不会发现更多 bug。
+
+对于这些行为，两个 profile 的默认值都是无需设置即可工作的开发默认值。每一项都有自己的设置，并列在下表中，因此每一处与生产环境的差异都是有文档记录的选择。
+
+### 用 productionExact 开启生产环境行为
+
+要一次性对所有这些行为采用生产环境的行为，将 `productionExact` 设为 `true`（仅限 `strict` profile）。显式设置仍优先于它：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+# 对开发默认值使用生产环境行为：true 或 false；需要 strict。
+productionExact = true
+
+[auth]
+# 接受未签名的模拟器自定义令牌：true 或 false。
+allowUnsignedCustomTokens = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "auth": {
+    "allowUnsignedCustomTokens": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### 开发默认值
+
+| 开发默认值 | 设置 | 使用 `productionExact` 时 |
+|---|---|---|
+| 接受未签名的模拟器自定义令牌 | `auth.allowUnsignedCustomTokens` | 拒绝 |
+| Firestore、Storage 和 Realtime Database 安全规则接受 `@firebase/rules-unit-testing` 的未签名模拟 ID 令牌（`authenticatedContext()`、客户端 SDK 的 `mockUserToken`） | `auth.allowUnsignedIdTokens` | 禁用模拟令牌回退，因为生产环境会拒绝未签名的令牌；通过正常验证的 fireemu 签发令牌仍被接受 |
+| 没有规则文件的 Realtime Database 实例对所有请求开放，与官方模拟器提供的方式相同 | `database.defaultAccess`（`"open"`） | `"locked"`：只有模拟器的 `owner` 凭据可以读写，因为生产环境在锁定模式下只允许管理员访问新数据库 |
+| Hosting 提供文件时不带默认的 `Cache-Control`，因此浏览器会立即显示编辑后的文件 | `hosting.cacheControl`（`"none"`） | `"production"` 会对 `headers` 规则未设置该头的文件添加 `Cache-Control: max-age=3600`，与 Hosting 生产环境相同（仅限 strict profile） |
+| Hosting 本地化内容遵循 `X-Country-Code` 头和 `firebase-country-override` cookie，因此可以测试按国家区分的内容 | `hosting.clientCountry`（`"honoured"`） | `"ignored"`：两者都不起选择作用，因为生产环境在其边缘节点决定国家（仅限 strict profile） |
+| 一个代码库的所有函数在一个 runner 进程中运行，因此函数共享模块图，身份变量指向最后开始的那次调用 | `functions.isolation`（`"codebase"`） | `"function"`：每个函数一个 runner 进程，在首次触发时启动，拥有自己的身份、secret 和模块图；每个已启动的函数约占 120 MiB 内存，首次调用时有一次冷启动 |
+| Auth 阻塞函数使用模拟器令牌 | `functions.authBlockingToken`（`"emulated"`） | `"production"` 传递签名的令牌，Python runner 使用 SDK 规则验证它；Node 函数收到同样的生产环境形式的令牌，但不验证它，因此行为与之前相同；需要 `strict` |
+| 已完成的 Cloud Tasks 任务的名称会立即释放 | `functions.taskNameReuse`（`"immediate"`；在 `emulator` profile 中为 `"retained"`） | `"production"` 在最长 3600 秒内拒绝该名称（"existed too recently"），与 Cloud Tasks 文档所述一致；已完成名称的历史在所有队列中合计限制为 65,536 个名称和 8 MiB 的队列及任务名称文本；超过任一限制时淘汰最旧的名称，包括在 3600 秒窗口到期之前。同样的限制也适用于 `"retained"`；需要 `strict` |
+| 没有 `dispatchDeadline` 的任务在 60 秒后被截断 | `functions.taskDispatchDeadlineSeconds`（`60`） | `600`，这是录制中 Cloud Tasks 给这类任务的值；可以设置 15 到 1800 之间的任意值；需要 `strict` |
+| 持续失败的任务按其队列声明的间隔重试 | `functions.taskRetryBackoff`（`"declared"`） | `"production"` 允许间隔在十几次失败后超过声明的最大值增长（按录制为 4、8 和 10 秒），但从不早于声明的间隔；需要 `strict` |
+| 未声明重试值的任务队列函数获得官方模拟器的 3 次尝试 | `functions.taskRetryDefaults`（`"emulated"`） | `"production"` 给出 100 次尝试（退避值相同），与读回的默认队列一致；声明的值始终保留；需要 `strict` |
+| 身份提供方登录对内置、`oidc.*` 和 `saml.*` provider 接受 fixture 断言和登录组件（`/emulator/auth/handler`）；在 `strict` 下，`oidc.*` 或 `saml.*` provider 仍必须经过配置并启用（`auth.providers` 或 Admin API），与生产环境的要求一致 | `auth.idpAssertions`（`"fixture"`） | `"signed"`：OIDC ID 令牌必须能用 `auth.idpSigners` 密钥验证，SAML 响应必须能用 provider 的证书验证，fixture 和内置 provider 会被拒绝 |
+| Eventarc 监听器接受任何凭据或无凭据，因此 Admin SDK 可以用伪造的凭据发布（见 [Eventarc authentication](https://github.com/fireemu/fireemu/blob/main/docs/eventarc-authentication.md)） | `eventarc.authentication`（`"permissive"`） | `"production"`：缺失、格式错误或 JWT 形式的 bearer 会以生产环境的 401 拒绝 |
+| 租户 ID 可以是任何可读名称，例如 `tenant-a` | `auth.tenantIdFormat`（`"readable"`） | `"generated"`：生产环境生成的形式，例如 `acme-x7k2q` |
+| 多租户默认开启：Admin API 可以创建租户，`auth.tenants` 无需 `updateConfig` 调用即可加载 | `auth.multiTenant.allowTenants`（`true`） | 在启用前未设置，与新的生产环境项目相同：租户路由会被拒绝，`auth.tenants` 需要 `allowTenants: true` |
+| 多重身份验证默认开启（SMS 和 TOTP），无需控制台开关、`updateConfig` 调用或 `auth.mfa` 块 | `auth.mfa`（`state: "ENABLED"`） | 在启用前关闭，与新的生产环境项目相同：注册会以 `OPERATION_NOT_ALLOWED : SMS based MFA not enabled.` 或 `TOTP based MFA not enabled.` 被拒绝 |
+| 最终用户的 Firestore `Listen` 流无论保持多久都保持打开。控制 API 上的 `POST /v1/firestore/listen:expire` 会以生产环境的状态一次性结束所有保持中的最终用户流，用于测试客户端的重连 | `firestore.listenStreamLifetime`（`"unlimited"`） | `"oneHour"`：在打开一小时后以 `INTERNAL` 结束 |
+| App Check 无需注册应用即可工作：任何格式正确的调试令牌（UUIDv4）都能为任何应用兑换，因此可以在没有 `appCheck` 块的情况下调用 `enforceAppCheck` callable；缺失或格式错误的令牌仍会被拒绝 | `appCheck.debugTokens`（`"any"`） | `"registered"`：只有 `appCheck.apps` 中注册了调试令牌摘要的应用才能兑换，并且没有 `appCheck` 块时不提供 App Check。`appCheck` 块也会恢复它 |
+| 未声明的 Storage bucket 在首次写入时被创建并给出提示 | `storage.undeclaredBuckets`（`"warn"`） | `"refuse"`：对象操作会被拒绝；显式设置的键优先 |
+| 未列出的 Storage bucket 获得宽松的 CORS 头 | `storage.cors` | 未列出的 bucket 没有 CORS 头；由显式条目决定 |
+| 死信转发既不需要项目编号，也不需要 IAM 授权 | `pubsub.deadLetterAuthorization`（`"implicit"`） | `"iam"`：只有在 Pub/Sub 服务代理被授予订阅上的 `roles/pubsub.subscriber` 和死信主题上的 `roles/pubsub.publisher` 后，消息才会被转发。指定 `pubsub.projectNumbers` 也会选择此值 |
+
+启动横幅和 `fireemu capabilities` 会报告是否设置了 `productionExact`，以及表中每个有键的开发默认值的生效值和来源。未列出 bucket 的 CORS 不是有键的开发默认值。
+
+大多数项目不需要 `productionExact`；它是用于与生产环境进行更严格比较的高级开关。
+
+未定义复合索引的查询不在这些默认值之列。`strict` 与生产环境一样拒绝它，而 `firestore.missingIndexes: "report"` 是一个显式的退出选项，它会运行该查询并在标准错误上报告缺失的索引。`productionExact` 不会改变该键。
+
+### 其他开发便利
+
+以下行为与生产环境不同，且不受 `productionExact` 切换。每一行说明如何获得生产环境的行为，或者说明没有办法。
+
+#### Authentication
+
+| 开发行为 | 如何获得生产环境的行为 |
+|---|---|
+| `localhost` 在操作链接 continue URL 的默认授权域中；新的生产环境项目可能不包含它 | 声明 `auth.authorizedDomains`，它会替换默认值 |
+| 所有登录方式一开始都已启用，包括电子邮件链接登录；新的生产环境项目一个都不启用（`firebase deploy --only auth` 只开启它列出的 provider，从不关闭） | 声明与你的项目一致的 `auth.signIn`，例如用 `email.passwordRequired: true` 拒绝电子邮件链接登录 |
+| `google.com` 等内置身份提供方无需在控制台中启用即可登录。`oidc.*` 和 `saml.*` provider 仍必须经过配置并启用，否则登录会像生产环境一样被拒绝 | `auth.idpAssertions: "signed"`（由 `productionExact` 设置）会拒绝内置 provider |
+| 在项目声明 Web API 密钥之前，接受任何 Web API 密钥；对于其他项目的密钥，生产环境返回 `API_KEY_INVALID` | 声明 `auth.apiKeys` |
+| 电话验证向任何号码发送验证码，不需要 reCAPTCHA、Play Integrity 或 APNs 证明，而生产环境对测试号码以外的号码要求这些证明 | 没有设置。客户端 SDK 以模拟器模式运行其验证器，因此应用路径会被覆盖；省略证明的原始 REST 客户端在这里会通过 |
+| reCAPTCHA `ENFORCE` 状态会被存储和返回，但不会执行，因此没有 reCAPTCHA 令牌的登录会被接受 | 没有设置 |
+| `accounts:batchCreate` 没有行数限制；Admin SDK 在发送前检查每次调用 1000 个用户 | 没有设置 |
+| 不模拟注册速率限制（生产环境按 IP 限制新账号数） | 将 `auth.quotaSimulation.mode` 设为 `"enforce"` |
+| 函数内 Admin SDK 的 `verifyIdToken` 接受未签名的 ID 令牌，因为设置了 `FIREBASE_AUTH_EMULATOR_HOST` 时 SDK 会跳过签名验证；生产环境会拒绝它 | 没有设置。见 [Auth](../../products/auth/#tokens) |
+
+#### Cloud Firestore
+
+| 开发行为 | 如何获得生产环境的行为 |
+|---|---|
+| 对于指定了守护进程以外项目的请求，Firestore 用该项目自己的空数据来响应，这样可以让并行测试相互隔离；`projectId` 中的拼写错误会导致数据分裂，而不是像生产环境那样以 `PERMISSION_DENIED` 失败 | 将 `projects.unknownProjects` 设为 `"refuse"` |
+| `firestore.indexes.json` 中的复合索引立即为 `READY`，通过 Admin API 创建的索引约 1.5 秒后为 `READY`；生产环境构建索引需要几分钟。`CREATING` 状态以及对需要该索引的查询给出的 "currently building" 拒绝都会保留 | 没有设置。像对生产环境那样轮询索引直到它为 `READY`；推进虚拟时钟也会完成构建 |
+| 托管的导出、导入和批量删除操作在第一次轮询时即完成；生产环境需要几分钟 | 没有设置。像对生产环境那样轮询操作直到 `done` |
+| 持有另一个写入方正在等待的锁的事务，在 60 秒（挂钟时间）无活动后被回滚。生产环境自身的空闲限制约为 110 到 123 秒，而它在更早时间对存在争用的持有者做什么没有记录 | 没有设置 |
+
+#### Cloud Storage
+
+| 开发行为 | 如何获得生产环境的行为 |
+|---|---|
+| 签名 URL 或 POST policy 无论签名如何都会被接受（会检查其过期时间和条件），因为验证签名需要签名服务账号的密钥 | 对于 V4 签名 URL，在 `storage.signedUrlKeys` 中注册签名所用的密钥；POST policy 签名不会被验证 |
+| JSON API 将没有凭据或带有 Firebase ID 令牌以外任何凭据的请求视为 owner 来处理，因为本地运行无法判断访问令牌 | 不可用 |
+| 无法通过 API 进行 bucket 级公开授权（IAM `allUsers`） | 在 `storage.publicBuckets` 中列出该 bucket |
+| 对于发送 `x-goog-api-client` 的请求，公开 URL（`GET /{bucket}/{object}`）无需凭据即可提供，因为 Go 客户端库（以及 Firebase Admin Go SDK）在面对模拟器主机时会不带凭据地通过它读取；浏览器 fetch 会被拒绝 | 不可用 |
+| 安全规则可以调用 `firestore.get()` 和 `firestore.exists()`，而不需要生产环境为 Storage 服务代理所要求的 Firestore 访问授权 | 不可用 |
+| 两个默认 bucket 名称 `<project>.appspot.com` 和 `<project>.firebasestorage.app` 都存在，而生产环境项目只有其中之一 | 将 `storage.defaultBucket` 设为你的项目所拥有的那个；另一个名称即为未声明，其 bucket 资源在存在之前返回 404；`storage.undeclaredBuckets` 控制首次写入是创建它并给出提示（`"warn"`）、静默创建（`"create"`），还是被拒绝（`"refuse"`，除非被覆盖，否则由 `productionExact` 选择） |
+
+#### Cloud Functions
+
+| 开发行为 | 如何获得生产环境的行为 |
+|---|---|
+| Functions 代码库中的 `.env.local` 在 `.env` 和 `.env.<projectId>` 之后应用，尽管生产环境从不部署它 | 改为把值放在 `.env` 或 `.env.<projectId>` 中；只存在于 `.env.local` 中的键在生产环境中是未设置的 |
+| 启用了 `retry` 的函数失败时总共重试 4 次（`events.maxAttempts`，在虚拟时钟上退避 10 秒到 600 秒），然后进入死信；生产环境最长重试 24 小时（第二代）或 7 天（第一代） | 调高 `events.maxAttempts`；没有任何值能重现时间窗口 |
+| 非公开的函数（`invoker: "private"` 或服务账号列表）以及任务队列函数，在公开函数 URL 上接受任何看起来像 Google 签发的身份令牌的 bearer（`iss` 为 `https://accounts.google.com` 的 JWT），因为 Google 对其签名和 IAM 角色的验证无法在本地运行。Firebase Auth ID 令牌会以 401 被拒绝，与 Cloud Run 的拒绝方式相同。没有凭据的调用会以 403 被拒绝，与生产环境相同。控制台和控制 API 使用控制令牌调用这类函数 | 没有办法；发送一个不带凭据的调用即可看到拒绝。不执行 `ingressSettings` |
+
+#### Pub/Sub
+
+| 开发行为 | 如何获得生产环境的行为 |
+|---|---|
+| Pub/Sub 接受不带任何凭据的请求，因此使用 `PUBSUB_EMULATOR_HOST` 的客户端可以工作 | 设置 `pubsub.authentication.localBearerToken`；之后不带凭据的请求会像生产环境一样被拒绝。见 [Pub/Sub 与 Eventarc](../../products/pubsub-eventarc/#身份验证)。 |
+| Pub/Sub push 端点可以是 loopback 上的普通 `http://`（`127.0.0.1`、`localhost`、`[::1]`）；生产环境要求 HTTPS | 在订阅中使用非 loopback 的 `https://` URL；Fireemu 只向 loopback 投递 push 消息，因此没有设置能让它到达这样的地址 |
+
+## 相关内容
+
+- [配置文件](../configuration/)
+- [配置参考](../../reference/configuration/)
+- [CI 与容器](../ci-and-containers/)
+- [限制](../../compatibility/limitations/)

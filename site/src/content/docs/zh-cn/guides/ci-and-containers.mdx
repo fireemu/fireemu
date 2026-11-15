@@ -1,0 +1,248 @@
+---
+title: CI 与容器
+description: 在 GitHub Actions 中用 Fireemu 运行测试，从容器提供模拟器服务，并选择模拟器响应的主机名。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+在 CI 作业中用 Fireemu 运行测试，从容器向宿主机或其他容器提供模拟器服务，并列出客户端使用的主机名。
+
+## 在 GitHub Actions 中运行测试
+
+`fireemu exec` 返回测试命令的退出状态，因此 CI 作业不需要单独的启动和停止步骤：
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec -- npm test
+```
+
+Fireemu 启动时不需要 Java，也不需要下载：npm 包会为 runner 的平台安装原生二进制文件。lint 步骤见[在测试前检查配置](#在测试前检查配置)。
+
+### 添加 productionExact 作业
+
+如果还要检查开发默认值放行了什么（例如未签名的测试令牌），可以添加一个作业，使用设置了 [`productionExact`](../profiles/) 的第二个配置文件运行，例如 `fireemu.production-exact.toml`：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+# 对开发默认值使用生产环境行为：true 或 false；需要 strict。
+productionExact = true
+# Firebase 项目配置的路径，相对于本文件；非空字符串。
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+```sh
+npx fireemu exec --config fireemu.production-exact.toml -- npm test
+```
+
+使用 JSON 形式时，将文件命名为 `fireemu.production-exact.json`。
+
+### 在测试前检查配置
+
+以下三项检查会让作业提前失败，避免测试在错误的设置上运行：
+
+```yaml
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec --plan --deny-inherited-emulator-env -- npm test
+      - run: npx fireemu exec --deny-inherited-emulator-env -- npm test
+```
+
+| 检查 | 作用 |
+|---|---|
+| `config lint --deny-ineffective` | 当配置设置了 Fireemu 接受但从不读取的键时，以 1 退出，使作业失败。用 `--allow <key>` 或 `--allow-file <path>` 列出你有意保留的键（见 [`config lint`](../../reference/cli/#config-lint)）。 |
+| `exec --plan` | 打印本次运行解析出的内容，使作业日志显示项目 ID、服务及其端口、读取的文件、Functions 将使用的 Node 以及继承的模拟器变量。它不启动任何东西；当它能发现运行会失败的原因时，以 1 退出。使用 `--json` 输出给其他工具（见[规划一次运行](../../reference/cli/#plan-a-run)）。 |
+| `--deny-inherited-emulator-env` | 当作业环境中带有本次运行不启动的服务的模拟器变量（`PUBSUB_EMULATOR_HOST`、另一个测试套件的 `FIRESTORE_EMULATOR_HOST` 等）时，使运行失败。不加此选项时，运行会发出警告并保留该变量。对你有意设置的变量使用 `--allow-inherited-emulator-env <NAME>`。 |
+
+### 容器作业
+
+在 GitHub Actions 的 `container:` 作业中，或任何以 root 运行并 bind mount 检出目录的容器中，检出目录归宿主机用户所有，容器的 root 不信任该用户。因此，自动发现的 `fireemu.toml` 或 `firebase.json` 会被跳过并给出警告。请显式指定这些文件，或对检出目录执行 `chown`：
+
+```sh
+npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
+```
+
+见[配置文件](../configuration/#文件所有权检查)。
+
+## 从容器提供模拟器服务
+
+默认情况下，所有监听器都在 loopback 上，发布的容器端口无法到达它们。要向宿主机或其他容器提供模拟器服务：
+
+1. 在 `fireemu.toml` 中通过 `network.allowNonLoopbackHosts` 显式启用。
+2. 在 `firebase.json` 中为各产品模拟器指定 host。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# Firebase 项目配置的路径，相对于本文件；非空字符串。
+firebaseJson = "firebase.json"
+
+[network]
+# 允许产品模拟器绑定非 loopback 主机：true 或 false。
+allowNonLoopbackHosts = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firebaseJson": "firebase.json",
+  "network": {
+    "allowNonLoopbackHosts": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+在 `firebase.json` 中：
+
+```json
+{
+  "emulators": {
+    "firestore": { "host": "0.0.0.0", "port": 8080 },
+    "auth": { "host": "0.0.0.0", "port": 9099 }
+  }
+}
+```
+
+### 哪些服务在 loopback 之外监听
+
+- 只有 Firestore、Authentication、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub 和 Realtime Database 可以在 loopback 之外监听。Hub、UI 和 Logging 模拟器保持在 loopback 上。
+- Authentication 的端口同时提供控制 API，它监听 loopback 或所有接口（`0.0.0.0` 或 `::`），不监听单个其他地址。
+- 监听 `0.0.0.0` 或 `::` 的监听器，在环境变量和 Hub 中公布为 `127.0.0.1` 或 `::1`，与官方 CLI 相同。
+- 启用该选项后，模拟器也响应单标签的 `Host`，例如 Compose 服务名（`fireemu:8080`）。其他名称必须列在 `network.allowedHosts` 中；见[模拟器响应的主机名](#模拟器响应的主机名)。
+
+### 谁能访问发布的端口
+
+:::caution
+模拟器在没有凭据的情况下提供服务。只把端口发布到你信任的网络。
+
+:::
+
+- 启动时，每个在 loopback 之外的监听器都会打印一行 `warning:`。
+- 任何能访问到发布端口的客户端，都能在产品 API 上做本地客户端能做的事，包括 Admin SDK 的 `Bearer owner` 凭据和 Auth 模拟器自己的路由。
+- 对 Realtime Database 而言，这包括 `database.defaultAccess = "locked"`，它接受那个众所周知的 `owner` 凭据，因此在 loopback 之外它不构成访问控制。
+- 在 `emulator` profile 下，任何 bearer 令牌对数据请求都是 Realtime Database 管理员；其 `/.settings/rules.json` 与 Firestore 和 Storage 的规则路由一样，只响应 loopback 对端。
+- 浏览器页面仍必须来自 loopback 源（`http://localhost:...`），因此从其他主机提供的页面无法使用暴露的端口。
+
+### Fireemu 自身的控制
+
+- 控制 API、App Check 调试令牌管理，以及加载 Firestore、Storage 和 Realtime Database 安全规则或清除 Firestore 数据的路由，只响应 loopback 对端，对任何其他对端返回 403。`@firebase/rules-unit-testing` 通过 `loadFirestoreRules`、`loadStorageRules` 和 `clearFirestore` 调用规则和清除路由。
+- 使用它们的代码应在容器内运行，或在共享其网络命名空间的容器中运行，例如 Podman pod 或 `--network container:<name>`。
+- 该命名空间内的转发器（`kubectl port-forward`、sidecar 代理）从 loopback 连接。因此一旦启用该选项，每个控制 API 请求也都需要 `Authorization: Bearer <control token>`，无论来自进程还是页面；只有 `/health/` 例外。
+- 加载安全规则或清除 Firestore 数据的路由不要求该令牌，因此 `@firebase/rules-unit-testing` 仍可正常工作。通过这种转发器访问模拟器的客户端可以调用这些路由，与在官方模拟器上一样。
+- `fireemu exec` 通过 `FIREEMU_CONTROL_TOKEN` 把令牌传给其命令，`fireemu/testing` 和 UI 会发送该令牌。
+
+## 模拟器响应的主机名
+
+网页可以在加载后把它控制的名称重新指向 `127.0.0.1`（DNS rebinding）。此时浏览器把对模拟器的请求视为同源，不发送 `Origin`，因此该页面可以读取模拟器在无凭据情况下提供的本地数据。
+
+为防止这种情况，产品模拟器（Firestore、Authentication 及控制 API、Storage、Functions、Eventarc、Cloud Tasks、Pub/Sub、Realtime Database 和 Hosting）对 `Host` 头指向以下以外任何主机的 HTTP/1 请求返回 `403`：
+
+- `localhost` 以及 `.localhost` 下的名称；
+- 任何 IP 地址，因此来自 Android 模拟器的 `10.0.2.2`、局域网地址或网桥地址都可用；
+- `.internal` 下的名称，这是容器运行时为容器访问其宿主机所提供名称的保留后缀：`host.docker.internal` 和 `gateway.docker.internal`（Docker）、`host.containers.internal`（Podman）、`host.lima.internal`（Lima 和 Colima）、`host.orb.internal`（OrbStack）；
+- `.firebaseio.com` 和 `.firebasedatabase.app` 下的名称，Realtime Database 通过它们选择命名空间；
+- `.cloudworkstations.dev` 下的名称，即 Firebase Studio 和 Cloud Workstations 的预览及端口 URL；
+- `.app.github.dev` 下的名称，即 GitHub Codespaces 的端口转发 URL；
+- 特殊用途后缀 `.test`、`.local` 和 `.home.arpa` 下的名称，公共 DNS 不会解析它们：例如 `myapp.test` 这样的 `/etc/hosts` 别名、`my-mac.local` 这样的 mDNS 名称、默认 `svc.cluster.local` 下的 Kubernetes 服务名以及家庭网络名称；
+- 启用 `network.allowNonLoopbackHosts` 时，单标签名称，例如 Compose 服务名；
+- `network.allowedHosts` 中的名称。
+
+特殊用途名称和 `.internal` 名称只有在本地名称解析可信时才安全。在不可信网络中，恶意解析器（例如公共 Wi-Fi 上由 DHCP 分发的解析器，RFC 8375 第 6.1 节针对 `.home.arpa` 指出了这一风险）或局域网上的 mDNS 对端（针对 `.local`）可以响应这些名称，并把页面 rebind 到模拟器。`network.allowedHosts` 只能添加名称；没有任何设置能移除这些默认值。
+
+检查的适用方式：
+
+- 没有 `Host` 的请求（HTTP/1.0）和 HTTP/2 请求（gRPC 客户端）不检查，因为浏览器不会发送这类请求。
+- 比较时忽略大小写、端口和一个末尾的点。
+- Hub、UI 和 Logging 模拟器只响应 loopback 名称。
+- 官方模拟器不检查 `Host`；生产环境中没有对应机制，因此该检查在两个 profile 中相同。
+- 被拒绝的请求得到一个 `403`，其消息中写明相关设置；守护进程对每个被拒绝的名称记录一行 `warning: refused Host "<name>"`（最多 32 个名称），因此即使客户端的 SDK 隐藏了响应体，也会留下痕迹。
+
+### 添加主机名
+
+添加客户端使用的其他名称，例如隧道、`/etc/hosts` 中不在特殊用途后缀下的名称，或自定义集群域下的 Kubernetes 服务。条目可以是一个名称、以点开头的名称（表示该域及其所有子域），或 `"*"`（响应所有 `Host`，即关闭此防护）：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+# 允许产品模拟器绑定非 loopback 主机：true 或 false。
+allowNonLoopbackHosts = true
+# 额外接受的主机名：精确名称、以点开头的域，或 "*"。
+allowedHosts = ["emulator.ci.example", ".corp.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowNonLoopbackHosts": true,
+    "allowedHosts": ["emulator.ci.example", ".corp.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 条目不含 scheme、端口或路径。
+- 列出一个名称只会放行指向该名称的请求。浏览器源检查不变，因此页面仍必须来自 loopback 源才能使用特权路由。
+- 对于 `"*"` 以及覆盖整个顶级域的条目（例如 `".com"`），Fireemu 在启动时打印一行 `warning:`，因为任何网页都可以在那里注册名称。
+- 该策略在守护进程启动时读取；修改 `network.allowedHosts` 后请重启守护进程。
+
+### 常见环境的条目
+
+| 环境 | 条目 |
+|---|---|
+| 自定义集群域下的 Kubernetes 服务 | `".svc.<cluster domain>"`（或精确的服务名） |
+| ngrok | 精确的隧道名称，例如 `"abc123.ngrok-free.app"` |
+| Cloudflare Tunnel | 隧道的精确公共主机名 |
+| `/etc/hosts` 中不在 `.test`、`.local` 和 `.home.arpa` 下的名称 | 该名称 |
+
+请列出精确的隧道名称，而不是隧道提供商的整个域：任何人都可以在其下开隧道。Firebase Studio 的 `.cloudworkstations.dev`、Codespaces 的 `.app.github.dev`、mDNS 的 `.local`、Kubernetes 的 `svc.cluster.local` 以及 `.test` 名称都不需要条目。
+
+## 相关内容
+
+- [配置文件](../configuration/#文件所有权检查)
+- [Profile 与 productionExact](../profiles/)
+- [CLI 参考](../../reference/cli/)
+- [故障排除](../troubleshooting/)

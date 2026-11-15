@@ -1,0 +1,171 @@
+---
+title: 配置文件
+description: 设置 fireemu.toml 和 firebase.json，并了解一次运行会加载哪些文件、其相对路径相对于何处解析。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu 读取两类文件：
+
+- **`fireemu.toml`** 保存 Fireemu 自身的设置，例如 [profile](../profiles/)、Authentication 项目配置和时钟。它包含 `schemaVersion = 1`。同样的设置也可以用 JSON 写在 `fireemu.json` 中；同时包含两者的目录会被拒绝（见[会加载哪些文件](#会加载哪些文件)）。见[配置 schema](../../reference/configuration/)。
+- **`firebase.json`** 是 Firebase CLI 使用的文件。Fireemu 每次启动时都从中读取端口、安全规则、索引和 Functions 代码库。
+
+## 同时使用两个文件
+
+将 Fireemu 特有的设置放在 `fireemu.toml` 中，而不是 `firebase.json` 中。要同时使用两者，在 `fireemu.toml` 中指定 `firebase.json`：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+# Firebase 项目配置的路径，相对于本文件；非空字符串。
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+`npx fireemu init --firebase-json firebase.json` 会为你写好这些内容。
+
+## 会加载哪些文件
+
+`up`、`exec`、`emulators:start` 和 `emulators:exec` 按以下顺序选择配置文件：
+
+1. **显式标志。** `--config <file>` 和 `--firebase-json <file>` 精确加载它们指定的文件，不进行任何搜索。`--config` 将 `.toml` 路径（不区分大小写，包括 `.TOML`）解析为 TOML，其他所有扩展名解析为 JSON。TOML 配置必须设置 `schemaVersion = 1`；它永远不会被当作 `firebase.json` 读取，后者只能是 JSON。`--firebase-json` 总是读取 JSON。
+2. **当前目录中的 Fireemu 配置。** 否则，当前目录中唯一的 `fireemu.toml` 或 `fireemu.json` 会像通过 `--config` 传入一样被加载。
+   - 如果两个文件都存在，启动会被拒绝：删除其中一个，或用 `--config` 选择一个文件。
+   - 其 `firebaseJson` 条目相对于被加载的文件解析，指定要加载的 `firebase.json`。位于 `fireemu.toml` 旁边但 `fireemu.toml` 没有 `firebaseJson` 条目的 `firebase.json` 不会被加载，启动输出会说明这一点。
+   - 父目录中的 `fireemu.toml` 和 `fireemu.json` 都不会被使用，因为其中的路径是相对于当前目录的。
+   - 规范文件中的相对路径（`rules.source`、`storage.rules`、`functions.source`、`firestore.indexFile` 及其他文件设置）无论文件位于哪个目录，都从工作目录读取。只有 `firebaseJson` 以及 `firebase.json` 中的路径从文件自身所在目录读取。
+3. **最近的 `firebase.json`。** 否则，最近的 `firebase.json` 会像通过 `--firebase-json` 传入一样被加载：当前目录中的那个，否则是在父目录中找到的第一个，与 Firebase CLI 的查找方式相同。其路径以及旁边的 `.firebaserc` 从其所在目录读取。
+4. **内置默认值。** 否则，使用内置默认值，并且不加载任何安全规则。
+
+`--no-config-discovery` 跳过第 2 步和第 3 步。启动输出的 `config:` 行列出了被加载的文件。
+
+自动发现有以下效果：
+
+- 项目 ID 来自被发现的 `firebase.json` 旁边的 `.firebaserc`。
+- 其模拟器端口、Hub、UI 和单项目设置生效。
+- `functions` 条目会启动 Functions 运行时。
+- `fireemu capabilities` 也会报告被发现的 `fireemu.toml` 的 profile。
+
+如果你依赖旧行为（测试旁边的 `firebase.json` 被忽略），请传入 `--no-config-discovery`。
+
+## 相对路径
+
+相对路径相对于哪个目录解析，取决于它写在哪个文件中：
+
+| 路径写在何处 | 相对于 |
+|---|---|
+| `fireemu.toml` 或 `fireemu.json`：`rules.source`、`firestore.indexFile`、`storage.rules`、`functions.source` 及其他文件设置 | 运行 `fireemu` 的工作目录 |
+| `--functions <dir>` 及其他路径选项 | 工作目录 |
+| `fireemu.toml` 或 `fireemu.json` 中的 `firebaseJson` | 该配置文件所在目录 |
+| `firebase.json` 中的每个路径（`firestore.rules`、`functions.source`、`hosting.public`……） | 该 `firebase.json` 所在目录 |
+
+因此，在仓库根目录运行 `fireemu exec --config packages/api/fireemu.toml -- npm test` 时，`rules.source = "firestore.rules"` 从仓库根目录读取，而不是从 `packages/api` 读取。Fireemu 为了兼容性保留此行为。未来的 schema 版本可能会将所有路径相对于配置文件解析。
+
+要避免这种差异，请从包含配置的目录运行 Fireemu，或把路径放在 `firebaseJson` 引用的 `firebase.json` 中。
+
+[`fireemu up --plan`](../../reference/cli/#plan-a-run) 会针对每个路径显示运行时打开的绝对路径以及解析所依据的目录。当规范配置中的某个路径的解析结果与相对于配置文件自身目录的解析结果不同时，它会发出警告。
+
+## 文件所有权检查
+
+被发现的文件可以指定要运行的 Functions 代码和要执行的规则。因此在 Unix 上，搜索会检查所找到内容的所有者，就像 git 检查仓库所有权一样。Firebase CLI 不做此检查。在 Windows 上不检查所有权。
+
+受信任的所有者是你、root，以及当你通过 `sudo` 以 root 运行时 `SUDO_UID` 中的用户。
+
+- **配置文件。** 所有者不受信任或任何用户都可写的 `fireemu.toml`、`fireemu.json` 或 `firebase.json` 会被跳过并给出警告。允许组可写，因此在用户私有组 umask（002，Debian 和 Ubuntu 的默认值）下创建的文件会被加载。
+- **`.firebaserc`。** 它只指定项目和 target 别名，从不涉及代码或规则，因此不检查其所有者。只有当它或其所在目录可被任何用户写入时才会被跳过。
+- **父目录。** 搜索会在所有者不受信任或任何用户都可写的父目录（例如 `/tmp`）之前停止。遇到无法检查的父目录（例如你无权进入的目录）时，它也会停止，且不发出警告。
+- **当前目录。** 不检查其所有者，因为是你选择在那里运行的。任何用户都可写的当前目录完全不会被搜索。
+- **符号链接。** 符号链接按其指向的文件判断。不检查目标所在的目录。
+- **读取。** 每个候选文件只打开一次。在读取任何内容之前，先在已打开的文件上检查其所有者和权限模式，然后从同一个文件读取其文本。大于 16 MiB 的被发现文件会以错误拒绝。
+
+被跳过的文件或目录会在警告中列出，运行会像什么都没找到一样继续。被发现文件中的错误会说明该文件是由搜索找到的。
+
+- 若仍要加载被跳过的文件，请用 `--config` 或 `--firebase-json` 指定它。
+- 若要消除警告，请传入 `--no-config-discovery`。
+
+有两种常见设置会触发此规则：
+
+- **以 root 运行并 bind mount 检出目录的容器**，例如 GitHub Actions 的 `container:` 作业，或以 root 运行的 `docker run -v "$PWD":/app`。文件归宿主机用户所有，容器的 root 不信任该用户。请使用显式标志，或对检出目录执行 `chown`。`.firebaserc` 仍会指定项目。Rootless Podman 把你的用户映射为容器的 root，因此不受影响。
+- **`sudo`。** `SUDO_UID` 中的用户所拥有的文件是受信任的。
+
+## 验证配置
+
+`fireemu.toml` 在启动时被验证。Fireemu 不接受的值会使其以错误停止。
+
+- `up`、`exec` 和 `config show` 在两种格式下都拒绝 schema 中未列出的键和类型错误的值。错误信息会指出文件、键及其应有的类型，例如 `fireemu.toml: daemon.firestorePort must be an integer, found a string`。
+- 整数设置拒绝浮点数，即使其值是整数：如错误信息所建议，写 `8080` 而不是 `8080.0`。
+- [配置 schema](../../reference/configuration/) 是一个 JSON Schema，也可以在编辑器中使用。
+
+有两个命令可以显示配置解析的结果：
+
+- `fireemu capabilities` 打印你的配置所解析到的 profile 的能力清单。
+- `fireemu up --plan` 和 `fireemu exec --plan -- <command>` 打印本次运行从文件、命令行和环境中解析出的所有内容（项目、服务、端口、文件、Functions 运行时、继承的变量），而不启动它。见[规划一次运行](../../reference/cli/#plan-a-run)。
+
+## 生成参考文件
+
+`fireemu init --reference` 还会写出 `fireemu.reference.toml`，这是一个由 schema 生成的带注释参考文件。如果已有 `fireemu.json`，它改为写出 `fireemu.reference.jsonc`，使参考键与你的配置格式一致。Fireemu 从不加载此文件。
+
+- 正常的 `fireemu.toml` 保持精简。把参考中的键复制进去会使该键变为显式设置，从而 `productionExact` 不再切换它。
+- 以下键在参考中保持注释状态：没有默认值的键、其存在本身就会选择行为的键、受 `productionExact` 控制的键，以及为向前兼容而接受、目前没有效果的键（在其注释中如此标注）。
+- 当配置设置了被接受但没有效果的键时，`fireemu config lint --deny-ineffective` 会使 CI 作业失败。`--allow` 和 `--allow-file` 列出你有意保留的键（见 [`config lint`](../../reference/cli/#config-lint)）。
+- 初始化时可以将 `--reference` 与 `--profile` 或 `--firebase-json` 组合使用。如果已有 `fireemu.toml` 或 `fireemu.json` 且未使用这两个选项，则只写出参考文件。
+- 替换已有的输出文件需要 `--force`。
+
+### Schema 注解
+
+在发布的二进制文件中，生成的 schema 注解指向该版本在 GitHub 仓库中的 schema 文件（`https://raw.githubusercontent.com/fireemu/fireemu/v<version>/spec/config/fireemu.schema.json`），因此编辑器会按已安装版本所接受的键检查文件。从源码构建的二进制文件，包括两次发布之间的构建（其内嵌的 schema 比其版本标签更新），会改为写出 `main` 位置。
+
+指向任何发布标签、`main` 或旧的 `https://fireemu.dev/spec/config/fireemu.schema.json` 位置的 `$schema` 或 `#:schema` 仍然可以加载。为了在编辑器中验证，请把旧注解替换为你所运行版本的标签。
+
+Fireemu 依据其内置的 schema 进行验证，不会获取注解中的 URL。`fireemu config schema --out <path>` 会把该内置 schema 写入文件，供无法访问 GitHub 的编辑器或工具使用。
+
+## TOML 值与 JSON null
+
+TOML 文件使用与 JSON 文件相同的 JSON Schema、验证和默认值。
+
+- 在文件开头写上 `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json`（你所运行版本的标签），即可在 Taplo 或 Even Better TOML 中选择该 schema。
+- 给时间戳值加引号。TOML datetime 会被拒绝并给出键名，因为 schema 中没有 datetime 类型。
+
+TOML 没有 `null`。对于下列每个可为 null 的设置，在其所在的表中省略该键；对于可为 null 的数组项，省略该项。当所在的表或数组的存在是有意为之时，请保留它。空数组和空表保持其原有含义。
+
+| 可为 null 的 JSON 键 | null 及 TOML 省略的含义 |
+|---|---|
+| `limits.queryCatalog`、`firestore.textSearch.visibilityLag` | 接受但没有运行时效果。省略也会去掉这些键的显式值和启动提示。 |
+| `limits.firestorePlan.compositeIndexLimitOverride`、`limits.firestorePlan.singleFieldConfigLimitOverride`、`limits.firestorePlan.enterpriseIndexLimitOverride` | 不覆盖；目前非 null 的覆盖值会被拒绝。 |
+| `auth.providers`、`auth.providers.oidc`、`auth.providers.saml` | 不声明 provider 种子。空数组显式声明一个空的替换，与省略不同。 |
+| `auth.providers.oidc[].displayName`、`auth.providers.oidc[].clientSecret`、`auth.providers.saml[].displayName` | 没有可选的 provider 值。 |
+| `auth.authorizedDomains` | 没有种子；保留默认域。空数组表示不声明任何域。 |
+| `auth.authorizedDomains[]` | 忽略此项；在 TOML 数组中省略它。 |
+| `auth.mfa`、`auth.multiTenant`、`auth.tenants` | 不声明；保留适用的默认值。 |
+| `auth.mfa.enabledProviders`、`auth.mfa.providerConfigs` | 所声明的 MFA 配置中没有此类 provider。如果要声明 MFA，请保留 `auth.mfa` 表。 |
+| `auth.mfa.providerConfigs[].totpProviderConfig` | 忽略此 provider 条目；在该条目中省略此键。 |
+| `auth.mfa.providerConfigs[].totpProviderConfig.adjacentIntervals` | 在所声明的 TOTP provider 中使用零个相邻间隔；保留其表。 |
+| `auth.blockingFunctions.triggers.beforeCreate`、`auth.blockingFunctions.triggers.beforeSignIn` | 在显式的触发器选择中禁用此触发器。保留 `[auth.blockingFunctions.triggers]`；省略整个表则改为启用自动发现。 |
+| `auth.quota.signUpQuotaConfig` | 清除临时配额覆盖，包括导入的覆盖。保留空的 `[auth.quota]`；省略整个配额表会保留导入的覆盖。 |
+| `auth.passwordPolicy.constraints.maxLength`、`auth.passwordPolicyOverrides[].passwordPolicy.constraints.maxLength` | 没有自定义最大长度。 |
+
+## 相关内容
+
+- [配置参考](../../reference/configuration/)
+- [Profile 与 productionExact](../profiles/)
+- [CLI 参考](../../reference/cli/)
+- [CI 与容器](../ci-and-containers/)
