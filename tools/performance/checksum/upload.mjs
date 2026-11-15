@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { createTestWorld } from '../../../npm/fireemu/testing.mjs';
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const TEMP_ROOT = join(REPOSITORY_ROOT, 'target', `checksum-upload-worlds-${process.pid}`);
 const DEFAULT_SIZES = [0, 7, 8, 64, 4096, 1024 * 1024, 30 * 1024 * 1024];
 const SIZES = process.env.CHECKSUM_UPLOAD_SIZES
   ? process.env.CHECKSUM_UPLOAD_SIZES.split(',').map((value) => Number(value))
@@ -280,7 +279,8 @@ async function main() {
   const warmup = fixture(64);
   const results = [];
   const startup = [];
-  await mkdir(TEMP_ROOT, { recursive: true });
+  await mkdir(join(REPOSITORY_ROOT, 'target'), { recursive: true });
+  const tempRoot = await mkdtemp(join(REPOSITORY_ROOT, 'target', 'checksum-upload-worlds-'));
 
   try {
     for (let pairIndex = 0; pairIndex < PAIRS; pairIndex++) {
@@ -293,7 +293,7 @@ async function main() {
           const state = await startWorld(
             binaries[role].path,
             `demo-crc-${role}-${pairIndex + 1}`,
-            TEMP_ROOT,
+            tempRoot,
           );
           worlds.push(state);
           pairWorlds[role] = state;
@@ -321,7 +321,7 @@ async function main() {
       }
     }
   } finally {
-    await rm(TEMP_ROOT, { recursive: true, force: true });
+    await rm(tempRoot, { recursive: true, force: true });
   }
 
   process.stdout.write(`${JSON.stringify({

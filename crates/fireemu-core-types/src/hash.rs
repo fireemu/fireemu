@@ -45,7 +45,7 @@ fn crc32c_update_raw(state: u32, bytes: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod crc32c_update_tests {
-    use super::{Crc32c, crc32c_update_raw};
+    use super::{crc32c_update_raw, Crc32c};
 
     fn forced_scalar_raw_update(mut state: u32, bytes: &[u8]) -> u32 {
         for &byte in bytes {
