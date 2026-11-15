@@ -3,10 +3,12 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, readlink, rea
 import { tmpdir } from 'node:os';
 import { join, dirname, delimiter, relative, isAbsolute } from 'node:path';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay, setImmediate } from 'node:timers/promises';
+import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { constants as fsConstants } from 'node:fs';
+import fs, { constants as fsConstants } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import fsp from 'node:fs/promises';
 import test from 'node:test';
 import { snapshotInputs, prepareGeneration, readRegularFile, cloneSupport } from '../fireemu/testing-snapshot.mjs';
@@ -73,6 +75,11 @@ async function fixture(t) {
   const source = join(root, 'source'), modules = join(root, 'shared'), world = join(root, 'world');
   await Promise.all([source, modules, world].map(path => mkdir(path)));
   return { root, source, modules, world, options: { cwd: root, functionsSource: source, env: { NODE_PATH: 'shared' } } };
+}
+function hideAbortSignalAny(t) {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+  Object.defineProperty(AbortSignal, 'any', { configurable: true, writable: true, value: undefined });
+  t.after(() => descriptor ? Object.defineProperty(AbortSignal, 'any', descriptor) : delete AbortSignal.any);
 }
 async function linkedRepository(f) {
   const repository = join(f.root, 'unrelated-repository');
@@ -383,6 +390,7 @@ test('snapshotTimeoutMs accepts the maximum timer delay', async t => {
 });
 
 test('external abort during an active file copy settles I/O before removing the world directory', { timeout: 30_000 }, async t => {
+  hideAbortSignalAny(t);
   const f = await fixture(t), temporary = join(f.root, 'temporary');
   await mkdir(temporary);
   const source = join(f.root, 'slow-functions');
@@ -482,6 +490,235 @@ test('generation preparation abort removes its partial copy after the stream set
   await delay(25);
   await assert.rejects(stat(generation), { code: 'ENOENT' });
 });
+
+for (const api of ['snapshot', 'generation']) {
+  for (const laterFailure of ['leaf', 'traversal']) {
+    test(`${api} preserves an earlier slow leaf error before a later ${laterFailure} error`, { timeout: 10_000 }, async t => {
+      await withCloneSupport(t, { file: false, tree: false });
+      const f = await fixture(t);
+      const earlier = join(f.source, '00-earlier.txt'), later = join(f.source, '01-later.txt');
+      await writeFile(earlier, 'earlier');
+      await writeFile(later, 'later');
+      const earlierError = Object.assign(Error('earlier read denied'), { code: 'EACCES' });
+      const laterError = Object.assign(Error('later read failed'), { code: 'EIO' });
+      let earlierStream, pending, markLaterFailure;
+      const laterFailed = new Promise(resolve => { markLaterFailure = resolve; });
+      const streams = new Set();
+      t.after(async () => {
+        for (const stream of streams) stream.destroy();
+        if (pending) await pending.catch(() => {});
+        t.mock.restoreAll();
+        syncBuiltinESMExports();
+      });
+      const realReaddir = fsp.readdir;
+      t.mock.method(fsp, 'readdir', async (path, options) => {
+        const entries = await realReaddir(path, options);
+        return path === f.source ? entries.sort((a, b) => a.name.localeCompare(b.name)) : entries;
+      });
+      const realLstat = fsp.lstat;
+      t.mock.method(fsp, 'lstat', async path => {
+        if (path === later && laterFailure === 'traversal') {
+          markLaterFailure();
+          return { isSymbolicLink: () => false, isDirectory: () => false, isFile: () => false };
+        }
+        return realLstat(path);
+      });
+      const realCreateReadStream = fs.createReadStream;
+      t.mock.method(fs, 'createReadStream', (path, options) => {
+        if (path !== earlier && path !== later) return realCreateReadStream(path, options);
+        const stream = new Readable({ signal: options.signal, read() {} });
+        streams.add(stream);
+        stream.once('close', () => streams.delete(stream));
+        if (path === earlier) earlierStream = stream;
+        else stream.destroy(laterError);
+        return stream;
+      });
+      const realRm = fsp.rm;
+      t.mock.method(fsp, 'rm', async (path, options) => {
+        if (String(path).endsWith('/01-later.txt')) markLaterFailure();
+        return realRm(path, options);
+      });
+      syncBuiltinESMExports();
+      pending = api === 'snapshot'
+        ? snapshotInputs({ cwd: f.root, functionsSource: f.source, services: ['functions'], env: { NODE_PATH: '' } }, f.world)
+        : prepareGeneration({ baseline: f.source, config: { daemon: {} }, nodePaths: [] }, join(f.world, 'generation'));
+      let settled = false;
+      pending.then(() => { settled = true; }, () => { settled = true; });
+      await laterFailed;
+      await setImmediate();
+      assert.ok(earlierStream, 'the earlier leaf was admitted before the later failure');
+      const settledBeforeEarlierFailure = settled;
+      earlierStream.destroy(earlierError);
+      await assert.rejects(pending, error => api === 'snapshot' ? error.cause === earlierError : error === earlierError);
+      assert.equal(settledBeforeEarlierFailure, false, 'the earlier copy finishes before rejection');
+      assert.equal(streams.size, 0, 'all admitted input streams close before rejection');
+      if (api === 'generation') await assert.rejects(stat(join(f.world, 'generation')), { code: 'ENOENT' });
+    });
+  }
+}
+
+test('a leaf failure drains admitted copies before generation cleanup and stops later admission', { timeout: 10_000 }, async t => {
+  if (process.getuid?.() === 0 || process.platform === 'win32') return t.skip('permissions are not enforced');
+  await withCloneSupport(t, { file: true });
+  const f = await fixture(t), baseline = join(f.root, 'baseline'), generation = join(f.root, 'generation');
+  await mkdir(baseline);
+  for (let index = 0; index < 8; index++) await writeFile(join(baseline, `${String(index).padStart(2, '0')}.txt`), `input ${index}`);
+  await chmod(join(baseline, '01.txt'), 0o000);
+  t.after(() => chmod(join(baseline, '01.txt'), 0o600).catch(() => {}));
+
+  let releaseCleanup, markCleanupStarted;
+  const cleanupReleased = new Promise(resolve => { releaseCleanup = resolve; });
+  let pending;
+  const cleanupStarted = new Promise(resolve => { markCleanupStarted = resolve; });
+  const copyGates = new Map();
+  for (let index = 0; index < 8; index++) {
+    if (index === 1) continue;
+    let release;
+    copyGates.set(`${String(index).padStart(2, '0')}.txt`, { promise: new Promise(resolve => { release = resolve; }), release: () => release() });
+  }
+  t.after(async () => {
+    releaseCleanup();
+    for (const gate of copyGates.values()) gate.release();
+    if (pending) await pending.catch(() => {});
+  });
+  const calls = [];
+  const realCopyFile = fsp.copyFile;
+  t.mock.method(fsp, 'copyFile', async (source, destination) => {
+    const name = source.split(/[\\/]/).pop();
+    calls.push(name);
+    if (name === '01.txt') {
+      throw Object.assign(Error('clone unavailable'), { code: 'ENOTSUP' });
+    }
+    await copyGates.get(name).promise;
+    return realCopyFile(source, destination, fsConstants.COPYFILE_EXCL);
+  });
+  let failedCopySignal;
+  const failedInput = join(baseline, '01.txt');
+  const realCreateReadStream = fs.createReadStream;
+  t.mock.method(fs, 'createReadStream', (path, options) => {
+    if (path === failedInput) failedCopySignal = options.signal;
+    return realCreateReadStream(path, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const realRm = fsp.rm;
+  t.mock.method(fsp, 'rm', async (path, options) => {
+    if (String(path).endsWith('/01.txt')) {
+      markCleanupStarted();
+      await cleanupReleased;
+    }
+    return realRm(path, options);
+  });
+
+  let settled = false;
+  pending = prepareGeneration({ baseline, config: { daemon: {} }, nodePaths: [] }, generation);
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  const cleanupWasReached = await Promise.race([cleanupStarted.then(() => true), delay(2_000).then(() => false)]);
+  if (!cleanupWasReached) {
+    releaseCleanup();
+    for (const gate of copyGates.values()) gate.release();
+    await pending.catch(() => {});
+    assert.fail('the failing leaf did not reach owned-output cleanup');
+  }
+  const admittedAtCleanup = calls.length;
+  assert.ok(admittedAtCleanup <= 4, 'the admitted set stays within the pool bound');
+  assert.ok(calls.includes('01.txt') && calls.some(name => name !== '01.txt'), `a failing and held copy were admitted: ${calls}`);
+  assert.ok(failedCopySignal, 'the failing leaf reached its portable stream fallback');
+  assert.equal(failedCopySignal.aborted, false, 'internal failures leave earlier copies running to preserve their errors');
+  releaseCleanup();
+  await delay(50);
+  assert.equal(settled, false, 'generation rejection waits for every already admitted copy');
+  for (const name of calls) if (name !== '01.txt') copyGates.get(name).release();
+  await assert.rejects(pending, /EACCES|permission denied/i);
+  await assert.rejects(stat(generation), { code: 'ENOENT' });
+  await delay(25);
+  await assert.rejects(stat(generation), { code: 'ENOENT' });
+});
+
+test('portable concurrent copies restore restrictive directory modes after their files settle', async t => {
+  await withCloneSupport(t, { file: true });
+  const readonlyPaths = [];
+  t.after(async () => { for (const path of readonlyPaths) await chmod(path, 0o700).catch(() => {}); });
+  const { f, options } = await selectionFixture(t, 'functionsSource');
+  const readonly = join(f.source, 'readonly');
+  readonlyPaths.push(readonly);
+  await mkdir(readonly);
+  for (let index = 0; index < 8; index++) await writeFile(join(readonly, `${index}.js`), `module.exports = ${index};`);
+  await chmod(readonly, 0o555);
+
+  let releaseCopies, markCopyStarted;
+  const copiesReleased = new Promise(resolve => { releaseCopies = resolve; });
+  const copyStarted = new Promise(resolve => { markCopyStarted = resolve; });
+  let pending;
+  t.after(async () => { releaseCopies(); if (pending) await pending.catch(() => {}); });
+  const realCopyFile = fsp.copyFile;
+  t.mock.method(fsp, 'copyFile', async (source, destination) => {
+    if (source.split(/[\\/]/).includes('readonly')) {
+      markCopyStarted();
+      await copiesReleased;
+    }
+    return realCopyFile(source, destination, fsConstants.COPYFILE_EXCL);
+  });
+  pending = snapshotInputs({ ...options, services: ['functions'] }, f.world);
+  const copyWasStarted = await Promise.race([copyStarted.then(() => true), delay(2_000).then(() => false)]);
+  if (!copyWasStarted) {
+    releaseCopies();
+    await pending;
+    assert.fail('the read-only descendant copy did not start');
+  }
+  const baseline = join(f.world, 'baseline');
+  const functionsDirectory = (await readdir(baseline)).find(name => name.startsWith('functions-'));
+  const activeDirectory = join(baseline, functionsDirectory, 'readonly');
+  assert.equal((await stat(activeDirectory)).mode & 0o777, 0o700, 'destination remains writable while a descendant copy is active');
+  releaseCopies();
+  const snapshot = await pending;
+  const copiedDirectory = join(snapshot.config.functions.source, 'readonly');
+  readonlyPaths.push(copiedDirectory);
+  assert.equal((await stat(copiedDirectory)).mode & 0o777, 0o555);
+  for (let index = 0; index < 8; index++) assert.equal(await readFile(join(copiedDirectory, `${index}.js`), 'utf8'), `module.exports = ${index};`);
+});
+
+// The checked order-3 PICT table is the full copy-path x source-shape x source-mode product.
+const worldCopyPictCases = [
+  { copyPath: 'Portable', shape: 'Flat', mode: 'Writable' },
+  { copyPath: 'Portable', shape: 'Flat', mode: 'ReadOnly' },
+  { copyPath: 'Portable', shape: 'Nested', mode: 'Writable' },
+  { copyPath: 'Portable', shape: 'Nested', mode: 'ReadOnly' },
+  { copyPath: 'CloneEnabled', shape: 'Flat', mode: 'Writable' },
+  { copyPath: 'CloneEnabled', shape: 'Flat', mode: 'ReadOnly' },
+  { copyPath: 'CloneEnabled', shape: 'Nested', mode: 'Writable' },
+  { copyPath: 'CloneEnabled', shape: 'Nested', mode: 'ReadOnly' },
+];
+for (const row of worldCopyPictCases) {
+  test(`PICT world copy case ${JSON.stringify(row)}`, async t => {
+    const modePaths = [];
+    t.after(async () => { for (const path of modePaths) await chmod(path, 0o700).catch(() => {}); });
+    await withCloneSupport(t, { file: row.copyPath === 'CloneEnabled' });
+    const f = await fixture(t), sourceTree = f.source;
+    const target = row.shape === 'Nested' ? join(sourceTree, 'nested') : sourceTree;
+    if (target !== sourceTree) await mkdir(target);
+    const contents = new Map();
+    for (let index = 0; index < 5; index++) {
+      const name = `input-${index}.txt`, value = `case ${row.shape} file ${index}`;
+      contents.set(name, value);
+      await writeFile(join(target, name), value);
+    }
+    const expectedMode = (await stat(sourceTree)).mode & 0o777;
+    if (row.mode === 'ReadOnly') {
+      await chmod(sourceTree, 0o555);
+      modePaths.push(sourceTree);
+    }
+    const snapshot = await snapshotInputs({ cwd: f.root, functionsSource: sourceTree, services: ['functions'], env: { NODE_PATH: '' } }, f.world);
+    const copiedSource = snapshot.config.functions.source;
+    modePaths.push(copiedSource);
+    assert.equal((await stat(copiedSource)).mode & 0o777, row.mode === 'ReadOnly' ? 0o555 : expectedMode);
+    const copiedTarget = row.shape === 'Nested' ? join(copiedSource, 'nested') : copiedSource;
+    for (const [name, value] of contents) assert.equal(await readFile(join(copiedTarget, name), 'utf8'), value);
+    const files = await regularFiles(snapshot.baseline);
+    assert.equal(snapshot.stats.files, files.length);
+    assert.equal(snapshot.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0));
+  });
+}
 
 
 test('scoped exclusions follow an external scope directory link before visiting excluded packages', async t => {
@@ -609,6 +846,31 @@ test('snapshot and generation statistics count the copied files and bytes', asyn
   assert.equal(generation.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0));
   assert.ok(Number.isInteger(generation.stats.elapsedMs) && generation.stats.elapsedMs >= 0);
   assert.ok(Object.isFrozen(snapshot.stats) && Object.isFrozen(generation.stats));
+});
+
+test('portable snapshot file copies stay within the fixed concurrency bound and preserve statistics', async t => {
+  await withCloneSupport(t, { file: true });
+  const { f, options } = await selectionFixture(t, 'functionsSource');
+  for (let index = 0; index < 20; index++) await writeFile(join(f.source, `many-${String(index).padStart(2, '0')}.js`), `module.exports = ${index};`);
+
+  let active = 0, peak = 0;
+  const realCopyFile = fsp.copyFile;
+  t.mock.method(fsp, 'copyFile', async (source, destination) => {
+    active++;
+    peak = Math.max(peak, active);
+    try {
+      await delay(25);
+      return await realCopyFile(source, destination, fsConstants.COPYFILE_EXCL);
+    } finally {
+      active--;
+    }
+  });
+
+  const snapshot = await snapshotInputs({ ...options, services: ['functions'] }, f.world);
+  const files = await regularFiles(snapshot.baseline);
+  assert.equal(peak, 4, 'the portable leaf-copy pool reaches but does not exceed its fixed bound');
+  assert.equal(snapshot.stats.files, files.length);
+  assert.equal(snapshot.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0));
 });
 
 test('statistics keep symbolic links apart from files and count rewritten Firebase files exactly', async t => {
@@ -1024,7 +1286,7 @@ test('the elapsed time covers the copy', async t => {
   const real = fsp.copyFile;
   t.mock.method(fsp, 'copyFile', async (source, destination) => { await delay(60); return real(source, destination, fsConstants.COPYFILE_EXCL); });
   const snapshot = await snapshotInputs({ ...options, services: ['functions'] }, f.world);
-  assert.ok(snapshot.stats.elapsedMs >= 100, `two files at 60 ms each took ${snapshot.stats.elapsedMs} ms`);
+  assert.ok(snapshot.stats.elapsedMs >= 50, `snapshot includes the 60 ms leaves (${snapshot.stats.elapsedMs} ms)`);
   const generation = await prepareGeneration(snapshot, join(f.world, 'generation-1'));
-  assert.ok(generation.stats.elapsedMs >= 150, `three clones at 60 ms each took ${generation.stats.elapsedMs} ms`);
+  assert.ok(generation.stats.elapsedMs >= 50, `generation includes the 60 ms leaves (${generation.stats.elapsedMs} ms)`);
 });
