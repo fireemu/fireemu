@@ -527,6 +527,8 @@ impl Firestore for GatewayService {
             let mut responses = Vec::new();
             if new_transaction {
                 // Empty batches and read-only transactions were not recorded; use the same head as the recorded batch.
+                // An error while reading a later document is also unrecorded: the batch is read eagerly above, so the
+                // error is returned before any frame is sent and the new transaction is abandoned by the backend.
                 responses.push(Ok(pb::BatchGetDocumentsResponse {
                     transaction: transaction.clone(),
                     read_time: None,
