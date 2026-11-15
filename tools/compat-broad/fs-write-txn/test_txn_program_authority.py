@@ -359,6 +359,17 @@ def test_initial_gates_accept_real_project_history_read_only(source):
     assert path.read_bytes() == original
 
 
+def test_initial_gates_reject_numeric_timestamp():
+    with pytest.raises(ValueError, match="timestamp is missing"):
+        authority.verify_initial_gates([{**LAST, "ts": 1720000000.0}], NOW, DECISIONS, PINS)
+
+
+def test_initial_gates_count_task_spending_outside_selected_projects():
+    rows = [{**LAST, "project": "unrelated", "estimatedUsd": 10.0}]
+    with pytest.raises(ValueError, match="whole-task US\\$10 limit exceeded"):
+        authority.verify_initial_gates(rows, NOW, DECISIONS, PINS)
+
+
 @pytest.mark.parametrize("project", ["fireemu-oracle-query", "fireemu-oracle-txn"])
 @pytest.mark.parametrize("identity", ["taskId", "task-alias", "packetId", "envelopeId"])
 def test_history_excludes_other_tasks_but_never_an_open_current_attempt(project, identity):
