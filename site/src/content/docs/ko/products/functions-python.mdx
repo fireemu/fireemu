@@ -1,0 +1,167 @@
+---
+title: Cloud Functions (Python)
+description: Python Cloud Functions for Firebase 코드베이스를 로컬에서 실행하고, 프로덕션 및 Node.js 코드베이스와 어떻게 다른지 확인합니다.
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu는 Node.js 코드베이스와 함께 Python 코드베이스도 실행합니다. 이 페이지는 Python에 특유한 내용을 다룹니다. [Cloud Functions](../functions/) 페이지는 Node.js 러너를 설명하며, 해당 페이지의 섹션 중 Python 코드베이스에도 적용되는 것(예: [callable의 App Check](../functions/#callable의-app-check))은 그렇다고 명시되어 있습니다.
+
+<Facts items={[
+  { label: '런타임', value: 'python310 ~ python314' },
+  { label: '테스트된 SDK', value: 'firebase-functions 0.6.0' },
+  { label: '플랫폼', value: 'Linux 및 macOS' },
+  { label: '프로덕션 검증', value: '여섯 가지 이벤트 계열의 기록된 사례', href: 'ko/compatibility/#프로덕션-검증' },
+]} />
+
+## 테스트할 수 있는 것
+
+- Python SDK로 작성한 [HTTP, callable, 이벤트, 예약, 태스크 큐, Auth blocking 함수](#지원되는-트리거).
+- 프로덕션의 audience 실패를 포함하거나 포함하지 않는 [Auth blocking 함수](#auth-blocking-함수와-audience-검사).
+- `flask.request`를 통해 [CloudEvent 핸들러가 받는 요청](#이벤트-본문).
+- Python 러너가 처리하는 방식의 [App Check, 시크릿, 리로드, 스케줄링](#프로덕션-및-firebase-cli와의-차이).
+
+## 설정
+
+다음 중 하나에 해당하면 코드베이스는 Python입니다(Firebase CLI가 사용하는 순서).
+
+- `firebase.json`의 `runtime`이 `python310`, `python311`, `python312`, `python313`, `python314` 중 하나입니다.
+- `runtime`을 선언하지 않았고, `package.json`이 없으며, `requirements.txt`가 있습니다.
+
+Fireemu는 코드베이스 자체의 가상 환경 인터프리터, 항상 `<source>/venv/bin/python`으로 이를 실행합니다. 환경을 만들거나 패키지를 설치하지 않습니다.
+
+```sh
+cd functions
+python3.12 -m venv venv
+venv/bin/pip install -r requirements.txt   # includes firebase-functions
+npx fireemu up
+```
+
+아무것도 시작하기 전에 fireemu는 환경을 확인하고 다음 경우 중지합니다.
+
+- `venv`가 없거나 `firebase_functions`를 import할 수 없으면 Firebase CLI의 메시지와 함께
+- 인터프리터의 Python이 선언된 `runtime`과 다르면 두 버전을 모두 명시한 메시지와 함께
+
+테스트된 SDK는 `firebase-functions` 0.6.0입니다. Linux와 macOS만 지원합니다.
+
+## 지원되는 트리거
+
+| 트리거 | Python SDK |
+|---|---|
+| HTTP | `https_fn.on_request` |
+| Callable | `https_fn.on_call` |
+| Firestore 문서 트리거 | `on_document_created`, `updated`, `deleted`, `written` 및 `_with_auth_context` 변형 |
+| Pub/Sub | `pubsub_fn.on_message_published` |
+| Cloud Storage | `storage_fn.on_object_finalized`, `deleted`, `archived`, `metadata_updated` |
+| Eventarc 커스텀 이벤트 | `eventarc_fn.on_custom_event_published` |
+| Realtime Database | `db_fn.on_value_created`, `updated`, `deleted`, `written` |
+| 예약 함수 | `scheduler_fn.on_schedule` |
+| 태스크 큐 함수 | `tasks_fn.on_task_dispatched` |
+| Auth blocking 함수 | `identity_fn.before_user_created`, `before_user_signed_in` |
+
+Callable은 Auth 에뮬레이터의 사용자를 봅니다. fireemu가 제공하지 않는 제품의 트리거는 코드베이스를 로드할 때 보고되며 실행되지 않습니다. `functions.unservedTriggers`가 `"report"`가 아니면 탐색 단계에서 그러한 코드베이스를 거부하며, 이는 Cloud Functions 페이지의 [지원되는 트리거](../functions/#지원되는-트리거) 아래에 나열된 제품에 대한 동작과 같습니다.
+
+## Auth blocking 함수와 audience 검사
+
+firebase-functions (Python) 0.6.0과 firebase-tools 15.28.2에서 프로덕션은 `cloudfunctions.net` audience를 가진 토큰을 전달하는데, Python SDK는 이를 거부합니다. 함수는 안전하게 실패(fail closed)하고 가입은 503 `Error code: 47`을 반환합니다.
+
+기본적으로 fireemu는 공식 에뮬레이터와 마찬가지로 함수를 실행하고, 이 프로덕션 실패에 대한 진단 줄을 출력합니다. 이 실패를 재현하려면 `productionExact`를 `true`로 설정하거나, strict 프로필에서 `functions.authBlockingToken`을 `"production"`으로 설정하십시오.
+
+Node 함수는 같은 프로덕션 형태의 토큰을 받지만 검증하지 않으므로 이전과 동일하게 동작합니다. 이후의 firebase-functions나 firebase-tools 릴리스가 audience 규칙을 바꿀 수 있습니다. 이 설정은 코드베이스 자체의 가상 환경에 설치된 SDK를 따르며, 기록된 것은 0.6.0뿐입니다.
+
+## 이벤트 본문
+
+CloudEvent 핸들러는 `flask.request`를 읽을 수 있습니다. 이는 이벤트를 전달하는 `POST /`를 나타내며, 바이너리 모드 `ce-*` 헤더, 콘텐츠 타입, 길이, 본문을 포함합니다. Firestore는 protobuf 본문을 사용합니다.
+
+`strict`에서는 다음과 같습니다.
+
+- Pub/Sub는 정렬된 컴팩트 JSON 뒤에 개행 문자를 사용합니다.
+- Storage는 기록된 들여쓰기 JSON 레이아웃을 사용합니다.
+- Eventarc는 발행자의 JSON 본문 텍스트를 그대로 유지합니다.
+- 트레이스 컨텍스트는 CloudEvent 속성이 아니라 일반 `traceparent` 헤더입니다.
+- Firestore에는 `dataschema`가 있습니다(`strict`에서만 해당하며, 생성 이벤트에 대해 기록되었고 다른 이벤트 유형은 관측되지 않았습니다).
+
+JSON 이벤트 본문의 경우 emulator 프로필은 데몬의 프레이밍된 JSON 값 텍스트를 유지합니다. 단 Pub/Sub는 SDK의 스네이크 케이스 별칭을 추가하고 본문을 압축합니다.
+
+Realtime Database 본문 레이아웃은 기록되지 않았습니다. `Function-Execution-Id`, `Forwarded`, `X-Forwarded-For` 같은 Cloud Run의 인가 및 ID 헤더는 재현되지 않습니다.
+
+## 프로덕션 검증
+
+Python 코드베이스는 `strict` 프로필에서 각각 두 번의 독립적인 프로덕션 기록으로 확인한, 여섯 가지 이벤트 계열의 기록된 사례에 대해 프로덕션과 대조하여 검증되었습니다. Firestore(생성 및 업데이트 이벤트), Pub/Sub, Cloud Storage(finalized 이벤트), Eventarc 커스텀 이벤트, Cloud Scheduler, Cloud Tasks(HTTP 패스스루)입니다. 비교는 Python SDK가 보는 값과 요청 프로젝션을 대상으로 합니다. [호환성 표](../../compatibility/#프로덕션-검증)를 참조하십시오.
+
+Python Auth blocking 함수는 검증되지 않았으며, Python 코드베이스를 프로덕션에 배포하는 과정은 비교하지 않았습니다. emulator 프로필이 기록된 `strict` 동작과 다른 점은 해당 표와 아래 섹션에 알려진 차이로 나열되어 있습니다.
+
+## 프로덕션 및 Firebase CLI와의 차이
+
+Python 코드베이스는 다음과 같은 점에서 프로덕션 및 Firebase CLI와 다릅니다.
+
+### 코드베이스당 프로세스 하나
+
+기본적으로 Python 프로세스 하나가 코드베이스 전체를 처리합니다. 프로덕션은 함수마다 별도의 인스턴스를, CLI는 별도의 프로세스를 제공합니다. `functions.isolation = "function"`은 대신 함수마다 프로세스 하나를 시작합니다([프로세스 격리](../functions/#프로세스-격리-functionsisolation) 참조). 이 섹션의 나머지와 [시크릿](#시크릿) 섹션은 기본 동작을 설명합니다.
+
+- 모듈 수준 상태는 함수 간에 공유됩니다.
+- `@init` 콜백은 프로세스당 한 번, 어느 함수든 첫 호출 시 실행됩니다.
+- 호출이 겹칠 때 `FUNCTION_TARGET`, `FUNCTION_SIGNATURE_TYPE`, `K_SERVICE`는 가장 최근에 시작된 함수를 가리킵니다.
+
+### 시간
+
+시간은 실제 시간입니다. Python 코드는 가상 시계로 옮겨지지 않으므로 `datetime.now()`는 `daemon.clock` 설정을 무시합니다. Functions 러너에 가상 date를 요청하는 구성은 Python 코드베이스에 대해 거부됩니다.
+
+### 소스 리로드
+
+Python 소스 변경은 자동으로 리로드됩니다.
+
+- 유효한 편집은 일관된 소스 스냅샷으로부터 교체본을 시작합니다.
+- 유효하지 않은 편집은 마지막으로 정상 동작하던 세대가 계속 서비스하도록 유지하며, 이후의 유효한 편집으로 복구할 수 있습니다.
+- 소스 디렉터리 밖을 가리키는 대상을 포함해 파일이나 디렉터리에 대한 일반 소스 심볼릭 링크는 각 스냅샷에서 링크 이름으로 구체화(materialize)되며, 별칭을 통한 편집도 리로드를 일으킵니다.
+- `venv` 내부의 변경은 리로드를 일으키지 않으므로, 설치된 의존성이나 가상 환경을 변경한 뒤에는 Fireemu를 다시 시작하십시오.
+- Python 바이트코드 캐시(`__pycache__`, `.pyc`, `.pyo`)는 무시됩니다.
+
+### `async def` 핸들러
+
+`async def` 핸들러는 실행되지 않습니다. Python SDK는 핸들러를 await하지 않으므로, 프로덕션에서 `async` 이벤트 또는 예약 함수의 본문은 조용히 건너뛰어집니다(`async` HTTP 함수는 500으로 응답합니다). Fireemu는 그러한 호출을 해당 사유와 함께 실패로 보고하며, `async` HTTP 함수는 이를 담아 500으로 응답합니다. 핸들러는 `def`로 선언하십시오.
+
+### 예약 함수
+
+예약 함수는 Cloud Scheduler가 호출하는 방식 그대로, SDK의 요청 래퍼를 통해 호출됩니다. 예외를 발생시키는 핸들러는 SDK가 로그에 남기고 해당 시도를 실패시킵니다. 핸들러가 보는 스케줄 시각은 strict 프로필에서는 로스앤젤레스 시간으로, emulator 프로필에서는 UTC로 기록됩니다(같은 시점입니다).
+
+### 시크릿
+
+`.secret.local`의 시크릿은 해당 시크릿을 선언한 함수가 실행되는 동안에만 환경에 존재합니다.
+
+- 시크릿이 있는 함수는 도착 순서대로 단독으로 실행됩니다.
+- 시크릿이 없는 모든 함수는 모든 로컬 시크릿이 숨겨진 상태로, 시크릿이 없는 다른 함수들과 나란히 실행됩니다. 시크릿이 없는 함수끼리는 서로를 지연시키지 않습니다.
+- 격리는 호출과 그 응답 동안 유지됩니다. 함수가 이후에도 계속 실행되도록 남겨 둔 작업, 예를 들어 시작한 스레드나 자식 프로세스는 공유 프로세스에서 실행되며 그 순간 환경이 담고 있는 모든 것을 볼 수 있습니다. Node 러너도 마찬가지로 동작합니다.
+- 시크릿을 가진 함수가 같은 코드베이스의 다른 함수를 동기적으로(예: 자신의 URL에 대한 HTTP 요청) 호출하면, 자신이 쥐고 있는 게이트를 기다리며 끝나지 않습니다. Node 러너와 같습니다. 그러한 함수는 비동기로 호출하거나 호출하는 쪽에 시크릿을 주지 마십시오.
+
+### 이벤트 시간 형식
+
+Python Storage 및 Eventarc 핸들러는 이벤트 `time`을 소수 초 패턴으로 파싱하므로, 프로덕션의 SDK는 정수 초 시각에서 실패합니다. strict 프로필은 프로덕션과 같이 시각을 전달합니다. emulator 프로필은 공식 에뮬레이터의 이벤트가 항상 밀리초를 가지므로, 정수 초 시각에 `.000`을 추가합니다.
+
+### 디버거
+
+`--inspect-functions`는 Firebase CLI와 마찬가지로 경고와 함께 무시됩니다.
+
+### App Check
+
+Python callable의 App Check는 프로덕션과 마찬가지로 Python SDK 자체가 검사합니다. SDK는 Admin SDK로 `X-Firebase-AppCheck` 토큰을 검증하며, Fireemu는 이 검사가 App Check 에뮬레이터의 키를 사용하도록 지정하므로 에뮬레이터가 서명한 토큰만 수락되고, `enforce_app_check=True`인 callable은 그 외의 모든 호출에 401로 응답합니다.
+
+- 러너는 해당 키를 직접, 루프백 주소로만, 리디렉션을 따르거나 프록시를 사용하지 않고 가져옵니다.
+- SDK의 검사 외에도 만료 시각과, 에뮬레이터가 발급하는 형태와 정확히 일치하는 발급자를 요구하며, 프로젝트 번호는 `projects/<number>` audience와 일치해야 합니다. audience 규칙은 SDK 자체의 것(`projects/<project id>`)입니다.
+- 이를 위해 PyJWT 2.10.1 이상이 필요하며, Admin SDK 자체의 제약이 이미 이를 암시합니다. 더 오래된 버전에서는 아무것도 알리지 않고 헤더가 제거됩니다.
+- 실행에 App Check 에뮬레이터가 있을 때 동작하며, strict 프로필은 Functions와 함께 이를 시작합니다. 없으면 함수에 도달하기 전에 헤더가 제거되어 어떤 callable도 토큰을 보지 못합니다.
+
+Node와의 차이는 다음과 같습니다.
+
+- Python SDK는 키만으로 토큰을 검사합니다. Node callable의 토큰은 데몬도 프로젝트의 현재 에포크와 앱 상태에 대해 추가로 검사하므로, Node와 달리 Python 토큰은 프로젝트를 리셋하거나 앱을 비활성화한 뒤에도 만료될 때까지 유효합니다.
+- SDK의 시작 시 자체 테스트가 없습니다.
+- SDK는 토큰의 시각을 실제 시간과 대조하여 검사하는 반면 에뮬레이터는 자체 시계로 서명하므로, 시계를 실제 시간보다 앞으로 이동한 뒤에 발급한 토큰은 아직 유효하지 않다는 이유로 거부됩니다.
+- 제한된 사용 토큰 소비(`verify_token(..., consume=True)`)는 거부됩니다.
+- App Check를 명시적으로 켜는 구성(구성 파일의 `appCheck`)은 Python 코드베이스와 함께 시작을 거부합니다.
+
+## 관련 문서
+
+- [Cloud Functions](../functions/)
+- [App Check](../app-check/)
+- [시간과 예약 함수](../../guides/time/)
+- [프로필](../../guides/profiles/)

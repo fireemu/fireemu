@@ -1,0 +1,238 @@
+---
+title: Firebase Hosting
+description: firebase.json을 바탕으로 Firebase Hosting 사이트를 로컬에서 제공하며, redirect, rewrite, 헤더, clean URL, 지역화, 로컬 함수로의 rewrite를 지원합니다.
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu는 `firebase.json`의 `hosting` 항목을 바탕으로 Firebase Hosting 사이트를 제공합니다. 정적 파일, redirect, rewrite, 사용자 지정 헤더, clean URL, 후행 슬래시 처리, 지역화된 콘텐츠를 지원합니다. 설정된 사이트마다 자체 로컬 리스너가 있으며, rewrite는 같은 실행에 있는 Functions 코드베이스의 함수로 요청을 보낼 수 있습니다.
+
+<Facts items={[
+  { label: '상태', value: '지원됨' },
+  { label: '기본 포트', value: '5000' },
+  { label: '시작 시점', value: 'firebase.json에 hosting.public 디렉터리가 있을 때' },
+  { label: '프로덕션 검증', value: '기록된 사례에 대해 검증됨', href: 'ko/compatibility/#프로덕션-검증' },
+]} />
+
+Hosting은 **기록된 사례에 대해 프로덕션과 대조해 검증**되었습니다. 기본값인 `strict` 프로필은 [알려진 차이](#알려진-차이와-기록되지-않은-응답)를 제외하면, 미리보기 채널에서 두 번 기록된 279개 요청(201개 요청 코퍼스와 78개 요청 후속 코퍼스)에 Firebase Hosting이 응답한 대로 응답합니다. `emulator` 프로필은 한정된 사례 집합에서 `firebase-tools` 15.28.2와 오프라인으로 비교되며 프로덕션에 대한 주장은 하지 않습니다. [프로필](#프로필)과 [검증 현황](#검증-현황)을 참고하십시오.
+
+Hosting은 v0.45.0부터 사용할 수 있습니다. 이후 릴리스에서 바뀐 동작은 [v0.47.0의 변경 사항](#v0470의-변경-사항)과 [v0.49.0의 변경 사항](#v0490의-변경-사항)에 나열되어 있습니다.
+
+## 테스트할 수 있는 항목
+
+- 정적 파일, clean URL, 후행 슬래시, 404 페이지([요청 처리 순서](#요청-처리-순서)).
+- 글롭과 캡처를 포함한 `redirects`, `rewrites`, `headers` 규칙([`hosting` 객체의 키](#hosting-객체의-키)).
+- 언어와 국가에 따라 선택되는 지역화된 콘텐츠(`i18n`).
+- 하나의 `firebase.json`에서 각자의 포트로 제공되는 여러 사이트([Hosting 시작](#hosting-시작)).
+- 같은 실행의 함수로의 rewrite([함수로의 rewrite](#함수로의-rewrite)).
+- `strict`에서 프로덕션의 응답 헤더, 콘텐츠 타입, 압축, 조건부 요청([프로필](#프로필)).
+
+## Hosting 시작
+
+`firebase.json`에 `public` 디렉터리가 있는 `hosting` 객체 또는 사이트 객체의 배열이 있으면 Hosting이 시작됩니다. 사이트가 하나라면 선택자가 필요 없습니다.
+
+```json
+{
+  "hosting": {
+    "public": "public"
+  }
+}
+```
+
+```sh
+npx fireemu up
+```
+
+사이트가 여러 개라면 각 항목에 `site` 또는 `target`을 지정하십시오. target은 선택된 Firebase 프로젝트의 `.firebaserc`를 통해 해석됩니다.
+
+```json
+{
+  "hosting": [
+    { "target": "app", "public": "public/app" },
+    { "site": "docs-site-id", "public": "public/docs" }
+  ]
+}
+```
+
+```json
+{
+  "targets": {
+    "my-project": {
+      "hosting": {
+        "app": ["app-site-id"]
+      }
+    }
+  }
+}
+```
+
+### 포트와 URL
+
+- 기본 포트는 5000입니다. 포트가 사용 중이고 포트를 설정하지 않았다면 Fireemu는 위쪽으로 탐색하며, `firebase-tools`와 마찬가지로 5001은 사용하지 않습니다. 직접 설정한 포트는 절대 옮기지 않습니다. `firebase.json`의 `emulators.hosting.port`, Fireemu 설정 파일의 `daemon.hostingPort`, 또는 `--hosting-port`로 설정합니다.
+- 첫 번째 사이트는 설정된 Hosting 포트(기본값 5000)를 사용합니다. 이후 사이트는 기본 포트로부터 네 칸 뒤에서 시작하는 Firebase CLI의 로컬 규칙을 따르며, 5001과 사용 중인 포트는 건너뜁니다.
+- 시작 출력에는 각 사이트의 URL이 출력됩니다. 준비 상태 디스크립터는 첫 번째 사이트에 대해 `hostingUrl`을 유지하고, 모든 사이트 URL이 담긴 `hostingSites`를 추가합니다.
+- Emulator Hub는 기본 바인드 주소를 `hosting`(Hub의 `GET /emulators`) 아래에, 보조 포트를 `reservedPorts`에 나열합니다.
+
+### 선택과 public 디렉터리
+
+- `--only`는 다른 제품과 마찬가지로 서비스를 선택합니다. `--only hosting`은 설정된 사이트를 제공하며, 선택된 사이트에 `public` 키가 없으면 시작을 거부합니다.
+- `hosting.public`은 `firebase.json`이 있는 디렉터리를 기준으로 해석됩니다. 디렉터리가 없어도 `firebase-tools`와 마찬가지로 오류가 아닙니다. 사이트는 시작되고 404로 응답합니다.
+
+## 설정
+
+### `hosting` 객체의 키
+
+`hosting` 객체의 다음 키가 적용됩니다.
+
+| 키 | 동작 |
+|---|---|
+| `public` | 제공할 디렉터리입니다. 필수입니다. 파일은 그 디렉터리에 대해 유지되는 핸들을 통해 열리며, 디렉터리 밖으로 나가는 심볼릭 링크, 일반 파일이 아닌 파일, 안전하지 않은 경로는 거부됩니다. `strict`에서는 해당되는 도트 세그먼트 경로가 파일 조회 전에 정규화된 경로로 redirect됩니다. [프로필](#프로필)을 참고하십시오. |
+| `ignore` | 모든 경로에서 없는 것으로 취급되는 파일의 글롭 패턴으로, `firebase-tools`가 배포할 파일을 고를 때 일치시키는 방식과 같게 일치시킵니다. `**/firebase-debug.log`, `**/firebase-debug.*.log`, `.firebase/*`는 `firebase deploy`가 업로드하지 않으므로 항상 무시됩니다. |
+| `redirects` | 어떤 파일이 제공되기 전에 순서대로 검사됩니다. 규칙에는 `source`, `glob` 또는 `regex`, `destination`, `type`(기본값 301)이 있습니다. `source`의 `:name` 캡처는 `destination`의 같은 이름을 채웁니다. 쿼리 문자열은 유지됩니다. |
+| `rewrites` | 일치하는 파일이 없을 때 사용됩니다. `source`, `glob`, `regex`가 요청을 고르며, 대상은 `destination` 파일, `function`, 또는 `run` 서비스입니다([함수로의 rewrite](#함수로의-rewrite) 참고). 처음 일치하는 규칙이 적용됩니다. |
+| `headers` | `source`, `glob` 또는 `regex`와 `key`·`value`로 이루어진 `headers` 목록을 가진 규칙입니다. 아래의 프로필별 규칙에 따라 파일과 rewrite의 응답에 추가되며, `strict`는 설정된 `Content-Encoding`을 무시합니다. |
+| `cleanUrls` | `/about.html`은 `/about`으로 redirect(301)되고, `/about`은 `about.html`을 제공합니다. |
+| `trailingSlash` | `true`는 디렉터리 URL에 후행 슬래시를 붙이고, `false`는 제거하며(301), 설정하지 않으면 슬래시 없는 디렉터리 URL은 `cleanUrls`가 켜져 있지 않은 한 슬래시가 있는 URL로 redirect됩니다. |
+| `i18n` | `{ "root": "/locales" }`(슬래시 표기는 무엇이든 가능: `locales`, `/locales/`)는 일반 경로보다 먼저 `locales/<language>_<country>/…`, `locales/ALL_<country>/…`, `locales/<language>_ALL/…`, `locales/<language>/…`를 제공하며, `Accept-Language`와 `X-Country-Code` 헤더, 또는 `firebase-language-override`와 `firebase-country-override` 쿠키로 선택됩니다. |
+
+### 요청 처리 순서
+
+요청은 다음 순서로 처리됩니다.
+
+1. **예약된 경로.** `/__/firebase/init.json`과 `/__/firebase/init.js`는 예약된 경로입니다. `init.json`은 프로젝트 ID와 비밀이 아닌 로컬 API 키(`fireemu-local-only`)를 담고 있으며, `init.js?useEmulator=true`는 Firebase SDK가 이 실행의 에뮬레이터(실행 중인 경우 Authentication, Firestore, Functions, Storage, Realtime Database)를 가리키게 합니다. `emulator`에서는 전체를 잡는 redirect보다 우선하며, `strict`에서는 프로덕션이 응답한 대로 redirect 이후에 응답합니다([프로필](#프로필) 참고).
+2. **Redirect.** `redirects`에서 일치하는 항목이 자신의 상태 코드와 `Location`으로 응답합니다.
+3. **파일.** 일치하는 파일이 있으면 제공되며, 디렉터리에는 `index.html`이 제공됩니다. `HEAD`에는 헤더만 응답합니다. 식별(identity) 본문은 열려 있는 파일에서 스트리밍되며, `strict`에서는 해당되는 파일이 대신 버퍼링되어 gzip으로 제공될 수 있습니다. 헤더와 콘텐츠 타입은 프로필에 따라 다릅니다. `emulator`는 `mime-types` 표를 사용하고 압축 가능한 타입에 `Vary: Accept-Encoding`을 추가하며, `strict`는 [프로필](#프로필)에서 설명하는 프로덕션 형태의 헤더와 타입을 사용합니다.
+4. **Rewrite.** `rewrites`에서 일치하는 항목이 응답합니다. `destination` 파일은 200으로 제공되고(`/404.html`로의 rewrite는 404로 응답합니다), `function` 또는 `run` 규칙은 로컬 Functions 런타임으로 전달됩니다.
+5. **찾을 수 없음.** public 디렉터리의 `404.html`이 상태 404로 제공되며, 없으면 내장 페이지가 제공됩니다. `strict`에서는 fireemu의 짧은 대체 페이지이고, `emulator`에서는 "Cannot GET" 페이지입니다.
+
+`/__/firebase/<version>/<file>`(호스팅되는 Firebase SDK 스크립트)은 Fireemu가 다운로드하지 않으므로 503으로 응답합니다. 번들된 SDK를 사용하거나 직접 제공하는 사본을 사용하십시오.
+
+## 함수로의 rewrite
+
+`function` 또는 `run` 대상이 있는 rewrite는 같은 실행의 Functions 에뮬레이터로 전달되며, 해당 에뮬레이터에는 코드베이스가 로드되어 있어야 합니다.
+
+```json
+{
+  "hosting": {
+    "public": "public",
+    "rewrites": [
+      { "source": "/api/**", "function": "api" },
+      { "source": "/images/**", "function": { "functionId": "resize", "region": "europe-west1" } },
+      { "source": "/service/**", "run": { "serviceId": "api", "region": "us-central1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
+```
+
+- 함수 ID는 `function` 뒤의 문자열, 그 `functionId`, 또는 `run`의 `serviceId`입니다. 리전은 대상의 `region`, 없으면 규칙의 `region`, 그것도 없으면 `us-central1`입니다.
+- `run` rewrite는 Cloud Run 서비스와 같은 ID를 가진 로컬 함수로 갑니다. Fireemu는 Cloud Run 서비스를 조회하지 않습니다.
+- 요청은 메서드, 경로, 쿼리, 헤더를 유지하며, 본문은 32 MiB로 제한됩니다. Fireemu는 `x-original-url`과 `x-forwarded-host`를 추가합니다. `Cache-Control`이 없는 응답에는 `private`가 설정되고, `Vary`는 `Accept-Encoding, Authorization, Cookie`로 설정됩니다.
+- Functions 코드베이스가 로드되어 있지 않으면 rewrite는 503으로 응답하고, 업스트림에 도달할 수 없으면 502로 응답합니다. 배포된 함수로의 폴백은 없습니다.
+
+## 프로필
+
+Hosting은 두 호환성 프로필에서 다르게 응답합니다.
+
+- `emulator` 프로필은 `firebase-tools` 15.28.2 에뮬레이터가 응답하는 대로 응답합니다.
+- 기본값인 `strict` 프로필은 두 프로덕션 코퍼스의 279개 요청(각각 일회용 미리보기 채널에서 두 번씩 기록했으며, [검증 현황](#검증-현황)에 나열되어 있습니다)에 Firebase Hosting이 응답한 대로 응답합니다. 다만 `productionExact`가 끄는 두 가지 개발 기본값인 `hosting.cacheControl`과 `hosting.clientCountry`는 예외입니다([개발 기본값](#개발-기본값) 참고).
+
+표는 `productionExact`를 켠 `strict`를 설명하며, 두 기본값이 바꾸는 행에는 그 사실을 명시했습니다.
+
+| 영역 | `strict` | `emulator` |
+|---|---|---|
+| 응답 헤더 | `productionExact`에서는 파일에 `Cache-Control: max-age=3600`이 붙습니다(`headers` 규칙이 설정한 경우 제외). 기본적으로는 붙지 않습니다(`hosting.cacheControl`). 파일에는 `Accept-Ranges: bytes`, `Vary: x-fh-requested-host, accept-encoding`, 따옴표로 감싼 SHA-256 `ETag`가 붙습니다. 요청의 `Accept-Encoding`에 텍스트 `gzip`이 있고(대소문자 구분, 품질 값은 무관: `x-gzip`과 `gzip;q=0`은 해당하고 `GZIP`과 `*`는 해당하지 않음) 압축된 본문이 파일보다 작으면 파일은 `Content-Encoding: gzip`으로 응답합니다. 콘텐츠 타입은 무관하며(텍스트뿐 아니라 이미지, zip, 폰트도 해당), 약 100바이트 이상의 파일이 대상이고, 파일 자체의 `ETag`를 씁니다. `Range`는 압축된 본문에 대해 적용됩니다. `br`을 요청하면, `gzip`도 포함되어 있을 때는 gzip을, 그렇지 않을 때는 파일 그대로를 받습니다. 32 MiB를 넘는 파일, `304`, 라우터가 생성한 응답은 압축되지 않습니다. `headers` 규칙이 설정한 `Content-Encoding`은 프로덕션과 마찬가지로 제공되지 않습니다. 미리 압축된 `*.br` 파일은 다시 압축해도 작아지지 않으므로 그대로(`application/octet-stream`) 전송됩니다. `i18n` 사이트 파일의 `Vary`는 `accept-language, x-country-code`로 시작합니다. Redirect에는 규칙이 설정한 헤더가 붙습니다. | `ETag`와 `Last-Modified`만 붙고, 압축 가능한 타입에는 `Vary: Accept-Encoding`이 붙습니다. 이 프로필에서 Fireemu는 압축하지 않습니다. |
+| `Content-Type` | charset이 없는 JSON 타입(`application/json`, `application/manifest+json`), `text/javascript; charset=utf-8`인 `.js`와 `.mjs`, `image/x-icon`인 `.ico`, `application/octet-stream`인 `.br`, 알 수 없는 확장자 또는 확장자 없음은 `text/plain; charset=utf-8`. | 에뮬레이터의 `mime-types` 표. 알 수 없는 확장자는 `application/octet-stream`. |
+| 조건부 및 범위 요청 | `If-None-Match`와 `If-Modified-Since`는 304로 응답하며(파일의 `Cache-Control`만 포함), 단일 `Range`는 `Content-Range`와 함께 206으로 응답합니다. 파일에 대한 `OPTIONS`는 `Allow: GET, HEAD, OPTIONS`와 함께 빈 200으로 응답합니다. | 파일 전체. |
+| `/404.html` | `/404.html` 요청은 파일을 200으로 제공하고, 그 밖의 없는 경로는 404로 제공합니다. `404.html`이 없는 사이트는 일치하지 않는 모든 경로에 fireemu용으로 작성된 짧은 페이지 하나로 응답합니다(프로덕션 페이지는 더 길며 그 바이트는 배포하지 않습니다). 상태, 콘텐츠 타입, 캐시 헤더는 프로덕션의 것입니다. | 둘 다 404로 응답하며, `404.html`이 없을 때의 페이지는 oracle의 짧은 페이지입니다. |
+| Redirect | 본문은 `text/plain`입니다. 캡처된 경로의 각 부분은 `Location`에 넣기 전에 퍼센트 디코딩되며(`%2f`는 `/`가 되고 이어진 슬래시는 하나로 접힙니다), 쿼리 문자열은 보낸 그대로 덧붙입니다. `:name`에 숫자가 있는 source(`/p/:a1`)는 프로덕션과 마찬가지로 아무것도 일치시키지 않으며, 이름이 반복되면 일치하고 마지막 값이 적용됩니다. | 본문은 `text/html`, 캡처된 부분은 인코딩된 채로 유지되고(`%2f`는 `%252f`가 됩니다), 쿼리는 다시 인코딩되며, `:a1`은 매개변수 이름입니다. |
+| 예약된 경로 | `/__/auth/handler`는 redirect 밖에서 fireemu용으로 작성된 대체 페이지와 프로덕션의 상태 및 헤더로 200 응답합니다. `/__/firebase/init.json`과 `init.js`는 이 규칙의 적용을 받으며, 캐시 가능한 파일입니다(`ETag`, `Last-Modified`, 규칙이 설정한 헤더). | `init.json`과 `init.js`가 redirect보다 먼저 처리되며, `/__/auth/handler`는 제공되지 않습니다. |
+| `appAssociation: "AUTO"` | `/.well-known/assetlinks.json`과 `/.well-known/apple-app-site-association`이 생성됩니다(`[]`와 빈 `applinks` 문서). | 제공되지 않음. |
+| `i18n` | `productionExact`에서는 프로덕션과 마찬가지로 국가가 요청의 출처에서 결정되므로 `X-Country-Code` 헤더와 `firebase-country-override` 쿠키는 **무시**됩니다. 기본적으로는 emulator 프로필처럼 반영됩니다(`hosting.clientCountry`). `Accept-Language`는 품질 값과 함께 읽습니다(`de;q=0.9, fr;q=0.8`은 `de`가 없으면 `fr`을 찾습니다). `firebase-language-override` 쿠키는 반영됩니다. | 국가 헤더와 쿠키가 반영되며, 품질 값은 읽지 않습니다. |
+| `headers`, `rewrites`, `redirects`의 글롭 | 도트 파일이 `*`와 `**`에 일치하고, 후행 슬래시 뒤의 빈 부분이 `*` 및 아무것도 일치하지 않을 수 있는 패턴에 일치합니다. | 고정된 `superstatic`과 마찬가지로 도트 파일과 빈 부분은 일치하지 않습니다. |
+| 도트 세그먼트가 있는 요청(`/../x`, `/a/./b`, `/a/b/..`) | 정규화된 경로로의 `302`(`Cache-Control: private`, 빈 본문)이며, 요청이 도착한 호스트의 절대 URL입니다. 프로덕션은 자신의 콘텐츠 출처에서 같은 302로 응답합니다. 도트 세그먼트를 찾기 전에 원시 `\`는 `/`로 읽히며(`/.\b`는 `/b`가 됩니다), `\`가 있지만 도트 세그먼트가 없는 경로는 redirect되지 않고, 남는 이스케이프는 대문자로 기록됩니다. `public` 밖의 것은 읽지 않습니다. | 고정된 oracle이 하는 대로: `/a/./b`에는 파일, 그 밖의 대부분에는 `404` |
+| 잘못된 퍼센트 이스케이프 | 일반 텍스트 `400 Bad Request`와 함께 `400`, chunked로 전송. | `Malformed URL`과 함께 `400`. |
+
+### 개발 기본값
+
+프로덕션 Hosting의 두 동작은 로컬 개발을 불편하게 하므로, 기본값은 공식 에뮬레이터의 응답이며 `productionExact`가 프로덕션 동작을 복원합니다(다른 [개발 기본값](../../guides/profiles/)과 같은 규칙입니다).
+
+| 키 | 기본값 | 프로덕션의 동작 |
+|---|---|---|
+| `hosting.cacheControl` | `"none"`. 브라우저가 수정한 파일을 즉시 보여 줍니다. | `"production"`은 `headers` 규칙이 `Cache-Control`을 설정하지 않은 파일에 `Cache-Control: max-age=3600`을 추가합니다. `Cache-Control`을 설정한 규칙은 모든 모드에서 우선합니다. |
+| `hosting.clientCountry` | `"honoured"`. `X-Country-Code` 헤더나 `firebase-country-override` 쿠키로 국가별 콘텐츠를 테스트할 수 있습니다. | `"ignored"`는 둘 다 읽지 않습니다. 프로덕션은 국가를 자신의 엣지에서 결정하기 때문입니다. `Accept-Language`의 품질 값과 `firebase-language-override` 쿠키는 두 모드 모두에서 읽습니다. |
+
+두 키는 `strict` 프로필에만 적용되며(`emulator` 프로필은 항상 공식 에뮬레이터처럼 응답합니다), 명시적으로 지정한 키는 `productionExact`보다 우선합니다.
+
+## 프로덕션과의 차이
+
+### 알려진 차이와 기록되지 않은 응답
+
+종료(closure) 기록([상위 코퍼스](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/known-differences.json), [후속 코퍼스](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/followup-known-differences.json))에는 `strict`가 재현하지 않는 알려진 차이가 나열되어 있습니다.
+
+- **Brotli 콘텐츠 인코딩.** 프로덕션은 `Accept-Encoding`에 `br`이 있는 요청에 `br`로 응답합니다. `strict`는 헤더에 `gzip`도 있으면 gzip으로, 없으면 파일 그대로 응답합니다.
+- **100~1,500바이트 파일의 gzip 본문 길이.** 다른 deflate 인코더를 사용하는 `strict`에서 1~5바이트 더 깁니다. 두 응답이 같은 본문의 gzip이고 길이 차이가 8바이트 이하인 동안에만 이 차이를 허용합니다(조정자 판정 27).
+- **호스팅되는 SDK 파일**(`/__/firebase/<version>/` 아래).
+- **프로덕션의 기본 404 페이지와 호스팅되는 `/__/auth/handler` 페이지의 본문.** 이들의 바이트는 배포하지 않으므로, `strict`는 프로덕션이 보낸 상태와 헤더로 fireemu용으로 작성된 페이지를 제공합니다.
+- **`apiKey`와 `projectId` 외의 `init.json` 키.**
+- **https의 `Strict-Transport-Security` 헤더**와 미리보기 채널의 `X-Robots-Tag`.
+- **도트 세그먼트가 있는 요청에 프로덕션이 응답하는 302의 호스트.** 요청마다 달라지는 내부 호스트이며, `Location`의 경로를 비교합니다.
+
+기록과의 비교에서 201개 행 중 18개, 후속 78개 행 중 42개가 알려진 차이를 가지고 있습니다.
+
+일부 strict 응답은 사례를 직접 관찰한 것이 아니라 기록을 해석한 것에서 나옵니다. 다음에 대해서는 프로덕션을 관찰하지 않았습니다.
+
+- 11~99바이트 파일의 gzip(프로덕션은 1바이트와 10바이트를 그대로 두었고 100바이트 이상을 압축했으며, `strict`는 압축된 본문이 더 작을 때 압축합니다).
+- 알 수 없는 확장자의 파일은 압축되면 `text/html; charset=UTF-8`입니다(4,500바이트 파일 두 개에서 관찰되었으며, 압축하지 않은 두 바이트에 대해서는 `text/plain`이 기록되어 있습니다).
+- 도트 세그먼트 redirect에서 `%5c` 외의 이스케이프의 대문자 16진수.
+- 압축된 본문에 대한 다른 범위.
+- 만족할 수 없는 `Range`는 `Content-Range: bytes */<size>`와 함께 `416`으로 응답합니다.
+- 여러 범위가 있는 요청에는 전체로 응답합니다.
+- `Range`가 있는 `HEAD`는 부분의 길이와 함께 본문 없이 `206`으로 응답합니다.
+- 도트 세그먼트와 제어 문자 또는 공백이 있는 경로는 redirect되지 않습니다.
+
+### 지원하지 않는 항목
+
+- `hosting.source`(웹 프레임워크)와 `public`이 없는 모든 사이트.
+- App Hosting. `--only apphosting`은 보류 항목으로 거부됩니다. [제한 사항](../../compatibility/limitations/)을 참고하십시오.
+- [키 표](#hosting-객체의-키)에 없는 키는 처리되지 않습니다. `appAssociation: "AUTO"`는 `strict`에서만 두 개의 association 문서를 생성하며, `public`에 둔 파일은 다른 파일과 똑같이 제공됩니다.
+- `/__/firebase/<version>/` 아래의 호스팅되는 SDK 스크립트, 배포된 Cloud Run 서비스, 배포된 함수(실서비스로의 폴백 없음).
+- `emulator`에서는 확장자가 없거나 알 수 없는 파일이 `application/octet-stream`으로 제공됩니다. `strict`에서는 `text/plain; charset=utf-8`이며, 압축되면 `text/html; charset=UTF-8`입니다. 사용자 지정 헤더 규칙의 `Content-Type`은 Fireemu가 고른 값을 대체합니다.
+
+## 검증 현황
+
+[호환성 표](../../compatibility/#프로덕션-검증)의 `HOSTING` 영역은 기록된 사례에 대해 **검증됨** 상태입니다.
+
+- **기록된 내용.** 프로덕션은 동일한 201개 요청(정적 파일, redirect, rewrite, 글롭 일치, 헤더와 캐싱, clean URL, 후행 슬래시, 지역화, 예약된 경로, 콘텐츠 타입, 압축, app association)으로 두 번, 그리고 78개 요청으로 이루어진 후속 집합(기본 404 페이지와 호스팅되는 auth handler 페이지의 길이와 상태, 도트 세그먼트와 백슬래시, 숫자가 포함되거나 반복된 redirect 매개변수 이름, `Content-Encoding` 규칙이 있는 미리 압축된 파일, 프로덕션이 gzip으로 압축하는 크기, 콘텐츠 타입, `Accept-Encoding` 형태)으로 두 번 관찰되었습니다. 기록은 일회용 사이트의 미리보기 채널에서 이루어졌으며 라이브 채널에서는 하지 않았고, 2026-11-11의 종료 검토에서 첫 증거 집합을 승인했습니다.
+- **응답을 비교하는 방법.** 각 쌍에서 두 기록은 프로덕션 내부 redirect 호스트를 제외한 모든 요청에서 서로 일치하며, `productionExact`를 켠 `strict` 프로필은 [알려진 차이](#알려진-차이와-기록되지-않은-응답)를 제외한 모든 요청에서 두 기록 모두와 일치합니다. 각 상위 비교의 201개 행 중 18개, 각 후속 비교의 78개 행 중 42개가 알려진 차이를 가지며, 일치와는 따로 집계됩니다.
+- **주장이 포괄하는 범위.** 기록된 요청과 거기서 읽어낸 규칙을 포괄합니다([기록되지 않은 응답과 추론한 응답](#알려진-차이와-기록되지-않은-응답)은 따로 나열되어 있습니다). `emulator`는 프로덕션에 대한 주장을 하지 않으며, 함수 및 Cloud Run rewrite, `ignore`, 로컬 안전 속성은 이에 포함되지 않습니다. Brotli는 알려진 차이로 남아 있습니다.
+- **오프라인 스위트.** 오프라인 적합성 스위트는 `ignore`에 쓰이는 실제 파일 목록에서 생성한 3,000개가 넘는 행을 포함해, 한정된 코퍼스에서 Fireemu를 `firebase-tools` 15.28.2와 계속 비교합니다.
+
+여기서 통과하는 Hosting 테스트는 `firebase.json`과 라우팅에 대한 검사로 취급하십시오. 미리보기 채널의 응답은 라이브 채널의 응답과 같지 않습니다.
+
+## v0.47.0의 변경 사항
+
+다음 변경 사항은 v0.47.0 이후 버전에 포함되어 있으며, v0.45.0과 v0.46.0은 다르게 동작했습니다([변경 로그](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md) 참고).
+
+- 앞이나 뒤에 슬래시를 붙여 쓴 `i18n.root`(`/locales`, Firebase 문서가 보여 주는 형태)는 `locales`와 같은 파일을 찾고, 빈 root는 `superstatic`과 마찬가지로 root가 없는 것으로 취급합니다. 이전에는 앞에 슬래시가 없는 root만 동작했습니다.
+- 콘텐츠 타입은 `firebase-tools` 에뮬레이터의 `mime-types`/`mime-db` 표에서(그것으로부터 생성되어) 가져오며, `Vary: Accept-Encoding` 규칙도 따릅니다. 이전에는 짧은 내장 표가 `.woff2`, `.gif`, `.ico` 같은 다른 모든 확장자를 `application/octet-stream`으로, `.js`를 `text/javascript`로 제공했습니다.
+- `ignore` 패턴은 `firebase-tools`가 macOS와 Windows에서 하는 방식대로 대소문자를 무시합니다(`glob` 패키지가 컴파일하는 대로 `i` 플래그가 붙은 JavaScript 정규식). Linux에서는 대소문자를 구분합니다.
+- `headers`, `rewrites`, 글롭 `redirects`의 source는 이어진 슬래시를 하나로 취급하며, 패턴은 고정된 `superstatic`과 마찬가지로 후행 슬래시가 하나 붙은 경로에도 일치합니다. `/%64ata.json` 같은 퍼센트 인코딩된 별칭은 고정된 에뮬레이터와 마찬가지로 여전히 헤더 규칙을 받지 않습니다.
+- `source`가 비어 있는 규칙은 아무것도 일치시키지 않고 `superstatic`과 마찬가지로 `regex`로 넘어갑니다.
+
+## v0.49.0의 변경 사항
+
+다음 변경 사항은 v0.49.0 이후 버전에 포함되어 있으며, 이전 릴리스는 `strict`와 `emulator`에서 똑같이 응답했고 `hosting.cacheControl`이나 `hosting.clientCountry` 키가 없었습니다([변경 로그](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md) 참고).
+
+- 기본값인 `strict` 프로필은 Firebase Hosting이 프로덕션 코퍼스에 응답한 대로 응답합니다. 각 응답은 [프로필](#프로필)을 참고하십시오. `emulator` 프로필은 바뀌지 않았습니다.
+- `hosting.cacheControl`과 `hosting.clientCountry`는 새로운 [개발 기본값](#개발-기본값)이며, `productionExact`는 둘 다 프로덕션 동작으로 바꿉니다.
+- `strict`에서 `/__/firebase/init.json`과 `init.js`는 redirect 이후에 응답하며, `appAssociation: "AUTO"`는 두 개의 association 문서를 생성합니다.
+
+`strict`의 gzip 콘텐츠 인코딩은 v0.49.0보다 새로운 것으로, 이어지는 릴리스의 [변경 로그](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)에 있습니다.
+
+## 관련 문서
+
+- [Functions](../functions/): `function` 또는 `run` rewrite가 도달하는 코드베이스.
+- [프로필](../../guides/profiles/): `strict`, `emulator`, `productionExact`.
+- [호환성 표](../../compatibility/#프로덕션-검증)와 [제한 사항](../../compatibility/limitations/).
+- [설정 스키마](../../reference/configuration/): `hosting` 및 `daemon.hostingPort` 키.

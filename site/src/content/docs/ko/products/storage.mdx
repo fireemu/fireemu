@@ -1,0 +1,481 @@
+---
+title: Cloud Storage
+description: Cloud Storage for Firebase를 로컬에서 실행하고, Firebase 및 Cloud Storage JSON API를 통해 업로드, 다운로드, 서명된 URL, 버킷 CORS, Storage 보안 규칙을 테스트합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu는 두 가지 API 방언으로 Cloud Storage for Firebase를 제공합니다.
+
+- 클라이언트 SDK가 사용하는 Firebase Storage 프로토콜. 재개 가능한 업로드와 다운로드 토큰을 포함합니다.
+- Admin SDK와 Google Cloud 클라이언트 라이브러리가 사용하는 Cloud Storage JSON API. copy와 rewrite를 포함합니다.
+
+두 방언은 하나의 저장소를 공유하므로, 한쪽으로 업로드한 객체는 다른 쪽에서도 보입니다. Storage 에뮬레이터는 객체를 메모리에 보관합니다.
+
+<Facts items={[
+  { label: '상태', value: '지원' },
+  { label: '기본 포트', value: '9199' },
+  { label: '시작', value: '기본값으로 시작' },
+  { label: '프로덕션 검증', value: '호환성 표 참조', href: 'ko/compatibility/#프로덕션-검증' },
+]} />
+
+## 테스트할 수 있는 항목
+
+- [버킷 이름](#존재하지-않는-버킷): 아무도 선언하지 않은 버킷에 쓰면 안내가 출력되거나 프로덕션과 같은 404로 실패합니다.
+- XML API에서 브라우저 업로드와 다운로드를 위한 [버킷 CORS](#버킷-cors).
+- [서명된 URL](#서명된-url-서명): 만료, 서명된 헤더, 그리고 등록된 키가 있으면 V4 서명.
+- [`list` 규칙을 요청된 프리픽스로 판정하는 방식](#단일-세그먼트-첨부-규칙으로-프리픽스-나열하기)을 포함한 [보안 규칙](#보안-규칙).
+- 비공개 객체의 공개 URL이나 서명된 정책 없는 폼 업로드처럼 [프로덕션이 거부하는 요청](#프로덕션-동작).
+- 저장 바이트에 로컬 상한을 두는 [가득 찬 저장소](#저장-바이트-제한).
+
+## 연결
+
+Storage는 기본적으로 `127.0.0.1:9199`에서 수신합니다(`--storage-port` 또는 `firebase.json`으로 변경할 수 있습니다).
+
+```js
+// Web SDK
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
+connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
+```
+
+Admin SDK와 Google Cloud 클라이언트 라이브러리는 환경 변수를 읽습니다. `fireemu exec`에서는 실행하는 명령에 이 변수들이 설정되며, `fireemu up`을 사용할 때는 직접 설정합니다.
+
+```sh
+STORAGE_EMULATOR_HOST=http://127.0.0.1:9199             # with the scheme
+FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199           # host:port, no scheme
+```
+
+[앱 연결](../../getting-started/connect/)과 [환경 변수](../../reference/environment-variables/)를 참고하십시오.
+
+## 구성
+
+모든 Storage 설정은 선택 사항입니다. 이 파일은 모든 설정을 지정합니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+profile = "strict"
+
+[storage]
+# Path of the Storage Security Rules file (or name it in firebase.json)
+rules = "storage.rules"
+# Which default bucket exists: "both" (default), "firebasestorage.app" or "appspot.com"
+defaultBucket = "both"
+# Buckets the project owns besides its default ones: 3 to 222 characters each
+buckets = ["uploads-bucket", "exports.example.com"]
+# Buckets whose objects the public URL serves without a credential: 3 to 222 characters each
+publicBuckets = ["public-assets.example.com"]
+# Local cap on stored object data in bytes (an integer of at least 1); unset means no cap
+maxStoredBytes = 1073741824
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "storage": {
+    "rules": "storage.rules",
+    "defaultBucket": "both",
+    "buckets": ["uploads-bucket", "exports.example.com"],
+    "publicBuckets": ["public-assets.example.com"],
+    "maxStoredBytes": 1073741824
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+| 설정 | 효과 |
+|---|---|
+| `storage.rules` | Storage 보안 규칙 파일. [보안 규칙](#보안-규칙)을 참고하십시오. |
+| `storage.defaultBucket` | `strict`에서 프로젝트의 두 기본 버킷 중 어느 쪽이 존재하는지 결정합니다([아래](#존재하지-않는-버킷) 참고). |
+| `storage.buckets`, `storage.publicBuckets` | 버킷과, 공개 URL에 자격 증명이 필요 없는 버킷을 선언합니다. `emulator` 프로필에서는 무시됩니다. |
+| `storage.undeclaredBuckets` | `strict`에서 아무도 선언하지 않은 버킷에 대한 객체 작업의 처리 방식입니다. `"warn"`(기본값)은 첫 쓰기를 처리하고 버킷을 생성하며 안내를 한 번 출력합니다. `"create"`는 안내 없이 동일하게 처리합니다. `"refuse"`는 프로덕션의 404로 응답하며 `productionExact`가 선택합니다. 명시적 키가 우선합니다([아래](#존재하지-않는-버킷) 참고). `emulator` 프로필은 항상 조용히 버킷을 생성합니다. |
+| `storage.cors` | Cloud Storage `cors` JSON 형식의 버킷별 CORS 구성입니다. `strict`에서 XML API와, 기록되지 않은 동작으로서 Firebase 미디어 읽기에 적용됩니다([아래](#버킷-cors) 참고). 목록에 없는 XML 버킷은 `productionExact`를 설정하지 않는 한 허용적인 응답을 유지합니다. 규칙이 비어 있지 않은 버킷에서는 JSON API 객체 읽기나 객체 preflight가 (기록된 대로) 규칙을 무시하며, 다른 JSON API 경로와 없거나 빈 항목은 기본 동작을 유지합니다. |
+| `storage.signedUrlKeys` | `strict`에서 V4 서명된 URL을 검증하는 데 쓰는 공개 키(또는 테스트가 서명에 사용한 개인 키나 서비스 계정 JSON)입니다([아래](#서명된-url-서명) 참고). 설정하지 않으면 서명을 검증하지 않습니다. |
+| `storage.maxStoredBytes` | 저장 바이트의 로컬 상한입니다. 이를 넘게 되는 쓰기는 HTTP 402(`storage.maxStoredBytes limit exceeded`)로 거부됩니다. [저장 바이트 제한](#저장-바이트-제한)을 참고하십시오. 프로덕션에는 이런 제한이 없습니다. |
+| `storage.maxObjectBytes` | 객체별 크기 제한으로, 기본값은 256 MiB(최대 2143289343)입니다. 이보다 큰 업로드는 HTTP 413으로 거부됩니다. [저장 바이트 제한](#저장-바이트-제한)을 참고하십시오. |
+| `storage.bufferedBodyBudgetBytes` | 버퍼링된 요청 본문에 대한 프로세스 전체 예산으로, 기본값은 1 GiB입니다. 이를 넘는 요청은 `Retry-After: 1`과 함께 HTTP 503을 받습니다. |
+| `storage.spillObjectBytes` | 이 바이트 수 이상인 커밋된 객체는 메모리 대신 임시 파일에 보관됩니다. 기본적으로 설정되어 있지 않으며, 프로덕션에는 이런 설정이 없습니다. 재개 가능한 업로드 세션은 수신한 바이트가 그 크기에 도달하면 임시 파일에 보관합니다. 단일 요청 업로드는 저장되기 전에 여전히 메모리에 버퍼링되므로, 큰 업로드 하나는 커밋 후에도 본문 하나가 메모리에 남습니다. 이 설정은 큰 객체를 많이 저장할 때 도움이 됩니다. |
+
+스필 디렉터리는 정상 종료 시 제거되며, 종료된 프로세스가 남긴 오래된 디렉터리는 시작 시 정리됩니다. 스필 쓰기가 실패하면 `Retry-After: 1`과 함께 HTTP 503을 반환합니다. 내보내기는 커밋된 객체만 포함하며, 진행 중인 재개 가능한 업로드 세션은 포함하지 않습니다.
+
+## 존재하지 않는 버킷
+
+프로덕션은 아무도 만들지 않은 버킷에 대한 객체 작업에 404 `The specified bucket does not exist.`로 응답합니다. Storage 에뮬레이터는 대신 이를 처리하고 첫 쓰기에서 버킷을 생성하므로, 테스트에 별도 설정이 필요 없습니다. `storage.undeclaredBuckets`는 `strict`에서 이 동작을 바꿉니다.
+
+| `storage.undeclaredBuckets` | `strict`에서의 동작 |
+|---|---|
+| `"warn"`(기본값) | 첫 쓰기를 처리하고 버킷을 생성합니다. 아무도 선언하지 않은 버킷에 처음 객체가 기록될 때 표준 오류에 `note:` 줄이 한 번 출력됩니다. |
+| `"create"` | 안내가 없는 `warn` 동작입니다. |
+| `"refuse"` | 존재하지 않는 버킷을 지정하는 모든 작업이 Cloud Storage가 응답하는 방식으로 응답되며, 아무것도 생성되지 않습니다. `productionExact`가 선택하며, 명시적 키가 `productionExact`보다 우선합니다. |
+
+`emulator` 프로필은 공식 에뮬레이터가 처음 사용할 때 모든 버킷을 생성하므로, 항상 조용히 버킷을 생성하고 `"warn"`과 `"refuse"`를 거부합니다.
+
+### 존재하는 버킷
+
+다음 중 하나에 해당하면 버킷이 존재합니다.
+
+- 프로젝트의 기본 버킷(`<project>.appspot.com` 또는 `<project>.firebasestorage.app`)
+- `storage.buckets` 또는 `storage.publicBuckets`에 나열된 버킷
+- `firebase.json`의 storage 타깃
+- 배포된 Storage 트리거가 지정한 버킷
+- 가져온 데이터를 보유한 버킷
+
+`storage.undeclaredBuckets: "warn"`인 `strict`에서는 그 밖의 버킷에 쓰면 안내가 출력되므로, 버킷 이름의 오타가 눈에 띕니다. 프로덕션에 존재하는 버킷에 대한 안내를 없애려면 `storage.buckets`에 나열하십시오([구성](#구성)).
+
+각 이름은 Cloud Storage가 허용하는 이름이어야 합니다. `storage.publicBuckets`는 공개 URL이 자격 증명 없이 객체를 제공하는 버킷을 나열하며, 이는 해당 버킷을 선언하는 것으로도 간주됩니다. `storage.buckets`와 `storage.publicBuckets`는 `emulator` 프로필에서 무시됩니다.
+
+### 버킷 이름 오타로 테스트 실패시키기
+
+`storage.undeclaredBuckets`를 `"refuse"`로 설정하거나 `productionExact`를 활성화하십시오(`strict` 전용). 그러면 없는 버킷은 API별로 다음과 같이 응답됩니다.
+
+| API | 응답 |
+|---|---|
+| JSON API | 404 `The specified bucket does not exist.` (reason `notFound`) |
+| XML API 및 폼 업로드 | 404 `NoSuchBucket` |
+| Firebase API (`/v0`) | 접근할 수 없는 버킷에 대해 이 API가 주는 not-found 응답 |
+
+copy나 rewrite는 두 버킷을 모두 확인하고, 재개 가능한 업로드는 시작할 때 확인합니다.
+
+**프로덕션 기준 측정.** STORAGE-STRICTNESS-OBS 실행 `ss-48adbd8e`에서 다음이 기록되었습니다.
+
+- 없는 버킷에 대한 JSON 객체 get, list, upload, delete, copy source, rewrite destination, ACL get(A1, A3-A8): 버킷 리소스와 동일한 247바이트 JSON 본문의 404.
+- 미디어 읽기(A2)는 대신 `text/html; charset=UTF-8`로 36바이트짜리 `The specified bucket does not exist.` 본문을 반환했습니다.
+- XML GET과 PUT(A9-A10)은 133바이트 `NoSuchBucket` 문서를 반환했습니다.
+- Firebase GET과 upload(A11-A12)는 마지막 개행이 없고 Firebase CORS 헤더가 붙은, 공백 두 칸 들여쓰기의 65바이트 JSON `Not Found.` 엔벨로프를 반환했습니다.
+- Firebase가 아닌 기존 버킷에 대한 Firebase 객체 get과 list는 412가 아니라 200을 반환했습니다(A13-A14).
+
+폼 업로드와 재개 가능한 업로드의 이어 보내기는 이 실행에서 기록되지 않았습니다.
+
+### 기본 버킷
+
+프로덕션 프로젝트의 기본 버킷은 하나입니다. 2024-10-30 이후에 Storage를 설정했다면 `<project>.firebasestorage.app`, 그 이전이라면 `<project>.appspot.com`입니다. 로컬 실행은 어느 쪽인지 알 수 없으므로 기본적으로 둘 다 존재합니다.
+
+다른 종류의 프로젝트에서 복사해 온 앱 구성을 잡아내려면 `storage.defaultBucket`을 `"firebasestorage.app"` 또는 `"appspot.com"`으로 설정하십시오(기본값은 `"both"`). 그러면 나머지 이름은 선언되지 않은 버킷으로 간주되므로, 버킷이 존재하기 전까지 `GET /storage/v1/b/{bucket}`은 404로 응답합니다. 첫 쓰기는 `"warn"`에서는 안내와 함께 버킷을 생성하고, `"create"`에서는 조용히 생성하며, `"refuse"`에서는 거부됩니다(재정의하지 않으면 `productionExact`가 선택).
+
+## 버킷 CORS
+
+프로덕션 XML API는 버킷의 CORS 구성에 따라 브라우저의 교차 출처 요청에 응답하며, 새 버킷에는 CORS 구성이 없습니다. 그래서 허용적인 로컬 서버를 대상으로 Playwright에서 업로드나 다운로드를 수행하는 페이지가 프로덕션에서는 실패할 수 있습니다. `strict`에서 `storage.cors`는 버킷 이름을 Cloud Storage `cors` JSON 형식의 규칙에 매핑합니다.
+
+```json
+{
+  "storage": {
+    "cors": {
+      "demo-app.appspot.com": [
+        {
+          "origin": ["http://localhost:3000"],
+          "method": ["GET", "PUT"],
+          "responseHeader": ["Content-Type", "x-goog-content-length-range"],
+          "maxAgeSeconds": 3600
+        }
+      ]
+    }
+  }
+}
+```
+
+`emulator` 프로필은 빈 맵은 받아들이지만 비어 있지 않은 `storage.cors` 맵은 거부합니다.
+
+### XML API
+
+버킷 규칙은 서명된 URL과 폼 업로드를 포함한 XML API를 제어합니다.
+
+| `storage.cors`의 버킷 | 응답 |
+|---|---|
+| 규칙과 함께 나열됨 | 해당 규칙을 따릅니다. 명시적 항목이 그 버킷을 결정합니다. |
+| `[]`와 함께 나열됨 | 프로덕션의 새 버킷처럼 CORS 구성이 없는 버킷입니다. |
+| 나열되지 않음 | `productionExact`를 설정하지 않는 한 허용적인 응답을 유지합니다. |
+| 나열되지 않음, `productionExact` 사용 시 | CORS 구성이 없는 버킷이 프로덕션에서 받는 것처럼 CORS 헤더가 없습니다. 따라서 브라우저 업로드와 다운로드에는 프로덕션과 마찬가지로 `storage.cors` 항목이 필요합니다. |
+
+`Origin`이 있는 요청에서는 `origin`(또는 `*`)과 `method`(또는 `*`)가 일치하는 첫 번째 규칙이 결정합니다.
+
+- 실제 요청은 `Access-Control-Allow-Origin`(오리진, 또는 `*`를 나열한 규칙의 경우 `*`), 오리진을 그대로 반환한 경우 `Vary: Origin`, 그리고 `responseHeader` 목록에 대한 `Access-Control-Expose-Headers`를 받습니다.
+- preflight(`OPTIONS`)는 추가로 `Access-Control-Request-Headers`의 모든 헤더가 `responseHeader`(또는 `*`)에 있어야 하며, 그러면 `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`, `Access-Control-Max-Age`(`maxAgeSeconds`, 설정하지 않으면 3600)도 받습니다.
+- 어떤 규칙에도 일치하지 않는 요청은 CORS 헤더 없이 응답되며 그래도 성공합니다. 브라우저가 응답을 페이지에 넘기지 않을 뿐입니다.
+
+서버는 규칙에 무엇이 나열되어 있든 `Origin`이 로컬이 아닌 요청을 여전히 거부하므로(403), 규칙은 `localhost` 또는 루프백 주소에서 제공되는 페이지로 검증합니다.
+
+### JSON API
+
+`strict`에서 JSON API와 그 업로드 경로는 `storage.cors`와 독립된 별도의 CORS 정책을 사용합니다. 없거나 빈 항목과 `productionExact`에서도 마찬가지입니다.
+
+- `Origin`이 있는 요청에는 오리진을 그대로 반환하고, `Access-Control-Allow-Credentials: true`와 `Vary: Origin, X-Origin`을 보내며, 객체 GET에 대해 기록된 미디어 또는 메타데이터 헤더 목록을 노출합니다.
+- preflight는 200, `Access-Control-Allow-Methods: DELETE,GET,HEAD,PATCH,POST,PUT`, `Access-Control-Max-Age: 3600`을 반환합니다. 기록된 소문자의 요청 헤더는 구분 공백을 제거하여 반환됩니다. 대소문자가 섞인 철자를 보존하는 것과, 요청된 것이 없을 때 Allow-Headers를 생략하는 것은 기록되지 않은 가정입니다.
+- 기록된 JSON API 및 업로드 사례는 관찰된 헤더 목록을 노출하며, 재개 가능한 업로드 시작 시에는 기록된 위치의 `Location`도 포함합니다. 이 목록을 다른 응답에 적용하는 것은 기록되지 않은 가정입니다. 특히 fireemu는 `alt=media`가 있는 모든 성공적인 JSON 경로에 미디어 목록을 선택합니다.
+- 취소와 취소된 세션의 읽기는 시작한 Origin과 기록된 취소 노출 목록과 함께 499를 반환합니다.
+
+strict 프로필은 또한 버킷 접근 구성 필드를 추가하고, 균일한 버킷 수준 액세스가 활성화된 버킷의 객체 ACL GET에 대해 기록된 400 레거시 ACL 오류를 반환합니다.
+
+### Firebase API
+
+Fireemu는 Firebase 미디어 읽기(`alt=media`)에 대해 기존의 버킷 규칙 처리를 유지하며, 이 동작은 구성된 버킷으로는 기록되지 않았습니다. Firebase API의 JSON 응답과 재개 가능한 프로토콜은 Firebase API가 자체 CORS 헤더를 보내므로 허용적인 응답을 유지합니다.
+
+### 녹화
+
+**XML CORS.** STORAGE-STRICTNESS-OBS 실행 `ss-48adbd8e`는 두 규칙으로 XML CORS를 기록했습니다(C1-C5).
+
+- 와일드카드 오리진은 Vary 없이 `*`를 반환합니다. 이름이 지정된 오리진은 `Vary: Origin`과 함께 그대로 반환됩니다.
+- preflight 메서드는 일치한 규칙의 목록을 규칙 순서대로 쉼표로 연결한 것입니다.
+- Allow-Headers는 요청된 헤더가 없으면 존재하되 비어 있고, 이름이 지정된 헤더에는 구성된 철자를 사용하며, `responseHeader: ["*"]`에는 요청된 헤더를 그대로 반영합니다.
+- Max-Age의 기본값은 3600이며 600을 따릅니다.
+- 일치하지 않는 DELETE preflight는 Access-Control 헤더 없이 `Vary: Origin`과 함께 200을 반환합니다.
+- 와일드카드 실제 GET은 `*, Content-Length, Date, Server, Transfer-Encoding, X-GUploader-UploadID, X-Google-Trace`를 노출합니다.
+- 규칙을 제거하면(`[]`) Access-Control 헤더도 Vary도 없는 200 preflight가 됩니다(R3).
+- C2는 요청된 `content-type`만 구성된 `Content-Type`으로 응답되는 것을 기록했습니다. 구성된 여러 철자를 쉼표로 연결하는 것과 요청되지 않은 헤더를 생략하는 것은 **기록되지 않은 가정**입니다.
+
+이전 녹화에는 CORS 구성이 없는 XML preflight와 PUT도 포함되어 있었습니다.
+
+**규칙이 있는 버킷의 JSON API.** C6-C8은 두 규칙이 모두 설치된 같은 버킷에서 JSON API 미디어 GET, 메타데이터 GET, OPTIONS를 기록했습니다. 규칙은 `{"origin":["*"],"method":["GET"],"responseHeader":["*"]}`와 `{"origin":["http://localhost:3000"],"method":["PUT","GET"],"responseHeader":["Content-Type"],"maxAgeSeconds":600}`입니다. 이후의 `run-2.json` 녹화는 CORS 구성이 없거나 빈 JSON API 요청을 다룹니다.
+
+**JSON API 및 업로드 CORS.** `conformance/storage-strictness-obs/recordings/run-2.json`은 CORS 구성이 없거나, 비어 있거나, 구성된 버킷 전반에 걸쳐 메타데이터, 미디어, 버킷, list, ACL 오류, 업로드 preflight, `Location`이 있는 재개 가능한 업로드 시작, 취소, 취소된 세션의 읽기를 다룹니다. 이 값들은 `productionExact`의 유무와 관계없이 `strict`에서 적용됩니다.
+
+**균일한 버킷 수준 액세스.** 녹화에서는 `iamConfiguration.uniformBucketLevelAccess.enabled: true`로 버킷을 생성하고 객체 ACL GET에서 400 레거시 ACL 오류를 관찰했습니다.
+
+- 생성 핸들러는 기록된 `location: "US-CENTRAL1"`과 `softDeletePolicy: {"retentionDurationSeconds": 0}` 힌트를 받아들이지만, 리전 배치나 소프트 삭제는 모델링하지 않습니다.
+- Fireemu는 PATCH로 액세스 플래그를 설정하는 것도 지원합니다. 토글 검증과 그에 따른 ACL 영향은 기록되지 않은 가정이며, 로컬 테스트로 다룹니다.
+- 기록된 기본 버킷은 플래그가 비활성화되어 있으며, fireemu는 구성하지 않은 버킷의 기본값을 false로 둡니다.
+- 로컬 테스트는 빈 생성 버킷을 포함해 리셋, 스냅샷/복원, 내보내기/가져오기를 다룹니다. 플래그가 없는 이전 내보내기 아티팩트는 false로 가져옵니다.
+- 이는 범용 IAM 정책 관리를 구현하는 것이 아닙니다.
+
+## 서명된 URL 서명
+
+Cloud Storage는 V4 서명된 URL을 서명한 서비스 계정의 공개 키로 검증합니다. fireemu에는 그런 계정이 없으므로, 기본적으로 만료와 서명된 헤더의 존재 여부는 확인하지만 서명은 확인하지 않습니다.
+
+서명을 확인하려면 테스트가 서명에 사용하는 키를 파일 경로 목록인 `storage.signedUrlKeys`에 등록하십시오. 각 파일은 다음 중 하나입니다.
+
+- PEM 공개 키
+- PEM 개인 키(공개 절반만 보관됨)
+- 서비스 계정 JSON(`private_key`, `client_email`)
+- RSA JWK
+
+읽을 수 없거나, RSA가 아니거나, 2048비트보다 짧은 키 파일은 시작을 중단시킵니다. 서비스 계정의 `client_email`은 해당 키를 그 계정의 자격 증명에 연결합니다. 공개 키만 메모리에 보관되며 키에 관한 어떤 것도 로그에 기록되지 않습니다.
+
+`strict`에서는 서명이 검증되지 않는 V4 요청이 서버가 계산한 `StringToSign`과 `CanonicalRequest`와 함께 `403 SignatureDoesNotMatch`로 응답됩니다. 이는 프로덕션이 기록된 네 가지 원인, 즉 서명이 변조된 경우, `Content-Type`이나 range 헤더가 서명된 것과 다른 경우, 객체 이름이 다른 경우에 준 본문입니다.
+
+정규 요청은 Cloud Storage가 문서화한 형식입니다.
+
+- 메서드
+- 퍼센트 인코딩된 경로
+- `X-Goog-Signature`를 제외한 정렬된 쿼리
+- 값과 함께 서명된 헤더. `host`는 요청이 도착한 `Host`이며 포트가 있든 없든 상관없습니다. Admin SDK는 로컬 엔드포인트에 대해 호스트 이름만 서명하므로, 이 SDK가 만든 URL은 그대로 검증됩니다.
+- 서명된 헤더 목록
+- `UNSIGNED-PAYLOAD`
+
+검사의 한계는 다음과 같습니다.
+
+- V2 서명된 URL은 검증되지 않습니다.
+- 서버가 읽는 서명된 헤더(`Content-Type`, `x-goog-content-length-range` 및 서버가 전달하는 다른 헤더)만 검증되는 서명의 일부가 될 수 있습니다.
+- `emulator` 프로필은 빈 `storage.signedUrlKeys` 목록은 받아들이지만 비어 있지 않은 목록은 거부합니다.
+- 이것은 테스트가 서명한 내용에 대한 로컬 검사이며, 인가 경계가 아닙니다.
+
+## 보안 규칙
+
+Storage 보안 규칙은 `firebase.json`에 지정한 `storage.rules` 파일이나 `fireemu.toml`의 `storage.rules`에서 읽습니다. Storage 규칙은 `firestore.get()`과 `firestore.exists()`로 Firestore 문서를 읽을 수 있습니다. `strict`에서 규칙이 없는 프로젝트는 프로덕션의 400 "bucket has not been set up" 응답으로 모든 최종 사용자 요청을 거부합니다. [보안 규칙](../../guides/security-rules/)을 참고하십시오.
+
+### 단일 세그먼트 첨부 규칙으로 프리픽스 나열하기
+
+`list` 규칙은 우연히 존재하는 객체가 아니라 요청된 프리픽스로 판정됩니다. 현재 모든 객체가 일치해서 테스트에서는 통과하는 규칙이라도, 프리픽스를 나열하면 프로덕션이 거부할 수 있습니다. `strict`에서 Fireemu는 아래에 기록된 결과(2026-10-16의 프로덕션 녹화 두 건과 2026-11-08의 관찰)를 사용해 프로덕션과 같은 방식으로 `list`를 평가하므로, 이러한 규칙은 배포 전에 로컬 테스트에서도 실패합니다.
+
+`strict` 프로필에서 list 인가는 요청된 프리픽스 아래의 가능한 항목들에 대한 접근을 증명합니다. `delimiter=/`를 사용하면 각 항목은 직계 자식 하나이고, 구분자가 없으면 항목의 깊이는 임의일 수 있습니다. 인가는 프리픽스가 비어 있는지 또는 어떤 객체가 우연히 존재하는지에 따라 달라지지 않습니다.
+
+`prefix=teams/T/requests/R/&delimiter=/`에서는 `/teams/{team}/requests/{id}/{attachment}`와 일치하는 규칙이 `allow list: if member(team)`이면 목록 조회를 인가할 수 있습니다. 팀과 요청 ID는 프리픽스로 고정되고 첨부 파일 이름만 알 수 없습니다. 특정 첨부 파일 이름을 요구하는 조건은, 현재 모든 객체가 그 이름과 일치한다는 이유만으로 디렉터리 목록 조회를 인가하지 않습니다.
+
+2026-10-16에 인증된 UID와 팀 멤버십, 별도의 upload/get 대조군, 두 건의 녹화를 사용한 대상 지정 프로덕션 비교가 이루어졌습니다. `strict`는 다음의 관찰된 결과와 일치합니다. 상위 프리픽스는 `teams/T/requests/`이고, 요청 프리픽스는 `teams/T/requests/R/`입니다.
+
+| 멤버에게 `list`를 허용하는 규칙 | 프리픽스 | 구분자 | 프로덕션 및 `strict` |
+| --- | --- | --- | --- |
+| 단일 첨부 파일 캡처 | 요청 | `/` | 200 |
+| 단일 첨부 파일 캡처 | 요청 | 생략 | 403 |
+| 같은 규칙에 명시적 상위 match 추가 | 요청 | `/` | 200 |
+| 같은 규칙에 명시적 상위 match 추가 | 요청 | 생략 | 403 |
+| 같은 규칙에 명시적 상위 match 추가 | 상위 | `/` | 200 |
+| 같은 규칙에 재귀 `list` match 추가 | 요청 | `/` 또는 생략 | 200 |
+| 같은 규칙에 재귀 `list` match 추가 | 상위 | `/` | 200 |
+
+빈 요청 프리픽스는 내용이 있는 프리픽스와 같은 인가 결정을 받습니다. 멤버가 아닌 사용자, 익명 사용자, 다른 팀의 요청 목록 조회는 계속 거부됩니다.
+
+`strict` 프로필에서는 프로덕션이 2026-11-08에 응답한 대로, `allow list: if [file] != null`과 `match /p/{file=**}` 아래 `request.path == /b/$(bucket)/o/<prefix>`에 대해서도 구분자 없는 목록 조회가 허용됩니다. 단일 세그먼트 캡처, 이름 없는 캡처, 다른 프리픽스의 경로는 여전히 거부되며, 구분자가 있는 목록 조회의 `request.path`는 프로덕션 기록이 확보될 때까지 거부된 상태로 유지됩니다.
+
+`/`가 아닌 구분자는 보수적인 임의 깊이 증명을 사용합니다. 프로덕션 비교는 `/`와 구분자 생략을 다루었으며, 모든 사용자 지정 구분자나 리소스에 의존하는 조건을 다룬 것은 아닙니다. 추가 배경은 [Firebase 세분화된 작업 문서](https://firebase.google.com/docs/storage/security/core-syntax#granular_operations)를 참고하십시오.
+
+`emulator` 프로필은 기존의 구체적 프리픽스 인가를 유지합니다. 단, 프리픽스 바로 아래 한 단계의 모든 항목이 허용되면 `delimiter=/`인 목록 조회가 허용된다는 점이 다릅니다(`prefix=p/&delimiter=/`에서 `match /p/{f} { allow list: if true; }`). 프로덕션과 `strict`도 이를 허용합니다.
+
+#### 명시적 상위 규칙
+
+위의 단일 캡처 SDK 요청에는 명시적 상위 규칙이 필요하지 않습니다. 이를 추가하면 프로덕션의 권한이 달라질 수 있습니다.
+
+```text
+match /teams/{team}/requests/{id} {
+  allow list: if member(team);
+}
+```
+
+측정된 규칙에서 이는 상위 프리픽스의 하위 프리픽스를 나열하는 것도 허용합니다. 요청의 첨부 파일을 구분자 없이 재귀적으로 열거하는 것은 인가하지 않습니다.
+
+첨부 파일의 `get`, `create`, `update`, `delete` 조건은 변경하지 마십시오. 이를 넓은 재귀 `allow read`로 대체하지 마십시오. `read`는 `get`과 `list`를 모두 포함합니다. list 권한은 특정 객체의 내용을 읽을 수 없는 경우에도 프리픽스 아래의 이름을 노출하며, 내용에 대한 접근을 부여하거나 목록을 `get` 권한이 있는 객체로 걸러 주지는 않습니다.
+
+## 프로덕션 동작
+
+`strict`에서는 generation 및 metageneration 전제 조건과 선언된 체크섬이 프로덕션이 처리하는 방식대로 적용됩니다. 공식 에뮬레이터는 체크섬을 검증하지 않습니다.
+
+**프로덕션 기준 측정.** STORAGE-STRICTNESS-OBS 실행 `ss-48adbd8e`는 `Authorization: Firebase not-a-jwt`를 인증되지 않은 요청으로 기록했습니다. 거부하는 규칙이 있을 때 마지막 개행이 없는, 공백 두 칸 들여쓰기의 73바이트 JSON `Permission denied.` 엔벨로프와 함께 403을 반환했습니다(F1). 인증되지 않은 호출자의 허용 여부는 규칙이 결정합니다. 서명이 잘못된 올바른 형식의 토큰은 기존 처리를 유지하며, 이 녹화는 그 경우를 다루지 않습니다. Firebase 객체 DELETE는 `Content-Length: 0`과 함께 204를 반환했습니다(F2).
+
+### `strict`가 거부하는 요청
+
+`strict`에서 Storage 에뮬레이터는 프로덕션이 거부하지만 공식 에뮬레이터가 받아들이는 요청도 거부합니다. 존재하지 않는 버킷은 예외입니다. [존재하지 않는 버킷](#존재하지-않는-버킷)을 참고하십시오.
+
+| 요청 | `strict` 응답 |
+|---|---|
+| 보안 규칙이 없는 프로젝트에 대한 최종 사용자 요청 | 400, "bucket has not been set up" |
+| 비공개 객체에 대한 `GET /{bucket}/{object}` (공개 URL) | 403 `AccessDenied` |
+| 수명이 지난 서명된 URL | 400 `ExpiredToken` |
+| 서명된 업로드: 서명된 헤더 누락, 서명된 범위를 벗어난 본문, 서명되지 않은 업로드 | 400 `MalformedSecurityHeader`, `EntityTooLarge` 또는 `EntityTooSmall`. 서명되지 않은 업로드는 거부됩니다 |
+| 서명을 제외한 모든 서명 파라미터를 지정한 서명된 URL | 400 `MissingSecurityHeader` |
+| 서명된 정책 없는 폼 업로드 | 거부됩니다. 정책의 만료와 조건이 적용됩니다 |
+| JSON API에서 OAuth bearer로 쓰인 Firebase ID 토큰 | 401 `Invalid Credentials` |
+| Cloud Storage가 모르는 ACL 항목 | 400 |
+| Cloud Storage가 절대 허용하지 않는 버킷 이름 | 400 `Invalid bucket name` (JSON API), 400 `InvalidBucketName` (XML 경로), 404 (Firebase 경로) |
+| `storage.maxStoredBytes`를 넘는 쓰기 (로컬 상한이며 프로덕션 규칙이 아님) | 402 `storage.maxStoredBytes limit exceeded` |
+
+각 거부의 세부 사항은 다음과 같으며, 생략된 내용은 없습니다.
+
+<details>
+<summary>비공개 객체의 공개 URL</summary>
+
+`file.publicUrl()`이 만드는 `GET /{bucket}/{object}`는 다음 중 하나가 성립하지 않으면 403 `AccessDenied`로 응답합니다.
+
+- 요청에 비어 있지 않은 `Bearer` `Authorization` 헤더가 있습니다.
+- 요청이 Google 클라이언트 라이브러리에서 왔습니다. 이 라이브러리들은 `x-goog-api-client`를 보내며, Go 라이브러리(따라서 Firebase Admin Go SDK)는 `STORAGE_EMULATOR_HOST`가 설정된 동안 자격 증명 없이 이 URL로 읽습니다. Python, Java, Node 라이브러리는 JSON API로 읽으므로 거부되지 않습니다.
+- 요청이 만료되지 않은 서명된 URL입니다.
+- 객체가 공개 상태입니다.
+
+객체는 애플리케이션 코드가 공개로 만든 경우에만, 그것도 해당 세대의 객체에 한해 공개 상태가 되며, 덮어쓰면 다시 비공개가 됩니다. 애플리케이션 코드는 `file.makePublic()`, 업로드·patch·copy(`destinationPredefinedAcl`)·rewrite의 `predefinedAcl=publicRead`, 업로드되거나 patch된 리소스의 `acl`에 있는 `allUsers` `READER` 항목, 또는 `POST .../acl`로 객체를 공개로 만듭니다. `file.makePrivate()`(`predefinedAcl=private`), 그 항목이 없는 patch된 `acl`, `DELETE .../acl/allUsers`는 공개 상태를 끝냅니다. 재개 가능한 업로드를 시작하는 메타데이터의 `acl`은 읽지 않습니다.
+
+IAM이 `allUsers`에게 객체 뷰어 역할을 부여한 버킷(프로덕션에서 콘솔로 설정하는 방식)은 `storage.publicBuckets`에 나열합니다. 403 응답은 두 가지 방법을 모두 명시합니다. Firebase 다운로드 토큰 URL은 영향을 받지 않습니다.
+
+</details>
+
+<details>
+<summary>만료된 서명된 URL</summary>
+
+수명이 지난 V4 또는 V2 서명된 URL은 400 `ExpiredToken`으로 응답하며, 수명이 7일을 넘는 V4나 읽을 수 없는 `X-Goog-Date`는 400으로 응답합니다. 서명 자체는, 서명에 사용된 키를 `storage.signedUrlKeys`에 등록하지 않는 한 검증되지 않습니다([서명된 URL 서명](#서명된-url-서명)). 서명 서비스 계정의 키가 필요하기 때문이며, 키가 없으면 모든 서명이 받아들여집니다.
+
+</details>
+
+<details>
+<summary>서명된 XML 업로드</summary>
+
+`PUT /{bucket}/{object}`는 로컬 업로드를 위한 V4 서명된 URL을 받아들입니다. Admin SDK를 초기화하기 전에 `FIREBASE_STORAGE_EMULATOR_HOST`를 스킴 없는 호스트와 포트로, 또는 `STORAGE_EMULATOR_HOST`를 HTTP URL로 설정하십시오. SDK에는 여전히 서명 자격 증명이 필요하며, 개발용으로는 로컬에서 생성한 테스트 서비스 계정 키를 사용할 수 있습니다. strict 모드는 서명되지 않은 업로드를 거부합니다.
+
+이 업로드 경로는 `Content-Type`을 저장하며, 다른 객체 메타데이터와 조건부 쓰기 헤더는 지원하지 않습니다. 이 용도에서는 `Content-Type`과 `x-goog-content-length-range`만 전달되며, 임의의 서명된 확장 헤더는 지원하지 않습니다. 범위는 양 끝을 포함합니다.
+
+- **프로덕션 기준 측정**(실제 Firebase 프로젝트, 2026-11-03, `image/png`와 `x-goog-content-length-range: 0,10485760`에 대한 `getSignedUrl` V4 `write`, 16개 사례의 녹화 두 건). 요청에서 서명된 헤더가 빠지면 이를 명시한 `400 MalformedSecurityHeader`입니다(`content-type`과 range 헤더를 측정했습니다). 범위보다 큰 본문이나 작은 본문은 `400 EntityTooLarge` 또는 `400 EntityTooSmall`입니다. 만료된 URL은 서명된 수명의 끝을 명시한 `400 ExpiredToken`입니다. 이 거부들과 성공 헤더(`ETag`, `x-goog-generation`, `x-goog-metageneration`, `x-goog-hash`, `x-goog-stored-content-length`, `x-goog-stored-content-encoding`)는 두 프로필 모두에서 프로덕션의 본문과 값을 가집니다. `strict`에서는 서명을 제외한 모든 서명 파라미터를 지정한 URL이 `400 MissingSecurityHeader`이고, 서명된 헤더에 포함되지 않았는데 range 헤더를 보내면 `400 MalformedSecurityHeader`입니다. `emulator` 프로필은 이전과 같이 둘 다 계속 받아들입니다(firebase-tools 15.28.2가 이를 어떻게 처리하는지는 측정하지 않았습니다).
+- **기본적으로 검증되지 않음, 문서화된 차이.** 프로덕션은 서명이 변조된 경우, `Content-Type`이나 range 값이 서명된 것과 다른 경우, 객체 이름이 서명된 것과 다른 경우에 `403 SignatureDoesNotMatch`로 응답합니다. fireemu는 `storage.signedUrlKeys`에 키를 등록하지 않는 한([서명된 URL 서명](#서명된-url-서명) 참고) 서명을 확인할 키가 없으므로, 두 프로필 모두에서 이 네 가지를 모두 받아들입니다. 따라서 메서드나 서명된 헤더 값의 변경은 인증할 수 없으며, 이 동작을 인가 검사로 사용하지 마십시오.
+- **CORS.** XML API에서 `storage.cors`나 `productionExact`가 없으면 두 프로필 모두 CORS가 허용적입니다. 성공한 `OPTIONS` preflight는 CORS 헤더와 함께 `204`로 응답하고, `Origin`이 있는 `PUT`도 CORS 헤더를 받습니다. 프로덕션은 버킷의 CORS 구성에 따르며, 구성이 없는 버킷에는 CORS 헤더 없이 `200`으로 응답했습니다. `strict`에서 이 동작을 얻으려면 `storage.cors`에 `[]`로 버킷을 나열하거나 `productionExact`를 활성화하십시오([버킷 CORS](#버킷-cors)).
+- **반복된 서명 파라미터.** `strict`에서는 반복되거나, 대소문자가 다르거나, 퍼센트 인코딩된 이름을 포함해 `X-Goog-SignedHeaders`의 모든 발생이 적용됩니다. 서로 충돌하는 반복된 `X-Goog-Date`, `X-Goog-Expires`, `Expires` 값은 `400 InvalidArgument`를 반환하므로, 충돌하는 파라미터를 제거하십시오. 이 거부는 프로덕션에서 관찰되지 않았습니다. `emulator` 프로필은 기존의 쿼리 해석을 유지합니다.
+
+</details>
+
+<details>
+<summary>서명된 정책 없는 폼 업로드</summary>
+
+멀티파트 폼을 사용하는 `POST /{bucket}`에는 `policy`와 서명 필드가 필요합니다. 정책의 만료와 조건(`bucket`, `eq`, `starts-with`, `content-length-range`)은 적용되며, 서명은 검증되지 않습니다.
+
+</details>
+
+<details>
+<summary>OAuth bearer로 쓰인 Firebase ID 토큰</summary>
+
+JSON API에서 OAuth bearer로 보낸 Firebase ID 토큰은 401 `Invalid Credentials`로 응답합니다. 그 밖의 자격 증명이나 자격 증명이 없는 경우는 소유자로 처리되는데, 로컬 실행은 액세스 토큰을 판단할 수 없기 때문입니다.
+
+</details>
+
+<details>
+<summary>Cloud Storage가 모르는 ACL 항목</summary>
+
+Cloud Storage가 모르는 ACL 항목은 400으로 응답합니다. 역할이 `READER`인 `allUsers`만 효과가 있습니다.
+
+</details>
+
+<details>
+<summary>Cloud Storage가 절대 허용하지 않는 버킷 이름</summary>
+
+Cloud Storage가 절대 허용하지 않는 버킷 이름(예: `ab`, `goog-x`, `1.2.3.4`)은, 같은 이름의 버킷이 존재하지 않는 한(가져오거나 선언한 경우) JSON API에서는 400 `Invalid bucket name`, XML 경로에서는 400 `InvalidBucketName`, Firebase 경로에서는 404로 응답합니다.
+
+</details>
+
+`emulator` 프로필은 위에서 설명한 서명된 업로드 응답을 제외하고는 기존 동작을 유지합니다. 이 응답들은 프로덕션을 따르며, 이에 대한 공식 에뮬레이터와의 동등성은 주장하지 않습니다.
+
+### 빈 경로 세그먼트
+
+두 프로필 모두에서, 객체 이름이나 list 프리픽스에 빈 경로 세그먼트(내부의 `//`, 객체 이름의 앞쪽 `/` 또는 끝의 `/` 등)가 있는 Firebase Storage 요청(`/v0/b/{bucket}/o/...`)은 보안 규칙이 평가되기 전에 `The path may not end with '/' or contain two consecutive '/'s`와 함께 `400`으로 응답합니다. 프로덕션은 2026-11-08에 모두 허용하는 규칙에서도 읽기, 메타데이터 읽기, list를 이렇게 응답했습니다. 업로드, `PATCH`, `DELETE`, 토큰 관리는 이로부터 따라오는 동작이며 기록되지 않았습니다.
+
+- `strict` 프로필은 Cloud Storage와 마찬가지로 `/x`, `x`, `x/`를 세 개의 서로 다른 객체로 유지합니다. `emulator` 프로필은 공식 에뮬레이터처럼 업로드된 이름의 앞쪽 `/` 하나를 여전히 제거합니다.
+- Firebase list는 `a//x` 같은 객체가 만들어 낼 프리픽스를 제외하며, 제외된 이름은 페이지에서 자리를 차지하거나 `nextPageToken`이 되지 않습니다.
+
+## 저장 바이트 제한
+
+### 객체 및 요청 크기
+
+각 객체는 기본적으로 256 MiB로 제한됩니다. 이 제한을 바꾸려면 `storage.maxObjectBytes`를 설정하십시오. HTTP 요청 본문 제한은 멀티파트 오버헤드를 고려해 4 MiB 더 큽니다.
+
+`storage.bufferedBodyBudgetBytes`는 프로세스 전체에서 버퍼링되는 요청 본문을 제한하며 기본값은 1 GiB입니다. 사용 가능한 예산을 초과하는 요청은 `Retry-After: 1`과 함께 HTTP 503을 받습니다. 요청보다 작은 예산은 객체가 제한 내에 있더라도 그 요청을 거부할 수 있습니다.
+
+두 설정 모두 양의 정수 바이트 수를 받으며, 최댓값은 `maxObjectBytes`가 2143289343, `bufferedBodyBudgetBytes`가 2147483647입니다. 재개 가능한 업로드에는 별도로 1 GiB의 보존된 업로드 합계 제한이 있으며, 가져오기에도 별도로 1 GiB의 총 제한이 있습니다.
+
+### 전체 저장 바이트
+
+Storage 에뮬레이터는 모든 객체를 메모리에 보관하며, 기본적으로 그 양을 제한하는 것은 없습니다. 상한을 두려면 `storage.maxStoredBytes`를 1 이상의 바이트 수로 설정하십시오([구성](#구성)). 이 제한은 Fireemu에 로컬한 것이며 프로덕션에는 없습니다.
+
+- 각 객체는 자신의 바이트를 한 번 계산하며, copy는 다시 계산됩니다. 객체를 교체하면 크기 차이만 계산됩니다.
+- 합계가 제한을 넘게 되는 업로드, 재개 가능한 업로드의 마지막 요청, copy는 HTTP 402와 `storage.maxStoredBytes limit exceeded` 메시지로 거부됩니다(JSON API에서는 reason이 `storageCapacityExceeded`). `Retry-After`는 없습니다. 공간을 확보하려면 객체를 삭제하십시오. Firebase 클라이언트 SDK는 402를 재시도 없이 즉시 `storage/quota-exceeded`로 보고하며, Cloud Storage 클라이언트 라이브러리도 재시도하지 않습니다.
+- 크기가 같거나 작은 교체처럼 합계를 늘리지 않는 쓰기는, 저장소가 제한보다 많은 양을 보유하고 있더라도(가져오기, 복원 또는 제한을 낮춘 이후) 항상 통과합니다.
+- 거부된 쓰기는 아무것도 변경하지 않습니다. 재개 가능한 업로드는 열린 상태로 유지됩니다. 오프셋이 진행되지 않으므로 공간을 확보한 뒤 같은 마지막 청크를 다시 보내거나 업로드를 취소할 수 있습니다.
+- 가져오기(`--import`)와 스냅샷 복원은 제한에 대해 검사되지 않습니다. 제한을 넘는 가져오기는 저장된 바이트와 제한을 명시한 `warning:` 줄과 함께 시작하며, 제한을 넘는 스냅샷 복원은 같은 줄을 로그에 남깁니다.
+
+`fireemu doctor --connect <control URL>`은 저장된 바이트를 이 제한에 대한 `objects.bytes`로 보고합니다.
+
+## 프로덕션과의 차이
+
+### 지원하지 않음
+
+- V2 서명된 URL 또는 POST 정책의 서명 검증. V4 서명된 URL은 `storage.signedUrlKeys`에 등록된 키에 대해서만 검증됩니다.
+- `allUsers` 읽기 이외의 객체 ACL.
+- IAM과 버킷 수준 공개 액세스.
+- 객체 합성(`compose`).
+- 알림 구성.
+
+객체 버전 관리는 JSON API에서 제공됩니다. `PATCH /storage/v1/b/{bucket}`에 `{"versioning":{"enabled":true}}`를 보내면 프로덕션처럼 활성화됩니다.
+
+### 로컬 동작
+
+- 아무도 선언하지 않은 버킷은 `storage.undeclaredBuckets`가 `"refuse"`가 아닌 한 첫 쓰기에서 생성됩니다. [존재하지 않는 버킷](#존재하지-않는-버킷)을 참고하십시오.
+- XML API는 `productionExact`를 설정하지 않는 한 `storage.cors`에 나열되지 않은 버킷에 대해 CORS를 허용적으로 응답합니다. [버킷 CORS](#버킷-cors)를 참고하십시오.
+- V4 서명은 `storage.signedUrlKeys`에 등록된 키에 대해서만 검사됩니다. [서명된 URL 서명](#서명된-url-서명)을 참고하십시오.
+- 객체 크기 제한, 버퍼링된 본문 예산, `storage.maxStoredBytes`는 로컬 제한입니다. [저장 바이트 제한](#저장-바이트-제한)을 참고하십시오.
+
+### Storage 포트를 localhost에 유지하기
+
+:::caution
+공식 에뮬레이터와 마찬가지로, Storage 포트는 존재하지 않는 미디어 읽기에 대한 404의 HTML 본문에 요청된 객체 이름을 그대로 반영합니다. 사용자의 컴퓨터에서 열린 웹 페이지가 해당 오리진에서 스크립트를 실행할 수 있습니다.
+
+- 기본적으로 모든 리스너는 루프백에 있으므로 사용자의 컴퓨터에 있는 프로세스만 접근할 수 있습니다. Host 가드는 또한 `localhost`, IP 주소, `network.allowedHosts`에 나열한 이름 이외의 `Host`를 지정한 요청에 DNS 리바인딩 방어로서 403으로 응답합니다([에뮬레이터가 응답하는 호스트 이름](../../guides/ci-and-containers/#에뮬레이터가-응답하는-호스트-이름) 참고).
+- 이 포트는 직접 선택한 경우에만 다른 호스트에서 접근할 수 있습니다. `fireemu.toml`의 `network.allowNonLoopbackHosts`와 `firebase.json`의 루프백이 아닌 `emulators.storage.host`를 함께 설정합니다([컨테이너에서 에뮬레이터 제공하기](../../guides/ci-and-containers/#컨테이너에서-에뮬레이터-제공) 참고). 이러한 리스너는 자격 증명 없이 응답하므로 신뢰할 수 없는 네트워크에 노출하지 마십시오.
+- `strict` 프로필은 프로덕션이 보내지 않는 JSON API 응답에는 `X-Content-Type-Options: nosniff`를 보내지 않으므로 이 심층 방어를 추가하지 않습니다. `emulator` 프로필은 공식 에뮬레이터의 헤더를 유지합니다.
+
+:::
+
+## 관련 문서
+
+- [보안 규칙](../../guides/security-rules/)
+- [프로필](../../guides/profiles/)
+- [호환성](../../compatibility/) 및 [제한 사항](../../compatibility/limitations/)
+- [구성 참조](../../reference/configuration/)

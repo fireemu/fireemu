@@ -1,0 +1,593 @@
+---
+title: Cloud Firestore
+description: Cloud Firestore를 로컬에서 실행하고, 쿼리, 복합 인덱스, 트랜잭션, 리스너, Security Rules를 프로덕션과 같은 동작으로 테스트합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu는 Cloud Firestore를 gRPC, REST, 그리고 Web SDK가 사용하는 WebChannel 전송 방식으로 제공하며, Firestore Security Rules도 지원합니다.
+
+<Facts items={[
+  { label: '상태', value: '지원' },
+  { label: '기본 포트', value: '8080' },
+  { label: '시작 여부', value: '기본적으로 시작' },
+  { label: '프로덕션 검증', value: '호환성 표 참조', href: 'ko/compatibility/#프로덕션-검증' },
+]} />
+
+## 테스트할 수 있는 항목
+
+- [복합 인덱스](#복합-인덱스): 선언되지 않은 인덱스가 필요한 쿼리는 `FAILED_PRECONDITION`으로 거부되며, [CI 작업이 누락된 인덱스 목록을 근거로 실패하게 할 수 있습니다](#누락된-인덱스에서-ci-작업-실패시키기).
+- Standard 에디션의 [쿼리 제한](#쿼리-제한).
+- 유지 중인 `Listen` 스트림을 프로덕션과 같은 상태로 종료하여 [리스너 재연결](#listen-스트림)을 테스트합니다.
+- 1시간 분량의 문서 이력에 대한 [트랜잭션, `read_time` 읽기, 재개된 리스너](#트랜잭션과-이력).
+- [이름 있는 데이터베이스](#이름-있는-데이터베이스)별로 분리된 규칙을 포함한 [Security Rules](#security-rules).
+- [Enterprise 텍스트 검색](#enterprise-텍스트-검색)과 [Enterprise 파이프라인](#enterprise-파이프라인)의 일부.
+
+## 연결
+
+Firestore는 기본적으로 `127.0.0.1:8080`에서 수신합니다(`--firestore-port` 또는 `firebase.json`으로 변경할 수 있으며, [모든 기본 포트](../../getting-started/install/#기본-포트)를 참조하십시오).
+
+```js
+// Web SDK
+import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+connectFirestoreEmulator(getFirestore(app), '127.0.0.1', 8080);
+```
+
+Admin SDK에는 별도의 코드가 필요하지 않습니다. `fireemu exec` 아래에서는 실행하는 명령에 `FIRESTORE_EMULATOR_HOST`가 Firestore의 `host:port`로 설정됩니다([환경 변수](../../reference/environment-variables/) 참조). `fireemu up`을 사용할 때는 직접 설정하십시오. 예: `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`. 다른 SDK와 프로젝트 ID 규칙은 [앱 연결하기](../../getting-started/connect/)를 참조하십시오.
+
+## 구성
+
+`fireemu.toml`에서 데이터베이스 에디션과 API 모드를 선택합니다. `fireemu init`은 Native API를 사용하는 Standard 에디션을 기록합니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+# "standard" or "enterprise"
+edition = "standard"
+# "native" or "mongodb-compatible"
+apiMode = "native"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`edition`은 `standard`와 `enterprise`를 받습니다. Enterprise Pipeline API는 읽기 작업의 제한된 부분집합만 지원합니다. [Enterprise 텍스트 검색](#enterprise-텍스트-검색), [Enterprise 파이프라인](#enterprise-파이프라인), [제한 사항](../../compatibility/limitations/)을 참조하십시오.
+
+나머지 `firestore` 키는 해당 내용이 적용되는 절에서 설명합니다.
+
+| 키 | 절 |
+|---|---|
+| `firestore.missingIndexes` | [복합 인덱스](#복합-인덱스) |
+| `firestore.enforceLimits` | [쿼리 제한](#쿼리-제한) |
+| `firestore.listenStreamLifetime` | [Listen 스트림](#listen-스트림) |
+| `firestore.history` | [트랜잭션과 이력](#트랜잭션과-이력) |
+
+## 복합 인덱스
+
+프로덕션은 복합 인덱스가 정의되지 않은 쿼리를 거부합니다. 공식 에뮬레이터는 복합 인덱스를 확인하지 않고 모든 쿼리를 실행하므로, 누락된 인덱스는 쿼리가 프로덕션에 도달했을 때 처음 드러납니다. Fireemu는 프로덕션과 같이 `firestore.indexes.json`(`firebase.json`에서 참조)에 선언된 인덱스를 기준으로 각 쿼리를 확인합니다.
+
+| `firestore.missingIndexes` | 동작 |
+|---|---|
+| `refuse` (기본값) | 프로덕션이 거부하는 것과 같이, 쿼리를 `FAILED_PRECONDITION`과 콘솔 링크로 거부합니다. |
+| `report` | 쿼리를 실행합니다. 누락된 각 인덱스는 데이터베이스당 한 번씩 표준 오류(standard error)에 보고되며, 프로덕션의 거부 문구와 추가해야 할 `firestore.indexes.json` 항목이 함께 출력됩니다. |
+
+`emulator` 프로필은 공식 에뮬레이터와 같이 항상 쿼리를 실행하고, 누락된 인덱스에 대한 제안을 표준 오류에 보고합니다.
+
+OR 쿼리는 각 분기마다 별도의 복합 인덱스가 필요할 수 있습니다. 보조 진단은 서로 다른 누락 분기 인덱스를 한 번에 모두 나열합니다.
+
+- `strict`에서 `refuse`를 사용하는 경우, SDK는 기존과 같은 `FAILED_PRECONDITION` 응답과 첫 번째 생성 링크를 받습니다. 추가 분기 정의는 표준 오류에 출력됩니다.
+- `report`에서는 컨트롤 API 보고서도 서로 다른 누락 정의를 수집합니다.
+
+### 누락된 인덱스에서 CI 작업 실패시키기
+
+표준 오류의 보고는 CI 로그에서 놓치기 쉽습니다. `strict`에서 `"report"`를 사용하면 컨트롤 API도 누락된 모든 인덱스를 나열하므로, 목록이 비어 있지 않으면 작업을 실패시킬 수 있습니다. 보고를 켭니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+# "strict" (the default) or "emulator"; "report" below needs strict
+profile = "strict"
+
+[firestore]
+# "refuse" (the default): refuse the query with FAILED_PRECONDITION
+# "report": run the query, and list each missing index
+missingIndexes = "report"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "firestore": {
+    "missingIndexes": "report"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`fireemu exec`는 실행하는 명령에 `FIREEMU_CONTROL_URL`(끝이 `/v1/`)과 `FIREEMU_CONTROL_TOKEN`을 전달하므로, 테스트를 실행하는 스크립트가 테스트가 끝난 뒤 목록을 확인할 수 있습니다.
+
+```sh
+npx fireemu exec -- sh -c '
+  npm test
+  status=$?
+  curl -fsS -H "Authorization: Bearer $FIREEMU_CONTROL_TOKEN" \
+    "${FIREEMU_CONTROL_URL}firestore/missingIndexes" > missing-indexes.json || exit 1
+  [ "$(jq .count missing-indexes.json)" = 0 ] || { jq .indexesJson missing-indexes.json; exit 1; }
+  exit $status
+'
+```
+
+`GET /v1/firestore/missingIndexes`는 다음과 같이 응답합니다.
+
+```json
+{
+  "count": 1,
+  "truncated": false,
+  "dropped": 0,
+  "missingIndexes": [
+    {
+      "project": "demo-app",
+      "database": "(default)",
+      "name": "projects/demo-app/databases/(default)",
+      "index": {
+        "collectionGroup": "notes",
+        "queryScope": "COLLECTION",
+        "fields": [
+          { "fieldPath": "owner", "order": "ASCENDING" },
+          { "fieldPath": "created", "order": "ASCENDING" }
+        ]
+      },
+      "message": "The query requires an index. You can create it here: https://console.firebase.google.com/..."
+    }
+  ],
+  "indexesJson": {
+    "projects/demo-app/databases/(default)": {
+      "indexes": [{ "collectionGroup": "notes", "queryScope": "COLLECTION", "fields": ["..."] }]
+    }
+  }
+}
+```
+
+#### 응답 형식
+
+- 각 항목은 데이터베이스당 인덱스 하나이며, 처음 필요해진 순서대로 나열되고 프로덕션의 거부 문구를 포함합니다.
+- `indexesJson`은 항목을 데이터베이스별로 묶어 `firestore.indexes.json`이 가지는 형태로 제공하므로, 데이터베이스의 `indexes` 배열을 그 파일에 그대로 병합할 수 있습니다.
+
+#### 세션과 초기화
+
+- `GET /v1/sessions/{session}/firestore/missingIndexes`는 해당 세션의 프로젝트만 나열합니다. `GET /v1/firestore/missingIndexes`는 모든 프로젝트를 나열합니다.
+- 세션 `reset`은 목록을 지우지 않으므로, 케이스 사이에 reset하는 스위트도 누락된 모든 인덱스를 계속 보고합니다. 세션을 삭제하면 해당 프로젝트의 항목이 지워집니다.
+- 두 경로 모두에서 `DELETE`는 목록과 dropped 개수를 지우고 `{"cleared": <count>}`로 응답합니다. 세션 경로는 해당 세션의 프로젝트만 지웁니다. 세션이 없는 경로는 모든 세션의 항목을 지우므로, 데몬을 다른 테스트와 공유하는 테스트 월드에서는 세션 경로를 사용해야 합니다. 이후 다시 필요해진 인덱스는 다시 보고됩니다.
+- `fireemu/testing`에서는 `world.control('GET', '/v1/sessions/default/firestore/missingIndexes')`와, 같은 경로에 대한 `world.control('DELETE', ...)`를 호출하십시오. 그러면 읽기와 삭제가 월드의 프로젝트 안에서만 이루어집니다.
+
+#### 제한과 거부
+
+- 목록에는 최대 1,000개의 항목이 담깁니다. 이를 넘으면 `truncated`가 `true`가 되고, `dropped`는 인덱스가 목록에 없는 상태로 처리된 쿼리의 수를 셉니다. 모든 인덱스가 누락된 프로젝트는 빈 목록이 아니라 목록이 가득 찼다는 메시지와 함께 `409`로 응답하므로, `count` 검사가 불완전한 목록을 통과시킬 수 없습니다. 목록을 지우고 다시 실행하십시오.
+- 아무것도 보고되지 않는 경우(`emulator` 프로필, `strict`와 `"refuse"`의 조합, 또는 Firestore가 선택되지 않은 경우) `GET`은 `FAILED_PRECONDITION`과 함께 `409`로 응답하므로, 목록에 의존하는 검사가 빈 응답으로 통과할 수 없습니다. `DELETE`는 그래도 `{"cleared": 0}`로 응답합니다.
+- 브라우저에서 여는 페이지는, 항목에 쿼리가 필터링하고 정렬하는 필드 이름이 들어 있으므로 리소스 보고서와 마찬가지로 두 메서드 모두 `Authorization: Bearer <control token>`이 필요합니다.
+
+### `firestore.indexes.json` 검사
+
+`strict`에서 Fireemu는 `firebase deploy`가 거부하는 내용을 시작할 때 거부합니다. Fireemu가 실행되는 중에 파일이 바뀌면 이전 인덱스를 유지합니다. 메시지는 항목을 지목하며 `./firestore.indexes.json: indexes[0] (collection group notes): ...`처럼 파일 경로로 시작합니다. 아래의 각 거부는 그 원인이 되는 항목과 프로덕션이 받아들이는 항목을 함께 보여 줍니다.
+
+**필드가 하나뿐인 복합 인덱스.** 프로덕션은 "this index is not necessary, configure using single field index controls"라고 응답합니다. 대신 `fieldOverrides` 아래에 선언하십시오. 필드 하나에 대한 컬렉션 그룹 쿼리도 이렇게 활성화합니다. `(field, __name__ DESC)`, `(__name__ DESC)`, 벡터 필드 하나는 프로덕션이 받아들이므로 그대로 허용됩니다.
+
+```json title="Refused"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): this index is not necessary, configure using single field index controls
+```
+
+```json title="Accepted"
+{ "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "notes", "fieldPath": "owner",
+      "indexes": [{ "queryScope": "COLLECTION", "order": "ASCENDING" }] }
+] }
+```
+
+**`fields` 배열이 없는 항목.** `feilds`처럼 키 이름을 잘못 쓰면 이렇게 보입니다.
+
+```json title="Refused"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "feilds": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+```text
+indexes[0] (collection group notes): Must contain "fields" (an array of index fields)
+```
+
+```json title="Accepted"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "owner", "order": "ASCENDING" },
+               { "fieldPath": "created", "order": "ASCENDING" }] }
+] }
+```
+
+**`indexes` 배열이 없는 `fieldOverrides` 항목.** TTL만 지정하는 override에는 `"indexes": []`가 필요합니다.
+
+```json title="Refused"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.expireAt): Must contain "indexes" (an array, empty for a TTL-only override)
+```
+
+```json title="Accepted"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "expireAt", "ttl": true, "indexes": [] }
+] }
+```
+
+**`vectorConfig`만 가진 `fieldOverrides` 인덱스.** override의 각 인덱스에는 `order`와 `arrayConfig` 중 정확히 하나가 필요합니다. 프로덕션과 같이 벡터 필드 하나는 대신 복합 인덱스로 선언하십시오.
+
+```json title="Refused"
+{ "fieldOverrides": [
+  { "collectionGroup": "notes", "fieldPath": "emb",
+    "indexes": [{ "queryScope": "COLLECTION", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+```text
+fieldOverrides[0] (notes.emb): Must contain exactly one of "arrayConfig,order" in each of its indexes
+```
+
+```json title="Accepted"
+{ "indexes": [
+  { "collectionGroup": "notes", "queryScope": "COLLECTION",
+    "fields": [{ "fieldPath": "emb", "vectorConfig": { "dimension": 3, "flat": {} } }] }
+] }
+```
+
+Fireemu는 `firebase deploy`가 읽는 방식대로 다음 형식을 읽습니다.
+
+- 없거나 빈 `queryScope`는 `COLLECTION`으로 읽습니다.
+- 이전 형식의 `collectionId`와 필드 `mode` 키는 각각 `collectionGroup`과 `order` / `arrayConfig`로 읽습니다.
+
+두 프로필 모두에서 파일 하나에는 복합 인덱스 최대 200개, 인덱스당 필드 최대 100개, 인덱스당 배열 필드 1개까지 담을 수 있습니다. Admin API의 `indexes.create`도 같은 검사를 적용하며, 파일의 인덱스와 런타임에 생성된 인덱스를 합산하여 200개 한도에 포함합니다.
+
+공식 에뮬레이터는 이 파일을 읽지 않으므로 `emulator` 프로필은 이 항목들을 거부하지 않습니다. 항목의 복합 필드 모드는 `firebase deploy`가 사용하는 우선순위와 참/거짓 판정으로 읽으며, 정렬 또는 배열 모드도 함께 지정한 필드 override의 검색 구성은 무시합니다.
+
+## 쿼리 제한
+
+`strict` 프로필에서는 Standard 에디션의 쿼리 제한이 프로덕션과 같이 적용됩니다. `firestore.enforceLimits`를 `false`로 설정하면 프로덕션이 거부하는 쿼리도 통과하므로, 특별한 이유가 없다면 켜 두십시오.
+
+`strict`에서 이 키는 다음 쿼리 제한(최대 30개의 disjunction, 10개의 `not-in` 값 등)만 전환합니다. 쓰기, 트랜잭션, 인덱스에 대한 제한이나 REST 및 WebChannel 동작에는 영향을 주지 않습니다. `emulator` 프로필에서는 `true`가 그 프로덕션 제한도 함께 요청합니다.
+
+## Listen 스트림
+
+프로덕션은 최종 사용자의 네이티브 gRPC `Listen` 스트림을 열린 지 1시간 뒤에 `INTERNAL`로 종료합니다. 기본적으로 Fireemu는 스트림을 얼마나 오래 유지하든 열어 둡니다(`firestore.listenStreamLifetime: "unlimited"`). 클라이언트의 재연결을 테스트하려면 다음 중 하나를 수행하십시오.
+
+- `firestore.listenStreamLifetime`을 `"oneHour"`로 설정합니다(`productionExact`의 기본값입니다).
+- 컨트롤 API에서 `POST /v1/firestore/listen:expire`를 호출하면 유지 중인 모든 최종 사용자 스트림이 프로덕션과 같은 상태로 한꺼번에 종료됩니다.
+
+자격 증명 또는 [App Check](../app-check/) 때문에 거부된 WebChannel Listen 또는 Write 개시는 HTTP 전송 협상을 200으로 완료한 다음, Web SDK가 읽을 수 있는 종료 `UNAUTHENTICATED` 또는 `PERMISSION_DENIED` 프로토콜 오류를 전달합니다. 유효하지 않거나 다른 앱의 App Check 대체 토큰은 보유 중이던 문서를 다시 전송하지 않고 종료 오류만 받습니다. 거부된 개시는 허용된 세션 용량을 소비하지 않습니다. 이 전송 동작은 SDK 프로토콜을 따르며, 기록된 프로덕션 호환성 주장은 아닙니다.
+
+## 트랜잭션과 이력
+
+프로덕션과 마찬가지로 Fireemu는 지난 1시간 동안 기록된 문서의 모든 버전을 보관하므로, `read_time` 읽기, 읽기 전용 트랜잭션, 재개된 리스너가 이를 볼 수 있습니다. 트랜잭션은 프로덕션과 같이 읽은 대상에 잠금을 겁니다. 경합하는 gRPC 및 WebChannel 쓰기는 런타임 워커를 점유하지 않고 대기합니다. 대기 중인 Commit을 취소하면 해당 요청의 데드락 대기는 끝나지만, 그 트랜잭션은 커밋, 롤백 또는 만료될 때까지 읽기 잠금을 유지합니다.
+
+### 로컬 이력 제한
+
+같은 문서를 여러 번 갱신하는 테스트는 많은 버전을 메모리에 보관합니다. 프로덕션에는 없는 다음 로컬 제한이 이를 제한합니다.
+
+- 각 데이터베이스는 논리 이력 바이트를 최대 1 GiB, 버전을 최대 1,000,000개 보관하고, 각 세션은 1 GiB와 1,000,000개, 데몬은 4 GiB와 4,000,000개까지 보관합니다. 논리 바이트는 Firestore의 저장소 크기 모델을 따르며 프로세스의 메모리 사용량이 아닙니다. 프로세스 메모리는 몇 배 더 클 수 있습니다.
+- 고정된 시계(`daemon.clockStart`)에서는 시간이 저절로 흐르지 않으므로, 데이터베이스는 한 문서의 버전을 최대 1,024개까지 보관합니다. 이 제한은 아래의 `maxVersionsPerPath`와 같이 동작합니다. 문서가 이를 넘으면 데이터베이스 전체에서 오래된 스냅샷이 해제됩니다.
+- Strict Listen은 라이브 데이터베이스당 최신 경계(boundary) 레코드 4,096개를 보관합니다. 재개된 스트림은 원래 경계의 `read_time`을 그대로 돌려준 뒤, 새 스냅샷 시각을 `CURRENT`와 함께 보냅니다. 토큰 바이트는 불투명하며 쓰기가 없어도 바뀔 수 있습니다. 만료된 레코드나 만료된 문서 이력은 `RESET`과 전체 재전송을 일으키며, reset, 복원, 데몬 재시작은 레코드를 폐기합니다. 이 한도는 Fireemu의 로컬 한도이며 프로덕션 한도가 아닙니다.
+- 한도를 넘게 되는 커밋은 전체가 `RESOURCE_EXHAUSTED`와 `Firestore retained history capacity is exhausted` 메시지로 거부됩니다.
+
+1시간보다 오래된 버전은 시계가 그 시점을 지난 뒤의 다음 커밋에서 해제됩니다.
+
+### 이력 제한 낮추기
+
+메모리를 덜 사용하려면 `firestore.history`의 제한을 낮추십시오.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[firestore]
+edition = "standard"
+apiMode = "native"
+
+[firestore.history]
+maxVersionsPerPath = 16
+maxBytes = 268435456
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native",
+    "history": {
+      "maxVersionsPerPath": 16,
+      "maxBytes": 268435456
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- `maxVersionsPerPath`(1에서 1,000,000)는 어느 시계에서든 데이터베이스가 한 문서에 대해 보관하는 최대 버전 수를 위의 기본값 대신 설정합니다.
+- `maxBytes`(1 MiB에서 1 GiB)는 데이터베이스 하나가 보관하는 논리 이력 바이트를 낮춥니다. 가져오기(`--import`)는 이 값으로 검사하지 않습니다. 더 큰 가져오기는 데이터베이스, 바이트 수, 제한을 명시한 `warning:` 줄과 함께 시작되며(스냅샷 복원이 이를 넘을 때도 같은 줄을 기록합니다), 이후 이력을 키우는 모든 쓰기는 `RESOURCE_EXHAUSTED`로 거부됩니다.
+
+이 키가 없으면 기본값이 적용됩니다.
+
+### 버전 상한이 해제하는 것
+
+버전 상한은 문서마다 따로 적용되지만 그 영향은 데이터베이스 전체에 미칩니다. 스냅샷은 모든 문서에 대해 정확하게 유지되므로, 어떤 문서가 상한보다 많은 버전을 가지게 되면 데이터베이스는 그 문서의 가장 오래된 보관 버전보다 오래된 스냅샷을 보관하지 않습니다. 그 이후에는 다음과 같이 됩니다.
+
+- 그 시점보다 오래된 `read_time` 읽기는 `FAILED_PRECONDITION`(`The requested 'read_time' is no longer retained by this database.`)으로 거부됩니다. 그런 `read_time`의 새 읽기 전용 트랜잭션도 마찬가지입니다(`read_time is no longer retained by this database`).
+- 더 오래된 스냅샷에서 이미 열려 있는 트랜잭션은, 다른 문서만 건드리더라도 다음 읽기 또는 커밋에서 `ABORTED`(`The referenced transaction has expired or is no longer valid.`)로 실패합니다.
+- 더 오래된 시점에서 재개하는 리스너는 reset되고 전체 결과를 다시 받습니다.
+
+클라이언트 SDK는 `ABORTED` 트랜잭션을 재시도하므로 매우 작은 상한은 피하십시오. 가장 긴 트랜잭션이 열려 있는 동안 어느 문서든 갱신되는 횟수보다 큰 값을 상한으로 선택하십시오.
+
+`fireemu doctor --connect <control URL>`은 실행 중인 데몬이 보관한 버전과 바이트를 보고합니다. `history.*` 줄은 세션 및 데몬 제한 대비 보관된 버전과 논리 바이트, 그리고 다음 컴팩션이 해제할 바이트 수를 보여 줍니다.
+
+## Security Rules
+
+규칙은 `firebase.json`에 지정된 `firestore.rules` 파일 또는 `fireemu.toml`의 `rules.source`에서 읽습니다. `strict`에서 규칙이 없는 프로젝트는, 규칙 릴리스가 없는 프로덕션 프로젝트와 같이 모든 클라이언트 요청을 거부합니다. [Security Rules](../../guides/security-rules/)를 참조하십시오.
+
+## 이름 있는 데이터베이스
+
+이름 있는 데이터베이스는 `firebase.json`의 `firestore` 배열에 사용하는 `rules` 및 `indexes` 파일과 함께 선언하거나, Admin API로 생성합니다. `strict`에서는 다음과 같습니다.
+
+- 선언되지도 생성되지도 않은 데이터베이스에 대한 요청은 프로덕션과 같이 `NOT_FOUND`를 받습니다.
+- 선언하는 데이터베이스 ID는 프로덕션에서 생성할 수 있는 것이어야 하며(`[a-z0-9-]` 4~63자, 문자로 시작), 그렇지 않으면 Fireemu가 시작되지 않습니다.
+
+프로덕션은 데이터베이스를 그 데이터베이스 자체의 규칙 릴리스로만 제어합니다. 따라서 런타임에 생성된 데이터베이스는 Security Rules를 설정하기 전까지 규칙이 없으며 모든 클라이언트 요청을 거부합니다. `(default)` 데이터베이스의 규칙은 적용되지 않습니다. 데이터베이스를 `firebase.json`에 `rules` 파일과 함께 선언하거나, 런타임에 규칙을 로드하십시오.
+
+```
+PUT /emulator/v1/projects/{project}/databases/{database}:securityRules
+{"rules": {"files": [{"name": "firestore.rules", "content": "..."}]}}
+```
+
+이는 `(default)` 데이터베이스에 `PUT /emulator/v1/projects/{project}:securityRules`가 사용하는 경로와 같으며, 본문과 응답도 같습니다. 이렇게 설정한 규칙은 데이터베이스가 삭제될 때까지 유지되며, 스냅샷에는 포함되지 않습니다.
+
+`emulator` 프로필은 공식 에뮬레이터의 동작을 유지합니다. 자체 규칙이 없는 데이터베이스는 `(default)` 데이터베이스의 규칙으로 처리됩니다(위 경로로 그 데이터베이스에 로드한 규칙은 그 데이터베이스에 적용됩니다).
+
+## Enterprise 텍스트 검색
+
+`firestore.indexes.json`의 지원되는 텍스트 정의(`searchConfig.textSpec`)는 Enterprise 데이터베이스의 로컬 텍스트 카탈로그에 들어가며 `collection(...).search({ query: documentMatches(...) })`를 처리합니다. 검색 인덱스는 일반 쿼리 계획과 별개로 유지됩니다. Standard 에디션은 유효한 검색 인덱스 구성을 여전히 받아들이지만 검색은 제공하지 않으며, 지리 검색은 지원되지 않습니다.
+
+로컬 `fireemu-lexical-v1` 엔진은 결정적인 Unicode 정규화와 단어 분할, AND 용어, 위치 기반 구문, 제외 조건, 인덱스된 필드 제한을 사용합니다.
+
+- 생성 시각 순 정렬이 지원되며, 점수 순 정렬은 기록된 프로덕션 결과 순서를 따릅니다. 숫자 `score()` 값은 근삿값입니다.
+- 어간 추출, 동의어 확장, 오타 교정, 언어 자동 감지는 없습니다.
+- `productionExact`는 해당하는 프로덕션 동작이 기록될 때까지 검색을 거부합니다.
+- 명시적인 Fireemu 컨트롤 동작이 세대(generation) 단위 빌드를 진행, 완료, 실패, 복구시킵니다.
+
+설정, 컨트롤, 정확한 제한은 [로컬 텍스트 검색 가이드](https://github.com/fireemu/fireemu/blob/main/docs/text-search.md)를 참조하십시오.
+
+## Enterprise 파이프라인
+
+Enterprise 데이터베이스에서 Fireemu는 Admin SDK(gRPC)와 Web SDK의 `firebase/firestore/lite/pipelines`(REST `:executePipeline`)에서 오는 파이프라인을 실행합니다.
+
+Enterprise 파이프라인은 기록된 1,951개 케이스의 코퍼스에 대해 프로덕션과 비교 검증되었습니다.
+
+| 케이스 | 결과 |
+|---|---|
+| 1,906 | 일치. |
+| 17 | 프로덕션 자체의 변동(응답 프레이밍과 무작위 `sample` 위치) 범위 내에서 일치. |
+| 26 | 프로젝트 소유자가 수용한 방식으로만 차이가 남(집계 그룹의 순서, 정렬되지 않은 그룹 뒤의 `limit` 또는 `offset` 아래에서 그룹을 선택하는 합법적 방식, 모든 정렬 키가 같은 행의 순서, 시계에 의존하는 값). |
+| 2 | 레코더가 보낼 수 없었던 gRPC 요청. 이후의 관측으로 다루어집니다. |
+
+기록되지 않은 형태는 주장하지 않으며, strict 프로필은 그중 많은 부분을 미관측으로 거부합니다. 주장하지 않는 항목은 [프로덕션 검증](../../compatibility/#프로덕션-검증) 표에 나열되어 있습니다.
+
+### 지원되는 스테이지와 표현식
+
+지원되는 부분집합은 `collection`, `collection_group`, `documents` 또는 유한한 `database` 입력으로 시작하고, 이어서 `where`, `select`, `sort`, `add_fields`, `remove_fields`, `distinct`, `aggregate`, `offset`, `limit`, `unnest` 스테이지를 순서와 개수에 제한 없이 사용할 수 있습니다. 집계에는 그룹 유무와 관계없이 `count`, `count_distinct`, `sum`, `average`, `minimum`, `maximum`이 포함됩니다.
+
+| 표현식 | 지원 |
+|---|---|
+| 필드 | 중첩 경로(`a.b`)와 `__name__`(문서 참조) |
+| 리터럴 | 배열, 리터럴 맵, double 벡터를 포함한 모든 타입의 값 |
+| 비교 | 표현식이 올 수 있는 모든 곳의 `equal`, `not_equal`, `less_than`, `less_than_or_equal`, `greater_than`, `greater_than_or_equal` |
+| 생성 | `array(...)`, `map(...)` |
+| 배열 접근 | `array_length`, `array_first`, `array_last`, `array_get`, `array_slice`, `array_first_n`, `array_last_n`, `array_index_of`, `array_index_of_all`, `join`, `maximum_n`, `minimum_n` |
+| 배열 헬퍼 | `array_concat`, `array_reverse` |
+| 타임스탬프 함수 | `current_timestamp`, `timestamp_add`, `timestamp_subtract`, `timestamp_trunc`, `timestamp_diff`, `timestamp_extract`, `unix_micros_to_timestamp`, `unix_millis_to_timestamp`, `unix_seconds_to_timestamp`, `timestamp_to_unix_micros`, `timestamp_to_unix_millis`, `timestamp_to_unix_seconds` |
+| 맵 함수 | `map_get`, `map_set`, `map_remove`, `map_merge`, `map_keys`, `map_values`, `map_entries` |
+| 정규식 | `regex_contains`, `regex_match`, `regex_find`, `regex_find_all` |
+| 문서 함수 | `documentId`, `collectionId`, `parent` |
+| 논리, 존재, 타입, 멤버십 | `and`, `or`, `not`, `xor`, `nor`, `exists`, `is_absent`, `is_error`, `type`, `is_type`, `array_contains`, `array_contains_all`, `array_contains_any`, `equal_any`, `not_equal_any` |
+| 문자열 | `byte_length`, `string_index_of`, `string_repeat`, `string_replace_all`, `string_replace_one`, `string_reverse`, `concat`, `to_lower`, `to_upper`, `starts_with`, `ends_with`, `string_contains`, `char_length`, `substring`, `trim`, `ltrim`, `rtrim`, `split` |
+| 벡터 스칼라 | `vector_length`, `dot_product`, `euclidean_distance`, `cosine_distance` |
+| 지연 평가 제어 | `if_absent`, `if_null`, `if_error`, `conditional`, `switch_on` |
+| 수학 | `add`, `subtract`, `multiply`, `divide`, `mod`, `abs`, `round`, `floor`, `ceil`, `pow` |
+
+### 추가로 기록된 형태
+
+- **빈 생성자.** 기록된 빈 `array()`와 `map()` 생성자는 빈 값을 반환합니다. 그 외의 생성자 형태는 이 관측의 범위 밖입니다.
+- **`like`, `rand`, `array_filter`, `array_transform`.** 추가로 기록된 이 형태들은 지원됩니다. 입력 타입, 람다의 위치, 조합에는 제한이 있습니다. 난수 값은 프로덕션의 난수 시퀀스를 재현하지 않습니다.
+- **스칼라 `minimum`, `maximum`, `sum`, `negate`.** 기록된 스칼라 형태가 지원되며, 수집된 정수, 유한 double, 혼합 숫자, null/absent 케이스를 포함합니다. 기록된 `sum([])`은 null을 반환합니다. 그 외의 타입, 유한하지 않은 입력, 수치 극값은 이 유한한 호환성 주장의 범위 밖입니다.
+- **일반 형태.** 추가로 기록된 일반 형태에는 `cmp`, `storage_size`, `coalesce`, `get_field`, `offset`, `reverse`, `length`, `string_concat`, `namespace`, `has_ancestor`, `reference_slice`, `replace_document_id`, `autogen_document_id`가 포함됩니다. 각 관측은 선언된 입력 타입을 대상으로 합니다. 예를 들어 `storage_size`는 현재 문자열을 지원하며, 기록된 `reverse` 형태는 문자열, 바이트, 배열을 다룹니다. 생성되는 문서 ID는 유한한 20자 ASCII 영숫자 규약을 따르며, 이 관측은 엔트로피나 전역 유일성을 보증하지 않습니다.
+
+위의 배열, 맵, 정규식, 타임스탬프 함수와 `unnest`, 그리고 0 카운트 동작은 두 프로필 모두에서 사용할 수 있습니다. 프로덕션 비교는 기록된 케이스를 대상으로 하며, 모든 입력 타입이나 조합을 대상으로 하지 않습니다.
+
+**맵 함수.** `map_set`은 명시적 null 값을 유지하고, 값이 absent인 키는 제거합니다. null 또는 absent 입력 맵은 absent 결과를 내고, 나열된 다른 맵 함수는 그 입력에 null을 반환합니다. 이 제거는 문서화된 API를 따르며 프로덕션에서 관측된 적은 없습니다. 맵 키, 값, 엔트리는 Fireemu의 결정적 맵 순서를 사용하며 대응하는 키와 값은 짝을 유지합니다. 기록된 프로덕션 맵은 두 키에 대해 일치하며, 그 외 맵의 프로덕션 순서는 검증되지 않았습니다.
+
+**추가 수학 함수.** emulator 프로필은 `sqrt`, `exp`, `ln`, `log`, `log10`, 그리고 정밀도를 생략하거나 0으로 지정한 `trunc`도 평가합니다. 0이 아닌 절삭 정밀도와 유한한 지수 서브노멀 출력은 관측되지 않았습니다. Strict는 지원되는 컨텍스트에서 기록된 유한 숫자 및 오류 형태를 허용하며, 기록되지 않은 숫자, 정의역, null, 타입, 우선순위 케이스는 계속 차단됩니다. 이 함수들은 프로덕션 전반의 호환성을 보증하지 않습니다.
+
+**문자열 및 벡터 함수.** 문자열 함수는 지원되는 형태에서 동작합니다. strict는 기록되지 않은 타입과 ASCII가 아닌 검색 오프셋을 거부하며, 반복과 치환에는 로컬 출력 크기 제한이 적용됩니다. Strict `array_index_of_all`은 관측된 정수 형태를 받아들입니다. 벡터 스칼라 함수는 기록되지 않았거나, 비어 있거나, 크기가 맞지 않거나, 유한하지 않은 바이너리 벡터와 지원되지 않는 수치 극값을 거부합니다. 이러한 경계는 프로덕션 전반의 호환성을 보증하지 않습니다.
+
+**배열 함수와 바이트.** 추가 배열 함수와 `unnest`는 기록된 입력 형태를 다루며, 기록되지 않은 조합과 순서는 검증되지 않았습니다. Strict Firestore REST는 기록된 표준 및 URL 안전 base64 형식과 protobuf `bytes_value` 별칭을 받아들이고, 기록된 CR/LF 및 혼합 알파벳 형식은 거부합니다. 일반 emulator 프로필은 개발 편의를 위해 관대한 디코딩을 유지하며, 추가로 받아들이는 형식은 프로덕션 호환성 주장이 아닙니다.
+
+### 동작 세부 사항
+
+#### 타임스탬프
+
+파이프라인 타임스탬프는 마이크로초 정밀도를 사용합니다. `current_timestamp`는 요청당 한 번 구성된 시계를 샘플링하며 그 파이프라인 평가 내내 고정됩니다. 시간대를 인식하는 절삭과 추출은 이름이 있는 IANA 시간대를 사용하며, 프로덕션 기록은 특정 시간대 케이스만 다룹니다. 모호하거나 존재하지 않는 로컬 일광 절약 시간 경계는 미관측으로 거부하며, 사용자 정의 GMT 오프셋 의미 체계는 구현되지 않았습니다. 그 밖의 시간대, 경계, 입력 조합은 그 기록으로는 프로덕션과 호환된다고 확립되지 않았습니다.
+
+#### 정규식
+
+정규식 함수는 두 프로필 모두에서 2026-11-10의 프로덕션 기록을 따릅니다.
+
+- `\d`, `\D`, `\w`, `\W`, `\b`, `\B`는 ASCII만 대상으로 합니다.
+- `\s`는 ASCII 공백 문자와 세로 탭이며, 줄 바꿈 없는 공백(no-break space)과는 일치하지 않습니다. `\s` 중 공백, 탭, 세로 탭 이외의 구성원(라인 피드, 폼 피드, 캐리지 리턴)은 기록된 것이 아니라 가정한 것입니다.
+- `\pL`과 `\p{Nd}`는 Unicode입니다.
+- `(?i)`는 ASCII 문자만 대소문자를 접습니다. `(?u)`와 `(?-u)`는 받아들이지만 아무것도 바꾸지 않습니다. `(?U)`는 한정자를 lazy로 만들지 않습니다.
+- `[[:digit:]]` 같은 POSIX 클래스와 `(?m)` 플래그는 프로덕션과 같이 `Unsupported regex syntax.`로 거부됩니다.
+- `regex_find`와 `regex_find_all`은 캡처 그룹을 최대 하나까지 받으며, 더 많으면 `At most one capture group is supported.`로 거부합니다. 일치하지 않은 그룹은 null을 줍니다. `regex_contains`와 `regex_match`는 그룹 수에 제한이 없습니다. `regex_match`는 문자열 전체가 일치해야 합니다.
+
+기록이 다루지 않는 `strict`의 입력(중괄호 반복, 그 밖의 플래그와 플래그 조합, `\A`와 `\z`, `\n` 같은 이스케이프, 그 밖의 속성 이름, 중첩 클래스와 클래스 집합 연산자, 클래스와 함께 쓴 `(?i)` 또는 `(?U)`)는 미관측으로 거부됩니다. `emulator` 프로필은 이를 로컬 엔진으로 평가하며, 그 결과가 프로덕션과 일치한다는 보증은 없습니다.
+
+프로덕션에서는 패턴 길이 제한이 기록되지 않았습니다. 로컬에서는 128 KiB보다 긴 패턴, 또는 ASCII로 다시 쓴 결과가 1 MiB보다 긴 패턴, 그리고 엔진의 컴파일 크기 제한을 넘는 패턴이 두 프로필 모두에서 미관측으로 거부됩니다.
+
+#### 0 카운트
+
+`limit`이 0이면 다음 스테이지에 행이 전달되지 않고, `offset`이 0이면 모든 행이 그대로 통과합니다. 두 프로필 모두 같습니다. strict 프로필은 이 입력에 대해 기록된 프로덕션 케이스를 따릅니다.
+
+#### 기록된 오류
+
+strict 프로필은 인수가 없고 옵션이 빈 `array_reverse()`, 그리고 한쪽은 따옴표로 감싸고 다른 쪽은 감싸지 않은 중복 select 별칭에 대해 프로덕션이 기록한 `INTERNAL` 응답을 재현합니다. Fireemu는 요청 값을 포함하지 않는 고정된 설명을 표준 오류에 기록합니다. 비어 있지 않은 옵션을 가진 인수 없는 `array_reverse()`는 기존 거부를 유지하며, emulator 프로필은 기존 검증 동작을 유지합니다. 이 오류들은 기록된 형태만 다루므로, 진행하려면 호출 또는 별칭을 수정하십시오.
+
+Strict 네이티브 gRPC는 `bit_not`, `bit_left_shift`, `bit_right_shift`의 유한 정수 형태에 대해 기록된 `INTERNAL` 오류도 재현합니다. 콘솔은 요청 값을 포함하지 않고 이 동작을 설명합니다. 이 관측은 선언된 네이티브 요청 형태에 대한 오류 호환성을 확립하며, 성공하는 비트 연산의 의미와 REST 오류 호환성은 검증되지 않았습니다. emulator 프로필은 기존 거부를 유지합니다.
+
+추가로 기록된 검증 우선순위 케이스가 일치하며, 수집된 순서 있는 REST `collection_id` 타입 오류에서는 구조화된 `ErrorInfo`가 보존됩니다. 그 밖의 우선순위 조합과 모호한 네이티브 맵 순서는 계속 차단됩니다.
+
+유효한 지리 점 두 개를 가진 수집된 네이티브 gRPC `geo_distance` select 호출은 검색 전용 `INVALID_ARGUMENT` 진단을 반환합니다. 지리 검색은 이 파이프라인 호환성 주장의 범위 밖입니다.
+
+두 프로필 모두에서, 정수에 대한 기록된 중첩 집계 스칼라 `sum` 호출은 프로덕션의 `array_sum` 진단(expected Array, got LONG)과 함께 `INVALID_ARGUMENT`를 반환합니다. 해당 스칼라 호출에는 배열을 전달하십시오. 다른 인수 형태는 기존 차단을 유지합니다.
+
+#### 결과, 프레이밍, 순서
+
+- `where`는 조건(비교, 필드 또는 지원되는 다른 함수)이 `true`일 때만 행을 유지합니다.
+- `select`는 프로덕션과 같이 최대 64개의 필드를 설정합니다.
+- `select`가 없는 결과는 문서의 이름, 생성 시각, 갱신 시각을 포함하고, 응답은 일반적으로 실행 시간을 포함합니다. 누락된 문서만 담긴 `documents` 입력은 선택된 실행 시간을 유지합니다.
+- 작은 응답은 프로덕션이 프레이밍하는 방식 그대로 전달됩니다. gRPC에서는 모든 결과가 하나의 응답 메시지에, REST에서는 하나의 배열 요소에 담깁니다. Fireemu는 더 큰 응답을 결과 약 1 MiB에서 나눕니다. 프로덕션 기록에서는 경계가 일정하지 않으며, 큰 응답의 프레이밍은 검증되지 않았습니다.
+- `select({__name__: field("__name__")})`는 문서 이름을 반환하며, 다른 별칭과 함께 쓰거나 따옴표로 감싼 별칭과 값을 쓰는 기록된 형태를 포함합니다. 기록되지 않은 형태는 `strict`에서 `UNIMPLEMENTED`로 남습니다.
+- `sort`가 없으면 기록된 컬렉션 읽기는 문서 ID의 CRC-32 오름차순을 따르고, 컬렉션 그룹은 부모 경로를 먼저 보고 그다음에 이 순서를 사용합니다. ASCII가 아닌 ID와 CRC-32 동률, 그리고 집계 그룹의 순서와 limit 아래의 동률 순서는 검증되지 않았습니다.
+- 저장된 `-0.0`은 프로덕션과 같이 `-0.0`으로 읽힙니다. 공식 에뮬레이터는 `0.0`으로 저장합니다.
+
+### 프로필 간 차이
+
+기록된 일치 응답은 FS-ENT-ORACLE 관측의 특정 요청 형태를 다루며, 비교, 리터럴 값, select 별칭, 문서 함수, 스테이지 순서, 지원되는 문자열 및 수학 함수를 포함합니다. 그 밖의 기록된 형태와 기록되지 않은 형태는 검증되지 않았습니다.
+
+`strict`에서 거부는 일반적으로 요청이 프로덕션이 거부한 요청과 같은 형태를 가질 때만 그 요청의 문구로 응답하고, 그렇지 않으면 `UNIMPLEMENTED`입니다. 아래에 설명한 gRPC 깊이 예외도 함께 적용됩니다. 형태는 스테이지, 함수 이름, 값의 종류, 모든 맵의 엔트리를 순서대로 유지하고 단순 필드 이름과 같은 종류의 값만 대체하므로, `select({total: documentId(field)})`는 기록된 `select({v: documentId(field)})`와 같이 응답됩니다. REST 본문은 키 순서를 유지합니다. gRPC에서는 둘 이상의 엔트리를 가진 맵에 순서가 없으므로, 아래에 설명한 기록된 gRPC select 폭 케이스를 제외하면 `strict`는 일반적으로 그런 요청에 대해 거부로 응답하지 않습니다.
+
+프로덕션이 관측되지 않은 곳에서는 프로필이 다릅니다.
+
+| 입력 | `strict` | `emulator` |
+|---|---|---|
+| ASCII가 아닌 이름을 가진 컬렉션 참조에 대한 문서 함수 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 인덱스는 UTF-16 단위로 셈 |
+| 기록된 예약 맵 키 거부 | 기록된 형태는 `INVALID_ARGUMENT`, 기록되지 않은 형태는 계속 차단 | `INVALID_ARGUMENT`, 예약된 키를 먼저 지목 |
+| 기록된 문서 함수 잘못된 타입 요청 | 기록된 REST 형태는 `INVALID_ARGUMENT`, 순서 없는 gRPC 벡터 맵은 계속 `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 타입을 지목 |
+| 정수 또는 불리언이 아닌 타입(double, null 등)인 `map(...)` 키 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 타입을 지목 |
+| 정수 또는 NaN 요소를 가졌거나, 요소가 없거나, `value`가 없거나, 다른 키를 가진 벡터 리터럴 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 공식 문구 |
+| 무한 요소를 가진 벡터 리터럴 | `UNIMPLEMENTED` | 해당 벡터 |
+| 문자열이 아닌 `__type__` 키, 또는 문서를 지목하지 않는 참조 리터럴 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 공식 문구 |
+| 한 파이프라인 안의 두 가지 거부 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 그중 하나 |
+| 프로덕션이 다른 스테이지에서만 기록한 거부(예: `where` 조건 안에서 필드를 담은 리터럴) | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 공식 문구 |
+| 음의 0 요소를 가진 벡터 리터럴 | `UNIMPLEMENTED` | 해당 벡터 |
+| `__name__`과 다중 키 케이스를 포함한, 기록된 빈 또는 예약 리터럴 키 거부 | REST와 모호하지 않은 gRPC에서는 `INVALID_ARGUMENT`, 순서 없는 다중 키 gRPC 케이스 3건은 계속 `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 키 하나를 지목 |
+| 기록된 잘못된 타입의 `limit`, `offset` 인수와 음수 `offset` | 기록된 형태는 `INVALID_ARGUMENT`, 그 외 형태는 계속 차단 | `INVALID_ARGUMENT`, 공식 문구 |
+| `limit` 0 또는 `offset` 0 | 기록된 0 카운트 동작 | 같은 0 카운트 동작 |
+| 프로덕션의 `{m, m.r}`과 다른 순서로 한 `select` 별칭이 다른 별칭 안에 있는 경우(예: `{a.b, a}`) | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, REST에서는 나중 별칭을 지목하고(공식 에뮬레이터와 같음) gRPC에서는 자식을 지목 |
+| 평가 시 둘 다 실패하는 두 필드를 가진 기록되지 않은 `select`(예: `{a: documentId("s"), b: parent(true)}`) | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 키 순서상 첫 번째 |
+| 배열 안의 벡터, 또는 리터럴에서 다른 키와 함께 있는 `__type__` 키 | `UNIMPLEMENTED` | 공식 응답 |
+| 지원되는 함수의 기록되지 않은 잘못된 인수 개수 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, fireemu의 문구 |
+| 함수 옵션 | `document_id(__name__)`에 대한 기록된 단일 정수 `x` 옵션은 두 스테이지 프로젝션 형태에서 허용되고, 다른 옵션은 계속 차단 | 공식 에뮬레이터가 무시하는 것과 같이 무시 |
+| 빈 `select` 맵, 또는 Fireemu가 검사하지 않는 함수나 스테이지 값 뒤에 오는 이후 스테이지의 검사(프로덕션은 알 수 없는 함수를 먼저 지목) | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 빈 맵 또는 이후 검사 |
+| 어떤 기록도 다루지 않는 정규식 구문(예: `a{2}`, `\n`, `(?x)`, `(?i)[a-c]`) | `UNIMPLEMENTED` | 로컬 엔진의 결과 |
+| 상수에서 실패하는 함수 호출(예: `map(1.5, i)`) 옆의 빈 맵 또는 다른 거부, 또는 `strict`가 응답하지 않는 다른 부분 옆의 거부 | `UNIMPLEMENTED` | `INVALID_ARGUMENT`, 빈 맵 또는 다른 거부 |
+| 기록되지 않은 스테이지 인수 개수 또는 옵션 | `UNIMPLEMENTED` | 스테이지와 인수 형태에 따라 다름 |
+| 빈 `array()` 또는 `map()` | 기록된 빈 배열 또는 맵 | 빈 배열 또는 맵 |
+| 그룹 인수가 없는 `aggregate` | 기록된 형태(컬렉션 바로 뒤, `count`에 대한 단순 별칭의 비어 있지 않은 맵)에서는 프로덕션의 인수 개수 문구와 함께 `INVALID_ARGUMENT`, 그 외에는 `UNIMPLEMENTED` | 같은 문구와 함께 `INVALID_ARGUMENT` |
+
+### Union, 샘플링, 서브쿼리, 그 밖의 스테이지
+
+**`union`.** 유한한 `union` 분기는 행 단위 `where` 및 `select`를 가진 컬렉션 입력을 사용할 수 있으며, 지원되지 않는 자식 스테이지와 입력은 거부됩니다. 소스 읽기는 스냅샷을 공유하고, 중첩된 분기에는 로컬 깊이 및 크기 제한이 있습니다.
+
+**`sample`.** `sample(size, mode)`는 복원 없는 `documents` 샘플링과 입력 순서대로의 `percent` 샘플링을 지원합니다. 예를 들어 `sample(0.5, "percent")`는 행당 0.5의 확률을 사용하고, `sample(2, "documents")`는 최대 두 행을 선택합니다. 무작위 결과는 달라질 수 있으며 프로덕션의 난수 시퀀스를 재현하지 않습니다.
+
+**`replace_with`와 `find_nearest`.** 유한한 `replace_with`는 전체 교체와 구현된 overwrite 및 keep 병합 모드를 지원하며, 전체 교체는 소스 문서 메타데이터를 버립니다. 유한한 `find_nearest`는 유클리드, 코사인, 내적 측정을 지원하며 로컬에서 필수인 limit 및 거리 필드 옵션을 사용합니다. 그 밖의 형태는 검증되지 않았거나 거부됩니다.
+
+**읽기 시각과 트랜잭션.** gRPC 경로와 REST 경로 모두 기록된 형태에서 유한한 `documents`, `collection`, `collection_group` 입력을 읽기 시각, 기존 트랜잭션 또는 새 트랜잭션과 함께 제공하며, 기존 또는 새 트랜잭션의 자동 커밋도 제공합니다. 자동 커밋과 함께 쓴 읽기 시각, 그리고 셀렉터와 함께 쓴 `database`, `union`, `search` 입력은 계속 거부됩니다. 지원되지 않는 실행 형태는 명시적으로 거부됩니다. 기록된 검증 실패는 제안된 함수를 실행 가능하게 만들지 않고도 `INVALID_ARGUMENT`를 반환할 수 있습니다. 기록된 일치는 기록된 요청 형태에 대해서만 호환성을 확립하며, 다른 형태는 검증되지 않았습니다.
+
+**추가 집계와 서브쿼리.** `array_agg`, `array_agg_distinct`, `first`, `last`, `count_if`의 유한한 기록 형태가 지원됩니다. 제한된 서브컬렉션 및 상관 스칼라 서브쿼리 형태는 소스 스냅샷을 공유하며, 지원되지 않는 입력, 스테이지, 바인딩은 거부되고 로컬 리소스 제한이 적용됩니다. 집계 순서와 기록되지 않은 형태는 프로덕션 호환성으로 주장하지 않습니다.
+
+지원되는 상관 스칼라 서브쿼리는 카디널리티를 확인하기 전에 문자열 동등 필터를 추가로 적용할 수 있습니다. 기록된 단일 결과 요청은 선택된 값을 반환하고, 기록된 다중 결과 요청은 프로덕션의 `INVALID_ARGUMENT` 진단을 받습니다. 이 관측은 해당 기록된 요청 형태만 다루며, 결과가 0건일 때의 동작과 다른 스칼라 형태는 검증되지 않았습니다.
+
+**깊이와 폭.** 일반 REST는 깊게 중첩된 파이프라인 JSON에 대해 기록된 깊이 진단을 보고하며, strict gRPC는 기록된 65필드 `select` 거부를 허용합니다. 32단계를 넘는 gRPC 함수 표현식은 두 프로필 모두에서 거부되며, strict gRPC는 protobuf 재귀 실패도 기록된 invalid-argument 진단에 대응시킵니다. gRPC 제한과 진단은 관측된 체인을 넘어 일반화되며, 오류 우선순위와 그 밖의 기록되지 않은 케이스는 검증되지 않았습니다.
+
+**누락된 중첩 별칭.** 누락된 중첩 별칭을 선택하면 비어 있는 부모 맵이 보존됩니다. 프로덕션은 점으로 구분된 별칭 케이스 세 건을 기록했으며, 다른 누락 표현식 형태는 그 관측으로부터 일반화한 것입니다.
+
+## 프로덕션과의 차이
+
+### 로컬 제한
+
+프로덕션에는 다음 제한이 없습니다. 각 제한은 해당 절에서 설명합니다.
+
+- 보관되는 문서 이력은 데이터베이스, 세션, 데몬 단위로 제한되며, strict Listen은 제한된 수의 경계 레코드를 보관합니다. [트랜잭션과 이력](#트랜잭션과-이력)을 참조하십시오.
+- 컨트롤 API의 누락 인덱스 목록은 제한된 수의 항목을 담습니다. [제한과 거부](#제한과-거부)를 참조하십시오.
+- 파이프라인 정규식 패턴에는 로컬 길이 제한이 있고, 중첩된 `union` 분기, 서브쿼리, 문자열 반복 및 치환에는 로컬 깊이, 크기 또는 리소스 제한이 있습니다. [Enterprise 파이프라인](#enterprise-파이프라인)을 참조하십시오.
+
+### 기본적으로 다르게 동작하는 부분
+
+- 네이티브 gRPC `Listen` 스트림은 얼마나 오래 유지하든 열려 있지만, 프로덕션은 1시간 뒤에 종료합니다. [Listen 스트림](#listen-스트림)을 참조하십시오.
+- 거부된 Listen 또는 Write 개시에 대한 WebChannel 응답은 SDK 프로토콜을 따르며 기록된 프로덕션 호환성 주장이 아닙니다. [Listen 스트림](#listen-스트림)을 참조하십시오.
+
+### Enterprise 범위
+
+- 텍스트 검색은 어간 추출, 동의어 확장, 오타 교정, 언어 자동 감지가 없는 로컬 엔진을 사용하며, 지리 검색은 지원되지 않습니다. [Enterprise 텍스트 검색](#enterprise-텍스트-검색)을 참조하십시오.
+- 파이프라인은 읽기 작업의 제한된 부분집합만 다루며, 기록된 요청 형태만 프로덕션과 호환된다고 주장합니다. [Enterprise 파이프라인](#enterprise-파이프라인)과 [제한 사항](../../compatibility/limitations/)을 참조하십시오.
+
+### 프로덕션 검증
+
+쓰기와 제한, 쿼리와 인덱스, 트랜잭션, 실시간 리스너, Security Rules, 데이터베이스 관리, Enterprise 전문 검색, Enterprise 파이프라인은 각 영역의 기록된 케이스에 대해 실제 Firestore의 기록과 비교 검증되었습니다. [호환성 표](../../compatibility/#프로덕션-검증)를 참조하십시오.
+
+## 관련 문서
+
+- [Security Rules](../../guides/security-rules/)
+- [프로필](../../guides/profiles/)
+- [호환성](../../compatibility/) 및 [제한 사항](../../compatibility/limitations/)
+- [구성 레퍼런스](../../reference/configuration/)
