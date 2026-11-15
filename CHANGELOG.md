@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Storage computes CRC32C with a runtime-dispatched hardware implementation (the `crc32c` crate), and the values are bit-identical to the previous scalar code. Realtime Database limitToFirst and limitToLast select their results with a bounded heap instead of a full sort. Firestore nearest-neighbour queries over high-dimensional vectors reuse a bounded cache between writes, and `fireemu/testing` copies portable snapshots with a small worker pool. Answers, including errors, are unchanged.
+
 ## [0.53.0] - 2026-11-15
 
 ### Changed
