@@ -94,6 +94,13 @@ export function firstDifference(a, b, path = "") {
     }
     return null;
   }
+  if (
+    typeof a === "string" &&
+    typeof b === "string" &&
+    a.replace(/\bTIME\(f(?:0|3|6|9),([^(),]+)\)/g, "TIME(f*, $1)") ===
+      b.replace(/\bTIME\(f(?:0|3|6|9),([^(),]+)\)/g, "TIME(f*, $1)")
+  )
+    return null;
   return a === b ? null : { path, a, b };
 }
 
@@ -113,7 +120,7 @@ export function allDifferences(a, b, path = "", out = []) {
       if (!(key in a) || !(key in b)) out.push({ path: `${path}/${key}`, a: a[key], b: b[key] });
       else allDifferences(a[key], b[key], `${path}/${key}`, out);
     }
-  } else if (a !== b) out.push({ path, a, b });
+  } else if (firstDifference(a, b, path)) out.push({ path, a, b });
   return out;
 }
 
