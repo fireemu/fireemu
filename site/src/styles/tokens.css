@@ -157,3 +157,21 @@
 		--sl-text-h4: 1.0625rem;
 	}
 }
+
+/* Wider screens get a wider text column: the pages are dense with tables and code. */
+@media (min-width: 80rem) {
+	:root[data-has-sidebar] {
+		--sl-content-width: 50rem;
+	}
+}
+@media (min-width: 100rem) {
+	:root[data-has-sidebar] {
+		--sl-content-width: 58rem;
+		--sl-sidebar-width: 18rem;
+	}
+}
+@media (min-width: 120rem) {
+	:root[data-has-sidebar] {
+		--sl-content-width: 64rem;
+	}
+}

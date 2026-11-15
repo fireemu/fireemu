@@ -4,6 +4,11 @@
 :root:has(.lp) {
 	--sl-content-width: 75rem;
 }
+@media (min-width: 105rem) {
+	:root:has(.lp) {
+		--sl-content-width: 84rem;
+	}
+}
 @media (min-width: 50rem) {
 	:root:has(.lp) {
 		--sl-content-pad-x: 2.5rem;
@@ -434,4 +439,16 @@
 	border-top: 1px solid var(--fe-border);
 	padding-top: 1.25rem;
 	margin-top: 1.25rem;
+}
+
+/* ---- Wide screens ---- */
+
+@media (min-width: 105rem) {
+	.lp-section {
+		grid-template-columns: 20rem minmax(0, 1fr);
+		gap: 4rem;
+	}
+	.lp-label h2 {
+		max-width: 19rem;
+	}
 }

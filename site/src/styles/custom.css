@@ -199,6 +199,24 @@ starlight-toc a[aria-current='true'] {
 	box-shadow: -3px 0 0 var(--fe-brand);
 }
 
+/* Words break only when a single word is wider than its line, never to make a column narrower. */
+.sl-markdown-content,
+.sl-markdown-content :is(td, th, li, p, dd, dt, summary) {
+	overflow-wrap: break-word;
+}
+/* Long prose stays readable on the wider column; tables, code and asides use the full width. */
+.sl-markdown-content > :is(p, ul, ol, blockquote):not(:where(.not-content *)) {
+	max-width: 50rem;
+}
+/* Capability tables: the identifier and its status share the first column. */
+.sl-markdown-content td.capability {
+	white-space: nowrap;
+}
+.sl-markdown-content td.capability .status {
+	display: table;
+	margin-top: 0.375rem;
+}
+
 /* ---- Page content ------------------------------------------------------------------------ */
 
 .content-panel + .content-panel {
@@ -241,7 +259,7 @@ h1#_top {
 	color: var(--fe-code-fg);
 	font-size: max(var(--fe-text-min), 0.9em);
 	padding: 0.1em 0.35em;
-	overflow-wrap: anywhere;
+	overflow-wrap: break-word;
 }
 
 .sl-markdown-content table:not(:where(.not-content *)) {
@@ -537,4 +555,24 @@ footer .meta a {
 /* Inline code inside an aside sits on the aside's own background, so it takes the lighter surface. */
 .starlight-aside :not(pre) > code {
 	background: var(--fe-surface);
+}
+
+/* On a phone a table scrolls sideways inside its own box; its columns keep a readable width
+   instead of being squeezed to a few characters. */
+@media (max-width: 50rem) {
+	.sl-markdown-content :is(td, th):not(:where(.not-content *)) {
+		min-width: 9rem;
+	}
+	.sl-markdown-content :is(td, th):not(:where(.not-content *)):has(> code:only-child),
+	.sl-markdown-content td.capability {
+		min-width: 0;
+	}
+}
+
+/* The generated compatibility tables span the text column, so their Details column has room. */
+@media (min-width: 50rem) {
+	.sl-markdown-content table:has(.status) {
+		display: table;
+		width: 100%;
+	}
 }

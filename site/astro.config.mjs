@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { fileURLToPath } from 'node:url';
 import { codeThemes } from './src/data/code-themes.mjs';
+import { codeBreaks } from './src/data/code-breaks.mjs';
 
 // The deployment target is set by the Pages workflow. The defaults build for
 // https://fireemu.github.io/fireemu/, the project page of the repository.
@@ -130,5 +131,7 @@ export default defineConfig({
 				},
 			],
 		}),
+		// Long inline code wraps at its separators, never mid-word (rewrites the built HTML).
+		codeBreaks(),
 	],
 });

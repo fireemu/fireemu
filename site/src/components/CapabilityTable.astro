@@ -10,13 +10,15 @@ const products = [...new Set(rows.map((row) => row.product))];
 		<h3>{product}</h3>
 		<table>
 			<thead>
-				<tr><th>Capability</th><th>Status</th><th>Details</th></tr>
+				<tr><th>Capability</th><th>Details</th></tr>
 			</thead>
 			<tbody>
 				{rows.filter((row) => row.product === product).map((row) => (
 					<tr>
-						<td><code>{row.id}</code></td>
-						<td><span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{row.status}</span></td>
+						<td class="capability">
+							<code>{row.id}</code>
+							<span class:list={['status', `status-${row.status.split(' ')[0].toLowerCase()}`]}>{row.status}</span>
+						</td>
 						<td>
 							{row.implemented.length > 0 && (
 								<details>
