@@ -82,7 +82,10 @@ mod provider_seeds;
 pub use provider_seeds::provider_config_seeds;
 mod tenant_document;
 mod tenant_seed;
-pub use password_hash::restorable_spec as restorable_imported_hash_spec;
+pub use password_hash::{
+    imported_hash_secret_fields, imported_hash_spec_error,
+    restorable_spec as restorable_imported_hash_spec,
+};
 pub use tenant_document::{exportable_tenant_members, restore_tenant_members};
 pub use tenant_seed::{
     prepare_tenant_seeds, prepare_tenant_seeds_with, seed_multi_tenancy, TenantIdFormat,
@@ -2548,6 +2551,7 @@ fn dispatch_with_blocking_hook(
     idp_trust: Option<&crate::oidc::LocalOidcTrust>,
     saml_trust: Option<&strict_saml::StrictSaml>,
     parent_authorized_domains: Option<&[String]>,
+    preverified: Option<&Arc<password_hash::PreVerified>>,
 ) -> JsonResponse {
     // A configuration that changes while the request runs is a retryable conflict in the strict
     // profile, fireemu's own guard; the emulator profile goes on with the configuration it finds,
@@ -2611,7 +2615,7 @@ fn dispatch_with_blocking_hook(
         body,
         headers,
         at,
-        &blocking_dispatch_options(state, parent_authorized_domains),
+        &blocking_dispatch_options(state, parent_authorized_domains, preverified),
     );
     if revision_changed() {
         return error(409, "BLOCKING_FUNCTION_CONFIGURATION_CHANGED");
@@ -2914,7 +2918,7 @@ fn dispatch_with_blocking_hook(
                 body,
                 headers,
                 at,
-                &blocking_dispatch_options(state, committed_domains),
+                &blocking_dispatch_options(state, committed_domains, preverified),
             )
         };
         if committed_response.status != 200 {
@@ -4666,10 +4670,8 @@ fn handle_with_policy_inner(
     } else {
         None
     };
-    // Non-blocking end-user requests keep the gate through admission and commit. Blocking hooks
-    // release it while the external callback runs and reacquire it in the commit boundary below,
-    // so a synchronous hook can safely re-enter Auth.
-    let _operation = if blocking_auth {
+    // Non-blocking end-user requests hold the gate for admission and commit, releasing it during imported-password derivation below. Blocking hooks release it during external callbacks and reacquire it at commit, so a synchronous hook can safely re-enter Auth.
+    let mut operation = if blocking_auth {
         None
     } else {
         match operation_gate.as_ref() {
@@ -4684,7 +4686,8 @@ fn handle_with_policy_inner(
     // Config holds the authorized domains (a Tenant resource has none). The list is read here,
     // under the parent lock this admission already takes before the tenant store's lock, so no
     // lock is nested later and the request sees one consistent project configuration.
-    let parent_authorized_domains = if !state.stateless_refresh_tokens && store_tenant.is_some() {
+    let mut parent_authorized_domains = if !state.stateless_refresh_tokens && store_tenant.is_some()
+    {
         let Some(parent) = state
             .registry
             .as_ref()
@@ -4967,6 +4970,77 @@ fn handle_with_policy_inner(
             return denial;
         }
     }
+    // Admission precedes expensive password work. Release both store and operation gate during derivation, then recheck live policy under the gate; dispatch still checks the current hash and password under the store lock.
+    let preverified_password = if route.handler == routes::Handler::SignInWithPassword {
+        drop(store);
+        drop(operation.take());
+        let snapshot = password_hash::preverify(
+            &store_arc,
+            str_field(body, "email").filter(|email| email.contains('@')),
+            str_field(body, "password"),
+            &password_hash::ImportedHashes,
+        );
+        operation = if blocking_auth {
+            None
+        } else {
+            match operation_gate.as_ref() {
+                Some(gate) => match gate.lock() {
+                    Ok(operation) => Some(operation),
+                    Err(_) => return error(500, "INTERNAL"),
+                },
+                None => None,
+            }
+        };
+        // A tenant may have been deleted or recreated while the gate was released. Read its parent and registry before reacquiring the selected store, in the original lock order.
+        let current_tenant_metadata = if let Some(tenant) = store_tenant.as_deref() {
+            let Some(registry) = state.registry.as_ref() else {
+                return error(500, "INTERNAL");
+            };
+            if strict {
+                let Some(parent) = registry.store_for(&store_project) else {
+                    return error(400, "INVALID_PROJECT_ID");
+                };
+                let Ok(parent) = parent.lock() else {
+                    return error(500, "INTERNAL");
+                };
+                if !parent.allows_tenants() {
+                    return unknown_tenant_refusal(route.handler, error(404, "TENANT_NOT_FOUND"));
+                }
+                parent_authorized_domains = Some(parent.authorized_domains());
+            }
+            if !registry
+                .tenant_store(&store_project, tenant)
+                .is_some_and(|current| Arc::ptr_eq(&current, &store_arc))
+            {
+                return unknown_tenant_refusal(route.handler, error(404, "TENANT_NOT_FOUND"));
+            }
+            registry.tenant_metadata(&store_project, tenant)
+        } else {
+            None
+        };
+        store = match store_arc.lock() {
+            Ok(store) => store,
+            Err(_) => return error(500, "INTERNAL"),
+        };
+        let denial = if store_tenant.is_some() {
+            tenant_policy_denial_with_metadata(
+                route.handler,
+                current_tenant_metadata.as_ref(),
+                body,
+                strict,
+            )
+        } else {
+            project_provider_denial(route.handler, store.sign_in_config(), body)
+        };
+        if let Some(denial) = denial {
+            return denial;
+        }
+        snapshot.map(Arc::new)
+    } else {
+        None
+    };
+    // Keep the original guard owner so the store and event drain still drop before the gate.
+    let _operation = &operation;
     // Verify the selected namespace and assertion before any account or transient mutation:
     // OIDC ID tokens with the startup issuer keys (O4), SAML responses with the provider's
     // certificates (O5 stage B). A verified SAML response reaches the credential parser only
@@ -5100,7 +5174,8 @@ fn handle_with_policy_inner(
             headers,
             at,
             &DispatchOptions::from(state)
-                .with_parent_authorized_domains(parent_authorized_domains.as_deref()),
+                .with_parent_authorized_domains(parent_authorized_domains.as_deref())
+                .with_preverified_password(preverified_password.as_ref()),
         );
         let retain_candidate = response.status == 200
             && pending_routed_project.is_some()
@@ -5177,6 +5252,7 @@ fn handle_with_policy_inner(
             idp_trust,
             strict_saml_trust.as_ref(),
             parent_authorized_domains.as_deref(),
+            preverified_password.as_ref(),
         )
     } else if let Some(reservation) = quota_reservation.clone() {
         // Run quota-accounted creation on an isolated store copy. This gives the quota
@@ -5191,7 +5267,8 @@ fn handle_with_policy_inner(
             headers,
             at,
             &DispatchOptions::from(state)
-                .with_parent_authorized_domains(parent_authorized_domains.as_deref()),
+                .with_parent_authorized_domains(parent_authorized_domains.as_deref())
+                .with_preverified_password(preverified_password.as_ref()),
         );
         // Determine creation from the request's returned identity and the isolated store
         // transition. A global user-count delta is not a per-request result: another actor may
@@ -5234,7 +5311,8 @@ fn handle_with_policy_inner(
             headers,
             at,
             &DispatchOptions::from(state)
-                .with_parent_authorized_domains(parent_authorized_domains.as_deref()),
+                .with_parent_authorized_domains(parent_authorized_domains.as_deref())
+                .with_preverified_password(preverified_password.as_ref()),
         );
         drop(store);
         response
@@ -5429,9 +5507,20 @@ struct DispatchOptions {
     /// link never checks its own list (without this snapshot it is refused), and the client
     /// project configuration reports this list for a tenant-scoped request.
     parent_authorized_domains: Option<Vec<String>>,
+    /// A password sign-in's imported-hash verification, computed before the store lock.
+    preverified_password: Option<Arc<password_hash::PreVerified>>,
 }
 
 impl DispatchOptions {
+    /// The same options carrying a verification computed outside the store lock.
+    fn with_preverified_password(
+        mut self,
+        preverified: Option<&Arc<password_hash::PreVerified>>,
+    ) -> Self {
+        self.preverified_password = preverified.cloned();
+        self
+    }
+
     /// The same options for a request admitted with the parent project's authorized domains.
     fn with_parent_authorized_domains(mut self, domains: Option<&[String]>) -> Self {
         self.parent_authorized_domains = domains.map(<[String]>::to_vec);
@@ -5443,12 +5532,14 @@ impl DispatchOptions {
 fn blocking_dispatch_options(
     state: &AuthState,
     parent_authorized_domains: Option<&[String]>,
+    preverified: Option<&Arc<password_hash::PreVerified>>,
 ) -> DispatchOptions {
     DispatchOptions {
         legacy_tokens: false,
         ..state.into()
     }
     .with_parent_authorized_domains(parent_authorized_domains)
+    .with_preverified_password(preverified)
 }
 
 impl From<&AuthState> for DispatchOptions {
@@ -5466,6 +5557,7 @@ impl From<&AuthState> for DispatchOptions {
                 IdpAssertionPolicy::Fixture => None,
             },
             parent_authorized_domains: None,
+            preverified_password: None,
             inbound_credential_policy: state.blocking.as_deref().map_or_else(
                 fireemu_core_functions::manifest::BlockingAuthTokenPolicy::default,
                 |blocking| {
@@ -5514,9 +5606,13 @@ fn dispatch(
             }
         }
         Handler::SignUp => sign_up(store, body, at, None),
-        Handler::SignInWithPassword => {
-            sign_in_with_password(store, body, at, options.legacy_tokens)
-        }
+        Handler::SignInWithPassword => sign_in_with_password(
+            store,
+            body,
+            at,
+            options.legacy_tokens,
+            options.preverified_password.as_deref(),
+        ),
         Handler::SignInWithCustomToken => sign_in_with_custom_token(
             store,
             body,
@@ -10464,6 +10560,7 @@ fn sign_in_with_password(
     body: &Value,
     at: LogicalInstant,
     legacy_tokens: bool,
+    preverified: Option<&password_hash::PreVerified>,
 ) -> JsonResponse {
     // The official order: the email is checked (present, well-formed) before the password.
     let Some(email) = str_field(body, "email") else {
@@ -10479,7 +10576,10 @@ fn sign_in_with_password(
         email,
         password,
         at,
-        &password_hash::ImportedHashes,
+        &password_hash::SnapshotHashes {
+            snapshot: preverified,
+            fallback: &password_hash::ImportedHashes,
+        },
     ) {
         Ok(result) => result,
         Err(e) => return auth_error(&e),
@@ -11637,7 +11737,9 @@ fn update(
     }
     // Duplicate-email mode never gives an address two password accounts, judged on the state
     // this update produces, so neither the address nor the password can arrive second
-    // (closure re-review 2026-09-24).
+    // (closure re-review 2026-09-24). Outside that mode the address check above is the whole
+    // rule: imported duplicates (batchCreate does not check uniqueness) keep changing their
+    // passwords (closure review 3, Closure Should Fix 2).
     let final_email = if plan.clear_email {
         None
     } else {
@@ -11647,7 +11749,8 @@ fn update(
     };
     let final_password =
         plan.password.is_some() || (store.has_password(&uid) && !plan.clear_password);
-    if final_password
+    if store.config().allow_duplicate_emails
+        && final_password
         && (plan.email.is_some() || plan.password.is_some())
         && final_email.as_deref().is_some_and(|email| {
             store
@@ -16530,6 +16633,123 @@ mod tests {
         let enabled = handle_with(&state, "PATCH", "/identitytoolkit.googleapis.com/admin/v2/projects/demo-app/config?updateMask=multiTenant.allowTenants", &headers, &json!({"multiTenant":{"allowTenants":true}}));
         assert_eq!(enabled.status, 200);
         state
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Keep the admission truth table and gate refusal assertions together.
+    fn imported_password_derivation_follows_admission_checks() {
+        use sha2::Digest as _;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // PICT three-way rows: API key, email provider, password; include the default and bad-key seeds.
+        for (key_valid, provider_enabled, password_correct) in [
+            (true, true, true),
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+            (false, false, false),
+            (false, true, false),
+            (true, false, false),
+            (false, false, true),
+        ] {
+            let mut state = apple_alias_state(false);
+            let mut tenancy = fireemu_core_session::tenancy::Tenancy::new("demo-app");
+            tenancy.declare_default_api_keys(&["synthetic-valid-key".to_owned()]);
+            state.tenancy = Some(Arc::new(std::sync::RwLock::new(tenancy)));
+            let imported = handle_with(
+                &state,
+                "POST",
+                "/identitytoolkit.googleapis.com/v1/projects/demo-app/accounts:batchCreate",
+                &RequestHeaders {
+                    authorization: Some("Bearer owner".to_owned()),
+                    ..RequestHeaders::default()
+                },
+                &json!({
+                    "hashAlgorithm":"SHA256", "rounds":1,
+                    "users":[{"localId":"imported", "email":"imported@example.com", "passwordHash":fireemu_core_types::hash::base64_standard(&sha2::Sha256::digest(b"password"))}]
+                }),
+            );
+            assert_eq!(imported.status, 200);
+            {
+                let mut store = state.store.lock().unwrap();
+                let mut config = store.sign_in_config().clone();
+                config.email_enabled = provider_enabled;
+                store.set_sign_in_config(config).unwrap();
+            }
+            let count = Arc::new(AtomicUsize::new(0));
+            let observed = count.clone();
+            password_hash::DERIVATION_OBSERVER.with_borrow_mut(|observer| {
+                *observer = Some(Box::new(move |entering| {
+                    if entering {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                    }
+                }));
+            });
+            let key = if key_valid {
+                "synthetic-valid-key"
+            } else {
+                "synthetic-bad-key"
+            };
+            let response = handle(
+                &state,
+                "POST",
+                &format!(
+                    "/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={key}"
+                ),
+                &json!({"email":"imported@example.com", "password":if password_correct { "password" } else { "wrong" }}),
+            );
+            password_hash::DERIVATION_OBSERVER.with_borrow_mut(|observer| *observer = None);
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                usize::from(key_valid && provider_enabled)
+            );
+            if key_valid && provider_enabled {
+                assert_eq!(response.status, if password_correct { 200 } else { 400 });
+                if !password_correct {
+                    assert_eq!(response.body["error"]["message"], "INVALID_PASSWORD");
+                }
+            } else if !key_valid {
+                assert_eq!(response.status, 400);
+                assert_eq!(
+                    response.body["error"]["message"],
+                    "API key not valid. Please pass a valid API key."
+                );
+            } else {
+                assert_eq!(response.status, 400);
+                assert_eq!(response.body["error"]["message"], "PASSWORD_LOGIN_DISABLED");
+            }
+            if key_valid && provider_enabled && password_correct {
+                let gate = state
+                    .registry
+                    .as_ref()
+                    .unwrap()
+                    .operation_gate("demo-app", None)
+                    .unwrap();
+                let poison_gate = gate.clone();
+                assert!(std::thread::spawn(move || {
+                    let _guard = poison_gate.lock().unwrap();
+                    panic!("poison the request gate");
+                })
+                .join()
+                .is_err());
+                assert!(gate.is_poisoned());
+                let observed = count.clone();
+                password_hash::DERIVATION_OBSERVER.with_borrow_mut(|observer| {
+                    *observer = Some(Box::new(move |entering| {
+                        if entering {
+                            observed.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }));
+                });
+                let refused = handle(&state, "POST", "/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=synthetic-valid-key", &json!({"email":"imported@example.com", "password":"password"}));
+                password_hash::DERIVATION_OBSERVER.with_borrow_mut(|observer| *observer = None);
+                assert_eq!(refused.status, 500);
+                assert_eq!(
+                    count.load(Ordering::SeqCst),
+                    1,
+                    "a refused gate must not derive"
+                );
+            }
+        }
     }
 
     #[test]

@@ -4851,6 +4851,19 @@ impl AuthStore {
         Ok((uid, violations))
     }
 
+    /// The imported foreign hash a password sign-in with `email` would check, cloned so the
+    /// caller can verify it without holding the store. [`Self::verify_password_with_imports`]
+    /// still decides the sign-in against the hash it then finds: a verifier that answers from
+    /// such a snapshot must do so only for an equal hash.
+    #[must_use]
+    pub fn imported_password_for_sign_in(&self, email: &str) -> Option<ImportedPasswordHash> {
+        self.password_owner_by_email(email)?
+            .password
+            .as_ref()?
+            .imported
+            .clone()
+    }
+
     /// Verifies an email + password sign-in; returns the user ID.
     ///
     /// This compatibility wrapper preserves the historical API for callers that do not need

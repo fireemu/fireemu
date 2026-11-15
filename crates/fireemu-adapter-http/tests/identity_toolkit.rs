@@ -23070,3 +23070,255 @@ fn a_bulk_delete_that_skips_rows_announces_nothing_for_them_either() {
         "{lookup}"
     );
 }
+
+/// A slow imported-hash verification runs outside the Auth store lock and the end-user gate:
+/// a concurrent request completes while the sign-in is still deriving (closure security
+/// review 3, 2026-09-24, Should Fix 2).
+#[test]
+fn a_slow_imported_hash_verification_does_not_block_other_requests() {
+    let b64 = fireemu_core_types::hash::base64_standard;
+    let s = state();
+    let (status, imported) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &json!({"hashAlgorithm": "MD5", "rounds": 8192,
+            "users": [{"localId": "md5", "email": "md5@example.com",
+                "passwordHash": b64(b"00000000000000000000000000000000"), "salt": b64(b"salt")}]}),
+    );
+    assert_eq!(status, 200, "{imported}");
+    let long_password = "p".repeat(150_000);
+    let started = std::time::Instant::now();
+    std::thread::scope(|scope| {
+        let slow = scope.spawn(|| {
+            let answer = post(
+                &s,
+                &format!("{V1}/accounts:signInWithPassword"),
+                &json!({"email": "md5@example.com", "password": long_password}),
+            );
+            (answer, started.elapsed())
+        });
+        // Cheap requests issued all through the derivation: each one would wait for the rest of
+        // it if the sign-in held the store lock or the end-user gate.
+        let mut slowest = std::time::Duration::ZERO;
+        let mut issued = 0;
+        while !slow.is_finished() {
+            let begun = std::time::Instant::now();
+            let (status, created) = post(
+                &s,
+                &format!("{V1}/accounts:signUp"),
+                &json!({"returnSecureToken": true}),
+            );
+            assert_eq!(status, 200, "{created}");
+            slowest = slowest.max(begun.elapsed());
+            issued += 1;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let ((status, refused), took) = slow.join().unwrap();
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["error"]["message"], "INVALID_PASSWORD");
+        assert!(
+            took > std::time::Duration::from_secs(2) && issued >= 10,
+            "the derivation must be slow enough to tell ({took:?}, {issued} requests)"
+        );
+        assert!(
+            slowest * 4 < took,
+            "a concurrent signUp waited {slowest:?} during a {took:?} sign-in"
+        );
+    });
+}
+
+/// Outside duplicate-email mode, two imported password accounts that share an address can
+/// each change only their password (closure review 3, 2026-09-24, Closure Should Fix 2). Only
+/// the strict profile imports such duplicates (production's batchCreate does not check
+/// uniqueness); the emulator profile refuses the second row as firebase-tools does.
+#[test]
+fn a_password_only_update_of_an_imported_duplicate_is_allowed_outside_duplicate_email_mode() {
+    let b64 = fireemu_core_types::hash::base64_standard;
+    let s = strict_state();
+    let (status, imported) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &json!({"hashAlgorithm": "MD5", "rounds": 0, "users": [
+            {"localId": "first", "email": "same@example.com", "passwordHash": b64(b"aa"), "salt": b64(b"s")},
+            {"localId": "second", "email": "same@example.com", "passwordHash": b64(b"bb"), "salt": b64(b"s")}
+        ]}),
+    );
+    assert_eq!(status, 200, "{imported}");
+    assert!(imported.get("error").is_none(), "{imported}");
+    for uid in ["first", "second"] {
+        let (status, updated) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:update"),
+            &json!({"localId": uid, "password": "password456"}),
+        );
+        assert_eq!(status, 200, "{uid}: {updated}");
+    }
+    // Near miss: moving a third account's address onto the shared one is still refused.
+    let (_, third) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts"),
+        &json!({"localId": "third", "email": "third@example.com", "password": "password123"}),
+    );
+    assert!(third.get("error").is_none(), "{third}");
+    let (status, refused) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "third", "email": "same@example.com"}),
+    );
+    assert_eq!(
+        (status, refused["error"]["message"].as_str()),
+        (400, Some("EMAIL_EXISTS")),
+        "{refused}"
+    );
+}
+
+/// `STANDARD_SCRYPT` parallelization follows the production recording AUTH-EDGES-OBS-20261115-01
+/// (`scrypt-import-*`/`scrypt-login-*`, cpuMemCost 16, blockSize 1, dkLen 32): 1, 4, 5 and 16
+/// import and sign in, 0 is `INVALID_HASH_PARAMETER`. Above 16 is unrecorded and stays refused,
+/// as does a parallelization whose total work exceeds the local bound.
+#[test]
+fn standard_scrypt_parallelization_follows_the_recording() {
+    let b64 = fireemu_core_types::hash::base64_standard;
+    for s in [state(), strict_state()] {
+        for p in [0_u32, 1, 4, 5, 16, 17] {
+            let salt = format!("salt{p}");
+            let mut hash = [0_u8; 32];
+            if p > 0 {
+                let params = scrypt::Params::new(4, 1, p, 32).unwrap();
+                scrypt::scrypt(b"password123", salt.as_bytes(), &params, &mut hash).unwrap();
+            }
+            let email = format!("p{p}@example.com");
+            let (status, imported) = admin(
+                &s,
+                "POST",
+                &format!("{ADMIN}/accounts:batchCreate"),
+                &json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 16, "blockSize": 1,
+                    "parallelization": p, "dkLen": 32,
+                    "users": [{"localId": format!("p{p}"), "email": email,
+                        "passwordHash": b64(&hash), "salt": b64(salt.as_bytes())}]}),
+            );
+            if p == 0 || p > 16 {
+                assert_eq!(status, 400, "p={p}: {imported}");
+                assert_eq!(imported["error"]["message"], "INVALID_HASH_PARAMETER");
+                continue;
+            }
+            assert_eq!(status, 200, "p={p}: {imported}");
+            let (status, signed_in) = post(
+                &s,
+                &format!("{V1}/accounts:signInWithPassword"),
+                &json!({"email": email, "password": "password123", "returnSecureToken": true}),
+            );
+            assert_eq!(status, 200, "p={p}: {signed_in}");
+        }
+        // The total work stays bounded: 16 lanes over a 32 MiB block are refused.
+        let (status, refused) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1_u64 << 15, "blockSize": 8,
+                "parallelization": 16, "dkLen": 32,
+                "users": [{"localId": "heavy", "email": "heavy@example.com",
+                    "passwordHash": b64(&[0; 32]), "salt": b64(b"salt")}]}),
+        );
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(refused["error"]["message"], "INVALID_HASH_PARAMETER");
+    }
+}
+
+/// While an account is disabled its earlier ID token is `USER_DISABLED` in both profiles; after
+/// re-enabling it is usable again in both (production: AUTH-ACCOUNT recording 2026-09-23,
+/// admin/disable; firebase-tools 15.28.2 copies `disabled` only, `operations.js:878`). Security
+/// review of the validSince lane, 2026-11-15, suggested test 2.
+#[test]
+fn a_disabled_account_refuses_its_token_until_re_enabled_in_both_profiles() {
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, account) = post(
+            &s,
+            &format!("{V1}/accounts:signUp"),
+            &json!({"email": "paused@example.com", "password": "hunter22", "returnSecureToken": true}),
+        );
+        assert_eq!(status, 200, "{account}");
+        advance(&s, 2);
+        let toggle = |disable: bool| {
+            let (status, body) = admin(
+                &s,
+                "POST",
+                &format!("{ADMIN}/accounts:update"),
+                &json!({"localId": account["localId"], "disableUser": disable}),
+            );
+            assert_eq!(status, 200, "{body}");
+        };
+        let lookup = || {
+            post(
+                &s,
+                &format!("{V1}/accounts:lookup"),
+                &json!({"idToken": account["idToken"]}),
+            )
+        };
+        toggle(true);
+        let (status, refused) = lookup();
+        assert_eq!(
+            (status, refused["error"]["message"].as_str()),
+            (400, Some("USER_DISABLED")),
+            "strict={strict}: {refused}"
+        );
+        toggle(false);
+        let (status, looked) = lookup();
+        assert_eq!(status, 200, "strict={strict}: {looked}");
+    }
+}
+
+/// In duplicate-email mode a password account cannot move onto an address another password
+/// account holds, even when the same update drops its password: the store judges the move on
+/// the account as it is (`validate_email_update`), before the update applies.
+#[test]
+fn duplicate_email_mode_refuses_a_password_account_move_even_when_it_drops_the_password() {
+    let s = state();
+    let (status, body) = admin(
+        &s,
+        "PATCH",
+        "/identitytoolkit.googleapis.com/admin/v2/projects/demo-app/config?updateMask=signIn.allowDuplicateEmails,emailPrivacyConfig.enableImprovedEmailPrivacy",
+        &json!({"signIn": {"allowDuplicateEmails": true}, "emailPrivacyConfig": {"enableImprovedEmailPrivacy": false}}),
+    );
+    assert_eq!(status, 200, "{body}");
+    for (local_id, email) in [
+        ("holder", "held@example.com"),
+        ("mover", "mover@example.com"),
+    ] {
+        let (status, created) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts"),
+            &json!({"localId": local_id, "email": email, "password": "password123"}),
+        );
+        assert_eq!(status, 200, "{created}");
+    }
+    let (status, refused) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "mover", "email": "held@example.com"}),
+    );
+    assert_eq!(
+        (status, refused["error"]["message"].as_str()),
+        (400, Some("EMAIL_EXISTS")),
+        "{refused}"
+    );
+    let (status, refused) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:update"),
+        &json!({"localId": "mover", "email": "held@example.com", "deleteProvider": ["password"]}),
+    );
+    assert_eq!(
+        (status, refused["error"]["message"].as_str()),
+        (400, Some("EMAIL_EXISTS")),
+        "{refused}"
+    );
+}

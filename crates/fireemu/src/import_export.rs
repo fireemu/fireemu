@@ -2475,12 +2475,10 @@ fn imported_user(record: &UserRecord, path: &Path) -> Result<ImportedUser, Artif
     let mut imported_password = None;
     for (member, value) in &record.extra {
         if member == IMPORTED_PASSWORD_MEMBER && imported_password.is_none() {
-            imported_password = Some(imported_password_of(value).ok_or_else(|| {
-                refuse(format!(
-                    "account {}: {IMPORTED_PASSWORD_MEMBER} is not {{spec, hash, salt}}",
-                    record.local_id
-                ))
-            })?);
+            imported_password = Some(
+                imported_password_of(value)
+                    .map_err(|cause| refuse(format!("account {}: {cause}", record.local_id)))?,
+            );
             continue;
         }
         return Err(refuse(format!(
@@ -3768,10 +3766,12 @@ fn export_auth(
     };
     let store = snapshot.default_store();
     let mut file = AccountsFile::default();
+    let accounts_path = section_dir.join(ACCOUNTS_FILE);
     for user in store.users_by_creation() {
+        ensure_restorable(store, user, &accounts_path.full)
+            .map_err(|e| ArtifactError::new("auth", &accounts_path, e))?;
         file.users.push(exported_account(store, user, None));
     }
-    let accounts_path = section_dir.join(ACCOUNTS_FILE);
     accounts_path
         .write(file.to_json().as_bytes())
         .map_err(|e| ArtifactError::new("auth", &accounts_path, e))?;
@@ -3823,11 +3823,13 @@ fn export_auth(
             metadata: Some(exported_tenant_metadata(tenant_metadata)),
         });
         let mut file = AccountsFile::default();
+        let path = section_dir.join(format!("accounts-{tenant}.json"));
         for user in tenant_store.users_by_creation() {
+            ensure_restorable(tenant_store, user, &path.full)
+                .map_err(|e| ArtifactError::new("auth", &path, e))?;
             file.users
                 .push(exported_account(tenant_store, user, Some(tenant)));
         }
-        let path = section_dir.join(format!("accounts-{tenant}.json"));
         path.write(file.to_json().as_bytes())
             .map_err(|e| ArtifactError::new("auth", &path, e))?;
     }
@@ -3885,11 +3887,18 @@ fn export_auth(
 /// The fireemu-only account member carrying native and imported foreign hashes with their algorithm parameters, which the Identity Toolkit export document cannot describe.
 const IMPORTED_PASSWORD_MEMBER: &str = "fireemuImportedPassword";
 
+/// The member of `fireemuImportedPassword` that names the secrets its spec carries. HMAC and
+/// Firebase SCRYPT hashes verify only with their `signerKey`, so an export keeps the key in
+/// the spec (dropping it would make the account unrestorable) and marks it here, so a reader
+/// knows the file holds key material. Artifacts written before the marker existed have no such
+/// member and load unchanged; a marker that is present must name exactly what the spec carries.
+const IMPORTED_PASSWORD_SECRETS: &str = "secrets";
+
 fn imported_password_json(
     hash: &fireemu_core_auth::store::ImportedPasswordHash,
 ) -> fireemu_core_export::json::Json {
     use fireemu_core_export::json::Json;
-    Json::Object(vec![
+    let mut members = vec![
         ("spec".to_owned(), Json::String(hash.spec.clone())),
         (
             "hash".to_owned(),
@@ -3899,15 +3908,29 @@ fn imported_password_json(
             "salt".to_owned(),
             Json::String(fireemu_core_types::hash::base64_standard(&hash.salt)),
         ),
-    ])
+    ];
+    let secrets = fireemu_adapter_http::identity_toolkit::imported_hash_secret_fields(&hash.spec);
+    if !secrets.is_empty() {
+        members.push((
+            IMPORTED_PASSWORD_SECRETS.to_owned(),
+            Json::Array(
+                secrets
+                    .iter()
+                    .map(|name| Json::String((*name).to_owned()))
+                    .collect(),
+            ),
+        ));
+    }
+    Json::Object(members)
 }
 
 fn imported_password_of(
     value: &fireemu_core_export::json::Json,
-) -> Option<fireemu_core_auth::store::ImportedPasswordHash> {
+) -> Result<fireemu_core_auth::store::ImportedPasswordHash, String> {
     use fireemu_core_export::json::Json;
+    let shape = || format!("{IMPORTED_PASSWORD_MEMBER} is not {{spec, hash, salt[, secrets]}}");
     let Json::Object(members) = value else {
-        return None;
+        return Err(shape());
     };
     let text = |key: &str| {
         members.iter().find_map(|(name, value)| match value {
@@ -3915,18 +3938,72 @@ fn imported_password_of(
             _ => None,
         })
     };
-    if members.len() != 3 {
-        return None;
+    let secrets = members
+        .iter()
+        .find(|(name, _)| name == IMPORTED_PASSWORD_SECRETS)
+        .map(|(_, value)| match value {
+            Json::Array(items) => items
+                .iter()
+                .map(|item| match item {
+                    Json::String(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        });
+    let known = members.iter().all(|(name, _)| {
+        ["spec", "hash", "salt", IMPORTED_PASSWORD_SECRETS].contains(&name.as_str())
+    });
+    if !known || members.len() != 3 + usize::from(secrets.is_some()) {
+        return Err(shape());
     }
     let hash = fireemu_core_auth::store::ImportedPasswordHash {
-        spec: text("spec")?.to_owned(),
-        hash: decode_base64(text("hash")?)?,
-        salt: decode_base64(text("salt")?)?,
+        spec: text("spec").ok_or_else(shape)?.to_owned(),
+        hash: text("hash").and_then(decode_base64).ok_or_else(shape)?,
+        salt: text("salt").and_then(decode_base64).ok_or_else(shape)?,
     };
-    // A restored spec keeps the parameter ranges an import enforces (closure re-review
-    // 2026-09-24): an out-of-range spec is refused rather than installed.
-    fireemu_adapter_http::identity_toolkit::restorable_imported_hash_spec(&hash.spec, &hash.hash)
-        .then_some(hash)
+    // A restored spec keeps the parameter ranges an import enforces, and only those (closure
+    // reviews 2 and 3, 2026-09-24): what batchCreate accepts restores, the rest is refused.
+    if let Some(cause) =
+        fireemu_adapter_http::identity_toolkit::imported_hash_spec_error(&hash.spec)
+    {
+        return Err(format!("{IMPORTED_PASSWORD_MEMBER}: {cause}"));
+    }
+    if let Some(secrets) = secrets {
+        let expected =
+            fireemu_adapter_http::identity_toolkit::imported_hash_secret_fields(&hash.spec);
+        if secrets.as_deref() != Some(expected) {
+            return Err(format!(
+                "{IMPORTED_PASSWORD_MEMBER}: {IMPORTED_PASSWORD_SECRETS} must be {expected:?}"
+            ));
+        }
+    }
+    Ok(hash)
+}
+
+/// Refuses to export an account whose credential this fireemu could not import again, naming
+/// the cause, rather than writing an export that fails later on restore.
+fn ensure_restorable(
+    store: &fireemu_core_auth::store::AuthStore,
+    user: &fireemu_core_auth::store::UserRecord,
+    path: &impl std::fmt::Debug,
+) -> Result<(), String> {
+    use fireemu_core_auth::store::{ExportablePassword, PasswordDigest};
+    if let Some(ExportablePassword::Hash(hash)) = store
+        .password_digest(&user.local_id)
+        .map(PasswordDigest::export_form)
+    {
+        if let Some(cause) =
+            fireemu_adapter_http::identity_toolkit::imported_hash_spec_error(&hash.spec)
+        {
+            return Err(format!(
+                "account {}: its password cannot be restored from an export ({cause}); {path:?} \
+                 is not written",
+                user.local_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// One account as the Identity Toolkit document an export carries.
@@ -7309,6 +7386,324 @@ mod tests {
         restored.import_user_trusted(restored_user).unwrap();
         let uid = restored.user_by_id("h").unwrap().local_id.clone();
         assert!(restored.password_digest(&uid).is_some());
+    }
+
+    /// One account holding `hash`, exported, as the record a restore reads.
+    fn exported_with(
+        hash: &fireemu_core_auth::store::ImportedPasswordHash,
+    ) -> (
+        fireemu_core_auth::store::AuthStore,
+        fireemu_core_export::auth::UserRecord,
+    ) {
+        use fireemu_core_auth::{mfa::TotpPolicy, store::AuthStore};
+        use fireemu_core_export::auth::UserRecord;
+        use fireemu_core_types::determinism::SplitMix64;
+        let record = UserRecord {
+            local_id: "h".to_owned(),
+            email: Some("hashed@example.com".to_owned()),
+            created_at: Some("100000".to_owned()),
+            ..UserRecord::default()
+        };
+        let mut user = super::imported_user(&record, std::path::Path::new("offline.json")).unwrap();
+        user.imported_password = Some(hash.clone());
+        let mut store = AuthStore::new("demo-app", SplitMix64::new(1), TotpPolicy::default());
+        store.import_user(user).unwrap();
+        let exported = super::exported_account(&store, store.user_by_id("h").unwrap(), None);
+        (store, exported)
+    }
+
+    fn hash_with(spec: &str, hash: &[u8]) -> fireemu_core_auth::store::ImportedPasswordHash {
+        fireemu_core_auth::store::ImportedPasswordHash {
+            spec: spec.to_owned(),
+            hash: hash.to_vec(),
+            salt: vec![4, 5],
+        }
+    }
+
+    /// Everything batchCreate accepts restores from fireemu's own export, at each edge of the
+    /// import ranges, including bcrypt costs and PBKDF outputs beyond the sign-in work bounds
+    /// (closure review 3, Closure Should Fix 1).
+    #[test]
+    fn exports_restore_at_every_import_boundary() {
+        let path = std::path::Path::new("offline.json");
+        let bcrypt17 = format!("$2b$17${}", "a".repeat(53));
+        let cases: Vec<(&str, Vec<u8>)> = vec![
+            (r#"{"algorithm":"BCRYPT"}"#, bcrypt17.into_bytes()),
+            (
+                r#"{"algorithm":"PBKDF","family":"SHA256","rounds":120000}"#,
+                vec![9; 129],
+            ),
+            (
+                r#"{"algorithm":"PBKDF","family":"SHA1","rounds":1}"#,
+                vec![9; 20],
+            ),
+            (r#"{"algorithm":"MD5","rounds":8192}"#, b"00".to_vec()),
+            (
+                r#"{"algorithm":"SCRYPT","key":"AQID","separator":"Bw==","rounds":8,"memoryCost":14}"#,
+                vec![1; 32],
+            ),
+            (
+                r#"{"algorithm":"STANDARD_SCRYPT","logN":4,"blockSize":1,"parallelization":16,"dkLen":1024}"#,
+                vec![1; 1024],
+            ),
+            (
+                r#"{"algorithm":"HMAC","family":"SHA512","key":"","order":"PASSWORD_AND_SALT"}"#,
+                vec![1; 64],
+            ),
+            (
+                r#"{"algorithm":"ARGON2","variant":"argon2id","version":19,"iterations":16,"memoryKib":32768,"parallelism":16,"hashLen":1024,"associatedData":""}"#,
+                vec![1; 1024],
+            ),
+        ];
+        for (spec, bytes) in cases {
+            let hash = hash_with(spec, &bytes);
+            let (store, exported) = exported_with(&hash);
+            super::ensure_restorable(&store, store.user_by_id("h").unwrap(), &path)
+                .unwrap_or_else(|e| panic!("{spec}: {e}"));
+            let restored =
+                super::imported_user(&exported, path).unwrap_or_else(|e| panic!("{spec}: {e}"));
+            assert_eq!(restored.imported_password, Some(hash), "{spec}");
+        }
+    }
+
+    /// An account a restore would refuse is refused at export time, naming the cause, instead
+    /// of producing an export that fails later.
+    #[test]
+    fn an_unrestorable_credential_is_refused_at_export_time() {
+        let path = std::path::Path::new("accounts.json");
+        for (spec, cause) in [
+            (
+                r#"{"algorithm":"SCRYPT","key":"AQID","separator":"Bw==","rounds":8,"memoryCost":40}"#,
+                "memoryCost 40",
+            ),
+            (r#"{"algorithm":"MD5","rounds":8193}"#, "rounds 8193"),
+            (r#"{"algorithm":"NOPE"}"#, "does not decode"),
+        ] {
+            let (store, _) = exported_with(&hash_with(spec, &[1, 2]));
+            let error = super::ensure_restorable(&store, store.user_by_id("h").unwrap(), &path)
+                .expect_err(spec);
+            assert!(
+                error.contains("account h") && error.contains(cause),
+                "{error}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[allow(clippy::too_many_lines)] // Keep the full export fixture and its permission assertions together.
+    fn auth_exports_with_signer_keys_have_owner_only_permissions() {
+        use fireemu_adapter_grpc::gateway::Gateway;
+        use fireemu_adapter_grpc::local::LocalBackend;
+        use fireemu_core_auth::mfa::TotpPolicy;
+        use fireemu_core_auth::store::{AuthRegistry, AuthStore};
+        use fireemu_core_firestore::index::{IndexSet, IndexValidationPolicy, PlanningContext};
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_storage::store::StorageState;
+        use fireemu_core_types::determinism::SplitMix64;
+        use fireemu_core_types::edition::{FirestoreApiMode, FirestoreEdition};
+        use std::sync::{Arc, Mutex};
+
+        use std::os::unix::fs::PermissionsExt as _;
+        let root =
+            std::env::temp_dir().join(format!("fireemu-auth-secret-export-{}", std::process::id()));
+        let clock = Arc::new(Mutex::new(VirtualClock::new(LogicalInstant::UNIX_EPOCH)));
+        let auth = Arc::new(AuthRegistry::new(
+            "demo-app",
+            Arc::new(Mutex::new(AuthStore::new(
+                "demo-app",
+                SplitMix64::new(1),
+                TotpPolicy::default(),
+            ))),
+        ));
+        let backend = Arc::new(LocalBackend::new(
+            Gateway {
+                enforce_limits: true,
+                ctx: PlanningContext {
+                    edition: FirestoreEdition::Standard,
+                    api_mode: FirestoreApiMode::Native,
+                    policy: IndexValidationPolicy::Production,
+                },
+                indexes: IndexSet::default(),
+            },
+            clock.clone(),
+            1,
+        ));
+        let storage = Arc::new(fireemu_adapter_http::storage::StorageState {
+            store: Mutex::new(StorageState::new(1)),
+            clock: clock.clone(),
+            auth: auth.clone(),
+            tenancy: None,
+            rules: Arc::new(fireemu_adapter_http::storage::StorageRulesRegistry::default()),
+            project: "demo-app".to_owned(),
+            events: None,
+            barrier: None,
+            firestore: None,
+            faults: None,
+            clock_observer: None,
+            app_check_policy: None,
+            admin_capability: None,
+            server_requests: fireemu_adapter_http::storage::StorageServerRequests::default(),
+            token_acceptance: fireemu_core_auth::jwt::TokenAcceptance::default(),
+            allow_unsigned_id_tokens: false,
+            control_token: None,
+        });
+        let database = Arc::new(Mutex::new(fireemu_adapter_database::rest::Database::new(
+            fireemu_adapter_database::rest::RestOptions::default(),
+            1,
+        )));
+        let endpoints = super::Endpoints {
+            backend: &backend,
+            auth: &auth,
+            storage: &storage,
+            clock: &clock,
+            database: &database,
+            project: "demo-app",
+            blocking: None,
+            auth_operation_gate: None,
+        };
+        auth.ensure_tenant("demo-app", "tenant-a").unwrap();
+        for (tenant, spec) in [
+            (
+                None,
+                r#"{"algorithm":"HMAC","family":"SHA256","key":"AQID","order":"PASSWORD_AND_SALT"}"#,
+            ),
+            (
+                Some("tenant-a"),
+                r#"{"algorithm":"SCRYPT","key":"AQID","separator":"Bw==","rounds":1,"memoryCost":1}"#,
+            ),
+        ] {
+            let hash = hash_with(spec, &[1; 32]);
+            let (_, record) = exported_with(&hash);
+            let user = super::imported_user(&record, std::path::Path::new("offline.json")).unwrap();
+            tenant
+                .map_or_else(
+                    || auth.store_for("demo-app"),
+                    |tenant| auth.tenant_store("demo-app", tenant),
+                )
+                .unwrap()
+                .lock()
+                .unwrap()
+                .import_user(user)
+                .unwrap();
+        }
+        let directory = root.join("export");
+        super::export(
+            &directory,
+            super::Products {
+                firestore: false,
+                auth: true,
+                storage: false,
+                database: false,
+            },
+            &endpoints,
+            "test",
+        )
+        .unwrap();
+        for name in ["accounts.json", "accounts-tenant-a.json"] {
+            let path = directory.join(super::AUTH_PATH).join(name);
+            let document: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(
+                document["users"][0]["fireemuImportedPassword"]["secrets"],
+                serde_json::json!(["signerKey"])
+            );
+            let spec: serde_json::Value = serde_json::from_str(
+                document["users"][0]["fireemuImportedPassword"]["spec"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(spec["key"], "AQID");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600,
+                "{name}"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// HMAC and Firebase SCRYPT exports keep their signerKey and say so; an artifact written
+    /// before the marker loads, and a marker that disagrees with the spec is refused.
+    #[test]
+    fn signer_keys_are_exported_as_marked_secrets() {
+        use fireemu_core_export::json::Json;
+        let path = std::path::Path::new("offline.json");
+        let hmac = hash_with(
+            r#"{"algorithm":"HMAC","family":"SHA256","key":"AQID","order":"PASSWORD_AND_SALT"}"#,
+            &[1; 32],
+        );
+        let (_, exported) = exported_with(&hmac);
+        let (_, member) = &exported.extra[0];
+        let Json::Object(members) = member else {
+            panic!("{member:?}")
+        };
+        let secrets = members
+            .iter()
+            .find(|(name, _)| name == "secrets")
+            .map(|(_, v)| v);
+        assert_eq!(
+            secrets,
+            Some(&Json::Array(vec![Json::String("signerKey".to_owned())]))
+        );
+        assert_eq!(
+            super::imported_user(&exported, path)
+                .unwrap()
+                .imported_password,
+            Some(hmac.clone())
+        );
+        // An artifact without the marker (written before it existed) loads unchanged.
+        let mut old = exported.clone();
+        if let Json::Object(members) = &mut old.extra[0].1 {
+            members.retain(|(name, _)| name != "secrets");
+        }
+        assert_eq!(
+            super::imported_user(&old, path).unwrap().imported_password,
+            Some(hmac)
+        );
+        // A wrong marker, or a marker on a spec without a secret, is refused.
+        let mut wrong = exported.clone();
+        if let Json::Object(members) = &mut wrong.extra[0].1 {
+            for (name, value) in members.iter_mut() {
+                if name == "secrets" {
+                    *value = Json::Array(Vec::new());
+                }
+            }
+        }
+        assert!(super::imported_user(&wrong, path)
+            .unwrap_err()
+            .to_string()
+            .contains("secrets"));
+        let (_, plain) = exported_with(&hash_with(r#"{"algorithm":"MD5","rounds":1}"#, b"00"));
+        let Json::Object(members) = &plain.extra[0].1 else {
+            panic!()
+        };
+        assert!(members.iter().all(|(name, _)| name != "secrets"));
+        let mut marked = plain.clone();
+        if let Json::Object(members) = &mut marked.extra[0].1 {
+            members.push((
+                "secrets".to_owned(),
+                Json::Array(vec![Json::String("signerKey".to_owned())]),
+            ));
+        }
+        assert!(super::imported_user(&marked, path).is_err());
+        // A repeated member is refused, as is an unknown one.
+        let mut repeated = plain.clone();
+        if let Json::Object(members) = &mut repeated.extra[0].1 {
+            let salt = members
+                .iter()
+                .find(|(name, _)| name == "salt")
+                .unwrap()
+                .clone();
+            members.push(salt);
+        }
+        assert!(super::imported_user(&repeated, path).is_err());
+        let mut extra = plain;
+        if let Json::Object(members) = &mut extra.extra[0].1 {
+            members.push(("other".to_owned(), Json::Null));
+        }
+        assert!(super::imported_user(&extra, path).is_err());
     }
 
     /// A restored foreign hash keeps the import's parameter ranges: an out-of-range spec in
