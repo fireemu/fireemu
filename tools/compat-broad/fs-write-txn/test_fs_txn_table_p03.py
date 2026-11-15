@@ -158,12 +158,13 @@ def _frame_a(state="v2", **extra):
 
 @pytest.mark.parametrize("label,frames,ok,owned", [
     ("a bare head then the documents", [{"transaction": "dG9rZW4="}, _frame_a(), {"missing": "M"}], True, True),
-    ("the transaction on the first document", [_frame_a(transaction="dG9rZW4="), {"missing": "M"}], True, True),
+    ("the old fireemu grpc shape with the transaction on the first document", [_frame_a(transaction="dG9rZW4="), {"missing": "M"}], False, True),
     ("a head an unset decoder member decorates", [{"transaction": "dG9rZW4=", "found": None, "result": ""}, _frame_a(), {"missing": "M"}], True, True),
     ("no transaction at all", [_frame_a(), {"missing": "M"}], False, False),
     ("the transaction on the second document", [_frame_a(), {"missing": "M", "transaction": "dG9rZW4="}], False, False),
     ("a head that also carries a discriminator", [{"transaction": "dG9rZW4=", "result": "found"}, _frame_a(), {"missing": "M"}], False, True),
     ("a head with another key", [{"transaction": "dG9rZW4=", "extra": 1}, _frame_a(), {"missing": "M"}], False, True),
+    ("a head with read time", [{"transaction": "dG9rZW4=", "readTime": {"seconds": "101"}}, _frame_a(), {"missing": "M"}], False, True),
     ("two bare heads", [{"transaction": "dG9rZW4="}, {"transaction": "dG9rZW4="}, _frame_a(), {"missing": "M"}], False, True),
     ("a head and too few documents", [{"transaction": "dG9rZW4="}, _frame_a()], False, True),
     ("a malformed transaction", [{"transaction": "not base64!"}, _frame_a(), {"missing": "M"}], False, False),
