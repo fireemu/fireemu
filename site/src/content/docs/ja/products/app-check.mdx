@@ -1,0 +1,422 @@
+---
+title: App Check
+description: ローカルのデバッグトークンを使って、有効なApp Checkトークンがある場合とない場合のリクエストを、Authentication、Firestore、Storage、callable関数がどう扱うかをテストします。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemuには、ローカルのApp Check実装が含まれています。デバッグトークンの交換、JWKS、そしてAuthentication、Firestore、Storage、callable関数に対する検証です。Local Emulator SuiteにはApp Checkエミュレーターは含まれていません。
+
+<Facts items={[
+  { label: 'ステータス', value: 'ローカルテスト' },
+  { label: 'デフォルトポート', value: '9099（Authenticationのポート）' },
+  { label: '起動', value: 'デフォルトで起動' },
+]} />
+
+## テストできること
+
+- `strict`で設定なしに動作するデバッグトークンの交換（[設定なしでデバッグトークンを交換する](#exchange-a-debug-token-with-no-configuration)）。
+- Authentication、Firestore、Storageに対する強制: `off`、`unenforced`、`enforced`（[アプリを登録して強制する](#register-apps-and-enforce)）。
+- `request.app`を含む、`enforceAppCheck`を指定したcallable関数（[Callable関数](#callable-functions)）。
+- 存在しない、形式が不正な、期限切れの、または署名が不正なトークンの拒否。
+- `onRequest`関数内の`getAppCheck().verifyToken()`（[Admin SDKで検証する](#verify-with-the-admin-sdk-getappcheckverifytoken)）。
+
+## 接続
+
+交換エンドポイントは`POST /v1/projects/{project}/apps/{appId}:exchangeDebugToken`です。そのホストは`FIREEMU_APP_CHECK_EMULATOR_HOST`で、`fireemu exec`は実行するコマンドに対して設定し、`fireemu up`は起動時の出力に表示します。これはコントロールリスナーのアドレスで、Authenticationが選択されている場合はAuthenticationのポート（デフォルトは9099）です。
+
+### 設定なしでデバッグトークンを交換する
+
+`strict`プロファイルでは、デバッグトークンの交換、JWKS、callableの信頼境界は、`appCheck`ブロックなしで提供され、すべてのプロダクトのベースラインは`off`です。
+
+- 形式が正しいデバッグトークン（UUIDv4）は、標準的なアプリID（`1:<project number>:<platform>:<id>`）を持つ任意のアプリのトークンと交換できます。アプリは最初の使用時に登録されます。
+- そのため、`enforceAppCheck`を指定したcallableは、アプリの登録もダイジェストもなしに、交換で得たトークンでテストでき、トークンがない場合や形式が不正な場合は、引き続き拒否されます。
+- 鍵ペアは起動後にバックグラウンドで生成されるため、最初の交換がそれを待つことはありません。
+
+たとえば、`fireemu up`を実行していて`appCheck`ブロックがなければ、任意のUUIDv4が交換できます（ホストは`FIREEMU_APP_CHECK_EMULATOR_HOST`として表示されたものです）。
+
+```sh
+curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aweb%3Alocal-test-app:exchangeDebugToken' \
+  -H 'content-type: application/json' \
+  -d "{\"debugToken\":\"$(uuidgen | tr 'A-F' 'a-f')\",\"limitedUse\":false}"
+# {"token":"eyJhbGciOiJSUzI1NiIs...", "ttl": "..."}
+```
+
+UUIDv4でない文字列は拒否されます: `403 PERMISSION_DENIED`、`App attestation failed.`
+
+これを制御するのは`appCheck.debugTokens`です。`appCheck.enabled: true`と並べて自分で`"any"`を設定すると、登録したアプリについても、どのダイジェストを持っていても、任意のUUIDv4を交換できます。その場合は`"any"`になり、`productionExact`の下、`emulator`プロファイルの下、およびこのキーを設定していない`appCheck`ブロックでは、本番のルールである`"registered"`になります。`"registered"`の場合は、[App Checkを有効にする](#register-apps-and-enforce)まで何も提供されません。
+
+### Web SDKからトークンを取得する
+
+`@firebase/app-check`は常に本番の交換エンドポイントを呼び出すため、デバッグトークンをFireemuと交換する`CustomProvider`を使ってください。ブラウザーのバンドルは`process.env`を読み取れないため、バンドラー自身の設定でホストを渡してください。
+
+<Tabs syncKey="code-language">
+<TabItem label="TypeScript">
+
+```ts
+import { initializeApp } from 'firebase/app';
+import {
+  CustomProvider,
+  getToken,
+  initializeAppCheck,
+  type AppCheckTokenResult,
+} from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+const debugToken = process.env.DEBUG_TOKEN;
+if (!host || !debugToken) throw new Error('Set FIREEMU_APP_CHECK_EMULATOR_HOST and DEBUG_TOKEN');
+
+async function exchangeDebugToken(): Promise<AppCheckTokenResult> {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken, limitedUse: false }),
+  });
+  if (!response.ok) throw new Error(`exchange refused: ${response.status}`);
+  const body = (await response.json()) as { token: string; ttl: string };
+  const ttlSeconds = Number.parseInt(body.ttl.replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+const appCheck = initializeAppCheck(app, {
+  provider: new CustomProvider({ getToken: exchangeDebugToken }),
+});
+
+const { token } = await getToken(appCheck);
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+import { initializeApp } from 'firebase/app';
+import { CustomProvider, initializeAppCheck } from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+
+async function exchangeDebugToken() {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken: process.env.DEBUG_TOKEN, limitedUse: false }),
+  });
+  const body = await response.json();
+  const ttlSeconds = Number.parseInt(String(body.ttl).replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+initializeAppCheck(app, { provider: new CustomProvider({ getToken: exchangeDebugToken }) });
+```
+
+</TabItem>
+</Tabs>
+
+変数を設定して実行します。`fireemu exec`の下では、自分で用意するのは`DEBUG_TOKEN`だけです。
+
+```sh
+export DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+
+# fireemu exec sets FIREEMU_APP_CHECK_EMULATOR_HOST for the command
+npx fireemu exec -- node provider.mjs
+
+# with fireemu up running, copy the host from its startup output
+FIREEMU_APP_CHECK_EMULATOR_HOST=127.0.0.1:9099 node provider.mjs
+```
+
+TypeScript版は、ローカルの`fireemu up` 0.48.0に対して、`firebase` 12.18.0とNode.js 24（型の除去）で実行し、`getToken`はトークンを返しました。`appCheck`ブロックがなければ任意のUUIDv4が交換できます。アプリを登録している場合、トークンのダイジェストはそのアプリの`debugTokenSha256`の値のいずれかでなければなりません。
+
+## 設定
+
+### アプリを登録して強制する
+
+Authentication、Firestore、StorageにApp Checkを強制する場合、または登録を必須にする場合は、App Checkを有効にし、デバッグトークンのSHA-256ダイジェストでアプリを登録します。設定にはダイジェストのみが保存され、生のトークンは保存されません。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[appCheck]
+# Enable the App Check product baseline: true or false.
+enabled = true
+
+[[appCheck.apps]]
+# App project ID: starts with a lowercase letter; up to 63 lowercase letters, digits, or hyphens.
+projectId = "demo-app"
+# App project number: a positive decimal string of up to 32 digits.
+projectNumber = "1234567890"
+# App ID: a string of 1 to 256 characters.
+appId = "1:1234567890:web:local-test-app"
+# Registered debug token digests: up to 128 unique lowercase SHA-256 hex strings
+# (this one is the digest of the example token 2f1e6d3c-5b7a-4c1e-9d0a-8e4b7c6a1f23; use your own)
+debugTokenSha256 = ["ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"]
+
+[appCheck.services]
+# Auth App Check mode: "off", "unenforced", or "enforced".
+auth = "unenforced"
+# Firestore App Check mode: "off", "unenforced", or "enforced".
+firestore = "enforced"
+# Storage App Check mode: "off", "unenforced", or "enforced".
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "appCheck": {
+    "enabled": true,
+    "apps": [
+      {
+        "projectId": "demo-app",
+        "projectNumber": "1234567890",
+        "appId": "1:1234567890:web:local-test-app",
+        "debugTokenSha256": [
+          "ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"
+        ]
+      }
+    ],
+    "services": {
+      "auth": "unenforced",
+      "firestore": "enforced",
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+各サービスは、`off`、`unenforced`（トークンは確認されて記録されますが、リクエストは通ります）、`enforced`（有効なトークンのないリクエストは、セキュリティルールが実行される前に拒否されます）を受け付けます。登録されたアプリのないプロジェクトはApp Checkを使えないため、`enforced`のサービスはそのプロジェクトへのすべてのリクエストを拒否します。
+
+`--only`は、設定済みのベースラインが必要とする検証機能を維持します。`appCheck.services.firestore = "enforced"`の場合、`--only firestore`を指定しても、有効なトークンのないリクエストは引き続き拒否され、起動バナーには検証機能が含まれたことが表示されます。
+
+### デバッグトークンとそのダイジェストを生成する
+
+デバッグトークンはUUIDv4で、ダイジェストは小文字の形式に対して取られます。テスト用のトークンを生成し、そのダイジェストを計算します。
+
+```sh
+DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
+```
+
+それ以外の文字列は一致せず、交換は403で応答します。
+
+### サーバーサイドコードからのStorageリクエスト
+
+Storageが`enforced`の場合でも、Admin SDKや`gcloud`を使うサーバーサイドのコード（ブラウザーではなくクライアントライブラリ）は、トークンなしでStorageに到達できなければなりません。本番では、そのトラフィックにApp Checkは適用されません。Admin SDKはOAuthを介してサービスアカウントで認証し、強制の対象はクライアントSDKが呼び出すFirebase Storage APIです。エミュレーターにはOAuthがないため、`appCheck.storageServerRequests`が、そのトラフィックをどう識別するかを決めます。
+
+| | `"loopback"`（デフォルト） | `"capability"` |
+|---|---|---|
+| トークンなしで許可されるもの | ループバックのピアからループバックの`Host`へのCloud Storage JSON APIリクエストで、ブラウザーの証拠もクライアントSDKの認証情報もないもの（[詳細](#how-loopback-recognises-a-request)） | `fireemu exec`が`STORAGE_EMULATOR_HOST`のユーザー情報部分（`http://fireemu:<capability>@host:port`）に入れる、実行ごとのcapabilityを持つリクエストのみ |
+| `STORAGE_EMULATOR_HOST` | プレーンな`http://host:port`。`@google-cloud/storage`と`firebase-admin`のすべてのバージョンが受け付けます | capability付き。`@google-cloud/storage` 8.1以降（`firebase-admin` 14.4以降）は、認証情報が埋め込まれたURLを拒否します |
+| `file.save()`と再開可能なアップロード | 動作します。再開可能なアップロードの続行はそのようなリクエストです | それらのバージョンや再開可能なアップロードを使うAdmin SDKは、強制の下で失敗します。続行用のURLにはcapabilityが含まれません |
+| ローカルの非ブラウザープロセス（`curl`、テストスクリプト） | トークンなしで通ります | capabilityがなければ拒否されます |
+| `enforced`のStorageサービスが証明するもの | ローカルのクライアントがトークンを提示したことではありません | capability以外は何も通らなかったこと |
+| ループバックでないホスト名（`host.containers.internal`、LANアドレスで公開されたポート）経由でエミュレーターに到達するコンテナー | 識別されません。トークンまたは`"capability"`が必要です | capabilityが必要です |
+| `fireemu`の下で実行するCloud Function内のAdmin SDK | 通ります。同じプレーンな`STORAGE_EMULATOR_HOST`が渡されます（本番では関数のサービスアカウントを使い、App Checkは確認しません） | 通りません |
+
+Firebase Storage API（`/v0`、`firebase/storage`とモバイルSDKが使うもの）には常にトークンが必要で、ページや別のホストから来たように見えるリクエストにも必要です。これは本番の動作であるため、エミュレーター、strictの各プロファイルと、`productionExact`の下で同じです。Storageの強制がなければ、`STORAGE_EMULATOR_HOST`は常にプレーンな`http://host:port`です。
+
+<details id="how-loopback-recognises-a-request">
+<summary><code>"loopback"</code>がリクエストを識別する方法</summary>
+
+`"loopback"`は、Cloud Storage JSON APIルート（`/storage/v1`、`/upload/storage/v1`、`/download/storage/v1`）上の、次の条件を満たすリクエストを許可します。
+
+- ループバックのピアから来ている。
+- ループバックの`Host`（`localhost`、または`127.0.0.1`や`[::1]`のようなループバックIPアドレス。`evil.example`のようにリバインドされたDNS名は該当しません）を宛先にしている。
+- ブラウザーの証拠がない。空でない値を持つ`Origin`、`Sec-Fetch-Site`、`Sec-Fetch-Dest`、`Referer`、`Cookie`ヘッダーがない（空のものは存在しないものとして扱われます）。
+- クライアントSDKの`Authorization: Firebase <token>`認証情報を提示していない。
+
+Admin SDKがバケットのメタデータに使う短い`/b/{bucket}`の形式は、JSON APIルートとして扱われます。再開可能なアップロードの続行はそのようなリクエストなので、`file.save()`は動作します。`fireemu exec`は、プレーンな`STORAGE_EMULATOR_HOST=http://host:port`をエクスポートします。
+
+</details>
+
+capabilityを持つリクエストのみを許可するには、次のようにします。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[appCheck]
+# Enable the App Check product baseline: true or false.
+enabled = true
+# Storage server request admission: "loopback" or "capability".
+storageServerRequests = "capability"
+
+[appCheck.services]
+# Storage App Check mode: "off", "unenforced", or "enforced".
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "appCheck": {
+    "enabled": true,
+    "storageServerRequests": "capability",
+    "services": {
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Callable関数
+
+Nodeのcallableに`enforceAppCheck: true`を指定すると、有効なトークンのない呼び出しは、関数が実行される前に、callableの`UNAUTHENTICATED`エラーで拒否されます（401レスポンス、またはストリーミング呼び出しの場合は`200`のSSEエラーレコード）。有効なトークンがあると`request.app`が設定されます。
+
+リプレイ保護は対応していません。`consumeAppCheckToken: true`を指定したcallableに有効なトークンを提示する呼び出しは、501 `APP_CHECK_REPLAY_UNSUPPORTED`で拒否されるため、本番なら消費されるトークンでテストが通ってしまうことはありません。
+
+トークンは、1つのデーモンインスタンスに属する鍵で署名されます。Nodeのcallableと、その他のデーモンが検証するサービスは、セッションのリセットやスナップショットのリストアの後、それらを拒否します。
+
+Pythonのcallableは、署名鍵と実時間を使ってトークンの署名とクレームを検証し、現在のアプリの状態やプロジェクトのエポックは確認しません。そのため、プロジェクトのリセットやアプリの無効化では、有効期限が切れるまで、それ以外は有効なトークンが失効しません。Pythonは、トークンの消費と明示的なApp Check設定も拒否します。セットアップと制限については、[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)を参照してください。
+
+## 通常のHTTP関数（`onRequest`）
+
+callableと異なり、`onRequest`ハンドラーは`X-Firebase-AppCheck`ヘッダーを自動的な検証や`request.app`なしで受け取ります。ハンドラー側で検証し、検証済みのアプリに何を許可するかを決める必要があります。callableの`enforceAppCheck`は、別のHTTPエンドポイントを保護しません。
+
+### Admin SDKで検証する（`getAppCheck().verifyToken()`）
+
+デプロイするコードは、変更せずにそのまま動作します。`onRequest`関数内の`getAppCheck().verifyToken(token)`には、Googleの鍵ではなく、デーモンが応答します。
+
+```js
+import { onRequest } from 'firebase-functions/v2/https';
+import { initializeApp } from 'firebase-admin/app';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+initializeApp();
+
+export const api = onRequest(async (req, res) => {
+  try {
+    const { appId } = await getAppCheck().verifyToken(req.get('X-Firebase-AppCheck'));
+    // application logic for a verified app
+  } catch {
+    res.status(401).send('Unauthorized');
+  }
+});
+```
+
+ランナーは、コードが読み込まれる前に、コードベースから解決される`firebase-admin`にパッチを当てます。SDKは引き続きトークンをデコードし、アルゴリズム、オーディエンス、発行者、サブジェクトを自分で確認します。置き換えられるのは署名のステップだけで、ランナーのプライベートパイプを通じてデーモンに問い合わせます。デーモンは、callable関数に使うのと同じ検証機能で、現在のプロジェクトのエポックとアプリのレジストリに対して、仮想クロックで応答し、何もキャッシュしません。そのため、その場でのセッションのリセットやスナップショットのリストアより前に発行されたトークンは、デーモンがもう鍵を保持していないトークンとまったく同様に拒否されます（`app-check/invalid-argument`、「... does not correspond to a known public key ...」）。エラーはSDK自身のもので、SDK自身のエラーマッパーによって生成されます。
+
+- 対応: Functionsのコードベースから解決される`firebase-admin`の13と14。14.3.0（CI）と13.10.0でテストしています。14.5.0は、App Checkのコードが14.3.0と同一であるため（`token-verifier.js`、`app-check.js`、`app-check-api-client-internal.js`、`utils/jwt.js`のファイルはバージョンバナーのみが異なります）、CIにはインストールされておらず、それらのファイルの内容を固定するテストがあるため、それらを変更する依存関係の更新はCIで失敗します。この範囲外の場合、またはSDKの内部が変わって起動時のセルフテストが失敗する場合は、何もパッチされず、デーモンが起動時にメモを出力し、`verifyToken`はFireemuのトークンを拒否します（確認できないトークンを受け付けることはありません）。`node_modules`の別の場所にある`firebase-admin`の2つ目のコピーは、ランナーが解決するものではなく、そのままです。
+- `verifyToken(token, { consume: true })`は、トークンが検証された後に`app-check/unimplemented`で拒否されます。limited-useの消費は実装されておらず、本番のApp Check APIが呼び出されることもありません。`getAppCheck().createToken()`は別の呼び出しで、引き続きGoogleの交換エンドポイントに送られます。
+- デーモンは、Functionsランナーが属するプロジェクトについて検証します。別のプロジェクトIDを指定するアプリでの呼び出しは、未知の鍵として応答されます。
+- 本番との相違: 本番は、登録されていない、または無効なアプリのトークンを、トークンの有効期限が切れるまで受け付けます。Fireemuは、すべてのプロファイルでそれを拒否します。`iat`が未来のトークンは、本番と同様に検証を通ります。
+- ここでのどの仕組みも、`onRequest`に自動的な検証をさせるものではありません。検証済みのアプリに何を許可するかは、引き続きハンドラーが決めます。また、App Checkが識別するのはアプリであり、ユーザーではありません。
+
+### 各プロセスでのエンドポイント探索
+
+| プロセス | 利用できるルーティング |
+| --- | --- |
+| `fireemu exec`の子プロセスまたは`world.environment` | App Checkが利用できる場合の`FIREEMU_APP_CHECK_EMULATOR_HOST`と`FIREEMU_APP_CHECK_JWKS_URL`。JWKSのURLは`http://host:port/v1/jwks`です。 |
+| 同梱のFunctionsランナー | App Checkが利用できる場合の`FUNCTIONS_EMULATOR=true`と、同じApp Checkのホスト/JWKS変数。Authが選択されていない場合も同様です。継承された値、dotenv、ローカルのシークレットの値は、この2つのルートを置き換えられません。App Checkが利用できないときは、それらは削除されます。 |
+| 親のテストプロセス | ワールドの変数は`process.env`にインストールされません。`world.environment`を明示的に使ってください。 |
+
+ランナー内では`FIREEMU_APP_CHECK_JWKS_URL`を使ってください。リクエストヘッダーや未検証のトークンから、鍵のURLを導出しないでください。
+
+### Admin SDKを使わないローカルの署名とクレームの検証
+
+ミドルウェアがAdmin SDKの代わりにJWKSライブラリで検証する場合は、Functionsパッケージに`jose`をインストールしてください。以下のプロジェクト番号、プロジェクトID、許可されるアプリIDは、テスト設定から取得する必要があります。許可するアプリの集合は、このエンドポイントに許可する意図のある、有効なアプリを反映していなければなりません。この例は、意図的にループバックのみに対応しています。
+
+```js
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+const projectId = 'demo-app';
+const projectNumber = '1234567890';
+const allowedApps = new Set(['1:1234567890:web:local-test-app']);
+let localKeys;
+
+export async function verifyHttpAppCheck(token) {
+  if (process.env.FUNCTIONS_EMULATOR !== 'true') {
+    return getAppCheck().verifyToken(token);
+  }
+  if (!localKeys) {
+    const address = process.env.FIREEMU_APP_CHECK_JWKS_URL;
+    if (!address) throw new Error('Local App Check is unavailable');
+    const url = new URL(address);
+    if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || !url.port ||
+        url.username || url.password || url.pathname !== '/v1/jwks' || url.search || url.hash) {
+      throw new Error('Expected the loopback App Check JWKS URL');
+    }
+    localKeys = createRemoteJWKSet(url);
+  }
+  const now = new Date();
+  const { payload, protectedHeader } = await jwtVerify(token, localKeys, {
+    algorithms: ['RS256'],
+    issuer: `https://firebaseappcheck.googleapis.com/${projectNumber}`,
+    requiredClaims: ['sub', 'aud', 'iat', 'exp', 'jti'],
+    currentDate: now,
+    clockTolerance: 0,
+  });
+  const audiences = [`projects/${projectNumber}`, `projects/${projectId}`];
+  if (protectedHeader.typ !== 'JWT' ||
+      typeof protectedHeader.kid !== 'string' || !protectedHeader.kid ||
+      !Array.isArray(payload.aud) || !audiences.every(a => payload.aud.includes(a)) ||
+      !allowedApps.has(payload.sub) ||
+      !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) ||
+      payload.iat > Math.floor(now.getTime() / 1000) || payload.exp <= payload.iat ||
+      typeof payload.jti !== 'string' || !payload.jti) {
+    throw new Error('Invalid local App Check token');
+  }
+  return { ...payload, app_id: payload.sub };
+}
+```
+
+これを`onRequest`ハンドラーから`req.get('X-Firebase-AppCheck')`を渡して呼び出します。ヘッダーがない場合や検証に失敗した場合は、アプリケーションのロジックを実行する前に、汎用的な401で拒否してください。検証の詳細を返したり、トークンをログに出力したりしないでください。App Checkが識別するのはアプリであり、ユーザーではありません。Authとメンバーシップの確認も維持してください。
+
+この例の`new Date()`は、トークンの交換と同じクロックを使う必要があります。テストのワールドは、Functionsではデフォルトで仮想のDateを使います。固定したクロックを使うプレーンなデーモンでも、`functions.clock.date = "virtual"`が必要です。親のテストプロセスと`world.run`の子プロセスはネイティブのDateを維持するため、この検証機能をそこへコピーする場合は、ワールドの時刻を明示的に与える必要があります。
+
+**これは署名とクレームの検証であり、Fireemuの完全な検証機能ではありません。** JWKSは現在のプロジェクトのエポックやアプリのレジストリを公開しませんが、上記のAdmin SDKの経路は公開します。同じ署名鍵が使える間は、この例では、その場でのセッションのリセット、スナップショットのリストア、プロジェクトの削除、アプリの無効化の後に、すでに発行されたトークンを拒否できません。`fireemu_epoch`が存在することだけを確認しても、これは解決しません。トークンの消費やリプレイ保護も実装していません。
+
+このレシピを使うテストでは、Functionsランナーを含めて`world.reset()`でワールド全体を再作成し（または破棄して別のワールドを作成し）、新しいトークンを取得してください。これにより、デーモンの鍵と検証機能のキャッシュが置き換えられます。この回避策を、デーモンのエポックによる失効動作の証拠とみなさないでください。その動作のテストには、callableの検証境界を使ってください。
+
+## Firestore WebChannelの拒否
+
+Firestore WebChannelでのApp Checkの拒否は、HTTP 200のトランスポートネゴシエーションの後に、終端の`PERMISSION_DENIED`プロトコルエラーとして届きます。HTTP 403を返すRESTの拒否とは異なります。既存のチャネル上の無効なトークンや、別のアプリの置き換えトークンは、保持されたドキュメントを再生できません。[Listenストリーム](../firestore/#listen-streams)を参照してください。
+
+## 本番との違い
+
+次のものは、意図的に対象外としています。
+
+- **Play Integrity、App Attest、DeviceCheck、reCAPTCHAによる実際の構成証明。** ローカルのApp Checkはデバッグトークンを使います。
+- **limited-useトークンとリプレイ保護。** `consumeAppCheckToken: true`を指定したcallableは501 `APP_CHECK_REPLAY_UNSUPPORTED`で拒否され、`verifyToken(token, { consume: true })`は`app-check/unimplemented`で応答するため、本番なら消費されるトークンでテストが通ることはありません。
+- **デーモンより長く生きるトークン。** トークンは1つのデーモンインスタンスに属する鍵で署名されます（[Callable関数](#callable-functions)を参照）。
+- **Pythonのcallable**には、さらに制限があります。[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)を参照してください。
+
+2つの動作は、上述の箇所で説明したとおり異なります。
+
+- `verifyToken`は、登録されていない、または無効なアプリのトークンを、すべてのプロファイルで拒否します。本番は、有効期限が切れるまでそれを受け付けます（[Admin SDKで検証する](#verify-with-the-admin-sdk-getappcheckverifytoken)）。
+- `"loopback"`では、`enforced`のStorageサービスは、ローカルの非ブラウザーのリクエストをトークンなしで許可します（[サーバーサイドコードからのStorageリクエスト](#storage-requests-from-server-side-code)）。
+
+## 関連情報
+
+- [Authentication](../auth/)、[Firestore](../firestore/)、[Storage](../storage/): App Checkが強制できるサービス。
+- [Functions](../functions/)と[Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli): callableと`onRequest`ハンドラー。
+- [プロファイル](../../guides/profiles/): `strict`、`emulator`、`productionExact`。
+- [設定スキーマ](../../reference/configuration/): `appCheck`のすべての設定。

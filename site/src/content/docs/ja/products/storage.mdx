@@ -1,0 +1,481 @@
+---
+title: Cloud Storage
+description: Cloud Storage for Firebaseをローカルで実行し、FirebaseとCloud StorageのJSON APIを通じて、アップロード、ダウンロード、署名付きURL、バケットのCORS、Storageセキュリティルールをテストします。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemuは、2つのAPI方言の両方でCloud Storage for Firebaseを提供します。
+
+- クライアントSDKが使うFirebase Storageプロトコル。再開可能なアップロードとダウンロードトークンを含みます。
+- Admin SDKとGoogle Cloudクライアントライブラリが使うCloud Storage JSON API。コピーとrewriteを含みます。
+
+2つの方言は1つのストアを共有するため、一方でアップロードしたオブジェクトは、もう一方からも見えます。Storageエミュレーターは、オブジェクトをメモリ上に保持します。
+
+<Facts items={[
+  { label: 'ステータス', value: '対応' },
+  { label: 'デフォルトポート', value: '9199' },
+  { label: '起動', value: 'デフォルトで起動' },
+  { label: '本番での検証', value: '互換性表を参照', href: 'compatibility/#production-verification' },
+]} />
+
+## テストできること
+
+- [バケット名](#buckets-that-do-not-exist): 何も宣言していないバケットへの書き込みは、メモを出力するか、本番と同じ404で失敗します。
+- XML APIでのブラウザーからのアップロードとダウンロードに対する[バケットのCORS](#bucket-cors)。
+- [署名付きURL](#signed-url-signatures): 有効期限、署名付きヘッダー、そして鍵を登録した場合はV4署名。
+- [セキュリティルール](#security-rules)。[要求されたプレフィックスから判定される`list`ルール](#listing-a-prefix-with-single-segment-attachment-rules)を含みます。
+- 非公開オブジェクトへの公開URLや、署名付きポリシーのないフォームアップロードなど、[本番が拒否するリクエスト](#production-behavior)。
+- 保存バイト数にローカルの上限を設ける[満杯のストア](#limit-the-stored-bytes)。
+
+## 接続
+
+Storageはデフォルトで`127.0.0.1:9199`で待ち受けます（`--storage-port`または`firebase.json`で変更できます）。
+
+```js
+// Web SDK
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
+connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
+```
+
+Admin SDKとGoogle Cloudクライアントライブラリは、環境変数を読み取ります。`fireemu exec`では、実行するコマンドに対して設定されます。`fireemu up`では、自分で設定してください。
+
+```sh
+STORAGE_EMULATOR_HOST=http://127.0.0.1:9199             # with the scheme
+FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199           # host:port, no scheme
+```
+
+[アプリを接続する](../../getting-started/connect/)と[環境変数](../../reference/environment-variables/)を参照してください。
+
+## 設定
+
+Storageの設定はすべて省略可能です。次のファイルは、そのすべてを設定しています。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+profile = "strict"
+
+[storage]
+# Path of the Storage Security Rules file (or name it in firebase.json)
+rules = "storage.rules"
+# Which default bucket exists: "both" (default), "firebasestorage.app" or "appspot.com"
+defaultBucket = "both"
+# Buckets the project owns besides its default ones: 3 to 222 characters each
+buckets = ["uploads-bucket", "exports.example.com"]
+# Buckets whose objects the public URL serves without a credential: 3 to 222 characters each
+publicBuckets = ["public-assets.example.com"]
+# Local cap on stored object data in bytes (an integer of at least 1); unset means no cap
+maxStoredBytes = 1073741824
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "storage": {
+    "rules": "storage.rules",
+    "defaultBucket": "both",
+    "buckets": ["uploads-bucket", "exports.example.com"],
+    "publicBuckets": ["public-assets.example.com"],
+    "maxStoredBytes": 1073741824
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+| 設定 | 効果 |
+|---|---|
+| `storage.rules` | Storageセキュリティルールのファイル。[セキュリティルール](#security-rules)を参照してください。 |
+| `storage.defaultBucket` | `strict`で、プロジェクトの2つのデフォルトバケットのうちどちらが存在するか（[後述](#buckets-that-do-not-exist)）。 |
+| `storage.buckets`、`storage.publicBuckets` | バケットと、公開URLが認証情報を必要としないバケットを宣言します。`emulator`プロファイルでは無視されます。 |
+| `storage.undeclaredBuckets` | `strict`で、何も宣言していないバケットに対するオブジェクト操作がどう扱われるか。`"warn"`（デフォルト）は最初の書き込みを受け付けてバケットを作成し、メモを1回出力します。`"create"`は同じことをメモなしで行います。`"refuse"`は本番の404で応答し、`productionExact`によって選択されます。明示したキーが優先されます（[後述](#buckets-that-do-not-exist)）。`emulator`プロファイルは、常にバケットを黙って作成します。 |
+| `storage.cors` | Cloud Storageの`cors` JSON形式による、バケットごとのCORS設定。`strict`ではXML APIに、また記録されていない動作としてFirebaseのメディア読み取りに適用されます（[後述](#bucket-cors)）。XMLのバケットで一覧にないものは、`productionExact`を設定しない限り、許容的な応答を維持します。空でないルールを持つバケットでは、JSON APIのオブジェクト読み取りやオブジェクトのプリフライトはルールを無視し（記録どおり）、その他のJSON APIルートや、存在しない、または空のエントリは、基本の動作を維持します。 |
+| `storage.signedUrlKeys` | `strict`でV4署名付きURLの検証に使う公開鍵（またはテストが署名に使った秘密鍵やサービスアカウントのJSON）（[後述](#signed-url-signatures)）。未設定の場合、署名は検証されません。 |
+| `storage.maxStoredBytes` | 保存バイト数のローカルの上限。上限を超える書き込みはHTTP 402（`storage.maxStoredBytes limit exceeded`）で拒否されます。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。本番にこのような上限はありません。 |
+| `storage.maxObjectBytes` | オブジェクトごとのサイズ上限。デフォルトは256 MiB（最大2143289343）。これを超えるアップロードはHTTP 413で拒否されます。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。 |
+| `storage.bufferedBodyBudgetBytes` | バッファリングされるリクエストボディに対する、プロセス全体の予算。デフォルトは1 GiB。これを超えたリクエストには、`Retry-After: 1`を付けたHTTP 503が返されます。 |
+| `storage.spillObjectBytes` | このバイト数以上のコミット済みオブジェクトを、メモリではなく一時ファイルに保持します。デフォルトでは未設定で、本番にこのような設定はありません。再開可能なアップロードセッションは、受信したバイト数がこのサイズに達すると、一時ファイルに保持します。単発のアップロードは、保存される前にメモリ上でバッファリングされるため、大きな単発アップロードは、コミット後も1つのボディがメモリに残ります。この設定は、大きなオブジェクトを多数保存する場合に役立ちます。 |
+
+スピルディレクトリは正常なシャットダウン時に削除され、終了したプロセスの古いディレクトリは起動時に掃除されます。スピルの書き込みに失敗すると、`Retry-After: 1`を付けたHTTP 503が返されます。エクスポートが取得するのはコミット済みのオブジェクトのみで、保留中の再開可能なアップロードセッションは含まれません。
+
+## 存在しないバケット
+
+本番は、誰も作成していないバケットに対するオブジェクト操作に、404 `The specified bucket does not exist.`で応答します。Storageエミュレーターは、代わりにそれを受け付け、最初の書き込みでバケットを作成するため、テストにセットアップは不要です。`storage.undeclaredBuckets`は、`strict`でこれを変更します。
+
+| `storage.undeclaredBuckets` | `strict`での動作 |
+|---|---|
+| `"warn"`（デフォルト） | 最初の書き込みが受け付けられ、バケットが作成されます。何も宣言していないバケットに初めてオブジェクトが書き込まれるときに、標準エラー出力へ`note:`行が1行出力されます。 |
+| `"create"` | メモなしの`warn`の動作です。 |
+| `"refuse"` | 存在しないバケットを指定するすべての操作にCloud Storageと同じ応答を返し、何も作成されません。`productionExact`によって選択され、明示したキーは`productionExact`より優先されます。 |
+
+`emulator`プロファイルは、常にバケットを黙って作成し、`"warn"`と`"refuse"`を拒否します。公式エミュレーターは、最初の使用時にすべてのバケットを作成するためです。
+
+### 存在するバケット
+
+次のいずれかに該当するバケットは存在します。
+
+- プロジェクトのデフォルトバケット（`<project>.appspot.com`または`<project>.firebasestorage.app`）。
+- `storage.buckets`または`storage.publicBuckets`に記載されている。
+- `firebase.json`のstorageターゲット。
+- デプロイされたStorageトリガーが指定している。
+- インポートされたデータを保持するバケット。
+
+`storage.undeclaredBuckets: "warn"`を指定した`strict`では、それ以外のバケットへの書き込みはメモを出力するため、バケット名のタイプミスに気づけます。本番に存在するバケットについてメモを止めるには、`storage.buckets`に記載してください（[設定](#configure)）。
+
+各名前はCloud Storageが受け付けるものでなければなりません。`storage.publicBuckets`は、公開URLが認証情報なしでオブジェクトを提供するバケットを列挙し、同時にそれらを宣言したことにもなります。`storage.buckets`と`storage.publicBuckets`は、`emulator`プロファイルでは無視されます。
+
+### バケット名のタイプミスでテストを失敗させる
+
+`storage.undeclaredBuckets`を`"refuse"`にするか、`productionExact`を有効にします（`strict`のみ）。存在しないバケットには、APIごとに次のように応答します。
+
+| API | 応答 |
+|---|---|
+| JSON API | 404 `The specified bucket does not exist.`（reasonは`notFound`） |
+| XML APIとフォームアップロード | 404 `NoSuchBucket` |
+| Firebase API（`/v0`） | 到達できないバケットに対して返すnot-found応答 |
+
+コピーやrewriteは両方のバケットを確認し、再開可能なアップロードは開始時に確認されます。
+
+**本番に対する測定。** STORAGE-STRICTNESS-OBSのrun `ss-48adbd8e`では、次のように記録されています。
+
+- 存在しないバケットに対するJSONのオブジェクト取得、一覧、アップロード、削除、コピー元、rewriteの宛先、ACL取得（A1、A3〜A8）: バケットリソースと同じ247バイトのJSONボディを持つ404。
+- メディア読み取り（A2）は、代わりに36バイトの`The specified bucket does not exist.`ボディを`text/html; charset=UTF-8`として返しました。
+- XMLのGETとPUT（A9〜A10）は、133バイトの`NoSuchBucket`ドキュメントを返しました。
+- FirebaseのGETとアップロード（A11〜A12）は、末尾の改行がなくFirebaseのCORSヘッダーを伴う、65バイトでスペース2つのインデントのJSON `Not Found.`エンベロープを返しました。
+- Firebaseのオブジェクト取得と一覧は、Firebase以外の既存バケットに対して412ではなく200を返しました（A13〜A14）。
+
+フォームアップロードと再開可能なアップロードの続行は、このrunでは記録されていません。
+
+### デフォルトバケット
+
+本番のプロジェクトには、デフォルトバケットが1つあります。Storageを2024-10-30より後にセットアップした場合は`<project>.firebasestorage.app`、それ以前は`<project>.appspot.com`です。ローカルの実行ではどちらかを判別できないため、デフォルトでは両方が存在します。
+
+もう一方の種類のプロジェクトからコピーしたアプリ設定を検出するには、`storage.defaultBucket`を`"firebasestorage.app"`または`"appspot.com"`（デフォルトは`"both"`）に設定します。すると、もう一方の名前は宣言されていないバケットとして扱われ、作成されるまで`GET /storage/v1/b/{bucket}`は404で応答します。最初の書き込みは、`"warn"`ではメモ付きで、`"create"`では黙ってそれを作成し、`"refuse"`（上書きしない限り`productionExact`が選択）では拒否されます。
+
+## バケットのCORS
+
+本番のXML APIは、ブラウザーのクロスオリジンリクエストにバケットのCORS設定に従って応答し、新しいバケットには設定がありません。そのため、許容的なローカルサーバーに対してPlaywrightでアップロードやダウンロードを行うページが、本番では失敗することがあります。`strict`では、`storage.cors`がバケット名を、Cloud Storageの`cors` JSON形式のルールに対応付けます。
+
+```json
+{
+  "storage": {
+    "cors": {
+      "demo-app.appspot.com": [
+        {
+          "origin": ["http://localhost:3000"],
+          "method": ["GET", "PUT"],
+          "responseHeader": ["Content-Type", "x-goog-content-length-range"],
+          "maxAgeSeconds": 3600
+        }
+      ]
+    }
+  }
+}
+```
+
+`emulator`プロファイルは空のマップを受け付けますが、空でない`storage.cors`マップは拒否します。
+
+### XML API
+
+バケットのルールは、署名付きURLとフォームアップロードを含むXML APIを制御します。
+
+| `storage.cors`のバケット | 応答 |
+|---|---|
+| ルール付きで記載 | そのルールに従います。明示的なエントリが、そのバケットについて決定します。 |
+| `[]`で記載 | CORS設定のないバケット。本番の新しいバケットと同じです。 |
+| 記載なし | `productionExact`を設定しない限り、許容的な応答を維持します。 |
+| 記載なし、`productionExact`の場合 | CORSヘッダーなし。本番でCORS設定のないバケットが受け取る応答と同じです。そのため、ブラウザーからのアップロードとダウンロードには、本番と同様に`storage.cors`のエントリが必要です。 |
+
+`Origin`を持つリクエストでは、`origin`（または`*`）と`method`（または`*`）が一致する最初のルールが決定します。
+
+- 実際のリクエストには、`Access-Control-Allow-Origin`（オリジン、またはルールが`*`を列挙している場合は`*`）、オリジンをそのまま返した場合は`Vary: Origin`、そして`responseHeader`の一覧に対する`Access-Control-Expose-Headers`が付きます。
+- プリフライト（`OPTIONS`）では、さらに`Access-Control-Request-Headers`のすべてのヘッダーが`responseHeader`（または`*`）に含まれている必要があり、その場合は`Access-Control-Allow-Methods`、`Access-Control-Allow-Headers`、`Access-Control-Max-Age`（`maxAgeSeconds`、未設定なら3600）も付きます。
+- どのルールにも一致しないリクエストは、CORSヘッダーなしで応答され、それでも成功します。ブラウザーが、その応答をページに渡すことを拒否します。
+
+サーバーは、ルールにどう記載されていても、`Origin`がローカルのものでないリクエストを引き続き拒否する（403）ため、ルールは`localhost`やループバックアドレスから配信されるページで確認されます。
+
+### JSON API
+
+`strict`では、JSON APIとそのアップロードルートは、`storage.cors`とは独立した別のCORSポリシーを使います。存在しない、または空のエントリの場合や、`productionExact`の場合も同様です。
+
+- `Origin`を持つリクエストでは、オリジンをそのまま返し、`Access-Control-Allow-Credentials: true`と`Vary: Origin, X-Origin`を送り、オブジェクトのGETについて記録されたメディアまたはメタデータのヘッダー一覧を公開します。
+- プリフライトは200、`Access-Control-Allow-Methods: DELETE,GET,HEAD,PATCH,POST,PUT`、`Access-Control-Max-Age: 3600`を返します。記録された小文字の要求ヘッダーは、区切りの空白を取り除いて返されます。大文字小文字が混在した表記の維持や、要求がなかった場合にAllow-Headersを省略することは、記録されていない前提です。
+- 記録されたJSON APIとアップロードのケースは、観測されたヘッダー一覧を公開します。再開可能なアップロードの開始では、記録された位置にある`Location`も含みます。これらの一覧を他の応答に適用することは、記録されていない前提です。特に、fireemuは`alt=media`を持つ成功したJSONルートすべてにメディア用の一覧を選択します。
+- キャンセルと、キャンセルされたセッションの読み取りは、開始時のOriginと、記録されたキャンセル用の公開一覧を伴って499を返します。
+
+strictプロファイルは、バケットのアクセス設定フィールドも追加し、均一なバケットレベルのアクセスが有効なバケットでのオブジェクトACLのGETに対して、記録された400のレガシーACLエラーを返します。
+
+### Firebase API
+
+Fireemuは、Firebaseのメディア読み取り（`alt=media`）について、既存のバケットルールの処理を維持しています。この動作は、設定されたバケットでは記録されていません。Firebase APIのJSON応答と再開可能プロトコルは、Firebase APIが独自のCORSヘッダーを送るため、許容的な応答を維持します。
+
+### 記録
+
+**XMLのCORS。** STORAGE-STRICTNESS-OBSのrun `ss-48adbd8e`は、2つのルールによるXMLのCORSを記録しました（C1〜C5）。
+
+- ワイルドカードのオリジンは、Varyなしで`*`を返します。名前付きのオリジンはそのまま返され、`Vary: Origin`が付きます。
+- プリフライトのメソッドは、一致したルールの一覧を、ルールの順にカンマで連結したものです。
+- Allow-Headersは、要求ヘッダーがなければ存在して空になり、名前付きヘッダーには設定された表記を使い、`responseHeader: ["*"]`では要求されたヘッダーを反映します。
+- Max-Ageのデフォルトは3600で、600も尊重されます。
+- 一致しないDELETEのプリフライトは、Access-Controlヘッダーなしで`Vary: Origin`だけを付けた200を返します。
+- ワイルドカードでの実際のGETは、`*, Content-Length, Date, Server, Transfer-Encoding, X-GUploader-UploadID, X-Google-Trace`を公開します。
+- ルールの削除（`[]`）では、Access-ControlヘッダーもVaryもない200のプリフライトになります（R3）。
+- C2では、要求された`content-type`のみが、設定された`Content-Type`として応答されることが記録されました。複数の設定された表記をカンマで連結することや、要求されていないヘッダーを省略することは、**記録されていない前提**です。
+
+それ以前の記録も、CORS設定のないXMLのプリフライトとPUTを対象としていました。
+
+**ルールのあるバケットでのJSON API。** C6〜C8は、両方のルールがまだインストールされている同じバケットでの、JSON APIのメディアGET、メタデータGET、OPTIONSを記録しました。ルールは`{"origin":["*"],"method":["GET"],"responseHeader":["*"]}`と`{"origin":["http://localhost:3000"],"method":["PUT","GET"],"responseHeader":["Content-Type"],"maxAgeSeconds":600}`です。その後の`run-2.json`の記録は、CORS設定が存在しない場合と空の場合のJSON APIリクエストを対象としています。
+
+**JSON APIとアップロードのCORS。** `conformance/storage-strictness-obs/recordings/run-2.json`は、CORS設定が存在しない、空、設定済みのバケットにわたって、メタデータ、メディア、バケット、一覧、ACLエラー、アップロードのプリフライト、`Location`を伴う再開可能アップロードの開始、キャンセル、キャンセルされたセッションの読み取りを対象としています。これらの値は、`productionExact`の有無にかかわらず`strict`で適用されます。
+
+**均一なバケットレベルのアクセス。** この記録では、`iamConfiguration.uniformBucketLevelAccess.enabled: true`を持つバケットを作成し、オブジェクトACLのGETで400のレガシーACLエラーが観測されました。
+
+- 作成ハンドラーは、記録された`location: "US-CENTRAL1"`と`softDeletePolicy: {"retentionDurationSeconds": 0}`のヒントを受け付けますが、リージョンの配置やソフト削除はモデル化しません。
+- Fireemuは、PATCHによるアクセスフラグの設定にも対応しています。切り替えの検証とそのACLへの影響は、記録されていない前提であり、ローカルのテストで確認しています。
+- 記録されたデフォルトバケットではこのフラグは無効です。fireemuは、設定されていないバケットのデフォルトをfalseにします。
+- ローカルのテストは、リセット、スナップショット/リストア、エクスポート/インポートを、空の作成済みバケットを含めて対象としています。フラグのない古いエクスポート成果物は、falseとしてインポートされます。
+- これは、一般的なIAMポリシー管理を実装するものではありません。
+
+## 署名付きURLの署名
+
+Cloud Storageは、V4署名付きURLを、署名したサービスアカウントの公開鍵に対して検証します。fireemuにはそのようなアカウントがないため、デフォルトでは有効期限と署名付きヘッダーの有無は確認しますが、署名は確認しません。
+
+署名を確認するには、テストが署名に使う鍵を、ファイルパスのリストである`storage.signedUrlKeys`に登録します。各ファイルは、次のいずれかです。
+
+- PEM形式の公開鍵。
+- PEM形式の秘密鍵（公開部分のみが保持されます）。
+- サービスアカウントのJSON（`private_key`、`client_email`）。
+- RSAのJWK。
+
+読み取れない鍵ファイル、RSAでないもの、2048ビット未満のものがあると、起動が停止します。サービスアカウントの`client_email`は、その鍵をそのアカウントの認証情報に結び付けます。メモリに保持されるのは公開鍵のみで、鍵に関する情報はログに出力されません。
+
+`strict`では、署名が検証できないV4リクエストに対し、サーバーが計算した`StringToSign`と`CanonicalRequest`を含めて`403 SignatureDoesNotMatch`で応答します。これは、署名が改変された場合、`Content-Type`や範囲ヘッダーが署名されたものと異なっていた場合、オブジェクト名が異なっていた場合という、4つの記録された原因で本番が返したボディです。
+
+正規リクエストは、Cloud Storageが文書化しているものです。
+
+- メソッド。
+- パーセントエンコードされたパス。
+- `X-Goog-Signature`を除き、ソートされたクエリ。
+- 署名付きヘッダーとその値。`host`は、リクエストが届いたときの`Host`で、ポートの有無は問いません。Admin SDKはローカルエンドポイントに対してホスト名だけで署名するため、SDKが構築したURLはそのまま検証に通ります。
+- 署名付きヘッダーの一覧。
+- `UNSIGNED-PAYLOAD`。
+
+この確認の制限:
+
+- V2の署名付きURLは検証されません。
+- サーバーが読み取る署名付きヘッダー（`Content-Type`、`x-goog-content-length-range`、および転送するその他のヘッダー）のみが、検証に通る署名の一部になれます。
+- `emulator`プロファイルは、空の`storage.signedUrlKeys`リストを受け付けますが、空でないリストは拒否します。
+- これは、テストが署名した内容に対するローカルの確認であり、認可の境界ではありません。
+
+## セキュリティルール
+
+Storageセキュリティルールは、`firebase.json`で指定した`storage.rules`ファイル、または`fireemu.toml`の`storage.rules`から読み込まれます。Storageルールは、`firestore.get()`と`firestore.exists()`でFirestoreのドキュメントを読み取れます。`strict`では、ルールのないプロジェクトは、本番と同じ400「bucket has not been set up」の応答で、すべてのエンドユーザーのリクエストを拒否します。[セキュリティルール](../../guides/security-rules/)を参照してください。
+
+### 単一セグメントのアタッチメントルールでプレフィックスを一覧する
+
+`list`ルールは、たまたま存在するオブジェクトではなく、要求されたプレフィックスから判定されます。現在のすべてのオブジェクトに一致するためにテストでは通るルールが、プレフィックスを一覧したときに本番で拒否されることがあります。`strict`では、Fireemuは以下に記録された結果（2026-10-16の2つの本番記録と2026-11-08の観測）を用いて、本番と同じ方法で`list`を評価するため、そのようなルールは、デプロイ前にローカルのテストでも失敗します。
+
+`strict`プロファイルでは、一覧の認可は、要求されたプレフィックスの下にあり得るエントリへのアクセスを証明します。`delimiter=/`の場合、各エントリは直下の子1つです。区切り文字がない場合、エントリは任意の深さになり得ます。認可は、プレフィックスが空かどうかや、たまたまどのオブジェクトが存在するかには依存しません。
+
+`prefix=teams/T/requests/R/&delimiter=/`では、`/teams/{team}/requests/{id}/{attachment}`に一致し`allow list: if member(team)`を持つルールが、一覧を認可できます。チームとリクエストIDはプレフィックスによって固定され、アタッチメント名は不明です。特定のアタッチメント名を要求する条件は、現在のすべてのオブジェクトがその名前に一致するというだけでは、ディレクトリの一覧を認可しません。
+
+2026-10-16に行った的を絞った本番との比較では、認証済みのUIDとチームのメンバーシップ、個別のアップロード/取得の制御、2つの記録を使いました。`strict`は、以下の観測結果と一致します。祖先のプレフィックスは`teams/T/requests/`、リクエストのプレフィックスは`teams/T/requests/R/`です。
+
+| メンバーに`list`を許可するルール | プレフィックス | 区切り文字 | 本番と`strict` |
+| --- | --- | --- | --- |
+| 単一アタッチメントのキャプチャ | リクエスト | `/` | 200 |
+| 単一アタッチメントのキャプチャ | リクエスト | 省略 | 403 |
+| 同じルールに明示的な親の一致を追加 | リクエスト | `/` | 200 |
+| 同じルールに明示的な親の一致を追加 | リクエスト | 省略 | 403 |
+| 同じルールに明示的な親の一致を追加 | 祖先 | `/` | 200 |
+| 同じルールに再帰的な`list`の一致を追加 | リクエスト | `/`または省略 | 200 |
+| 同じルールに再帰的な`list`の一致を追加 | 祖先 | `/` | 200 |
+
+空のリクエストプレフィックスの認可の判定は、オブジェクトがあるものと同じです。メンバーではないユーザー、匿名ユーザー、他のチームによるリクエストの一覧は、引き続き拒否されます。
+
+`strict`プロファイルでは、2026-11-08に本番が応答したとおり、区切り文字なしの一覧は、`allow list: if [file] != null`と、`match /p/{file=**}`の下の`request.path == /b/$(bucket)/o/<prefix>`に対しても許可されます。単一セグメントのキャプチャ、単独のキャプチャ、別のプレフィックスのパスは、引き続き拒否され、区切り文字付きの一覧の`request.path`は、本番が記録されるまで拒否されたままです。
+
+`/`以外の区切り文字は、保守的な任意の深さの証明を使います。本番との比較が対象としたのは`/`と区切り文字の省略で、すべてのカスタム区切り文字やリソースに依存する条件ではありません。さらに背景を知りたい場合は、[Firebaseの粒度の細かい操作に関するドキュメント](https://firebase.google.com/docs/storage/security/core-syntax#granular_operations)を参照してください。
+
+`emulator`プロファイルは、既存の具体的なプレフィックスの認可を維持します。ただし、`delimiter=/`の一覧は、プレフィックスの1つ下のすべてのエントリが許可されている場合（`prefix=p/&delimiter=/`に対する`match /p/{f} { allow list: if true; }`）は許可されます。これは、本番と`strict`が許可するのと同じです。
+
+#### 明示的な親ルール
+
+上記の単一キャプチャのSDKリクエストには、明示的な親ルールは必要ありません。追加すると、本番の権限が変わる可能性があります。
+
+```text
+match /teams/{team}/requests/{id} {
+  allow list: if member(team);
+}
+```
+
+測定したルールでは、これにより祖先の子プレフィックスを一覧することも許可されます。リクエストのアタッチメントを、区切り文字なしで再帰的に列挙することは認可しません。
+
+アタッチメントの`get`、`create`、`update`、`delete`の条件は、変更しないでください。広範で再帰的な`allow read`で置き換えないでください。`read`には`get`と`list`の両方が含まれます。一覧の権限は、特定のオブジェクトの内容を読み取れない場合でも、プレフィックスの下の名前を公開します。内容へのアクセスを許可するものではなく、一覧を`get`権限のあるオブジェクトに絞り込むものでもありません。
+
+## 本番の動作
+
+`strict`では、generationとmetagenerationの事前条件と、宣言されたチェックサムは、本番と同様に尊重されます。公式エミュレーターは、チェックサムを検証しません。
+
+**本番に対する測定。** STORAGE-STRICTNESS-OBSのrun `ss-48adbd8e`は、`Authorization: Firebase not-a-jwt`を認証なしのリクエストとして記録しました。拒否するルールは、末尾の改行がなく73バイトでスペース2つのインデントのJSON `Permission denied.`エンベロープを持つ403を返しました（F1）。認証されていない呼び出し元を許可するかどうかはルールが決めます。形式は正しいが署名が不正なトークンは、既存の扱いのままで、この記録はそれを対象としていません。FirebaseのオブジェクトDELETEは、`Content-Length: 0`を伴って204を返しました（F2）。
+
+### `strict`が拒否するリクエスト
+
+`strict`では、Storageエミュレーターは、本番が拒否し公式エミュレーターが受け付けるものも拒否します。存在しないバケットは例外です。[存在しないバケット](#buckets-that-do-not-exist)を参照してください。
+
+| リクエスト | `strict`の応答 |
+|---|---|
+| セキュリティルールのないプロジェクトでのエンドユーザーのリクエスト | 400、「bucket has not been set up」 |
+| 非公開オブジェクトに対する`GET /{bucket}/{object}`（公開URL） | 403 `AccessDenied` |
+| 有効期間を過ぎた署名付きURL | 400 `ExpiredToken` |
+| 署名付きアップロード: 署名付きヘッダーの欠落、署名された範囲外のボディ、署名なしのアップロード | 400 `MalformedSecurityHeader`、`EntityTooLarge`、`EntityTooSmall`。署名なしのアップロードは拒否されます |
+| 署名以外のすべての署名パラメーターを持つ署名付きURL | 400 `MissingSecurityHeader` |
+| 署名付きポリシーのないフォームアップロード | 拒否されます。ポリシーの有効期限と条件が適用されます |
+| JSON APIでのOAuthベアラーとしてのFirebase IDトークン | 401 `Invalid Credentials` |
+| Cloud Storageが知らないACLエントリ | 400 |
+| Cloud Storageが決して受け付けないバケット名 | 400 `Invalid bucket name`（JSON API）、400 `InvalidBucketName`（XMLルート）、404（Firebaseルート） |
+| `storage.maxStoredBytes`を超える書き込み（ローカルの上限であり、本番のルールではありません） | 402 `storage.maxStoredBytes limit exceeded` |
+
+各拒否の詳細は以下のとおりです。省略されているものはありません。
+
+<details>
+<summary>非公開オブジェクトへの公開URL</summary>
+
+`file.publicUrl()`が組み立てる`GET /{bucket}/{object}`は、次のいずれかに該当しない限り、403 `AccessDenied`で応答します。
+
+- リクエストに、空でない`Bearer`の`Authorization`ヘッダーがある。
+- リクエストがGoogleクライアントライブラリからのものである。これらは`x-goog-api-client`を送ります。Goライブラリ、つまりFirebase Admin Go SDKは、`STORAGE_EMULATOR_HOST`が設定されている間、認証情報なしでこのURLから読み取ります。Python、Java、NodeのライブラリはJSON API経由で読み取るため、拒否されることはありません。
+- リクエストが、期限切れでない署名付きURLである。
+- オブジェクトが公開されている。
+
+オブジェクトが公開されるのは、アプリケーションコードがそうした場合で、そのオブジェクトの当該世代についてのみです。上書きすると、再び非公開になります。アプリケーションコードがオブジェクトを公開するには、`file.makePublic()`、アップロード、パッチ、コピー（`destinationPredefinedAcl`）、rewriteでの`predefinedAcl=publicRead`、アップロードまたはパッチされたリソースの`acl`にある`allUsers`の`READER`エントリ、または`POST .../acl`を使います。`file.makePrivate()`（`predefinedAcl=private`）、そのエントリを含まないパッチされた`acl`、`DELETE .../acl/allUsers`は、公開を終了させます。再開可能なアップロードを開始するメタデータの`acl`は読み取られません。
+
+IAMで`allUsers`にオブジェクト閲覧者ロールを付与するバケット（本番ではコンソールで設定します）は、`storage.publicBuckets`に記載します。403は両方の方法を示します。FirebaseのダウンロードトークンURLは影響を受けません。
+
+</details>
+
+<details>
+<summary>期限切れの署名付きURL</summary>
+
+有効期間を過ぎたV4またはV2の署名付きURLは400 `ExpiredToken`で応答し、7日を超えるV4の有効期間や読み取れない`X-Goog-Date`は400で応答します。署名そのものは、作成に使った鍵が`storage.signedUrlKeys`に登録されていない限り検証されません（[署名付きURLの署名](#signed-url-signatures)）。署名したサービスアカウントの鍵が必要なためで、鍵がなければ、どの署名も受け付けられます。
+
+</details>
+
+<details>
+<summary>署名付きXMLアップロード</summary>
+
+`PUT /{bucket}/{object}`は、ローカルのアップロード向けにV4署名付きURLを受け付けます。Admin SDKを初期化する前に、`FIREBASE_STORAGE_EMULATOR_HOST`をスキームなしのホストとポートに、または`STORAGE_EMULATOR_HOST`をHTTP URLに設定してください。SDKには引き続き署名用の認証情報が必要です。開発には、ローカルで生成したテスト用のサービスアカウントキーを使えます。strictモードは、署名なしのアップロードを拒否します。
+
+このアップロード経路は`Content-Type`を保存します。その他のオブジェクトメタデータと条件付き書き込みヘッダーは対応していません。この用途で転送されるのは`Content-Type`と`x-goog-content-length-range`のみで、任意の署名付き拡張ヘッダーは対応していません。範囲は両端を含みます。
+
+- **本番に対する測定**（実際のFirebaseプロジェクト、2026-11-03、`image/png`に対する`getSignedUrl` V4 `write`と`x-goog-content-length-range: 0,10485760`、16ケースの2つの記録）。リクエストにない署名付きヘッダーは、それを名指しする`400 MalformedSecurityHeader`です（`content-type`と範囲ヘッダーを測定しました）。範囲を上回る、または下回るボディは`400 EntityTooLarge`または`400 EntityTooSmall`です。期限切れのURLは、署名された有効期間の終端を名指しする`400 ExpiredToken`です。これらの拒否と、成功時のヘッダー（`ETag`、`x-goog-generation`、`x-goog-metageneration`、`x-goog-hash`、`x-goog-stored-content-length`、`x-goog-stored-content-encoding`）は、どちらのプロファイルでも本番のボディと値を持ちます。`strict`では、署名以外のすべての署名パラメーターを指定するURLは`400 MissingSecurityHeader`で、署名付きヘッダーに含まれずに送られた範囲ヘッダーは`400 MalformedSecurityHeader`です。`emulator`プロファイルは、以前と同じくどちらも受け付けます（firebase-tools 15.28.2がそれらをどう扱うかは測定していません）。
+- **デフォルトでは検証されない、文書化された違い。** 本番は、署名が改変された場合、`Content-Type`や範囲の値が署名されたものと異なる場合、オブジェクト名が署名されたものと異なる場合に、`403 SignatureDoesNotMatch`で応答します。fireemuには、`storage.signedUrlKeys`で登録しない限り署名を確認するための鍵がなく、そうでなければ、どちらのプロファイルでもこの4つすべてを受け付けます。そのため、メソッドや署名付きヘッダー値の変更を認証できません。この動作を認可のチェックとして使わないでください。
+- **CORS。** XML APIでは、`storage.cors`も`productionExact`もない場合、CORSはどちらのプロファイルでも許容的です。成功した`OPTIONS`のプリフライトはCORSヘッダー付きの`204`で応答し、`Origin`を持つ`PUT`にもそれらが付きます。本番はバケットのCORS設定に依存し、設定のないバケットにはCORSヘッダーなしの`200`で応答しました。`strict`でそれを得るには、`storage.cors`でそのバケットを`[]`で記載するか、`productionExact`を有効にします（[バケットのCORS](#bucket-cors)）。
+- **繰り返された署名パラメーター。** `strict`では、繰り返されたもの、大文字小文字が異なるもの、パーセントエンコードされた名前を含め、`X-Goog-SignedHeaders`のすべての出現が適用されます。競合する`X-Goog-Date`、`X-Goog-Expires`、`Expires`の値が繰り返されると`400 InvalidArgument`が返されます。競合するパラメーターを削除してください。この拒否は、本番では観測されていません。`emulator`プロファイルは、既存のクエリの解釈を維持します。
+
+</details>
+
+<details>
+<summary>署名付きポリシーのないフォームアップロード</summary>
+
+マルチパートフォームによる`POST /{bucket}`には、`policy`と署名フィールドが必要です。ポリシーの有効期限と条件（`bucket`、`eq`、`starts-with`、`content-length-range`）は適用されますが、署名は検証されません。
+
+</details>
+
+<details>
+<summary>OAuthベアラーとしてのFirebase IDトークン</summary>
+
+JSON APIでOAuthベアラーとして送られたFirebase IDトークンには、401 `Invalid Credentials`で応答します。それ以外の認証情報、または認証情報なしの場合は、ローカルの実行ではアクセストークンを判断できないため、オーナーとして処理されます。
+
+</details>
+
+<details>
+<summary>Cloud Storageが知らないACLエントリ</summary>
+
+Cloud Storageが知らないACLエントリには、400で応答します。効果があるのは、ロールが`READER`の`allUsers`のみです。
+
+</details>
+
+<details>
+<summary>Cloud Storageが決して受け付けないバケット名</summary>
+
+Cloud Storageが決して受け付けないバケット名（たとえば`ab`、`goog-x`、`1.2.3.4`）には、その名前のバケットが（インポートまたは宣言により）存在しない限り、JSON APIでは400 `Invalid bucket name`、XMLルートでは400 `InvalidBucketName`、Firebaseルートでは404で応答します。
+
+</details>
+
+`emulator`プロファイルは、上述の署名付きアップロードの応答を除き、既存の動作を維持します。それらの応答は本番に従っており、それについて公式エミュレーターとの互換性は主張しません。
+
+### 空のパスセグメント
+
+どちらのプロファイルでも、オブジェクト名または一覧のプレフィックスに空のパスセグメントがあるFirebase Storageリクエスト（`/v0/b/{bucket}/o/...`）は、オブジェクト名の途中の`//`、先頭の`/`、末尾の`/`などを含め、セキュリティルールが評価される前に、`The path may not end with '/' or contain two consecutive '/'s`とともに`400`で応答します。本番は、すべてを許可するルールの下でも、2026-11-08に読み取り、メタデータの読み取り、一覧をこのように応答しました。アップロード、`PATCH`、`DELETE`、トークン管理はそこから導かれるもので、記録されていません。
+
+- `strict`プロファイルは、Cloud Storageと同様に、`/x`、`x`、`x/`を3つのオブジェクトとして維持します。`emulator`プロファイルは、公式エミュレーターと同様に、アップロードされた名前の先頭の`/`を1つ取り除きます。
+- Firebaseの一覧は、`a//x`のようなオブジェクトが生成するプレフィックスを除外し、除外された名前がページに入ったり`nextPageToken`になったりすることはありません。
+
+## 保存バイト数を制限する
+
+### オブジェクトとリクエストのサイズ
+
+各オブジェクトは、デフォルトで256 MiBに制限されます。この上限を変更するには、`storage.maxObjectBytes`を設定します。HTTPリクエストボディの上限は、マルチパートのオーバーヘッドを考慮して4 MiB大きくなります。
+
+`storage.bufferedBodyBudgetBytes`は、プロセス全体でバッファリングされるリクエストボディに上限を設けるもので、デフォルトは1 GiBです。利用可能な予算を超えるリクエストには、`Retry-After: 1`を付けたHTTP 503が返されます。リクエストより小さい予算では、オブジェクトが上限内でもリクエストが拒否されることがあります。
+
+どちらの設定も正の整数のバイト数を受け付け、最大値は`maxObjectBytes`が2143289343、`bufferedBodyBudgetBytes`が2147483647です。再開可能なアップロードには、保持されるアップロードの合計に対する別の1 GiBの上限もあり、インポートにも別の1 GiBの合計上限があります。
+
+### 保存される合計バイト数
+
+Storageエミュレーターはすべてのオブジェクトをメモリに保持し、デフォルトではその量に制限がありません。上限を設けるには、`storage.maxStoredBytes`を1以上のバイト数に設定します（[設定](#configure)）。この上限はFireemuのローカルのもので、本番にはありません。
+
+- 各オブジェクトのバイト数は1回だけ数えられ、コピーは再度数えられます。オブジェクトを置き換えた場合は、サイズの差分のみが数えられます。
+- 合計が上限を超えて増加するアップロード、再開可能なアップロードの最終リクエスト、コピーは、HTTP 402とメッセージ`storage.maxStoredBytes limit exceeded`（JSON APIではreason `storageCapacityExceeded`）で拒否されます。`Retry-After`はありません。オブジェクトを削除して空きを作ってください。FirebaseのクライアントSDKは、402を再試行せずにすぐ`storage/quota-exceeded`として報告し、Cloud Storageのクライアントライブラリも再試行しません。
+- 同じサイズまたはより小さいサイズでの置き換えなど、合計が増えない書き込みは、ストアが上限を超えて保持している間（インポート、リストア、上限の引き下げの後）でも、常に通ります。
+- 拒否された書き込みは、何も変更しません。再開可能なアップロードは開いたままで、オフセットは進まないため、空きを作った後に同じ最終チャンクを再送するか、アップロードをキャンセルできます。
+- インポート（`--import`）とスナップショットのリストアは、上限に対して確認されません。上限を超えるインポートは、保存バイト数と上限を示す`warning:`行を出力して開始し、上限を超えるスナップショットのリストアは、同じ行をログに記録します。
+
+`fireemu doctor --connect <control URL>`は、保存バイト数を`objects.bytes`として、この上限と対比して報告します。
+
+## 本番との違い
+
+### 未対応
+
+- V2の署名付きURLまたはPOSTポリシーの署名の検証。V4署名付きURLは、`storage.signedUrlKeys`に登録された鍵に対してのみ検証されます。
+- `allUsers`の読み取り以外のオブジェクトACL。
+- IAMとバケットレベルの公開アクセス。
+- オブジェクトの結合（`compose`）。
+- 通知の設定。
+
+オブジェクトのバージョニングはJSON APIで提供されます。`PATCH /storage/v1/b/{bucket}`に`{"versioning":{"enabled":true}}`を指定すると、本番と同様にオンになります。
+
+### ローカルの動作
+
+- 何も宣言していないバケットは、`storage.undeclaredBuckets`が`"refuse"`でない限り、最初の書き込みで作成されます。[存在しないバケット](#buckets-that-do-not-exist)を参照してください。
+- `storage.cors`に記載のないバケットに対して、`productionExact`を設定しない限り、XML APIはCORSに許容的に応答します。[バケットのCORS](#bucket-cors)を参照してください。
+- V4署名は、`storage.signedUrlKeys`に登録された鍵に対してのみ確認されます。[署名付きURLの署名](#signed-url-signatures)を参照してください。
+- オブジェクトのサイズ上限、バッファリングされたボディの予算、`storage.maxStoredBytes`は、ローカルの制限です。[保存バイト数を制限する](#limit-the-stored-bytes)を参照してください。
+
+### Storageのポートをlocalhostに限定する
+
+:::caution
+公式エミュレーターと同様に、Storageのポートは、存在しないメディア読み取りに対する404のHTMLボディに、要求されたオブジェクト名を反映します。お使いのマシンで開いたWebページが、そのオリジンでスクリプトを実行できる可能性があります。
+
+- デフォルトでは、すべてのリスナーはループバック上にあるため、お使いのマシン上のプロセスだけが到達できます。Hostガードは、`localhost`、IPアドレス、`network.allowedHosts`に記載した名前以外の`Host`を指定するリクエストにも、DNSリバインディングへの対策として403で応答します（[エミュレーターが応答するホスト名](../../guides/ci-and-containers/#host-names-the-emulators-answer)を参照）。
+- このポートに他のホストから到達できるのは、自分でオプトインした場合だけです。`fireemu.toml`の`network.allowNonLoopbackHosts`と、`firebase.json`のループバックでない`emulators.storage.host`を併用します（[コンテナーからエミュレーターを提供する](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)を参照）。このようなリスナーは認証情報なしで応答するため、信頼できないネットワークに公開しないでください。
+- `strict`プロファイルは、本番が送らないJSON APIの応答に`X-Content-Type-Options: nosniff`を送らないため、その多層防御は追加されません。`emulator`プロファイルは、公式エミュレーターのヘッダーを維持します。
+
+:::
+
+## 関連情報
+
+- [セキュリティルール](../../guides/security-rules/)
+- [プロファイル](../../guides/profiles/)
+- [互換性](../../compatibility/)と[制限事項](../../compatibility/limitations/)
+- [設定リファレンス](../../reference/configuration/)
