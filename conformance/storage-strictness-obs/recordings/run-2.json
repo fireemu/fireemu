@@ -170,6 +170,15 @@
         "location",
         "vary"
       ],
+      "location": {
+        "origin": "<REQUEST_ORIGIN>",
+        "path": "/upload/storage/v1/b/<REQUEST_BUCKET>/o",
+        "query": [
+          ["name", "<REQUEST_OBJECT>"],
+          ["upload_id", "<UPLOAD_ID>"],
+          ["uploadType", "resumable"]
+        ]
+      },
       "shape": "resumable-start",
       "known": true
     },
@@ -341,6 +350,15 @@
         "location",
         "vary"
       ],
+      "location": {
+        "origin": "<REQUEST_ORIGIN>",
+        "path": "/upload/storage/v1/b/<REQUEST_BUCKET>/o",
+        "query": [
+          ["name", "<REQUEST_OBJECT>"],
+          ["upload_id", "<UPLOAD_ID>"],
+          ["uploadType", "resumable"]
+        ]
+      },
       "shape": "resumable-start",
       "known": true
     },
@@ -512,6 +530,15 @@
         "location",
         "vary"
       ],
+      "location": {
+        "origin": "<REQUEST_ORIGIN>",
+        "path": "/upload/storage/v1/b/<REQUEST_BUCKET>/o",
+        "query": [
+          ["name", "<REQUEST_OBJECT>"],
+          ["upload_id", "<UPLOAD_ID>"],
+          ["uploadType", "resumable"]
+        ]
+      },
       "shape": "resumable-start",
       "known": true
     },

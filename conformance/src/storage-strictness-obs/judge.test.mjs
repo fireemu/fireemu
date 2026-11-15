@@ -570,7 +570,7 @@ test("v3 media and resumable shapes require every recorded discriminator", () =>
   );
   assert.equal(compare([row], [volatile])[0].verdict, "MATCH");
   assert.equal(
-    compare([row], [{ ...row, location: { ...row.location, host: "other.example" } }])[0].verdict,
+    compare([row], [{ ...row, location: { ...row.location, path: "/other" } }])[0].verdict,
     "DIFFERS(location)",
   );
   assert.notEqual(
@@ -655,4 +655,84 @@ test("comparison retains the recorded ACL error code, message and reason", async
     compare([xml], [{ ...xml, xml: { ...xml.xml, Message: "changed" } }])[0].verdict,
     "DIFFERS(xml)",
   );
+});
+
+const fixtureRows = async () => {
+  const { readFileSync } = await import("node:fs");
+  return JSON.parse(
+    readFileSync(
+      new URL("../../storage-strictness-obs/recordings/run-2.json", import.meta.url),
+      "utf8",
+    ),
+  ).rows;
+};
+
+// Re-judges a published fixture row as the answer a journal would hold for it.
+const judgedFromFixture = (row, rewrite = (url) => url) => {
+  const url = rewrite(row.url);
+  const headers = { ...row.headers };
+  if (row.headerNames.includes("location")) headers.location = `${url}&upload_id=session-1`;
+  return judgeAnswer(
+    answer(row.body ?? (row.shape === "media" ? "fire" : ""), {
+      case: row.case,
+      method: row.method,
+      status: row.status,
+      url,
+      headers,
+    }),
+  );
+};
+
+test("the published fixture compared with itself and with its re-judged answers MATCHes", async () => {
+  const rows = await fixtureRows();
+  assert.ok(compare(rows, rows).every((row) => row.verdict === "MATCH"));
+  // Success bodies are omitted from the fixture, so only bodiless and error rows can be re-judged.
+  for (const row of rows.filter((candidate) =>
+    ["json-error", "empty", "resumable-start"].includes(candidate.shape),
+  ))
+    assert.equal(compare([row], [judgedFromFixture(row)])[0].verdict, "MATCH", row.case);
+});
+
+test("a production https Location and a local http Location with another bucket MATCH", async () => {
+  const start = (await fixtureRows()).find((row) => row.case === "V3-absent-resumable");
+  const production = judgedFromFixture(start);
+  const local = judgedFromFixture(start, (url) =>
+    url
+      .replace("https://storage.googleapis.com", "http://127.0.0.1:39199")
+      .replace("fireemu-obs-RUN", "fireemu-obs-local-absent"),
+  );
+  assert.equal(production.shape, "resumable-start");
+  assert.equal(local.shape, "resumable-start");
+  assert.equal(compare([production], [local])[0].verdict, "MATCH");
+  assert.equal(compare([start], [local])[0].verdict, "MATCH");
+});
+
+test("a changed ACL message DIFFERS; a wrong Location path or a missing upload_id never MATCHes", async () => {
+  const rows = await fixtureRows();
+  const acl = rows.find((row) => row.case === "V3-absent-acl");
+  const body = JSON.parse(acl.body);
+  body.error.message = "changed ACL message";
+  const changed = judgedFromFixture({ ...acl, body: JSON.stringify(body, null, 2) + "\n" });
+  assert.equal(changed.known, true);
+  assert.equal(compare([acl], [changed])[0].verdict, "DIFFERS(json)");
+  const start = rows.find((row) => row.case === "V3-absent-resumable");
+  for (const location of [
+    start.url.replace("/upload/storage/v1/b/fireemu-obs-RUN/o", "/upload/storage/v1/b/other/o") +
+      "&upload_id=session-1",
+    start.url.replace("/o?", "/o/extra?") + "&upload_id=session-1",
+    start.url,
+  ]) {
+    const row = judgeAnswer(
+      answer("", {
+        case: start.case,
+        method: "POST",
+        status: 200,
+        url: start.url,
+        headers: { ...start.headers, location },
+      }),
+    );
+    // The judge refuses the shape, so the row is unknown and never MATCHes.
+    assert.equal(compare([start], [row])[0].verdict, "NEEDS-REVIEW", location);
+    assert.equal(row.location, null, location);
+  }
 });

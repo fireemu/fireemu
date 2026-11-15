@@ -108,6 +108,73 @@ export function parseXmlError(text) {
   return fields.Code && fields.Message ? { Code: fields.Code, Message: fields.Message } : null;
 }
 
+// The comparable error semantics of a JSON body: its code, message and first reason.
+export function jsonErrorFields(value) {
+  const error = value?.error;
+  if (!error || typeof error !== "object") return null;
+  return {
+    code: error.code ?? null,
+    message: error.message ?? null,
+    reason: error.errors?.[0]?.reason ?? null,
+  };
+}
+
+// The comparable error semantics of a recorded body text, whichever encoding it uses.
+export function bodyErrorFields(text) {
+  try {
+    return { json: jsonErrorFields(JSON.parse(text)), xml: null };
+  } catch {
+    return { json: null, xml: parseXmlError(text) };
+  }
+}
+
+// Validates a resumable Location against its own request and returns its request-relative
+// structure. Protocol, host and bucket name differ between production and a local emulator,
+// so only their agreement with the request is kept; the session id is masked.
+export function resumableLocation(locationText, requestUrl) {
+  try {
+    const location = new URL(locationText);
+    const request = new URL(requestUrl);
+    const bucket = /^\/upload\/storage\/v1\/b\/([^/]+)\/o$/.exec(request.pathname)?.[1];
+    const object = request.searchParams.get("name");
+    const query = [...location.searchParams].toSorted(([a], [b]) => a.localeCompare(b));
+    const expected = [...request.searchParams, ["upload_id", "<UPLOAD_ID>"]].toSorted(([a], [b]) =>
+      a.localeCompare(b),
+    );
+    const mask = ([key, value]) => [
+      key,
+      key === "upload_id" ? "<UPLOAD_ID>" : key === "name" ? "<REQUEST_OBJECT>" : value,
+    ];
+    if (
+      !bucket ||
+      !object ||
+      !["http:", "https:"].includes(location.protocol) ||
+      location.origin !== request.origin ||
+      location.pathname !== `/upload/storage/v1/b/${bucket}/o` ||
+      location.username ||
+      location.password ||
+      location.hash ||
+      location.searchParams.get("uploadType") !== "resumable" ||
+      location.searchParams.getAll("name").length !== 1 ||
+      location.searchParams.get("name") !== object ||
+      location.searchParams.getAll("upload_id").length !== 1 ||
+      !location.searchParams.get("upload_id") ||
+      JSON.stringify(
+        query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
+      ) !== JSON.stringify(expected)
+    )
+      return null;
+    return {
+      origin: "<REQUEST_ORIGIN>",
+      path: "/upload/storage/v1/b/<REQUEST_BUCKET>/o",
+      query: query.map(mask),
+    };
+  } catch {
+    // An invalid or fully redacted Location is not evidence of a resumable URL.
+    return null;
+  }
+}
+
 export function judgeAnswer(entry) {
   const body = Buffer.from(entry.bodyBase64 ?? "", "base64");
   const headers = Object.fromEntries(new Headers(entry.headers ?? {}).entries());
@@ -145,11 +212,7 @@ export function judgeAnswer(entry) {
     const value = JSON.parse(text);
     const error = value?.error;
     if (error && typeof error === "object") {
-      row.json = {
-        code: error.code ?? null,
-        message: error.message ?? null,
-        reason: error.errors?.[0]?.reason ?? null,
-      };
+      row.json = jsonErrorFields(value);
       if (
         Object.keys(value).length === 1 &&
         Object.keys(error).every((key) => ["code", "message", "errors"].includes(key)) &&
@@ -239,38 +302,8 @@ export function judgeAnswer(entry) {
     !body.length &&
     headerNames.includes("location")
   ) {
-    try {
-      const location = new URL(headers.location);
-      const request = new URL(entry.url);
-      const query = [...location.searchParams].toSorted(([a], [b]) => a.localeCompare(b));
-      const expected = [...request.searchParams, ["upload_id", "<UPLOAD_ID>"]].toSorted(
-        ([a], [b]) => a.localeCompare(b),
-      );
-      if (
-        ["http:", "https:"].includes(location.protocol) &&
-        location.origin === request.origin &&
-        location.pathname === request.pathname &&
-        !location.username &&
-        !location.password &&
-        !location.hash &&
-        location.searchParams.get("uploadType") === "resumable" &&
-        location.searchParams.getAll("upload_id").length === 1 &&
-        location.searchParams.get("upload_id") &&
-        JSON.stringify(
-          query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
-        ) === JSON.stringify(expected)
-      ) {
-        row.location = {
-          protocol: location.protocol,
-          host: location.host,
-          path: location.pathname,
-          query: query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
-        };
-        row.shape = "resumable-start";
-      }
-    } catch {
-      // An invalid or fully redacted Location is not evidence of a resumable URL.
-    }
+    row.location = resumableLocation(headers.location, entry.url);
+    if (row.location) row.shape = "resumable-start";
   }
   row.known =
     row.shape !== "unrecorded" &&
