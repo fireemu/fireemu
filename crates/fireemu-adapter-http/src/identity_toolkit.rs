@@ -11807,8 +11807,18 @@ fn update(
     // sessions are judged against it when they are used (sandbox recording 2026-09-24). A
     // client update's validSince changes nothing (AUTH-ACCOUNT recording 2026-09-23,
     // privilege/valid-token-admin-fields#admin-readback-valid-since).
+    // firebase-tools 15.28.2 sets the account's own `validSince` to the current second for an
+    // email change (`operations.js:861`); the emulator profile's ID-token check reads it.
+    if email_changed {
+        let _ = store.assign_emulator_valid_since(&uid, at);
+    }
     if let Some(valid_since) = plan.revoke_at.filter(|_| !self_service) {
         let _ = store.set_valid_since(&uid, valid_since);
+        // A privileged `validSince` is copied over the account's own as given (`:885`); the
+        // number 0 is false to JavaScript, so the account then has none (`:1727`).
+        if body.get("validSince").and_then(Value::as_i64) == Some(0) {
+            let _ = store.clear_emulator_valid_since(&uid);
+        }
     }
     // A privileged password replacement or an explicit validSince advances `validSince` but
     // keeps the refresh-session record, so a session issued in the revocation second is not

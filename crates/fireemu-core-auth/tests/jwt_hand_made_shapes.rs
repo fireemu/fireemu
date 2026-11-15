@@ -220,7 +220,7 @@ enum Account {
     PasswordRemoved,
     /// An import sets it always (`:341`).
     Imported,
-    /// Tokens revoked (`reqBody.validSince`, `:861-862`).
+    /// Tokens revoked through a privileged `validSince` (`:861-862`, `:885`).
     Revoked,
 }
 
@@ -289,7 +289,7 @@ fn store_for(profile: Profile, account: Account) -> (AuthStore, LocalId) {
     match account {
         Account::AdminCreatedPasswordless => store.user_mut(&uid).unwrap().admin_created = true,
         Account::PasswordRemoved => assert!(store.clear_password(&uid).unwrap()),
-        Account::Revoked => store.revoke_tokens(&uid, at(REVOKED_AT)).unwrap(),
+        Account::Revoked => store.set_valid_since(&uid, at(REVOKED_AT)).unwrap(),
         _ => {}
     }
     if profile == Profile::Emulator {
