@@ -1,0 +1,471 @@
+---
+title: Realtime Database
+description: 在本地测试 Firebase Realtime Database 的读取、写入、监听器、安全规则以及导出和导入，并查看哪些用例已与生产环境比对验证。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 在 `127.0.0.1:9000` 提供 Firebase Realtime Database：REST API、SDK 使用的实时协议、安全规则，以及 Firebase CLI 格式的导出和导入。它已针对其录制用例与生产环境比对验证；更广泛的生产环境兼容性仍未验证（参见[与生产环境的差异](#与生产环境的差异)）。
+
+它也与官方模拟器（firebase-database-emulator v4.11.2，由 firebase-tools 15.28.2 运行）进行了比较，但目前尚未声称与其一致，因此[兼容性契约](../../compatibility/)将该比较列为未解决的缺口。在未观测生产环境的情况下沿用官方模拟器的行为，今后可能会改变（参见[暂定行为](#暂定行为)）。
+
+<Facts items={[
+  { label: '状态', value: '部分支持' },
+  { label: '默认端口', value: '9000' },
+  { label: '启动条件', value: '被选中或已配置时' },
+  { label: '生产环境验证', value: '仅限录制用例', href: 'compatibility/#production-verification' },
+]} />
+
+## 可以测试的内容
+
+- [REST 读取、写入、查询和事件流](#提供的功能)，以及基于 WebSocket 和长轮询的实时协议。
+- 所有传输方式上的[安全规则](#安全规则)，以及[各类凭据](#凭据)。
+- 使用 `@firebase/rules-unit-testing` 的[规则单元测试](#使用-firebaserules-unit-testing-进行单元测试)，以及[规则覆盖率](#规则覆盖率)。
+- [`onDisconnect` 写入](#ondisconnect-写入与规则)及规则如何判定它们。
+- Firebase CLI 格式的[导出、导入和会话快照](#导出导入和快照)。
+- 两代的[数据库触发的 Functions](#本地-functions-触发器)。
+
+## 连接
+
+### 启动数据库
+
+数据库在被选中或已配置时启动。若以下条件均不满足，默认运行不会占用 9000 端口：
+
+- `--only database`（与其他服务一起：`--only auth,firestore,database`）；
+- `firebase.json` 中的 `emulators.database`，即 `firebase init` 写入的形式；
+- `fireemu.toml` 中的 `daemon.databasePort`，或 `--database-port`。
+
+```sh
+npx fireemu exec --only database -- npm test
+```
+
+```json
+{
+  "emulators": { "database": { "port": 9000 } }
+}
+```
+
+端口被占用时启动会中止（`error: bind 127.0.0.1:9000: Address already in use`）。9000 也是 PHP-FPM 的默认端口，因此可以用 `--database-port` 或 `emulators.database.port` 选择其他端口，或用 `--only` 不启动数据库。
+
+启动横幅会显示地址和生效的规则：
+
+```text
+  database:         127.0.0.1:9000   FIREBASE_DATABASE_EMULATOR_HOST=127.0.0.1:9000
+  database rules:   demo-app-default-rtdb <- ./database.rules.json; another instance: every request is allowed (database.defaultAccess = open, default)
+```
+
+### 让 SDK 指向它
+
+`fireemu exec` 为其运行的命令设置 `FIREBASE_DATABASE_EMULATOR_HOST`，Admin SDK 会读取它（参见[环境变量](../../reference/environment-variables/)）。
+
+`exec` 还会像 firebase-tools 一样设置 `FIREBASE_CONFIG`，其 `databaseURL` 为 `https://<project>.firebaseio.com`。因此，不带选项初始化的 Admin SDK 应用读写的是实例 `<project>`，而不是单一规则形式和下面客户端示例所使用的 `<project>-default-rtdb`。要与客户端共享同一实例，请向 `initializeApp` 传入 `databaseURL: 'https://<project>-default-rtdb.firebaseio.com'`。
+
+Web 和移动客户端需显式连接：
+
+```js
+import { initializeApp } from 'firebase/app';
+import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
+
+const app = initializeApp({ projectId: 'demo-app', databaseURL: 'https://demo-app-default-rtdb.firebaseio.com' });
+const db = getDatabase(app);
+connectDatabaseEmulator(db, '127.0.0.1', 9000);
+```
+
+### 实例
+
+数据库实例是一个命名空间。与官方模拟器一样，请求通过 `ns` 查询参数或主机名的第一个标签选择实例。`demo-app-default-rtdb` 是项目 `demo-app` 的默认实例：ID 令牌针对该项目进行检查；对于其他任何名称的实例，则针对守护进程的项目进行检查。会话重置和会话快照涵盖 `<project>` 和 `<project>-default-rtdb`。
+
+## 提供的功能
+
+- REST API（`.json` 路径）：读取、写入、更新、push ID、带 ETag 的条件请求、`shallow`、`print`、`format=export`、查询，以及事件流（`Accept: text/event-stream`）。
+- 基于 WebSocket 和长轮询（`forceLongPolling()`）的实时协议，支持监听、查询、事务和服务器值。
+- `onDisconnect` 写入（`set`、`update`、`remove`、`cancel`）。无论连接以何种方式结束，它们都会在连接结束时作为一次更新运行，其服务器值在那一刻解析。Fireemu 自身停止时它们不会运行，正如官方模拟器停止时也不运行它们；会话重置会丢弃为其所重置项目注册的写入。
+- [安全规则](#安全规则)、`/.settings/rules.json`、`/.inspect/databases.json`，以及写入时的 `disableTriggers`。
+- [导出、导入和会话快照](#导出导入和快照)。
+
+仓库中的 `tools/sdk-smoke-database` 通过固定版本的 `firebase` 和 `firebase-admin` SDK 驱动这些功能，并将结果与官方模拟器的录制进行比较。
+
+### REST 选项
+
+- 普通 REST 读取会把 `timeout` 校验为最长 15 分钟的正时长（例如 `1s`、`2seconds` 或 `3min`）。这只校验该选项，不会设置请求截止时间。写入、浅读取和条件读取会忽略它。无效时长会被拒绝；时长溢出可能返回 500。
+- `shallow=true` 接受 `limitToFirst` 和纯文本 `startAfter`，拒绝 `limitToLast`、`startAt`、`endAt` 和 `orderBy`。
+- 读取忽略 `writeSizeLimit`，写入忽略 `format`。
+- 条件响应保留其 ETag：`if-none-match` PUT 即使带 `print=silent` 也包含 ETag，`X-Firebase-ETag: true` 在 304、被拒绝的条件 PUT（412）和 POST 上也会请求 ETag。
+- 在 `strict` 下，路径中格式错误的百分号转义返回 400，带 `application/octet-stream` 和 `Bad request.`；`emulator` profile 保留官方模拟器的响应。
+
+### 多路径写入的顺序
+
+一次多路径写入的各条目（REST `PATCH`、SDK `update()`，以及连接结束时的 `onDisconnect` 写入）按官方模拟器的顺序到达连接的监听：最多四个条目时按发送或注册顺序，五个及以上时按其键的哈希顺序。位于写入位置或其上层的监听先收到。一份生产环境录制对一组六个键的情况与此一致；其他形式沿用官方模拟器，尚未在生产环境中观测。
+
+## 安全规则
+
+规则支持 `.read`、`.write`、`.validate` 和 `.indexOn`，以及 `auth`、`now`、`root`、`data`、`newData`、`query` 和 `$` 变量，适用于 REST、事件流和实时协议。
+
+### 加载规则
+
+与 Firebase CLI 一样，在 `firebase.json` 中指定规则文件。单一形式将一个文件加载到默认实例 `<project>-default-rtdb`：
+
+```json
+{
+  "database": { "rules": "database.rules.json" }
+}
+```
+
+数组形式将每个条目加载到其 `instance`，或加载到 `.firebaserc` 中其部署 `target` 对应的实例：
+
+```json
+{
+  "database": [
+    { "instance": "demo-app-default-rtdb", "rules": "database.rules.json" },
+    { "target": "audit", "rules": "audit.rules.json" }
+  ]
+}
+```
+
+规则文件加载失败时，启动会中止并给出文件、行和列，与 firebase-tools 中止的方式相同。Fireemu 运行期间，变更的文件会被重新加载；无法加载的变更会保留当前生效的规则并打印原因。
+
+`GET` 和 `PUT /.settings/rules.json?ns=<instance>` 使用管理员凭据读取和替换实例的规则，`@firebase/rules-unit-testing` 正是这样加载规则的。与 Firestore 和 Storage 的规则路由一样，该路由要求回环对端。非回环对端在评估凭据之前就收到 403；重复的前导斜杠和百分号编码的 `.settings` 路径同样受此限制。
+
+### 规则文件中的错误
+
+加载无效规则时会报告第一个语法错误、重复键错误或无效索引名错误。对于可以解析的文档，类型和名称错误按规则顺序报告：`.read`、`.write`、`.validate`，然后按文件顺序报告具名子节点，最后报告通配符子节点，且收集数量有上限。不支持的 JavaScript 构造仍然失败；解析更多形式是为了改进其错误消息，而不是启用它们。录制用例并不能确定所有格式错误的输入。
+
+### 已比较的内容
+
+与官方模拟器的比较涵盖 REST 读写、带或不带范围/计数查询的事件流，以及不带查询（`q` 缺失或为空）的实时监听。它们不能确定所有带查询的 WebSocket 监听形式；长轮询使用共享的实时会话行为。
+
+有限的已录制生产环境 REST 规则、依赖查询的规则和查询边界用例，连同已录制的长轮询事务帧，在两个 profile 下均会重放。这些观测涵盖已录制的请求，并不能确定所有规则、查询或传输形式的一致性。
+
+### 事件流与监听
+
+由查询限定范围或数量的事件流按该查询判定。查询仅指定排序的事件流会读取全部数据，并与官方模拟器一样，按不带查询的流判定，不需要索引。
+
+规则变更、改变依赖数据的 `.read` 所允许内容的写入，或客户端登录或登出，都会取消规则不再允许的监听和事件流。
+
+### `onDisconnect` 写入与规则
+
+`onDisconnect` 写入在注册时和连接结束时都会被检查。
+
+- **注册时。** `set` 作为一次写入检查，`update` 逐条目检查，均针对当前的树。任一条目失败，注册即被拒绝。
+- **断开连接时。** 每个待处理条目先针对当时的树单独检查。被 `.write` 或 `.validate` 拒绝的条目会被丢弃。保留的条目随后作为一次更新一起检查；如果该组合检查失败，则全部不应用。
+
+在已录制的生产环境用例中，取消以数字优先级注册的 onDisconnect 值的某个子节点，会丢弃该连接的整个更新，包括无关的写入。另有两轮录制涵盖子节点取消后的重新注册、嵌套优先级和字符串优先级；每种形式的两轮录制在每个 profile 下均已重放。其他优先级和取消形式在生产环境中仍未验证。
+
+### 凭据
+
+| 凭据 | `emulator` profile | `strict` profile（默认） |
+|---|---|---|
+| `Authorization: Bearer owner` 或 `access_token=owner`（模拟器的 owner 凭据） | 管理员；规则不适用 | 管理员；规则不适用 |
+| 单个其他的 `Authorization: Bearer` 或 `access_token` | 管理员，与官方模拟器相同。除非 `network.allowNonLoopbackHosts` 将其公开，监听器位于回环地址；请先参阅 [CI 与容器](../../guides/ci-and-containers/) | 以 401 拒绝。对于非事件流的数据路径读取，与测量时生产环境的回答一致，响应体为 `Unauthorized request.`（空的 Bearer 仍为 `Permission denied`） |
+| 由 Fireemu 的 Auth 签名的 `auth=<ID token>` | 其指明的用户，自定义声明作为 `auth` 的成员 | 当令牌属于实例所在项目时，为其指明的用户 |
+| `auth=<unsigned ID token>`（`@firebase/rules-unit-testing`、`mockUserToken`） | 在 `auth.allowUnsignedIdTokens` 为 `true` 时（默认；在 `productionExact` 下为 `false`，此时视为匿名），为其 `sub` 指明的用户，不论其指明哪个项目、是否带 `aud`，与官方模拟器的读法相同 | 在 `auth.allowUnsignedIdTokens` 为 `true` 时（默认；在 `productionExact` 下为 `false`），当其具有 `createMockUserToken` 的形式且以实例所在项目为受众时，为其指明的用户 |
+| Fireemu 无法验证的 `auth=<token signed with RS256 or HS256>` | 当令牌具有非空签名、以实例所在项目为 `aud`、`exp` 在未来、且（如有指明）租户存在，同时允许未签名令牌且 Fireemu 的 Auth 自身不签发令牌时，为其声明指明的用户，与官方模拟器的读法相同；否则为匿名 | 以 401 拒绝 |
+| 其他任何 `auth=` 值 | 匿名 | 以 401 拒绝；但对于非事件流的数据路径读取，若值为不透明值（1 至 128 个字母和数字，不是 `null` 或 `owner`，在解码查询后判定），则与测量时生产环境的回答一致，视为未认证：规则对所有人开放的路径可以读取，受保护的路径仍被拒绝 |
+
+在应用此表之前，Fireemu 在两个 profile 下都以 400 拒绝含糊的 HTTP 请求：任何重复的查询参数（包括 `auth` 和 `access_token`）、多个 `Authorization` 头，或查询凭据与 `Authorization` 头的任何组合。相同的重复凭据仍属含糊。官方模拟器则会选取一个值，因此这是一项已列出的差异。
+
+同时携带 `auth_variable_override`（Admin SDK 为 `databaseAuthVariableOverride` 发送的内容）的管理员 REST 请求，会被规则按该 `auth` 值评估，与已录制用例中生产环境的评估方式相同。`null` 视为未认证，格式错误的覆盖值或既非对象也非 `null` 的覆盖值会被拒绝。
+
+`/.inspect/databases.json`（`firebase emulators:export` 会读取它）在 `emulator` profile 下回应任何人，在 `strict` 下或数据库处于锁定状态时仅回应 `owner` 凭据。
+
+### 没有规则的实例
+
+没有规则文件的实例遵循 `database.defaultAccess`：
+
+- `"open"`（两个 profile 的开发默认值）：允许所有请求，与官方模拟器提供没有规则的数据库的方式相同。
+- `"locked"`（`productionExact` 的默认值，仅限 `strict` profile）：只有 `owner` 凭据可以读写，与锁定模式下新建的生产环境数据库只允许管理员相同。其他所有凭据（包括已登录用户的凭据）都以 401 拒绝。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[database]
+# Access without a rules file: "open" or "locked"; "locked" requires strict.
+defaultAccess = "locked"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "database": {
+    "defaultAccess": "locked"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### 使用 `@firebase/rules-unit-testing` 进行单元测试
+
+`initializeTestEnvironment` 通过 `/.settings/rules.json` 加载你传入的规则，`authenticatedContext()` 发送未签名的模拟令牌，`withSecurityRulesDisabled()` 和 `clearDatabase()` 均受支持：
+
+```js
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import { readFileSync } from 'node:fs';
+
+const [host, port] = process.env.FIREBASE_DATABASE_EMULATOR_HOST.split(':');
+const testEnv = await initializeTestEnvironment({
+  projectId: 'demo-app',
+  database: { host, port: Number(port), rules: readFileSync('database.rules.json', 'utf8') },
+});
+const alice = testEnv.authenticatedContext('alice').database();
+await assertSucceeds(alice.ref('users/alice').set({ name: 'Alice' }));
+await assertFails(alice.ref('users/bob').set({ name: 'Mallory' }));
+await testEnv.cleanup();
+```
+
+使用 `npx fireemu exec --only database -- node test.mjs` 运行。
+
+要测试生产环境对未签名令牌的拒绝，请将 `auth.allowUnsignedIdTokens` 设为 `false` 或设置 [`productionExact`](../../guides/profiles/)。此时实时连接会拒绝模拟令牌（`invalid_token`），SDK 会持续重试，因此来自 `authenticatedContext()` 的读取或写入不会失败，而是一直不结束。请通过 REST 检查拒绝（`?auth=<token>` 返回 401），或为断言设置超时。
+
+### 规则覆盖率
+
+`/.inspect/coverage?ns=<instance>`（HTML 查看器）和 `/.inspect/coverage.json?ns=<instance>` 会针对已加载规则的每个表达式报告其产生的结果，与官方模拟器相同。
+
+- 收集始终开启，每个记录的结果耗费一次哈希查找。
+- 为使长时间运行保持快速且占用小，每个表达式保留其最初 64 个不同的结果（字符串值最多 64 KiB）；之后的新结果计入 `values-omitted`，而不列出。
+- `data` 和 `root` 等快照值在每次评估时都是新的标识，因此其列表很快会被填满。
+- 加载变更后的规则会开始新的报告；再次加载相同文本则保留原报告。
+
+## 导出、导入和快照
+
+`emulators:export`、`--export-on-exit` 和 Hub 的导出，会为每个持有数据或曾被导入的实例写入 `database_export/<instance>.json`，格式为 `GET /.json?format=export` 的导出格式（保留优先级），并附带 firebase-tools 写入的 `firebase-export-metadata.json` 的 `database` 部分。对于相同数据，这些文件与 Firebase CLI 的文件逐字节相同，且两个工具都能导入对方的导出。
+
+```sh
+npx fireemu exec --only database --export-on-exit ./emulator-data -- npm test
+npx fireemu exec --only database --import ./emulator-data -- npm test
+```
+
+```text
+emulator-data/
+  firebase-export-metadata.json
+  database_export/
+    demo-app-default-rtdb.json
+```
+
+`--import` 在命令开始前，与 firebase-tools 一样，以 `owner` 凭据并带 `disableTriggers=true` 写入每个文件。
+
+- 文件名的小写形式即为实例。
+- 以无效实例命名的文件，或数据库会拒绝的文件（无效 JSON、无效键、嵌套过深的数据），会在安装任何其他产品的数据之前中止启动。
+- 未选择数据库时，导出中的数据库部分会被跳过并给出提示。
+
+会话快照和重置包含会话所在项目的实例。恢复或重置对打开的监听器和事件流可见，会取消规则在恢复后的数据上不再允许的监听和事件流，并丢弃为这些实例注册的 `onDisconnect` 写入。
+
+在[测试世界](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md)中，在 `services` 中选择 `database`；`world.endpoints.database` 和 `FIREBASE_DATABASE_EMULATOR_HOST` 会路由到它，其数据在导出、导入和重置后保留。
+
+## 本地 Functions 触发器
+
+本地 v1 和 v2 数据库处理程序会收到限定于其项目、实例和引用模式的创建、更新、删除和写入事件。运行器提供 Firebase SDK 的快照对象。
+
+- 未改变数据的写入不发出变更事件。
+- 源变更与其预留的事件批次一起提交。
+- 无法到达任何触发器引用的写入会在不捕获快照的情况下应用，因此某个路径上的触发器不会给其他位置的写入增加开销。
+- 会话重置在清除源数据并结束 Functions 纪元期间，排除并发的数据库变更。
+
+### 事件队列已满时
+
+- 本地事件队列已满时，若某次写入的事件在空队列中能放下，该写入会以 503 拒绝，并在投递排空后重试成功。
+- 事件永远无法放下的写入（超过 4096 个事件或 64 MiB 的序列化事件，例如在 `/users/{uid}` 触发器下一次 `PUT` 5,000 个子节点），无论队列中有什么，都会像生产环境一样被应用，但不带其事件。
+
+### 事件大小
+
+- **`emulator` profile。** 大于一个调用帧（16 MiB）的事件会被单独丢弃，该写入的其他事件照常投递。首次丢弃会打印警告，每次丢弃都会在资源诊断中计为 `admission.database_fanout_dropped`。
+- **`strict` profile。** 到达已注册触发器引用、且其事件（写入前的节点加上增量，以紧凑 JSON 表示）大于 1,048,576 字节（1 MiB）的写入，会以 `400` 和 `This request would cause a function payload exceeding the maximum size allowed.` 拒绝，且不应用任何内容，与生产环境对 2 MiB 值的处理相同。SDK 连接会以相同文本收到 `invalid_parameters`，该形式未经录制。
+
+strict 阈值来自 2026-11-08 和 2026-11-09 的录制：1,023,9xx 字节的事件被接受并投递，1,049,9xx 字节的事件被拒绝。生产环境文档写明每个事件 1 MB，因此采用 1 MiB。这两个大小之间的确切阈值以及事件的计数方式未经验证。
+
+### 优先级
+
+与生产环境一样，strict 事件不带优先级：写入前的节点没有优先级，新建节点的增量是其纯值，仅修改优先级的写入发送增量 `{".priority": n}`。emulator profile 保留其一贯发送的事件。
+
+### 区域
+
+本地实例位于 `us-central1`。其他区域的第 2 代触发器不会触发，加载时会给出警告，与官方模拟器的警告相同；在生产环境中，它只对其所在区域的实例触发。
+
+### 事件元数据与已录制的内容
+
+生产环境观测涵盖对 v1 和 v2 处理程序进行的一组固定顺序的管理员写入和未认证写入。对于这些已录制的投递，strict profile 使用观测到的事件 ID、毫秒时间戳、来源和认证元数据形式。
+
+对于配置中指定的 `daemon.seed` 和事件序列，事件 ID 是确定性的，因此重复使用某个种子会重放相同的 ID。没有 `daemon.seed` 时，每次守护进程启动都会抽取自己的会话，因此重启不会重复上一次运行的 ID。
+
+另有录制涵盖电子邮件/密码用户通过 REST 和 Web SDK 进行的 12 次写入，包括祖先路径写入、多路径写入，以及调用失败后的重新投递。strict profile 使用已录制的生产环境元数据；emulator profile 保留其已记录的官方模拟器事件形式。投递延迟、重试时机、跨处理程序的顺序、其他提供方以及未录制的写入或处理程序形式仍未验证。
+
+## Emulator UI
+
+[Emulator UI](../../guides/ui/) 的 Realtime Database 页面提供四项功能：
+
+- 浏览某个路径下的数据；
+- 以本地管理员身份替换、修补或删除数据（因此这些编辑不测试客户端权限）；
+- 读取和替换实例的规则；
+- 运行匿名请求，查看规则如何回应。
+
+## 与生产环境的差异
+
+Fireemu 仅就已录制用例与生产环境进行比较。
+
+### 已录制用例
+
+- **REST。** PUT、GET 和 PATCH 的值与优先级，有限的 POST 生成键及回读，DELETE，`shallow`，`print=silent` 和较小 `writeSizeLimit` 的形式，`format=export`，有限的 `orderBy` 查询边界形式（包括 `startAt`、`endAt`、`startAfter`、`endBefore`、`equalTo`、`limitToFirst` 和 `limitToLast`），ETag 与 `if-match`，以及已录制的错误。已录制范围还包括 72 个 REST 选项和拒绝用例（包括 `timeout`、`$priority`、方法覆盖、回调和下载）以及生成的无效 REST 凭据。
+- **规则。** 有限的规则加载、`.validate`、级联、`data`/`newData`/`root` 和依赖查询的规则用例，以及 owner 和 UID 的 `.read` 与 `.write` 评估：70 个规则用例、另外七个规则文档，以及九个针对 `query.endBefore`、`query.isOrderByChild()`、`OrderByKey`、`OrderByValue`、`OrderByPriority`、`http.encodeURL()`、未调用的方法读取和三元被调用者的文档，其下有 33 次读写。
+- **事件流。** 匿名事件流。
+- **Web SDK。** 值监听器，带排队写入的重连，两个 `orderByChild` 窗口的子事件和值事件顺序（含查询范围的取消订阅和取消），`onDisconnect` 的 set、remove、update、cancel 和重新注册（带服务器值及触发前的规则变更），已录制的数字优先级子节点取消用例和三种已录制的重新注册、嵌套优先级和字符串优先级形式，一个事务调度，以及基于 WebSocket 和长轮询的电子邮件/密码 Auth。另有录制涵盖针对键、优先级、值范围和 `equalTo` 窗口带 `prevName` 的 SDK 子事件、相同值上的键边界、父/子监听器扇出、对不存在节点和对象的事务以及中止的事务，以及基于 WebSocket 和长轮询对窗口和缺失路径的 `get`。
+- **Admin SDK。** Node Admin SDK 在拒绝全部的规则下，使用用户 OAuth 访问令牌通过 WebSocket 录制；不声称支持服务账号凭据。
+- **Functions 触发器。** 两代 RTDB 触发的 Functions 的创建、更新、删除和写入处理程序，针对已录制的管理员写入和未认证写入（以及[本地 Functions 触发器](#本地-functions-触发器)中所述的有限终端用户触发器投递）。
+
+另有有限的服务器值、规则语言、规则方法和规则运算符用例已录制并在两个 profile 下重放；它们不能确定未录制输入的一致性。
+
+### 已知差异
+
+在已录制范围内，已知存在以下差异：
+
+- 不带限制的范围读取、浅读取和 PATCH 响应使用官方模拟器的映射排序：最多四个条目时保留插入顺序，更大的映射使用键哈希。PATCH 对嵌套响应（包括美化输出和回调输出）保留已录制的成员顺序。不声称与生产环境在一般 JSON 成员顺序上一致。
+- 未关闭便离线的长轮询客户端，其 `onDisconnect` 写入在空闲连接被丢弃时运行，约为最后一次请求后 100 秒至 105 秒；生产环境在 99.3 秒至 104.0 秒后运行它们。
+- 在 `strict` 下，事件流带 `Connection: close`，HTTP/1.1 连接在 `cancel` 事件和分块响应结束后关闭。已录制的事件字节与生产环境一致，但已录制的生产环境响应是以关闭连接界定、不带传输编码的，而 Fireemu 使用原生的 HTTP/1.1 分块帧。这一传输帧差异是经所有者批准的开发例外（2026-10-31）；事件内容、取消和 EOF 仍受其现有证据要求的约束。`emulator` profile 保留其现有的连接行为；更广泛的流生命周期行为仍未验证。
+- 不接受生产环境由 Google 签名的 Firebase ID 令牌。接受由 Fireemu 的 Auth 签发的令牌和 `owner` 凭据，`strict` 会以生产环境的 `permission_denied` 拒绝其他 `gauth` 凭据。
+
+### 未验证
+
+上述有限的 REST、规则、SDK 和触发器用例已经录制。除此之外：
+
+- 其他 push ID 形式、服务器值、查询边界、超时和写入大小选项仍未验证。
+- 超出已录制用例的规则校验、级联、快照、查询成员、声明和索引诊断，仍以官方模拟器作为暂定参考。
+- 不声称支持超出已录制用例的 SDK 事件、事务、多位置更新和 onDisconnect 形式、服务账号 Admin 凭据，以及更广泛的 Functions 触发器投递和时机。
+
+### 尚不支持
+
+- Android、Apple、Unity 以及 Java 和 Python Admin SDK 不在当前 Node 和 Web 的范围内。
+
+### 限制
+
+- 表达式最多嵌套 600 层；任意长度的 `&&`、`||` 和 `+` 链只计一次。这是本地的安全预算：官方模拟器本身在 2,000 到 4,000 层之间失败。
+- 超出正则表达式引擎步数或深度预算的 `matches()` 调用是错误，因此无论是否取反，该规则都为 false。
+- 写入的路径最多 768 字节，数据最多 32 层深，与生产环境文档一致。
+
+### 暂定行为
+
+在未观测生产环境的情况下，已录制的官方模拟器行为是暂定参考，但需考虑上面列出的已知差异。这些比较不能确定与生产环境等价，并可能在生产环境观测后改变。它们涵盖：
+
+- `1.0` 等数字形式；
+- 写入相等的值；
+- 优先级；
+- 拒绝文本；
+- 长轮询的帧格式；
+- `onDisconnect` 写入如何合并；
+- 各 profile 的凭据；
+- 正则表达式方言；
+- 官方模拟器在写入正文中拒绝 768 字节的键、但在路径中接受它的情况；
+- 它无法确定化的模式。
+
+## 与官方模拟器的差异
+
+与官方模拟器的比较仅限于已录制用例。所列出的不支持的语法和评估用例会在规则加载时被拒绝或产生规则错误；这并不能确定资源限制方面的接受情况等价。
+
+- 字符类（名称、空白以及官方模拟器读取器会跳过的格式字符）使用 Java 21 的表。
+- 运算符和方法已针对已录制的操作数类型与官方模拟器进行比较。
+- 与官方模拟器一样，对象按标识比较。`auth` 和 `query` 各自等于自身。两个快照在读取树的同一版本（`root` 和 `data` 读取写入前的树，`newData` 读取写入后的树）的同一位置时相等，因此 `/t/o` 处的 `data` 等于 `root.child('t').child('o')`，且永远不等于 `newData`。
+- 两个快照之间的直接比较，或 `query` 与自身的直接比较，仍会在规则加载时被拒绝，与官方模拟器相同；当三元表达式使其绕过该检查时，比较会运行。
+- 从 `auth` 成员读取的对象，以及 `val()` 对有子节点的位置给出的值，每次都是新对象，不等于任何东西。
+
+### 正则表达式
+
+官方模拟器以其自有方言读取 `matches()` 模式，这是一种自动机语法，既不是 JavaScript 的，也不是 RE2 的。Fireemu 在已录制的范围内遵循其语法。例如，`a+?` 表示 `(a+)?`（而不是惰性重复），`/a|q/` 按 `.*a|q.*` 搜索，在 `i` 下 ASCII 模式与官方模拟器一样进行大小写折叠，而被匹配的字符串保持原样。
+
+Fireemu 尚未重现其含义的构造是错误，因此无论是否取反，该规则都为 false。emulator profile 对下面大多数构造的读法与官方模拟器相同；strict profile 将它们全部保留为错误，因为尚未询问过生产环境：
+
+| 构造 | 示例 |
+|---|---|
+| `(?…)` 组，emulator profile 将其读作以字面 `?` 开头的组（`/(?:a)/` 匹配 `?:a`） | `/(?:a)/`、`/(?i)a/` |
+| POSIX 类（两个 profile 都不读取） | `/[[:alpha:]]/` |
+| 任意位置的 `\W` 和 `\D`（emulator profile 读取） | `/\W/`、`/[\D]/` |
+| `\d` 和 `\w` 以外的转义字母或数字（emulator profile 读取） | `/\n/`、`/\x41/`、`/\1/` |
+| 类内的转义反斜杠（emulator profile 读取） | `/[\\a]/` |
+| 位于选择分支开头的运算符，或 `^` 之后的量词（emulator profile 读取） | `/(|a)/`、`/^(a|*)$/`、`/^*/`、`/^{2}a/` |
+| 模式中含有任何 ASCII 以外字符时的 `i` 标志（两个 profile 都不读取） | `/^é$/i`、`/[ａ-ｚ]/i` |
+| 换行前的反斜杠（emulator profile 读作换行符） | `/a\` 后跟换行再跟 `b/` |
+| 反斜杠后带有 U+200B 等格式字符的转义字母（格式字符被丢弃，与官方模拟器相同） | `/\` U+200B `u0061/` |
+| 端点超出基本多文种平面的类范围（emulator profile 按 UTF-16 单元读取） | `/[a-😀]/` |
+
+emulator profile 对这些构造的读法：
+
+- `\W` 和 `\D` 是字符串语言的补集，与官方模拟器的自动机相同：`\W` 是除单个单词字符以外的所有字符串，因此 `'ab'` 和 `''` 匹配 `/^\W$/`，而 `'a'` 不匹配。包含它们的类是其成员作为语言的并集（`[\Wa]`），取反的类（`[^\W]`）照常为单个字符。
+- `d`、`w`、`D` 和 `W` 以外的转义字母或数字就是该字符本身（`A` 是 `u0041`，`\b` 是 `b`，因此 `/[\uD800-\uDFFF]/` 是由 `0` 到 `u` 的字符、`D` 和 `F` 构成的类）。
+- 除此之外，它读取官方模拟器的类语法：终点在起点之前的范围不包含任何字符，`[\\a]` 包含 `a`，闭合方括号前的 `-` 是一个字符，位于选择分支开头的量词或其他运算符就是该字符本身。
+- 它按 UTF-16 单元读取模式，因此超出基本多文种平面的字符是两个类成员，对 `.` 而言是两个单元；在反斜杠之后，回车符、U+2028 和 U+2029 是换行符，而 U+FEFF 和 U+0085 是它们自身。
+
+当官方模拟器与 strict profile 对模式的读法不同时，strict profile 会拒绝该规则，绝不会允许它。
+
+标记为不读取的构造在两个 profile 下都保持为错误，因此 emulator profile 仍会拒绝官方模拟器在那里允许的内容。在已录制方言语料库中 fireemu 拒绝而官方模拟器允许的 323 行里，现在有 252 行与其判定相同，71 行仍被拒绝，它们全部带有 `i` 标志和非 ASCII 文本（这是已声明的差异：需要 Java 21 的大小写折叠表）。
+
+已录制的语法拒绝用例，包括 `\s`、未闭合的类或组，以及位于中间的未转义 `^`，在这里以与官方模拟器相同的消息被拒绝。另外的已录制确定化资源用例见下文。
+
+被官方模拟器的确定化资源限制拒绝的八个已录制模式，在 fireemu 加载规则时也会被拒绝，包括在未被评估的表达式分支中。这并不能确定正则表达式或生产环境的完全等价。其中包括确定化拒绝（"could not determinize efficiently"，即官方模拟器自动机库的资源限制）。已录制的模式包括在一个模式中对由选择分支构成的组进行多次计数重复。生产环境的限制未知；不会从这些比较推断任何生产环境行为。
+
+### 孤立代理项
+
+- **在字符串字面量中。** 字符串字面量中孤立的转义代理项（`'\uD83D'`）可以加载，并按 UTF-16 单元判定，与官方模拟器相同（`.length`、`+`、`==`、各种排序和字符串方法；覆盖率报告将其显示为 U+FFFD）。含有孤立代理项的路径或键不指向任何东西：`child()` 读取为不存在，`hasChild` 为 false，索引为 undefined；对含有超出基本多文种平面字符的字符串执行 `replace('', to)` 时，会把 `to` 放在其代理对的两半之间，与 Java 相同。生产环境尚未回应这些形式，因此两个 profile 都沿用官方模拟器。
+- **在存储的值中（仅限 emulator profile）。** JSON 字符串值中的孤立代理项转义会被存储为 `?`，每个孤立代理项对应一个，有效的代理对不受影响，与官方模拟器的存储方式相同。这适用于写入正文（`PUT`、`PATCH` 或 `POST`，包括嵌套值、`.value` 和 `.priority`）、WebSocket 帧和导入文件，查询的边界（`startAt="\ud83d"`、监听的 `sp` 和 `ep`）也同样读取为 `?`。含有孤立代理项的键在两个 profile 下都被拒绝，含有孤立代理项的 WebSocket 路径会收到 `Invalid token in path`。strict profile 照旧拒绝所有这些情况；尚未询问过生产环境。
+- **在令牌声明和 `authvar` 中（两个 profile 都不读取，属已声明的差异）。** 这涵盖声明中含有孤立代理项的令牌（`"x":"\ud83d"`，包括声明名称），以及含有孤立代理项的 `gauth` 帧的 `authvar`。官方模拟器会将代理项作为 Java 字符串保留在声明中（`auth.token.x == '\uD83D'` 成立）并回显 authvar 对象。在这里，strict profile 对这样的令牌返回 401，emulator profile 将该请求按匿名请求判定，而 authvar 含有孤立代理项的 `gauth` 帧会导致连接错误。
+- **在 WebSocket 路径和合并键中。** WebSocket 帧路径中的孤立代理项永远无法成为有效路径（包括 `.priority`）：该帧会收到 `Invalid token in path`，不写入、不注册、不取消任何东西。键不是有效路径的 WebSocket 合并条目，在 emulator profile 下会收到 `invalid_parameters`（`Invalid token in path`、`Empty strings are not valid keys`，或路径长度和深度的文本）；strict profile 照旧回应连接错误。无效的 `onDisconnect` 合并条目键仍会导致连接错误。
+
+### 评估预算
+
+单次规则评估的工作量超过 2^30 个单位时，在这里同样是错误。工作量按如下方式计费：
+
+- 规则读取、连接、比较、搜索、转换或替换的每个字符串，按其长度计；
+- 声明或嵌套值的副本，按其大小计；
+- 通过 `child`、`hasChild`、`hasChildren` 或 `parent()` 构建或缩短的位置，按其键的字节数计。
+
+这可以阻止二次复杂度的 `contains`、对长存储字符串的反复连接以及反复构建的路径。对 10 MiB 字符串进行十三次搜索是允许的，五十次可以容纳，五十二次则不行（这是已知限制：无论是否取反，该规则都被拒绝），而规则语料库在一次评估中最多使用 628 个单位。
+
+该界限按每次评估计算：一个请求可以运行多次评估（写入会校验其写入的每个子节点），对请求整体没有限制，也没有挂钟时间限制，因此慢的规则仍然慢。正则表达式的匹配器有自己的界限，每次 `matches` 调用 200,000 步。
+
+规则通过替换、连接或大小写转换构建的字符串超过 2^26 个单位（UTF-8 操作保守地计算字节；UTF-16 操作计算码元）时，在这里是错误，因此无论是否取反，该规则都为 false。这可以防止十个链式的 `replace('', '0123456789')` 之类的规则分配数十 GB 内存。官方模拟器的限制由其堆决定：在 512 MB 时，它回应了七个这样的步骤（约 3900 万个单位），并在第八步以内部错误（500）失败。
+
+### 查询变量与方法
+
+- `query.orderBy` 在两个 profile 下都可以加载。当读取按子节点排序时，它是该子节点排序（`query.orderBy == 'a/b'`）；否则为 `OrderByKey`、`OrderByValue` 或 `OrderByPriority`（普通 REST 读取按键排序，流和监听按优先级排序）；在写入、校验和浅读取中为 null。按优先级排序即按子节点 `.priority` 排序，因此在那里 `query.orderBy == '.priority'` 和 `query.isOrderByChild('.priority')` 成立。
+- `query.endBefore` 是排他的结束边界，`query.isOrderByChild(path)` 表示读取是否按该子节点排序（空段会被丢弃；没有段或含无效键的路径是错误）。
+- `http.encodeURL(s)` 是 Java 的 `URLEncoder.encode(s, "UTF-8")`，空格为 `%20`，孤立代理项编码为 `?`。
+- 未调用的方法读取（`auth.uid.contains`、`data.child`）是一个非 null 且不等于任何东西的值；不是成员的被调用者（`(c ? data.child : data.parent)('a')`）在其类型具有该方法时会被调用，因为规则加载时会检查该类型的第一个方法。通过这种值以其方法不接受的参数个数进行调用时，官方模拟器以内部错误（500）回应，而在这里会被拒绝。
+
+对于后三项中所有已录制的形式，生产环境的回应都与官方模拟器相同（两个 profile 都遵循它们）。
+
+### 大小写转换
+
+- 对含有 Java 21 与 Fireemu 较新的 Unicode 表映射不同的大小写字符的字符串调用 `toLowerCase()` 和 `toUpperCase()`，在这里是错误：U+019B、U+0264、U+1C89、U+1C8A、U+A7CB 至 U+A7CF、U+A7D2 至 U+A7D5 和 U+A7DA 至 U+A7DC，以及基本多文种平面之外的 U+10D50 至 U+10D65、U+10D70 至 U+10D85、U+16EA0 至 U+16EB8 和 U+16EBB 至 U+16ED3。下面依赖上下文的 sigma 限制同样适用。
+- 对含有 `Σ`（U+03A3）的字符串调用 `toLowerCase()` 在这里是错误，除非 `Σ` 的每个相邻位置都是字符串边界、空格或有大小写的拉丁、希腊或西里尔字母（`'ΑΣ'`、`'ΑΣ Α'`）。Java 依据其单词边界选择词尾形式 `ς`，Fireemu 不重现这一点，因此 `'Α:Σ'` 和 `'ΑΣ.'` 是错误。
+
+### 格式错误的实时查询
+
+格式错误的实时线路查询会收到连接错误控制消息，但不会自动断开连接或发送关闭帧。这些是实时协议响应，不是 HTTP 400 响应。
+
+- 它们包括未知字段、非字符串的索引（`i`）、非布尔的包含标志（`sin`、`ein`）、非字符串的限制方向（`vf`）、字符串或 null 以外的边界名称（`sn`、`en`），以及以浮点数写出的限制（即使是 `2.0`）。
+- 即使对应的边界或限制不存在，类型检查仍适用于标志、方向和名称。
+- null 边界名称表示没有名称。除此之外，没有边界的有效包含标志和名称，以及没有限制的方向，均不起作用。
+- 提供的整数限制必须为正数，且能放入 32 位无符号数。非数字的限制和超出该范围的整数限制会收到 `invalid_parameters`。
+- 提供的限制还要求方向为 `l` 或 `r`；在官方模拟器可能将其读作两边都不是的情况下，Fireemu 会拒绝缺失或其他的方向。
+
+### 其他差异
+
+- 标识符中的 `\uXXXX` 转义按官方模拟器的读法解码（`auth.uid` 和 `auth.uid` 都指 `auth.uid`）。其他不支持的 JavaScript 构造在规则加载时仍会失败。
+- 在官方模拟器以内部错误（500）回应请求的情况下，Fireemu 会拒绝它：例如在结果为快照的值上调用字符串方法（`(c ? root : 'a').length`），以及在官方模拟器无法作为路径读取的位置调用 `getPriority()`（含有 `.`、`#`、`$`、`[`、`]` 或控制字符的键，`.value` 或 `.info` 等保留名称，位于末尾之前的 `.priority`，或超过 32 层或 768 字节的路径）。
+- 多次给出某个查询参数，或给出多个凭据（`auth`、`access_token` 和 `Authorization` 头）的请求，会以 400 拒绝。官方模拟器取第一个值，并且 `auth` 优先于其他凭据。
+- 少数两者都拒绝的规则，会以不同的消息或在不同的列被拒绝。
+
+## 相关内容
+
+- [安全规则](../../guides/security-rules/)
+- [导出和导入](../../guides/data/)
+- [Cloud Functions](../functions/)
+- [兼容性](../../compatibility/)

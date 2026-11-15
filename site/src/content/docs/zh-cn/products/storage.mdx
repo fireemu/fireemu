@@ -1,0 +1,481 @@
+---
+title: Cloud Storage
+description: 在本地运行 Cloud Storage for Firebase，并通过 Firebase 和 Cloud Storage JSON API 测试上传、下载、签名 URL、存储桶 CORS 和 Storage 安全规则。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 以两种 API 方言提供 Cloud Storage for Firebase：
+
+- 客户端 SDK 使用的 Firebase Storage 协议，包括可恢复上传和下载令牌；
+- Admin SDK 和 Google Cloud 客户端库使用的 Cloud Storage JSON API，包括 copy 和 rewrite。
+
+两种方言共享同一个存储，因此通过其中一种上传的对象可以通过另一种看到。Storage 模拟器将对象保存在内存中。
+
+<Facts items={[
+  { label: '状态', value: '支持' },
+  { label: '默认端口', value: '9199' },
+  { label: '启动条件', value: '默认启动' },
+  { label: '生产环境验证', value: '参见兼容性表', href: 'compatibility/#production-verification' },
+]} />
+
+## 可以测试的内容
+
+- [存储桶名称](#不存在的存储桶)：向未声明的存储桶写入时会打印提示，或以生产环境的 404 失败。
+- XML API 上用于浏览器上传和下载的[存储桶 CORS](#存储桶-cors)。
+- [签名 URL](#签名-url-的签名)：过期时间、签名头，以及在注册密钥后的 V4 签名。
+- [安全规则](#安全规则)，包括[根据请求前缀判定的 `list` 规则](#用单段附件规则列出前缀)。
+- [生产环境拒绝的请求](#生产环境行为)，例如私有对象的公开 URL，或没有签名策略的表单上传。
+- 通过对存储字节数设置本地上限来测试[存储已满](#限制存储字节数)。
+
+## 连接
+
+Storage 默认监听 `127.0.0.1:9199`（可通过 `--storage-port` 或 `firebase.json` 更改）。
+
+```js
+// Web SDK
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
+connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
+```
+
+Admin SDK 和 Google Cloud 客户端库读取环境变量。在 `fireemu exec` 下，它们会为你的命令设置好；使用 `fireemu up` 时，请自行设置：
+
+```sh
+STORAGE_EMULATOR_HOST=http://127.0.0.1:9199             # with the scheme
+FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199           # host:port, no scheme
+```
+
+参见[连接你的应用](../../getting-started/connect/)和[环境变量](../../reference/environment-variables/)。
+
+## 配置
+
+所有 Storage 设置都是可选的。下面的文件设置了其中每一项：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+profile = "strict"
+
+[storage]
+# Path of the Storage Security Rules file (or name it in firebase.json)
+rules = "storage.rules"
+# Which default bucket exists: "both" (default), "firebasestorage.app" or "appspot.com"
+defaultBucket = "both"
+# Buckets the project owns besides its default ones: 3 to 222 characters each
+buckets = ["uploads-bucket", "exports.example.com"]
+# Buckets whose objects the public URL serves without a credential: 3 to 222 characters each
+publicBuckets = ["public-assets.example.com"]
+# Local cap on stored object data in bytes (an integer of at least 1); unset means no cap
+maxStoredBytes = 1073741824
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "storage": {
+    "rules": "storage.rules",
+    "defaultBucket": "both",
+    "buckets": ["uploads-bucket", "exports.example.com"],
+    "publicBuckets": ["public-assets.example.com"],
+    "maxStoredBytes": 1073741824
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+| 设置 | 作用 |
+|---|---|
+| `storage.rules` | Storage 安全规则文件；参见[安全规则](#安全规则)。 |
+| `storage.defaultBucket` | 在 `strict` 下项目的两个默认存储桶中哪些存在（[见下文](#不存在的存储桶)）。 |
+| `storage.buckets`、`storage.publicBuckets` | 声明存储桶，以及公开 URL 无需凭据的存储桶。`emulator` profile 会忽略它们。 |
+| `storage.undeclaredBuckets` | 在 `strict` 下对未声明存储桶执行对象操作时的行为：`"warn"`（默认）处理第一次写入、创建存储桶并打印一条提示；`"create"` 执行相同操作但不提示；`"refuse"` 返回生产环境的 404，由 `productionExact` 选择；显式指定的键优先（[见下文](#不存在的存储桶)）。`emulator` profile 总是静默创建存储桶。 |
+| `storage.cors` | 以 Cloud Storage `cors` JSON 表示的按存储桶 CORS 配置，在 `strict` 下应用于 XML API，并作为未录制的行为应用于 Firebase 媒体读取（[见下文](#存储桶-cors)）。未列出的 XML 存储桶保持宽松的回答，除非设置了 `productionExact`；在规则非空的存储桶上，JSON API 的对象读取或对象预检会忽略这些规则（与录制一致）；其他 JSON API 路由以及缺失或为空的条目保持基本行为。 |
+| `storage.signedUrlKeys` | 在 `strict` 下用于验证 V4 签名 URL 的公钥（或测试签名所用的私钥或服务账号 JSON）（[见下文](#签名-url-的签名)）。未设置时不验证签名。 |
+| `storage.maxStoredBytes` | 存储字节数的本地上限。会超过该上限的写入以 HTTP 402（`storage.maxStoredBytes limit exceeded`）拒绝；参见[限制存储字节数](#限制存储字节数)。生产环境没有这样的限制。 |
+| `storage.maxObjectBytes` | 单个对象的大小限制，默认 256 MiB（最大 2143289343）。更大的上传以 HTTP 413 拒绝；参见[限制存储字节数](#限制存储字节数)。 |
+| `storage.bufferedBodyBudgetBytes` | 整个进程中缓冲的请求体预算，默认 1 GiB。超出预算的请求收到 HTTP 503 和 `Retry-After: 1`。 |
+| `storage.spillObjectBytes` | 达到此字节数的已提交对象保存在临时文件中而非内存中。默认未设置；生产环境没有这样的设置。可恢复上传会话接收的字节达到该大小后，会保存在临时文件中。单次上传在存储前仍会缓冲在内存中，因此单个大文件上传在提交后会保留一个常驻请求体；当存储大量大对象时，此设置会有帮助。 |
+
+溢出目录在正常关闭时被删除，已死进程遗留的过期目录会在启动时清理。溢出写入失败时返回 HTTP 503 和 `Retry-After: 1`。导出只捕获已提交的对象，不包括待处理的可恢复上传会话。
+
+## 不存在的存储桶
+
+对于针对无人创建的存储桶的对象操作，生产环境返回 404 `The specified bucket does not exist.`。Storage 模拟器则会处理该操作，并在第一次写入时创建存储桶，因此测试无需事先设置。`storage.undeclaredBuckets` 可在 `strict` 下改变这一行为：
+
+| `storage.undeclaredBuckets` | `strict` 下的行为 |
+|---|---|
+| `"warn"`（默认） | 处理第一次写入并创建存储桶。第一次向未声明的存储桶写入对象时，在标准错误输出上打印一行 `note:`。 |
+| `"create"` | `warn` 的行为，但不打印提示。 |
+| `"refuse"` | 指定了不存在存储桶的每个操作都按 Cloud Storage 的方式回答，且不创建任何东西。由 `productionExact` 选择；显式指定的键优先于 `productionExact`。 |
+
+`emulator` profile 总是静默创建存储桶，并拒绝 `"warn"` 和 `"refuse"`，因为官方模拟器会在首次使用时创建每个存储桶。
+
+### 哪些存储桶存在
+
+满足以下任一条件的存储桶即存在：
+
+- 项目的默认存储桶（`<project>.appspot.com` 或 `<project>.firebasestorage.app`）；
+- 列在 `storage.buckets` 或 `storage.publicBuckets` 中；
+- `firebase.json` 中的 storage 目标；
+- 已部署的 Storage 触发器所指定的存储桶；
+- 持有导入数据的存储桶。
+
+在 `strict` 且 `storage.undeclaredBuckets: "warn"` 下，向其他任何存储桶写入都会打印提示，因此存储桶名称中的拼写错误是可见的。要对生产环境中存在的存储桶消除提示，请将其列在 `storage.buckets` 中（[配置](#配置)）。
+
+每个名称都必须是 Cloud Storage 接受的名称。`storage.publicBuckets` 列出公开 URL 无需凭据即可提供其对象的存储桶，同时也视为声明了它们。`emulator` profile 会忽略 `storage.buckets` 和 `storage.publicBuckets`。
+
+### 让存储桶名称拼写错误导致测试失败
+
+将 `storage.undeclaredBuckets` 设为 `"refuse"`，或启用 `productionExact`（仅限 `strict`）。此时对缺失存储桶的回答因 API 而异：
+
+| API | 回答 |
+|---|---|
+| JSON API | 404 `The specified bucket does not exist.`（原因 `notFound`） |
+| XML API 和表单上传 | 404 `NoSuchBucket` |
+| Firebase API（`/v0`） | 它对无法访问的存储桶给出的未找到回答 |
+
+copy 或 rewrite 会检查其两个存储桶，可恢复上传在开始时检查。
+
+**与生产环境比对测量。** STORAGE-STRICTNESS-OBS 运行 `ss-48adbd8e` 录制了：
+
+- 缺失存储桶上的 JSON 对象 get、list、upload、delete、copy 源、rewrite 目标和 ACL get（A1、A3–A8）：404，带有与存储桶资源相同的 247 字节 JSON 正文。
+- 媒体读取（A2）则以 `text/html; charset=UTF-8` 返回 36 字节的 `The specified bucket does not exist.` 正文。
+- XML GET 和 PUT（A9–A10）返回 133 字节的 `NoSuchBucket` 文档。
+- Firebase GET 和 upload（A11–A12）返回 65 字节、两空格缩进的 JSON `Not Found.` 信封，末尾没有换行，并带有 Firebase CORS 头。
+- 在现有的非 Firebase 存储桶上，Firebase 对象 get 和 list 返回 200，而不是 412（A13–A14）。
+
+本次运行未录制表单上传和可恢复上传的后续请求。
+
+### 默认存储桶
+
+生产环境项目只有一个默认存储桶：如果 Storage 是在 2024-10-30 之后设置的，则为 `<project>.firebasestorage.app`，之前则为 `<project>.appspot.com`。本地运行无法知道是哪一种，因此默认两者都存在。
+
+要捕获从另一种项目复制来的应用配置，请将 `storage.defaultBucket` 设为 `"firebasestorage.app"` 或 `"appspot.com"`（默认 `"both"`）。此时另一个名称被视为未声明的存储桶，因此在它存在之前，`GET /storage/v1/b/{bucket}` 返回 404。对它的第一次写入在 `"warn"` 下会创建它并给出提示，在 `"create"` 下静默创建，在 `"refuse"` 下被拒绝（除非被覆盖，否则由 `productionExact` 选择）。
+
+## 存储桶 CORS
+
+生产环境的 XML API 根据存储桶的 CORS 配置回答浏览器的跨源请求，而新存储桶没有 CORS 配置。因此，在 Playwright 中针对宽松的本地服务器进行上传或下载的页面，可能在生产环境中失败。在 `strict` 下，`storage.cors` 将存储桶名称映射到以 Cloud Storage `cors` JSON 表示的规则：
+
+```json
+{
+  "storage": {
+    "cors": {
+      "demo-app.appspot.com": [
+        {
+          "origin": ["http://localhost:3000"],
+          "method": ["GET", "PUT"],
+          "responseHeader": ["Content-Type", "x-goog-content-length-range"],
+          "maxAgeSeconds": 3600
+        }
+      ]
+    }
+  }
+}
+```
+
+`emulator` profile 接受空映射，但拒绝非空的 `storage.cors` 映射。
+
+### XML API
+
+存储桶规则管控 XML API，包括签名 URL 和表单上传。
+
+| `storage.cors` 中的存储桶 | 回答 |
+|---|---|
+| 列出且带规则 | 遵循其规则。显式条目决定其存储桶的行为。 |
+| 列为 `[]` | 视为没有 CORS 配置的存储桶，与生产环境中的新存储桶相同。 |
+| 未列出 | 保持宽松的回答，除非设置了 `productionExact`。 |
+| 未列出，且在 `productionExact` 下 | 没有 CORS 头，与生产环境中没有 CORS 配置的存储桶相同。因此浏览器上传和下载需要 `storage.cors` 条目，与生产环境相同。 |
+
+对于携带 `Origin` 的请求，由第一条 `origin`（或 `*`）和 `method`（或 `*`）都匹配的规则决定：
+
+- 实际请求会得到 `Access-Control-Allow-Origin`（该源，或对列出 `*` 的规则为 `*`），回显源时得到 `Vary: Origin`，以及针对 `responseHeader` 列表的 `Access-Control-Expose-Headers`。
+- 预检（`OPTIONS`）另外要求 `Access-Control-Request-Headers` 中的每个头都在 `responseHeader` 中（或为 `*`），然后还会得到 `Access-Control-Allow-Methods`、`Access-Control-Allow-Headers` 和 `Access-Control-Max-Age`（`maxAgeSeconds`，未设置时为 3600）。
+- 没有规则匹配的请求会在不带任何 CORS 头的情况下回答，且照样成功：是浏览器拒绝将回答交给页面。
+
+无论规则列出什么，服务器仍会拒绝 `Origin` 不是本地源的请求（403），因此规则要由 `localhost` 或回环地址提供的页面来检验。
+
+### JSON API
+
+在 `strict` 下，JSON API 及其上传路由使用独立的 CORS 策略，与 `storage.cors` 无关，包括缺失和为空的条目以及在 `productionExact` 下。
+
+- 对于带 `Origin` 的请求，它回显该源，发送 `Access-Control-Allow-Credentials: true` 和 `Vary: Origin, X-Origin`，并对对象 GET 公开已录制的媒体或元数据头列表。
+- 预检返回 200、`Access-Control-Allow-Methods: DELETE,GET,HEAD,PATCH,POST,PUT` 和 `Access-Control-Max-Age: 3600`。已录制的小写请求头会去除分隔符空白后返回。保留大小写混合的拼写，以及未请求任何头时省略 Allow-Headers，是未录制的假设。
+- 已录制的 JSON API 和上传用例公开其观测到的头列表，包括在可恢复上传发起时位于其已录制位置的 `Location`。将这些列表应用于其他响应是未录制的假设；特别是，fireemu 对任何带 `alt=media` 的成功 JSON 路由选择媒体列表。
+- 取消和已取消会话的读取返回 499，带有发起请求时的 Origin 和已录制的取消公开列表。
+
+strict profile 还会添加存储桶访问配置字段，并在启用了统一存储桶级访问的存储桶上，对对象 ACL GET 返回已录制的 400 旧版 ACL 错误。
+
+### Firebase API
+
+对于 Firebase 媒体读取（`alt=media`），Fireemu 保留其现有的存储桶规则处理；该行为尚未在已配置的存储桶上录制。Firebase API 的 JSON 回答及其可恢复协议保持宽松的回答，因为 Firebase API 会为它们发送自己的 CORS 头。
+
+### 录制
+
+**XML CORS。** STORAGE-STRICTNESS-OBS 运行 `ss-48adbd8e` 以两条规则录制了 XML CORS（C1–C5）：
+
+- 通配源返回 `*`，不带 Vary。具名源会被回显，并带 `Vary: Origin`。
+- 预检方法是匹配规则的列表，按规则顺序以逗号连接。
+- 没有请求头时 Allow-Headers 存在且为空；对具名头使用配置的拼写；对 `responseHeader: ["*"]` 则反映请求的头。
+- Max-Age 默认为 3600，并遵循 600。
+- 不匹配的 DELETE 预检返回 200，没有 Access-Control 头，但有 `Vary: Origin`。
+- 通配的实际 GET 公开 `*, Content-Length, Date, Server, Transfer-Encoding, X-GUploader-UploadID, X-Google-Trace`。
+- 移除规则（`[]`）后，预检返回 200，既没有 Access-Control 头也没有 Vary（R3）。
+- C2 只录制了请求的 `content-type` 以配置的 `Content-Type` 回答；以逗号连接多个配置的拼写以及省略未请求的头，是**未录制的假设**。
+
+更早的录制还涵盖了没有 CORS 配置时的 XML 预检和 PUT。
+
+**带规则存储桶上的 JSON API。** C6–C8 录制了在同一存储桶上、两条规则仍然安装时的 JSON API 媒体 GET、元数据 GET 和 OPTIONS：`{"origin":["*"],"method":["GET"],"responseHeader":["*"]}` 和 `{"origin":["http://localhost:3000"],"method":["PUT","GET"],"responseHeader":["Content-Type"],"maxAgeSeconds":600}`。之后的 `run-2.json` 录制涵盖了 CORS 配置缺失和为空时的 JSON API 请求。
+
+**JSON API 和上传 CORS。** `conformance/storage-strictness-obs/recordings/run-2.json` 涵盖在缺失、为空和已配置的存储桶 CORS 下的元数据、媒体、存储桶、列表、ACL 错误、上传预检、带 `Location` 的可恢复上传发起、取消以及已取消会话的读取。这些值在 `strict` 下适用，无论是否设置 `productionExact`。
+
+**统一存储桶级访问。** 该录制创建了一个带 `iamConfiguration.uniformBucketLevelAccess.enabled: true` 的存储桶，并观测到对象 ACL GET 上的 400 旧版 ACL 错误。
+
+- 创建处理程序接受已录制的 `location: "US-CENTRAL1"` 和 `softDeletePolicy: {"retentionDurationSeconds": 0}` 提示，但不模拟区域放置或软删除。
+- Fireemu 还支持通过 PATCH 设置该访问标志；切换的校验及其对 ACL 的影响是未录制的假设，由本地测试覆盖。
+- 已录制的默认存储桶禁用了该标志；fireemu 将未配置的存储桶默认为 false。
+- 本地测试覆盖重置、快照/恢复和导出/导入，包括空的已创建存储桶。不带该标志的旧导出产物按 false 导入。
+- 这并未实现通用的 IAM 策略管理。
+
+## 签名 URL 的签名
+
+Cloud Storage 根据签名服务账号的公钥验证 V4 签名 URL。fireemu 没有这样的账号，因此默认只检查过期时间和签名头是否存在，而不检查签名。
+
+要检查签名，请在 `storage.signedUrlKeys`（文件路径列表）中注册测试签名所用的密钥。每个文件是以下之一：
+
+- PEM 公钥；
+- PEM 私钥（只保留其公钥部分）；
+- 服务账号 JSON（`private_key`、`client_email`）；
+- RSA JWK。
+
+无法读取、不是 RSA 或短于 2048 位的密钥文件会中止启动。服务账号的 `client_email` 将其密钥与该账号的凭据绑定。内存中只保留公钥，且不记录任何关于密钥的信息。
+
+在 `strict` 下，签名无法验证的 V4 请求会收到 `403 SignatureDoesNotMatch`，并附带服务器计算出的 `StringToSign` 和 `CanonicalRequest`。这是生产环境在四种已录制原因下给出的正文：签名被改动时，`Content-Type` 或范围头与签名时不同时，以及对象名称不同时。
+
+规范请求即 Cloud Storage 文档所述的形式：
+
+- 方法；
+- 百分号编码的路径；
+- 不含 `X-Goog-Signature` 的排序后查询；
+- 签名头及其值。`host` 是请求到达时的 `Host`，带或不带端口均可：Admin SDK 对本地端点只签名主机名，因此它构建的 URL 可以原样通过验证；
+- 签名头列表；
+- `UNSIGNED-PAYLOAD`。
+
+该检查的限制：
+
+- 不验证 V2 签名 URL。
+- 只有服务器读取的签名头（`Content-Type`、`x-goog-content-length-range` 以及它转发的其他头）才能成为可通过验证的签名的一部分。
+- `emulator` profile 接受空的 `storage.signedUrlKeys` 列表，但拒绝非空列表。
+- 这是对测试签名内容的本地检查，不是授权边界。
+
+## 安全规则
+
+Storage 安全规则从 `firebase.json` 中指定的 `storage.rules` 文件，或 `fireemu.toml` 中的 `storage.rules` 读取。Storage 规则可以通过 `firestore.get()` 和 `firestore.exists()` 读取 Firestore 文档。在 `strict` 下，没有规则的项目会以生产环境的 400 "bucket has not been set up" 回答拒绝所有终端用户请求。参见[安全规则](../../guides/security-rules/)。
+
+### 用单段附件规则列出前缀
+
+`list` 规则根据请求的前缀判定，而不是根据恰好存在的对象。因为当前所有对象都匹配而在测试中通过的规则，一旦列出该前缀，就可能被生产环境拒绝。在 `strict` 下，Fireemu 按生产环境的方式评估 `list`，使用下面录制的结果（2026-10-16 的两次生产环境录制和 2026-11-08 的观测），因此这样的规则在本地测试中也会失败，在你部署之前就能发现。
+
+在 `strict` profile 中，列表授权需要证明对请求前缀下所有可能条目的访问权限。使用 `delimiter=/` 时，每个条目是一个直接子项；没有分隔符时，条目可以有任意深度。授权不取决于前缀是否为空，也不取决于恰好存在哪些对象。
+
+对于 `prefix=teams/T/requests/R/&delimiter=/`，匹配 `/teams/{team}/requests/{id}/{attachment}` 且带 `allow list: if member(team)` 的规则可以授权该列表操作。团队和请求 ID 由前缀确定，而附件名称是未知的。要求特定附件名称的条件，不会仅仅因为当前所有对象都匹配该名称就授权目录列表。
+
+2026-10-16 的一次针对性生产环境比较使用了已认证的 UID 到团队成员关系、独立的上传/获取对照以及两次录制。`strict` 与以下观测结果一致。祖先前缀为 `teams/T/requests/`；请求前缀为 `teams/T/requests/R/`。
+
+| 向成员授予 `list` 的规则 | 前缀 | 分隔符 | 生产环境与 `strict` |
+| --- | --- | --- | --- |
+| 单个附件捕获 | 请求 | `/` | 200 |
+| 单个附件捕获 | 请求 | 省略 | 403 |
+| 相同规则加显式父级匹配 | 请求 | `/` | 200 |
+| 相同规则加显式父级匹配 | 请求 | 省略 | 403 |
+| 相同规则加显式父级匹配 | 祖先 | `/` | 200 |
+| 相同规则加递归 `list` 匹配 | 请求 | `/` 或省略 | 200 |
+| 相同规则加递归 `list` 匹配 | 祖先 | `/` | 200 |
+
+空的请求前缀与有内容的前缀有相同的授权判定。非成员、匿名用户和其他团队的请求列表仍被拒绝。
+
+在 `strict` profile 中，与 2026-11-08 生产环境的回答一致，对于 `allow list: if [file] != null`，以及 `match /p/{file=**}` 下的 `request.path == /b/$(bucket)/o/<prefix>`，也允许不带分隔符的列表。单段捕获、裸捕获以及其他前缀的路径仍被拒绝；带分隔符列表的 `request.path` 在录制生产环境之前仍保持拒绝。
+
+非斜杠分隔符使用保守的任意深度证明；生产环境比较涵盖了 `/` 和省略分隔符，并未涵盖所有自定义分隔符或依赖资源的条件。[Firebase 细粒度操作文档](https://firebase.google.com/docs/storage/security/core-syntax#granular_operations)提供了更多背景。
+
+`emulator` profile 保留其现有的具体前缀授权，但当前缀下一级的每个条目都被允许时（`match /p/{f} { allow list: if true; }` 配合 `prefix=p/&delimiter=/`），允许带 `delimiter=/` 的列表，与生产环境和 `strict` 一致。
+
+#### 显式父级规则
+
+上面的单捕获 SDK 请求不需要显式父级规则。添加一个可能会改变生产环境中的权限：
+
+```text
+match /teams/{team}/requests/{id} {
+  allow list: if member(team);
+}
+```
+
+在测量的规则中，这也允许列出祖先的子前缀。它不授权对请求附件进行无分隔符的递归枚举。
+
+请保持附件的 `get`、`create`、`update` 和 `delete` 条件不变。不要用宽泛的递归 `allow read` 替换它们：`read` 同时包含 `get` 和 `list`。即使某个对象的内容无法读取，列表权限也会暴露前缀下的名称；它不授予内容访问权，也不会将列表过滤为拥有 `get` 权限的对象。
+
+## 生产环境行为
+
+在 `strict` 下，世代（generation）和元世代（metageneration）前置条件以及声明的校验和会像生产环境一样被遵守。官方模拟器不验证校验和。
+
+**与生产环境比对测量。** STORAGE-STRICTNESS-OBS 运行 `ss-48adbd8e` 将 `Authorization: Firebase not-a-jwt` 录制为未认证请求：拒绝的规则返回 403，带有 73 字节、两空格缩进的 JSON `Permission denied.` 信封，末尾没有换行（F1）。是否允许未认证的调用者由规则决定；格式正确但签名错误的令牌保持其现有处理方式，本次录制不涵盖这一点。Firebase 对象 DELETE 返回 204，带 `Content-Length: 0`（F2）。
+
+### `strict` 拒绝的请求
+
+在 `strict` 下，Storage 模拟器还会拒绝生产环境拒绝而官方模拟器接受的请求。不存在的存储桶是例外；参见[不存在的存储桶](#不存在的存储桶)。
+
+| 请求 | `strict` 的回答 |
+|---|---|
+| 没有安全规则的项目中的终端用户请求 | 400，"bucket has not been set up" |
+| 对私有对象的 `GET /{bucket}/{object}`（公开 URL） | 403 `AccessDenied` |
+| 超过有效期的签名 URL | 400 `ExpiredToken` |
+| 签名上传：缺少签名头、正文超出签名范围、未签名上传 | 400 `MalformedSecurityHeader`、`EntityTooLarge` 或 `EntityTooSmall`；未签名上传被拒绝 |
+| 指定了除签名外所有签名参数的签名 URL | 400 `MissingSecurityHeader` |
+| 没有签名策略的表单上传 | 拒绝；会强制执行策略的过期时间和条件 |
+| 在 JSON API 上作为 OAuth bearer 的 Firebase ID 令牌 | 401 `Invalid Credentials` |
+| Cloud Storage 不认识的 ACL 条目 | 400 |
+| Cloud Storage 从不接受的存储桶名称 | 400 `Invalid bucket name`（JSON API）、400 `InvalidBucketName`（XML 路由）、404（Firebase 路由） |
+| 超过 `storage.maxStoredBytes` 的写入（本地上限，不是生产环境规则） | 402 `storage.maxStoredBytes limit exceeded` |
+
+每种拒绝的详细信息如下；其中未省略任何内容。
+
+<details>
+<summary>私有对象的公开 URL</summary>
+
+`GET /{bucket}/{object}`（即 `file.publicUrl()` 构建的 URL）会返回 403 `AccessDenied`，除非满足以下任一条件：
+
+- 请求携带非空的 `Bearer` `Authorization` 头。
+- 请求来自 Google 客户端库。这些库会发送 `x-goog-api-client`；在设置了 `STORAGE_EMULATOR_HOST` 时，Go 库（因此 Firebase Admin Go SDK 也一样）会在不带凭据的情况下通过此 URL 读取；Python、Java 和 Node 库通过 JSON API 读取，从不会被拒绝。
+- 请求是尚未过期的签名 URL。
+- 对象是公开的。
+
+当应用代码使对象公开时，对象即为公开，但仅限于该对象的这一世代：覆盖写入后又变为私有。应用代码可以通过以下方式使其公开：`file.makePublic()`，在 upload、patch、copy（`destinationPredefinedAcl`）或 rewrite 上使用 `predefinedAcl=publicRead`，在上传或修补的资源的 `acl` 中加入 `allUsers` `READER` 条目，或 `POST .../acl`。`file.makePrivate()`（`predefinedAcl=private`）、不含该条目的修补后 `acl` 以及 `DELETE .../acl/allUsers` 会结束公开状态。发起可恢复上传的元数据中的 `acl` 不会被读取。
+
+IAM 向 `allUsers` 授予对象查看者角色的存储桶（生产环境中在控制台设置）应列在 `storage.publicBuckets` 中。403 会指出这两种方式。Firebase 下载令牌 URL 不受影响。
+
+</details>
+
+<details>
+<summary>已过期的签名 URL</summary>
+
+超过有效期的 V4 或 V2 签名 URL 返回 400 `ExpiredToken`，有效期超过七天的 V4 URL 或无法读取的 `X-Goog-Date` 返回 400。除非 `storage.signedUrlKeys` 注册了生成签名所用的密钥（[签名 URL 的签名](#签名-url-的签名)），否则不验证签名本身，因为这需要签名服务账号的密钥；没有密钥时，任何签名都会被接受。
+
+</details>
+
+<details>
+<summary>签名 XML 上传</summary>
+
+`PUT /{bucket}/{object}` 接受用于本地上传的 V4 签名 URL。在初始化 Admin SDK 之前，将 `FIREBASE_STORAGE_EMULATOR_HOST` 设为不带协议的主机和端口，或将 `STORAGE_EMULATOR_HOST` 设为 HTTP URL。SDK 仍需要签名凭据；开发时可以使用本地生成的测试服务账号密钥。strict 模式会拒绝未签名的上传。
+
+此上传路径会存储 `Content-Type`；不支持其他对象元数据和条件写入头。此用途只转发 `Content-Type` 和 `x-goog-content-length-range`；不支持任意的签名扩展头。范围是闭区间。
+
+- **与生产环境比对测量**（一个真实的 Firebase 项目，2026-11-03，针对 `image/png` 的 `getSignedUrl` V4 `write`，带 `x-goog-content-length-range: 0,10485760`，两次各 16 个用例的录制）。请求中缺少签名头时为 `400 MalformedSecurityHeader` 并指出该头（测量了 `content-type` 和范围头）。正文高于或低于范围时为 `400 EntityTooLarge` 或 `400 EntityTooSmall`。过期的 URL 为 `400 ExpiredToken`，并指出签名有效期的结束时间。这些拒绝以及成功时的头（`ETag`、`x-goog-generation`、`x-goog-metageneration`、`x-goog-hash`、`x-goog-stored-content-length`、`x-goog-stored-content-encoding`）在两个 profile 下都具有生产环境的正文和值。在 `strict` 下，指定了除签名外所有签名参数的 URL 为 `400 MissingSecurityHeader`，发送了未列入签名头的范围头为 `400 MalformedSecurityHeader`；`emulator` profile 与以前一样继续接受这两者（未测量 firebase-tools 15.28.2 对它们的处理）。
+- **默认不验证，属已记录的差异。** 当签名被改动、`Content-Type` 或范围值与签名时不同，以及对象名称与签名时不同时，生产环境返回 `403 SignatureDoesNotMatch`。除非 `storage.signedUrlKeys` 注册了密钥（参见[签名 URL 的签名](#签名-url-的签名)），fireemu 没有用于检查签名的密钥，否则在两个 profile 下都接受这四种情况，因此无法对方法或签名头值的更改进行认证；不要将此行为用作授权检查。
+- **CORS。** 对于 XML API，在没有 `storage.cors` 或 `productionExact` 时，两个 profile 下的 CORS 都是宽松的：成功的 `OPTIONS` 预检返回带 CORS 头的 `204`，携带 `Origin` 的 `PUT` 也会得到这些头。生产环境取决于存储桶的 CORS 配置，对于没有 CORS 配置的存储桶返回不带 CORS 头的 `200`；要在 `strict` 下得到该行为，请在 `storage.cors` 中将该存储桶列为 `[]`，或启用 `productionExact`（[存储桶 CORS](#存储桶-cors)）。
+- **重复的签名参数。** 在 `strict` 下，`X-Goog-SignedHeaders` 的每次出现都会被强制执行，包括重复的、大小写不同的和百分号编码的名称。相互冲突的重复 `X-Goog-Date`、`X-Goog-Expires` 或 `Expires` 值返回 `400 InvalidArgument`；请移除冲突的参数。该拒绝尚未在生产环境中观测到。`emulator` profile 保留其现有的查询解释方式。
+
+</details>
+
+<details>
+<summary>没有签名策略的表单上传</summary>
+
+带 multipart 表单的 `POST /{bucket}` 需要 `policy` 和签名字段。会强制执行策略的过期时间和条件（`bucket`、`eq`、`starts-with`、`content-length-range`）；不验证签名。
+
+</details>
+
+<details>
+<summary>作为 OAuth bearer 的 Firebase ID 令牌</summary>
+
+在 JSON API 上作为 OAuth bearer 发送的 Firebase ID 令牌返回 401 `Invalid Credentials`。其他任何凭据或没有凭据时，均以 owner 身份处理，因为本地运行无法判定访问令牌。
+
+</details>
+
+<details>
+<summary>Cloud Storage 不认识的 ACL 条目</summary>
+
+Cloud Storage 不认识的 ACL 条目返回 400。只有角色为 `READER` 的 `allUsers` 才有效果。
+
+</details>
+
+<details>
+<summary>Cloud Storage 从不接受的存储桶名称</summary>
+
+Cloud Storage 从不接受的存储桶名称（例如 `ab`、`goog-x` 或 `1.2.3.4`）在 JSON API 上返回 400 `Invalid bucket name`，在 XML 路由上返回 400 `InvalidBucketName`，在 Firebase 路由上返回 404，除非存在该名称的存储桶（已导入或已声明）。
+
+</details>
+
+除上述签名上传的响应外，`emulator` profile 保留其现有行为；这些响应遵循生产环境，不声称与官方模拟器一致。
+
+### 空路径段
+
+在两个 profile 下，对象名称或列表前缀含有空路径段（例如中间的 `//`、对象名称开头的 `/` 或末尾的 `/`）的 Firebase Storage 请求（`/v0/b/{bucket}/o/...`），会在评估任何安全规则之前返回 `400` 和 `The path may not end with '/' or contain two consecutive '/'s`。2026-11-08 生产环境对读取、元数据读取和列表都是这样回答的，在允许全部的规则下也是如此；上传、`PATCH`、`DELETE` 和令牌管理由此推断，未经录制。
+
+- `strict` profile 将 `/x`、`x` 和 `x/` 视为三个对象，与 Cloud Storage 相同。`emulator` profile 仍会去掉上传名称开头的一个 `/`，与官方模拟器相同。
+- Firebase 列表会略去像 `a//x` 这样的对象会产生的前缀，被略去的名称永远不会占据页面中的位置，也不会成为 `nextPageToken`。
+
+## 限制存储字节数
+
+### 对象和请求大小
+
+每个对象默认限制为 256 MiB。设置 `storage.maxObjectBytes` 可更改该限制；HTTP 请求体限制比它大 4 MiB，以容纳 multipart 开销。
+
+`storage.bufferedBodyBudgetBytes` 限制整个进程中缓冲的请求体，默认为 1 GiB。超出可用预算的请求收到 HTTP 503 和 `Retry-After: 1`。即使对象在其限制内，小于请求的预算也可能拒绝该请求。
+
+两个设置都接受正整数字节数；`maxObjectBytes` 的最大值为 2143289343，`bufferedBodyBudgetBytes` 为 2147483647。可恢复上传还另有 1 GiB 的已保留上传总量限制，导入另有 1 GiB 的总量限制。
+
+### 存储字节总数
+
+Storage 模拟器将每个对象保存在内存中，默认情况下对总量没有任何限制。要设置上限，请将 `storage.maxStoredBytes` 设为至少 1 的字节数（[配置](#配置)）。此限制是 Fireemu 本地的；生产环境没有。
+
+- 每个对象的字节只计一次，副本会再计一次。替换对象只计算大小的差值。
+- 会使总量超过限制的上传、可恢复上传的最终请求或 copy，以 HTTP 402 和消息 `storage.maxStoredBytes limit exceeded` 拒绝（在 JSON API 中，原因为 `storageCapacityExceeded`）。没有 `Retry-After`。请删除对象以腾出空间。Firebase 客户端 SDK 会立即将 402 报告为 `storage/quota-exceeded`，不会重试；Cloud Storage 客户端库也不会重试它。
+- 不增加总量的写入（例如相等或更小的替换）总会通过，即使存储中的数据超过了限制（在导入、恢复或调低限制之后）。
+- 被拒绝的写入不会改变任何内容。可恢复上传保持打开：其偏移量不会前进，因此你可以在腾出空间后再次发送相同的最终分块，或取消上传。
+- 导入（`--import`）和快照恢复不会对照该限制检查。超过限制的导入启动时会输出一行 `warning:`，指出存储字节数和限制；超过限制的快照恢复会记录同样的一行。
+
+`fireemu doctor --connect <control URL>` 会将存储字节数作为 `objects.bytes` 报告，并与该限制对照。
+
+## 与生产环境的差异
+
+### 不支持
+
+- 验证 V2 签名 URL 或 POST 策略的签名。V4 签名 URL 仅对照 `storage.signedUrlKeys` 中注册的密钥进行验证。
+- `allUsers` 读取以外的对象 ACL。
+- IAM 和存储桶级公开访问。
+- 对象组合（`compose`）。
+- 通知配置。
+
+JSON API 提供对象版本控制：与生产环境一样，带 `{"versioning":{"enabled":true}}` 的 `PATCH /storage/v1/b/{bucket}` 会启用它。
+
+### 本地行为
+
+- 未声明的存储桶会在第一次写入时创建，除非 `storage.undeclaredBuckets` 为 `"refuse"`。参见[不存在的存储桶](#不存在的存储桶)。
+- 对于未列在 `storage.cors` 中的存储桶，XML API 以宽松方式回答 CORS，除非设置了 `productionExact`。参见[存储桶 CORS](#存储桶-cors)。
+- V4 签名仅对照 `storage.signedUrlKeys` 中注册的密钥进行检查。参见[签名 URL 的签名](#签名-url-的签名)。
+- 对象大小限制、缓冲请求体预算和 `storage.maxStoredBytes` 都是本地限制。参见[限制存储字节数](#限制存储字节数)。
+
+### 将 Storage 端口保持在 localhost
+
+:::caution
+与官方模拟器一样，Storage 端口会在缺失媒体读取的 404 的 HTML 正文中反射所请求的对象名称。在你的机器上打开的网页可能会在该源上运行脚本。
+
+- 默认情况下，所有监听器都位于回环地址，因此只有你机器上的进程才能访问它。Host 防护还会以 403 回答 `Host` 不是 `localhost`、IP 地址或你在 `network.allowedHosts` 中列出的名称的请求，以防御 DNS 重绑定（参见[模拟器响应的主机名](../../guides/ci-and-containers/#host-names-the-emulators-answer)）。
+- 只有在你选择启用时，其他主机才能访问该端口：`fireemu.toml` 中的 `network.allowNonLoopbackHosts` 加上 `firebase.json` 中非回环的 `emulators.storage.host`（参见[从容器提供模拟器](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)）。这样的监听器无需凭据即可提供服务，因此不要在不受信任的网络上公开它。
+- 在生产环境不发送 `X-Content-Type-Options: nosniff` 的 JSON API 回答上，`strict` profile 也不发送它，因此不会增加这层纵深防御；`emulator` profile 保留官方模拟器的该头。
+
+:::
+
+## 相关内容
+
+- [安全规则](../../guides/security-rules/)
+- [Profile](../../guides/profiles/)
+- [兼容性](../../compatibility/)和[限制](../../compatibility/limitations/)
+- [配置参考](../../reference/configuration/)
