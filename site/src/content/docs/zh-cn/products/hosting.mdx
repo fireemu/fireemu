@@ -1,0 +1,238 @@
+---
+title: Firebase Hosting
+description: 根据 firebase.json 在本地提供 Firebase Hosting 站点，支持重定向、重写、标头、简洁网址、本地化以及重写到本地函数。
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 根据 `firebase.json` 的 `hosting` 条目提供 Firebase Hosting 站点：静态文件、重定向、重写、自定义标头、简洁网址、尾部斜杠处理和本地化内容。每个已配置的站点都有自己的本地监听器，重写可以把请求发送到同一次运行中某个 Functions 代码库的函数。
+
+<Facts items={[
+  { label: '状态', value: '已支持' },
+  { label: '默认端口', value: '5000' },
+  { label: '启动条件', value: 'firebase.json 中有 hosting.public 目录时' },
+  { label: '生产环境验证', value: '已针对记录的用例验证', href: 'compatibility/#production-verification' },
+]} />
+
+Hosting **已针对其记录的用例与生产环境进行验证**。默认的 `strict` profile 的应答与 Firebase Hosting 对在预览渠道上记录两次的 279 个请求（一个 201 个请求的语料库和一个 78 个请求的后续语料库）的应答一致，[已知差异](#已知差异与未记录的答复)除外。`emulator` profile 在有限的用例集上与 `firebase-tools` 15.28.2 进行离线比较，不对生产环境作任何声明。参见 [Profile](#profile) 和[验证状态](#验证状态)。
+
+Hosting 自 v0.45.0 起可用。在之后版本中发生变化的行为列于 [v0.47.0 中的变更](#v0470-中的变更)和 [v0.49.0 中的变更](#v0490-中的变更)。
+
+## 可测试的内容
+
+- 静态文件、简洁网址、尾部斜杠和 404 页面（[请求顺序](#请求顺序)）。
+- `redirects`、`rewrites` 和 `headers` 规则，包括它们的 glob 和捕获（[`hosting` 对象的键](#hosting-对象的键)）。
+- 按语言和国家选择的本地化内容（`i18n`）。
+- 一个 `firebase.json` 中的多个站点，每个站点使用自己的端口（[启动 Hosting](#启动-hosting)）。
+- 重写到同一次运行中的函数（[重写到函数](#重写到函数)）。
+- 在 `strict` 下生产环境的响应标头、内容类型、压缩和条件请求（[Profile](#profile)）。
+
+## 启动 Hosting
+
+当 `firebase.json` 有一个带 `public` 目录的 `hosting` 对象，或一个站点对象数组时，Hosting 就会启动。单个站点不需要选择器：
+
+```json
+{
+  "hosting": {
+    "public": "public"
+  }
+}
+```
+
+```sh
+npx fireemu up
+```
+
+对于多个站点，为每个条目指定 `site` 或 `target`。target 通过所选 Firebase 项目的 `.firebaserc` 解析：
+
+```json
+{
+  "hosting": [
+    { "target": "app", "public": "public/app" },
+    { "site": "docs-site-id", "public": "public/docs" }
+  ]
+}
+```
+
+```json
+{
+  "targets": {
+    "my-project": {
+      "hosting": {
+        "app": ["app-site-id"]
+      }
+    }
+  }
+}
+```
+
+### 端口和 URL
+
+- 默认端口为 5000。如果该端口被占用且你没有配置端口，Fireemu 会向上搜索，并且与 `firebase-tools` 一样从不使用 5001。你设置的端口不会被移动。可通过 `firebase.json` 中的 `emulators.hosting.port`、Fireemu 配置文件中的 `daemon.hostingPort` 或 `--hosting-port` 设置。
+- 第一个站点使用已配置的 Hosting 端口（默认 5000）。其后的站点遵循 Firebase CLI 的本地约定，从主端口之后第四个端口开始，跳过 5001 和已占用的端口。
+- 启动输出会打印每个站点的 URL。就绪描述符为第一个站点保留 `hostingUrl`，并添加包含所有站点 URL 的 `hostingSites`。
+- Emulator Hub 在 `hosting` 下列出主绑定地址（Hub 上的 `GET /emulators`），并在 `reservedPorts` 中列出次要端口。
+
+### 选择与 public 目录
+
+- `--only` 与其他产品一样选择服务：`--only hosting` 提供已配置的站点，当所选站点缺少 `public` 键时拒绝启动。
+- `hosting.public` 相对于 `firebase.json` 所在目录解析。与 `firebase-tools` 一样，目录不存在不是错误：站点会启动并应答 404。
+
+## 配置
+
+### `hosting` 对象的键
+
+`hosting` 对象的以下键会被遵循：
+
+| 键 | 行为 |
+|---|---|
+| `public` | 提供服务的目录。必需。文件通过对该目录保留的句柄打开；离开该目录的符号链接、非常规文件和不安全路径会被拒绝。在 `strict` 下，符合条件的含点段路径会在查找文件之前重定向到其规范化路径；参见 [Profile](#profile)。 |
+| `ignore` | 在所有路由上都不存在的文件的 glob 模式，匹配方式与 `firebase-tools` 选择要部署的文件时相同。`**/firebase-debug.log`、`**/firebase-debug.*.log` 和 `.firebase/*` 始终被忽略，因为 `firebase deploy` 从不上传它们。 |
+| `redirects` | 在提供任何文件之前按顺序检查。规则包含 `source`、`glob` 或 `regex`、一个 `destination` 和一个 `type`（默认 301）。`source` 中的 `:name` 捕获会填入 `destination` 中的同名位置。查询字符串会被保留。 |
+| `rewrites` | 在没有匹配文件时使用。`source`、`glob` 或 `regex` 选择请求；目标是 `destination` 文件、`function` 或 `run` 服务（参见[重写到函数](#重写到函数)）。第一个匹配的规则生效。 |
+| `headers` | 包含 `source`、`glob` 或 `regex` 以及由 `key` 和 `value` 组成的 `headers` 列表的规则。它们会被添加到文件和重写的响应中，并受下文各 profile 特定规则的约束；`strict` 会忽略配置的 `Content-Encoding`。 |
+| `cleanUrls` | `/about.html` 重定向（301）到 `/about`，且 `/about` 提供 `about.html`。 |
+| `trailingSlash` | `true` 为目录 URL 添加尾部斜杠，`false` 将其移除（301），未设置时，不带斜杠的目录 URL 会重定向到带斜杠的 URL，除非开启了 `cleanUrls`。 |
+| `i18n` | `{ "root": "/locales" }`（斜杠的任意写法：`locales`、`/locales/`）会在普通路径之前提供 `locales/<language>_<country>/…`、`locales/ALL_<country>/…`、`locales/<language>_ALL/…` 和 `locales/<language>/…`，根据 `Accept-Language` 和 `X-Country-Code` 标头，或根据 `firebase-language-override` 和 `firebase-country-override` cookie 选择。 |
+
+### 请求顺序
+
+请求按以下顺序处理：
+
+1. **保留路由。** `/__/firebase/init.json` 和 `/__/firebase/init.js` 是保留路由：`init.json` 包含项目 ID 和一个非机密的本地 API 密钥（`fireemu-local-only`），`init.js?useEmulator=true` 还会把 Firebase SDK 指向本次运行的模拟器（Authentication、Firestore、Functions、Storage 和 Realtime Database，在它们运行时）。在 `emulator` 下它们优先于全匹配重定向；在 `strict` 下它们在重定向之后应答，与生产环境的应答一致（参见 [Profile](#profile)）。
+2. **重定向。** 匹配的 `redirects` 条目以其状态码和 `Location` 应答。
+3. **文件。** 有匹配的文件时提供该文件，包括目录的 `index.html`；`HEAD` 仅以标头应答。identity 正文从打开的文件流式传输；在 `strict` 下，符合条件的文件可能改为被缓冲并以 gzip 提供。标头和内容类型取决于 profile：`emulator` 使用 `mime-types` 表并为可压缩类型添加 `Vary: Accept-Encoding`，而 `strict` 使用 [Profile](#profile) 中描述的生产环境形式的标头和类型。
+4. **重写。** 匹配的 `rewrites` 条目应答：`destination` 文件以 200 提供（重写到 `/404.html` 时应答 404），`function` 或 `run` 规则被转发到本地 Functions 运行时。
+5. **未找到。** 以状态 404 提供 public 目录中的 `404.html`，若没有则提供内置页面：在 `strict` 下是一个简短的 fireemu 替代页面，在 `emulator` 下是 "Cannot GET" 页面。
+
+`/__/firebase/<version>/<file>`（托管的 Firebase SDK 脚本）以 503 应答，因为 Fireemu 从不下载它们：请使用打包的 SDK 或你自己提供的副本。
+
+## 重写到函数
+
+带有 `function` 或 `run` 目标的重写会被转发到同一次运行的 Functions 模拟器，该模拟器必须已加载一个代码库：
+
+```json
+{
+  "hosting": {
+    "public": "public",
+    "rewrites": [
+      { "source": "/api/**", "function": "api" },
+      { "source": "/images/**", "function": { "functionId": "resize", "region": "europe-west1" } },
+      { "source": "/service/**", "run": { "serviceId": "api", "region": "us-central1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
+```
+
+- 函数 ID 是 `function` 后面的字符串、其 `functionId`，或 `run` 的 `serviceId`。区域是目标的 `region`，否则是规则的，否则是 `us-central1`。
+- `run` 重写会到达与 Cloud Run 服务 ID 相同的本地函数；Fireemu 从不查找 Cloud Run 服务。
+- 请求保留其方法、路径、查询和标头；正文限制为 32 MiB。Fireemu 会添加 `x-original-url` 和 `x-forwarded-host`。没有 `Cache-Control` 的响应会得到 `private`，并且 `Vary` 被设置为 `Accept-Encoding, Authorization, Cookie`。
+- 没有已加载的 Functions 代码库时，重写应答 503，无法访问的上游应答 502。不会回退到已部署的函数。
+
+## Profile
+
+Hosting 在两种兼容性 profile 下的应答不同。
+
+- `emulator` profile 的应答与 `firebase-tools` 15.28.2 模拟器一致。
+- 默认的 `strict` profile 的应答与 Firebase Hosting 对两个生产环境语料库中 279 个请求的应答一致（每个都在一次性预览渠道上记录了两次，列于[验证状态](#验证状态)），但 `productionExact` 会关闭的两个开发默认值除外：`hosting.cacheControl` 和 `hosting.clientCountry`（参见[开发默认值](#开发默认值)）。
+
+下表描述带 `productionExact` 的 `strict`；受这两个默认值影响的行会注明。
+
+| 方面 | `strict` | `emulator` |
+|---|---|---|
+| 响应标头 | 使用 `productionExact` 时，文件带有 `Cache-Control: max-age=3600`（除非 `headers` 规则设置了一个）；默认情况下不带（`hosting.cacheControl`）。文件带有 `Accept-Ranges: bytes`、`Vary: x-fh-requested-host, accept-encoding` 和一个带引号的 SHA-256 `ETag`。当请求的 `Accept-Encoding` 包含文本 `gzip`（区分大小写，任意质量值：`x-gzip` 和 `gzip;q=0` 算，`GZIP` 和 `*` 不算）且压缩后的正文小于文件时，文件以 `Content-Encoding: gzip` 应答：任何内容类型（图像、zip 或字体以及文本），从约 100 字节的文件起，使用文件自身的 `ETag`。`Range` 作用于压缩后的正文。请求 `br` 的请求在同时包含 `gzip` 时得到 gzip，不包含时得到原样文件。超过 32 MiB 的文件、`304` 和路由器生成的应答不会被压缩。与生产环境一样，`headers` 规则设置的 `Content-Encoding` 不会被提供：预压缩的 `*.br` 文件按原样发送（`application/octet-stream`），因为再次压缩不会使其变小。`i18n` 站点文件的 `Vary` 以 `accept-language, x-country-code` 开头。重定向带有你的规则设置的标头。 | 仅 `ETag` 和 `Last-Modified`，以及可压缩类型的 `Vary: Accept-Encoding`。Fireemu 在此 profile 中不进行压缩。 |
+| `Content-Type` | JSON 类型不带 charset（`application/json`、`application/manifest+json`），`.js` 和 `.mjs` 为 `text/javascript; charset=utf-8`，`.ico` 为 `image/x-icon`，`.br` 为 `application/octet-stream`，未知扩展名或无扩展名为 `text/plain; charset=utf-8`。 | 模拟器的 `mime-types` 表；未知扩展名为 `application/octet-stream`。 |
+| 条件请求和范围请求 | `If-None-Match` 和 `If-Modified-Since` 应答 304（仅带文件的 `Cache-Control`）；单个 `Range` 以 206 和 `Content-Range` 应答。对文件的 `OPTIONS` 应答一个空的 200，带 `Allow: GET, HEAD, OPTIONS`。 | 整个文件。 |
+| `/404.html` | 对 `/404.html` 的请求以 200 提供该文件；其他任何缺失路径以 404 提供它。没有 `404.html` 的站点对任何未匹配路径应答一个为 fireemu 编写的简短页面（生产环境的页面更长，其字节未随附）；状态码、内容类型和缓存标头与生产环境一致。 | 两者都应答 404；没有 `404.html` 时的页面是 oracle 的简短页面。 |
+| 重定向 | 正文为 `text/plain`。每个捕获的路径部分在放入 `Location` 之前进行百分号解码（`%2f` 变为 `/`，然后连续的斜杠合并），查询字符串按发送时原样附加。`:name` 中含数字的 source（`/p/:a1`）与生产环境一样不匹配任何内容；重复的名称会匹配，且最后一个值生效。 | `text/html` 正文，捕获的部分保持编码（`%2f` 变为 `%252f`），查询被重新编码，`:a1` 是参数名。 |
+| 保留路径 | `/__/auth/handler` 在重定向之外以 200 应答，提供一个为 fireemu 编写的替代页面，以及生产环境的状态码和标头；`/__/firebase/init.json` 和 `init.js` 受重定向约束，并且是可缓存的文件（`ETag`、`Last-Modified`、你的规则设置的标头）。 | `init.json` 和 `init.js` 在重定向之前；不提供 `/__/auth/handler`。 |
+| `appAssociation: "AUTO"` | 会生成 `/.well-known/assetlinks.json` 和 `/.well-known/apple-app-site-association`（`[]` 和一个空的 `applinks` 文档）。 | 不提供。 |
+| `i18n` | 使用 `productionExact` 时，国家与生产环境一样来自请求的来源，因此 `X-Country-Code` 标头和 `firebase-country-override` cookie **会被忽略**；默认情况下它们会被遵循，与 emulator profile 相同（`hosting.clientCountry`）；`Accept-Language` 按其质量值读取（没有 `de` 时，`de;q=0.9, fr;q=0.8` 会找到 `fr`）；`firebase-language-override` cookie 会被遵循。 | 国家标头和 cookie 会被遵循；不读取质量值。 |
+| `headers`、`rewrites` 和 `redirects` 的 glob | 点文件匹配 `*` 和 `**`，尾部斜杠之后的空部分匹配 `*` 以及可以不匹配任何内容的模式。 | 点文件和空部分不匹配，与固定版本的 `superstatic` 相同。 |
+| 含点段的请求（`/../x`、`/a/./b`、`/a/b/..`） | 以 `302` 重定向到规范化路径（`Cache-Control: private`，空正文），作为请求到达的主机上的绝对 URL；生产环境在其自身的内容来源上应答同样的 302。原始的 `\` 在查找点段之前被读作 `/`（`/.\b` 得到 `/b`），含 `\` 但无点段的路径不会被重定向，保留下来的转义以大写形式写出。不会读取 `public` 之外的任何内容。 | 与固定版本的 oracle 相同：`/a/./b` 返回文件，其他大多数返回 `404` |
+| 格式错误的百分号转义 | `400`，纯文本 `400 Bad Request`，以分块方式发送。 | `400`，带 `Malformed URL`。 |
+
+### 开发默认值
+
+Hosting 生产环境的两种行为会让本地开发体验变差，因此默认采用官方模拟器的应答，而 `productionExact` 会恢复生产环境的行为（与其他[开发默认值](../../guides/profiles/)的规则相同）：
+
+| 键 | 默认值 | 生产环境的行为 |
+|---|---|---|
+| `hosting.cacheControl` | `"none"`，因此浏览器会立即显示编辑后的文件。 | `"production"` 会为 `headers` 规则未设置 `Cache-Control` 的文件添加 `Cache-Control: max-age=3600`。设置了 `Cache-Control` 的规则在所有模式下都生效。 |
+| `hosting.clientCountry` | `"honoured"`，因此可以通过 `X-Country-Code` 标头或 `firebase-country-override` cookie 测试国家内容。 | `"ignored"` 两者都不读取，因为生产环境在其边缘决定国家。`Accept-Language` 质量值和 `firebase-language-override` cookie 在两种模式下都会被读取。 |
+
+这两个键仅适用于 `strict` profile（`emulator` profile 始终与官方模拟器的应答一致），且显式设置的键优先于 `productionExact`。
+
+## 与生产环境的差异
+
+### 已知差异与未记录的答复
+
+收尾记录（[父语料库](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/known-differences.json)、[后续语料库](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/followup-known-differences.json)）列出了 `strict` 不重现的已知差异：
+
+- **Brotli 内容编码。** 生产环境对 `Accept-Encoding` 包含 `br` 的请求应答 `br`；`strict` 在该标头同时包含 `gzip` 时应答 gzip，不包含时应答原样文件。
+- **100 到 1,500 字节文件的 gzip 正文长度。** 在 `strict` 中长 1 到 5 字节，因为它使用另一种 deflate 编码器。仅当两个应答都是同一正文的 gzip 且长度相差不超过 8 字节时，该差异才被豁免（coordinator ruling 27）。
+- `/__/firebase/<version>/` 下的**托管 SDK 文件**。
+- **生产环境默认 404 页面和托管的 `/__/auth/handler` 页面的正文。** 它们的字节未随附，因此 `strict` 提供为 fireemu 编写的页面，并带有生产环境发送的状态码和标头。
+- `apiKey` 和 `projectId` 之外的 **`init.json` 键**。
+- **https 的 `Strict-Transport-Security` 标头**以及预览渠道的 `X-Robots-Tag`。
+- **生产环境对含点段请求应答的 302 的主机。** 它是一个每次请求都会变化的内部主机；比较的是 `Location` 的路径。
+
+在与记录的比较中，201 行中的 18 行以及后续的 78 行中的 42 行带有已知差异。
+
+一些 strict 应答来自对记录的解读，而不是对该用例的观察。以下情况未观察过生产环境：
+
+- 11 到 99 字节文件的 gzip（生产环境对 1 字节和 10 字节保持原样，对 100 字节及以上进行压缩，而 `strict` 在压缩后的正文更小时进行压缩）。
+- 扩展名未知的文件压缩后为 `text/html; charset=UTF-8`（在两个 4,500 字节的文件上观察到；对于未压缩的两个字节记录为 `text/plain`）。
+- 针对点段的重定向中 `%5c` 以外转义的大写十六进制。
+- 压缩正文上的其他范围。
+- 无法满足的 `Range` 以 `416` 和 `Content-Range: bytes */<size>` 应答。
+- 含多个范围的请求以整体应答。
+- 带 `Range` 的 `HEAD` 以 `206` 应答，带有该部分的长度且无正文。
+- 含点段以及控制字符或空格的路径不会被重定向。
+
+### 不支持
+
+- `hosting.source`（Web 框架）以及任何没有 `public` 的站点。
+- App Hosting。`--only apphosting` 作为延后项被拒绝；参见[限制](../../compatibility/limitations/)。
+- [键的表格](#hosting-对象的键)之外的键不会被处理。`appAssociation: "AUTO"` 仅在 `strict` 下生成两个关联文档；你放在 `public` 中的文件与其他文件一样被提供。
+- `/__/firebase/<version>/` 下的托管 SDK 脚本、已部署的 Cloud Run 服务和已部署的函数（没有实时回退）。
+- 在 `emulator` 下，无扩展名或扩展名未知的文件以 `application/octet-stream` 提供。在 `strict` 下为 `text/plain; charset=utf-8`，压缩时为 `text/html; charset=UTF-8`。自定义标头规则的 `Content-Type` 会替换 Fireemu 选择的类型。
+
+## 验证状态
+
+[兼容性表格](../../compatibility/#production-verification)中的 `HOSTING` 区域对记录的用例为**已验证**。
+
+- **记录了什么。** 生产环境以相同的 201 个请求观察了两次（静态文件、重定向、重写、glob 匹配、标头和缓存、简洁网址、尾部斜杠、本地化、保留路径、内容类型、压缩、应用关联），并以一组 78 个请求的后续集合观察了两次（默认 404 页面和托管 auth handler 页面的长度和状态、点段和反斜杠、含数字和重复的重定向参数名、带 `Content-Encoding` 规则的预压缩文件，以及生产环境对哪些大小、内容类型和 `Accept-Encoding` 形式进行 gzip）。记录是在一次性站点的预览渠道上进行的，从未在 live 渠道上进行，2026-11-11 的收尾评审接受了第一组证据。
+- **应答如何比较。** 每一对中，两次记录除生产环境内部的重定向主机外，在每个请求上都彼此一致，并且 `productionExact` 下的 `strict` profile 除[已知差异](#已知差异与未记录的答复)外，在每个请求上都与两者一致。每次父比较的 201 行中有 18 行带有已知差异，每次后续比较的 78 行中有 42 行带有已知差异，与匹配分开计数。
+- **声明涵盖什么。** 它涵盖记录的请求以及从中读出的规则（[未记录和推断的应答](#已知差异与未记录的答复)单独列出）。`emulator` 不对生产环境作任何声明，函数和 Cloud Run 重写、`ignore` 以及本地安全属性不属于其中。Brotli 仍是已知差异。
+- **离线套件。** 离线一致性套件仍在有限的语料库上将 Fireemu 与 `firebase-tools` 15.28.2 进行比较，其中包括 3,000 多行基于 `ignore` 所用真实文件列表生成的行。
+
+请将在此处通过的 Hosting 测试视为对你的 `firebase.json` 和路由的检查：预览渠道的应答并非 live 渠道的应答。
+
+## v0.47.0 中的变更
+
+这些变更包含在 v0.47.0 及更高版本中；v0.45.0 和 v0.46.0 的行为不同（参见[变更日志](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)）：
+
+- 以前导或尾部斜杠书写的 `i18n.root`（`/locales`，即 Firebase 文档所示的形式）会找到与 `locales` 相同的文件，空的 root 即没有 root，与 `superstatic` 相同。此前只有不带前导斜杠的 root 有效。
+- 内容类型来自 `firebase-tools` 模拟器的 `mime-types`/`mime-db` 表（由其生成），并采用其 `Vary: Accept-Encoding` 规则。此前，一个简短的内置表会把其他所有扩展名（如 `.woff2`、`.gif` 或 `.ico`）作为 `application/octet-stream` 提供，并把 `.js` 作为 `text/javascript` 提供。
+- `ignore` 模式在 macOS 和 Windows 上与 `firebase-tools` 一样忽略大小写（带 `i` 标志的 JavaScript 正则表达式，与 `glob` 包的编译方式相同）；在 Linux 上仍区分大小写。
+- `headers`、`rewrites` 和 glob `redirects` 的 source 将连续的斜杠视为一个，并且模式也会匹配带一个尾部斜杠的路径，与固定版本的 `superstatic` 相同。像 `/%64ata.json` 这样的百分号编码别名仍然不会获得标头规则，与固定版本的模拟器相同。
+- `source` 为空的规则不匹配任何内容，并回落到其 `regex`，与 `superstatic` 相同。
+
+## v0.49.0 中的变更
+
+这些变更包含在 v0.49.0 及更高版本中；更早的版本在 `strict` 和 `emulator` 下应答相同，且没有 `hosting.cacheControl` 或 `hosting.clientCountry` 键（参见[变更日志](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)）：
+
+- 默认的 `strict` profile 的应答与 Firebase Hosting 对生产环境语料库的应答一致；每种应答参见 [Profile](#profile)。`emulator` profile 未变。
+- `hosting.cacheControl` 和 `hosting.clientCountry` 是新的[开发默认值](#开发默认值)；`productionExact` 会将两者切换为生产环境的行为。
+- 在 `strict` 下，`/__/firebase/init.json` 和 `init.js` 在重定向之后应答，且 `appAssociation: "AUTO"` 会生成两个关联文档。
+
+`strict` 下的 gzip 内容编码比 v0.49.0 更新：它在[变更日志](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)中列于之后的版本下。
+
+## 相关内容
+
+- [Functions](../functions/)：`function` 或 `run` 重写到达的代码库。
+- [Profile](../../guides/profiles/)：`strict`、`emulator` 和 `productionExact`。
+- [兼容性表格](../../compatibility/#production-verification)和[限制](../../compatibility/limitations/)。
+- [配置 schema](../../reference/configuration/)：`hosting` 和 `daemon.hostingPort` 键。
