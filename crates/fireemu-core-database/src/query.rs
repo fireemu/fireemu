@@ -426,6 +426,105 @@ mod tests {
     use crate::number::Number;
 
     #[test]
+    fn candidate_equality_and_top_k_match_full_sort_for_all_key_and_priority_types() {
+        use super::Candidate;
+        use crate::node::Priority;
+        use crate::path::Path;
+        use std::cmp::Ordering;
+
+        for keys in [
+            [
+                "-2147483648",
+                "-1",
+                "-0",
+                "0",
+                "00",
+                "01",
+                "1",
+                "2147483647",
+            ],
+            ["a", "aa", "b", "c", "d", "e", "f", "z"],
+            ["a", "é", "中", "\u{e000}", "\u{ffff}", "😀", "😁", "𐀀"],
+        ] {
+            for priority in [
+                None,
+                Some(Priority::Number(Number::Int(-1))),
+                Some(Priority::Number(Number::Int(0))),
+                Some(Priority::Number(Number::from_f64(0.5).unwrap())),
+                Some(Priority::String(String::new())),
+                Some(Priority::String("😀".to_owned())),
+            ] {
+                let children = keys
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, key)| {
+                        let mut node = match index % 4 {
+                            0 => Node::leaf(Leaf::Bool(false)),
+                            1 => Node::leaf(Leaf::Number(Number::Int(1))),
+                            2 => Node::leaf(Leaf::String("😀".to_owned())),
+                            _ => Node {
+                                content: Content::Children(
+                                    [("v".to_owned(), Node::leaf(Leaf::Bool(true)))].into(),
+                                ),
+                                priority: None,
+                            },
+                        };
+                        node.priority = priority.clone().map(Box::new);
+                        (key.to_owned(), node)
+                    })
+                    .collect();
+                let parent = Node {
+                    content: Content::Children(children),
+                    priority: None,
+                };
+                let Content::Children(children) = &parent.content else {
+                    unreachable!()
+                };
+                for order in [
+                    OrderBy::Key,
+                    OrderBy::Priority,
+                    OrderBy::Value,
+                    OrderBy::Child(Path::from_keys(["v"])),
+                ] {
+                    let mut query = QueryParams::ordered_by(order);
+                    let mut reference: Vec<_> = children
+                        .iter()
+                        .map(|(key, node)| (key.as_str(), node))
+                        .collect();
+                    reference.sort_by(|(ka, a), (kb, b)| query.compare_children(ka, a, kb, b));
+                    for (ka, a) in &reference {
+                        for (kb, b) in &reference {
+                            let left = Candidate::new(&query, ka, a);
+                            let right = Candidate::new(&query, kb, b);
+                            let expected = query.compare_children(ka, a, kb, b);
+                            assert_eq!(left.cmp(&right), expected);
+                            assert_eq!(left == right, expected == Ordering::Equal);
+                            assert_eq!(expected == Ordering::Equal, ka == kb);
+                        }
+                    }
+                    assert_eq!(query.run(Some(&parent)), reference);
+                    for n in [0, 1, 7, 8, 9, u32::MAX] {
+                        for limit in [Limit::First(n), Limit::Last(n)] {
+                            query.limit = Some(limit);
+                            let expected = match limit {
+                                Limit::First(n) => &reference[..(n as usize).min(reference.len())],
+                                Limit::Last(n) => {
+                                    &reference[reference.len().saturating_sub(n as usize)..]
+                                }
+                            };
+                            assert_eq!(
+                                query.run(Some(&parent)),
+                                expected,
+                                "{query:?}, keys={keys:?}, priority={priority:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn limited_selection_retains_only_the_requested_top_k_candidates() {
         let children = (0..1_024)
             .map(|index| {

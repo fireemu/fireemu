@@ -1273,6 +1273,120 @@ fn small_dimension_query_preserves_a_valid_high_dimension_cache_slot() {
 }
 
 #[test]
+fn candidate_factor_cache_capacity_growth_accepts_the_exact_byte_cap() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let path = candidate_cache_path("one");
+    let entry_bytes = core::mem::size_of::<CandidateNormalizationEntry>();
+    for excess in [0, 1] {
+        let mut cache = CandidateNormalizationCache::new(&field);
+        assert!(cache.admit(&path, CommitVersion::from_value(1), None));
+        let old_capacity = cache.entries.capacity();
+        cache.estimated_bytes = CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES - entry_bytes + excess;
+        assert_eq!(cache.account_capacity_growth(old_capacity, old_capacity + 1), excess == 0);
+        assert_eq!(cache.poisoned, excess == 1);
+        if excess == 0 {
+            assert_eq!(cache.estimated_bytes, CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES);
+            assert_eq!(cache.entries.len(), 1);
+        } else {
+            assert_eq!(cache.entries.capacity(), 0);
+            assert_eq!(cache.estimated_bytes, core::mem::size_of::<CandidateNormalizationCache>() + field_retained_estimate(&field));
+        }
+    }
+}
+
+#[test]
+fn candidate_factor_cache_admission_accounts_for_full_and_spare_capacity_at_the_cap() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let path = candidate_cache_path("one");
+    let entry_bytes = core::mem::size_of::<CandidateNormalizationEntry>();
+    for rows in 0..=2 {
+        for excess in [0, 1] {
+            let mut cache = CandidateNormalizationCache::new(&field);
+            cache.entries = Vec::with_capacity(2);
+            for _ in 0..rows {
+                cache.entries.push(CandidateNormalizationEntry {
+                    path: path.clone(), version: CommitVersion::from_value(1), factors: None,
+                });
+            }
+            let old_capacity = cache.entries.capacity();
+            let expected_capacity = if rows == old_capacity { old_capacity * 2 } else { old_capacity };
+            let growth_bytes = (expected_capacity - old_capacity) * entry_bytes;
+            let before = CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES - growth_bytes - document_path_retained_estimate(&path) + excess;
+            cache.estimated_bytes = before;
+            assert_eq!(cache.admit(&path, CommitVersion::from_value(2), Some((0.5, 2.0))), excess == 0, "rows={rows}, excess={excess}");
+            assert!(!cache.poisoned);
+            if excess == 0 {
+                assert_eq!(cache.entries.len(), rows + 1);
+                assert_eq!(cache.entries.capacity(), expected_capacity);
+                assert_eq!(cache.estimated_bytes, CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES);
+                assert_eq!(cache.entries.last().unwrap().version, CommitVersion::from_value(2));
+                assert_eq!(cache.entries.last().unwrap().factors, Some((0.5, 2.0)));
+            } else {
+                assert_eq!(cache.entries.len(), rows);
+                assert_eq!(cache.entries.capacity(), old_capacity);
+                assert_eq!(cache.estimated_bytes, before);
+            }
+        }
+    }
+}
+
+#[test]
+fn candidate_factor_cache_first_admission_accounts_for_the_allocated_entry() {
+    let field = FieldPath::parse("embedding").unwrap();
+    let path = candidate_cache_path("one");
+    let mut cache = CandidateNormalizationCache::new(&field);
+    let before = cache.estimated_bytes;
+    assert!(cache.admit(&path, CommitVersion::from_value(1), None));
+    assert_eq!(cache.entries.capacity(), 1);
+    assert_eq!(cache.estimated_bytes, before + core::mem::size_of::<CandidateNormalizationEntry>() + document_path_retained_estimate(&path));
+}
+
+#[test]
+fn candidate_factor_cache_finish_requires_nonempty_unpoisoned_in_budget_entries() {
+    for poisoned in [false, true] {
+        for empty in [false, true] {
+            for bytes in [CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES - 1, CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES, CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES + 1] {
+                let mut cache = CandidateNormalizationCache::new(&FieldPath::parse("embedding").unwrap());
+                if !empty {
+                    assert!(cache.admit(&candidate_cache_path("z"), CommitVersion::from_value(1), None));
+                    assert!(cache.admit(&candidate_cache_path("a"), CommitVersion::from_value(2), Some((1.0, 2.0))));
+                }
+                cache.poisoned = poisoned;
+                cache.estimated_bytes = bytes;
+                let finished = cache.finish();
+                let expected = !poisoned && !empty && bytes <= CANDIDATE_NORMALIZATION_MAX_ESTIMATED_BYTES;
+                assert_eq!(finished.is_some(), expected, "poisoned={poisoned}, empty={empty}, bytes={bytes}");
+                if let Some(cache) = finished {
+                    assert_eq!(cache.estimated_bytes, bytes);
+                    assert_eq!(cache.entries[0].path, candidate_cache_path("a"));
+                    assert_eq!(cache.lookup(&cache.field, &candidate_cache_path("a"), CommitVersion::from_value(2)), CandidateNormalizationLookup::Hit(Some((1.0, 2.0))));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn candidate_factor_cache_retained_estimates_include_each_field_and_path_allocation() {
+    use fireemu_core_types::ids::{DatabaseId, ProjectId};
+    for (text, segments, bytes) in [("embedding", 1, 9), ("meta.embedding", 2, 13), ("`é`.`😀`", 2, 6)] {
+        let field = FieldPath::parse(text).unwrap();
+        let expected = core::mem::size_of::<FieldPath>() + segments * core::mem::size_of::<String>() + bytes;
+        assert_eq!(field_retained_estimate(&field), expected, "{text}");
+        assert_eq!(CandidateNormalizationCache::new(&field).estimated_bytes, core::mem::size_of::<CandidateNormalizationCache>() + expected);
+    }
+    let project = ProjectId::try_new("demo-app").unwrap();
+    let database = DatabaseId::default_database();
+    for (relative, depth) in [("items/one", 1), ("items/one/children/two", 2), ("items/one/children/two/葉/😀", 3)] {
+        let path = DocumentPath::parse(&project, &database, relative).unwrap();
+        let resource = format!("projects/demo-app/databases/(default)/documents/{relative}");
+        let segment_bytes: usize = resource.split('/').map(str::len).sum();
+        let expected = core::mem::size_of::<DocumentPath>() + 2 * segment_bytes + (5 + 2 * depth) * core::mem::size_of::<String>() + depth * core::mem::size_of::<(CollectionId, DocumentId)>();
+        assert_eq!(document_path_retained_estimate(&path), expected, "{relative}");
+    }
+}
+
+#[test]
 fn candidate_factor_cache_starts_without_a_large_reserved_row_buffer() {
     let field = FieldPath::parse("embedding").unwrap();
     let cache = CandidateNormalizationCache::new(&field);
