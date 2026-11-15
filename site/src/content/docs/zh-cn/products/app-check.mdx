@@ -1,0 +1,422 @@
+---
+title: App Check
+description: 使用本地调试令牌，测试 Authentication、Firestore、Storage 和 callable 函数如何处理带有和不带有效 App Check 令牌的请求。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 包含一个本地 App Check 实现：调试令牌兑换、JWKS，以及针对 Authentication、Firestore、Storage 和 callable 函数的验证。Local Emulator Suite 不包含 App Check 模拟器。
+
+<Facts items={[
+  { label: '状态', value: '本地测试' },
+  { label: '默认端口', value: '9099（Authentication 端口）' },
+  { label: '启动', value: '默认启动' },
+]} />
+
+## 可以测试什么
+
+- 调试令牌兑换，在 `strict` 下无需任何配置即可工作（[无需配置即可兑换调试令牌](#无需配置即可兑换调试令牌)）。
+- 对 Authentication、Firestore 和 Storage 的强制执行：`off`、`unenforced` 或 `enforced`（[注册应用并强制执行](#注册应用并强制执行)）。
+- 带 `enforceAppCheck` 的 callable 函数，包括 `request.app`（[Callable 函数](#callable-函数)）。
+- 对缺失、格式错误、已过期或签名错误的令牌的拒绝。
+- `onRequest` 函数内的 `getAppCheck().verifyToken()`（[使用 Admin SDK 验证](#使用-admin-sdk-验证getappcheckverifytoken)）。
+
+## 连接
+
+兑换端点是 `POST /v1/projects/{project}/apps/{appId}:exchangeDebugToken`。其主机为 `FIREEMU_APP_CHECK_EMULATOR_HOST`：`fireemu exec` 会为你的命令设置它，`fireemu up` 会在启动输出中打印它。当选择了 Authentication 时，它是控制监听器的地址，即 Authentication 端口，默认为 9099。
+
+### 无需配置即可兑换调试令牌
+
+在 `strict` profile 下，调试令牌兑换、JWKS 和 callable 信任边界在没有 `appCheck` 块的情况下也会提供，并且每个产品的基线都是 `off`。
+
+- 任何格式正确的调试令牌（UUIDv4）都能为任何具有标准应用 ID（`1:<project number>:<platform>:<id>`）的应用兑换令牌。应用在首次使用时注册。
+- 因此，可以用兑换得到的令牌测试 `enforceAppCheck` callable，无需注册应用，也无需摘要，而缺失或格式错误的令牌仍会被拒绝。
+- 密钥对在启动后于后台生成，因此第一次兑换不会等待它。
+
+例如，在 `fireemu up` 运行且没有 `appCheck` 块时，任何 UUIDv4 都可以兑换（主机为打印为 `FIREEMU_APP_CHECK_EMULATOR_HOST` 的那个）：
+
+```sh
+curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aweb%3Alocal-test-app:exchangeDebugToken' \
+  -H 'content-type: application/json' \
+  -d "{\"debugToken\":\"$(uuidgen | tr 'A-F' 'a-f')\",\"limitedUse\":false}"
+# {"token":"eyJhbGciOiJSUzI1NiIs...", "ttl": "..."}
+```
+
+不是 UUIDv4 的字符串会被拒绝：`403 PERMISSION_DENIED`，`App attestation failed.`
+
+这由 `appCheck.debugTokens` 控制。如果你自己在 `appCheck.enabled: true` 旁边将其设为 `"any"`，那么对于你注册的应用，无论它们带有什么摘要，任何 UUIDv4 也都可以兑换。在这种情况下它为 `"any"`；而在 `productionExact` 下、`emulator` profile 下，以及任何未设置该键的 `appCheck` 块中，它为生产环境的规则 `"registered"`。使用 `"registered"` 时，在你[启用 App Check](#注册应用并强制执行) 之前不提供任何服务。
+
+### 从 Web SDK 获取令牌
+
+`@firebase/app-check` 总是调用生产环境的兑换端点，因此请使用一个与 Fireemu 兑换调试令牌的 `CustomProvider`。浏览器 bundle 无法读取 `process.env`，因此请通过你的打包工具自己的配置向它提供主机。
+
+<Tabs syncKey="code-language">
+<TabItem label="TypeScript">
+
+```ts
+import { initializeApp } from 'firebase/app';
+import {
+  CustomProvider,
+  getToken,
+  initializeAppCheck,
+  type AppCheckTokenResult,
+} from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+const debugToken = process.env.DEBUG_TOKEN;
+if (!host || !debugToken) throw new Error('Set FIREEMU_APP_CHECK_EMULATOR_HOST and DEBUG_TOKEN');
+
+async function exchangeDebugToken(): Promise<AppCheckTokenResult> {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken, limitedUse: false }),
+  });
+  if (!response.ok) throw new Error(`exchange refused: ${response.status}`);
+  const body = (await response.json()) as { token: string; ttl: string };
+  const ttlSeconds = Number.parseInt(body.ttl.replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+const appCheck = initializeAppCheck(app, {
+  provider: new CustomProvider({ getToken: exchangeDebugToken }),
+});
+
+const { token } = await getToken(appCheck);
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+import { initializeApp } from 'firebase/app';
+import { CustomProvider, initializeAppCheck } from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+
+async function exchangeDebugToken() {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken: process.env.DEBUG_TOKEN, limitedUse: false }),
+  });
+  const body = await response.json();
+  const ttlSeconds = Number.parseInt(String(body.ttl).replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+initializeAppCheck(app, { provider: new CustomProvider({ getToken: exchangeDebugToken }) });
+```
+
+</TabItem>
+</Tabs>
+
+设置好变量后运行它。在 `fireemu exec` 下，只有 `DEBUG_TOKEN` 需要你自己设置：
+
+```sh
+export DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+
+# fireemu exec 会为命令设置 FIREEMU_APP_CHECK_EMULATOR_HOST
+npx fireemu exec -- node provider.mjs
+
+# 在 fireemu up 运行时，从其启动输出中复制主机
+FIREEMU_APP_CHECK_EMULATOR_HOST=127.0.0.1:9099 node provider.mjs
+```
+
+TypeScript 版本已在本地 `fireemu up` 0.48.0、`firebase` 12.18.0 和 Node.js 24（类型剥离）上运行过，`getToken` 返回了令牌。没有 `appCheck` 块时，任何 UUIDv4 都可以兑换；有已注册应用时，令牌的摘要必须是该应用的某个 `debugTokenSha256` 值。
+
+## 配置
+
+### 注册应用并强制执行
+
+要对 Authentication、Firestore 或 Storage 强制执行 App Check，或要求注册，请启用它，并用应用调试令牌的 SHA-256 摘要注册该应用。配置只存储摘要，从不存储原始令牌。
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+# 兼容性 profile："strict" 或 "emulator"。
+profile = "strict"
+
+[appCheck]
+# 启用 App Check 产品基线：true 或 false。
+enabled = true
+
+[[appCheck.apps]]
+# 应用项目 ID：以小写字母开头；最多 63 个小写字母、数字或连字符。
+projectId = "demo-app"
+# 应用项目编号：最多 32 位的正十进制数字符串。
+projectNumber = "1234567890"
+# 应用 ID：1 到 256 个字符的字符串。
+appId = "1:1234567890:web:local-test-app"
+# 已注册的调试令牌摘要：最多 128 个唯一的小写 SHA-256 十六进制字符串
+# （这是示例令牌 2f1e6d3c-5b7a-4c1e-9d0a-8e4b7c6a1f23 的摘要；请使用你自己的）
+debugTokenSha256 = ["ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"]
+
+[appCheck.services]
+# Auth 的 App Check 模式："off"、"unenforced" 或 "enforced"。
+auth = "unenforced"
+# Firestore 的 App Check 模式："off"、"unenforced" 或 "enforced"。
+firestore = "enforced"
+# Storage 的 App Check 模式："off"、"unenforced" 或 "enforced"。
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "appCheck": {
+    "enabled": true,
+    "apps": [
+      {
+        "projectId": "demo-app",
+        "projectNumber": "1234567890",
+        "appId": "1:1234567890:web:local-test-app",
+        "debugTokenSha256": [
+          "ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"
+        ]
+      }
+    ],
+    "services": {
+      "auth": "unenforced",
+      "firestore": "enforced",
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+每个服务接受 `off`、`unenforced`（检查并记录令牌，请求仍会通过）或 `enforced`（没有有效令牌的请求在安全规则运行之前被拒绝）。没有已注册应用的项目无法使用 App Check，因此强制执行的服务会拒绝对它的每个请求。
+
+`--only` 会保留已配置的基线所需的验证器：在 `appCheck.services.firestore = "enforced"` 时，`--only firestore` 仍会拒绝没有有效令牌的请求，启动横幅会说明已包含该验证器。
+
+### 生成调试令牌及其摘要
+
+调试令牌是一个 UUIDv4，其摘要基于小写形式计算。为测试生成一个令牌并计算其摘要：
+
+```sh
+DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
+```
+
+任何其他字符串都不会匹配，兑换会返回 403。
+
+### 来自服务器端代码的 Storage 请求
+
+当 Storage 为 `enforced` 时，使用 Admin SDK 或 `gcloud` 的服务器端代码（客户端库，而非浏览器）仍需要在没有令牌的情况下访问 Storage。生产环境不对这类流量应用 App Check：Admin SDK 通过 OAuth 用服务账号进行身份验证，而强制执行覆盖的是客户端 SDK 调用的 Firebase Storage API。模拟器没有 OAuth，因此由 `appCheck.storageServerRequests` 决定如何识别这类流量：
+
+| | `"loopback"`（默认） | `"capability"` |
+|---|---|---|
+| 无需令牌即可放行 | 从 loopback 对端发往 loopback `Host`、没有浏览器痕迹且没有客户端 SDK 凭据的 Cloud Storage JSON API 请求（[详情](#how-loopback-recognises-a-request)） | 仅放行带有 `fireemu exec` 放在 `STORAGE_EMULATOR_HOST` userinfo 中的每次运行 capability（`http://fireemu:<capability>@host:port`）的请求 |
+| `STORAGE_EMULATOR_HOST` | 普通的 `http://host:port`，所有 `@google-cloud/storage` 和 `firebase-admin` 版本都接受 | 带 capability。`@google-cloud/storage` 8.1 及更高版本（`firebase-admin` 14.4 及更高版本）会拒绝内嵌凭据的 URL |
+| `file.save()` 和可续传上传 | 可以工作：可续传的后续请求就是这样的请求 | 在强制执行下，对于这些版本或可续传上传，Admin SDK 会失败：后续请求 URL 不带 capability |
+| 本地非浏览器进程（`curl`、测试脚本） | 无需令牌即可通过 | 没有 capability 时被拒绝 |
+| `enforced` 的 Storage 服务能证明什么 | 不能证明本地客户端出示了令牌 | 能证明除 capability 之外没有任何东西通过 |
+| 通过非 loopback 主机名（`host.containers.internal`、局域网地址上发布的端口）访问模拟器的容器 | 无法识别：需要令牌或 `"capability"` | 需要 capability |
+| 你在 `fireemu` 下运行的 Cloud Function 内的 Admin SDK | 通过：它获得同样普通的 `STORAGE_EMULATOR_HOST`（在生产环境中它使用函数的服务账号，App Check 不检查该账号） | 不通过 |
+
+Firebase Storage API（`/v0`，即 `firebase/storage` 和移动端 SDK 使用的 API）总是需要令牌，看起来来自页面或其他主机的任何请求也是如此。这在 emulator 和 strict profile 下以及 `productionExact` 下都相同，因为这是生产环境的行为。没有 Storage 强制执行时，`STORAGE_EMULATOR_HOST` 始终是普通的 `http://host:port`。
+
+<details id="how-loopback-recognises-a-request">
+<summary><code>"loopback"</code> 如何识别请求</summary>
+
+`"loopback"` 放行 Cloud Storage JSON API 路由（`/storage/v1`、`/upload/storage/v1`、`/download/storage/v1`）上满足以下条件的请求：
+
+- 来自 loopback 对端；
+- 指向 loopback `Host`（`localhost` 或 `127.0.0.1`、`[::1]` 等 loopback IP 地址；`evil.example` 这样被 rebind 的 DNS 名称不算）；
+- 没有浏览器痕迹：没有值非空的 `Origin`、`Sec-Fetch-Site`、`Sec-Fetch-Dest`、`Referer` 或 `Cookie` 头（空值视为不存在）；
+- 没有出示客户端 SDK 的 `Authorization: Firebase <token>` 凭据。
+
+Admin SDK 用于 bucket 元数据的简短 `/b/{bucket}` 写法也算作 JSON API 路由。可续传上传的后续请求就是这样的请求，因此 `file.save()` 可以工作。`fireemu exec` 导出普通的 `STORAGE_EMULATOR_HOST=http://host:port`。
+
+</details>
+
+若只放行带有 capability 的请求：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+
+[appCheck]
+# 启用 App Check 产品基线：true 或 false。
+enabled = true
+# Storage 服务器请求的放行方式："loopback" 或 "capability"。
+storageServerRequests = "capability"
+
+[appCheck.services]
+# Storage 的 App Check 模式："off"、"unenforced" 或 "enforced"。
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "appCheck": {
+    "enabled": true,
+    "storageServerRequests": "capability",
+    "services": {
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Callable 函数
+
+Node callable 上的 `enforceAppCheck: true` 会在函数运行之前，以 callable 的 `UNAUTHENTICATED` 错误拒绝没有有效令牌的调用（401 响应，或对于流式调用为 `200` 的 SSE 错误记录）。有效的令牌会填充 `request.app`。
+
+不支持重放保护。对 `consumeAppCheckToken: true` 的 callable 出示有效令牌的调用会以 501 `APP_CHECK_REPLAY_UNSUPPORTED` 被拒绝，因此测试永远不会因一个生产环境本会消耗掉的令牌而通过。
+
+令牌使用属于某个守护进程实例的密钥签名。在会话重置或快照恢复之后，Node callable 和其他由守护进程验证的服务会拒绝它们。
+
+Python callable 使用签名密钥和真实时间验证令牌签名和声明，不检查当前应用状态或项目 epoch，因此重置项目或禁用应用不会在过期之前撤销一个原本有效的令牌。Python 还会拒绝令牌消耗和显式的 App Check 配置；设置和限制见 [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)。
+
+## 普通 HTTP 函数（`onRequest`）
+
+与 callable 不同，`onRequest` 处理程序收到 `X-Firebase-AppCheck` 头时不会自动验证，也没有 `request.app`。你的处理程序必须验证它，并决定经过验证的应用可以做什么。callable 上的 `enforceAppCheck` 不会保护单独的 HTTP 端点。
+
+### 使用 Admin SDK 验证（`getAppCheck().verifyToken()`）
+
+你部署的代码无需修改即可工作：`onRequest` 函数内的 `getAppCheck().verifyToken(token)` 由守护进程回答，而不是由 Google 的密钥回答。
+
+```js
+import { onRequest } from 'firebase-functions/v2/https';
+import { initializeApp } from 'firebase-admin/app';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+initializeApp();
+
+export const api = onRequest(async (req, res) => {
+  try {
+    const { appId } = await getAppCheck().verifyToken(req.get('X-Firebase-AppCheck'));
+    // 针对已验证应用的应用逻辑
+  } catch {
+    res.status(401).send('Unauthorized');
+  }
+});
+```
+
+runner 会在你的代码加载之前，修补它从你的代码库中解析到的 `firebase-admin`。SDK 仍然自己解码令牌并检查算法、audience、issuer 和 subject；只有签名步骤被替换为通过 runner 的私有管道向守护进程发起的询问。守护进程使用与 callable 函数相同的验证器，依据当前的项目 epoch 和应用注册表，在虚拟时钟上作答，并且不做任何缓存。因此，在原地会话重置或快照恢复之前签发的令牌会被拒绝，与守护进程不再持有其密钥的令牌完全相同（`app-check/invalid-argument`，"... does not correspond to a known public key ..."）。错误是 SDK 自己的，由其自身的错误映射器产生。
+
+- 支持：从 Functions 代码库解析到的 `firebase-admin` 13 和 14。已用 14.3.0（CI）和 13.10.0 测试；CI 中没有安装 14.5.0，因为其 App Check 代码与 14.3.0 完全相同（文件 `token-verifier.js`、`app-check.js`、`app-check-api-client-internal.js` 和 `utils/jwt.js` 只有版本横幅不同），并且有一个测试固定了这些文件的内容，因此改变它们的依赖升级会使 CI 失败。在该范围之外，或者 SDK 内部发生变化导致启动自检失败时，不会进行任何修补，守护进程会打印一条启动提示，`verifyToken` 会拒绝 Fireemu 令牌（它从不接受无法检查的令牌）。`node_modules` 中其他位置的第二份 `firebase-admin` 副本不是 runner 解析到的那个，保持原样。
+- `verifyToken(token, { consume: true })` 在令牌验证通过后以 `app-check/unimplemented` 被拒绝。未实现限制使用令牌的消耗，并且从不调用生产环境的 App Check API。`getAppCheck().createToken()` 是另一个调用，仍然发往 Google 的兑换端点。
+- 守护进程为 Functions runner 所属的项目进行验证。应用指向另一个项目 ID 的调用会被当作未知密钥来回答。
+- 与生产环境的差异：生产环境在令牌过期之前接受未注册或已禁用应用的令牌。Fireemu 在所有 profile 中都会拒绝它。`iat` 位于未来的令牌可以通过验证，与生产环境相同。
+- 这里没有任何内容会让 `onRequest` 自动验证。你的处理程序仍需决定经过验证的应用可以做什么，并且 App Check 识别的是应用，而不是用户。
+
+### 各进程中的端点发现
+
+| 进程 | 可用的路由 |
+| --- | --- |
+| `fireemu exec` 子进程或 `world.environment` | App Check 可用时提供 `FIREEMU_APP_CHECK_EMULATOR_HOST` 和 `FIREEMU_APP_CHECK_JWKS_URL`。JWKS URL 为 `http://host:port/v1/jwks`。 |
+| 内置的 Functions runner | App Check 可用时提供 `FUNCTIONS_EMULATOR=true` 以及同样的 App Check 主机/JWKS 变量，即使没有选择 Auth 也是如此。继承的值、dotenv 值或本地 secret 值不能替换这两个路由；App Check 不可用时它们会被移除。 |
+| 父测试进程 | 世界的变量不会安装到 `process.env` 中；请显式使用 `world.environment`。 |
+
+在 runner 内部使用 `FIREEMU_APP_CHECK_JWKS_URL`。不要从请求头或未经验证的令牌推导密钥 URL。
+
+### 不使用 Admin SDK 的本地签名和声明验证
+
+如果你的中间件使用 JWKS 库而不是 Admin SDK 进行验证，请在 Functions 包中安装 `jose`。下面的项目编号、项目 ID 和允许的应用 ID 必须来自你的测试配置。允许的应用集合必须反映你打算让该端点放行的已启用应用。此示例有意只支持 loopback。
+
+```js
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+const projectId = 'demo-app';
+const projectNumber = '1234567890';
+const allowedApps = new Set(['1:1234567890:web:local-test-app']);
+let localKeys;
+
+export async function verifyHttpAppCheck(token) {
+  if (process.env.FUNCTIONS_EMULATOR !== 'true') {
+    return getAppCheck().verifyToken(token);
+  }
+  if (!localKeys) {
+    const address = process.env.FIREEMU_APP_CHECK_JWKS_URL;
+    if (!address) throw new Error('Local App Check is unavailable');
+    const url = new URL(address);
+    if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || !url.port ||
+        url.username || url.password || url.pathname !== '/v1/jwks' || url.search || url.hash) {
+      throw new Error('Expected the loopback App Check JWKS URL');
+    }
+    localKeys = createRemoteJWKSet(url);
+  }
+  const now = new Date();
+  const { payload, protectedHeader } = await jwtVerify(token, localKeys, {
+    algorithms: ['RS256'],
+    issuer: `https://firebaseappcheck.googleapis.com/${projectNumber}`,
+    requiredClaims: ['sub', 'aud', 'iat', 'exp', 'jti'],
+    currentDate: now,
+    clockTolerance: 0,
+  });
+  const audiences = [`projects/${projectNumber}`, `projects/${projectId}`];
+  if (protectedHeader.typ !== 'JWT' ||
+      typeof protectedHeader.kid !== 'string' || !protectedHeader.kid ||
+      !Array.isArray(payload.aud) || !audiences.every(a => payload.aud.includes(a)) ||
+      !allowedApps.has(payload.sub) ||
+      !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) ||
+      payload.iat > Math.floor(now.getTime() / 1000) || payload.exp <= payload.iat ||
+      typeof payload.jti !== 'string' || !payload.jti) {
+    throw new Error('Invalid local App Check token');
+  }
+  return { ...payload, app_id: payload.sub };
+}
+```
+
+在你的 `onRequest` 处理程序中用 `req.get('X-Firebase-AppCheck')` 调用它。在运行应用逻辑之前，以通用的 401 拒绝缺失的头或验证失败。不要返回验证细节，也不要记录令牌。App Check 识别的是应用，而不是用户：请同时保留你的 Auth 和成员资格检查。
+
+示例中的 `new Date()` 必须使用与令牌兑换相同的时钟。测试世界在 Functions 中默认使用虚拟 Date；使用固定时钟的普通守护进程也需要 `functions.clock.date = "virtual"`。父测试进程和 `world.run` 子进程保留原生 Date，因此把此验证器复制到那里时需要显式提供世界的时间。
+
+**这是签名和声明验证，而不是 Fireemu 的完整验证器。** JWKS 不暴露当前的项目 epoch 或应用注册表；上面的 Admin SDK 路径会使用它们。在同一个签名密钥仍可用的情况下，该示例无法在原地会话重置、快照恢复、项目删除或应用禁用之后拒绝先前签发的令牌。只检查 `fireemu_epoch` 是否存在并不能解决这个问题。它也没有实现令牌消耗或重放保护。
+
+对于使用此方法的测试，请用 `world.reset()` 重新创建整个世界（或释放后再创建另一个世界），包括 Functions runner，并获取一个新的令牌。这会替换守护进程的密钥和验证器缓存。不要把这种变通方法当作守护进程 epoch 失效行为的证明；请使用其 callable 验证边界来测试该行为。
+
+## Firestore WebChannel 拒绝
+
+Firestore WebChannel 的 App Check 拒绝在 HTTP 200 传输协商之后，以终止性的 `PERMISSION_DENIED` 协议错误到达，这与 HTTP 403 的 REST 拒绝不同。在现有 channel 上替换为无效令牌或其他应用的令牌，无法重放已保留的文档。见 [Listen streams](../firestore/#listen-streams)。
+
+## 与生产环境的差异
+
+以下内容有意不在范围内：
+
+- 通过 Play Integrity、App Attest、DeviceCheck 或 reCAPTCHA 进行的**真实证明**。本地 App Check 使用调试令牌。
+- **限制使用令牌和重放保护。** `consumeAppCheckToken: true` 的 callable 会以 501 `APP_CHECK_REPLAY_UNSUPPORTED` 被拒绝，`verifyToken(token, { consume: true })` 返回 `app-check/unimplemented`，因此测试不会因一个生产环境本会消耗掉的令牌而通过。
+- **比其守护进程存活更久的令牌。** 它们使用属于某个守护进程实例的密钥签名（见 [Callable 函数](#callable-函数)）。
+- **Python callable** 有更多限制；见 [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)。
+
+有两种行为在上文描述之处与生产环境不同：
+
+- 在所有 profile 中，`verifyToken` 都会拒绝未注册或已禁用应用的令牌；生产环境会在其过期之前接受它（[使用 Admin SDK 验证](#使用-admin-sdk-验证getappcheckverifytoken)）。
+- 使用 `"loopback"` 时，`enforced` 的 Storage 服务会在没有令牌的情况下放行本地非浏览器请求（[来自服务器端代码的 Storage 请求](#来自服务器端代码的-storage-请求)）。
+
+## 相关内容
+
+- [Authentication](../auth/)、[Firestore](../firestore/) 和 [Storage](../storage/)：App Check 可以强制执行的服务。
+- [Functions](../functions/) 和 [Cloud Functions (Python)](../functions-python/#differences-from-production-and-the-firebase-cli)：callable 和 `onRequest` 处理程序。
+- [Profile](../../guides/profiles/)：`strict`、`emulator` 和 `productionExact`。
+- [配置 schema](../../reference/configuration/)：所有 `appCheck` 设置。

@@ -1,0 +1,165 @@
+---
+title: Pub/Sub 与 Eventarc
+description: 在本地从 Functions 和服务器代码发布和接收 Cloud Pub/Sub 消息、Eventarc 自定义事件以及 Cloud Tasks。
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 通过 gRPC 和 REST 提供 `google.pubsub.v1` API、用于自定义事件的 Eventarc 监听器，以及用于任务队列函数的 Cloud Tasks 模拟器。
+
+<Facts items={[
+  { label: '状态', value: '已支持' },
+  { label: '默认端口', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
+  { label: '启动', value: 'Pub/Sub 在配置后启动；Eventarc 和 Cloud Tasks 随 Functions 启动' },
+  { label: '生产环境验证', value: '见兼容性表格', href: 'compatibility/#production-verification' },
+]} />
+
+## 可以测试什么
+
+- [Pub/Sub 主题、订阅和投递](#cloud-pubsub)，包括 push、过滤器、排序键、StreamingPull、快照和 seek。
+- [死信转发](#死信主题)，可带或不带生产环境的 IAM 授权。
+- [带凭据和不带凭据的 Pub/Sub 请求](#身份验证)。
+- [投递给 `onCustomEventPublished` 函数的自定义事件](#eventarc)。
+- [投递给 `onTaskDispatched` 函数的任务](#cloud-tasks)。
+
+## 连接
+
+| 服务 | 默认地址 | 环境变量 | 启动时机 |
+|---|---|---|---|
+| Cloud Pub/Sub | `127.0.0.1:8085` | `PUBSUB_EMULATOR_HOST` | 配置后启动：`firebase.json` 中的 `emulators.pubsub`、`daemon.pubsubPort`、`--pubsub-port` 或 `--only pubsub` |
+| Eventarc | `127.0.0.1:9299` | `CLOUD_EVENTARC_EMULATOR_HOST` | 加载 Functions 代码库时 |
+| Cloud Tasks | `127.0.0.1:9499` | `CLOUD_TASKS_EMULATOR_HOST` | 加载 Functions 代码库时 |
+
+`fireemu exec` 会设置 `PUBSUB_EMULATOR_HOST`，Google Cloud 客户端库会读取它（见[环境变量](../../reference/environment-variables/)）。Fireemu 在启动这些监听器时会设置 `CLOUD_EVENTARC_EMULATOR_HOST` 和 `CLOUD_TASKS_EMULATOR_HOST`。
+
+## Cloud Pub/Sub
+
+支持主题、订阅、发布、拉取与确认、push 投递、过滤器、排序键、死信主题、StreamingPull、快照和 seek。不支持的内容见[与生产环境的差异](#与生产环境的差异)。
+
+### 主题消息存储策略
+
+在 `profile = "emulator"` 下，主题的 `messageStoragePolicy`（`allowedPersistenceRegions` 和 `enforceInTransit`）会按发送的原样存储、由 get 和 list 返回，并可由 `UpdateTopic`（带 `updateMask` 的 REST `PATCH`，掩码为 `messageStoragePolicy` 及其两个成员）更改，与官方模拟器相同：
+
+- 未知、重复或空的区域列表以及空策略都会被保留。
+- 指定了该策略但没有发送策略的掩码会删除它。
+- 不执行任何约束：消息不会按区域路由。
+
+`strict` profile 会以 `UNIMPLEMENTED`（REST 501）并附带说明拒绝该字段。生产环境会根据 Google Cloud 的 Pub/Sub 区域列表检查每个区域（它对 `no-such-region1` 返回 `INVALID_ARGUMENT`，并接受 `us-central1`），而 Fireemu 没有可引用的该列表副本用于检查。在 `strict` 下请省略该字段，或选择 emulator profile 以保留它。
+
+### 主题密钥名称与标签
+
+在 `profile = "emulator"` 下，主题的 `kmsKeyName` 和 `tags` 按发送的原样存储，并通过 REST 和 gRPC 返回，不进行验证或执行。`UpdateTopic` 可以替换或清除 `kms_key_name`；标签不可变。
+
+strict profile 会拒绝这些字段，因为生产环境的验证依赖于 Fireemu 所没有的 Cloud KMS 和 Resource Manager 清单及权限。官方模拟器 0.8.35 不经验证地存储这些值，并拒绝所有更新掩码；生产环境的行为没有记录。
+
+### 死信主题
+
+在 `strict` 下，耗尽 `maxDeliveryAttempts` 的消息会被转发到死信主题，不需要项目编号和 IAM 授权，并带有生产环境添加的元数据属性。
+
+生产环境只有在 Pub/Sub 服务代理持有订阅上的 `roles/pubsub.subscriber` 和死信主题上的 `roles/pubsub.publisher` 后才会转发。若要通过 `SetIamPolicy` 要求同样的授权，请将 `pubsub.deadLetterAuthorization` 设为 `"iam"`（或使用 `productionExact`，或指定 `pubsub.projectNumbers`）。启动横幅随后会列出需要授权的服务代理。
+
+### REST 前端上缓存的 404（`pubsub.restNegativeCache`）
+
+在订阅刚创建后，生产环境的 REST 前端可能会对该订阅的 `GET` 返回缓存的 `404`。`pubsub.restNegativeCache` 在所有 profile 中默认为 `"off"`，`productionExact` 不会选择它。
+
+将该键设为 `"production"`（仅限 strict profile）时，模型会让 `GET` 或 `PATCH` 的真实 `404` 为**同一连接**上对同一订阅的 `GET`、`PATCH` 或 `DELETE` 建立一个缓存条目，因此该 `PATCH` 或 `DELETE` 不会执行。
+
+该模型做了什么，以及仍未确定的部分：
+
+- **时间窗口。** 边界并不清晰：一次录制中 10.25 秒到 10.50 秒的所有读取都未命中，另一次在 10.40 到 10.50 秒命中，同时在相同时长下也有未命中，更早的录制则在最多 10.20 秒时命中。生产环境在约 10.2 到 10.5 秒之间是不确定的；fireemu 确定性的 10.35 秒窗口是已知的差异。
+- **404 之前的 `GET` 200。** 在两次 v5 运行中，404 之前七秒的 `GET` 200 都使其免于缓存；四秒和 13 秒的情况仍未确定。模型会对窗口内的 `GET` 200 予以豁免。
+- **DELETE 和从未创建过的名称。** DELETE 404 是否建立缓存，以及对从未创建过的名称是否生效，仍未确定；模型不会在 DELETE 时建立缓存，但会对从未创建过的名称建立缓存。
+- **永远不会从该条目返回的情况。** 另一个连接、`:pull` 或 `:getIamPolicy`、快照、主题、gRPC 以及带查询字符串的请求。
+- **不会建立缓存的情况。** 失败的创建，以及返回 `404` 的 `:seek`。
+
+过期使用守护进程的逻辑时钟。如果时钟被冻结，要从缓存的 404 中恢复，请将其推进到越过 10.35 秒窗口、使用另一个连接，或禁用该缓存。
+
+### 身份验证
+
+在 `strict` 下，不带任何凭据的请求会被接受，因此不带凭据使用 `PUBSUB_EMULATOR_HOST` 的客户端可以工作。出示了凭据的请求会被检查，而 Fireemu 无法离线验证真实的 Google OAuth 令牌，因此这样的请求会以 401 被拒绝。请对模拟器使用不带凭据的客户端，例如使用 `NoCredentialsProvider` 的 Java 客户端。
+
+对于需要凭据的测试，请设置一个本地 fixture bearer 令牌。此后端点只接受值完全相同的 `Authorization: Bearer <token>`，并像生产环境一样拒绝不带凭据的请求：
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# 配置 schema 版本：1。
+schemaVersion = 1
+
+[pubsub.authentication]
+# strict profile 下的 Pub/Sub 请求要求此非空的本地 bearer 令牌。
+localBearerToken = "fixture-token"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "pubsub": {
+    "authentication": {
+      "localBearerToken": "fixture-token"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+请使用编造的值；切勿复用生产环境的凭据。
+
+## Eventarc
+
+加载 Functions 代码库时，Fireemu 会在 `127.0.0.1:9299` 启动 Eventarc 监听器并设置 `CLOUD_EVENTARC_EMULATOR_HOST`。用 `onCustomEventPublished` 声明的函数会收到发布到其 channel 的事件。
+
+Admin SDK 在发布前总是向其凭据请求访问令牌，而 CI 中没有 Google 凭据。请为应用提供一个伪造的凭据：
+
+```js
+import { initializeApp } from 'firebase-admin/app';
+import { getEventarc } from 'firebase-admin/eventarc';
+
+const app = initializeApp({
+  projectId: 'demo-app',
+  credential: { getAccessToken: async () => ({ access_token: 'owner', expires_in: 3600 }) },
+});
+await getEventarc(app).channel('locations/us-central1/channels/firebase').publish({
+  type: 'com.example.thing.done',
+  source: 'https://example.com/things',
+  data: { id: 'e1' },
+});
+```
+
+默认情况下，监听器不检查凭据（`eventarc.authentication: "permissive"`），与官方模拟器一样。使用 `"production"`（或 `productionExact`）时，缺失、格式错误或 JWT 形式的 bearer 会以生产环境的 401 被拒绝。
+
+## Cloud Tasks
+
+加载 Functions 代码库时，Fireemu 会在 `127.0.0.1:9499` 启动 Cloud Tasks 模拟器并设置 `CLOUD_TASKS_EMULATOR_HOST`。任务队列函数（`onTaskDispatched`）会收到为其加入队列的任务，并遵循其速率限制和重试配置。在 `strict` 下，任务的 `scheduleTime` 会使其延后；关于等待中的任务、**Run now** 和虚拟时钟，见[任务队列](../functions/#task-queues)。
+
+## 与生产环境的差异
+
+### 不支持的 Pub/Sub 功能
+
+不支持 schema、BigQuery 和 Cloud Storage 订阅投递，以及 `UpdateTopic` 等部分 API。在 emulator profile 下，`UpdateTopic` 会更改[主题消息存储策略](#主题消息存储策略)和[主题密钥名称与标签](#主题密钥名称与标签)中描述的字段。
+
+### `strict` profile 拒绝的字段
+
+- `messageStoragePolicy`：见[主题消息存储策略](#主题消息存储策略)。
+- `kmsKeyName` 和 `tags`：见[主题密钥名称与标签](#主题密钥名称与标签)。
+
+### 其他差异
+
+- 除非你要求，死信转发不需要 IAM 授权；见[死信主题](#死信主题)。
+- REST 负缓存默认关闭。开启时，其 10.35 秒窗口是确定性的，而生产环境的不是；见[REST 前端上缓存的 404](#rest-前端上缓存的-404pubsubrestnegativecache)。
+- 在 `strict` 下，带真实 Google OAuth 令牌的 Pub/Sub 请求会以 401 被拒绝，因为该令牌无法离线验证；见[身份验证](#身份验证)。
+- 除非 `eventarc.authentication` 为 `"production"`，Eventarc 监听器不检查凭据；见 [Eventarc](#eventarc)。
+
+## 相关内容
+
+- [Cloud Functions](../functions/)
+- [任务队列](../functions/#task-queues)
+- [Profile](../../guides/profiles/)
+- [环境变量](../../reference/environment-variables/)
