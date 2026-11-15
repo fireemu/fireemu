@@ -22,12 +22,6 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Fireemu',
-			// The emu beside the wordmark. Remove this block to go back to the amber bar.
-			logo: {
-				light: './src/assets/emu-mark-light.png',
-				dark: './src/assets/emu-mark-dark.png',
-				alt: '',
-			},
 			description:
 				'A local Firebase emulator for tests and CI that follows production Firebase behavior.',
 			// The emu mark on a dark tile, so it reads on light and dark browser tabs.
