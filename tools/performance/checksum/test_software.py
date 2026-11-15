@@ -51,15 +51,30 @@ class SoftwareFallbackTest(unittest.TestCase):
                 f'[dev-dependencies]\nproptest = {proptest}\n',
                 encoding="utf-8",
             )
-            subprocess.run(
-                [str(common_dir.parent / "docs.local" / "tools" / "heavy-slot"),
-                 "run", "--lane", "codex", "--", "cargo", "test", "--offline",
-                 "--manifest-path", str(scratch / "Cargo.toml"),
-                 "--target-dir", "target/checksum-software",
-                 "--lib", "crc32c_update_tests"],
-                check=True, cwd=repository,
+            command = ["cargo", "test", "--offline",
+                       "--manifest-path", str(scratch / "Cargo.toml"),
+                       "--target-dir", "target/checksum-software",
+                       "--lib", "crc32c_update_tests"]
+            heavy_slot = common_dir.parent / "docs.local" / "tools" / "heavy-slot"
+            if heavy_slot.is_file():
+                command = [str(heavy_slot), "run", "--lane", "codex", "--"] + command
+            result = subprocess.run(
+                command, check=True, cwd=repository, capture_output=True, text=True,
                 env={**os.environ, "RUSTC_WRAPPER": "", "CARGO_INCREMENTAL": "0"},
             )
+            print(result.stdout, end="")
+            expected_tests = (
+                "raw_update_matches_forced_scalar_at_tail_and_chunk_boundaries",
+                "long_hardware_paths_match_forced_scalar_at_every_alignment",
+                "public_digest_retains_castagnoli_finalization",
+                "arbitrary_raw_states_match_forced_scalar",
+            )
+            self.assertIn(
+                f"test result: ok. {len(expected_tests)} passed; 0 failed; 0 ignored;",
+                result.stdout,
+            )
+            for name in expected_tests:
+                self.assertIn(f"test crc32c_update_tests::{name} ... ok", result.stdout.splitlines())
 
 
 if __name__ == "__main__":
