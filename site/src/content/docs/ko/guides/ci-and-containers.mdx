@@ -1,0 +1,248 @@
+---
+title: CI와 컨테이너
+description: GitHub Actions에서 Fireemu로 테스트를 실행하고, 컨테이너에서 에뮬레이터를 제공하며, 에뮬레이터가 응답할 호스트 이름을 선택하는 방법을 설명합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+CI 작업에서 Fireemu로 테스트를 실행하고, 호스트나 다른 컨테이너에 컨테이너에서 에뮬레이터를 제공하며, 클라이언트가 사용하는 호스트 이름을 등록합니다.
+
+## GitHub Actions에서 테스트 실행
+
+`fireemu exec`는 테스트 명령의 종료 상태를 그대로 반환하므로 CI 작업에 별도의 시작 및 중지 단계가 필요하지 않습니다.
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec -- npm test
+```
+
+Fireemu는 Java도, 시작 시점의 다운로드도 필요하지 않습니다. npm 패키지가 러너의 플랫폼에 맞는 네이티브 바이너리를 설치합니다. lint 단계는 [테스트 전에 구성 확인](#테스트-전에-구성-확인)에서 설명합니다.
+
+### productionExact 작업 추가
+
+서명되지 않은 테스트 토큰처럼 개발용 기본값이 통과시키는 문제도 확인하려면, [`productionExact`](../profiles/)를 설정한 두 번째 구성 파일(예: `fireemu.production-exact.toml`)로 실행하는 작업을 추가하십시오.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Use production behavior for development defaults: true or false; requires strict.
+productionExact = true
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+```sh
+npx fireemu exec --config fireemu.production-exact.toml -- npm test
+```
+
+JSON 형식을 사용한다면 파일 이름을 `fireemu.production-exact.json`으로 지정하십시오.
+
+### 테스트 전에 구성 확인
+
+세 가지 검사를 사용하면 잘못된 설정으로 테스트가 실행되기 전에 작업을 일찍 실패시킬 수 있습니다.
+
+```yaml
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec --plan --deny-inherited-emulator-env -- npm test
+      - run: npx fireemu exec --deny-inherited-emulator-env -- npm test
+```
+
+| 검사 | 동작 |
+|---|---|
+| `config lint --deny-ineffective` | 구성이 Fireemu가 허용하지만 읽지는 않는 키를 설정하면 종료 코드 1로 작업을 실패시킵니다. 의도적으로 유지하는 키는 `--allow <key>` 또는 `--allow-file <path>`로 나열합니다([`config lint`](../../reference/cli/#config-lint) 참조). |
+| `exec --plan` | 실행이 해석하는 내용을 출력하므로, 작업 로그에서 프로젝트 ID, 서비스와 포트, 읽은 파일, Functions에 사용할 Node, 상속하는 에뮬레이터 변수를 볼 수 있습니다. 아무것도 시작하지 않으며, 확인할 수 있는 이유로 실행이 실패할 경우 종료 코드 1로 끝납니다. 다른 도구에 넘기려면 `--json`을 사용합니다([실행 계획 보기](../../reference/cli/#실행-계획-확인) 참조). |
+| `--deny-inherited-emulator-env` | 작업 환경에 이 실행이 시작하지 않는 서비스의 에뮬레이터 변수(`PUBSUB_EMULATOR_HOST`, 다른 스위트의 `FIRESTORE_EMULATOR_HOST` 등)가 있으면 실행을 실패시킵니다. 이 옵션이 없으면 경고만 하고 변수를 유지합니다. 의도적으로 설정한 변수에는 `--allow-inherited-emulator-env <NAME>`을 사용합니다. |
+
+### 컨테이너 작업
+
+GitHub Actions의 `container:` 작업이나 바인드 마운트된 체크아웃으로 root로 실행되는 모든 컨테이너에서는, 체크아웃의 소유자가 컨테이너의 root가 신뢰하지 않는 호스트 사용자입니다. 따라서 검색된 `fireemu.toml` 또는 `firebase.json`은 경고와 함께 건너뜁니다. 파일을 명시적으로 지정하거나 체크아웃을 `chown`하십시오.
+
+```sh
+npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
+```
+
+[구성 파일](../configuration/#파일-소유권-검사)을 참조하십시오.
+
+## 컨테이너에서 에뮬레이터 제공
+
+기본적으로 모든 리스너는 루프백에 있으며, 게시된 컨테이너 포트로는 여기에 접근할 수 없습니다. 호스트나 다른 컨테이너에 에뮬레이터를 제공하려면 다음과 같이 합니다.
+
+1. `fireemu.toml`의 `network.allowNonLoopbackHosts`로 옵트인합니다.
+2. `firebase.json`에서 제품 에뮬레이터에 호스트를 지정합니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+
+[network]
+# Allow product emulators to bind non-loopback hosts: true or false.
+allowNonLoopbackHosts = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firebaseJson": "firebase.json",
+  "network": {
+    "allowNonLoopbackHosts": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`firebase.json`에서는 다음과 같이 지정합니다.
+
+```json
+{
+  "emulators": {
+    "firestore": { "host": "0.0.0.0", "port": 8080 },
+    "auth": { "host": "0.0.0.0", "port": 9099 }
+  }
+}
+```
+
+### 루프백 밖에서 수신하는 대상
+
+- Firestore, Authentication, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub, Realtime Database만 루프백 밖에서 수신할 수 있습니다. Hub, UI, Logging 에뮬레이터는 루프백에 남습니다.
+- 포트가 제어 API도 제공하는 Authentication은 루프백 또는 모든 인터페이스(`0.0.0.0` 또는 `::`)에서 수신하며, 그 밖의 다른 주소 하나에서는 수신하지 않습니다.
+- `0.0.0.0` 또는 `::`의 리스너는 공식 CLI와 같이 환경 변수와 Hub에서 `127.0.0.1` 또는 `::1`로 알립니다.
+- 옵션을 켜면 에뮬레이터는 Compose 서비스 이름(`fireemu:8080`)처럼 레이블이 하나뿐인 `Host`에도 응답합니다. 그 밖의 이름은 `network.allowedHosts`에 나열해야 합니다. [에뮬레이터가 응답하는 호스트 이름](#에뮬레이터가-응답하는-호스트-이름)을 참조하십시오.
+
+### 게시된 포트에 접근할 수 있는 대상
+
+:::caution
+에뮬레이터는 자격 증명 없이 서비스를 제공합니다. 신뢰할 수 있는 네트워크에만 포트를 게시하십시오.
+
+:::
+
+- 시작할 때 루프백 밖의 리스너마다 `warning:` 줄을 출력합니다.
+- 게시된 포트에 도달하는 모든 클라이언트는 제품 API에서 로컬 클라이언트가 할 수 있는 일을 할 수 있으며, 여기에는 Admin SDK의 `Bearer owner` 자격 증명과 Auth 에뮬레이터 자체의 라우트도 포함됩니다.
+- Realtime Database의 경우 `database.defaultAccess = "locked"`도 여기에 해당합니다. 이 설정은 잘 알려진 `owner` 자격 증명을 허용하므로 루프백 밖에서는 접근 제어가 되지 않습니다.
+- `emulator` 프로파일에서는 모든 베어러 토큰이 데이터 요청에 대해 Realtime Database 관리자이며, `/.settings/rules.json`은 Firestore 및 Storage 규칙 라우트와 마찬가지로 루프백 피어에게만 응답합니다.
+- 브라우저 페이지는 여전히 루프백 출처(`http://localhost:...`)에서 와야 하므로, 다른 호스트에서 제공되는 페이지는 노출된 포트를 사용할 수 없습니다.
+
+### Fireemu 자체 제어
+
+- 제어 API, App Check 디버그 토큰 관리, 그리고 Firestore, Storage, Realtime Database의 Security Rules를 로드하거나 Firestore 데이터를 지우는 라우트는 루프백 피어에게만 응답하고 다른 모든 피어에게는 403을 반환합니다. `@firebase/rules-unit-testing`은 `loadFirestoreRules`, `loadStorageRules`, `clearFirestore`를 통해 규칙 및 삭제 라우트를 호출합니다.
+- 이러한 라우트를 사용하는 코드는 컨테이너 안에서, 또는 Podman 파드나 `--network container:<name>`처럼 네트워크 네임스페이스를 공유하는 컨테이너에서 실행하십시오.
+- 그 네임스페이스 안의 포워더(`kubectl port-forward`, 사이드카 프록시)는 루프백에서 연결합니다. 따라서 옵션을 켜면 모든 제어 API 요청에 프로세스에서든 페이지에서든 `Authorization: Bearer <control token>`도 필요합니다. `/health/`만 예외입니다.
+- Security Rules를 로드하거나 Firestore 데이터를 지우는 라우트는 토큰이 필요하지 않으므로 `@firebase/rules-unit-testing`은 계속 동작합니다. 이런 포워더를 통해 에뮬레이터에 접근하는 클라이언트는 공식 에뮬레이터에서와 마찬가지로 이 라우트를 호출할 수 있습니다.
+- `fireemu exec`는 명령에 `FIREEMU_CONTROL_TOKEN`으로 토큰을 전달하며, `fireemu/testing`과 UI도 토큰을 보냅니다.
+
+## 에뮬레이터가 응답하는 호스트 이름
+
+웹 페이지는 로드된 뒤에 자신이 제어하는 이름을 `127.0.0.1`로 다시 지정할 수 있습니다(DNS 리바인딩). 그러면 브라우저는 에뮬레이터에 대한 요청을 동일 출처로 취급하고 `Origin`을 보내지 않으므로, 페이지가 에뮬레이터가 자격 증명 없이 제공하는 로컬 데이터를 읽을 수 있게 됩니다.
+
+이를 막기 위해 제품 에뮬레이터(Firestore, Authentication과 제어 API, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub, Realtime Database, Hosting)는 `Host` 헤더가 다음 이외의 호스트를 지정하는 HTTP/1 요청에 `403`으로 응답합니다.
+
+- `localhost`와 `.localhost` 하위의 이름
+- 모든 IP 주소. 따라서 Android 에뮬레이터의 `10.0.2.2`, LAN 주소, 브리지 주소가 동작합니다.
+- `.internal` 하위의 이름. 컨테이너 런타임이 컨테이너에 호스트 이름으로 부여하는 예약된 접미사입니다. `host.docker.internal`과 `gateway.docker.internal`(Docker), `host.containers.internal`(Podman), `host.lima.internal`(Lima와 Colima), `host.orb.internal`(OrbStack)이 있습니다.
+- `.firebaseio.com`과 `.firebasedatabase.app` 하위의 이름. Realtime Database가 이 이름으로 네임스페이스를 선택합니다.
+- `.cloudworkstations.dev` 하위의 이름. Firebase Studio와 Cloud Workstations의 미리보기 및 포트 URL입니다.
+- `.app.github.dev` 하위의 이름. GitHub Codespaces의 포워딩된 포트 URL입니다.
+- 특수 용도 접미사 `.test`, `.local`, `.home.arpa` 하위의 이름. 공개 DNS가 응답하지 않는 이름으로, `myapp.test` 같은 `/etc/hosts` 별칭, `my-mac.local` 같은 mDNS 이름, 기본값 `svc.cluster.local` 하위의 Kubernetes 서비스 이름, 홈 네트워크 이름이 해당합니다.
+- `network.allowNonLoopbackHosts`를 켠 경우, Compose 서비스 이름 같은 단일 레이블 이름
+- `network.allowedHosts`에 있는 이름
+
+특수 용도 이름과 `.internal` 이름은 로컬 이름 확인을 신뢰할 수 있는 동안에만 안전합니다. 신뢰할 수 없는 네트워크에서는 악의적인 리졸버(예: 공용 Wi-Fi의 DHCP가 제공하는 리졸버. RFC 8375 섹션 6.1이 `.home.arpa`에 대해 언급하는 위험입니다)나 LAN의 mDNS 피어(`.local`의 경우)가 이 이름에 응답하여 페이지를 에뮬레이터로 리바인딩할 수 있습니다. `network.allowedHosts`는 이름을 추가만 하며, 이 기본값들을 제거하는 설정은 없습니다.
+
+검사가 적용되는 방식은 다음과 같습니다.
+
+- `Host`가 없는 요청(HTTP/1.0)과 HTTP/2 요청(gRPC 클라이언트)은 검사하지 않습니다. 어떤 브라우저도 이를 보내지 않기 때문입니다.
+- 비교는 대소문자, 포트, 후행 점 하나를 무시합니다.
+- Hub, UI, Logging 에뮬레이터는 루프백 이름에만 응답합니다.
+- 공식 에뮬레이터는 `Host`를 검사하지 않습니다. 프로덕션에는 대응하는 것이 없으므로 검사는 두 프로파일에서 동일합니다.
+- 거부된 요청은 해당 설정 이름을 담은 `403`을 받으며, 데몬은 거부된 이름마다 `warning: refused Host "<name>"` 줄을 하나씩(최대 32개 이름) 기록하므로, SDK가 응답 본문을 숨기는 클라이언트도 흔적을 남깁니다.
+
+### 호스트 이름 추가
+
+클라이언트가 사용하는 그 밖의 이름을 추가하십시오. 예를 들어 터널, 특수 용도 접미사 밖의 `/etc/hosts` 이름, 사용자 지정 클러스터 도메인 하위의 Kubernetes 서비스가 있습니다. 항목은 이름, 해당 도메인과 모든 하위 도메인을 뜻하는 앞에 점이 붙은 이름, 또는 모든 `Host`에 응답하는 `"*"`(방어를 끕니다) 중 하나입니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+# Allow product emulators to bind non-loopback hosts: true or false.
+allowNonLoopbackHosts = true
+# Additional accepted host names: exact names, dot-prefixed domains, or "*".
+allowedHosts = ["emulator.ci.example", ".corp.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowNonLoopbackHosts": true,
+    "allowedHosts": ["emulator.ci.example", ".corp.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 항목에는 스킴, 포트, 경로를 포함하지 않습니다.
+- 이름을 나열하면 그 이름을 지정한 요청이 통과할 뿐입니다. 브라우저 출처 검사는 바뀌지 않으므로, 권한이 필요한 라우트를 사용하려면 페이지가 여전히 루프백 출처에서 와야 합니다.
+- Fireemu는 `"*"`와 `".com"`처럼 최상위 도메인 전체를 포함하는 항목에 대해 시작할 때 `warning:` 줄을 출력합니다. 어떤 웹 페이지든 그 아래에 이름을 등록할 수 있기 때문입니다.
+- 정책은 데몬이 시작될 때 읽습니다. `network.allowedHosts`를 변경한 뒤에는 데몬을 재시작하십시오.
+
+### 일반적인 환경별 항목
+
+| 환경 | 항목 |
+|---|---|
+| 사용자 지정 클러스터 도메인 하위의 Kubernetes 서비스 | `".svc.<cluster domain>"`(또는 정확한 서비스 이름) |
+| ngrok | 정확한 터널 이름. 예: `"abc123.ngrok-free.app"` |
+| Cloudflare Tunnel | 터널의 정확한 공개 호스트 이름 |
+| `.test`, `.local`, `.home.arpa` 밖의 `/etc/hosts` 이름 | 해당 이름 |
+
+터널 제공업체의 전체 도메인이 아니라 정확한 터널 이름을 나열하십시오. 누구나 그 아래에 터널을 열 수 있기 때문입니다. Firebase Studio의 `.cloudworkstations.dev`, Codespaces의 `.app.github.dev`, mDNS `.local`, Kubernetes `svc.cluster.local`, `.test` 이름은 항목이 필요하지 않습니다.
+
+## 관련 문서
+
+- [구성 파일](../configuration/#파일-소유권-검사)
+- [프로파일과 productionExact](../profiles/)
+- [CLI 레퍼런스](../../reference/cli/)
+- [문제 해결](../troubleshooting/)

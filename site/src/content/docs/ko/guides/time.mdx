@@ -1,0 +1,164 @@
+---
+title: 시간과 예약 함수
+description: 에뮬레이터 시계를 원하는 시각에서 시작하고, 멈추거나 이동하며, 기다리지 않고 예약 함수를 실행합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu에는 자체 시계가 있으며 모든 서비스가 이 시계를 읽습니다. 서버 타임스탬프, 문서와 객체의 시각, 토큰 만료, 예약 함수, Security Rules의 `request.time`이 모두 해당합니다. 기본적으로 시계는 프로덕션과 마찬가지로 실제 시간으로 동작합니다. 시작 시각을 정하거나, 시계를 이동하거나, 멈출 수 있으며, 모든 서비스가 새 시각을 반영합니다.
+
+## 실제 시간을 따르거나 시계를 멈추기
+
+| 구성 | 시계 동작 |
+|---|---|
+| `daemon.clockStart` 없음(기본값) | 데몬이 시작된 시점부터 실제 시간을 따릅니다. |
+| `daemon.clockStart` 고정 | 해당 시각에서 시작하여 이동하기 전까지 멈춰 있으므로 실행을 재현할 수 있습니다. |
+| `daemon.clock`을 `"realtime"`으로 설정 | 고정된 시계가 시작 시각부터 계속 흘러갑니다. |
+| `daemon.clock`을 `"frozen"`으로 설정 | 고정되지 않은 시계가 멈춥니다. |
+
+이동(`clock:advance`, `clock:advanceTo`, `clock:set` 또는 Runtime 페이지)은 실제 시간을 따르는 시계 위에 더해지는 오프셋입니다. 시계는 이동한 지점에서부터 계속 흘러갑니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+# Virtual clock behavior: "realtime" or "frozen".
+clock = "frozen"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z",
+    "clock": "frozen"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+가상 `functions.clock`([Functions의 애플리케이션 시간](#functions의-애플리케이션-시간) 참조)에는 고정된 시작 시각, 즉 멈춰 있는 시계가 필요합니다. 시계를 고정하는 `fireemu/testing`의 월드도 마찬가지입니다.
+
+## 예약 함수 실행
+
+스케줄은 시계가 발생 시점(occurrence)에 도달하면 실행됩니다.
+
+- 기본 시계에서는 실제 시간이 흐르면서 실행됩니다.
+- 시계가 멈춰 있으면 실제 시간이 흘러도 아무것도 실행되지 않습니다. [Emulator UI](../ui/)의 Runtime 페이지에서 시계를 이동하거나 제어 API(`clock:advance`, `clock:advanceTo`, `clock:set`)를 사용합니다.
+
+한 번 이동할 때마다 `(이전 시각, 새 시각]` 구간의 모든 발생 시점이 실행 대상이 됩니다. 시간대, 따라잡기(catch-up), 중첩 동작은 `scheduler` 섹션에서 구성합니다.
+
+- `scheduler.catchUp`은 한 번의 이동으로 여러 발생 시점을 지나갈 때 무엇을 실행할지 정합니다. `all`은 각각을 실행하고(작업과 이동당 최대 `scheduler.maxCatchUpRuns`개), `latest`는 가장 최근 것을 실행하며, `none`은 아무것도 실행하지 않습니다.
+- `scheduler.overlap`(`allow`, `skip`, `queue`, `reject`, `skip-in-flight`)은 이전 실행이 아직 진행 중일 때 새 실행 시점이 되면 어떻게 할지 정합니다. `strict`에서는 프로덕션의 Cloud Scheduler와 같이 기본값이 `skip-in-flight`이고, `emulator`에서는 `allow`입니다.
+
+UI의 Functions 페이지에서는 예약 함수를 즉시 실행하거나 시계를 다음 발생 시점까지 앞당길 수도 있습니다. 수동 실행은 다음 발생 시점을 소비하지 않습니다.
+
+### 스케줄 세부 사항
+
+- 새 시각과 정확히 일치하는 발생 시점은 이동에 포함되고, 이전 시각과 정확히 일치하는 발생 시점은 포함되지 않습니다.
+- `scheduler.catchUp: all`에서 작업과 시계 이동당 `scheduler.maxCatchUpRuns`를 초과하는 실행은 실행 대상으로 남아 있다가 여유가 생기면 실행됩니다. `latest`와 `none`은 실행을 버린 작업과 시계 이동마다 `skipped: catch-up` 요약을 하나씩 기록합니다.
+- 되감기는 결코 재실행하지 않습니다. 스케줄이 이미 지나간 발생 시점은 시계가 그 위로 다시 앞으로 이동해도 다시 실행되지 않으며, 시계가 스케줄이 마지막으로 실행했거나 아직 실행해야 하는 마지막 발생 시점(커서)을 지나면 스케줄이 재개됩니다. 그 지점 아래로 되감은 뒤에는, 백로그로 인해 아직 실행해야 하거나 여유를 기다리며 보류된 실행은 계속 실행 대기 상태로 남지만 시계가 그 지점을 지나기 전까지는 다시 실행 시점이 되지 않습니다. 세션 리셋이나 스냅샷 복원은 모든 스케줄을 시계의 현재 시각부터 다시 시작하므로, 되감은 뒤에는 그 시각과 이후 시각 사이의 발생 시점이 다시 실행 대상이 됩니다.
+- `scheduler.overlap`은 스케줄러 실행과 수동 실행 모두에 적용되지만, 수동 실행을 거부하지 않는 `skip-in-flight`는 예외입니다. `skip-in-flight`(`strict`의 기본값)에서는 시계 이동 이전에 시작된 해당 함수의 핸들러가 아직 실행 중이면, 프로덕션의 Cloud Scheduler와 마찬가지로 발생 시점이 버려지며(`skipped: in flight`로 기록), 한 번의 시계 이동에 포함된 발생 시점끼리는 서로 영향을 주지 않습니다.
+- 함수는 실행 중 하나라도 큐에 대기 중이거나 실행 중이면 바쁜 것으로 간주되며, 재시도를 기다리는 실행도 포함합니다. 따라서 `skip`과 `reject`에서는 아직 대기 중인 재시도가 다음 발생 시점을 억제할 수 있습니다. Fireemu는 여기서 재시도와 중첩 실행을 구분하지 않습니다. `catchUp: all`에서 같은 함수의 여러 발생 시점을 지나는 한 번의 시계 이동은 스스로와 중첩되므로, `skip`은 그중 가장 오래된 것을 유지하고 `reject`는 나머지를 거부로 집계합니다.
+- Functions 이벤트 큐가 가득 차면(활성 이벤트 4,096개 또는 64 MiB) 실행 시점이 된 예약 실행은 대기 상태로 남아 있다가 여유가 생기면 실행됩니다.
+
+### 예약 함수를 지금 실행
+
+수동 실행(`POST /v1/sessions/{session}/functions/{name}:run`)은 현재 가상 시각을 찍은 예약 함수 실행 하나를 큐에 넣습니다. 다음 발생 시점은 소비하지 않으며, 그 시점은 여전히 실행 시점이 되고 다른 실행과 마찬가지로 `scheduler.overlap`의 적용을 받습니다. 이것은 Fireemu 자체의 제어 기능이며, 프로덕션의 즉시 실행 기능에 대한 주장이 아닙니다.
+
+| 응답 | 조건 |
+|---|---|
+| `400 INVALID_ARGUMENT` | 알 수 없는 함수, 예약되지 않은 함수, 중첩 정책에 의한 거부, 또는 종료 중인 런타임 |
+| `429 RESOURCE_EXHAUSTED` | 이벤트 큐가 가득 참 |
+
+태스크 큐 함수(`onTaskDispatched`)에서는 같은 경로가 `scheduleTime`을 기다리는 Cloud Tasks 작업을 해제합니다. 전부를 해제하거나, `{"task": "<task id>"}` 본문으로 지정한 하나만 해제합니다(해당 id의 대기 작업이 없으면 404). [태스크 큐](../../products/functions/#태스크-큐)를 참조하십시오.
+
+## 시계를 뒤로 이동
+
+시계는 뒤로 이동할 수 있습니다(`"allowBackwards": true`를 지정한 `clock:set`, 또는 Runtime 페이지의 **Allow moving backwards**). 되감기는 이미 실행된 발생 시점을 재실행하지 않습니다.
+
+### 되감기 이후의 ID 토큰
+
+- `strict`에서는 Authentication(`INVALID_ID_TOKEN`), Firestore, Storage가 새 시각 이후에 발급된 ID 토큰을 시계가 발급 시각에 다시 도달할 때까지 거부합니다.
+- `emulator` 프로필에서는 발급 시각을 확인하지 않는 공식 에뮬레이터와 마찬가지로, 되감기 이후에도 ID 토큰을 계속 사용할 수 있습니다.
+- 두 프로필 모두 만료된 토큰은 여전히 거부됩니다.
+
+### 되감기 이후의 폐기
+
+계정이 생성되기 전이나 토큰이 폐기되기 전으로 되감으면, 새로 로그인해 발급받은 토큰도 폐기된 것으로 간주됩니다. 이 경우 시계를 다시 앞으로 이동하거나 세션을 리셋하십시오.
+
+반대로, 되감은 뒤에 수행한 폐기나 비밀번호 변경은 타임라인상 더 늦은 시각에 발급된 토큰을 폐기하지 않습니다. `emulator` 프로필은 그 토큰을 즉시 수락하고, `strict`는 시계가 발급 시각에 도달하면 수락합니다. 폐기하기 전에 시계를 해당 발급 시각 이후로 이동하거나 세션을 리셋하십시오.
+
+## Functions의 애플리케이션 시간
+
+기본적으로 함수 코드는 실제 시간을 봅니다. `Date.now()`, 타이머, Cloud Tasks도 가상 시계를 따르게 하려면 `functions.clock`을 고정된 `daemon.clockStart`와 함께 설정합니다.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+
+[functions]
+# Directory of the Functions codebase.
+source = "./functions"
+
+[functions.clock]
+# Functions date clock: "real" or "virtual".
+date = "virtual"
+# Functions timer clock: "real" or "virtual".
+timers = "real"
+# Cloud Tasks clock: "real" or "virtual".
+tasks = "virtual"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z"
+  },
+  "functions": {
+    "source": "./functions",
+    "clock": {
+      "date": "virtual",
+      "timers": "real",
+      "tasks": "virtual"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- 각 모드는 `real` 또는 `virtual`을 받습니다. 가상 타이머를 사용하려면 `date`도 가상이어야 합니다.
+- `tasks`를 `virtual`로 설정하면 `scheduleTime`과 함께 큐에 넣은 Cloud Tasks 작업은 가상 시계가 그 시각에 도달할 때 실행 시점이 되므로, 테스트는 기다리는 대신 시계를 앞당깁니다.
+- `tasks`를 `real`로 설정하면 `strict`에서 작업은 실제 시계를 기다립니다. [Emulator UI](../ui/)의 Functions 페이지에는 대기 중인 작업이 나열되며 지금 실행할 수 있습니다.
+- Python 코드베이스는 항상 실제 시간을 봅니다. 가상 시계로 옮겨지지 않으며, Functions 러너에 가상 date를 요청하는 구성은 Python 코드베이스에 대해 거부됩니다.
+
+## 관련 문서
+
+- [테스트 월드](../test-worlds/): 각자 자신의 시계가 필요한 병렬 테스트를 위해, `fireemu/testing` 헬퍼는 각각 직접 이동하는 시작 시각에 고정된 독립 월드를 시작합니다.
+- [Emulator UI](../ui/)
+- [Cloud Functions](../../products/functions/#태스크-큐)
+- [구성 레퍼런스](../../reference/configuration/)

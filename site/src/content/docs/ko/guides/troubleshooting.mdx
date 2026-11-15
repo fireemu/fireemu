@@ -1,0 +1,132 @@
+---
+title: 문제 해결
+description: 설치를 점검하고, 증상이나 오류 메시지를 찾아보고, 이슈를 보고합니다.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+먼저 `fireemu doctor`를 실행한 다음, 아래에서 증상이나 오류 메시지를 찾아보십시오.
+
+## 설치 점검
+
+```sh
+npx fireemu doctor
+```
+
+`doctor`는 찾아낸 Fireemu 바이너리, UI, Functions 러너, Node.js를 보고하고 문제마다 해결 방법을 제안합니다.
+
+실행 중인 스위트가 알려 주는 내용, 예를 들어 보유 중인 Firestore 이력과 Storage 바이트도 함께 보고하려면 제어 URL을 전달합니다. 제어 URL은 시작할 때 출력됩니다.
+
+```sh
+npx fireemu doctor --connect http://127.0.0.1:<port>
+```
+
+## 자주 발생하는 문제
+
+| 증상 | 확인할 사항 |
+|---|---|
+| 시작이 `bind 127.0.0.1:9000: Address already in use`로 실패함 | `firebase.json`에 `emulators.database`가 있어 Realtime Database가 9000번 포트에서 시작되는데, 다른 프로세스(기본적으로 PHP-FPM)가 이 포트를 점유하고 있습니다. `--database-port`를 사용하거나 `--only`로 제외하십시오. |
+| `firebase.json` 또는 `fireemu.toml`이 사용되지 않음 | 시작 출력의 `config:` 줄에 로드된 파일이 표시됩니다. [로드되는 파일](../configuration/#로드되는-파일)과, 컨테이너나 `sudo`로 실행하는 경우의 소유권 규칙을 참조하십시오. |
+| 모든 Firestore 또는 Storage 요청이 거부됨 | `strict`에서는 Security Rules가 없는 프로젝트가 프로덕션과 마찬가지로 클라이언트 요청을 거부합니다. 시작 출력의 `firestore rules:`와 `storage rules:` 줄을 확인하십시오. [Security Rules](../security-rules/)를 참조하십시오. |
+| 요청이 거부되었는데 이유를 모르겠음 | 표준 오류의 `note: firestore: Security Rules denied ...` 줄이나 UI의 Rules 페이지를 읽어 보십시오. |
+| 쿼리가 로컬에서는 동작하지만 프로덕션에서는 실패함 | `emulator`에서는 인덱스가 없어도 쿼리가 거부되지 않지만 제안이 표준 오류에 출력됩니다. 강제하려면 `strict`로 전환하십시오. OR 쿼리는 분기마다 인덱스가 필요할 수 있으며, 누락된 모든 분기 정의가 표준 오류에 나열됩니다. `firestore.missingIndexes`가 `"report"`이면 표준 오류에서 누락 인덱스 보고를 찾거나, 제어 API의 `GET /v1/firestore/missingIndexes`에서 읽으십시오([Cloud Firestore](../../products/firestore/#누락된-인덱스에서-ci-작업-실패시키기) 참조). |
+| 권한 문제로 내보내기가 실패함 | `fireemu doctor --export-dir <dir>`을 실행하십시오. 기존 상위 디렉터리 체인 전체를 수정하지 않고 점검하며, 공유 상위 디렉터리 아래의 비공개 하위 디렉터리로는 충분하지 않습니다. [내보내기 대상](../data/#내보내기-위치)을 참조하십시오. |
+| 관련 없는 전역 저장소를 복사하다가 테스트가 실패함 | v0.27.0부터 Functions 월드는 환경의 `NODE_PATH`를 비웁니다. 이전 버전에서는 스냅샷이 이를 복사했습니다. 업그레이드하거나, 로컬 전용 의존성을 위해 빈 `NODE_PATH`를 전달하거나, 필요한 루트를 명시적으로 좁히십시오. [의존성 스냅샷](../test-worlds/#의존성-스냅샷과-전역-node_path)을 참조하십시오. |
+| 테스트 월드 스냅샷 준비가 타임아웃됨 | 사용하지 않는 의존성을 줄이거나 `snapshotTimeoutMs`를 늘리십시오(기본값 60,000 ms, 최대 2,147,483,647). `startupTimeoutMs`는 준비가 끝난 뒤의 데몬 준비 상태만 다룹니다. [독립 테스트 월드](../test-worlds/#스냅샷과-타임아웃)를 참조하십시오. |
+| Windows에서 Functions 리로드가 스냅샷 ACL 검증 실패를 보고함 | 정션이나 다른 재해석 지점(reparse point)이 없는 비공개 임시 디렉터리를 사용하십시오. 해당 디렉터리의 권한은 본인 계정과 신뢰할 수 있는 시스템 계정으로 접근을 제한해야 하며, 상위 디렉터리는 다른 계정이 수정하도록 허용해서는 안 됩니다. `SystemRoot` 아래에 Windows PowerShell이 있는지 확인한 다음 소스를 다시 변경해 보십시오. [소스 리로드](../../products/functions/#소스-리로드)를 참조하십시오. |
+| UI가 열리지 않음 | 4000번 포트가 사용 중이면 `up`은 UI 없이 시작됩니다. `--ui-port`를 사용하십시오. `exec`는 `--ui`를 지정할 때만 UI를 시작합니다. |
+| 예약 함수가 실행되지 않음 | 스케줄은 가상 시계를 따릅니다. `daemon.clockStart`가 고정되어 있거나 `daemon.clock = "frozen"`이면 시계가 멈춰 있으므로, 시계를 이동하거나 UI에서 함수를 실행하십시오. 시작 시각을 고정하지 않으면 실제 시간을 따릅니다. [시간과 예약 함수](../time/)를 참조하십시오. |
+
+## 오류 메시지
+
+<details>
+<summary><code>FAILED_PRECONDITION: The query requires an index</code></summary>
+
+`firestore.missingIndexes = "refuse"`인 `strict`(기본값)에서는 복합 인덱스가 선언되지 않은 쿼리가 프로덕션과 마찬가지로 거부됩니다. SDK는 `FAILED_PRECONDITION` 상태(REST에서는 `"status": "FAILED_PRECONDITION"`을 포함한 HTTP 400)와 다음 메시지를 받습니다.
+
+```text
+The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/<project>/firestore/indexes?create_composite=...
+```
+
+인덱스를 `firestore.indexes.json`(`firebase.json`에서 참조)에 추가하고 다시 시작하십시오. 첫 번째 누락에서 실패하는 대신 한 번의 실행에서 누락된 인덱스를 모두 수집하려면 `firestore.missingIndexes = "report"`로 설정합니다. 쿼리는 실행되고, 누락된 각 인덱스는 추가할 항목과 함께 표준 오류에 한 번씩 출력됩니다. `emulator` 프로필은 이러한 쿼리를 절대 거부하지 않습니다. [복합 인덱스](../../products/firestore/#복합-인덱스)를 참조하십시오.
+
+</details>
+
+<details>
+<summary><code>/v1/firestore/missingIndexes</code>의 <code>409 FAILED_PRECONDITION</code></summary>
+
+제어 API는 두 가지 경우에 `409`로 응답하므로, 아무것도 증명하지 못하는 응답으로 목록 확인이 통과할 수는 없습니다.
+
+```text
+FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to "report" and Firestore selected; ...
+```
+
+아무것도 보고되지 않는 상태입니다. 실행이 `emulator` 프로필이거나, `"refuse"`인 `strict`이거나, Firestore가 선택되지 않았습니다. `profile = "strict"`와 `firestore.missingIndexes = "report"`로 설정하십시오.
+
+```text
+FAILED_PRECONDITION : <n> quer(y|ies) of this project were served with a missing composite index that is not listed, because the list is full; the list is incomplete, not empty. DELETE it and run again
+```
+
+목록은 최대 1,000개 항목을 담습니다. 서로 다른 누락 인덱스가 그보다 많으면 `200` 응답에 `"truncated": true`와 `dropped` 개수가 포함되고, 프로젝트의 모든 항목이 버려졌다면 대신 이 `409`가 응답됩니다. 이미 알고 있는 인덱스를 수정하고, 목록을 `DELETE`한 다음 다시 실행하십시오. [누락된 인덱스에서 CI 작업 실패시키기](../../products/firestore/#누락된-인덱스에서-ci-작업-실패시키기)를 참조하십시오.
+
+</details>
+
+<details>
+<summary><code>403 ... fireemu does not answer Host</code> (<code>network.allowedHosts</code>)</summary>
+
+요청이 Fireemu가 응답하지 않는 `Host`를 지정했습니다. DNS 리바인딩 방어를 위한 동작입니다. 응답은 HTTP 403과 `PERMISSION_DENIED` 상태입니다.
+
+```text
+fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/guides/ci-and-containers/#host-names-the-emulators-answer
+```
+
+사용 중인 클라이언트가 그 이름을 사용한다면(터널, `/etc/hosts`의 이름, Compose 서비스 이름) 목록에 추가하십시오.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+allowedHosts = ["emulator.ci.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowedHosts": ["emulator.ci.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Compose 서비스처럼 단일 레이블 이름은 `network.allowNonLoopbackHosts = true`도 필요합니다.
+
+Fireemu는 이름마다 한 번씩 표준 오류에 `refused Host` 경고도 기록합니다. [에뮬레이터가 응답하는 호스트 이름](../ci-and-containers/#에뮬레이터가-응답하는-호스트-이름)을 참조하십시오.
+
+</details>
+
+## 더 자세한 정보 얻기
+
+`--log-verbosity debug`로 시작하십시오. 확정된 구성도 함께 출력됩니다.
+
+## 이슈 보고
+
+다음 내용을 포함하여 [GitHub에 이슈를 등록](https://github.com/fireemu/fireemu/issues)하십시오.
+
+- Fireemu와 Firebase SDK 버전, 프로필, 관련된 Firebase 제품
+- 최소 재현 사례
+- 호환성 이슈의 경우, 프로덕션 Firebase와 비교했는지 공식 에뮬레이터와 비교했는지, 그리고 기대 결과와 실제 결과
+
+구성 파일이나 로그를 공유하기 전에 자격 증명과 개인 정보를 제거하십시오.
+
+## 관련 문서
+
+- [구성 파일](../configuration/)
+- [Security Rules](../security-rules/)
+- [CI와 컨테이너](../ci-and-containers/)
+- [제한 사항](../../compatibility/limitations/)
