@@ -1,0 +1,384 @@
+---
+title: Cloud Functions
+description: Ejecuta Cloud Functions para Firebase en local y prueba funciones HTTP, callable, de eventos, programadas, de colas de tareas y de bloqueo.
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu carga los codebases de Functions declarados en `firebase.json` y los ejecuta con Node.js. Los emuladores de Eventarc y Cloud Tasks se inician junto con un codebase cargado. Los codebases de Python (`python310` a `python314`) también se ejecutan; consulta [Cloud Functions (Python)](../functions-python/). Salvo que una sección indique lo contrario, esta página describe los codebases de Node.js.
+
+<Facts items={[
+  { label: 'Estado', value: 'Compatible' },
+  { label: 'Puerto predeterminado', value: '5001' },
+  { label: 'Se inicia', value: 'Cuando hay un codebase configurado' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- [Disparadores HTTP, callable, de eventos, programados, de colas de tareas y de bloqueo](#disparadores-admitidos) en ambas generaciones.
+- [Parámetros y secretos](#parámetros-y-secretos), resueltos como los resuelve un despliegue.
+- [Quién puede llamar a una función](#quién-puede-llamar-a-una-función): ajustes de `invoker` y credenciales de callable.
+- [Aplicación de App Check en callables](#app-check-en-callables).
+- [Colas de tareas](#colas-de-tareas): tareas retrasadas, límites de tasa, reintentos y las respuestas de Cloud Tasks.
+- [Funciones programadas](#funciones-programadas) sobre el reloj virtual, o ejecutadas bajo demanda.
+- [Procesos por función](#aislamiento-de-procesos-functionsisolation), la forma en que se ejecuta producción.
+
+## Conectar
+
+Para ejecutar Functions se necesita `firebase-functions` v6 o v7 en el codebase.
+
+```sh
+# Only Functions (with Eventarc and Cloud Tasks); add the services your functions use,
+# for example --only functions,firestore,auth
+npx fireemu up --only functions
+
+# All codebases declared in firebase.json, with the default services
+npx fireemu up
+
+# One codebase
+npx fireemu up --only functions:<codebase>
+
+# One directory, whatever firebase.json declares
+npx fireemu up --functions ./functions
+```
+
+Functions escucha por defecto en `127.0.0.1:5001` (`--functions-port` o `firebase.json` lo cambian). Apunta el SDK web hacia esa dirección:
+
+```js
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
+```
+
+Con `fireemu exec`, `FIREEMU_FUNCTIONS_HOST` contiene el `host:port` para tu comando (consulta [Variables de entorno](../../reference/environment-variables/)).
+
+## Disparadores admitidos
+
+Estos son los exports de `firebase-functions` para Node.js. Consulta el [inventario de compatibilidad de Functions](https://github.com/fireemu/fireemu/blob/main/docs/functions-export-inventory.md) para ver la compatibilidad por tipo de disparador y por export.
+
+| Disparador | v1 (`firebase-functions/v1`) | v2 (`firebase-functions/v2/*`) |
+|---|---|---|
+| HTTP y callable | `https.onRequest`, `https.onCall` | `onRequest`, `onCall`, `onCallGenkit` |
+| Firestore | eventos de `firestore.document()` | `onDocumentCreated`, `Updated`, `Deleted`, `Written` y las variantes `WithAuthContext` |
+| Storage | eventos de `storage.object()` | `onObjectFinalized`, `Deleted`, `MetadataUpdated`, `Archived` |
+| Pub/Sub | `pubsub.topic().onPublish` | `onMessagePublished` |
+| Programados | `pubsub.schedule()` | `onSchedule` |
+| Colas de tareas | `tasks.taskQueue().onDispatch` | `onTaskDispatched` |
+| Authentication | eventos de `auth.user()`, `beforeCreate`, `beforeSignIn` | `beforeUserCreated`, `beforeUserSignedIn`; `beforeEmailSent` bajo `strict` |
+| Realtime Database | `onCreate`, `onUpdate`, `onDelete`, `onWrite` de `database.ref()` y `database.instance().ref()` | `onValueCreated`, `Updated`, `Deleted`, `Written` |
+| Eventarc y alertas | | `onCustomEventPublished`, `onAlertPublished` |
+
+Varios de estos se ejecutan solo bajo ciertas condiciones; consulta [Salvedades de los disparadores](#salvedades-de-los-disparadores).
+
+Las observaciones en producción de los disparadores de Realtime Database cubren secuencias fijas de administrador y sin autenticar, además de 12 escrituras de un usuario de correo y contraseña por REST y por el SDK web, incluidas escrituras de ancestros y de varias rutas y la reentrega tras una invocación fallida. El momento de la entrega, otros proveedores y las formas de escritura o de handler no registradas siguen sin verificarse. [Disparadores locales de Functions](../realtime-database/#local-functions-triggers) describe cómo se admite una escritura y sus eventos.
+
+## Parámetros y secretos
+
+`defineString`, `defineInt`, `defineBoolean`, `defineFloat` y `defineList` se resuelven como los resuelve un despliegue. Los archivos se aplican en el orden indicado a continuación, de modo que un archivo posterior sobrescribe a uno anterior, y después se aplica el `default` del parámetro. Un parámetro sin valor ni valor predeterminado se niega a iniciar el codebase y nombra el parámetro y los archivos donde se coloca un valor, porque `firebase deploy` se detiene de la misma manera. Los secretos (`defineSecret`) provienen de `.secret.local` y solo llegan a una función que los declara.
+
+| Archivo (en el directorio del codebase) | Contiene | Precedencia | Desplegado |
+|---|---|---|---|
+| `.env` | Valores de parámetros | La más baja | Sí, tal como lo lee `firebase deploy` |
+| `.env.<projectId>` (o `.env.<alias>`) | Valores para un proyecto | Sobre `.env` | Sí, cuando despliegas ese proyecto |
+| `.env.local` | Valores para ejecuciones locales | La más alta | Nunca: un valor que solo está aquí falta en producción. Lo aplican Fireemu y el emulador oficial |
+| `.secret.local` | Valores de `defineSecret` | La única fuente de secretos aquí | Nunca: un despliegue necesita el secreto en Secret Manager |
+| `default` en `defineString` y los demás | Un valor de reserva | Por debajo de todos los archivos | En el código |
+
+- Tener a la vez `.env.<projectId>` y `.env.<alias>` detiene el inicio, igual que `firebase deploy`.
+- Fireemu nunca contacta con Secret Manager. Un secreto que una función declara pero que `.secret.local` no incluye se lee como la cadena vacía, y una advertencia de inicio nombra el secreto y las funciones.
+- En ambos perfiles, las variables de entorno heredadas cuyos nombres aparecen en `.secret.local` se eliminan antes de suministrar los secretos declarados por una función.
+- `.runtimeconfig.json` se pasa al código como `CLOUD_RUNTIME_CONFIG` para un codebase que lo lee. `firebase-functions` v7 ha eliminado `functions.config()`, por lo que un codebase v7 no lo lee.
+
+## Quién puede llamar a una función
+
+Una función cuyo `invoker` es `"private"` o una lista de cuentas de servicio, y toda función de cola de tareas, responde a una llamada en su URL pública según la credencial que lleve:
+
+| Solicitud a la URL pública | Respuesta |
+|---|---|
+| Sin credenciales | 403, igual que Cloud Run la rechaza antes de que se ejecute la función |
+| Un bearer con la forma de un token de identidad emitido por Google (un JWT cuyo `iss` es `https://accounts.google.com`) | Se admite. Fireemu no puede comprobar un token de identidad con Google |
+| Cualquier otro bearer, incluido el ID token de Firebase Auth que envía un SDK cliente con sesión iniciada | 401. Cloud Run tampoco lo acepta |
+
+El despacho de tareas, la UI del emulador y la API de control (`POST /v1/sessions/default/functions/{name}:run`, la invocación y el encolado de la consola) no son llamadas a la URL pública; la UI y la API de control actúan como el propietario del proyecto. `ingressSettings` se registra pero no se aplica. El perfil `emulator` sirve cada función a cualquier llamante, como hace el emulador oficial.
+
+## App Check en callables
+
+`enforceAppCheck` en funciones callable funciona sin configuración: obtén un token mediante el intercambio de token de depuración con cualquier UUIDv4 y envíalo en `X-Firebase-AppCheck`.
+
+- Una llamada ordinaria sin token, o con uno mal formado, se rechaza con 401. Una llamada de streaming v2 exacta recibe un registro de error SSE con 200.
+- El consumo para evitar repeticiones no está disponible: un token válido en un callable de Node con `consumeAppCheckToken: true` se rechaza con `APP_CHECK_REPLAY_UNSUPPORTED`.
+- Los callables de Python usan la [verificación y las restricciones descritas para Python](../functions-python/#diferencias-con-producción-y-con-la-cli-de-firebase).
+
+Consulta [App Check](../app-check/).
+
+### Credenciales de callable bajo `strict`
+
+Bajo `strict`, el daemon verifica el `Authorization` de los callables de Node y Python antes de reenviar la solicitud.
+
+| `Authorization` en la llamada | Resultado |
+|---|---|
+| Ausente o vacío | Se invoca el handler sin autenticar |
+| Una credencial no vacía que no es un ID token de usuario del proyecto verificado | Se rechaza antes del handler con HTTP 401 y `application/json; charset=utf-8` con el contenido `{"error":{"message":"Unauthenticated","status":"UNAUTHENTICATED"}}`. Una solicitud de streaming v2 exacta recibe en cambio HTTP 200 con un registro de error SSE |
+| Varios encabezados `Authorization` | Una página HTML de front-end con 401 |
+
+Envía un ID token de proyecto válido u omite la credencial, y elimina los encabezados duplicados. Esto también se aplica cuando un manifiesto sirve código callable como `onRequest`. Para `onRequest(opts, onCall(...))`, el wrapper callable anidado rechaza las credenciales que el daemon no verificó; los handlers `onRequest` ordinarios siguen recibiendo las credenciales originales sin cambios.
+
+## Colas de tareas
+
+Las funciones de cola de tareas están verificadas para los casos registrados (TASK-QUEUE-FUNCTIONS), con las diferencias conocidas enumeradas en el [registro](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/closure/TASK-QUEUE-FUNCTIONS.json). En un despacho `strict` con un token de identidad emitido por el daemon, el SDK de Node construye `request.auth`, mientras que el handler y sus temporizadores siguen viendo `FUNCTIONS_EMULATOR="true"`; el perfil emulator deja `request.auth` sin definir.
+
+### Tareas retrasadas
+
+Una tarea encolada con un `scheduleTime` (o `scheduleDelaySeconds`) espera hasta ese momento bajo `strict`, como en Cloud Tasks. Un `scheduleTime` que no sea RFC 3339, o que esté a más de 720 horas, se rechaza con 400. El perfil `emulator` despacha de inmediato, como hace el emulador oficial.
+
+Para probar una tarea retrasada sin esperar, haz una de estas cosas:
+
+- Establece `functions.clock.tasks` en `"virtual"` y mueve el reloj (consulta [Tiempo y funciones programadas](../../guides/time/)).
+- Libera las tareas en espera. La página Functions de la UI del emulador las lista con su hora de vencimiento y un botón **Run now**. La API de control acepta `POST /v1/sessions/default/functions/{queue}:run` (todas las tareas en espera) o lo mismo con `{"task": "<task id>"}` (una tarea).
+
+Los límites de tasa y de concurrencia siguen aplicándose a una tarea liberada.
+
+### Leer una tarea con `getTask`
+
+Bajo `strict`, `getTask` devuelve tareas pendientes, en ejecución y en reintento.
+
+- El valor predeterminado `responseView=BASIC` omite el cuerpo de la solicitud; `responseView=FULL` devuelve sus bytes originales en base64.
+- Las respuestas de tareas pendientes omiten los contadores de despacho y de respuesta con valor cero, como hacen las dos grabaciones de producción.
+- Un nombre completado o eliminado recientemente devuelve el mensaje 404 de tarea reciente registrado; un nombre desconocido mantiene la respuesta genérica de no encontrado.
+- El historial reciente de consultas está acotado por los límites de historial existentes y dura una hora con reutilización inmediata de nombres, o sigue el período de retención de nombres configurado.
+
+Las vistas FULL, las observaciones de tareas activas o en reintento, las vistas no válidas, las respuestas GET para nombres desconocidos y la expiración del historial se prueban localmente pero no están registradas; no se afirma la equivalencia completa de getTask.
+
+### Límites de tasa y ráfagas
+
+Aceptar una tarea inicia el runner de su función si hace falta. Bajo `strict`, la recarga de tokens usa períodos de nanosegundos enteros y se activa en los plazos de los tokens y de la programación. Las grabaciones de producción de 120 tareas vencidas a la vez mostraron una ráfaga inicial de 10 con tasa 1; una tasa de 500 devolvió una ráfaga de 100. Otras tasas empiezan vacías con una capacidad de tokens enteros de `floor(max(rate, 1.1))`; su ráfaga en producción no está registrada.
+
+El perfil `emulator` conserva su refresco de un segundo y elimina una tarea por su nombre exacto de encolado, incluida una tarea ya despachada una vez, como hace firebase-tools 15.28.2.
+
+### Encabezados y cuerpos de despacho
+
+Bajo `strict`, `X-CloudTasks-QueueName` es el ID de cola sin más, `X-CloudTasks-TaskETA` son segundos Unix con seis decimales y `User-Agent` es `Google-Cloud-Tasks`. Los encabezados suministrados por la tarea no pueden sobrescribir ese user agent ni las familias `X-CloudTasks-*`, `X-Google-*` y `X-AppEngine-*`. El perfil `emulator` conserva el nombre de cola interno del emulador oficial y sus sobrescrituras de encabezados.
+
+El despacho de tareas conserva los bytes del cuerpo encolado, incluidos el orden de los miembros JSON y los espacios en blanco. El perfil strict también acepta cuerpos vacíos, no JSON y binarios; el perfil emulator conserva la admisión solo de JSON. Un handler sigue decidiendo si puede procesar el cuerpo suministrado.
+
+### `createTask` y `deleteTask`
+
+Bajo `strict`, `createTask` y `deleteTask` responden como respondió Cloud Tasks en dos grabaciones de 122 pasos cada una (2026-11-11):
+
+- La respuesta es la propia Task: vista `BASIC` o `FULL`, un nombre generado de 19 dígitos (los de producción eran de 19 o 20) y un `scheduleTime` pasado se convierte en ahora.
+- Los errores son errores JSON de `google.rpc` con las comprobaciones de producción en el orden de producción: campos desconocidos, `payload_type`, nombre e id de la tarea, un `dispatchDeadline` de 15 segundos a 30 minutos, un `scheduleTime` como máximo 720 horas en el futuro, una tarea de como máximo 1 MiB.
+- El nombre de una tarea en cola se rechaza con 409.
+- Un reintento lleva `X-CloudTasks-TaskPreviousResponse: 504` tras un plazo vencido y antes espera el `minBackoff` de la cola.
+- Las respuestas se imprimen como las imprimió Cloud Tasks: JSON de varias líneas con el mismo orden de campos, `application/json; charset=UTF-8`, los `details` de un error de argumento.
+- A una tarea que nombra un `oidcToken` se le entrega un token `Authorization: Bearer` de tres segmentos, de modo que `request.auth` está presente en el handler. El token lo emite el emulador, sin firmar, y sus claims no son los de Google.
+
+Cuatro ajustes son valores predeterminados de desarrollo que `productionExact` fija a los de producción. Una clave explícita prevalece sobre `productionExact`. Consulta [perfiles](../../guides/profiles/).
+
+| Ajuste | Valor predeterminado de desarrollo | Producción |
+|---|---|---|
+| `functions.taskNameReuse` | El nombre de una tarea terminada queda libre de inmediato | El modo de producción lo rechaza durante hasta 3600 segundos |
+| `functions.taskDispatchDeadlineSeconds` | 60 segundos cuando se omite o se establece en `"0s"` | El valor predeterminado de producción es 600 |
+| `functions.taskRetryDefaults` | 3 intentos | La cola predeterminada de producción permite 100 intentos en total |
+| `functions.taskRetryBackoff` | | Los intervalos de reintento de producción crecen más allá del máximo declarado tras una docena de fallos |
+
+El historial de nombres completados está acotado, entre todas las colas, a 65 536 nombres y 8 MiB de texto de nombres de colas y tareas. Los nombres más antiguos se expulsan cuando se supera cualquiera de los límites, incluso antes de que expire la ventana de 3600 segundos. Este límite también se aplica al modo `"retained"`.
+
+### Esperar a que el trabajo actual se estabilice
+
+Para una prueba que solo necesita que el trabajo actual se estabilice, envía `POST /v1/sessions/default:awaitIdle` con `{ "scope": "runnable" }` (desde v0.26.0). Las programaciones futuras y el backoff de reintentos no bloquean este ámbito; las tareas vencidas que esperan por tasa o concurrencia y las solicitudes HTTP activas sí lo hacen. Si omites el ámbito, espera a todo el trabajo. Consulta [esperar el trabajo ejecutable](../../guides/test-worlds/#wait-for-runnable-work).
+
+## Funciones programadas
+
+Una programación se ejecuta sobre el reloj virtual de Fireemu. A menos que fijes una hora de inicio con `daemon.clockStart`, ese reloj sigue el tiempo real, de modo que las ocurrencias vencen conforme pasa el tiempo. Con una hora de inicio fija, el reloj se detiene y tú lo mueves para que venzan las ocurrencias. Consulta [Tiempo y funciones programadas](../../guides/time/).
+
+### Ejecutar ahora
+
+Para ejecutar una función programada o liberar una tarea retrasada sin esperar:
+
+| | Función programada | Función de cola de tareas (tareas que esperan su `scheduleTime`) |
+|---|---|---|
+| UI del emulador, página Functions | Ejecútala de inmediato, o adelanta el reloj hasta su siguiente ocurrencia | Las tareas en espera, con su hora de vencimiento y un botón **Run now** |
+| API de control | `POST /v1/sessions/default/functions/{name}:run` | La misma ruta libera todas las tareas en espera; con `{"task": "<task id>"}` libera una (404 para un id desconocido) |
+| Reloj virtual | Fija `daemon.clockStart`, o establece `daemon.clock = "frozen"`, y luego `POST /v1/sessions/default/clock:advance` con `{"seconds": 86400}` (también `{"millis": n}`, `clock:advanceTo` y `clock:set`), o usa la página Runtime | `functions.clock.tasks = "virtual"` con un `daemon.clockStart` fijo, y luego mueve el reloj |
+
+La API de control no está en el puerto de la UI. Su dirección es la línea `control API:` de la salida de inicio: el puerto de Authentication (9099 por defecto) cuando Authentication se ejecuta, otro puerto en caso contrario. Con `fireemu exec` es `$FIREEMU_CONTROL_URL`, con `Authorization: Bearer $FIREEMU_CONTROL_TOKEN` (el token solo es necesario cuando `network.allowNonLoopbackHosts` está establecido). Por ejemplo, con `fireemu up`:
+
+```sh
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/functions/nightly:run
+# {"enqueued":true,"function":"nightly"}
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 86400}'
+```
+
+Un nombre desconocido o no programado responde `400 INVALID_ARGUMENT`. Una ejecución manual no consume la siguiente ocurrencia; consulta [Ejecutar ahora una función programada](../../guides/time/#run-a-scheduled-function-now).
+
+Publicar un mensaje en el tema `firebase-schedule-<function>-<region>` de una programación de primera generación bajo `strict` también invoca el handler, conservando los datos, atributos, clave de orden e ID de mensaje originales de Pub/Sub. Las ocurrencias programadas normales y las ejecuciones manuales siguen invocándolo una sola vez.
+
+## Cuando la cola de eventos está llena
+
+El runtime retiene como máximo 4096 eventos sin entregar (y 64 MiB de payloads). Un evento que no cabe nunca se pierde en silencio, y lo que ocurre depende de su origen:
+
+- **Firestore, Storage, el emulador de Pub/Sub y una publicación de Pub/Sub de control:** la escritura o la publicación se rechaza y no se entrega nada. Una publicación de control responde `429 RESOURCE_EXHAUSTED`.
+- **Authentication:** un usuario creado o eliminado se confirma de todos modos. Sus eventos se retienen en una cola acotada y se entregan, del más antiguo al más reciente, cuando vuelve a haber capacidad; solo una acumulación de más de 4096 eventos retenidos descarta uno, y ese descarte se cuenta y se registra.
+
+<details>
+<summary>Detalles</summary>
+
+- Firestore, Storage, el emulador de Pub/Sub y la publicación de Pub/Sub de control (`POST /v1/sessions/{session}/pubsub/topics/{topic}:publish`) reservan primero toda la difusión, cada mensaje a cada función suscrita con las copias que pide una falla `duplicate`. Cuando no cabe, la escritura o la publicación se rechaza (una publicación de control responde `429 RESOURCE_EXHAUSTED` y no emite ningún id de mensaje) y no se entrega nada.
+- Un usuario de Auth creado o eliminado se confirma tenga o no espacio la cola, porque producción nunca rechaza un registro por ir las funciones con retraso. Un evento que la cola aún no puede aceptar se retiene y se entrega cuando vuelve a haber capacidad, del más antiguo al más reciente y completo. `GET /v1/sessions/{session}/functions` muestra el número de eventos retenidos como `authEventsPending`, y `await-idle` espera por él. Se retienen como máximo 4096 eventos: uno más allá de ese número se descarta, se cuenta como `admission.auth_event_dropped` en el informe de recursos y se registra. Un reinicio de sesión descarta los eventos retenidos junto con el resto de la cola.
+
+</details>
+
+## Salida del runner
+
+Los logs de las funciones y el error estándar del runner se reenvían a los logs locales. Si el runner termina antes de su handshake de inicio, los diagnósticos también incluyen su estado de salida, el error estándar capturado y una cola acotada de la salida estándar. La salida escrita por la aplicación no se depura automáticamente de secretos arbitrarios; evita imprimir credenciales o volcar el entorno en el código de las funciones.
+
+## Recarga del código fuente
+
+Los codebases de Node y Python recargan automáticamente los cambios en el código fuente.
+
+- Las invocaciones ya admitidas terminan en la generación que seleccionaron, sujetas a sus plazos de invocación. Una generación retirada que no termina se detiene un segundo después del plazo de su última invocación pendiente, excepto en modo depurador.
+- Las ediciones anteriores al primer escaneo del watcher se detectan, y las instantáneas de recarga se eliminan al apagar.
+- Cambiar el manifiesto de disparadores descubierto requiere reiniciar Fireemu; una recarga rechazada normalmente conserva la generación anterior.
+- Para Node, un `--inspect-functions <port>` fijo es una excepción: el runner anterior debe detenerse antes de que el de reemplazo pueda enlazar ese puerto.
+- Python ignora la opción de inspector y conserva la generación anterior si falla una recarga. Los entornos virtuales de Python permanecen vinculados al codebase original; reinicia tras cambiar las dependencias instaladas. Las cachés de bytecode de Python se excluyen de la vigilancia y de las instantáneas de recarga.
+
+En Windows, las instantáneas de recarga se crean con una DACL protegida antes de copiar el código fuente o los archivos de secretos locales. Fireemu comprueba el directorio de la instantánea, el directorio padre temporal y los ancestros en busca de permisos inseguros o puntos de reanálisis, y rechaza la instantánea si no puede verificarlos en 30 segundos. Esto requiere Windows PowerShell; consulta [Solución de problemas](../../guides/troubleshooting/).
+
+## Aislamiento de procesos (`functions.isolation`)
+
+Producción ejecuta cada función en su propia instancia:
+
+- La identidad de la función (`FUNCTION_TARGET`, `FUNCTION_SIGNATURE_TYPE`, `K_SERVICE`) y los secretos que declara están en su entorno desde el principio.
+- Tiene su propio grafo de módulos.
+- Una instancia de segunda generación atiende hasta `concurrency` llamadas simultáneas de esa única función (la primera generación atiende una).
+- Una instancia se inicia con la primera solicitud.
+
+`functions.isolation` elige hasta qué punto una ejecución sigue ese modelo.
+
+| `functions.isolation` | Procesos | Qué significa |
+|---|---|---|
+| `"codebase"` (el valor predeterminado; `productionExact` es la excepción) | Un proceso runner por codebase | Lo más barato de iniciar. Las funciones comparten un grafo de módulos: el estado a nivel de módulo, las cachés y los singletons son visibles para todas las funciones. También comparten un entorno de proceso: `FUNCTION_TARGET`, `FUNCTION_SIGNATURE_TYPE` y `K_SERVICE` nombran la llamada que se inició más recientemente, de modo que una función que lee una de ellas tras un `await` mientras se llamó a otra función ve la otra función. Una llamada que usa un secreto local de `.secret.local` se ejecuta sola, por lo que además oculta la concurrencia que tendría una función desplegada. Los secretos se ocultan a toda función que no los declara, tanto mientras se carga el código de usuario como mientras se ejecuta una llamada. |
+| `"function"` (el valor predeterminado bajo `productionExact`) | Un proceso runner por función de cada codebase | La forma de producción. Cada proceso carga el codebase por su cuenta, se inicia con la identidad de su función y con los secretos locales que esa función declara ya en su entorno (de modo que el código a nivel de módulo que los lee los ve) y sirve solo esa función, con la concurrencia con que está configurada. No se reescribe, oculta ni encola nada por llamada. Que el proceso de una función se bloquee o se reinicie no afecta a las demás. |
+
+```json
+{ "schemaVersion": 1, "functions": { "isolation": "function" } }
+```
+
+### Cómo inicia procesos `"function"`
+
+Con `"function"`, Fireemu primero inicia un proceso de descubrimiento para leer los exports del codebase y lo detiene de nuevo. El proceso propio de una función se inicia entonces con la primera solicitud, evento o tarea para esa función, como una instancia de producción. El trabajo que llega mientras tanto espera al proceso y se entrega una sola vez, en orden: un evento nunca se descarta ni se reordena por un arranque en frío.
+
+Dos tipos de función se inician junto con el codebase en su lugar:
+
+- Las funciones de bloqueo de Auth, porque un registro no debe pagar un arranque en frío dentro de su breve plazo.
+- Todas las funciones cuando se da `--inspect-functions`, para que cada proceso informe de antemano su puerto de depurador.
+
+Un proceso sigue activo una vez iniciado; detener procesos inactivos aún no está implementado. Una función cuyo proceso termina se inicia de nuevo en su siguiente uso, como un proceso de codebase. Una recarga del código fuente reemplaza todos los procesos del codebase a la vez: si la recarga cambia qué funciones sirve el codebase, se rechaza y los procesos anteriores siguen ejecutándose. Las líneas de log de cada proceso se reenvían igual que para el proceso del codebase, y el estado de la API de control lista una entrada por proceso con su `function` y si ha `started`. También se aplica a los codebases de Python.
+
+### Costo
+
+Un proceso, y una copia del codebase cargado, por cada función que se usa. Medido en un portátil con Node 24 y `firebase-functions` 7 (la memoria residente cuenta las páginas compartidas en cada proceso, por lo que sobrestima el total real):
+
+| Codebase | `"codebase"` | `"function"`, todas las funciones iniciadas |
+|---|---|---|
+| 10 funciones | 1,3 s para iniciar y detener, 121 MiB, 1 proceso | 2,5 s, 1,2 GiB, 10 procesos |
+| 22 funciones | 1,0 s, 126 MiB, 1 proceso | 3,0 s, 2,7 GiB, 22 procesos |
+
+Como un proceso se inicia en el primer uso, una ejecución que toca pocas funciones paga solo por esas, y la primera llamada a cada una paga un arranque en frío (alrededor de un segundo). Un conjunto de pruebas que llama a todas las funciones acaba en la columna derecha. Por esa razón `"codebase"` sigue siendo el valor predeterminado para desarrollo y CI; `productionExact` selecciona `"function"`.
+
+### Cuándo se rechaza `"function"`
+
+- Con más de 64 funciones servidas en un codebase. Establece `functions.isolation` en `"codebase"`, el valor predeterminado, para servirlo desde un solo proceso.
+- Escrito explícitamente, junto con `functions.runner` (un comando de runner personalizado se inicia una vez por codebase).
+- Escrito explícitamente, junto con un `--inspect-functions <port>` fijo (los procesos no pueden compartir un puerto; `--inspect-functions` sin puerto da a cada proceso el suyo).
+
+Cuando solo `productionExact` eligió `"function"`, los dos últimos casos usan `"codebase"` en lugar de rechazar. Un `functions.isolation = "codebase"` explícito siempre prevalece.
+
+## Depuración
+
+Ejecuta el runner de Functions bajo el inspector de Node con `--inspect-functions`:
+
+```sh
+npx fireemu up --inspect-functions 9229
+```
+
+## Servir una lista fija de funciones (`functions.manifest`)
+
+`functions.manifest` nombra un archivo JSON que reemplaza lo que el descubrimiento informa como el conjunto servido. Contiene un array `functions`. Cada entrada tiene un `name` y un `trigger` cuyo `type` es uno de `http`, `firestore`, `database`, `storage`, `pubsub`, `schedule`, `auth`, `blockingAuth`, `tasks` o `eventarc`, con `region`, `generation`, `entryPoint`, `timeoutSeconds`, `retry` y `concurrency` opcionales.
+
+Fireemu sigue cargando y descubriendo tu codebase, de modo que el runner se inicia y el código se comprueba. Las funciones que sirve, sus tipos de disparador y sus opciones son los del archivo: un export que el archivo omite no se sirve, y una función se sirve con el disparador que le da el archivo.
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "functions": { "manifest": "manifest.json" }
+}
+```
+
+```json
+{
+  "functions": [
+    { "name": "hello", "trigger": { "type": "http", "callable": false } },
+    {
+      "name": "ping",
+      "trigger": {
+        "type": "http",
+        "callable": true,
+        "enforceAppCheck": false,
+        "consumeAppCheckToken": "disabled"
+      }
+    }
+  ]
+}
+```
+
+Para un codebase que exporta `hello` (`onRequest`), `ping` (`onCall`) y `worker` (`onTaskDispatched`), esto se inicia con `functions loaded: hello, ping`; `worker` no se sirve. Sin la clave, se sirven las tres.
+
+### Qué puede y qué no puede cambiar el archivo
+
+- La ruta se lee desde el directorio de trabajo, sea cual sea el directorio en que esté el archivo de configuración (como los demás ajustes de archivo en un archivo canónico; consulta [Archivos de configuración](../../guides/configuration/)). Un archivo que falta, que no es JSON o que contiene una entrada no válida detiene el inicio y nombra la ruta o la función (`functions manifest manifest.json: No such file or directory`, `manifest: function "hello": unsupported trigger type "carrierpigeon"`). Bajo `strict`, una declaración que producción rechaza se rechaza también aquí.
+- Se aplica a un codebase. Una ejecución que carga varios se niega a iniciarse (`functions.manifest replaces discovery for one codebase, and this run loads 2 (a, b); name the one to load with --only functions:<codebase> or drop functions.manifest`).
+- El archivo no puede cambiar lo que es el código. Las funciones de bloqueo de Auth del archivo deben coincidir con las que encontró el descubrimiento, o se rechaza el inicio (`... invents Blocking Auth hook ... it must match codebase discovery`).
+- Mientras [App Check](../app-check/) está activo (el valor predeterminado bajo `strict`; `appCheck.enabled: true` bajo `emulator`; no cuando `appCheck.enabled` es `false`), el archivo tampoco puede cambiar cómo se trata un callable. Se rechazan al iniciar:
+  - un callable listado con `"callable": false`, o una función `onRequest` listada con `"callable": true`;
+  - un callable listado como cola de tareas, función de bloqueo o disparador de eventos (`... declares "ping" as a non-HTTP function, but the codebase declares it callable ...`, que indica que se liste como función http con `callable: true` y las opciones de App Check que declara el código, que se quite del archivo, o que se exporte con `onTaskDispatched` si debe ser una cola de tareas);
+  - un callable cuyo `enforceAppCheck` o `consumeAppCheckToken` difiere del código;
+  - una función HTTP que el codebase no exporta.
+
+### Con App Check desactivado
+
+Con App Check desactivado, las comprobaciones de callable anteriores no se ejecutan; solo se aplica la coincidencia de Blocking Auth. Ninguna sobrescritura llega al wrapper callable al que apunta una entrada mal etiquetada:
+
+- No se le dice al runner que omita la verificación de tokens (eso solo lo hace el protocolo de App Check).
+- El daemon elimina los campos de sobrescritura de autenticación internos del emulador (`x-callable-context-auth`, `x-original-auth`) de toda solicitud que reenvía, incluido el despacho de tareas.
+- La comprobación de token del wrapper es la del emulador de Auth, exactamente como para una función `onTaskDispatched` a la que llega una tarea.
+
+Bajo `strict`, una tarea enviada a una cola así, o una solicitud a un callable que el archivo lista como función `onRequest` (`"callable": false`), también pasa la comprobación de Bearer que pasa una solicitud callable (un preflight y una solicitud sin credencial no), de modo que un Bearer que no es de un usuario del proyecto se responde con 401 antes de que se ejecute el código. Para una tarea eso es un despacho fallido, reintentado según la política de reintentos de la cola hasta que se rinde; cada rechazo imprime una línea que nombra la función (nunca la credencial), y el inicio imprime también una advertencia que la nombra. El emulador oficial tampoco compara un `functions.yaml` con el código.
+
+## Diferencias con producción
+
+### Salvedades de los disparadores
+
+- **Realtime Database, 2.ª generación.** Las instancias locales de Realtime Database están en `us-central1`, por lo que un disparador de base de datos de 2.ª generación en otra región no se activa, y una advertencia al cargar lo indica.
+- **Productos para los que Fireemu no entrega eventos.** Los disparadores de productos como Data Connect (diferido) no pueden ejecutarse. Por defecto, el descubrimiento rechaza un codebase que exporta uno (`functions.unservedTriggers = "refuse"`); establécelo en `"report"` para informar de cada uno y cargar el resto. La página Functions de la [UI del emulador](../../guides/ui/) y `GET /v1/sessions/default/functions` en la API de control listan cada export ignorado con el motivo.
+- **Remote Config.** Los handlers se ejecutan solo mediante la acción de inyección local, y su forma de evento en producción no se ha observado.
+- **Eventos de archivado de Storage.** Se activan solo para un bucket cuyo versionado se activó (`PATCH /storage/v1/b/{bucket}` con `{"versioning":{"enabled":true}}`), y su forma no está registrada.
+- **`beforeEmailSent`.** Se ejecuta solo bajo `strict`.
+
+### Exports que nunca se ejecutan
+
+Un export que Fireemu no puede servir (una función cuyas opciones no se resuelven, o un tipo de evento que no reconoce) se omite. Cada uno es un `warning:` en el error estándar al iniciar, seguido de una línea de resumen. Una función que producción desplegaría y ejecutaría nunca se ejecuta aquí, de modo que una prueba que afirma "sin efecto secundario" pasa por la razón equivocada; lee las advertencias. `functions.unservedTriggers` sigue rechazando los productos que Fireemu no sirve.
+
+### Verificación en producción
+
+Los codebases de Node.js se verifican con grabaciones de funciones desplegadas para funciones HTTP y callable, para disparadores de eventos y para funciones programadas. Consulta las [tablas de compatibilidad](../../compatibility/#production-verification).
+
+Los codebases de Python tienen su propia declaración de verificación, para seis familias de eventos; consulta [Verificación en producción](../functions-python/#verificación-en-producción) en la página de Python.
+
+## Relacionado
+
+- [Cloud Functions (Python)](../functions-python/)
+- [Tiempo y funciones programadas](../../guides/time/)
+- [Pub/Sub, Eventarc y Cloud Tasks](../pubsub-eventarc/)
+- [Perfiles](../../guides/profiles/)

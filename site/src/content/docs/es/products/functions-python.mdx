@@ -1,0 +1,167 @@
+---
+title: Cloud Functions (Python)
+description: Ejecuta codebases de Cloud Functions para Firebase en Python en local, y consulta en qué se diferencian de producción y de los codebases de Node.js.
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu ejecuta codebases de Python junto a los de Node.js. Esta página trata lo específico de Python. La página [Cloud Functions](../functions/) describe el runner de Node.js; las secciones de esa página que también se aplican a los codebases de Python, como [App Check en callables](../functions/#app-check-en-callables), lo indican.
+
+<Facts items={[
+  { label: 'Runtimes', value: 'python310 a python314' },
+  { label: 'SDK probado', value: 'firebase-functions 0.6.0' },
+  { label: 'Plataformas', value: 'Linux y macOS' },
+  { label: 'Verificación en producción', value: 'Casos registrados en seis familias de eventos', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- [Funciones HTTP, callable, de eventos, programadas, de colas de tareas y de bloqueo de Auth](#disparadores-admitidos) escritas con el SDK de Python.
+- [Funciones de bloqueo de Auth](#funciones-de-bloqueo-de-auth-y-la-comprobación-de-audiencia), con o sin el fallo de audiencia de producción.
+- [La solicitud que recibe un handler de CloudEvent](#cuerpos-de-eventos) mediante `flask.request`.
+- [App Check, secretos, recarga y programación](#diferencias-con-producción-y-con-la-cli-de-firebase) tal como los gestiona el runner de Python.
+
+## Configuración
+
+Un codebase es de Python cuando se cumple una de estas condiciones (el orden que usa la CLI de Firebase):
+
+- su `runtime` en `firebase.json` es `python310`, `python311`, `python312`, `python313` o `python314`;
+- no declara ningún `runtime`, no tiene `package.json` y tiene un `requirements.txt`.
+
+Fireemu lo ejecuta con el intérprete del propio entorno virtual del codebase, siempre `<source>/venv/bin/python`. Nunca crea el entorno ni instala paquetes:
+
+```sh
+cd functions
+python3.12 -m venv venv
+venv/bin/pip install -r requirements.txt   # includes firebase-functions
+npx fireemu up
+```
+
+Antes de iniciar nada, fireemu comprueba el entorno y se detiene:
+
+- con el mensaje de la CLI de Firebase cuando falta `venv` o no se puede importar `firebase_functions`;
+- con un mensaje que nombra ambas versiones cuando el Python del intérprete difiere del `runtime` declarado.
+
+El SDK probado es `firebase-functions` 0.6.0. Solo Linux y macOS.
+
+## Disparadores admitidos
+
+| Disparador | SDK de Python |
+|---|---|
+| HTTP | `https_fn.on_request` |
+| Callable | `https_fn.on_call` |
+| Disparadores de documentos de Firestore | `on_document_created`, `updated`, `deleted`, `written` y las variantes `_with_auth_context` |
+| Pub/Sub | `pubsub_fn.on_message_published` |
+| Cloud Storage | `storage_fn.on_object_finalized`, `deleted`, `archived`, `metadata_updated` |
+| Eventos personalizados de Eventarc | `eventarc_fn.on_custom_event_published` |
+| Realtime Database | `db_fn.on_value_created`, `updated`, `deleted`, `written` |
+| Funciones programadas | `scheduler_fn.on_schedule` |
+| Funciones de colas de tareas | `tasks_fn.on_task_dispatched` |
+| Funciones de bloqueo de Auth | `identity_fn.before_user_created`, `before_user_signed_in` |
+
+Un callable ve al usuario del emulador de Auth. Un disparador de un producto que fireemu no sirve se informa cuando se carga el codebase y nunca se ejecuta; el descubrimiento rechaza ese codebase salvo que `functions.unservedTriggers` sea `"report"`, igual que para los productos enumerados en [Disparadores admitidos](../functions/#disparadores-admitidos) en la página de Cloud Functions.
+
+## Funciones de bloqueo de Auth y la comprobación de audiencia
+
+Con firebase-functions (Python) 0.6.0 y firebase-tools 15.28.2, producción entrega un token cuya audiencia `cloudfunctions.net` el SDK de Python rechaza: la función falla en modo cerrado y el registro devuelve 503 `Error code: 47`.
+
+Por defecto fireemu ejecuta la función, como hace el emulador oficial, e imprime una línea de diagnóstico sobre este fallo de producción. Para reproducir el fallo, establece `productionExact` en `true`, o establece `functions.authBlockingToken` en `"production"` bajo el perfil strict.
+
+Las funciones de Node reciben el mismo token con la forma de producción pero no lo verifican, así que se comportan como antes. Una versión posterior de firebase-functions o firebase-tools puede cambiar la regla de audiencia; este ajuste sigue al SDK instalado en el propio entorno virtual del codebase, y solo se ha registrado la 0.6.0.
+
+## Cuerpos de eventos
+
+Los handlers de CloudEvent pueden leer `flask.request`: representa el `POST /` que los entrega, incluidos los encabezados `ce-*` del modo binario, el tipo de contenido, la longitud y el cuerpo. Firestore usa un cuerpo protobuf.
+
+Bajo `strict`:
+
+- Pub/Sub usa JSON compacto ordenado con un salto de línea.
+- Storage usa su diseño JSON con sangría registrado.
+- Eventarc conserva el texto del cuerpo JSON del publicador.
+- El contexto de traza es un encabezado `traceparent` simple en lugar de un atributo de CloudEvent.
+- Firestore tiene `dataschema` (solo bajo `strict`; registrado para eventos de creación, los demás tipos de evento no se han observado).
+
+Para los cuerpos de eventos JSON, el perfil emulator conserva el texto del valor JSON enmarcado del daemon, salvo que Pub/Sub añade los alias en snake case del SDK y compacta el cuerpo.
+
+El diseño del cuerpo de Realtime Database no está registrado. Los encabezados de autorización e identidad de Cloud Run, como `Function-Execution-Id`, `Forwarded` y `X-Forwarded-For`, no se reproducen.
+
+## Verificación en producción
+
+Los codebases de Python se verifican contra producción para los casos registrados de seis familias de eventos, cada una a partir de dos grabaciones independientes de producción bajo el perfil `strict`: Firestore (eventos de creación y actualización), Pub/Sub, Cloud Storage (el evento finalized), eventos personalizados de Eventarc, Cloud Scheduler y Cloud Tasks (paso directo HTTP). La comparación cubre los valores y las proyecciones de solicitud que ve el SDK de Python; consulta las [tablas de compatibilidad](../../compatibility/#production-verification).
+
+Las funciones de bloqueo de Auth de Python no están verificadas, y el despliegue de un codebase de Python en producción no se comparó. Las diferencias del perfil emulator respecto al comportamiento `strict` registrado se enumeran como diferencias conocidas en esas tablas y en las secciones siguientes.
+
+## Diferencias con producción y con la CLI de Firebase
+
+Los codebases de Python difieren de producción y de la CLI de Firebase en lo siguiente.
+
+### Un proceso por codebase
+
+Por defecto un proceso de Python sirve todo el codebase, mientras que producción da a cada función su propia instancia y la CLI su propio proceso. `functions.isolation = "function"` inicia en cambio un proceso por función (consulta [Aislamiento de procesos](../functions/#aislamiento-de-procesos-functionsisolation)); el resto de esta sección y la sección de [secretos](#secretos) describen el valor predeterminado.
+
+- El estado a nivel de módulo se comparte entre funciones.
+- El callback `@init` se ejecuta una vez por proceso, en la primera llamada de cualquier función.
+- `FUNCTION_TARGET`, `FUNCTION_SIGNATURE_TYPE` y `K_SERVICE` nombran la función que se inició más recientemente cuando las llamadas se solapan.
+
+### Tiempo
+
+El tiempo es tiempo real. El código de Python no se traslada al reloj virtual, así que `datetime.now()` ignora los ajustes de `daemon.clock`. Una configuración que pide una fecha virtual para el runner de Functions se rechaza para un codebase de Python.
+
+### Recarga del código fuente
+
+Los cambios en el código fuente de Python se recargan automáticamente.
+
+- Una edición válida inicia un reemplazo a partir de una instantánea coherente del código fuente.
+- Una edición no válida mantiene sirviendo la última generación buena conocida, y ediciones válidas posteriores pueden recuperarla.
+- Los enlaces simbólicos ordinarios del código fuente a archivos o directorios, incluidos destinos fuera del directorio del código fuente, se materializan con sus nombres de enlace en cada instantánea; las ediciones a través del alias provocan recargas.
+- Los cambios dentro de `venv` no provocan recargas, así que reinicia Fireemu tras cambiar las dependencias instaladas o el entorno virtual.
+- Las cachés de bytecode de Python (`__pycache__`, `.pyc` y `.pyo`) se ignoran.
+
+### Handlers `async def`
+
+Un handler `async def` no se ejecuta. El SDK de Python nunca hace `await` de un handler, así que en producción el cuerpo de una función de eventos o programada `async` se omite en silencio (y una función HTTP `async` responde 500). Fireemu informa de esa invocación como fallida con ese motivo, y una función HTTP `async` responde 500 con él. Declara el handler con `def`.
+
+### Funciones programadas
+
+Una función programada se llama como la llama Cloud Scheduler, a través del wrapper de solicitud del SDK. Un handler que lanza una excepción es registrado por el SDK y hace fallar el intento. La hora de programación que ve el handler se escribe en hora de Los Ángeles en el perfil strict y en UTC en el perfil emulator (el mismo instante).
+
+### Secretos
+
+Los secretos de `.secret.local` están en el entorno solo mientras se ejecuta una función que los declara:
+
+- Una función con un secreto se ejecuta sola, en orden de llegada.
+- Toda función sin uno se ejecuta con todos los secretos locales ocultos, junto a otras funciones así. Las funciones sin secretos nunca se retrasan entre sí.
+- El aislamiento dura la invocación y su respuesta. El trabajo que una función deja en marcha después, como un hilo que inició o un proceso hijo, se ejecuta en el proceso compartido y puede ver lo que contenga el entorno en ese momento; el runner de Node se comporta igual.
+- Una función que tiene un secreto y llama de forma síncrona a otra función del mismo codebase (una solicitud HTTP a su propia URL, por ejemplo) espera la compuerta que ella misma sostiene y nunca termina, como en el runner de Node. Llama a esas funciones de forma asíncrona o no des un secreto al llamante.
+
+### Formato de la hora del evento
+
+Los handlers de Storage y Eventarc de Python analizan el `time` del evento con un patrón de segundos fraccionarios, por lo que el SDK de producción falla con una hora de segundos enteros. El perfil strict entrega la hora como lo hace producción. El perfil emulator añade `.000` a una hora de segundos enteros, ya que los eventos del emulador oficial siempre llevan milisegundos.
+
+### Depurador
+
+`--inspect-functions` se ignora con una advertencia, como hace la CLI de Firebase.
+
+### App Check
+
+El propio SDK de Python comprueba App Check para un callable de Python, como en producción. Verifica el token `X-Firebase-AppCheck` con el Admin SDK, y Fireemu apunta esa comprobación a las claves del emulador de App Check, de modo que solo se acepta un token que firmó el emulador y un callable con `enforce_app_check=True` responde 401 a cualquier otra llamada.
+
+- El runner obtiene esas claves por sí mismo, solo desde una dirección loopback, sin seguir redirecciones ni usar un proxy.
+- Además de las comprobaciones del SDK, exige una expiración y un emisor exactamente de la forma que emite el emulador, y su número de proyecto debe concordar con la audiencia `projects/<number>`; la regla de audiencia es la propia del SDK (`projects/<project id>`).
+- Esto requiere PyJWT 2.10.1 o posterior, que la restricción propia del Admin SDK ya implica; con uno anterior no se anuncia nada y el encabezado se elimina.
+- Funciona cuando la ejecución tiene un emulador de App Check, que el perfil strict inicia con Functions. Sin uno, el encabezado se elimina antes de la función y ningún callable ve un token.
+
+Diferencias con Node:
+
+- El SDK de Python comprueba el token solo contra las claves. Los tokens de un callable de Node además los comprueba el daemon contra la época actual del proyecto y el estado de la app, así que, a diferencia de allí, un token de Python sigue siendo válido tras restablecer el proyecto o desactivar la app hasta que expira.
+- No hay autoprueba de inicio del SDK.
+- El SDK comprueba los tiempos del token contra el tiempo real mientras el emulador los firma con su propio reloj, así que un token emitido después de adelantar el reloj por delante del tiempo real se rechaza por todavía no válido.
+- El consumo de tokens de uso limitado (`verify_token(..., consume=True)`) se rechaza.
+- Una configuración que activa App Check explícitamente (`appCheck` en el archivo de configuración) se niega a iniciar con un codebase de Python.
+
+## Relacionado
+
+- [Cloud Functions](../functions/)
+- [App Check](../app-check/)
+- [Tiempo y funciones programadas](../../guides/time/)
+- [Perfiles](../../guides/profiles/)

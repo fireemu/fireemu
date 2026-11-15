@@ -1,0 +1,422 @@
+---
+title: App Check
+description: Prueba cómo Authentication, Firestore, Storage y las funciones callable tratan las solicitudes con y sin un token válido de App Check, usando tokens de depuración locales.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu incluye una implementación local de App Check: un intercambio de tokens de depuración, un JWKS y la verificación para Authentication, Firestore, Storage y las funciones callable. La Local Emulator Suite no incluye un emulador de App Check.
+
+<Facts items={[
+  { label: 'Estado', value: 'Pruebas locales' },
+  { label: 'Puerto predeterminado', value: '9099 (el puerto de Authentication)' },
+  { label: 'Se inicia', value: 'Por defecto' },
+]} />
+
+## Qué puedes probar
+
+- El intercambio de tokens de depuración, que funciona sin configuración bajo `strict` ([Intercambiar un token de depuración sin configuración](#intercambiar-un-token-de-depuración-sin-configuración)).
+- La aplicación para Authentication, Firestore y Storage: `off`, `unenforced` o `enforced` ([Registrar apps y exigir](#registrar-apps-y-exigir)).
+- Funciones callable con `enforceAppCheck`, incluido `request.app` ([Funciones callable](#funciones-callable)).
+- El rechazo de un token ausente, mal formado, expirado o con una firma incorrecta.
+- `getAppCheck().verifyToken()` dentro de una función `onRequest` ([Verificar con el Admin SDK](#verificar-con-el-admin-sdk-getappcheckverifytoken)).
+
+## Conectar
+
+El endpoint de intercambio es `POST /v1/projects/{project}/apps/{appId}:exchangeDebugToken`. Su host es `FIREEMU_APP_CHECK_EMULATOR_HOST`: `fireemu exec` lo establece para tu comando, y `fireemu up` lo imprime en la salida de inicio. Es la dirección del listener de control, que es el puerto de Authentication, 9099 por defecto, cuando Authentication está seleccionado.
+
+### Intercambiar un token de depuración sin configuración
+
+Bajo el perfil `strict`, el intercambio de tokens de depuración, el JWKS y el límite de confianza de los callables se sirven sin un bloque `appCheck`, y la base de cada producto es `off`.
+
+- Cualquier token de depuración bien formado (un UUIDv4) se intercambia por un token para cualquier app con un ID de app estándar (`1:<project number>:<platform>:<id>`). La app se registra en el primer uso.
+- Por tanto, un callable con `enforceAppCheck` puede probarse con un token del intercambio, sin registro de apps ni digest, mientras que un token ausente o mal formado se sigue rechazando.
+- El par de claves se genera en segundo plano después del inicio, así que el primer intercambio no espera por él.
+
+Por ejemplo, con `fireemu up` en ejecución y sin bloque `appCheck`, cualquier UUIDv4 se intercambia (el host es el que se imprime como `FIREEMU_APP_CHECK_EMULATOR_HOST`):
+
+```sh
+curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aweb%3Alocal-test-app:exchangeDebugToken' \
+  -H 'content-type: application/json' \
+  -d "{\"debugToken\":\"$(uuidgen | tr 'A-F' 'a-f')\",\"limitedUse\":false}"
+# {"token":"eyJhbGciOiJSUzI1NiIs...", "ttl": "..."}
+```
+
+Una cadena que no es un UUIDv4 se rechaza: `403 PERMISSION_DENIED`, `App attestation failed.`
+
+`appCheck.debugTokens` controla esto. Establecerlo tú mismo en `"any"` junto a `appCheck.enabled: true` también permite que cualquier UUIDv4 se intercambie para las apps que registraste, sean cuales sean los digests que lleven. Es `"any"` en ese caso y `"registered"`, la regla de producción, bajo `productionExact`, bajo el perfil `emulator` y en cualquier bloque `appCheck` que no establece la clave. Con `"registered"` no se sirve nada hasta que [actives App Check](#registrar-apps-y-exigir).
+
+### Obtener un token desde el SDK web
+
+`@firebase/app-check` siempre llama al endpoint de intercambio de producción, así que usa un `CustomProvider` que intercambie el token de depuración con Fireemu. Un bundle de navegador no puede leer `process.env`, así que dale el host mediante la propia configuración de tu bundler.
+
+<Tabs syncKey="code-language">
+<TabItem label="TypeScript">
+
+```ts
+import { initializeApp } from 'firebase/app';
+import {
+  CustomProvider,
+  getToken,
+  initializeAppCheck,
+  type AppCheckTokenResult,
+} from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+const debugToken = process.env.DEBUG_TOKEN;
+if (!host || !debugToken) throw new Error('Set FIREEMU_APP_CHECK_EMULATOR_HOST and DEBUG_TOKEN');
+
+async function exchangeDebugToken(): Promise<AppCheckTokenResult> {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken, limitedUse: false }),
+  });
+  if (!response.ok) throw new Error(`exchange refused: ${response.status}`);
+  const body = (await response.json()) as { token: string; ttl: string };
+  const ttlSeconds = Number.parseInt(body.ttl.replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+const appCheck = initializeAppCheck(app, {
+  provider: new CustomProvider({ getToken: exchangeDebugToken }),
+});
+
+const { token } = await getToken(appCheck);
+```
+
+</TabItem>
+<TabItem label="JavaScript">
+
+```js
+import { initializeApp } from 'firebase/app';
+import { CustomProvider, initializeAppCheck } from 'firebase/app-check';
+
+const APP_ID = '1:1234567890:web:local-test-app';
+const host = process.env.FIREEMU_APP_CHECK_EMULATOR_HOST;
+
+async function exchangeDebugToken() {
+  const url = `http://${host}/v1/projects/demo-app/apps/${encodeURIComponent(APP_ID)}:exchangeDebugToken`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ debugToken: process.env.DEBUG_TOKEN, limitedUse: false }),
+  });
+  const body = await response.json();
+  const ttlSeconds = Number.parseInt(String(body.ttl).replace(/s$/, ''), 10);
+  return { token: body.token, expireTimeMillis: Date.now() + ttlSeconds * 1000 };
+}
+
+const app = initializeApp({ projectId: 'demo-app', apiKey: 'fake-api-key', appId: APP_ID });
+initializeAppCheck(app, { provider: new CustomProvider({ getToken: exchangeDebugToken }) });
+```
+
+</TabItem>
+</Tabs>
+
+Ejecútalo con las variables establecidas. Bajo `fireemu exec` solo `DEBUG_TOKEN` es tuya:
+
+```sh
+export DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+
+# fireemu exec sets FIREEMU_APP_CHECK_EMULATOR_HOST for the command
+npx fireemu exec -- node provider.mjs
+
+# with fireemu up running, copy the host from its startup output
+FIREEMU_APP_CHECK_EMULATOR_HOST=127.0.0.1:9099 node provider.mjs
+```
+
+La versión en TypeScript se ejecutó contra un `fireemu up` 0.48.0 local con `firebase` 12.18.0 y Node.js 24 (type stripping), y `getToken` devolvió un token. Sin bloque `appCheck`, cualquier UUIDv4 se intercambia; con apps registradas, el digest del token debe ser uno de los valores `debugTokenSha256` de la app.
+
+## Configurar
+
+### Registrar apps y exigir
+
+Para exigir App Check en Authentication, Firestore o Storage, o para requerir el registro, actívalo y registra la app con los digests SHA-256 de sus tokens de depuración. La configuración almacena solo digests, nunca un token en bruto.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[appCheck]
+# Enable the App Check product baseline: true or false.
+enabled = true
+
+[[appCheck.apps]]
+# App project ID: starts with a lowercase letter; up to 63 lowercase letters, digits, or hyphens.
+projectId = "demo-app"
+# App project number: a positive decimal string of up to 32 digits.
+projectNumber = "1234567890"
+# App ID: a string of 1 to 256 characters.
+appId = "1:1234567890:web:local-test-app"
+# Registered debug token digests: up to 128 unique lowercase SHA-256 hex strings
+# (this one is the digest of the example token 2f1e6d3c-5b7a-4c1e-9d0a-8e4b7c6a1f23; use your own)
+debugTokenSha256 = ["ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"]
+
+[appCheck.services]
+# Auth App Check mode: "off", "unenforced", or "enforced".
+auth = "unenforced"
+# Firestore App Check mode: "off", "unenforced", or "enforced".
+firestore = "enforced"
+# Storage App Check mode: "off", "unenforced", or "enforced".
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "appCheck": {
+    "enabled": true,
+    "apps": [
+      {
+        "projectId": "demo-app",
+        "projectNumber": "1234567890",
+        "appId": "1:1234567890:web:local-test-app",
+        "debugTokenSha256": [
+          "ceab494aa80e99ae2521e0a8c7b7a3b2d8fbe38e725ad31a29a888b997cfa4a5"
+        ]
+      }
+    ],
+    "services": {
+      "auth": "unenforced",
+      "firestore": "enforced",
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Cada servicio acepta `off`, `unenforced` (los tokens se comprueban y se registran, las solicitudes pasan igualmente) o `enforced` (las solicitudes sin un token válido se rechazan antes de que se ejecuten las Security Rules). Un proyecto sin una app registrada no puede usar App Check, así que un servicio con `enforced` rechaza todas las solicitudes dirigidas a él.
+
+`--only` conserva el verificador que necesita una base configurada: con `appCheck.services.firestore = "enforced"`, `--only firestore` sigue rechazando una solicitud sin un token válido, y el banner de inicio indica que se incluyó el verificador.
+
+### Generar un token de depuración y su digest
+
+Un token de depuración es un UUIDv4, y su digest se calcula sobre la forma en minúsculas. Genera un token para pruebas y calcula su digest:
+
+```sh
+DEBUG_TOKEN=$(uuidgen | tr 'A-F' 'a-f')
+printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
+```
+
+Cualquier otra cadena nunca coincide, y el intercambio responde 403.
+
+### Solicitudes a Storage desde código de servidor
+
+Con Storage en `enforced`, el código de servidor que usa el Admin SDK o `gcloud` (una biblioteca cliente, no un navegador) todavía tiene que llegar a Storage sin un token. Producción no aplica App Check a ese tráfico: el Admin SDK se autentica con una cuenta de servicio mediante OAuth, y la aplicación cubre la API de Firebase Storage que llaman los SDK cliente. El emulador no tiene OAuth, así que `appCheck.storageServerRequests` decide cómo reconoce ese tráfico:
+
+| | `"loopback"` (predeterminado) | `"capability"` |
+|---|---|---|
+| Admitido sin token | Una solicitud a la API JSON de Cloud Storage desde un peer loopback a un `Host` loopback, sin evidencia de navegador y sin credencial de SDK cliente ([detalles](#how-loopback-recognises-a-request)) | Solo una solicitud que lleve la capacidad por ejecución que `fireemu exec` coloca en el userinfo de `STORAGE_EMULATOR_HOST` (`http://fireemu:<capability>@host:port`) |
+| `STORAGE_EMULATOR_HOST` | El `http://host:port` simple, que aceptan todas las versiones de `@google-cloud/storage` y `firebase-admin` | Con la capacidad. `@google-cloud/storage` 8.1 y posteriores (`firebase-admin` 14.4 y posteriores) rechazan una URL con credenciales incrustadas |
+| `file.save()` y subidas reanudables | Funcionan: una continuación reanudable es una solicitud así | El Admin SDK falla bajo aplicación con esas versiones o con subidas reanudables: una URL de continuación no lleva la capacidad |
+| Un proceso local que no es un navegador (`curl`, un script de pruebas) | Pasa sin token | Se rechaza sin la capacidad |
+| Qué demuestra un servicio de Storage `enforced` | No que un cliente local presentó un token | Que nada salvo la capacidad pasó |
+| Un contenedor que llega al emulador mediante un nombre de host no loopback (`host.containers.internal`, un puerto publicado en una dirección de LAN) | No se reconoce: necesita un token o `"capability"` | Necesita la capacidad |
+| El Admin SDK dentro de una Cloud Function que ejecutas bajo `fireemu` | Pasa: recibe el mismo `STORAGE_EMULATOR_HOST` simple (en producción usa la cuenta de servicio de la función, que App Check no comprueba) | No pasa |
+
+La API de Firebase Storage (`/v0`, la que usan `firebase/storage` y los SDK móviles) siempre necesita un token, y también cualquier solicitud que parezca venir de una página o de otro host. Es igual bajo los perfiles emulator y strict y bajo `productionExact`, porque es el comportamiento de producción. Sin la aplicación en Storage, `STORAGE_EMULATOR_HOST` es siempre el `http://host:port` simple.
+
+<details id="how-loopback-recognises-a-request">
+<summary>Cómo reconoce <code>"loopback"</code> una solicitud</summary>
+
+`"loopback"` admite una solicitud a una ruta de la API JSON de Cloud Storage (`/storage/v1`, `/upload/storage/v1`, `/download/storage/v1`) que:
+
+- viene de un peer loopback;
+- se dirige a un `Host` loopback (`localhost` o una dirección IP loopback como `127.0.0.1` o `[::1]`; un nombre DNS reenlazado como `evil.example` no lo es);
+- no lleva evidencia de navegador: ningún encabezado `Origin`, `Sec-Fetch-Site`, `Sec-Fetch-Dest`, `Referer` o `Cookie` con un valor no vacío (uno vacío cuenta como ausente);
+- no presenta la credencial `Authorization: Firebase <token>` del SDK cliente.
+
+La forma corta `/b/{bucket}` que usa el Admin SDK para los metadatos de un bucket cuenta como una ruta de la API JSON. Una continuación de subida reanudable es una solicitud así, por lo que `file.save()` funciona. `fireemu exec` exporta el `STORAGE_EMULATOR_HOST=http://host:port` simple.
+
+</details>
+
+Para admitir solo las solicitudes que llevan la capacidad:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[appCheck]
+# Enable the App Check product baseline: true or false.
+enabled = true
+# Storage server request admission: "loopback" or "capability".
+storageServerRequests = "capability"
+
+[appCheck.services]
+# Storage App Check mode: "off", "unenforced", or "enforced".
+storage = "enforced"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "appCheck": {
+    "enabled": true,
+    "storageServerRequests": "capability",
+    "services": {
+      "storage": "enforced"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Funciones callable
+
+`enforceAppCheck: true` en un callable de Node rechaza una llamada sin un token válido con el error callable `UNAUTHENTICATED` antes de que se ejecute la función (una respuesta 401, o el registro de error SSE con `200` para una llamada de streaming). Un token válido rellena `request.app`.
+
+La protección contra repeticiones no es compatible. Una llamada que presenta un token válido a un callable con `consumeAppCheckToken: true` se rechaza con 501 `APP_CHECK_REPLAY_UNSUPPORTED`, de modo que una prueba nunca puede pasar con un token que producción habría consumido.
+
+Los tokens se firman con una clave que pertenece a una instancia del daemon. Los callables de Node y otros servicios verificados por el daemon los rechazan tras un reinicio de sesión o una restauración de instantánea.
+
+Los callables de Python verifican las firmas y los claims de los tokens usando las claves de firma y el tiempo real, sin comprobar el estado actual de la app ni la época del proyecto, así que restablecer un proyecto o desactivar una app no revoca un token por lo demás válido antes de que expire. Python también rechaza el consumo de tokens y la configuración explícita de App Check; consulta [Cloud Functions (Python)](../functions-python/#diferencias-con-producción-y-con-la-cli-de-firebase) para la configuración y las restricciones.
+
+## Funciones HTTP ordinarias (`onRequest`)
+
+A diferencia de un callable, un handler `onRequest` recibe el encabezado `X-Firebase-AppCheck` sin verificación automática ni `request.app`. Tu handler debe verificarlo y decidir qué puede hacer una app verificada. `enforceAppCheck` en un callable no protege un endpoint HTTP aparte.
+
+### Verificar con el Admin SDK (`getAppCheck().verifyToken()`)
+
+El código que despliegas funciona sin cambios: `getAppCheck().verifyToken(token)` dentro de una función `onRequest` lo responde el daemon, no las claves de Google.
+
+```js
+import { onRequest } from 'firebase-functions/v2/https';
+import { initializeApp } from 'firebase-admin/app';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+initializeApp();
+
+export const api = onRequest(async (req, res) => {
+  try {
+    const { appId } = await getAppCheck().verifyToken(req.get('X-Firebase-AppCheck'));
+    // application logic for a verified app
+  } catch {
+    res.status(401).send('Unauthorized');
+  }
+});
+```
+
+El runner parchea el `firebase-admin` que resuelve desde tu codebase antes de que se cargue tu código. El SDK sigue decodificando el token y comprobando por sí mismo el algoritmo, la audiencia, el emisor y el subject; solo el paso de la firma se sustituye por una consulta al daemon a través de la tubería privada del runner. El daemon responde con el mismo verificador que usa para las funciones callable, contra la época actual del proyecto y el registro de apps, sobre el reloj virtual, y no se almacena nada en caché. Por tanto, un token emitido antes de un reinicio de sesión en el sitio o una restauración de instantánea se rechaza, exactamente igual que un token para el que el daemon ya no tiene la clave (`app-check/invalid-argument`, "... does not correspond to a known public key ..."). Los errores son los propios del SDK, producidos por su propio mapeador de errores.
+
+- Compatible: `firebase-admin` 13 y 14, resueltos desde el codebase de Functions. Probado con 14.3.0 (CI) y 13.10.0; 14.5.0 no se instala en CI porque su código de App Check es idéntico al de 14.3.0 (los archivos `token-verifier.js`, `app-check.js`, `app-check-api-client-internal.js` y `utils/jwt.js` difieren solo en el banner de versión), y una prueba fija el contenido de esos archivos para que una actualización de dependencia que los cambie haga fallar el CI. Fuera de ese rango, o si los internos del SDK cambiaron de modo que la autoprueba de inicio falla, no se parchea nada, el daemon imprime una nota de inicio y `verifyToken` rechaza los tokens de Fireemu (nunca acepta uno que no puede comprobar). Una segunda copia de `firebase-admin` en otro lugar de `node_modules` no es la que resuelve el runner y permanece sin modificar.
+- `verifyToken(token, { consume: true })` se rechaza con `app-check/unimplemented` después de que el token se verificó. El consumo de uso limitado no está implementado, y la API de App Check de producción nunca se llama. `getAppCheck().createToken()` es otra llamada distinta y sigue yendo al endpoint de intercambio de Google.
+- El daemon verifica para el proyecto al que pertenece el runner de Functions. Una llamada cuya app nombra otro ID de proyecto se responde como una clave desconocida.
+- Divergencia con producción: producción acepta un token para una app que no está registrada o está desactivada hasta que el token expira. Fireemu lo rechaza, en todos los perfiles. Un token cuyo `iat` está en el futuro se verifica, como en producción.
+- Nada de esto hace que `onRequest` verifique automáticamente. Tu handler sigue decidiendo qué puede hacer una app verificada, y App Check identifica una app, no un usuario.
+
+### Descubrimiento de endpoints en cada proceso
+
+| Proceso | Enrutamiento disponible |
+| --- | --- |
+| Hijo de `fireemu exec` o `world.environment` | `FIREEMU_APP_CHECK_EMULATOR_HOST` y `FIREEMU_APP_CHECK_JWKS_URL` cuando App Check está disponible. La URL del JWKS es `http://host:port/v1/jwks`. |
+| Runner de Functions incluido | `FUNCTIONS_EMULATOR=true` y las mismas variables de host/JWKS de App Check cuando App Check está disponible, incluso cuando Auth no está seleccionado. Los valores heredados, de dotenv o de secretos locales no pueden reemplazar estas dos rutas; se eliminan cuando App Check no está disponible. |
+| Proceso de pruebas padre | Las variables del world no se instalan en `process.env`; usa `world.environment` explícitamente. |
+
+Usa `FIREEMU_APP_CHECK_JWKS_URL` dentro del runner. No derives la URL de claves de un encabezado de solicitud ni de un token sin verificar.
+
+### Verificación local de firma y claims sin el Admin SDK
+
+Si tu middleware verifica con una biblioteca de JWKS en lugar del Admin SDK, instala `jose` en el paquete de Functions. El número de proyecto, el ID de proyecto y los IDs de app permitidos que siguen deben provenir de tu configuración de pruebas. El conjunto de apps permitidas debe reflejar las apps activadas que pretendes que admita este endpoint. Este ejemplo admite deliberadamente solo loopback.
+
+```js
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { getAppCheck } from 'firebase-admin/app-check';
+
+const projectId = 'demo-app';
+const projectNumber = '1234567890';
+const allowedApps = new Set(['1:1234567890:web:local-test-app']);
+let localKeys;
+
+export async function verifyHttpAppCheck(token) {
+  if (process.env.FUNCTIONS_EMULATOR !== 'true') {
+    return getAppCheck().verifyToken(token);
+  }
+  if (!localKeys) {
+    const address = process.env.FIREEMU_APP_CHECK_JWKS_URL;
+    if (!address) throw new Error('Local App Check is unavailable');
+    const url = new URL(address);
+    if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) || !url.port ||
+        url.username || url.password || url.pathname !== '/v1/jwks' || url.search || url.hash) {
+      throw new Error('Expected the loopback App Check JWKS URL');
+    }
+    localKeys = createRemoteJWKSet(url);
+  }
+  const now = new Date();
+  const { payload, protectedHeader } = await jwtVerify(token, localKeys, {
+    algorithms: ['RS256'],
+    issuer: `https://firebaseappcheck.googleapis.com/${projectNumber}`,
+    requiredClaims: ['sub', 'aud', 'iat', 'exp', 'jti'],
+    currentDate: now,
+    clockTolerance: 0,
+  });
+  const audiences = [`projects/${projectNumber}`, `projects/${projectId}`];
+  if (protectedHeader.typ !== 'JWT' ||
+      typeof protectedHeader.kid !== 'string' || !protectedHeader.kid ||
+      !Array.isArray(payload.aud) || !audiences.every(a => payload.aud.includes(a)) ||
+      !allowedApps.has(payload.sub) ||
+      !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) ||
+      payload.iat > Math.floor(now.getTime() / 1000) || payload.exp <= payload.iat ||
+      typeof payload.jti !== 'string' || !payload.jti) {
+    throw new Error('Invalid local App Check token');
+  }
+  return { ...payload, app_id: payload.sub };
+}
+```
+
+Llama a esto desde tu handler `onRequest` con `req.get('X-Firebase-AppCheck')`. Rechaza un encabezado ausente o un fallo de verificación con un 401 genérico antes de ejecutar la lógica de la aplicación. No devuelvas detalles de la verificación ni registres tokens. App Check identifica una app, no un usuario: conserva también tus comprobaciones de Auth y de pertenencia.
+
+El `new Date()` del ejemplo debe usar el mismo reloj que el intercambio de tokens. Los test worlds usan por defecto Date virtual en Functions; un daemon simple que use un reloj fijo también necesita `functions.clock.date = "virtual"`. El proceso de pruebas padre y los hijos de `world.run` conservan el Date nativo, así que copiar este verificador allí requiere suministrar explícitamente la hora del world.
+
+**Esto es verificación de firma y de claims, no el verificador completo de Fireemu.** Un JWKS no expone la época actual del proyecto ni el registro de apps; la ruta del Admin SDK anterior sí. El ejemplo no puede rechazar un token emitido anteriormente tras un reinicio de sesión en el sitio, una restauración de instantánea, la eliminación de un proyecto o la desactivación de una app mientras la misma clave de firma siga siendo utilizable. Comprobar solo que existe `fireemu_epoch` no lo solucionaría. Tampoco implementa el consumo de tokens ni la protección contra repeticiones.
+
+Para las pruebas que usan esta receta, recrea el world completo con `world.reset()` (o elimínalo y crea otro), incluido el runner de Functions, y obtén un token nuevo. Eso reemplaza las claves del daemon y la caché del verificador. No tomes este rodeo como prueba del comportamiento de invalidación por época del daemon; usa su límite de verificación de callables para probar ese comportamiento.
+
+## Rechazos de Firestore WebChannel
+
+Los rechazos de App Check de Firestore WebChannel llegan como un error de protocolo terminal `PERMISSION_DENIED` tras la negociación de transporte HTTP 200, a diferencia de un rechazo REST con HTTP 403. Un token de reemplazo no válido o de otra app en un canal existente no puede reproducir documentos retenidos. Consulta [Streams de escucha](../firestore/#listen-streams).
+
+## Diferencias con producción
+
+Estas quedan fuera del alcance a propósito:
+
+- **La atestación real** mediante Play Integrity, App Attest, DeviceCheck o reCAPTCHA. El App Check local usa tokens de depuración.
+- **Tokens de uso limitado y protección contra repeticiones.** Un callable con `consumeAppCheckToken: true` se rechaza con 501 `APP_CHECK_REPLAY_UNSUPPORTED`, y `verifyToken(token, { consume: true })` responde `app-check/unimplemented`, de modo que una prueba no puede pasar con un token que producción habría consumido.
+- **Tokens que sobreviven a su daemon.** Se firman con una clave que pertenece a una instancia del daemon (consulta [Funciones callable](#funciones-callable)).
+- **Los callables de Python** tienen más límites; consulta [Cloud Functions (Python)](../functions-python/#diferencias-con-producción-y-con-la-cli-de-firebase).
+
+Dos comportamientos difieren donde se describen más arriba:
+
+- `verifyToken` rechaza un token para una app que no está registrada o está desactivada, en todos los perfiles; producción lo acepta hasta que expira ([Verificar con el Admin SDK](#verificar-con-el-admin-sdk-getappcheckverifytoken)).
+- Con `"loopback"`, un servicio de Storage `enforced` admite sin token solicitudes locales que no son de navegador ([Solicitudes a Storage desde código de servidor](#solicitudes-a-storage-desde-código-de-servidor)).
+
+## Relacionado
+
+- [Authentication](../auth/), [Firestore](../firestore/) y [Storage](../storage/): los servicios que App Check puede exigir.
+- [Functions](../functions/) y [Cloud Functions (Python)](../functions-python/#diferencias-con-producción-y-con-la-cli-de-firebase): callables y handlers `onRequest`.
+- [Perfiles](../../guides/profiles/): `strict`, `emulator` y `productionExact`.
+- [Esquema de configuración](../../reference/configuration/): todos los ajustes de `appCheck`.

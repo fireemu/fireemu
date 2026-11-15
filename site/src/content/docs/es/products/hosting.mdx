@@ -1,0 +1,238 @@
+---
+title: Firebase Hosting
+description: Sirve sitios de Firebase Hosting en local desde firebase.json, con redirecciones, rewrites, encabezados, URLs limpias, localización y rewrites a funciones locales.
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu sirve sitios de Firebase Hosting desde la entrada `hosting` de `firebase.json`: archivos estáticos, redirecciones, rewrites, encabezados personalizados, URLs limpias, gestión de la barra final y contenido localizado. Cada sitio configurado tiene su propio listener local, y un rewrite puede enviar una solicitud a una función de un codebase de Functions en la misma ejecución.
+
+<Facts items={[
+  { label: 'Estado', value: 'Compatible' },
+  { label: 'Puerto predeterminado', value: '5000' },
+  { label: 'Se inicia', value: 'Cuando firebase.json tiene un directorio hosting.public' },
+  { label: 'Verificación en producción', value: 'Verificado para los casos registrados', href: 'compatibility/#production-verification' },
+]} />
+
+Hosting está **verificado contra producción para sus casos registrados**. El perfil `strict`, el predeterminado, responde como respondió Firebase Hosting a 279 solicitudes registradas dos veces en canales de vista previa (un corpus de 201 solicitudes y un corpus de seguimiento de 78 solicitudes), salvo por las [diferencias conocidas](#diferencias-conocidas-y-respuestas-no-registradas). El perfil `emulator` se compara sin conexión con `firebase-tools` 15.28.2 sobre un conjunto finito de casos y no hace ninguna afirmación sobre producción. Consulta [Perfiles](#perfiles) y [Estado de la verificación](#estado-de-la-verificación).
+
+Hosting está disponible desde v0.45.0. El comportamiento que cambió en una versión posterior se enumera en [Cambios en v0.47.0](#cambios-en-v0470) y [Cambios en v0.49.0](#cambios-en-v0490).
+
+## Qué puedes probar
+
+- Archivos estáticos, URLs limpias, barras finales y la página 404 ([Orden de las solicitudes](#orden-de-las-solicitudes)).
+- Reglas `redirects`, `rewrites` y `headers`, con sus globs y capturas ([Claves del objeto `hosting`](#claves-del-objeto-hosting)).
+- Contenido localizado elegido por idioma y país (`i18n`).
+- Varios sitios desde un mismo `firebase.json`, cada uno en su propio puerto ([Iniciar Hosting](#iniciar-hosting)).
+- Rewrites a funciones de la misma ejecución ([Rewrites a funciones](#rewrites-a-funciones)).
+- Encabezados de respuesta, tipos de contenido, compresión y solicitudes condicionales de producción bajo `strict` ([Perfiles](#perfiles)).
+
+## Iniciar Hosting
+
+Hosting se inicia cuando `firebase.json` tiene un objeto `hosting` con un directorio `public`, o un array de objetos de sitio. Un solo sitio no necesita selector:
+
+```json
+{
+  "hosting": {
+    "public": "public"
+  }
+}
+```
+
+```sh
+npx fireemu up
+```
+
+Para varios sitios, da a cada entrada un `site` o un `target`. Los targets se resuelven mediante `.firebaserc` para el proyecto de Firebase seleccionado:
+
+```json
+{
+  "hosting": [
+    { "target": "app", "public": "public/app" },
+    { "site": "docs-site-id", "public": "public/docs" }
+  ]
+}
+```
+
+```json
+{
+  "targets": {
+    "my-project": {
+      "hosting": {
+        "app": ["app-site-id"]
+      }
+    }
+  }
+}
+```
+
+### Puertos y URLs
+
+- El puerto predeterminado es el 5000. Si el puerto está ocupado y no configuraste uno, Fireemu busca hacia arriba y nunca toma el 5001, como hace `firebase-tools`. Un puerto que establezcas nunca se mueve. Establécelo con `emulators.hosting.port` en `firebase.json`, `daemon.hostingPort` en un archivo de configuración de Fireemu, o `--hosting-port`.
+- El primer sitio usa el puerto de Hosting configurado (5000 por defecto). Los sitios siguientes usan la convención local de la CLI de Firebase empezando cuatro puertos después del primario, omitiendo el 5001 y los puertos ocupados.
+- La salida de inicio imprime la URL de cada sitio. El descriptor de disponibilidad conserva `hostingUrl` para el primer sitio y añade `hostingSites` con las URLs de todos los sitios.
+- El Emulator Hub lista la dirección enlazada primaria bajo `hosting` (`GET /emulators` en el Hub) y los puertos secundarios en `reservedPorts`.
+
+### Selección y el directorio público
+
+- `--only` selecciona servicios como para los demás productos: `--only hosting` sirve los sitios configurados y se niega a iniciar cuando falta la clave `public` de un sitio seleccionado.
+- `hosting.public` se resuelve desde el directorio de `firebase.json`. Un directorio que falta no es un error, como en `firebase-tools`: el sitio se inicia y responde 404.
+
+## Configurar
+
+### Claves del objeto `hosting`
+
+Estas claves del objeto `hosting` se respetan:
+
+| Clave | Comportamiento |
+|---|---|
+| `public` | El directorio servido. Obligatoria. Los archivos se abren a través de un handle retenido a ese directorio; se rechazan un enlace simbólico que sale de él, un archivo que no es regular y las rutas inseguras. Bajo `strict`, las rutas elegibles con segmentos de punto redirigen a su ruta normalizada antes de buscar el archivo; consulta [Perfiles](#perfiles). |
+| `ignore` | Patrones glob de archivos que están ausentes en toda ruta, comparados como los compara `firebase-tools` cuando elige los archivos que desplegar. `**/firebase-debug.log`, `**/firebase-debug.*.log` y `.firebase/*` siempre se ignoran, porque `firebase deploy` nunca los sube. |
+| `redirects` | Se comprueban en orden antes de servir ningún archivo. Una regla tiene `source`, `glob` o `regex`, un `destination` y un `type` (301 por defecto). Las capturas `:name` en un `source` rellenan los mismos nombres en el `destination`. Se conserva la cadena de consulta. |
+| `rewrites` | Se usan cuando ningún archivo coincide. `source`, `glob` o `regex` eligen la solicitud; el objetivo es un archivo `destination`, una `function` o un servicio `run` (consulta [Rewrites a funciones](#rewrites-a-funciones)). Gana la primera regla que coincide. |
+| `headers` | Reglas con `source`, `glob` o `regex` y una lista `headers` de `key` y `value`. Se añaden a las respuestas de archivos y rewrites, sujetas a las reglas específicas de cada perfil que se indican más abajo; `strict` ignora un `Content-Encoding` configurado. |
+| `cleanUrls` | `/about.html` redirige (301) a `/about`, y `/about` sirve `about.html`. |
+| `trailingSlash` | `true` añade una barra final a las URLs de directorio, `false` la quita (301), y sin definir una URL de directorio sin barra redirige a la que la tiene salvo que `cleanUrls` esté activado. |
+| `i18n` | `{ "root": "/locales" }` (cualquier forma de escribir las barras: `locales`, `/locales/`) sirve `locales/<language>_<country>/…`, `locales/ALL_<country>/…`, `locales/<language>_ALL/…` y `locales/<language>/…` antes de la ruta simple, elegidos a partir de `Accept-Language` y el encabezado `X-Country-Code`, o de las cookies `firebase-language-override` y `firebase-country-override`. |
+
+### Orden de las solicitudes
+
+Una solicitud se gestiona en este orden:
+
+1. **Rutas reservadas.** `/__/firebase/init.json` y `/__/firebase/init.js` son rutas reservadas: `init.json` contiene el ID del proyecto y una clave de API local no secreta (`fireemu-local-only`), e `init.js?useEmulator=true` además apunta los SDK de Firebase a los emuladores de esta ejecución (Authentication, Firestore, Functions, Storage y Realtime Database, cuando se ejecutan). Bajo `emulator` tienen prioridad sobre una redirección comodín; bajo `strict` se responden después de las redirecciones, como respondía producción (consulta [Perfiles](#perfiles)).
+2. **Redirecciones.** Una entrada coincidente de `redirects` responde con su estado y un `Location`.
+3. **Archivos.** Se sirve un archivo cuando uno coincide, incluido `index.html` para un directorio; `HEAD` se responde solo con los encabezados. Los cuerpos identity se transmiten desde el archivo abierto; bajo `strict`, los archivos elegibles pueden en cambio almacenarse en búfer y servirse como gzip. Los encabezados y los tipos de contenido dependen del perfil: `emulator` usa la tabla de `mime-types` y añade `Vary: Accept-Encoding` para los tipos comprimibles, mientras que `strict` usa los encabezados y tipos con la forma de producción descritos en [Perfiles](#perfiles).
+4. **Rewrites.** Una entrada coincidente de `rewrites` responde: un archivo `destination` se sirve con 200 (un rewrite a `/404.html` responde 404), y una regla `function` o `run` se reenvía al runtime local de Functions.
+5. **No encontrado.** Se sirve `404.html` del directorio público con estado 404 o, sin uno, una página integrada: un breve sustituto de fireemu bajo `strict`, y una página "Cannot GET" bajo `emulator`.
+
+`/__/firebase/<version>/<file>` (los scripts alojados del SDK de Firebase) se responde con 503, porque Fireemu nunca los descarga: usa un SDK empaquetado o una copia que sirvas tú mismo.
+
+## Rewrites a funciones
+
+Un rewrite con un objetivo `function` o `run` se reenvía al emulador de Functions de la misma ejecución, que debe tener un codebase cargado:
+
+```json
+{
+  "hosting": {
+    "public": "public",
+    "rewrites": [
+      { "source": "/api/**", "function": "api" },
+      { "source": "/images/**", "function": { "functionId": "resize", "region": "europe-west1" } },
+      { "source": "/service/**", "run": { "serviceId": "api", "region": "us-central1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
+```
+
+- El ID de la función es la cadena que sigue a `function`, su `functionId`, o el `serviceId` de `run`. La región es la `region` del objetivo, si no la de la regla, si no `us-central1`.
+- Un rewrite `run` va a la función local con el mismo ID que el servicio de Cloud Run; Fireemu nunca busca un servicio de Cloud Run.
+- La solicitud conserva su método, ruta, consulta y encabezados; el cuerpo está limitado a 32 MiB. Fireemu añade `x-original-url` y `x-forwarded-host`. Una respuesta sin `Cache-Control` recibe `private`, y `Vary` se establece en `Accept-Encoding, Authorization, Cookie`.
+- Sin un codebase de Functions cargado el rewrite responde 503, y un upstream al que no se puede llegar responde 502. No hay respaldo a una función desplegada.
+
+## Perfiles
+
+Hosting responde de forma diferente bajo los dos perfiles de compatibilidad.
+
+- El perfil `emulator` responde como el emulador de `firebase-tools` 15.28.2.
+- El perfil `strict`, el predeterminado, responde como respondió Firebase Hosting a las 279 solicitudes de los dos corpus de producción (dos grabaciones de cada uno en canales de vista previa desechables, enumerados en [Estado de la verificación](#estado-de-la-verificación)), salvo por dos valores predeterminados de desarrollo que `productionExact` desactiva: `hosting.cacheControl` y `hosting.clientCountry` (consulta [Valores predeterminados de desarrollo](#valores-predeterminados-de-desarrollo)).
+
+La tabla describe `strict` con `productionExact`; las filas que cambian los dos valores predeterminados lo indican.
+
+| Área | `strict` | `emulator` |
+|---|---|---|
+| Encabezados de respuesta | Con `productionExact`, los archivos llevan `Cache-Control: max-age=3600` (salvo que una regla de `headers` establezca uno); por defecto no llevan ninguno (`hosting.cacheControl`). Los archivos llevan `Accept-Ranges: bytes`, `Vary: x-fh-requested-host, accept-encoding` y un `ETag` SHA-256 entre comillas. Un archivo se responde como `Content-Encoding: gzip` cuando el `Accept-Encoding` de la solicitud contiene el texto `gzip` (distingue mayúsculas, con cualquier calidad: `x-gzip` y `gzip;q=0` cuentan, `GZIP` y `*` no) y el cuerpo comprimido es menor que el archivo: cualquier tipo de contenido (una imagen, un zip o una fuente además de texto), a partir de un archivo de unos 100 bytes, con el `ETag` propio del archivo. Un `Range` se toma sobre el cuerpo comprimido. Una solicitud que pide `br` recibe gzip cuando también contiene `gzip` y el archivo tal cual cuando no. Un archivo de más de 32 MiB, un `304` y una respuesta que genera el router no se comprimen. Un `Content-Encoding` que establece una regla de `headers` no se sirve, como en producción: un archivo `*.br` precomprimido se envía tal cual (`application/octet-stream`) porque comprimirlo otra vez no lo haría más pequeño. El `Vary` de los archivos de un sitio `i18n` empieza por `accept-language, x-country-code`. Las redirecciones llevan los encabezados que establecen tus reglas. | Solo `ETag` y `Last-Modified`, y `Vary: Accept-Encoding` para los tipos comprimibles. Fireemu no comprime en este perfil. |
+| `Content-Type` | Tipos JSON sin charset (`application/json`, `application/manifest+json`), `.js` y `.mjs` como `text/javascript; charset=utf-8`, `.ico` como `image/x-icon`, `.br` como `application/octet-stream`, una extensión desconocida o ninguna como `text/plain; charset=utf-8`. | La tabla de `mime-types` del emulador; una extensión desconocida es `application/octet-stream`. |
+| Solicitudes condicionales y de rango | `If-None-Match` e `If-Modified-Since` responden 304 (solo con el `Cache-Control` del archivo); un único `Range` responde 206 con `Content-Range`. `OPTIONS` sobre un archivo responde un 200 vacío con `Allow: GET, HEAD, OPTIONS`. | El archivo completo. |
+| `/404.html` | Una solicitud de `/404.html` sirve el archivo con 200; cualquier otra ruta inexistente lo sirve con 404. Un sitio sin `404.html` responde cualquier ruta sin coincidencia con una página breve escrita para fireemu (la página de producción es más larga y sus bytes no se distribuyen); el estado, el tipo de contenido y los encabezados de caché son los de producción. | Ambos responden 404; la página sin `404.html` es la breve del oráculo. |
+| Redirecciones | El cuerpo es `text/plain`. Cada parte de ruta capturada se decodifica de porcentaje antes de ponerla en el `Location` (`%2f` se convierte en `/`, y luego las secuencias de barras se pliegan), y la cadena de consulta se añade tal como se envió. Un source con un dígito en un `:name` (`/p/:a1`) no coincide con nada, como en producción; un nombre repetido coincide y gana el último valor. | Cuerpo `text/html`, las partes capturadas siguen codificadas (`%2f` se convierte en `%252f`), la consulta se recodifica y `:a1` es un nombre de parámetro. |
+| Rutas reservadas | `/__/auth/handler` responde 200 fuera de las redirecciones con una página sustituta escrita para fireemu, y el estado y los encabezados de producción; `/__/firebase/init.json` e `init.js` están sujetos a ellas, y son archivos cacheables (`ETag`, `Last-Modified`, los encabezados que establecen tus reglas). | `init.json` e `init.js` van antes de las redirecciones; `/__/auth/handler` no se sirve. |
+| `appAssociation: "AUTO"` | `/.well-known/assetlinks.json` y `/.well-known/apple-app-site-association` se generan (`[]` y un documento `applinks` vacío). | No se sirve. |
+| `i18n` | Con `productionExact` el país proviene del origen de la solicitud, como en producción, así que el encabezado `X-Country-Code` y la cookie `firebase-country-override` se **ignoran**; por defecto se respetan, como en el perfil emulator (`hosting.clientCountry`); `Accept-Language` se lee con sus valores de calidad (`de;q=0.9, fr;q=0.8` encuentra `fr` cuando no hay `de`); la cookie `firebase-language-override` se respeta. | El encabezado y la cookie de país se respetan; los valores de calidad no se leen. |
+| Globs de `headers`, `rewrites` y `redirects` | Un archivo de punto coincide con `*` y `**`, y la parte vacía tras una barra final coincide con `*` y con los patrones que pueden no coincidir con nada. | Los archivos de punto y la parte vacía no coinciden, como en el `superstatic` fijado. |
+| Una solicitud con segmentos de punto (`/../x`, `/a/./b`, `/a/b/..`) | `302` a la ruta normalizada (`Cache-Control: private`, cuerpo vacío), como URL absoluta en el host al que llegó la solicitud; producción responde el mismo 302 en su propio origen de contenido. Una `\` sin procesar se lee como `/` antes de buscar los segmentos de punto (`/.\b` da `/b`), una ruta con `\` y sin segmento de punto no se redirige, y los escapes que quedan se escriben en mayúsculas. No se lee nada fuera de `public`. | Como hace el oráculo fijado: el archivo para `/a/./b`, `404` para la mayoría de los demás |
+| Escape de porcentaje mal formado | `400` con el texto plano `400 Bad Request`, enviado en chunked. | `400` con `Malformed URL`. |
+
+### Valores predeterminados de desarrollo
+
+Dos comportamientos de producción de Hosting empeoran el desarrollo local, así que el valor predeterminado es la respuesta del emulador oficial y `productionExact` restaura la de producción (la misma regla que los demás [valores predeterminados de desarrollo](../../guides/profiles/)):
+
+| Clave | Valor predeterminado | Comportamiento de producción |
+|---|---|---|
+| `hosting.cacheControl` | `"none"`, para que un navegador muestre de inmediato un archivo editado. | `"production"` añade `Cache-Control: max-age=3600` a un archivo cuyas reglas de `headers` no establecen ninguno. Una regla que establece `Cache-Control` gana en todos los modos. |
+| `hosting.clientCountry` | `"honoured"`, para poder probar contenido por país con el encabezado `X-Country-Code` o la cookie `firebase-country-override`. | `"ignored"` no lee ninguno, porque producción decide el país en su edge. Los valores de calidad de `Accept-Language` y la cookie `firebase-language-override` se leen en ambos modos. |
+
+Ambas claves se aplican solo al perfil `strict` (el perfil `emulator` siempre responde como el emulador oficial), y una clave explícita prevalece sobre `productionExact`.
+
+## Diferencias con producción
+
+### Diferencias conocidas y respuestas no registradas
+
+Los registros de cierre ([corpus principal](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/known-differences.json), [corpus de seguimiento](https://github.com/fireemu/fireemu/blob/main/conformance/src/hosting-production/followup-known-differences.json)) enumeran las diferencias conocidas que `strict` no reproduce:
+
+- **Codificación de contenido Brotli.** Producción responde `br` a una solicitud cuyo `Accept-Encoding` contiene `br`; `strict` responde gzip cuando el encabezado también contiene `gzip` y el archivo tal cual cuando no.
+- **La longitud del cuerpo gzip de un archivo de 100 a 1500 bytes.** Es de 1 a 5 bytes más larga en `strict`, que usa otro codificador deflate. La diferencia se excusa solo mientras ambas respuestas sean gzip del mismo cuerpo y las longitudes difieran como máximo en 8 bytes (dictamen del coordinador 27).
+- **Los archivos alojados del SDK** bajo `/__/firebase/<version>/`.
+- **El cuerpo de la página 404 predeterminada de producción y de la página alojada `/__/auth/handler`.** Sus bytes no se distribuyen, así que `strict` sirve páginas escritas para fireemu con el estado y los encabezados que envió producción.
+- **Las claves de `init.json`** más allá de `apiKey` y `projectId`.
+- **El encabezado `Strict-Transport-Security` de https** y el `X-Robots-Tag` del canal de vista previa.
+- **El host del 302 que producción responde a una solicitud con segmentos de punto.** Es un host interno que cambia de una solicitud a otra; se compara la ruta del `Location`.
+
+En la comparación con las grabaciones, 18 de las 201 filas y 42 de las 78 filas del seguimiento llevan una diferencia conocida.
+
+Algunas respuestas de strict provienen de una lectura de las grabaciones, no de una observación del caso. Producción no se observó en estos:
+
+- Gzip para un archivo de 11 a 99 bytes (producción dejó tal cual los de 1 y 10 bytes y comprimió los de 100 bytes o más, y `strict` comprime cuando el cuerpo comprimido es menor).
+- Un archivo con una extensión desconocida es `text/html; charset=UTF-8` una vez comprimido (visto en dos archivos de 4500 bytes; `text/plain` está registrado para dos bytes sin compresión).
+- Los hexadecimales en mayúsculas de un escape distinto de `%5c` en una redirección por segmentos de punto.
+- Otros rangos sobre un cuerpo comprimido.
+- Un `Range` insatisfacible responde `416` con `Content-Range: bytes */<size>`.
+- Una solicitud con varios rangos se responde completa.
+- `HEAD` con un `Range` responde `206` con la longitud de la parte y sin cuerpo.
+- Una ruta con segmentos de punto y un carácter de control o un espacio no se redirige.
+
+### No compatible
+
+- `hosting.source` (frameworks web) y cualquier sitio sin `public`.
+- App Hosting. `--only apphosting` se rechaza por diferido; consulta [Limitaciones](../../compatibility/limitations/).
+- Las claves distintas de las de la [tabla de claves](#claves-del-objeto-hosting) no se tienen en cuenta. `appAssociation: "AUTO"` genera los dos documentos de asociación solo bajo `strict`; un archivo que coloques en `public` se sirve como cualquier otro.
+- Los scripts alojados del SDK bajo `/__/firebase/<version>/`, los servicios de Cloud Run desplegados y las funciones desplegadas (sin respaldo en vivo).
+- Bajo `emulator`, un archivo sin extensión o con una extensión desconocida se sirve como `application/octet-stream`. Bajo `strict`, es `text/plain; charset=utf-8`, o `text/html; charset=UTF-8` cuando está comprimido. El `Content-Type` de una regla de encabezado personalizada reemplaza al que elige Fireemu.
+
+## Estado de la verificación
+
+El área `HOSTING` de las [tablas de compatibilidad](../../compatibility/#production-verification) está **Verificada** para los casos registrados.
+
+- **Qué se registró.** Producción se observó dos veces con las mismas 201 solicitudes (archivos estáticos, redirecciones, rewrites, coincidencia de globs, encabezados y caché, URLs limpias, barras finales, localización, rutas reservadas, tipos de contenido, compresión, asociación de apps) y dos veces con un conjunto de seguimiento de 78 solicitudes (la página 404 predeterminada y la página alojada del auth handler como longitudes y estado, segmentos de punto y barras invertidas, nombres de parámetros de redirección con dígitos y repetidos, archivos precomprimidos con una regla de `Content-Encoding`, y qué tamaños, tipos de contenido y formas de `Accept-Encoding` comprime gzip producción). Las grabaciones se hicieron en canales de vista previa de un sitio desechable, nunca en un canal en vivo, y la revisión de cierre del 2026-11-11 aceptó el primer conjunto de evidencias.
+- **Cómo se comparan las respuestas.** En cada par las dos grabaciones concuerdan entre sí en todas las solicitudes salvo un host de redirección interno de producción, y el perfil `strict` con `productionExact` concuerda con ambas en todas las solicitudes salvo las [diferencias conocidas](#diferencias-conocidas-y-respuestas-no-registradas). De las 201 filas de cada comparación principal, 18 llevan una diferencia conocida, y de las 78 filas de cada comparación de seguimiento, 42, contadas por separado de las coincidencias.
+- **Qué cubre la afirmación.** Cubre las solicitudes registradas y las reglas leídas de ellas (las [respuestas no registradas e inferidas](#diferencias-conocidas-y-respuestas-no-registradas) se enumeran aparte). `emulator` no hace ninguna afirmación sobre producción, y los rewrites de funciones y de Cloud Run, `ignore` y las propiedades de seguridad locales no forman parte de ella. Brotli sigue siendo una diferencia conocida.
+- **El conjunto de pruebas sin conexión.** El conjunto de pruebas de conformidad sin conexión sigue comparando Fireemu con `firebase-tools` 15.28.2 sobre un corpus finito, incluidas más de 3000 filas generadas del listado real de archivos usado para `ignore`.
+
+Trata una prueba de Hosting que pasa aquí como una comprobación de tu `firebase.json` y tu enrutamiento: las respuestas de los canales de vista previa no son las del canal en vivo.
+
+## Cambios en v0.47.0
+
+Estos cambios están en v0.47.0 y posteriores; v0.45.0 y v0.46.0 se comportaban de otra manera (consulta el [changelog](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)):
+
+- Un `i18n.root` escrito con una barra inicial o final (`/locales`, la forma que muestra la documentación de Firebase) encuentra los mismos archivos que `locales`, y una raíz vacía no es raíz, como en `superstatic`. Antes, solo funcionaba una raíz sin barra inicial.
+- Los tipos de contenido provienen de la tabla `mime-types`/`mime-db` del emulador de `firebase-tools` (generada a partir de ella), con su regla `Vary: Accept-Encoding`. Antes, una breve tabla integrada servía como `application/octet-stream` toda otra extensión, como `.woff2`, `.gif` o `.ico`, y `.js` como `text/javascript`.
+- Los patrones de `ignore` ignoran las mayúsculas como lo hace `firebase-tools` en macOS y Windows (una expresión regular de JavaScript con el indicador `i`, como la compila el paquete `glob`); en Linux siguen distinguiendo mayúsculas.
+- Las fuentes de `headers`, `rewrites` y `redirects` glob tratan una secuencia de barras como una sola, y un patrón también coincide con una ruta con una barra final, como hace el `superstatic` fijado. Un alias codificado en porcentaje como `/%64ata.json` sigue sin recibir una regla de encabezado, como en el emulador fijado.
+- Una regla cuyo `source` está vacío no coincide con nada y pasa a su `regex`, como hace `superstatic`.
+
+## Cambios en v0.49.0
+
+Estos cambios están en v0.49.0 y posteriores; las versiones anteriores respondían igual bajo `strict` y `emulator` y no tenían las claves `hosting.cacheControl` ni `hosting.clientCountry` (consulta el [changelog](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md)):
+
+- El perfil `strict`, el predeterminado, responde como respondió Firebase Hosting al corpus de producción; consulta [Perfiles](#perfiles) para cada respuesta. El perfil `emulator` no cambia.
+- `hosting.cacheControl` y `hosting.clientCountry` son nuevos [valores predeterminados de desarrollo](#valores-predeterminados-de-desarrollo); `productionExact` pone ambos en el comportamiento de producción.
+- Bajo `strict`, `/__/firebase/init.json` e `init.js` se responden después de las redirecciones, y `appAssociation: "AUTO"` genera los dos documentos de asociación.
+
+La codificación de contenido gzip bajo `strict` es más reciente que v0.49.0: está en el [changelog](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md) bajo la versión que le sigue.
+
+## Relacionado
+
+- [Functions](../functions/): el codebase al que llega un rewrite `function` o `run`.
+- [Perfiles](../../guides/profiles/): `strict`, `emulator` y `productionExact`.
+- [Tablas de compatibilidad](../../compatibility/#production-verification) y [Limitaciones](../../compatibility/limitations/).
+- [Esquema de configuración](../../reference/configuration/): las claves `hosting` y `daemon.hostingPort`.
