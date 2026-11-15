@@ -338,3 +338,107 @@ test("resource evidence stops at the success status boundary", async () => {
     assert.equal((await client.wire(request)).showsResource, expected, String(status));
   }
 });
+
+test("v3 sessions are masked, pinned to issued URLs and cancelled at most once", async () => {
+  const t = targetOf({ ...target, stage: "v3" });
+  const plan = requests(t);
+  const start = plan["V3-absent-resumable"];
+  const url = start.url + "&upload_id=synthetic-session-private";
+  const entries = [];
+  let calls = 0;
+  const client = createWire({
+    target: t,
+    net: async (request) => {
+      calls++;
+      return request.method === "POST"
+        ? {
+            status: 200,
+            headers: {
+              location: url,
+              "x-guploader-uploadid": "synthetic-session-private",
+              "access-control-expose-headers": "Location",
+            },
+            body: Buffer.alloc(0),
+          }
+        : { status: 499, headers: {}, body: Buffer.alloc(0) };
+    },
+    journal: { append: (entry) => entries.push(entry) },
+  });
+  const cancel = { ...plan["V3-absent-cancel"], url };
+  await assert.rejects(client.wire(cancel), /unissued/);
+  assert.equal(calls, 0);
+  assert.equal((await client.wire(start)).unknown, false);
+  assert.equal(client.sessions.get("absent"), url);
+  for (const changed of [
+    url.replace("storage.googleapis.com", "example.com"),
+    url.replace(t.tempBucket, t.defaultBucket),
+    url + "&extra=1",
+    url + "&upload_id=other",
+    url.replace("synthetic-session-private", "other-session"),
+  ])
+    await assert.rejects(client.wire({ ...cancel, url: changed }));
+  await client.wire(cancel);
+  await assert.rejects(client.wire(cancel), /cannot be resent/);
+  assert.equal(calls, 2);
+  assert.ok(!JSON.stringify(entries).includes("synthetic-session-private"));
+  assert.equal(entries[1].headers.location, "<redacted-session>");
+});
+
+test("v3 refuses missing or foreign resumable locations without recording their values", async () => {
+  const t = targetOf({ ...target, stage: "v3" });
+  for (const location of [
+    undefined,
+    "https://example.com/private-session",
+    "https://storage.googleapis.com/other?upload_id=private-session",
+  ]) {
+    const entries = [];
+    const client = createWire({
+      target: t,
+      net: async () => ({
+        status: 200,
+        headers: location ? { location } : {},
+        body: Buffer.alloc(0),
+      }),
+      journal: { append: (entry) => entries.push(entry) },
+    });
+    const answer = await client.wire(requests(t)["V3-absent-resumable"]);
+    assert.equal(answer.unknown, true);
+    assert.equal(client.sessions.size, 0);
+    assert.ok(!JSON.stringify(entries).includes("private-session"));
+  }
+});
+
+test("v3 masks encoded session query keys and identifiers echoed by refused locations", async () => {
+  const t = targetOf({ ...target, stage: "v3" });
+  const plan = requests(t);
+  for (const foreign of [false, true]) {
+    const entries = [];
+    const session = "synthetic-private-session-value";
+    const url =
+      plan["V3-absent-resumable"].url.replace(
+        "storage.googleapis.com",
+        foreign ? "example.com" : "storage.googleapis.com",
+      ) + `&%75pload_id=${session}`;
+    const client = createWire({
+      target: t,
+      net: async (request) =>
+        request.method === "POST"
+          ? {
+              status: 200,
+              headers: { location: url, ...(foreign ? { "x-echo": session } : {}) },
+              body: Buffer.from(foreign ? session : ""),
+            }
+          : { status: 499, headers: {}, body: Buffer.alloc(0) },
+      journal: { append: (entry) => entries.push(entry) },
+    });
+    const answer = await client.wire(plan["V3-absent-resumable"]);
+    assert.equal(answer.unknown, foreign);
+    if (!foreign) await client.wire({ ...plan["V3-absent-cancel"], url });
+    assert.ok(!JSON.stringify(entries).includes(session));
+    assert.ok(
+      entries.every(
+        (entry) => !Buffer.from(entry.bodyBase64 ?? "", "base64").includes(Buffer.from(session)),
+      ),
+    );
+  }
+});

@@ -131,6 +131,14 @@ export function judgeAnswer(entry) {
     shape: "unrecorded",
     known: false,
   };
+  const v3 =
+    /^V3-(absent|empty|configured)-(metadata|media|bucket|list|acl|preflight|resumable)$/.exec(
+      entry.case,
+    );
+  if (v3?.[2] === "resumable")
+    row.exposesLocation = (headers["access-control-expose-headers"] ?? "")
+      .split(",")
+      .some((name) => name.trim().toLowerCase() === "location");
   const text = body.toString("utf8");
   try {
     const value = JSON.parse(text);
@@ -163,7 +171,50 @@ export function judgeAnswer(entry) {
       )
         row.shape = "json-error";
     }
-    // Resource and list JSON are retained in full bytes but require review: their layouts are not recorded fixtures.
+    // v3 compares resource bytes and digests, including their content, without treating matching counts as evidence.
+    if (
+      v3 &&
+      entry.status === 200 &&
+      entry.method === "GET" &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !error
+    ) {
+      const bucket = /\/b\/([^/]+)/.exec(new URL(entry.url).pathname)?.[1];
+      const object = (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        item.bucket === bucket &&
+        item.name === "cors/o.txt" &&
+        /^\d+$/.test(item.size ?? "");
+      if (v3[2] === "metadata" && object(value)) row.shape = "object-metadata";
+      if (v3[2] === "bucket" && value.name === bucket && typeof value.location === "string")
+        row.shape = "bucket-metadata";
+      if (
+        v3[2] === "list" &&
+        Array.isArray(value.items) &&
+        value.items.length === 1 &&
+        value.items.every(object) &&
+        !value.nextPageToken
+      )
+        row.shape = "object-list";
+      if (
+        v3[2] === "acl" &&
+        Array.isArray(value.items) &&
+        value.items.length > 0 &&
+        value.items.every(
+          (item) =>
+            item &&
+            item.bucket === bucket &&
+            item.object === "cors/o.txt" &&
+            typeof item.entity === "string" &&
+            typeof item.role === "string",
+        )
+      )
+        row.shape = "object-acl";
+    }
   } catch {
     row.xml = parseXmlError(text);
     if (row.xml && entry.status >= 400 && entry.status < 500) row.shape = "xml-error";
@@ -173,9 +224,21 @@ export function judgeAnswer(entry) {
         (entry.method === "DELETE" && entry.status === 204))
     )
       row.shape = "empty";
-    else if (text === "fire" && entry.status === 200 && ["C5", "C6"].includes(entry.case))
+    else if (
+      text === "fire" &&
+      entry.status === 200 &&
+      (["C5", "C6"].includes(entry.case) || (v3?.[2] === "media" && entry.method === "GET"))
+    )
       row.shape = "media";
   }
+  if (
+    v3?.[2] === "resumable" &&
+    entry.method === "POST" &&
+    entry.status === 200 &&
+    !body.length &&
+    headerNames.includes("location")
+  )
+    row.shape = "resumable-start";
   row.known =
     row.shape !== "unrecorded" &&
     !entry.unknown &&
@@ -192,19 +255,39 @@ export function judgeJournal(entries) {
   const after = new Map(
     entries.filter((entry) => entry.phase === "after").map((entry) => [entry.n, entry]),
   );
-  return entries
-    .filter((entry) => entry.phase === "before")
-    .map((entry) =>
-      judgeAnswer(
-        after.get(entry.n) ?? {
-          ...entry,
-          unknown: true,
-          status: null,
-          bodyBytes: 0,
-          bodyBase64: "",
-        },
+  const before = entries.filter((entry) => entry.phase === "before");
+  if (entries[0]?.stage === "v3") {
+    const expected = ["absent", "empty", "configured"].flatMap((state) =>
+      ["metadata", "media", "bucket", "list", "acl", "preflight", "resumable"].map(
+        (endpoint) => `V3-${state}-${endpoint}`,
       ),
     );
+    return expected.flatMap((id) => {
+      const matches = before.filter((entry) => entry.case === id);
+      return (matches.length ? matches : [{ case: id }]).map((entry) =>
+        judgeAnswer(
+          after.get(entry.n) ?? {
+            ...entry,
+            unknown: true,
+            status: null,
+            bodyBytes: 0,
+            bodyBase64: "",
+          },
+        ),
+      );
+    });
+  }
+  return before.map((entry) =>
+    judgeAnswer(
+      after.get(entry.n) ?? {
+        ...entry,
+        unknown: true,
+        status: null,
+        bodyBytes: 0,
+        bodyBase64: "",
+      },
+    ),
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

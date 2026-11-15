@@ -315,3 +315,34 @@ test("targetOf refuses a wrong project and a wrong default bucket each on its ow
     GuardError,
   );
 });
+
+test("v3 pins each Origin probe and refuses v2 requests", () => {
+  const t = targetOf({ ...target, stage: "v3" });
+  const plan = requests(t);
+  assert.equal(plan.C6, undefined);
+  assert.equal(JSON.parse(plan["V3-W-bucket"].body).cors, undefined);
+  assert.deepEqual(JSON.parse(plan["V3-empty-patch"].body), { cors: [] });
+  for (const state of ["absent", "empty", "configured"]) {
+    for (const endpoint of [
+      "metadata",
+      "media",
+      "bucket",
+      "list",
+      "acl",
+      "preflight",
+      "resumable",
+    ]) {
+      const r = authenticated(plan[`V3-${state}-${endpoint}`]);
+      assert.ok(classifyRequest(t, r));
+      for (const changed of [
+        { method: "HEAD" },
+        { body: "changed" },
+        { url: r.url + "&extra=1" },
+        { headers: { ...r.headers, origin: "http://other.example" } },
+      ])
+        assert.throws(() => classifyRequest(t, { ...r, ...changed }), GuardError);
+    }
+  }
+  assert.throws(() => classifyRequest(t, authenticated(requests(target).C6)), GuardError);
+  assert.throws(() => targetOf({ ...target, stage: "v4" }), GuardError);
+});

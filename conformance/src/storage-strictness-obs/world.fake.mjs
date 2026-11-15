@@ -7,6 +7,7 @@ export function createFakeWorld(
 ) {
   const buckets = new Map([[target.defaultBucket, { name: target.defaultBucket, location: "US" }]]);
   const objects = new Map();
+  const sessions = new Map();
   const log = [];
   const json = (status, value) => ({
     status,
@@ -33,7 +34,7 @@ export function createFakeWorld(
       ? decodeURIComponent(path.split("/o/")[1].split("/")[0])
       : (url.searchParams.get("name") ?? path.split("/").slice(2).join("/"));
     const resource = `/storage/v1/b/${bucket}/o/${encodeURIComponent(name)}`;
-    if (r.case === "W1") {
+    if (["W1", "V3-W-bucket"].includes(r.case)) {
       if (buckets.has(target.tempBucket))
         return json(409, { error: { code: 409, message: "Already exists" } });
       const body = JSON.parse(r.body);
@@ -56,6 +57,21 @@ export function createFakeWorld(
     if (r.case === "A13" || r.case === "A14")
       return json(412, { error: { code: 412, message: "Bucket is not linked to Firebase" } });
     if (r.case === "A6" || r.case === "A7") return missing();
+    if (target.stage === "v3" && url.searchParams.has("upload_id")) {
+      if (r.method === "DELETE") sessions.delete(url.searchParams.get("upload_id"));
+      return empty(sessions.has(url.searchParams.get("upload_id")) ? 308 : 499);
+    }
+    if (target.stage === "v3" && r.case.endsWith("-resumable")) {
+      const id = `synthetic-session-${r.case}`;
+      const location = `${r.url}&upload_id=${id}`;
+      sessions.set(id, location);
+      return empty(200, { location, "x-guploader-uploadid": id });
+    }
+    if (target.stage === "v3" && r.method === "OPTIONS")
+      return empty(200, {
+        "access-control-allow-methods": "POST",
+        "access-control-allow-headers": r.headers["access-control-request-headers"],
+      });
     if (r.method === "OPTIONS") {
       const rules = buckets.get(bucket).cors ?? [];
       const h = r.headers;
@@ -84,7 +100,8 @@ export function createFakeWorld(
       );
     }
     if (r.method === "PATCH") {
-      delete buckets.get(bucket).cors;
+      if (target.stage === "v3") Object.assign(buckets.get(bucket), JSON.parse(r.body));
+      else delete buckets.get(bucket).cors;
       return json(200, {});
     }
     if (r.action === "create") {
@@ -109,6 +126,14 @@ export function createFakeWorld(
       return json(200, buckets.get(bucket));
     }
     if (!objects.has(resource)) return missing();
+    if (target.stage === "v3" && path.endsWith("/acl"))
+      return json(400, {
+        error: {
+          code: 400,
+          message: "Uniform bucket-level access is enabled",
+          errors: [{ reason: "invalid" }],
+        },
+      });
     if (r.method === "DELETE") {
       objects.delete(resource);
       return empty(204);
@@ -123,6 +148,7 @@ export function createFakeWorld(
   return {
     buckets,
     objects,
+    sessions,
     log,
     cors: CORS,
     async net(request) {
@@ -132,6 +158,15 @@ export function createFakeWorld(
         fault === undefined || applyBeforeFault.includes(request.case)
           ? perform(request)
           : undefined;
+      if (answer && target.stage === "v3" && request.headers.origin) {
+        answer.headers = {
+          ...answer.headers,
+          "access-control-allow-origin": request.headers.origin,
+          "access-control-allow-credentials": "true",
+          "access-control-expose-headers": "Content-Type, Location",
+          vary: "Origin, X-Origin",
+        };
+      }
       if (fault === "transport") throw new Error("synthetic transport failure");
       if (typeof fault === "function") return fault(request, { buckets, objects, answer });
       return fault === undefined ? answer : { headers: {}, body: Buffer.alloc(0), ...fault };

@@ -387,3 +387,63 @@ test("an A2 read that answers 200 without the resource never settles a confirmed
   entries[1] = { ...entries[1], status: 404 };
   assert.equal(settlement(entries).unresolved.length, 0);
 });
+
+test("v3 CORS rows compare content, retain header names and detect Location exposure", async () => {
+  const { targetOf, requests } = await import("./guard.mjs");
+  const { createFakeWorld } = await import("./world.fake.mjs");
+  const { createWire } = await import("./wire.mjs");
+  const { observe } = await import("./run.mjs");
+  const target = targetOf({
+    project: "fireemu-oracle-query",
+    defaultBucket: "fireemu-oracle-query.firebasestorage.app",
+    runId: "ss-1234abcd",
+    stage: "v3",
+  });
+  const entries = [{ phase: "header", stage: "v3" }];
+  const client = createWire({
+    target,
+    net: createFakeWorld(target).net,
+    journal: { append: (entry) => entries.push(entry) },
+  });
+  await observe({ target, client });
+  const rows = judgeJournal(entries);
+  assert.equal(rows.length, 21);
+  assert.ok(rows.every((row) => row.known));
+  assert.ok(compare(rows, rows).every((row) => row.verdict === "MATCH"));
+  const id = "V3-configured-resumable";
+  const start = entries.find((entry) => entry.phase === "after" && entry.case === id);
+  const startRow = rows.find((row) => row.case === id);
+  assert.equal(startRow.exposesLocation, true);
+  assert.ok(startRow.headerNames.includes("location"));
+  assert.equal(startRow.headers.location, undefined);
+  const changed = judgeAnswer({
+    ...start,
+    headers: { ...start.headers, "access-control-expose-headers": "Content-Type, Xocation" },
+  });
+  assert.equal(changed.exposesLocation, false);
+  assert.equal(compare([startRow], [changed])[0].verdict, "DIFFERS(headers)");
+  const media = entries.find((entry) => entry.phase === "after" && entry.case === "V3-empty-media");
+  assert.equal(
+    judgeAnswer({ ...media, bodyBase64: Buffer.from("fake").toString("base64") }).known,
+    false,
+  );
+  const metadata = entries.find(
+    (entry) => entry.phase === "after" && entry.case === "V3-empty-metadata",
+  );
+  const body = JSON.parse(Buffer.from(metadata.bodyBase64, "base64"));
+  const changedBody = Buffer.from(JSON.stringify({ ...body, size: "5" }));
+  const different = judgeAnswer({
+    ...metadata,
+    bodyBase64: changedBody.toString("base64"),
+    bodyBytes: changedBody.length,
+  });
+  assert.match(compare([judgeAnswer(metadata)], [different])[0].verdict, /DIFFERS.*sha256/);
+  const missingRows = judgeJournal(entries.filter((entry) => entry.case !== id));
+  assert.equal(missingRows.find((row) => row.case === id).known, false);
+  const duplicate = judgeJournal([
+    ...entries,
+    { ...start, n: 999 },
+    { ...requests(target)[id], phase: "before", n: 999 },
+  ]);
+  assert.equal(compare(rows, duplicate).find((row) => row.case === id).verdict, "NEEDS-REVIEW");
+});

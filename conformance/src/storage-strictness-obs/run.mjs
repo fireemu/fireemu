@@ -112,6 +112,153 @@ export async function observe({
     if (!client.unknownDeletes.has(plan[id].resource)) return safe(id);
     return null;
   };
+  if (target.stage === "v3") {
+    const ownedLocal = new Set();
+    const sessionFailures = [];
+    try {
+      const p1 = await executeCase("V3-P-location");
+      const metadata = parse(p1);
+      check(isSuccess(p1.status) && typeof metadata?.location === "string", "V3-P-location", true);
+      location = metadata.location;
+      plan = requests(target, location);
+      if (!target.local) {
+        check((await executeCase("V3-P-absent")).status === 404, "V3-P-absent", true);
+        armed = true;
+        check(isSuccess((await executeCase("V3-W-bucket")).status), "V3-W-bucket", true);
+        const verify = await executeCase("V3-W-verify");
+        const bucket = parse(verify);
+        check(
+          isSuccess(verify.status) &&
+            bucket?.name === target.tempBucket &&
+            corsCleared(bucket) &&
+            !Object.hasOwn(bucket, "cors") &&
+            hardDeletes(bucket.softDeletePolicy),
+          "V3-W-verify",
+          true,
+        );
+        check(isSuccess((await executeCase("V3-W-object")).status), "V3-W-object", true);
+      }
+      for (const state of ["absent", "empty", "configured"]) {
+        const id = `V3-${state}`;
+        if (target.local) {
+          check(emptyList(await executeCase(`${id}-initial-list`)), `${id}-initial-list`, true);
+          ownedLocal.add(state);
+          armed = true;
+          check(isSuccess((await executeCase(`${id}-upload`)).status), `${id}-upload`, true);
+          client.append({
+            phase: "skipped",
+            case: `${id}-configuration`,
+            reason: "local: predeclared bucket; no bucket management",
+          });
+        } else if (state !== "absent") {
+          check(isSuccess((await executeCase(`${id}-patch`)).status), `${id}-patch`, true);
+          const verify = await executeCase(`${id}-verify`);
+          const configuredMetadata = parse(verify);
+          check(
+            isSuccess(verify.status) &&
+              configuredMetadata?.name === target.tempBucket &&
+              (state === "empty"
+                ? corsCleared(configuredMetadata)
+                : isDeepStrictEqual(configuredMetadata?.cors, CORS)),
+            `${id}-verify`,
+            true,
+          );
+        }
+        for (const endpoint of [
+          "metadata",
+          "media",
+          "bucket",
+          "list",
+          "acl",
+          "preflight",
+          "resumable",
+        ])
+          await executeCase(`${id}-${endpoint}`);
+        check(
+          answers[`${id}-resumable`].status === 200 && client.sessions.has(state),
+          `${id}-resumable`,
+          true,
+        );
+      }
+      completed = true;
+    } catch {
+      failures.push("sequence stopped");
+    } finally {
+      for (const state of ["absent", "empty", "configured"]) {
+        const id = `V3-${state}`;
+        if (!answers[`${id}-resumable`]) continue;
+        const url = client.sessions.get(state);
+        if (!url) {
+          if (answers[`${id}-resumable`].unknown || isSuccess(answers[`${id}-resumable`].status))
+            sessionFailures.push(state);
+          continue;
+        }
+        plan[`${id}-cancel`] = { ...plan[`${id}-cancel`], url };
+        plan[`${id}-session-read`] = { ...plan[`${id}-session-read`], url };
+        const cancel = await safe(`${id}-cancel`);
+        const read = await safe(`${id}-session-read`);
+        if (
+          cancel.unknown ||
+          ![499, 204].includes(cancel.status) ||
+          read.unknown ||
+          ![499, 404, 410].includes(read.status)
+        )
+          sessionFailures.push(state);
+      }
+      if (armed) {
+        if (target.local) {
+          for (const state of ownedLocal) {
+            if (pending(plan[`V3-${state}-upload`].resource)?.unknownCreate)
+              await safe(`V3-${state}-read-object`);
+            await remove(`V3-${state}-delete-object`);
+            await safe(`V3-${state}-read-object`);
+          }
+        } else {
+          if (pending(plan["V3-W-bucket"].resource)?.unknownCreate)
+            await safe("V3-K-read-created-bucket");
+          const ownsBucket =
+            isSuccess(answers["V3-W-bucket"]?.status) ||
+            answers["V3-K-read-created-bucket"]?.showsResource;
+          if (ownsBucket) {
+            if (pending(plan["V3-W-object"].resource)?.unknownCreate)
+              await safe("V3-K-read-object");
+            await remove("V3-K-object");
+            await safe("V3-K-read-object");
+            await remove("V3-K-delete-bucket");
+          }
+          await safe("V3-K-bucket");
+        }
+      }
+    }
+    const settled = settlement(client.entries);
+    const unknownAnswers = client.entries.some((entry) => entry.phase === "after" && entry.unknown);
+    const cleanupVerified =
+      armed &&
+      sessionFailures.length === 0 &&
+      (target.local
+        ? [...ownedLocal].every(
+            (state) =>
+              answers[`V3-${state}-read-object`]?.status === 404 &&
+              !answers[`V3-${state}-read-object`]?.unknown,
+          )
+        : answers["V3-K-read-object"]?.status === 404 &&
+          !answers["V3-K-read-object"]?.unknown &&
+          answers["V3-K-bucket"]?.status === 404 &&
+          !answers["V3-K-bucket"]?.unknown);
+    return {
+      completed,
+      location,
+      violations,
+      failures,
+      requests: client.budget.count,
+      ...settled,
+      sessionFailures,
+      cleanupVerified: Boolean(cleanupVerified),
+      closureReady: Boolean(
+        settled.closureReady && cleanupVerified && !unknownAnswers && !violations.length,
+      ),
+    };
+  }
   try {
     const p1 = await executeCase("P1");
     const metadata = parse(p1);
@@ -240,6 +387,7 @@ export async function readback({ target, client, previous, now = Date.now }) {
   const header = previous[0];
   const summary = previous.at(-1);
   if (
+    (header?.stage ?? "v2") !== target.stage ||
     header?.phase !== "header" ||
     header.runId !== target.runId ||
     header.project !== target.project ||
@@ -251,7 +399,9 @@ export async function readback({ target, client, previous, now = Date.now }) {
     throw new GuardError("A2 needs the matching completed journal and a ten-minute delay");
   const plan = requests(target);
   const answers = {};
-  for (const id of ["A2-bucket", "A2-prefix", "A2-object", "A2-cors", "A2-t-y", "A2-m-x", "A2-m-y"])
+  for (const id of target.stage === "v3"
+    ? ["V3-A2-bucket", "V3-A2-object"]
+    : ["A2-bucket", "A2-prefix", "A2-object", "A2-cors", "A2-t-y", "A2-m-x", "A2-m-y"])
     answers[id] = await client.wire(plan[id]);
   const evidence = client.entries.map((entry) => ({ ...entry, session: "a2" }));
   const settled = settlement([...previous, ...evidence]);
@@ -260,7 +410,10 @@ export async function readback({ target, client, previous, now = Date.now }) {
   );
   return {
     ...settled,
-    closureReady: settled.closureReady && absent,
+    closureReady:
+      settled.closureReady &&
+      absent &&
+      (target.stage !== "v3" || summary.sessionFailures?.length === 0),
     readbackVerified: absent,
     requests: client.budget.count,
   };
@@ -280,9 +433,11 @@ export async function main(argv = process.argv.slice(2)) {
       send: { type: "boolean", default: false },
     },
   });
+  const stage = positionals.includes("v3") ? "v3" : "v2";
   const a2 = positionals[0] === "readback";
   if (
-    positionals.length > (a2 ? 1 : 0) ||
+    JSON.stringify(positionals) !==
+      JSON.stringify([...(a2 ? ["readback"] : []), ...(stage === "v3" ? ["v3"] : [])]) ||
     !values.out ||
     (a2 && !values["run-id"]) ||
     (!a2 && values["run-id"] && !values.local) ||
@@ -290,6 +445,7 @@ export async function main(argv = process.argv.slice(2)) {
   )
     throw new GuardError("invalid arguments");
   const target = targetOf({
+    stage,
     project: values.project,
     defaultBucket: values["default-bucket"],
     runId: values["run-id"],
@@ -302,6 +458,8 @@ export async function main(argv = process.argv.slice(2)) {
   let previous;
   if (a2) {
     previous = readJournal(join(values.out, "journal.jsonl"));
+    if ((previous[0]?.stage ?? "v2") !== stage)
+      throw new GuardError("A2 stage must match the original run");
     if (previous[0]?.mode !== mode) throw new GuardError("A2 mode must match the original run");
     const end = previous.at(-1);
     if (
@@ -337,6 +495,7 @@ export async function main(argv = process.argv.slice(2)) {
     restore = installEgressGuard();
     const header = {
       phase: "header",
+      stage,
       mode,
       runId: target.runId,
       project: target.project,

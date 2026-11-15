@@ -24,16 +24,17 @@ const target = targetOf({
   defaultBucket: "fireemu-oracle-query.firebasestorage.app",
   runId: "ss-0123abcd",
 });
-async function run(options = {}) {
+async function run(options = {}, targetOverride = target) {
+  const runTarget = targetOverride;
   const entries = [];
-  const world = createFakeWorld(target, options);
+  const world = createFakeWorld(runTarget, options);
   const client = createWire({
-    target,
+    target: runTarget,
     net: world.net,
     journal: { append: (entry) => entries.push(entry) },
   });
   const sleeps = [];
-  const report = await observe({ target, client, sleep: async (ms) => sleeps.push(ms) });
+  const report = await observe({ target: runTarget, client, sleep: async (ms) => sleeps.push(ms) });
   return { entries, world, client, report, sleeps };
 }
 
@@ -743,5 +744,227 @@ test("A2 refuses a journal written in another mode (presend Should 4)", async ()
     assert.throws(() => readFileSync(join(dir, "readback.jsonl")), /ENOENT/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const v3 = targetOf({ ...target, stage: "v3" });
+
+test("v3 records all three CORS states and closes objects, sessions and bucket", async () => {
+  const { report, world, entries } = await run({}, v3);
+  assert.equal(report.completed, true);
+  assert.equal(report.closureReady, true);
+  assert.equal(report.cleanupVerified, true);
+  assert.ok(report.requests < 60);
+  assert.equal(world.buckets.has(v3.tempBucket), false);
+  assert.equal(world.objects.size, 0);
+  assert.equal(world.sessions.size, 0);
+  for (const state of ["absent", "empty", "configured"]) {
+    for (const endpoint of [
+      "metadata",
+      "media",
+      "bucket",
+      "list",
+      "acl",
+      "preflight",
+      "resumable",
+    ]) {
+      const request = world.log.find((r) => r.case === `V3-${state}-${endpoint}`);
+      assert.ok(request, `${state}/${endpoint}`);
+      assert.equal(request.headers.origin, "http://localhost:3000");
+      assert.ok(
+        request.url.includes(`/b/${v3.tempBucket}/`) || request.url.endsWith(`/b/${v3.tempBucket}`),
+      );
+    }
+  }
+  assert.ok(
+    world.log.filter((r) => r.url.includes(v3.defaultBucket)).every((r) => r.method === "GET"),
+  );
+  assert.equal(entries.at(-1).case, "V3-K-bucket");
+  assert.equal(entries.at(-1).status, 404);
+  assert.ok(!JSON.stringify(entries).includes("synthetic-session-"));
+});
+
+test("v3 stops at each unknown probe and still performs cleanup", async () => {
+  for (const state of ["absent", "empty", "configured"]) {
+    for (const endpoint of [
+      "metadata",
+      "media",
+      "bucket",
+      "list",
+      "acl",
+      "preflight",
+      "resumable",
+    ]) {
+      const id = `V3-${state}-${endpoint}`;
+      const { report, world } = await run({ faults: { [id]: "transport" } }, v3);
+      assert.equal(report.completed, false, id);
+      assert.equal(report.closureReady, false, id);
+      assert.equal(world.buckets.has(v3.tempBucket), false, id);
+      assert.equal(world.log.filter((r) => r.case === id).length, 1, id);
+    }
+  }
+});
+
+test("v3 partial cleanup never repeats an unknown delete or closes unresolved sessions", async () => {
+  for (const id of [
+    "V3-K-object",
+    "V3-K-delete-bucket",
+    "V3-absent-cancel",
+    "V3-absent-session-read",
+  ]) {
+    const { report, world } = await run(
+      { faults: { [id]: "transport" }, applyBeforeFault: [id] },
+      v3,
+    );
+    assert.equal(report.closureReady, false, id);
+    assert.equal(world.log.filter((r) => r.case === id).length, 1, id);
+    assert.ok(
+      world.log.some((r) => r.case === "V3-K-bucket"),
+      id,
+    );
+  }
+});
+
+test("v3 rejects a racing bucket and unsafe configuration readbacks", async () => {
+  for (const id of [
+    "V3-P-absent",
+    "V3-W-bucket",
+    "V3-W-verify",
+    "V3-empty-verify",
+    "V3-configured-verify",
+  ]) {
+    const { report, world } = await run(
+      { faults: { [id]: { status: id === "V3-W-bucket" ? 409 : 200, body: Buffer.from("{}") } } },
+      v3,
+    );
+    assert.equal(report.completed, false, id);
+    if (["V3-P-absent", "V3-W-bucket"].includes(id))
+      assert.ok(world.log.every((r) => r.method !== "DELETE"));
+  }
+});
+
+test("v3 local rehearsal covers three predeclared CORS buckets without management writes", async () => {
+  const { rehearsalConfig } = await import("./rehearse.mjs");
+  const local = targetOf({ ...v3, local: "http://127.0.0.1:9199" });
+  const config = rehearsalConfig(local);
+  assert.equal(config.profile, "strict");
+  assert.equal(config.storage.cors[`${v3.tempBucket}-absent`], undefined);
+  assert.deepEqual(config.storage.cors[`${v3.tempBucket}-empty`], []);
+  assert.deepEqual(config.storage.cors[`${v3.tempBucket}-configured`], CORS);
+  const world = createFakeWorld(local);
+  for (const bucket of config.storage.buckets)
+    world.buckets.set(bucket, {
+      name: bucket,
+      location: "US",
+      ...(Object.hasOwn(config.storage.cors, bucket) ? { cors: config.storage.cors[bucket] } : {}),
+    });
+  const client = createWire({ target: local, net: world.net, journal: { append() {} } });
+  const report = await observe({ target: local, client });
+  assert.equal(report.completed, true);
+  assert.equal(report.closureReady, true);
+  assert.equal(world.objects.size, 0);
+  assert.equal(world.sessions.size, 0);
+  assert.ok(world.log.every((r) => new URL(r.url).origin === local.local));
+  assert.ok(world.log.every((r) => r.headers.authorization === undefined));
+  assert.ok(
+    world.log
+      .filter((r) => r.method !== "GET")
+      .every((r) => new URL(r.url).pathname.includes("/o")),
+  );
+  assert.equal(world.buckets.size, 4);
+});
+
+test("v3 unknown creates require positive reads and A2 cannot clear unknown sessions", async () => {
+  for (const id of ["V3-W-bucket", "V3-W-object"]) {
+    for (const applied of [false, true]) {
+      const { report, client, world } = await run(
+        { faults: { [id]: "transport" }, applyBeforeFault: applied ? [id] : [] },
+        v3,
+      );
+      assert.equal(report.closureReady, false);
+      assert.equal(report.unresolved.length === 0, applied);
+      assert.equal(world.buckets.has(v3.tempBucket), false);
+      const previous = [
+        {
+          phase: "header",
+          stage: "v3",
+          runId: v3.runId,
+          project: v3.project,
+          defaultBucket: v3.defaultBucket,
+        },
+        ...client.entries,
+        { phase: "summary", ...report, endedAt: 0 },
+      ];
+      const a2 = createWire({ target: v3, net: world.net, journal: { append() {} } });
+      assert.equal(
+        (await readback({ target: v3, client: a2, previous, now: () => 600_000 })).closureReady,
+        applied,
+      );
+      await assert.rejects(
+        readback({ target, client: a2, previous, now: () => 600_000 }),
+        /matching/,
+      );
+    }
+  }
+  const { client, world, report } = await run(
+    { faults: { "V3-absent-resumable": "transport" }, applyBeforeFault: ["V3-absent-resumable"] },
+    v3,
+  );
+  assert.deepEqual(report.sessionFailures, ["absent"]);
+  assert.equal(world.sessions.size, 1);
+  const previous = [
+    {
+      phase: "header",
+      stage: "v3",
+      runId: v3.runId,
+      project: v3.project,
+      defaultBucket: v3.defaultBucket,
+    },
+    ...client.entries,
+    { phase: "summary", ...report, endedAt: 0 },
+  ];
+  const a2 = createWire({ target: v3, net: world.net, journal: { append() {} } });
+  const result = await readback({ target: v3, client: a2, previous, now: () => 600_000 });
+  assert.equal(result.readbackVerified, true);
+  assert.equal(result.closureReady, false);
+});
+
+test("v3 preserves the cleanup reserve and fails closed on an exhausted budget", async () => {
+  for (const limited of ["reserve", "budget"]) {
+    const world = createFakeWorld(v3);
+    const budget = {
+      count: 0,
+      take() {
+        if (this.count === 9) throw new Error("budget");
+        return ++this.count;
+      },
+    };
+    const client = createWire({
+      target: v3,
+      net: world.net,
+      journal: { append() {} },
+      ...(limited === "budget"
+        ? { budget }
+        : { now: () => (world.log.length >= 6 ? 600_001 : 0), deadline: 900_000 }),
+    });
+    const report = await observe({ target: v3, client });
+    assert.equal(report.completed, false);
+    if (limited === "reserve") {
+      assert.equal(report.cleanupVerified, true);
+      assert.equal(world.buckets.has(v3.tempBucket), false);
+    } else {
+      assert.equal(report.cleanupVerified, false);
+      assert.equal(report.closureReady, false);
+      assert.equal(world.log.length, 9);
+    }
+  }
+});
+
+test("v3 known session cleanup failures make cleanup unverified", async () => {
+  for (const id of ["V3-absent-cancel", "V3-absent-session-read"]) {
+    const { report } = await run({ faults: { [id]: { status: 400 } } }, v3);
+    assert.equal(report.cleanupVerified, false);
+    assert.equal(report.closureReady, false);
+    assert.deepEqual(report.sessionFailures, ["absent"]);
   }
 });
