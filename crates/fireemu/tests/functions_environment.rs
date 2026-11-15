@@ -21,6 +21,10 @@ use std::process::{Command, Output, Stdio};
 #[path = "../../../tests/support/real_node.rs"]
 mod real_node;
 
+#[cfg(unix)]
+#[path = "../../../tests/support/trusted_temp.rs"]
+mod trusted_temp;
+
 fn sdk_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/sdk-smoke")
 }
@@ -445,6 +449,7 @@ fn relative_runner_override_starts_from_the_daemon_working_directory() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 #[ignore = "requires tools/sdk-smoke dependencies; the SDK workflow runs this test"]
 fn a_same_size_rewrite_reloads_and_an_invalid_generation_keeps_the_last_good_one() {
@@ -461,15 +466,27 @@ fn a_same_size_rewrite_reloads_and_an_invalid_generation_keeps_the_last_good_one
         r#"{"name":"same-size-reload","private":true,"main":"index.js","engines":{"node":"20"}}"#,
     );
     let source = dir.join("index.js");
-    let output = exec_script_with_arg(
-        &dir,
-        "demo-same-size-reload",
-        r#"
+    // Keep diagnostics outside the watched source so logging cannot trigger a reload.
+    let diagnostics = trusted_temp::TrustedTempDir::new("same-size-reload-diagnostics");
+    let stderr_path = diagnostics.join("stderr");
+    let stderr_file = std::fs::File::create(&stderr_path).unwrap();
+    let output = fireemu_exec(&dir, "demo-same-size-reload")
+        .args(["--", "/bin/sh", "-c"])
+        .arg(r#"
 set -eu
 endpoint="$FIREEMU_FUNCTIONS_HOST/demo-same-size-reload/us-central1/fxReload"
 first=$(curl -fsS "$endpoint")
 node -e 'const fs=require("fs"); const p=process.argv[1]; const s=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,s.replace("\"before\"", "missing!"));' "$1"
-sleep 3
+# A slow scan must reject this revision before the script overwrites it.
+attempt=0
+until grep -q 'keeping the last-known-good generation' "$2"; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    echo 'timed out waiting for the invalid generation to be rejected' >&2
+    exit 1
+  fi
+  sleep 1
+done
 last_good=$(curl -fsS "$endpoint")
 node -e 'const fs=require("fs"); const p=process.argv[1]; const s=fs.readFileSync(p,"utf8"); fs.writeFileSync(p,s.replace("missing!", "\"after!\""));' "$1"
 latest=""
@@ -484,10 +501,17 @@ printf '%s\n%s\n%s\n' "$first" "$last_good" "$latest"
 test "$first" = "before"
 test "$last_good" = "before"
 test "$latest" = "after!"
-"#,
-        &source,
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+"#)
+        .args([
+            "functions-reload-test",
+            source.to_str().unwrap(),
+            stderr_path.to_str().unwrap(),
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::from(stderr_file))
+        .output()
+        .unwrap();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap();
 
     assert_eq!(output.status.code(), Some(0), "{stderr}");
     assert!(
