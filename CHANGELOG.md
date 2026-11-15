@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-15
+
 ### Changed
 
 - Storage computes CRC32C with a runtime-dispatched hardware implementation (the `crc32c` crate), and the values are bit-identical to the previous scalar code. Realtime Database limitToFirst and limitToLast select their results with a bounded heap instead of a full sort. Firestore nearest-neighbour queries over high-dimensional vectors reuse a bounded cache between writes, and `fireemu/testing` copies portable snapshots with a small worker pool. Answers, including errors, are unchanged.
@@ -1377,7 +1379,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/fireemu/fireemu/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/fireemu/fireemu/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/fireemu/fireemu/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/fireemu/fireemu/compare/v0.50.0...v0.51.0
