@@ -39,7 +39,7 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 선택되지 않은 에뮬레이터의 변수는 환경에 있던 그대로 둡니다. 실행이 시작하지 않는 에뮬레이터에 대해 셸에 이미 있는 변수는 그대로 남고 경고와 함께 보고됩니다.
 
 - `fireemu exec --plan -- <command>`는 명령이 보게 될 변수를 나열합니다.
-- [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables)를 지정하면 이런 실행은 시작하기 전에 실패합니다.
+- [`--deny-inherited-emulator-env`](../../reference/cli/#상속된-에뮬레이터-변수)를 지정하면 이런 실행은 시작하기 전에 실패합니다.
 
 ## 클라이언트 SDK 연결
 
@@ -64,9 +64,9 @@ connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
 connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 ```
 
-기본 포트는 [설치와 실행](../install/#default-ports)에 나열되어 있습니다. 두 제품은 연결 방식이 다릅니다.
+기본 포트는 [설치와 실행](../install/#기본-포트)에 나열되어 있습니다. 두 제품은 연결 방식이 다릅니다.
 
-- **Realtime Database.** 클라이언트에 별도의 `databaseURL`이 필요합니다. [Realtime Database](../../products/realtime-database/#connect)를 참고하십시오.
+- **Realtime Database.** 클라이언트에 별도의 `databaseURL`이 필요합니다. [Realtime Database](../../products/realtime-database/#연결)를 참고하십시오.
 - **Hosting.** 일반 HTTP이며 SDK 설정이 필요하지 않습니다([Firebase Hosting](../../products/hosting/)).
 
 ## Security Rules 단위 테스트 실행

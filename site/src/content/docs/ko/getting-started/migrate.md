@@ -43,11 +43,11 @@ Fireemu는 기존 `firebase.json`을 읽고, 같은 기본 포트를 제공하�
 - 거부 테스트에는 SDK 도우미의 기본값인 `iat: 0` / `exp: 3600`을 만료 이후의 시계와 함께 사용하십시오. 정상적인 검증을 통과하는 Fireemu 발급 토큰은 계속 수락됩니다.
 - 서명되지 않은 모든 ID 토큰을 거부하려면 `auth.idTokenSigning = "session-rsa"`를 사용하십시오.
 
-[서명되지 않은 모의 ID 토큰](../../products/auth/#unsigned-mock-id-tokens)을 참고하십시오.
+[서명되지 않은 모의 ID 토큰](../../products/auth/#서명되지-않은-모의-id-토큰)을 참고하십시오.
 
 ### 이름이 있는 데이터베이스
 
-이름이 있는 데이터베이스는 `firebase.json`의 `firestore` 배열에 각각 `rules`와 `indexes` 파일과 함께 선언하거나, 프로덕션에서 필요한 방식대로 Admin API로 생성하십시오. 실행 중에 생성한 데이터베이스는 규칙을 로드하기 전까지 Security Rules가 없습니다([Firestore](../../products/firestore/#named-databases) 참고).
+이름이 있는 데이터베이스는 `firebase.json`의 `firestore` 배열에 각각 `rules`와 `indexes` 파일과 함께 선언하거나, 프로덕션에서 필요한 방식대로 Admin API로 생성하십시오. 실행 중에 생성한 데이터베이스는 규칙을 로드하기 전까지 Security Rules가 없습니다([Firestore](../../products/firestore/#이름-있는-데이터베이스) 참고).
 
 ### 복합 인덱스
 
@@ -65,13 +65,13 @@ Fireemu는 기존 `firebase.json`을 읽고, 같은 기본 포트를 제공하�
 | 설정 | `strict`에서의 동작 |
 |---|---|
 | `auth.improvedEmailPrivacy` | 이메일 열거 보호. 새 프로덕션 프로젝트에서는 켜져 있습니다. 프로덕션 프로젝트에서 껐을 때만 `false`로 설정하십시오. 그러면 로그인이 공식 Auth 에뮬레이터처럼 `EMAIL_NOT_FOUND`와 `INVALID_PASSWORD`로 응답합니다. |
-| `auth.mfa` | 프로젝트의 다단계 인증 구성. `strict`는 SMS와 TOTP를 켠 상태로 시작하고, `productionExact`는 새 프로덕션 프로젝트처럼 다단계 인증을 끈 상태로 시작합니다. [Authentication](../../products/auth/#multi-factor-authentication)을 참고하십시오. |
+| `auth.mfa` | 프로젝트의 다단계 인증 구성. `strict`는 SMS와 TOTP를 켠 상태로 시작하고, `productionExact`는 새 프로덕션 프로젝트처럼 다단계 인증을 끈 상태로 시작합니다. [Authentication](../../products/auth/#다단계-인증)을 참고하십시오. |
 | `firestore.enforceLimits` | 프로덕션은 항상 Standard 에디션의 쿼리 한도를 적용합니다. `false`로 하면 프로덕션이 거부하는 쿼리가 통과하므로, 특별한 이유가 없다면 켜 두십시오. `strict`에서는 쿼리 한도만 전환합니다. |
 
 ## 공식 CLI와의 차이
 
 - `--export-on-exit`가 실패하면, 명령이 성공했더라도 실행은 종료 코드 1로 끝납니다. 공식 CLI는 경고만 하고 0으로 종료합니다. 저장된 데이터에 의존하는 CI 작업이 그 데이터 없이 통과하지 못하도록 Fireemu는 다르게 동작합니다.
-- Unix에서는 발견된 `fireemu.toml` 또는 `firebase.json`을 소유자가 신뢰할 수 있을 때만 로드합니다. [구성 파일](../../guides/configuration/#file-ownership-checks)을 참고하십시오.
+- Unix에서는 발견된 `fireemu.toml` 또는 `firebase.json`을 소유자가 신뢰할 수 있을 때만 로드합니다. [구성 파일](../../guides/configuration/#파일-소유권-검사)을 참고하십시오.
 - `strict`에서 Security Rules가 없는 프로젝트는 규칙 릴리스가 없는 프로덕션 프로젝트처럼 동작하며, 클라이언트 요청이 거부됩니다. [Security Rules](../../guides/security-rules/)를 참고하십시오.
 
 ## 관련 문서

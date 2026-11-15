@@ -15,13 +15,13 @@ App Hosting과 Data Connect는 현재 지원하지 않습니다. Firebase Extens
 
 ## 부분적으로 지원하는 제품
 
-- **Realtime Database.** 녹화된 사례에 대해서만 제공하고 프로덕션과 대조해 검증했습니다([프로덕션 검증](../#프로덕션-검증) 참고). 그 밖의 프로덕션 호환성은 검증되지 않았으며, 공식 에뮬레이터에 대한 동등성 주장도 없습니다. 자세한 내용은 [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator)와 아래 목록을 참고하십시오.
+- **Realtime Database.** 녹화된 사례에 대해서만 제공하고 프로덕션과 대조해 검증했습니다([프로덕션 검증](../#프로덕션-검증) 참고). 그 밖의 프로덕션 호환성은 검증되지 않았으며, 공식 에뮬레이터에 대한 동등성 주장도 없습니다. 자세한 내용은 [Realtime Database](../../products/realtime-database/#공식-에뮬레이터와의-차이)와 아래 목록을 참고하십시오.
 
 ## 지원하지 않는 기능
 
 ### Cloud Firestore
 
-- Enterprise Pipeline API는 읽기 작업의 제한된 부분 집합만 지원합니다([Enterprise 파이프라인](../../products/firestore/#enterprise-pipelines) 참고).
+- Enterprise Pipeline API는 읽기 작업의 제한된 부분 집합만 지원합니다([Enterprise 파이프라인](../../products/firestore/#enterprise-파이프라인) 참고).
 - Enterprise 텍스트 검색은 유한한 로컬 어휘 검색과 명시적인 빌드 제어를 제공합니다. 분석과 순위 계산은 근사치이며, `productionExact`는 관찰되지 않은 검색 의미 체계를 거부합니다.
 
 ### Authentication
@@ -35,7 +35,7 @@ App Hosting과 Data Connect는 현재 지원하지 않습니다. Firebase Extens
 - 서명된 URL 또는 POST 정책의 서명 검증(만료와 조건은 검사합니다).
 - `allUsers` 읽기 외의 객체 ACL, IAM, 버킷 수준 공개 액세스.
 - 객체 합성(`compose`)과 알림 구성.
-- **`strict`에서 녹화된 Storage CORS.** `conformance/storage-strictness-obs/recordings/run-2.json`은 버킷 CORS가 없는 경우, 비어 있는 경우, 구성된 경우에 대해 JSON API 메타데이터, 미디어, 버킷, 목록, UBLA ACL 오류 응답, 업로드 사전 요청(preflight), 재개 가능한 업로드 시작, 취소, 취소된 세션 읽기를 기록합니다. strict는 `productionExact` 없이도 녹화된 CORS 값을 사용하며, emulator 프로필은 기존 동작을 유지합니다. 요청 헤더의 대소문자 혼합 보존, UBLA PATCH/토글 동작, expose 목록을 다른 응답에 적용하는 것은 녹화되지 않은 가정입니다. 생성 시에는 녹화된 리전과 비활성화된 soft-delete 힌트를 받아들이지만, 해당 서비스를 모델링하지는 않습니다. 로컬 테스트는 UBLA 내보내기/가져오기와 비어 있는 생성 버킷을 다룹니다. [버킷 CORS](../../products/storage/#bucket-cors)를 참고하십시오.
+- **`strict`에서 녹화된 Storage CORS.** `conformance/storage-strictness-obs/recordings/run-2.json`은 버킷 CORS가 없는 경우, 비어 있는 경우, 구성된 경우에 대해 JSON API 메타데이터, 미디어, 버킷, 목록, UBLA ACL 오류 응답, 업로드 사전 요청(preflight), 재개 가능한 업로드 시작, 취소, 취소된 세션 읽기를 기록합니다. strict는 `productionExact` 없이도 녹화된 CORS 값을 사용하며, emulator 프로필은 기존 동작을 유지합니다. 요청 헤더의 대소문자 혼합 보존, UBLA PATCH/토글 동작, expose 목록을 다른 응답에 적용하는 것은 녹화되지 않은 가정입니다. 생성 시에는 녹화된 리전과 비활성화된 soft-delete 힌트를 받아들이지만, 해당 서비스를 모델링하지는 않습니다. 로컬 테스트는 UBLA 내보내기/가져오기와 비어 있는 생성 버킷을 다룹니다. [버킷 CORS](../../products/storage/#버킷-cors)를 참고하십시오.
 
 ### Realtime Database
 
@@ -45,7 +45,7 @@ App Hosting과 Data Connect는 현재 지원하지 않습니다. Firebase Extens
 - Functions 트리거 전달은 제한된 집합의 녹화된 핸들러와 쓰기에서 관찰되었으며, 그 밖의 사례는 검증되지 않았습니다.
 - 프로덕션에서 관찰되지 않아 공식 에뮬레이터의 동작을 따른 부분은 바뀔 수 있습니다.
 
-[Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator)를 참고하십시오.
+[Realtime Database](../../products/realtime-database/#공식-에뮬레이터와의-차이)를 참고하십시오.
 
 ### Cloud Functions
 
@@ -79,7 +79,7 @@ Security Rules와 API 동작은 문서와 Firebase의 실제 동작 관찰에 �
 
 ## 로컬 한도
 
-일부 한도는 메모리 사용을 제한하기 위해 Fireemu에만 존재합니다. [Firestore 이력 한도](../../products/firestore/#transactions-and-history)와 선택 사항인 [Storage 저장 바이트 한도](../../products/storage/#limit-the-stored-bytes)입니다.
+일부 한도는 메모리 사용을 제한하기 위해 Fireemu에만 존재합니다. [Firestore 이력 한도](../../products/firestore/#트랜잭션과-이력)와 선택 사항인 [Storage 저장 바이트 한도](../../products/storage/#저장-바이트-제한)입니다.
 
 ## 버전 간 변경
 
