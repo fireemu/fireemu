@@ -15,13 +15,13 @@ App Hosting y Data Connect no son compatibles por ahora. La compatibilidad con F
 
 ## Productos con compatibilidad parcial
 
-- **Realtime Database.** Se sirve y se verifica contra producción solo para sus casos grabados (consulta [Verificación contra producción](../#verificación-de-producción)). La compatibilidad más amplia con producción no está verificada, y no hay una declaración de paridad con el emulador oficial. Detalles: [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) y la lista de abajo.
+- **Realtime Database.** Se sirve y se verifica contra producción solo para sus casos grabados (consulta [Verificación contra producción](../#verificación-contra-producción)). La compatibilidad más amplia con producción no está verificada, y no hay una declaración de paridad con el emulador oficial. Detalles: [Realtime Database](../../products/realtime-database/#diferencias-con-el-emulador-oficial) y la lista de abajo.
 
 ## Funciones no compatibles
 
 ### Cloud Firestore
 
-- La API Enterprise Pipeline admite un subconjunto limitado de operaciones de lectura (consulta [Enterprise pipelines](../../products/firestore/#enterprise-pipelines)).
+- La API Enterprise Pipeline admite un subconjunto limitado de operaciones de lectura (consulta [Enterprise pipelines](../../products/firestore/#pipelines-enterprise)).
 - La búsqueda de texto de la edición Enterprise ofrece una búsqueda léxica local finita y controles de construcción explícitos. El análisis y el ranking son aproximaciones; `productionExact` rechaza la semántica de búsqueda no observada.
 
 ### Authentication
@@ -35,17 +35,17 @@ App Hosting y Data Connect no son compatibles por ahora. La compatibilidad con F
 - Verificar la firma de una URL firmada o de una política POST (se comprueban su expiración y sus condiciones).
 - ACL de objetos distintas de la lectura para `allUsers`, IAM y acceso público a nivel de bucket.
 - Composición de objetos (`compose`) y configuración de notificaciones.
-- **CORS de Storage grabado con `strict`.** `conformance/storage-strictness-obs/recordings/run-2.json` registra respuestas de metadatos de la API JSON, de contenido multimedia, de buckets, de listados y de errores de ACL con UBLA, preflights de subida, inicio de subidas reanudables, cancelación y lecturas de sesiones canceladas con CORS de bucket ausente, vacío y configurado. Strict usa los valores de CORS grabados sin requerir `productionExact`; el perfil emulator conserva su comportamiento actual. La conservación de mayúsculas y minúsculas mixtas en las cabeceras solicitadas, el comportamiento de PATCH y de conmutación de UBLA, y la aplicación de las listas expose a otras respuestas son suposiciones no grabadas. La creación acepta las indicaciones grabadas de región y de soft-delete desactivado sin modelar esos servicios. Las pruebas locales cubren la exportación e importación de UBLA y los buckets creados vacíos. Consulta [CORS de buckets](../../products/storage/#bucket-cors).
+- **CORS de Storage grabado con `strict`.** `conformance/storage-strictness-obs/recordings/run-2.json` registra respuestas de metadatos de la API JSON, de contenido multimedia, de buckets, de listados y de errores de ACL con UBLA, preflights de subida, inicio de subidas reanudables, cancelación y lecturas de sesiones canceladas con CORS de bucket ausente, vacío y configurado. Strict usa los valores de CORS grabados sin requerir `productionExact`; el perfil emulator conserva su comportamiento actual. La conservación de mayúsculas y minúsculas mixtas en las cabeceras solicitadas, el comportamiento de PATCH y de conmutación de UBLA, y la aplicación de las listas expose a otras respuestas son suposiciones no grabadas. La creación acepta las indicaciones grabadas de región y de soft-delete desactivado sin modelar esos servicios. Las pruebas locales cubren la exportación e importación de UBLA y los buckets creados vacíos. Consulta [CORS de buckets](../../products/storage/#cors-del-bucket).
 
 ### Realtime Database
 
-- Verificada contra producción solo para sus casos grabados (consulta [Verificación contra producción](../#verificación-de-producción)); la compatibilidad más amplia con producción no está verificada, y no hay una declaración de paridad con el emulador oficial. La comparación se limita a los casos grabados del emulador oficial.
+- Verificada contra producción solo para sus casos grabados (consulta [Verificación contra producción](../#verificación-contra-producción)); la compatibilidad más amplia con producción no está verificada, y no hay una declaración de paridad con el emulador oficial. La comparación se limita a los casos grabados del emulador oficial.
 - La sintaxis no admitida y los casos de evaluación enumerados (construcciones de expresiones regulares, mapeos de mayúsculas y minúsculas y las demás diferencias que allí se enumeran) se rechazan al cargar las reglas o producen errores de reglas. `query.endBefore`, `query.isOrderByChild()`, los nombres `OrderByKey`, `OrderByValue` y `OrderByPriority`, `http.encodeURL()`, las lecturas de métodos sin llamada y los callees ternarios se cargan y se evalúan como se grabó que lo hacía producción.
 - Los ocho patrones grabados que el límite de recursos de determinización del emulador oficial rechaza también se rechazan cuando Fireemu carga las reglas, incluso en ramas de expresión no evaluadas. Esto no establece una equivalencia completa de expresiones regulares ni con producción.
 - La entrega de triggers de Functions se ha observado para un conjunto limitado de handlers y escrituras grabados; los casos más amplios siguen sin verificarse.
 - El comportamiento tomado del emulador oficial donde producción no se ha observado puede cambiar.
 
-Consulta [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator).
+Consulta [Realtime Database](../../products/realtime-database/#diferencias-con-el-emulador-oficial).
 
 ### Cloud Functions
 
@@ -79,7 +79,7 @@ Las Security Rules y el comportamiento de las APIs se implementan a partir de la
 
 ## Límites locales
 
-Algunos límites existen solo en Fireemu, para acotar el uso de memoria: los [límites del historial de Firestore](../../products/firestore/#transactions-and-history) y el [límite opcional de bytes almacenados de Storage](../../products/storage/#limit-the-stored-bytes).
+Algunos límites existen solo en Fireemu, para acotar el uso de memoria: los [límites del historial de Firestore](../../products/firestore/#transacciones-e-historial) y el [límite opcional de bytes almacenados de Storage](../../products/storage/#limitar-los-bytes-almacenados).
 
 ## Cambios entre versiones
 

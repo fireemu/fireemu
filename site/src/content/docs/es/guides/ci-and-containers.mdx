@@ -79,7 +79,7 @@ Tres comprobaciones hacen fallar un trabajo pronto, antes de que una prueba se e
 | Comprobación | Qué hace |
 |---|---|
 | `config lint --deny-ineffective` | Sale con 1, haciendo fallar el trabajo, cuando la configuración establece una clave que Fireemu acepta pero nunca lee. Lista las claves que conservas a propósito con `--allow <key>` o `--allow-file <path>` (consulta [`config lint`](../../reference/cli/#config-lint)). |
-| `exec --plan` | Imprime lo que resuelve la ejecución, de modo que el log del trabajo muestra el ID del proyecto, los servicios y sus puertos, los archivos que se leyeron, el Node que usaría para Functions y las variables de emulador que hereda. No inicia nada, y sale con 1 cuando la ejecución fallaría por una razón que puede ver. Usa `--json` para alimentar otra herramienta (consulta [Planificar una ejecución](../../reference/cli/#plan-a-run)). |
+| `exec --plan` | Imprime lo que resuelve la ejecución, de modo que el log del trabajo muestra el ID del proyecto, los servicios y sus puertos, los archivos que se leyeron, el Node que usaría para Functions y las variables de emulador que hereda. No inicia nada, y sale con 1 cuando la ejecución fallaría por una razón que puede ver. Usa `--json` para alimentar otra herramienta (consulta [Planificar una ejecución](../../reference/cli/#planificar-una-ejecución)). |
 | `--deny-inherited-emulator-env` | Hace fallar la ejecución cuando el entorno del trabajo lleva una variable de emulador (`PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST` de otra suite, etc.) de un servicio que esta ejecución no inicia. Sin él, la ejecución avisa y conserva la variable. Usa `--allow-inherited-emulator-env <NAME>` para una variable que estableces a propósito. |
 
 ### Trabajos en contenedor

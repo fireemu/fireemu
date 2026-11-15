@@ -17,7 +17,7 @@ Ambos dialectos comparten un único almacén, así que un objeto subido por uno 
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puerto predeterminado', value: '9199' },
   { label: 'Inicio', value: 'De forma predeterminada' },
-  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -467,8 +467,8 @@ El versionado de objetos se sirve en la API JSON: `PATCH /storage/v1/b/{bucket}`
 :::caution
 Como el emulador oficial, el puerto de Storage refleja el nombre de objeto solicitado en el cuerpo HTML de su 404 para una lectura de medios que falta. Una página web abierta en tu máquina podría ejecutar script en ese origen.
 
-- De forma predeterminada, todos los listeners están en loopback, así que solo los procesos de tu máquina llegan a él. El guarda de Host también responde 403 a una solicitud que nombra un `Host` distinto de `localhost`, una dirección IP o un nombre que incluiste en `network.allowedHosts`, como defensa contra el DNS rebinding (consulta [Nombres de host a los que responden los emuladores](../../guides/ci-and-containers/#host-names-the-emulators-answer)).
-- El puerto es accesible desde otros hosts solo si lo habilitas expresamente: `network.allowNonLoopbackHosts` en `fireemu.toml` junto con un `emulators.storage.host` que no sea de loopback en `firebase.json` (consulta [Sirve los emuladores desde un contenedor](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)). Un listener así sirve sin credencial, así que no lo expongas en una red no confiable.
+- De forma predeterminada, todos los listeners están en loopback, así que solo los procesos de tu máquina llegan a él. El guarda de Host también responde 403 a una solicitud que nombra un `Host` distinto de `localhost`, una dirección IP o un nombre que incluiste en `network.allowedHosts`, como defensa contra el DNS rebinding (consulta [Nombres de host a los que responden los emuladores](../../guides/ci-and-containers/#nombres-de-host-que-responden-los-emuladores)).
+- El puerto es accesible desde otros hosts solo si lo habilitas expresamente: `network.allowNonLoopbackHosts` en `fireemu.toml` junto con un `emulators.storage.host` que no sea de loopback en `firebase.json` (consulta [Sirve los emuladores desde un contenedor](../../guides/ci-and-containers/#servir-los-emuladores-desde-un-contenedor)). Un listener así sirve sin credencial, así que no lo expongas en una red no confiable.
 - El perfil `strict` no envía `X-Content-Type-Options: nosniff` en las respuestas de la API JSON donde producción no envía ninguno, así que no añade esa defensa en profundidad; el perfil `emulator` mantiene el encabezado del emulador oficial.
 
 :::

@@ -28,7 +28,7 @@ Las variables de los emuladores que no se seleccionan se dejan como las tenía t
 | `GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT` | El ID de proyecto | Siempre |
 | `FIREBASE_CONFIG` | Se define a partir del ID de proyecto | Salvo que tu entorno ya la tenga |
 | `FIREEMU_CONTROL_URL` | URL base de la API de control, terminada en `/v1/` | Siempre |
-| `FIREEMU_CONTROL_TOKEN` | Token bearer de la API de control; lo usan `fireemu/testing` y los scripts de [Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index) | Siempre |
+| `FIREEMU_CONTROL_TOKEN` | Token bearer de la API de control; lo usan `fireemu/testing` y los scripts de [Cloud Firestore](../../products/firestore/#hacer-fallar-un-trabajo-de-ci-por-un-índice-faltante) | Siempre |
 
 `fireemu up` no define variables en tu shell. Su salida de arranque imprime cada `host:port` (por ejemplo `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`), y la UI del emulador los muestra en la página Overview, en "Environment for SDKs".
 
@@ -51,6 +51,6 @@ Solo se hereda del daemon una lista corta de variables. Las credenciales se reti
 | `FIREBASE_CONFIG` | Cuando `exec` la encuentra definida, conserva tu valor en lugar de escribir uno a partir del ID de proyecto. |
 | `PATH`, `VOLTA_HOME` | Dónde se busca Node.js cuando `FIREEMU_NODE` no está definida. |
 | `HOME`, `XDG_CACHE_HOME`, `LOCALAPPDATA` | Dónde se guarda la caché de la clave de firma de sesión de Authentication (un directorio solo del propietario); sin una caché utilizable, la clave se genera en memoria en cada arranque. |
-| `SUDO_UID` | Cuando Fireemu se ejecuta como root, el usuario indicado aquí también es un propietario de confianza de los archivos de configuración descubiertos. Consulta las [comprobaciones de propiedad de archivos](../../guides/configuration/#file-ownership-checks). |
+| `SUDO_UID` | Cuando Fireemu se ejecuta como root, el usuario indicado aquí también es un propietario de confianza de los archivos de configuración descubiertos. Consulta las [comprobaciones de propiedad de archivos](../../guides/configuration/#comprobaciones-de-propiedad-de-archivos). |
 | `ComSpec` | En Windows, el shell que ejecuta la forma de script de `fireemu exec "script"`. Valor predeterminado: `cmd.exe`. |
 | `FIREEMU_TRACE_WEBCHANNEL`, `FIREEMU_TRACE_STORAGE` | Cualquier valor imprime una traza de solicitudes (`[webchannel] ...`, `[storage] ...`) en la salida de error estándar, para diagnosticar un problema de cliente. No es para ejecuciones normales. |

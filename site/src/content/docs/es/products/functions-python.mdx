@@ -11,7 +11,7 @@ Fireemu ejecuta codebases de Python junto a los de Node.js. Esta página trata l
   { label: 'Runtimes', value: 'python310 a python314' },
   { label: 'SDK probado', value: 'firebase-functions 0.6.0' },
   { label: 'Plataformas', value: 'Linux y macOS' },
-  { label: 'Verificación en producción', value: 'Casos registrados en seis familias de eventos', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Casos registrados en seis familias de eventos', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -87,7 +87,7 @@ El diseño del cuerpo de Realtime Database no está registrado. Los encabezados 
 
 ## Verificación en producción
 
-Los codebases de Python se verifican contra producción para los casos registrados de seis familias de eventos, cada una a partir de dos grabaciones independientes de producción bajo el perfil `strict`: Firestore (eventos de creación y actualización), Pub/Sub, Cloud Storage (el evento finalized), eventos personalizados de Eventarc, Cloud Scheduler y Cloud Tasks (paso directo HTTP). La comparación cubre los valores y las proyecciones de solicitud que ve el SDK de Python; consulta las [tablas de compatibilidad](../../compatibility/#production-verification).
+Los codebases de Python se verifican contra producción para los casos registrados de seis familias de eventos, cada una a partir de dos grabaciones independientes de producción bajo el perfil `strict`: Firestore (eventos de creación y actualización), Pub/Sub, Cloud Storage (el evento finalized), eventos personalizados de Eventarc, Cloud Scheduler y Cloud Tasks (paso directo HTTP). La comparación cubre los valores y las proyecciones de solicitud que ve el SDK de Python; consulta las [tablas de compatibilidad](../../compatibility/#verificación-contra-producción).
 
 Las funciones de bloqueo de Auth de Python no están verificadas, y el despliegue de un codebase de Python en producción no se comparó. Las diferencias del perfil emulator respecto al comportamiento `strict` registrado se enumeran como diferencias conocidas en esas tablas y en las secciones siguientes.
 

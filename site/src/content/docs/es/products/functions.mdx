@@ -11,7 +11,7 @@ Fireemu carga los codebases de Functions declarados en `firebase.json` y los eje
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puerto predeterminado', value: '5001' },
   { label: 'Se inicia', value: 'Cuando hay un codebase configurado' },
-  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -70,7 +70,7 @@ Estos son los exports de `firebase-functions` para Node.js. Consulta el [inventa
 
 Varios de estos se ejecutan solo bajo ciertas condiciones; consulta [Salvedades de los disparadores](#salvedades-de-los-disparadores).
 
-Las observaciones en producción de los disparadores de Realtime Database cubren secuencias fijas de administrador y sin autenticar, además de 12 escrituras de un usuario de correo y contraseña por REST y por el SDK web, incluidas escrituras de ancestros y de varias rutas y la reentrega tras una invocación fallida. El momento de la entrega, otros proveedores y las formas de escritura o de handler no registradas siguen sin verificarse. [Disparadores locales de Functions](../realtime-database/#local-functions-triggers) describe cómo se admite una escritura y sus eventos.
+Las observaciones en producción de los disparadores de Realtime Database cubren secuencias fijas de administrador y sin autenticar, además de 12 escrituras de un usuario de correo y contraseña por REST y por el SDK web, incluidas escrituras de ancestros y de varias rutas y la reentrega tras una invocación fallida. El momento de la entrega, otros proveedores y las formas de escritura o de handler no registradas siguen sin verificarse. [Disparadores locales de Functions](../realtime-database/#triggers-de-functions-locales) describe cómo se admite una escritura y sus eventos.
 
 ## Parámetros y secretos
 
@@ -185,7 +185,7 @@ El historial de nombres completados está acotado, entre todas las colas, a 65 5
 
 ### Esperar a que el trabajo actual se estabilice
 
-Para una prueba que solo necesita que el trabajo actual se estabilice, envía `POST /v1/sessions/default:awaitIdle` con `{ "scope": "runnable" }` (desde v0.26.0). Las programaciones futuras y el backoff de reintentos no bloquean este ámbito; las tareas vencidas que esperan por tasa o concurrencia y las solicitudes HTTP activas sí lo hacen. Si omites el ámbito, espera a todo el trabajo. Consulta [esperar el trabajo ejecutable](../../guides/test-worlds/#wait-for-runnable-work).
+Para una prueba que solo necesita que el trabajo actual se estabilice, envía `POST /v1/sessions/default:awaitIdle` con `{ "scope": "runnable" }` (desde v0.26.0). Las programaciones futuras y el backoff de reintentos no bloquean este ámbito; las tareas vencidas que esperan por tasa o concurrencia y las solicitudes HTTP activas sí lo hacen. Si omites el ámbito, espera a todo el trabajo. Consulta [esperar el trabajo ejecutable](../../guides/test-worlds/#esperar-el-trabajo-ejecutable).
 
 ## Funciones programadas
 
@@ -209,7 +209,7 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/functions/nightly:run
 curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 86400}'
 ```
 
-Un nombre desconocido o no programado responde `400 INVALID_ARGUMENT`. Una ejecución manual no consume la siguiente ocurrencia; consulta [Ejecutar ahora una función programada](../../guides/time/#run-a-scheduled-function-now).
+Un nombre desconocido o no programado responde `400 INVALID_ARGUMENT`. Una ejecución manual no consume la siguiente ocurrencia; consulta [Ejecutar ahora una función programada](../../guides/time/#ejecutar-ahora-una-función-programada).
 
 Publicar un mensaje en el tema `firebase-schedule-<function>-<region>` de una programación de primera generación bajo `strict` también invoca el handler, conservando los datos, atributos, clave de orden e ID de mensaje originales de Pub/Sub. Las ocurrencias programadas normales y las ejecuciones manuales siguen invocándolo una sola vez.
 
@@ -372,7 +372,7 @@ Un export que Fireemu no puede servir (una función cuyas opciones no se resuelv
 
 ### Verificación en producción
 
-Los codebases de Node.js se verifican con grabaciones de funciones desplegadas para funciones HTTP y callable, para disparadores de eventos y para funciones programadas. Consulta las [tablas de compatibilidad](../../compatibility/#production-verification).
+Los codebases de Node.js se verifican con grabaciones de funciones desplegadas para funciones HTTP y callable, para disparadores de eventos y para funciones programadas. Consulta las [tablas de compatibilidad](../../compatibility/#verificación-contra-producción).
 
 Los codebases de Python tienen su propia declaración de verificación, para seis familias de eventos; consulta [Verificación en producción](../functions-python/#verificación-en-producción) en la página de Python.
 

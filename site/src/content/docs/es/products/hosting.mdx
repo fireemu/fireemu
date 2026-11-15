@@ -11,7 +11,7 @@ Fireemu sirve sitios de Firebase Hosting desde la entrada `hosting` de `firebase
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puerto predeterminado', value: '5000' },
   { label: 'Se inicia', value: 'Cuando firebase.json tiene un directorio hosting.public' },
-  { label: 'Verificación en producción', value: 'Verificado para los casos registrados', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Verificado para los casos registrados', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 Hosting está **verificado contra producción para sus casos registrados**. El perfil `strict`, el predeterminado, responde como respondió Firebase Hosting a 279 solicitudes registradas dos veces en canales de vista previa (un corpus de 201 solicitudes y un corpus de seguimiento de 78 solicitudes), salvo por las [diferencias conocidas](#diferencias-conocidas-y-respuestas-no-registradas). El perfil `emulator` se compara sin conexión con `firebase-tools` 15.28.2 sobre un conjunto finito de casos y no hace ninguna afirmación sobre producción. Consulta [Perfiles](#perfiles) y [Estado de la verificación](#estado-de-la-verificación).
@@ -201,7 +201,7 @@ Algunas respuestas de strict provienen de una lectura de las grabaciones, no de 
 
 ## Estado de la verificación
 
-El área `HOSTING` de las [tablas de compatibilidad](../../compatibility/#production-verification) está **Verificada** para los casos registrados.
+El área `HOSTING` de las [tablas de compatibilidad](../../compatibility/#verificación-contra-producción) está **Verificada** para los casos registrados.
 
 - **Qué se registró.** Producción se observó dos veces con las mismas 201 solicitudes (archivos estáticos, redirecciones, rewrites, coincidencia de globs, encabezados y caché, URLs limpias, barras finales, localización, rutas reservadas, tipos de contenido, compresión, asociación de apps) y dos veces con un conjunto de seguimiento de 78 solicitudes (la página 404 predeterminada y la página alojada del auth handler como longitudes y estado, segmentos de punto y barras invertidas, nombres de parámetros de redirección con dígitos y repetidos, archivos precomprimidos con una regla de `Content-Encoding`, y qué tamaños, tipos de contenido y formas de `Accept-Encoding` comprime gzip producción). Las grabaciones se hicieron en canales de vista previa de un sitio desechable, nunca en un canal en vivo, y la revisión de cierre del 2026-11-11 aceptó el primer conjunto de evidencias.
 - **Cómo se comparan las respuestas.** En cada par las dos grabaciones concuerdan entre sí en todas las solicitudes salvo un host de redirección interno de producción, y el perfil `strict` con `productionExact` concuerda con ambas en todas las solicitudes salvo las [diferencias conocidas](#diferencias-conocidas-y-respuestas-no-registradas). De las 201 filas de cada comparación principal, 18 llevan una diferencia conocida, y de las 78 filas de cada comparación de seguimiento, 42, contadas por separado de las coincidencias.
@@ -234,5 +234,5 @@ La codificación de contenido gzip bajo `strict` es más reciente que v0.49.0: e
 
 - [Functions](../functions/): el codebase al que llega un rewrite `function` o `run`.
 - [Perfiles](../../guides/profiles/): `strict`, `emulator` y `productionExact`.
-- [Tablas de compatibilidad](../../compatibility/#production-verification) y [Limitaciones](../../compatibility/limitations/).
+- [Tablas de compatibilidad](../../compatibility/#verificación-contra-producción) y [Limitaciones](../../compatibility/limitations/).
 - [Esquema de configuración](../../reference/configuration/): las claves `hosting` y `daemon.hostingPort`.

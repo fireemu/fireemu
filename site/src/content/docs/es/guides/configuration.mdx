@@ -82,7 +82,7 @@ Así, `fireemu exec --config packages/api/fireemu.toml -- npm test`, ejecutado d
 
 Para evitar la diferencia, ejecuta Fireemu desde el directorio que contiene la configuración, o pon las rutas en un `firebase.json` al que haga referencia `firebaseJson`.
 
-[`fireemu up --plan`](../../reference/cli/#plan-a-run) muestra, para cada ruta, la ruta absoluta que abre la ejecución y el directorio contra el que se resolvió. Avisa cuando una ruta de la configuración canónica se resolvería de forma distinta desde el directorio del propio archivo de configuración.
+[`fireemu up --plan`](../../reference/cli/#planificar-una-ejecución) muestra, para cada ruta, la ruta absoluta que abre la ejecución y el directorio contra el que se resolvió. Avisa cuando una ruta de la configuración canónica se resolvería de forma distinta desde el directorio del propio archivo de configuración.
 
 ## Comprobaciones de propiedad de archivos
 
@@ -118,7 +118,7 @@ Dos configuraciones habituales chocan con esta regla:
 Dos comandos muestran a qué se resuelve una configuración:
 
 - `fireemu capabilities` imprime el manifiesto de capacidades del perfil al que se resuelve tu configuración.
-- `fireemu up --plan` y `fireemu exec --plan -- <command>` imprimen todo lo que la ejecución resuelve a partir de tus archivos, la línea de comandos y el entorno (proyecto, servicios, puertos, archivos, runtime de Functions, variables heredadas) sin iniciarla. Consulta [Planificar una ejecución](../../reference/cli/#plan-a-run).
+- `fireemu up --plan` y `fireemu exec --plan -- <command>` imprimen todo lo que la ejecución resuelve a partir de tus archivos, la línea de comandos y el entorno (proyecto, servicios, puertos, archivos, runtime de Functions, variables heredadas) sin iniciarla. Consulta [Planificar una ejecución](../../reference/cli/#planificar-una-ejecución).
 
 ## Generar un archivo de referencia
 

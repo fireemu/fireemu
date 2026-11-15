@@ -170,7 +170,7 @@ Estos comportamientos difieren de producción y `productionExact` no los cambia.
 
 | Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
 |---|---|
-| Pub/Sub acepta solicitudes sin ninguna credencial, de modo que funcionan los clientes que usan `PUBSUB_EMULATOR_HOST` | Establece `pubsub.authentication.localBearerToken`; las solicitudes sin credencial se rechazan entonces como las rechaza producción. Consulta [Pub/Sub y Eventarc](../../products/pubsub-eventarc/#authentication). |
+| Pub/Sub acepta solicitudes sin ninguna credencial, de modo que funcionan los clientes que usan `PUBSUB_EMULATOR_HOST` | Establece `pubsub.authentication.localBearerToken`; las solicitudes sin credencial se rechazan entonces como las rechaza producción. Consulta [Pub/Sub y Eventarc](../../products/pubsub-eventarc/#autenticación). |
 | Un endpoint push de Pub/Sub puede ser `http://` simple en loopback (`127.0.0.1`, `localhost`, `[::1]`); producción exige HTTPS | Usa una URL `https://` que no sea loopback en la suscripción; Fireemu entrega los mensajes push solo a loopback, por lo que no hay ajuste que lo haga llegar a una |
 
 ## Relacionado

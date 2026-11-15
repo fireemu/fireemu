@@ -82,7 +82,7 @@ Una ejecución manual (`POST /v1/sessions/{session}/functions/{name}:run`) encol
 | `400 INVALID_ARGUMENT` | Una función desconocida, una función que no está programada, un rechazo de la política de solapamiento o un runtime que se está apagando |
 | `429 RESOURCE_EXHAUSTED` | La cola de eventos está llena |
 
-En una función de cola de tareas (`onTaskDispatched`), la misma ruta libera las Cloud Tasks que esperan su `scheduleTime`: todas, o la nombrada por un cuerpo `{"task": "<task id>"}` (404 cuando ninguna tarea en espera tiene ese id). Consulta [Colas de tareas](../../products/functions/#task-queues).
+En una función de cola de tareas (`onTaskDispatched`), la misma ruta libera las Cloud Tasks que esperan su `scheduleTime`: todas, o la nombrada por un cuerpo `{"task": "<task id>"}` (404 cuando ninguna tarea en espera tiene ese id). Consulta [Colas de tareas](../../products/functions/#colas-de-tareas).
 
 ## Mover el reloj hacia atrás
 
@@ -160,5 +160,5 @@ tasks = "virtual"
 
 - [Mundos de prueba](../test-worlds/): para pruebas en paralelo que necesitan su propio reloj, el helper `fireemu/testing` inicia mundos independientes, cada uno fijado a una hora de inicio que tú mueves a mano.
 - [UI del emulador](../ui/)
-- [Cloud Functions](../../products/functions/#task-queues)
+- [Cloud Functions](../../products/functions/#colas-de-tareas)
 - [Referencia de configuración](../../reference/configuration/)

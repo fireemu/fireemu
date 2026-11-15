@@ -12,7 +12,7 @@ Fireemu sirve Firebase Authentication con las funciones de Identity Platform: au
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puerto predeterminado', value: '9099' },
   { label: 'Inicio', value: 'De forma predeterminada' },
-  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -489,7 +489,7 @@ Consulta la [documentación de compatibilidad](https://github.com/fireemu/fireem
 
 ## Tokens
 
-Fireemu acepta algunos tokens sin firma de forma predeterminada, para que las pruebas no necesiten claves de firma. Cada valor predeterminado tiene su propio ajuste, y [`productionExact`](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose) los cambia todos al comportamiento de producción:
+Fireemu acepta algunos tokens sin firma de forma predeterminada, para que las pruebas no necesiten claves de firma. Cada valor predeterminado tiene su propio ajuste, y [`productionExact`](../../guides/profiles/#dónde-fireemu-se-aparta-de-producción-a-propósito) los cambia todos al comportamiento de producción:
 
 | Valor predeterminado de desarrollo | Ajuste | Con `productionExact` |
 |---|---|---|
@@ -497,7 +497,7 @@ Fireemu acepta algunos tokens sin firma de forma predeterminada, para que las pr
 | Las Security Rules de Firestore, Storage y Realtime Database aceptan el token de ID simulado sin firma de `@firebase/rules-unit-testing` | `auth.allowUnsignedIdTokens` | La alternativa del token simulado se deshabilita, como producción rechaza un token sin firma; los tokens emitidos por fireemu que superan la verificación normal se siguen aceptando |
 | El inicio de sesión con proveedores de identidad acepta aserciones de prueba y el widget de inicio de sesión | `auth.idpAssertions` (`"fixture"`) | `"signed"`: los tokens de ID de OIDC deben verificarse con una clave de `auth.idpSigners`, y las respuestas SAML con los certificados del proveedor |
 
-Las aserciones de prueba omiten solo la comprobación de la firma. Con `strict`, el inicio de sesión mediante un proveedor `oidc.*` o `saml.*` se sigue rechazando cuando el proveedor no tiene configuración (declárala en `auth.providers` o créala mediante la Admin API) o está deshabilitado, con los mensajes de producción `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` o `... is disabled.`. Los proveedores integrados como `google.com` inician sesión sin configuración en la consola; consulta [Otras comodidades de desarrollo](../../guides/profiles/#other-development-conveniences).
+Las aserciones de prueba omiten solo la comprobación de la firma. Con `strict`, el inicio de sesión mediante un proveedor `oidc.*` o `saml.*` se sigue rechazando cuando el proveedor no tiene configuración (declárala en `auth.providers` o créala mediante la Admin API) o está deshabilitado, con los mensajes de producción `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` o `... is disabled.`. Los proveedores integrados como `google.com` inician sesión sin configuración en la consola; consulta [Otras comodidades de desarrollo](../../guides/profiles/#otras-comodidades-de-desarrollo).
 
 ### Tokens personalizados
 

@@ -12,7 +12,7 @@ Fireemu sirve la API `google.pubsub.v1` por gRPC y REST, un listener de Eventarc
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puertos predeterminados', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
   { label: 'Inicio', value: 'Pub/Sub cuando está configurado; Eventarc y Cloud Tasks con Functions' },
-  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -137,7 +137,7 @@ De forma predeterminada, el listener no comprueba la credencial (`eventarc.authe
 
 ## Cloud Tasks
 
-Cuando se carga un código base de Functions, Fireemu inicia un emulador de Cloud Tasks en `127.0.0.1:9499` y establece `CLOUD_TASKS_EMULATOR_HOST`. Las funciones de cola de tareas (`onTaskDispatched`) reciben las tareas encoladas para ellas, con sus límites de tasa y su configuración de reintentos. El `scheduleTime` de una tarea la retiene con `strict`; consulta [Colas de tareas](../functions/#task-queues) para las tareas en espera, **Run now** y el reloj virtual.
+Cuando se carga un código base de Functions, Fireemu inicia un emulador de Cloud Tasks en `127.0.0.1:9499` y establece `CLOUD_TASKS_EMULATOR_HOST`. Las funciones de cola de tareas (`onTaskDispatched`) reciben las tareas encoladas para ellas, con sus límites de tasa y su configuración de reintentos. El `scheduleTime` de una tarea la retiene con `strict`; consulta [Colas de tareas](../functions/#colas-de-tareas) para las tareas en espera, **Run now** y el reloj virtual.
 
 ## Diferencias con producción
 
@@ -160,6 +160,6 @@ Los esquemas, la entrega de suscripciones a BigQuery y Cloud Storage, y algunas 
 ## Relacionado
 
 - [Cloud Functions](../functions/)
-- [Colas de tareas](../functions/#task-queues)
+- [Colas de tareas](../functions/#colas-de-tareas)
 - [Perfiles](../../guides/profiles/)
 - [Variables de entorno](../../reference/environment-variables/)

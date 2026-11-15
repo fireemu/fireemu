@@ -12,7 +12,7 @@ Fireemu sirve Cloud Firestore mediante gRPC, REST y el transporte WebChannel que
   { label: 'Estado', value: 'Compatible' },
   { label: 'Puerto por defecto', value: '8080' },
   { label: 'Inicio', value: 'Por defecto' },
-  { label: 'Verificación contra producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+  { label: 'Verificación contra producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#verificación-contra-producción' },
 ]} />
 
 ## Qué puedes probar
@@ -26,7 +26,7 @@ Fireemu sirve Cloud Firestore mediante gRPC, REST y el transporte WebChannel que
 
 ## Conectar
 
-Firestore escucha por defecto en `127.0.0.1:8080` (`--firestore-port` o `firebase.json` lo cambian; consulta [todos los puertos por defecto](../../getting-started/install/#default-ports)).
+Firestore escucha por defecto en `127.0.0.1:8080` (`--firestore-port` o `firebase.json` lo cambian; consulta [todos los puertos por defecto](../../getting-started/install/#puertos-predeterminados)).
 
 ```js
 // Web SDK
@@ -420,7 +420,7 @@ Los pipelines Enterprise se verifican contra producción para el corpus registra
 | 26 | Difieren solo de una forma que aceptó el propietario del proyecto (el orden de los grupos de un aggregate, la selección legal de grupos bajo un `limit` o `offset` tras grupos sin ordenar, el orden de las filas empatadas en todas las claves de ordenación, y un valor que depende del reloj). |
 | 2 | Solicitudes gRPC que el registrador no pudo enviar; las cubre una observación posterior. |
 
-Las formas que no se registraron no se afirman, y el perfil strict rechaza muchas de ellas por no observadas; la tabla de [Verificación contra producción](../../compatibility/#production-verification) enumera lo que no se afirma.
+Las formas que no se registraron no se afirman, y el perfil strict rechaza muchas de ellas por no observadas; la tabla de [Verificación contra producción](../../compatibility/#verificación-contra-producción) enumera lo que no se afirma.
 
 ### Etapas y expresiones admitidas
 
@@ -583,7 +583,7 @@ Producción no tiene ninguno de estos límites. Cada uno se describe en su secci
 
 ### Verificación contra producción
 
-Las escrituras y los límites, las consultas y los índices, las transacciones, los listeners en tiempo real, las Security Rules, la administración de bases de datos, la búsqueda de texto completo Enterprise y los pipelines Enterprise se verifican contra grabaciones de Firestore real, para los casos registrados de cada área. Consulta las [tablas de compatibilidad](../../compatibility/#production-verification).
+Las escrituras y los límites, las consultas y los índices, las transacciones, los listeners en tiempo real, las Security Rules, la administración de bases de datos, la búsqueda de texto completo Enterprise y los pipelines Enterprise se verifican contra grabaciones de Firestore real, para los casos registrados de cada área. Consulta las [tablas de compatibilidad](../../compatibility/#verificación-contra-producción).
 
 ## Relacionado
 

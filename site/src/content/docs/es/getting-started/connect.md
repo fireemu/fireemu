@@ -66,7 +66,7 @@ connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 
 Los puertos predeterminados se enumeran en [Instalación y ejecución](../install/#puertos-predeterminados). Dos productos se conectan de otra manera:
 
-- **Realtime Database.** El cliente necesita su propio `databaseURL`; consulta [Realtime Database](../../products/realtime-database/#connect).
+- **Realtime Database.** El cliente necesita su propio `databaseURL`; consulta [Realtime Database](../../products/realtime-database/#conectar).
 - **Hosting.** Es HTTP simple y no necesita configuración de SDK ([Firebase Hosting](../../products/hosting/)).
 
 ## Ejecuta pruebas unitarias de Security Rules
