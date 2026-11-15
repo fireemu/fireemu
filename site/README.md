@@ -5,12 +5,14 @@ The documentation site for Fireemu, built with [Astro Starlight](https://starlig
 ```sh
 pnpm -C site install --frozen-lockfile
 pnpm -C site test      # checks the compatibility data mapping
-pnpm -C site build     # writes site/dist
+pnpm -C site build     # writes site/dist (always a full rebuild; see below)
 pnpm -C site check:links  # after a build: every internal link and #anchor resolves
 pnpm -C site preview   # serves site/dist locally
 ```
 
 The compatibility pages are generated at build time from `spec/compatibility/contract.json`, `spec/compatibility/closure/*.json` and `crates/fireemu/src/capabilities.json`. A new production area, surface state or capability prefix fails the build until `src/data/compat.mjs` describes it.
+
+`build` passes `--force`, which drops Astro's content cache. Without it, pages whose source did not change keep their cached HTML, and after a change to the code block settings in `astro.config.mjs` they point at a stylesheet that no longer exists.
 
 ## Design
 

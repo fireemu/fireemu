@@ -2,32 +2,36 @@
 
 [![npm](https://img.shields.io/npm/v/fireemu)](https://www.npmjs.com/package/fireemu)
 
-Fireemu is a local emulator for testing applications built with Firebase. It aims to match production Firebase behavior as closely as possible, so you can test locally and in CI without using a real Firebase project.
+**Test against Firebase as it behaves in production.**
 
-Passing tests against the official emulator does not always mean your application will behave the same way in production. Fireemu is being developed to close that gap. For example, it provides:
+Fireemu is an unofficial local Firebase emulator for tests and CI, built to close the gap between local tests and production behavior. It is an independent open-source project, not an official Google or Firebase product.
 
-- **Validation of configuration required in production:** Fireemu detects issues that the official emulator misses, such as missing Firestore index definitions.
-- **Support for features not available in the official emulator:** Fireemu also supports features such as TOTP-based multi-factor authentication.
-- **Control over test execution conditions:** You can set an arbitrary time and run scheduled functions to verify their behavior without waiting for the actual scheduled time.
+It brings more of production into local tests:
 
-Fireemu is still in development and does not yet reproduce every feature and behavior of production Firebase. Before relying on its results in CI, run the same tests against Fireemu and a dedicated Firebase test project (not your live production project) for the features and critical workflows your application uses, and check for differences.
+- **Missing-index query rejection.** Queries that need an undeclared composite index fail with `FAILED_PRECONDITION` under the default `strict` settings, so the missing index surfaces in the test run, before deployment.
+- **TOTP multi-factor authentication.** Test TOTP enrollment and sign-in through the Firebase SDK.
+- **Blocking functions and account policies.** Test blocking functions for sign-up, sign-in and password-reset emails, and account settings such as disabling user-initiated account deletion.
+- **A virtual clock.** Set and advance the emulator's clock to test token expiry and scheduled Node.js functions without waiting for real time to pass.
+- **Independent test worlds.** Each world has its own data, Security Rules, Functions, ports and clock, so integration tests run in parallel without sharing state.
+
+Fireemu's responses are compared with recordings from real Firebase projects, and the [compatibility tables](https://fireemu.github.io/fireemu/compatibility/) publish the conditions checked and the known differences. Verification applies to the recorded scope, not every Firebase feature or input. Before relying on results in CI, compare the features and critical workflows your application uses with a dedicated Firebase test project (not your live production project).
 
 **Documentation:** <https://fireemu.github.io/fireemu/>
 
 ## Quick start
 
-Node.js 20 or newer is required. Fireemu runs on macOS 13 or newer (Apple silicon, Intel), Linux (x86-64, arm64) and Windows 10 or newer (x86-64). Running Node Functions requires `firebase-functions` v6 or v7 in the codebase; a Python codebase needs Python 3.10 to 3.14, its own `venv` with `firebase-functions`, and macOS or Linux.
+Start locally:
 
 ```sh
 npm install --save-dev fireemu
 npx fireemu init
 
-# Start the emulator
+# Start the emulators
 # UI (default): http://127.0.0.1:4000/ui/
 npx fireemu up
 ```
 
-Press `Ctrl+C` to stop the emulator. To run the emulator only for the duration of a command, use `exec`. It sets the Firebase SDK emulator host environment variables for the command and returns its exit status:
+Press `Ctrl+C` to stop. To run your tests, use `exec`: it starts Fireemu, sets the Firebase SDK emulator host environment variables for your command, runs it, then stops and returns the command's exit status:
 
 ```sh
 npx fireemu exec -- npm test
@@ -36,13 +40,20 @@ npx fireemu exec -- npm test
 npx fireemu exec --only auth,firestore,storage -- npm test
 ```
 
+Requirements:
+
+- Node.js 20 or newer.
+- macOS 13 or newer (Apple silicon, Intel), Linux (x86-64, arm64) or Windows 10 or newer (x86-64).
+- To run Node Functions: `firebase-functions` v6 or v7 in the codebase.
+- To run a Python codebase: Python 3.10 to 3.14, its own `venv` with `firebase-functions`, and macOS or Linux.
+
 The official command names `emulators:start` and `emulators:exec` work as aliases. `up` and `exec` read `fireemu.toml` (or an existing `fireemu.json`) from the current directory, or, when there is none, the nearest `firebase.json`; the first lines of the startup output name the files that were loaded. Run `npx fireemu --help` and `npx fireemu <command> --help` for every option, and `npx fireemu doctor` if the emulator does not start.
 
 See [Install and run](https://fireemu.github.io/fireemu/getting-started/install/), [Connect your app](https://fireemu.github.io/fireemu/getting-started/connect/) and [Migrate from the Local Emulator Suite](https://fireemu.github.io/fireemu/getting-started/migrate/).
 
-### Testing helpers
+### Independent test worlds
 
-The npm package also ships `fireemu/testing`, which starts independent emulator worlds with their own daemon, ports, clock and data for parallel integration tests, and `fireemu/control`, a client for the control API:
+The npm package also ships `fireemu/testing`, which starts independent emulator worlds with their own daemon, ports, clock and data for parallel integration tests, and `fireemu/control`, a client for the control API. `withTestWorld` starts the world and cleans it up when the test finishes, including when it fails:
 
 ```js
 import { withTestWorld } from 'fireemu/testing';
@@ -56,9 +67,11 @@ await withTestWorld(
 );
 ```
 
-See [Time and scheduled functions](https://fireemu.github.io/fireemu/guides/time/) and [test clocks and independent worlds](docs/test-worlds.md).
+See [Test worlds](https://fireemu.github.io/fireemu/guides/test-worlds/), [Time and scheduled functions](https://fireemu.github.io/fireemu/guides/time/) and the [design notes on test clocks and independent worlds](docs/test-worlds.md).
 
-## Supported scope
+## Supported services
+
+Find the services your app uses. Each guide describes the supported APIs and their limits.
 
 | Product | Summary | Documentation |
 |---|---|---|
@@ -77,7 +90,7 @@ This table is a summary, not an exhaustive list. See [Limitations](https://firee
 
 ## Compatibility
 
-Fireemu has two compatibility profiles:
+Fireemu uses the `strict` profile by default. It has two compatibility profiles:
 
 | Profile | Behavior |
 |---|---|
@@ -121,7 +134,7 @@ Keep the emulator bound to localhost (the default); see [CI and containers](http
 
 ## Performance
 
-In the benchmark against the official Firestore emulator, Fireemu starts about 21.6 times faster and uses about 1/34 of the idle memory. See [Performance](https://fireemu.github.io/fireemu/compatibility/performance/) for the method and the full results.
+Fireemu is a single native binary. In one benchmark run on a GitHub Actions Linux runner, it was ready for the Firestore SDK in 140 ms and used 11 MiB of idle memory with an empty database (3,043 ms and 390 MiB for the official Firestore emulator in the same run). See [Performance](https://fireemu.github.io/fireemu/compatibility/performance/) for the method, the conditions and the full results.
 
 ## Changes between versions
 

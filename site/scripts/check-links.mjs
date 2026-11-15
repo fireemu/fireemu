@@ -1,5 +1,6 @@
 // Checks every internal link in the built site (dist/): the target page exists, and a #fragment
-// names an id on that page. Run after `pnpm build`. Exits 1 and lists each broken link.
+// names an id on that page. Stylesheets, scripts and images a page loads must exist too (a stale
+// build cache can leave a page pointing at a stylesheet of an earlier build). Run after `pnpm build`. Exits 1 and lists each broken link.
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,13 +41,19 @@ let checked = 0;
 for (const file of pages(dist)) {
 	const html = readFileSync(file, 'utf8');
 	const pageUrl = new URL(`${base}/${relative(dist, file).replace(/index\.html$/, '')}`, 'http://site');
+	const from = relative(dist, file);
+	for (const [, asset] of html.matchAll(/<(?:link|script|img)\s[^>]*?(?:href|src)="([^"]+)"/g)) {
+		const raw = asset.replaceAll('&amp;', '&');
+		if (/^(https?:|data:|\/\/)/.test(raw)) continue;
+		checked += 1;
+		if (!fileFor(new URL(raw, pageUrl).pathname)) broken.push(`${from}: ${raw} -> no such file`);
+	}
 	for (const [, href] of html.matchAll(/<a\s[^>]*?href="([^"]+)"/g)) {
 		const raw = href.replaceAll('&amp;', '&');
 		if (/^(https?:|mailto:|data:)/.test(raw)) continue;
 		const url = new URL(raw, pageUrl);
 		checked += 1;
 		const target = fileFor(url.pathname);
-		const from = relative(dist, file);
 		if (!target) {
 			broken.push(`${from}: ${raw} -> no such page`);
 			continue;
@@ -59,5 +66,5 @@ for (const file of pages(dist)) {
 }
 
 for (const line of [...new Set(broken)]) console.error(line);
-console.log(`${checked} internal links checked, ${new Set(broken).size} broken`);
+console.log(`${checked} internal links and assets checked, ${new Set(broken).size} broken`);
 process.exit(broken.length ? 1 : 0);
