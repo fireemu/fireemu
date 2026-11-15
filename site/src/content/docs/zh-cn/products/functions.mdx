@@ -1,0 +1,384 @@
+---
+title: Cloud Functions
+description: 在本地运行 Cloud Functions for Firebase，并测试 HTTP、callable、事件、定时、任务队列和阻塞函数。
+---
+
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu 加载 `firebase.json` 中声明的 Functions 代码库，并使用 Node.js 运行它们。Eventarc 和 Cloud Tasks 模拟器会随已加载的代码库一起启动。Python 代码库（`python310` 至 `python314`）同样可以运行；参见 [Cloud Functions（Python）](../functions-python/)。除非某节另有说明，本页描述的是 Node.js 代码库。
+
+<Facts items={[
+  { label: '状态', value: '支持' },
+  { label: '默认端口', value: '5001' },
+  { label: '启动条件', value: '配置了代码库时' },
+  { label: '生产环境验证', value: '参见兼容性表', href: 'compatibility/#production-verification' },
+]} />
+
+## 可以测试的内容
+
+- 两代的 [HTTP、callable、事件、定时、任务队列和阻塞触发器](#支持的触发器)。
+- 像部署时那样解析的[参数和密钥](#参数和密钥)。
+- [谁可以调用函数](#谁可以调用函数)：`invoker` 设置和 callable 凭据。
+- [callable 中的 App Check 强制执行](#callable-中的-app-check)。
+- [任务队列](#任务队列)：延迟任务、速率限制、重试以及 Cloud Tasks 的回答。
+- 在虚拟时钟上运行或按需运行的[定时函数](#定时函数)。
+- [按函数划分的进程](#进程隔离functionsisolation)，即生产环境运行的形式。
+
+## 连接
+
+运行 Functions 需要代码库中有 `firebase-functions` v6 或 v7。
+
+```sh
+# Only Functions (with Eventarc and Cloud Tasks); add the services your functions use,
+# for example --only functions,firestore,auth
+npx fireemu up --only functions
+
+# All codebases declared in firebase.json, with the default services
+npx fireemu up
+
+# One codebase
+npx fireemu up --only functions:<codebase>
+
+# One directory, whatever firebase.json declares
+npx fireemu up --functions ./functions
+```
+
+Functions 默认监听 `127.0.0.1:5001`（可通过 `--functions-port` 或 `firebase.json` 更改）。让 Web SDK 指向它：
+
+```js
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
+connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
+```
+
+在 `fireemu exec` 下，`FIREEMU_FUNCTIONS_HOST` 为你的命令保存 `host:port`（参见[环境变量](../../reference/environment-variables/)）。
+
+## 支持的触发器
+
+以下是 Node.js `firebase-functions` 的导出。按触发器类型和导出划分的支持情况，参见 [Functions 支持清单](https://github.com/fireemu/fireemu/blob/main/docs/functions-export-inventory.md)。
+
+| 触发器 | v1（`firebase-functions/v1`） | v2（`firebase-functions/v2/*`） |
+|---|---|---|
+| HTTP 和 callable | `https.onRequest`、`https.onCall` | `onRequest`、`onCall`、`onCallGenkit` |
+| Firestore | `firestore.document()` 事件 | `onDocumentCreated`、`Updated`、`Deleted`、`Written`，以及 `WithAuthContext` 变体 |
+| Storage | `storage.object()` 事件 | `onObjectFinalized`、`Deleted`、`MetadataUpdated`、`Archived` |
+| Pub/Sub | `pubsub.topic().onPublish` | `onMessagePublished` |
+| 定时 | `pubsub.schedule()` | `onSchedule` |
+| 任务队列 | `tasks.taskQueue().onDispatch` | `onTaskDispatched` |
+| Authentication | `auth.user()` 事件、`beforeCreate`、`beforeSignIn` | `beforeUserCreated`、`beforeUserSignedIn`；`strict` 下的 `beforeEmailSent` |
+| Realtime Database | `database.ref()` 和 `database.instance().ref()` 的 `onCreate`、`onUpdate`、`onDelete`、`onWrite` | `onValueCreated`、`Updated`、`Deleted`、`Written` |
+| Eventarc 和提醒 | | `onCustomEventPublished`、`onAlertPublished` |
+
+其中有几种只在特定条件下运行；参见[触发器注意事项](#触发器注意事项)。
+
+Realtime Database 触发器的生产环境观测涵盖固定的管理员和未认证序列，以及电子邮件/密码用户通过 REST 和 Web SDK 进行的 12 次写入，包括祖先路径写入、多路径写入，以及调用失败后的重新投递。投递时机、其他提供方以及未录制的写入或处理程序形式仍未验证。[本地 Functions 触发器](../realtime-database/#本地-functions-触发器)描述了写入及其事件如何被接纳。
+
+## 参数和密钥
+
+`defineString`、`defineInt`、`defineBoolean`、`defineFloat` 和 `defineList` 会像部署时那样解析。文件按下表顺序应用，后面的文件覆盖前面的文件，然后应用参数的 `default`。既没有值也没有默认值的参数会使代码库拒绝启动，并指出该参数以及应放入值的文件，因为 `firebase deploy` 也会因此以同样方式中止。密钥（`defineSecret`）来自 `.secret.local`，且只提供给声明了它们的函数。
+
+| 文件（位于代码库目录中） | 内容 | 优先级 | 是否部署 |
+|---|---|---|---|
+| `.env` | 参数值 | 最低 | 是，与 `firebase deploy` 读取它的方式一致 |
+| `.env.<projectId>`（或 `.env.<alias>`） | 某一项目的值 | 高于 `.env` | 是，部署该项目时 |
+| `.env.local` | 本地运行的值 | 最高 | 从不：仅存在于此处的值在生产环境中缺失。由 Fireemu 和官方模拟器应用 |
+| `.secret.local` | `defineSecret` 的值 | 此处密钥的唯一来源 | 从不：部署需要 Secret Manager 中的密钥 |
+| `defineString` 等中的 `default` | 后备值 | 低于所有文件 | 在代码中 |
+
+- 同时存在 `.env.<projectId>` 和 `.env.<alias>` 会中止启动，与 `firebase deploy` 相同。
+- Fireemu 从不联系 Secret Manager。函数声明了但 `.secret.local` 中缺少的密钥读取为空字符串，启动警告会指出该密钥和相关函数。
+- 在两个 profile 下，名称出现在 `.secret.local` 中的继承环境变量，会在提供函数声明的密钥之前被移除。
+- 对于读取 `.runtimeconfig.json` 的代码库，它会作为 `CLOUD_RUNTIME_CONFIG` 传给代码。`firebase-functions` v7 已移除 `functions.config()`，因此 v7 代码库不会读取它。
+
+## 谁可以调用函数
+
+`invoker` 为 `"private"` 或服务账号列表的函数，以及所有任务队列函数，会根据请求携带的凭据回答对其公开 URL 的调用：
+
+| 对公开 URL 的请求 | 回答 |
+|---|---|
+| 没有凭据 | 403，与 Cloud Run 在函数运行前拒绝它一致 |
+| 形如 Google 签发的身份令牌的 bearer（`iss` 为 `https://accounts.google.com` 的 JWT） | 放行。Fireemu 无法向 Google 校验身份令牌 |
+| 其他任何 bearer，包括已登录客户端 SDK 发送的 Firebase Auth ID 令牌 | 401。Cloud Run 也不接受它 |
+
+任务分派、Emulator UI 和控制 API（`POST /v1/sessions/default/functions/{name}:run`，即控制台的调用和入队）不是对公开 URL 的调用；UI 和控制 API 以项目所有者身份操作。`ingressSettings` 会被记录但不强制执行。`emulator` profile 向所有调用者提供所有函数，与官方模拟器相同。
+
+## callable 中的 App Check
+
+callable 函数上的 `enforceAppCheck` 无需任何配置即可使用：用任意 UUIDv4 从调试令牌交换中获取令牌，并通过 `X-Firebase-AppCheck` 发送。
+
+- 不带令牌或带格式错误令牌的普通调用会以 401 拒绝。确切的 v2 流式调用会收到 200 SSE 错误记录。
+- 不支持重放消耗：在带 `consumeAppCheckToken: true` 的 Node callable 上，有效令牌会以 `APP_CHECK_REPLAY_UNSUPPORTED` 拒绝。
+- Python callable 使用[针对 Python 所述的验证和限制](../functions-python/#differences-from-production-and-the-firebase-cli)。
+
+参见 [App Check](../app-check/)。
+
+### `strict` 下的 callable 凭据
+
+在 `strict` 下，守护进程会在转发前为 Node 和 Python 验证 callable 的 `Authorization`。
+
+| 调用上的 `Authorization` | 结果 |
+|---|---|
+| 缺失或为空 | 以未认证身份调用处理程序 |
+| 非空但不是经过验证的项目用户 ID 令牌的凭据 | 在处理程序之前以 HTTP 401 拒绝，`application/json; charset=utf-8` 中包含 `{"error":{"message":"Unauthenticated","status":"UNAUTHENTICATED"}}`。确切的 v2 流式请求则收到带 SSE 错误记录的 HTTP 200 |
+| 多个 `Authorization` 头 | 401 HTML 前端页面 |
+
+请发送有效的项目 ID 令牌或省略凭据，并移除重复的头。当清单将 callable 代码作为 `onRequest` 提供时，这同样适用。对于 `onRequest(opts, onCall(...))`，嵌套的 callable 包装器会拒绝守护进程未验证的凭据；普通的 `onRequest` 处理程序继续原样接收原始凭据。
+
+## 任务队列
+
+任务队列函数已针对录制用例（TASK-QUEUE-FUNCTIONS）验证，已知差异列在[记录](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/closure/TASK-QUEUE-FUNCTIONS.json)中。对于带守护进程签发的身份令牌的 strict 分派，Node SDK 会构造 `request.auth`，而处理程序及其定时器继续看到 `FUNCTIONS_EMULATOR="true"`；emulator profile 不设置 `request.auth`。
+
+### 延迟任务
+
+在 `strict` 下，带 `scheduleTime`（或 `scheduleDelaySeconds`）入队的任务会一直等到那时，与 Cloud Tasks 相同。不是 RFC 3339 格式、或超前 720 小时以上的 `scheduleTime` 会以 400 拒绝。`emulator` profile 会立即分派，与官方模拟器相同。
+
+要在不等待的情况下测试延迟任务，可以采取以下方式之一：
+
+- 将 `functions.clock.tasks` 设为 `"virtual"` 并移动时钟（参见[时间与定时函数](../../guides/time/)）。
+- 释放等待中的任务。Emulator UI 的 Functions 页面列出它们及其到期时间和 **Run now** 按钮。控制 API 接受 `POST /v1/sessions/default/functions/{queue}:run`（所有等待中的任务），或带 `{"task": "<task id>"}` 的同一请求（单个任务）。
+
+速率限制和并发仍适用于被释放的任务。
+
+### 用 `getTask` 读取任务
+
+在 `strict` 下，`getTask` 返回待处理、运行中和重试中的任务。
+
+- 默认的 `responseView=BASIC` 省略请求体；`responseView=FULL` 以 base64 返回其原始字节。
+- 与两次生产环境录制一样，待处理的回答省略值为零的分派次数和响应次数。
+- 最近完成或删除的名称返回已录制的最近任务 404 消息；未知名称保持通用的未找到回答。
+- 最近查找历史受现有历史上限约束，在名称可立即重用时持续一小时，否则遵循配置的名称保留期。
+
+FULL 视图、活动/重试观测、无效视图、未知名称的 GET 回答以及历史过期已在本地测试但未录制；不声称 getTask 完全等价。
+
+### 速率限制与突发
+
+接受任务时，如有需要会启动其函数的运行器。在 `strict` 下，令牌补充使用整纳秒周期，并在令牌和调度截止时刻唤醒。对同时到期的 120 个任务的生产环境录制显示，速率为 1 时起始突发为 10；速率为 500 时读回的突发为 100。其他速率以空桶开始，容量为整令牌数 `floor(max(rate, 1.1))`；它们在生产环境中的突发未经录制。
+
+`emulator` profile 保留其一秒刷新，并按确切的入队名称删除任务（包括已分派的任务，一次），与 firebase-tools 15.28.2 相同。
+
+### 分派的头和正文
+
+在 `strict` 下，`X-CloudTasks-QueueName` 是纯队列 ID，`X-CloudTasks-TaskETA` 是带六位小数的 Unix 秒数，`User-Agent` 为 `Google-Cloud-Tasks`。任务提供的头无法覆盖该用户代理，也无法覆盖 `X-CloudTasks-*`、`X-Google-*` 和 `X-AppEngine-*` 系列。`emulator` profile 保留官方模拟器的内部队列名称和头覆盖。
+
+任务分派保留入队正文的字节，包括 JSON 成员顺序和空白。strict profile 还接受空的、非 JSON 的和二进制的正文字节；emulator profile 保留仅接受 JSON 的方式。处理程序仍自行决定能否处理所提供的正文。
+
+### `createTask` 和 `deleteTask`
+
+在 `strict` 下，`createTask` 和 `deleteTask` 的回答与两次各 122 步的录制（2026-11-11）中 Cloud Tasks 的回答相同：
+
+- 回答就是 Task 本身：`BASIC` 或 `FULL` 视图，生成的名称为 19 位数字（生产环境为 19 或 20 位），过去的 `scheduleTime` 变为当前时间。
+- 错误是 `google.rpc` JSON 错误，按生产环境的顺序执行生产环境的检查：未知字段、`payload_type`、任务名称和 ID、15 秒至 30 分钟的 `dispatchDeadline`、最多超前 720 小时的 `scheduleTime`、最大 1 MiB 的任务。
+- 已入队任务的名称会以 409 拒绝。
+- 截止时间到达后的重试携带 `X-CloudTasks-TaskPreviousResponse: 504`，并先等待队列的 `minBackoff`。
+- 回答按 Cloud Tasks 的输出方式打印：字段顺序相同的多行 JSON、`application/json; charset=UTF-8`、参数错误的 `details`。
+- 指定了 `oidcToken` 的任务会收到三段式的 `Authorization: Bearer` 令牌，因此处理程序中存在 `request.auth`。该令牌由模拟器签发、未签名，其声明不是 Google 的。
+
+有四项设置是开发默认值，`productionExact` 会将它们设为生产环境的值。显式指定的键优先于 `productionExact`。参见 [profile](../../guides/profiles/)。
+
+| 设置 | 开发默认值 | 生产环境 |
+|---|---|---|
+| `functions.taskNameReuse` | 已完成任务的名称立即可用 | 生产模式在最长 3600 秒内拒绝它 |
+| `functions.taskDispatchDeadlineSeconds` | 省略或设为 `"0s"` 时为 60 秒 | 生产环境的默认值为 600 |
+| `functions.taskRetryDefaults` | 3 次尝试 | 生产环境的默认队列允许总共 100 次尝试 |
+| `functions.taskRetryBackoff` | | 生产环境的重试间隔在十几次失败后会超过声明的最大值 |
+
+已完成名称的历史在所有队列中合计限制为 65,536 个名称和 8 MiB 的队列与任务名称文本。超过任一限制时会驱逐最旧的名称，包括在 3600 秒窗口到期之前。此限制也适用于 `"retained"` 模式。
+
+### 等待当前工作稳定
+
+对于只需要当前工作稳定下来的测试，发送带 `{ "scope": "runnable" }` 的 `POST /v1/sessions/default:awaitIdle`（自 v0.26.0 起）。未来的调度和重试退避不会阻塞此范围；等待速率/并发的到期任务和活动的 HTTP 请求仍会阻塞。省略范围时会等待所有工作。参见[等待可运行的工作](../../guides/test-worlds/#wait-for-runnable-work)。
+
+## 定时函数
+
+调度在 Fireemu 的虚拟时钟上运行。除非你用 `daemon.clockStart` 固定起始时间，该时钟跟随真实时间，因此各次执行会随时间推移而到期。固定起始时间后，时钟静止不动，你需要移动时钟使执行到期。参见[时间与定时函数](../../guides/time/)。
+
+### 立即运行
+
+要在不等待的情况下运行定时函数或释放延迟任务：
+
+| | 定时函数 | 任务队列函数（等待其 `scheduleTime` 的任务） |
+|---|---|---|
+| Emulator UI 的 Functions 页面 | 立即运行，或将时钟推进到下一次执行 | 等待中的任务，带其到期时间和 **Run now** 按钮 |
+| 控制 API | `POST /v1/sessions/default/functions/{name}:run` | 同一路由释放所有等待中的任务；带 `{"task": "<task id>"}` 时释放单个任务（未知 ID 返回 404） |
+| 虚拟时钟 | 固定 `daemon.clockStart`，或设置 `daemon.clock = "frozen"`，然后带 `{"seconds": 86400}` 发送 `POST /v1/sessions/default/clock:advance`（也可用 `{"millis": n}`、`clock:advanceTo` 和 `clock:set`），或使用 Runtime 页面 | 在固定 `daemon.clockStart` 的情况下设置 `functions.clock.tasks = "virtual"`，然后移动时钟 |
+
+控制 API 不在 UI 端口上。其地址是启动输出中的 `control API:` 行：运行 Authentication 时为 Authentication 端口（默认 9099），否则为另一个端口。在 `fireemu exec` 下为 `$FIREEMU_CONTROL_URL`，并带 `Authorization: Bearer $FIREEMU_CONTROL_TOKEN`（仅在设置了 `network.allowNonLoopbackHosts` 时才需要令牌）。例如，使用 `fireemu up` 时：
+
+```sh
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/functions/nightly:run
+# {"enqueued":true,"function":"nightly"}
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 86400}'
+```
+
+未知或非定时的名称返回 `400 INVALID_ARGUMENT`。手动运行不会消耗下一次执行；参见[立即运行定时函数](../../guides/time/#run-a-scheduled-function-now)。
+
+在 `strict` 下，向第一代调度的 `firebase-schedule-<function>-<region>` 主题发布消息也会调用处理程序，并保留原始的 Pub/Sub 数据、属性、排序键和消息 ID。正常的定时执行和手动运行仍然只调用一次。
+
+## 事件队列已满时
+
+运行时最多保存 4096 个未投递事件（以及 64 MiB 的负载）。放不下的事件绝不会被静默丢失，具体行为取决于其来源：
+
+- **Firestore、Storage、Pub/Sub 模拟器和控制 Pub/Sub 发布：** 写入或发布被拒绝，不投递任何内容。控制发布返回 `429 RESOURCE_EXHAUSTED`。
+- **Authentication：** 用户的创建或删除无论如何都会提交。其事件保存在有界队列中，在容量恢复时按从旧到新的顺序投递；只有超过 4096 个保存事件的积压才会丢弃一个，该丢弃会被计数并记录。
+
+<details>
+<summary>详细信息</summary>
+
+- Firestore、Storage、Pub/Sub 模拟器和控制 Pub/Sub 发布（`POST /v1/sessions/{session}/pubsub/topics/{topic}:publish`）会先预留整个扇出，即发往每个订阅函数的每条消息，以及 `duplicate` 故障要求的副本。放不下时，写入或发布被拒绝（控制发布返回 `429 RESOURCE_EXHAUSTED` 且不分配消息 ID），不投递任何内容。
+- 无论队列是否有空间，Auth 用户的创建或删除都会提交，因为生产环境从不会因为函数处理滞后而拒绝注册。队列暂时无法接收的事件会被保存，并在容量恢复时按从旧到新的顺序完整投递。`GET /v1/sessions/{session}/functions` 将保存的数量显示为 `authEventsPending`，`await-idle` 会等待它。最多保存 4096 个事件：超出的一个会被丢弃，在资源报告中计为 `admission.auth_event_dropped` 并记录日志。会话重置会将保存的事件与队列的其余部分一起丢弃。
+
+</details>
+
+## 运行器输出
+
+函数日志和运行器的标准错误会转发到本地日志。如果运行器在启动握手之前退出，诊断信息还会包括其退出状态、捕获的标准错误以及有长度上限的标准输出末尾部分。应用写入的输出不会被自动清除任意密钥；请避免在函数代码中打印凭据或转储环境。
+
+## 源代码重新加载
+
+Node 和 Python 代码库会自动重新加载源代码变更。
+
+- 已接纳的调用会在其所选的世代上完成，受其调用截止时间约束。未完成的已退役世代会在其最晚的未完成调用截止时间一秒后被停止，调试器模式除外。
+- 监视器首次扫描之前的编辑也会被检测到，重新加载快照会在关闭时删除。
+- 更改发现的触发器清单需要重启 Fireemu；被拒绝的重新加载通常会保留上一个世代。
+- 对于 Node，固定的 `--inspect-functions <port>` 是例外：上一个运行器必须先停止，替代者才能绑定该端口。
+- Python 忽略检查器选项，并在重新加载失败时保留上一个世代。Python 虚拟环境保持链接到原始代码库；更改已安装的依赖后请重启。Python 字节码缓存不在监视和重新加载快照的范围内。
+
+在 Windows 上，重新加载快照会在复制源文件或本地密钥文件之前以受保护的 DACL 创建。Fireemu 会检查快照目录、临时父目录及其祖先是否有不安全的权限或重解析点，如果无法在 30 秒内验证，则拒绝该快照。这需要 Windows PowerShell；参见[故障排除](../../guides/troubleshooting/)。
+
+## 进程隔离（`functions.isolation`）
+
+生产环境在各自的实例中运行每个函数：
+
+- 函数的标识（`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE`、`K_SERVICE`）及其声明的密钥从一开始就在其环境中。
+- 它有自己的模块图。
+- 第二代实例一次最多处理该函数的 `concurrency` 个调用（第一代处理一个）。
+- 实例在第一个请求时启动。
+
+`functions.isolation` 选择运行在多大程度上遵循这一点。
+
+| `functions.isolation` | 进程 | 含义 |
+|---|---|---|
+| `"codebase"`（默认值；`productionExact` 例外） | 每个代码库一个运行器进程 | 启动成本最低。各函数共享一个模块图：模块级状态、缓存和单例对每个函数都可见。它们还共享一个进程环境：`FUNCTION_TARGET`、`FUNCTION_SIGNATURE_TYPE` 和 `K_SERVICE` 指向最近开始的调用，因此若某函数在 `await` 之后读取其中之一，而期间另一个函数被调用，它看到的是另一个函数。使用 `.secret.local` 中本地密钥的调用会单独运行，因此它也会掩盖已部署函数本应具有的并发。在用户代码加载期间和调用运行期间，密钥对所有未声明它们的函数都是隐藏的。 |
+| `"function"`（`productionExact` 下的默认值） | 每个代码库的每个函数一个运行器进程 | 生产环境的形式。每个进程各自加载代码库，以其函数的标识启动，且该函数声明的本地密钥已在其环境中（因此读取它们的模块级代码可以看到），并以该函数配置的并发只处理该函数。不会按调用重写、隐藏或排队任何东西。一个函数的进程崩溃或重启不会影响其他函数。 |
+
+```json
+{ "schemaVersion": 1, "functions": { "isolation": "function" } }
+```
+
+### `"function"` 如何启动进程
+
+使用 `"function"` 时，Fireemu 首先启动一个发现进程来读取代码库的导出，然后再停止它。之后，函数自己的进程会在该函数的第一个请求、事件或任务到来时启动，与生产环境实例相同。在此期间到达的工作会等待进程，并按顺序投递一次：冷启动绝不会丢弃事件或打乱其顺序。
+
+有两类函数会随代码库一起启动：
+
+- 阻塞 Auth 函数，因为注册不能在其很短的截止时间内承担冷启动。
+- 给出 `--inspect-functions` 时的所有函数，以便每个进程预先报告其调试器端口。
+
+进程一旦启动就会保持运行；目前尚未实现停止空闲进程。进程退出的函数会在下次使用时再次启动，与代码库进程相同。源代码重新加载会一起替换代码库的所有进程：如果重新加载改变了代码库提供的函数，则会被拒绝，之前的进程继续运行。每个进程的日志行都像代码库进程一样被转发，控制 API 的状态为每个进程列出一个条目，包括其 `function` 以及是否已 `started`。这同样适用于 Python 代码库。
+
+### 开销
+
+每个被使用的函数一个进程和一份已加载代码库的副本。在一台使用 Node 24 和 `firebase-functions` 7 的笔记本电脑上测量（常驻内存会在每个进程中计入共享页，因此会高估实际总量）：
+
+| 代码库 | `"codebase"` | `"function"`，所有函数均已启动 |
+|---|---|---|
+| 10 个函数 | 启动和停止 1.3 秒，121 MiB，1 个进程 | 2.5 秒，1.2 GiB，10 个进程 |
+| 22 个函数 | 1.0 秒，126 MiB，1 个进程 | 3.0 秒，2.7 GiB，22 个进程 |
+
+由于进程在首次使用时启动，只涉及少数函数的运行只为这些函数付出开销，而每个函数的第一次调用要承担一次冷启动（约一秒）。调用所有函数的测试套件最终会达到右侧一列的开销。因此，`"codebase"` 仍是开发和 CI 的默认值；`productionExact` 选择 `"function"`。
+
+### `"function"` 被拒绝的情况
+
+- 代码库中提供的函数超过 64 个时。将 `functions.isolation` 设为默认值 `"codebase"`，即可从一个进程提供它。
+- 显式写出，并与 `functions.runner` 一起使用时（自定义运行器命令按每个代码库启动一次）。
+- 显式写出，并与固定的 `--inspect-functions <port>` 一起使用时（进程不能共享端口；不带端口的 `--inspect-functions` 会为每个进程分配各自的端口）。
+
+当只是 `productionExact` 选择了 `"function"` 时，后两种情况会改用 `"codebase"` 而不是拒绝。显式的 `functions.isolation = "codebase"` 总是优先。
+
+## 调试
+
+使用 `--inspect-functions` 在 Node 检查器下运行 Functions 运行器：
+
+```sh
+npx fireemu up --inspect-functions 9229
+```
+
+## 提供固定的函数列表（`functions.manifest`）
+
+`functions.manifest` 指定一个 JSON 文件，以替代发现过程报告的所提供函数集合。它包含一个 `functions` 数组。每个条目有一个 `name` 和一个 `trigger`，其 `type` 为 `http`、`firestore`、`database`、`storage`、`pubsub`、`schedule`、`auth`、`blockingAuth`、`tasks` 或 `eventarc` 之一，另有可选的 `region`、`generation`、`entryPoint`、`timeoutSeconds`、`retry` 和 `concurrency`。
+
+Fireemu 仍会加载并发现你的代码库，因此运行器会启动，代码也会被检查。它提供的函数、其触发器类型和选项以文件为准：文件中省略的导出不会被提供，函数会以文件给出的触发器提供。
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "functions": { "manifest": "manifest.json" }
+}
+```
+
+```json
+{
+  "functions": [
+    { "name": "hello", "trigger": { "type": "http", "callable": false } },
+    {
+      "name": "ping",
+      "trigger": {
+        "type": "http",
+        "callable": true,
+        "enforceAppCheck": false,
+        "consumeAppCheckToken": "disabled"
+      }
+    }
+  ]
+}
+```
+
+对于导出 `hello`（`onRequest`）、`ping`（`onCall`）和 `worker`（`onTaskDispatched`）的代码库，这会以 `functions loaded: hello, ping` 启动；`worker` 不会被提供。没有该键时，三者都会被提供。
+
+### 文件可以和不可以更改的内容
+
+- 路径从工作目录读取，不论配置文件位于哪个目录（与规范文件中的其他文件设置相同；参见[配置文件](../../guides/configuration/)）。文件缺失、不是 JSON 或含有无效条目时会中止启动，并指出路径或函数（`functions manifest manifest.json: No such file or directory`、`manifest: function "hello": unsupported trigger type "carrierpigeon"`）。在 `strict` 下，生产环境拒绝的声明在这里也会被拒绝。
+- 它只适用于一个代码库。加载多个代码库的运行会拒绝启动（`functions.manifest replaces discovery for one codebase, and this run loads 2 (a, b); name the one to load with --only functions:<codebase> or drop functions.manifest`）。
+- 文件不能改变代码本身。文件中的阻塞 Auth 函数必须与发现过程找到的一致，否则拒绝启动（`... invents Blocking Auth hook ... it must match codebase discovery`）。
+- 当 [App Check](../app-check/) 处于活动状态时（`strict` 下的默认值；`emulator` 下为 `appCheck.enabled: true`；`appCheck.enabled` 为 `false` 时则不是），文件也不能改变 callable 的处理方式。以下情况会在启动时被拒绝：
+  - 以 `"callable": false` 列出的 callable，或以 `"callable": true` 列出的 `onRequest` 函数；
+  - 被列为任务队列、阻塞函数或事件触发器的 callable（`... declares "ping" as a non-HTTP function, but the codebase declares it callable ...`，该消息会提示将其列为带 `callable: true` 和代码所声明的 App Check 选项的 http 函数、将其从文件中移除，或者如果它本应是任务队列，则用 `onTaskDispatched` 导出它）；
+  - `enforceAppCheck` 或 `consumeAppCheckToken` 与代码不同的 callable；
+  - 代码库未导出的 HTTP 函数。
+
+### 关闭 App Check 时
+
+关闭 App Check 时，上述 callable 检查不会运行；只适用阻塞 Auth 的一致性检查。任何覆盖都不会到达错误标记的条目所指向的 callable 包装器：
+
+- 不会通知运行器跳过令牌验证（只有 App Check 协议会这样做）。
+- 守护进程会从其转发的每个请求（包括任务分派）中剥离模拟器内部的认证覆盖字段（`x-callable-context-auth`、`x-original-auth`）。
+- 包装器的令牌检查是 Auth 模拟器的检查，与通过任务到达的 `onTaskDispatched` 函数完全相同。
+
+在 `strict` 下，发送到这种队列的任务，或对文件将其列为 `onRequest` 函数（`"callable": false`）的 callable 的请求，同样要通过 callable 请求所通过的 Bearer 检查（预检和不带凭据的请求不需要），因此不属于项目用户的 Bearer 会在代码运行前收到 401。对于任务，这是一次分派失败，会按队列的重试策略重试，直到放弃；每次拒绝都会打印一行指出该函数（绝不包括凭据），启动时也会打印指出它的警告。官方模拟器同样不会将 `functions.yaml` 与代码进行比较。
+
+## 与生产环境的差异
+
+### 触发器注意事项
+
+- **Realtime Database，第 2 代。** 本地 Realtime Database 实例位于 `us-central1`，因此其他区域的第 2 代数据库触发器不会触发，加载时会给出警告。
+- **Fireemu 不投递事件的产品。** Data Connect（已推迟）等产品的触发器无法运行。默认情况下，发现过程会拒绝导出此类触发器的代码库（`functions.unservedTriggers = "refuse"`）；将其设为 `"report"` 可逐一报告并加载其余部分。[Emulator UI](../../guides/ui/) 的 Functions 页面以及控制 API 上的 `GET /v1/sessions/default/functions` 会列出所有被忽略的导出及原因。
+- **Remote Config。** 处理程序只能通过本地注入操作运行，其生产环境事件形式尚未观测。
+- **Storage 归档事件。** 它们只对启用了版本控制的存储桶触发（带 `{"versioning":{"enabled":true}}` 的 `PATCH /storage/v1/b/{bucket}`），其形式未经录制。
+- **`beforeEmailSent`。** 仅在 `strict` 下运行。
+
+### 永远不会运行的导出
+
+Fireemu 无法提供的导出（选项无法解析的函数，或无法识别的事件类型）会被跳过。每一个都会在启动时在标准错误上输出一条 `warning:`，随后是一行摘要。生产环境会部署并运行的函数在这里永远不会运行，因此断言"没有副作用"的测试会因错误的原因通过；请阅读这些警告。`functions.unservedTriggers` 仍会拒绝 Fireemu 不提供的产品。
+
+### 生产环境验证
+
+Node.js 代码库已针对 HTTP 和 callable 函数、事件触发器以及定时函数，用来自已部署函数的录制进行验证。参见[兼容性表](../../compatibility/#production-verification)。
+
+Python 代码库有自己的验证说明，涵盖六类事件；参见 Python 页面上的[生产环境验证](../functions-python/#production-verification)。
+
+## 相关内容
+
+- [Cloud Functions（Python）](../functions-python/)
+- [时间与定时函数](../../guides/time/)
+- [Pub/Sub、Eventarc 和 Cloud Tasks](../pubsub-eventarc/)
+- [Profile](../../guides/profiles/)
