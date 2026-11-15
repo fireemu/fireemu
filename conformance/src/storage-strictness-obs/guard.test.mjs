@@ -374,3 +374,67 @@ test("v3 session URL classifier rejects each independent scope violation", () =>
       );
   }
 });
+
+test("v3 vocabulary contains exactly the recorded production and local cases", () => {
+  for (const local of [undefined, "http://127.0.0.1:9199"]) {
+    const t = targetOf({ ...target, stage: "v3", local });
+    const plan = requests(t);
+    const expected = [
+      "P-location",
+      "P-absent",
+      "W-bucket",
+      "W-verify",
+      "W-object",
+      "K-object",
+      "K-read-object",
+      "K-read-created-bucket",
+      "K-delete-bucket",
+      "K-bucket",
+      "A2-bucket",
+      "A2-object",
+    ];
+    for (const state of ["absent", "empty", "configured"]) {
+      for (const endpoint of [
+        "metadata",
+        "media",
+        "bucket",
+        "list",
+        "acl",
+        "preflight",
+        "resumable",
+        "cancel",
+        "session-read",
+        ...(state === "absent" ? [] : ["patch", "verify"]),
+        ...(local ? ["initial-list", "upload", "delete-object", "read-object"] : []),
+      ])
+        expected.push(`${state}-${endpoint}`);
+      if (local) assert.equal(plan[`V3-${state}-initial-list`].method, "GET");
+    }
+    assert.deepEqual(Object.keys(plan).toSorted(), expected.map((id) => `V3-${id}`).toSorted());
+    assert.equal(
+      plan["V3-A2-object"].url,
+      `${local ?? "https://storage.googleapis.com"}/storage/v1/b/${t.tempBucket}/o/cors%2Fo.txt`,
+    );
+  }
+});
+
+test("run IDs and cross-stage session requests fail with the scope diagnostic", () => {
+  for (const runId of [
+    "ss-nothex00",
+    "ss-0123ABCd",
+    "ss-0123abc",
+    "ss-0123abcde",
+    "other-0123abcd",
+  ])
+    assert.throws(() => targetOf({ ...target, runId }), GuardError);
+  const t = targetOf({ ...target, stage: "v3" });
+  const plan = requests(t);
+  const request = authenticated({
+    ...plan["V3-absent-cancel"],
+    url: `${plan["V3-absent-resumable"].url}&upload_id=synthetic-session`,
+  });
+  assert.throws(() => classifyRequest(target, request), GuardError);
+  assert.throws(() => classifyRequest(t, { ...request, url: `${request.url}&extra=1` }), {
+    message: "session URL outside the plan",
+  });
+});

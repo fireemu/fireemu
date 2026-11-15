@@ -447,3 +447,108 @@ test("v3 CORS rows compare content, retain header names and detect Location expo
   ]);
   assert.equal(compare(rows, duplicate).find((row) => row.case === id).verdict, "NEEDS-REVIEW");
 });
+
+test("v3 shapes enforce endpoint, method, status and resource fields independently", () => {
+  const object = { bucket: "b", name: "cors/o.txt", size: "4" };
+  const bucket = { name: "b", location: "US" };
+  const acl = { bucket: "b", object: "cors/o.txt", entity: "user-a", role: "READER" };
+  const cases = [];
+  for (const [endpoint, value, shape] of [
+    ["metadata", object, "object-metadata"],
+    ["bucket", bucket, "bucket-metadata"],
+    ["list", { items: [object] }, "object-list"],
+    ["acl", { items: [acl] }, "object-acl"],
+  ]) {
+    cases.push([endpoint, value, shape]);
+    for (const method of ["POST", "DELETE"])
+      cases.push([endpoint, value, "unrecorded", { method }]);
+    for (const status of [201, 400]) cases.push([endpoint, value, "unrecorded", { status }]);
+    for (const other of ["metadata", "bucket", "list", "acl", "media", "preflight"])
+      if (other !== endpoint) cases.push([other, value, "unrecorded"]);
+    cases.push([endpoint, { ...value, error: {} }, "unrecorded"]);
+    for (const invalid of [null, [], 0, false, "text"])
+      cases.push([endpoint, invalid, "unrecorded"]);
+  }
+  for (const invalid of [
+    {},
+    { ...object, bucket: "other" },
+    { ...object, name: "other" },
+    { ...object, size: "4x" },
+    { ...object, size: null },
+    { ...object, size: undefined },
+  ]) {
+    cases.push(["metadata", invalid, "unrecorded"]);
+    cases.push(["list", { items: [invalid] }, "unrecorded"]);
+  }
+  for (const invalid of [null, [], "text", 4])
+    cases.push(["list", { items: [invalid] }, "unrecorded"]);
+  for (const invalid of [{ ...bucket, name: "other" }, { name: "b" }, { ...bucket, location: 1 }])
+    cases.push(["bucket", invalid, "unrecorded"]);
+  for (const invalid of [
+    {},
+    { items: [] },
+    { items: [object, object] },
+    { items: [object], nextPageToken: "next" },
+    { items: {} },
+  ])
+    cases.push(["list", invalid, "unrecorded"]);
+  for (const invalid of [{}, { items: [] }, { items: {} }])
+    cases.push(["acl", invalid, "unrecorded"]);
+  for (const invalid of [
+    null,
+    {},
+    { ...acl, bucket: "other" },
+    { ...acl, object: "other" },
+    { ...acl, entity: 1 },
+    { ...acl, role: 1 },
+  ])
+    cases.push(["acl", { items: [invalid] }, "unrecorded"]);
+  for (const [endpoint, value, shape, extra = {}] of cases) {
+    const row = judgeAnswer(
+      answer(JSON.stringify(value), {
+        case: `V3-absent-${endpoint}`,
+        status: 200,
+        method: "GET",
+        url: "https://storage.googleapis.com/storage/v1/b/b/o",
+        ...extra,
+      }),
+    );
+    assert.equal(row.shape, shape, JSON.stringify({ endpoint, value, extra }));
+    assert.equal(row.known, shape !== "unrecorded");
+    assert.equal(Object.hasOwn(row, "exposesLocation"), endpoint === "resumable");
+  }
+});
+
+test("v3 media and resumable shapes require every recorded discriminator", () => {
+  for (const method of ["POST", "PUT"])
+    assert.equal(
+      judgeAnswer(answer("fire", { case: "V3-absent-media", method, status: 200 })).shape,
+      "unrecorded",
+    );
+  const start = {
+    case: "V3-absent-resumable",
+    method: "POST",
+    status: 200,
+    headers: { location: "<masked>" },
+  };
+  assert.equal(judgeAnswer(answer("", start)).shape, "resumable-start");
+  for (const extra of [
+    { headers: {} },
+    { method: "GET" },
+    { status: 201 },
+    { case: "V3-absent-preflight" },
+  ])
+    assert.equal(judgeAnswer(answer("", { ...start, ...extra })).shape, "unrecorded");
+  assert.equal(judgeAnswer(answer("x", start)).shape, "unrecorded");
+});
+
+test("interrupted journals retain zero-byte unknown placeholders", () => {
+  for (const prefix of [[], [{ phase: "header", stage: "v3" }]]) {
+    const id = prefix.length ? "V3-absent-preflight" : "R3";
+    const rows = judgeJournal([...prefix, { phase: "before", n: 1, case: id, method: "OPTIONS" }]);
+    const row = rows.find((candidate) => candidate.case === id);
+    assert.equal(row.bodyBytes, 0);
+    assert.equal(row.status, null);
+    assert.equal(row.known, false);
+  }
+});

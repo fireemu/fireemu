@@ -1,7 +1,7 @@
 import "../storage-signed-put/test-preload.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CORS, requests, targetOf, SEND_FLAG } from "./guard.mjs";
@@ -722,7 +722,6 @@ test("A2 refuses a journal written in another mode (presend Should 4)", async ()
       defaultBucket: target.defaultBucket,
     };
     const summary = { phase: "summary", endedAt: 1 };
-    const { writeFileSync } = await import("node:fs");
     writeFileSync(
       join(dir, "journal.jsonl"),
       `${JSON.stringify(header)}\n${JSON.stringify(summary)}\n`,
@@ -754,7 +753,12 @@ test("v3 records all three CORS states and closes objects, sessions and bucket",
   assert.equal(report.completed, true);
   assert.equal(report.closureReady, true);
   assert.equal(report.cleanupVerified, true);
-  assert.ok(report.requests < 60);
+  assert.equal(report.requests, 40);
+  assert.equal(world.log.filter((request) => request.case === "V3-K-read-object").length, 1);
+  assert.equal(
+    world.log.some((request) => request.case === "V3-K-read-created-bucket"),
+    false,
+  );
   assert.equal(world.buckets.has(v3.tempBucket), false);
   assert.equal(world.objects.size, 0);
   assert.equal(world.sessions.size, 0);
@@ -1145,4 +1149,277 @@ test("v3 a body echoing an earlier upload ID is withheld and stops the sequence"
   );
   assert.ok(!JSON.stringify(entries).includes(uploadId));
   assert.equal(world.log.at(-1).case, "V3-K-bucket");
+});
+
+test("v3 preconditions report the exact failed obligation before the next request", async () => {
+  for (const [id, status, value, next] of [
+    ["V3-P-location", 200, {}, "V3-P-absent"],
+    ["V3-P-location", 403, { location: "US" }, "V3-P-absent"],
+    ["V3-P-absent", 200, {}, "V3-W-bucket"],
+    ["V3-W-bucket", 409, {}, "V3-W-verify"],
+    [
+      "V3-W-verify",
+      200,
+      { name: "other", softDeletePolicy: { retentionDurationSeconds: "0" } },
+      "V3-W-object",
+    ],
+    [
+      "V3-W-verify",
+      403,
+      { name: v3.tempBucket, softDeletePolicy: { retentionDurationSeconds: "0" } },
+      "V3-W-object",
+    ],
+    ["V3-W-object", 403, {}, "V3-absent-metadata"],
+    ["V3-empty-verify", 403, { name: v3.tempBucket, cors: [] }, "V3-empty-metadata"],
+    ["V3-configured-verify", 403, { name: v3.tempBucket, cors: CORS }, "V3-configured-metadata"],
+  ]) {
+    const { report, world } = await run(
+      { faults: { [id]: { status, body: Buffer.from(JSON.stringify(value)) } } },
+      v3,
+    );
+    assert.equal(report.completed, false, id);
+    assert.deepEqual(report.violations, [id]);
+    assert.deepEqual(report.failures, ["sequence stopped"]);
+    assert.equal(
+      world.log.some((request) => request.case === next),
+      false,
+      id,
+    );
+    if (id === "V3-P-location")
+      assert.deepEqual(
+        world.log.map((request) => request.case),
+        [id],
+      );
+    if (id === "V3-W-verify") {
+      assert.equal(report.cleanupVerified, true);
+      assert.equal(report.closureReady, false);
+    }
+  }
+});
+
+test("v3 cleanup distinguishes known absence from unknown or refused readback", async () => {
+  for (const [id, status, body, sessionFailure, verified] of [
+    ["V3-absent-session-read", 404, null, true, false],
+    ["V3-absent-cancel", 204, null, true, false],
+    ["V3-absent-session-read", 404, Buffer.alloc(0), false, true],
+    ["V3-absent-session-read", 410, Buffer.alloc(0), false, true],
+    ["V3-K-bucket", 404, null, false, false],
+    ["V3-K-bucket", 403, Buffer.alloc(0), false, false],
+    ["V3-K-read-object", 404, null, false, false],
+    ["V3-K-read-object", 403, Buffer.alloc(0), false, false],
+  ]) {
+    const { report } = await run(
+      { faults: { [id]: { status, body } }, applyBeforeFault: [id] },
+      v3,
+    );
+    assert.deepEqual(report.sessionFailures, sessionFailure ? ["absent"] : [], id);
+    assert.equal(report.cleanupVerified, verified, id);
+    assert.equal(report.closureReady, verified, id);
+  }
+  const { report } = await run(
+    {
+      faults: {
+        "V3-K-object": { status: 403 },
+        "V3-K-read-object": { status: 404 },
+        "V3-K-delete-bucket": { status: 204 },
+        "V3-K-bucket": { status: 404 },
+      },
+    },
+    v3,
+  );
+  assert.equal(report.cleanupVerified, true);
+  assert.equal(report.closureReady, false);
+  assert.ok(report.unresolved.some((entry) => entry.resource.endsWith("/o/cors%2Fo.txt")));
+});
+
+test("v3 local preconditions stop and ownership reads occur only when needed", async () => {
+  const local = targetOf({ ...v3, local: "http://127.0.0.1:9199" });
+  for (const [id, fault, applied, violation] of [
+    [null, undefined, false, undefined],
+    ["V3-P-location", { status: 200, body: Buffer.from("{}") }, false, "V3-P-location"],
+    [
+      "V3-absent-initial-list",
+      { status: 200, body: Buffer.from('{"items":[{}]}') },
+      false,
+      "V3-absent-initial-list",
+    ],
+    ["V3-absent-upload", { status: 403 }, false, "V3-absent-upload"],
+    ["V3-absent-resumable", { status: 403 }, false, "V3-absent-resumable"],
+    ["V3-absent-upload", "transport", true, undefined],
+    ["V3-absent-read-object", { status: 404, body: null }, false, undefined],
+    ["V3-absent-read-object", { status: 403 }, false, undefined],
+  ]) {
+    const world = createFakeWorld(local, {
+      faults: id ? { [id]: fault } : {},
+      applyBeforeFault: applied ? [id] : [],
+    });
+    for (const state of ["absent", "empty", "configured"]) {
+      const name = `${local.tempBucket}-${state}`;
+      world.buckets.set(name, { name, location: "US" });
+    }
+    const client = createWire({ target: local, net: world.net, journal: { append() {} } });
+    const report = await observe({ target: local, client });
+    const ids = world.log.map((request) => request.case);
+    assert.deepEqual(report.violations, violation ? [violation] : [], id);
+    if (violation || applied) {
+      assert.equal(report.completed, false, id);
+      assert.deepEqual(report.failures, ["sequence stopped"]);
+      assert.equal(ids.includes("V3-empty-initial-list"), false, id);
+    }
+    if (id === "V3-P-location") {
+      assert.deepEqual(ids, [id]);
+      assert.equal(report.cleanupVerified, false);
+    }
+    if (id === "V3-absent-read-object") assert.equal(report.cleanupVerified, false);
+    if (applied) {
+      assert.deepEqual(report.unresolved, []);
+      assert.deepEqual(ids.slice(-3), [
+        "V3-absent-read-object",
+        "V3-absent-delete-object",
+        "V3-absent-read-object",
+      ]);
+      assert.equal(report.closureReady, false);
+    }
+    if (!id) {
+      assert.equal(report.closureReady, true);
+      assert.deepEqual(
+        client.entries.filter((entry) => entry.phase === "skipped"),
+        ["absent", "empty", "configured"].map((state) => ({
+          phase: "skipped",
+          case: `V3-${state}-configuration`,
+          reason: "local: predeclared bucket; no bucket management",
+        })),
+      );
+      assert.deepEqual(ids, [
+        "V3-P-location",
+        ...["absent", "empty", "configured"].flatMap((state) =>
+          [
+            "initial-list",
+            "upload",
+            "metadata",
+            "media",
+            "bucket",
+            "list",
+            "acl",
+            "preflight",
+            "resumable",
+          ].map((endpoint) => `V3-${state}-${endpoint}`),
+        ),
+        ...["absent", "empty", "configured"].flatMap((state) =>
+          ["cancel", "session-read"].map((endpoint) => `V3-${state}-${endpoint}`),
+        ),
+        ...["absent", "empty", "configured"].flatMap((state) =>
+          ["delete-object", "read-object"].map((endpoint) => `V3-${state}-${endpoint}`),
+        ),
+      ]);
+    }
+  }
+});
+
+test("v3 CLI writes a stage-bound fake journal and rejects missing output", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "storage-v3-cli-"));
+  try {
+    await assert.rejects(
+      main(["v3", "--project", v3.project, "--default-bucket", v3.defaultBucket]),
+      { message: "invalid arguments" },
+    );
+    assert.equal(
+      await main([
+        "v3",
+        "--project",
+        v3.project,
+        "--default-bucket",
+        v3.defaultBucket,
+        "--out",
+        dir,
+      ]),
+      0,
+    );
+    const entries = readFileSync(join(dir, "journal.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(entries[0].stage, "v3");
+    assert.equal(entries[0].mode, "fake");
+    assert.equal(entries.at(-1).completed, true);
+    assert.equal(entries.at(-1).requests, 40);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("v3 CLI readback checks the original header stage before opening its journal", async () => {
+  for (const stage of ["v2", "v3"]) {
+    const dir = mkdtempSync(join(tmpdir(), "storage-v3-a2-"));
+    try {
+      const previous = [
+        {
+          phase: "header",
+          stage,
+          mode: "fake",
+          runId: v3.runId,
+          project: v3.project,
+          defaultBucket: v3.defaultBucket,
+        },
+        { phase: "skipped", case: "synthetic-note" },
+        { phase: "summary", endedAt: 0, sessionFailures: [] },
+      ];
+      writeFileSync(
+        join(dir, "journal.jsonl"),
+        previous.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      );
+      const args = [
+        "readback",
+        "v3",
+        "--project",
+        v3.project,
+        "--default-bucket",
+        v3.defaultBucket,
+        "--run-id",
+        v3.runId,
+        "--out",
+        dir,
+      ];
+      if (stage === "v2") {
+        await assert.rejects(main(args), { message: "A2 stage must match the original run" });
+        assert.throws(() => readFileSync(join(dir, "readback.jsonl")), /ENOENT/);
+      } else {
+        assert.equal(await main(args), 0);
+        const entries = readFileSync(join(dir, "readback.jsonl"), "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        assert.equal(entries[0].stage, "v3");
+        assert.equal(entries.at(-1).closureReady, true);
+        assert.equal(entries.at(-1).requests, 2);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test("the fake transport rejects request drift independently of recorder classification", async () => {
+  const plan = requests(v3);
+  const request = {
+    ...plan["V3-W-bucket"],
+    headers: { ...plan["V3-W-bucket"].headers, authorization: "Bearer synthetic-owner" },
+  };
+  for (const changed of [
+    { method: "PUT" },
+    { url: request.url + "&extra=1" },
+    { body: "{}" },
+    { headers: { authorization: "Bearer synthetic-owner", "content-type": "text/plain" } },
+    { action: "read" },
+    { resource: "/other" },
+    { auth: "none" },
+    { case: "V3-unrecorded" },
+  ]) {
+    const world = createFakeWorld(v3, {
+      faults: { [changed.case ?? request.case]: { status: 200 } },
+    });
+    await assert.rejects(world.net({ ...request, ...changed }), /recorded v3 vocabulary/);
+    assert.equal(world.buckets.has(v3.tempBucket), false);
+    assert.deepEqual(world.log, []);
+  }
 });
