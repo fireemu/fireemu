@@ -199,7 +199,7 @@ export async function observe({
         const read = await safe(`${id}-session-read`);
         if (
           cancel.unknown ||
-          ![499, 204].includes(cancel.status) ||
+          cancel.status !== 204 ||
           read.unknown ||
           ![499, 404, 410].includes(read.status)
         )
@@ -217,7 +217,7 @@ export async function observe({
           if (pending(plan["V3-W-bucket"].resource)?.unknownCreate)
             await safe("V3-K-read-created-bucket");
           const ownsBucket =
-            isSuccess(answers["V3-W-bucket"]?.status) ||
+            (isSuccess(answers["V3-W-bucket"]?.status) && !answers["V3-W-bucket"].unknown) ||
             answers["V3-K-read-created-bucket"]?.showsResource;
           if (ownsBucket) {
             if (pending(plan["V3-W-object"].resource)?.unknownCreate)

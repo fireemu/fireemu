@@ -346,3 +346,31 @@ test("v3 pins each Origin probe and refuses v2 requests", () => {
   assert.throws(() => classifyRequest(t, authenticated(requests(target).C6)), GuardError);
   assert.throws(() => targetOf({ ...target, stage: "v4" }), GuardError);
 });
+
+test("v3 session URL classifier rejects each independent scope violation", () => {
+  const t = targetOf({ ...target, stage: "v3" });
+  const plan = requests(t);
+  const url = plan["V3-absent-resumable"].url + "&upload_id=synthetic-session";
+  for (const operation of ["cancel", "session-read"]) {
+    const request = authenticated({ ...plan[`V3-absent-${operation}`], url });
+    assert.doesNotThrow(() => classifyRequest(t, request));
+    for (const [label, changed] of [
+      ["extra key", url + "&extra=1"],
+      ["duplicate key", url + "&upload_id=second"],
+      ["three keys with duplicate", url.replace("upload_id=synthetic-session", "name=second")],
+      ["name", url.replace("resumable-absent.txt", "resumable-empty.txt")],
+      ["path", url.replace(t.tempBucket, t.defaultBucket)],
+      ["origin", url.replace("storage.googleapis.com", "firebasestorage.googleapis.com")],
+      ["uploadType", url.replace("uploadType=resumable", "uploadType=media")],
+      ["missing id", url.replace("upload_id=synthetic-session", "other=synthetic-session")],
+      ["empty id", url.replace("synthetic-session", "")],
+      ["invalid id", url.replace("synthetic-session", "synthetic%2Fsession")],
+      ["oversized id", url.replace("synthetic-session", "x".repeat(1025))],
+    ])
+      assert.throws(() => classifyRequest(t, { ...request, url: changed }), GuardError, label);
+    for (const id of ["x", "x".repeat(1024), "a.A_0~-9"])
+      assert.doesNotThrow(() =>
+        classifyRequest(t, { ...request, url: url.replace("synthetic-session", id) }),
+      );
+  }
+});

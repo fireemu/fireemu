@@ -58,7 +58,10 @@ export function createFakeWorld(
       return json(412, { error: { code: 412, message: "Bucket is not linked to Firebase" } });
     if (r.case === "A6" || r.case === "A7") return missing();
     if (target.stage === "v3" && url.searchParams.has("upload_id")) {
-      if (r.method === "DELETE") sessions.delete(url.searchParams.get("upload_id"));
+      if (r.method === "DELETE") {
+        sessions.delete(url.searchParams.get("upload_id"));
+        return empty(204);
+      }
       return empty(sessions.has(url.searchParams.get("upload_id")) ? 308 : 499);
     }
     if (target.stage === "v3" && r.case.endsWith("-resumable")) {

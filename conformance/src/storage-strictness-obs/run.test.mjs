@@ -968,3 +968,181 @@ test("v3 known session cleanup failures make cleanup unverified", async () => {
     assert.deepEqual(report.sessionFailures, ["absent"]);
   }
 });
+
+test("v3 unknown successful bucket creation requires a definite own read before any deletion", async () => {
+  for (const fault of [
+    { status: 200, body: null },
+    { status: 201, body: Buffer.from("fake-owner") },
+    { status: 299, headers: { "x-echo": "fake-owner" } },
+  ]) {
+    for (const read of [
+      { status: 404 },
+      { status: 200, body: null },
+      { status: 200, body: Buffer.from(JSON.stringify({ name: v3.defaultBucket })) },
+      { status: 200, body: Buffer.from(JSON.stringify({ name: v3.tempBucket })) },
+    ]) {
+      const confirmed = read.body?.toString().includes(v3.tempBucket) === true;
+      const { world, client, report } = await run(
+        {
+          faults: { "V3-W-bucket": fault, "V3-K-read-created-bucket": read },
+          applyBeforeFault: confirmed ? ["V3-W-bucket"] : [],
+        },
+        v3,
+      );
+      assert.equal(report.completed, false);
+      assert.equal(report.closureReady, false);
+      assert.equal(
+        world.log.some((r) => r.method === "DELETE"),
+        confirmed,
+      );
+      assert.equal(report.unresolved.length === 0, confirmed);
+      assert.ok(world.log.some((r) => r.case === "V3-K-read-created-bucket"));
+      const previous = [
+        {
+          phase: "header",
+          stage: "v3",
+          runId: v3.runId,
+          project: v3.project,
+          defaultBucket: v3.defaultBucket,
+        },
+        ...client.entries,
+        { phase: "summary", ...report, endedAt: 0 },
+      ];
+      const a2 = createWire({ target: v3, net: world.net, journal: { append() {} } });
+      const result = await readback({ target: v3, client: a2, previous, now: () => 600_000 });
+      assert.equal(result.readbackVerified, true);
+      assert.equal(result.closureReady, confirmed);
+    }
+  }
+});
+
+test("v3 W-verify independently requires absent cors and zero soft-delete retention", async () => {
+  for (const [extra, valid] of [
+    [{ softDeletePolicy: { retentionDurationSeconds: "0" } }, true],
+    [{ softDeletePolicy: { retentionDurationSeconds: 0 } }, true],
+    [{ cors: [], softDeletePolicy: { retentionDurationSeconds: "0" } }, false],
+    [{ softDeletePolicy: { retentionDurationSeconds: "604800" } }, false],
+  ]) {
+    const { report, world } = await run(
+      {
+        faults: {
+          "V3-W-verify": {
+            status: 200,
+            body: Buffer.from(JSON.stringify({ name: v3.tempBucket, ...extra })),
+          },
+        },
+      },
+      v3,
+    );
+    assert.equal(report.completed, valid);
+    assert.equal(
+      world.log.some((r) => r.case === "V3-W-object"),
+      valid,
+    );
+    assert.equal(report.violations.includes("V3-W-verify"), !valid);
+  }
+});
+
+test("v3 configured read-back requires every field of the exact CORS rule", async () => {
+  for (const cors of [
+    [],
+    [{ ...CORS[0], origin: ["http://other.example"] }, CORS[1]],
+    [CORS[0], { ...CORS[1], method: ["GET"] }],
+    [CORS[0], { ...CORS[1], responseHeader: ["*"] }],
+    [CORS[0], { ...CORS[1], maxAgeSeconds: 601 }],
+  ]) {
+    const { report, world } = await run(
+      {
+        faults: {
+          "V3-configured-verify": {
+            status: 200,
+            body: Buffer.from(JSON.stringify({ name: v3.tempBucket, cors })),
+          },
+        },
+      },
+      v3,
+    );
+    assert.equal(report.completed, false);
+    assert.ok(report.violations.includes("V3-configured-verify"));
+    assert.equal(
+      world.log.some((r) => r.case === "V3-configured-metadata"),
+      false,
+    );
+  }
+});
+
+test("v3 unrecorded cancel statuses require coordinator acceptance even after an absent A2", async () => {
+  for (const status of [200, 404, 499, 204]) {
+    const { report, client, world } = await run(
+      {
+        faults: { "V3-absent-cancel": { status } },
+        applyBeforeFault: ["V3-absent-cancel"],
+      },
+      v3,
+    );
+    assert.deepEqual(report.sessionFailures, status === 204 ? [] : ["absent"]);
+    assert.equal(report.cleanupVerified, status === 204);
+    assert.equal(report.closureReady, status === 204);
+    const previous = [
+      {
+        phase: "header",
+        stage: "v3",
+        runId: v3.runId,
+        project: v3.project,
+        defaultBucket: v3.defaultBucket,
+      },
+      ...client.entries,
+      { phase: "summary", ...report, endedAt: 0 },
+    ];
+    const a2 = createWire({ target: v3, net: world.net, journal: { append() {} } });
+    const result = await readback({ target: v3, client: a2, previous, now: () => 600_000 });
+    assert.equal(result.readbackVerified, true);
+    assert.equal(result.closureReady, status === 204);
+  }
+});
+
+test("v3 refused or missing-Location resumable starts stop before the next state", async () => {
+  for (const status of [200, 201, 400, 403, 404]) {
+    const { report, world } = await run({ faults: { "V3-absent-resumable": { status } } }, v3);
+    assert.equal(report.completed, false, String(status));
+    assert.equal(
+      world.log.some((r) => r.case.startsWith("V3-empty-")),
+      false,
+    );
+    assert.equal(
+      world.log.some((r) => r.case === "V3-absent-cancel"),
+      false,
+    );
+    assert.equal(world.log.at(-1).case, "V3-K-bucket");
+    assert.deepEqual(report.sessionFailures, status < 300 ? ["absent"] : []);
+  }
+});
+
+test("v3 a body echoing an earlier upload ID is withheld and stops the sequence", async () => {
+  const uploadId = "synthetic-earlier-upload-id";
+  const { report, world, entries } = await run(
+    {
+      faults: {
+        "V3-absent-metadata": {
+          status: 200,
+          headers: { "x-guploader-uploadid": uploadId },
+          body: Buffer.from("{}"),
+        },
+        "V3-absent-media": { status: 200, body: Buffer.from(`prefix ${uploadId} suffix`) },
+      },
+    },
+    v3,
+  );
+  const answer = entries.find((e) => e.phase === "after" && e.case === "V3-absent-media");
+  assert.equal(answer.withheld, true);
+  assert.equal(answer.unknown, true);
+  assert.equal(answer.bodyBase64, "");
+  assert.equal(report.completed, false);
+  assert.equal(report.closureReady, false);
+  assert.equal(
+    world.log.some((r) => r.case === "V3-absent-bucket"),
+    false,
+  );
+  assert.ok(!JSON.stringify(entries).includes(uploadId));
+  assert.equal(world.log.at(-1).case, "V3-K-bucket");
+});
