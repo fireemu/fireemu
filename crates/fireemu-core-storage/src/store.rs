@@ -1270,6 +1270,27 @@ impl StorageState {
         self.public_read.retain(|(b, _, _)| !owned(b.as_str()));
     }
 
+    /// `buckets.delete`: drops the configuration (versioning, uniform access, public reads)
+    /// and the uploads of a bucket that holds no object and no noncurrent generation, and
+    /// answers whether it did; a bucket that still holds one is left as it was.
+    pub fn delete_empty_bucket(&mut self, bucket: &BucketName) -> bool {
+        let holds = self
+            .objects
+            .range((bucket.clone(), ObjectName::range_start(""))..)
+            .next()
+            .is_some_and(|((b, _), _)| b == bucket)
+            || self
+                .noncurrent
+                .range((bucket.clone(), ObjectName::range_start(""), 0)..)
+                .next()
+                .is_some_and(|((b, _, _), _)| b == bucket);
+        if holds {
+            return false;
+        }
+        self.remove_bucket(bucket);
+        true
+    }
+
     /// Drops every object, blob and upload of one bucket (a project's session reset);
     /// returns how many objects went.
     pub fn remove_bucket(&mut self, bucket: &BucketName) -> usize {

@@ -2933,7 +2933,10 @@ fn route(method: &str, path: &str) -> Result<Route, String> {
         ("GET", ["b", b, "o"] | ["storage", "v1", "b", b, "o"]) => {
             Ok(Route::GcsList { bucket: d(b)? })
         }
-        ("GET" | "PATCH", ["storage", "v1", "b", b]) => Ok(Route::GcsBucket { bucket: d(b)? }),
+        // DELETE is buckets.delete, served under strict only (see the dispatch).
+        ("GET" | "PATCH" | "DELETE", ["storage", "v1", "b", b]) => {
+            Ok(Route::GcsBucket { bucket: d(b)? })
+        }
         ("GET" | "PATCH", ["b", b]) => Ok(Route::GcsBucketShort { bucket: d(b)? }),
         // PATCH is served on `/storage/v1` as production serves it; the official emulator
         // registers it on the short spelling only. The download spelling is GET only.
@@ -4100,6 +4103,10 @@ fn handle_request(
         }
         Route::GcsListBuckets => gcs_list_buckets(state, &host),
         Route::GcsList { bucket } => gcs_list(state, &bucket, &params, &host),
+        // Without strict a bucket DELETE stays the official emulator's 501 catch-all.
+        Route::GcsBucket { .. } if method == "DELETE" && !state.is_strict() => {
+            Ok(plain_status(501))
+        }
         Route::GcsBucket { bucket } => gcs_bucket(state, &bucket, &method, &req, &params, &host),
         Route::GcsObject { bucket, name } => {
             gcs_object(state, &bucket, &name, &method, &req, &params, &host)
@@ -5720,6 +5727,21 @@ fn bucket_exists(state: &StorageState, store: &ObjectStore, bucket: &BucketName)
         || store.bucket_known(bucket)
 }
 
+/// `DELETE /storage/v1/b/{bucket}` (buckets.delete, strict only): 204 with no body for an
+/// empty bucket, 409 while it holds an object (GCS documents "The bucket you tried to delete is
+/// not empty."; UNRECORDED here). A bucket that exists by declaration (a default or configured
+/// bucket) still reads as present afterwards: the store has no registry to remove it from.
+fn gcs_bucket_delete(state: &StorageState, bucket: &BucketName) -> Outcome {
+    if !state.store()?.delete_empty_bucket(bucket) {
+        return Err(gcs_json_error(
+            409,
+            "The bucket you tried to delete is not empty.",
+            "conflict",
+        ));
+    }
+    Ok(plain_status(204))
+}
+
 /// `GET` and `PATCH /storage/v1/b/{bucket}`: the bucket resource with its `versioning`. `PATCH`
 /// accepts `versioning.enabled` only; any other field is refused rather than ignored, so a caller
 /// never believes it configured something this store does not model (a strict over-refusal:
@@ -5745,6 +5767,9 @@ fn gcs_bucket(
             "The specified bucket does not exist.",
             "notFound",
         ));
+    }
+    if method == "DELETE" {
+        return gcs_bucket_delete(state, &b);
     }
     if method == "PATCH" || method == "POST" {
         let body: Value = if req.body.is_empty() {

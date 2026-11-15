@@ -1909,3 +1909,81 @@ async fn strict_survivor_media_error_at_400_has_no_media_exposed_headers() {
         "{exposed}"
     );
 }
+
+/// The FS-CONFIG-LIFECYCLE harness creates its run bucket under strict, empties it, deletes it
+/// and reads it back as absent. Before buckets.delete was served, the delete answered 501 and
+/// the created bucket stayed present (200), which failed the release R3 comparison. Without
+/// strict the delete stays the official emulator's 501 catch-all.
+#[test]
+fn strict_bucket_delete_removes_a_created_bucket() {
+    use fireemu_adapter_http::storage::{handle, StorageRequest};
+    for strict in [false, true] {
+        let s = state(if strict {
+            TokenAcceptance::Verified
+        } else {
+            TokenAcceptance::EmulatorMock
+        });
+        let send = |method: &str, path: &str, body: Value| {
+            handle(
+                &s,
+                StorageRequest {
+                    method: method.into(),
+                    path: path.into(),
+                    query: String::new(),
+                    host: None,
+                    headers: BTreeMap::from([("authorization".into(), "Bearer owner".into())]),
+                    app_check: vec![],
+                    body: if body.is_null() {
+                        vec![]
+                    } else {
+                        serde_json::to_vec(&body).unwrap()
+                    },
+                    remote_peer: false,
+                },
+            )
+            .status
+        };
+        if !strict {
+            assert_eq!(
+                send("DELETE", "/storage/v1/b/created-run", json!(null)),
+                501
+            );
+            continue;
+        }
+        assert_eq!(
+            send("DELETE", "/storage/v1/b/created-run", json!(null)),
+            404
+        );
+        assert_eq!(
+            send(
+                "POST",
+                "/storage/v1/b",
+                json!({"name":"created-run","location":"US-CENTRAL1","iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true},"publicAccessPrevention":"enforced"},"softDeletePolicy":{"retentionDurationSeconds":"0"}}),
+            ),
+            200
+        );
+        seed_named(&s, "created-run", "left/o.txt", b"fire");
+        assert_eq!(
+            send("DELETE", "/storage/v1/b/created-run", json!(null)),
+            409
+        );
+        assert_eq!(send("GET", "/storage/v1/b/created-run", json!(null)), 200);
+        assert_eq!(
+            send(
+                "DELETE",
+                "/storage/v1/b/created-run/o/left%2Fo.txt",
+                json!(null)
+            ),
+            204
+        );
+        assert_eq!(
+            send("DELETE", "/storage/v1/b/created-run", json!(null)),
+            204
+        );
+        assert_eq!(send("GET", "/storage/v1/b/created-run", json!(null)), 404);
+        assert_eq!(
+            send("DELETE", "/storage/v1/b/created-run", json!(null)),
+            404
+        );
+    }
+}
