@@ -11,4 +11,8 @@ pnpm -C site preview   # serves site/dist locally
 
 The compatibility pages are generated at build time from `spec/compatibility/contract.json`, `spec/compatibility/closure/*.json` and `crates/fireemu/src/capabilities.json`. A new production area, surface state or capability prefix fails the build until `src/data/compat.mjs` describes it.
 
+## Design
+
+The landing page (`src/pages/index.astro`) and the docs pages share one design. `src/styles/tokens.css` holds the palette and maps it onto Starlight's variables, `src/styles/custom.css` styles the header, sidebar, content components and footer, and `src/data/code-themes.mjs` holds the syntax colours. `src/styles/landing.css` only lays out the landing page. Change a colour in `tokens.css` (and its hex twin in `code-themes.mjs`), not in a page.
+
 `FIREEMU_SITE_URL` and `FIREEMU_SITE_BASE` override the deployment URL (default `https://fireemu.github.io` and `/fireemu`).

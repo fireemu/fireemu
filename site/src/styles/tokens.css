@@ -1,0 +1,156 @@
+/* Fireemu design tokens: palette W09 (cool paper and amber), square corners.
+   Every page (the landing page and the Starlight docs pages) reads these, and the Starlight
+   variables below are derived from them, so the two never drift apart.
+   Starlight renders dark by default and sets data-theme="light" on <html> for the light theme. */
+
+:root {
+	color-scheme: dark;
+	--fe-bg: oklch(20.5% 0.01 247);
+	--fe-surface: oklch(25% 0.01 247);
+	--fe-surface-raised: oklch(28.5% 0.01 247);
+	--fe-surface-sunken: oklch(18.3% 0.01 247);
+	--fe-fg: oklch(95.3% 0.007 245);
+	--fe-fg-secondary: oklch(84% 0.007 245);
+	--fe-fg-muted: oklch(76.5% 0.007 245);
+	--fe-border: oklch(37% 0.016 247);
+	--fe-border-control: oklch(67% 0.015 247);
+	--fe-brand: oklch(84% 0.12 82);
+	--fe-accent: oklch(86% 0.11 82);
+	--fe-accent-hover: oklch(89.5% 0.104 82);
+	--fe-accent-soft: oklch(34% 0.027 78);
+	--fe-action-bg: oklch(90% 0.012 245);
+	--fe-action-fg: oklch(21% 0.01 247);
+	--fe-action-hover: oklch(93.5% 0.012 245);
+	--fe-action-active: oklch(86% 0.012 245);
+	--fe-focus: oklch(86% 0.11 82);
+	--fe-success: oklch(80% 0.075 147);
+	--fe-success-bg: oklch(29% 0.018 147);
+	--fe-warning: oklch(84% 0.075 75);
+	--fe-warning-bg: oklch(29% 0.018 75);
+	--fe-danger: oklch(80% 0.1 25);
+	--fe-danger-bg: oklch(29% 0.018 25);
+	--fe-info: oklch(81% 0.07 245);
+	--fe-info-bg: oklch(29% 0.018 245);
+	--fe-code-bg: oklch(18.3% 0.01 247);
+	--fe-code-fg: oklch(95.3% 0.007 245);
+	--fe-selection-bg: oklch(34% 0.027 78);
+	--fe-selection-fg: oklch(95.3% 0.007 245);
+
+	--fe-font: 'Inter Variable', Inter, 'Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', ui-sans-serif,
+		system-ui, sans-serif;
+	--fe-font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+	--fe-text-min: 0.875rem;
+}
+
+:root[data-theme='light'] {
+	color-scheme: light;
+	--fe-bg: oklch(97.7% 0.008 245);
+	--fe-surface: oklch(98.8% 0.004 245);
+	--fe-surface-raised: oklch(93.5% 0.008 245);
+	--fe-surface-sunken: oklch(93.4% 0.008 245);
+	--fe-fg: oklch(25.5% 0.007 250);
+	--fe-fg-secondary: oklch(40% 0.007 250);
+	--fe-fg-muted: oklch(46.5% 0.007 250);
+	--fe-border: oklch(81.5% 0.008 245);
+	--fe-border-control: oklch(53.5% 0.014 245);
+	--fe-brand: oklch(79% 0.14 80);
+	--fe-accent: oklch(44.5% 0.085 75);
+	--fe-accent-hover: oklch(39.5% 0.083 75);
+	--fe-accent-soft: oklch(92.4% 0.044 84);
+	--fe-action-bg: oklch(32% 0.01 250);
+	--fe-action-fg: oklch(98.8% 0.004 245);
+	--fe-action-hover: oklch(27.5% 0.01 250);
+	--fe-action-active: oklch(24.5% 0.01 250);
+	--fe-focus: oklch(44.5% 0.085 75);
+	--fe-success: oklch(40% 0.075 147);
+	--fe-success-bg: oklch(95.5% 0.018 147);
+	--fe-warning: oklch(43% 0.075 75);
+	--fe-warning-bg: oklch(95.5% 0.018 75);
+	--fe-danger: oklch(44% 0.12 25);
+	--fe-danger-bg: oklch(95.5% 0.018 25);
+	--fe-info: oklch(41% 0.067 245);
+	--fe-info-bg: oklch(95.5% 0.018 245);
+	--fe-code-bg: oklch(93.4% 0.008 245);
+	--fe-code-fg: oklch(25.5% 0.007 250);
+	--fe-selection-bg: oklch(92.4% 0.044 84);
+	--fe-selection-fg: oklch(25.5% 0.007 250);
+}
+
+/* Starlight's variables, derived from the tokens. Both themes share one mapping because the
+   tokens already carry the theme. */
+:root,
+:root[data-theme='light'],
+::backdrop,
+[data-theme='light'] ::backdrop {
+	--sl-color-white: var(--fe-fg);
+	--sl-color-gray-1: var(--fe-fg);
+	--sl-color-gray-2: var(--fe-fg-secondary);
+	--sl-color-gray-3: var(--fe-fg-muted);
+	--sl-color-gray-4: var(--fe-border-control);
+	--sl-color-gray-5: var(--fe-border);
+	--sl-color-gray-6: var(--fe-surface-raised);
+	--sl-color-gray-7: var(--fe-surface);
+	--sl-color-black: var(--fe-bg);
+
+	--sl-color-accent-low: var(--fe-accent-soft);
+	--sl-color-accent: var(--fe-accent);
+	--sl-color-accent-high: var(--fe-accent);
+
+	--sl-color-orange-low: var(--fe-warning-bg);
+	--sl-color-orange: var(--fe-warning);
+	--sl-color-orange-high: var(--fe-warning);
+	--sl-color-green-low: var(--fe-success-bg);
+	--sl-color-green: var(--fe-success);
+	--sl-color-green-high: var(--fe-success);
+	--sl-color-blue-low: var(--fe-info-bg);
+	--sl-color-blue: var(--fe-info);
+	--sl-color-blue-high: var(--fe-info);
+	--sl-color-purple-low: var(--fe-info-bg);
+	--sl-color-purple: var(--fe-info);
+	--sl-color-purple-high: var(--fe-info);
+	--sl-color-red-low: var(--fe-danger-bg);
+	--sl-color-red: var(--fe-danger);
+	--sl-color-red-high: var(--fe-danger);
+
+	--sl-color-text: var(--fe-fg);
+	--sl-color-text-accent: var(--fe-accent);
+	--sl-color-text-invert: var(--fe-action-fg);
+	--sl-color-bg: var(--fe-bg);
+	--sl-color-bg-nav: var(--fe-bg);
+	--sl-color-bg-sidebar: var(--fe-bg);
+	--sl-color-bg-inline-code: var(--fe-code-bg);
+	--sl-color-bg-accent: var(--fe-action-bg);
+	--sl-color-hairline-light: var(--fe-border);
+	--sl-color-hairline: var(--fe-border);
+	--sl-color-hairline-shade: var(--fe-border);
+
+	--sl-shadow-sm: none;
+	--sl-shadow-md: none;
+	--sl-shadow-lg: none;
+
+	--sl-font: var(--fe-font);
+	--sl-font-mono: var(--fe-font-mono);
+}
+
+:root {
+	--sl-text-xs: 0.875rem;
+	--sl-text-2xs: 0.8125rem;
+	--sl-text-h1: 2.25rem;
+	--sl-text-h2: 1.625rem;
+	--sl-text-h3: 1.25rem;
+	--sl-text-h4: 1.0625rem;
+	--sl-text-h5: 1rem;
+	--sl-line-height: 1.75;
+	--sl-line-height-headings: 1.25;
+	--sl-nav-height: 4rem;
+	--sl-sidebar-width: 17rem;
+}
+@media (min-width: 50em) {
+	:root {
+		--sl-nav-height: 4.5rem;
+		--sl-text-h1: 2.5rem;
+		--sl-text-h2: 1.625rem;
+		--sl-text-h3: 1.25rem;
+		--sl-text-h4: 1.0625rem;
+	}
+}

@@ -1,0 +1,440 @@
+---
+// The landing page. It renders inside Starlight's page frame, so the header, search, theme
+// selector, code blocks and footer are the same components the docs pages use.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Code } from '@astrojs/starlight/components';
+import { loadRepositoryData, verifiedAreaCount } from '../data/compat.mjs';
+import '../styles/landing.css';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const to = (path: string) => `${base}${path}`;
+
+const verifiedAreas = verifiedAreaCount((await loadRepositoryData()).closures);
+
+const startCommands = `npm install --save-dev fireemu
+npx fireemu init
+npx fireemu up`;
+
+const testCommand = `npx fireemu exec -- npm test`;
+
+const missingIndexOutput = `FirebaseError: [code=failed-precondition]: The query requires an index.
+You can create it here: https://console.firebase.google.com/...`;
+
+const worldsExample = `import { withTestWorld } from 'fireemu/testing';
+
+const tests = ['./signup.test.mjs', './account.test.mjs'];
+
+await Promise.all(tests.map((testFile) =>
+  withTestWorld(
+    {
+      projectId: 'demo-app',
+      services: ['auth', 'firestore'],
+      clockStart: '2026-01-31T23:59:00Z',
+    },
+    async (world) => {
+      await world.clock.advance(60_000);
+      await world.run(process.execPath, [testFile]);
+    },
+  ),
+));`;
+
+const features = [
+	{
+		title: 'Missing-index query rejection',
+		body: 'Queries that need an undeclared composite index fail with <code>FAILED_PRECONDITION</code> under the default <code>strict</code> settings, so the missing index surfaces in the test run, before deployment.',
+		link: 'Index validation',
+		href: to('products/firestore/#composite-indexes'),
+		output: missingIndexOutput,
+	},
+	{
+		title: 'TOTP multi-factor authentication',
+		body: 'Test TOTP enrollment and sign-in through the Firebase SDK.',
+		link: 'TOTP walkthrough',
+		href: to('products/auth/#test-totp-enrollment-and-sign-in'),
+	},
+	{
+		title: 'Blocking functions and account policies',
+		body: 'Test blocking functions for sign-up, sign-in and password-reset emails. Verify account settings such as disabling user-initiated account deletion.',
+		link: 'Authentication guide',
+		href: to('products/auth/'),
+	},
+	{
+		title: 'Scheduled function execution',
+		body: 'Run Node.js scheduled functions by advancing the emulator clock. Test time zones and missed occurrences.',
+		link: 'Scheduling behavior',
+		href: to('guides/time/#run-scheduled-functions'),
+	},
+	{
+		title: 'Enterprise full-text search',
+		body: 'Run supported Firestore Enterprise text-search queries locally. Scores are approximate; Japanese/CJK tokenization has known differences.',
+		link: 'Search scope and limits',
+		href: to('products/firestore/#enterprise-text-search'),
+	},
+];
+
+const services = [
+	{
+		name: 'Cloud Firestore',
+		href: to('products/firestore/'),
+		covers: 'Standard and Enterprise editions, index validation, queries and Security Rules.',
+		limit: 'Enterprise pipelines and text search have a documented scope.',
+	},
+	{
+		name: 'Firebase Authentication',
+		href: to('products/auth/'),
+		covers: 'Identity Platform settings, sign-in, TOTP/SMS MFA, tenants and blocking functions.',
+		limit: 'Live flows to external identity providers are outside the local runtime.',
+	},
+	{
+		name: 'Cloud Storage',
+		href: to('products/storage/'),
+		covers: 'Firebase and JSON APIs, object operations and Security Rules.',
+		limit: 'Managed infrastructure and API coverage have limits; see the guide.',
+	},
+	{
+		name: 'Cloud Functions',
+		href: to('products/functions/'),
+		covers:
+			'Node.js and Python functions: HTTP, callable, event, blocking, scheduled and task-queue functions (Cloud Tasks).',
+		links: [
+			{ label: 'Node.js guide', href: to('products/functions/') },
+			{ label: 'Python guide', href: to('products/functions-python/') },
+		],
+	},
+	{
+		name: 'Cloud Pub/Sub',
+		href: to('products/pubsub-eventarc/'),
+		covers: 'Topics, subscriptions, push/pull delivery, dead-letter topics and StreamingPull.',
+		limit: 'Schemas, BigQuery/Storage delivery and exactly-once delivery are not supported.',
+	},
+	{
+		name: 'Eventarc',
+		href: to('products/pubsub-eventarc/'),
+		covers: 'Custom events, channels and event delivery to local Functions.',
+		limit: 'See the supported event types and authentication settings in the guide.',
+	},
+	{
+		name: 'Realtime Database',
+		href: to('products/realtime-database/'),
+		covers: 'REST and realtime protocols, Security Rules, export and import.',
+		limit: 'Production verification covers recorded cases; no official-emulator parity claim.',
+	},
+	{
+		name: 'Firebase Hosting',
+		href: to('products/hosting/'),
+		covers: 'Static files, redirects, rewrites, headers, clean URLs and localization.',
+		limit: 'Production verification covers recorded cases; no official-emulator parity claim.',
+	},
+	{
+		name: 'Firebase App Check',
+		href: to('products/app-check/'),
+		covers: 'Debug-token exchange and local application flows using App Check tokens.',
+		limit: 'Real-device attestation and limited-use replay protection are not supported.',
+	},
+];
+
+const workflow = [
+	{ title: 'Install', body: 'Add Fireemu to the project.', href: to('getting-started/install/') },
+	{
+		title: 'Connect',
+		body: 'Point your SDK at the local services.',
+		href: to('getting-started/connect/'),
+	},
+	{
+		title: 'Run tests',
+		body: 'Use exec for your test command.',
+		href: to('getting-started/install/#run-a-command-against-the-emulators'),
+	},
+	{
+		title: 'Use in CI',
+		body: 'Review isolation and environment settings.',
+		href: to('guides/ci-and-containers/'),
+	},
+];
+
+const resources = [
+	{ label: 'CLI reference', href: to('reference/cli/') },
+	{ label: 'Configuration reference', href: to('reference/configuration/') },
+	{ label: 'Security Rules', href: to('guides/security-rules/') },
+	{ label: 'Emulator UI', href: to('guides/ui/') },
+	{ label: 'Export & import', href: to('guides/data/') },
+	{ label: 'Troubleshooting', href: to('guides/troubleshooting/') },
+];
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Fireemu — Test against Firebase as it behaves in production',
+		description:
+			'Fireemu is an unofficial local Firebase emulator for tests and CI, built to close the gap between local tests and production behavior.',
+		template: 'splash',
+		tableOfContents: false,
+	}}
+>
+	<div class="lp not-content">
+		<section class="lp-hero" id="intro">
+			<div>
+				<h1>Test against Firebase as it behaves in production</h1>
+				<p class="lp-lede">
+					Fireemu is an unofficial local Firebase emulator, built to close the gap between local
+					tests and production behavior.
+				</p>
+				<div class="lp-actions">
+					<a class="lp-btn" href={to('getting-started/install/')}>
+						Install and run <span aria-hidden="true">→</span>
+					</a>
+					<a class="lp-textlink" href={to('compatibility/')}>Explore compatibility</a>
+				</div>
+				<p class="lp-caveat">
+					Uses the <code>strict</code> profile by default.{' '}
+					<a href={to('guides/profiles/')}>Profile behavior</a>
+				</p>
+			</div>
+			<aside class="lp-start" aria-label="Quick start">
+				<Code code={startCommands} lang="sh" title="Start locally" />
+				<p class="lp-meta">Node.js 20+ · macOS / Linux / Windows</p>
+				<div class="lp-next">
+					<Code code={testCommand} lang="sh" title="Run your tests" />
+					<p class="lp-meta">
+						Starts Fireemu, runs your tests, then stops.{' '}
+						<a href={to('getting-started/connect/')}>Connect your SDK first</a>
+					</p>
+				</div>
+			</aside>
+		</section>
+
+		<dl class="lp-facts" aria-label="Fireemu at a glance">
+			<div>
+				<dt>{verifiedAreas}</dt>
+				<dd>
+					areas verified against recordings from real Firebase projects.{' '}
+					<a href={to('compatibility/#production-verification')}>Records</a>
+				</dd>
+			</div>
+			<div>
+				<dt>140<small> ms</small></dt>
+				<dd>
+					from start until the SDK can use Firestore, in one benchmark run.{' '}
+					<a href={to('compatibility/performance/')}>Conditions</a>
+				</dd>
+			</div>
+			<div>
+				<dt>11<small> MiB</small></dt>
+				<dd>
+					idle memory with an empty database, in the same run.{' '}
+					<a href={to('compatibility/performance/')}>Method</a>
+				</dd>
+			</div>
+			<div>
+				<dt>1<small> binary</small></dt>
+				<dd>
+					A single native executable, installed from npm. It reads your existing{' '}
+					<code>firebase.json</code>.
+				</dd>
+			</div>
+		</dl>
+
+		<section class="lp-section" id="production">
+			<div class="lp-label"><h2>Bring more of production into local tests.</h2></div>
+			<div>
+				{
+					features.map((feature) => (
+						<article class="lp-feature">
+							<h3>{feature.title}</h3>
+							<p set:html={feature.body} />
+							{feature.output && (
+								<Code code={feature.output} lang="ansi" title="What the test sees" wrap />
+							)}
+							<a href={feature.href}>{feature.link}</a>
+						</article>
+					))
+				}
+				<p class="lp-more">
+					<a href={to('compatibility/')}>
+						And more <span aria-hidden="true">→</span>
+					</a>
+				</p>
+			</div>
+		</section>
+
+		<section class="lp-section" id="testing">
+			<div class="lp-label">
+				<h2>
+					<span>Control time with a virtual clock.</span>
+					<span>Give each test its own Firebase environment.</span>
+				</h2>
+			</div>
+			<div>
+				<div class="lp-pair">
+					<article>
+						<h3>Test time-dependent behavior without waiting</h3>
+						<p>
+							Set and advance the emulator’s virtual clock to test token expiry and scheduled
+							Node.js functions without waiting for real time to pass.
+						</p>
+						<p>
+							In the UI, choose a date and time, then run a scheduled function. You can also
+							advance straight to its next scheduled run.
+						</p>
+						<a href={to('guides/time/')}>Virtual clock and UI controls</a>
+					</article>
+					<article>
+						<h3>Run integration tests in parallel</h3>
+						<p>
+							Each test world has its own data, Security Rules, Functions, ports and virtual
+							clock—even with the same project ID. One test can change data or advance time
+							without changing another world’s state.
+						</p>
+						<p>
+							<code>withTestWorld</code> starts the environment and cleans it up when the test finishes,
+							including when it fails.
+						</p>
+						<a href={to('guides/test-worlds/')}>Create independent test worlds</a>
+					</article>
+				</div>
+				<Code code={worldsExample} lang="js" title="Two tests, two independent worlds" />
+				<p class="lp-boundary">
+					Each script runs in its own world using the same <code>demo-app</code> project ID. Each
+					callback advances only its world’s clock.{' '}
+					<a href={to('guides/test-worlds/#what-a-clock-move-reaches')}>Clock scope and setup</a>
+				</p>
+			</div>
+		</section>
+
+		<section class="lp-section" id="verification">
+			<div class="lp-label"><h2>Grounded in real Firebase behavior.</h2></div>
+			<div>
+				<div class="lp-evidence">
+					<div>
+						<p class="lp-intro">
+							Fireemu’s responses are compared with recordings from real Firebase projects. The
+							published records describe the conditions checked, reviewed differences, and work
+							still in progress.
+						</p>
+						<a class="lp-textlink" href={to('compatibility/#production-verification')}>
+							Explore production verification
+						</a>
+					</div>
+					<div class="lp-count">
+						<strong>{verifiedAreas}</strong>
+						<span>areas verified against production</span>
+					</div>
+				</div>
+				<ol class="lp-steps">
+					<li>
+						<span>01</span>
+						<h3>Record</h3>
+						<p>Observe responses from real Firebase projects.</p>
+					</li>
+					<li>
+						<span>02</span>
+						<h3>Compare</h3>
+						<p>Check local behavior against those recordings.</p>
+					</li>
+					<li>
+						<span>03</span>
+						<h3>Publish the scope</h3>
+						<p>Keep verified conditions and known differences inspectable.</p>
+					</li>
+				</ol>
+				<p class="lp-boundary">
+					Verification applies to the recorded scope, not every Firebase feature or input. Before
+					relying on results in CI, compare critical workflows with a dedicated Firebase test
+					project—not your live production project.
+				</p>
+				<div class="lp-differs" id="local-differences">
+					<h3>Where local behavior differs.</h3>
+					<p>
+						Some production setup is relaxed for local tests. Features such as MFA and
+						multi-tenancy are enabled by default; documented settings let you test their
+						production setup requirements.
+					</p>
+					<p>
+						Other behavior remains approximate or outside the local runtime, including text
+						analysis, real quota accounting and cloud infrastructure. We distinguish these limits
+						from behavior that is not yet implemented or verified.
+					</p>
+					<p class="lp-links">
+						<a href={to('guides/profiles/#where-fireemu-departs-from-production-on-purpose')}>
+							Development defaults
+						</a>
+						<a href={to('compatibility/limitations/')}>Limitations</a>
+					</p>
+				</div>
+			</div>
+		</section>
+
+		<section class="lp-section" id="scope">
+			<div class="lp-label"><h2>Supported services.</h2></div>
+			<div>
+				<p class="lp-intro">
+					Find the services your app uses. Each guide describes the supported APIs and their
+					limits.
+				</p>
+				<dl class="lp-services">
+					{
+						services.map((service) => (
+							<div>
+								<dt>
+									<a href={service.href}>{service.name}</a>
+								</dt>
+								<dd>
+									<p>{service.covers}</p>
+									{service.limit && <p class="lp-limit">{service.limit}</p>}
+									{service.links && (
+										<p class="lp-limit lp-links">
+											{service.links.map((link) => (
+												<a href={link.href}>{link.label}</a>
+											))}
+										</p>
+									)}
+								</dd>
+							</div>
+						))
+					}
+				</dl>
+				<p class="lp-outside">
+					Not currently supported: App Hosting and Data Connect.<br />
+					Not planned: Firebase Extensions.
+				</p>
+				<p class="lp-links"><a href={to('compatibility/')}>View compatibility records</a></p>
+			</div>
+		</section>
+
+		<section class="lp-section" id="workflow">
+			<div class="lp-label"><h2>From local setup to your test suite.</h2></div>
+			<div>
+				<ol class="lp-workflow">
+					{
+						workflow.map((step, index) => (
+							<li>
+								<span class="lp-stepno">{String(index + 1).padStart(2, '0')}</span>
+								<h3>{step.title}</h3>
+								<p>{step.body}</p>
+								<a href={step.href}>Read guide</a>
+							</li>
+						))
+					}
+				</ol>
+				<p class="lp-boundary">
+					Already using the Local Emulator Suite? Fireemu reads your existing{' '}
+					<code>firebase.json</code> as it is.{' '}
+					<a href={to('getting-started/migrate/')}>Read the migration guide</a>
+				</p>
+			</div>
+		</section>
+
+		<section class="lp-section lp-resources" id="resources">
+			<div class="lp-label"><h2>Documentation</h2></div>
+			<div class="lp-resource-list">
+				{
+					resources.map((resource) => (
+						<a href={resource.href}>
+							{resource.label} <span aria-hidden="true">→</span>
+						</a>
+					))
+				}
+			</div>
+		</section>
+	</div>
+</StarlightPage>
