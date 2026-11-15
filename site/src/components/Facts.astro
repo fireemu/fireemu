@@ -1,0 +1,60 @@
+---
+// A short ruled list of facts at the top of a page: the same block, in the same place, on every
+// product page (status, default port, when it starts, how it is verified).
+interface Fact {
+	label: string;
+	value: string;
+	/** Optional link for the value, relative to the site base (e.g. "compatibility/"). */
+	href?: string;
+}
+interface Props {
+	items: Fact[];
+}
+const { items } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<dl class="fe-facts not-content">
+	{
+		items.map(({ label, value, href }) => (
+			<div>
+				<dt>{label}</dt>
+				<dd>{href ? <a href={`${base}${href}`}>{value}</a> : value}</dd>
+			</div>
+		))
+	}
+</dl>
+
+<style>
+	.fe-facts {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+		gap: 0 1.5rem;
+		margin: 1.75rem 0 0;
+		border-block: 1px solid var(--fe-border);
+		padding: 1rem 0;
+	}
+	.fe-facts div {
+		padding: 0.25rem 0;
+	}
+	dt {
+		color: var(--fe-fg-muted);
+		font-size: 0.8125rem;
+		line-height: 1.6;
+	}
+	dd {
+		margin: 0;
+		color: var(--fe-fg);
+		font-size: 0.9375rem;
+		font-weight: 600;
+		line-height: 1.6;
+	}
+	dd a {
+		color: inherit;
+		text-decoration-thickness: 1px;
+		text-underline-offset: 4px;
+	}
+	dd a:hover {
+		color: var(--fe-accent);
+	}
+</style>
