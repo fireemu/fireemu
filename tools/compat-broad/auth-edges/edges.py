@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 for directory in (HERE.parent, HERE.parent / 'auth-action-codes', HERE.parent / 'auth-credential-tokens', HERE.parent / 'auth-totp-enroll'):
     sys.path.insert(0, str(directory))
 
-from action_codes_collector import _Run, _recover, _loopback_origin, _http_send, BindingError, CollectorError
+from action_codes_collector import _Run, _loopback_origin, _http_send, BindingError, CollectorError
 from action_codes_comparator import _indeterminate
 from batch_adapter import Adapter
 from broad_contract import digest
@@ -29,9 +29,11 @@ from mfa_totp import TotpParameters, totp_code
 PROJECT = 'fireemu-oracle-idp'
 CLIENT = '/identitytoolkit.googleapis.com/v1/accounts:'
 ADMIN = f'/identitytoolkit.googleapis.com/v1/projects/{PROJECT}/accounts:'
+CONFIG = f'/identitytoolkit.googleapis.com/admin/v2/projects/{PROJECT}/config'
+DOMAIN = PROJECT + '.firebaseapp.com'
 FAMILIES = ('link-unverified', 'link-verified', 'disabled-link', 'change-reuse', 'continue-url', 'admin-email', 'scrypt', 'totp-reuse')
 ROLES = ('unverified', 'verified', 'disabled', 'change', 'session', 'mfa', 'scrypt0', 'scrypt1', 'scrypt4', 'scrypt5', 'scrypt16')
-REFUSALS = ('USER_DISABLED', 'INVALID_OOB_CODE', 'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'TOKEN_EXPIRED', 'INVALID_ID_TOKEN', 'INVALID_REFRESH_TOKEN', 'UNAUTHORIZED_DOMAIN', 'INVALID_CONTINUE_URI', 'INVALID_HASH_PARAMETERS', 'INVALID_HASH_PARALLELIZATION', 'MFA_ENROLLMENT_ALREADY_COMPLETE', 'INVALID_CODE', 'OPERATION_NOT_ALLOWED')
+REFUSALS = ('USER_DISABLED', 'INVALID_OOB_CODE', 'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'TOKEN_EXPIRED', 'INVALID_ID_TOKEN', 'INVALID_REFRESH_TOKEN', 'UNAUTHORIZED_DOMAIN', 'INVALID_CONTINUE_URI', 'INVALID_HASH_PARAMETER', 'INVALID_HASH_PARALLELIZATION', 'MFA_ENROLLMENT_ALREADY_COMPLETE', 'INVALID_CODE', 'OPERATION_NOT_ALLOWED')
 
 
 def manifest(nonce):
@@ -55,6 +57,9 @@ def manifest(nonce):
         return row
 
     add('preflight-absence', None, 'lookup', {'email': [a['email'] for a in accounts.values()]}, kind='preflight', owner=True, required=('users',))
+    for identifier, method, body in [('config-baseline', 'GET', None), ('email-link-enable', 'PATCH', {'signIn': {'email': {'passwordRequired': False}}}), *[(f'email-link-readback-{i}', 'GET', None) for i in range(30)]]:
+        row = add(identifier, None, '', body, kind='config', owner=True)
+        row.update(path=CONFIG + ('?updateMask=signIn.email.passwordRequired' if method == 'PATCH' else ''), method=method)
     for role in ROLES:
         add('create-' + role, role, 'signUp', {'email': accounts[role]['email'], 'password': '$binding:' + role + '.password', 'returnSecureToken': True}, kind='create', required=('localId', 'idToken', 'refreshToken'), binds={role + '.localId': 'localId', role + '.idToken': 'idToken', role + '.refreshToken': 'refreshToken'})
         readback('create-' + role, role)
@@ -63,14 +68,16 @@ def manifest(nonce):
     for role in ('unverified', 'verified'):
         family = 'link-' + role
         add('baseline-' + role, role, 'lookup', {'idToken': '$binding:' + role + '.idToken'}, required=('users',))
-        add('issue-' + role, role, 'sendOobCode', {'email': accounts[role]['email'], 'requestType': 'EMAIL_SIGNIN', 'returnOobLink': True, 'continueUrl': 'http://localhost/edge', 'canHandleCodeInApp': True}, owner=True, required=('oobCode',), binds={role + '.code': 'oobCode'})
+        add('issue-' + role, role, 'sendOobCode', {'email': accounts[role]['email'], 'requestType': 'EMAIL_SIGNIN', 'returnOobLink': True, 'continueUrl': 'https://' + DOMAIN + '/edge', 'canHandleCodeInApp': True}, owner=True, kind='diagnostic', family=family, required=('oobCode',), binds={role + '.code': 'oobCode'})
+        readback('issue-' + role, role, family)
         diagnostic(family, role, 'signInWithEmailLink', {'email': accounts[role]['email'], 'oobCode': '$binding:' + role + '.code'}, family, required=('localId', 'idToken'))
         diagnostic(family + '-password', role, 'signInWithPassword', {'email': accounts[role]['email'], 'password': '$binding:' + role + '.password', 'returnSecureToken': True}, family, required=('localId', 'idToken'))
         diagnostic(family + '-old-id', role, 'lookup', {'idToken': '$binding:' + role + '.idToken'}, family, required=('users',))
         row = diagnostic(family + '-old-refresh', role, 'refresh', {'grant_type': 'refresh_token', 'refresh_token': '$binding:' + role + '.refreshToken'}, family, required=('id_token', 'user_id'))
         row['path'] = '/securetoken.googleapis.com/v1/token'
     # Issue while enabled, then disable: issuance refusal cannot hide sign-in behavior.
-    add('issue-disabled', 'disabled', 'sendOobCode', {'email': accounts['disabled']['email'], 'requestType': 'EMAIL_SIGNIN', 'returnOobLink': True, 'continueUrl': 'http://localhost/edge', 'canHandleCodeInApp': True}, owner=True, required=('oobCode',), binds={'disabled.code': 'oobCode'})
+    add('issue-disabled', 'disabled', 'sendOobCode', {'email': accounts['disabled']['email'], 'requestType': 'EMAIL_SIGNIN', 'returnOobLink': True, 'continueUrl': 'https://' + DOMAIN + '/edge', 'canHandleCodeInApp': True}, owner=True, kind='diagnostic', family='disabled-link', required=('oobCode',), binds={'disabled.code': 'oobCode'})
+    readback('issue-disabled', 'disabled', 'disabled-link')
     add('disable-link-owner', 'disabled', 'update', {'localId': '$binding:disabled.localId', 'disableUser': True}, owner=True, required=('localId',))
     diagnostic('disabled-link', 'disabled', 'signInWithEmailLink', {'email': accounts['disabled']['email'], 'oobCode': '$binding:disabled.code'}, 'disabled-link', required=('localId',))
     add('issue-change', 'change', 'sendOobCode', {'email': accounts['change']['email'], 'newEmail': f'edges-{nonce}-changed@example.invalid', 'requestType': 'VERIFY_AND_CHANGE_EMAIL', 'returnOobLink': True}, owner=True, required=('oobCode',), binds={'change.code': 'oobCode'})
@@ -80,7 +87,7 @@ def manifest(nonce):
     diagnostic('change-retry', 'change', 'update', {'oobCode': '$binding:change.code'}, 'change-reuse', required=('localId',))
     # Restore by immutable UID before address-keyed cleanup.
     add('restore-change-address', 'change', 'update', {'localId': '$binding:change.localId', 'email': accounts['change']['email']}, owner=True, required=('localId',))
-    for label, url in (('backslash', 'https://localhost\\@example.invalid/edge'), ('javascript', 'javascript://localhost/edge'), ('relative', '/edge'), ('untrusted', 'https://example.invalid/edge')):
+    for label, url in (('backslash', 'https://' + DOMAIN + '\\@example.invalid/edge'), ('javascript', 'javascript://' + DOMAIN + '/edge'), ('relative', '/edge'), ('untrusted', 'https://example.invalid/edge')):
         diagnostic('continue-' + label, 'verified', 'sendOobCode', {'email': accounts['verified']['email'], 'requestType': 'PASSWORD_RESET', 'returnOobLink': True, 'continueUrl': url}, 'continue-url', owner=True, required=('oobCode',))
     add('baseline-session', 'session', 'lookup', {'idToken': '$binding:session.idToken'}, required=('users',))
     diagnostic('admin-email-change', 'session', 'update', {'localId': '$binding:session.localId', 'email': accounts['sessionAlias']['email']}, 'admin-email', owner=True, required=('localId',))
@@ -112,7 +119,10 @@ def manifest(nonce):
         recovery.insert(-1, dict(id='recover-delete-' + role, path=ADMIN + 'delete', body={'localId': '$binding:' + role + '.localId'}, owner=True, kind='delete', routeClass='admin'))
     for role in accounts:
         recovery.insert(-1, dict(id='recover-uid-absence-' + role, path=ADMIN + 'lookup', body={'localId': ['$binding:' + role + '.localId']}, owner=True, kind='recovery', routeClass='admin'))
-    return dict(contract='auth-edges-v1', project=PROJECT, nonce=nonce, ownedAccounts=accounts, stages=rows, recovery=recovery, budget=dict(observationRequests=len(rows), recoveryRequests=len(recovery), totalRequests=len(rows) + len(recovery), wallSeconds=300, recoverySeconds=180, requestsPerSecond=4, planningCeilingUsd=0.10), productionExecutable=False)
+    recovery.append(dict(id='recover-config-restore', path=CONFIG + '?updateMask=signIn.email.passwordRequired', method='PATCH', body={'signIn': {'email': {'passwordRequired': True}}}, owner=True, kind='config'))
+    for i in range(30):
+        recovery.append(dict(id=f'recover-config-readback-{i}', path=CONFIG, method='GET', body=None, owner=True, kind='config'))
+    return dict(contract='auth-edges-v2', project=PROJECT, nonce=nonce, ownedAccounts=accounts, stages=rows, recovery=recovery, budget=dict(observationRequests=len(rows), recoveryRequests=len(recovery), totalRequests=len(rows) + len(recovery), wallSeconds=300, recoverySeconds=630, configRestoreSeconds=450, requestsPerSecond=4, planningCeilingUsd=0.10), productionExecutable=False)
 
 
 class Guard(CredentialGate):
@@ -142,7 +152,7 @@ def judge(row, status, body):
         if code in row['refusals']:
             return {'classification': 'OBSERVED', 'outcome': 'refused', 'readBackRequired': True}
         return unknown
-    if status != 200 or 'error' in body:
+    if status != 200 or ('error' in body and not (row.get('path', '').endswith('batchCreate') and isinstance(body['error'], list))):
         return unknown
     for key in row['required']:
         value = body.get(key)
@@ -166,12 +176,14 @@ class StageRun(_Run):
 
     def __init__(self, plan, output, send, sleep, clock):
         budget = plan['budget']
-        super().__init__('', PROJECT, plan['nonce'], send, budget['observationRequests'], budget['recoveryRequests'], 300, 180, clock, 4, sleep)
+        super().__init__('', PROJECT, plan['nonce'], send, budget['observationRequests'], budget['recoveryRequests'], budget['wallSeconds'], budget['recoverySeconds'], clock, 4, sleep)
         self.plan, self.output = plan, output
         self.journal = output / 'ownership.jsonl'
         self.guard = Guard(plan['stages'], self.secrets)
         self.recovery_guard = Guard(plan['recovery'], self.secrets)
         self.current = None
+        self.attempted = set()
+        self.config_attempted = False
         self.record = lambda event: Adapter.record(self, event)
 
     def request(self, path, body, privileged):
@@ -186,6 +198,8 @@ class StageRun(_Run):
             guard, row = self.guard, self.current
             if (path, body, privileged) != (row['path'], row['body'], row['owner']):
                 raise ValueError('request outside edge slot')
+        if self.recovering and row['kind'] != 'config' and self.clock() - self.recovery_started >= self.plan['budget']['recoverySeconds'] - self.plan['budget']['configRestoreSeconds']:
+            raise CollectorError('account recovery deadline; config reserve retained')
         resolved = self.resolve(body)
         guard.check(row, resolved)
         self.spend()
@@ -200,7 +214,110 @@ class StageRun(_Run):
         return status, answer
 
 
-def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
+def recover(run, plan):
+    """Delete only journal-confirmed UIDs, then restore the recorded config toggle."""
+    rows, failures, uid_proofs = [], 0, []
+    unknown = run.attempted - run.owned.keys()
+    if unknown:
+        run.record({'kind': 'recovery-required', 'reason': 'unconfirmed-create', 'accounts': sorted(unknown)})
+    remaining, proven, restored = len(plan['ownedAccounts']), False, False
+    deleted = set()
+    discovered_uids = None
+    try:
+        for row in plan['recovery']:
+            if row['kind'] == 'config':
+                break
+            role = row['id'].removeprefix('recover-delete-').removeprefix('recover-uid-absence-')
+            uid = run.secrets.get(role + '.localId')
+            if row['kind'] == 'delete' or row['id'].startswith('recover-uid-absence-'):
+                if uid is None:
+                    rows.append({'id': row['id'], 'skipped': 'no immutable create UID'})
+                    continue
+                if row['kind'] == 'delete' and discovered_uids is not None and uid not in discovered_uids:
+                    rows.append({'id': row['id'], 'skipped': 'absent at discovery'})
+                    continue
+                if row['kind'] == 'delete' and uid in deleted:
+                    rows.append({'id': row['id'], 'skipped': 'alias UID already attempted'})
+                    continue
+            record = {'id': row['id']}
+            try:
+                if row['kind'] == 'delete':
+                    deleted.add(uid)
+                status, body = run.request(row['path'], row['body'], True)
+                record['status'] = status if type(status) is int else None
+                if row['kind'] == 'delete':
+                    if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
+                        raise ValueError('delete answer unknown')
+                    record['deleted'] = True
+                elif row['id'].startswith('recover-uid-absence-'):
+                    valid = absent_response(status, body)
+                    uid_proofs.append(valid)
+                    if not valid:
+                        raise ValueError('UID absence unproven')
+                    record['uidAbsent'] = True
+                else:
+                    if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body or 'nextPageToken' in body or not isinstance(body.get('users'), list) or body.get('kind', 'identitytoolkit#GetAccountInfoResponse') != 'identitytoolkit#GetAccountInfoResponse':
+                        raise ValueError('address lookup invalid')
+                    seen = set()
+                    for user in body['users']:
+                        if not isinstance(user, dict):
+                            raise ValueError('address identity invalid')
+                        email, found_uid = user.get('email'), user.get('localId')
+                        name = next((r for r, a in plan['ownedAccounts'].items() if a['email'] == email), None)
+                        if name is None or not isinstance(found_uid, str) or not found_uid or found_uid in seen or any(ord(c) < 32 or ord(c) == 127 for c in found_uid):
+                            raise ValueError('address identity invalid')
+                        seen.add(found_uid)
+                        known = run.secrets.get(name + '.localId')
+                        if known is not None and known != found_uid:
+                            raise ValueError('address UID conflicts with creation')
+                        # Discovery is read-only evidence; it never grants deletion authority.
+                        if known is None:
+                            run.record({'kind': 'recovery-required', 'reason': 'unconfirmed-address', 'account': name})
+                    if row['id'] == 'recover-discover':
+                        discovered_uids = seen
+                    record['presentAddresses'] = len(body['users'])
+                    if row['id'] == 'recover-absence':
+                        remaining, proven = len(body['users']), True
+            except (Exception, KeyboardInterrupt) as error:
+                record['failure'] = type(error).__name__
+                if row['kind'] == 'delete':
+                    failures += 1
+            rows.append(record)
+    finally:
+        # AUTH-ACTION restores after account cleanup even if cleanup failed.
+        for row in (r for r in plan['recovery'] if r['kind'] == 'config'):
+            if row['method'] == 'PATCH' and not run.config_attempted:
+                rows.append({'id': row['id'], 'skipped': 'config-not-attempted'})
+                continue
+            if row['method'] == 'GET' and restored:
+                break
+            record = {'id': row['id']}
+            try:
+                status, body = run.request(row['path'], row['body'], True)
+                record['status'] = status if type(status) is int else None
+                if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
+                    raise ValueError('config restore answer unknown')
+                if row['method'] == 'GET':
+                    restored = body.get('signIn', {}).get('email', {}).get('passwordRequired') is True
+                    record['restored'] = restored
+                    if not restored:
+                        if row['id'] == 'recover-config-readback-29':
+                            raise ValueError('config restore did not read back')
+                        run.sleep(2)
+            except (Exception, KeyboardInterrupt) as error:
+                record['failure'] = type(error).__name__
+                # A lost PATCH reply still requires its own GET read-back.
+                if row['method'] == 'GET':
+                    rows.append(record)
+                    break
+            rows.append(record)
+        if not restored:
+            run.record({'kind': 'recovery-required', 'reason': 'config-restore-unconfirmed'})
+    complete = proven and remaining == 0 and not unknown and all(uid_proofs) and restored and not any('failure' in r for r in rows)
+    return rows, complete, remaining, failures, proven
+
+
+def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, recovery_journal=None, production=False):
     """Execute a stage through a coordinator-supplied, already admitted transport.
 
     The callable receives only a frozen request descriptor and its resolved body. This entry performs no credential discovery and supplies no remote transport.
@@ -221,11 +338,48 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
         raw = hashlib.scrypt(run.secrets[role + '.importPassword'].encode(), salt=salt, n=16, r=1, p=max(1, p), dklen=32, maxmem=1024 * 1024)
         run.secrets[role + '.salt'] = base64.b64encode(salt).decode()
         run.secrets[role + '.hash'] = base64.b64encode(raw).decode()
+    if recovery_journal is not None:
+        for line in Path(recovery_journal).read_text().splitlines():
+            event = json.loads(line)
+            role = next((r for r, a in plan['ownedAccounts'].items() if a['email'] == event.get('email')), None)
+            if event.get('kind') == 'account-attempt':
+                if role not in ROLES or event.get('preflightAbsent') is not True:
+                    raise ValueError('recovery journal outside frozen namespace')
+                run.attempted.add(role)
+            elif event.get('kind') == 'account-created':
+                uid = event.get('uid')
+                if role not in run.attempted or not isinstance(uid, str) or not uid or any(ord(c) < 32 or ord(c) == 127 for c in uid):
+                    raise ValueError('recovery journal lacks creation responsibility')
+                if any(a['localId'] == uid for a in run.owned.values()) or role in run.owned:
+                    raise ValueError('recovery journal identity conflicts')
+                run.secrets[role + '.localId'] = uid
+                run.owned[role] = {'localId': uid, 'email': event['email']}
+                if role in ('session', 'change'):
+                    run.secrets[role + 'Alias.localId'] = uid
+            elif event.get('kind') == 'config-attempt':
+                if event.get('nonce') != nonce or event.get('restore') is not True:
+                    raise ValueError('recovery config journal mismatch')
+                run.config_attempted = True
+        # A subsequent recovery can use this journal without losing responsibility.
+        for role in run.attempted:
+            run.record({'kind': 'account-attempt', 'email': plan['ownedAccounts'][role]['email'], 'preflightAbsent': True})
+        for role, account in run.owned.items():
+            run.record({'kind': 'account-created', 'email': account['email'], 'uid': account['localId']})
+        if run.config_attempted:
+            run.record({'kind': 'config-attempt', 'nonce': nonce, 'restore': True})
     stages, stopped, parameters = [], None, None
+    config_applied = False
     pending_stop = None
     try:
-        for row in plan['stages']:
+        for row in ([] if recovery_journal is not None else plan['stages']):
             run.current = row
+            if row['id'].startswith('email-link-readback-') and config_applied:
+                run.guard.index += 1
+                stages.append({'id': row['id'], 'kind': row['kind'], 'family': '', 'classification': 'OBSERVED', 'skipped': 'config-already-confirmed'})
+                continue
+            if row['id'] == 'email-link-enable':
+                run.config_attempted = True
+                run.record({'kind': 'config-attempt', 'nonce': nonce, 'restore': True})
             if row['id'] in ('totp-finalize', 'totp-reuse') and 'mfa.secret' in run.secrets:
                 run.secrets['mfa.code'] = totp_code(run.secrets['mfa.secret'], int(time.time()), parameters)
             try:
@@ -237,6 +391,7 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
                 stages.append({k: row[k] for k in ('id', 'kind', 'family')} | {'classification': 'INDETERMINATE', 'status': None, 'skipped': 'dependency-unavailable'})
                 continue
             if row['kind'] == 'create':
+                run.attempted.add(row['account'])
                 run.record({'kind': 'account-attempt', 'email': plan['ownedAccounts'][row['account']]['email'], 'preflightAbsent': True})
             try:
                 status, body = run.request(row['path'], row['body'], row['owner'])
@@ -245,12 +400,43 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
                     raise
                 status, body = None, {}
                 pending_stop = type(error).__name__
+            if row['kind'] == 'config':
+                if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
+                    raise ValueError('configuration answer unknown')
+                if row['method'] == 'GET':
+                    email = body.get('signIn', {}).get('email', {})
+                    required = email.get('passwordRequired')
+                    if row['id'] == 'config-baseline':
+                        mfa = body.get('mfa') or {}
+                        # Match AUTH-ACTION's mfaDisabled baseline, including provider state.
+                        if not isinstance(mfa, dict) or mfa.get('state') in ('ENABLED', 'MANDATORY') or any(p.get('state') in ('ENABLED', 'MANDATORY') for p in (mfa.get('providerConfigs') or [])):
+                            raise ValueError('recorded MFA baseline differs')
+                        if required is not True or email.get('enabled') is not True or DOMAIN not in body.get('authorizedDomains', []):
+                            raise ValueError('recorded project baseline differs')
+                    else:
+                        # AUTH-ACTION configMatches accepts omitted/null false switches.
+                        if email.get('enabled') is not True:
+                            raise ValueError('email configuration missing')
+                        config_applied = required is False or required is None
+                        if not config_applied:
+                            if row['id'] == 'email-link-readback-29':
+                                raise ValueError('email-link config did not read back')
+                            run.sleep(2)
+                projection = {'id': row['id'], 'kind': 'config', 'family': '', 'status': status, 'classification': 'OBSERVED'}
+                if row['method'] == 'GET':
+                    projection['passwordRequired'] = required if type(required) is bool else None
+                    if row['id'] == 'config-baseline':
+                        projection.update(authorizedDomainConfirmed=True, emailEnabled=True, mfaDisabled=True)
+                stages.append(projection)
+                run.record({'kind': 'response', 'observation': projection})
+                continue
             verdict = judge(row, status, body)
             projection = {k: row[k] for k in ('id', 'kind', 'family')}
             projection.update(status=status if type(status) is int else None, classification=verdict['classification'])
             if isinstance(body, dict):
                 message = body.get('error', {}).get('message') if isinstance(body.get('error'), dict) else None
-                code = message.split(' : ', 1)[0] if isinstance(message, str) else ''
+                code = re.match(r'[A-Z][A-Z0-9_]{0,63}(?=[:\s]|$)', message) if isinstance(message, str) else None
+                code = code.group() if code else ''
                 if re.fullmatch('[A-Z][A-Z0-9_]{0,63}', code):
                     projection['errorCode'] = code
                 # Only declared fields are projected: arbitrary keys and prose are not logs.
@@ -272,25 +458,31 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
                 if row['path'].endswith('batchCreate'):
                     errors = body.get('error')
                     projection['importErrorCount'] = len(errors) if isinstance(errors, list) else None
-                    projection['importResult'] = publishable({'error': [{'index': e.get('index'), 'message': e.get('message') if e.get('message') in REFUSALS else 'UNRECOGNIZED'} for e in errors if isinstance(e, dict)]}) if isinstance(errors, list) else None
+                    projection['importResult'] = {'error': []} if isinstance(errors, list) else None
+                    for e in errors if isinstance(errors, list) else []:
+                        if not isinstance(e, dict):
+                            continue
+                        message = e.get('message')
+                        code = re.match(r'[A-Z][A-Z0-9_]{0,63}(?=[:\s]|$)', message) if isinstance(message, str) else None
+                        projection['importResult']['error'].append({'index': e.get('index') if type(e.get('index')) is int else None, 'message': code.group() if code else 'UNRECOGNIZED'})
             assert_no_secret(projection, [v for k, v in run.secrets.items() if not k.endswith(('.email', '.localId'))])
             stages.append(projection)
             run.record({'kind': 'response', 'observation': projection})
             if row['kind'] == 'preflight' and not absent_response(status, body):
                 raise ValueError('owned namespace not absent')
-            if row['kind'] in ('setup', 'create') and verdict['classification'] != 'OBSERVED':
-                raise ValueError('setup answer unknown')
-            if row['kind'] in ('setup', 'create') and status != 200:
-                raise ValueError('setup refused')
-            if row['kind'] == 'create':
+            if row['kind'] == 'create' and type(status) is int and status == 200 and isinstance(body, dict) and isinstance(body.get('localId'), str) and body['localId']:
                 role, uid = row['account'], body['localId']
-                if any(a['localId'] == uid for a in run.owned.values()) or any(ord(c) < 32 for c in uid):
+                if any(a['localId'] == uid for a in run.owned.values()) or any(ord(c) < 32 or ord(c) == 127 for c in uid):
                     raise ValueError('creation identity conflicts')
                 run.secrets[role + '.localId'] = uid
                 run.owned[role] = {'localId': uid, 'email': plan['ownedAccounts'][role]['email']}
                 run.record({'kind': 'account-created', 'email': plan['ownedAccounts'][role]['email'], 'uid': uid})
                 if role in ('session', 'change'):
                     run.secrets[role + 'Alias.localId'] = uid
+            if row['kind'] in ('setup', 'create') and verdict['classification'] != 'OBSERVED':
+                raise ValueError('setup answer unknown')
+            if row['kind'] in ('setup', 'create') and status != 200:
+                raise ValueError('setup refused')
             if row['kind'] == 'readback' or row['id'].startswith('baseline-'):
                 users = body.get('users') if isinstance(body, dict) else None
                 if type(status) is not int or status != 200 or not isinstance(users, list) or len(users) != 1 or not isinstance(users[0], dict) or users[0].get('localId') != run.secrets[row['account'] + '.localId']:
@@ -323,8 +515,8 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic):
         stopped = type(error).__name__
     finally:
         run.begin_recovery()
-        recovery, complete, remaining, failures, proven = _recover(run, plan)
-    receipt = dict(contract=plan['contract'], manifestDigest=digest(plan), productionExecuted=False, side='injected', recordingComplete=stopped is None and len(stages) == len(plan['stages']), stopReason=stopped, stages=stages, recovery=recovery, cleanupComplete=complete, remainingAccounts=remaining, deleteFailures=failures, absenceProven=proven, requests=run.requests, recoveryRequests=run.recovery_requests, requestBudget=plan['budget'], deliveredMessages=0)
+        recovery, complete, remaining, failures, proven = recover(run, plan)
+    receipt = dict(contract=plan['contract'], manifestDigest=digest(plan), productionExecuted=production, side='production' if production else 'injected', recordingComplete=recovery_journal is None and stopped is None and len(stages) == len(plan['stages']), stopReason=stopped, stages=stages, recovery=recovery, cleanupComplete=complete, remainingAccounts=remaining, deleteFailures=failures, absenceProven=proven, requests=run.requests, recoveryRequests=run.recovery_requests, requestBudget=plan['budget'], deliveredMessages=0)
     receipt['classification'] = 'RECORDED' if receipt['recordingComplete'] and complete and all(r['classification'] == 'OBSERVED' for r in stages) else 'INDETERMINATE'
     assert_no_secret(receipt, [v for k, v in run.secrets.items() if not k.endswith(('.email', '.localId'))])
     run.record({'kind': 'terminal', 'recordingComplete': receipt['recordingComplete'], 'cleanupComplete': complete, 'classification': receipt['classification']})
@@ -341,7 +533,7 @@ def local_send(origin):
         if row['owner']:
             headers['authorization'] = 'Bearer owner'
         path = row['path'] + ('' if row['owner'] else '?key=fake')
-        return _http_send('POST', origin + path, headers, body)
+        return _http_send(row.get('method', 'POST'), origin + path, headers, body)
     return send
 
 
@@ -350,21 +542,32 @@ def main():
     parser.add_argument('--nonce', required=True)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--origin')
+    parser.add_argument('--production', action='store_true')
+    parser.add_argument('--recover', type=Path, help='Replay only recovery from an ownership journal')
     args = parser.parse_args()
-    if args.origin is None:
+    if args.origin is None and not args.production:
         print(json.dumps(manifest(args.nonce), indent=2))
         return 0
     if args.output is None:
         parser.error('--output is required for a local rehearsal')
-    sender = local_send(args.origin)
+    if args.production:
+        if args.origin is not None:
+            parser.error('--production excludes --origin')
+        from transport import production_send
+        sender = production_send()
+    else:
+        sender = local_send(args.origin)
 
     def interrupted(_signum, _frame):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise KeyboardInterrupt('cleanup requested')
 
     signal.signal(signal.SIGTERM, interrupted)
-    result = collect(nonce=args.nonce, output=args.output, send=sender)
+    signal.signal(signal.SIGINT, interrupted)
+    result = collect(nonce=args.nonce, output=args.output, send=sender, recovery_journal=args.recover, production=args.production)
     print(json.dumps({k: result[k] for k in ('recordingComplete', 'cleanupComplete', 'classification', 'requests', 'recoveryRequests')}))
-    return 0 if result['recordingComplete'] and result['cleanupComplete'] else 2
+    return 0 if (result['recordingComplete'] or args.recover is not None) and result['cleanupComplete'] else 2
 
 
 if __name__ == '__main__':

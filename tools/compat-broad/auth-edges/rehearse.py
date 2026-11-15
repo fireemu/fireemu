@@ -20,7 +20,12 @@ def main():
         origin = shadow.loopback_origin(os.environ['FIREBASE_AUTH_EMULATOR_HOST'])
         args.child.mkdir(parents=True, exist_ok=True)
         (args.child / 'instance.json').write_text(json.dumps({'childPid': os.getpid(), 'parentPid': os.getppid(), 'authOrigin': origin, 'nonce': args.nonce}) + '\n')
-        receipt = edges.collect(nonce=args.nonce, output=args.child / 'stage', send=edges.local_send(origin))
+        sender = edges.local_send(origin)
+        # AUTH-ACTION prepares this baseline only on its owned local emulator.
+        status, _ = sender({'path': edges.CONFIG + '?updateMask=signIn.email.enabled,signIn.email.passwordRequired,authorizedDomains,mfa', 'owner': True, 'method': 'PATCH'}, {'signIn': {'email': {'enabled': True, 'passwordRequired': True}}, 'authorizedDomains': [edges.DOMAIN], 'mfa': {'state': 'DISABLED'}})
+        if status != 200:
+            raise ValueError('local baseline preparation failed')
+        receipt = edges.collect(nonce=args.nonce, output=args.child / 'stage', send=sender)
         (args.child / 'receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
         return 0 if receipt['recordingComplete'] and receipt['cleanupComplete'] else 2
     if args.fail_after or args.built_from_source_commit:
@@ -39,7 +44,7 @@ def main():
         return argv
 
     with patch.object(shadow, 'artifact_command', command), patch.object(tempfile, 'tempdir', str(args.output)):
-        report = shadow.run(args.output, args.artifact, edges.PROJECT, args.nonce, timeout=540)
+        report = shadow.run(args.output, args.artifact, edges.PROJECT, args.nonce, timeout=960)
     print(json.dumps({'status': report['status'], 'ownedProcess': report.get('ownedProcess')}))
     return 0 if report['status'] == 'shadow-complete' else 2
 
