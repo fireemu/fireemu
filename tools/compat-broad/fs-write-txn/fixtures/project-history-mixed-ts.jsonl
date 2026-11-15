@@ -1,0 +1,5 @@
+{"project":"fireemu-oracle-query","ts":"2026-09-28T04:00:00Z","taskId":"OTHER","outcome":"recorded"}
+{"projects":["fireemu-oracle-txn"],"ts":"2026-09-28T04:10:00Z","taskId":"OTHER","outcome":"recorded"}
+{"project":"fireemu-oracle-query","ts":1720000000.0}
+{"project":"fireemu-oracle-txn"}
+{"project":"unrelated","ts":"not-a-timestamp"}

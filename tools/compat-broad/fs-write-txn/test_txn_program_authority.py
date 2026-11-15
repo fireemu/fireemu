@@ -331,12 +331,14 @@ def test_database_action_rejects_revocation_outside_its_approval_topic(identity)
         authority.authorize_database_action(text, ACTION)
 
 
-@pytest.mark.parametrize("source", ["fixture", "live"])
+@pytest.mark.parametrize("source", ["fixture", "mixed", "live"])
 def test_initial_gates_accept_real_project_history_read_only(source):
     import json
     from pathlib import Path
     if source == "fixture":
         path = Path(__file__).with_name("fixtures") / "p16-project-history-masked.jsonl"
+    elif source == "mixed":
+        path = Path(__file__).with_name("fixtures") / "project-history-mixed-ts.jsonl"
     else:
         path = next((parent / "docs.local/runs/sandbox-ledger.jsonl" for parent in Path(__file__).resolve().parents if (parent / "docs.local/runs/sandbox-ledger.jsonl").is_file()), None)
         if path is None:
@@ -347,9 +349,25 @@ def test_initial_gates_accept_real_project_history_read_only(source):
     pins = {**PINS, "project": "fireemu-oracle-query", "scope": scope}
     decisions = AUTHORITY + envelope_row(scope=scope) + approve_row()
     projects = {resource.split('/')[0] for resource in scope['project'].split('+')}
-    now = max(datetime.fromisoformat(row['ts'].replace('Z', '+00:00')) for row in rows if row.get('project') in projects or projects.intersection(row.get('projects', []))) + timedelta(minutes=31)
+    rows = [row for row in rows if isinstance(row.get('ts'), str) and (row.get('project') in projects or projects.intersection(row.get('projects', [])))]
+    if source == 'mixed':
+        assert [row['ts'] for row in rows] == ['2026-09-28T04:00:00Z', '2026-09-28T04:10:00Z']
+        with pytest.raises(ValueError, match='timestamp is missing'):
+            authority.verify_initial_gates([{'project': 'fireemu-oracle-query'}], NOW, decisions, pins)
+    now = max(datetime.fromisoformat(row['ts'].replace('Z', '+00:00')) for row in rows) + timedelta(minutes=31)
     assert authority.verify_initial_gates(rows, now, decisions, pins)
     assert path.read_bytes() == original
+
+
+def test_initial_gates_reject_numeric_timestamp():
+    with pytest.raises(ValueError, match="timestamp is missing"):
+        authority.verify_initial_gates([{**LAST, "ts": 1720000000.0}], NOW, DECISIONS, PINS)
+
+
+def test_initial_gates_count_task_spending_outside_selected_projects():
+    rows = [{**LAST, "project": "unrelated", "estimatedUsd": 10.0}]
+    with pytest.raises(ValueError, match="whole-task US\\$10 limit exceeded"):
+        authority.verify_initial_gates(rows, NOW, DECISIONS, PINS)
 
 
 @pytest.mark.parametrize("project", ["fireemu-oracle-query", "fireemu-oracle-txn"])
