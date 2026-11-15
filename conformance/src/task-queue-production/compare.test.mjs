@@ -83,6 +83,23 @@ for (const [name, left, right, expected] of [
   });
 }
 
+test("an allowed timestamp variation does not hide or add a real difference", () => {
+  const left = record({
+    admission: { body: { scheduleTime: "TIME(f6,Z)", url: "https://example.test" } },
+  });
+  const right = record({
+    admission: { body: { scheduleTime: "TIME(f3,Z)", url: "http://localhost" } },
+  });
+  assert.deepEqual(allDifferences(left.admission, right.admission), [
+    { path: "/body/url", a: "https://example.test", b: "http://localhost" },
+  ]);
+  const row = verdictOf({ a: left }, { a: right });
+  assert.equal(row.structure, "MISMATCH");
+  assert.deepEqual(row.parts.admission.uncovered, [
+    { path: "/body/url", left: "https://example.test", right: "http://localhost" },
+  ]);
+});
+
 test("a difference with no known difference is a mismatch and is named by path", () => {
   const changed = record({
     admission: { status: 400, error: { code: 400, status: "INVALID_ARGUMENT", message: "m" } },
