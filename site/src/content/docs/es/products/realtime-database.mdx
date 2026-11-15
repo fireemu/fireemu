@@ -1,0 +1,471 @@
+---
+title: Realtime Database
+description: Prueba en local las lecturas, escrituras, listeners, Security Rules, exportación e importación de Firebase Realtime Database, y consulta qué casos están verificados contra producción.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu sirve Firebase Realtime Database en `127.0.0.1:9000`: la API REST, el protocolo en tiempo real que usan los SDK, Security Rules, y exportación e importación en el formato de la CLI de Firebase. Está verificado contra producción para sus casos registrados; una compatibilidad más amplia con producción sigue sin verificarse (consulta [Diferencias con producción](#diferencias-con-producción)).
+
+También se compara con el emulador oficial (firebase-database-emulator v4.11.2, que ejecuta firebase-tools 15.28.2), con el que todavía no tiene ninguna afirmación de paridad, por lo que el [contrato de compatibilidad](../../compatibility/) enumera esa comparación como una brecha abierta. El comportamiento copiado del emulador oficial donde no se ha observado producción puede cambiar (consulta [Comportamiento provisional](#comportamiento-provisional)).
+
+<Facts items={[
+  { label: 'Estado', value: 'Parcial' },
+  { label: 'Puerto por defecto', value: '9000' },
+  { label: 'Inicio', value: 'Al seleccionarlo o configurarlo' },
+  { label: 'Verificación contra producción', value: 'Solo casos registrados', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- [Lecturas, escrituras, consultas y streams de eventos REST](#qué-se-sirve), y el protocolo en tiempo real sobre WebSocket y long polling.
+- [Security Rules](#security-rules) sobre todos los transportes, con [cada tipo de credencial](#credenciales).
+- [Pruebas unitarias de reglas](#pruebas-unitarias-con-firebaserules-unit-testing) con `@firebase/rules-unit-testing`, y [cobertura de reglas](#cobertura-de-reglas).
+- [Escrituras `onDisconnect`](#escrituras-ondisconnect-y-reglas) y cómo las juzgan las reglas.
+- [Exportación, importación y snapshots de sesión](#exportación-importación-y-snapshots) en el formato de la CLI de Firebase.
+- [Functions activadas por la base de datos](#triggers-de-functions-locales) en ambas generaciones.
+
+## Conectar
+
+### Iniciar la base de datos
+
+La base de datos arranca cuando se selecciona o se configura. Sin ninguna de las siguientes opciones, la ejecución por defecto deja libre el puerto 9000:
+
+- `--only database` (con otros servicios: `--only auth,firestore,database`);
+- `emulators.database` en `firebase.json`, tal como lo escribe `firebase init`;
+- `daemon.databasePort` en `fireemu.toml`, o `--database-port`.
+
+```sh
+npx fireemu exec --only database -- npm test
+```
+
+```json
+{
+  "emulators": { "database": { "port": 9000 } }
+}
+```
+
+Un puerto ocupado detiene el arranque (`error: bind 127.0.0.1:9000: Address already in use`). 9000 es también el valor por defecto de PHP-FPM, así que elige otro con `--database-port` o `emulators.database.port`, o deja fuera la base de datos con `--only`.
+
+El banner de arranque muestra la dirección y las reglas en vigor:
+
+```text
+  database:         127.0.0.1:9000   FIREBASE_DATABASE_EMULATOR_HOST=127.0.0.1:9000
+  database rules:   demo-app-default-rtdb <- ./database.rules.json; another instance: every request is allowed (database.defaultAccess = open, default)
+```
+
+### Apuntar los SDK a la base de datos
+
+`fireemu exec` establece `FIREBASE_DATABASE_EMULATOR_HOST` para el comando que ejecuta, y el Admin SDK la lee (consulta [Variables de entorno](../../reference/environment-variables/)).
+
+`exec` también establece `FIREBASE_CONFIG` con el `databaseURL` `https://<project>.firebaseio.com`, como hace firebase-tools. Por tanto, una aplicación del Admin SDK inicializada sin opciones lee y escribe la instancia `<project>`, no `<project>-default-rtdb`, que es la que usan la forma única de las reglas y el ejemplo de cliente de más abajo. Pasa `databaseURL: 'https://<project>-default-rtdb.firebaseio.com'` a `initializeApp` para compartir una instancia con los clientes.
+
+Los clientes web y móviles se conectan de forma explícita:
+
+```js
+import { initializeApp } from 'firebase/app';
+import { getDatabase, connectDatabaseEmulator } from 'firebase/database';
+
+const app = initializeApp({ projectId: 'demo-app', databaseURL: 'https://demo-app-default-rtdb.firebaseio.com' });
+const db = getDatabase(app);
+connectDatabaseEmulator(db, '127.0.0.1', 9000);
+```
+
+### Instancias
+
+Una instancia de base de datos es un espacio de nombres. Las solicitudes eligen una con el parámetro de consulta `ns` o la primera etiqueta del nombre de host, como en el emulador oficial. `demo-app-default-rtdb` es la instancia por defecto del proyecto `demo-app`: los ID token se comprueban contra ese proyecto, y contra el proyecto del demonio para una instancia con cualquier otro nombre. Un reset de sesión y los snapshots de sesión cubren `<project>` y `<project>-default-rtdb`.
+
+## Qué se sirve
+
+- La API REST (rutas `.json`): lecturas, escrituras, actualizaciones, push ids, solicitudes condicionales con ETags, `shallow`, `print`, `format=export`, consultas y streams de eventos (`Accept: text/event-stream`).
+- El protocolo en tiempo real sobre WebSocket y sobre long polling (`forceLongPolling()`), con listens, consultas, transacciones y valores de servidor.
+- Escrituras `onDisconnect` (`set`, `update`, `remove`, `cancel`). Se ejecutan cuando termina la conexión, sea cual sea la forma en que termine, como una sola actualización con sus valores de servidor resueltos en ese momento. No se ejecutan cuando se detiene el propio Fireemu, igual que el emulador oficial no las ejecuta cuando se detiene, y un reset de sesión descarta las registradas para los proyectos que reinicia.
+- [Security Rules](#security-rules), `/.settings/rules.json`, `/.inspect/databases.json` y `disableTriggers` en las escrituras.
+- [Exportación, importación y snapshots de sesión](#exportación-importación-y-snapshots).
+
+`tools/sdk-smoke-database` en el repositorio ejercita todo esto mediante los SDK `firebase` y `firebase-admin` fijados y compara los resultados con una grabación del emulador oficial.
+
+### Opciones de REST
+
+- Una lectura REST ordinaria valida `timeout` como una duración positiva de como máximo 15 minutos (por ejemplo `1s`, `2seconds` o `3min`). Esto valida la opción sin instalar un plazo límite en la solicitud. Las escrituras, las lecturas shallow y las lecturas condicionales la ignoran. Las duraciones no válidas se rechazan; un desbordamiento de duración puede devolver 500.
+- `shallow=true` acepta `limitToFirst` y un `startAfter` en texto plano, y rechaza `limitToLast`, `startAt`, `endAt` y `orderBy`.
+- Las lecturas ignoran `writeSizeLimit`, y las escrituras ignoran `format`.
+- Las respuestas condicionales conservan sus ETags: un PUT con `if-none-match` incluye un ETag incluso con `print=silent`, y `X-Firebase-ETag: true` también lo solicita en un 304, en un PUT condicional rechazado (412) y en un POST.
+- Con `strict`, un escape porcentual mal formado en una ruta devuelve 400 con `application/octet-stream` y `Bad request.`; el perfil `emulator` conserva la respuesta del emulador oficial.
+
+### Orden de las escrituras multirruta
+
+Las entradas de una escritura multirruta (un `PATCH` REST, un `update()` del SDK y las escrituras `onDisconnect` de una conexión que termina) llegan a los listens de una conexión en el orden del emulador oficial: hasta cuatro entradas en el orden en que se enviaron o registraron, y desde cinco en el orden del hash de sus claves. Un listen en la ubicación escrita o por encima de ella es el primero en enterarse. Una grabación de producción coincide para un conjunto de seis claves; las demás formas siguen al emulador oficial y no se han observado en producción.
+
+## Security Rules
+
+Las reglas admiten `.read`, `.write`, `.validate` y `.indexOn`, con las variables `auth`, `now`, `root`, `data`, `newData`, `query` y `$`, sobre REST, streams de eventos y el protocolo en tiempo real.
+
+### Cargar reglas
+
+Nombra el archivo de reglas en `firebase.json`, como para la CLI de Firebase. La forma única carga un archivo en la instancia por defecto, `<project>-default-rtdb`:
+
+```json
+{
+  "database": { "rules": "database.rules.json" }
+}
+```
+
+La forma de array carga cada entrada en su `instance`, o en las instancias de su `target` de despliegue de `.firebaserc`:
+
+```json
+{
+  "database": [
+    { "instance": "demo-app-default-rtdb", "rules": "database.rules.json" },
+    { "target": "audit", "rules": "audit.rules.json" }
+  ]
+}
+```
+
+Un archivo de reglas que no se carga detiene el arranque con el archivo, la línea y la columna, como lo detiene firebase-tools. Un archivo modificado se vuelve a cargar mientras Fireemu se ejecuta; un cambio que no se carga conserva las reglas en vigor e imprime el motivo.
+
+`GET` y `PUT /.settings/rules.json?ns=<instance>` leen y reemplazan las reglas de una instancia con una credencial de administrador, que es como las carga `@firebase/rules-unit-testing`. La ruta exige un par en loopback, como las rutas de reglas de Firestore y Storage. Los pares que no son loopback reciben 403 antes de que se evalúen las credenciales; las barras iniciales repetidas y las rutas `.settings` codificadas con porcentaje están sujetas a la misma restricción.
+
+### Errores en un archivo de reglas
+
+Cargar reglas no válidas informa del primer error de sintaxis, de clave duplicada o de nombre de índice no válido. Para un documento que se analiza correctamente, los errores de tipo y de nombre se informan en el orden de las reglas: `.read`, `.write`, `.validate`, después los hijos con nombre en el orden del archivo y el hijo comodín al final, sujeto a una recolección acotada. Las construcciones de JavaScript no admitidas siguen fallando; analizar más formas mejora sus mensajes de error en lugar de habilitarlas. Los casos registrados no establecen todas las entradas mal formadas.
+
+### Qué se ha comparado
+
+Las comparaciones con el emulador oficial cubren lecturas y escrituras REST, streams de eventos con y sin consultas de rango o de cantidad, y listens en tiempo real sin consulta (`q` ausente o vacío). No establecen todas las formas de listen WebSocket con consulta; el long polling usa el comportamiento compartido de la sesión en tiempo real.
+
+Los casos finitos registrados de producción de Rules REST, Rules dependientes de la consulta y consultas acotadas se reproducen en ambos perfiles, junto con las tramas de transacción de long poll registradas. Estas observaciones cubren las solicitudes registradas y no establecen paridad para todas las reglas, consultas ni formas de transporte.
+
+### Streams de eventos y listens
+
+Un stream de eventos cuya consulta lo acota o lo limita se juzga con esa consulta. Uno cuya consulta solo ordena lee todos los datos y, como en el emulador oficial, se juzga como un stream sin consulta y no necesita índice.
+
+Un cambio de reglas, una escritura que cambia lo que permite un `.read` dependiente de datos, o un cliente que inicia o cierra sesión cancelan los listens y streams de eventos que las reglas ya no permiten.
+
+### Escrituras `onDisconnect` y reglas
+
+Las escrituras `onDisconnect` se comprueban tanto al registrarse como cuando termina la conexión.
+
+- **Al registrarse.** Un `set` se comprueba como una sola escritura y un `update` entrada por entrada, cada una contra el árbol actual. Si falla alguna entrada, se rechaza el registro.
+- **Al desconectarse.** Cada entrada pendiente se comprueba primero por separado contra el árbol de ese momento. Las entradas denegadas por `.write` o `.validate` se descartan. Las entradas retenidas se comprueban después juntas como una sola actualización; si esa comprobación combinada falla, no se aplica ninguna.
+
+En el caso de producción registrado, cancelar un hijo de un valor `onDisconnect` registrado con una prioridad numérica descarta la actualización completa de la conexión, incluida una escritura no relacionada. Dos rondas registradas cubren también el nuevo registro tras la cancelación de un hijo, una prioridad anidada y una prioridad de cadena; dos rondas registradas de cada forma se reprodujeron en cada perfil. Otras formas de prioridad y de cancelación siguen sin verificarse en producción.
+
+### Credenciales
+
+| Credencial | Perfil `emulator` | Perfil `strict` (el predeterminado) |
+|---|---|---|
+| `Authorization: Bearer owner` o `access_token=owner` (la credencial de propietario del emulador) | Administrador; las reglas no se aplican | Administrador; las reglas no se aplican |
+| Un único `Authorization: Bearer` o `access_token` distinto | Administrador, como en el emulador oficial. El listener está en loopback salvo que `network.allowNonLoopbackHosts` lo publique; consulta antes [CI y contenedores](../../guides/ci-and-containers/) | Rechazada con 401. En una lectura de una ruta de datos que no es un stream de eventos, como respondió producción cuando se midió, el cuerpo es `Unauthorized request.` (un Bearer vacío sigue siendo `Permission denied`) |
+| `auth=<ID token>` firmado por el Auth de Fireemu | El usuario que nombra, con sus custom claims como miembros de `auth` | El usuario que nombra, cuando el token es para el proyecto de la instancia |
+| `auth=<ID token sin firmar>` (`@firebase/rules-unit-testing`, `mockUserToken`) | El usuario que nombra su `sub`, sea cual sea el proyecto que nombre y con o sin `aud`, como lo lee el emulador oficial, mientras `auth.allowUnsignedIdTokens` sea `true` (el valor por defecto; `false` con `productionExact`, que lo hace anónimo) | El usuario que nombra cuando tiene la forma de `createMockUserToken` y el proyecto de la instancia como audiencia, mientras `auth.allowUnsignedIdTokens` sea `true` (el valor por defecto; `false` con `productionExact`) |
+| `auth=<token firmado con RS256 o HS256>` que Fireemu no puede verificar | El usuario que nombran sus claims, como lo lee el emulador oficial, cuando el token tiene una firma no vacía, el proyecto de la instancia como `aud`, un `exp` en el futuro y un tenant que existe (si nombra uno), mientras se admitan los tokens sin firmar y el Auth de Fireemu no firme ningún token propio; en caso contrario, anónimo | Rechazada con 401 |
+| Cualquier otro valor de `auth=` | Anónimo | Rechazada con 401, salvo que una lectura de una ruta de datos que no es un stream de eventos con un valor opaco (de 1 a 128 letras y dígitos, que no sea `null` ni `owner`, juzgado tras decodificar la consulta) no está autenticada, como respondió producción cuando se midió: se lee una ruta que las reglas abren a todos y una ruta protegida sigue rechazada |
+
+Antes de aplicar esta tabla, Fireemu rechaza con 400 las solicitudes HTTP ambiguas en cualquiera de los dos perfiles: cualquier parámetro de consulta repetido (incluidos `auth` y `access_token`), más de una cabecera `Authorization`, o cualquier combinación de credenciales en la consulta y una cabecera `Authorization`. Las credenciales repetidas idénticas siguen siendo ambiguas. El emulador oficial, en cambio, selecciona un valor, así que esta es una diferencia enumerada.
+
+Una solicitud REST de administrador que además lleva `auth_variable_override` (lo que envía el Admin SDK para `databaseAuthVariableOverride`) se evalúa en las reglas como ese valor de `auth`, como la evaluó producción en los casos registrados. `null` se lee como no autenticado, y un override mal formado o que no es ni un objeto ni `null` se rechaza.
+
+`/.inspect/databases.json`, que lee `firebase emulators:export`, responde a cualquiera con el perfil `emulator` y solo a la credencial `owner` con `strict` o con una base de datos bloqueada.
+
+### Una instancia sin reglas
+
+Una instancia sin archivo de reglas sigue `database.defaultAccess`:
+
+- `"open"` (el valor por defecto de desarrollo en ambos perfiles): se permite toda solicitud, como el emulador oficial sirve una base de datos sin reglas.
+- `"locked"` (el valor por defecto de `productionExact`, solo perfil `strict`): solo la credencial `owner` lee y escribe, como una nueva base de datos de producción en modo bloqueado admite solo a administradores. Cualquier otra credencial, incluida la de un usuario con sesión iniciada, se rechaza con 401.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[database]
+# Access without a rules file: "open" or "locked"; "locked" requires strict.
+defaultAccess = "locked"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "database": {
+    "defaultAccess": "locked"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Pruebas unitarias con `@firebase/rules-unit-testing`
+
+`initializeTestEnvironment` carga las reglas que le pasas mediante `/.settings/rules.json`, `authenticatedContext()` envía un token simulado sin firmar, y se sirven `withSecurityRulesDisabled()` y `clearDatabase()`:
+
+```js
+import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
+import { readFileSync } from 'node:fs';
+
+const [host, port] = process.env.FIREBASE_DATABASE_EMULATOR_HOST.split(':');
+const testEnv = await initializeTestEnvironment({
+  projectId: 'demo-app',
+  database: { host, port: Number(port), rules: readFileSync('database.rules.json', 'utf8') },
+});
+const alice = testEnv.authenticatedContext('alice').database();
+await assertSucceeds(alice.ref('users/alice').set({ name: 'Alice' }));
+await assertFails(alice.ref('users/bob').set({ name: 'Mallory' }));
+await testEnv.cleanup();
+```
+
+Ejecútalo con `npx fireemu exec --only database -- node test.mjs`.
+
+Para probar el rechazo de producción a los tokens sin firmar, establece `auth.allowUnsignedIdTokens` en `false` o establece [`productionExact`](../../guides/profiles/). La conexión en tiempo real rechaza entonces el token simulado (`invalid_token`) y el SDK sigue reintentando, de modo que una lectura o escritura desde `authenticatedContext()` no se resuelve en lugar de fallar. Comprueba el rechazo por REST (`?auth=<token>` responde 401) o dale un timeout a la aserción.
+
+### Cobertura de reglas
+
+`/.inspect/coverage?ns=<instance>` (un visor HTML) y `/.inspect/coverage.json?ns=<instance>` informan, para cada expresión de las reglas cargadas, de los resultados que produjo, como hace el emulador oficial.
+
+- La recolección está siempre activa y cuesta una búsqueda hash por resultado registrado.
+- Para que una ejecución larga siga siendo rápida y pequeña, cada expresión conserva sus primeros 64 resultados distintos (y como máximo 64 KiB de valores de cadena); los nuevos resultados posteriores se cuentan en `values-omitted` en lugar de enumerarse.
+- Los valores de snapshot como `data` y `root` son una identidad nueva en cada evaluación, así que sus listas se llenan rápido.
+- Cargar reglas modificadas inicia un informe nuevo; cargar de nuevo el mismo texto lo conserva.
+
+## Exportación, importación y snapshots
+
+`emulators:export`, `--export-on-exit` y la exportación del Hub escriben `database_export/<instance>.json` para cada instancia que contiene datos o fue importada, en el formato de exportación de `GET /.json?format=export` (con las prioridades conservadas), con la sección `database` de `firebase-export-metadata.json` que escribe firebase-tools. Los archivos son idénticos byte a byte a los de la CLI de Firebase para los mismos datos, y cada herramienta importa la exportación de la otra.
+
+```sh
+npx fireemu exec --only database --export-on-exit ./emulator-data -- npm test
+npx fireemu exec --only database --import ./emulator-data -- npm test
+```
+
+```text
+emulator-data/
+  firebase-export-metadata.json
+  database_export/
+    demo-app-default-rtdb.json
+```
+
+`--import` escribe cada archivo como la credencial `owner` con `disableTriggers=true`, como hace firebase-tools, antes de que arranque el comando.
+
+- El nombre del archivo, en minúsculas, es la instancia.
+- Un archivo con el nombre de una instancia no válida, o uno que la base de datos rechazaría (JSON no válido, una clave no válida, datos anidados a demasiada profundidad), detiene el arranque antes de que se instalen los datos de cualquier otro producto.
+- La sección de base de datos de una exportación se omite, con una nota, cuando la base de datos no está seleccionada.
+
+Los snapshots de sesión y los resets incluyen las instancias del proyecto de la sesión. Los listeners y streams de eventos abiertos ven una restauración o un reset, cancelan los que las reglas ya no permiten sobre los datos restaurados, y descartan las escrituras `onDisconnect` registradas para esas instancias.
+
+En los [mundos de pruebas](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md), selecciona `database` en `services`; `world.endpoints.database` y `FIREBASE_DATABASE_EMULATOR_HOST` encaminan hacia ella, y sus datos sobreviven a la exportación, la importación y el reset.
+
+## Triggers de Functions locales
+
+Los handlers locales de base de datos v1 y v2 reciben eventos de creación, actualización, eliminación y escritura acotados a su proyecto, instancia y patrón de referencia. El runner proporciona los objetos snapshot del Firebase SDK.
+
+- Las escrituras sin cambios no emiten un evento de cambio.
+- Las mutaciones de origen y su lote de eventos reservado se confirman juntos.
+- Una escritura que no puede alcanzar ninguna referencia de trigger se aplica sin capturar snapshots, de modo que un trigger en una ruta no añade coste a las escrituras en otras.
+- El reset de sesión excluye la mutación concurrente de la base de datos mientras limpia los datos de origen y retira la época de Functions.
+
+### Cuando la cola de eventos está llena
+
+- Mientras la cola de eventos local está llena, una escritura cuyos eventos cabrían en una cola vacía se rechaza con 503 y tiene éxito en un reintento una vez que se vacían las entregas.
+- Una escritura cuyos eventos nunca pueden caber (más de 4096 eventos o 64 MiB de eventos serializados, por ejemplo un solo `PUT` de 5.000 hijos bajo un trigger `/users/{uid}`) se aplica, como la aplica producción, sin sus eventos, sea cual sea el contenido de la cola.
+
+### Tamaño de los eventos
+
+- **Perfil `emulator`.** Un evento mayor que un frame de invocación (16 MiB) se descarta por sí solo, y se entregan los demás eventos de la escritura. El primer descarte imprime una advertencia, y cada uno se cuenta como `admission.database_fanout_dropped` en los diagnósticos de recursos.
+- **Perfil `strict`.** Una escritura que alcanza una referencia de trigger registrada y cuyo evento (el nodo anterior a la escritura más el delta, como JSON compacto) supera 1.048.576 bytes (1 MiB) se rechaza con `400` y `This request would cause a function payload exceeding the maximum size allowed.`, y no aplica nada, como hizo producción con un valor de 2 MiB. La conexión del SDK recibe `invalid_parameters` con el mismo texto, una forma que no se registró.
+
+El umbral estricto procede de grabaciones del 2026-11-08 y del 2026-11-09: se aceptaron y entregaron eventos de 1.023.9xx bytes, y se rechazaron eventos de 1.049.9xx bytes. Producción documenta 1 MB por evento, por lo que se usa 1 MiB. El umbral exacto entre esos dos tamaños y la forma de contar un evento no están verificados.
+
+### Prioridades
+
+Los eventos estrictos no llevan prioridades, como los de producción: el nodo anterior a la escritura no tiene ninguna, el delta de un nodo creado es su valor simple, y una escritura solo de prioridad envía el delta `{".priority": n}`. El perfil emulator conserva los eventos que siempre envió.
+
+### Región
+
+Las instancias locales están en `us-central1`. Un trigger de 2.ª generación en otra región no se dispara, y una advertencia al cargar lo indica, como advierte el emulador oficial; en producción solo se dispara para las instancias de su propia región.
+
+### Metadatos de eventos y qué se registró
+
+Las observaciones de producción cubren una secuencia fija de escrituras de administrador y no autenticadas a handlers v1 y v2. Para esas entregas registradas, el perfil strict usa las formas observadas del ID de evento, de la marca de tiempo en milisegundos, y de los metadatos de origen y de autenticación.
+
+Los ID de evento son deterministas para un `daemon.seed` indicado en la configuración y la secuencia de eventos, así que repetir una semilla reproduce los mismos ID. Sin `daemon.seed`, cada arranque del demonio obtiene su propia sesión, de modo que un reinicio no repite los ID de la ejecución anterior.
+
+Grabaciones adicionales cubren 12 escrituras de un usuario de correo y contraseña por REST y por el SDK web, incluidas escrituras sobre ancestros y multirruta y la reentrega tras una invocación fallida. El perfil strict usa los metadatos de producción registrados; el perfil emulator conserva su forma de evento documentada del emulador oficial. La latencia de entrega, el tiempo de reintento, el orden entre handlers, otros proveedores y las formas de escritura o de handler no registradas siguen sin verificarse.
+
+## Emulator UI
+
+La página de Realtime Database de la [Emulator UI](../../guides/ui/) hace cuatro cosas:
+
+- explora los datos en una ruta;
+- los reemplaza, los modifica con patch o los elimina como administrador local (así que estas ediciones no prueban los permisos de los clientes);
+- lee y reemplaza las reglas de la instancia;
+- ejecuta una solicitud anónima para ver cómo la responden las reglas.
+
+## Diferencias con producción
+
+Fireemu se compara con producción solo para los casos registrados.
+
+### Casos registrados
+
+- **REST.** Valores y prioridades de PUT, GET y PATCH, claves generadas por POST finitas y su lectura posterior, DELETE, `shallow`, `print=silent` y formas pequeñas de `writeSizeLimit`, `format=export`, formas finitas de consultas acotadas con `orderBy` que incluyen `startAt`, `endAt`, `startAfter`, `endBefore`, `equalTo`, `limitToFirst` y `limitToLast`, ETag e `if-match`, y los errores registrados. El alcance registrado incluye también 72 casos de opciones y rechazos REST (entre ellos `timeout`, `$priority`, sobrescritura de método, callbacks y descargas) y credenciales REST no válidas generadas.
+- **Reglas.** Carga finita de reglas, `.validate`, cascada, casos de Rules con `data`/`newData`/`root` y dependientes de la consulta, además de la evaluación de `.read` y `.write` por propietario y por UID: 70 casos de Rules, siete documentos de Rules adicionales y nueve documentos para `query.endBefore`, `query.isOrderByChild()`, `OrderByKey`, `OrderByValue`, `OrderByPriority`, `http.encodeURL()`, lecturas de métodos sin llamada y un callee ternario, con 33 lecturas y escrituras bajo ellos.
+- **Streams de eventos.** Streams de eventos anónimos.
+- **SDK Web.** Listeners de valor, reconexión con escrituras en cola, orden de eventos de hijo y de valor para dos ventanas `orderByChild` con cancelación y baja con alcance de consulta, `onDisconnect` set, remove, update, cancel y nuevo registro con valores de servidor y un cambio de Rules antes de dispararse, el caso registrado de cancelación de hijo con prioridad numérica y las tres formas registradas de nuevo registro, prioridad anidada y prioridad de cadena, un calendario de transacción y Auth de correo y contraseña sobre WebSocket y long polling. Grabaciones adicionales cubren eventos de hijo del SDK con `prevName` para ventanas de clave, prioridad, rango de valores y `equalTo`, límites con clave sobre valores empatados, fan-out de listeners padre/hijo, transacciones sobre un nodo ausente y sobre un objeto y una transacción abortada, y `get` de ventanas y de rutas inexistentes sobre WebSocket y long polling.
+- **Admin SDK.** El Admin SDK de Node se registró sobre WebSocket con Rules de denegación total y un access token OAuth de usuario; las credenciales de cuenta de servicio no se afirman.
+- **Triggers de Functions.** Handlers de Functions activadas por RTDB para creado, actualizado, eliminado y escrito en ambas generaciones para las escrituras de administrador y no autenticadas registradas (las entregas finitas de triggers de usuario final descritas en [Triggers de Functions locales](#triggers-de-functions-locales)).
+
+Se registraron y reprodujeron en ambos perfiles casos finitos adicionales de valores de servidor, del lenguaje de Rules, de métodos de Rules y de operadores de Rules; no establecen paridad para entradas no registradas.
+
+### Diferencias conocidas
+
+Dentro del alcance registrado, estas diferencias son conocidas:
+
+- Las lecturas con rango y sin límite, las lecturas shallow y las respuestas de PATCH usan el orden de mapas del emulador oficial: hasta cuatro entradas conservan el orden de inserción, mientras que los mapas más grandes usan hashes de claves. PATCH conserva el orden de miembros registrado para las respuestas anidadas, incluida la salida con formato y con callback. No se afirma paridad general con producción en el orden de los miembros JSON.
+- Un cliente de long polling que se desconecta sin cerrar tiene sus escrituras `onDisconnect` ejecutadas cuando se descarta la conexión inactiva, unos 100 s a 105 s después de su última solicitud; producción las ejecutó tras 99,3 s a 104,0 s.
+- Con `strict`, los streams de eventos llevan `Connection: close`, y la conexión HTTP/1.1 se cierra tras el evento `cancel` y el final de la respuesta chunked. Los bytes de evento registrados coinciden con producción, pero la respuesta de producción registrada estaba delimitada por cierre sin codificación de transferencia, mientras que Fireemu usa el framing chunked nativo de HTTP/1.1. Esta diferencia de framing de transferencia es una excepción de desarrollo aprobada por el propietario (2026-10-31); el contenido de los eventos, la cancelación y el EOF siguen sujetos a sus requisitos de evidencia existentes. El perfil `emulator` conserva su comportamiento de conexión existente; el comportamiento más amplio del ciclo de vida de los streams sigue sin verificarse.
+- Los ID token de Firebase firmados por Google de producción no se aceptan. Sí se aceptan los tokens emitidos por el Auth de Fireemu y la credencial `owner`, y `strict` rechaza otra credencial `gauth` con el `permission_denied` de producción.
+
+### No verificado
+
+Los casos finitos de REST, Rules, SDK y triggers anteriores se registraron. Más allá de ellos:
+
+- Otras formas de push ID, valores de servidor, límites de consulta, timeouts y opciones de tamaño de escritura siguen sin verificarse.
+- La validación de Rules, la cascada, los snapshots, los miembros de query, los claims y los diagnósticos de índices más allá de los casos registrados siguen usando el emulador oficial como referencia provisional.
+- No se afirman los eventos del SDK, las transacciones, las actualizaciones multiubicación ni las formas de onDisconnect más allá de los casos registrados, las credenciales de Admin de cuenta de servicio, ni la entrega y los tiempos más amplios de los triggers de Functions.
+
+### Aún no admitido
+
+- Android, Apple, Unity y los Admin SDK de Java y Python quedan fuera del alcance actual de Node y Web.
+
+### Límites
+
+- Una expresión se anida como máximo 600 niveles; las cadenas de `&&`, `||` y `+` de cualquier longitud cuentan una sola vez. Es un presupuesto de seguridad local: el propio emulador oficial falla entre 2.000 y 4.000 niveles.
+- Una llamada `matches()` que supera el presupuesto de pasos o de profundidad del motor de expresiones regulares es un error, de modo que la regla es falsa tenga o no negación.
+- La ruta de una escritura tiene como máximo 768 bytes y sus datos como máximo 32 niveles de profundidad, como documenta producción.
+
+### Comportamiento provisional
+
+Donde no se ha observado producción, el comportamiento registrado del emulador oficial es la referencia provisional, sujeta a las diferencias conocidas enumeradas arriba. Estas comparaciones no establecen equivalencia con producción y pueden cambiar tras observaciones de producción. Cubren:
+
+- formas de números como `1.0`;
+- una escritura de un valor igual;
+- prioridades;
+- textos de rechazo;
+- el framing del long polling;
+- cómo se combinan las escrituras `onDisconnect`;
+- las credenciales de cada perfil;
+- el dialecto de expresiones regulares;
+- el caso en que el emulador oficial rechaza una clave de 768 bytes en el cuerpo de una escritura pero la acepta en la ruta;
+- los patrones que no puede determinizar.
+
+## Diferencias con el emulador oficial
+
+La comparación con el emulador oficial se limita a los casos registrados. Los casos enumerados de sintaxis y evaluación no admitidas se rechazan al cargar las reglas o producen errores de regla; esto no establece una admisión equivalente de límites de recursos.
+
+- Las clases de caracteres (nombres, espacios en blanco y los caracteres de formato que omite el lector del emulador oficial) usan las tablas de Java 21.
+- Los operadores y métodos se compararon con el emulador oficial para los tipos de operando registrados.
+- Los objetos se comparan por identidad, como en el emulador oficial. `auth` y `query` son cada uno igual a sí mismos. Dos snapshots son iguales cuando leen la misma versión del árbol (`root` y `data` leen el árbol antes de una escritura, `newData` el árbol después de ella) en la misma ubicación, así que `data` en `/t/o` es igual a `root.child('t').child('o')` y nunca es igual a `newData`.
+- Una comparación directa de dos snapshots o de `query` consigo mismo se sigue rechazando al cargar las Rules, como allí; la comparación se ejecuta cuando un ternario la deja pasar esa comprobación.
+- Los objetos leídos de los miembros de `auth` y los valores que `val()` da para una ubicación con hijos son objetos nuevos cada vez y no son iguales a nada.
+
+### Expresiones regulares
+
+El emulador oficial lee los patrones de `matches()` en un dialecto propio, una gramática de autómata que no es ni la de JavaScript ni la de RE2. Fireemu sigue su gramática donde está registrada. Por ejemplo, `a+?` significa `(a+)?` (no una repetición perezosa), `/a|q/` se busca como `.*a|q.*`, y con `i` un patrón ASCII pliega las mayúsculas y minúsculas como allí, mientras que la cadena que se compara se deja tal cual.
+
+Una construcción cuyo significado Fireemu todavía no reproduce es un error, de modo que la regla es falsa tenga o no negación. El perfil emulator lee la mayoría de las construcciones siguientes como las lee el emulador oficial; el perfil strict mantiene todas como errores porque no se ha consultado a producción:
+
+| Construcción | Ejemplo |
+|---|---|
+| Grupos `(?…)`, leídos por el perfil emulator como un grupo que empieza con un `?` literal (`/(?:a)/` coincide con `?:a`) | `/(?:a)/`, `/(?i)a/` |
+| Clases POSIX (no las lee ninguno de los dos perfiles) | `/[[:alpha:]]/` |
+| `\W` y `\D`, en cualquier posición (los lee el perfil emulator) | `/\W/`, `/[\D]/` |
+| Una letra o un dígito escapados distintos de `\d` y `\w` (los lee el perfil emulator) | `/\n/`, `/\x41/`, `/\1/` |
+| Una barra invertida escapada dentro de una clase (la lee el perfil emulator) | `/[\\a]/` |
+| Un operador que inicia una alternativa, o un cuantificador tras `^` (los lee el perfil emulator) | `/(|a)/`, `/^(a|*)$/`, `/^*/`, `/^{2}a/` |
+| El flag `i` con cualquier carácter más allá de ASCII en el patrón (no lo lee ninguno de los dos perfiles) | `/^é$/i`, `/[ａ-ｚ]/i` |
+| Una barra invertida antes de un salto de línea (la lee el perfil emulator como un salto de línea) | `/a\` seguido de una nueva línea y `b/` |
+| Una letra escapada con un carácter de formato como U+200B tras la barra invertida (el carácter de formato se descarta, como allí) | `/\` U+200B `u0061/` |
+| Un rango de clase con un final más allá del Plano Multilingüe Básico (lo lee el perfil emulator por unidades UTF-16) | `/[a-😀]/` |
+
+Cómo lee el perfil emulator estas construcciones:
+
+- `\W` y `\D` son el complemento de un lenguaje de cadenas, como en el autómata del emulador oficial: `\W` es toda cadena excepto un carácter de palabra, así que `'ab'` y `''` coinciden con `/^\W$/` y `'a'` no. Una clase que contiene uno es la unión de sus miembros como lenguajes (`[\Wa]`), y una clase negada (`[^\W]`) son caracteres individuales como de costumbre.
+- Una letra o un dígito escapados distintos de `d`, `w`, `D` y `W` son ese carácter (`A` es `u0041`, `\b` es `b`, así que `/[\uD800-\uDFFF]/` es la clase de los caracteres de `0` a `u`, `D` y `F`).
+- Más allá de eso, lee la gramática de clases del emulador oficial: un rango cuyo final está antes de su inicio no contiene nada, `[\\a]` contiene `a`, un `-` antes del corchete de cierre es un carácter, y un cuantificador u otro operador al inicio de una alternativa es ese carácter.
+- Lee un patrón por unidades UTF-16, así que un carácter más allá del Plano Multilingüe Básico son dos miembros de clase y dos unidades para `.`, y tras una barra invertida un retorno de carro, U+2028 y U+2029 son un salto de línea mientras que U+FEFF y U+0085 son ellos mismos.
+
+Donde el emulador oficial y el perfil strict leen el patrón de forma distinta, el perfil strict deniega la regla, nunca la permite.
+
+Las construcciones marcadas como no leídas siguen siendo errores en ambos perfiles, así que el perfil emulator sigue rechazando lo que el emulador oficial admite ahí. De las 323 filas del corpus de dialecto registrado que Fireemu denegaba y el emulador oficial permitía, 252 se deciden ahora como él y 71 siguen denegadas, todas con el flag `i` y texto no ASCII (una diferencia declarada: requeriría una tabla de plegado de mayúsculas y minúsculas de Java 21).
+
+Los casos registrados de rechazo sintáctico, incluidos `\s`, una clase o grupo sin cerrar, o un `^` sin escapar en medio, se rechazan aquí con el mismo mensaje que el emulador oficial. Los casos registrados separados de recursos de determinización se describen más abajo.
+
+Los ocho patrones registrados que rechaza el límite de recursos de determinización del emulador oficial también se rechazan cuando Fireemu carga las reglas, incluso en ramas de expresión no evaluadas. Esto no establece una equivalencia completa de expresiones regulares ni con producción. Entre ellos están los rechazos de determinización ("could not determinize efficiently", un límite de recursos de la biblioteca de autómatas del emulador oficial). Los patrones registrados incluyen varias repeticiones contadas de grupos de alternativas en un mismo patrón. Se desconoce el límite de producción; de estas comparaciones no se infiere ningún comportamiento de producción.
+
+### Surrogates aislados
+
+- **En un literal de cadena.** Un surrogate aislado escapado en un literal de cadena (`'\uD83D'`) se carga y se juzga por unidades UTF-16, como hace el emulador oficial (`.length`, `+`, `==`, los órdenes y los métodos de cadena; el informe de cobertura lo muestra como U+FFFD). Una ruta o clave que contiene uno no nombra nada: `child()` lee ausente, `hasChild` es falso y un índice es indefinido, y `replace('', to)` de una cadena con un carácter más allá del Plano Multilingüe Básico coloca `to` entre las dos mitades de su par, como hace Java. Producción no ha respondido a estas formas, así que ambos perfiles siguen al emulador oficial.
+- **En valores almacenados (solo perfil emulator).** Un escape de surrogate aislado en un valor de cadena JSON se almacena como `?`, uno por cada surrogate aislado y con un par válido intacto, como lo almacena el emulador oficial. Esto vale para el cuerpo de una escritura (`PUT`, `PATCH` o `POST`, valores anidados, incluidos `.value` y `.priority`), una trama WebSocket y un archivo de importación, y un límite de consulta (`startAt="\ud83d"`, el `sp` y el `ep` de un listen) se lee `?` del mismo modo. Una clave que contiene uno se rechaza en ambos perfiles, y una ruta WebSocket que contiene uno recibe `Invalid token in path`. El perfil strict rechaza todos ellos como antes; no se ha consultado a producción.
+- **En claims de token y en `authvar` (no se leen en ningún perfil, una diferencia declarada).** Esto abarca un token cuyos claims contienen un surrogate aislado (`"x":"\ud83d"`, incluido el nombre de un claim), y el `authvar` de una trama `gauth` que contiene uno. El emulador oficial conserva el surrogate en los claims como cadena de Java (`auth.token.x == '\uD83D'` se cumple) y devuelve el objeto authvar. Aquí el perfil strict responde 401 a un token así, el perfil emulator juzga la solicitud como anónima, y una trama `gauth` cuyo authvar contiene un surrogate aislado es el error de conexión.
+- **En rutas WebSocket y claves de merge.** Un surrogate aislado en la ruta de una trama WebSocket nunca puede llegar a ser una ruta válida (incluido `.priority`): la trama recibe `Invalid token in path` y no escribe, registra ni cancela nada. Una entrada de merge de WebSocket cuya clave no es una ruta válida recibe `invalid_parameters` (`Invalid token in path`, `Empty strings are not valid keys`, o los textos de longitud y profundidad de la ruta) en el perfil emulator; el perfil strict responde el error de conexión como antes. Las claves no válidas de entradas de merge de `onDisconnect` siguen provocando un error de conexión.
+
+### Presupuestos de evaluación
+
+Una sola evaluación de regla que hace más de 2^30 unidades de trabajo es también un error aquí. El trabajo se carga así:
+
+- cada cadena que una regla lee, une, compara, busca, convierte o reemplaza, por su longitud;
+- una copia de los claims o de un valor anidado, por su tamaño;
+- una ubicación construida o acortada con `child`, `hasChild`, `hasChildren` o `parent()`, por los bytes de sus claves.
+
+Esto detiene un `contains` cuadrático, una concatenación repetida de una cadena almacenada larga y una ruta construida una y otra vez. Se permiten trece búsquedas en una cadena de 10 MiB, caben cincuenta y cincuenta y dos no (un límite conocido: la regla se deniega, tenga o no negación), y los corpus de Rules usan como máximo 628 unidades en una evaluación.
+
+El límite es por evaluación: una solicitud puede ejecutar muchas evaluaciones (una escritura valida cada hijo que escribe), y no hay límite para una solicitud en conjunto ni límite de tiempo real, de modo que una regla lenta sigue siendo lenta. El matcher de una expresión regular tiene su propio límite de 200.000 pasos por cada llamada a `matches`.
+
+Una cadena que una regla construye con reemplazo, concatenación o conversión de mayúsculas y minúsculas más allá de 2^26 unidades (las operaciones UTF-8 cuentan bytes de forma conservadora; las operaciones UTF-16 cuentan unidades de código) es un error aquí, de modo que la regla es falsa tenga o no negación. Esto evita que una regla como diez `replace('', '0123456789')` encadenados reserve decenas de gigabytes. El heap del emulador oficial decide su propio límite: con 512 MB respondió siete pasos así (unos 39 millones de unidades) y falló el octavo con un error interno (500).
+
+### Variables y métodos de query
+
+- `query.orderBy` se carga en ambos perfiles. Es el orden por hijo cuando la lectura ordena por un hijo (`query.orderBy == 'a/b'`), y `OrderByKey`, `OrderByValue` u `OrderByPriority` en caso contrario (una lectura REST simple se ordena por clave, un stream y un listen por prioridad), y null en una escritura, una validación y una lectura shallow. Un orden por prioridad es el orden por el hijo `.priority`, así que `query.orderBy == '.priority'` y `query.isOrderByChild('.priority')` se cumplen ahí.
+- `query.endBefore` es el límite final exclusivo y `query.isOrderByChild(path)` indica si la lectura ordena por ese hijo (los segmentos vacíos se descartan; una ruta sin segmentos o una clave no válida es un error).
+- `http.encodeURL(s)` es el `URLEncoder.encode(s, "UTF-8")` de Java con `%20` para un espacio, y un surrogate aislado codificado como `?`.
+- Una lectura de método sin llamada (`auth.uid.contains`, `data.child`) es un valor que no es null y no es igual a nada, y un callee que no es un miembro (`(c ? data.child : data.parent)('a')`) se llama cuando su tipo contiene un método, igual que el primer método de ese tipo se comprueba al cargar las Rules. Una llamada a través de un valor así con un número de argumentos que su método no admite, a lo que el emulador oficial responde con un error interno (500), se deniega aquí.
+
+Producción respondió a todas las formas registradas de los tres últimos puntos como lo hace el emulador oficial (ambos perfiles las siguen).
+
+### Conversión de mayúsculas y minúsculas
+
+- `toLowerCase()` y `toUpperCase()` de una cadena que contiene un carácter cuya capitalización difiere entre Java 21 y las tablas Unicode más recientes de Fireemu es un error aquí: U+019B, U+0264, U+1C89, U+1C8A, U+A7CB a U+A7CF, U+A7D2 a U+A7D5 y U+A7DA a U+A7DC, y más allá del Plano Multilingüe Básico U+10D50 a U+10D65, U+10D70 a U+10D85, U+16EA0 a U+16EB8 y U+16EBB a U+16ED3. También se aplica la restricción de la sigma dependiente del contexto que figura a continuación.
+- `toLowerCase()` de una cadena que contiene `Σ` (U+03A3) es un error aquí salvo que cada vecino de la `Σ` sea el borde de la cadena, un espacio o una letra latina, griega o cirílica que tenga capitalización (`'ΑΣ'`, `'ΑΣ Α'`). Java elige la forma final `ς` por sus límites de palabra, que Fireemu no reproduce, así que `'Α:Σ'` y `'ΑΣ.'` son errores.
+
+### Queries de tiempo real mal formadas
+
+Las queries de wire en tiempo real mal formadas reciben un mensaje de control de error de conexión, sin descartar automáticamente la conexión ni enviar una trama de cierre. Son respuestas del protocolo en tiempo real, no respuestas HTTP 400.
+
+- Incluyen campos desconocidos, un índice que no es cadena (`i`), flags inclusivos que no son booleanos (`sin`, `ein`), un lado de límite que no es cadena (`vf`), nombres de límite (`sn`, `en`) que no son cadenas ni null, y un límite escrito como número de coma flotante (incluso `2.0`).
+- Las comprobaciones de tipo siguen aplicándose a los flags, el lado y los nombres cuando falta su límite o tope correspondiente.
+- Un nombre de límite null significa que no hay nombre. Los flags inclusivos y los nombres válidos sin un límite, y un lado sin un tope, no tienen efecto.
+- Un tope entero proporcionado debe ser positivo y caber en 32 bits sin signo. Los topes no numéricos y los topes enteros fuera de ese rango reciben `invalid_parameters` en su lugar.
+- Un tope proporcionado también exige el lado `l` o `r`; Fireemu rechaza un lado ausente u otro donde el emulador oficial puede leerlo como ninguno de los dos lados.
+
+### Otras diferencias
+
+- Un escape `\uXXXX` en un identificador se decodifica como lo lee el emulador oficial (`auth.uid` y `auth.uid` nombran `auth.uid`). Las demás construcciones de JavaScript no admitidas siguen fallando al cargar las Rules.
+- Donde el emulador oficial responde a una solicitud con un error interno (500), Fireemu la deniega: por ejemplo un método de cadena sobre un valor que resulta ser un snapshot (`(c ? root : 'a').length`), y `getPriority()` en una ubicación que el emulador oficial no puede leer como ruta (una clave con `.`, `#`, `$`, `[`, `]` o un carácter de control, un nombre reservado como `.value` o `.info`, `.priority` antes del final, o una ruta de más de 32 niveles o 768 bytes).
+- Una solicitud que da un parámetro de consulta más de una vez, o más de una credencial (`auth`, `access_token` y una cabecera `Authorization`), se rechaza con 400. El emulador oficial toma el primer valor, y `auth` antes que los demás.
+- Unas pocas reglas que ambos rechazan se rechazan con otro mensaje o en otra columna.
+
+## Relacionado
+
+- [Security Rules](../../guides/security-rules/)
+- [Exportar e importar](../../guides/data/)
+- [Cloud Functions](../functions/)
+- [Compatibilidad](../../compatibility/)
