@@ -1,0 +1,132 @@
+---
+title: Fehlerbehebung
+description: Prüfen Sie eine Installation, schlagen Sie ein Symptom oder eine Fehlermeldung nach und melden Sie ein Problem.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Beginnen Sie mit `fireemu doctor` und schlagen Sie dann das Symptom oder die Fehlermeldung unten nach.
+
+## Die Installation prüfen
+
+```sh
+npx fireemu doctor
+```
+
+`doctor` meldet die Fireemu-Binärdatei, die UI, den Functions-Runner und das Node.js, die es findet, und schlägt für jedes Problem eine Abhilfe vor.
+
+Um auch zu melden, was eine laufende Suite sagt, etwa den Firestore-Verlauf und die Storage-Bytes, die sie hält, übergeben Sie ihre Steuer-URL. Sie wird beim Start ausgegeben:
+
+```sh
+npx fireemu doctor --connect http://127.0.0.1:<port>
+```
+
+## Häufige Probleme
+
+| Symptom | Was zu prüfen ist |
+|---|---|
+| Der Start scheitert mit `bind 127.0.0.1:9000: Address already in use` | Ihre `firebase.json` enthält `emulators.database`, daher startet die Realtime Database auf 9000, das ein anderer Prozess belegt (standardmäßig PHP-FPM). Verwenden Sie `--database-port` oder lassen Sie sie mit `--only` weg. |
+| Ihre `firebase.json` oder `fireemu.toml` wird nicht verwendet | Die Zeile `config:` der Startausgabe nennt die geladenen Dateien. Siehe [Welche Dateien geladen werden](../configuration/#which-files-are-loaded) und die Eigentümerregel, wenn Sie in einem Container oder mit `sudo` arbeiten. |
+| Jede Firestore- oder Storage-Anfrage wird abgelehnt | Unter `strict` lehnt ein Projekt ohne Security Rules Client-Anfragen ab, wie es die Produktion tut. Prüfen Sie die Startzeilen `firestore rules:` und `storage rules:`. Siehe [Security Rules](../security-rules/). |
+| Eine Anfrage wird abgelehnt, und Sie wissen nicht, warum | Lesen Sie die Zeile `note: firestore: Security Rules denied ...` auf der Standardfehlerausgabe oder die Seite „Rules“ der UI. |
+| Eine Abfrage funktioniert lokal, scheitert aber in der Produktion | Unter `emulator` lehnt ein fehlender Index die Abfrage nicht ab, doch Vorschläge werden auf der Standardfehlerausgabe ausgegeben; wechseln Sie zu `strict`, um ihn durchzusetzen. OR-Abfragen können einen Index pro Zweig brauchen; alle fehlenden Zweigdefinitionen werden auf der Standardfehlerausgabe aufgelistet. Ist `firestore.missingIndexes` auf `"report"` gesetzt, suchen Sie den Bericht über fehlende Indizes auf der Standardfehlerausgabe oder lesen Sie ihn über `GET /v1/firestore/missingIndexes` der Steuer-API (siehe [Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index)). |
+| Der Export scheitert wegen Berechtigungen | Führen Sie `fireemu doctor --export-dir <dir>` aus. Es untersucht die vollständige Kette der vorhandenen übergeordneten Verzeichnisse, ohne sie zu verändern; ein privates Unterverzeichnis unter einem gemeinsam genutzten übergeordneten Verzeichnis genügt nicht. Siehe [Export-Ziele](../data/#where-to-export). |
+| Tests scheitern beim Kopieren eines unbeteiligten globalen Repositorys | Ab v0.27.0 leert eine Functions-Welt den vorhandenen `NODE_PATH`; in einer älteren Version kopierten Snapshots ihn. Aktualisieren Sie, übergeben Sie einen leeren `NODE_PATH` für rein lokale Abhängigkeiten oder grenzen Sie die erforderlichen Wurzeln ausdrücklich ein. Siehe [Abhängigkeits-Snapshots](../test-worlds/#dependency-snapshots-and-global-node_path). |
+| Die Snapshot-Vorbereitung der Testwelt überschreitet das Zeitlimit | Verengen Sie ungenutzte Abhängigkeiten oder erhöhen Sie `snapshotTimeoutMs` (Standard 60.000 ms, höchstens 2.147.483.647). `startupTimeoutMs` deckt nur die Bereitschaft des Daemons nach der Vorbereitung ab. Siehe [unabhängige Testwelten](../test-worlds/#snapshots-and-timeouts). |
+| Das Neuladen von Functions meldet unter Windows einen Fehler bei der ACL-Validierung des Snapshots | Verwenden Sie ein privates temporäres Verzeichnis ohne Junctions oder andere Reparse-Points. Seine Berechtigungen müssen den Zugriff auf Ihr Konto und vertrauenswürdige Systemkonten beschränken, und seine übergeordneten Verzeichnisse dürfen anderen Konten keine Änderung erlauben. Stellen Sie sicher, dass Windows PowerShell unter `SystemRoot` verfügbar ist, und wiederholen Sie dann die Quelländerung. Siehe [Neuladen der Quelle](../../products/functions/#source-reload). |
+| Die UI öffnet sich nicht | `up` startet ohne die UI, wenn Port 4000 belegt ist. Verwenden Sie `--ui-port`. `exec` startet die UI nur mit `--ui`. |
+| Eine geplante Funktion läuft nie | Zeitpläne folgen der virtuellen Uhr. Bei fixiertem `daemon.clockStart` (oder `daemon.clock = "frozen"`) steht die Uhr still, bewegen Sie sie also oder führen Sie die Funktion aus der UI aus; ohne fixierten Start folgt sie der Echtzeit. Siehe [Zeit und geplante Funktionen](../time/). |
+
+## Fehlermeldungen
+
+<details>
+<summary><code>FAILED_PRECONDITION: The query requires an index</code></summary>
+
+Unter `strict` (dem Standard) mit `firestore.missingIndexes = "refuse"` wird eine Abfrage, deren zusammengesetzter Index nicht deklariert ist, abgelehnt, wie es die Produktion tut. Das SDK erhält den Status `FAILED_PRECONDITION` (über REST HTTP 400 mit `"status": "FAILED_PRECONDITION"`) und diese Meldung:
+
+```text
+The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/<project>/firestore/indexes?create_composite=...
+```
+
+Fügen Sie den Index zu `firestore.indexes.json` hinzu (auf die `firebase.json` verweist) und starten Sie neu. Um alle fehlenden Indizes in einem Lauf zu sammeln, statt beim ersten zu scheitern, setzen Sie `firestore.missingIndexes = "report"`: Die Abfragen werden ausgeführt, und jeder fehlende Index wird einmal auf der Standardfehlerausgabe mit dem hinzuzufügenden Eintrag ausgegeben. Das Profil `emulator` lehnt diese Abfragen nie ab. Siehe [Zusammengesetzte Indizes](../../products/firestore/#composite-indexes).
+
+</details>
+
+<details>
+<summary><code>409 FAILED_PRECONDITION</code> von <code>/v1/firestore/missingIndexes</code></summary>
+
+Die Steuer-API antwortet in zwei Fällen mit `409`, damit eine Prüfung der Liste nicht auf einer Antwort bestehen kann, die nichts beweist:
+
+```text
+FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to "report" and Firestore selected; ...
+```
+
+Es wird nichts gemeldet: Der Lauf verwendet das Profil `emulator`, oder `strict` mit `"refuse"`, oder Firestore ist nicht ausgewählt. Setzen Sie `profile = "strict"` und `firestore.missingIndexes = "report"`.
+
+```text
+FAILED_PRECONDITION : <n> quer(y|ies) of this project were served with a missing composite index that is not listed, because the list is full; the list is incomplete, not empty. DELETE it and run again
+```
+
+Die Liste fasst höchstens 1.000 Einträge. Fehlten mehr verschiedene Indizes, enthält eine `200`-Antwort `"truncated": true` und eine Zahl `dropped`; wurden alle Einträge des Projekts verworfen, ist die Antwort stattdessen dieses `409`. Beheben Sie die Indizes, die Sie bereits kennen, führen Sie `DELETE` auf der Liste aus und starten Sie den Lauf erneut. Siehe [Einen CI-Job bei einem fehlenden Index scheitern lassen](../../products/firestore/#fail-a-ci-job-on-a-missing-index).
+
+</details>
+
+<details>
+<summary><code>403 ... fireemu does not answer Host</code> (<code>network.allowedHosts</code>)</summary>
+
+Eine Anfrage nannte einen `Host`, auf den Fireemu nicht antwortet, als Schutz gegen DNS-Rebinding. Die Antwort ist HTTP 403 mit dem Status `PERMISSION_DENIED`:
+
+```text
+fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/guides/ci-and-containers/#host-names-the-emulators-answer
+```
+
+Wenn einer Ihrer Clients diesen Namen verwendet (ein Tunnel, ein Name in `/etc/hosts`, ein Compose-Dienstname), tragen Sie ihn ein:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+allowedHosts = ["emulator.ci.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowedHosts": ["emulator.ci.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Ein Name aus einem einzelnen Label wie ein Compose-Dienst braucht zusätzlich `network.allowNonLoopbackHosts = true`.
+
+Fireemu schreibt außerdem pro Name einmal eine Warnung `refused Host` auf die Standardfehlerausgabe. Siehe [Hostnamen, auf die die Emulatoren antworten](../ci-and-containers/#host-names-the-emulators-answer).
+
+</details>
+
+## Mehr Details erhalten
+
+Starten Sie mit `--log-verbosity debug`, was auch die aufgelöste Konfiguration ausgibt.
+
+## Ein Problem melden
+
+[Eröffnen Sie ein Issue auf GitHub](https://github.com/fireemu/fireemu/issues) mit:
+
+- den Versionen von Fireemu und des Firebase SDK, dem Profil und dem betroffenen Firebase-Produkt;
+- einer minimalen Reproduktion;
+- bei einem Kompatibilitätsproblem der Angabe, ob Sie mit der Firebase-Produktion oder mit dem offiziellen Emulator verglichen haben, sowie den erwarteten und tatsächlichen Ergebnissen.
+
+Entfernen Sie Credentials und personenbezogene Daten, bevor Sie Konfigurationsdateien oder Logs teilen.
+
+## Siehe auch
+
+- [Konfigurationsdateien](../configuration/)
+- [Security Rules](../security-rules/)
+- [CI und Container](../ci-and-containers/)
+- [Einschränkungen](../../compatibility/limitations/)

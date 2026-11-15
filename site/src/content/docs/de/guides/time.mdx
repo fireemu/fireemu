@@ -1,0 +1,164 @@
+---
+title: Zeit und geplante Funktionen
+description: Starten Sie die Emulator-Uhr zu einer gewählten Zeit, frieren Sie sie ein oder bewegen Sie sie, und führen Sie geplante Funktionen aus, ohne zu warten.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu hat eine eigene Uhr, und jeder Dienst liest sie: Server-Zeitstempel, Zeiten von Dokumenten und Objekten, Ablauf von Tokens, geplante Funktionen und `request.time` der Security Rules. Standardmäßig läuft sie mit Echtzeit, wie die Produktion. Legen Sie fest, wo sie startet, bewegen Sie sie oder frieren Sie sie ein, und jeder Dienst sieht die neue Zeit.
+
+## Echtzeit folgen oder die Uhr einfrieren
+
+| Konfiguration | Verhalten der Uhr |
+|---|---|
+| Kein `daemon.clockStart` (der Standard) | Folgt der Echtzeit ab dem Moment, in dem der Daemon gestartet wurde. |
+| `daemon.clockStart` fixiert | Startet zu dieser Zeit und steht still, bis sie bewegt wird, was einen Lauf reproduzierbar macht. |
+| `daemon.clock` auf `"realtime"` gesetzt | Eine fixierte Uhr läuft ab ihrem Start weiter. |
+| `daemon.clock` auf `"frozen"` gesetzt | Eine nicht fixierte Uhr bleibt stehen. |
+
+Eine Bewegung (`clock:advance`, `clock:advanceTo`, `clock:set` oder die Seite „Runtime“) ist ein Offset auf einer Uhr, die der Echtzeit folgt: Die Uhr läuft von dem Punkt aus weiter, an dem sie landet.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+# Virtual clock behavior: "realtime" or "frozen".
+clock = "frozen"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z",
+    "clock": "frozen"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Eine virtuelle `functions.clock` (siehe [Anwendungszeit in Functions](#application-time-in-functions)) braucht einen fixierten Start und damit eine stillstehende Uhr. Das gilt auch für die Welten von `fireemu/testing`, die ihn fixieren.
+
+## Geplante Funktionen ausführen
+
+Ein Zeitplan läuft, wenn die Uhr ein Vorkommen erreicht.
+
+- Mit der Standarduhr geschieht das, während die Echtzeit vergeht.
+- Bei einer eingefrorenen Uhr führt die Echtzeit nichts aus. Bewegen Sie die Uhr auf der Seite „Runtime“ der [Emulator UI](../ui/) oder mit der Steuer-API (`clock:advance`, `clock:advanceTo`, `clock:set`).
+
+Jede Bewegung macht jedes Vorkommen in `(vorherige Zeit, neue Zeit]` fällig. Konfigurieren Sie Zeitzone, Nachholen und das Verhalten bei Überlappung im Abschnitt `scheduler`:
+
+- `scheduler.catchUp` entscheidet, was läuft, wenn eine Bewegung mehrere Vorkommen überschreitet: `all` führt jedes aus (höchstens `scheduler.maxCatchUpRuns` pro Job und Bewegung), `latest` führt das neueste aus, und `none` führt keines aus.
+- `scheduler.overlap` (`allow`, `skip`, `queue`, `reject`, `skip-in-flight`) entscheidet, was passiert, wenn ein Lauf fällig wird, während der vorherige noch läuft. Unter `strict` ist der Standard `skip-in-flight`, so wie sich Cloud Scheduler der Produktion verhält; unter `emulator` ist er `allow`.
+
+Die Seite „Functions“ der UI kann eine geplante Funktion auch sofort ausführen oder die Uhr zu ihrem nächsten Vorkommen vorstellen. Ein manueller Lauf verbraucht das nächste Vorkommen nicht.
+
+### Details zum Zeitplan
+
+- Ein Vorkommen genau zur neuen Zeit ist in einer Bewegung enthalten, eines genau zur vorherigen Zeit nicht.
+- Mit `scheduler.catchUp: all` bleiben Läufe über `scheduler.maxCatchUpRuns` pro Job und Uhrbewegung hinaus fällig und laufen, sobald wieder Platz ist. `latest` und `none` zeichnen pro Job und Uhrbewegung, die Läufe verwirft, eine Zusammenfassung `skipped: catch-up` auf.
+- Ein Zurückstellen spielt nie erneut ab: Vorkommen, die der Zeitplan bereits passiert hat, werden nicht erneut ausgeführt, wenn die Uhr wieder über sie hinweg vorrückt, und der Zeitplan wird fortgesetzt, sobald die Uhr das letzte Vorkommen passiert, das er ausgeführt hat oder noch schuldet (sein Cursor). Nach einem Zurückstellen unter diesen Punkt bleiben noch geschuldete Läufe aus einem Rückstau oder wegen fehlenden Platzes zurückgehaltene Läufe geschuldet, werden aber nicht wieder fällig, bis die Uhr ihn passiert. Ein Sitzungs-Reset oder eine Snapshot-Wiederherstellung startet stattdessen jeden Zeitplan ab der aktuellen Zeit der Uhr, sodass nach einem Zurückstellen die Vorkommen zwischen dieser Zeit und einer späteren wieder fällig sind.
+- `scheduler.overlap` gilt für Scheduler-Läufe und manuelle Läufe gleichermaßen, außer `skip-in-flight`, das einen manuellen Lauf nie ablehnt. Unter `skip-in-flight` (dem Standard von `strict`) wird ein Vorkommen verworfen (aufgezeichnet als `skipped: in flight`), solange ein Handler der Funktion, der vor der Uhrbewegung gestartet wurde, noch läuft, so wie es Cloud Scheduler in der Produktion tat, und die Vorkommen einer Uhrbewegung zählen nicht gegeneinander.
+- Eine Funktion gilt als beschäftigt, solange einer ihrer Läufe in der Warteschlange steht oder läuft, einschließlich eines Laufs, der auf eine Wiederholung wartet; unter `skip` und `reject` kann daher ein noch ausstehender Wiederholungsversuch das nächste Vorkommen unterdrücken. Fireemu unterscheidet hier nicht zwischen einem Wiederholungsversuch und einem überlappenden Lauf. Mit `catchUp: all` überlappt sich eine Uhrbewegung über mehrere Vorkommen derselben Funktion selbst, sodass `skip` das älteste davon behält und `reject` den Rest als Ablehnungen zählt.
+- Ist die Event-Warteschlange von Functions voll (4.096 aktive Events oder 64 MiB), bleibt ein fällig werdender geplanter Lauf fällig und läuft, sobald wieder Platz ist.
+
+### Eine geplante Funktion jetzt ausführen
+
+Ein manueller Lauf (`POST /v1/sessions/{session}/functions/{name}:run`) reiht einen Lauf einer geplanten Funktion ein, versehen mit der aktuellen virtuellen Zeit. Er verbraucht das nächste Vorkommen nicht, das weiterhin fällig wird und wie jeder Lauf `scheduler.overlap` unterliegt. Dies ist eine eigene Steuerfunktion von Fireemu, keine Aussage über das „Jetzt ausführen“ der Produktion.
+
+| Antwort | Wann |
+|---|---|
+| `400 INVALID_ARGUMENT` | Eine unbekannte Funktion, eine Funktion, die nicht geplant ist, eine Ablehnung durch die Überlappungsrichtlinie oder eine Laufzeit, die gerade herunterfährt |
+| `429 RESOURCE_EXHAUSTED` | Die Event-Warteschlange ist voll |
+
+Bei einer Task-Queue-Funktion (`onTaskDispatched`) gibt dieselbe Route die Cloud-Tasks-Aufgaben frei, die auf ihre `scheduleTime` warten: alle oder die eine, die ein Body `{"task": "<task id>"}` benennt (404, wenn keine wartende Aufgabe diese ID hat). Siehe [Task-Queues](../../products/functions/#task-queues).
+
+## Die Uhr rückwärts bewegen
+
+Die Uhr kann sich rückwärts bewegen (`clock:set` mit `"allowBackwards": true` oder **Allow moving backwards** auf der Seite „Runtime“). Ein Zurückstellen spielt Vorkommen, die bereits gelaufen sind, nie erneut ab.
+
+### ID-Tokens nach einem Zurückstellen
+
+- Unter `strict` lehnen Authentication (`INVALID_ID_TOKEN`), Firestore und Storage ein ID-Token ab, das nach der neuen Zeit ausgestellt wurde, bis die Uhr seine Ausstellungszeit wieder erreicht.
+- Im Profil `emulator` bleiben ID-Tokens nach einem Zurückstellen nutzbar, wie beim offiziellen Emulator, der ihre Ausstellungszeit nicht prüft.
+- In beiden Profilen wird ein abgelaufenes Token weiterhin abgelehnt.
+
+### Widerruf nach einem Zurückstellen
+
+Ein Zurückstellen auf vor die Erstellung eines Kontos oder vor den Widerruf seiner Tokens lässt sogar das Token einer neuen Anmeldung als widerrufen gelten. Stellen Sie die Uhr stattdessen wieder vor oder setzen Sie die Sitzung zurück.
+
+Umgekehrt widerruft ein Widerruf oder eine Passwortänderung nach einem Zurückstellen keine Tokens, die zu späteren Zeitpunkten auf der Zeitachse ausgestellt wurden: Das Profil `emulator` akzeptiert sie sofort, und `strict` akzeptiert sie, sobald die Uhr ihre Ausstellungszeit erreicht. Stellen Sie die Uhr vor dem Widerruf über deren Ausstellungszeit hinaus vor oder setzen Sie die Sitzung zurück.
+
+## Anwendungszeit in Functions
+
+Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock` zusammen mit einem fixierten `daemon.clockStart`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+
+[functions]
+# Directory of the Functions codebase.
+source = "./functions"
+
+[functions.clock]
+# Functions date clock: "real" or "virtual".
+date = "virtual"
+# Functions timer clock: "real" or "virtual".
+timers = "real"
+# Cloud Tasks clock: "real" or "virtual".
+tasks = "virtual"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z"
+  },
+  "functions": {
+    "source": "./functions",
+    "clock": {
+      "date": "virtual",
+      "timers": "real",
+      "tasks": "virtual"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- Jeder Modus akzeptiert `real` oder `virtual`. Virtuelle Timer erfordern ein virtuelles `date`.
+- Ist `tasks` auf `virtual` gesetzt, wird eine Cloud-Tasks-Aufgabe, die mit einer `scheduleTime` eingereiht wurde, fällig, wenn die virtuelle Uhr sie erreicht, sodass ein Test die Uhr vorstellt, statt zu warten.
+- Ist `tasks` auf `real` gesetzt, wartet die Aufgabe unter `strict` auf die Wanduhr. Die Seite „Functions“ der [Emulator UI](../ui/) listet wartende Aufgaben auf und kann sie sofort ausführen.
+- Eine Python-Codebasis sieht immer die Echtzeit: Sie wird nicht auf die virtuelle Uhr gelegt, und eine Konfiguration, die für den Functions-Runner ein virtuelles Datum verlangt, wird für sie abgelehnt.
+
+## Siehe auch
+
+- [Testwelten](../test-worlds/): Für parallele Tests, die eine eigene Uhr brauchen, startet der Helfer `fireemu/testing` unabhängige Welten, jede auf eine Startzeit fixiert, die Sie von Hand bewegen.
+- [Emulator UI](../ui/)
+- [Cloud Functions](../../products/functions/#task-queues)
+- [Konfigurationsreferenz](../../reference/configuration/)
