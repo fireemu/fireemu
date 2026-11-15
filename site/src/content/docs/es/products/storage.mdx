@@ -1,0 +1,481 @@
+---
+title: Cloud Storage
+description: Ejecuta Cloud Storage for Firebase en local y prueba subidas, descargas, URL firmadas, CORS de buckets y Storage Security Rules mediante las API JSON de Firebase y de Cloud Storage.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu sirve Cloud Storage for Firebase con ambos dialectos de API:
+
+- el protocolo de Firebase Storage que usan los SDK de cliente, incluidas las subidas reanudables y los tokens de descarga;
+- la API JSON de Cloud Storage que usan el Admin SDK y las bibliotecas cliente de Google Cloud, incluidos copy y rewrite.
+
+Ambos dialectos comparten un único almacén, así que un objeto subido por uno es visible por el otro. El emulador de Storage mantiene sus objetos en memoria.
+
+<Facts items={[
+  { label: 'Estado', value: 'Compatible' },
+  { label: 'Puerto predeterminado', value: '9199' },
+  { label: 'Inicio', value: 'De forma predeterminada' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- [Nombres de bucket](#buckets-que-no-existen): una escritura en un bucket que nadie declaró imprime una nota o falla con el 404 de producción.
+- [CORS del bucket](#cors-del-bucket) para subidas y descargas desde el navegador en la API XML.
+- [URL firmadas](#firmas-de-url-firmadas): caducidad, encabezados firmados y, con una clave registrada, la firma V4.
+- [Security Rules](#security-rules), incluidas las [reglas `list` decididas a partir del prefijo solicitado](#listar-un-prefijo-con-reglas-de-asociación-de-un-solo-segmento).
+- [Solicitudes que rechaza producción](#comportamiento-de-producción), como una URL pública para un objeto privado o una subida de formulario sin una política firmada.
+- [Un almacén lleno](#limitar-los-bytes-almacenados), con un límite local de bytes almacenados.
+
+## Conectar
+
+Storage escucha en `127.0.0.1:9199` de forma predeterminada (`--storage-port` o `firebase.json` lo cambian).
+
+```js
+// Web SDK
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
+connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
+```
+
+El Admin SDK y las bibliotecas cliente de Google Cloud leen variables de entorno. Con `fireemu exec` se establecen para tu comando; con `fireemu up`, defínelas tú mismo:
+
+```sh
+STORAGE_EMULATOR_HOST=http://127.0.0.1:9199             # with the scheme
+FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:9199           # host:port, no scheme
+```
+
+Consulta [Conecta tu aplicación](../../getting-started/connect/) y las [variables de entorno](../../reference/environment-variables/).
+
+## Configurar
+
+Todos los ajustes de Storage son opcionales. Este archivo establece cada uno de ellos:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+profile = "strict"
+
+[storage]
+# Path of the Storage Security Rules file (or name it in firebase.json)
+rules = "storage.rules"
+# Which default bucket exists: "both" (default), "firebasestorage.app" or "appspot.com"
+defaultBucket = "both"
+# Buckets the project owns besides its default ones: 3 to 222 characters each
+buckets = ["uploads-bucket", "exports.example.com"]
+# Buckets whose objects the public URL serves without a credential: 3 to 222 characters each
+publicBuckets = ["public-assets.example.com"]
+# Local cap on stored object data in bytes (an integer of at least 1); unset means no cap
+maxStoredBytes = 1073741824
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "storage": {
+    "rules": "storage.rules",
+    "defaultBucket": "both",
+    "buckets": ["uploads-bucket", "exports.example.com"],
+    "publicBuckets": ["public-assets.example.com"],
+    "maxStoredBytes": 1073741824
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+| Ajuste | Efecto |
+|---|---|
+| `storage.rules` | El archivo de Storage Security Rules; consulta [Security Rules](#security-rules). |
+| `storage.defaultBucket` | Cuál de los dos buckets predeterminados del proyecto existe con `strict` ([más abajo](#buckets-que-no-existen)). |
+| `storage.buckets`, `storage.publicBuckets` | Declaran buckets, y buckets cuya URL pública no necesita credencial. El perfil `emulator` los ignora. |
+| `storage.undeclaredBuckets` | Qué hace con `strict` una operación de objeto sobre un bucket que nadie declaró: `"warn"` (predeterminado) atiende la primera escritura, crea el bucket e imprime una nota; `"create"` hace lo mismo en silencio; `"refuse"` responde con el 404 de producción y lo selecciona `productionExact`; una clave explícita prevalece ([más abajo](#buckets-que-no-existen)). El perfil `emulator` siempre crea el bucket en silencio. |
+| `storage.cors` | Configuración de CORS por bucket en el JSON `cors` de Cloud Storage, que con `strict` se aplica a la API XML y, como comportamiento no grabado, a las lecturas de medios de Firebase ([más abajo](#cors-del-bucket)). Un bucket XML sin entrada mantiene la respuesta permisiva salvo que se establezca `productionExact`; en un bucket con reglas no vacías, una lectura de objeto o un preflight de objeto de la API JSON ignora las reglas (como se grabó); otras rutas de la API JSON y las entradas ausentes o vacías mantienen el comportamiento base. |
+| `storage.signedUrlKeys` | Claves públicas (o la clave privada o el JSON de cuenta de servicio con el que una prueba firmó) contra las que se verifican las URL firmadas V4 con `strict` ([más abajo](#firmas-de-url-firmadas)). Si no se establece, la firma no se verifica. |
+| `storage.maxStoredBytes` | Un límite local de bytes almacenados. Una escritura que lo superaría se rechaza con HTTP 402 (`storage.maxStoredBytes limit exceeded`); consulta [Limitar los bytes almacenados](#limitar-los-bytes-almacenados). Producción no tiene ese límite. |
+| `storage.maxObjectBytes` | Límite de tamaño por objeto, 256 MiB de forma predeterminada (máximo 2143289343). Las subidas mayores se rechazan con HTTP 413; consulta [Limitar los bytes almacenados](#limitar-los-bytes-almacenados). |
+| `storage.bufferedBodyBudgetBytes` | Presupuesto de todo el proceso para los cuerpos de solicitud en búfer, 1 GiB de forma predeterminada. Una solicitud que lo supera recibe HTTP 503 con `Retry-After: 1`. |
+| `storage.spillObjectBytes` | Los objetos confirmados de al menos este número de bytes se guardan en archivos temporales en lugar de en memoria. No está establecido de forma predeterminada; producción no tiene este ajuste. Una sesión de subida reanudable guarda sus bytes recibidos en un archivo temporal cuando alcanzan ese tamaño. Una subida de una sola petición sigue almacenándose en búfer en memoria antes de guardarse, así que una única subida grande mantiene un cuerpo residente después de confirmarse; el ajuste ayuda cuando se almacenan muchos objetos grandes. |
+
+Los directorios de volcado se eliminan en un cierre limpio, y los directorios obsoletos de procesos muertos se barren al arrancar. Una escritura de volcado fallida devuelve HTTP 503 con `Retry-After: 1`. La exportación captura solo los objetos confirmados, no las sesiones de subida reanudable pendientes.
+
+## Buckets que no existen
+
+Producción responde 404 `The specified bucket does not exist.` a una operación de objeto sobre un bucket que nadie creó. El emulador de Storage lo atiende en su lugar y crea el bucket en la primera escritura, de modo que una prueba no necesita preparación. `storage.undeclaredBuckets` cambia eso con `strict`:
+
+| `storage.undeclaredBuckets` | Comportamiento con `strict` |
+|---|---|
+| `"warn"` (predeterminado) | La primera escritura se atiende y crea el bucket. Se imprime una línea `note:` en la salida de error estándar la primera vez que se escribe un objeto en un bucket que nadie declaró. |
+| `"create"` | El comportamiento de `warn` sin la nota. |
+| `"refuse"` | Toda operación que nombra un bucket que no existe se responde como la responde Cloud Storage, y no se crea nada. Lo selecciona `productionExact`; una clave explícita prevalece sobre `productionExact`. |
+
+El perfil `emulator` siempre crea el bucket en silencio y rechaza `"warn"` y `"refuse"`, porque el emulador oficial crea todos los buckets en el primer uso.
+
+### Qué buckets existen
+
+Un bucket existe cuando es uno de estos:
+
+- un bucket predeterminado del proyecto (`<project>.appspot.com` o `<project>.firebasestorage.app`);
+- figura en `storage.buckets` o `storage.publicBuckets`;
+- un destino de storage de `firebase.json`;
+- está nombrado por un trigger de Storage desplegado;
+- un bucket que contiene datos importados.
+
+Con `strict` y `storage.undeclaredBuckets: "warn"`, una escritura en cualquier otro bucket imprime la nota, de modo que un error tipográfico en el nombre de un bucket es visible. Para silenciar la nota de un bucket que existe en producción, inclúyelo en `storage.buckets` ([Configurar](#configurar)).
+
+Cada nombre debe ser uno que Cloud Storage acepte. `storage.publicBuckets` enumera los buckets cuyos objetos la URL pública sirve sin credencial, y también cuenta como declararlos. El perfil `emulator` ignora `storage.buckets` y `storage.publicBuckets`.
+
+### Hacer fallar una prueba por un error tipográfico en el nombre del bucket
+
+Establece `storage.undeclaredBuckets` en `"refuse"` o habilita `productionExact` (solo `strict`). Un bucket que falta se responde entonces según la API:
+
+| API | Respuesta |
+|---|---|
+| API JSON | 404 `The specified bucket does not exist.` (motivo `notFound`) |
+| API XML y la subida de formulario | 404 `NoSuchBucket` |
+| API de Firebase (`/v0`) | La respuesta de no encontrado que da para un bucket al que no puede llegar |
+
+Un copy o un rewrite comprueba sus dos buckets, y una subida reanudable se comprueba cuando empieza.
+
+**Medido en producción.** La ejecución `ss-48adbd8e` de STORAGE-STRICTNESS-OBS registró:
+
+- Obtención, listado, subida, eliminación, origen de copy, destino de rewrite y obtención de ACL de objetos JSON en un bucket inexistente (A1, A3–A8): 404 con el mismo cuerpo JSON de 247 bytes que el recurso del bucket.
+- Una lectura de medios (A2) devolvió en cambio el cuerpo de 36 bytes `The specified bucket does not exist.` como `text/html; charset=UTF-8`.
+- GET y PUT de XML (A9–A10) devolvieron el documento `NoSuchBucket` de 133 bytes.
+- GET y subida de Firebase (A11–A12) devolvieron el sobre JSON `Not Found.` de 65 bytes, con dos espacios de sangría, sin salto de línea final y con encabezados CORS de Firebase.
+- La obtención y el listado de objetos de Firebase en un bucket existente que no es de Firebase devolvieron 200, no 412 (A13–A14).
+
+Las subidas de formulario y las continuaciones reanudables no se registraron en esta ejecución.
+
+### Buckets predeterminados
+
+Un proyecto de producción tiene un único bucket predeterminado: `<project>.firebasestorage.app` si Storage se configuró después del 2024-10-30, `<project>.appspot.com` antes. Una ejecución local no puede saber cuál, así que ambos existen de forma predeterminada.
+
+Para detectar una configuración de aplicación copiada del otro tipo de proyecto, establece `storage.defaultBucket` en `"firebasestorage.app"` o `"appspot.com"` (predeterminado `"both"`). El otro nombre cuenta entonces como un bucket no declarado, así que `GET /storage/v1/b/{bucket}` responde 404 hasta que exista. Su primera escritura lo crea con una nota con `"warn"`, en silencio con `"create"`, y se rechaza con `"refuse"` (que selecciona `productionExact` salvo que se sustituya).
+
+## CORS del bucket
+
+La API XML de producción responde a una solicitud entre orígenes de un navegador según la configuración de CORS del bucket, y un bucket nuevo no tiene ninguna. Por eso una página que sube o descarga en Playwright contra un servidor local permisivo puede fallar en producción. Con `strict`, `storage.cors` asigna a cada nombre de bucket sus reglas en el JSON `cors` de Cloud Storage:
+
+```json
+{
+  "storage": {
+    "cors": {
+      "demo-app.appspot.com": [
+        {
+          "origin": ["http://localhost:3000"],
+          "method": ["GET", "PUT"],
+          "responseHeader": ["Content-Type", "x-goog-content-length-range"],
+          "maxAgeSeconds": 3600
+        }
+      ]
+    }
+  }
+}
+```
+
+El perfil `emulator` acepta un mapa vacío pero rechaza un mapa `storage.cors` no vacío.
+
+### API XML
+
+Las reglas del bucket gobiernan la API XML, incluidas las URL firmadas y la subida de formulario.
+
+| Bucket en `storage.cors` | Respuesta |
+|---|---|
+| Listado con reglas | Sigue sus reglas. Una entrada explícita decide para su bucket. |
+| Listado con `[]` | Un bucket sin configuración de CORS, como lo es un bucket nuevo en producción. |
+| No listado | Mantiene la respuesta permisiva salvo que se establezca `productionExact`. |
+| No listado, con `productionExact` | Sin encabezados CORS, como recibe en producción un bucket sin configuración de CORS. Por tanto, las subidas y descargas desde el navegador necesitan una entrada en `storage.cors`, como en producción. |
+
+Para una solicitud que lleva un `Origin`, decide la primera regla cuyo `origin` (o `*`) y `method` (o `*`) coinciden:
+
+- Una solicitud real recibe `Access-Control-Allow-Origin` (el origen, o `*` para una regla que enumera `*`), `Vary: Origin` cuando se devolvió el origen, y `Access-Control-Expose-Headers` para la lista `responseHeader`.
+- Un preflight (`OPTIONS`) necesita además que todos los encabezados de `Access-Control-Request-Headers` estén en `responseHeader` (o `*`), y entonces también recibe `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` y `Access-Control-Max-Age` (`maxAgeSeconds`, 3600 si no se establece).
+- Una solicitud a la que no corresponde ninguna regla se responde sin ningún encabezado CORS, y tiene éxito igualmente: el navegador se niega a entregar la respuesta a la página.
+
+El servidor sigue rechazando una solicitud cuyo `Origin` no es local (403), sea cual sea lo que enumere una regla, de modo que una regla se ejerce desde una página servida desde `localhost` o una dirección de loopback.
+
+### API JSON
+
+Con `strict`, la API JSON y sus rutas de subida usan una política de CORS independiente, sin relación con `storage.cors`, incluidas las entradas ausentes y vacías y con `productionExact`.
+
+- Para una solicitud con `Origin`, devuelve el origen, envía `Access-Control-Allow-Credentials: true` y `Vary: Origin, X-Origin`, y expone la lista grabada de encabezados de medios o de metadatos en los GET de objetos.
+- Un preflight devuelve 200, `Access-Control-Allow-Methods: DELETE,GET,HEAD,PATCH,POST,PUT` y `Access-Control-Max-Age: 3600`. Los encabezados solicitados grabados en minúsculas se devuelven sin los espacios separadores. Conservar la grafía con mayúsculas mixtas y omitir Allow-Headers cuando no se solicitó ninguno son suposiciones no grabadas.
+- Los casos grabados de la API JSON y de subida exponen sus listas de encabezados observadas, incluido `Location` en su posición grabada para el inicio de una subida reanudable. Aplicar estas listas a otras respuestas es una suposición no grabada; en particular, fireemu selecciona la lista de medios para cualquier ruta JSON correcta con `alt=media`.
+- La cancelación y las lecturas de sesiones canceladas devuelven 499 con el Origin que inició la sesión y la lista de exposición de cancelación grabada.
+
+El perfil strict también añade campos de configuración de acceso del bucket y devuelve el error 400 grabado de ACL heredada en el GET de ACL de un objeto de un bucket con acceso uniforme a nivel de bucket habilitado.
+
+### API de Firebase
+
+Fireemu conserva su gestión existente de reglas de bucket para las lecturas de medios de Firebase (`alt=media`); ese comportamiento no se ha grabado con un bucket configurado. Las respuestas JSON de la API de Firebase y su protocolo reanudable mantienen la respuesta permisiva, porque la API de Firebase envía sus propios encabezados CORS para ellos.
+
+### Grabaciones
+
+**CORS de XML.** La ejecución `ss-48adbd8e` de STORAGE-STRICTNESS-OBS registró CORS de XML con dos reglas (C1–C5):
+
+- Un origen comodín devuelve `*` sin Vary. Un origen con nombre se devuelve con `Vary: Origin`.
+- Los métodos del preflight son la lista de la regla coincidente unida con comas en el orden de las reglas.
+- Allow-Headers está presente y vacío sin encabezados solicitados, usa la grafía configurada para un encabezado con nombre y refleja los encabezados solicitados para `responseHeader: ["*"]`.
+- Max-Age es 3600 de forma predeterminada y respeta 600.
+- Un preflight DELETE sin coincidencia devuelve 200 sin ningún encabezado Access-Control pero con `Vary: Origin`.
+- El GET real con comodín expone `*, Content-Length, Date, Server, Transfer-Encoding, X-GUploader-UploadID, X-Google-Trace`.
+- Quitar las reglas (`[]`) da un preflight 200 sin encabezados Access-Control ni Vary (R3).
+- C2 solo registró que el `content-type` solicitado se responde como `Content-Type` configurado; unir con comas varias grafías configuradas y omitir los encabezados no solicitados es una **suposición NO GRABADA**.
+
+Grabaciones anteriores también cubrían el preflight y el PUT de XML sin configuración de CORS.
+
+**API JSON en un bucket con reglas.** C6–C8 registraron un GET de medios, un GET de metadatos y un OPTIONS de la API JSON en el mismo bucket con ambas reglas aún instaladas: `{"origin":["*"],"method":["GET"],"responseHeader":["*"]}` y `{"origin":["http://localhost:3000"],"method":["PUT","GET"],"responseHeader":["Content-Type"],"maxAgeSeconds":600}`. La grabación posterior `run-2.json` cubre solicitudes de la API JSON con configuración de CORS ausente y vacía.
+
+**CORS de la API JSON y de subida.** `conformance/storage-strictness-obs/recordings/run-2.json` cubre metadatos, medios, bucket, listado, errores de ACL, preflights de subida, el inicio de una subida reanudable con `Location`, la cancelación y las lecturas de sesiones canceladas con CORS de bucket ausente, vacío y configurado. Estos valores se aplican con `strict`, con o sin `productionExact`.
+
+**Acceso uniforme a nivel de bucket.** La grabación creó un bucket con `iamConfiguration.uniformBucketLevelAccess.enabled: true` y observó el error 400 de ACL heredada en el GET de ACL de un objeto.
+
+- El manejador de creación acepta las pistas grabadas `location: "US-CENTRAL1"` y `softDeletePolicy: {"retentionDurationSeconds": 0}`, pero no modela la ubicación regional ni la eliminación temporal.
+- Fireemu también admite establecer el indicador de acceso mediante PATCH; la validación del cambio y sus efectos sobre las ACL son suposiciones no grabadas, cubiertas por pruebas locales.
+- El bucket predeterminado grabado tiene el indicador deshabilitado; fireemu establece en false el valor predeterminado de los buckets sin configurar.
+- Las pruebas locales cubren el restablecimiento, la instantánea/restauración y la exportación/importación, incluidos los buckets creados vacíos. Los artefactos de exportación antiguos sin el indicador se importan como false.
+- Esto no implementa una gestión general de políticas de IAM.
+
+## Firmas de URL firmadas
+
+Cloud Storage verifica una URL firmada V4 contra la clave pública de la cuenta de servicio firmante. fireemu no tiene esa cuenta, así que de forma predeterminada comprueba la caducidad y la presencia de los encabezados firmados, pero no la firma.
+
+Para comprobar la firma, registra en `storage.signedUrlKeys`, una lista de rutas de archivo, la clave con la que firma una prueba. Cada archivo es uno de estos:
+
+- una clave pública PEM;
+- una clave privada PEM (solo se conserva su mitad pública);
+- un JSON de cuenta de servicio (`private_key`, `client_email`);
+- una JWK RSA.
+
+Un archivo de clave que no se puede leer, que no es RSA o que tiene menos de 2048 bits detiene el arranque. El `client_email` de una cuenta de servicio vincula su clave a las credenciales de esa cuenta. Solo se conservan claves públicas en memoria y no se registra nada sobre una clave.
+
+Con `strict`, una solicitud V4 cuya firma no se verifica se responde `403 SignatureDoesNotMatch` con el `StringToSign` y el `CanonicalRequest` que calculó el servidor. Es el cuerpo que dio producción en cuatro causas grabadas: cuando se alteró una firma, cuando el `Content-Type` o el encabezado de rango difería del firmado, y cuando el nombre del objeto difería.
+
+La solicitud canónica es la que documenta Cloud Storage:
+
+- el método;
+- la ruta codificada con porcentaje;
+- la consulta ordenada sin `X-Goog-Signature`;
+- los encabezados firmados con sus valores. `host` es el `Host` con el que llegó la solicitud, con o sin su puerto: el Admin SDK firma solo el nombre de host para un endpoint local, así que una URL que construye se verifica tal cual;
+- la lista de encabezados firmados;
+- `UNSIGNED-PAYLOAD`.
+
+Límites de la comprobación:
+
+- Las URL firmadas V2 no se verifican.
+- Solo los encabezados firmados que lee el servidor (`Content-Type`, `x-goog-content-length-range` y los demás encabezados que reenvía) pueden formar parte de una firma que se verifica.
+- El perfil `emulator` acepta una lista `storage.signedUrlKeys` vacía pero rechaza una lista no vacía.
+- Es una comprobación local de lo que firmó una prueba, no un límite de autorización.
+
+## Security Rules
+
+Las Storage Security Rules se leen del archivo `storage.rules` indicado en `firebase.json`, o de `storage.rules` en `fireemu.toml`. Una regla de Storage puede leer documentos de Firestore con `firestore.get()` y `firestore.exists()`. Con `strict`, un proyecto sin reglas rechaza toda solicitud de usuario final con la respuesta 400 de producción "bucket has not been set up". Consulta [Security Rules](../../guides/security-rules/).
+
+### Listar un prefijo con reglas de asociación de un solo segmento
+
+Una regla `list` se decide a partir del prefijo solicitado, no de los objetos que existan por casualidad. Una regla que pasa en una prueba porque todos los objetos actuales la cumplen puede ser rechazada por producción en cuanto se lista el prefijo. Con `strict`, Fireemu evalúa `list` como lo hace producción, usando los resultados registrados más abajo (dos grabaciones de producción del 2026-10-16 y las observaciones del 2026-11-08), de modo que esa regla también falla en una prueba local, antes de desplegar.
+
+En el perfil `strict`, la autorización de listado demuestra el acceso a las posibles entradas bajo el prefijo solicitado. Con `delimiter=/`, cada entrada es un hijo inmediato; sin delimitador, las entradas pueden tener una profundidad arbitraria. La autorización no depende de si el prefijo está vacío ni de qué objetos existan por casualidad.
+
+Para `prefix=teams/T/requests/R/&delimiter=/`, una regla que coincide con `/teams/{team}/requests/{id}/{attachment}` con `allow list: if member(team)` puede autorizar el listado. El equipo y el ID de la solicitud quedan fijados por el prefijo, mientras que el nombre del adjunto es desconocido. Una condición que exige un nombre de adjunto concreto no autoriza un listado de directorio solo porque todos los objetos actuales coincidan con ese nombre.
+
+Una comparación específica con producción del 2026-10-16 usó la pertenencia autenticada de UID a equipo, controles separados de subida/obtención y dos grabaciones. `strict` coincide con los siguientes resultados observados. El prefijo ancestro es `teams/T/requests/`; el prefijo de la solicitud es `teams/T/requests/R/`.
+
+| Reglas que conceden `list` al miembro | Prefijo | Delimitador | Producción y `strict` |
+| --- | --- | --- | --- |
+| Captura de un solo adjunto | Solicitud | `/` | 200 |
+| Captura de un solo adjunto | Solicitud | Omitido | 403 |
+| Las mismas reglas más una coincidencia explícita del padre | Solicitud | `/` | 200 |
+| Las mismas reglas más una coincidencia explícita del padre | Solicitud | Omitido | 403 |
+| Las mismas reglas más una coincidencia explícita del padre | Ancestro | `/` | 200 |
+| Las mismas reglas más una coincidencia `list` recursiva | Solicitud | `/` u omitido | 200 |
+| Las mismas reglas más una coincidencia `list` recursiva | Ancestro | `/` | 200 |
+
+Los prefijos de solicitud vacíos tienen las mismas decisiones de autorización que los que tienen contenido. Los listados de solicitudes de no miembros, anónimos y de otros equipos siguen denegados.
+
+En el perfil `strict`, un listado sin delimitador también se permite para `allow list: if [file] != null` y para `request.path == /b/$(bucket)/o/<prefix>` bajo `match /p/{file=**}`, como respondió producción el 2026-11-08. Una captura de un solo segmento, una captura simple y la ruta de otro prefijo siguen rechazándose, y `request.path` de un listado con delimitador sigue rechazado hasta que se registre producción para él.
+
+Los delimitadores que no son la barra usan una prueba conservadora de profundidad arbitraria; la comparación con producción cubrió `/` y un delimitador omitido, no todos los delimitadores personalizados ni las condiciones que dependen del recurso. La [documentación de operaciones granulares de Firebase](https://firebase.google.com/docs/storage/security/core-syntax#granular_operations) ofrece más contexto.
+
+El perfil `emulator` conserva su autorización existente por prefijo concreto, salvo que un listado con `delimiter=/` se permite cuando se permite cada entrada un nivel por debajo del prefijo (`match /p/{f} { allow list: if true; }` con `prefix=p/&delimiter=/`), como lo permiten producción y `strict`.
+
+#### Una regla padre explícita
+
+No hace falta una regla padre explícita para la solicitud del SDK de captura única anterior. Añadir una puede cambiar los permisos de producción:
+
+```text
+match /teams/{team}/requests/{id} {
+  allow list: if member(team);
+}
+```
+
+En las reglas medidas, esto también permite listar los prefijos hijos del ancestro. No autoriza la enumeración recursiva sin delimitador de los adjuntos de la solicitud.
+
+Mantén sin cambios las condiciones `get`, `create`, `update` y `delete` de los adjuntos. No las sustituyas por un `allow read` recursivo amplio: `read` incluye tanto `get` como `list`. El permiso de listado expone los nombres bajo el prefijo incluso cuando el contenido de un objeto concreto no se puede leer; no concede acceso al contenido ni filtra el listado a los objetos con permiso `get`.
+
+## Comportamiento de producción
+
+Con `strict`, las precondiciones de generación y de metageneración y las sumas de comprobación declaradas se respetan como las respeta producción. El emulador oficial no verifica ninguna suma de comprobación.
+
+**Medido en producción.** La ejecución `ss-48adbd8e` de STORAGE-STRICTNESS-OBS registró `Authorization: Firebase not-a-jwt` como una solicitud no autenticada: al denegar las Rules, devolvió 403 con el sobre JSON `Permission denied.` de 73 bytes, con dos espacios de sangría y sin salto de línea final (F1). Las Rules deciden si se permite a un llamante no autenticado; los tokens bien formados con firmas incorrectas mantienen su gestión existente, que esta grabación no cubre. El DELETE de un objeto de Firebase devolvió 204 con `Content-Length: 0` (F2).
+
+### Solicitudes que `strict` rechaza
+
+Con `strict`, el emulador de Storage también rechaza lo que rechaza producción y acepta el emulador oficial. Un bucket que no existe es la excepción; consulta [Buckets que no existen](#buckets-que-no-existen).
+
+| Solicitud | Respuesta de `strict` |
+|---|---|
+| Solicitud de usuario final en un proyecto sin Security Rules | 400, "bucket has not been set up" |
+| `GET /{bucket}/{object}` (URL pública) para un objeto privado | 403 `AccessDenied` |
+| URL firmada pasada su vigencia | 400 `ExpiredToken` |
+| Subida firmada: falta un encabezado firmado, un cuerpo fuera del rango firmado, una subida sin firmar | 400 `MalformedSecurityHeader`, `EntityTooLarge` o `EntityTooSmall`; una subida sin firmar se rechaza |
+| URL firmada que nombra todos los parámetros de firma excepto la firma | 400 `MissingSecurityHeader` |
+| Subida de formulario sin una política firmada | Rechazada; se aplican la caducidad y las condiciones de la política |
+| Token de ID de Firebase como portador OAuth en la API JSON | 401 `Invalid Credentials` |
+| Una entrada de ACL que Cloud Storage no conoce | 400 |
+| Un nombre de bucket que Cloud Storage nunca acepta | 400 `Invalid bucket name` (API JSON), 400 `InvalidBucketName` (rutas XML), 404 (rutas de Firebase) |
+| Escritura que supera `storage.maxStoredBytes` (un límite local, no una regla de producción) | 402 `storage.maxStoredBytes limit exceeded` |
+
+A continuación se detalla cada rechazo; no se omite nada.
+
+<details>
+<summary>Una URL pública para un objeto privado</summary>
+
+`GET /{bucket}/{object}`, que es lo que construye `file.publicUrl()`, responde 403 `AccessDenied` salvo que se cumpla una de estas condiciones:
+
+- La solicitud lleva un encabezado `Authorization` `Bearer` no vacío.
+- La solicitud procede de una biblioteca cliente de Google. Estas envían `x-goog-api-client`, y la biblioteca de Go, por tanto el Firebase Admin Go SDK, lee a través de esta URL sin credencial mientras `STORAGE_EMULATOR_HOST` está establecida; las bibliotecas de Python, Java y Node leen a través de la API JSON y nunca se rechazan.
+- La solicitud es una URL firmada que no ha caducado.
+- El objeto es público.
+
+Un objeto es público cuando el código de la aplicación lo hizo así, solo para esa generación del objeto: una sobrescritura vuelve a ser privada. El código de la aplicación lo hace público con `file.makePublic()`, `predefinedAcl=publicRead` en una subida, patch, copy (`destinationPredefinedAcl`) o rewrite, una entrada `allUsers` `READER` en el `acl` de un recurso subido o modificado, o `POST .../acl`. `file.makePrivate()` (`predefinedAcl=private`), un `acl` modificado sin esa entrada y `DELETE .../acl/allUsers` lo terminan. No se lee un `acl` en los metadatos que inician una subida reanudable.
+
+Un bucket cuyo IAM concede a `allUsers` el rol de visor de objetos, que producción establece en la consola, se enumera en `storage.publicBuckets`. El 403 nombra ambas vías. Las URL con token de descarga de Firebase no se ven afectadas.
+
+</details>
+
+<details>
+<summary>Una URL firmada caducada</summary>
+
+Una URL firmada V4 o V2 pasada su vigencia responde 400 `ExpiredToken`, y un tiempo de vida V4 superior a siete días o un `X-Goog-Date` ilegible responde 400. La firma en sí no se verifica salvo que `storage.signedUrlKeys` registre la clave con la que se hizo ([Firmas de URL firmadas](#firmas-de-url-firmadas)), porque eso requiere la clave de la cuenta de servicio firmante; sin una, se acepta cualquier firma.
+
+</details>
+
+<details>
+<summary>Subidas XML firmadas</summary>
+
+`PUT /{bucket}/{object}` acepta una URL firmada V4 para subidas locales. Establece `FIREBASE_STORAGE_EMULATOR_HOST` con el host y el puerto sin esquema, o `STORAGE_EMULATOR_HOST` con la URL HTTP, antes de inicializar el Admin SDK. El SDK sigue necesitando credenciales de firma; para desarrollo se puede usar una clave de cuenta de servicio de prueba generada localmente. El modo strict rechaza una subida sin firmar.
+
+Esta ruta de subida almacena `Content-Type`; no se admiten otros metadatos del objeto ni los encabezados de escritura condicional. Solo se reenvían `Content-Type` y `x-goog-content-length-range` para este uso; no se admiten encabezados de extensión firmados arbitrarios. El rango es inclusivo.
+
+- **Medido en producción** (un proyecto real de Firebase, 2026-11-03, `getSignedUrl` V4 `write` para `image/png` con `x-goog-content-length-range: 0,10485760`, dos grabaciones de 16 casos). Un encabezado firmado ausente de la solicitud es `400 MalformedSecurityHeader` que lo nombra (se midieron `content-type` y el encabezado de rango). Un cuerpo por encima o por debajo del rango es `400 EntityTooLarge` o `400 EntityTooSmall`. Una URL caducada es `400 ExpiredToken` que nombra el final del tiempo de vida firmado. Estos rechazos, y los encabezados de éxito (`ETag`, `x-goog-generation`, `x-goog-metageneration`, `x-goog-hash`, `x-goog-stored-content-length`, `x-goog-stored-content-encoding`), tienen el cuerpo y los valores de producción en ambos perfiles. Con `strict`, una URL que nombra todos los parámetros de firma excepto la firma es `400 MissingSecurityHeader`, y el encabezado de rango enviado sin estar entre los encabezados firmados es `400 MalformedSecurityHeader`; el perfil `emulator` sigue aceptando ambos, como hacía antes (no se midió lo que hace firebase-tools 15.28.2 con ellos).
+- **No se verifica de forma predeterminada, una diferencia documentada.** Producción responde `403 SignatureDoesNotMatch` cuando se altera la firma, cuando el `Content-Type` o el valor del rango difiere del firmado, y cuando el nombre del objeto difiere del firmado. fireemu no tiene una clave con la que comprobar una firma salvo que `storage.signedUrlKeys` registre una (consulta [Firmas de URL firmadas](#firmas-de-url-firmadas)), y en caso contrario acepta los cuatro casos en ambos perfiles, así que los cambios en el método o en los valores de los encabezados firmados no se pueden autenticar; no uses este comportamiento como comprobación de autorización.
+- **CORS.** Para la API XML, sin `storage.cors` ni `productionExact`, CORS es permisivo en ambos perfiles: un preflight `OPTIONS` correcto responde `204` con encabezados CORS, y un `PUT` que lleva un `Origin` los recibe. Producción depende de la configuración de CORS del bucket y respondió `200` sin encabezados CORS para un bucket que no tiene ninguna; incluye el bucket con `[]` en `storage.cors` o habilita `productionExact` para obtener eso con `strict` ([CORS del bucket](#cors-del-bucket)).
+- **Parámetros de firma repetidos.** Con `strict`, se aplica cada aparición de `X-Goog-SignedHeaders`, incluidos los nombres repetidos, con distinta capitalización y codificados con porcentaje. Los valores repetidos y contradictorios de `X-Goog-Date`, `X-Goog-Expires` o `Expires` devuelven `400 InvalidArgument`; elimina los parámetros contradictorios. Ese rechazo no se ha observado en producción. El perfil `emulator` mantiene su interpretación existente de la consulta.
+
+</details>
+
+<details>
+<summary>Una subida de formulario sin una política firmada</summary>
+
+`POST /{bucket}` con un formulario multipart necesita una `policy` y un campo de firma. Se aplican la caducidad y las condiciones de la política (`bucket`, `eq`, `starts-with`, `content-length-range`); la firma no se verifica.
+
+</details>
+
+<details>
+<summary>Un token de ID de Firebase como portador OAuth</summary>
+
+Un token de ID de Firebase enviado como portador OAuth en la API JSON responde 401 `Invalid Credentials`. Cualquier otra credencial, o ninguna, se atiende como el propietario, porque una ejecución local no puede juzgar un token de acceso.
+
+</details>
+
+<details>
+<summary>Una entrada de ACL que Cloud Storage no conoce</summary>
+
+Una entrada de ACL que Cloud Storage no conoce responde 400. Solo `allUsers` con el rol `READER` tiene efecto.
+
+</details>
+
+<details>
+<summary>Un nombre de bucket que Cloud Storage nunca acepta</summary>
+
+Un nombre de bucket que Cloud Storage nunca acepta (por ejemplo `ab`, `goog-x` o `1.2.3.4`) responde 400 `Invalid bucket name` en la API JSON, 400 `InvalidBucketName` en las rutas XML y 404 en las rutas de Firebase, salvo que exista un bucket con ese nombre (importado o declarado).
+
+</details>
+
+El perfil `emulator` conserva su comportamiento existente, excepto en las respuestas de subida firmada descritas arriba; esas respuestas siguen a producción, y no se afirma paridad con el emulador oficial para ellas.
+
+### Segmentos de ruta vacíos
+
+En ambos perfiles, una solicitud de Firebase Storage (`/v0/b/{bucket}/o/...`) cuyo nombre de objeto o prefijo de listado tiene un segmento de ruta vacío, como un `//` interior, una `/` inicial o una `/` final en un nombre de objeto, responde `400` con `The path may not end with '/' or contain two consecutive '/'s` antes de evaluar cualquier Security Rule. Producción respondió así a lecturas, lecturas de metadatos y listados el 2026-11-08, también con una regla que lo permite todo; las subidas, `PATCH`, `DELETE` y la gestión de tokens se derivan de ello y no se registraron.
+
+- El perfil `strict` mantiene `/x`, `x` y `x/` como tres objetos, igual que Cloud Storage. El perfil `emulator` sigue descartando una `/` inicial de un nombre subido, como hace el emulador oficial.
+- Un listado de Firebase omite un prefijo que produciría un objeto como `a//x`, y un nombre que omite nunca ocupa un lugar en una página ni se convierte en un `nextPageToken`.
+
+## Limitar los bytes almacenados
+
+### Tamaño de objeto y de solicitud
+
+Cada objeto está limitado a 256 MiB de forma predeterminada. Establece `storage.maxObjectBytes` para cambiar ese límite; el límite del cuerpo de la solicitud HTTP es 4 MiB mayor para dar cabida a la sobrecarga de multipart.
+
+`storage.bufferedBodyBudgetBytes` limita los cuerpos de solicitud en búfer en todo el proceso y su valor predeterminado es 1 GiB. Las solicitudes que superan el presupuesto disponible reciben HTTP 503 con `Retry-After: 1`. Un presupuesto menor que una solicitud puede rechazarla incluso cuando el objeto está dentro de su límite.
+
+Ambos ajustes aceptan números enteros positivos de bytes; el máximo es 2143289343 para `maxObjectBytes` y 2147483647 para `bufferedBodyBudgetBytes`. Las subidas reanudables también tienen un límite agregado independiente de 1 GiB de subidas retenidas, y la importación tiene un límite total independiente de 1 GiB.
+
+### Total de bytes almacenados
+
+El emulador de Storage mantiene todos los objetos en memoria y, de forma predeterminada, nada limita cuánto. Para ponerle un tope, establece `storage.maxStoredBytes` en un número de bytes de al menos 1 ([Configurar](#configurar)). Este límite es local de Fireemu; producción no tiene ninguno.
+
+- Cada objeto cuenta sus bytes una vez, y una copia cuenta de nuevo. Sustituir un objeto cuenta solo la diferencia de tamaño.
+- Una subida, la última solicitud de una subida reanudable o una copia que haría crecer el total por encima del límite se rechaza con HTTP 402 y el mensaje `storage.maxStoredBytes limit exceeded` (en la API JSON, con el motivo `storageCapacityExceeded`). No hay `Retry-After`. Elimina objetos para hacer sitio. Los SDK de cliente de Firebase notifican un 402 de inmediato como `storage/quota-exceeded` sin reintentar; las bibliotecas cliente de Cloud Storage tampoco lo reintentan.
+- Una escritura que no hace crecer el total, como una sustitución de tamaño igual o menor, siempre pasa, incluso mientras el almacén contiene más que el límite (tras una importación, una restauración o un límite reducido).
+- Una escritura rechazada no cambia nada. Una subida reanudable sigue abierta: su desplazamiento no avanza, así que puedes enviar de nuevo el mismo fragmento final después de hacer sitio, o cancelar la subida.
+- Una importación (`--import`) y una restauración de instantánea no se comprueban contra el límite. Una importación por encima de él empieza con una línea `warning:` que nombra los bytes almacenados y el límite, y una restauración de instantánea por encima de él registra la misma línea.
+
+`fireemu doctor --connect <control URL>` informa de los bytes almacenados como `objects.bytes` frente a este límite.
+
+## Diferencias con producción
+
+### No compatible
+
+- Verificar la firma de una URL firmada V2 o de una política POST. Las URL firmadas V4 solo se verifican contra las claves registradas en `storage.signedUrlKeys`.
+- ACL de objeto distintas de la lectura de `allUsers`.
+- IAM y acceso público a nivel de bucket.
+- Composición de objetos (`compose`).
+- Configuración de notificaciones.
+
+El versionado de objetos se sirve en la API JSON: `PATCH /storage/v1/b/{bucket}` con `{"versioning":{"enabled":true}}` lo activa, como en producción.
+
+### Comportamiento local
+
+- Un bucket que nadie declaró se crea en su primera escritura salvo que `storage.undeclaredBuckets` sea `"refuse"`. Consulta [Buckets que no existen](#buckets-que-no-existen).
+- La API XML responde a CORS de forma permisiva para un bucket que no figura en `storage.cors` salvo que se establezca `productionExact`. Consulta [CORS del bucket](#cors-del-bucket).
+- Una firma V4 solo se comprueba contra una clave registrada en `storage.signedUrlKeys`. Consulta [Firmas de URL firmadas](#firmas-de-url-firmadas).
+- El límite de tamaño de objeto, el presupuesto de cuerpos en búfer y `storage.maxStoredBytes` son límites locales. Consulta [Limitar los bytes almacenados](#limitar-los-bytes-almacenados).
+
+### Mantén el puerto de Storage en localhost
+
+:::caution
+Como el emulador oficial, el puerto de Storage refleja el nombre de objeto solicitado en el cuerpo HTML de su 404 para una lectura de medios que falta. Una página web abierta en tu máquina podría ejecutar script en ese origen.
+
+- De forma predeterminada, todos los listeners están en loopback, así que solo los procesos de tu máquina llegan a él. El guarda de Host también responde 403 a una solicitud que nombra un `Host` distinto de `localhost`, una dirección IP o un nombre que incluiste en `network.allowedHosts`, como defensa contra el DNS rebinding (consulta [Nombres de host a los que responden los emuladores](../../guides/ci-and-containers/#host-names-the-emulators-answer)).
+- El puerto es accesible desde otros hosts solo si lo habilitas expresamente: `network.allowNonLoopbackHosts` en `fireemu.toml` junto con un `emulators.storage.host` que no sea de loopback en `firebase.json` (consulta [Sirve los emuladores desde un contenedor](../../guides/ci-and-containers/#serve-the-emulators-from-a-container)). Un listener así sirve sin credencial, así que no lo expongas en una red no confiable.
+- El perfil `strict` no envía `X-Content-Type-Options: nosniff` en las respuestas de la API JSON donde producción no envía ninguno, así que no añade esa defensa en profundidad; el perfil `emulator` mantiene el encabezado del emulador oficial.
+
+:::
+
+## Relacionado
+
+- [Security Rules](../../guides/security-rules/)
+- [Perfiles](../../guides/profiles/)
+- [Compatibilidad](../../compatibility/) y [Limitaciones](../../compatibility/limitations/)
+- [Referencia de configuración](../../reference/configuration/)

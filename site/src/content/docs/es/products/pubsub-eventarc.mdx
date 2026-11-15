@@ -1,0 +1,165 @@
+---
+title: Pub/Sub and Eventarc
+description: Publica y recibe en local mensajes de Cloud Pub/Sub, eventos personalizados de Eventarc y tareas de Cloud Tasks, desde Functions y código de servidor.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu sirve la API `google.pubsub.v1` por gRPC y REST, un listener de Eventarc para eventos personalizados y un emulador de Cloud Tasks para las funciones de cola de tareas.
+
+<Facts items={[
+  { label: 'Estado', value: 'Compatible' },
+  { label: 'Puertos predeterminados', value: '8085 Pub/Sub · 9299 Eventarc · 9499 Cloud Tasks' },
+  { label: 'Inicio', value: 'Pub/Sub cuando está configurado; Eventarc y Cloud Tasks con Functions' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- [Topics, suscripciones y entrega de Pub/Sub](#cloud-pubsub), incluidos push, filtros, claves de ordenación, StreamingPull, instantáneas y seek.
+- [Reenvío a dead-letter](#topics-dead-letter), con o sin los permisos de IAM de producción.
+- [Solicitudes de Pub/Sub con y sin credenciales](#autenticación).
+- [Eventos personalizados entregados a funciones `onCustomEventPublished`](#eventarc).
+- [Tareas entregadas a funciones `onTaskDispatched`](#cloud-tasks).
+
+## Conectar
+
+| Servicio | Dirección predeterminada | Variable de entorno | Inicio |
+|---|---|---|---|
+| Cloud Pub/Sub | `127.0.0.1:8085` | `PUBSUB_EMULATOR_HOST` | Cuando está configurado: `emulators.pubsub` en `firebase.json`, `daemon.pubsubPort`, `--pubsub-port` o `--only pubsub` |
+| Eventarc | `127.0.0.1:9299` | `CLOUD_EVENTARC_EMULATOR_HOST` | Cuando se carga un código base de Functions |
+| Cloud Tasks | `127.0.0.1:9499` | `CLOUD_TASKS_EMULATOR_HOST` | Cuando se carga un código base de Functions |
+
+`fireemu exec` establece `PUBSUB_EMULATOR_HOST`, que leen las bibliotecas cliente de Google Cloud (consulta [Variables de entorno](../../reference/environment-variables/)). Fireemu establece `CLOUD_EVENTARC_EMULATOR_HOST` y `CLOUD_TASKS_EMULATOR_HOST` cuando inicia esos listeners.
+
+## Cloud Pub/Sub
+
+Se admiten topics, suscripciones, publish, pull y acuse de recibo, entrega push, filtros, claves de ordenación, topics dead-letter, StreamingPull, instantáneas y seek. Para lo que no se admite, consulta [Diferencias con producción](#diferencias-con-producción).
+
+### Política de almacenamiento de mensajes del topic
+
+Con `profile = "emulator"`, el `messageStoragePolicy` de un topic (`allowedPersistenceRegions` y `enforceInTransit`) se almacena, lo devuelven get y list, y lo cambia `UpdateTopic` (REST `PATCH` con `updateMask`, máscaras `messageStoragePolicy` y sus dos miembros), exactamente como se envió, igual que hace el emulador oficial:
+
+- Una lista de regiones desconocida, repetida o vacía, y una política vacía, se conservan todas.
+- Una máscara que nombra la política pero no envía ninguna la elimina.
+- No se aplica nada: los mensajes no se enrutan por región.
+
+El perfil `strict` rechaza el campo con `UNIMPLEMENTED` (REST 501) y una explicación. Producción comprueba cada región contra la lista de regiones de Pub/Sub de Google Cloud (respondió `INVALID_ARGUMENT` para `no-such-region1` y aceptó `us-central1`), y Fireemu no tiene una copia citada de esa lista con la que comprobar. Omite el campo con `strict`, o selecciona el perfil emulator para conservarlo.
+
+### Nombre de clave y etiquetas del topic
+
+Con `profile = "emulator"`, `kmsKeyName` y `tags` del topic se almacenan tal como se envían y se devuelven por REST y gRPC sin validación ni aplicación. `UpdateTopic` puede sustituir o borrar `kms_key_name`; las etiquetas son inmutables.
+
+El perfil strict rechaza estos campos porque la validación de producción depende de inventarios y permisos de Cloud KMS y Resource Manager que Fireemu no tiene. El emulador oficial 0.8.35 almacena estos valores sin validar y rechaza todas las máscaras de actualización; el comportamiento de producción no está grabado.
+
+### Topics dead-letter
+
+Con `strict`, un mensaje que agota `maxDeliveryAttempts` se reenvía al topic dead-letter sin número de proyecto y sin permisos de IAM, con los atributos de metadatos que añade producción.
+
+Producción reenvía solo después de que el agente de servicio de Pub/Sub tenga `roles/pubsub.subscriber` en la suscripción y `roles/pubsub.publisher` en el topic dead-letter. Para exigir los mismos permisos mediante `SetIamPolicy`, establece `pubsub.deadLetterAuthorization` en `"iam"` (o `productionExact`, o nombra `pubsub.projectNumbers`). El banner de inicio nombra entonces el agente de servicio al que conceder los permisos.
+
+### 404 en caché en el frontend REST (`pubsub.restNegativeCache`)
+
+El frontend REST de producción puede responder a un `GET` de una suscripción con un `404` en caché justo después de crear la suscripción. `pubsub.restNegativeCache` es `"off"` de forma predeterminada, en todos los perfiles, y `productionExact` no lo selecciona.
+
+Establecer la clave en `"production"` (solo perfil strict) modela que un `404` real de un `GET` o `PATCH` arma una entrada de caché para `GET`, `PATCH` o `DELETE` de la misma suscripción en la **misma conexión**, de modo que el `PATCH` o `DELETE` no se ejecuta.
+
+Qué hace el modelo y qué queda abierto:
+
+- **La ventana.** El borde no es nítido: una grabación perdió todas las lecturas de 10,25 s a 10,50 s, otra acertó a 10,40 a 10,50 s junto a fallos en las mismas edades, y grabaciones anteriores acertaron hasta 10,20 s. Producción es no determinista alrededor de 10,2 a 10,5 s; la ventana determinista de 10,35 s de fireemu es una diferencia conocida.
+- **Un `GET` 200 antes del 404.** Un `GET` 200 siete segundos antes del 404 lo eximió en ambas ejecuciones v5; cuatro y 13 segundos siguen abiertos. El modelo exime un `GET` 200 dentro de su ventana.
+- **DELETE y nombres nunca creados.** El armado por DELETE 404 y la activación para nombres nunca creados siguen abiertos; el modelo no arma con DELETE y arma para nombres nunca creados.
+- **Lo que nunca se responde desde la entrada.** Otra conexión, un `:pull` o `:getIamPolicy`, una instantánea, un topic, gRPC y una solicitud con cadena de consulta.
+- **Lo que no la arma.** Una creación fallida y un `:seek` que responde `404`.
+
+La caducidad usa el reloj lógico del daemon. Si el reloj está congelado, avánzalo más allá de la ventana de 10,35 segundos, usa otra conexión o desactiva la caché para recuperarte de un 404 en caché.
+
+### Autenticación
+
+Con `strict`, se acepta una solicitud sin ninguna credencial, de modo que funcionan los clientes que usan `PUBSUB_EMULATOR_HOST` sin credenciales. Una solicitud que presenta una credencial se comprueba, y Fireemu no puede verificar un token OAuth real de Google sin conexión, así que esa solicitud se rechaza con 401. Usa un cliente sin credenciales contra el emulador, por ejemplo el cliente de Java con `NoCredentialsProvider`.
+
+Para las pruebas que necesitan una credencial, establece un token portador de prueba local. El endpoint acepta entonces solo `Authorization: Bearer <token>` con ese valor exacto, y rechaza las solicitudes sin credencial como lo hace producción:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[pubsub.authentication]
+# Require this non-empty local bearer token for strict-profile Pub/Sub requests.
+localBearerToken = "fixture-token"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "pubsub": {
+    "authentication": {
+      "localBearerToken": "fixture-token"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Usa un valor inventado; nunca reutilices una credencial de producción.
+
+## Eventarc
+
+Cuando se carga un código base de Functions, Fireemu inicia un listener de Eventarc en `127.0.0.1:9299` y establece `CLOUD_EVENTARC_EMULATOR_HOST`. Las funciones declaradas con `onCustomEventPublished` reciben los eventos publicados en su canal.
+
+El Admin SDK siempre pide a su credencial un token de acceso antes de publicar, y CI no tiene credencial de Google. Dale a la aplicación una credencial falsa:
+
+```js
+import { initializeApp } from 'firebase-admin/app';
+import { getEventarc } from 'firebase-admin/eventarc';
+
+const app = initializeApp({
+  projectId: 'demo-app',
+  credential: { getAccessToken: async () => ({ access_token: 'owner', expires_in: 3600 }) },
+});
+await getEventarc(app).channel('locations/us-central1/channels/firebase').publish({
+  type: 'com.example.thing.done',
+  source: 'https://example.com/things',
+  data: { id: 'e1' },
+});
+```
+
+De forma predeterminada, el listener no comprueba la credencial (`eventarc.authentication: "permissive"`), igual que no lo hace el emulador oficial. Con `"production"` (o `productionExact`), un portador ausente, mal formado o con forma de JWT se rechaza con el 401 de producción.
+
+## Cloud Tasks
+
+Cuando se carga un código base de Functions, Fireemu inicia un emulador de Cloud Tasks en `127.0.0.1:9499` y establece `CLOUD_TASKS_EMULATOR_HOST`. Las funciones de cola de tareas (`onTaskDispatched`) reciben las tareas encoladas para ellas, con sus límites de tasa y su configuración de reintentos. El `scheduleTime` de una tarea la retiene con `strict`; consulta [Colas de tareas](../functions/#task-queues) para las tareas en espera, **Run now** y el reloj virtual.
+
+## Diferencias con producción
+
+### Funciones de Pub/Sub no compatibles
+
+Los esquemas, la entrega de suscripciones a BigQuery y Cloud Storage, y algunas API como `UpdateTopic` no son compatibles. Con el perfil emulator, `UpdateTopic` cambia los campos descritos en [Política de almacenamiento de mensajes del topic](#política-de-almacenamiento-de-mensajes-del-topic) y [Nombre de clave y etiquetas del topic](#nombre-de-clave-y-etiquetas-del-topic).
+
+### Campos que rechaza el perfil `strict`
+
+- `messageStoragePolicy`: consulta [Política de almacenamiento de mensajes del topic](#política-de-almacenamiento-de-mensajes-del-topic).
+- `kmsKeyName` y `tags`: consulta [Nombre de clave y etiquetas del topic](#nombre-de-clave-y-etiquetas-del-topic).
+
+### Otras diferencias
+
+- El reenvío a dead-letter no necesita permisos de IAM salvo que los pidas; consulta [Topics dead-letter](#topics-dead-letter).
+- La caché negativa de REST está desactivada de forma predeterminada. Cuando está activada, su ventana de 10,35 s es determinista y la de producción no; consulta [404 en caché en el frontend REST](#404-en-caché-en-el-frontend-rest-pubsubrestnegativecache).
+- Una solicitud de Pub/Sub con un token OAuth real de Google se rechaza con 401 con `strict`, porque el token no se puede verificar sin conexión; consulta [Autenticación](#autenticación).
+- El listener de Eventarc no comprueba la credencial salvo que `eventarc.authentication` sea `"production"`; consulta [Eventarc](#eventarc).
+
+## Relacionado
+
+- [Cloud Functions](../functions/)
+- [Colas de tareas](../functions/#task-queues)
+- [Perfiles](../../guides/profiles/)
+- [Variables de entorno](../../reference/environment-variables/)

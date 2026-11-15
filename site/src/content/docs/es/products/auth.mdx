@@ -1,0 +1,587 @@
+---
+title: Authentication
+description: Prueba en local los flujos de Firebase Authentication e Identity Platform, incluidos MFA con TOTP, multi-tenancy, proveedores OIDC y SAML y funciones de bloqueo.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Facts from '../../../../components/Facts.astro';
+
+Fireemu sirve Firebase Authentication con las funciones de Identity Platform: autenticación multifactor, incluido TOTP, multi-tenancy, proveedores OIDC y SAML, y funciones de bloqueo. Los SDK de cliente, el Admin SDK y las rutas REST de Identity Toolkit y Secure Token llegan a él por un único puerto.
+
+<Facts items={[
+  { label: 'Estado', value: 'Compatible' },
+  { label: 'Puerto predeterminado', value: '9099' },
+  { label: 'Inicio', value: 'De forma predeterminada' },
+  { label: 'Verificación en producción', value: 'Consulta las tablas de compatibilidad', href: 'compatibility/#production-verification' },
+]} />
+
+## Qué puedes probar
+
+- **Flujos de inicio de sesión y de cuenta sin mensajes reales.** Los enlaces de acción de correo y los códigos SMS se imprimen y se sirven por REST ([Mensajes de verificación locales](#mensajes-de-verificación-locales)).
+- **La configuración de tu proyecto**, declarada en `fireemu.toml` en lugar de establecerla mediante la Admin API en cada prueba ([Configura tu proyecto](#configura-tu-proyecto)).
+- **Segundos factores TOTP**, junto con SMS, usados a través de `TotpMultiFactorGenerator` del SDK ([guía paso a paso](#prueba-la-inscripción-y-el-inicio-de-sesión-con-totp)).
+- **Recursos de proveedores OIDC y SAML** declarados en `auth.providers`. Con `strict`, el inicio de sesión mediante un proveedor `oidc.*` o `saml.*` no declarado o deshabilitado se rechaza, igual que lo rechaza producción, y `auth.idpAssertions = "signed"` verifica localmente las aserciones firmadas ([Proveedores OIDC y SAML](#proveedores-oidc-y-saml)).
+- **Comprobaciones de tenant tal como las aplica producción.** Con `strict`, una solicitud que nombra un tenant que el proyecto no tiene se rechaza en lugar de crear el tenant ([Multi-tenancy](#multi-tenancy)).
+- **Funciones de bloqueo**, incluida `beforeEmailSent` con `strict` ([Funciones de bloqueo](#funciones-de-bloqueo)).
+- **Errores por superar la cuota de registro** ([Comportamiento al superar la cuota](#comportamiento-al-superar-la-cuota)).
+
+El emulador de Authentication de `firebase-tools` 15.28.2 admite segundos factores por teléfono (SMS), tenants, el inicio de sesión de prueba con `oidc.*` y `saml.*`, y las funciones de bloqueo `beforeCreate` y `beforeSignIn`. Fireemu añade segundos factores TOTP, recursos de proveedores OIDC y SAML declarados, las comprobaciones de tenant de producción con `strict` y la función de bloqueo `beforeEmailSent` con `strict`.
+
+Las [tablas de compatibilidad](../../compatibility/) muestran qué áreas se comparan con grabaciones de proyectos reales de Firebase. [Limitaciones](../../compatibility/limitations/) enumera lo que no es compatible.
+
+## Conectar
+
+El emulador de Authentication escucha en `127.0.0.1:9099` de forma predeterminada (`--http-port` o `firebase.json` lo cambian).
+
+```js
+// Web SDK
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+const auth = getAuth(app);
+connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+```
+
+El Admin SDK lee `FIREBASE_AUTH_EMULATOR_HOST`. Con `fireemu exec` se establece en `127.0.0.1:9099` para tu comando. Con `fireemu up`, defínela tú mismo: `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099`. Consulta [Conecta tu aplicación](../../getting-started/connect/) y las [variables de entorno](../../reference/environment-variables/).
+
+## Mensajes de verificación locales
+
+Fireemu imprime los enlaces de acción de correo y los códigos de verificación SMS locales en la salida estándar del daemon (y en el emulador de Logging) a medida que se emiten, de modo que puedes completar los flujos de inicio de sesión y de gestión de cuentas sin enviar mensajes reales. Estas líneas contienen credenciales de las cuentas del emulador local; trata los registros capturados en consecuencia al compartir la salida de las pruebas. Una ejecución imprime, por ejemplo:
+
+```text
+  auth codes:       email action links and SMS codes are printed here as they are issued (they are credentials: do not forward this output to CI or shared logs; auth.logActionCodes = false silences them)
+  auth: To verify the email address ada@example.test, follow this link: http://127.0.0.1:9099/emulator/action?mode=verifyEmail&lang=en&oobCode=oob-3fb5430a00cf9e1a0002&apiKey=fake-api-key
+  auth: To reset the password for ada@example.test, follow this link: http://127.0.0.1:9099/emulator/action?mode=resetPassword&lang=en&oobCode=oob-039b95aa9467d4c80003&apiKey=fake-api-key&newPassword=NEW_PASSWORD_HERE
+  auth: To verify the phone number +15555550100, use the code 551768.
+```
+
+Una prueba lee esos mismos valores de las rutas REST del emulador en lugar de analizar la consola. Cada ruta devuelve los códigos emitidos hasta el momento para el proyecto:
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/oobCodes
+# {"oobCodes":[{"email":"ada@example.test","oobCode":"oob-3fb5430a00cf9e1a0002","oobLink":"http://127.0.0.1:9099/emulator/action?mode=verifyEmail&...","requestType":"VERIFY_EMAIL"}, ...]}
+
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
+# {"verificationCodes":[{"code":"551768","phoneNumber":"+15555550100","sessionInfo":"sms-4e2ee8b8ae04bce80004"}]}
+```
+
+`auth.logActionCodes = false` detiene las líneas de la consola (para un registro compartido o capturado); las rutas REST siguen funcionando. `--log-verbosity quiet` también las silencia.
+
+## Configura tu proyecto
+
+La sección `auth` de `fireemu.toml` declara la configuración del proyecto de la que depende tu aplicación, de modo que una prueba no tenga que establecerla mediante la Admin API cada vez.
+
+| Área | Qué puedes configurar | Ajustes |
+|---|---|---|
+| Inicio de sesión básico y cuentas | Habilitar o deshabilitar el inicio de sesión con correo y contraseña, anónimo y por teléfono | `auth.signIn` |
+| | Dominios autorizados para las URL de continuación de los enlaces de acción | `auth.authorizedDomains` |
+| | Cuentas que comparten una dirección de correo | `auth.signIn.allowDuplicateEmails` |
+| | Requisitos de contraseña y su aplicación al iniciar sesión | `auth.passwordPolicy` |
+| | Creación y eliminación de cuentas por parte del usuario final | `auth.client.permissions` |
+| | Protección contra la enumeración de correos | `auth.improvedEmailPrivacy` |
+| Seguridad avanzada y autenticación multifactor | Autenticación multifactor | `auth.mfa` (y `auth.totp` en el perfil `emulator`) |
+| | Claves públicas para verificar tokens personalizados y tokens de ID de OIDC | `auth.customTokenSigners`, `auth.idpSigners` |
+| | Aserciones de proveedores de identidad de prueba, o aserciones firmadas verificadas como lo hace producción | `auth.idpAssertions` |
+| Empresa y multi-tenant | Tenants y el interruptor de multi-tenancy | `auth.tenants`, `auth.multiTenant` |
+| | Sustituciones por proyecto y por tenant | `auth.passwordPolicyOverrides`, `auth.configOverrides` |
+| | Funciones de bloqueo | `auth.blockingFunctions` |
+| | Proveedores OIDC y SAML | `auth.providers.oidc`, `auth.providers.saml` |
+| Pruebas y simulaciones | Números de teléfono de prueba y códigos de verificación | `auth.signIn.phoneNumber.testPhoneNumbers` |
+| | Tokens personalizados del emulador sin firma (se aceptan de forma predeterminada; se rechazan con `productionExact`) | `auth.allowUnsignedCustomTokens` |
+| | La alternativa del token de ID simulado sin firma en las Security Rules de Firestore, Storage y Realtime Database (activada de forma predeterminada; desactivada con `productionExact`) | `auth.allowUnsignedIdTokens` |
+| | Cuota de registro y simulación local de superación de cuota | `auth.quota`, `auth.quotaSimulation` |
+| | Impresión en la consola de los enlaces de acción de correo y los códigos SMS (activada de forma predeterminada) | `auth.logActionCodes` |
+
+Este ejemplo habilita el inicio de sesión con correo y contraseña y por teléfono, deshabilita el inicio de sesión anónimo, exige contraseñas de al menos 12 caracteres con mayúsculas, minúsculas y caracteres numéricos, e impide que los usuarios eliminen sus propias cuentas:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/main/spec/config/fireemu.schema.json
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[auth]
+# Enable email enumeration protection: true or false.
+improvedEmailPrivacy = true
+
+[auth.signIn]
+# Allow duplicate sign-in emails: true or false.
+allowDuplicateEmails = false
+
+[auth.signIn.email]
+# Enable email sign-in: true or false.
+enabled = true
+# Require a password for email sign-in: true or false.
+passwordRequired = true
+
+[auth.signIn.anonymous]
+# Enable anonymous sign-in: true or false.
+enabled = false
+
+[auth.signIn.phoneNumber]
+# Enable phone number sign-in: true or false.
+enabled = true
+
+[auth.signIn.phoneNumber.testPhoneNumbers]
+# Map a test phone number in E.164 format to a verification code string.
+"+16505550101" = "123456"
+
+[auth.passwordPolicy]
+# Password policy enforcement: "OFF" or "ENFORCE".
+enforcementState = "ENFORCE"
+# Require policy upgrades on sign-in: true or false.
+forceUpgradeOnSignin = true
+
+[auth.passwordPolicy.constraints]
+# Minimum password length: 6 to 30.
+minLength = 12
+# Require an uppercase character: true or false.
+requireUppercase = true
+# Require a lowercase character: true or false.
+requireLowercase = true
+# Require a numeric character: true or false.
+requireNumeric = true
+
+[auth.client.permissions]
+# Disable client user sign-up: true or false.
+disabledUserSignup = false
+# Disable client user deletion: true or false.
+disabledUserDeletion = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "improvedEmailPrivacy": true,
+    "signIn": {
+      "allowDuplicateEmails": false,
+      "email": {
+        "enabled": true,
+        "passwordRequired": true
+      },
+      "anonymous": {
+        "enabled": false
+      },
+      "phoneNumber": {
+        "enabled": true,
+        "testPhoneNumbers": {
+          "+16505550101": "123456"
+        }
+      }
+    },
+    "passwordPolicy": {
+      "enforcementState": "ENFORCE",
+      "forceUpgradeOnSignin": true,
+      "constraints": {
+        "minLength": 12,
+        "requireUppercase": true,
+        "requireLowercase": true,
+        "requireNumeric": true
+      }
+    },
+    "client": {
+      "permissions": {
+        "disabledUserSignup": false,
+        "disabledUserDeletion": true
+      }
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+En un `fireemu.toml` existente, añade los ajustes que necesites a su sección `auth` y adapta los valores a los requisitos de tu aplicación. El [esquema de configuración](../../reference/configuration/) indica el formato y los valores aceptados de cada ajuste.
+
+### Dominios autorizados
+
+Declara `auth.authorizedDomains`, por ejemplo `["localhost", "app.test"]`, para establecer la lista inicial de todo el proyecto en cualquiera de los perfiles.
+
+- La lista sustituye a los valores predeterminados, así que incluye `localhost` si tus pruebas lo usan. Una lista vacía no autoriza ningún host con `strict`. Un ajuste ausente o `null` conserva los valores predeterminados existentes (`localhost` y los dominios `firebaseapp.com` y `web.app` del proyecto).
+- La validación usa las reglas de la Admin API para el perfil seleccionado, incluida su conversión de las entradas numéricas y booleanas a cadenas y la omisión de las entradas `null`. Usa cadenas al escribir la lista.
+- Fireemu mantiene `localhost` de forma intencionada en sus valores predeterminados para el desarrollo. La [línea base grabada en el sandbox de producción](https://github.com/fireemu/fireemu/blob/main/conformance/auth-action-production.json) no lo incluye, y es posible que los proyectos de producción nuevos tampoco lo incluyan. Este valor predeterminado es una comodidad exclusiva de Fireemu, y declarar la lista lo sustituye.
+- En el perfil `strict`, un enlace de acción solicitado para un tenant comprueba el host de su `continueUrl` con esta misma lista del proyecto tal como está en ese momento (los dominios autorizados pertenecen al proyecto; un tenant no tiene los suyos propios), y de nuevo cuando la solicitud se confirma si se ejecutó una función `beforeSendEmail`. El perfil `emulator` no comprueba ningún dominio. El alcance por tenant sigue el modelo de recursos; producción registró esta comprobación solo para el alcance del proyecto.
+- En el perfil `strict`, `GET /v1/projects` para una solicitud que nombra un tenant mediante la consulta `tenantId` informa de la misma lista vigente del proyecto. El SDK de JavaScript de Firebase comprueba su origen con esta lista y no envía ningún tenant en esa llamada. El perfil `emulator` ignora el tenant en ese punto, como hace el emulador oficial.
+- Una actualización de Admin cambia la lista vigente. Un restablecimiento de sesión restaura la lista declarada, si existe, y conserva una lista escrita por Admin cuando no se declaró ninguna lista inicial.
+- Los proyectos creados después reciben la declaración palabra por palabra, con independencia de la lista vigente del proyecto predeterminado. Por tanto, incluir el dominio `firebaseapp.com` o `web.app` de un proyecto concreto hace que los proyectos posteriores reciban ese mismo dominio.
+- Borrar las cuentas no modifica la lista vigente. La exportación/importación de Auth transporta las cuentas sin la lista de dominios ni su declaración.
+- El perfil `emulator` acepta el ajuste y expone la lista, pero sigue permitiendo URL de continuación de enlaces de acción fuera de ella.
+
+### Ajustes específicos de proyecto y de tenant
+
+Usa `auth.passwordPolicyOverrides` para dar políticas de contraseña distintas a proyectos o tenants concretos. Usa `auth.configOverrides` para personalizar los permisos de creación y eliminación de cuentas y la protección contra la enumeración de correos.
+
+Estos ajustes no crean el proyecto ni el tenant. Nombrar un tenant en `auth.configOverrides` o en `auth.passwordPolicyOverrides` no lo crea; decláralo en `auth.tenants` para que se cree.
+
+### Proveedores OIDC y SAML
+
+Declara los recursos OIDC y SAML del proyecto con `auth.providers.oidc` y `auth.providers.saml`, usando los campos de recurso de Admin v2 y un `name` que sea solo el ID, como `oidc.fixture` o `saml.fixture`. Los nombres de recurso completos se rechazan. Esto inicializa un proveedor OIDC en ambos perfiles:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[[auth.providers.oidc]]
+# Provider id, in the form oidc.<id> (a full resource name is refused)
+name = "oidc.fixture"
+enabled = true
+clientId = "local-client"
+issuer = "https://issuer.test"
+
+[auth.providers.oidc.responseType]
+idToken = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "auth": {
+    "providers": {
+      "oidc": [
+        {
+          "name": "oidc.fixture",
+          "enabled": true,
+          "clientId": "local-client",
+          "issuer": "https://issuer.test",
+          "responseType": { "idToken": true }
+        }
+      ]
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- **Aserciones de prueba (el valor predeterminado).** Ambos perfiles aceptan las aserciones de prueba que acepta el emulador oficial (un token de ID JSON o sin firma, una respuesta SAML en JSON, el widget de inicio de sesión). El perfil `emulator` las acepta tanto si el proveedor está declarado como si no. El perfil `strict` rechaza un proveedor `oidc.*` o `saml.*` que no esté declarado (o que esté deshabilitado), como hace producción.
+- **Aserciones firmadas.** Con `auth.idpAssertions` establecido en `"signed"` (o con `productionExact`, o con `auth.idpSigners` presente), el inicio de sesión OIDC con `strict` necesita claves públicas del emisor coincidentes en `auth.idpSigners`; no se obtiene ninguna clave. El SAML con `strict` usa entonces los certificados declarados del proveedor y conserva sus comprobaciones de aserción existentes.
+- **Las matrices declaradas sustituyen.** Cada matriz declarada sustituye a ese tipo de proveedor. `[]` lo inicia explícitamente vacío, mientras que un tipo ausente o `null` no declara ningún recurso inicial.
+- **Cambios en vivo.** Las operaciones de Admin cambian los recursos vigentes hasta que un restablecimiento de sesión restaura los tipos declarados. Las sesiones y los proyectos enrutados posteriores heredan la declaración con independencia de los cambios vigentes del proyecto predeterminado. Los recursos de tenant y los proveedores integrados siguen siendo independientes.
+- **Restablecimiento, instantáneas y exportación.** Borrar las cuentas conserva los recursos vigentes. Las instantáneas y la exportación/importación de Auth no transfieren recursos de proveedor ni declaraciones.
+- **Perfil emulator.** Sigue aceptando sus credenciales de prueba sin firma sin exigir recursos de proveedor configurados o habilitados.
+- **Solo archivos canónicos.** Estas declaraciones requieren un documento canónico con `schemaVersion = 1`. Una sección `auth.providers` de un despliegue de Firebase sin esa versión sigue siendo un dato de despliegue y no instala ninguna semilla de proveedor.
+
+## Autenticación multifactor
+
+Fireemu admite segundos factores TOTP y SMS. El emulador oficial de Authentication admite únicamente segundos factores por teléfono (SMS).
+
+Con `strict`, TOTP se habilita solo mediante la configuración de MFA del proyecto, como en producción. Esa configuración está activada de forma predeterminada (SMS y TOTP habilitados), así que inscribir un segundo factor no requiere activar nada en la consola, ni llamar a la Admin API, ni un bloque `auth.mfa`. Con `productionExact`, un proyecto nuevo empieza con MFA desactivado, como en producción, y la inscripción responde `OPERATION_NOT_ALLOWED` hasta que se habilite.
+
+Declara la configuración con `auth.mfa`, con la forma que usa Identity Platform, para reflejar tu proyecto o para desactivar MFA (`auth.mfa.state = "DISABLED"`). Un bloque declarado siempre decide:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[auth.mfa]
+# Project MFA state: "STATE_UNSPECIFIED", "DISABLED", "ENABLED", or "MANDATORY".
+state = "ENABLED"
+
+[[auth.mfa.providerConfigs]]
+# Provider state: "STATE_UNSPECIFIED", "DISABLED", "ENABLED", or "MANDATORY".
+state = "ENABLED"
+
+[auth.mfa.providerConfigs.totpProviderConfig]
+# Accepted adjacent TOTP intervals: 0 to 10.
+adjacentIntervals = 1
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "mfa": {
+      "state": "ENABLED",
+      "providerConfigs": [
+        {
+          "state": "ENABLED",
+          "totpProviderConfig": {
+            "adjacentIntervals": 1
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- La configuración se aplica cuando arranca el daemon, en ambos perfiles, y a todos los proyectos creados después (no al valor actual del proyecto predeterminado). Se valida como la Admin API valida una actualización de `mfa`, y un valor que producción rechazaría detiene el daemon en el arranque.
+- Nada más cambia. Una actualización de la Admin API sustituye la configuración actual, y deshabilitar MFA rechaza TOTP como hace producción. Un tenant sigue su propio `mfaConfig`, no este ajuste. La ventana de TOTP aceptada sigue siendo `auth.totp.windowSteps` salvo que la configuración establezca `adjacentIntervals`.
+- `POST /v1/sessions/{session}/reset` devuelve el proyecto a la configuración declarada, o a la predeterminada (SMS y TOTP habilitados) si no se declaró ninguna. Con `productionExact` y sin `auth.mfa`, un restablecimiento deja intacta una configuración establecida mediante la Admin API, igual que el resto de la configuración del proyecto. `DELETE /emulator/v1/projects/{project}/accounts` solo borra las cuentas.
+- Una exportación no incluye la configuración `mfa` del proyecto, así que un proyecto importado conserva su propio `auth.mfa` o la configuración establecida por Admin.
+- El perfil `emulator` mantiene `auth.totp` en funcionamiento. Con `strict`, `auth.totp` basta de forma predeterminada; con `productionExact`, o con un `auth.mfa` que deja TOTP desactivado, imprime una advertencia de arranque que nombra `auth.mfa`.
+
+### Prueba la inscripción y el inicio de sesión con TOTP
+
+Una prueba obtiene el secreto TOTP del propio SDK: `TotpMultiFactorGenerator.generateSecret(session)` devuelve un `TotpSecret` cuyo `secretKey` es el secreto compartido en base32, con `hashingAlgorithm`, `codeLength` y `codeIntervalSeconds`. El SDK no tiene ninguna función que calcule un código, así que la prueba calcula el código RFC 6238 con esos valores, como lo haría una aplicación de autenticación. Una pista de inicio de sesión (`resolver.hints`) contiene el `uid`, el `displayName` y el `enrollmentTime` del factor, nunca el secreto.
+
+Inscribir un segundo factor requiere una dirección de correo verificada, como en producción (si no, `auth/unverified-email`). La prueba la verifica con el enlace de acción que emitió el emulador, leído de la ruta `oobCodes` ([Mensajes de verificación locales](#mensajes-de-verificación-locales)). Este flujo se ejecutó contra un `fireemu up` local (0.48.0, perfil `strict`, configuración de MFA predeterminada) con `firebase` 12.18.0:
+
+```js
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth, connectAuthEmulator, createUserWithEmailAndPassword, sendEmailVerification,
+  applyActionCode, reauthenticateWithCredential, EmailAuthProvider, multiFactor,
+  TotpMultiFactorGenerator, signInWithEmailAndPassword, getMultiFactorResolver, signOut,
+} from 'firebase/auth';
+import { createHmac } from 'node:crypto';
+
+const BASE = 'http://127.0.0.1:9099';
+const auth = getAuth(initializeApp({ projectId: 'demo-shop', apiKey: 'fake-api-key' }));
+connectAuthEmulator(auth, BASE, { disableWarnings: true });
+
+// RFC 6238 code from a TotpSecret (base32 key, period, digits, algorithm).
+function totp(secret, atMs = Date.now()) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const bits = [...secret.secretKey.replace(/=+$/, '')]
+    .map((c) => alphabet.indexOf(c).toString(2).padStart(5, '0')).join('');
+  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)));
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(atMs / 1000 / secret.codeIntervalSeconds)));
+  const h = createHmac(secret.hashingAlgorithm.toLowerCase(), key).update(counter).digest();
+  const o = h[h.length - 1] & 15;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 10 ** secret.codeLength).padStart(secret.codeLength, '0');
+}
+
+const email = 'grace@example.test';
+const password = 'demo-pass-123';
+const { user } = await createUserWithEmailAndPassword(auth, email, password);
+
+// Verify the email with the action code the emulator issued.
+await sendEmailVerification(user);
+const { oobCodes } = await (await fetch(`${BASE}/emulator/v1/projects/demo-shop/oobCodes`)).json();
+await applyActionCode(auth, oobCodes.findLast((c) => c.email === email && c.requestType === 'VERIFY_EMAIL').oobCode);
+await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, password));
+
+// Enroll: the secret comes from the SDK, the code from the helper above.
+const secret = await TotpMultiFactorGenerator.generateSecret(await multiFactor(user).getSession());
+await multiFactor(user).enroll(
+  TotpMultiFactorGenerator.assertionForEnrollment(secret, totp(secret)), 'Authenticator');
+await signOut(auth);
+
+// The enrollment code used up its time step; sign in with a code from the next one.
+const period = secret.codeIntervalSeconds * 1000;
+await new Promise((r) => setTimeout(r, period - (Date.now() % period) + 500));
+
+try {
+  await signInWithEmailAndPassword(auth, email, password);
+} catch (error) {
+  if (error.code !== 'auth/multi-factor-auth-required') throw error;
+  const resolver = getMultiFactorResolver(auth, error);
+  const hint = resolver.hints.find((h) => h.factorId === TotpMultiFactorGenerator.FACTOR_ID);
+  const credential = await resolver.resolveSignIn(
+    TotpMultiFactorGenerator.assertionForSignIn(hint.uid, totp(secret)));
+  console.log('signed in as', credential.user.email);
+}
+```
+
+Una inscripción TOTP correcta consume el intervalo de tiempo aceptado. Reutilizar ese código para iniciar sesión en el mismo intervalo se rechaza, por eso el ejemplo espera al siguiente. En una prueba con tiempo virtual, avanza el reloj del mundo según el periodo real del secreto y genera el código de inicio de sesión para ese nuevo instante; consulta la [receta de prueba de TOTP](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code).
+
+## Multi-tenancy
+
+Multi-tenancy está activada de forma predeterminada, así que la Admin API crea tenants y `auth.tenants` se carga sin habilitar nada antes. Con `productionExact`, un proyecto nuevo empieza como en producción, con los tenants rechazados hasta que `multiTenant.allowTenants` se habilite mediante la Admin API o en el archivo. `auth.multiTenant.allowTenants: false` la desactiva en cualquiera de los dos casos. Cada entrada de `auth.tenants` es un documento `Tenant` de Admin v2 más su `tenantId`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+
+[auth.multiTenant]
+# Allow tenants in the project: true or false.
+allowTenants = true
+
+[[auth.tenants]]
+# Tenant ID: starts with a letter; up to 63 letters, digits, or hyphens.
+tenantId = "tenant-a"
+# Tenant display name: 4 to 20 letters, digits, or hyphens, starting with a letter.
+displayName = "acme"
+# Allow password sign-up for this tenant.
+allowPasswordSignup = true
+
+[auth.tenants.mfaConfig]
+# Tenant multi-factor state.
+state = "ENABLED"
+# Multi-factor providers enabled for the tenant.
+enabledProviders = ["PHONE_SMS"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "auth": {
+    "multiTenant": {
+      "allowTenants": true
+    },
+    "tenants": [
+      {
+        "tenantId": "tenant-a",
+        "displayName": "acme",
+        "allowPasswordSignup": true,
+        "mfaConfig": {
+          "state": "ENABLED",
+          "enabledProviders": [
+            "PHONE_SMS"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+De forma predeterminada, un ID de tenant puede ser cualquier nombre legible que empiece con una letra y contenga letras, dígitos y guiones (hasta 63 caracteres), como `tenant-a`. Con `productionExact` o `auth.tenantIdFormat: "generated"`, debe tener la forma que genera producción: el nombre para mostrar, un guion y cinco caracteres de `a-z0-9`, como `acme-x7k2q`.
+
+- Un documento se lee con el mismo código con el que la ruta de creación de tenants de Admin lee uno, así que un valor que producción rechaza detiene el daemon en el arranque. Los tenants se crean vacíos, en el orden del archivo, y ajustes como `mfaConfig` y `passwordPolicyConfig` proceden del documento. En el perfil `emulator`, el archivo es más estricto que la ruta: también rechaza un miembro desconocido y un `displayName` ausente o no válido, como hace producción.
+- Un tenant declarado tiene lo que da una creación de Admin con ese documento: un `allowPasswordSignup`, `enableEmailLinkSignin` o `enableAnonymousUser` omitido está desactivado, y la autenticación multifactor está desactivada. Un tenant que el perfil `emulator` crea por el camino para una solicitud que nombra un ID desconocido recibe en su lugar los valores predeterminados del emulador oficial (los tres activados, multifactor `PHONE_SMS`), así que declara lo que necesite tu prueba.
+- Con el perfil `strict`, los tenants se crean solo en un proyecto que los permite, como en producción. Un proyecto nuevo los permite de forma predeterminada; con `productionExact`, o con `allowTenants: false` declarado, `auth.tenants` necesita `auth.multiTenant.allowTenants: true` (de lo contrario, el daemon se niega a arrancar). El perfil `emulator` acepta tenants sin el interruptor.
+- El proyecto predeterminado y todos los proyectos de sesión (`POST /v1/sessions`) empiezan con el interruptor y los tenants declarados. `POST /v1/sessions/{session}/reset` (incluido el de la sesión predeterminada) los crea de nuevo, vacíos, y devuelve el interruptor al valor declarado; sin estas claves, un restablecimiento deja intacto un interruptor establecido por Admin. Un espacio de nombres que el perfil `emulator` crea para un ID de proyecto desconocido (como hace el emulador oficial) también empieza con el interruptor y los tenants declarados: lo crean las solicitudes que ya crearon uno (un usuario, un proveedor o un ajuste de proyecto escrito allí) y una solicitud que escribe un tenant allí (creando uno, o nombrando uno que aún no existe), no una simple lectura. Una sesión creada para ese ID de proyecto (`POST /v1/sessions`) sustituye el espacio de nombres, tenants incluidos, y empieza con los declarados.
+- Con `--import`, un tenant importado es la referencia para su ID, y un tenant declarado que la importación no incluía se crea igualmente. Si reimportas continuamente tu propia exportación (`--import dir --export-on-exit dir`), una modificación de un tenant declarado se ignora, por tanto, una vez que existe su copia exportada: el daemon imprime una advertencia que nombra el tenant cuando el documento del tenant importado difiere del declarado (se compara cada ajuste que el archivo puede declarar). El interruptor funciona al revés: un `allowTenants` declarado prevalece sobre la importación. Tras un restablecimiento vuelve la versión declarada de un tenant, no la importada.
+
+### Tenants que crea una solicitud
+
+Con el perfil `emulator`, una solicitud con una clave de API o un encabezado Authorization que nombra un tenant que el proyecto no tiene crea ese tenant, y el número de tenants no está limitado, como en el emulador oficial. `strict` rechaza esa solicitud, como hace producción. Una solicitud que Fireemu rechaza (una credencial incorrecta, una página del navegador sin el token de control en las rutas del emulador, App Check, una clave de API desconocida) no crea nada.
+
+Igual que en el emulador oficial, un `GET` simple sin encabezado `Origin` a una ruta de tenant de `127.0.0.1` crea el tenant, de modo que cualquier página web que visites mientras el emulador está en ejecución puede añadirle tenants (no leerlos). Usa el perfil `strict` donde eso importe.
+
+### Solicitudes de cliente sin clave de API
+
+En el perfil `emulator`, Fireemu sirve las solicitudes de cliente de Identity Toolkit y Secure Token sin clave de API ni encabezado `Authorization` como una extensión local; esas solicitudes no pueden crear implícitamente un tenant que falta. Establece `auth.requireClientApiKey` en `true` para devolver el 403 del emulador oficial en estas solicitudes. El valor predeterminado es `false`; el perfil `strict` no cambia.
+
+Consulta la [documentación de compatibilidad](https://github.com/fireemu/fireemu/blob/main/docs/compatibility-contract.md) para conocer el alcance admitido de la Admin API.
+
+## Tokens
+
+Fireemu acepta algunos tokens sin firma de forma predeterminada, para que las pruebas no necesiten claves de firma. Cada valor predeterminado tiene su propio ajuste, y [`productionExact`](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose) los cambia todos al comportamiento de producción:
+
+| Valor predeterminado de desarrollo | Ajuste | Con `productionExact` |
+|---|---|---|
+| Se aceptan los tokens personalizados sin firma del Admin SDK en modo emulador | `auth.allowUnsignedCustomTokens` | Rechazados; configura `auth.customTokenSigners` con las claves públicas de tus cuentas de servicio |
+| Las Security Rules de Firestore, Storage y Realtime Database aceptan el token de ID simulado sin firma de `@firebase/rules-unit-testing` | `auth.allowUnsignedIdTokens` | La alternativa del token simulado se deshabilita, como producción rechaza un token sin firma; los tokens emitidos por fireemu que superan la verificación normal se siguen aceptando |
+| El inicio de sesión con proveedores de identidad acepta aserciones de prueba y el widget de inicio de sesión | `auth.idpAssertions` (`"fixture"`) | `"signed"`: los tokens de ID de OIDC deben verificarse con una clave de `auth.idpSigners`, y las respuestas SAML con los certificados del proveedor |
+
+Las aserciones de prueba omiten solo la comprobación de la firma. Con `strict`, el inicio de sesión mediante un proveedor `oidc.*` o `saml.*` se sigue rechazando cuando el proveedor no tiene configuración (declárala en `auth.providers` o créala mediante la Admin API) o está deshabilitado, con los mensajes de producción `OPERATION_NOT_ALLOWED : The identity provider configuration is not found.` o `... is disabled.`. Los proveedores integrados como `google.com` inician sesión sin configuración en la consola; consulta [Otras comodidades de desarrollo](../../guides/profiles/#other-development-conveniences).
+
+### Tokens personalizados
+
+Los tokens personalizados sin firma generados por el Firebase Admin SDK en modo emulador se aceptan de forma predeterminada, también con el perfil recomendado `strict` y con `auth.customTokenSigners` configurado. Para exigir tokens personalizados firmados, establece `auth.allowUnsignedCustomTokens` en `false` y configura `auth.customTokenSigners` con los conjuntos de JWK públicas de las cuentas de servicio. El ajuste se aplica solo al inicio de sesión con token personalizado; las comprobaciones estrictas de claims y la verificación de tokens firmados siguen aplicándose. En el perfil `emulator`, establecerlo en `false` también deshabilita los tokens personalizados falsos en JSON.
+
+### Tokens de ID simulados sin firma
+
+El token de ID simulado sin firma de `@firebase/rules-unit-testing` se acepta de forma predeterminada cuando se evalúan las Security Rules de Firestore, Storage y Realtime Database, también con el perfil `strict`. Es el token que envían `authenticatedContext()` y la opción `mockUserToken` de los SDK de cliente (`createMockUserToken` en `@firebase/util`).
+
+- La verificación normal se ejecuta primero. Solo después de que falle puede la alternativa del token simulado aceptar un token.
+- Con `strict`, esa alternativa acepta únicamente la forma exacta del SDK: un JWT cuyo encabezado es exactamente `{"alg":"none","type":"JWT"}` y cuya firma está vacía. `request.auth` se construye a partir de los claims del token, como lo construye el emulador oficial, cuando el token nombra un sujeto (`sub`) y su audiencia (`aud`) es el proyecto al que va la solicitud. Su `exp` no se comprueba, porque el SDK establece `iat: 0` y `exp: 3600` de forma predeterminada.
+- Todos los demás tokens se verifican como antes, incluida la caducidad. Eso abarca los tokens de ID sin firma que emite el propio fireemu (su encabezado lleva `typ`, no `type`), y un token que afirma una firma que no se verifica se sigue rechazando.
+- El perfil `emulator` acepta cualquier token sin firma, como hace el emulador oficial, y su Storage también acepta el token de otro proyecto.
+- Establece `auth.allowUnsignedIdTokens` en `false` (en cualquiera de los perfiles) o establece `productionExact` para deshabilitar esta alternativa. Ninguno de los dos ajustes rechaza los tokens de ID sin firma emitidos por fireemu que superan la verificación normal. Una sesión con `auth.idTokenSigning = "session-rsa"` no acepta ningún token sin firma.
+- El ajuste no afecta a las Functions invocables, a Identity Toolkit ni a App Check.
+
+Cambiar solo el encabezado de un token emitido a la forma del SDK puede seguir superando la verificación normal de su carga útil; no es una prueba de rechazo. Para una prueba de rechazo, usa `createMockUserToken` con sus valores predeterminados `iat: 0` / `exp: 3600`, o construye ese encabezado exacto y una firma vacía con esos tiempos, un sujeto y el proyecto enrutado como audiencia, y ejecuta con un reloj posterior a la caducidad (incluido el margen de 30 segundos de Firestore).
+
+### Tokens dentro de funciones
+
+`verifyIdToken` y `verifySessionCookie` del Admin SDK dentro de una función que ejecutas aquí omiten la verificación de la firma, porque el SDK acepta solo tokens sin firma siempre que `FIREBASE_AUTH_EMULATOR_HOST` está establecida (igual que con el emulador oficial). Por tanto, un manejador que autentica a los llamantes de esa manera acepta un token sin firma hecho a mano con los claims correctos, que producción rechaza. `auth.idTokenSigning = "session-rsa"` no puede solucionarlo, porque entonces el SDK rechaza también los tokens firmados. No te fíes de una llamada local a `verifyIdToken` para demostrar que los tokens falsificados se rechazan; prueba esa ruta contra una función desplegada.
+
+## Funciones de bloqueo
+
+`beforeUserCreated` y `beforeUserSignedIn` (y sus formas v1) se ejecutan dentro de la solicitud, como en producción. Con `strict`, `beforeEmailSent` también se ejecuta antes del correo de restablecimiento de contraseña o de inicio de sesión por correo. Se registran desde el código base de Functions cargado.
+
+`auth.blockingFunctions` es opcional. Selecciona qué función descubierta gestiona `beforeCreate` y `beforeSignIn`, y qué credenciales se le reenvían. Indicar su mapa `triggers` desactiva `beforeEmailSent`.
+
+## Comportamiento al superar la cuota
+
+Para probar los errores de cuota de registro, establece `auth.quotaSimulation`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+schemaVersion = 1
+
+[auth.quotaSimulation]
+# Sign-up quota simulation: "off", "observe", or "enforce".
+mode = "enforce"
+# Default hourly sign-up quota: 0 to 1,000,000.
+defaultQuotaPerHour = 5
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "auth": {
+    "quotaSimulation": {
+      "mode": "enforce",
+      "defaultQuotaPerHour": 5
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Es una simulación local de ventana fija, no la contabilidad de cuotas completa de Firebase ni su prevención de abusos.
+
+## Diferencias con producción
+
+### Fuera del alcance admitido
+
+Los flujos de inicio de sesión que se comunican con proveedores de identidad externos, el intercambio hospedado de códigos de autorización y el descubrimiento de claves en vivo quedan fuera del alcance admitido. Las aserciones OIDC y SAML firmadas de los proveedores que configures se verifican localmente; consulta [Proveedores OIDC y SAML](#proveedores-oidc-y-saml). [Limitaciones](../../compatibility/limitations/) tiene la lista completa.
+
+### Comportamiento local descrito en esta página
+
+Estos comportamientos difieren de producción y se describen donde corresponde:
+
+- Los tokens personalizados sin firma, el token de ID simulado sin firma y las aserciones de prueba de proveedores de identidad se aceptan hasta que `productionExact` o su propio ajuste los desactiva ([Tokens](#tokens)).
+- MFA y multi-tenancy están activadas en un proyecto nuevo; con `productionExact` ambas empiezan desactivadas ([Autenticación multifactor](#autenticación-multifactor), [Multi-tenancy](#multi-tenancy)).
+- `localhost` está en los dominios autorizados predeterminados ([Dominios autorizados](#dominios-autorizados)).
+- `verifyIdToken` y `verifySessionCookie` dentro de una función local omiten la verificación de la firma ([Tokens dentro de funciones](#tokens-dentro-de-funciones)).
+- La cuota de registro es una simulación local de ventana fija ([Comportamiento al superar la cuota](#comportamiento-al-superar-la-cuota)).
+
+## Relacionado
+
+- [Perfiles](../../guides/profiles/): `strict`, `emulator` y `productionExact`.
+- [Esquema de configuración](../../reference/configuration/): todos los ajustes de `auth`.
+- [Tablas de compatibilidad](../../compatibility/) y [Limitaciones](../../compatibility/limitations/).
+- [App Check](../app-check/): aplicación para las solicitudes de Authentication.
