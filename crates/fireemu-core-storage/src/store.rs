@@ -688,6 +688,8 @@ struct UploadSession {
     /// Credentials the session was started with (the protocol layer re-derives the caller
     /// from them at finalization).
     authorization: Option<String>,
+    /// The initiating JSON upload Origin, retained for cancelled-session CORS.
+    origin: Option<String>,
     /// The app the session was admitted for, when the initiation captured an enforced App
     /// Check policy. Continuations and the finalization must match it.
     admission: Option<UploadAdmission>,
@@ -711,6 +713,7 @@ impl UploadSession {
             precondition,
             total,
             authorization,
+            origin,
             admission,
             expected_md5,
             expected_crc32c,
@@ -727,6 +730,7 @@ impl UploadSession {
             precondition: *precondition,
             total: *total,
             authorization: authorization.clone(),
+            origin: origin.clone(),
             admission: admission.clone(),
             expected_md5: *expected_md5,
             expected_crc32c: *expected_crc32c,
@@ -936,6 +940,8 @@ pub struct StorageState {
     /// `false` disabled (RECORDED, FE v5: production keeps "disabled" apart from "never
     /// configured"). A bucket not listed was never configured and is unversioned.
     versioning: BTreeMap<BucketName, bool>,
+    /// Explicit bucket access configuration; unconfigured buckets default to false.
+    uniform_bucket_level_access: BTreeMap<BucketName, bool>,
     /// Generations that are no longer live, by `(bucket, name, generation)`. Their blobs are in
     /// `blobs` and count toward `stored_bytes`.
     noncurrent: BTreeMap<(BucketName, ObjectName, u64), NoncurrentVersion>,
@@ -1013,6 +1019,7 @@ impl StorageState {
             events: Vec::new(),
             production_order: false,
             versioning: BTreeMap::new(),
+            uniform_bucket_level_access: BTreeMap::new(),
             noncurrent: BTreeMap::new(),
             public_read: BTreeSet::new(),
             #[cfg(test)]
@@ -1234,6 +1241,7 @@ impl StorageState {
         self.objects.clear();
         self.noncurrent.clear();
         self.versioning.clear();
+        self.uniform_bucket_level_access.clear();
         self.public_read.clear();
         self.blobs.clear();
         self.stored_bytes = 0;
@@ -1257,6 +1265,8 @@ impl StorageState {
             }
         }
         self.versioning.retain(|b, _| !owned(b.as_str()));
+        self.uniform_bucket_level_access
+            .retain(|b, _| !owned(b.as_str()));
         self.public_read.retain(|(b, _, _)| !owned(b.as_str()));
     }
 
@@ -1366,6 +1376,12 @@ impl StorageState {
             events: Vec::new(),
             production_order: self.production_order,
             versioning,
+            uniform_bucket_level_access: self
+                .uniform_bucket_level_access
+                .iter()
+                .filter(|(b, _)| owned(b.as_str()))
+                .map(|(b, enabled)| (b.clone(), *enabled))
+                .collect(),
             noncurrent,
             public_read,
             #[cfg(test)]
@@ -1414,6 +1430,12 @@ impl StorageState {
         for (bucket, enabled) in &captured.versioning {
             if owned(bucket.as_str()) {
                 self.versioning.insert(bucket.clone(), *enabled);
+            }
+        }
+        for (bucket, enabled) in &captured.uniform_bucket_level_access {
+            if owned(bucket.as_str()) {
+                self.uniform_bucket_level_access
+                    .insert(bucket.clone(), *enabled);
             }
         }
         for entry in &captured.public_read {
@@ -1517,6 +1539,18 @@ impl StorageState {
                     .map(|_| bytes.len())
             })
             .sum()
+    }
+
+    /// Whether this bucket explicitly enables uniform bucket-level access.
+    #[must_use]
+    pub fn uniform_bucket_level_access(&self, bucket: &BucketName) -> bool {
+        self.uniform_bucket_level_access.get(bucket) == Some(&true)
+    }
+
+    /// Stores the JSON API bucket access flag, including an explicit false.
+    pub fn set_uniform_bucket_level_access(&mut self, bucket: &BucketName, enabled: bool) {
+        self.uniform_bucket_level_access
+            .insert(bucket.clone(), enabled);
     }
 
     /// Whether object versioning is enabled on `bucket`.
@@ -2266,7 +2300,8 @@ impl StorageState {
     /// configured is unknown here (the HTTP layer adds the project's default buckets).
     #[must_use]
     pub fn bucket_known(&self, bucket: &BucketName) -> bool {
-        self.versioning.contains_key(bucket)
+        self.uniform_bucket_level_access.contains_key(bucket)
+            || self.versioning.contains_key(bucket)
             || self
                 .objects
                 .range((bucket.clone(), ObjectName::range_start(""))..)
@@ -2855,11 +2890,7 @@ impl StorageState {
         }
     }
 
-    /// Every bucket that holds an object, in name order.
-    ///
-    /// The store has no bucket registry: a bucket exists because an object names it. An
-    /// export therefore lists exactly the buckets with content, and importing a bucket with
-    /// no objects is a no-op.
+    /// Every bucket that holds an object or has explicit access configuration, in name order.
     #[must_use]
     pub fn buckets(&self) -> Vec<BucketName> {
         let mut out: Vec<BucketName> = Vec::new();
@@ -2868,6 +2899,9 @@ impl StorageState {
                 out.push(bucket.clone());
             }
         }
+        out.extend(self.uniform_bucket_level_access.keys().cloned());
+        out.sort();
+        out.dedup();
         out
     }
 
@@ -3075,6 +3109,7 @@ impl StorageState {
                 precondition,
                 total: options.total,
                 authorization: options.authorization,
+                origin: None,
                 admission: options.admission,
                 expected_md5: options.expected_md5,
                 expected_crc32c: options.expected_crc32c,
@@ -3086,6 +3121,26 @@ impl StorageState {
             },
         );
         Ok(id)
+    }
+
+    /// Remembers the initiating Origin alongside the upload session lifecycle.
+    pub fn set_upload_origin(
+        &mut self,
+        id: &UploadId,
+        origin: Option<String>,
+        now: LogicalInstant,
+    ) -> Result<(), StorageError> {
+        self.upload_mut(id, now)?.origin = origin;
+        Ok(())
+    }
+
+    /// The initiating Origin, including after cancellation, until the session expires.
+    pub fn upload_origin(
+        &mut self,
+        id: &UploadId,
+        now: LogicalInstant,
+    ) -> Result<Option<&str>, StorageError> {
+        Ok(self.upload_mut(id, now)?.origin.as_deref())
     }
 
     /// Declares (or confirms) the checksums the whole object must have; they are verified

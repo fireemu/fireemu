@@ -9,23 +9,35 @@ export function rehearsalConfig(target) {
     profile: "strict",
     storage: {
       defaultBucket: "firebasestorage.app",
-      buckets: [target.defaultBucket, target.tempBucket],
+      buckets: [
+        target.defaultBucket,
+        ...(target.stage === "v3"
+          ? ["absent", "empty", "configured"].map((state) => `${target.tempBucket}-${state}`)
+          : [target.tempBucket]),
+      ],
       undeclaredBuckets: "refuse",
-      cors: { [target.tempBucket]: CORS },
+      cors:
+        target.stage === "v3"
+          ? { [`${target.tempBucket}-empty`]: [], [`${target.tempBucket}-configured`]: CORS }
+          : { [target.tempBucket]: CORS },
     },
   };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const { values } = parseArgs({
+    const { values, positionals } = parseArgs({
+      allowPositionals: true,
       options: {
         project: { type: "string" },
         "default-bucket": { type: "string" },
         "run-id": { type: "string" },
       },
     });
+    if (positionals.length > 1 || (positionals.length && positionals[0] !== "v3"))
+      throw new Error("invalid stage");
     const target = targetOf({
+      stage: positionals[0] ?? "v2",
       project: values.project,
       defaultBucket: values["default-bucket"],
       runId: values["run-id"],

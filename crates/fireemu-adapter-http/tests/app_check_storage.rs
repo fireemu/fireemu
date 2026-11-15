@@ -1083,6 +1083,19 @@ fn session_id_of(start: &StorageResponse) -> String {
 }
 
 #[test]
+fn emulator_bucket_creation_keeps_the_exact_loopback_app_check_refusal() {
+    let mut h = harness(BaselineMode::Enforced);
+    h.storage.token_acceptance = fireemu_core_auth::jwt::TokenAcceptance::EmulatorMock;
+    let denied = h.call("POST", "/storage/v1/b", &[], &[], b"{}");
+    let baseline = h.call("POST", "/storage/v1/not-implemented", &[], &[], b"{}");
+    assert_eq!(denied.status, 403);
+    assert_eq!(body_of(&denied)["error"]["reason"], "APP_CHECK_REQUIRED");
+    assert_eq!(denied.status, baseline.status);
+    assert_eq!(denied.headers, baseline.headers);
+    assert_eq!(denied.body, baseline.body);
+}
+
+#[test]
 fn a_loopback_json_api_request_without_browser_evidence_is_admitted_under_enforcement() {
     let h = harness(BaselineMode::Enforced);
     h.seed_object("server/seeded.txt");

@@ -18,8 +18,10 @@ export function targetOf({
   defaultBucket,
   runId = `ss-${randomBytes(4).toString("hex")}`,
   local,
+  stage = "v2",
 }) {
   if (
+    !["v2", "v3"].includes(stage) ||
     project !== "fireemu-oracle-query" ||
     defaultBucket !== `${project}.firebasestorage.app` ||
     !/^ss-[a-f0-9]{8}$/.test(runId)
@@ -44,6 +46,7 @@ export function targetOf({
   return {
     project,
     defaultBucket,
+    stage,
     runId,
     local,
     tempBucket: `fireemu-obs-${runId}`,
@@ -92,6 +95,83 @@ export function requests(t, location = "US") {
         resource: o(bucket, name),
       },
     );
+  if (t.stage === "v3") {
+    read("V3-P-location", b(D));
+    read("V3-P-absent", b(T));
+    add("V3-W-bucket", "POST", `/storage/v1/b?project=${t.project}`, {
+      body: JSON.stringify({
+        name: T,
+        location,
+        iamConfiguration: { uniformBucketLevelAccess: { enabled: true } },
+        softDeletePolicy: { retentionDurationSeconds: 0 },
+      }),
+      headers: { "content-type": "application/json" },
+      action: "create",
+      resource: b(T),
+    });
+    read("V3-W-verify", b(T));
+    upload("V3-W-object", T, "cors/o.txt");
+    for (const state of ["absent", "empty", "configured"]) {
+      const bucket = t.local ? `${T}-${state}` : T;
+      const id = `V3-${state}`;
+      const origin = { origin: "http://localhost:3000" };
+      if (state !== "absent") {
+        add(`${id}-patch`, "PATCH", `${b(T)}?fields=cors`, {
+          body: JSON.stringify({ cors: state === "empty" ? [] : CORS }),
+          headers: { "content-type": "application/json" },
+        });
+        read(`${id}-verify`, b(T));
+      }
+      if (t.local) {
+        add(`${id}-initial-list`, "GET", `${b(bucket)}/o`);
+        upload(`${id}-upload`, bucket, "cors/o.txt");
+      }
+      for (const [endpoint, path] of [
+        ["metadata", o(bucket, "cors/o.txt")],
+        ["media", `${o(bucket, "cors/o.txt")}?alt=media`],
+        ["bucket", b(bucket)],
+        ["list", `${b(bucket)}/o`],
+        ["acl", `${o(bucket, "cors/o.txt")}/acl`],
+      ])
+        add(`${id}-${endpoint}`, "GET", path, { headers: origin });
+      add(`${id}-preflight`, "OPTIONS", `/upload/storage/v1/b/${bucket}/o`, {
+        auth: "none",
+        headers: {
+          ...origin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers":
+            "content-type, x-upload-content-type, x-goog-upload-protocol",
+        },
+      });
+      const start = `/upload/storage/v1/b/${bucket}/o?uploadType=resumable&name=${encodeURIComponent(`cors/resumable-${state}.txt`)}`;
+      add(`${id}-resumable`, "POST", start, {
+        headers: {
+          ...origin,
+          "content-type": "application/json",
+          "x-upload-content-type": "text/plain",
+        },
+        body: "{}",
+      });
+      // Only an issued session URL can replace this placeholder at the wire boundary.
+      add(`${id}-cancel`, "DELETE", `${start}&upload_id=<session>`);
+      add(`${id}-session-read`, "PUT", `${start}&upload_id=<session>`, {
+        headers: { "content-range": "bytes */*" },
+        body: "",
+      });
+      if (t.local) {
+        del(`${id}-delete-object`, o(bucket, "cors/o.txt"));
+        read(`${id}-read-object`, o(bucket, "cors/o.txt"));
+      }
+    }
+    del("V3-K-object", o(T, "cors/o.txt"));
+    read("V3-K-read-object", o(T, "cors/o.txt"));
+    read("V3-K-read-created-bucket", b(T));
+    del("V3-K-delete-bucket", b(T));
+    read("V3-K-bucket", b(T));
+    read("V3-A2-bucket", b(T));
+    read("V3-A2-object", o(T, "cors/o.txt"));
+    return out;
+  }
   read("P1", b(D));
   read("P2", b(M));
   read("P3", b(T));
@@ -217,7 +297,27 @@ export function classifyRequest(target, request, location = "US") {
   } else if (!HOSTS.some((host) => request.url.startsWith(`https://${host}/`))) {
     throw new GuardError("production origin refused");
   }
-  const planned = requests(target, location)[request.case];
+  const vocabulary = requests(target, location);
+  let planned = vocabulary[request.case];
+  if (
+    target.stage === "v3" &&
+    /^V3-(absent|empty|configured)-(cancel|session-read)$/.test(request.case)
+  ) {
+    const state = request.case.split("-")[1];
+    const start = new URL(vocabulary[`V3-${state}-resumable`].url);
+    const keys = [...url.searchParams.keys()];
+    if (
+      url.origin !== start.origin ||
+      url.pathname !== start.pathname ||
+      keys.length !== 3 ||
+      new Set(keys).size !== 3 ||
+      url.searchParams.get("name") !== start.searchParams.get("name") ||
+      url.searchParams.get("uploadType") !== "resumable" ||
+      !/^[A-Za-z0-9._~-]{1,1024}$/.test(url.searchParams.get("upload_id") ?? "")
+    )
+      throw new GuardError("session URL outside the plan");
+    planned = { ...planned, url: request.url };
+  }
   if (
     !planned ||
     request.url !== planned.url ||

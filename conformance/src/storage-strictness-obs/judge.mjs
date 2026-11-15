@@ -108,10 +108,80 @@ export function parseXmlError(text) {
   return fields.Code && fields.Message ? { Code: fields.Code, Message: fields.Message } : null;
 }
 
+// The comparable error semantics of a JSON body: its code, message and first reason.
+export function jsonErrorFields(value) {
+  const error = value?.error;
+  if (!error || typeof error !== "object") return null;
+  return {
+    code: error.code ?? null,
+    message: error.message ?? null,
+    reason: error.errors?.[0]?.reason ?? null,
+  };
+}
+
+// The comparable error semantics of a recorded body text, whichever encoding it uses.
+export function bodyErrorFields(text) {
+  try {
+    return { json: jsonErrorFields(JSON.parse(text)), xml: null };
+  } catch {
+    return { json: null, xml: parseXmlError(text) };
+  }
+}
+
+// Validates a resumable Location against its own request and returns its request-relative
+// structure. Protocol, host and bucket name differ between production and a local emulator,
+// so only their agreement with the request is kept; the session id is masked.
+export function resumableLocation(locationText, requestUrl) {
+  try {
+    const location = new URL(locationText);
+    const request = new URL(requestUrl);
+    const bucket = /^\/upload\/storage\/v1\/b\/([^/]+)\/o$/.exec(request.pathname)?.[1];
+    const object = request.searchParams.get("name");
+    const query = [...location.searchParams].toSorted(([a], [b]) => a.localeCompare(b));
+    const expected = [...request.searchParams, ["upload_id", "<UPLOAD_ID>"]].toSorted(([a], [b]) =>
+      a.localeCompare(b),
+    );
+    const mask = ([key, value]) => [
+      key,
+      key === "upload_id" ? "<UPLOAD_ID>" : key === "name" ? "<REQUEST_OBJECT>" : value,
+    ];
+    if (
+      !bucket ||
+      !object ||
+      !["http:", "https:"].includes(location.protocol) ||
+      location.origin !== request.origin ||
+      location.pathname !== `/upload/storage/v1/b/${bucket}/o` ||
+      location.username ||
+      location.password ||
+      location.hash ||
+      location.searchParams.get("uploadType") !== "resumable" ||
+      location.searchParams.getAll("name").length !== 1 ||
+      location.searchParams.get("name") !== object ||
+      location.searchParams.getAll("upload_id").length !== 1 ||
+      !location.searchParams.get("upload_id") ||
+      JSON.stringify(
+        query.map(([key, value]) => [key, key === "upload_id" ? "<UPLOAD_ID>" : value]),
+      ) !== JSON.stringify(expected)
+    )
+      return null;
+    return {
+      origin: "<REQUEST_ORIGIN>",
+      path: "/upload/storage/v1/b/<REQUEST_BUCKET>/o",
+      query: query.map(mask),
+    };
+  } catch {
+    // An invalid or fully redacted Location is not evidence of a resumable URL.
+    return null;
+  }
+}
+
 export function judgeAnswer(entry) {
   const body = Buffer.from(entry.bodyBase64 ?? "", "base64");
   const headers = Object.fromEntries(new Headers(entry.headers ?? {}).entries());
-  const headerNames = Object.keys(headers).toSorted();
+  // Only names relevant to CORS are comparable; transport and Google frontend headers vary.
+  const headerNames = Object.keys(headers)
+    .filter((name) => name.startsWith("access-control-") || ["vary", "location"].includes(name))
+    .toSorted();
   const row = {
     case: entry.case,
     status: entry.status,
@@ -120,27 +190,29 @@ export function judgeAnswer(entry) {
     headerNames,
     headers: Object.fromEntries(
       headerNames
-        .filter(
-          (name) =>
-            name.startsWith("access-control-") || name === "vary" || name === "content-length",
-        )
+        .filter((name) => name.startsWith("access-control-") || name === "vary")
         .map((name) => [name, headers[name]]),
     ),
     json: null,
     xml: null,
+    location: null,
     shape: "unrecorded",
     known: false,
   };
+  const v3 =
+    /^V3-(absent|empty|configured)-(metadata|media|bucket|list|acl|preflight|resumable|cancel|session-read)$/.exec(
+      entry.case,
+    );
+  if (v3?.[2] === "resumable")
+    row.exposesLocation = (headers["access-control-expose-headers"] ?? "")
+      .split(",")
+      .some((name) => name.trim().toLowerCase() === "location");
   const text = body.toString("utf8");
   try {
     const value = JSON.parse(text);
     const error = value?.error;
     if (error && typeof error === "object") {
-      row.json = {
-        code: error.code ?? null,
-        message: error.message ?? null,
-        reason: error.errors?.[0]?.reason ?? null,
-      };
+      row.json = jsonErrorFields(value);
       if (
         Object.keys(value).length === 1 &&
         Object.keys(error).every((key) => ["code", "message", "errors"].includes(key)) &&
@@ -163,7 +235,50 @@ export function judgeAnswer(entry) {
       )
         row.shape = "json-error";
     }
-    // Resource and list JSON are retained in full bytes but require review: their layouts are not recorded fixtures.
+    // Validate resource shapes against their request; generated IDs, sizes and times are not compared.
+    if (
+      v3 &&
+      entry.status === 200 &&
+      entry.method === "GET" &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      !error
+    ) {
+      const bucket = /\/b\/([^/]+)/.exec(new URL(entry.url).pathname)?.[1];
+      const object = (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        item.bucket === bucket &&
+        item.name === "cors/o.txt" &&
+        /^\d+$/.test(item.size ?? "");
+      if (v3[2] === "metadata" && object(value)) row.shape = "object-metadata";
+      if (v3[2] === "bucket" && value.name === bucket && typeof value.location === "string")
+        row.shape = "bucket-metadata";
+      if (
+        v3[2] === "list" &&
+        Array.isArray(value.items) &&
+        value.items.length === 1 &&
+        value.items.every(object) &&
+        !value.nextPageToken
+      )
+        row.shape = "object-list";
+      if (
+        v3[2] === "acl" &&
+        Array.isArray(value.items) &&
+        value.items.length > 0 &&
+        value.items.every(
+          (item) =>
+            item &&
+            item.bucket === bucket &&
+            item.object === "cors/o.txt" &&
+            typeof item.entity === "string" &&
+            typeof item.role === "string",
+        )
+      )
+        row.shape = "object-acl";
+    }
   } catch {
     row.xml = parseXmlError(text);
     if (row.xml && entry.status >= 400 && entry.status < 500) row.shape = "xml-error";
@@ -173,8 +288,22 @@ export function judgeAnswer(entry) {
         (entry.method === "DELETE" && entry.status === 204))
     )
       row.shape = "empty";
-    else if (text === "fire" && entry.status === 200 && ["C5", "C6"].includes(entry.case))
+    else if (
+      text === "fire" &&
+      entry.status === 200 &&
+      (["C5", "C6"].includes(entry.case) || (v3?.[2] === "media" && entry.method === "GET"))
+    )
       row.shape = "media";
+  }
+  if (
+    v3?.[2] === "resumable" &&
+    entry.method === "POST" &&
+    entry.status === 200 &&
+    !body.length &&
+    headerNames.includes("location")
+  ) {
+    row.location = resumableLocation(headers.location, entry.url);
+    if (row.location) row.shape = "resumable-start";
   }
   row.known =
     row.shape !== "unrecorded" &&
@@ -192,19 +321,64 @@ export function judgeJournal(entries) {
   const after = new Map(
     entries.filter((entry) => entry.phase === "after").map((entry) => [entry.n, entry]),
   );
-  return entries
-    .filter((entry) => entry.phase === "before")
-    .map((entry) =>
-      judgeAnswer(
-        after.get(entry.n) ?? {
-          ...entry,
-          unknown: true,
-          status: null,
-          bodyBytes: 0,
-          bodyBase64: "",
-        },
-      ),
+  const before = entries.filter((entry) => entry.phase === "before");
+  if (entries[0]?.stage === "v3") {
+    const expected = ["absent", "empty", "configured"].flatMap((state) =>
+      [
+        "metadata",
+        "media",
+        "bucket",
+        "list",
+        "acl",
+        "preflight",
+        "resumable",
+        "cancel",
+        "session-read",
+      ].map((endpoint) => `V3-${state}-${endpoint}`),
     );
+    return expected.flatMap((id) => {
+      const matches = before.filter((entry) => entry.case === id);
+      return (matches.length ? matches : [{ case: id }]).map((entry) => {
+        let response = after.get(entry.n);
+        if (id.endsWith("-resumable") && response?.headers?.location === "<redacted-session>") {
+          // Older journals redact the whole header, but record the issued URL when cancelling it.
+          // The recorder accepts cancellation only for that exact issued URL; retain its structure.
+          const cancellations = before.filter(
+            (candidate) =>
+              candidate.case === id.replace(/-resumable$/, "-cancel") &&
+              candidate.method === "DELETE" &&
+              candidate.n > entry.n &&
+              candidate.session === entry.session,
+          );
+          if (cancellations.length === 1)
+            response = {
+              ...response,
+              headers: { ...response.headers, location: cancellations[0].url },
+            };
+        }
+        return judgeAnswer(
+          response ?? {
+            ...entry,
+            unknown: true,
+            status: null,
+            bodyBytes: 0,
+            bodyBase64: "",
+          },
+        );
+      });
+    });
+  }
+  return before.map((entry) =>
+    judgeAnswer(
+      after.get(entry.n) ?? {
+        ...entry,
+        unknown: true,
+        status: null,
+        bodyBytes: 0,
+        bodyBase64: "",
+      },
+    ),
+  );
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

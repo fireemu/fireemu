@@ -4,6 +4,7 @@ import {
   GuardError,
   isUnknownStatus,
   RequestBudget,
+  requests,
   SEND_FLAG,
 } from "./guard.mjs";
 import { fetchNet } from "./egress.mjs";
@@ -59,6 +60,8 @@ export function createWire({
   deadline = now() + 15 * 60_000,
 }) {
   const unknownDeletes = new Set();
+  const sessions = new Map();
+  const sessionDeletes = new Set();
   const entries = [];
   const secrets = [token, `Bearer ${token}`, "Firebase not-a-jwt", "not-a-jwt"];
   const append = (entry) => {
@@ -73,16 +76,31 @@ export function createWire({
     const checked = classifyRequest(target, request, location);
     if (checked.action === "delete" && unknownDeletes.has(checked.resource))
       throw new GuardError("unknown DELETE cannot be resent");
+    const sessionCase = /^V3-(absent|empty|configured)-(cancel|session-read)$/.exec(checked.case);
+    if (sessionCase) {
+      if (sessions.get(sessionCase[1]) !== request.url)
+        throw new GuardError("unissued session URL");
+      if (sessionCase[2] === "cancel") {
+        if (sessionDeletes.has(sessionCase[1]))
+          throw new GuardError("session cancel cannot be resent");
+        sessionDeletes.add(sessionCase[1]);
+      }
+    }
     const remaining = deadline - now();
     if (remaining <= 0) throw new GuardError("whole-run deadline exhausted");
     const n = budget.take();
     const startedAt = now();
-    const timeoutMs = Math.min(checked.case === "W1" ? 60_000 : 30_000, remaining);
+    const timeoutMs = Math.min(
+      ["W1", "V3-W-bucket"].includes(checked.case) ? 60_000 : 30_000,
+      remaining,
+    );
+    const journalUrl = new URL(request.url);
+    if (sessionCase) journalUrl.searchParams.set("upload_id", "<redacted-session>");
     const base = {
       n,
       case: checked.case,
       method: request.method,
-      url: request.url,
+      url: sessionCase ? journalUrl.href : request.url,
       requestHeaders: redactHeaders(headers, secrets),
       action: checked.action,
       resource: checked.resource,
@@ -113,18 +131,63 @@ export function createWire({
       const unreadable = response.body == null;
       const body = unreadable ? Buffer.alloc(0) : Buffer.from(response.body);
       const rawHeaders = Object.fromEntries(new Headers(response.headers).entries());
-      const responseHeaders = redactHeaders(rawHeaders, secrets);
+      const protectedHeaders = { ...rawHeaders };
+      let invalidSession = false;
+      if (target.stage === "v3") {
+        for (const name of ["location", "x-guploader-uploadid"]) {
+          if (protectedHeaders[name] !== undefined) {
+            secrets.push(protectedHeaders[name]);
+            if (name === "location") {
+              try {
+                secrets.push(...new URL(protectedHeaders[name]).searchParams.getAll("upload_id"));
+              } catch {
+                // An invalid start location is refused and its body withheld below.
+              }
+            }
+            protectedHeaders[name] = "<redacted-session>";
+          }
+        }
+        const start = /^V3-(absent|empty|configured)-resumable$/.exec(checked.case);
+        if (start && response.status === 200) {
+          try {
+            const cancel = requests(target, location)[`V3-${start[1]}-cancel`];
+            classifyRequest(
+              target,
+              {
+                ...cancel,
+                url: rawHeaders.location,
+                headers: target.local ? {} : { authorization: `Bearer ${token}` },
+              },
+              location,
+            );
+            sessions.set(start[1], rawHeaders.location);
+            secrets.push(
+              rawHeaders.location,
+              new URL(rawHeaders.location).searchParams.get("upload_id"),
+            );
+          } catch {
+            invalidSession = true;
+          }
+        }
+      }
+      const responseHeaders = redactHeaders(protectedHeaders, secrets);
       // Never persist echoed credentials. Withholding makes the answer unknown, never a fixture.
       const withheld =
+        invalidSession ||
         secrets.some((secret) => secret && body.includes(Buffer.from(secret))) ||
         /AIza[\w-]{20,}|-----BEGIN [^-]*PRIVATE KEY-----/.test(body.toString("utf8"));
-      const headersRedacted = JSON.stringify(rawHeaders) !== JSON.stringify(responseHeaders);
+      const headersRedacted = JSON.stringify(protectedHeaders) !== JSON.stringify(responseHeaders);
       answer = {
         status: response.status,
         headers: responseHeaders,
         body: withheld ? Buffer.alloc(0) : body,
         bodyBytes: unreadable ? null : body.length,
-        unknown: isUnknownStatus(response.status) || withheld || headersRedacted || unreadable,
+        unknown:
+          isUnknownStatus(response.status) ||
+          withheld ||
+          headersRedacted ||
+          unreadable ||
+          invalidSession,
         withheld,
         headersRedacted,
         unreadable,
@@ -172,5 +235,5 @@ export function createWire({
     });
     return answer;
   }
-  return { wire, append, entries, budget, unknownDeletes, deadline, now };
+  return { wire, append, entries, budget, unknownDeletes, sessions, deadline, now };
 }
