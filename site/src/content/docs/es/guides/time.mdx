@@ -1,0 +1,164 @@
+---
+title: Tiempo y funciones programadas
+description: Inicia el reloj del emulador a una hora elegida, congélalo o muévelo, y ejecuta funciones programadas sin esperar.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Fireemu tiene su propio reloj, y todos los servicios lo leen: marcas de tiempo del servidor, horas de documentos y objetos, caducidad de tokens, funciones programadas y `request.time` de las Security Rules. Por defecto corre con el tiempo real, como lo hace producción. Establece dónde empieza, muévelo o congélalo, y todos los servicios ven la nueva hora.
+
+## Seguir el tiempo real o congelar el reloj
+
+| Configuración | Comportamiento del reloj |
+|---|---|
+| Sin `daemon.clockStart` (el valor predeterminado) | Sigue el tiempo real desde el momento en que inició el daemon. |
+| `daemon.clockStart` fijado | Empieza a esa hora y permanece detenido hasta que se mueve, lo que hace reproducible una ejecución. |
+| `daemon.clock` establecido en `"realtime"` | Un reloj fijado sigue corriendo desde su inicio. |
+| `daemon.clock` establecido en `"frozen"` | Un reloj sin fijar se detiene. |
+
+Un movimiento (`clock:advance`, `clock:advanceTo`, `clock:set` o la página Runtime) es un desplazamiento sobre un reloj que sigue el tiempo real: el reloj sigue corriendo desde donde queda.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+# Virtual clock behavior: "realtime" or "frozen".
+clock = "frozen"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z",
+    "clock": "frozen"
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Un `functions.clock` virtual (consulta [Tiempo de aplicación en Functions](#tiempo-de-aplicación-en-functions)) necesita un inicio fijado y, por tanto, un reloj quieto. Lo mismo ocurre con los mundos de `fireemu/testing`, que lo fijan.
+
+## Ejecutar funciones programadas
+
+Una programación se ejecuta cuando el reloj alcanza una ocurrencia.
+
+- Con el reloj predeterminado, eso ocurre a medida que pasa el tiempo real.
+- Con un reloj congelado, el tiempo real no ejecuta nada. Mueve el reloj desde la página Runtime de la [UI del emulador](../ui/), o con la API de control (`clock:advance`, `clock:advanceTo`, `clock:set`).
+
+Cada movimiento hace vencer todas las ocurrencias en `(hora anterior, hora nueva]`. Configura la zona horaria, el comportamiento de puesta al día y el de solapamiento en la sección `scheduler`:
+
+- `scheduler.catchUp` decide qué se ejecuta cuando un movimiento pasa varias ocurrencias: `all` ejecuta cada una (como máximo `scheduler.maxCatchUpRuns` por job y movimiento), `latest` ejecuta la más reciente y `none` no ejecuta ninguna.
+- `scheduler.overlap` (`allow`, `skip`, `queue`, `reject`, `skip-in-flight`) decide qué ocurre cuando una ejecución vence mientras la anterior sigue en marcha. Con `strict` el valor predeterminado es `skip-in-flight`, como se comporta Cloud Scheduler en producción; con `emulator` es `allow`.
+
+La página Functions de la UI también puede ejecutar de inmediato una función programada, o avanzar el reloj hasta su siguiente ocurrencia. Una ejecución manual no consume la siguiente ocurrencia.
+
+### Detalles de la programación
+
+- Una ocurrencia exactamente en la hora nueva se incluye en un movimiento, y una exactamente en la hora anterior no.
+- Con `scheduler.catchUp: all`, las ejecuciones que superan `scheduler.maxCatchUpRuns` por job y movimiento del reloj siguen vencidas y se ejecutan a medida que se libera espacio. `latest` y `none` registran un resumen `skipped: catch-up` por job y movimiento del reloj que descarta ejecuciones.
+- Un retroceso nunca repite: las ocurrencias que la programación ya pasó no se vuelven a ejecutar cuando el reloj avanza sobre ellas, y la programación se reanuda cuando el reloj pasa la última ocurrencia que ejecutó o que aún debe (su cursor). Tras un retroceso por debajo de ese punto, las ejecuciones aún debidas de un atrasado o retenidas por falta de espacio siguen debidas pero no vuelven a vencer hasta que el reloj lo pase. Un reinicio de sesión o una restauración de instantánea inicia cada programación desde la hora actual del reloj, por lo que tras un retroceso las ocurrencias entre esa hora y una posterior vuelven a estar vencidas.
+- `scheduler.overlap` se aplica por igual a las ejecuciones del scheduler y a las manuales, salvo `skip-in-flight`, que nunca rechaza una ejecución manual. Con `skip-in-flight` (el valor predeterminado de `strict`) una ocurrencia se descarta (registrada como `skipped: in flight`) mientras un handler de la función que inició antes del movimiento del reloj sigue ejecutándose, como hacía Cloud Scheduler en producción, y las ocurrencias de un mismo movimiento del reloj no cuentan unas contra otras.
+- Una función cuenta como ocupada mientras cualquiera de sus ejecuciones esté en cola o en marcha, incluida una ejecución que espera para reintentarse, por lo que con `skip` y `reject` un reintento aún pendiente puede suprimir la siguiente ocurrencia; aquí Fireemu no distingue un intento de reintento de una ejecución solapada. Con `catchUp: all`, un movimiento del reloj sobre varias ocurrencias de la misma función se solapa consigo mismo, por lo que `skip` conserva la más antigua de ellas y `reject` cuenta el resto como rechazos.
+- Si la cola de eventos de Functions está llena (4096 eventos activos o 64 MiB), una ejecución programada que vence sigue vencida y se ejecuta cuando se libera espacio.
+
+### Ejecutar ahora una función programada
+
+Una ejecución manual (`POST /v1/sessions/{session}/functions/{name}:run`) encola una ejecución de una función programada con la hora virtual actual. No consume la siguiente ocurrencia, que sigue venciendo y está sujeta a `scheduler.overlap` como cualquier ejecución. Este es un control propio de Fireemu, no una afirmación sobre el run-now de producción.
+
+| Respuesta | Cuándo |
+|---|---|
+| `400 INVALID_ARGUMENT` | Una función desconocida, una función que no está programada, un rechazo de la política de solapamiento o un runtime que se está apagando |
+| `429 RESOURCE_EXHAUSTED` | La cola de eventos está llena |
+
+En una función de cola de tareas (`onTaskDispatched`), la misma ruta libera las Cloud Tasks que esperan su `scheduleTime`: todas, o la nombrada por un cuerpo `{"task": "<task id>"}` (404 cuando ninguna tarea en espera tiene ese id). Consulta [Colas de tareas](../../products/functions/#task-queues).
+
+## Mover el reloj hacia atrás
+
+El reloj puede moverse hacia atrás (`clock:set` con `"allowBackwards": true`, o **Allow moving backwards** en la página Runtime). Un retroceso nunca repite las ocurrencias que ya se ejecutaron.
+
+### ID tokens tras un retroceso
+
+- Con `strict`, Authentication (`INVALID_ID_TOKEN`), Firestore y Storage rechazan un ID token emitido después de la nueva hora hasta que el reloj vuelve a alcanzar su hora de emisión.
+- En el perfil `emulator`, los ID tokens siguen siendo utilizables tras un retroceso, como con el emulador oficial, que no comprueba su hora de emisión.
+- En ambos perfiles, un token caducado se sigue rechazando.
+
+### Revocación tras un retroceso
+
+Un retroceso a antes de que se creara una cuenta, o antes de que se revocaran sus tokens, hace que incluso el token de un inicio de sesión nuevo cuente como revocado. Vuelve a mover el reloj hacia delante o reinicia la sesión.
+
+A la inversa, una revocación o un cambio de contraseña hecho tras un retroceso no revoca los tokens emitidos en momentos posteriores de la línea temporal: el perfil `emulator` los acepta de inmediato, y `strict` los acepta cuando el reloj alcanza su hora de emisión. Mueve el reloj hacia delante más allá de su hora de emisión antes de revocar, o reinicia la sesión.
+
+## Tiempo de aplicación en Functions
+
+Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock` junto con un `daemon.clockStart` fijado:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+
+[daemon]
+# Start the virtual clock at this date-time.
+clockStart = "2026-01-31T23:59:00Z"
+
+[functions]
+# Directory of the Functions codebase.
+source = "./functions"
+
+[functions.clock]
+# Functions date clock: "real" or "virtual".
+date = "virtual"
+# Functions timer clock: "real" or "virtual".
+timers = "real"
+# Cloud Tasks clock: "real" or "virtual".
+tasks = "virtual"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "daemon": {
+    "clockStart": "2026-01-31T23:59:00Z"
+  },
+  "functions": {
+    "source": "./functions",
+    "clock": {
+      "date": "virtual",
+      "timers": "real",
+      "tasks": "virtual"
+    }
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- Cada modo acepta `real` o `virtual`. Los temporizadores virtuales requieren `date` virtual.
+- Con `tasks` establecido en `virtual`, una tarea de Cloud Tasks encolada con un `scheduleTime` vence cuando el reloj virtual lo alcanza, de modo que una prueba avanza el reloj en lugar de esperar.
+- Con `tasks` establecido en `real`, la tarea espera al reloj de pared con `strict`. La página Functions de la [UI del emulador](../ui/) lista las tareas en espera y puede ejecutarlas ahora.
+- Un codebase de Python ve siempre el tiempo real: no se mueve al reloj virtual, y una configuración que pide una fecha virtual para el runner de Functions se rechaza para él.
+
+## Relacionado
+
+- [Mundos de prueba](../test-worlds/): para pruebas en paralelo que necesitan su propio reloj, el helper `fireemu/testing` inicia mundos independientes, cada uno fijado a una hora de inicio que tú mueves a mano.
+- [UI del emulador](../ui/)
+- [Cloud Functions](../../products/functions/#task-queues)
+- [Referencia de configuración](../../reference/configuration/)

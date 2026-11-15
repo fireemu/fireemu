@@ -1,0 +1,248 @@
+---
+title: CI y contenedores
+description: Ejecuta tus pruebas con Fireemu en GitHub Actions, sirve los emuladores desde un contenedor y elige los nombres de host a los que responden.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Ejecuta tus pruebas con Fireemu en un trabajo de CI, sirve los emuladores desde un contenedor al host o a otros contenedores, y lista los nombres de host que usan tus clientes.
+
+## Ejecutar pruebas en GitHub Actions
+
+`fireemu exec` devuelve el estado de salida de tu comando de pruebas, por lo que un trabajo de CI no necesita pasos separados de inicio y parada:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec -- npm test
+```
+
+Fireemu no necesita Java ni descargas al iniciar: el paquete npm instala un binario nativo para la plataforma del runner. El paso de lint se describe en [Comprobar la configuración antes de las pruebas](#comprobar-la-configuración-antes-de-las-pruebas).
+
+### Añadir un trabajo con productionExact
+
+Para comprobar también lo que los valores predeterminados de desarrollo dejan pasar, como los tokens de prueba sin firmar, añade un trabajo que se ejecute con un segundo archivo de configuración que establezca [`productionExact`](../profiles/), por ejemplo `fireemu.production-exact.toml`:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Use production behavior for development defaults: true or false; requires strict.
+productionExact = true
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "firebaseJson": "firebase.json"
+}
+```
+
+</TabItem>
+</Tabs>
+
+```sh
+npx fireemu exec --config fireemu.production-exact.toml -- npm test
+```
+
+Con la forma JSON, llama al archivo `fireemu.production-exact.json`.
+
+### Comprobar la configuración antes de las pruebas
+
+Tres comprobaciones hacen fallar un trabajo pronto, antes de que una prueba se ejecute con una configuración equivocada:
+
+```yaml
+      - run: npx fireemu config lint --deny-ineffective
+      - run: npx fireemu exec --plan --deny-inherited-emulator-env -- npm test
+      - run: npx fireemu exec --deny-inherited-emulator-env -- npm test
+```
+
+| Comprobación | Qué hace |
+|---|---|
+| `config lint --deny-ineffective` | Sale con 1, haciendo fallar el trabajo, cuando la configuración establece una clave que Fireemu acepta pero nunca lee. Lista las claves que conservas a propósito con `--allow <key>` o `--allow-file <path>` (consulta [`config lint`](../../reference/cli/#config-lint)). |
+| `exec --plan` | Imprime lo que resuelve la ejecución, de modo que el log del trabajo muestra el ID del proyecto, los servicios y sus puertos, los archivos que se leyeron, el Node que usaría para Functions y las variables de emulador que hereda. No inicia nada, y sale con 1 cuando la ejecución fallaría por una razón que puede ver. Usa `--json` para alimentar otra herramienta (consulta [Planificar una ejecución](../../reference/cli/#plan-a-run)). |
+| `--deny-inherited-emulator-env` | Hace fallar la ejecución cuando el entorno del trabajo lleva una variable de emulador (`PUBSUB_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST` de otra suite, etc.) de un servicio que esta ejecución no inicia. Sin él, la ejecución avisa y conserva la variable. Usa `--allow-inherited-emulator-env <NAME>` para una variable que estableces a propósito. |
+
+### Trabajos en contenedor
+
+En un trabajo `container:` de GitHub Actions, o en cualquier contenedor que se ejecute como root con un checkout montado por bind, el checkout pertenece a un usuario del host en quien el root del contenedor no confía. Por eso un `fireemu.toml` o `firebase.json` descubierto se omite con un aviso. Nombra los archivos explícitamente, o ejecuta `chown` sobre el checkout:
+
+```sh
+npx fireemu exec --config fireemu.toml --firebase-json firebase.json -- npm test
+```
+
+Consulta [Archivos de configuración](../configuration/#comprobaciones-de-propiedad-de-archivos).
+
+## Servir los emuladores desde un contenedor
+
+Por defecto, todos los listeners están en loopback, al que no puede llegar un puerto de contenedor publicado. Para servir los emuladores al host o a otros contenedores:
+
+1. Activa la opción con `network.allowNonLoopbackHosts` en `fireemu.toml`.
+2. Da un host a los emuladores de producto en `firebase.json`.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Path to Firebase project configuration, relative to this file; a non-empty string.
+firebaseJson = "firebase.json"
+
+[network]
+# Allow product emulators to bind non-loopback hosts: true or false.
+allowNonLoopbackHosts = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "firebaseJson": "firebase.json",
+  "network": {
+    "allowNonLoopbackHosts": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+En `firebase.json`:
+
+```json
+{
+  "emulators": {
+    "firestore": { "host": "0.0.0.0", "port": 8080 },
+    "auth": { "host": "0.0.0.0", "port": 9099 }
+  }
+}
+```
+
+### Qué escucha fuera de loopback
+
+- Solo Firestore, Authentication, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub y Realtime Database pueden escuchar fuera de loopback. El Hub, la UI y el emulador de Logging se mantienen en loopback.
+- Authentication, cuyo puerto también sirve la API de control, escucha en loopback o en todas las interfaces (`0.0.0.0` o `::`), no en otra dirección concreta.
+- Un listener en `0.0.0.0` o `::` se anuncia como `127.0.0.1` o `::1` en el entorno y en el Hub, como hace la CLI oficial.
+- Con la opción activada, los emuladores también responden a un `Host` de una sola etiqueta, como el nombre de un servicio de Compose (`fireemu:8080`). Los demás nombres deben figurar en `network.allowedHosts`; consulta [Nombres de host que responden los emuladores](#nombres-de-host-que-responden-los-emuladores).
+
+### Quién puede alcanzar un puerto publicado
+
+:::caution
+Los emuladores sirven sin credencial. Publica los puertos solo en una red de confianza.
+
+:::
+
+- El inicio imprime una línea `warning:` por cada listener fuera de loopback.
+- Cualquier cliente que alcance un puerto publicado puede hacer en las APIs de producto lo que puede un cliente local, incluida la credencial `Bearer owner` del Admin SDK y las rutas propias del emulador de Auth.
+- Para Realtime Database esto incluye `database.defaultAccess = "locked"`, que admite esa credencial `owner` bien conocida, por lo que no es control de acceso fuera de loopback.
+- Con el perfil `emulator`, cualquier bearer token es administrador de Realtime Database para las solicitudes de datos, y su `/.settings/rules.json`, como las rutas de reglas de Firestore y Storage, responde solo a pares loopback.
+- Las páginas del navegador deben seguir procediendo de un origen loopback (`http://localhost:...`), de modo que una página servida desde otro host no pueda usar los puertos expuestos.
+
+### Los controles propios de Fireemu
+
+- La API de control, la gestión de debug tokens de App Check y las rutas que cargan las Security Rules de Firestore, Storage y Realtime Database o borran datos de Firestore responden solo a pares loopback y devuelven 403 a cualquier otro par. `@firebase/rules-unit-testing` llama a las rutas de reglas y de borrado mediante `loadFirestoreRules`, `loadStorageRules` y `clearFirestore`.
+- Ejecuta el código que las usa dentro del contenedor, o en un contenedor que comparta su espacio de nombres de red, como un pod de Podman o `--network container:<name>`.
+- Un reenviador dentro de ese espacio de nombres (`kubectl port-forward`, un proxy sidecar) se conecta desde loopback. Por eso, una vez activada la opción, toda solicitud a la API de control necesita además `Authorization: Bearer <control token>`, tanto desde un proceso como desde una página; solo `/health/` está exento.
+- Las rutas que cargan Security Rules o borran datos de Firestore no están sujetas al token, de modo que `@firebase/rules-unit-testing` sigue funcionando. Un cliente que alcanza el emulador mediante un reenviador así puede llamarlas, como podría en el emulador oficial.
+- `fireemu exec` da a su comando el token en `FIREEMU_CONTROL_TOKEN`, y `fireemu/testing` y la UI lo envían.
+
+## Nombres de host que responden los emuladores
+
+Una página web puede redirigir a `127.0.0.1` un nombre que controla después de haberse cargado (DNS rebinding). El navegador trata entonces las solicitudes a los emuladores como del mismo origen y no envía `Origin`, de modo que la página podría leer datos locales que los emuladores sirven sin credencial.
+
+Para evitarlo, los emuladores de producto (Firestore, Authentication y la API de control, Storage, Functions, Eventarc, Cloud Tasks, Pub/Sub, Realtime Database y Hosting) responden `403` a una solicitud HTTP/1 cuya cabecera `Host` nombra cualquier host distinto de:
+
+- `localhost` y los nombres bajo `.localhost`;
+- cualquier dirección IP, de modo que funcionan `10.0.2.2` desde el emulador de Android, una dirección de LAN o una dirección de bridge;
+- los nombres bajo `.internal`, el sufijo reservado de los nombres que los runtimes de contenedores dan a un contenedor para su host: `host.docker.internal` y `gateway.docker.internal` (Docker), `host.containers.internal` (Podman), `host.lima.internal` (Lima y Colima), `host.orb.internal` (OrbStack);
+- los nombres bajo `.firebaseio.com` y `.firebasedatabase.app`, con los que Realtime Database selecciona un namespace;
+- los nombres bajo `.cloudworkstations.dev`, las URL de vista previa y de puertos de Firebase Studio y Cloud Workstations;
+- los nombres bajo `.app.github.dev`, las URL de puertos reenviados de GitHub Codespaces;
+- los nombres bajo los sufijos de uso especial `.test`, `.local` y `.home.arpa`, a los que el DNS público no responde: alias de `/etc/hosts` como `myapp.test`, nombres mDNS como `my-mac.local`, nombres de servicios de Kubernetes bajo el `svc.cluster.local` predeterminado y nombres de redes domésticas;
+- con `network.allowNonLoopbackHosts`, los nombres de una sola etiqueta, como el nombre de un servicio de Compose;
+- los nombres de `network.allowedHosts`.
+
+Los nombres de uso especial y `.internal` son seguros solo mientras se pueda confiar en la resolución local de nombres. En una red no confiable, un resolvedor malicioso (por ejemplo, uno entregado por DHCP en un Wi-Fi público, un riesgo que la sección 6.1 de RFC 8375 señala para `.home.arpa`) o un par mDNS de la LAN (para `.local`) puede responderlos y redirigir una página hacia los emuladores. `network.allowedHosts` solo añade nombres; ningún ajuste elimina estos valores predeterminados.
+
+Cómo se aplica la comprobación:
+
+- Una solicitud sin `Host` (HTTP/1.0) y las solicitudes HTTP/2 (clientes gRPC) no se comprueban, porque ningún navegador las envía.
+- La comparación ignora las mayúsculas, el puerto y un punto final.
+- El Hub, la UI y el emulador de Logging responden solo a nombres loopback.
+- El emulador oficial no comprueba `Host`; producción no tiene equivalente, por lo que la comprobación es la misma en ambos perfiles.
+- Una solicitud rechazada recibe un `403` cuyo mensaje nombra el ajuste, y el daemon registra una línea `warning: refused Host "<name>"` por cada nombre rechazado (como máximo 32 nombres), de modo que un cliente cuyo SDK oculta el cuerpo de la respuesta deja igualmente un rastro.
+
+### Añadir nombres de host
+
+Añade los demás nombres que usan tus clientes, por ejemplo un túnel, un nombre en `/etc/hosts` fuera de los sufijos de uso especial, o un servicio de Kubernetes bajo un dominio de clúster personalizado. Una entrada es un nombre, un nombre con un punto inicial para ese dominio y todos sus subdominios, o `"*"` para responder a todos los `Host` (lo que desactiva la defensa):
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+# Allow product emulators to bind non-loopback hosts: true or false.
+allowNonLoopbackHosts = true
+# Additional accepted host names: exact names, dot-prefixed domains, or "*".
+allowedHosts = ["emulator.ci.example", ".corp.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowNonLoopbackHosts": true,
+    "allowedHosts": ["emulator.ci.example", ".corp.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+- Una entrada no lleva esquema, puerto ni ruta.
+- Listar un nombre solo deja pasar las solicitudes que lo nombran. Las comprobaciones de origen del navegador no cambian, de modo que una página debe seguir procediendo de un origen loopback para usar las rutas privilegiadas.
+- Fireemu imprime una línea `warning:` al iniciar para `"*"` y para una entrada que cubre un dominio de primer nivel entero, como `".com"`, porque cualquier página web puede registrar un nombre ahí.
+- La política se lee cuando inicia el daemon; reinícialo tras cambiar `network.allowedHosts`.
+
+### Entradas para entornos habituales
+
+| Entorno | Entrada |
+|---|---|
+| Un servicio de Kubernetes bajo un dominio de clúster personalizado | `".svc.<cluster domain>"` (o el nombre exacto del servicio) |
+| ngrok | el nombre exacto del túnel, por ejemplo `"abc123.ngrok-free.app"` |
+| Cloudflare Tunnel | el nombre de host público exacto del túnel |
+| Un nombre en `/etc/hosts` fuera de `.test`, `.local` y `.home.arpa` | ese nombre |
+
+Lista los nombres exactos de los túneles en lugar de todo el dominio del proveedor del túnel: cualquiera puede abrir un túnel bajo él. Los nombres `.cloudworkstations.dev` de Firebase Studio, `.app.github.dev` de Codespaces, `.local` de mDNS, `svc.cluster.local` de Kubernetes y `.test` no necesitan entrada.
+
+## Relacionado
+
+- [Archivos de configuración](../configuration/#comprobaciones-de-propiedad-de-archivos)
+- [Perfiles y productionExact](../profiles/)
+- [Referencia de la CLI](../../reference/cli/)
+- [Solución de problemas](../troubleshooting/)

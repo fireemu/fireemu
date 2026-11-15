@@ -1,0 +1,181 @@
+---
+title: Perfiles y productionExact
+description: Elige entre los perfiles strict y emulator, consulta dónde los valores predeterminados difieren de producción a propósito y cámbialos al comportamiento de producción con productionExact.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Un perfil selecciona el comportamiento que sigue Fireemu: el de Firebase en producción (`strict`, el predeterminado) o el del emulador oficial (`emulator`). Algunos valores predeterminados difieren de producción a propósito en ambos perfiles, para que las pruebas se ejecuten sin configuración previa. `productionExact` los cambia al comportamiento de producción.
+
+## Elegir un perfil
+
+| Perfil | Comportamiento |
+|---|---|
+| `strict` | Reproduce el comportamiento y las restricciones de Firebase en producción lo más fielmente posible dentro del alcance soportado. Es el predeterminado y el recomendado, también al migrar desde el emulador oficial. |
+| `emulator` | Apunta al comportamiento de una versión fijada del emulador oficial (`firebase-tools` 15.28.2). Úsalo solo para comprobar la alineación con el emulador oficial, por ejemplo como destino de prueba adicional; no hace falta para una migración. |
+
+El perfil `emulator` acepta comportamientos que producción rechaza, por lo que una prueba puede pasar ahí y fallar contra producción. Usa `strict` para tus pruebas.
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict"
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Elegir una configuración
+
+- **La mayoría de los proyectos:** `strict` con los valores predeterminados de desarrollo. Las pruebas se ejecutan sin claves ni llamadas de configuración y siguen cumpliendo la validación, los rechazos y las formas de error de producción.
+- **Antes de un lanzamiento, o en un trabajo de CI aparte:** `strict` con [`productionExact: true`](#dónde-fireemu-se-aparta-de-producción-a-propósito), para detectar lo que los valores predeterminados de desarrollo dejan pasar, como un token sin firmar.
+- **Comprobar el emulador oficial:** `emulator`, solo como destino adicional.
+
+## Dónde Fireemu se aparta de producción a propósito
+
+El objetivo de Fireemu es reproducir producción. Algunos comportamientos de producción solo añaden configuración a una prueba: producción exige tokens firmados y claves de firma, una función habilitada mediante una llamada a la Admin API, o una hora de espera. Copiarlos exactamente haría que Fireemu fuera más difícil de usar en CI y en la máquina de un desarrollador sin detectar más errores.
+
+Para estos comportamientos, el valor predeterminado en ambos perfiles es un valor predeterminado de desarrollo que funciona sin configuración. Cada uno tiene su propio ajuste y aparece en la tabla siguiente, de modo que cada una de estas diferencias con producción es una decisión documentada.
+
+### Activar el comportamiento de producción con productionExact
+
+Para obtener el comportamiento de producción en todos ellos a la vez, establece `productionExact` en `true` (solo en el perfil `strict`). Un ajuste explícito sigue teniendo prioridad sobre él:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+# Configuration schema version: 1.
+schemaVersion = 1
+# Compatibility profile: "strict" or "emulator".
+profile = "strict"
+# Use production behavior for development defaults: true or false; requires strict.
+productionExact = true
+
+[auth]
+# Accept unsigned emulator custom tokens: true or false.
+allowUnsignedCustomTokens = true
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "auth": {
+    "allowUnsignedCustomTokens": true
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Valores predeterminados de desarrollo
+
+| Valor predeterminado de desarrollo | Ajuste | Con `productionExact` |
+|---|---|---|
+| Se aceptan los custom tokens del emulador sin firmar | `auth.allowUnsignedCustomTokens` | Se rechazan |
+| Las Security Rules de Firestore, Storage y Realtime Database aceptan el ID token simulado sin firmar de `@firebase/rules-unit-testing` (`authenticatedContext()`, el `mockUserToken` del SDK de cliente) | `auth.allowUnsignedIdTokens` | Se desactiva el recurso de reserva del token simulado, ya que producción rechaza un token sin firmar; los tokens emitidos por fireemu que superan la verificación normal se siguen aceptando |
+| Una instancia de Realtime Database sin archivo de reglas está abierta a todas las solicitudes, tal como la sirve el emulador oficial | `database.defaultAccess` (`"open"`) | `"locked"`: solo la credencial `owner` del emulador lee y escribe, ya que producción admite solo a administradores en una base de datos nueva en modo bloqueado |
+| Hosting sirve un archivo sin un `Cache-Control` predeterminado, de modo que el navegador muestra de inmediato un archivo editado | `hosting.cacheControl` (`"none"`) | `"production"` añade `Cache-Control: max-age=3600` a un archivo cuyas reglas `headers` no establecen ninguno, como hace Hosting en producción (solo perfil strict) |
+| El contenido localizado de Hosting sigue la cabecera `X-Country-Code` y la cookie `firebase-country-override`, de modo que se puede probar el contenido por país | `hosting.clientCountry` (`"honoured"`) | `"ignored"`: ninguna selecciona nada, porque producción decide el país en su borde (solo perfil strict) |
+| Todas las funciones de un codebase se ejecutan en un único proceso runner, por lo que comparten un grafo de módulos y las variables de identidad nombran la llamada que empezó más recientemente | `functions.isolation` (`"codebase"`) | `"function"`: un proceso runner por función, iniciado en su primer disparo, con su propia identidad, sus secretos y su grafo de módulos; cuesta unos 120 MiB de memoria por función iniciada y un arranque en frío en su primera llamada |
+| Las funciones de bloqueo de Auth usan un token del emulador | `functions.authBlockingToken` (`"emulated"`) | `"production"` entrega un token firmado y el runner de Python lo verifica con las reglas del SDK; las funciones de Node reciben el mismo token con la forma de producción pero no lo verifican, por lo que se comportan como antes; requiere `strict` |
+| El nombre de una tarea de Cloud Tasks terminada queda libre de inmediato | `functions.taskNameReuse` (`"immediate"`; `"retained"` en el perfil `emulator`) | `"production"` rechaza el nombre hasta 3600 segundos ("existed too recently"), como documenta Cloud Tasks; el historial de nombres completados está acotado entre todas las colas a 65 536 nombres y 8 MiB de texto de nombres de colas y tareas; los nombres más antiguos se descartan cuando se supera cualquiera de los dos límites, incluso antes de que expire la ventana de 3600 segundos. Los mismos límites se aplican a `"retained"`; requiere `strict` |
+| Una tarea sin `dispatchDeadline` se corta a los 60 segundos | `functions.taskDispatchDeadlineSeconds` (`60`) | `600`, el plazo que Cloud Tasks dio a una tarea así en las grabaciones; se puede establecer cualquier valor de 15 a 1800; requiere `strict` |
+| Una tarea que sigue fallando se reintenta con los intervalos que declara su cola | `functions.taskRetryBackoff` (`"declared"`) | `"production"` deja que los intervalos crezcan por encima del máximo declarado tras una docena de fallos (4, 8 y 10 s, según lo grabado), nunca antes de lo declarado; requiere `strict` |
+| Una función de cola de tareas que no declara ningún valor de reintento recibe los 3 intentos del emulador oficial | `functions.taskRetryDefaults` (`"emulated"`) | `"production"` da 100 intentos (los mismos valores de backoff), como devolvió la lectura de la cola predeterminada; un valor declarado se conserva siempre; requiere `strict` |
+| El inicio de sesión con un proveedor de identidad acepta aserciones de prueba (fixture) y el widget de inicio de sesión (`/emulator/auth/handler`), para proveedores integrados, `oidc.*` y `saml.*`; con `strict`, un proveedor `oidc.*` o `saml.*` debe seguir estando configurado y habilitado (`auth.providers` o la Admin API), como exige producción | `auth.idpAssertions` (`"fixture"`) | `"signed"`: los ID tokens OIDC deben verificarse con una clave de `auth.idpSigners`, las respuestas SAML con los certificados del proveedor, y se rechazan los proveedores fixture e integrados |
+| El listener de Eventarc admite cualquier credencial o ninguna, de modo que el Admin SDK publica con una credencial falsa (consulta [Eventarc authentication](https://github.com/fireemu/fireemu/blob/main/docs/eventarc-authentication.md)) | `eventarc.authentication` (`"permissive"`) | `"production"`: un bearer ausente, mal formado o con forma de JWT se rechaza con el 401 de producción |
+| Un ID de tenant puede ser cualquier nombre legible, como `tenant-a` | `auth.tenantIdFormat` (`"readable"`) | `"generated"`: la forma generada de producción, como `acme-x7k2q` |
+| La multitenencia está activada: la Admin API crea tenants y `auth.tenants` se carga sin una llamada a `updateConfig` | `auth.multiTenant.allowTenants` (`true`) | Sin establecer hasta que se active, como en un proyecto de producción nuevo: las rutas de tenant se rechazan y `auth.tenants` necesita `allowTenants: true` |
+| La autenticación multifactor está activada, SMS y TOTP, sin interruptor en la consola, sin llamada a `updateConfig` ni bloque `auth.mfa` | `auth.mfa` (`state: "ENABLED"`) | Desactivada hasta que se active, como en un proyecto de producción nuevo: el registro se rechaza con `OPERATION_NOT_ALLOWED : SMS based MFA not enabled.` o `TOTP based MFA not enabled.` |
+| El stream `Listen` de Firestore de un usuario final permanece abierto por mucho tiempo que se mantenga. `POST /v1/firestore/listen:expire` en la API de control termina de golpe todos los streams de usuario final retenidos, con el estado de producción, para probar la reconexión de un cliente | `firestore.listenStreamLifetime` (`"unlimited"`) | `"oneHour"`: se termina con `INTERNAL` una hora después de abrirse |
+| App Check funciona sin registrar una app: cualquier debug token bien formado (un UUIDv4) se intercambia para cualquier app, de modo que un callable con `enforceAppCheck` puede llamarse sin bloque `appCheck`; un token ausente o mal formado se sigue rechazando | `appCheck.debugTokens` (`"any"`) | `"registered"`: solo se intercambian las apps de `appCheck.apps` con un digest de debug token registrado, y App Check no se sirve sin un bloque `appCheck`. Un bloque `appCheck` también lo restablece |
+| Un bucket de Storage no declarado se crea en la primera escritura con una nota | `storage.undeclaredBuckets` (`"warn"`) | `"refuse"`: se rechazan las operaciones sobre objetos; una clave explícita prevalece |
+| Un bucket de Storage que no figura en la lista recibe cabeceras CORS permisivas | `storage.cors` | Sin cabeceras CORS para un bucket que no figura en la lista; una entrada explícita decide |
+| El reenvío a dead-letter no necesita número de proyecto ni permisos IAM | `pubsub.deadLetterAuthorization` (`"implicit"`) | `"iam"`: un mensaje se reenvía solo después de conceder al agente de servicio de Pub/Sub `roles/pubsub.subscriber` en la suscripción y `roles/pubsub.publisher` en el tema dead-letter. Indicar `pubsub.projectNumbers` también lo selecciona |
+
+El banner de inicio y `fireemu capabilities` informan de si `productionExact` está establecido, y del valor efectivo y el origen de cada valor predeterminado de desarrollo con clave de la tabla. El CORS de buckets que no figuran en la lista no es un valor predeterminado de desarrollo con clave.
+
+La mayoría de los proyectos no necesitan `productionExact`; es un interruptor avanzado para una comparación más estricta con producción.
+
+Una consulta cuyo índice compuesto no está definido no figura entre estos valores predeterminados. `strict` la rechaza como lo hace producción, y `firestore.missingIndexes: "report"` es una exclusión explícita que la ejecuta e informa del índice que falta por la salida de error estándar. `productionExact` no cambia esa clave.
+
+### Otras comodidades de desarrollo
+
+Estos comportamientos difieren de producción y `productionExact` no los cambia. Cada fila indica cómo obtener el comportamiento de producción, o que no hay forma de hacerlo.
+
+#### Autenticación
+
+| Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
+|---|---|
+| `localhost` está entre los dominios autorizados predeterminados para las URL de continuación de los enlaces de acción; un proyecto de producción nuevo puede no incluirlo | Declara `auth.authorizedDomains`, que sustituye a los valores predeterminados |
+| Todos los métodos de inicio de sesión empiezan habilitados, incluido el inicio de sesión con enlace por correo; un proyecto de producción nuevo no habilita ninguno (`firebase deploy --only auth` solo activa los proveedores que lista, nunca desactiva) | Declara `auth.signIn` para que coincida con tu proyecto, por ejemplo `email.passwordRequired: true` para rechazar el inicio de sesión con enlace por correo |
+| Los proveedores de identidad integrados, como `google.com`, permiten iniciar sesión sin estar habilitados en la consola. Los proveedores `oidc.*` y `saml.*` deben seguir estando configurados y habilitados, o el inicio de sesión se rechaza como lo rechaza producción | `auth.idpAssertions: "signed"` (establecido por `productionExact`) rechaza los proveedores integrados |
+| Se acepta cualquier clave de API Web hasta que el proyecto declara una; producción responde `API_KEY_INVALID` para una clave de otro proyecto | Declara `auth.apiKeys` |
+| La verificación por teléfono envía un código a cualquier número sin prueba de reCAPTCHA, Play Integrity o APNs, que producción exige fuera de los números de prueba | Ningún ajuste. Los SDK de cliente ejecutan su verificador en modo emulador, de modo que se ejercita la ruta de la app; un cliente REST sin procesar que omite la prueba pasa aquí |
+| Un estado `ENFORCE` de reCAPTCHA se almacena y se devuelve, pero no se aplica, por lo que se acepta un inicio de sesión sin token de reCAPTCHA | Ningún ajuste |
+| `accounts:batchCreate` no tiene límite de filas; el Admin SDK comprueba 1000 usuarios por llamada antes de enviar | Ningún ajuste |
+| Los límites de velocidad de registro (producción limita las cuentas nuevas por IP) no se simulan | Establece `auth.quotaSimulation.mode` en `"enforce"` |
+| `verifyIdToken` del Admin SDK dentro de una función acepta un ID token sin firmar, porque el SDK omite la verificación de la firma mientras `FIREBASE_AUTH_EMULATOR_HOST` está establecida; producción lo rechaza | Ningún ajuste. Consulta [Auth](../../products/auth/#tokens) |
+
+#### Cloud Firestore
+
+| Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
+|---|---|
+| Firestore atiende una solicitud que nombra un proyecto distinto del del daemon a partir de los datos vacíos propios de ese proyecto, lo que mantiene separadas las pruebas en paralelo; un error tipográfico en un `projectId` divide los datos en lugar de fallar con el `PERMISSION_DENIED` de producción | Establece `projects.unknownProjects` en `"refuse"` |
+| Los índices compuestos de `firestore.indexes.json` están `READY` de inmediato, y los creados mediante la Admin API tras unos 1,5 segundos; producción tarda minutos en construir un índice. Se conservan el estado `CREATING` y el rechazo "currently building" de una consulta que necesita el índice | Ningún ajuste. Consulta el índice hasta que esté `READY`, como contra producción; avanzar el reloj virtual también termina una construcción |
+| Las operaciones gestionadas de exportación, importación y borrado masivo están hechas en la primera consulta; producción tarda minutos | Ningún ajuste. Consulta la operación hasta `done`, como contra producción |
+| Una transacción que mantiene un bloqueo que otro escritor está esperando se revierte tras 60 segundos sin actividad (reloj real). El límite de inactividad propio de producción es de unos 110 a 123 segundos, y lo que hace antes con un titular en disputa no está grabado | Ningún ajuste |
+
+#### Cloud Storage
+
+| Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
+|---|---|
+| Una URL firmada o una política POST se acepta con cualquier firma (se comprueban su caducidad y sus condiciones), porque verificarla requiere la clave de la cuenta de servicio de firma | Para una URL firmada V4, registra la clave con la que se firmó en `storage.signedUrlKeys`; la firma de una política POST no se verifica |
+| La API JSON atiende como propietario una solicitud sin credencial, o con cualquier credencial distinta de un ID token de Firebase, porque una ejecución local no puede juzgar un access token | No disponible |
+| Una concesión pública a nivel de bucket (IAM `allUsers`) no puede hacerse mediante una API | Lista el bucket en `storage.publicBuckets` |
+| La URL pública (`GET /{bucket}/{object}`) se sirve sin credencial a una solicitud que envía `x-goog-api-client`, porque la biblioteca cliente de Go (y el Firebase Admin Go SDK) lee a través de ella sin credencial contra un host de emulador; una búsqueda desde el navegador se rechaza | No disponible |
+| Una Security Rule puede llamar a `firestore.get()` y `firestore.exists()` sin la concesión de acceso a Firestore que producción necesita para el agente de servicio de Storage | No disponible |
+| Existen los dos nombres de bucket predeterminados, `<project>.appspot.com` y `<project>.firebasestorage.app`, mientras que un proyecto de producción tiene uno solo | Establece `storage.defaultBucket` en el que tiene tu proyecto; el otro nombre queda sin declarar y el recurso de su bucket responde 404 hasta que exista; `storage.undeclaredBuckets` controla si la primera escritura lo crea con una nota (`"warn"`), en silencio (`"create"`) o se rechaza (`"refuse"`, seleccionado por `productionExact` salvo que se sobrescriba) |
+
+#### Cloud Functions
+
+| Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
+|---|---|
+| `.env.local` de un codebase de Functions se aplica después de `.env` y `.env.<projectId>` aunque producción nunca lo despliega | Pon el valor en `.env` o en `.env.<projectId>`; una clave que existe solo en `.env.local` queda sin establecer en producción |
+| Una función que falla con `retry` habilitado se reintenta 4 veces en total (`events.maxAttempts`, backoff de 10 s a 600 s en el reloj virtual) y luego pasa a dead-letter; producción reintenta hasta 24 horas (segunda generación) o 7 días (primera generación) | Aumenta `events.maxAttempts`; ningún valor reproduce una ventana de tiempo |
+| Una función que no es pública (`invoker: "private"` o una lista de cuentas de servicio) y una función de cola de tareas aceptan en la URL pública de la función cualquier bearer que parezca un identity token emitido por Google (un JWT cuyo `iss` es `https://accounts.google.com`), porque la verificación de Google de su firma y de su rol IAM no puede ejecutarse en local. Un ID token de Firebase Auth se rechaza con 401, como lo rechaza Cloud Run. Una llamada sin credenciales se rechaza con 403, como la rechaza producción. La consola y la API de control llaman a estas funciones con el token de control | No hay ninguna; envía una llamada sin credenciales para ver el rechazo. `ingressSettings` no se aplica |
+
+#### Pub/Sub
+
+| Comportamiento de desarrollo | Cómo obtener el comportamiento de producción |
+|---|---|
+| Pub/Sub acepta solicitudes sin ninguna credencial, de modo que funcionan los clientes que usan `PUBSUB_EMULATOR_HOST` | Establece `pubsub.authentication.localBearerToken`; las solicitudes sin credencial se rechazan entonces como las rechaza producción. Consulta [Pub/Sub y Eventarc](../../products/pubsub-eventarc/#authentication). |
+| Un endpoint push de Pub/Sub puede ser `http://` simple en loopback (`127.0.0.1`, `localhost`, `[::1]`); producción exige HTTPS | Usa una URL `https://` que no sea loopback en la suscripción; Fireemu entrega los mensajes push solo a loopback, por lo que no hay ajuste que lo haga llegar a una |
+
+## Relacionado
+
+- [Archivos de configuración](../configuration/)
+- [Referencia de configuración](../../reference/configuration/)
+- [CI y contenedores](../ci-and-containers/)
+- [Limitaciones](../../compatibility/limitations/)

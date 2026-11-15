@@ -1,0 +1,132 @@
+---
+title: Solución de problemas
+description: Comprueba una instalación, busca un síntoma o un mensaje de error e informa de un problema.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Empieza con `fireemu doctor`, y luego busca abajo el síntoma o el mensaje de error.
+
+## Comprobar la instalación
+
+```sh
+npx fireemu doctor
+```
+
+`doctor` informa del binario de Fireemu, la UI, el runner de Functions y el Node.js que encuentra, y sugiere un remedio para cada problema.
+
+Para informar también de lo que dice una suite en ejecución, como el historial de Firestore y los bytes de Storage que contiene, pasa su URL de control. Se imprime al iniciar:
+
+```sh
+npx fireemu doctor --connect http://127.0.0.1:<port>
+```
+
+## Problemas habituales
+
+| Síntoma | Qué comprobar |
+|---|---|
+| El inicio falla con `bind 127.0.0.1:9000: Address already in use` | Tu `firebase.json` tiene `emulators.database`, por lo que Realtime Database inicia en 9000, que ocupa otro proceso (PHP-FPM por defecto). Usa `--database-port`, o déjalo fuera con `--only`. |
+| No se usa tu `firebase.json` o `fireemu.toml` | La línea `config:` de la salida de inicio nombra los archivos que se cargaron. Consulta [Qué archivos se cargan](../configuration/#qué-archivos-se-cargan), y la regla de propiedad si ejecutas en un contenedor o con `sudo`. |
+| Se deniega toda solicitud a Firestore o Storage | Con `strict`, un proyecto sin Security Rules rechaza las solicitudes de cliente, como hace producción. Comprueba las líneas de inicio `firestore rules:` y `storage rules:`. Consulta [Security Rules](../security-rules/). |
+| Se deniega una solicitud y no sabes por qué | Lee la línea `note: firestore: Security Rules denied ...` en la salida de error estándar, o la página Rules de la UI. |
+| Una consulta funciona en local pero falla en producción | Con `emulator`, un índice que falta no rechaza la consulta, pero se imprimen sugerencias en la salida de error estándar; cambia a `strict` para aplicarlo. Las consultas OR pueden necesitar un índice por rama; todas las definiciones de rama que faltan se listan en la salida de error estándar. Si `firestore.missingIndexes` es `"report"`, busca el informe de índices que faltan en la salida de error estándar, o léelo en `GET /v1/firestore/missingIndexes` de la API de control (consulta [Cloud Firestore](../../products/firestore/#fail-a-ci-job-on-a-missing-index)). |
+| La exportación falla por permisos | Ejecuta `fireemu doctor --export-dir <dir>`. Inspecciona la cadena completa de ancestros existentes sin modificarla; un hijo privado bajo un padre compartido no es suficiente. Consulta [destinos de exportación](../data/#dónde-exportar). |
+| Las pruebas fallan al copiar un repositorio global no relacionado | Desde v0.27.0, un mundo con Functions limpia el `NODE_PATH` ambiental; en una versión anterior, las instantáneas lo copiaban. Actualiza, o pasa un `NODE_PATH` vacío para dependencias solo locales, o acota explícitamente las raíces requeridas. Consulta [instantáneas de dependencias](../test-worlds/#instantáneas-de-dependencias-y-node_path-global). |
+| La preparación de la instantánea del mundo de prueba agota su tiempo | Reduce las dependencias sin usar o aumenta `snapshotTimeoutMs` (60,000 ms por defecto, como máximo 2,147,483,647). `startupTimeoutMs` solo cubre la disponibilidad del daemon tras la preparación. Consulta [mundos de prueba independientes](../test-worlds/#instantáneas-y-tiempos-de-espera). |
+| La recarga de Functions informa de un fallo de validación de ACL de la instantánea en Windows | Usa un directorio temporal privado sin junctions ni otros puntos de reanálisis. Sus permisos deben restringir el acceso a tu cuenta y a las cuentas de sistema de confianza, y sus ancestros no deben permitir que otras cuentas lo modifiquen. Asegúrate de que Windows PowerShell esté disponible bajo `SystemRoot` y vuelve a intentar el cambio de fuente. Consulta [recarga de fuentes](../../products/functions/#source-reload). |
+| La UI no se abre | `up` inicia sin la UI cuando el puerto 4000 está ocupado. Usa `--ui-port`. `exec` inicia la UI solo con `--ui`. |
+| Una función programada nunca se ejecuta | Las programaciones siguen el reloj virtual. Con `daemon.clockStart` fijado (o `daemon.clock = "frozen"`) el reloj permanece quieto, así que muévelo o ejecuta la función desde la UI; sin un inicio fijado sigue el tiempo real. Consulta [Tiempo y funciones programadas](../time/). |
+
+## Mensajes de error
+
+<details>
+<summary><code>FAILED_PRECONDITION: The query requires an index</code></summary>
+
+Con `strict` (el valor predeterminado) y `firestore.missingIndexes = "refuse"`, una consulta cuyo índice compuesto no está declarado se rechaza, como la rechaza producción. El SDK recibe el estado `FAILED_PRECONDITION` (por REST, HTTP 400 con `"status": "FAILED_PRECONDITION"`) y este mensaje:
+
+```text
+The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/<project>/firestore/indexes?create_composite=...
+```
+
+Añade el índice a `firestore.indexes.json` (referenciado desde `firebase.json`) y reinicia. Para recoger todos los índices que faltan en una sola ejecución en lugar de fallar en el primero, establece `firestore.missingIndexes = "report"`: las consultas se ejecutan, y cada índice que falta se imprime una vez en la salida de error estándar con la entrada que hay que añadir. El perfil `emulator` nunca rechaza estas consultas. Consulta [Índices compuestos](../../products/firestore/#composite-indexes).
+
+</details>
+
+<details>
+<summary><code>409 FAILED_PRECONDITION</code> de <code>/v1/firestore/missingIndexes</code></summary>
+
+La API de control responde `409` en dos casos, de modo que una comprobación de la lista no puede pasar con una respuesta que no demuestra nada:
+
+```text
+FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to "report" and Firestore selected; ...
+```
+
+No se está informando de nada: la ejecución usa el perfil `emulator`, o `strict` con `"refuse"`, o Firestore no está seleccionado. Establece `profile = "strict"` y `firestore.missingIndexes = "report"`.
+
+```text
+FAILED_PRECONDITION : <n> quer(y|ies) of this project were served with a missing composite index that is not listed, because the list is full; the list is incomplete, not empty. DELETE it and run again
+```
+
+La lista contiene como máximo 1,000 entradas. Cuando faltaron más índices distintos, una respuesta `200` lleva `"truncated": true` y un contador `dropped`; cuando se descartaron todas las entradas del proyecto, la respuesta es en su lugar este `409`. Corrige los índices que ya conoces, haz `DELETE` de la lista y ejecuta de nuevo. Consulta [Hacer fallar un trabajo de CI por un índice que falta](../../products/firestore/#fail-a-ci-job-on-a-missing-index).
+
+</details>
+
+<details>
+<summary><code>403 ... fireemu does not answer Host</code> (<code>network.allowedHosts</code>)</summary>
+
+Una solicitud nombró un `Host` al que Fireemu no responde, como defensa contra el DNS rebinding. La respuesta es HTTP 403 con estado `PERMISSION_DENIED`:
+
+```text
+fireemu does not answer Host "evil.example": as a defence against DNS rebinding it answers localhost, IP addresses, names under .internal and the names listed in network.allowedHosts (...) (single-label names too with network.allowNonLoopbackHosts); see https://fireemu.github.io/fireemu/guides/ci-and-containers/#host-names-the-emulators-answer
+```
+
+Si un cliente tuyo usa ese nombre (un túnel, un nombre en `/etc/hosts`, el nombre de un servicio de Compose), lístalo:
+
+<Tabs syncKey="config-format">
+<TabItem label="TOML">
+
+```toml
+[network]
+allowedHosts = ["emulator.ci.example"]
+```
+
+</TabItem>
+<TabItem label="JSON">
+
+```json
+{
+  "network": {
+    "allowedHosts": ["emulator.ci.example"]
+  }
+}
+```
+
+</TabItem>
+</Tabs>
+
+Un nombre de una sola etiqueta, como un servicio de Compose, necesita además `network.allowNonLoopbackHosts = true`.
+
+Fireemu también escribe un aviso `refused Host` en la salida de error estándar, una vez por nombre. Consulta [Nombres de host que responden los emuladores](../ci-and-containers/#nombres-de-host-que-responden-los-emuladores).
+
+</details>
+
+## Obtener más detalle
+
+Inicia con `--log-verbosity debug`, que también imprime la configuración resuelta.
+
+## Informar de un problema
+
+[Abre un issue en GitHub](https://github.com/fireemu/fireemu/issues) con:
+
+- las versiones de Fireemu y del SDK de Firebase, el perfil y el producto de Firebase implicado;
+- una reproducción mínima;
+- para un problema de compatibilidad, si comparaste contra Firebase en producción o contra el emulador oficial, y los resultados esperado y real.
+
+Elimina las credenciales y la información personal antes de compartir archivos de configuración o logs.
+
+## Relacionado
+
+- [Archivos de configuración](../configuration/)
+- [Security Rules](../security-rules/)
+- [CI y contenedores](../ci-and-containers/)
+- [Limitaciones](../../compatibility/limitations/)
