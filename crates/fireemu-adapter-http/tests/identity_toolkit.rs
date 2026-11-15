@@ -23088,32 +23088,43 @@ fn a_slow_imported_hash_verification_does_not_block_other_requests() {
     );
     assert_eq!(status, 200, "{imported}");
     let long_password = "p".repeat(150_000);
+    let started = std::time::Instant::now();
     std::thread::scope(|scope| {
         let slow = scope.spawn(|| {
-            post(
+            let answer = post(
                 &s,
                 &format!("{V1}/accounts:signInWithPassword"),
                 &json!({"email": "md5@example.com", "password": long_password}),
-            )
+            );
+            (answer, started.elapsed())
         });
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(
-            !slow.is_finished(),
-            "the slow verification must still be running"
-        );
-        let (status, created) = post(
-            &s,
-            &format!("{V1}/accounts:signUp"),
-            &json!({"email": "other@example.com", "password": "password123", "returnSecureToken": true}),
-        );
-        assert_eq!(status, 200, "{created}");
-        assert!(
-            !slow.is_finished(),
-            "the concurrent signUp waited for the slow verification"
-        );
-        let (status, refused) = slow.join().unwrap();
+        // Cheap requests issued all through the derivation: each one would wait for the rest of
+        // it if the sign-in held the store lock or the end-user gate.
+        let mut slowest = std::time::Duration::ZERO;
+        let mut issued = 0;
+        while !slow.is_finished() {
+            let begun = std::time::Instant::now();
+            let (status, created) = post(
+                &s,
+                &format!("{V1}/accounts:signUp"),
+                &json!({"returnSecureToken": true}),
+            );
+            assert_eq!(status, 200, "{created}");
+            slowest = slowest.max(begun.elapsed());
+            issued += 1;
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let ((status, refused), took) = slow.join().unwrap();
         assert_eq!(status, 400, "{refused}");
         assert_eq!(refused["error"]["message"], "INVALID_PASSWORD");
+        assert!(
+            took > std::time::Duration::from_secs(2) && issued >= 10,
+            "the derivation must be slow enough to tell ({took:?}, {issued} requests)"
+        );
+        assert!(
+            slowest * 4 < took,
+            "a concurrent signUp waited {slowest:?} during a {took:?} sign-in"
+        );
     });
 }
 
