@@ -17,6 +17,7 @@ import {
   FetchState,
   Field,
   Notice,
+  RelativeTime,
   Spinner,
 } from "../components/common";
 import { decodeSplat, storageHref } from "../lib/hrefs";
@@ -101,6 +102,7 @@ const ObjectDetail: Component<{
             </Field>
             <Field label={t("storage.updated")} mono>
               {o().updated}
+              <RelativeTime value={o().updated} />
             </Field>
             <Field label={t("storage.generation")} mono>
               {o().generation} / {o().metageneration}
@@ -304,7 +306,10 @@ const Storage: Component = () => {
                     </td>
                     <td>{formatSize(o.size)}</td>
                     <td class="mono text-xs">{o.contentType}</td>
-                    <td class="mono text-xs">{o.updated}</td>
+                    <td class="mono text-xs whitespace-nowrap">
+                      {o.updated}
+                      <RelativeTime value={o.updated} />
+                    </td>
                   </tr>
                 )}
               </For>

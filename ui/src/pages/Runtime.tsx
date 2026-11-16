@@ -8,6 +8,7 @@ import {
   ErrorBanner,
   FetchState,
   Notice,
+  RelativeTime,
   Section,
   SectionNav,
 } from "../components/common";
@@ -203,7 +204,10 @@ const SnapshotsPanel: Component = () => {
                 {(s) => (
                   <tr>
                     <td class="mono">{s.name}</td>
-                    <td class="mono">{s.clock}</td>
+                    <td class="mono">
+                      {s.clock}
+                      <RelativeTime value={s.clock} />
+                    </td>
                     <td>{s.parts}</td>
                     <td class="space-x-2 text-right">
                       <ConfirmButton

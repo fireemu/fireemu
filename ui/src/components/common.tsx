@@ -1,6 +1,8 @@
 import { createSignal, For, onCleanup, Show, type Component, type JSX } from "solid-js";
 import { t } from "../i18n";
+import { relativeTime } from "../lib/relativeTime";
 import { createSubmitGuard } from "../lib/submitGuard";
+import { appState } from "../state";
 
 /** An error line (hidden while empty). */
 export const ErrorBanner: Component<{ message: string | null | undefined }> = (props) => (
@@ -188,6 +190,27 @@ export const SectionNav: Component<{
     </For>
   </nav>
 );
+
+/**
+ * How far an instant is from the session's virtual clock ("3 min ago", "in 2 h"), shown after
+ * the instant itself. Emulator timestamps are stamped by that clock, so the wall clock would
+ * give the wrong distance. Renders nothing for a missing or unparsable value or clock.
+ */
+export const RelativeTime: Component<{ value: string | undefined }> = (props) => {
+  const text = () => (props.value ? relativeTime(props.value, appState.clock()) : null);
+  return (
+    <Show when={text()}>
+      {(distance) => (
+        <span
+          class="ml-1 font-sans text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400"
+          data-testid="relative-time"
+        >
+          ({distance()})
+        </span>
+      )}
+    </Show>
+  );
+};
 
 /** A key / value row for detail views. */
 export const Field: Component<{ label: string; children: JSX.Element; mono?: boolean }> = (

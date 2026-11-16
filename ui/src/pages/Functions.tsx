@@ -17,7 +17,14 @@ import { t } from "../i18n";
 import { FunctionsTimeline } from "../components/FunctionsTimeline";
 import type { FunctionLog, FunctionsOverview } from "../api/functions";
 import { appState } from "../state";
-import { AsyncButton, ErrorBanner, FetchState, Notice, Section } from "../components/common";
+import {
+  AsyncButton,
+  ErrorBanner,
+  FetchState,
+  Notice,
+  RelativeTime,
+  Section,
+} from "../components/common";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -32,6 +39,7 @@ import {
 } from "../api/functions";
 import { buildCallableInvoke, buildEnqueue, buildRequestInvoke } from "../lib/invoke";
 import { mergeFunctionLogs } from "../lib/functionsTimeline";
+import { formatLogLine } from "../lib/logFormat";
 import { matchesLog, type LevelFilter } from "../lib/logFilter";
 import { runtimeLabel } from "../lib/functionRuntime";
 
@@ -507,6 +515,7 @@ const FunctionRow: Component<{
           {(nextRun) => (
             <div class="mono text-xs text-zinc-500" data-testid={`next-run-${props.f.name}`}>
               {t("functions.nextRun")}: {nextRun()}
+              <RelativeTime value={nextRun()} />
             </div>
           )}
         </Show>
@@ -819,7 +828,11 @@ const Functions: Component = () => {
   const filteredLines = createMemo(() =>
     lines().filter((line) => matchesLog(line, { level: logLevel(), text: logText() })),
   );
-  const filteredLogOutput = createMemo(() => filteredLines().join("\n"));
+  // Formatting is presentation only: the filters and the counts work on the lines as sent.
+  const [formatJson, setFormatJson] = createSignal(false);
+  const filteredLogOutput = createMemo(() =>
+    (formatJson() ? filteredLines().map(formatLogLine) : filteredLines()).join("\n"),
+  );
   const filteredInvocations = (): InvocationInfo[] => {
     const name = fnFilter();
     return name === ""
@@ -1287,6 +1300,15 @@ const Functions: Component = () => {
                     value={logText()}
                     onInput={(e) => editLogText(e.currentTarget.value)}
                   />
+                </label>
+                <label class="flex items-center gap-1 text-sm whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={formatJson()}
+                    onChange={(e) => setFormatJson(e.currentTarget.checked)}
+                    data-testid="log-format-json"
+                  />
+                  {t("functions.formatJson")}
                 </label>
                 <span
                   class={`badge ${connected() ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : "bg-zinc-200 dark:bg-zinc-800"}`}

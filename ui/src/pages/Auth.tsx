@@ -17,6 +17,7 @@ import {
   CopyField,
   ErrorBanner,
   Notice,
+  RelativeTime,
   Section,
   Spinner,
 } from "../components/common";
@@ -570,9 +571,13 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         <td class="text-xs">
                           <MfaSummary enrollments={u.mfaInfo} />
                         </td>
-                        <td class="mono text-xs whitespace-nowrap">{formatMillis(u.createdAt)}</td>
+                        <td class="mono text-xs whitespace-nowrap">
+                          {formatMillis(u.createdAt)}
+                          <RelativeTime value={formatMillis(u.createdAt)} />
+                        </td>
                         <td class="mono text-xs whitespace-nowrap">
                           {formatMillis(u.lastLoginAt)}
+                          <RelativeTime value={formatMillis(u.lastLoginAt)} />
                         </td>
                         <td class="text-right">
                           <Show when={u.disabled}>

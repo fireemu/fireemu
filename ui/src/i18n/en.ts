@@ -1,6 +1,7 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "functions.formatJson": "Format JSON",
   "palette.showShortcuts": "Show keyboard shortcuts",
   "shortcuts.title": "Keyboard shortcuts",
   "shortcuts.open": "Shortcuts",

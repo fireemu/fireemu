@@ -21,6 +21,7 @@ import {
   ErrorBanner,
   FetchState,
   Notice,
+  RelativeTime,
 } from "../components/common";
 import { ValueTree } from "../components/ValueTree";
 import { buildValueTree } from "../lib/valueTree";
@@ -719,9 +720,11 @@ const DocumentView: Component<{
             <div class="mb-3 flex flex-wrap gap-x-4 text-xs text-zinc-600 dark:text-zinc-400">
               <span class="whitespace-nowrap">
                 {t("firestore.createTime")}: <span class="mono">{d().createTime}</span>
+                <RelativeTime value={d().createTime} />
               </span>{" "}
               <span class="whitespace-nowrap">
                 {t("firestore.updateTime")}: <span class="mono">{d().updateTime}</span>
+                <RelativeTime value={d().updateTime} />
               </span>
             </div>
           )}
