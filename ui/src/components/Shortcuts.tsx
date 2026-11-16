@@ -76,7 +76,7 @@ export const Shortcuts: Component<{ pages: PageShortcut[]; paletteKeys: string }
   return (
     <Show when={shortcutHelpOpen()}>
       <div
-        class="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/50 p-4 pt-[12vh]"
+        class="fixed inset-0 z-50 flex items-start justify-center overlay p-4 pt-[12vh]"
         data-testid="shortcut-help-backdrop"
         onClick={(event) => {
           if (event.target === event.currentTarget) close();
@@ -86,7 +86,7 @@ export const Shortcuts: Component<{ pages: PageShortcut[]; paletteKeys: string }
           role="dialog"
           aria-modal="true"
           aria-labelledby="shortcut-help-title"
-          class="max-h-[76vh] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+          class="max-h-[76vh] w-full max-w-lg overflow-y-auto dialog p-4"
           data-testid="shortcut-help"
           onKeyDown={(event) => {
             trapTab(event, event.currentTarget);

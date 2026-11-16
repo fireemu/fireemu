@@ -213,7 +213,7 @@ const RecordedSource: Component<{
               <>
                 {props.source!.slice(0, r().start)}
                 <mark
-                  class="bg-amber-200 text-black outline outline-2 outline-amber-700"
+                  class="bg-[var(--fe-mark-bg)] text-[var(--fe-mark-fg)] outline-2 outline-[var(--fe-mark-outline)]"
                   data-testid={`${props.testId}-highlight`}
                   ref={(node) => {
                     highlighted = node;
@@ -695,7 +695,7 @@ const Rules: Component = () => {
     <div>
       <h1 class="page-title mb-4">{t("rules.title")}</h1>
       <Show when={!appState.config().rulesEnforced}>
-        <div class="mb-4 rounded-md border border-amber-400 p-3 text-sm">
+        <div class="mb-4 rounded-control border border-warning-line p-3 text-sm">
           {t("rules.enforcedOff")}
         </div>
       </Show>

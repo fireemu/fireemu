@@ -43,13 +43,13 @@ const Row: Component<RowProps> = (props) => {
   return (
     <li>
       <div
-        class="flex items-baseline gap-2 rounded px-1 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+        class="flex items-baseline gap-2 rounded px-1 py-1 hover:bg-hover"
         style={{ "padding-left": `${props.depth * 1.25 + 0.25}rem` }}
       >
         <Show when={container() && props.node.size > 0} fallback={<span class="w-4 shrink-0" />}>
           <button
             type="button"
-            class="link w-4 shrink-0 self-center text-zinc-500 dark:text-zinc-400 [&>svg]:size-3.5 [&>svg]:transition-transform"
+            class="link w-4 shrink-0 self-center text-muted [&>svg]:size-3.5 [&>svg]:transition-transform"
             classList={{ "[&>svg]:rotate-90": open() }}
             aria-expanded={open()}
             aria-label={t(open() ? "firestore.collapseField" : "firestore.expandField", {
@@ -60,10 +60,7 @@ const Row: Component<RowProps> = (props) => {
             <IconChevron />
           </button>
         </Show>
-        <span
-          class="mono shrink-0 font-medium"
-          classList={{ "text-zinc-500 dark:text-zinc-400": props.indexed }}
-        >
+        <span class="mono shrink-0 font-medium" classList={{ "text-muted": props.indexed }}>
           {props.node.key}
         </span>
         <span class="type-chip shrink-0">{typeText()}</span>
@@ -82,9 +79,9 @@ const Row: Component<RowProps> = (props) => {
           >
             <Show
               when={open() && props.node.size > 0}
-              fallback={<span class="text-zinc-600 dark:text-zinc-400">{props.node.preview}</span>}
+              fallback={<span class="text-secondary">{props.node.preview}</span>}
             >
-              <span class="text-zinc-500 dark:text-zinc-400">
+              <span class="text-muted">
                 {props.node.size === 1
                   ? t(props.node.type === "map" ? "firestore.mapSizeOne" : "firestore.arraySizeOne")
                   : t(props.node.type === "map" ? "firestore.mapSize" : "firestore.arraySize", {
@@ -110,7 +107,7 @@ const Row: Component<RowProps> = (props) => {
           </For>
           <Show when={props.node.omitted > 0}>
             <li
-              class="py-1 text-xs text-zinc-600 dark:text-zinc-400"
+              class="py-1 text-xs text-secondary"
               style={{ "padding-left": `${(props.depth + 1) * 1.25 + 1.5}rem` }}
             >
               {t("firestore.treeOmitted", { count: props.node.omitted })}

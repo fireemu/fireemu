@@ -68,7 +68,7 @@ const DatabasePicker: Component<{
         </button>
       </form>
       <Show when={recent().length > 1}>
-        <p class="mt-1 text-xs text-zinc-500">
+        <p class="mt-1 text-xs text-muted">
           {t("firestore.databaseRecent")}: {recent().join(", ")}
         </p>
       </Show>

@@ -61,7 +61,7 @@ const RuleTable: Component<{
 }> = (props) => (
   <Section title={t(props.title)}>
     <Show when={props.ordered}>
-      <p class="mb-2 text-sm text-zinc-500">{t("hosting.orderHint")}</p>
+      <p class="mb-2 text-sm text-muted">{t("hosting.orderHint")}</p>
     </Show>
     <Show
       when={(props.rules?.length ?? 0) > 0}
@@ -135,7 +135,7 @@ const Hosting: Component = () => {
               <Section title={t("hosting.site")}>
                 <Field label={t("hosting.url")}>
                   <a
-                    class="text-blue-700 underline dark:text-blue-300"
+                    class="link underline"
                     data-testid="hosting-url"
                     href={served().url}
                     target="_blank"
@@ -155,7 +155,7 @@ const Hosting: Component = () => {
                   </span>
                 </Field>
                 <Show when={!served().publicExists}>
-                  <p class="mb-2 text-sm text-amber-700" data-testid="hosting-public-missing">
+                  <p class="mb-2 text-sm text-warning" data-testid="hosting-public-missing">
                     {t("hosting.publicMissing")}
                   </p>
                 </Show>

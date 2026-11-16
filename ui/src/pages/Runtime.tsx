@@ -188,7 +188,7 @@ const SnapshotsPanel: Component = () => {
       >
         <Show
           when={(list()?.unwrapOr({ snapshots: [] }).snapshots.length ?? 0) > 0}
-          fallback={<p class="text-sm text-zinc-500">{t("runtime.noSnapshots")}</p>}
+          fallback={<p class="text-sm text-muted">{t("runtime.noSnapshots")}</p>}
         >
           <table class="table" data-testid="snapshot-table">
             <thead>
@@ -496,7 +496,7 @@ export const FaultPlanPanel: Component = () => {
       >
         <Show
           when={current()?.plan}
-          fallback={<p class="mt-3 text-sm text-zinc-500">{t("runtime.faultPlanNone")}</p>}
+          fallback={<p class="mt-3 text-sm text-muted">{t("runtime.faultPlanNone")}</p>}
         >
           {(p) => (
             <table class="table mt-3" data-testid="fault-rules">
@@ -527,7 +527,7 @@ export const FaultPlanPanel: Component = () => {
           <div class="label">{t("runtime.fired")}</div>
           <Show
             when={(current()?.fired.length ?? 0) > 0}
-            fallback={<p class="text-sm text-zinc-500">{t("runtime.noneFired")}</p>}
+            fallback={<p class="text-sm text-muted">{t("runtime.noneFired")}</p>}
           >
             <ul class="mono">
               <For each={current()?.fired ?? []}>
@@ -650,7 +650,7 @@ const ServiceResourcesView: Component<{ service: ServiceResources }> = (props) =
     <h3 class="mb-1 font-semibold">
       {props.service.service}
       <Show when={props.service.roots.truncated}>
-        <span class="ml-2 text-xs font-normal text-amber-700 dark:text-amber-300">
+        <span class="ml-2 text-xs font-normal text-warning">
           {t("runtime.resourcesTruncated", {
             shown: String(props.service.roots.items.length),
             total: String(props.service.roots.total),
@@ -678,7 +678,7 @@ const ServiceResourcesView: Component<{ service: ServiceResources }> = (props) =
               <td class="mono text-right">
                 {gauge.limit === null ? "" : formatQuantity(gauge.limit, gauge.unit)}
                 <Show when={saturation(gauge) !== null}>
-                  <span class="ml-1 inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  <span class="ml-1 inline-flex items-center gap-1 text-xs text-secondary">
                     ({saturation(gauge)}%)
                     <span
                       class="meter"
@@ -716,7 +716,7 @@ const ServiceResourcesView: Component<{ service: ServiceResources }> = (props) =
       <span class="label">{t("runtime.roots")}</span>
       <Show
         when={props.service.roots.items.length > 0}
-        fallback={<p class="text-sm text-zinc-500">{t("runtime.noRoots")}</p>}
+        fallback={<p class="text-sm text-muted">{t("runtime.noRoots")}</p>}
       >
         <table class="table">
           <thead>
@@ -734,9 +734,7 @@ const ServiceResourcesView: Component<{ service: ServiceResources }> = (props) =
                   <td class="mono">
                     {root.kind}
                     <Show when={root.outstanding}>
-                      <span class="ml-1 rounded bg-amber-100 px-1 text-xs text-amber-900 dark:bg-amber-900 dark:text-amber-100">
-                        {t("runtime.outstanding")}
-                      </span>
+                      <span class="badge badge-warning ml-1">{t("runtime.outstanding")}</span>
                     </Show>
                   </td>
                   <td class="mono break-all">{root.id}</td>
@@ -765,7 +763,7 @@ const QuiescenceView: Component<{ result: QuiescenceResult }> = (props) => (
   >
     {(failure) => (
       <div
-        class="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        class="mb-3 rounded-control border border-warning-line bg-warning-subtle p-3 text-sm text-warning"
         role="status"
         data-testid="quiescence-failure"
       >
@@ -850,7 +848,7 @@ const ResourcesPanel: Component = () => {
         </>
       }
     >
-      <p class="mb-3 text-sm text-zinc-600 dark:text-zinc-300">{t("runtime.resourcesIntro")}</p>
+      <p class="mb-3 text-sm text-secondary">{t("runtime.resourcesIntro")}</p>
       <ErrorBanner message={error()} />
       <Show when={quiescence()}>{(result) => <QuiescenceView result={result()} />}</Show>
       <label class="text-sm">
@@ -906,11 +904,7 @@ const Runtime: Component = () => (
         { id: "runtime-resources", title: t("runtime.resources") },
       ]}
     />
-    <div
-      class="mb-4 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
-      role="note"
-      data-testid="runtime-fireemu-only"
-    >
+    <div class="callout callout-info mb-4" role="note" data-testid="runtime-fireemu-only">
       {t("runtime.fireemuOnly")}
     </div>
     <div class="grid gap-4 xl:grid-cols-2">

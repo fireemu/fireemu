@@ -43,7 +43,7 @@ const Alerts: Component = () => {
   return (
     <div>
       <h1 class="page-title mb-4">{t("alerts.title")}</h1>
-      <p class="mb-4 text-sm text-zinc-600 dark:text-zinc-300">{t("alerts.intro")}</p>
+      <p class="mb-4 text-sm text-secondary">{t("alerts.intro")}</p>
       <Section title={t("alerts.publish")}>
         <ErrorBanner message={error()} />
         <Notice message={notice()} />

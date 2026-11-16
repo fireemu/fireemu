@@ -84,7 +84,7 @@ const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props)
               <ErrorBanner message={loaded().error} />
               <Show when={loaded().text !== null}>
                 <pre
-                  class="mono max-h-96 overflow-auto rounded-md bg-zinc-100 p-3 text-xs break-all whitespace-pre-wrap dark:bg-zinc-800"
+                  class="mono max-h-96 overflow-auto code-block break-all whitespace-pre-wrap"
                   data-testid="object-preview-text"
                 >
                   {loaded().text}
@@ -93,7 +93,7 @@ const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props)
               <Show when={loaded().url}>
                 {(url) => (
                   <img
-                    class="max-h-96 max-w-full rounded-md border border-zinc-200 bg-zinc-100 object-contain dark:border-zinc-700 dark:bg-zinc-800"
+                    class="max-h-96 max-w-full rounded-control border border-line-subtle bg-sunken object-contain"
                     src={url()}
                     alt={t("storage.previewAlt", { name: props.object.name })}
                     data-testid="object-preview-image"
@@ -308,10 +308,7 @@ const Storage: Component = () => {
           </select>
         </label>
         <ErrorBanner message={errorOf(buckets())} />
-        <span
-          class="badge bg-violet-100 text-violet-900 dark:bg-violet-900 dark:text-violet-100"
-          title={t("app.adminHint")}
-        >
+        <span class="badge badge-accent" title={t("app.adminHint")}>
           {t("app.admin")}
         </span>
       </div>
@@ -322,7 +319,7 @@ const Storage: Component = () => {
         <For each={prefix().split("/").filter(Boolean)}>
           {(s, i) => (
             <>
-              <span class="text-zinc-400">/</span>
+              <span class="text-muted">/</span>
               <A
                 href={link(
                   prefix()
@@ -341,7 +338,7 @@ const Storage: Component = () => {
       </nav>
       <div
         class="card transition-shadow"
-        classList={{ "ring-2 ring-amber-500": dragging() }}
+        classList={{ "ring-2 ring-selection-indicator": dragging() }}
         data-testid="upload-dropzone"
         data-dragging={dragging() ? "true" : undefined}
         onDragOver={onDragOver}
@@ -379,7 +376,7 @@ const Storage: Component = () => {
             </button>
           </div>
         </div>
-        <p class="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
+        <p class="mb-2 text-xs text-secondary">
           {t("storage.uploadPrefix")}. {t("storage.dropHint")}
         </p>
         <ErrorBanner message={error()} />
@@ -423,7 +420,7 @@ const Storage: Component = () => {
                         {f.slice(prefix().length)}
                       </A>
                     </td>
-                    <td class="text-xs text-zinc-500">{t("storage.folder")}</td>
+                    <td class="text-xs text-muted">{t("storage.folder")}</td>
                     <td />
                     <td />
                   </tr>

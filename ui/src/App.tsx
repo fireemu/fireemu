@@ -11,6 +11,7 @@ import {
   type Component,
 } from "solid-js";
 import { CommandPalette } from "./components/CommandPalette";
+import { StatusBadge, type Tone } from "./components/common";
 import { openCommandPalette, openShortcutHelp } from "./components/overlays";
 import { Shortcuts } from "./components/Shortcuts";
 import {
@@ -24,7 +25,9 @@ import {
   IconOverview,
   IconRules,
   IconRuntime,
+  IconMenu,
   IconSearch,
+  IconWarning,
   IconStorage,
 } from "./components/icons";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -115,14 +118,14 @@ export const App: Component<RouteSectionProps> = (props) => {
     const timer = window.setInterval(() => void appState.refreshClock(), 5000);
     onCleanup(() => window.clearInterval(timer));
   });
-  const connectionClass = () => {
+  const connectionTone = (): Tone => {
     switch (appState.connected()) {
       case true:
-        return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100";
+        return "success";
       case false:
-        return "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100";
+        return "danger";
       default:
-        return "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+        return "neutral";
     }
   };
   const connectionLabel = () => {
@@ -166,21 +169,22 @@ export const App: Component<RouteSectionProps> = (props) => {
         aria-expanded={navigationOpen()}
         onClick={() => setNavigationOpen(!navigationOpen())}
       >
+        <IconMenu />
         {t("nav.toggle")}
       </button>
       <aside
         id="console-navigation"
-        class={`${navigationOpen() ? "flex" : "hidden"} shrink-0 flex-col border-r border-zinc-200 bg-zinc-100 p-3 md:sticky md:top-0 md:flex md:h-screen md:w-48 md:overflow-y-auto lg:w-56 dark:border-zinc-800 dark:bg-zinc-900`}
+        class={`${navigationOpen() ? "flex" : "hidden"} shrink-0 flex-col border-r border-line-subtle bg-sidebar p-3 md:sticky md:top-0 md:flex md:h-screen md:w-48 md:overflow-y-auto lg:w-56 `}
       >
         <div class="mb-3 flex items-baseline gap-2 px-3">
           <div class="text-lg font-bold tracking-tight">
-            <span class="text-amber-600 dark:text-amber-400">fire</span>emu
+            <span class="text-accent">fire</span>emu
           </div>
-          <div class="text-xs text-zinc-500 dark:text-zinc-400">{t("app.subtitle")}</div>
+          <div class="text-xs text-muted">{t("app.subtitle")}</div>
         </div>
         <button
           type="button"
-          class="input mb-3 flex items-center gap-2 text-left text-zinc-500 dark:text-zinc-400 [&>svg]:size-4"
+          class="input mb-3 flex items-center gap-2 text-left text-muted [&>svg]:size-4 [&>svg]:shrink-0"
           data-testid="command-palette-open"
           onClick={openCommandPalette}
         >
@@ -203,7 +207,7 @@ export const App: Component<RouteSectionProps> = (props) => {
             )}
           </For>
         </nav>
-        <div class="mt-5 mb-1 px-3 text-xs font-semibold tracking-wide text-zinc-400 uppercase">
+        <div class="mt-5 mb-1 px-3 text-xs font-semibold tracking-wide text-muted uppercase">
           {t("nav.sectionRuntime")}
         </div>
         <nav class="space-y-0.5" aria-label={t("nav.sectionRuntime")}>
@@ -233,25 +237,21 @@ export const App: Component<RouteSectionProps> = (props) => {
           </button>
           <ThemeToggle />
           <Show when={appState.config().version}>
-            {(version) => (
-              <div class="mono px-3 pt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                v{version()}
-              </div>
-            )}
+            {(version) => <div class="mono px-3 pt-1 text-xs text-muted">v{version()}</div>}
           </Show>
         </div>
       </aside>
       <div class="flex min-w-0 flex-1 flex-col">
         {/* Where every action lands: the target the pages act on, and whether the daemon answers. */}
         <header
-          class="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-zinc-200 bg-white/90 px-4 py-2 text-xs backdrop-blur lg:px-6 dark:border-zinc-800 dark:bg-zinc-900/90"
+          class="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6 "
           data-testid="context-bar"
         >
-          <span class="font-semibold text-zinc-600 dark:text-zinc-300">{t("header.local")}</span>
+          <span class="font-semibold text-secondary">{t("header.local")}</span>
           <label class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
             <span class="label">{t("overview.session")}</span>
             <select
-              class="input mono min-w-0 max-w-full w-auto py-0.5"
+              class="input input-sm mono min-w-0 max-w-full w-auto"
               data-testid="session-select"
               value={appState.session()}
               onChange={(e) => {
@@ -283,30 +283,32 @@ export const App: Component<RouteSectionProps> = (props) => {
             <span class="mono whitespace-nowrap" data-testid="clock">
               {appState.clock()}
             </span>
-            <span class="text-zinc-500">
-              (
+            <StatusBadge
+              tone={appState.config().clockMode === "frozen" ? "paused" : "neutral"}
+              testId="clock-mode"
+              class="whitespace-normal"
+            >
               {appState.config().clockMode === "frozen"
                 ? t("overview.clockFrozen")
                 : t("overview.clockRealtime")}
-              )
-            </span>
+            </StatusBadge>
           </span>
           <span role="status" class="sr-only" data-testid="connection-status">
             {announcement().label} {t("header.controlHint")}{" "}
             {announcement().time && t("header.lastSuccess", { time: announcement().time! })}
           </span>
-          <span
+          <StatusBadge
             aria-hidden="true"
-            class={`badge ml-auto inline-flex items-center gap-1.5 ${connectionClass()}`}
-            data-testid="connection-badge"
+            class="ml-auto"
+            tone={connectionTone()}
+            testId="connection-badge"
           >
-            <span class="size-1.5 rounded-full bg-current" />
             {connectionLabel()}
-          </span>
+          </StatusBadge>
           <Show when={appState.lastConnectedAt()}>
             {(time) => (
               <span
-                class="text-xs whitespace-nowrap text-zinc-500 dark:text-zinc-400"
+                class="text-xs whitespace-nowrap text-muted"
                 title={`${time()} · ${t("header.controlHint")}`}
                 aria-hidden="true"
                 data-testid="control-last-success"
@@ -319,8 +321,9 @@ export const App: Component<RouteSectionProps> = (props) => {
         </header>
         <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 lg:p-6">
           <Show when={!appState.config().controlToken}>
-            <div class="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
-              {t("app.tokenMissing")}
+            <div class="callout callout-warning mb-4">
+              <IconWarning />
+              <span class="min-w-0 flex-1">{t("app.tokenMissing")}</span>
             </div>
           </Show>
           {props.children}

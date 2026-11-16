@@ -166,7 +166,7 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
   return (
     <Show when={open()}>
       <div
-        class="fixed inset-0 z-50 flex items-start justify-center bg-zinc-950/50 p-4 pt-[12vh]"
+        class="fixed inset-0 z-50 flex items-start justify-center overlay p-4 pt-[12vh]"
         data-testid="command-palette-backdrop"
         onClick={(event) => {
           if (event.target === event.currentTarget) close();
@@ -176,17 +176,17 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
           role="dialog"
           aria-modal="true"
           aria-label={t("palette.title")}
-          class="w-full max-w-xl overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+          class="w-full max-w-xl overflow-hidden dialog"
           data-testid="command-palette"
           onKeyDown={onKeyDown}
         >
-          <div class="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-800 [&>svg]:size-4 [&>svg]:text-zinc-500">
+          <div class="flex items-center gap-2 border-b border-line-subtle px-3  [&>svg]:size-4 [&>svg]:text-muted">
             <IconSearch />
             <input
               ref={(element) => {
                 input = element;
               }}
-              class="mono w-full bg-transparent py-3 text-sm outline-none placeholder:text-zinc-500"
+              class="mono w-full bg-transparent py-3 text-sm outline-none placeholder:text-muted"
               role="combobox"
               aria-expanded="true"
               aria-controls="command-palette-list"
@@ -213,24 +213,22 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
                   id={`command-palette-option-${index()}`}
                   role="option"
                   aria-selected={index() === selected()}
-                  class="flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 text-sm aria-selected:bg-amber-100 aria-selected:text-amber-950 dark:aria-selected:bg-amber-900/40 dark:aria-selected:text-amber-50"
+                  class="flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 text-sm aria-selected:bg-selected aria-selected:text-on-selected"
                   onMouseMove={() => setSelected(index())}
                   onClick={() => run(command)}
                 >
                   <span class="min-w-0 break-all">{command.title}</span>
-                  <span class="shrink-0 text-xs text-zinc-500 dark:text-zinc-400">
-                    {command.group}
-                  </span>
+                  <span class="shrink-0 text-xs text-muted">{command.group}</span>
                 </li>
               )}
             </For>
             <Show when={results().length === 0}>
-              <li class="px-3 py-6 text-center text-sm text-zinc-500" role="presentation">
+              <li class="px-3 py-6 text-center text-sm text-muted" role="presentation">
                 {t("palette.empty")}
               </li>
             </Show>
           </ul>
-          <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-zinc-200 px-3 py-2 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+          <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-line-subtle px-3 py-2 text-xs text-muted  dark:text-muted">
             <span>
               <span class="kbd">↑</span> <span class="kbd">↓</span> {t("palette.hintMove")}
             </span>

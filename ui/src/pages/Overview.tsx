@@ -1,7 +1,14 @@
 import { createEffect, createSignal, For, on, Show, type Component, type JSX } from "solid-js";
 import { t } from "../i18n";
 import { appState } from "../state";
-import { AsyncButton, CopyButton, Field, Section, FetchState } from "../components/common";
+import {
+  AsyncButton,
+  CopyButton,
+  Field,
+  Section,
+  FetchState,
+  StatusBadge,
+} from "../components/common";
 import { IconAuth, IconFirestore, IconFunctions, IconStorage } from "../components/icons";
 import { functionsStatus, getRules, sessionResources } from "../api/control";
 import { settle } from "../api/client";
@@ -36,10 +43,7 @@ const CopyBlock: Component<{ text: string; testId: string }> = (props) => {
   };
   return (
     <div class="relative">
-      <pre
-        class="mono rounded-md bg-zinc-100 p-3 pr-20 text-xs break-all whitespace-pre-wrap dark:bg-zinc-800"
-        data-testid={props.testId}
-      >
+      <pre class="mono code-block pr-20 break-all whitespace-pre-wrap" data-testid={props.testId}>
         {props.text}
       </pre>
       <AsyncButton
@@ -85,15 +89,9 @@ const RulesStatus: Component<{ which: "firestore" | "storage" }> = (props) => {
       <div class="flex flex-wrap items-center gap-2">
         <Show when={info.data()}>
           {(data) => (
-            <span
-              class={`badge ${
-                data().loaded
-                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100"
-                  : "bg-amber-100 text-amber-900 dark:bg-amber-900/60 dark:text-amber-100"
-              }`}
-            >
+            <StatusBadge tone={data().loaded ? "success" : "warning"}>
               {data().loaded ? t("rules.loaded") : t("rules.notLoaded")}
-            </span>
+            </StatusBadge>
           )}
         </Show>
         <AsyncButton class="btn" onClick={info.refetch} testId={`overview-${props.which}-refresh`}>
@@ -115,7 +113,7 @@ const StatTile: Component<{
   detail: string;
 }> = (props) => (
   <a class="stat" href={appHref(props.href)} data-testid={`stat-${props.id}`}>
-    <div class="flex items-center gap-2 text-xs font-semibold tracking-wide text-zinc-600 uppercase dark:text-zinc-400 [&>svg]:size-4">
+    <div class="flex items-center gap-2 text-xs font-semibold tracking-wide text-secondary uppercase [&>svg]:size-4 [&>svg]:shrink-0">
       {props.icon}
       {props.label}
     </div>
@@ -124,7 +122,7 @@ const StatTile: Component<{
         {props.value}
       </Show>
     </div>
-    <div class="text-xs text-zinc-600 dark:text-zinc-400">{props.detail}</div>
+    <div class="text-xs text-secondary">{props.detail}</div>
   </a>
 );
 
@@ -222,13 +220,13 @@ const Stats: Component = () => {
 const Address: Component<{ label: string; value: string; note?: string | null | undefined }> = (
   props,
 ) => (
-  <div class="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-zinc-100 py-1.5 last:border-b-0 dark:border-zinc-800">
-    <span class="text-sm text-zinc-600 dark:text-zinc-400">{props.label}</span>
+  <div class="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line-subtle py-1.5 last:border-b-0 ">
+    <span class="text-sm text-secondary">{props.label}</span>
     <span class="flex min-w-0 items-baseline gap-2">
       <span class="mono min-w-0 break-all">
         {props.value}
         <Show when={props.note}>
-          <span class="text-zinc-600 dark:text-zinc-400"> ({props.note})</span>
+          <span class="text-secondary"> ({props.note})</span>
         </Show>
       </span>
       <CopyButton value={props.value} subject={props.label} />
@@ -269,7 +267,7 @@ const Overview: Component = () => {
     <div>
       <h1 class="page-title mb-4">{t("overview.title")}</h1>
       <Show when={!config().uiBundled}>
-        <div class="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
+        <div class="mb-4 rounded-control border border-warning-line bg-warning-subtle p-3 text-sm">
           {t("app.notBundled")}
         </div>
       </Show>
@@ -279,7 +277,7 @@ const Overview: Component = () => {
           {t("overview.envVarsFor", { session: appState.session(), project: appState.project() })}
         </p>
         <div
-          class="mb-3 flex flex-wrap border-b border-zinc-200 dark:border-zinc-800"
+          class="mb-3 flex flex-wrap border-b border-line-subtle"
           role="tablist"
           aria-label={t("overview.envTabs")}
           onKeyDown={onTabKey}
@@ -350,11 +348,15 @@ const Overview: Component = () => {
           </div>
           <Field label={t("overview.clock")} mono>
             <span data-testid="overview-clock">{appState.clock()}</span>{" "}
-            <span class="text-zinc-600 dark:text-zinc-400" data-testid="overview-clock-mode">
+            <StatusBadge
+              tone={config().clockMode === "frozen" ? "paused" : "neutral"}
+              testId="overview-clock-mode"
+              class="font-sans whitespace-normal"
+            >
               {config().clockMode === "frozen"
                 ? t("overview.clockFrozen")
                 : t("overview.clockRealtime")}
-            </span>
+            </StatusBadge>
           </Field>
         </Section>
         <Section
@@ -422,7 +424,7 @@ const Overview: Component = () => {
           <Show when={config().hosts.allowed.includes("*")}>
             <div
               data-testid="host-names-open"
-              class="mt-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-900/30"
+              class="mt-2 rounded-control border border-warning-line bg-warning-subtle p-3 text-sm"
             >
               {t("overview.hostNamesOpen")}
             </div>

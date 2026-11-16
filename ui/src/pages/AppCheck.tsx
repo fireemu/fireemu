@@ -9,6 +9,8 @@ import {
   Field,
   Section,
   Spinner,
+  StatusBadge,
+  type Tone,
 } from "../components/common";
 import { errorOf, settle } from "../api/client";
 import {
@@ -21,20 +23,13 @@ import {
 } from "../api/appcheck";
 import { canonicalDebugSecret, counterTotals } from "../lib/appCheck";
 
-const modeBadge = (mode: string): string => {
-  if (mode === "enforced") {
-    return "badge bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100";
-  }
-  if (mode === "unenforced") {
-    return "badge bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100";
-  }
-  return "badge bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+const modeTone = (mode: string): Tone => {
+  if (mode === "enforced") return "success";
+  if (mode === "unenforced") return "warning";
+  return "neutral";
 };
 
-const outcomeBadge = (admitted: boolean): string =>
-  admitted
-    ? "badge bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100"
-    : "badge bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200";
+const outcomeTone = (admitted: boolean): Tone => (admitted ? "success" : "danger");
 
 /**
  * The App Check page: what this runtime enforces, which apps it knows, the debug tokens
@@ -140,7 +135,7 @@ const AppCheck: Component = () => {
         when={enabled()}
         fallback={
           <div
-            class="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-900/30"
+            class="rounded-control border border-warning-line bg-warning-subtle p-3 text-sm"
             data-testid="appcheck-disabled"
           >
             {t("appCheck.disabled")}
@@ -183,14 +178,14 @@ const AppCheck: Component = () => {
                     <tr>
                       <td>{row.service}</td>
                       <td>
-                        <span class={modeBadge(row.mode)}>{row.mode}</span>
+                        <StatusBadge tone={modeTone(row.mode)}>{row.mode}</StatusBadge>
                       </td>
                     </tr>
                   )}
                 </For>
               </tbody>
             </table>
-            <p class="text-xs text-zinc-500">{t("appCheck.functionsNote")}</p>
+            <p class="text-xs text-muted">{t("appCheck.functionsNote")}</p>
           </Show>
         </Section>
 
@@ -253,7 +248,7 @@ const AppCheck: Component = () => {
               <Show when={secret()}>
                 {(shown) => (
                   <div
-                    class="mb-3 rounded-md border border-amber-400 bg-amber-50 p-3 dark:bg-amber-900/30"
+                    class="mb-3 rounded-control border border-warning-line bg-warning-subtle p-3"
                     role="alert"
                   >
                     <div class="mb-1 text-sm font-semibold">{t("appCheck.secretOnce")}</div>
@@ -410,7 +405,9 @@ const AppCheck: Component = () => {
                       <td class="mono">{row.function ?? ""}</td>
                       <td>{row.category}</td>
                       <td>
-                        <span class={outcomeBadge(row.outcome === "admitted")}>{row.outcome}</span>
+                        <StatusBadge tone={outcomeTone(row.outcome === "admitted")}>
+                          {row.outcome}
+                        </StatusBadge>
                       </td>
                       <td>{row.count}</td>
                     </tr>
@@ -448,15 +445,15 @@ const AppCheck: Component = () => {
                         <td>{row.transport}</td>
                         <td class="mono">{row.operation}</td>
                         <td>
-                          <span class={modeBadge(row.mode)}>{row.mode}</span>
+                          <StatusBadge tone={modeTone(row.mode)}>{row.mode}</StatusBadge>
                         </td>
                         <td>{row.category}</td>
                         <td class="mono">{row.appId}</td>
                         <td class="mono">{row.reason ?? ""}</td>
                         <td>
-                          <span class={outcomeBadge(row.admitted)}>
+                          <StatusBadge tone={outcomeTone(row.admitted)}>
                             {row.admitted ? t("appCheck.admitted") : t("appCheck.denied")}
-                          </span>
+                          </StatusBadge>
                         </td>
                       </tr>
                     )}
@@ -465,7 +462,7 @@ const AppCheck: Component = () => {
               </table>
             </div>
           </Show>
-          <p class="mt-2 text-xs text-zinc-500">{t("appCheck.ringNote")}</p>
+          <p class="mt-2 text-xs text-muted">{t("appCheck.ringNote")}</p>
         </Section>
       </Show>
     </div>
