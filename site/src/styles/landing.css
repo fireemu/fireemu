@@ -452,3 +452,21 @@
 		max-width: 19rem;
 	}
 }
+
+/* Japanese and Korean headings break between phrases, not inside a word (e.g. 挙|動). Korean
+   separates words with spaces; Japanese breaks at punctuation, and Chromium also finds phrase
+   boundaries with auto-phrase. A run too long for the line still wraps instead of overflowing. */
+.lp :is(h1, h2, h3):lang(ja),
+.lp :is(h1, h2, h3):lang(ko) {
+	word-break: keep-all;
+	overflow-wrap: anywhere;
+}
+@supports (word-break: auto-phrase) {
+	.lp :is(h1, h2, h3):lang(ja) {
+		word-break: auto-phrase;
+	}
+}
+/* An opening bracket that starts a line (「) sits flush with the left edge instead of half a space in. */
+.lp :is(h1, h2, h3):lang(ja) {
+	text-spacing-trim: trim-start;
+}
