@@ -1,6 +1,12 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "storage.dropHint": "You can also drop files anywhere on this card.",
+  "storage.uploadFailed": "Could not upload {name}: {message}",
+  "storage.preview": "Preview",
+  "storage.previewNone":
+    "No inline preview for this content type or size (images up to 10 MiB and text up to 256 KiB are shown). Use Download.",
+  "storage.previewAlt": "Preview of {name}",
   "functions.formatJson": "Format JSON",
   "palette.showShortcuts": "Show keyboard shortcuts",
   "shortcuts.title": "Keyboard shortcuts",
