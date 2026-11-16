@@ -31,3 +31,32 @@ describe("in-app links encode names the URL would misread", () => {
     expect(decodeSplat(undefined)).toEqual([]);
   });
 });
+
+describe("plain anchors outside the router carry the served base", () => {
+  it("prefixes a route with the base the daemon serves the app under", async () => {
+    const { appHref, UI_BASE } = await import("./hrefs");
+    expect(UI_BASE).toBe("/ui");
+    expect(appHref("/firestore")).toBe("/ui/firestore");
+    expect(appHref("/")).toBe("/ui/");
+  });
+});
+
+describe("a reference value links only into the database being browsed", () => {
+  it("links a document of this database and nothing else", async () => {
+    const { referenceHref } = await import("./hrefs");
+    const root = "projects/demo/databases/(default)/documents";
+    expect(referenceHref(`${root}/users/a#b`, root, "(default)")).toBe(
+      "/firestore/users/a%23b?db=(default)",
+    );
+    expect(
+      referenceHref("projects/demo/databases/other/documents/users/a", root, "(default)"),
+    ).toBeNull();
+    expect(
+      referenceHref("projects/else/databases/(default)/documents/users/a", root, "(default)"),
+    ).toBeNull();
+    // A name that merely starts with the same characters is another database.
+    expect(referenceHref(`${root}x/users/a`, root, "(default)")).toBeNull();
+    expect(referenceHref(`${root}/`, root, "(default)")).toBeNull();
+    expect(referenceHref(root, root, "(default)")).toBeNull();
+  });
+});

@@ -22,3 +22,20 @@ export const functionFiltersUrl = (
   if (includeText && filters.text) url.searchParams.set("q", filters.text);
   return url.href;
 };
+
+/**
+ * Whether a registered function matches the table's search box: every whitespace-separated
+ * term must occur (ignoring case) in its name, region, trigger kind or trigger description.
+ * An empty query matches everything.
+ */
+export const matchesFunction = (
+  fn: { name: string; region: string; trigger: { kind: string } },
+  triggerText: string,
+  query: string,
+): boolean => {
+  const haystack = `${fn.name} ${fn.region} ${fn.trigger.kind} ${triggerText}`.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .every((term) => haystack.includes(term));
+};

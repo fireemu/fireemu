@@ -34,6 +34,19 @@ If the default port is busy, `up` starts without the UI; check the startup outpu
 | **App Check** | See registered apps and debug tokens. |
 | **Runtime** | Move the virtual clock forward, or backwards with **Allow moving backwards**, and install a fault plan (see below). |
 
+## Find your way around
+
+- **Command palette**: press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd> on macOS), or select **Search or jump to** in the sidebar. Type a page name to open it, a Firestore path such as `users/alice` to open that document or collection in the default database, or choose an action: switch the session, switch the theme, or copy the `.env` lines.
+- **Theme**: the button at the bottom of the sidebar cycles between the system setting, light and dark. An explicit choice is remembered in this browser.
+- **Overview figures**: the tiles show what the selected session holds (Firestore document data, Authentication users, Storage objects, registered functions) and link to each page. A figure the daemon does not report is shown as a dash, not as zero.
+- **Connection snippets**: the Overview offers the same connection settings as `.env` lines, shell exports, Web SDK code and Admin SDK code, and each service address has a **Copy** button.
+- **Firestore fields**: a document's fields are a tree. Each row shows the name, the type (integers and doubles are told apart) and the value; maps and arrays open on demand. A reference into the database you are browsing is a link to that document.
+- **Functions search**: the box above the registered functions filters the table by name, region or trigger.
+- **Keyboard shortcuts**: press <kbd>?</kbd> (or select **Shortcuts** in the sidebar) for the list. <kbd>/</kbd> opens the command palette, and <kbd>g</kbd> followed by a page key opens that page, for example <kbd>g</kbd> <kbd>f</kbd> for Firestore. Single keys do nothing while a text field has focus.
+- **Relative times**: timestamps are followed by their distance from the session's virtual clock, such as `(3 min ago)` or `(in 2 h)`. The distance is measured against the virtual clock, not your computer's clock, so it changes when you advance the clock.
+- **Storage upload and preview**: drop one or more files on the **Objects** card, or select several in the file picker, to upload them under the folder you are viewing. Files are sent one at a time; the first failure stops the rest and names the file. An object's details show an inline preview for images up to 10 MiB and text-like content (text, JSON, XML and similar) up to 256 KiB. Text is always shown as text, never rendered as HTML.
+- **Function logs as JSON**: select **Format JSON** above the logs to print a line's JSON object or array indented. The level and text filters still match the lines as they were written.
+
 ## Install a fault plan
 
 On the Runtime page, under **Fault plan**:

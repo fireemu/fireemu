@@ -8,7 +8,9 @@ import {
   ErrorBanner,
   FetchState,
   Notice,
+  RelativeTime,
   Section,
+  SectionNav,
 } from "../components/common";
 import {
   advanceClock,
@@ -31,6 +33,7 @@ import {
   formatQuantity,
   parseAllowances,
   saturation,
+  saturationLevel,
   type QuiescenceResult,
   type ServiceResources,
 } from "../lib/resources";
@@ -82,7 +85,7 @@ const ClockPanel: Component = () => {
     );
   };
   return (
-    <Section title={t("runtime.clock")}>
+    <Section id="runtime-clock" title={t("runtime.clock")}>
       <ErrorBanner message={error()} />
       <div class="mb-3">
         <span class="label">{t("runtime.clockNow")}</span>
@@ -151,7 +154,7 @@ const SnapshotsPanel: Component = () => {
     );
   };
   return (
-    <Section title={t("runtime.snapshots")}>
+    <Section id="runtime-snapshots" title={t("runtime.snapshots")}>
       <ErrorBanner message={error()} />
       <Notice message={notice()} />
       <div class="mb-3 flex flex-wrap items-end gap-2">
@@ -201,7 +204,10 @@ const SnapshotsPanel: Component = () => {
                 {(s) => (
                   <tr>
                     <td class="mono">{s.name}</td>
-                    <td class="mono">{s.clock}</td>
+                    <td class="mono">
+                      {s.clock}
+                      <RelativeTime value={s.clock} />
+                    </td>
                     <td>{s.parts}</td>
                     <td class="space-x-2 text-right">
                       <ConfirmButton
@@ -335,6 +341,7 @@ export const FaultPlanPanel: Component = () => {
   const current = () => plan()?.unwrapOr(null) ?? null;
   return (
     <Section
+      id="runtime-fault-plan"
       title={t("runtime.faultPlan")}
       actions={
         <>
@@ -553,7 +560,7 @@ const SessionsPanel: Component = () => {
     );
   };
   return (
-    <Section title={t("runtime.sessions")}>
+    <Section id="runtime-sessions" title={t("runtime.sessions")}>
       <ErrorBanner message={error()} />
       <div class="mb-3 flex flex-wrap items-end gap-2">
         <label class="text-sm">
@@ -671,7 +678,16 @@ const ServiceResourcesView: Component<{ service: ServiceResources }> = (props) =
               <td class="mono text-right">
                 {gauge.limit === null ? "" : formatQuantity(gauge.limit, gauge.unit)}
                 <Show when={saturation(gauge) !== null}>
-                  <span class="ml-1 text-xs text-zinc-500">({saturation(gauge)}%)</span>
+                  <span class="ml-1 inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                    ({saturation(gauge)}%)
+                    <span
+                      class="meter"
+                      data-level={saturationLevel(saturation(gauge)!)}
+                      aria-hidden="true"
+                    >
+                      <span style={{ width: `${saturation(gauge)}%` }} />
+                    </span>
+                  </span>
                 </Show>
               </td>
               <td class="mono text-right">
@@ -815,6 +831,7 @@ const ResourcesPanel: Component = () => {
   const current = () => report()?.unwrapOr(null) ?? null;
   return (
     <Section
+      id="runtime-resources"
       title={t("runtime.resources")}
       actions={
         <>
@@ -878,7 +895,17 @@ const ResourcesPanel: Component = () => {
 
 const Runtime: Component = () => (
   <div>
-    <h1 class="mb-4 text-xl font-bold">{t("runtime.title")}</h1>
+    <h1 class="page-title mb-3">{t("runtime.title")}</h1>
+    <SectionNav
+      label={t("runtime.sectionNav")}
+      sections={[
+        { id: "runtime-clock", title: t("runtime.clock") },
+        { id: "runtime-sessions", title: t("runtime.sessions") },
+        { id: "runtime-snapshots", title: t("runtime.snapshots") },
+        { id: "runtime-fault-plan", title: t("runtime.faultPlan") },
+        { id: "runtime-resources", title: t("runtime.resources") },
+      ]}
+    />
     <div
       class="mb-4 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100"
       role="note"

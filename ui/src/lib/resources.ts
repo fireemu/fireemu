@@ -71,6 +71,10 @@ export const saturation = (gauge: Gauge): number | null => {
   return Math.min(100, Math.floor((gauge.current / gauge.limit) * 100));
 };
 
+/** How a usage bar is coloured: plenty left, close to the limit (75% and up), at the limit. */
+export const saturationLevel = (percent: number): "ok" | "warn" | "full" =>
+  percent >= 100 ? "full" : percent >= 75 ? "warn" : "ok";
+
 export type ServiceSummary = {
   service: string;
   outstanding: number;

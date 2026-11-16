@@ -34,6 +34,19 @@ Ist der Standardport belegt, startet `up` ohne die UI; prüfen Sie die Startausg
 | **App Check** | Registrierte Apps und Debug-Tokens sehen. |
 | **Runtime** | Die virtuelle Uhr vorstellen oder mit **Allow moving backwards** zurückstellen und einen Fault-Plan installieren (siehe unten). |
 
+## Navigation und Komfortfunktionen
+
+- **Befehlspalette**: Drücken Sie <kbd>Strg</kbd>+<kbd>K</kbd> (unter macOS <kbd>⌘</kbd>+<kbd>K</kbd>) oder wählen Sie in der Seitenleiste **Search or jump to**. Ein Seitenname öffnet die Seite, ein Firestore-Pfad wie `users/alice` öffnet das Dokument oder die Sammlung in der Standarddatenbank. Außerdem stehen Aktionen zur Wahl: die Session wechseln, das Farbschema wechseln oder die `.env`-Zeilen kopieren.
+- **Farbschema**: Die Schaltfläche unten in der Seitenleiste wechselt zwischen Systemeinstellung, Hell und Dunkel. Eine ausdrückliche Auswahl wird in diesem Browser gespeichert.
+- **Kennzahlen in der Overview**: Die Kacheln zeigen, was die ausgewählte Session enthält (Firestore-Dokumentdaten, Authentication-Benutzer, Storage-Objekte, registrierte Funktionen), und führen zur jeweiligen Seite. Eine Kennzahl, die der Daemon nicht meldet, erscheint als Strich und nicht als Null.
+- **Verbindungs-Snippets**: Die Overview bietet dieselben Verbindungseinstellungen als `.env`-Zeilen, Shell-Exports, Web-SDK-Code und Admin-SDK-Code an; jede Dienstadresse hat eine Schaltfläche **Copy**.
+- **Firestore-Felder**: Die Felder eines Dokuments werden als Baum angezeigt. Jede Zeile zeigt Name, Typ (Ganzzahlen und Gleitkommazahlen werden unterschieden) und Wert; Maps und Arrays lassen sich bei Bedarf öffnen. Eine Referenz in die gerade angezeigte Datenbank ist ein Link zu diesem Dokument.
+- **Functions-Suche**: Das Eingabefeld über den registrierten Funktionen filtert die Tabelle nach Name, Region oder Trigger.
+- **Tastenkürzel**: Drücken Sie <kbd>?</kbd> (oder wählen Sie in der Seitenleiste **Shortcuts**), um die Liste anzuzeigen. <kbd>/</kbd> öffnet die Befehlspalette, und <kbd>g</kbd> gefolgt von der Taste einer Seite öffnet diese Seite, zum Beispiel <kbd>g</kbd> <kbd>f</kbd> für Firestore. Einzelne Tasten bewirken nichts, solange ein Textfeld den Fokus hat.
+- **Relative Zeiten**: Hinter Zeitstempeln steht ihr Abstand zur virtuellen Uhr der Session, etwa `(3 min ago)` oder `(in 2 h)`. Gemessen wird gegen die virtuelle Uhr und nicht gegen die Uhr Ihres Computers; der Abstand ändert sich also, wenn Sie die Uhr vorstellen.
+- **Storage-Upload und Vorschau**: Ziehen Sie eine oder mehrere Dateien auf die Karte **Objects** oder wählen Sie mehrere in der Dateiauswahl, um sie in den angezeigten Ordner hochzuladen. Die Dateien werden nacheinander gesendet; der erste Fehler bricht den Rest ab und nennt die Datei. Die Details eines Objekts zeigen eine Vorschau für Bilder bis 10 MiB und für textartige Inhalte (Text, JSON, XML und Ähnliches) bis 256 KiB. Text wird immer als Text angezeigt und nie als HTML gerendert.
+- **Function-Logs als JSON**: Wählen Sie über den Logs **Format JSON**, um das JSON-Objekt oder -Array einer Zeile eingerückt auszugeben. Die Filter für Level und Text prüfen weiterhin die Zeilen, wie sie geschrieben wurden.
+
 ## Einen Fault-Plan installieren
 
 Auf der Seite „Runtime“ unter **Fault plan**:

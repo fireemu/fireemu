@@ -14,9 +14,19 @@ import {
 import { createStore, produce, type SetStoreFunction } from "solid-js/store";
 import { t } from "../i18n";
 import { appState } from "../state";
-import { AsyncButton, ConfirmButton, ErrorBanner, FetchState, Notice } from "../components/common";
+import {
+  AsyncButton,
+  ConfirmButton,
+  CopyButton,
+  ErrorBanner,
+  FetchState,
+  Notice,
+  RelativeTime,
+} from "../components/common";
+import { ValueTree } from "../components/ValueTree";
+import { buildValueTree } from "../lib/valueTree";
 import FirestoreQuery from "../components/FirestoreQuery";
-import { decodeSplat, firestoreHref } from "../lib/hrefs";
+import { decodeSplat, firestoreHref, referenceHref } from "../lib/hrefs";
 import { createPagedList } from "../lib/pagedList";
 import {
   affectedFirestoreViews,
@@ -662,7 +672,14 @@ const DocumentView: Component<{
   return (
     <div data-testid="document-view">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 class="mono text-base font-semibold">{lastSegment(props.path)}</h2>
+        <div class="flex min-w-0 flex-wrap items-baseline gap-2">
+          <h2 class="mono text-base font-semibold break-all">{lastSegment(props.path)}</h2>
+          <CopyButton
+            value={props.path}
+            subject={t("firestore.documentPath")}
+            testId="document-copy-path"
+          />
+        </div>
         <div class="flex flex-wrap items-start gap-2">
           <Show when={!editing()}>
             <button type="button" class="btn" data-testid="document-edit" onClick={startEdit}>
@@ -700,9 +717,15 @@ const DocumentView: Component<{
         </Show>
         <Show when={current()}>
           {(d) => (
-            <div class="mb-3 text-xs text-zinc-500">
-              {t("firestore.createTime")}: <span class="mono">{d().createTime}</span>{" "}
-              {t("firestore.updateTime")}: <span class="mono">{d().updateTime}</span>
+            <div class="mb-3 flex flex-wrap gap-x-4 text-xs text-zinc-600 dark:text-zinc-400">
+              <span class="whitespace-nowrap">
+                {t("firestore.createTime")}: <span class="mono">{d().createTime}</span>
+                <RelativeTime value={d().createTime} />
+              </span>{" "}
+              <span class="whitespace-nowrap">
+                {t("firestore.updateTime")}: <span class="mono">{d().updateTime}</span>
+                <RelativeTime value={d().updateTime} />
+              </span>
             </div>
           )}
         </Show>
@@ -713,28 +736,12 @@ const DocumentView: Component<{
               when={fieldRows().length > 0}
               fallback={<p class="text-sm text-zinc-500">{t("firestore.noFields")}</p>}
             >
-              <table class="table" data-testid="document-fields">
-                <thead>
-                  <tr>
-                    <th>{t("firestore.fieldName")}</th>
-                    <th>{t("firestore.fieldType")}</th>
-                    <th>{t("firestore.fieldValue")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={fieldRows()}>
-                    {([name, value]) => (
-                      <tr>
-                        <td class="mono">{name}</td>
-                        <td class="text-xs text-zinc-500">
-                          {typeLabel(toEditable({ [name]: value })[0]?.type ?? "string")}
-                        </td>
-                        <td class="mono break-all">{summarize(value)}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+              <ValueTree
+                nodes={buildValueTree(current()?.fields)}
+                typeLabel={typeLabel}
+                referenceHref={(reference) => referenceHref(reference, props.root, props.db)}
+                testId="document-fields"
+              />
             </Show>
           }
         >
@@ -946,7 +953,14 @@ const CollectionView: Component<{
   return (
     <div data-testid="collection-view">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 class="mono text-base font-semibold">{lastSegment(props.path)}</h2>
+        <div class="flex min-w-0 flex-wrap items-baseline gap-2">
+          <h2 class="mono text-base font-semibold break-all">{lastSegment(props.path)}</h2>
+          <CopyButton
+            value={props.path}
+            subject={t("firestore.documentPath")}
+            testId="document-copy-path"
+          />
+        </div>
         <div class="flex flex-wrap items-start gap-2">
           <button
             type="button"
@@ -1173,7 +1187,7 @@ const Firestore: Component = () => {
   return (
     <div>
       <div class="mb-3 flex flex-wrap items-center gap-3">
-        <h1 class="text-xl font-bold">{t("firestore.title")}</h1>
+        <h1 class="page-title">{t("firestore.title")}</h1>
         <DatabasePicker
           project={appState.project()}
           session={appState.session()}

@@ -181,6 +181,40 @@ it("distinguishes loading, initial failure, empty and not-configured responses",
   expect(absent.queryByTestId("timeline-empty")).toBeNull();
 });
 
+it("formats JSON log lines on request without changing what the filters match or count", async () => {
+  const ui = render(() => (
+    <Router>
+      <Route path="*" component={Functions} />
+    </Router>
+  ));
+  await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
+  mocks.event?.({
+    kind: "snapshot",
+    project: "demo-owner",
+    generation: 1,
+    logs: ['info {"user":"a","n":1}', "warn plain text", "error [1,2]"],
+    invocations: [],
+    logRecords: [],
+    logScopes: [],
+  });
+  const logs = () => ui.getByTestId("function-logs").textContent;
+  const raw = 'info {"user":"a","n":1}\nwarn plain text\nerror [1,2]';
+  expect(logs()).toBe(raw);
+  const toggle = ui.getByTestId("log-format-json") as HTMLInputElement;
+  expect(toggle.checked).toBe(false);
+  fireEvent.click(toggle);
+  expect(logs()).toBe(
+    'info\n{\n  "user": "a",\n  "n": 1\n}\nwarn plain text\nerror\n[\n  1,\n  2\n]',
+  );
+  expect(ui.getByTestId("log-count").textContent).toContain("3");
+  // The text filter still matches the line as it was sent ("user":"a" has no space).
+  fireEvent.input(ui.getByTestId("log-text-filter"), { target: { value: '"user":"a"' } });
+  expect(logs()).toBe('info\n{\n  "user": "a",\n  "n": 1\n}');
+  fireEvent.input(ui.getByTestId("log-text-filter"), { target: { value: "" } });
+  fireEvent.click(toggle);
+  expect(logs()).toBe(raw);
+});
+
 it("filters the capped log window once per change even when multiple views consume it", async () => {
   const ui = render(() => (
     <Router>

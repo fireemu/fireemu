@@ -134,7 +134,7 @@ const AppCheck: Component = () => {
 
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("appCheck.title")}</h1>
+      <h1 class="page-title mb-4">{t("appCheck.title")}</h1>
       <ErrorBanner message={error() ?? errorOf(summary())} />
       <Show
         when={enabled()}

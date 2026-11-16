@@ -8,6 +8,22 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Emulator UI: a command palette (Ctrl+K, or ⌘K on macOS) opens a page by name, a Firestore path typed with a slash (`users/alice`), or an action (switch the session, switch the theme, copy the `.env` lines).
+- Emulator UI: a theme button cycles between the system setting, light and dark; an explicit choice is remembered in the browser.
+- Emulator UI: the Overview shows what the selected session holds (Firestore document data, Authentication users, Storage objects, registered functions) with links to each page, a copy button for every service address, and the connection settings as `.env` lines, shell exports, Web SDK code or Admin SDK code.
+- Emulator UI: the registered functions table can be filtered by name, region or trigger.
+- Emulator UI: single-key shortcuts when no text field has focus: `?` lists them, `/` opens the command palette, and `g` followed by a page key opens that page.
+- Emulator UI: timestamps are followed by their distance from the session's virtual clock (`(3 min ago)`, `(in 2 h)`).
+- Emulator UI: Storage accepts several files at once, from the file picker or dropped on the Objects card, and shows an inline preview of images (up to 10 MiB) and text-like objects (up to 256 KiB, always as text).
+- Emulator UI: **Format JSON** above the function logs prints a line's JSON object or array indented; the filters still match the lines as written.
+
+### Changed
+
+- Emulator UI: a Firestore document's fields are shown as a tree with the type of each value (integers and doubles told apart); maps and arrays open on demand, and a reference into the database being browsed links to its document.
+- Emulator UI: the navigation has icons and stays in view while a page scrolls; wide tables scroll inside their card instead of wrapping every column; the Runtime page has jump links to its sections and a usage bar for each gauge with a limit.
+
 ### Fixed
 
 - With a virtual `functions.clock.date` that follows real time (no `daemon.clockStart`), a normal shutdown (Ctrl+C) no longer logs `[functions] runner clock synchronization failed: RunnerGone("runner exited")`. A clock update that meets a runner the daemon stopped on purpose (shutdown, reload, reset) is no longer reported as a failure; a runner that exits unexpectedly is still reported with the same message.

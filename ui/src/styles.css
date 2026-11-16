@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* Dark styles follow the OS unless the document carries an explicit data-theme (the theme
+   toggle sets it only for a deliberate choice, so the first paint needs no script). */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"], [data-theme="light"] *)) {
+      @slot;
+    }
+  }
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+}
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -8,6 +21,12 @@
 @layer base {
   html {
     color-scheme: light dark;
+  }
+  html[data-theme="light"] {
+    color-scheme: light;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
   }
   body {
     @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased;
@@ -42,7 +61,17 @@
     @apply border-b border-zinc-200 px-2 py-1 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400;
   }
   .table td {
-    @apply border-b border-zinc-100 px-2 py-1 align-top dark:border-zinc-800;
+    @apply border-b border-zinc-100 px-2 py-1.5 align-top dark:border-zinc-800;
+  }
+  .table tbody tr {
+    @apply transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50;
+  }
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  /* Wide tables scroll inside their card instead of squeezing every column into wraps. */
+  .table-scroll {
+    @apply -mx-1 overflow-x-auto px-1;
   }
   /* Monospace is a typeface, not a size: IDs, paths and code inherit the surrounding size. Add
      `text-xs` explicitly where a smaller size is wanted. */
@@ -50,7 +79,7 @@
     @apply font-mono text-[0.9em];
   }
   .nav-link {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 block rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-zinc-700 transition-colors hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800;
   }
   .link {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 rounded-sm text-amber-800 hover:underline dark:text-amber-300;
@@ -60,5 +89,73 @@
   }
   .badge {
     @apply inline-block rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .nav-link svg {
+    @apply size-4 shrink-0 text-zinc-500 dark:text-zinc-400;
+  }
+  .nav-link[aria-current="page"] svg {
+    @apply text-amber-700 dark:text-amber-300;
+  }
+  .page-title {
+    @apply text-xl font-bold tracking-tight;
+  }
+  .hint {
+    @apply text-sm text-zinc-600 dark:text-zinc-400;
+  }
+  .kbd {
+    @apply inline-flex min-w-5 items-center justify-center rounded border border-zinc-300 bg-zinc-50 px-1 font-mono text-[0.7rem] leading-5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300;
+  }
+  /* A figure with its caption: the Overview tiles and the Functions runtime counters. */
+  .stat {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 block rounded-lg border border-zinc-200 bg-white p-3 shadow-xs dark:border-zinc-800 dark:bg-zinc-900;
+  }
+  a.stat {
+    @apply transition-colors hover:border-amber-400 dark:hover:border-amber-600;
+  }
+  .stat-value {
+    @apply text-2xl font-semibold tabular-nums tracking-tight;
+  }
+  .tab {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 -mb-px border-b-2 border-transparent px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100;
+  }
+  .tab[aria-selected="true"] {
+    @apply border-amber-500 text-zinc-900 dark:text-zinc-50;
+  }
+  /* Value types read by colour as well as by their label. */
+  .type-chip {
+    @apply inline-block rounded px-1.5 py-px font-mono text-[0.7rem] leading-4 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300;
+  }
+  .value-string {
+    @apply text-emerald-800 dark:text-emerald-300;
+  }
+  .value-number {
+    @apply text-sky-800 dark:text-sky-300;
+  }
+  .value-boolean {
+    @apply text-violet-800 dark:text-violet-300;
+  }
+  .value-null {
+    @apply text-zinc-500 italic dark:text-zinc-400;
+  }
+  .value-special {
+    @apply text-amber-800 dark:text-amber-300;
+  }
+  .meter {
+    @apply h-1.5 w-16 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700;
+  }
+  .meter > span {
+    @apply block h-full rounded-full bg-emerald-500;
+  }
+  .meter[data-level="warn"] > span {
+    @apply bg-amber-500;
+  }
+  .meter[data-level="full"] > span {
+    @apply bg-red-500;
+  }
+  .file-input {
+    @apply max-w-full text-sm text-zinc-600 dark:text-zinc-400;
+  }
+  .file-input::file-selector-button {
+    @apply mr-2 cursor-pointer rounded-md border border-solid border-zinc-300 bg-white px-2.5 py-1 text-sm font-medium text-zinc-800 shadow-xs hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800;
   }
 }

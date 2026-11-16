@@ -1,5 +1,5 @@
 import { useSearchParams } from "@solidjs/router";
-import { readFunctionFilters, functionFiltersUrl } from "../lib/functionsFilters";
+import { readFunctionFilters, functionFiltersUrl, matchesFunction } from "../lib/functionsFilters";
 import {
   createEffect,
   createMemo,
@@ -17,7 +17,14 @@ import { t } from "../i18n";
 import { FunctionsTimeline } from "../components/FunctionsTimeline";
 import type { FunctionLog, FunctionsOverview } from "../api/functions";
 import { appState } from "../state";
-import { AsyncButton, ErrorBanner, FetchState, Notice, Section } from "../components/common";
+import {
+  AsyncButton,
+  ErrorBanner,
+  FetchState,
+  Notice,
+  RelativeTime,
+  Section,
+} from "../components/common";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -32,6 +39,7 @@ import {
 } from "../api/functions";
 import { buildCallableInvoke, buildEnqueue, buildRequestInvoke } from "../lib/invoke";
 import { mergeFunctionLogs } from "../lib/functionsTimeline";
+import { formatLogLine } from "../lib/logFormat";
 import { matchesLog, type LevelFilter } from "../lib/logFilter";
 import { runtimeLabel } from "../lib/functionRuntime";
 
@@ -387,6 +395,8 @@ const FunctionRow: Component<{
   functionsAddr: string | null;
   /** Whether the selected session is the one the functions belong to; actions are disabled otherwise. */
   active: boolean;
+  /** Filtered out by the search box: kept mounted (an open form survives) but not shown. */
+  hidden?: boolean | undefined;
   onNotice: (m: string) => void;
   onError: (m: string) => void;
   onRefresh: () => Promise<void>;
@@ -396,10 +406,10 @@ const FunctionRow: Component<{
   const [enqueuing, setEnqueuing] = createSignal(false);
   const trigger = () => props.f.trigger;
   return (
-    <tr data-testid={`function-row-${props.f.name}`}>
-      <td class="mono">{props.f.name}</td>
-      <td class="mono text-xs">{props.f.region}</td>
-      <td data-testid={`function-runtime-${props.f.name}`}>
+    <tr data-testid={`function-row-${props.f.name}`} hidden={props.hidden}>
+      <td class="mono font-medium">{props.f.name}</td>
+      <td class="mono text-xs whitespace-nowrap">{props.f.region}</td>
+      <td class="whitespace-nowrap" data-testid={`function-runtime-${props.f.name}`}>
         {props.f.runtime ? runtimeLabel(props.f.runtime) : "-"}
       </td>
       <td class="text-xs">
@@ -505,6 +515,7 @@ const FunctionRow: Component<{
           {(nextRun) => (
             <div class="mono text-xs text-zinc-500" data-testid={`next-run-${props.f.name}`}>
               {t("functions.nextRun")}: {nextRun()}
+              <RelativeTime value={nextRun()} />
             </div>
           )}
         </Show>
@@ -512,7 +523,7 @@ const FunctionRow: Component<{
       <td class="text-xs">{props.f.timeoutSeconds}s</td>
       <td class="text-xs">{props.f.retry ? t("app.yes") : t("app.no")}</td>
       <td class="text-xs">{props.f.concurrency}</td>
-      <td class="text-right">
+      <td class="space-y-1 text-right whitespace-nowrap [&>button]:ml-1">
         <Show when={trigger().kind === "schedule"}>
           <AsyncButton
             class="btn"
@@ -628,6 +639,8 @@ export const FunctionRows: Component<{
   onNotice: (m: string) => void;
   onError: (m: string) => void;
   onRefresh?: () => Promise<void>;
+  /** The search box text; rows that do not match are hidden, not unmounted. */
+  filter?: string | undefined;
 }> = (props) => {
   // Refreshed objects describe the same target. Keep its form mounted until that target changes.
   // `nextRun` is deliberately excluded so advancing the clock updates a row without discarding
@@ -649,6 +662,13 @@ export const FunctionRows: Component<{
           project={props.project}
           functionsAddr={props.functionsAddr ?? null}
           active={props.active ?? true}
+          hidden={
+            !matchesFunction(
+              byTarget().get(key)!,
+              describeTrigger(byTarget().get(key)!.trigger),
+              props.filter ?? "",
+            )
+          }
           onNotice={props.onNotice}
           onError={props.onError}
           onRefresh={props.onRefresh ?? (async () => {})}
@@ -659,6 +679,7 @@ export const FunctionRows: Component<{
 };
 
 const Functions: Component = () => {
+  const [registeredFilter, setRegisteredFilter] = createSignal("");
   const [overview, { refetch }] = createResource(() => settle(functionsOverview()));
   // This global overview belongs to the Functions owner, independently of the top bar.
   const [lastOverview, setLastOverview] = createSignal<FunctionsOverview | null>(null);
@@ -807,7 +828,11 @@ const Functions: Component = () => {
   const filteredLines = createMemo(() =>
     lines().filter((line) => matchesLog(line, { level: logLevel(), text: logText() })),
   );
-  const filteredLogOutput = createMemo(() => filteredLines().join("\n"));
+  // Formatting is presentation only: the filters and the counts work on the lines as sent.
+  const [formatJson, setFormatJson] = createSignal(false);
+  const filteredLogOutput = createMemo(() =>
+    (formatJson() ? filteredLines().map(formatLogLine) : filteredLines()).join("\n"),
+  );
   const filteredInvocations = (): InvocationInfo[] => {
     const name = fnFilter();
     return name === ""
@@ -930,7 +955,7 @@ const Functions: Component = () => {
   };
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("functions.title")}</h1>
+      <h1 class="page-title mb-4">{t("functions.title")}</h1>
       <ErrorBanner message={error() ?? (o() ? errorOf(overview()) : null)} />
       <Notice message={notice()} />
       <div class="mb-3 flex flex-wrap items-center gap-3">
@@ -976,7 +1001,31 @@ const Functions: Component = () => {
             title={t("functions.registered")}
             actions={
               <>
-                <span class="mono text-xs text-zinc-500">{o()?.source ?? ""}</span>
+                <span class="mono text-xs text-zinc-600 dark:text-zinc-400">
+                  {o()?.source ?? ""}
+                </span>
+                <label class="flex items-center gap-2 text-sm">
+                  <span class="sr-only">{t("functions.searchRegistered")}</span>
+                  <input
+                    class="input w-56"
+                    type="search"
+                    placeholder={t("functions.searchRegistered")}
+                    value={registeredFilter()}
+                    onInput={(e) => setRegisteredFilter(e.currentTarget.value)}
+                    data-testid="function-search"
+                  />
+                </label>
+                <span
+                  class="text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400"
+                  data-testid="function-search-count"
+                >
+                  {t("functions.searchCount", {
+                    shown: (o()?.functions ?? []).filter((f) =>
+                      matchesFunction(f, describeTrigger(f.trigger), registeredFilter()),
+                    ).length,
+                    total: (o()?.functions ?? []).length,
+                  })}
+                </span>
                 <AsyncButton
                   class="btn"
                   onClick={async () => {
@@ -988,33 +1037,36 @@ const Functions: Component = () => {
               </>
             }
           >
-            <table class="table" data-testid="function-table">
-              <thead>
-                <tr>
-                  <th>{t("functions.name")}</th>
-                  <th>{t("functions.region")}</th>
-                  <th>{t("functions.runtime")}</th>
-                  <th>{t("functions.trigger")}</th>
-                  <th>{t("functions.timeout")}</th>
-                  <th>{t("functions.retry")}</th>
-                  <th>{t("functions.concurrency")}</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                <FunctionRows
-                  functions={o()?.functions ?? []}
-                  project={o()?.project ?? appState.project()}
-                  functionsAddr={o()?.functionsAddr ?? null}
-                  active={active()}
-                  onNotice={setNotice}
-                  onError={setError}
-                  onRefresh={async () => {
-                    await refetch();
-                  }}
-                />
-              </tbody>
-            </table>
+            <div class="table-scroll">
+              <table class="table" data-testid="function-table">
+                <thead>
+                  <tr>
+                    <th>{t("functions.name")}</th>
+                    <th>{t("functions.region")}</th>
+                    <th>{t("functions.runtime")}</th>
+                    <th>{t("functions.trigger")}</th>
+                    <th>{t("functions.timeout")}</th>
+                    <th>{t("functions.retry")}</th>
+                    <th>{t("functions.concurrency")}</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  <FunctionRows
+                    functions={o()?.functions ?? []}
+                    project={o()?.project ?? appState.project()}
+                    functionsAddr={o()?.functionsAddr ?? null}
+                    active={active()}
+                    filter={registeredFilter()}
+                    onNotice={setNotice}
+                    onError={setError}
+                    onRefresh={async () => {
+                      await refetch();
+                    }}
+                  />
+                </tbody>
+              </table>
+            </div>
           </Section>
           <FunctionsTimeline
             project={o()?.project ?? ""}
@@ -1248,6 +1300,15 @@ const Functions: Component = () => {
                     value={logText()}
                     onInput={(e) => editLogText(e.currentTarget.value)}
                   />
+                </label>
+                <label class="flex items-center gap-1 text-sm whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={formatJson()}
+                    onChange={(e) => setFormatJson(e.currentTarget.checked)}
+                    data-testid="log-format-json"
+                  />
+                  {t("functions.formatJson")}
                 </label>
                 <span
                   class={`badge ${connected() ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : "bg-zinc-200 dark:bg-zinc-800"}`}
