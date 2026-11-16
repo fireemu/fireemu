@@ -37,6 +37,13 @@
     outline: var(--fe-focus-width) solid var(--fe-focus-ring);
     outline-offset: var(--fe-focus-offset);
   }
+  /* Native checkboxes and radios take the action colour and a fixed size. */
+  input:where([type="checkbox"], [type="radio"]) {
+    accent-color: var(--fe-action-bg);
+    width: 1rem;
+    height: 1rem;
+    vertical-align: -0.125rem;
+  }
   ::placeholder {
     color: var(--fe-input-placeholder);
     opacity: 1;
@@ -65,6 +72,14 @@
   .input {
     @apply min-h-[var(--fe-control-md)] w-full rounded-control border border-control-line bg-[var(--fe-input-bg)] px-2.5 py-1.5 text-sm text-[var(--fe-input-fg)] aria-invalid:border-[var(--fe-input-border-invalid)] disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled disabled:text-on-disabled;
   }
+  /* Selects drop the platform chrome and draw a chevron (border-control grey reads on both
+     themes) so they match text inputs. */
+  select.input {
+    @apply appearance-none bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B8B95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+  }
   .input-sm {
     @apply min-h-[var(--fe-control-sm)] py-0.5 text-xs;
   }
@@ -92,6 +107,15 @@
   /* Row actions stay compact so a row with buttons keeps the table's rhythm. */
   .table td .btn {
     @apply min-h-[var(--fe-control-sm)] py-0.5;
+  }
+  /* A row-actions column that stays in view while a wide table scrolls sideways (-right-1
+     covers the .table-scroll padding). */
+  .table .sticky-actions {
+    @apply sticky -right-1 bg-surface;
+    box-shadow: -1px 0 0 var(--fe-border-subtle);
+  }
+  .table tbody tr:hover .sticky-actions {
+    @apply bg-[var(--fe-table-row-hover-bg)];
   }
   .table tbody tr:last-child td {
     @apply border-b-0;

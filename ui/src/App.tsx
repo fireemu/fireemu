@@ -244,80 +244,87 @@ export const App: Component<RouteSectionProps> = (props) => {
       <div class="flex min-w-0 flex-1 flex-col">
         {/* Where every action lands: the target the pages act on, and whether the daemon answers. */}
         <header
-          class="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6 "
+          class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6 "
           data-testid="context-bar"
         >
-          <span class="font-semibold text-secondary">{t("header.local")}</span>
-          <label class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-            <span class="label">{t("overview.session")}</span>
-            <select
-              class="input input-sm mono min-w-0 max-w-full w-auto"
-              data-testid="session-select"
-              value={appState.session()}
-              onChange={(e) => {
-                const next = e.currentTarget.value;
-                e.currentTarget.value = appState.session();
-                requestScopeChange(() => {
-                  appState.setSession(next);
-                  void appState.refreshClock();
-                });
-              }}
-            >
-              <For each={appState.sessions().map((s) => s.name)}>
-                {(name) => (
-                  <option value={name} selected={name === appState.session()}>
-                    {name}
-                  </option>
-                )}
-              </For>
-            </select>
-          </label>
-          <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-            <span class="label">{t("overview.project")}</span>
-            <span class="mono break-all" data-testid="header-project">
-              {appState.project()}
+          {/* Two groups that wrap as units: where actions land, and whether the daemon answers. */}
+          <div class="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+            {/* The scope label shows on wide screens only; screen readers always get it. */}
+            <span class="sr-only font-semibold text-secondary 2xl:not-sr-only">
+              {t("header.local")}
             </span>
-          </span>
-          <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-            <span class="label">{t("overview.clock")}</span>
-            <span class="mono whitespace-nowrap" data-testid="clock">
-              {appState.clock()}
-            </span>
-            <StatusBadge
-              tone={appState.config().clockMode === "frozen" ? "paused" : "neutral"}
-              testId="clock-mode"
-              class="whitespace-normal"
-            >
-              {appState.config().clockMode === "frozen"
-                ? t("overview.clockFrozen")
-                : t("overview.clockRealtime")}
-            </StatusBadge>
-          </span>
-          <span role="status" class="sr-only" data-testid="connection-status">
-            {announcement().label} {t("header.controlHint")}{" "}
-            {announcement().time && t("header.lastSuccess", { time: announcement().time! })}
-          </span>
-          <StatusBadge
-            aria-hidden="true"
-            class="ml-auto"
-            tone={connectionTone()}
-            testId="connection-badge"
-          >
-            {connectionLabel()}
-          </StatusBadge>
-          <Show when={appState.lastConnectedAt()}>
-            {(time) => (
-              <span
-                class="text-xs whitespace-nowrap text-muted"
-                title={`${time()} · ${t("header.controlHint")}`}
-                aria-hidden="true"
-                data-testid="control-last-success"
+            <label class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+              <span class="label">{t("overview.session")}</span>
+              <select
+                class="input input-sm mono min-w-0 max-w-full w-auto"
+                data-testid="session-select"
+                value={appState.session()}
+                onChange={(e) => {
+                  const next = e.currentTarget.value;
+                  e.currentTarget.value = appState.session();
+                  requestScopeChange(() => {
+                    appState.setSession(next);
+                    void appState.refreshClock();
+                  });
+                }}
               >
-                {/* The time of day is enough at a glance; the full instant is in the title. */}
-                {t("header.lastSuccess", { time: `${time().slice(11, 19)}Z` })}
+                <For each={appState.sessions().map((s) => s.name)}>
+                  {(name) => (
+                    <option value={name} selected={name === appState.session()}>
+                      {name}
+                    </option>
+                  )}
+                </For>
+              </select>
+            </label>
+            <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+              <span class="label">{t("overview.project")}</span>
+              <span class="mono break-all" data-testid="header-project">
+                {appState.project()}
               </span>
-            )}
-          </Show>
+            </span>
+            <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+              <span class="label">{t("overview.clock")}</span>
+              <span class="mono whitespace-nowrap" data-testid="clock">
+                {appState.clock()}
+              </span>
+              <StatusBadge
+                tone={appState.config().clockMode === "frozen" ? "paused" : "neutral"}
+                testId="clock-mode"
+                title={
+                  appState.config().clockMode === "frozen"
+                    ? t("overview.clockFrozen")
+                    : t("overview.clockRealtime")
+                }
+              >
+                {appState.config().clockMode === "frozen"
+                  ? t("header.clockFrozen")
+                  : t("header.clockRealtime")}
+              </StatusBadge>
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span role="status" class="sr-only" data-testid="connection-status">
+              {announcement().label} {t("header.controlHint")}{" "}
+              {announcement().time && t("header.lastSuccess", { time: announcement().time! })}
+            </span>
+            <StatusBadge aria-hidden="true" tone={connectionTone()} testId="connection-badge">
+              {connectionLabel()}
+            </StatusBadge>
+            <Show when={appState.lastConnectedAt()}>
+              {(time) => (
+                <span
+                  class="text-xs whitespace-nowrap text-muted"
+                  title={`${time()} · ${t("header.controlHint")}`}
+                  aria-hidden="true"
+                  data-testid="control-last-success"
+                >
+                  {/* The time of day is enough at a glance; the full instant is in the title. */}
+                  {t("header.lastSuccess", { time: `${time().slice(11, 19)}Z` })}
+                </span>
+              )}
+            </Show>
+          </div>
         </header>
         <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 lg:p-6">
           <Show when={!appState.config().controlToken}>

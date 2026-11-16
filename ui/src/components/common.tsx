@@ -99,6 +99,9 @@ export const AsyncButton: Component<{
   disabled?: boolean | undefined;
   children: JSX.Element;
   testId?: string | undefined;
+  /** A full accessible name when the visible label is shortened; it must contain that label. */
+  ariaLabel?: string | undefined;
+  title?: string | undefined;
 }> = (props) => {
   const guard = createSubmitGuard();
   return (
@@ -107,6 +110,8 @@ export const AsyncButton: Component<{
       class={props.class ?? "btn"}
       disabled={props.disabled || guard.pending()}
       aria-busy={guard.pending()}
+      aria-label={props.ariaLabel}
+      title={props.title}
       data-testid={props.testId}
       onClick={() => void guard.run(props.onClick)}
     >

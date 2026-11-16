@@ -179,6 +179,11 @@ it("disables every action when the functions do not belong to the selected sessi
   ]) {
     expect(button(id).disabled).toBe(false);
   }
+  // The advance button shows a short label; its accessible name and tooltip keep the full one.
+  const advance = button("advance-to-next-tick");
+  expect(advance.textContent).toBe("Advance");
+  expect(advance.getAttribute("aria-label")).toBe("Advance clock to next run");
+  expect(advance.title).toBe("Advance clock to next run");
 });
 
 it("lists the tasks a queue holds back and offers to run each one, or all, now", () => {
