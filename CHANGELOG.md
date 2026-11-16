@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-16
+
 ### Added
 
 - Emulator UI: a command palette (Ctrl+K, or ⌘K on macOS) opens a page by name, a Firestore path typed with a slash (`users/alice`), or an action (switch the session, switch the theme, copy the `.env` lines).
@@ -1422,7 +1424,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/fireemu/fireemu/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/fireemu/fireemu/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/fireemu/fireemu/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/fireemu/fireemu/compare/v0.53.0...v0.54.0
