@@ -63,8 +63,11 @@ const options = [
 <style>
 	/* The button shows the chosen theme: a sun (light), a moon (dark) or a laptop (follow the system).
 	   Before the script runs, the system icon shows. */
-	.fe-theme-icons {
+	.fe-theme-icons,
+	.fe-theme-icons :global([data-for]) {
 		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 	.fe-theme-icons :global(.fe-menu-icon) {
 		font-size: 1.125rem;
@@ -77,6 +80,6 @@ const options = [
 	}
 	:global(fe-theme-select[data-current='light']) .fe-theme-icons :global([data-for='light']),
 	:global(fe-theme-select[data-current='dark']) .fe-theme-icons :global([data-for='dark']) {
-		display: block;
+		display: flex;
 	}
 </style>
