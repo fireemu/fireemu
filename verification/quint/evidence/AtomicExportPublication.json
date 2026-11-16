@@ -623,7 +623,7 @@
     },
     "crates/fireemu-adapter-functions/src/runtime.rs": {
       "kind": "sha256",
-      "value": "6359de2973d83789ec9d62b3349e6e0477e13924c33e9d55e8b08652d675e20d"
+      "value": "c1b0a6c6d8a2cf27cb8765f67cd773ce52a57132c577aee0091f02dd9bb35cbd"
     },
     "crates/fireemu-adapter-functions/src/runtime/event_frame_member_tests.rs": {
       "kind": "sha256",
