@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-11-17
+
 ### Changed
 
 - Emulator UI: colours come from one set of light and dark design tokens (a neutral graphite ground, orange only for the main action and the selection, a blue keyboard focus outline); status badges and notices carry a shape icon beside their label, the frozen virtual clock reads as information rather than a warning, and buttons, inputs and table rows use consistent heights.
@@ -1434,7 +1436,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.57.1...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/fireemu/fireemu/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/fireemu/fireemu/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/fireemu/fireemu/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/fireemu/fireemu/compare/v0.55.0...v0.56.0
