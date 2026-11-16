@@ -2,6 +2,7 @@
 // The theme picker as an icon menu. It keeps Starlight's stored preference ('starlight-theme' in
 // localStorage, empty for auto) so Starlight's ThemeProvider applies it before the first paint.
 import IconMenu from './IconMenu.astro';
+import { Icon } from '@astrojs/starlight/components';
 const options = [
 	{ value: 'auto', label: Astro.locals.t('themeSelect.auto') },
 	{ value: 'light', label: Astro.locals.t('themeSelect.light') },
@@ -10,7 +11,12 @@ const options = [
 ---
 
 <fe-theme-select>
-	<IconMenu icon="laptop" label={Astro.locals.t('themeSelect.accessibleLabel')}>
+	<IconMenu label={Astro.locals.t('themeSelect.accessibleLabel')}>
+		<span slot="icon" class="fe-theme-icons">
+			<span data-for="auto"><Icon name="laptop" class="fe-menu-icon" /></span>
+			<span data-for="light"><Icon name="sun" class="fe-menu-icon" /></span>
+			<span data-for="dark"><Icon name="moon" class="fe-menu-icon" /></span>
+		</span>
 		{options.map(({ value, label }) => <button type="button" data-theme-value={value} aria-pressed="false">{label}</button>)}
 	</IconMenu>
 </fe-theme-select>
@@ -32,6 +38,7 @@ const options = [
 		try {
 			localStorage.setItem(storageKey, theme === 'auto' ? '' : theme);
 		} catch {}
+		for (const picker of document.querySelectorAll('fe-theme-select')) picker.setAttribute('data-current', theme);
 		for (const button of document.querySelectorAll<HTMLButtonElement>('fe-theme-select [data-theme-value]')) {
 			button.setAttribute('aria-pressed', String(button.dataset.themeValue === theme));
 		}
@@ -52,3 +59,24 @@ const options = [
 	}
 	customElements.define('fe-theme-select', FeThemeSelect);
 </script>
+
+<style>
+	/* The button shows the chosen theme: a sun (light), a moon (dark) or a laptop (follow the system).
+	   Before the script runs, the system icon shows. */
+	.fe-theme-icons {
+		display: flex;
+	}
+	.fe-theme-icons :global(.fe-menu-icon) {
+		font-size: 1.125rem;
+	}
+	.fe-theme-icons :global([data-for='light']),
+	.fe-theme-icons :global([data-for='dark']),
+	:global(fe-theme-select[data-current='light']) .fe-theme-icons :global([data-for='auto']),
+	:global(fe-theme-select[data-current='dark']) .fe-theme-icons :global([data-for='auto']) {
+		display: none;
+	}
+	:global(fe-theme-select[data-current='light']) .fe-theme-icons :global([data-for='light']),
+	:global(fe-theme-select[data-current='dark']) .fe-theme-icons :global([data-for='dark']) {
+		display: block;
+	}
+</style>

@@ -4,7 +4,7 @@
 import { Icon } from '@astrojs/starlight/components';
 
 interface Props {
-	icon: 'translate' | 'laptop';
+	icon?: 'translate' | 'laptop';
 	label: string;
 	class?: string;
 }
@@ -13,7 +13,7 @@ const { icon, label, class: className } = Astro.props;
 
 <details class:list={['fe-menu', className]}>
 	<summary aria-label={label} title={label}>
-		<Icon name={icon} class="fe-menu-icon" />
+		{Astro.slots.has('icon') ? <slot name="icon" /> : <Icon name={icon!} class="fe-menu-icon" />}
 	</summary>
 	<div class="fe-menu-panel">
 		<slot />
