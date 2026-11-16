@@ -263,7 +263,12 @@ thread_local! {
 
 /// The core store's view of this module: an imported hash matches when its spec decodes and
 /// the password derives the stored hash.
-pub(crate) struct ImportedHashes;
+pub(crate) struct ImportedHashes {
+    /// The strict profile fails a sign-in whose spec is outside the local work bounds; the
+    /// emulator profile answers that no password matches, as firebase-tools 15.28.2 never
+    /// compares a password with an imported hash (`operations.js:1303-1310`).
+    pub(crate) strict: bool,
+}
 
 impl fireemu_core_auth::store::ImportedHashVerifier for ImportedHashes {
     fn verify(
@@ -275,11 +280,20 @@ impl fireemu_core_auth::store::ImportedHashVerifier for ImportedHashes {
             return Ok(false);
         };
         // An HMAC without a key cannot be computed; production accepts HMAC_SHA512 so at
-        // import and fails the sign-in internally (sandbox recording 2026-09-23).
-        if matches!(&spec, HashSpec::Hmac { key, .. } if key.is_empty())
-            || !within_work_bounds(&spec, &imported.hash)
-        {
+        // import and fails the sign-in internally (sandbox recording 2026-09-23), in both
+        // profiles as production is recorded.
+        if matches!(&spec, HashSpec::Hmac { key, .. } if key.is_empty()) {
             return Err(fireemu_core_auth::store::ImportedHashFailure);
+        }
+        // A spec outside the local work bounds has no production record. Strict fails the
+        // sign-in without deriving; the emulator profile answers no match, as firebase-tools
+        // does.
+        if !within_work_bounds(&spec, &imported.hash) {
+            return if self.strict {
+                Err(fireemu_core_auth::store::ImportedHashFailure)
+            } else {
+                Ok(false)
+            };
         }
         let active = DERIVATION_SLOTS
             .0
@@ -634,7 +648,8 @@ pub(crate) fn within_work_bounds(spec: &HashSpec, hash: &[u8]) -> bool {
 /// Why a stored spec text (an export's `fireemuImportedPassword`) cannot be restored, or
 /// `None` when it can. A restore accepts exactly what `accounts:batchCreate` accepts, so every
 /// export fireemu writes can be imported again (closure review 3, Closure Should Fix 1); the
-/// local work bounds stay a sign-in check, which fails such a sign-in with an internal error.
+/// local work bounds stay a sign-in check, which fails such a sign-in with an internal error in
+/// the strict profile and answers no match in the emulator profile.
 #[must_use]
 pub fn imported_hash_spec_error(spec: &str) -> Option<String> {
     if spec == UNSPECIFIED_SPEC {
@@ -825,6 +840,86 @@ mod tests {
             .clone()
     }
 
+    /// An HMAC without a key fails the sign-in in both profiles, as production does (sandbox
+    /// recording 2026-09-23); a keyed HMAC verifies in both.
+    #[test]
+    fn a_keyless_hmac_fails_the_sign_in_in_both_profiles() {
+        use fireemu_core_auth::store::{ImportedHashVerifier, ImportedPasswordHash};
+        let imported = |key: Vec<u8>| {
+            let spec = HashSpec::Hmac {
+                family: Family::Sha512,
+                key,
+                order: Order::PasswordFirst,
+            };
+            let hash = derive(&spec, b"password", b"salt", 64).unwrap_or_default();
+            ImportedPasswordHash {
+                spec: encode(&spec),
+                hash,
+                salt: b"salt".to_vec(),
+            }
+        };
+        let keyless = imported(Vec::new());
+        for strict in [true, false] {
+            assert!(ImportedHashes { strict }
+                .verify(&keyless, "password")
+                .is_err());
+        }
+        let keyed = imported(vec![1, 2, 3]);
+        for strict in [true, false] {
+            assert_eq!(
+                ImportedHashes { strict }.verify(&keyed, "password"),
+                Ok(true)
+            );
+        }
+    }
+
+    /// The bcrypt cost bound is inclusive at 16: cost 16 derives in both profiles, cost 17
+    /// fails the strict sign-in and answers no match in the emulator profile, without
+    /// deriving.
+    #[test]
+    fn bcrypt_cost_above_the_bound_never_derives() {
+        use fireemu_core_auth::store::{ImportedHashVerifier, ImportedPasswordHash};
+        let imported = |hash: String| ImportedPasswordHash {
+            spec: encode(&HashSpec::Bcrypt),
+            hash: hash.into_bytes(),
+            salt: Vec::new(),
+        };
+        let over = imported(format!("$2b$17${}", "a".repeat(53)));
+        assert!(!within_work_bounds(&HashSpec::Bcrypt, &over.hash));
+        let derived = std::rc::Rc::new(std::cell::Cell::new(0));
+        let seen = std::rc::Rc::clone(&derived);
+        DERIVATION_OBSERVER.with_borrow_mut(|observer| {
+            *observer = Some(Box::new(move |start| {
+                if start {
+                    seen.set(seen.get() + 1);
+                }
+            }));
+        });
+        assert!(ImportedHashes { strict: true }
+            .verify(&over, "password")
+            .is_err());
+        assert_eq!(
+            ImportedHashes { strict: false }.verify(&over, "password"),
+            Ok(false)
+        );
+        assert_eq!(derived.get(), 0);
+        let low = imported(
+            bcrypt::hash_with_salt("password", 4, [7; 16])
+                .unwrap()
+                .format_for_version(bcrypt::Version::TwoB),
+        );
+        for strict in [true, false] {
+            assert_eq!(ImportedHashes { strict }.verify(&low, "password"), Ok(true));
+            assert_eq!(ImportedHashes { strict }.verify(&low, "wrong"), Ok(false));
+        }
+        assert_eq!(derived.get(), 4);
+        DERIVATION_OBSERVER.with_borrow_mut(|observer| *observer = None);
+        assert!(within_work_bounds(
+            &HashSpec::Bcrypt,
+            format!("$2b$16${}", "a".repeat(53)).as_bytes()
+        ));
+    }
+
     /// A spec outside the import ranges fails the sign-in instead of running, whichever way
     /// it reached the store (closure re-review 2026-09-24).
     #[test]
@@ -866,7 +961,14 @@ mod tests {
             };
             assert!(!restorable_spec(&imported.spec), "{spec:?}");
             assert!(
-                ImportedHashes.verify(&imported, "password123").is_err(),
+                ImportedHashes { strict: true }
+                    .verify(&imported, "password123")
+                    .is_err(),
+                "{spec:?}"
+            );
+            assert_eq!(
+                ImportedHashes { strict: false }.verify(&imported, "password123"),
+                Ok(false),
                 "{spec:?}"
             );
         }
@@ -1275,7 +1377,10 @@ mod tests {
                         }
                     }));
                 });
-                assert_eq!(ImportedHashes.verify(&imported, "password"), Ok(false));
+                assert_eq!(
+                    ImportedHashes { strict: true }.verify(&imported, "password"),
+                    Ok(false)
+                );
                 DERIVATION_OBSERVER.with_borrow_mut(|observer| *observer = None);
             }));
         }

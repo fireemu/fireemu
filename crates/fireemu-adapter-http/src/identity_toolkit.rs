@@ -4978,7 +4978,7 @@ fn handle_with_policy_inner(
             &store_arc,
             str_field(body, "email").filter(|email| email.contains('@')),
             str_field(body, "password"),
-            &password_hash::ImportedHashes,
+            &password_hash::ImportedHashes { strict },
         );
         operation = if blocking_auth {
             None
@@ -5612,6 +5612,7 @@ fn dispatch(
             at,
             options.legacy_tokens,
             options.preverified_password.as_deref(),
+            !options.stateless_refresh_tokens,
         ),
         Handler::SignInWithCustomToken => sign_in_with_custom_token(
             store,
@@ -10561,6 +10562,7 @@ fn sign_in_with_password(
     at: LogicalInstant,
     legacy_tokens: bool,
     preverified: Option<&password_hash::PreVerified>,
+    strict: bool,
 ) -> JsonResponse {
     // The official order: the email is checked (present, well-formed) before the password.
     let Some(email) = str_field(body, "email") else {
@@ -10578,7 +10580,7 @@ fn sign_in_with_password(
         at,
         &password_hash::SnapshotHashes {
             snapshot: preverified,
-            fallback: &password_hash::ImportedHashes,
+            fallback: &password_hash::ImportedHashes { strict },
         },
     ) {
         Ok(result) => result,
