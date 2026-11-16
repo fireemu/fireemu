@@ -45,3 +45,14 @@ export const UI_BASE = "/ui";
  * handles the click, so the page does not reload.
  */
 export const appHref = (route: string): string => `${UI_BASE}${route}`;
+
+/**
+ * The Firestore browser link of a reference value, when it points into the database whose
+ * documents root is `root` (`projects/p/databases/d/documents`); `null` for any other
+ * project or database, which this page cannot open.
+ */
+export const referenceHref = (reference: string, root: string, db: string): string | null => {
+  const prefix = `${root}/`;
+  if (!reference.startsWith(prefix) || reference.length === prefix.length) return null;
+  return firestoreHref(reference.slice(prefix.length), db);
+};

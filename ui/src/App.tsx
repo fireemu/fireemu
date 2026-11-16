@@ -110,11 +110,11 @@ export const App: Component<RouteSectionProps> = (props) => {
     })),
   );
   const paletteLinks = () =>
-    [...OFFICIAL_NAV, ...RUNTIME_NAV].map((item) => ({
-      href: item.href,
-      title: t(item.key),
-      ...(item.keywords ? { keywords: item.keywords } : {}),
-    }));
+    [...OFFICIAL_NAV, ...RUNTIME_NAV].map((item) =>
+      item.keywords
+        ? { href: item.href, title: t(item.key), keywords: item.keywords }
+        : { href: item.href, title: t(item.key) },
+    );
   const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
   return (
     <div class="flex min-h-screen flex-col md:flex-row">

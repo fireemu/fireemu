@@ -9,6 +9,8 @@ export type ValueNode = {
   type: FieldType;
   /** `integer` or `double` for numbers, which the wire tells apart. */
   numberKind?: "integer" | "double";
+  /** The full resource name of a reference (the preview shows it relative). */
+  reference?: string;
   /** One line: the value itself for scalars, compact JSON (cut) for containers. */
   preview: string;
   /** The number of entries of a map or array (0 for scalars). */
@@ -31,7 +33,7 @@ const entriesOf = (value: FsValue): [string, FsValue][] | null => {
   }
   if ("mapValue" in value) {
     // Field names sort as the console shows them, independent of wire order.
-    return Object.entries(value.mapValue.fields ?? {}).sort(([a], [b]) =>
+    return Object.entries(value.mapValue.fields ?? {}).toSorted(([a], [b]) =>
       a < b ? -1 : a > b ? 1 : 0,
     );
   }
@@ -43,10 +45,11 @@ const nodeOf = (key: string, value: FsValue, depth: number, limits: TreeLimits):
   const entries = entriesOf(value);
   const numberKind: ValueNode["numberKind"] =
     "integerValue" in value ? "integer" : "doubleValue" in value ? "double" : undefined;
-  const base: Pick<ValueNode, "key" | "type" | "numberKind" | "preview"> = {
+  const base: Pick<ValueNode, "key" | "type" | "numberKind" | "reference" | "preview"> = {
     key,
     type,
     ...(numberKind ? { numberKind } : {}),
+    ...("referenceValue" in value ? { reference: value.referenceValue } : {}),
     preview: cut(summarize(value), limits.maxPreview),
   };
   if (entries === null) return { ...base, size: 0, children: [], omitted: 0 };
@@ -68,7 +71,7 @@ export const buildValueTree = (
   limits: TreeLimits = DEFAULT_LIMITS,
 ): ValueNode[] =>
   Object.entries(fields ?? {})
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([name, value]) => nodeOf(name, value, 0, limits));
 
 /** The number of nodes in a tree (what the page would render fully expanded). */

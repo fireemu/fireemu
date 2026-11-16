@@ -33,7 +33,12 @@ test("every wire type gets its type and the one-line preview the list view uses"
   expect(byKey.n).toMatchObject({ type: "null", preview: "null" });
   expect(byKey.t).toMatchObject({ type: "timestamp", preview: "2026-01-02T03:04:05Z" });
   expect(byKey.g).toMatchObject({ type: "geopoint", preview: "[35.68, 139.69]" });
-  expect(byKey.r).toMatchObject({ type: "reference", preview: "users/a" });
+  expect(byKey.r).toMatchObject({
+    type: "reference",
+    preview: "users/a",
+    reference: "projects/p/databases/(default)/documents/users/a",
+  });
+  expect(byKey.t).not.toHaveProperty("reference");
   expect(byKey.y).toMatchObject({ type: "bytes", preview: "bytes(4)" });
 });
 
@@ -114,5 +119,5 @@ test("prototype-named fields are ordinary keys", () => {
   const tree = buildValueTree(
     JSON.parse('{"__proto__":{"stringValue":"x"},"constructor":{"stringValue":"y"}}'),
   );
-  expect(tree.map((n) => n.key).sort()).toEqual(["__proto__", "constructor"]);
+  expect(tree.map((n) => n.key).toSorted()).toEqual(["__proto__", "constructor"]);
 });

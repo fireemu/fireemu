@@ -1,6 +1,15 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "firestore.expandField": "Expand {name}",
+  "firestore.collapseField": "Collapse {name}",
+  "firestore.mapSize": "{count} fields",
+  "firestore.arraySize": "{count} items",
+  "firestore.mapSizeOne": "1 field",
+  "firestore.arraySizeOne": "1 item",
+  "firestore.treeOmitted": "{count} more not shown; the REST JSON view has every entry",
+  "firestore.copyPath": "Copy path",
+  "firestore.documentPath": "document path",
   "app.copySubject": "Copy {subject}",
   "app.unknown": "unknown",
   "overview.statDatabases": "{count} databases",

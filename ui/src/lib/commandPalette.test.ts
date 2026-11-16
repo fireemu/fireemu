@@ -84,7 +84,7 @@ test("every result contains the query as a subsequence of its title or keywords"
     for (let i = 0; i < length; i += 1) query += alphabet[next() % alphabet.length];
     const results = filterCommands(COMMANDS, query);
     const scores = results.map((c) => matchScore(query, c)!);
-    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+    expect([...scores].toSorted((a, b) => b - a)).toEqual(scores);
     for (const command of results) {
       const text = `${command.title} ${command.keywords ?? ""}`.toLowerCase();
       let at = 0;
