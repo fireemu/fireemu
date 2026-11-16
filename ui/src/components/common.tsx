@@ -3,7 +3,15 @@ import { t } from "../i18n";
 import { relativeTime } from "../lib/relativeTime";
 import { createSubmitGuard } from "../lib/submitGuard";
 import { appState } from "../state";
-import { IconDanger, IconInfo, IconNeutral, IconPaused, IconSuccess, IconWarning } from "./icons";
+import {
+  IconCopy,
+  IconDanger,
+  IconInfo,
+  IconNeutral,
+  IconPaused,
+  IconSuccess,
+  IconWarning,
+} from "./icons";
 
 /** The meaning a state carries. Frozen clock is info, queued and cancelled are neutral. */
 export type Tone = "success" | "warning" | "danger" | "info" | "neutral" | "paused";
@@ -189,11 +197,12 @@ export const CopyButton: Component<{
   return (
     <button
       type="button"
-      class="link shrink-0 text-xs"
+      class="link inline-flex shrink-0 items-center gap-1 text-xs [&>svg]:size-3.5"
       aria-label={t("app.copySubject", { subject: props.subject })}
       data-testid={props.testId}
       onClick={() => void copy()}
     >
+      {copied() ? <IconSuccess /> : <IconCopy />}
       <span aria-live="polite">{copied() ? t("app.copied") : t("app.copy")}</span>
     </button>
   );
@@ -296,6 +305,7 @@ export const CopyField: Component<{
           onFocus={(e) => e.currentTarget.select()}
         />
         <AsyncButton onClick={copy} testId={props.testId ? `${props.testId}-copy` : undefined}>
+          {copied() ? <IconSuccess /> : <IconCopy />}
           {copied() ? t("app.copied") : t("app.copy")}
         </AsyncButton>
       </div>

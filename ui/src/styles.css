@@ -89,6 +89,10 @@
   .table tbody tr[aria-selected="true"] {
     @apply bg-[var(--fe-table-row-selected-bg)];
   }
+  /* Row actions stay compact so a row with buttons keeps the table's rhythm. */
+  .table td .btn {
+    @apply min-h-[var(--fe-control-sm)] py-0.5;
+  }
   .table tbody tr:last-child td {
     @apply border-b-0;
   }

@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Emulator UI: colours come from one set of light and dark design tokens (a neutral graphite ground, orange only for the main action and the selection, a blue keyboard focus outline); status badges and notices carry a shape icon beside their label, the frozen virtual clock reads as information rather than a warning, and buttons, inputs and table rows use consistent heights.
+
 ## [0.57.0] - 2026-11-16
 
 ### Added
