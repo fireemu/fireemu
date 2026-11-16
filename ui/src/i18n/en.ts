@@ -1,6 +1,26 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "theme.label": "Theme: {theme}",
+  "theme.system": "System",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.hint": "Switch between the system, light and dark theme",
+  "palette.title": "Command palette",
+  "palette.open": "Search or jump to",
+  "palette.placeholder": "Go to a page, or type a Firestore path like users/alice",
+  "palette.groupGo": "Go to",
+  "palette.groupFirestore": "Firestore",
+  "palette.groupSession": "Session",
+  "palette.groupActions": "Action",
+  "palette.openPath": "Open {path} in Firestore",
+  "palette.switchSession": "Switch to session {session} ({project})",
+  "palette.switchTheme": "Switch theme (now: {theme})",
+  "palette.copyEnv": "Copy the .env lines for the selected session",
+  "palette.empty": "Nothing matches",
+  "palette.hintMove": "to move",
+  "palette.hintRun": "to open",
+  "palette.hintPath": "A slash opens a Firestore path",
   "app.copyManually":
     "Copy manually: clipboard access was unavailable. Select the text and use your copy shortcut.",
   "header.lastSuccess": "Last successful check: {time}",

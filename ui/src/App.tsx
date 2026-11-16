@@ -10,27 +10,70 @@ import {
   untrack,
   type Component,
 } from "solid-js";
+import { CommandPalette, openCommandPalette } from "./components/CommandPalette";
+import {
+  IconAlerts,
+  IconAppCheck,
+  IconAuth,
+  IconDatabase,
+  IconFirestore,
+  IconFunctions,
+  IconHosting,
+  IconOverview,
+  IconRules,
+  IconRuntime,
+  IconSearch,
+  IconStorage,
+} from "./components/icons";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { t, type MessageKey } from "./i18n";
 import { requestScopeChange } from "./lib/unsaved";
 import { appState } from "./state";
 
-type NavItem = { href: string; key: MessageKey };
+type NavItem = { href: string; key: MessageKey; icon: Component; keywords?: string };
 
 // The official Emulator Suite products, then the fireemu-only deterministic runtime controls,
 // kept in a visually and semantically separate group so the two are never conflated.
 const OFFICIAL_NAV: NavItem[] = [
-  { href: "/", key: "nav.overview" },
-  { href: "/firestore", key: "nav.firestore" },
-  { href: "/database", key: "database.title" },
-  { href: "/auth", key: "nav.auth" },
-  { href: "/storage", key: "nav.storage" },
-  { href: "/functions", key: "nav.functions" },
-  { href: "/hosting", key: "nav.hosting" },
-  { href: "/alerts", key: "nav.alerts" },
-  { href: "/rules", key: "nav.rules" },
-  { href: "/appcheck", key: "nav.appCheck" },
+  {
+    href: "/",
+    key: "nav.overview",
+    icon: IconOverview,
+    keywords: "home status environment snippets",
+  },
+  {
+    href: "/firestore",
+    key: "nav.firestore",
+    icon: IconFirestore,
+    keywords: "documents collections query",
+  },
+  { href: "/database", key: "database.title", icon: IconDatabase, keywords: "rtdb" },
+  { href: "/auth", key: "nav.auth", icon: IconAuth, keywords: "users sign-in codes mfa" },
+  {
+    href: "/storage",
+    key: "nav.storage",
+    icon: IconStorage,
+    keywords: "bucket objects files upload",
+  },
+  {
+    href: "/functions",
+    key: "nav.functions",
+    icon: IconFunctions,
+    keywords: "logs triggers invoke schedule tasks pubsub",
+  },
+  { href: "/hosting", key: "nav.hosting", icon: IconHosting, keywords: "site rewrites" },
+  { href: "/alerts", key: "nav.alerts", icon: IconAlerts, keywords: "crashlytics eventarc" },
+  { href: "/rules", key: "nav.rules", icon: IconRules, keywords: "security coverage requests" },
+  { href: "/appcheck", key: "nav.appCheck", icon: IconAppCheck, keywords: "tokens attestation" },
 ];
-const RUNTIME_NAV: NavItem[] = [{ href: "/runtime", key: "nav.runtime" }];
+const RUNTIME_NAV: NavItem[] = [
+  {
+    href: "/runtime",
+    key: "nav.runtime",
+    icon: IconRuntime,
+    keywords: "clock snapshots fault sessions resources",
+  },
+];
 
 /** The frame: sidebar navigation, a status bar with the clock, the routed page. */
 export const App: Component<RouteSectionProps> = (props) => {
@@ -66,8 +109,16 @@ export const App: Component<RouteSectionProps> = (props) => {
       time: untrack(appState.lastConnectedAt),
     })),
   );
+  const paletteLinks = () =>
+    [...OFFICIAL_NAV, ...RUNTIME_NAV].map((item) => ({
+      href: item.href,
+      title: t(item.key),
+      ...(item.keywords ? { keywords: item.keywords } : {}),
+    }));
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K";
   return (
     <div class="flex min-h-screen flex-col md:flex-row">
+      <CommandPalette links={paletteLinks()} />
       <button
         type="button"
         class="btn m-3 self-start md:hidden"
@@ -79,12 +130,24 @@ export const App: Component<RouteSectionProps> = (props) => {
       </button>
       <aside
         id="console-navigation"
-        class={`${navigationOpen() ? "block" : "hidden"} shrink-0 border-r border-zinc-200 bg-zinc-100 p-3 md:block md:w-44 lg:w-56 dark:border-zinc-800 dark:bg-zinc-900`}
+        class={`${navigationOpen() ? "flex" : "hidden"} shrink-0 flex-col border-r border-zinc-200 bg-zinc-100 p-3 md:sticky md:top-0 md:flex md:h-screen md:w-48 md:overflow-y-auto lg:w-56 dark:border-zinc-800 dark:bg-zinc-900`}
       >
-        <div class="mb-4 px-3">
-          <div class="text-lg font-bold">{t("app.title")}</div>
-          <div class="text-xs text-zinc-500">{t("app.subtitle")}</div>
+        <div class="mb-3 flex items-baseline gap-2 px-3">
+          <div class="text-lg font-bold tracking-tight">
+            <span class="text-amber-600 dark:text-amber-400">fire</span>emu
+          </div>
+          <div class="text-xs text-zinc-500 dark:text-zinc-400">{t("app.subtitle")}</div>
         </div>
+        <button
+          type="button"
+          class="input mb-3 flex items-center gap-2 text-left text-zinc-500 dark:text-zinc-400 [&>svg]:size-4"
+          data-testid="command-palette-open"
+          onClick={openCommandPalette}
+        >
+          <IconSearch />
+          <span class="flex-1 truncate">{t("palette.open")}</span>
+          <span class="kbd">{shortcut}</span>
+        </button>
         <nav class="space-y-0.5" aria-label={t("nav.sectionOfficial")}>
           <For each={OFFICIAL_NAV}>
             {(item) => (
@@ -94,6 +157,7 @@ export const App: Component<RouteSectionProps> = (props) => {
                 onClick={() => setNavigationOpen(false)}
                 end={item.href === "/"}
               >
+                <item.icon />
                 {t(item.key)}
               </A>
             )}
@@ -111,16 +175,27 @@ export const App: Component<RouteSectionProps> = (props) => {
                 onClick={() => setNavigationOpen(false)}
                 end={false}
               >
+                <item.icon />
                 {t(item.key)}
               </A>
             )}
           </For>
         </nav>
+        <div class="mt-auto pt-4">
+          <ThemeToggle />
+          <Show when={appState.config().version}>
+            {(version) => (
+              <div class="mono px-3 pt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                v{version()}
+              </div>
+            )}
+          </Show>
+        </div>
       </aside>
       <div class="flex min-w-0 flex-1 flex-col">
         {/* Where every action lands: the target the pages act on, and whether the daemon answers. */}
         <header
-          class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-zinc-200 bg-white px-4 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900"
+          class="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-zinc-200 bg-white/90 px-4 py-2 text-xs backdrop-blur lg:px-6 dark:border-zinc-800 dark:bg-zinc-900/90"
           data-testid="context-bar"
         >
           <span class="font-semibold text-zinc-600 dark:text-zinc-300">{t("header.local")}</span>
@@ -156,7 +231,7 @@ export const App: Component<RouteSectionProps> = (props) => {
           </span>
           <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
             <span class="label">{t("overview.clock")}</span>
-            <span class="mono" data-testid="clock">
+            <span class="mono whitespace-nowrap" data-testid="clock">
               {appState.clock()}
             </span>
             <span class="text-zinc-500">
@@ -173,25 +248,27 @@ export const App: Component<RouteSectionProps> = (props) => {
           </span>
           <span
             aria-hidden="true"
-            class={`badge ${connectionClass()}`}
+            class={`badge ml-auto inline-flex items-center gap-1.5 ${connectionClass()}`}
             data-testid="connection-badge"
           >
+            <span class="size-1.5 rounded-full bg-current" />
             {connectionLabel()}
           </span>
           <Show when={appState.lastConnectedAt()}>
             {(time) => (
               <span
-                class="text-xs text-zinc-500"
-                title={t("header.controlHint")}
+                class="text-xs whitespace-nowrap text-zinc-500 dark:text-zinc-400"
+                title={`${time()} · ${t("header.controlHint")}`}
                 aria-hidden="true"
                 data-testid="control-last-success"
               >
-                {t("header.lastSuccess", { time: time() })}
+                {/* The time of day is enough at a glance; the full instant is in the title. */}
+                {t("header.lastSuccess", { time: `${time().slice(11, 19)}Z` })}
               </span>
             )}
           </Show>
         </header>
-        <main class="min-w-0 flex-1 p-4 lg:p-6">
+        <main class="mx-auto w-full max-w-[1600px] min-w-0 flex-1 p-4 lg:p-6">
           <Show when={!appState.config().controlToken}>
             <div class="mb-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
               {t("app.tokenMissing")}

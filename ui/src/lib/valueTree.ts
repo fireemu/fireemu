@@ -41,14 +41,14 @@ const entriesOf = (value: FsValue): [string, FsValue][] | null => {
 const nodeOf = (key: string, value: FsValue, depth: number, limits: TreeLimits): ValueNode => {
   const type = typeOf(value);
   const entries = entriesOf(value);
-  const numberKind =
+  const numberKind: ValueNode["numberKind"] =
     "integerValue" in value ? "integer" : "doubleValue" in value ? "double" : undefined;
-  const base = {
+  const base: Pick<ValueNode, "key" | "type" | "numberKind" | "preview"> = {
     key,
     type,
     ...(numberKind ? { numberKind } : {}),
     preview: cut(summarize(value), limits.maxPreview),
-  } as const;
+  };
   if (entries === null) return { ...base, size: 0, children: [], omitted: 0 };
   if (depth >= limits.maxDepth) {
     return { ...base, size: entries.length, children: [], omitted: entries.length };

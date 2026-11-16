@@ -61,7 +61,7 @@ export const filterCommands = (
   commands
     .map((command, index) => ({ command, index, score: matchScore(query, command) }))
     .filter((entry): entry is typeof entry & { score: number } => entry.score !== null)
-    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .toSorted((a, b) => b.score - a.score || a.index - b.index)
     .map((entry) => entry.command);
 
 /**
