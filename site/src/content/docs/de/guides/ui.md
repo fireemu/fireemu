@@ -42,6 +42,10 @@ Ist der Standardport belegt, startet `up` ohne die UI; prüfen Sie die Startausg
 - **Verbindungs-Snippets**: Die Overview bietet dieselben Verbindungseinstellungen als `.env`-Zeilen, Shell-Exports, Web-SDK-Code und Admin-SDK-Code an; jede Dienstadresse hat eine Schaltfläche **Copy**.
 - **Firestore-Felder**: Die Felder eines Dokuments werden als Baum angezeigt. Jede Zeile zeigt Name, Typ (Ganzzahlen und Gleitkommazahlen werden unterschieden) und Wert; Maps und Arrays lassen sich bei Bedarf öffnen. Eine Referenz in die gerade angezeigte Datenbank ist ein Link zu diesem Dokument.
 - **Functions-Suche**: Das Eingabefeld über den registrierten Funktionen filtert die Tabelle nach Name, Region oder Trigger.
+- **Tastenkürzel**: Drücken Sie <kbd>?</kbd> (oder wählen Sie in der Seitenleiste **Shortcuts**), um die Liste anzuzeigen. <kbd>/</kbd> öffnet die Befehlspalette, und <kbd>g</kbd> gefolgt von der Taste einer Seite öffnet diese Seite, zum Beispiel <kbd>g</kbd> <kbd>f</kbd> für Firestore. Einzelne Tasten bewirken nichts, solange ein Textfeld den Fokus hat.
+- **Relative Zeiten**: Hinter Zeitstempeln steht ihr Abstand zur virtuellen Uhr der Session, etwa `(3 min ago)` oder `(in 2 h)`. Gemessen wird gegen die virtuelle Uhr und nicht gegen die Uhr Ihres Computers; der Abstand ändert sich also, wenn Sie die Uhr vorstellen.
+- **Storage-Upload und Vorschau**: Ziehen Sie eine oder mehrere Dateien auf die Karte **Objects** oder wählen Sie mehrere in der Dateiauswahl, um sie in den angezeigten Ordner hochzuladen. Die Dateien werden nacheinander gesendet; der erste Fehler bricht den Rest ab und nennt die Datei. Die Details eines Objekts zeigen eine Vorschau für Bilder bis 10 MiB und für textartige Inhalte (Text, JSON, XML und Ähnliches) bis 256 KiB. Text wird immer als Text angezeigt und nie als HTML gerendert.
+- **Function-Logs als JSON**: Wählen Sie über den Logs **Format JSON**, um das JSON-Objekt oder -Array einer Zeile eingerückt auszugeben. Die Filter für Level und Text prüfen weiterhin die Zeilen, wie sie geschrieben wurden.
 
 ## Einen Fault-Plan installieren
 

@@ -14,6 +14,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 - Emulator UI: a theme button cycles between the system setting, light and dark; an explicit choice is remembered in the browser.
 - Emulator UI: the Overview shows what the selected session holds (Firestore document data, Authentication users, Storage objects, registered functions) with links to each page, a copy button for every service address, and the connection settings as `.env` lines, shell exports, Web SDK code or Admin SDK code.
 - Emulator UI: the registered functions table can be filtered by name, region or trigger.
+- Emulator UI: single-key shortcuts when no text field has focus: `?` lists them, `/` opens the command palette, and `g` followed by a page key opens that page.
+- Emulator UI: timestamps are followed by their distance from the session's virtual clock (`(3 min ago)`, `(in 2 h)`).
+- Emulator UI: Storage accepts several files at once, from the file picker or dropped on the Objects card, and shows an inline preview of images (up to 10 MiB) and text-like objects (up to 256 KiB, always as text).
+- Emulator UI: **Format JSON** above the function logs prints a line's JSON object or array indented; the filters still match the lines as written.
 
 ### Changed
 
