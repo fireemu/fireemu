@@ -627,7 +627,8 @@ pub(crate) fn within_work_bounds(spec: &HashSpec, hash: &[u8]) -> bool {
         }
         HashSpec::Bcrypt => std::str::from_utf8(hash)
             .ok()
-            .and_then(|text| text.split('$').nth(2))
+            // bcrypt's parser skips empty `$` tokens; the cost is the second one.
+            .and_then(|text| text.split('$').filter(|token| !token.is_empty()).nth(1))
             .and_then(|cost| cost.parse::<u32>().ok())
             .is_some_and(|cost| cost <= MAX_BCRYPT_COST),
         HashSpec::Argon2 {
@@ -918,6 +919,13 @@ mod tests {
             &HashSpec::Bcrypt,
             format!("$2b$16${}", "a".repeat(53)).as_bytes()
         ));
+        // The cost is the second non-empty `$` token, as bcrypt's own parser reads it, so a
+        // hash without the leading `$` is bounded by its real cost.
+        let bounded = |hash: &str| within_work_bounds(&HashSpec::Bcrypt, hash.as_bytes());
+        assert!(!bounded(&format!("2b$17${}", "a".repeat(53))));
+        assert!(!bounded("2b$31$16"));
+        assert!(bounded(&format!("2b$04${}", "a".repeat(53))));
+        assert!(!bounded(&format!("$$2b$17${}", "a".repeat(53))));
     }
 
     /// A spec outside the import ranges fails the sign-in instead of running, whichever way
