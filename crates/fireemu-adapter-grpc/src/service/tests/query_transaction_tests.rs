@@ -1164,7 +1164,15 @@ async fn bare_run_query_pages_keep_their_snapshot_across_commits_between_pages()
             .collect();
         assert_eq!(read_times.len(), 1, "every page reports one snapshot");
         assert_eq!(transaction_stats(&backend).active, 0);
-        assert_eq!(selection_bytes(&backend), 0);
+        // The selection's accounting is released by the query worker's destructor, which can
+        // still be running after the last response arrived: wait for it (bounded).
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while selection_bytes(&backend) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a finished bare RunQuery releases its selection");
     }
 }
 
