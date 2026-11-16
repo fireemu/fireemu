@@ -30,7 +30,7 @@ const TEXT_TYPES = new Set([
 
 /** The media type without parameters, lower-cased (`Text/Plain; charset=utf-8` -> `text/plain`). */
 export const baseType = (contentType: string): string =>
-  (contentType.split(";", 1)[0] ?? "").trim().toLowerCase();
+  contentType.split(";", 1)[0]!.trim().toLowerCase();
 
 /** How an object of this type and size is previewed; `none` when it is not, or is too large. */
 export const previewKind = (contentType: string, size: number): PreviewKind => {
@@ -48,4 +48,4 @@ export const previewKind = (contentType: string, size: number): PreviewKind => {
 
 /** Whether a drag carries files (as opposed to text or a link dragged across the page). */
 export const dragHasFiles = (types: readonly string[] | undefined): boolean =>
-  (types ?? []).includes("Files");
+  types !== undefined && types.includes("Files");
