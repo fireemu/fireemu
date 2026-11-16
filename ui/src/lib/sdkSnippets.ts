@@ -68,15 +68,15 @@ export const webSdkSnippet = (target: SnippetTarget): string =>
       : []),
   ].join("\n");
 
-/** Admin SDK (Node.js) code: the environment set in-process before the app is created. */
+/** Admin SDK (Node.js) code: the environment set in-process before the app is used. */
 export const adminSdkSnippet = (target: SnippetTarget): string =>
   [
+    `import { initializeApp } from "firebase-admin/app";`,
+    `import { getFirestore } from "firebase-admin/firestore";`,
+    ``,
     `process.env.FIRESTORE_EMULATOR_HOST = ${literal(target.firestoreAddr)};`,
     `process.env.FIREBASE_AUTH_EMULATOR_HOST = ${literal(target.httpAddr)};`,
     `process.env.FIREBASE_STORAGE_EMULATOR_HOST = ${literal(target.storageAddr)};`,
-    ``,
-    `import { initializeApp } from "firebase-admin/app";`,
-    `import { getFirestore } from "firebase-admin/firestore";`,
     ``,
     `const app = initializeApp({ projectId: ${literal(target.project)} });`,
     `const db = getFirestore(app);`,

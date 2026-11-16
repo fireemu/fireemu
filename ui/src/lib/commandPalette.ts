@@ -26,7 +26,7 @@ const isSubsequence = (needle: string, haystack: string): boolean => {
     if (ch === needle[at]) at += 1;
     if (at === needle.length) return true;
   }
-  return needle.length === 0;
+  return false;
 };
 
 const scoreText = (query: string, text: string): number | null => {
@@ -42,13 +42,12 @@ const scoreText = (query: string, text: string): number | null => {
  * keywords. Matching ignores case and surrounding whitespace.
  */
 export const matchScore = (query: string, command: PaletteCommand): number | null => {
+  // An empty query is a prefix of every title, so everything matches equally.
   const q = query.trim().toLowerCase();
-  if (q === "") return 0;
   const title = scoreText(q, command.title.toLowerCase());
   const keywords = command.keywords ? scoreText(q, command.keywords.toLowerCase()) : null;
-  if (title === null && keywords === null) return null;
   // Keywords never use the loose subsequence match: it would surface unrelated commands.
-  const keywordScore = keywords !== null && keywords > SUBSEQUENCE ? keywords - 50 : null;
+  const keywordScore = (keywords ?? 0) > SUBSEQUENCE ? keywords! - 50 : null;
   if (title === null) return keywordScore;
   return Math.max(title, keywordScore ?? 0);
 };
@@ -59,9 +58,10 @@ export const filterCommands = (
   query: string,
 ): PaletteCommand[] =>
   commands
-    .map((command, index) => ({ command, index, score: matchScore(query, command) }))
+    .map((command) => ({ command, score: matchScore(query, command) }))
     .filter((entry): entry is typeof entry & { score: number } => entry.score !== null)
-    .toSorted((a, b) => b.score - a.score || a.index - b.index)
+    // The sort is stable, so equal scores stay in declared order.
+    .toSorted((a, b) => b.score - a.score)
     .map((entry) => entry.command);
 
 /**

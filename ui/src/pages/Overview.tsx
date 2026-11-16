@@ -37,7 +37,7 @@ const CopyBlock: Component<{ text: string; testId: string }> = (props) => {
   return (
     <div class="relative">
       <pre
-        class="mono whitespace-pre-wrap rounded-md bg-zinc-100 p-3 pr-20 text-xs dark:bg-zinc-800"
+        class="mono rounded-md bg-zinc-100 p-3 pr-20 text-xs break-all whitespace-pre-wrap dark:bg-zinc-800"
         data-testid={props.testId}
       >
         {props.text}

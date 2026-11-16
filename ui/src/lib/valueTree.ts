@@ -27,15 +27,16 @@ export const DEFAULT_LIMITS: TreeLimits = { maxDepth: 20, maxChildren: 200, maxP
 const cut = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max)}…` : text;
 
+// Field names are unique within a map, so two entries never compare equal.
+const byName = ([a]: [string, FsValue], [b]: [string, FsValue]): number => (a < b ? -1 : 1);
+
 const entriesOf = (value: FsValue): [string, FsValue][] | null => {
   if ("arrayValue" in value) {
     return (value.arrayValue.values ?? []).map((v, index) => [String(index), v]);
   }
   if ("mapValue" in value) {
     // Field names sort as the console shows them, independent of wire order.
-    return Object.entries(value.mapValue.fields ?? {}).toSorted(([a], [b]) =>
-      a < b ? -1 : a > b ? 1 : 0,
-    );
+    return Object.entries(value.mapValue.fields ?? {}).toSorted(byName);
   }
   return null;
 };
@@ -71,7 +72,7 @@ export const buildValueTree = (
   limits: TreeLimits = DEFAULT_LIMITS,
 ): ValueNode[] =>
   Object.entries(fields ?? {})
-    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .toSorted(byName)
     .map(([name, value]) => nodeOf(name, value, 0, limits));
 
 /** The number of nodes in a tree (what the page would render fully expanded). */

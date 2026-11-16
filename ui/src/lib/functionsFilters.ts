@@ -37,6 +37,5 @@ export const matchesFunction = (
   return query
     .toLowerCase()
     .split(/\s+/)
-    .filter(Boolean)
     .every((term) => haystack.includes(term));
 };

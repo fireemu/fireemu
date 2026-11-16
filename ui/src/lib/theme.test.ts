@@ -90,6 +90,10 @@ test("the cycle visits every preference and returns to the start", () => {
   expect(preference).toBe("system");
 });
 
+test("the preference is kept under a key of its own", () => {
+  expect(THEME_STORAGE_KEY).toBe("fireemu.ui.theme");
+});
+
 test("only the three exact names parse; everything else is the system default", () => {
   expect(parsePreference("light")).toBe("light");
   expect(parsePreference("dark")).toBe("dark");

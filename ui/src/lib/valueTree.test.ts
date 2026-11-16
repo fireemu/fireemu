@@ -46,12 +46,21 @@ test("maps expose their entries sorted by name and arrays theirs by index", () =
   const [profile, tags] = buildValueTree({
     tags: { arrayValue: { values: [{ stringValue: "b" }, { stringValue: "a" }] } },
     profile: {
-      mapValue: { fields: { zip: { stringValue: "1" }, active: { booleanValue: true } } },
+      mapValue: {
+        fields: {
+          zip: { stringValue: "1" },
+          active: { booleanValue: true },
+          mid: { nullValue: null },
+          Zeta: { nullValue: null },
+          beta: { nullValue: null },
+        },
+      },
     },
   });
-  expect(profile).toMatchObject({ key: "profile", type: "map", size: 2, omitted: 0 });
-  expect(profile!.preview).toBe('{"zip":"1","active":true}');
-  expect(profile!.children.map((c) => c.key)).toEqual(["active", "zip"]);
+  expect(profile).toMatchObject({ key: "profile", type: "map", size: 5, omitted: 0 });
+  expect(profile!.preview).toBe('{"zip":"1","active":true,"mid":null,"Zeta":null,"beta":null}');
+  // Code-unit order: upper case before lower case.
+  expect(profile!.children.map((c) => c.key)).toEqual(["Zeta", "active", "beta", "mid", "zip"]);
   expect(tags).toMatchObject({ key: "tags", type: "array", size: 2, preview: '["b","a"]' });
   expect(tags!.children.map((c) => [c.key, c.preview])).toEqual([
     ["0", '"b"'],

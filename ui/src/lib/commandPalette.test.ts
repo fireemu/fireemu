@@ -67,6 +67,16 @@ test("keywords match below the same kind of title match and never by subsequence
   expect(matchScore("fns", COMMANDS[5]!)).not.toBeNull();
 });
 
+test("a strong keyword match outranks a weak title match of the same command", () => {
+  // "aba" is only a subsequence of the title but a prefix of the keywords.
+  const both: PaletteCommand = { id: "x", title: "alpha beta", group: "g", keywords: "abacus" };
+  const titleOnly: PaletteCommand = { id: "y", title: "alpha beta", group: "g" };
+  const keywordOnly: PaletteCommand = { id: "z", title: "zzz", group: "g", keywords: "abacus" };
+  expect(matchScore("aba", both)!).toBeGreaterThan(matchScore("aba", titleOnly)!);
+  expect(matchScore("aba", both)).toBe(matchScore("aba", keywordOnly));
+  expect(filterCommands([titleOnly, both], "aba").map((c) => c.id)).toEqual(["x", "y"]);
+});
+
 test("matching ignores case and surrounding whitespace", () => {
   expect(ids("  FIRE ")).toEqual(["firestore"]);
 });

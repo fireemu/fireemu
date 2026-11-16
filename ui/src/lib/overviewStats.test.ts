@@ -29,6 +29,8 @@ const root = (kind: string, id: string) => ({ kind, id, count: 1, bytes: 1, outs
 test("each figure reads its own gauge of its own service", () => {
   const stats = overviewStats(
     report([
+      // Not first on purpose: services are found by name, not by position.
+      service("functions", [g("invocations.running", 1), g("history.live_document_bytes", 96)]),
       service("firestore", [g("history.live_document_bytes", 876), g("users.count", 99)], {
         total: 3,
         truncated: false,
@@ -37,7 +39,6 @@ test("each figure reads its own gauge of its own service", () => {
       service("auth", [g("users.count", 4), g("objects.count", 98)]),
       service("storage", [g("objects.count", 7), g("objects.bytes", 2048), g("topics", 97)]),
       service("pubsub", [g("topics", 2)]),
-      service("functions", [g("invocations.running", 1)]),
     ]),
   );
   expect(stats).toEqual({

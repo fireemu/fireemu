@@ -61,6 +61,38 @@ test("the Web SDK snippet splits host and port and uses a URL for Auth", () => {
   expect(text).toContain('connectStorageEmulator(getStorage(app), "127.0.0.1", 9199);');
 });
 
+test("the Web and Admin snippets are exactly these programs", () => {
+  expect(webSdkSnippet(TARGET)).toBe(
+    [
+      'import { initializeApp } from "firebase/app";',
+      'import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";',
+      'import { getAuth, connectAuthEmulator } from "firebase/auth";',
+      'import { getStorage, connectStorageEmulator } from "firebase/storage";',
+      'import { getFunctions, connectFunctionsEmulator } from "firebase/functions";',
+      "",
+      'const app = initializeApp({ projectId: "demo-app", apiKey: "fake-api-key" });',
+      'connectFirestoreEmulator(getFirestore(app), "127.0.0.1", 8080);',
+      'connectAuthEmulator(getAuth(app), "http://127.0.0.1:9099");',
+      'connectStorageEmulator(getStorage(app), "127.0.0.1", 9199);',
+      'connectFunctionsEmulator(getFunctions(app), "127.0.0.1", 5001);',
+    ].join("\n"),
+  );
+  expect(webSdkSnippet(NO_FUNCTIONS).split("\n")).toHaveLength(9);
+  expect(adminSdkSnippet(TARGET)).toBe(
+    [
+      'import { initializeApp } from "firebase-admin/app";',
+      'import { getFirestore } from "firebase-admin/firestore";',
+      "",
+      'process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";',
+      'process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";',
+      'process.env.FIREBASE_STORAGE_EMULATOR_HOST = "127.0.0.1:9199";',
+      "",
+      'const app = initializeApp({ projectId: "demo-app" });',
+      "const db = getFirestore(app);",
+    ].join("\n"),
+  );
+});
+
 test("the Admin SDK snippet sets the three hosts before creating the app", () => {
   const text = adminSdkSnippet(TARGET);
   expect(text).toContain('process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";');
