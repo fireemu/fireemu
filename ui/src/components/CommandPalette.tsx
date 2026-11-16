@@ -17,6 +17,7 @@ import {
   pathCommand,
   type PaletteCommand,
 } from "../lib/commandPalette";
+import { trapTab } from "../lib/focusTrap";
 import { dotenvSnippet } from "../lib/sdkSnippets";
 import { requestScopeChange } from "../lib/unsaved";
 import { appState } from "../state";
@@ -145,7 +146,8 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
     }),
   );
 
-  const onKeyDown = (event: KeyboardEvent) => {
+  const onKeyDown = (event: KeyboardEvent & { currentTarget: HTMLElement }) => {
+    trapTab(event, event.currentTarget);
     if (event.key === "Escape") {
       event.preventDefault();
       close();

@@ -2,6 +2,8 @@
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
   "storage.dropHint": "You can also drop files anywhere on this card.",
+  "storage.uploadQueuedOne": "Upload in progress: {count} more file will be uploaded after it.",
+  "storage.uploadQueued": "Upload in progress: {count} more files will be uploaded after it.",
   "storage.uploadFailed": "Could not upload {name}: {message}",
   "storage.preview": "Preview",
   "storage.previewNone":

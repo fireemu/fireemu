@@ -1,6 +1,7 @@
 import { useNavigate } from "@solidjs/router";
 import { createEffect, For, on, onCleanup, onMount, Show, type Component } from "solid-js";
 import { t } from "../i18n";
+import { trapTab } from "../lib/focusTrap";
 import { IDLE, stepShortcut, type ShortcutState } from "../lib/shortcuts";
 import {
   openCommandPalette,
@@ -88,6 +89,7 @@ export const Shortcuts: Component<{ pages: PageShortcut[]; paletteKeys: string }
           class="max-h-[76vh] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-white p-4 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
           data-testid="shortcut-help"
           onKeyDown={(event) => {
+            trapTab(event, event.currentTarget);
             if (event.key === "Escape") {
               event.preventDefault();
               close();

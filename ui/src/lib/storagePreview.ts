@@ -1,5 +1,7 @@
 // What the Storage page may preview inline, decided from the object's declared content type
-// and size. Images go through `<img>`, text through a text node; nothing is rendered as HTML.
+// and size. Raster images go through `<img>`, text through a text node; nothing is rendered as
+// HTML. SVG is not previewed: it is a document that can carry script, and its `blob:` URL would
+// have the UI's origin if opened in a tab of its own.
 
 export type PreviewKind = "image" | "text" | "none";
 
@@ -13,7 +15,6 @@ const IMAGE_TYPES = new Set([
   "image/webp",
   "image/avif",
   "image/bmp",
-  "image/svg+xml",
   "image/x-icon",
   "image/vnd.microsoft.icon",
 ]);
@@ -37,6 +38,8 @@ export const previewKind = (contentType: string, size: number): PreviewKind => {
   if (!Number.isFinite(size) || size < 0) return "none";
   const type = baseType(contentType);
   if (IMAGE_TYPES.has(type)) return size <= MAX_IMAGE_PREVIEW_BYTES ? "image" : "none";
+  // Any other image type (SVG and the `+xml` ones above all) is not shown, not even as text.
+  if (type.startsWith("image/")) return "none";
   const textLike =
     type.startsWith("text/") ||
     TEXT_TYPES.has(type) ||

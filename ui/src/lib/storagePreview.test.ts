@@ -14,7 +14,6 @@ test.each([
   "image/webp",
   "image/avif",
   "image/bmp",
-  "image/svg+xml",
   "image/x-icon",
   "image/vnd.microsoft.icon",
 ])("%s is previewed as an image", (type) => {
@@ -45,6 +44,10 @@ test.each([
   "audio/mpeg",
   "image/tiff",
   "image/heic",
+  // SVG is a document that can carry script; a blob: URL of it would have the UI's origin.
+  "image/svg+xml",
+  "image/svg+xml; charset=utf-8",
+  "image/x-unknown+xml",
   "application/zip",
   "",
   "json",
@@ -59,7 +62,8 @@ test("parameters and case do not change the type", () => {
   expect(baseType("  IMAGE/PNG  ")).toBe("image/png");
   expect(baseType("")).toBe("");
   expect(previewKind("Application/JSON; charset=utf-8", 10)).toBe("text");
-  expect(previewKind("IMAGE/SVG+XML", 10)).toBe("image");
+  expect(previewKind("IMAGE/SVG+XML", 10)).toBe("none");
+  expect(previewKind("IMAGE/PNG; q=1", 10)).toBe("image");
 });
 
 test("the size limits are inclusive and separate for images and text", () => {
@@ -87,4 +91,34 @@ test("only a drag that carries files is accepted", () => {
   expect(dragHasFiles(["files"])).toBe(false);
   expect(dragHasFiles([])).toBe(false);
   expect(dragHasFiles(undefined)).toBe(false);
+});
+
+// Only raster image types reach `<img>`: every other image/* type, including the +xml and +json
+// suffixed ones that would otherwise read as text, is not previewed at all.
+test("no image type outside the raster list is previewed, whatever its suffix or case", () => {
+  const raster = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+  ]);
+  const subtypes = ["svg", "png", "jpeg", "x-icon", "tiff", "foo", "", "svg+xml", "png+xml"];
+  const suffixes = ["", "+xml", "+json", "+zip", "-xml"];
+  const cases = ["image/", "IMAGE/", "Image/"];
+  for (const prefix of cases) {
+    for (const sub of subtypes) {
+      for (const suffix of suffixes) {
+        for (const params of ["", "; charset=utf-8"]) {
+          const type = `${prefix}${sub}${suffix}${params}`;
+          const kind = previewKind(type, 1);
+          const base = `image/${sub}${suffix}`.toLowerCase();
+          expect(kind, type).toBe(raster.has(base) ? "image" : "none");
+        }
+      }
+    }
+  }
 });

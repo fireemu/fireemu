@@ -10,7 +10,8 @@ import {
   type Component,
 } from "solid-js";
 import { dragHasFiles, previewKind } from "../lib/storagePreview";
-import { createSubmitGuard } from "../lib/submitGuard";
+import { createPreviewUrls } from "../lib/previewUrls";
+import { createUploadQueue } from "../lib/uploadQueue";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -50,26 +51,27 @@ const formatSize = (size: string): string => {
  */
 const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props) => {
   const kind = () => previewKind(props.object.contentType, Number(props.object.size));
-  let imageUrl: string | null = null;
-  const release = () => {
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    imageUrl = null;
-  };
-  onCleanup(release);
+  // Fetches can overlap; only the latest may show its image or revoke the one shown.
+  const urls = createPreviewUrls();
+  onCleanup(urls.dispose);
   const [content] = createResource(
     () =>
       kind() === "none"
         ? null
         : ([props.bucket, props.object.name, props.object.generation, kind()] as const),
     async ([bucket, name, , wanted]) => {
+      const token = urls.begin();
       const result = await downloadObject(bucket, name);
-      release();
-      if (result.isErr()) return { error: result.error.message, text: null, url: null };
-      if (wanted === "text") {
-        return { error: null, text: await result.value.blob.text(), url: null };
+      if (result.isErr()) {
+        urls.adopt(token, null);
+        return { error: result.error.message, text: null, url: null };
       }
-      imageUrl = URL.createObjectURL(result.value.blob);
-      return { error: null, text: null, url: imageUrl };
+      if (wanted === "text") {
+        const text = await result.value.blob.text();
+        urls.adopt(token, null);
+        return { error: null, text, url: null };
+      }
+      return { error: null, text: null, url: urls.adopt(token, result.value.blob) };
     },
   );
   return (
@@ -234,18 +236,19 @@ const Storage: Component = () => {
     ),
   );
   const link = (folder: string) => storageHref(folder, bucket());
-  const uploadGuard = createSubmitGuard();
   const [dragging, setDragging] = createSignal(false);
-  // One batch at a time, one file at a time, into the bucket and prefix shown when it began.
-  // The first failure stops the batch and names the file; what was stored before it stays.
-  const uploadFiles = (files: File[]): Promise<void | undefined> =>
-    uploadGuard.run(async () => {
-      if (files.length === 0) return;
-      const targetBucket = bucket();
-      const targetPrefix = prefix();
+  // One batch at a time, one file at a time, into the bucket and prefix shown when the batch was
+  // added. A batch added while another runs waits for it. The first failure stops its batch and
+  // names the file; what was stored before it stays, and the queued batches still run.
+  let stored: string[] = [];
+  const uploads = createUploadQueue<{ bucket: string; prefix: string; files: File[] }>({
+    onStart: () => {
+      stored = [];
       setError(null);
       setNotice(null);
-      const stored: string[] = [];
+    },
+    run: async ({ bucket: targetBucket, prefix: targetPrefix, files }) => {
+      const before = stored.length;
       for (const file of files) {
         const result = await uploadObject(targetBucket, `${targetPrefix}${file.name}`, file);
         if (result.isErr()) {
@@ -254,14 +257,23 @@ const Storage: Component = () => {
         }
         stored.push(result.value.name);
       }
-      if (stored.length > 0) {
+      if (stored.length > before) {
         setNotice(`${t("storage.upload")}: ${stored.join(", ")}`);
         void list.refresh();
       }
-    });
-  const upload = async () => {
+    },
+  });
+  const uploadFiles = (files: File[]): void => {
+    if (files.length === 0) return;
+    const job = { bucket: bucket(), prefix: prefix(), files };
+    if (uploads.add(job) === "queued") {
+      const count = files.length;
+      setNotice(t(count === 1 ? "storage.uploadQueuedOne" : "storage.uploadQueued", { count }));
+    }
+  };
+  const upload = () => {
     const input = fileInput();
-    await uploadFiles([...(input?.files ?? [])]);
+    uploadFiles([...(input?.files ?? [])]);
     if (input) input.value = "";
   };
   const onDragOver = (event: DragEvent) => {
@@ -275,7 +287,7 @@ const Storage: Component = () => {
     if (!dragHasFiles(event.dataTransfer?.types)) return;
     // Without this the browser would navigate away to show the dropped file.
     event.preventDefault();
-    void uploadFiles([...(event.dataTransfer?.files ?? [])]);
+    uploadFiles([...(event.dataTransfer?.files ?? [])]);
   };
   return (
     <div>
@@ -358,12 +370,12 @@ const Storage: Component = () => {
             <button
               type="button"
               class="btn btn-primary"
-              disabled={uploadGuard.pending()}
-              aria-busy={uploadGuard.pending()}
+              disabled={uploads.pending()}
+              aria-busy={uploads.pending()}
               data-testid="upload-button"
-              onClick={() => void upload()}
+              onClick={upload}
             >
-              {uploadGuard.pending() ? t("storage.uploading") : t("storage.upload")}
+              {uploads.pending() ? t("storage.uploading") : t("storage.upload")}
             </button>
           </div>
         </div>

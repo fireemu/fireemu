@@ -81,7 +81,7 @@ it("uploads dropped files under the current prefix, in order, and lists them aga
   await waitFor(() => expect(storage.listObjects).toHaveBeenCalledTimes(2));
 });
 
-it("sends one file at a time and ignores a second drop while a batch is running", async () => {
+it("sends one file at a time and queues a drop made while a batch is running", async () => {
   const pending: ((value: storage.ObjectInfo) => void)[] = [];
   vi.mocked(storage.uploadObject).mockImplementation(() =>
     ResultAsync.fromSafePromise(
@@ -97,18 +97,81 @@ it("sends one file at a time and ignores a second drop while a batch is running"
   const button = ui.getByTestId("upload-button") as HTMLButtonElement;
   expect(button.disabled).toBe(true);
   expect(button.textContent).toBe("Uploading");
-  fireEvent.drop(zone, drop([file("c.txt")]));
+  // A drop while busy cancels the browser's default and is queued, with a visible notice.
+  expect(fireEvent.drop(zone, drop([file("c.txt")]))).toBe(false);
   await Promise.resolve();
   expect(storage.uploadObject).toHaveBeenCalledTimes(1);
+  expect(ui.getAllByRole("status").map((e) => e.textContent)).toContain(
+    "Upload in progress: 1 more file will be uploaded after it.",
+  );
   pending[0]!(info("docs/a.txt"));
   await waitFor(() => expect(pending).toHaveLength(2));
   pending[1]!(info("docs/b.txt"));
+  await waitFor(() => expect(pending).toHaveLength(3));
+  pending[2]!(info("docs/c.txt"));
   await waitFor(() => expect(button.disabled).toBe(false));
   expect(button.textContent).toBe("Upload file");
   expect(vi.mocked(storage.uploadObject).mock.calls.map((call) => call[1])).toEqual([
     "docs/a.txt",
     "docs/b.txt",
+    "docs/c.txt",
   ]);
+  await waitFor(() =>
+    expect(ui.getByRole("status").textContent).toBe(
+      "Upload file: docs/a.txt, docs/b.txt, docs/c.txt",
+    ),
+  );
+});
+
+it("a queued drop goes to the bucket and prefix shown when it was dropped", async () => {
+  const pending: ((value: storage.ObjectInfo) => void)[] = [];
+  vi.mocked(storage.uploadObject).mockImplementation(() =>
+    ResultAsync.fromSafePromise(
+      new Promise<storage.ObjectInfo>((resolve) => {
+        pending.push(resolve);
+      }),
+    ),
+  );
+  const ui = mount();
+  const zone = await ui.findByTestId("upload-dropzone");
+  fireEvent.drop(zone, drop([file("a.txt")]));
+  await waitFor(() => expect(pending).toHaveLength(1));
+  fireEvent.drop(zone, drop([file("b.txt"), file("c.txt")]));
+  expect(ui.getAllByRole("status").map((e) => e.textContent)).toContain(
+    "Upload in progress: 2 more files will be uploaded after it.",
+  );
+  pending[0]!(info("docs/a.txt"));
+  await waitFor(() => expect(pending).toHaveLength(2));
+  pending[1]!(info("docs/b.txt"));
+  await waitFor(() => expect(pending).toHaveLength(3));
+  pending[2]!(info("docs/c.txt"));
+  await waitFor(() => expect(storage.listObjects).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(storage.uploadObject).mock.calls.map((call) => [call[0], call[1]])).toEqual([
+    ["demo-a.appspot.com", "docs/a.txt"],
+    ["demo-a.appspot.com", "docs/b.txt"],
+    ["demo-a.appspot.com", "docs/c.txt"],
+  ]);
+});
+
+it("a failure in the first batch keeps its message and still uploads the queued batch", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(storage.uploadObject).mockImplementation((_bucket, name) =>
+    name === "docs/a.txt"
+      ? ResultAsync.fromSafePromise(gate).andThen(() =>
+          errAsync<storage.ObjectInfo, ApiError>({ status: 500, message: "boom" }),
+        )
+      : okAsync(info(name)),
+  );
+  const ui = mount();
+  const zone = await ui.findByTestId("upload-dropzone");
+  fireEvent.drop(zone, drop([file("a.txt")]));
+  await waitFor(() => expect(storage.uploadObject).toHaveBeenCalledTimes(1));
+  fireEvent.drop(zone, drop([file("b.txt")]));
+  release();
+  await waitFor(() => expect(storage.uploadObject).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(ui.getByRole("status").textContent).toBe("Upload file: docs/b.txt"));
+  expect(ui.getByRole("alert").textContent).toBe("Could not upload a.txt: boom");
 });
 
 it("stops at the first failure, names the file and keeps what was stored before it", async () => {
@@ -256,4 +319,102 @@ it("reports a preview that could not be loaded", async () => {
   );
   expect(ui.queryByTestId("object-preview-text")).toBeNull();
   expect(ui.queryByTestId("object-preview-image")).toBeNull();
+});
+
+it("does not preview SVG, and downloads nothing for it", async () => {
+  const ui = await openObject(info("docs/logo.svg", "image/svg+xml", "40"));
+  expect(ui.getByTestId("object-preview").textContent).toContain("No inline preview");
+  expect(ui.queryByTestId("object-preview-image")).toBeNull();
+  expect(ui.queryByTestId("object-preview-text")).toBeNull();
+  expect(storage.downloadObject).not.toHaveBeenCalled();
+  expect(createObjectURL).not.toHaveBeenCalled();
+});
+
+it("an older preview download that resolves last neither replaces nor revokes the shown image", async () => {
+  const a = info("docs/a.png", "image/png", "3");
+  const b = info("docs/b.png", "image/png", "3");
+  vi.mocked(storage.listObjects).mockImplementation(() => okAsync({ items: [a, b] }));
+  vi.mocked(storage.getObject).mockImplementation((_bucket, name) =>
+    okAsync(name === a.name ? a : b),
+  );
+  let releaseA!: () => void;
+  const slow = new Promise<void>((resolve) => (releaseA = resolve));
+  vi.mocked(storage.downloadObject).mockImplementation((_bucket, name) =>
+    name === a.name
+      ? ResultAsync.fromSafePromise(slow).map(() => ({
+          blob: new Blob(["a"], { type: "image/png" }),
+          contentType: "image/png",
+        }))
+      : okAsync({ blob: new Blob(["b"], { type: "image/png" }), contentType: "image/png" }),
+  );
+  let n = 0;
+  createObjectURL.mockImplementation(() => `blob:${(n += 1)}`);
+  const ui = mount();
+  fireEvent.click(await ui.findByRole("button", { name: "a.png" }));
+  await waitFor(() => expect(storage.downloadObject).toHaveBeenCalledTimes(1));
+  fireEvent.click(ui.getByRole("button", { name: "b.png" }));
+  const image = (await ui.findByTestId("object-preview-image")) as HTMLImageElement;
+  await waitFor(() => expect(image.alt).toBe("Preview of docs/b.png"));
+  const shown = image.getAttribute("src");
+  releaseA();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(ui.getByTestId("object-preview-image").getAttribute("src")).toBe(shown);
+  expect(revokeObjectURL).not.toHaveBeenCalledWith(shown);
+  // The stale download created no URL that would never be revoked.
+  expect(createObjectURL).toHaveBeenCalledTimes(1);
+  fireEvent.click(ui.getByText("Close"));
+  expect(revokeObjectURL.mock.calls).toEqual([[shown]]);
+  createObjectURL.mockImplementation(() => "blob:preview");
+});
+
+it("an older text preview that resolves last does not revoke the image shown after it", async () => {
+  const note = info("docs/note.txt", "text/plain", "1");
+  const pic = info("docs/pic.png", "image/png", "3");
+  vi.mocked(storage.listObjects).mockImplementation(() => okAsync({ items: [note, pic] }));
+  vi.mocked(storage.getObject).mockImplementation((_bucket, name) =>
+    okAsync(name === note.name ? note : pic),
+  );
+  let releaseText!: () => void;
+  const slow = new Promise<void>((resolve) => (releaseText = resolve));
+  vi.mocked(storage.downloadObject).mockImplementation((_bucket, name) =>
+    name === note.name
+      ? ResultAsync.fromSafePromise(slow).map(() => ({
+          blob: new Blob(["t"], { type: "text/plain" }),
+          contentType: "text/plain",
+        }))
+      : okAsync({ blob: new Blob(["p"], { type: "image/png" }), contentType: "image/png" }),
+  );
+  const ui = mount();
+  fireEvent.click(await ui.findByRole("button", { name: "note.txt" }));
+  await waitFor(() => expect(storage.downloadObject).toHaveBeenCalledTimes(1));
+  fireEvent.click(ui.getByRole("button", { name: "pic.png" }));
+  await ui.findByTestId("object-preview-image");
+  releaseText();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(revokeObjectURL).not.toHaveBeenCalled();
+  expect(ui.getByTestId("object-preview-image").getAttribute("src")).toBe("blob:preview");
+});
+
+it("a new upload clears the failure message of the previous one", async () => {
+  vi.mocked(storage.uploadObject).mockImplementation((_bucket, name) =>
+    name === "docs/bad.txt"
+      ? errAsync<storage.ObjectInfo, ApiError>({ status: 500, message: "boom" })
+      : okAsync(info(name)),
+  );
+  const ui = mount();
+  const zone = await ui.findByTestId("upload-dropzone");
+  fireEvent.drop(zone, drop([file("bad.txt")]));
+  await waitFor(() =>
+    expect(ui.getByRole("alert").textContent).toBe("Could not upload bad.txt: boom"),
+  );
+  await waitFor(() =>
+    expect((ui.getByTestId("upload-button") as HTMLButtonElement).disabled).toBe(false),
+  );
+  fireEvent.drop(zone, drop([file("good.txt")]));
+  await waitFor(() =>
+    expect(ui.getAllByRole("status").map((e) => e.textContent)).toContain(
+      "Upload file: docs/good.txt",
+    ),
+  );
+  expect(ui.queryByRole("alert")).toBeNull();
 });

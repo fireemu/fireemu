@@ -56,6 +56,24 @@ test.describe("Navigation and appearance", () => {
     await expect(opener).toBeFocused();
   });
 
+  test("Tab and Shift+Tab stay inside the palette, and closing returns focus to the opener", async ({
+    page,
+  }) => {
+    await gotoApp(page, "/");
+    const opener = page.getByTestId("command-palette-open");
+    await opener.click();
+    const input = page.getByTestId("command-palette-input");
+    await expect(input).toBeFocused();
+    for (const key of ["Tab", "Tab", "Shift+Tab", "Shift+Tab", "Tab"]) {
+      await page.keyboard.press(key);
+      await expect(input).toBeFocused();
+    }
+    // Escape still works because focus never left the dialog.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("command-palette")).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+
   test("an explicit theme survives a reload and the system choice clears it", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await gotoApp(page, "/");
@@ -218,6 +236,30 @@ test.describe("Keyboard shortcuts", () => {
   });
 });
 
+test.describe("Keyboard shortcuts focus", () => {
+  test("Tab stays inside the shortcut list, and closing returns focus to its button", async ({
+    page,
+  }) => {
+    await gotoApp(page, "/");
+    const opener = page.getByTestId("shortcut-help-open");
+    await opener.click();
+    const help = page.getByTestId("shortcut-help");
+    const close = help.getByRole("button", { name: "Close" });
+    await expect(close).toBeFocused();
+    for (const key of ["Tab", "Shift+Tab", "Tab", "Tab"]) {
+      await page.keyboard.press(key);
+      await expect(close).toBeFocused();
+    }
+    await page.keyboard.press("Escape");
+    await expect(help).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await opener.click();
+    await page.getByTestId("shortcut-help").getByRole("button", { name: "Close" }).click();
+    await expect(page.getByTestId("shortcut-help")).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  });
+});
+
 test.describe("Storage upload and preview", () => {
   test.beforeEach(async ({ request }) => {
     await resetSession(request);
@@ -274,6 +316,56 @@ test.describe("Storage upload and preview", () => {
     await page.getByRole("button", { name: "Close" }).click();
     await table.getByRole("button", { name: "blob.bin" }).click();
     await expect(page.getByTestId("object-preview")).toContainText("No inline preview");
+  });
+
+  test("an SVG object is not previewed, as an image or as text", async ({ page }) => {
+    await gotoApp(page, "/storage");
+    await page.getByTestId("upload-input").setInputFiles([
+      {
+        name: "logo.svg",
+        mimeType: "image/svg+xml",
+        buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>'),
+      },
+    ]);
+    await page.getByTestId("upload-button").click();
+    const table = page.getByTestId("object-table");
+    await table.getByRole("button", { name: "logo.svg" }).click();
+    const preview = page.getByTestId("object-preview");
+    await expect(preview).toContainText("No inline preview");
+    await expect(page.getByTestId("object-preview-image")).toHaveCount(0);
+    await expect(page.getByTestId("object-preview-text")).toHaveCount(0);
+  });
+
+  test("files dropped while an upload runs are queued and uploaded after it", async ({ page }) => {
+    await gotoApp(page, "/storage");
+    await expect(page.getByText("No objects under this prefix")).toBeVisible();
+    // Hold the first upload until the second drop has been made.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    await page.route("**/upload/storage/**", async (route) => {
+      if (first) {
+        first = false;
+        await held;
+      }
+      await route.continue();
+    });
+    const transfer = (name: string) =>
+      page.evaluateHandle((fileName) => {
+        const data = new DataTransfer();
+        data.items.add(new File(["x"], fileName, { type: "text/plain" }));
+        return data;
+      }, name);
+    const zone = page.getByTestId("upload-dropzone");
+    await zone.dispatchEvent("drop", { dataTransfer: await transfer("first.txt") });
+    await expect(page.getByTestId("upload-button")).toBeDisabled();
+    await zone.dispatchEvent("drop", { dataTransfer: await transfer("second.txt") });
+    await expect(zone).toContainText("1 more file will be uploaded after it");
+    release();
+    const table = page.getByTestId("object-table");
+    await expect(table).toContainText("first.txt");
+    await expect(table).toContainText("second.txt");
+    await expect(page.getByTestId("upload-button")).toBeEnabled();
   });
 });
 
