@@ -366,9 +366,6 @@ fn main() -> ExitCode {
         // options the daemon does and reports the profile they resolve to.
         Some("capabilities") => match parse_options(&args[1..], OptionContext::Inspect) {
             Ok((options, None)) => {
-                if let Err(warning) = options.cfg.validate_startup() {
-                    eprintln!("warning: {warning}");
-                }
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&control::capabilities_manifest(
@@ -634,6 +631,16 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
                 value,
                 row["source"].as_str().expect("source")
             );
+            if let Some(effective) = row["effective"].as_object() {
+                let surfaces: Vec<String> = effective
+                    .iter()
+                    .map(|(surface, state)| format!("{surface} = {}", state.as_str().unwrap_or("")))
+                    .collect();
+                println!("  in effect: {}", surfaces.join("; "));
+                if let Some(note) = row["note"].as_str() {
+                    println!("  note: {note}");
+                }
+            }
         }
     }
     Ok(())

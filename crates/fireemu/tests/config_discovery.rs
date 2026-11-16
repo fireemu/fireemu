@@ -770,7 +770,7 @@ fn test_world_config_uses_the_cli_toml_parser_without_starting_services() {
 }
 
 #[test]
-fn capabilities_inspects_unpinned_virtual_clock_but_startup_refuses() {
+fn capabilities_and_config_show_accept_an_unpinned_virtual_clock() {
     let dir = scratch("capabilities-virtual-clock");
     let path = dir.join("fireemu.json");
     let mut config = serde_json::json!({"schemaVersion":1,"profile":"emulator","functions":{"clock":{"date":"virtual","tasks":"virtual"}}});
@@ -783,27 +783,22 @@ fn capabilities_inspects_unpinned_virtual_clock_but_startup_refuses() {
             .output()
             .unwrap()
     };
+    // A virtual functions.clock no longer needs daemon.clockStart (user report, 0.54.0): the
+    // clock starts at the wall-clock time of the daemon, as it does without functions.clock.
     let unpinned = run(&["capabilities"]);
     assert!(unpinned.status.success(), "{}", stderr(&unpinned));
-    assert!(stderr(&unpinned).contains("warning:"));
-    assert!(stderr(&unpinned).contains("clockStart"));
+    assert!(
+        !stderr(&unpinned).contains("warning:"),
+        "{}",
+        stderr(&unpinned)
+    );
     let manifest: serde_json::Value = serde_json::from_slice(&unpinned.stdout).unwrap();
     assert_eq!(manifest["profile"], "emulator");
     let explicit = run(&["capabilities", "--config", "fireemu.json"]);
     assert!(explicit.status.success(), "{}", stderr(&explicit));
     assert_eq!(explicit.stdout, unpinned.stdout);
-    for args in [
-        &["up"][..],
-        &["exec", "--", "this-child-must-never-run"][..],
-    ] {
-        let output = run(args);
-        assert!(!output.status.success());
-        assert!(
-            stderr(&output).contains("clockStart"),
-            "{}",
-            stderr(&output)
-        );
-    }
+    let show = run(&["config", "show", "--config", "fireemu.json"]);
+    assert!(show.status.success(), "{}", stderr(&show));
     config["daemon"] = serde_json::json!({"clockStart":"2026-01-01T00:00:00Z"});
     write(&path, &config.to_string());
     let pinned = run(&["capabilities"]);

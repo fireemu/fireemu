@@ -276,6 +276,8 @@ export const en = {
   "auth.deleteAllConfirm": "Delete every user of project {project}?",
   "auth.disable": "Disable",
   "auth.enable": "Enable",
+  "auth.codesHint":
+    "Codes appear here as they are issued, for this project. Open an email action link to apply it (verify an email, reset a password, sign in), or copy a code into your app.",
   "auth.oobCodes": "Email action codes",
   "auth.noOobCodes": "No pending email action codes",
   "auth.oobType": "Type",

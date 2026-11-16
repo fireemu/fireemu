@@ -2781,9 +2781,14 @@ fn inspection_routes_need_the_control_token_from_browser_pages_and_codes_expire(
     );
     assert_eq!(get(&s, &format!("{EMU}/oobCodes")).0, 200);
     s.control_token = Some("secret-token".to_owned());
-    assert_eq!(
-        handle_with(&s, "GET", &format!("{EMU}/oobCodes"), &page, &json!({})).status,
-        403
+    let refused = handle_with(&s, "GET", &format!("{EMU}/oobCodes"), &page, &json!({}));
+    assert_eq!(refused.status, 403);
+    // The refusal names the supported path for a person in a browser (user report, 0.54.0).
+    let message = refused.body["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("CONTROL_TOKEN_REQUIRED"), "{message}");
+    assert!(
+        message.contains("Auth page of the Emulator UI"),
+        "{message}"
     );
     let with_token = RequestHeaders {
         origin: Some("http://localhost:5173".to_owned()),

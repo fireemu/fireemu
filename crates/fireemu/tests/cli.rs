@@ -2205,3 +2205,40 @@ fn a_command_line_port_overrides_the_one_in_firebase_json() {
     assert!(!env["FIREBASE_AUTH_EMULATOR_HOST"].ends_with(":9123"));
     assert_eq!(env["GCLOUD_PROJECT"], "demo-ports");
 }
+
+/// The user report (0.54.0): strict with no `appCheck` block printed `appCheck.enabled = false`
+/// while the exchange and callable enforcement were on. The text output now says what is in
+/// effect right below the key, and the emulator profile shows everything off.
+#[test]
+fn config_show_prints_the_app_check_state_in_effect_under_the_enabled_key() {
+    let dir = scratch("config-show-app-check");
+    for (profile, expected) in [
+        (
+            "strict",
+            "appCheck.enabled = false (default)\n  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens \"any\"); firestore = off; storage = off\n  note: appCheck.enabled = true",
+        ),
+        (
+            "emulator",
+            "appCheck.enabled = false (default)\n  in effect: auth = off; callables = off; exchange = off; firestore = off; storage = off\n",
+        ),
+    ] {
+        write(
+            &dir,
+            "fireemu.toml",
+            &format!("schemaVersion = 1\nprofile = \"{profile}\"\n"),
+        );
+        let out = run_in(&dir, &["config", "show", "--config", "fireemu.toml"], None);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains(expected), "{profile}: {text}");
+        let json = run_in(&dir, &["config", "show", "--json", "--config", "fireemu.toml"], None);
+        let rows: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        let row = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["key"] == "appCheck.enabled")
+            .unwrap();
+        assert_eq!(row["effective"]["exchange"] == "off", profile == "emulator");
+    }
+}

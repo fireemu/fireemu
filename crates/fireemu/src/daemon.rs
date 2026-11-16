@@ -237,6 +237,42 @@ fn blocking_auth_bridge_settings(cfg: &RuntimeConfig) -> BlockingAuthBridgeSetti
     )
 }
 
+/// The banner line about email action codes and SMS codes.
+///
+/// The emulator routes that list the codes refuse a browser page without the control token, so
+/// a person following a flow in a browser is pointed at the Emulator UI's Auth page, which
+/// lists them (and their links) through its own privileged front.
+pub(crate) fn auth_codes_line(log: bool, ui: Option<&str>) -> String {
+    let mut line = if log {
+        "  auth codes:       email action links and SMS codes are printed here as they are issued (they are credentials: do not forward this output to CI or shared logs; auth.logActionCodes = false silences them)".to_owned()
+    } else {
+        "  auth codes:       not printed (auth.logActionCodes = false); read /emulator/v1/projects/{project}/oobCodes and verificationCodes".to_owned()
+    };
+    if let Some(addr) = ui {
+        line = format!(
+            "{line}\n                    in a browser, the Emulator UI lists them with their links: http://{addr}/ui/auth"
+        );
+    }
+    line
+}
+
+/// The banner note about TOTP and a clock that does not show the wall-clock time.
+///
+/// TOTP is checked at the emulator clock, as production checks it at its own time, so a code
+/// from an authenticator app (which reads the wall clock) only matches while the emulator
+/// clock shows the current time. The default clock does; a pinned start or a frozen clock
+/// does not, and the note says what to do instead of loosening the check.
+pub(crate) fn totp_clock_note(cfg: &RuntimeConfig) -> Option<String> {
+    let totp_on = cfg.auth_totp.is_some()
+        || cfg
+            .effective_auth_mfa()
+            .is_some_and(|mfa| mfa.totp_enabled());
+    let leaves_wall_time = cfg.clock_start_pinned || cfg.clock_frozen();
+    (totp_on && leaves_wall_time).then(|| {
+        "  totp clock:       TOTP codes are checked at the emulator clock, which is pinned or frozen, so codes from an authenticator app do not match; leave daemon.clockStart and daemon.clock unset to use an authenticator app, or move the clock to the current time (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:set)".to_owned()
+    })
+}
+
 /// The startup notice when neither unsigned custom tokens nor trusted signers are available.
 pub(crate) fn custom_token_signer_note(cfg: &RuntimeConfig) -> Option<&'static str> {
     (!cfg.auth_allow_unsigned_custom_tokens && cfg.auth_custom_token_signers.is_none())
@@ -1077,10 +1113,15 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
             print_rules_status(&cfg, rules.snapshot().is_ok_and(|r| r.is_loaded()));
         }
         if addrs.auth.is_some() {
-            if cfg.auth_log_action_codes {
-                println!("  auth codes:       email action links and SMS codes are printed here as they are issued (they are credentials: do not forward this output to CI or shared logs; auth.logActionCodes = false silences them)");
-            } else {
-                println!("  auth codes:       not printed (auth.logActionCodes = false); read /emulator/v1/projects/{{project}}/oobCodes and verificationCodes");
+            println!(
+                "{}",
+                auth_codes_line(
+                    cfg.auth_log_action_codes,
+                    ui_addr.map(|addr| addr.to_string()).as_deref()
+                )
+            );
+            if let Some(note) = totp_clock_note(&cfg) {
+                println!("{note}");
             }
         }
         if let Some(runtime) = &functions_runtime {
@@ -2429,6 +2470,64 @@ fn configured_pubsub_handle(
 
 #[cfg(test)]
 mod tests {
+    /// User report (0.54.0): a person following the TOTP flow in a browser could not read the
+    /// email verification code there (the emulator routes refuse a browser without the control
+    /// token). The banner names the Emulator UI's Auth page, which lists the codes.
+    #[test]
+    fn the_auth_codes_line_points_a_person_at_the_ui_auth_page() {
+        let printed = super::auth_codes_line(true, Some("127.0.0.1:4000"));
+        assert!(
+            printed.contains("printed here as they are issued"),
+            "{printed}"
+        );
+        assert!(
+            printed.contains("http://127.0.0.1:4000/ui/auth"),
+            "{printed}"
+        );
+        let silent = super::auth_codes_line(false, Some("127.0.0.1:4000"));
+        assert!(silent.contains("not printed"), "{silent}");
+        assert!(silent.contains("http://127.0.0.1:4000/ui/auth"), "{silent}");
+        for log in [false, true] {
+            let without_ui = super::auth_codes_line(log, None);
+            assert!(!without_ui.contains("/ui/auth"), "{without_ui}");
+            assert!(
+                without_ui.starts_with("  auth codes:       "),
+                "{without_ui}"
+            );
+        }
+        assert!(super::auth_codes_line(false, None).contains("oobCodes"));
+    }
+
+    /// User report (0.54.0): with a pinned or frozen clock, a real authenticator app's codes do
+    /// not match, because TOTP is checked at the emulator clock. The banner says so only when
+    /// TOTP is on and the clock does not show the wall-clock time.
+    #[test]
+    fn the_totp_clock_note_appears_only_when_totp_is_on_and_the_clock_leaves_wall_time() {
+        use serde_json::json;
+        let note = |daemon: serde_json::Value, profile: &str, production_exact: bool| {
+            let cfg = crate::config::RuntimeConfig::from_json(&json!({
+                "schemaVersion": 1, "profile": profile, "productionExact": production_exact, "daemon": daemon,
+            }))
+            .unwrap();
+            super::totp_clock_note(&cfg)
+        };
+        let pinned = json!({"clockStart": "2026-01-31T23:59:00Z"});
+        let frozen = json!({"clock": "frozen"});
+        let running = json!({"clockStart": "2026-01-31T23:59:00Z", "clock": "realtime"});
+        for daemon in [&pinned, &frozen, &running] {
+            let text = note(daemon.clone(), "strict", false).unwrap_or_default();
+            assert!(text.contains("authenticator app"), "{daemon}: {text}");
+            assert!(text.contains("daemon.clockStart"), "{daemon}: {text}");
+            assert!(text.contains("clock:set"), "{daemon}: {text}");
+        }
+        // The default clock shows the wall-clock time: no note.
+        assert_eq!(note(json!({}), "strict", false), None);
+        // No TOTP (production's new project under productionExact, the emulator profile without
+        // auth.totp): no note.
+        assert_eq!(note(pinned.clone(), "strict", true), None);
+        assert_eq!(note(pinned.clone(), "emulator", false), None);
+    }
+
     #[tokio::test]
     async fn auth_and_rules_preparation_runs_while_explicit_app_check_key_is_pending() {
         use std::sync::{

@@ -1895,7 +1895,7 @@ fn emulator_guard(state: &AuthState, headers: &RequestHeaders) -> Result<(), Jso
     {
         return Err(error(
             403,
-            "CONTROL_TOKEN_REQUIRED : browser requests to the emulator routes need Authorization: Bearer <control token>",
+            "CONTROL_TOKEN_REQUIRED : browser requests to the emulator routes need Authorization: Bearer <control token>; to read action and SMS codes in a browser, open the Auth page of the Emulator UI (its address is printed at startup as ui:)",
         ));
     }
     Ok(())

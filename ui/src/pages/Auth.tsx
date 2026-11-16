@@ -4,6 +4,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   type Component,
 } from "solid-js";
@@ -32,6 +33,10 @@ import {
   type UserUpdate,
 } from "../api/auth";
 import { settle } from "../api/client";
+
+/** How often the Auth page re-reads the pending codes, so a code a flow in another tab just
+ * issued shows up without a reload. */
+export const CODE_POLL_MS = 3000;
 
 const formatMillis = (value: string | undefined): string => {
   if (!value) return "";
@@ -391,6 +396,14 @@ const AuthScope: Component<{ project: string }> = (props) => {
     settle(listVerificationCodes(p)),
   );
 
+  onMount(() => {
+    const timer = window.setInterval(() => {
+      void refetchCodes();
+      void refetchPhoneCodes();
+    }, CODE_POLL_MS);
+    onCleanup(() => window.clearInterval(timer));
+  });
+
   const load = async (token?: string) => {
     if (!active) return;
     const generation = ++loadGeneration;
@@ -593,11 +606,14 @@ const AuthScope: Component<{ project: string }> = (props) => {
           </Show>
         </Show>
       </Section>
+      <p class="mb-2 text-sm text-zinc-500" data-testid="auth-codes-hint">
+        {t("auth.codesHint")}
+      </p>
       <div class="grid gap-4 md:grid-cols-2">
         <Section title={t("auth.oobCodes")}>
-          <Show when={!codes.loading} fallback={<Spinner />}>
+          <Show when={codes.latest !== undefined} fallback={<Spinner />}>
             <Show
-              when={(codes()?.unwrapOr({ oobCodes: [] }).oobCodes.length ?? 0) > 0}
+              when={(codes.latest?.unwrapOr({ oobCodes: [] }).oobCodes.length ?? 0) > 0}
               fallback={<p class="text-sm text-zinc-500">{t("auth.noOobCodes")}</p>}
             >
               <table class="table" data-testid="oob-table">
@@ -609,7 +625,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={codes()?.unwrapOr({ oobCodes: [] }).oobCodes ?? []}>
+                  <For each={codes.latest?.unwrapOr({ oobCodes: [] }).oobCodes ?? []}>
                     {(c) => (
                       <tr>
                         <td>{c.email}</td>
@@ -633,11 +649,11 @@ const AuthScope: Component<{ project: string }> = (props) => {
           </Show>
         </Section>
         <Section title={t("auth.verificationCodes")}>
-          <Show when={!phoneCodes.loading} fallback={<Spinner />}>
+          <Show when={phoneCodes.latest !== undefined} fallback={<Spinner />}>
             <Show
               when={
-                (phoneCodes()?.unwrapOr({ verificationCodes: [] }).verificationCodes.length ?? 0) >
-                0
+                (phoneCodes.latest?.unwrapOr({ verificationCodes: [] }).verificationCodes.length ??
+                  0) > 0
               }
               fallback={<p class="text-sm text-zinc-500">{t("auth.noVerificationCodes")}</p>}
             >
@@ -651,7 +667,9 @@ const AuthScope: Component<{ project: string }> = (props) => {
                 </thead>
                 <tbody>
                   <For
-                    each={phoneCodes()?.unwrapOr({ verificationCodes: [] }).verificationCodes ?? []}
+                    each={
+                      phoneCodes.latest?.unwrapOr({ verificationCodes: [] }).verificationCodes ?? []
+                    }
                   >
                     {(c) => (
                       <tr>

@@ -2462,14 +2462,52 @@ impl RuntimeConfig {
             } else {
                 (Value::Null, "unset")
             };
-            rows.push(json!({"key": key, "value": value, "source": source, "description": schema["description"].as_str().unwrap_or("")}));
+            let mut row = json!({"key": key, "value": value, "source": source, "description": schema["description"].as_str().unwrap_or("")});
+            if key == "appCheck.enabled" {
+                // The key alone does not say what is served: the strict development default
+                // serves the exchange and callable enforcement with the key false.
+                row["effective"] = self.app_check_effective(&Selection::default());
+                row["note"] = json!(APP_CHECK_ENABLED_NOTE);
+            }
+            rows.push(row);
         }
         for row in &mut rows {
             redact_config_row(row);
         }
         rows
     }
+
+    /// What App Check serves for `only`, per surface, in the words of the startup banner:
+    /// the exchange (and JWKS), callable enforcement, and the Auth, Firestore and Storage
+    /// baselines. `config show` reports it for the default selection.
+    #[must_use]
+    pub fn app_check_effective(&self, only: &Selection) -> Value {
+        let served = only.app_check_available(&self.app_check);
+        let exchange = if !served {
+            "off".to_owned()
+        } else if self.app_check.debug_tokens == AppCheckDebugTokens::Any {
+            "on: any well-formed debug token (appCheck.debugTokens \"any\")".to_owned()
+        } else {
+            format!("on: {} registered app(s)", self.app_check.apps.len())
+        };
+        let callables = if served && only.functions {
+            "on: enforceAppCheck is honoured per function"
+        } else {
+            "off"
+        };
+        let mode = |service| only.app_check_mode(&self.app_check, service).to_string();
+        serde_json::json!({
+            "exchange": exchange,
+            "callables": callables,
+            "auth": mode(AppCheckService::Auth),
+            "firestore": mode(AppCheckService::Firestore),
+            "storage": mode(AppCheckService::Storage),
+        })
+    }
 }
+
+/// What `appCheck.enabled` governs, printed by `config show` next to its value.
+pub const APP_CHECK_ENABLED_NOTE: &str = "appCheck.enabled = true serves App Check with the registered apps and turns on the appCheck.services modes; false written in an appCheck block turns App Check off. Unset, the strict profile's development default (appCheck.debugTokens \"any\", when there is no appCheck block) still serves the exchange and callable enforcement while every appCheck.services mode stays off. \"effective\" shows what this configuration serves when every product is selected.";
 
 /// Config keys whose values are secret-bearing. `config show` (text and `--json`) and
 /// `config lint --json` print these through [`redact_config_row`] instead of the value.
@@ -6198,30 +6236,19 @@ impl RuntimeConfig {
 
     /// Builds the runtime config from parsed JSON.
     pub fn from_json(json: &Value) -> Result<Self, ConfigError> {
-        let cfg = Self::inspect_json(json)?;
-        cfg.validate_startup()?;
-        Ok(cfg)
+        Self::inspect_json(json)
     }
 
     /// Whether the virtual clock stands still until moved. Unless `daemon.clock` says so, it
     /// follows real time from the start time of the daemon, and a pinned `daemon.clockStart`
-    /// (a reproducible run, which a virtual `functions.clock` also needs) keeps it still.
+    /// (a reproducible run) keeps it still. A virtual `functions.clock` needs neither: its
+    /// `Date` and timers follow whatever this clock does, the wall-clock start included.
     #[must_use]
     pub fn clock_frozen(&self) -> bool {
         match self.clock_mode {
             Some(mode) => mode == ClockMode::Frozen,
             None => self.clock_start_pinned,
         }
-    }
-
-    /// Checks requirements that are only needed when starting a daemon.
-    pub fn validate_startup(&self) -> Result<(), ConfigError> {
-        if self.functions_clock.any_virtual() && !self.clock_start_pinned {
-            return Err(ConfigError(
-                "functions.clock virtual policies require daemon.clockStart".into(),
-            ));
-        }
-        Ok(())
     }
 
     /// Resolves configuration for inspection while retaining all static shape checks.
@@ -7466,6 +7493,120 @@ mod tests {
         assert_eq!(row["source"], "default");
     }
 
+    /// The App Check rows of the user report (0.54.0): strict with no `appCheck` block showed
+    /// `appCheck.enabled = false` while the exchange and callable enforcement were on.
+    /// `config show` now carries the effective state per surface on the `appCheck.enabled` row.
+    #[test]
+    fn config_show_reports_the_effective_app_check_state_per_surface() {
+        let effective = |input: Value| {
+            let mut document = json!({"schemaVersion": 1});
+            for (key, value) in input.as_object().unwrap() {
+                document[key] = value.clone();
+            }
+            let cfg = RuntimeConfig::from_json(&document).unwrap();
+            let rows = cfg.config_show(&document);
+            let row = rows
+                .iter()
+                .find(|row| row["key"] == "appCheck.enabled")
+                .unwrap()
+                .clone();
+            (cfg, row)
+        };
+        // The reported configuration: strict, no appCheck block.
+        let (_, row) = effective(json!({"profile": "strict"}));
+        assert_eq!(row["value"], json!(false));
+        assert_eq!(
+            row["effective"],
+            json!({
+                "exchange": "on: any well-formed debug token (appCheck.debugTokens \"any\")",
+                "callables": "on: enforceAppCheck is honoured per function",
+                "auth": "off",
+                "firestore": "off",
+                "storage": "off",
+            })
+        );
+        let note = row["note"].as_str().unwrap();
+        assert!(note.contains("appCheck.services"), "{note}");
+        assert!(note.contains("debugTokens"), "{note}");
+        // The emulator profile with no block serves nothing, as the official emulator.
+        let (_, row) = effective(json!({"profile": "emulator"}));
+        assert_eq!(
+            row["effective"],
+            json!({"exchange": "off", "callables": "off", "auth": "off", "firestore": "off", "storage": "off"})
+        );
+        // An enabled block with registered apps and a Firestore baseline.
+        let (_, row) = effective(json!({"profile": "strict", "appCheck": {
+            "enabled": true,
+            "apps": [{"projectId": "demo-app", "projectNumber": "123456789012", "appId": "1:123456789012:web:abc", "debugTokenSha256": ["0".repeat(64)]}],
+            "services": {"firestore": "enforced"}}}));
+        assert_eq!(row["effective"]["exchange"], "on: 1 registered app(s)");
+        assert_eq!(row["effective"]["firestore"], "enforced");
+        assert_eq!(row["effective"]["auth"], "off");
+        assert_eq!(
+            row["effective"]["callables"],
+            "on: enforceAppCheck is honoured per function"
+        );
+        // An explicit false turns everything off, the services modes included.
+        let (_, row) = effective(json!({"profile": "strict", "appCheck": {"enabled": false}}));
+        assert_eq!(row["effective"]["exchange"], "off");
+        assert_eq!(row["effective"]["callables"], "off");
+    }
+
+    /// Every combination of the PICT table (docs.local coverage ledger, `appcheck.pict`): the
+    /// effective state agrees with the activation table the daemon starts from.
+    #[test]
+    fn config_show_app_check_effective_state_agrees_with_the_daemon_activation_table() {
+        let blocks = [
+            ("absent", None),
+            ("enabledTrue", Some(json!({"enabled": true}))),
+            ("enabledFalse", Some(json!({"enabled": false}))),
+            ("debugTokensOnly", Some(json!({"debugTokens": "any"}))),
+            (
+                "appsOnly",
+                Some(
+                    json!({"apps": [{"projectId": "demo-app", "projectNumber": "123456789012", "appId": "1:123456789012:web:abc", "debugTokenSha256": ["0".repeat(64)]}]}),
+                ),
+            ),
+        ];
+        for profile in ["strict", "emulator"] {
+            for (label, block) in &blocks {
+                for production_exact in [false, true] {
+                    for firestore in ["off", "enforced"] {
+                        let mut document = json!({"schemaVersion": 1, "profile": profile, "productionExact": production_exact});
+                        let mut block = block.clone();
+                        if firestore != "off" {
+                            let target = block.get_or_insert_with(|| json!({}));
+                            target["services"] = json!({"firestore": firestore});
+                        }
+                        if let Some(block) = block {
+                            document["appCheck"] = block;
+                        }
+                        let Ok(cfg) = RuntimeConfig::from_json(&document) else {
+                            continue;
+                        };
+                        let rows = cfg.config_show(&document);
+                        let row = rows
+                            .iter()
+                            .find(|row| row["key"] == "appCheck.enabled")
+                            .unwrap();
+                        let only = Selection::default();
+                        let served = only.app_check_available(&cfg.app_check);
+                        let case = format!("{profile} {label} productionExact={production_exact} firestore={firestore}");
+                        assert_eq!(row["effective"]["exchange"] != "off", served, "{case}");
+                        assert_eq!(row["effective"]["callables"] != "off", served, "{case}");
+                        assert_eq!(
+                            row["effective"]["firestore"],
+                            json!(only
+                                .app_check_mode(&cfg.app_check, AppCheckService::Firestore)
+                                .to_string()),
+                            "{case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn config_show_shows_the_fixed_baseline_of_keys_that_accept_only_one_value() {
         let rows = RuntimeConfig::default().config_show(&json!({}));
@@ -8070,7 +8211,7 @@ mod tests {
     }
 
     #[test]
-    fn functions_application_clock_is_explicit_and_requires_a_pinned_start() {
+    fn functions_application_clock_is_explicit_and_needs_no_pinned_start() {
         let input = json!({"schemaVersion":1,"firestore":{"edition":"standard","apiMode":"native"},
             "functions":{"clock":{"date":"virtual","timers":"real","tasks":"virtual"}},
             "daemon":{"clockStart":"2026-01-31T23:59:00Z"}});
@@ -8078,12 +8219,16 @@ mod tests {
         assert!(config.functions_clock.date_virtual);
         assert!(!config.functions_clock.timers_virtual);
         assert!(config.functions_clock.tasks_virtual);
+        // Without daemon.clockStart the clock starts at the wall-clock time and follows real
+        // time (user report, 0.54.0): the Functions key alone is enough.
         let mut missing = input.clone();
         missing.as_object_mut().unwrap().remove("daemon");
-        assert!(RuntimeConfig::from_json(&missing)
-            .unwrap_err()
-            .0
-            .contains("clockStart"));
+        let unpinned = RuntimeConfig::from_json(&missing).unwrap();
+        assert!(unpinned.functions_clock.date_virtual && unpinned.functions_clock.tasks_virtual);
+        assert!(!unpinned.clock_start_pinned);
+        assert!(!unpinned.clock_frozen());
+        missing["daemon"] = json!({"clock": "frozen"});
+        assert!(RuntimeConfig::from_json(&missing).unwrap().clock_frozen());
         let mut invalid = input.clone();
         invalid["functions"]["clock"] = json!({"date":"real","timers":"virtual"});
         assert!(RuntimeConfig::from_json(&invalid)
