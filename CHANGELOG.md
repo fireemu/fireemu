@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-11-16
+
 ### Fixed
 
 - Authentication: in the emulator profile, a password sign-in against an imported bcrypt hash whose cost is above the local bound (or any imported spec outside the local work bounds) answers `INVALID_PASSWORD` without deriving, as firebase-tools does, instead of an internal error. The strict profile is unchanged.
@@ -1428,7 +1430,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.57.1...HEAD
+[0.57.1]: https://github.com/fireemu/fireemu/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/fireemu/fireemu/compare/v0.56.0...v0.57.0
 [0.56.0]: https://github.com/fireemu/fireemu/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/fireemu/fireemu/compare/v0.54.0...v0.55.0
