@@ -1,6 +1,21 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "app.copySubject": "Copy {subject}",
+  "app.unknown": "unknown",
+  "overview.statDatabases": "{count} databases",
+  "overview.statDatabase": "1 database",
+  "overview.statLiveData": "live document data",
+  "overview.statUsers": "users",
+  "overview.statObjects": "objects, {bytes}",
+  "overview.statFunctions": "registered functions",
+  "overview.statFunctionsRunning": "registered functions, {running} running",
+  "overview.statNotConfigured": "not configured",
+  "overview.statsLabel": "Emulator data at a glance",
+  "overview.envWeb": "Web SDK",
+  "overview.envAdmin": "Admin SDK (Node.js)",
+  "overview.envTabs": "Connection snippet format",
+  "overview.rulesOpen": "Open Rules",
   "theme.label": "Theme: {theme}",
   "theme.system": "System",
   "theme.light": "Light",

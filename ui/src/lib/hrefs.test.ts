@@ -31,3 +31,12 @@ describe("in-app links encode names the URL would misread", () => {
     expect(decodeSplat(undefined)).toEqual([]);
   });
 });
+
+describe("plain anchors outside the router carry the served base", () => {
+  it("prefixes a route with the base the daemon serves the app under", async () => {
+    const { appHref, UI_BASE } = await import("./hrefs");
+    expect(UI_BASE).toBe("/ui");
+    expect(appHref("/firestore")).toBe("/ui/firestore");
+    expect(appHref("/")).toBe("/ui/");
+  });
+});
