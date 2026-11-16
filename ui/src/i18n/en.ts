@@ -7,7 +7,7 @@ export const en = {
   "storage.uploadFailed": "Could not upload {name}: {message}",
   "storage.preview": "Preview",
   "storage.previewNone":
-    "No inline preview for this content type or size (images up to 10 MiB and text up to 256 KiB are shown). Use Download.",
+    "No inline preview for this content type or size (PNG, JPEG, GIF, WebP, AVIF, BMP and ICO images up to 10 MiB and text up to 256 KiB are shown; SVG is not). Use Download.",
   "storage.previewAlt": "Preview of {name}",
   "functions.formatJson": "Format JSON",
   "palette.showShortcuts": "Show keyboard shortcuts",
