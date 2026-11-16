@@ -338,7 +338,7 @@ const Database: Component = () => {
     current() && JSON.stringify([appState.session(), appState.project(), params.path ?? ""]);
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("database.title")}</h1>
+      <h1 class="page-title mb-4">{t("database.title")}</h1>
       <Show when={scope()} keyed fallback={<p role="alert">{t("database.sessionMissing")}</p>}>
         {(key) => {
           const [session, project, initialPath] = JSON.parse(key) as [string, string, string];

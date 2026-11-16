@@ -183,7 +183,7 @@ const Storage: Component = () => {
   return (
     <div>
       <div class="mb-3 flex flex-wrap items-center gap-3">
-        <h1 class="text-xl font-bold">{t("storage.title")}</h1>
+        <h1 class="page-title">{t("storage.title")}</h1>
         <label class="flex items-center gap-1 text-sm">
           <span class="label">{t("storage.bucket")}</span>
           <select
@@ -237,7 +237,7 @@ const Storage: Component = () => {
             <input
               ref={setFileInput}
               type="file"
-              class="text-sm"
+              class="file-input"
               data-testid="upload-input"
               aria-label={t("storage.upload")}
             />

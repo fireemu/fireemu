@@ -693,7 +693,7 @@ const Rules: Component = () => {
   const scope = () => JSON.stringify([appState.session(), appState.project()]);
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("rules.title")}</h1>
+      <h1 class="page-title mb-4">{t("rules.title")}</h1>
       <Show when={!appState.config().rulesEnforced}>
         <div class="mb-4 rounded-md border border-amber-400 p-3 text-sm">
           {t("rules.enforcedOff")}

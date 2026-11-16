@@ -1184,7 +1184,7 @@ const Firestore: Component = () => {
   return (
     <div>
       <div class="mb-3 flex flex-wrap items-center gap-3">
-        <h1 class="text-xl font-bold">{t("firestore.title")}</h1>
+        <h1 class="page-title">{t("firestore.title")}</h1>
         <DatabasePicker
           project={appState.project()}
           session={appState.session()}

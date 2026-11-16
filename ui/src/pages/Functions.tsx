@@ -514,7 +514,7 @@ const FunctionRow: Component<{
       <td class="text-xs">{props.f.timeoutSeconds}s</td>
       <td class="text-xs">{props.f.retry ? t("app.yes") : t("app.no")}</td>
       <td class="text-xs">{props.f.concurrency}</td>
-      <td class="space-y-1 text-right whitespace-nowrap">
+      <td class="space-y-1 text-right whitespace-nowrap [&>button]:ml-1">
         <Show when={trigger().kind === "schedule"}>
           <AsyncButton
             class="btn"
@@ -942,7 +942,7 @@ const Functions: Component = () => {
   };
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("functions.title")}</h1>
+      <h1 class="page-title mb-4">{t("functions.title")}</h1>
       <ErrorBanner message={error() ?? (o() ? errorOf(overview()) : null)} />
       <Notice message={notice()} />
       <div class="mb-3 flex flex-wrap items-center gap-3">

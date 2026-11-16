@@ -152,4 +152,10 @@
   .meter[data-level="full"] > span {
     @apply bg-red-500;
   }
+  .file-input {
+    @apply max-w-full text-sm text-zinc-600 dark:text-zinc-400;
+  }
+  .file-input::file-selector-button {
+    @apply mr-2 cursor-pointer rounded-md border border-solid border-zinc-300 bg-white px-2.5 py-1 text-sm font-medium text-zinc-800 shadow-xs hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800;
+  }
 }

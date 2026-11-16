@@ -113,7 +113,7 @@ const Hosting: Component = () => {
   return (
     <div>
       <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-xl font-bold">{t("hosting.title")}</h1>
+        <h1 class="page-title">{t("hosting.title")}</h1>
         <AsyncButton testId="hosting-refresh" onClick={refresh}>
           {t("app.refresh")}
         </AsyncButton>

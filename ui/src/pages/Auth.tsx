@@ -442,7 +442,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
   const selectedUser = selectedRecord;
   return (
     <div>
-      <h1 class="mb-4 text-xl font-bold">{t("auth.title")}</h1>
+      <h1 class="page-title mb-4">{t("auth.title")}</h1>
       <Section
         title={t("auth.users")}
         actions={
@@ -570,8 +570,10 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         <td class="text-xs">
                           <MfaSummary enrollments={u.mfaInfo} />
                         </td>
-                        <td class="mono text-xs">{formatMillis(u.createdAt)}</td>
-                        <td class="mono text-xs">{formatMillis(u.lastLoginAt)}</td>
+                        <td class="mono text-xs whitespace-nowrap">{formatMillis(u.createdAt)}</td>
+                        <td class="mono text-xs whitespace-nowrap">
+                          {formatMillis(u.lastLoginAt)}
+                        </td>
                         <td class="text-right">
                           <Show when={u.disabled}>
                             <span class="badge bg-zinc-200 dark:bg-zinc-800">
