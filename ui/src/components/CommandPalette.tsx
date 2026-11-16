@@ -180,7 +180,9 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
           data-testid="command-palette"
           onKeyDown={onKeyDown}
         >
-          <div class="flex items-center gap-2 border-b border-line-subtle px-3  [&>svg]:size-4 [&>svg]:text-muted">
+          {/* The combobox input draws no outline of its own (the dialog clips it); its row shows
+              keyboard focus with an inset focus-ring outline instead. */}
+          <div class="flex items-center gap-2 border-b border-line-subtle px-3 focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-focus [&>svg]:size-4 [&>svg]:text-muted">
             <IconSearch />
             <input
               ref={(element) => {
@@ -228,7 +230,7 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
               </li>
             </Show>
           </ul>
-          <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-line-subtle px-3 py-2 text-xs text-muted  dark:text-muted">
+          <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-line-subtle px-3 py-2 text-xs text-muted">
             <span>
               <span class="kbd">↑</span> <span class="kbd">↓</span> {t("palette.hintMove")}
             </span>

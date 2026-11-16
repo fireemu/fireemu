@@ -198,7 +198,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
 
   return (
     <section
-      class="my-5 border-y border-line-subtle py-4 "
+      class="my-5 border-y border-line-subtle py-4"
       data-testid="query-panel"
       aria-labelledby="firestore-query-heading"
     >
@@ -497,7 +497,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
         )}
       </Show>
       <section
-        class="mt-4 border-t border-line-subtle pt-3 "
+        class="mt-4 border-t border-line-subtle pt-3"
         data-testid="query-indexes"
         aria-label={t("firestore.queryIndexes")}
       >

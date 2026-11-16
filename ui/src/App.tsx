@@ -244,7 +244,7 @@ export const App: Component<RouteSectionProps> = (props) => {
       <div class="flex min-w-0 flex-1 flex-col">
         {/* Where every action lands: the target the pages act on, and whether the daemon answers. */}
         <header
-          class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6 "
+          class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6"
           data-testid="context-bar"
         >
           {/* Two groups that wrap as units: where actions land, and whether the daemon answers. */}

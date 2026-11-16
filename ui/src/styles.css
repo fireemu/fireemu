@@ -52,7 +52,7 @@
 
 @layer components {
   .btn {
-    @apply inline-flex min-h-[var(--fe-button-min-height)] items-center justify-center gap-1.5 whitespace-nowrap rounded-control border border-line bg-surface px-3 py-1 text-sm font-medium text-content transition-colors duration-[var(--fe-duration-fast)] hover:bg-hover active:bg-pressed disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled disabled:text-on-disabled;
+    @apply inline-flex min-h-[var(--fe-button-min-height)] items-center justify-center gap-1.5 whitespace-nowrap rounded-control border border-line bg-surface px-3 py-1 text-sm font-medium text-content transition-colors duration-[var(--fe-duration-fast)] enabled:hover:bg-hover enabled:active:bg-pressed disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled disabled:text-on-disabled;
   }
   .btn > svg {
     @apply size-4 shrink-0;
@@ -60,10 +60,10 @@
   /* The one filled colour: the main action. White on ember-700 is about 5.2:1 in light, dark
      text on ember-400 about 7.8:1 in dark. */
   .btn-primary {
-    @apply border-action bg-action text-on-action hover:border-action-hover hover:bg-action-hover active:border-action-pressed active:bg-action-pressed;
+    @apply border-action bg-action text-on-action enabled:hover:border-action-hover enabled:hover:bg-action-hover enabled:active:border-action-pressed enabled:active:bg-action-pressed;
   }
   .btn-danger {
-    @apply border-danger-action bg-danger-action text-on-danger-action hover:border-danger-action-hover hover:bg-danger-action-hover active:bg-danger-action-hover;
+    @apply border-danger-action bg-danger-action text-on-danger-action enabled:hover:border-danger-action-hover enabled:hover:bg-danger-action-hover enabled:active:bg-danger-action-hover;
   }
   /* Compact controls for table rows, the header and chips. */
   .btn-sm {

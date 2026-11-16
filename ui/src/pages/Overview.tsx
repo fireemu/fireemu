@@ -220,7 +220,7 @@ const Stats: Component = () => {
 const Address: Component<{ label: string; value: string; note?: string | null | undefined }> = (
   props,
 ) => (
-  <div class="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line-subtle py-1.5 last:border-b-0 ">
+  <div class="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line-subtle py-1.5 last:border-b-0">
     <span class="text-sm text-secondary">{props.label}</span>
     <span class="flex min-w-0 items-baseline gap-2">
       <span class="mono min-w-0 break-all">
