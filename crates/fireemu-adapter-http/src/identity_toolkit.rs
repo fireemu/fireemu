@@ -12888,11 +12888,15 @@ fn admin_batch_create(
         return response;
     }
     // The hash algorithm and its parameters apply to every row of the request; production
-    // refuses the whole request when they are invalid.
+    // refuses the whole request when they are invalid. firebase-tools 15.28.2 `batchCreate`
+    // (`operations.js:256-345`) reads no hash parameter and keeps the hash, which no password
+    // matches at sign-in (`:1303-1304`, `:1309-1310`), so the emulator profile keeps such a
+    // hash under the unspecified spec: it never matches, derives nothing and always restores.
     let hash_spec = match body.get("hashAlgorithm") {
         None | Some(Value::Null) => None,
-        Some(_) => match password_hash::spec_from_options(body) {
+        Some(algorithm) => match password_hash::spec_from_options(body) {
             Ok(spec) => Some(spec),
+            Err(_) if !strict && algorithm.is_string() => None,
             Err(code) => return error(400, code),
         },
     };

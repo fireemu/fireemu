@@ -13434,8 +13434,11 @@ fn strict_admin_query_negative_offset_is_a_backend_failure() {
 fn imported_hash_work_is_bounded() {
     let b64 = fireemu_core_types::hash::base64_standard;
     let s = state();
+    // Strict refuses the oversized scrypt at import; the emulator profile keeps it as a hash
+    // no password matches and derives nothing
+    // (`the_emulator_profile_accepts_hash_parameters_firebase_tools_ignores`).
     let (status, refused) = admin(
-        &s,
+        &strict_state(),
         "POST",
         &format!("{ADMIN}/accounts:batchCreate"),
         &json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1_u64 << 40, "blockSize": 8,
@@ -16963,9 +16966,9 @@ fn imported_production_hash_formats_sign_in_with_their_password_only() {
     }
 }
 
-#[test]
-fn invalid_hash_parameters_refuse_the_whole_import() {
-    let s = state();
+/// The hash-parameter cases of [`invalid_hash_parameters_refuse_the_whole_import`]: every code
+/// the Identity Platform sandbox answered (recording 2026-09-23).
+fn invalid_hash_options() -> Vec<(Value, &'static str)> {
     let argon = |overrides: Value| {
         let mut params = json!({"hashType": "ARGON2_ID", "iterations": 2, "memoryCostKib": 1024, "parallelism": 1, "hashLengthBytes": 32});
         for (k, v) in overrides.as_object().unwrap() {
@@ -16974,36 +16977,150 @@ fn invalid_hash_parameters_refuse_the_whole_import() {
         json!({"hashAlgorithm": "ARGON2", "argon2Parameters": params})
     };
     let scrypt = |rounds: u32, memory: u32| json!({"hashAlgorithm": "SCRYPT", "signerKey": "AAAA", "rounds": rounds, "memoryCost": memory});
-    // Every code the Identity Platform sandbox answered (recording 2026-09-23).
-    for (options, code) in [
-        (json!({"hashAlgorithm": "NOT_AN_ALGORITHM"}), "INVALID_HASH_ALGORITHM"),
-        (json!({"hashAlgorithm": "PBKDF_SHA1"}), "INVALID_HASH_ROUNDS"),
-        (json!({"hashAlgorithm": "PBKDF_SHA1", "rounds": 0}), "INVALID_HASH_ROUNDS"),
-        (json!({"hashAlgorithm": "PBKDF_SHA1", "rounds": 120_001}), "INVALID_HASH_ROUNDS"),
-        (json!({"hashAlgorithm": "SHA256", "rounds": 8193}), "INVALID_HASH_ROUNDS"),
-        (json!({"hashAlgorithm": "MD5", "rounds": 8193}), "INVALID_HASH_ROUNDS"),
+    vec![
+        (
+            json!({"hashAlgorithm": "NOT_AN_ALGORITHM"}),
+            "INVALID_HASH_ALGORITHM",
+        ),
+        (
+            json!({"hashAlgorithm": "PBKDF_SHA1"}),
+            "INVALID_HASH_ROUNDS",
+        ),
+        (
+            json!({"hashAlgorithm": "PBKDF_SHA1", "rounds": 0}),
+            "INVALID_HASH_ROUNDS",
+        ),
+        (
+            json!({"hashAlgorithm": "PBKDF_SHA1", "rounds": 120_001}),
+            "INVALID_HASH_ROUNDS",
+        ),
+        (
+            json!({"hashAlgorithm": "SHA256", "rounds": 8193}),
+            "INVALID_HASH_ROUNDS",
+        ),
+        (
+            json!({"hashAlgorithm": "MD5", "rounds": 8193}),
+            "INVALID_HASH_ROUNDS",
+        ),
         (json!({"hashAlgorithm": "HMAC_SHA256"}), "EMPTY_HASH_KEY"),
         (scrypt(8, 15), "INVALID_HASH_MEMORY_COSTS"),
         (scrypt(8, 0), "INVALID_HASH_MEMORY_COSTS"),
         (scrypt(9, 14), "INVALID_HASH_ROUNDS"),
         (scrypt(0, 14), "INVALID_HASH_ROUNDS"),
-        (json!({"hashAlgorithm": "STANDARD_SCRYPT", "blockSize": 8, "parallelization": 1, "dkLen": 64}), "INVALID_HASH_PARAMETER"),
-        (json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1024, "blockSize": 8, "parallelization": 1, "dkLen": 0}), "INVALID_HASH_PARAMETER"),
-        (json!({"hashAlgorithm": "ARGON2"}), "INVALID_ARGON2_MEMORY_COST"),
-        (argon(json!({"memoryCostKib": 32769})), "INVALID_ARGON2_MEMORY_COST"),
-        (argon(json!({"iterations": 17})), "INVALID_ARGON2_ITERATIONS"),
-        (argon(json!({"parallelism": 0})), "INVALID_ARGON2_PARALLELISM"),
-        (argon(json!({"hashType": "HASH_TYPE_UNSPECIFIED"})), "INVALID_ARGON2_HASH_TYPE"),
+        (
+            json!({"hashAlgorithm": "STANDARD_SCRYPT", "blockSize": 8, "parallelization": 1, "dkLen": 64}),
+            "INVALID_HASH_PARAMETER",
+        ),
+        (
+            json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1024, "blockSize": 8, "parallelization": 1, "dkLen": 0}),
+            "INVALID_HASH_PARAMETER",
+        ),
+        (
+            json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 1_u64 << 40, "blockSize": 8, "parallelization": 1, "dkLen": 64}),
+            "INVALID_HASH_PARAMETER",
+        ),
+        (
+            json!({"hashAlgorithm": "STANDARD_SCRYPT", "cpuMemCost": 16, "blockSize": 1, "parallelization": 17, "dkLen": 32}),
+            "INVALID_HASH_PARAMETER",
+        ),
+        (
+            json!({"hashAlgorithm": "ARGON2"}),
+            "INVALID_ARGON2_MEMORY_COST",
+        ),
+        (
+            argon(json!({"memoryCostKib": 32769})),
+            "INVALID_ARGON2_MEMORY_COST",
+        ),
+        (
+            argon(json!({"iterations": 17})),
+            "INVALID_ARGON2_ITERATIONS",
+        ),
+        (
+            argon(json!({"parallelism": 0})),
+            "INVALID_ARGON2_PARALLELISM",
+        ),
+        (
+            argon(json!({"hashType": "HASH_TYPE_UNSPECIFIED"})),
+            "INVALID_ARGON2_HASH_TYPE",
+        ),
+    ]
+}
+
+/// firebase-tools 15.28.2 `batchCreate` (`operations.js:256-345`) reads no hash parameter: it
+/// keeps `passwordHash` and `salt` as given, and at sign-in compares them with its own fake
+/// hash (`:1303-1304`, `:1309-1310`), so a real imported hash never matches. The emulator
+/// profile therefore accepts every hash parameter strict refuses, keeps the hash as a
+/// credential no password matches (the sign-in answer of a wrong password), and runs no
+/// derivation for it. A non-string `hashAlgorithm`, which its request schema refuses, and a
+/// row's undecodable bytes stay refused.
+#[test]
+fn the_emulator_profile_accepts_hash_parameters_firebase_tools_ignores() {
+    for (options, code) in invalid_hash_options() {
+        let s = state();
+        let mut request = options.clone();
+        request["users"] = json!([{"localId": "kept", "email": "kept@example.com",
+            "passwordHash": "AAAA", "salt": "AAAA"}]);
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(status, 200, "{options} ({code}): {response}");
+        assert!(response.get("error").is_none(), "{options}: {response}");
+        assert!(
+            s.store.lock().unwrap().user_by_id("kept").is_some(),
+            "{options}"
+        );
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "kept@example.com", "password": "password123"}),
+        );
+        assert_eq!(status, 400, "{options}: {refused}");
+        assert_eq!(
+            refused["error"]["message"], "INVALID_PASSWORD",
+            "{options}: {refused}"
+        );
+    }
+    for (options, code) in [
+        (json!({"hashAlgorithm": 7}), "MISSING_HASH_ALGORITHM"),
         (
             json!({"hashAlgorithm": "SHA256", "users": [{"localId": "refused", "passwordHash": "not base64!"}]}),
             "Invalid value at 'users[0].password' (TYPE_BYTES), Base64 decoding failed for \"not base64!\"",
         ),
     ] {
+        let s = state();
         let mut request = options.clone();
         if request.get("users").is_none() {
             request["users"] = json!([{"localId": "refused", "passwordHash": "AAAA", "salt": "AAAA"}]);
         }
         let (status, response) = admin(&s, "POST", &format!("{ADMIN}/accounts:batchCreate"), &request);
+        assert_eq!((status, response["error"]["message"].as_str()), (400, Some(code)), "{options}: {response}");
+        assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+    }
+}
+
+#[test]
+fn invalid_hash_parameters_refuse_the_whole_import() {
+    let s = strict_state();
+    let mut cases = invalid_hash_options();
+    cases.push((
+        json!({"hashAlgorithm": "SHA256", "users": [{"localId": "refused", "passwordHash": "not base64!"}]}),
+        "Invalid value at 'users[0].password' (TYPE_BYTES), Base64 decoding failed for \"not base64!\"",
+    ));
+    for (options, code) in cases {
+        let mut request = options.clone();
+        if request.get("users").is_none() {
+            request["users"] =
+                json!([{"localId": "refused", "passwordHash": "AAAA", "salt": "AAAA"}]);
+        }
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
         assert_eq!(status, 400, "{options}: {response}");
         assert_eq!(response["error"]["message"], code, "{options}");
         assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
@@ -23202,9 +23319,21 @@ fn standard_scrypt_parallelization_follows_the_recording() {
                     "users": [{"localId": format!("p{p}"), "email": email,
                         "passwordHash": b64(&hash), "salt": b64(salt.as_bytes())}]}),
             );
+            let strict = !s.stateless_refresh_tokens;
             if p == 0 || p > 16 {
-                assert_eq!(status, 400, "p={p}: {imported}");
-                assert_eq!(imported["error"]["message"], "INVALID_HASH_PARAMETER");
+                if strict {
+                    assert_eq!(status, 400, "p={p}: {imported}");
+                    assert_eq!(imported["error"]["message"], "INVALID_HASH_PARAMETER");
+                } else {
+                    // firebase-tools ignores the parameters; no password matches the hash.
+                    assert_eq!(status, 200, "p={p}: {imported}");
+                    let (status, _) = post(
+                        &s,
+                        &format!("{V1}/accounts:signInWithPassword"),
+                        &json!({"email": email, "password": "password123"}),
+                    );
+                    assert_eq!(status, 400, "p={p}");
+                }
                 continue;
             }
             assert_eq!(status, 200, "p={p}: {imported}");
@@ -23225,8 +23354,12 @@ fn standard_scrypt_parallelization_follows_the_recording() {
                 "users": [{"localId": "heavy", "email": "heavy@example.com",
                     "passwordHash": b64(&[0; 32]), "salt": b64(b"salt")}]}),
         );
-        assert_eq!(status, 400, "{refused}");
-        assert_eq!(refused["error"]["message"], "INVALID_HASH_PARAMETER");
+        if s.stateless_refresh_tokens {
+            assert_eq!(status, 200, "{refused}");
+        } else {
+            assert_eq!(status, 400, "{refused}");
+            assert_eq!(refused["error"]["message"], "INVALID_HASH_PARAMETER");
+        }
     }
 }
 
