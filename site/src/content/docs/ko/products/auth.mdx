@@ -65,6 +65,8 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
 
 `auth.logActionCodes = false`는 콘솔 출력을 끕니다(공유하거나 캡처하는 로그용). REST 경로는 계속 동작합니다. `--log-verbosity quiet`도 이 출력을 끕니다.
 
+브라우저 페이지에서는 이 경로들이 자격 증명을 내주므로, 페이지가 해당 실행의 제어 토큰을 제시하지 않으면 `403 CONTROL_TOKEN_REQUIRED`로 응답합니다. 브라우저에서 흐름을 직접 따라갈 때는 대신 [Emulator UI](../../guides/ui/)의 **Authentication** 페이지를 여십시오(시작 배너가 `auth codes:` 옆에 주소를 출력합니다). 선택한 프로젝트의 대기 중인 이메일 작업 코드와 SMS 코드를 나열하고, 몇 초마다 새로 고치며, 각 이메일 작업에 링크를 제공하므로 링크를 열면 이메일 확인, 비밀번호 재설정, 이메일 링크 로그인 완료가 이루어집니다.
+
 ## 프로젝트 구성
 
 `fireemu.toml`의 `auth` 섹션에는 애플리케이션이 의존하는 프로젝트 구성을 선언하므로, 테스트에서 매번 Admin API로 설정할 필요가 없습니다.
@@ -401,6 +403,8 @@ try {
   console.log('signed in as', credential.user.email);
 }
 ```
+
+TOTP 코드는 프로덕션이 자체 시각으로 확인하듯이 Fireemu의 시계 시각으로 확인됩니다. 기본 시계는 실제 시간을 따르므로 실제 인증 앱으로 등록하고 로그인할 수 있습니다. `daemon.clockStart`를 고정하거나 `daemon.clock = "frozen"`으로 설정하면 시계가 더 이상 현재 시각을 보여 주지 않아 인증 앱의 코드가 일치하지 않습니다. 수동 실행에서는 둘 다 설정하지 않거나, 시계를 현재 시각으로 이동하십시오(Emulator UI의 Runtime 페이지 또는 `clock:set`). TOTP가 켜져 있고 시계가 고정되거나 멈춰 있으면 시작 배너가 `totp clock:` 안내를 출력합니다. Fireemu는 이를 위해 허용 범위를 넓히지 않습니다. 프로덕션보다 느슨한 확인은 프로덕션에서 실패하는 테스트를 통과시키기 때문입니다.
 
 TOTP 등록이 성공하면 허용된 타임 스텝이 소비됩니다. 같은 스텝에서 그 코드를 재사용해 로그인하는 것은 거부되므로, 위 샘플은 다음 스텝까지 기다립니다. 가상 시간을 사용하는 테스트에서는 대신 월드 클록을 시크릿의 실제 주기만큼 앞당기고 그 새로운 시점의 로그인 코드를 생성하십시오. [TOTP 테스트 레시피](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code)를 참고하십시오.
 

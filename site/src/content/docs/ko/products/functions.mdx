@@ -199,7 +199,7 @@ FULL 보기, 활성/재시도 관찰, 잘못된 보기, 알 수 없는 이름에
 |---|---|---|
 | Emulator UI, Functions 페이지 | 즉시 실행하거나, 시계를 다음 발생 시점으로 진행 | 대기 중인 태스크가 예정 시각과 **Run now** 버튼과 함께 표시됨 |
 | 제어 API | `POST /v1/sessions/default/functions/{name}:run` | 같은 경로로 대기 중인 모든 태스크를 해제하며, `{"task": "<task id>"}`를 보내면 하나를 해제함(알 수 없는 id는 404) |
-| 가상 시계 | `daemon.clockStart`를 고정하거나 `daemon.clock = "frozen"`으로 설정한 뒤 `{"seconds": 86400}`(`{"millis": n}`, `clock:advanceTo`, `clock:set`도 가능)와 함께 `POST /v1/sessions/default/clock:advance`를 호출하거나, Runtime 페이지를 사용 | 고정된 `daemon.clockStart`와 함께 `functions.clock.tasks = "virtual"`로 설정한 뒤 시계를 이동 |
+| 가상 시계 | `daemon.clockStart`를 고정하거나 `daemon.clock = "frozen"`으로 설정한 뒤 `{"seconds": 86400}`(`{"millis": n}`, `clock:advanceTo`, `clock:set`도 가능)와 함께 `POST /v1/sessions/default/clock:advance`를 호출하거나, Runtime 페이지를 사용 | `functions.clock.tasks = "virtual"`로 설정한 뒤 시계를 이동 |
 
 제어 API는 UI 포트에 있지 않습니다. 그 주소는 시작 출력의 `control API:` 줄에 나옵니다. Authentication이 실행 중이면 Authentication 포트(기본값 9099)이고, 그렇지 않으면 다른 포트입니다. `fireemu exec` 아래에서는 `$FIREEMU_CONTROL_URL`이며 `Authorization: Bearer $FIREEMU_CONTROL_TOKEN`을 사용합니다(토큰은 `network.allowNonLoopbackHosts`가 설정된 경우에만 필요합니다). 예를 들어 `fireemu up`을 사용하면 다음과 같습니다.
 

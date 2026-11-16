@@ -47,6 +47,15 @@ Una cadena que no es un UUIDv4 se rechaza: `403 PERMISSION_DENIED`, `App attesta
 
 `appCheck.debugTokens` controla esto. Establecerlo tú mismo en `"any"` junto a `appCheck.enabled: true` también permite que cualquier UUIDv4 se intercambie para las apps que registraste, sean cuales sean los digests que lleven. Es `"any"` en ese caso y `"registered"`, la regla de producción, bajo `productionExact`, bajo el perfil `emulator` y en cualquier bloque `appCheck` que no establece la clave. Con `"registered"` no se sirve nada hasta que [actives App Check](#registrar-apps-y-exigir).
 
+Por tanto, `appCheck.enabled` no indica por sí solo si App Check se sirve: con este valor predeterminado permanece en `false` mientras el intercambio y la exigencia en los callables están activos. `fireemu config show` imprime lo que está en vigor justo debajo de la clave, en los mismos términos que el banner de inicio:
+
+```text
+appCheck.enabled = false (default)
+  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+```
+
+`config show --json` incluye el mismo estado en el objeto `effective` de la fila `appCheck.enabled`.
+
 ### Obtener un token desde el SDK web
 
 `@firebase/app-check` siempre llama al endpoint de intercambio de producción, así que usa un `CustomProvider` que intercambie el token de depuración con Fireemu. Un bundle de navegador no puede leer `process.env`, así que dale el host mediante la propia configuración de tu bundler.

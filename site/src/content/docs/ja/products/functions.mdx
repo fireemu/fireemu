@@ -199,7 +199,7 @@ FULLビュー、アクティブ/リトライの観測、無効なビュー、未
 |---|---|---|
 | Emulator UIのFunctionsページ | すぐに実行する、またはクロックを次の実行回まで進める | 待機中のタスクが、期限時刻と**Run now**ボタン付きで表示される |
 | コントロールAPI | `POST /v1/sessions/default/functions/{name}:run` | 同じルートで待機中のすべてのタスクを解放する。`{"task": "<task id>"}`を付けると1つを解放する(未知のIDは404) |
-| 仮想クロック | `daemon.clockStart`を固定するか`daemon.clock = "frozen"`を設定し、`{"seconds": 86400}`(`{"millis": n}`、`clock:advanceTo`、`clock:set`も使えます)を付けて`POST /v1/sessions/default/clock:advance`を呼ぶか、Runtimeページを使う | 固定した`daemon.clockStart`とともに`functions.clock.tasks = "virtual"`を設定し、クロックを進める |
+| 仮想クロック | `daemon.clockStart`を固定するか`daemon.clock = "frozen"`を設定し、`{"seconds": 86400}`(`{"millis": n}`、`clock:advanceTo`、`clock:set`も使えます)を付けて`POST /v1/sessions/default/clock:advance`を呼ぶか、Runtimeページを使う | `functions.clock.tasks = "virtual"`を設定し、クロックを進める |
 
 コントロールAPIはUIのポートにはありません。そのアドレスは、起動時の出力の`control API:`行にあります。Authenticationが動作している場合はAuthenticationのポート(デフォルトは9099)、そうでなければ別のポートです。`fireemu exec`の下では`$FIREEMU_CONTROL_URL`で、`Authorization: Bearer $FIREEMU_CONTROL_TOKEN`を付けます(トークンが必要なのは`network.allowNonLoopbackHosts`が設定されている場合のみです)。`fireemu up`の例を示します。
 

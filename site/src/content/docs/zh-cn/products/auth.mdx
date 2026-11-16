@@ -65,6 +65,8 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
 
 `auth.logActionCodes = false` 会停止输出这些控制台行（适用于共享或被捕获的日志）；REST 路由仍然可用。`--log-verbosity quiet` 也会使其静默。
 
+在浏览器页面中，除非页面出示本次运行的控制令牌，否则这些路由会返回 `403 CONTROL_TOKEN_REQUIRED`，因为它们会交出凭据。在浏览器中手动走一遍流程时，请改为打开 [Emulator UI](../../guides/ui/) 的 **Authentication** 页面（启动横幅会在 `auth codes:` 旁边打印其地址）。它会列出所选项目待处理的邮件操作码和短信验证码，每隔几秒刷新一次，并为每个邮件操作提供链接，因此打开链接即可验证邮箱、重置密码或完成邮件链接登录。
+
 ## 配置你的项目
 
 `fireemu.toml` 的 `auth` 部分声明你的应用所依赖的项目配置，因此测试无需每次都通过 Admin API 设置它。
@@ -401,6 +403,8 @@ try {
   console.log('signed in as', credential.user.email);
 }
 ```
+
+TOTP 验证码按 Fireemu 的时钟校验，就像生产环境按其自身时间校验一样。默认时钟跟随真实时间，因此可以用真实的验证器应用完成注册和登录。如果固定了 `daemon.clockStart` 或设置了 `daemon.clock = "frozen"`，时钟就不再显示当前时间，验证器应用的验证码也就无法匹配：手动运行时请两者都不设置，或者把时钟移到当前时间（Emulator UI 的 Runtime 页面，或 `clock:set`）。当 TOTP 开启且时钟被固定或冻结时，启动横幅会打印一条 `totp clock:` 提示。Fireemu 不会为此放宽接受的窗口：比生产环境更宽松的校验会让在生产环境中失败的测试通过。
 
 TOTP 注册成功会消耗被接受的时间步。在同一时间步内重复使用该验证码登录会被拒绝，因此示例会等待下一个时间步。在使用虚拟时间的测试中，请改为将世界时钟推进密钥的实际周期，并为该新时刻生成登录验证码；参见 [TOTP 测试方法](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code)。
 

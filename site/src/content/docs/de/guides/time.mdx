@@ -48,7 +48,7 @@ clock = "frozen"
 </TabItem>
 </Tabs>
 
-Eine virtuelle `functions.clock` (siehe [Anwendungszeit in Functions](#anwendungszeit-in-functions)) braucht einen fixierten Start und damit eine stillstehende Uhr. Das gilt auch für die Welten von `fireemu/testing`, die ihn fixieren.
+Eine virtuelle `functions.clock` (siehe [Anwendungszeit in Functions](#anwendungszeit-in-functions)) folgt dieser Uhr, was auch immer sie tut. Die Welten von `fireemu/testing` fixieren den Start, daher steht ihre Uhr still.
 
 ## Geplante Funktionen ausführen
 
@@ -102,7 +102,7 @@ Umgekehrt widerruft ein Widerruf oder eine Passwortänderung nach einem Zurücks
 
 ## Anwendungszeit in Functions
 
-Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock` zusammen mit einem fixierten `daemon.clockStart`:
+Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock`. Ohne `daemon.clockStart` startet die Uhr zur Wanduhrzeit und folgt der Echtzeit, sodass `Date.now()` in Ihren Funktionen die aktuelle Zeit liest, bis Sie die Uhr bewegen. Fixieren Sie zusätzlich `daemon.clockStart` für einen reproduzierbaren Lauf, bei dem die Uhr stillsteht, bis sie bewegt wird:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

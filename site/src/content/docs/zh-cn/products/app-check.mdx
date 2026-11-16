@@ -47,6 +47,15 @@ curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aw
 
 这由 `appCheck.debugTokens` 控制。如果你自己在 `appCheck.enabled: true` 旁边将其设为 `"any"`，那么对于你注册的应用，无论它们带有什么摘要，任何 UUIDv4 也都可以兑换。在这种情况下它为 `"any"`；而在 `productionExact` 下、`emulator` profile 下，以及任何未设置该键的 `appCheck` 块中，它为生产环境的规则 `"registered"`。使用 `"registered"` 时，在你[启用 App Check](#注册应用并强制执行) 之前不提供任何服务。
 
+因此，`appCheck.enabled` 本身并不说明是否提供 App Check：在此默认设置下，它保持为 `false`，而兑换和 callable 强制执行是开启的。`fireemu config show` 会在该键的正下方打印实际生效的内容，用语与启动横幅一致：
+
+```text
+appCheck.enabled = false (default)
+  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+```
+
+`config show --json` 在 `appCheck.enabled` 行的 `effective` 对象中携带相同的状态。
+
 ### 从 Web SDK 获取令牌
 
 `@firebase/app-check` 总是调用生产环境的兑换端点，因此请使用一个与 Fireemu 兑换调试令牌的 `CustomProvider`。浏览器 bundle 无法读取 `process.env`，因此请通过你的打包工具自己的配置向它提供主机。

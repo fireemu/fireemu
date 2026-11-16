@@ -199,7 +199,7 @@ Para ejecutar una función programada o liberar una tarea retrasada sin esperar:
 |---|---|---|
 | UI del emulador, página Functions | Ejecútala de inmediato, o adelanta el reloj hasta su siguiente ocurrencia | Las tareas en espera, con su hora de vencimiento y un botón **Run now** |
 | API de control | `POST /v1/sessions/default/functions/{name}:run` | La misma ruta libera todas las tareas en espera; con `{"task": "<task id>"}` libera una (404 para un id desconocido) |
-| Reloj virtual | Fija `daemon.clockStart`, o establece `daemon.clock = "frozen"`, y luego `POST /v1/sessions/default/clock:advance` con `{"seconds": 86400}` (también `{"millis": n}`, `clock:advanceTo` y `clock:set`), o usa la página Runtime | `functions.clock.tasks = "virtual"` con un `daemon.clockStart` fijo, y luego mueve el reloj |
+| Reloj virtual | Fija `daemon.clockStart`, o establece `daemon.clock = "frozen"`, y luego `POST /v1/sessions/default/clock:advance` con `{"seconds": 86400}` (también `{"millis": n}`, `clock:advanceTo` y `clock:set`), o usa la página Runtime | `functions.clock.tasks = "virtual"`, y luego mueve el reloj |
 
 La API de control no está en el puerto de la UI. Su dirección es la línea `control API:` de la salida de inicio: el puerto de Authentication (9099 por defecto) cuando Authentication se ejecuta, otro puerto en caso contrario. Con `fireemu exec` es `$FIREEMU_CONTROL_URL`, con `Authorization: Bearer $FIREEMU_CONTROL_TOKEN` (el token solo es necesario cuando `network.allowNonLoopbackHosts` está establecido). Por ejemplo, con `fireemu up`:
 

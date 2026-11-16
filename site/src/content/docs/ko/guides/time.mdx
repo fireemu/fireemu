@@ -48,7 +48,7 @@ clock = "frozen"
 </TabItem>
 </Tabs>
 
-가상 `functions.clock`([Functions의 애플리케이션 시간](#functions의-애플리케이션-시간) 참조)에는 고정된 시작 시각, 즉 멈춰 있는 시계가 필요합니다. 시계를 고정하는 `fireemu/testing`의 월드도 마찬가지입니다.
+가상 `functions.clock`([Functions의 애플리케이션 시간](#functions의-애플리케이션-시간) 참조)은 이 시계가 어떻게 움직이든 그것을 따릅니다. `fireemu/testing`의 월드는 시작 시각을 고정하므로 이들의 시계는 멈춰 있습니다.
 
 ## 예약 함수 실행
 
@@ -102,7 +102,7 @@ UI의 Functions 페이지에서는 예약 함수를 즉시 실행하거나 시�
 
 ## Functions의 애플리케이션 시간
 
-기본적으로 함수 코드는 실제 시간을 봅니다. `Date.now()`, 타이머, Cloud Tasks도 가상 시계를 따르게 하려면 `functions.clock`을 고정된 `daemon.clockStart`와 함께 설정합니다.
+기본적으로 함수 코드는 실제 시간을 봅니다. `Date.now()`, 타이머, Cloud Tasks도 가상 시계를 따르게 하려면 `functions.clock`을 설정합니다. `daemon.clockStart`가 없으면 시계는 벽시계 시각에서 시작해 실제 시간을 따르므로, 시계를 이동하기 전까지 함수의 `Date.now()`는 현재 시각을 읽습니다. 재현 가능한 실행을 위해서는 `daemon.clockStart`도 고정하며, 이 경우 시계는 이동하기 전까지 멈춰 있습니다.
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

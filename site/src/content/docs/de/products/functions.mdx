@@ -199,7 +199,7 @@ So führen Sie eine geplante Funktion aus oder geben eine verzögerte Aufgabe fr
 |---|---|---|
 | Emulator UI, Seite „Functions“ | Sofort ausführen oder die Uhr zu ihrem nächsten Vorkommen vorstellen | Die wartenden Aufgaben, mit ihrer Fälligkeitszeit und einer Schaltfläche **Run now** |
 | Steuer-API | `POST /v1/sessions/default/functions/{name}:run` | Dieselbe Route gibt alle wartenden Aufgaben frei; mit `{"task": "<task id>"}` gibt sie eine frei (404 bei einer unbekannten ID) |
-| Virtuelle Uhr | Fixieren Sie `daemon.clockStart` oder setzen Sie `daemon.clock = "frozen"`, dann `POST /v1/sessions/default/clock:advance` mit `{"seconds": 86400}` (auch `{"millis": n}`, `clock:advanceTo` und `clock:set`), oder verwenden Sie die Seite „Runtime“ | `functions.clock.tasks = "virtual"` mit fixiertem `daemon.clockStart`, dann die Uhr bewegen |
+| Virtuelle Uhr | Fixieren Sie `daemon.clockStart` oder setzen Sie `daemon.clock = "frozen"`, dann `POST /v1/sessions/default/clock:advance` mit `{"seconds": 86400}` (auch `{"millis": n}`, `clock:advanceTo` und `clock:set`), oder verwenden Sie die Seite „Runtime“ | `functions.clock.tasks = "virtual"`, dann die Uhr bewegen |
 
 Die Steuer-API liegt nicht auf dem UI-Port. Ihre Adresse steht in der Zeile `control API:` der Startausgabe: der Authentication-Port (standardmäßig 9099), wenn Authentication läuft, sonst ein anderer Port. Unter `fireemu exec` ist es `$FIREEMU_CONTROL_URL`, mit `Authorization: Bearer $FIREEMU_CONTROL_TOKEN` (das Token ist nur erforderlich, wenn `network.allowNonLoopbackHosts` gesetzt ist). Zum Beispiel mit `fireemu up`:
 

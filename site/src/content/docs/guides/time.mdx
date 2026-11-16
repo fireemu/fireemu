@@ -48,7 +48,7 @@ clock = "frozen"
 </TabItem>
 </Tabs>
 
-A virtual `functions.clock` (see [Application time in Functions](#application-time-in-functions)) needs a pinned start and therefore a still clock. So do the worlds of `fireemu/testing`, which pin it.
+A virtual `functions.clock` (see [Application time in Functions](#application-time-in-functions)) follows this clock whatever it does. The worlds of `fireemu/testing` pin the start, so their clock stands still.
 
 ## Run scheduled functions
 
@@ -102,7 +102,7 @@ Conversely, a revocation or password change made after a rewind does not revoke 
 
 ## Application time in Functions
 
-By default your function code sees real time. To make `Date.now()`, timers and Cloud Tasks follow the virtual clock too, set `functions.clock` together with a pinned `daemon.clockStart`:
+By default your function code sees real time. To make `Date.now()`, timers and Cloud Tasks follow the virtual clock too, set `functions.clock`. Without `daemon.clockStart` the clock starts at the wall-clock time and follows real time, so `Date.now()` in your functions reads the current time until you move the clock. Pin `daemon.clockStart` as well for a reproducible run, where the clock stands still until it is moved:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

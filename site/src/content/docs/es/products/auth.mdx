@@ -65,6 +65,8 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
 
 `auth.logActionCodes = false` detiene las líneas de la consola (para un registro compartido o capturado); las rutas REST siguen funcionando. `--log-verbosity quiet` también las silencia.
 
+Desde una página del navegador, estas rutas responden `403 CONTROL_TOKEN_REQUIRED` a menos que la página presente el token de control de la ejecución, porque entregan credenciales. Cuando sigas un flujo a mano en un navegador, abre en su lugar la página **Authentication** de la [UI del emulador](../../guides/ui/) (el banner de inicio imprime su dirección junto a `auth codes:`). Lista los códigos de acción por correo y los códigos SMS pendientes del proyecto seleccionado, los actualiza cada pocos segundos y enlaza cada acción por correo, de modo que abrir el enlace verifica el correo, restablece la contraseña o completa el inicio de sesión con enlace por correo.
+
 ## Configura tu proyecto
 
 La sección `auth` de `fireemu.toml` declara la configuración del proyecto de la que depende tu aplicación, de modo que una prueba no tenga que establecerla mediante la Admin API cada vez.
@@ -401,6 +403,8 @@ try {
   console.log('signed in as', credential.user.email);
 }
 ```
+
+Los códigos TOTP se comprueban con el reloj de Fireemu, igual que producción los comprueba con su propia hora. El reloj predeterminado sigue el tiempo real, así que una persona puede inscribirse e iniciar sesión con una app autenticadora real. Con un `daemon.clockStart` fijado o `daemon.clock = "frozen"`, el reloj ya no muestra la hora actual y los códigos de una app autenticadora no coinciden: deja ambos sin establecer en una ejecución manual, o mueve el reloj a la hora actual (página Runtime de la UI del emulador, o `clock:set`). El banner de inicio imprime una nota `totp clock:` cuando TOTP está activo y el reloj está fijado o congelado. Fireemu no amplía la ventana aceptada por esto: una comprobación más laxa que la de producción haría pasar una prueba que falla en producción.
 
 Una inscripción TOTP correcta consume el intervalo de tiempo aceptado. Reutilizar ese código para iniciar sesión en el mismo intervalo se rechaza, por eso el ejemplo espera al siguiente. En una prueba con tiempo virtual, avanza el reloj del mundo según el periodo real del secreto y genera el código de inicio de sesión para ese nuevo instante; consulta la [receta de prueba de TOTP](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code).
 

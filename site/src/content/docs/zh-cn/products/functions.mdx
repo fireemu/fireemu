@@ -199,7 +199,7 @@ FULL 视图、活动/重试观测、无效视图、未知名称的 GET 回答以
 |---|---|---|
 | Emulator UI 的 Functions 页面 | 立即运行，或将时钟推进到下一次执行 | 等待中的任务，带其到期时间和 **Run now** 按钮 |
 | 控制 API | `POST /v1/sessions/default/functions/{name}:run` | 同一路由释放所有等待中的任务；带 `{"task": "<task id>"}` 时释放单个任务（未知 ID 返回 404） |
-| 虚拟时钟 | 固定 `daemon.clockStart`，或设置 `daemon.clock = "frozen"`，然后带 `{"seconds": 86400}` 发送 `POST /v1/sessions/default/clock:advance`（也可用 `{"millis": n}`、`clock:advanceTo` 和 `clock:set`），或使用 Runtime 页面 | 在固定 `daemon.clockStart` 的情况下设置 `functions.clock.tasks = "virtual"`，然后移动时钟 |
+| 虚拟时钟 | 固定 `daemon.clockStart`，或设置 `daemon.clock = "frozen"`，然后带 `{"seconds": 86400}` 发送 `POST /v1/sessions/default/clock:advance`（也可用 `{"millis": n}`、`clock:advanceTo` 和 `clock:set`），或使用 Runtime 页面 | 设置 `functions.clock.tasks = "virtual"`，然后移动时钟 |
 
 控制 API 不在 UI 端口上。其地址是启动输出中的 `control API:` 行：运行 Authentication 时为 Authentication 端口（默认 9099），否则为另一个端口。在 `fireemu exec` 下为 `$FIREEMU_CONTROL_URL`，并带 `Authorization: Bearer $FIREEMU_CONTROL_TOKEN`（仅在设置了 `network.allowNonLoopbackHosts` 时才需要令牌）。例如，使用 `fireemu up` 时：
 

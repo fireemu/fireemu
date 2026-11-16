@@ -65,6 +65,8 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/verificationCodes
 
 `auth.logActionCodes = false` stops the console lines (for a shared or captured log); the REST routes keep working. `--log-verbosity quiet` also silences them.
 
+From a browser page, these routes answer `403 CONTROL_TOKEN_REQUIRED` unless the page presents the run's control token, because they hand out credentials. When you follow a flow by hand in a browser, open the **Authentication** page of the [Emulator UI](../../guides/ui/) instead (the startup banner prints its address next to `auth codes:`). It lists the pending email action codes and SMS codes of the selected project, refreshes them every few seconds, and links each email action, so opening the link verifies the email, resets the password or completes the email-link sign-in.
+
 ## Configure your project
 
 The `auth` section of `fireemu.toml` declares the project configuration your application relies on, so a test does not have to set it through the Admin API every time.
@@ -401,6 +403,8 @@ try {
   console.log('signed in as', credential.user.email);
 }
 ```
+
+TOTP codes are checked at Fireemu's clock, as production checks them at its own time. The default clock follows real time, so a person can enroll and sign in with a real authenticator app. With a pinned `daemon.clockStart` or `daemon.clock = "frozen"`, the clock no longer shows the current time and codes from an authenticator app do not match: leave both unset for a manual run, or move the clock to the current time (Runtime page of the Emulator UI, or `clock:set`). The startup banner prints a `totp clock:` note when TOTP is on and the clock is pinned or frozen. Fireemu does not widen the accepted window for this: a looser check than production's would let a test pass that production fails.
 
 Successful TOTP enrollment consumes the accepted time step. Reusing that code to sign in in the same step is refused, so the sample waits for the next step. In a test with virtual time, advance the world clock by the secret's actual period instead, and generate the sign-in code for that new instant; see the [TOTP test recipe](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code).
 

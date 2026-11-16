@@ -48,7 +48,7 @@ clock = "frozen"
 </TabItem>
 </Tabs>
 
-仮想の`functions.clock`([Functionsのアプリケーション時刻](#functionsのアプリケーション時刻)を参照)には、固定された開始時刻、つまり止まったクロックが必要です。それを固定する`fireemu/testing`のワールドも同様です。
+仮想の`functions.clock`（[Functionsのアプリケーション時刻](#functionsのアプリケーション時刻)を参照）は、このクロックがどう動いても、それに追従します。`fireemu/testing`のワールドは開始時刻を固定するので、そのクロックは止まったままです。
 
 ## スケジュール関数を実行する
 
@@ -102,7 +102,7 @@ UIのFunctionsページから、スケジュール関数をすぐに実行する
 
 ## Functionsのアプリケーション時刻
 
-デフォルトでは、関数のコードは実時間を参照します。`Date.now()`、タイマー、Cloud Tasksも仮想クロックに追従させるには、`functions.clock`を、固定した`daemon.clockStart`とともに設定します。
+デフォルトでは、関数のコードは実時間を参照します。`Date.now()`、タイマー、Cloud Tasksも仮想クロックに追従させるには、`functions.clock`を設定します。`daemon.clockStart`がない場合、クロックは壁時計の時刻から始まって実時間に追従するので、クロックを動かすまで、関数内の`Date.now()`は現在時刻を返します。再現可能な実行にするには`daemon.clockStart`も固定します。その場合、クロックは動かすまで止まったままです。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

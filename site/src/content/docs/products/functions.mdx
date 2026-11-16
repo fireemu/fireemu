@@ -199,7 +199,7 @@ To run a scheduled function or release a delayed task without waiting:
 |---|---|---|
 | Emulator UI, Functions page | Run it immediately, or advance the clock to its next occurrence | The waiting tasks, with their due time and a **Run now** button |
 | Control API | `POST /v1/sessions/default/functions/{name}:run` | The same route releases all waiting tasks; with `{"task": "<task id>"}` it releases one (404 for an unknown id) |
-| Virtual clock | Pin `daemon.clockStart`, or set `daemon.clock = "frozen"`, then `POST /v1/sessions/default/clock:advance` with `{"seconds": 86400}` (also `{"millis": n}`, `clock:advanceTo` and `clock:set`), or use the Runtime page | `functions.clock.tasks = "virtual"` with a pinned `daemon.clockStart`, then move the clock |
+| Virtual clock | Pin `daemon.clockStart`, or set `daemon.clock = "frozen"`, then `POST /v1/sessions/default/clock:advance` with `{"seconds": 86400}` (also `{"millis": n}`, `clock:advanceTo` and `clock:set`), or use the Runtime page | `functions.clock.tasks = "virtual"`, then move the clock |
 
 The control API is not on the UI port. Its address is the `control API:` line of the startup output: the Authentication port (9099 by default) when Authentication runs, another port otherwise. Under `fireemu exec` it is `$FIREEMU_CONTROL_URL`, with `Authorization: Bearer $FIREEMU_CONTROL_TOKEN` (the token is required only when `network.allowNonLoopbackHosts` is set). For example, with `fireemu up`:
 

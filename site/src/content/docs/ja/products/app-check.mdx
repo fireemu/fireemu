@@ -47,6 +47,15 @@ UUIDv4でない文字列は拒否されます: `403 PERMISSION_DENIED`、`App at
 
 これを制御するのは`appCheck.debugTokens`です。`appCheck.enabled: true`と並べて自分で`"any"`を設定すると、登録したアプリについても、どのダイジェストを持っていても、任意のUUIDv4を交換できます。その場合は`"any"`になり、`productionExact`の下、`emulator`プロファイルの下、およびこのキーを設定していない`appCheck`ブロックでは、本番のルールである`"registered"`になります。`"registered"`の場合は、[App Checkを有効にする](#アプリを登録して強制する)まで何も提供されません。
 
+そのため、`appCheck.enabled`だけではApp Checkが提供されているかどうかは分かりません。このデフォルトでは、交換とcallableの強制がオンでも`false`のままです。`fireemu config show`は、キーのすぐ下に実際に有効な内容を、起動バナーと同じ用語で表示します。
+
+```text
+appCheck.enabled = false (default)
+  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+```
+
+`config show --json`は、同じ状態を`appCheck.enabled`行の`effective`オブジェクトとして返します。
+
 ### Web SDKからトークンを取得する
 
 `@firebase/app-check`は常に本番の交換エンドポイントを呼び出すため、デバッグトークンをFireemuと交換する`CustomProvider`を使ってください。ブラウザーのバンドルは`process.env`を読み取れないため、バンドラー自身の設定でホストを渡してください。

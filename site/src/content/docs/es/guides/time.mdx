@@ -48,7 +48,7 @@ clock = "frozen"
 </TabItem>
 </Tabs>
 
-Un `functions.clock` virtual (consulta [Tiempo de aplicación en Functions](#tiempo-de-aplicación-en-functions)) necesita un inicio fijado y, por tanto, un reloj quieto. Lo mismo ocurre con los mundos de `fireemu/testing`, que lo fijan.
+Un `functions.clock` virtual (consulta [Tiempo de aplicación en Functions](#tiempo-de-aplicación-en-functions)) sigue este reloj haga lo que haga. Los mundos de `fireemu/testing` fijan el inicio, así que su reloj permanece quieto.
 
 ## Ejecutar funciones programadas
 
@@ -102,7 +102,7 @@ A la inversa, una revocación o un cambio de contraseña hecho tras un retroceso
 
 ## Tiempo de aplicación en Functions
 
-Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock` junto con un `daemon.clockStart` fijado:
+Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock`. Sin `daemon.clockStart`, el reloj empieza a la hora del reloj de pared y sigue el tiempo real, así que `Date.now()` en tus funciones lee la hora actual hasta que muevas el reloj. Fija también `daemon.clockStart` para una ejecución reproducible, en la que el reloj permanece quieto hasta que se mueve:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

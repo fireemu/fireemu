@@ -8,6 +8,13 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- A virtual `functions.clock` (`date`, `timers` or `tasks`) no longer needs `daemon.clockStart`: without it the clock starts at the wall-clock time of the daemon and follows real time, as it does without `functions.clock`, so `Date.now()` in a function reads the current time until the clock is moved. A pinned `daemon.clockStart` still gives a reproducible run whose clock stands still.
+- `fireemu config show` prints the App Check state in effect per surface (exchange, callables, Auth, Firestore, Storage) under `appCheck.enabled`, and `--json` carries it as that row's `effective` object, with a note on what the key controls. Under the strict profile with no `appCheck` block the key stays `false` while the exchange and callable enforcement are on, which the key alone did not show.
+- The Emulator UI's Authentication page re-reads the pending email action codes and SMS codes every few seconds, so a code a flow in another tab just issued appears without a reload, and says how to use them. The startup banner's `auth codes:` line names that page, and a browser request to the emulator code routes without the control token (`403 CONTROL_TOKEN_REQUIRED`, unchanged) now says to use it.
+- With TOTP enabled and a pinned `daemon.clockStart` or `daemon.clock = "frozen"`, the startup banner notes that TOTP codes are checked at the emulator clock, so an authenticator app's codes do not match, and how to use one. Verification itself is unchanged in both profiles.
+
 ### Fixed
 
 - In the emulator profile, an ID token without a usable `iat` is checked against a per-account `validSince` kept as firebase-tools 15.28.2 keeps it: a password, an email change through `accounts:update`, a verified identity provider taking over an account, a batch import and a privileged `validSince` assign the current second (also after a clock rewind), and disabling, second-factor withdrawal and other updates leave it. An artifact import gives every account the import second, as firebase-tools' own import does. Strict, integer-claim tokens and the reported `validSince` are unchanged.
