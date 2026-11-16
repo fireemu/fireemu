@@ -84,6 +84,24 @@ jobs:
           quint_home="$RUNNER_TEMP/quint-home"
           QUINT_HOME="$quint_home" verification/quint/bin/install-apalache
           echo "QUINT_HOME=$quint_home" >> "$GITHUB_ENV"
+      - name: install verified Quint Rust evaluator
+        # Quint otherwise downloads this binary from GitHub anonymously at test time and hits the rate limit.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVALUATOR_VERSION: v0.6.0
+          EVALUATOR_ASSET: quint_evaluator-x86_64-unknown-linux-gnu.tar.gz
+          EVALUATOR_SHA256: 61755a09d5052d93a4e75e840059edfd0d3674aeda164b9d2464be3d6e21b1c2
+        run: |
+          manager="$(find verification/quint/node_modules/.pnpm -path '*/@informalsystems/quint/dist/src/rust/binaryManager.js' -print -quit)"
+          grep -q "QUINT_EVALUATOR_VERSION = '$EVALUATOR_VERSION'" "$manager" || { echo "Quint expects a different evaluator than $EVALUATOR_VERSION" >&2; exit 1; }
+          download="$(mktemp -d)"
+          gh release download "evaluator/$EVALUATOR_VERSION" -R informalsystems/quint -p "$EVALUATOR_ASSET" -D "$download"
+          echo "$EVALUATOR_SHA256  $download/$EVALUATOR_ASSET" | sha256sum -c -
+          target="$QUINT_HOME/rust-evaluator-$EVALUATOR_VERSION"
+          mkdir -p "$target"
+          tar -xzf "$download/$EVALUATOR_ASSET" -C "$target" quint_evaluator
+          chmod 0755 "$target/quint_evaluator"
+          rm -rf "$download"
       - name: configure guarded Quint path
         run: |
           echo "QUINT_REAL_BIN=$GITHUB_WORKSPACE/verification/quint/node_modules/.bin/quint" >> "$GITHUB_ENV"

@@ -474,7 +474,7 @@
   "digests": {
     ".github/workflows/quint.yml": {
       "kind": "sha256",
-      "value": "2e641886ee0d832f95e570f33eead54964a6151bf14c2fc54d5fe10cb8d4cc53"
+      "value": "a0df2816a9a46927a49e0c59e01a2ff24003deb969c56d5c563a2bc03bac17bc"
     },
     "conformance/fs-ent-pipeline-production.json": {
       "kind": "json-semantic",
