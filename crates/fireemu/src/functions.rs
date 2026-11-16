@@ -4753,7 +4753,7 @@ async fn check_started_runner(
             runner.kill_now();
             return Err(runner_checks::virtual_clock_refusal(label, python));
         }
-        if let Err(error) = runner.sync_clock(clock_snapshot).await {
+        if let Err(error) = runner.sync_clock(clock_snapshot, !cfg.clock_frozen()).await {
             runner.kill_now();
             return Err(error);
         }
@@ -14619,7 +14619,7 @@ sys.stdin.buffer.read()
         clock.lock().unwrap().advance(delta).unwrap();
         let snapshot = clock.lock().unwrap().snapshot();
         executor
-            .block_on(runtime.runner().sync_clock(snapshot))
+            .block_on(runtime.runner().sync_clock(snapshot, false))
             .unwrap();
         runtime
             .reload_codebase(CodebaseSpec {
