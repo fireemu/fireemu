@@ -15,7 +15,7 @@ const current = currentNavSlug(rest);
 		headerNav.map(({ label, key, slug, href, icon }) =>
 			slug ? (
 				<a href={to(`${slug}/`)} aria-current={slug === current ? 'page' : undefined}>
-					{key ? t(key) : label}
+					<span class="label">{key ? t(key) : label}</span>
 				</a>
 			) : (
 				<a class="external" href={href} rel="noopener noreferrer" aria-label={label} title={label}>

@@ -582,3 +582,15 @@ footer .meta a {
 		display: none !important;
 	}
 }
+
+/* Header text sits on the same optical center as the header icons: trim each text box to the
+   capital height so flex centering centers the letters, not the line box with its descender room. */
+header .header-nav .label,
+header site-search kbd kbd {
+	display: block;
+	text-box: trim-both cap alphabetic;
+}
+/* Japanese glyphs sit about 1px higher in their em box than Latin capitals; measured against the icons. */
+header .header-nav .label:lang(ja) {
+	transform: translateY(1px);
+}
