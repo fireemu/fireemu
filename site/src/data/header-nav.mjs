@@ -8,8 +8,8 @@ export const headerNav = [
 	{ label: 'Products', key: 'nav.products', slug: 'products/firestore', section: 'products' },
 	{ label: 'Guides', key: 'nav.guides', slug: 'guides/configuration', section: 'guides' },
 	{ label: 'Compatibility', key: 'nav.compatibility', slug: 'compatibility', section: 'compatibility' },
-	{ label: 'npm', href: 'https://www.npmjs.com/package/fireemu' },
-	{ label: 'GitHub', href: 'https://github.com/fireemu/fireemu' },
+	{ label: 'npm', icon: 'npm', href: 'https://www.npmjs.com/package/fireemu' },
+	{ label: 'GitHub', icon: 'github', href: 'https://github.com/fireemu/fireemu' },
 ];
 
 /**

@@ -1,0 +1,54 @@
+---
+// The theme picker as an icon menu. It keeps Starlight's stored preference ('starlight-theme' in
+// localStorage, empty for auto) so Starlight's ThemeProvider applies it before the first paint.
+import IconMenu from './IconMenu.astro';
+const options = [
+	{ value: 'auto', label: Astro.locals.t('themeSelect.auto') },
+	{ value: 'light', label: Astro.locals.t('themeSelect.light') },
+	{ value: 'dark', label: Astro.locals.t('themeSelect.dark') },
+];
+---
+
+<fe-theme-select>
+	<IconMenu icon="laptop" label={Astro.locals.t('themeSelect.accessibleLabel')}>
+		{options.map(({ value, label }) => <button type="button" data-theme-value={value} aria-pressed="false">{label}</button>)}
+	</IconMenu>
+</fe-theme-select>
+
+<script>
+	type Theme = 'auto' | 'dark' | 'light';
+	const storageKey = 'starlight-theme';
+	const load = (): Theme => {
+		try {
+			const value = localStorage.getItem(storageKey);
+			return value === 'light' || value === 'dark' ? value : 'auto';
+		} catch {
+			return 'auto';
+		}
+	};
+	const preferred = () => (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+	function apply(theme: Theme) {
+		document.documentElement.dataset.theme = theme === 'auto' ? preferred() : theme;
+		try {
+			localStorage.setItem(storageKey, theme === 'auto' ? '' : theme);
+		} catch {}
+		for (const button of document.querySelectorAll<HTMLButtonElement>('fe-theme-select [data-theme-value]')) {
+			button.setAttribute('aria-pressed', String(button.dataset.themeValue === theme));
+		}
+	}
+	matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+		if (load() === 'auto') apply('auto');
+	});
+	class FeThemeSelect extends HTMLElement {
+		connectedCallback() {
+			apply(load());
+			for (const button of this.querySelectorAll<HTMLButtonElement>('[data-theme-value]')) {
+				button.addEventListener('click', () => {
+					apply(button.dataset.themeValue as Theme);
+					button.closest('details')?.removeAttribute('open');
+				});
+			}
+		}
+	}
+	customElements.define('fe-theme-select', FeThemeSelect);
+</script>

@@ -78,14 +78,16 @@ for (const file of pages(dist)) {
 		checked += 1;
 		if (!fileFor(new URL(raw, pageUrl).pathname)) broken.push(`${from}: ${raw} -> no such file`);
 	}
-	for (const [, href] of html.matchAll(/<a\s[^>]*?href="([^"]+)"/g)) {
+	for (const [tag, href] of html.matchAll(/<a\s[^>]*?href="([^"]+)"[^>]*>/g)) {
 		const raw = href.replaceAll('&amp;', '&');
+		// The language picker links to the same page in another language on purpose.
+		const languageSwitch = /\shreflang="/.test(tag);
 		if (/^(https?:|mailto:|data:)/.test(raw)) continue;
 		const url = new URL(raw, pageUrl);
 		checked += 1;
 		const target = fileFor(url.pathname);
 		const fromLocale = splitLocale(`/${from}`).locale;
-		if (target && fromLocale !== 'root' && url.pathname.startsWith(`${base}/`)) {
+		if (target && !languageSwitch && fromLocale !== 'root' && url.pathname.startsWith(`${base}/`)) {
 			const { locale, rest } = splitLocale(url.pathname.slice(base.length));
 			if (locale === 'root' && target.endsWith('.html') && existsSync(join(dist, fromLocale, rest, 'index.html'))) {
 				broken.push(`${from}: ${raw} -> leaves the ${fromLocale} locale (use the ${fromLocale}/ page)`);

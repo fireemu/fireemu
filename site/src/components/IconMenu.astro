@@ -1,0 +1,110 @@
+---
+// An icon button that opens a small menu under it, aligned to the button's end edge so it never
+// runs off the screen. Used for the header's theme and language pickers.
+import { Icon } from '@astrojs/starlight/components';
+
+interface Props {
+	icon: 'translate' | 'laptop';
+	label: string;
+	class?: string;
+}
+const { icon, label, class: className } = Astro.props;
+---
+
+<details class:list={['fe-menu', className]}>
+	<summary aria-label={label} title={label}>
+		<Icon name={icon} class="fe-menu-icon" />
+	</summary>
+	<div class="fe-menu-panel">
+		<slot />
+	</div>
+</details>
+
+<script>
+	// Close an open menu on a click elsewhere, on Escape, or when another menu opens.
+	document.addEventListener('click', (event) => {
+		for (const menu of document.querySelectorAll<HTMLDetailsElement>('details.fe-menu[open]')) {
+			if (!menu.contains(event.target as Node)) menu.open = false;
+		}
+	});
+	document.addEventListener('keydown', (event) => {
+		if (event.key !== 'Escape') return;
+		for (const menu of document.querySelectorAll<HTMLDetailsElement>('details.fe-menu[open]')) {
+			menu.open = false;
+			menu.querySelector('summary')?.focus();
+		}
+	});
+</script>
+
+<style>
+	.fe-menu {
+		position: relative;
+	}
+	.fe-menu summary {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.375rem;
+		color: var(--sl-color-gray-2);
+		cursor: pointer;
+		list-style: none;
+	}
+	.fe-menu summary::-webkit-details-marker {
+		display: none;
+	}
+	.fe-menu summary:hover,
+	.fe-menu[open] summary {
+		color: var(--sl-color-white);
+	}
+	.fe-menu summary:focus-visible {
+		outline: 2px solid var(--sl-color-text-accent);
+		outline-offset: 1px;
+	}
+	.fe-menu :global(.fe-menu-icon) {
+		font-size: 1.125rem;
+	}
+	.fe-menu-panel {
+		position: absolute;
+		inset-inline-end: 0;
+		top: calc(100% + 0.375rem);
+		z-index: 20;
+		min-width: 10rem;
+		max-width: calc(100vw - 2rem);
+		padding: 0.375rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		background: var(--sl-color-bg-nav);
+		box-shadow: var(--sl-shadow-md);
+	}
+	.fe-menu-panel :global(a),
+	.fe-menu-panel :global(button) {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: 100%;
+		padding: 0.5rem 0.75rem;
+		border: 0;
+		border-radius: 0.25rem;
+		background: none;
+		color: var(--sl-color-gray-1);
+		font: inherit;
+		font-size: var(--sl-text-sm);
+		text-align: start;
+		text-decoration: none;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.fe-menu-panel :global(a:hover),
+	.fe-menu-panel :global(button:hover) {
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-white);
+	}
+	.fe-menu-panel :global([aria-current='true']),
+	.fe-menu-panel :global([aria-pressed='true']) {
+		font-weight: 600;
+		color: var(--sl-color-text-accent);
+	}
+</style>

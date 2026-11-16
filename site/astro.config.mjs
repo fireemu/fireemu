@@ -83,6 +83,9 @@ export default defineConfig({
 				PageTitle: './src/components/PageTitle.astro',
 				// The language picker next to the search box on narrow screens.
 				Search: './src/components/Search.astro',
+				// Icon menus instead of the native selects, so the open list has room and stays on screen.
+				ThemeSelect: './src/components/ThemeSelect.astro',
+				LanguageSelect: './src/components/LanguageSelect.astro',
 			},
 			sidebar: translateSidebar([
 				{
