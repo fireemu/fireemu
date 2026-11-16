@@ -1,6 +1,7 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "runtime.sectionNav": "Sections of this page",
   "functions.searchRegistered": "Filter by name, region or trigger",
   "functions.searchCount": "{shown} of {total}",
   "firestore.expandField": "Expand {name}",

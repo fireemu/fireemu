@@ -240,3 +240,14 @@ describe("parseAllowances lines", () => {
     expect(parseAllowances("\n#only\n")).toEqual({ ok: true, allow: [] });
   });
 });
+
+describe("usage bar level", () => {
+  it("turns to a warning at 75% and to full at 100%", async () => {
+    const { saturationLevel } = await import("./resources");
+    expect(saturationLevel(0)).toBe("ok");
+    expect(saturationLevel(74)).toBe("ok");
+    expect(saturationLevel(75)).toBe("warn");
+    expect(saturationLevel(99)).toBe("warn");
+    expect(saturationLevel(100)).toBe("full");
+  });
+});

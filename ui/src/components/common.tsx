@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, Show, type Component, type JSX } from "solid-js";
+import { createSignal, For, onCleanup, Show, type Component, type JSX } from "solid-js";
 import { t } from "../i18n";
 import { createSubmitGuard } from "../lib/submitGuard";
 
@@ -26,10 +26,14 @@ export const Notice: Component<{ message: string | null | undefined }> = (props)
   </Show>
 );
 
-export const Section: Component<{ title: string; actions?: JSX.Element; children: JSX.Element }> = (
-  props,
-) => (
-  <section class="card mb-4">
+export const Section: Component<{
+  title: string;
+  actions?: JSX.Element;
+  children: JSX.Element;
+  /** An element id, for in-page jump links (the sticky header is allowed for). */
+  id?: string | undefined;
+}> = (props) => (
+  <section class="card mb-4 scroll-mt-20" id={props.id}>
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-base font-semibold tracking-tight">{props.title}</h2>
       <div class="flex min-w-0 max-w-full flex-wrap items-center gap-2">{props.actions}</div>
@@ -156,13 +160,42 @@ export const CopyButton: Component<{
   );
 };
 
+/**
+ * Jump links to the sections of a long page. They scroll and move focus; the URL is left
+ * alone (a hash would be read as a route).
+ */
+export const SectionNav: Component<{
+  label: string;
+  sections: { id: string; title: string }[];
+}> = (props) => (
+  <nav class="mb-4 flex flex-wrap gap-2" aria-label={props.label} data-testid="section-nav">
+    <For each={props.sections}>
+      {(section) => (
+        <button
+          type="button"
+          class="btn rounded-full py-0.5 text-xs"
+          onClick={() => {
+            const target = document.getElementById(section.id);
+            if (!target) return;
+            target.scrollIntoView?.({ behavior: "smooth", block: "start" });
+            target.setAttribute("tabindex", "-1");
+            target.focus({ preventScroll: true });
+          }}
+        >
+          {section.title}
+        </button>
+      )}
+    </For>
+  </nav>
+);
+
 /** A key / value row for detail views. */
 export const Field: Component<{ label: string; children: JSX.Element; mono?: boolean }> = (
   props,
 ) => (
   <div class="mb-2">
     <div class="label">{props.label}</div>
-    <div class={props.mono ? "mono break-all" : "text-sm break-all"}>{props.children}</div>
+    <div class={props.mono ? "mono break-all" : "text-sm break-words"}>{props.children}</div>
   </div>
 );
 
