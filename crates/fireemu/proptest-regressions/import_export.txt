@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a798dac6d8432f4ce18c067a6d5560552c7017fd2c34031d2460359dfe6c21ec # shrinks to options = Object {"argon2Parameters": Object {"hashLengthBytes": Number(0), "hashType": String("ARGON2_ID"), "iterations": Number(0), "memoryCostKib": Number(0), "parallelism": Number(0)}, "blockSize": Number(0), "cpuMemCost": Number(0), "dkLen": Number(0), "hashAlgorithm": String("SCRYPT"), "memoryCost": Number(0), "parallelization": Number(0), "rounds": Number(0)}

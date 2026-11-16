@@ -8468,6 +8468,63 @@ mod credential_persistence_tests {
         }
     }
 
+    /// Hash parameters strict refuses at import, in the shapes firebase-tools 15.28.2 accepts
+    /// (it reads none of them, `operations.js:256-345`): any algorithm name and any integer.
+    fn ignored_hash_options() -> impl proptest::strategy::Strategy<Value = Value> {
+        use proptest::prelude::*;
+        let algorithm = prop_oneof![
+            Just("MD5".to_owned()),
+            Just("SHA256".to_owned()),
+            Just("HMAC_SHA256".to_owned()),
+            Just("PBKDF_SHA1".to_owned()),
+            Just("SCRYPT".to_owned()),
+            Just("STANDARD_SCRYPT".to_owned()),
+            Just("ARGON2".to_owned()),
+            "[A-Z_]{1,12}",
+        ];
+        let int = prop_oneof![
+            Just(0_i64),
+            Just(-1),
+            Just(8193),
+            Just(120_001),
+            Just(1 << 40),
+            any::<i32>().prop_map(i64::from)
+        ];
+        (algorithm, int.clone(), int.clone(), int).prop_map(|(algorithm, a, b, c)| {
+            json!({"hashAlgorithm": algorithm, "rounds": a,
+                "memoryCost": b, "cpuMemCost": c, "blockSize": a, "parallelization": b, "dkLen": c,
+                "argon2Parameters": {"hashType": "ARGON2_ID", "memoryCostKib": a, "iterations": b,
+                    "parallelism": c, "hashLengthBytes": a}})
+        })
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        /// N6 (security review 2026-11-15): whatever hash parameters the emulator profile
+        /// accepts at import, the account exports and restores, and no password signs in
+        /// before or after the restore.
+        #[test]
+        fn accepted_hash_parameters_export_and_restore(options in ignored_hash_options()) {
+            let state = state();
+            let mut request = options.clone();
+            request["users"] = json!([{"localId": "h", "email": "persist@example.com",
+                "passwordHash": "AAAA", "salt": "AAAA"}]);
+            let imported = post(&state, "projects/demo-app/accounts:batchCreate", &request);
+            proptest::prop_assert_eq!(imported.status, 200, "{}", imported.body);
+            proptest::prop_assert!(imported.body.get("error").is_none(), "{}", imported.body);
+            proptest::prop_assert_eq!(login(&state, "password123").status, 400);
+            {
+                let store = state.store.lock().unwrap();
+                let user = store.user_by_email("persist@example.com").unwrap();
+                let path = std::path::Path::new("accounts.json");
+                let checked = super::ensure_restorable(&store, user, &path);
+                proptest::prop_assert!(checked.is_ok(), "{:?}", checked);
+            }
+            restore(&state, "password123");
+            proptest::prop_assert_eq!(login(&state, "password123").status, 400);
+        }
+    }
+
     #[test]
     fn admin_client_and_reset_changes_reject_previous_password_after_restore() {
         for route in ["projects/demo-app/accounts", "accounts:signUp"] {
