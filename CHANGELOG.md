@@ -15,6 +15,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 - Outside duplicate-email mode, an account imported with the same email as another can change its password again (strict profile); duplicate-email mode keeps one password account per address.
 - `STANDARD_SCRYPT` imports accept `parallelization` up to 16, as production does (1, 4, 5 and 16 were recorded on 2026-11-15), with total CPU work bounded locally (not peak memory); peak algorithm buffers per derivation are at most 112 MiB plus 1,024 output bytes, excluding inputs, stack and allocator overhead.
 - An Auth export can always be restored by fireemu: a restore accepts exactly the hash parameters `accounts:batchCreate` accepts and names the parameter it refuses, and an export refuses, naming the account, a credential it could not restore. HMAC and Firebase SCRYPT credentials keep their `signerKey` and mark it with `"secrets": ["signerKey"]`; older exports load unchanged.
+- Strict profile: an email link that verifies the address of an account that had never verified it and removes its password now also ends that account's earlier sessions, so their ID and refresh tokens answer `TOKEN_EXPIRED`, as production does (recorded 2026-11-15). An account whose address was already verified keeps its password and sessions. The emulator profile is unchanged.
+- Strict profile: after an Admin email change, the account's earlier refresh tokens answer `TOKEN_EXPIRED` as production does (recorded 2026-11-15), not `INVALID_REFRESH_TOKEN`.
 
 ## [0.54.0] - 2026-11-15
 
