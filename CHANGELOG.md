@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-16
+
 ### Fixed
 
 - In the emulator profile, an ID token without a usable `iat` is checked against a per-account `validSince` kept as firebase-tools 15.28.2 keeps it: a password, an email change through `accounts:update`, a verified identity provider taking over an account, a batch import and a privileged `validSince` assign the current second (also after a clock rewind), and disabling, second-factor withdrawal and other updates leave it. An artifact import gives every account the import second, as firebase-tools' own import does. Strict, integer-claim tokens and the reported `validSince` are unchanged.
@@ -18,7 +20,6 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 - Strict profile: an email link that verifies the address of an account that had never verified it and removes its password now also ends that account's earlier sessions, so their ID and refresh tokens answer `TOKEN_EXPIRED`, as production does (recorded 2026-11-15). An account whose address was already verified keeps its password and sessions. The emulator profile is unchanged.
 - Strict profile: after an Admin email change, the account's earlier refresh tokens answer `TOKEN_EXPIRED` as production does (recorded 2026-11-15), not `INVALID_REFRESH_TOKEN`.
 - In the emulator profile, `accounts:batchCreate` no longer refuses hash parameters that firebase-tools 15.28.2 ignores (an unknown `hashAlgorithm`, out-of-range rounds or memory costs, a missing `signerKey`, out-of-range standard scrypt or Argon2 parameters). The account is created and keeps its hash as a credential no password matches, so a password sign-in answers as for a wrong password, nothing is derived, and the account exports and restores. A non-string `hashAlgorithm` and undecodable bytes stay refused. Strict keeps production's codes.
-- Tests now pin that the emulator profile redeems a refresh token minted before a password change, an email change or a `validSince` revocation, as firebase-tools' `grantToken` does, while strict answers `TOKEN_EXPIRED`.
 
 ## [0.54.0] - 2026-11-15
 
@@ -1392,7 +1393,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/fireemu/fireemu/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/fireemu/fireemu/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/fireemu/fireemu/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/fireemu/fireemu/compare/v0.51.0...v0.52.0
