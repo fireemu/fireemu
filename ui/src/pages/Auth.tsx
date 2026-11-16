@@ -20,6 +20,7 @@ import {
   RelativeTime,
   Section,
   Spinner,
+  StatusBadge,
 } from "../components/common";
 import {
   createUser,
@@ -234,20 +235,14 @@ const UserEditor: Component<{
       <Notice message={notice()} />
       <CopyField label={t("auth.uid")} value={props.uid} testId="edit-uid" />
       <div class="mb-2 flex flex-wrap gap-1">
-        <span
-          class={`badge ${props.user.disabled ? "bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100"}`}
-        >
+        <StatusBadge tone={props.user.disabled ? "neutral" : "success"}>
           {props.user.disabled ? t("auth.disabled") : t("auth.enabled")}
-        </span>
+        </StatusBadge>
         <Show when={props.user.emailVerified}>
-          <span class="badge bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100">
-            {t("auth.emailVerified")}
-          </span>
+          <StatusBadge tone="success">{t("auth.emailVerified")}</StatusBadge>
         </Show>
         <Show when={(props.user.mfaInfo?.length ?? 0) > 0}>
-          <span class="badge bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-100">
-            {t("auth.mfa")}
-          </span>
+          <StatusBadge tone="info">{t("auth.mfa")}</StatusBadge>
         </Show>
       </div>
       <div class="grid gap-2 md:grid-cols-2">
@@ -313,7 +308,7 @@ const UserEditor: Component<{
         <div class="label">{t("auth.mfa")}</div>
         <Show
           when={(props.user.mfaInfo?.length ?? 0) > 0}
-          fallback={<p class="text-sm text-zinc-500">{t("auth.mfaNone")}</p>}
+          fallback={<p class="text-sm text-muted">{t("auth.mfaNone")}</p>}
         >
           <ul class="space-y-1 text-sm">
             <For each={props.user.mfaInfo ?? []}>
@@ -321,7 +316,7 @@ const UserEditor: Component<{
                 <li class="flex items-center gap-2">
                   <span class="mono">{m.mfaEnrollmentId}</span>
                   <span>{m.phoneInfo ?? (m.totpInfo ? "TOTP" : "")}</span>
-                  <span class="text-zinc-500">{m.displayName}</span>
+                  <span class="text-muted">{m.displayName}</span>
                   <AsyncButton class="btn" onClick={() => withdraw(m.mfaEnrollmentId)}>
                     {t("auth.mfaWithdraw")}
                   </AsyncButton>
@@ -517,7 +512,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
         <Show when={!loading() || users().length > 0} fallback={<Spinner />}>
           <Show
             when={users().length > 0}
-            fallback={<p class="text-sm text-zinc-500">{t("auth.noUsers")}</p>}
+            fallback={<p class="text-sm text-muted">{t("auth.noUsers")}</p>}
           >
             <div
               class="max-w-full overflow-x-auto"
@@ -547,18 +542,14 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         data-testid={`user-row-${u.localId}`}
                       >
                         <td class="mono">
-                          <button
-                            type="button"
-                            class="text-amber-700 hover:underline dark:text-amber-300"
-                            onClick={() => select(u.localId)}
-                          >
+                          <button type="button" class="link" onClick={() => select(u.localId)}>
                             {u.localId}
                           </button>
                         </td>
                         <td>
                           {u.email}
                           <Show when={u.emailVerified}>
-                            <span class="ml-1 text-xs text-emerald-600">
+                            <span class="ml-1 text-xs text-success">
                               ({t("auth.emailVerified")})
                             </span>
                           </Show>
@@ -581,9 +572,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         </td>
                         <td class="text-right">
                           <Show when={u.disabled}>
-                            <span class="badge bg-zinc-200 dark:bg-zinc-800">
-                              {t("auth.disabled")}
-                            </span>
+                            <StatusBadge tone="neutral">{t("auth.disabled")}</StatusBadge>
                           </Show>
                           <ConfirmButton
                             label={t("app.delete")}
@@ -615,7 +604,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
           </Show>
         </Show>
       </Section>
-      <p class="mb-2 text-sm text-zinc-500" data-testid="auth-codes-hint">
+      <p class="mb-2 text-sm text-muted" data-testid="auth-codes-hint">
         {t("auth.codesHint")}
       </p>
       <div class="grid gap-4 md:grid-cols-2">
@@ -623,7 +612,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
           <Show when={codes.latest !== undefined} fallback={<Spinner />}>
             <Show
               when={(codes.latest?.unwrapOr({ oobCodes: [] }).oobCodes.length ?? 0) > 0}
-              fallback={<p class="text-sm text-zinc-500">{t("auth.noOobCodes")}</p>}
+              fallback={<p class="text-sm text-muted">{t("auth.noOobCodes")}</p>}
             >
               <table class="table" data-testid="oob-table">
                 <thead>
@@ -640,12 +629,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         <td>{c.email}</td>
                         <td class="text-xs">{c.requestType}</td>
                         <td class="mono break-all">
-                          <a
-                            href={c.oobLink}
-                            class="text-amber-700 hover:underline dark:text-amber-300"
-                            target="_blank"
-                            rel="noreferrer"
-                          >
+                          <a href={c.oobLink} class="link" target="_blank" rel="noreferrer">
                             {c.oobCode}
                           </a>
                         </td>
@@ -664,7 +648,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
                 (phoneCodes.latest?.unwrapOr({ verificationCodes: [] }).verificationCodes.length ??
                   0) > 0
               }
-              fallback={<p class="text-sm text-zinc-500">{t("auth.noVerificationCodes")}</p>}
+              fallback={<p class="text-sm text-muted">{t("auth.noVerificationCodes")}</p>}
             >
               <table class="table">
                 <thead>

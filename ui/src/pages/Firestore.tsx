@@ -22,6 +22,7 @@ import {
   FetchState,
   Notice,
   RelativeTime,
+  StatusBadge,
 } from "../components/common";
 import { ValueTree } from "../components/ValueTree";
 import { buildValueTree } from "../lib/valueTree";
@@ -248,7 +249,7 @@ const Breadcrumbs: Component<{ path: string; db: string }> = (props) => {
       <For each={segments()}>
         {(s, i) => (
           <>
-            <span class="text-zinc-400">/</span>
+            <span class="text-muted">/</span>
             <A href={link(i())} class="link">
               {s}
             </A>
@@ -713,11 +714,11 @@ const DocumentView: Component<{
         }}
       >
         <Show when={missing()}>
-          <p class="mb-3 text-sm text-zinc-500">{t("firestore.missing")}</p>
+          <p class="mb-3 text-sm text-muted">{t("firestore.missing")}</p>
         </Show>
         <Show when={current()}>
           {(d) => (
-            <div class="mb-3 flex flex-wrap gap-x-4 text-xs text-zinc-600 dark:text-zinc-400">
+            <div class="mb-3 flex flex-wrap gap-x-4 text-xs text-secondary">
               <span class="whitespace-nowrap">
                 {t("firestore.createTime")}: <span class="mono">{d().createTime}</span>
                 <RelativeTime value={d().createTime} />
@@ -734,7 +735,7 @@ const DocumentView: Component<{
           fallback={
             <Show
               when={fieldRows().length > 0}
-              fallback={<p class="text-sm text-zinc-500">{t("firestore.noFields")}</p>}
+              fallback={<p class="text-sm text-muted">{t("firestore.noFields")}</p>}
             >
               <ValueTree
                 nodes={buildValueTree(current()?.fields)}
@@ -783,7 +784,7 @@ const DocumentView: Component<{
           </div>
         </Show>
         <Show when={showJson()}>
-          <pre class="mono mt-3 whitespace-pre-wrap rounded-md bg-zinc-100 p-3 dark:bg-zinc-800">
+          <pre class="mono mt-3 whitespace-pre-wrap code-block text-[0.8125rem]">
             {JSON.stringify(current()?.fields ?? {}, null, 2)}
           </pre>
         </Show>
@@ -1026,10 +1027,10 @@ const CollectionView: Component<{
                       {lastSegment(d.name)}
                     </A>
                     <Show when={!d.createTime && !d.fields}>
-                      <span class="ml-2 text-xs text-zinc-400">({t("firestore.missing")})</span>
+                      <span class="ml-2 text-xs text-muted">({t("firestore.missing")})</span>
                     </Show>
                   </td>
-                  <td class="mono break-all text-zinc-600 dark:text-zinc-400">
+                  <td class="mono break-all text-secondary">
                     {Object.entries(d.fields ?? {})
                       .slice(0, 4)
                       .map(([k, v]) => `${k}: ${summarize(v)}`)
@@ -1194,22 +1195,15 @@ const Firestore: Component = () => {
           database={db()}
           onSelect={(name) => setSearch({ db: name })}
         />
-        <span class="text-sm text-zinc-500">
+        <span class="text-sm text-muted">
           {t("firestore.project")}: <span class="mono">{appState.project()}</span>
         </span>
-        <span
-          class="badge bg-violet-100 text-violet-900 dark:bg-violet-900 dark:text-violet-100"
-          title={t("app.adminHint")}
-          data-testid="admin-badge"
-        >
+        <span class="badge badge-accent" title={t("app.adminHint")} data-testid="admin-badge">
           {t("app.admin")}
         </span>
-        <span
-          class={`badge ${live() ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : "bg-zinc-200 text-zinc-600 dark:bg-zinc-800"}`}
-          data-testid="live-badge"
-        >
+        <StatusBadge tone={live() ? "success" : "neutral"} testId="live-badge">
           {live() ? t("firestore.live") : t("firestore.liveOff")}
-        </span>
+        </StatusBadge>
       </div>
       <div class="mb-3 flex flex-wrap items-center gap-2">
         <Breadcrumbs path={path()} db={db()} />

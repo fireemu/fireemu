@@ -3,15 +3,62 @@ import { t } from "../i18n";
 import { relativeTime } from "../lib/relativeTime";
 import { createSubmitGuard } from "../lib/submitGuard";
 import { appState } from "../state";
+import {
+  IconCopy,
+  IconDanger,
+  IconInfo,
+  IconNeutral,
+  IconPaused,
+  IconSuccess,
+  IconWarning,
+} from "./icons";
+
+/** The meaning a state carries. Frozen clock is info, queued and cancelled are neutral. */
+export type Tone = "success" | "warning" | "danger" | "info" | "neutral" | "paused";
+
+const TONE_ICON: Record<Tone, Component> = {
+  success: IconSuccess,
+  warning: IconWarning,
+  danger: IconDanger,
+  info: IconInfo,
+  neutral: IconNeutral,
+  paused: IconPaused,
+};
+
+/** The badge class for a tone ("paused" reads as info). */
+export const toneBadgeClass = (tone: Tone): string =>
+  `badge badge-${tone === "paused" ? "info" : tone}`;
+
+/** A status pill: a label, a tone colour and a shape icon, so it never rests on colour alone. */
+export const StatusBadge: Component<{
+  tone: Tone;
+  children: JSX.Element;
+  testId?: string | undefined;
+  title?: string | undefined;
+  class?: string | undefined;
+  "aria-hidden"?: boolean | "true" | "false" | undefined;
+}> = (props) => {
+  const icon = () => TONE_ICON[props.tone];
+  return (
+    <span
+      class={`${toneBadgeClass(props.tone)}${props.class ? ` ${props.class}` : ""}`}
+      data-tone={props.tone}
+      data-testid={props.testId}
+      title={props.title}
+      aria-hidden={props["aria-hidden"]}
+    >
+      {icon()({})}
+      {props.children}
+    </span>
+  );
+};
 
 /** An error line (hidden while empty). */
 export const ErrorBanner: Component<{ message: string | null | undefined }> = (props) => (
   <Show when={props.message}>
-    <div
-      role="alert"
-      class="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
-    >
-      {props.message}
+    <div role="alert" class="callout callout-danger">
+      <IconDanger />
+      <span class="min-w-0 flex-1 break-words">{props.message}</span>
     </div>
   </Show>
 );
@@ -19,11 +66,9 @@ export const ErrorBanner: Component<{ message: string | null | undefined }> = (p
 /** A short success line. */
 export const Notice: Component<{ message: string | null | undefined }> = (props) => (
   <Show when={props.message}>
-    <div
-      role="status"
-      class="mb-3 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-    >
-      {props.message}
+    <div role="status" class="callout callout-success">
+      <IconSuccess />
+      <span class="min-w-0 flex-1 break-words">{props.message}</span>
     </div>
   </Show>
 );
@@ -54,6 +99,9 @@ export const AsyncButton: Component<{
   disabled?: boolean | undefined;
   children: JSX.Element;
   testId?: string | undefined;
+  /** A full accessible name when the visible label is shortened; it must contain that label. */
+  ariaLabel?: string | undefined;
+  title?: string | undefined;
 }> = (props) => {
   const guard = createSubmitGuard();
   return (
@@ -62,6 +110,8 @@ export const AsyncButton: Component<{
       class={props.class ?? "btn"}
       disabled={props.disabled || guard.pending()}
       aria-busy={guard.pending()}
+      aria-label={props.ariaLabel}
+      title={props.title}
       data-testid={props.testId}
       onClick={() => void guard.run(props.onClick)}
     >
@@ -99,13 +149,13 @@ export const ConfirmButton: Component<{
       }
     >
       <span
-        class="inline-flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-50 px-2 py-1 text-sm dark:border-red-800 dark:bg-red-950"
+        class="inline-flex flex-wrap items-center gap-2 rounded-control border border-danger-line bg-danger-subtle px-2 py-1 text-sm"
         role="alertdialog"
       >
         <span>
           <span class="font-semibold">{props.question}</span>
           <Show when={props.details}>
-            <span class="block text-xs text-zinc-600 dark:text-zinc-300">{props.details}</span>
+            <span class="block text-xs text-secondary">{props.details}</span>
           </Show>
         </span>
         <AsyncButton
@@ -152,11 +202,12 @@ export const CopyButton: Component<{
   return (
     <button
       type="button"
-      class="link shrink-0 text-xs"
+      class="link inline-flex shrink-0 items-center gap-1 text-xs [&>svg]:size-3.5"
       aria-label={t("app.copySubject", { subject: props.subject })}
       data-testid={props.testId}
       onClick={() => void copy()}
     >
+      {copied() ? <IconSuccess /> : <IconCopy />}
       <span aria-live="polite">{copied() ? t("app.copied") : t("app.copy")}</span>
     </button>
   );
@@ -175,7 +226,7 @@ export const SectionNav: Component<{
       {(section) => (
         <button
           type="button"
-          class="btn rounded-full py-0.5 text-xs"
+          class="btn btn-sm rounded-full"
           onClick={() => {
             const target = document.getElementById(section.id);
             if (!target) return;
@@ -202,7 +253,7 @@ export const RelativeTime: Component<{ value: string | undefined }> = (props) =>
     <Show when={text()}>
       {(distance) => (
         <span
-          class="ml-1 font-sans text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400"
+          class="ml-1 font-sans text-xs whitespace-nowrap text-secondary"
           data-testid="relative-time"
         >
           ({distance()})
@@ -259,6 +310,7 @@ export const CopyField: Component<{
           onFocus={(e) => e.currentTarget.select()}
         />
         <AsyncButton onClick={copy} testId={props.testId ? `${props.testId}-copy` : undefined}>
+          {copied() ? <IconSuccess /> : <IconCopy />}
           {copied() ? t("app.copied") : t("app.copy")}
         </AsyncButton>
       </div>
@@ -283,11 +335,8 @@ export const FetchState: Component<{
   <Show
     when={!props.error}
     fallback={
-      <div
-        role="alert"
-        data-testid="fetch-error"
-        class="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
-      >
+      <div role="alert" data-testid="fetch-error" class="callout callout-danger items-center">
+        <IconDanger />
         <span class="font-semibold">{t("app.fetchFailed")}</span>
         <span class="break-all">{props.error}</span>
         <Show when={props.onRetry}>
@@ -302,11 +351,8 @@ export const FetchState: Component<{
   >
     <Show when={!props.loading} fallback={<Spinner />}>
       <Show when={props.stale}>
-        <div
-          role="status"
-          data-testid="fetch-stale"
-          class="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
-        >
+        <div role="status" data-testid="fetch-stale" class="callout callout-warning items-center">
+          <IconWarning />
           <span class="font-semibold">{t("app.fetchStale")}</span>
           <span class="break-all">{props.stale}</span>
           <Show when={props.onRetry}>
@@ -320,7 +366,7 @@ export const FetchState: Component<{
       </Show>
       <Show
         when={!props.empty}
-        fallback={<p class="text-sm text-zinc-500">{props.emptyMessage ?? t("app.none")}</p>}
+        fallback={<p class="text-sm text-muted">{props.emptyMessage ?? t("app.none")}</p>}
       >
         {props.children}
       </Show>
@@ -329,7 +375,7 @@ export const FetchState: Component<{
 );
 
 export const Spinner: Component = () => (
-  <span class="text-sm text-zinc-500" role="status">
+  <span class="text-sm text-muted" role="status">
     {t("app.loading")}
   </span>
 );

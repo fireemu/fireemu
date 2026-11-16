@@ -41,12 +41,16 @@ it("links the Hosting page in the products navigation, after Functions", () => {
 it("says in the header whether the clock is frozen or follows real time", () => {
   appState.setConfig({ ...appState.config(), clockMode: "frozen" });
   const frozen = render(() => <Router root={App}>{routes}</Router>);
-  expect(frozen.getByTestId("context-bar").textContent).toContain("frozen");
+  expect(frozen.getByTestId("clock-mode").textContent).toBe("Frozen");
+  expect(frozen.getByTestId("clock-mode").title).toContain("stands still until advanced");
+  expect(frozen.getByTestId("clock-mode").dataset.tone).toBe("paused");
   cleanup();
   appState.setConfig({ ...appState.config(), clockMode: "realtime" });
   const live = render(() => <Router root={App}>{routes}</Router>);
-  expect(live.getByTestId("context-bar").textContent).toContain("real time");
-  expect(live.getByTestId("context-bar").textContent).not.toContain("frozen");
+  expect(live.getByTestId("clock-mode").textContent).toBe("Real time");
+  expect(live.getByTestId("clock-mode").title).toContain("wall clock");
+  expect(live.getByTestId("clock-mode").dataset.tone).toBe("neutral");
+  expect(live.getByTestId("context-bar").textContent).not.toContain("Frozen");
 });
 
 it("announces connection transitions without announcing each successful poll", async () => {

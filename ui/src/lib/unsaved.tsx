@@ -88,7 +88,7 @@ export const LeavePrompt: Component<{ guard: LeaveGuard; subject: string }> = (p
       role="alertdialog"
       aria-live="assertive"
       data-testid="unsaved-prompt"
-      class="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+      class="callout callout-warning items-center"
     >
       <span>{t("app.unsaved", { subject: props.subject })}</span>
       <button

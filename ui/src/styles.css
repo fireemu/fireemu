@@ -1,7 +1,12 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
+@import "./styles/tailwind-theme.css";
 
-/* Dark styles follow the OS unless the document carries an explicit data-theme (the theme
-   toggle sets it only for a deliberate choice, so the first paint needs no script). */
+/* Colours come from the semantic tokens in styles/tokens.css, which switch with the theme on
+   their own, so components need no `dark:` colour variants. The variant stays for the rare
+   case that differs by more than a colour. Dark follows the OS unless the document carries an
+   explicit data-theme (the theme toggle sets it only for a deliberate choice, so the first
+   paint needs no script). */
 @custom-variant dark {
   @media (prefers-color-scheme: dark) {
     &:where(:not([data-theme="light"], [data-theme="light"] *)) {
@@ -11,11 +16,6 @@
   &:where([data-theme="dark"], [data-theme="dark"] *) {
     @slot;
   }
-}
-
-@theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @layer base {
@@ -29,42 +29,93 @@
     color-scheme: dark;
   }
   body {
-    @apply bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 antialiased;
+    @apply bg-canvas text-sm text-content antialiased;
+  }
+  /* Keyboard focus is its own signal: a 2px blue outline with a 2px gap of the background,
+     never the orange used for selection. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: var(--fe-focus-width) solid var(--fe-focus-ring);
+    outline-offset: var(--fe-focus-offset);
+  }
+  /* Native checkboxes and radios take the action colour and a fixed size. */
+  input:where([type="checkbox"], [type="radio"]) {
+    accent-color: var(--fe-action-bg);
+    width: 1rem;
+    height: 1rem;
+    vertical-align: -0.125rem;
+  }
+  ::placeholder {
+    color: var(--fe-input-placeholder);
+    opacity: 1;
   }
 }
 
 @layer components {
-  /* Keyboard focus is always visible: a ring that reads on light and dark grounds. */
   .btn {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-sm font-medium text-zinc-800 shadow-xs hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800;
+    @apply inline-flex min-h-[var(--fe-button-min-height)] items-center justify-center gap-1.5 whitespace-nowrap rounded-control border border-line bg-surface px-3 py-1 text-sm font-medium text-content transition-colors duration-[var(--fe-duration-fast)] enabled:hover:bg-hover enabled:active:bg-pressed disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled disabled:text-on-disabled;
   }
-  /* Dark text on amber in both themes: white on amber-500 is about 2.1:1, far below WCAG AA. */
+  .btn > svg {
+    @apply size-4 shrink-0;
+  }
+  /* The one filled colour: the main action. White on ember-700 is about 5.2:1 in light, dark
+     text on ember-400 about 7.8:1 in dark. */
   .btn-primary {
-    @apply border-amber-600 bg-amber-500 text-zinc-950 hover:bg-amber-400 dark:border-amber-500 dark:bg-amber-500 dark:hover:bg-amber-400 dark:text-zinc-950;
+    @apply border-action bg-action text-on-action enabled:hover:border-action-hover enabled:hover:bg-action-hover enabled:active:border-action-pressed enabled:active:bg-action-pressed;
   }
   .btn-danger {
-    @apply border-red-700 bg-red-700 text-white hover:bg-red-800 dark:border-red-500 dark:bg-red-600 dark:hover:bg-red-500;
+    @apply border-danger-action bg-danger-action text-on-danger-action enabled:hover:border-danger-action-hover enabled:hover:bg-danger-action-hover enabled:active:bg-danger-action-hover;
+  }
+  /* Compact controls for table rows, the header and chips. */
+  .btn-sm {
+    @apply min-h-[var(--fe-control-sm)] px-2 py-0.5 text-xs;
   }
   .input {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm text-zinc-900 focus:border-amber-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100;
+    @apply min-h-[var(--fe-control-md)] w-full rounded-control border border-control-line bg-[var(--fe-input-bg)] px-2.5 py-1.5 text-sm text-[var(--fe-input-fg)] aria-invalid:border-[var(--fe-input-border-invalid)] disabled:cursor-not-allowed disabled:border-disabled-line disabled:bg-disabled disabled:text-on-disabled;
+  }
+  /* Selects drop the platform chrome and draw a chevron (border-control grey reads on both
+     themes) so they match text inputs. */
+  select.input {
+    @apply appearance-none bg-no-repeat pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238B8B95' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center;
+    background-size: 1rem;
+  }
+  .input-sm {
+    @apply min-h-[var(--fe-control-sm)] py-0.5 text-xs;
   }
   .card {
-    @apply rounded-lg border border-zinc-200 bg-white p-4 shadow-xs dark:border-zinc-800 dark:bg-zinc-900;
+    @apply rounded-panel border border-line-subtle bg-surface p-4;
   }
   .label {
-    @apply block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400;
+    @apply block text-xs font-semibold tracking-wide text-muted uppercase;
   }
   .table {
-    @apply w-full border-collapse text-sm;
+    @apply w-full border-collapse text-[0.8125rem] leading-5;
   }
   .table th {
-    @apply border-b border-zinc-200 px-2 py-1 text-left text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400;
+    @apply border-b border-line px-2 py-2 text-left text-xs font-semibold tracking-wide text-muted uppercase;
   }
   .table td {
-    @apply border-b border-zinc-100 px-2 py-1.5 align-top dark:border-zinc-800;
+    @apply border-b border-line-subtle px-2 py-2 align-top;
   }
   .table tbody tr {
-    @apply transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50;
+    @apply transition-colors duration-[var(--fe-duration-fast)] hover:bg-[var(--fe-table-row-hover-bg)];
+  }
+  .table tbody tr[aria-selected="true"] {
+    @apply bg-[var(--fe-table-row-selected-bg)];
+  }
+  /* Row actions stay compact so a row with buttons keeps the table's rhythm. */
+  .table td .btn {
+    @apply min-h-[var(--fe-control-sm)] py-0.5;
+  }
+  /* A row-actions column that stays in view while a wide table scrolls sideways (-right-1
+     covers the .table-scroll padding). */
+  .table .sticky-actions {
+    @apply sticky -right-1 bg-surface;
+    box-shadow: -1px 0 0 var(--fe-border-subtle);
+  }
+  .table tbody tr:hover .sticky-actions {
+    @apply bg-[var(--fe-table-row-hover-bg)];
   }
   .table tbody tr:last-child td {
     @apply border-b-0;
@@ -78,84 +129,152 @@
   .mono {
     @apply font-mono text-[0.9em];
   }
+  /* Read-only code and JSON. */
+  .code-block {
+    @apply rounded-control border border-line-subtle bg-sunken p-3 font-mono text-xs;
+  }
+  /* Process logs and terminal output: dark in both themes. */
+  .console {
+    @apply rounded-control border border-line bg-console p-3 font-mono text-xs text-on-console;
+  }
+  /* A bordered group inside a card (a form, a detail pane). */
+  .inset {
+    @apply rounded-panel border border-line-subtle;
+  }
   .nav-link {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-zinc-700 transition-colors hover:bg-zinc-200 dark:text-zinc-300 dark:hover:bg-zinc-800;
-  }
-  .link {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-50 dark:focus-visible:ring-offset-zinc-950 rounded-sm text-amber-800 hover:underline dark:text-amber-300;
-  }
-  .nav-link[aria-current="page"] {
-    @apply bg-amber-100 font-semibold text-amber-900 dark:bg-amber-900/40 dark:text-amber-100;
-  }
-  .badge {
-    @apply inline-block rounded-full px-2 py-0.5 text-xs font-medium;
+    @apply relative flex min-h-[var(--fe-control-md)] items-center gap-2.5 rounded-control px-3 py-1.5 text-sm text-secondary transition-colors duration-[var(--fe-duration-fast)] hover:bg-hover hover:text-content;
   }
   .nav-link svg {
-    @apply size-4 shrink-0 text-zinc-500 dark:text-zinc-400;
+    @apply size-[var(--fe-icon-sm)] shrink-0 text-muted;
+  }
+  /* Selection: a tinted ground, a heavier weight and a bar on the leading edge, so it does not
+     rest on colour alone. */
+  .nav-link[aria-current="page"] {
+    @apply bg-[var(--fe-nav-active-bg)] font-semibold text-[var(--fe-nav-active-fg)];
+  }
+  .nav-link[aria-current="page"]::before {
+    content: "";
+    @apply absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-[var(--fe-nav-active-indicator)];
   }
   .nav-link[aria-current="page"] svg {
-    @apply text-amber-700 dark:text-amber-300;
+    @apply text-[var(--fe-nav-active-fg)];
+  }
+  .link {
+    @apply rounded-xs text-link underline-offset-2 hover:underline;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-xs leading-4 font-medium whitespace-nowrap;
+  }
+  .badge > svg {
+    @apply size-3.5 shrink-0;
+  }
+  .badge-success {
+    @apply border-success-line bg-success-subtle text-success;
+  }
+  .badge-warning {
+    @apply border-warning-line bg-warning-subtle text-warning;
+  }
+  .badge-danger {
+    @apply border-danger-line bg-danger-subtle text-danger;
+  }
+  .badge-info {
+    @apply border-info-line bg-info-subtle text-info;
+  }
+  .badge-neutral {
+    @apply border-line bg-sunken text-secondary;
+  }
+  .badge-accent {
+    @apply border-accent-line bg-accent-subtle text-accent;
+  }
+  /* Callouts: a tinted panel with a leading shape icon. */
+  .callout {
+    @apply mb-3 flex flex-wrap items-start gap-2 rounded-control border px-3 py-2 text-sm;
+  }
+  .callout > svg {
+    @apply mt-0.5 size-4 shrink-0;
+  }
+  .callout.items-center > svg {
+    @apply mt-0;
+  }
+  .callout-danger {
+    @apply border-danger-line bg-danger-subtle text-danger;
+  }
+  .callout-success {
+    @apply border-success-line bg-success-subtle text-success;
+  }
+  .callout-warning {
+    @apply border-warning-line bg-warning-subtle text-warning;
+  }
+  .callout-info {
+    @apply border-info-line bg-info-subtle text-info;
   }
   .page-title {
-    @apply text-xl font-bold tracking-tight;
+    @apply text-2xl leading-8 font-semibold tracking-tight;
   }
   .hint {
-    @apply text-sm text-zinc-600 dark:text-zinc-400;
+    @apply text-sm text-secondary;
   }
   .kbd {
-    @apply inline-flex min-w-5 items-center justify-center rounded border border-zinc-300 bg-zinc-50 px-1 font-mono text-[0.7rem] leading-5 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300;
+    @apply inline-flex min-w-5 items-center justify-center rounded-xs border border-line bg-sunken px-1 font-mono text-[0.7rem] leading-5 text-secondary;
   }
   /* A figure with its caption: the Overview tiles and the Functions runtime counters. */
   .stat {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 block rounded-lg border border-zinc-200 bg-white p-3 shadow-xs dark:border-zinc-800 dark:bg-zinc-900;
+    @apply block rounded-panel border border-line-subtle bg-surface p-3;
   }
   a.stat {
-    @apply transition-colors hover:border-amber-400 dark:hover:border-amber-600;
+    @apply transition-colors duration-[var(--fe-duration-fast)] hover:border-control-line hover:bg-hover;
   }
   .stat-value {
     @apply text-2xl font-semibold tabular-nums tracking-tight;
   }
   .tab {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 -mb-px border-b-2 border-transparent px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100;
+    @apply -mb-px inline-flex min-h-[var(--fe-control-md)] items-center border-b-2 border-transparent px-3 py-1.5 text-sm font-medium text-secondary hover:text-content;
   }
   .tab[aria-selected="true"] {
-    @apply border-amber-500 text-zinc-900 dark:text-zinc-50;
+    @apply border-selection-indicator font-semibold text-content;
   }
   /* Value types read by colour as well as by their label. */
   .type-chip {
-    @apply inline-block rounded px-1.5 py-px font-mono text-[0.7rem] leading-4 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300;
+    @apply inline-block rounded-xs bg-sunken px-1.5 py-px font-mono text-[0.7rem] leading-4 text-secondary;
   }
   .value-string {
-    @apply text-emerald-800 dark:text-emerald-300;
+    color: var(--fe-syntax-string);
   }
   .value-number {
-    @apply text-sky-800 dark:text-sky-300;
+    color: var(--fe-syntax-number);
   }
   .value-boolean {
-    @apply text-violet-800 dark:text-violet-300;
+    color: var(--fe-syntax-boolean);
   }
   .value-null {
-    @apply text-zinc-500 italic dark:text-zinc-400;
+    @apply italic;
+    color: var(--fe-syntax-null);
   }
   .value-special {
-    @apply text-amber-800 dark:text-amber-300;
+    color: var(--fe-syntax-special);
   }
   .meter {
-    @apply h-1.5 w-16 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700;
+    @apply h-1.5 w-16 overflow-hidden rounded-full bg-pressed;
   }
   .meter > span {
-    @apply block h-full rounded-full bg-emerald-500;
+    @apply block h-full rounded-full bg-success-indicator;
   }
   .meter[data-level="warn"] > span {
-    @apply bg-amber-500;
+    @apply bg-warning-indicator;
   }
   .meter[data-level="full"] > span {
-    @apply bg-red-500;
+    @apply bg-danger-indicator;
   }
   .file-input {
-    @apply max-w-full text-sm text-zinc-600 dark:text-zinc-400;
+    @apply max-w-full text-sm text-secondary;
   }
   .file-input::file-selector-button {
-    @apply mr-2 cursor-pointer rounded-md border border-solid border-zinc-300 bg-white px-2.5 py-1 text-sm font-medium text-zinc-800 shadow-xs hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800;
+    @apply mr-2 min-h-[var(--fe-control-md)] cursor-pointer rounded-control border border-solid border-line bg-surface px-3 py-1 text-sm font-medium text-content hover:bg-hover;
+  }
+  .overlay {
+    background: var(--fe-overlay);
+  }
+  .dialog {
+    @apply rounded-dialog border border-line bg-raised shadow-modal;
   }
 }

@@ -345,6 +345,20 @@ test("the canonical third-party license file includes the Firebase CLI MIT notic
   assert.match(notice, /Permission is hereby granted, free of charge/);
 });
 
+test("the canonical third-party license file includes the Lucide ISC and Feather MIT notices", () => {
+  const notice = readFileSync(join(repoRoot, "THIRD_PARTY_LICENSES.txt"), "utf8");
+  const start = notice.indexOf("Lucide icons\n------------");
+  assert.ok(start >= 0, "a Lucide icons section must exist");
+  const lucide = notice.slice(start);
+  assert.match(lucide, /ISC License/);
+  assert.match(lucide, /held by Cole Bemis 2013-2022 as part\s+of Feather \(MIT\)/);
+  assert.match(lucide, /held by Lucide\s+Contributors 2022/);
+  assert.match(lucide, /Permission to use, copy, modify, and\/or distribute this software/);
+  assert.match(lucide, /THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES/);
+  assert.match(lucide, /The MIT License \(MIT\)\s+Copyright \(c\) 2013-2023 Cole Bemis/);
+  assert.match(lucide, /Permission is hereby granted, free of charge/);
+});
+
 test("the launcher package includes the canonical third-party license file", () => {
   const root = mkdtempSync(join(tmpdir(), "fireemu-launcher-license-"));
   try {

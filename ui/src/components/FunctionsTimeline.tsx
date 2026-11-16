@@ -118,11 +118,11 @@ export const FunctionsTimeline: Component<{
         {t("functions.timelineOwner", { session: props.session, project: props.project })}
       </p>
       <Show when={props.stale}>
-        <p role="status" class="mb-2 text-sm text-amber-800 dark:text-amber-200">
+        <p role="status" class="mb-2 text-sm text-warning">
           {t("functions.timelineStale")}
         </p>
       </Show>
-      <p class="mb-2 text-xs text-zinc-500" data-testid="timeline-retention">
+      <p class="mb-2 text-xs text-muted" data-testid="timeline-retention">
         {t("functions.timelineGaps", {
           retained: props.causality?.retained ?? 0,
           retention: props.causality?.retention ?? 0,
@@ -175,7 +175,7 @@ export const FunctionsTimeline: Component<{
       <Show
         when={events().length > 0}
         fallback={
-          <p data-testid="timeline-empty" class="text-sm text-zinc-500">
+          <p data-testid="timeline-empty" class="text-sm text-muted">
             {t("functions.timelineEmpty")}
           </p>
         }
@@ -259,10 +259,7 @@ export const FunctionsTimeline: Component<{
         </Show>
       </Show>
       <Show when={selectedKey()}>
-        <div
-          class="mt-4 rounded-md border border-zinc-200 p-3 dark:border-zinc-700"
-          data-testid="timeline-detail"
-        >
+        <div class="mt-4 inset p-3" data-testid="timeline-detail">
           <button
             type="button"
             class="btn mb-2"
@@ -288,7 +285,7 @@ export const FunctionsTimeline: Component<{
               fallback={
                 <>
                   <p class="mb-2 text-sm">{t("functions.timelineUnavailable")}</p>
-                  <p class="mb-2 text-xs text-zinc-500">{t("functions.timelineUnknownEpoch")}</p>
+                  <p class="mb-2 text-xs text-muted">{t("functions.timelineUnknownEpoch")}</p>
                 </>
               }
             >
@@ -354,14 +351,14 @@ export const FunctionsTimeline: Component<{
               </ol>
             </Show>
             <h4 class="mb-1 text-sm font-semibold">{t("functions.timelineRelatedLogs")}</h4>
-            <p class="mb-1 text-xs text-zinc-500">{t("functions.timelineLogsPartial")}</p>
+            <p class="mb-1 text-xs text-muted">{t("functions.timelineLogsPartial")}</p>
             <Show when={props.logGaps}>
               <p class="mb-1 text-sm" data-testid="timeline-log-gaps">
                 {t("functions.timelineLogGaps")}
               </p>
             </Show>
             <pre
-              class="mono max-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-900 p-3 text-xs text-zinc-100"
+              class="mono max-h-64 overflow-auto whitespace-pre-wrap console"
               tabindex="0"
               aria-label={t("functions.timelineRelatedLogs")}
               data-testid="timeline-logs"
@@ -371,7 +368,7 @@ export const FunctionsTimeline: Component<{
           </Show>
         </div>
       </Show>
-      <p class="mt-2 text-xs text-zinc-500">
+      <p class="mt-2 text-xs text-muted">
         {t("functions.timelineUngroupedLogs", { count: ungrouped() })}
       </p>
     </Section>

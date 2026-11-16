@@ -24,6 +24,7 @@ import {
   Notice,
   RelativeTime,
   Section,
+  StatusBadge,
 } from "../components/common";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
@@ -134,10 +135,7 @@ const PublishForm: Component<{ topic: string; onDone: (count: number) => void }>
     );
   };
   return (
-    <div
-      class="mt-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
-      data-testid={`publish-${props.topic}`}
-    >
+    <div class="mt-2 inset p-2" data-testid={`publish-${props.topic}`}>
       <ErrorBanner message={error()} />
       <label class="block text-sm">
         <span class="label">{t("functions.message")}</span>
@@ -176,17 +174,17 @@ const InvokeResult: Component<{ response: InvokeResponse }> = (props) => (
       })}
     </div>
     <Show when={props.response.truncated}>
-      <p class="text-xs text-amber-700 dark:text-amber-300">
+      <p class="text-xs text-warning">
         {t("functions.invokeTruncated", { bytes: props.response.bodyLength })}
       </p>
     </Show>
     <Show when={props.response.headers.length > 0}>
-      <pre class="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-xs text-zinc-500">
+      <pre class="mono mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-xs text-muted">
         {props.response.headers.map(([name, value]) => `${name}: ${value}`).join("\n")}
       </pre>
     </Show>
     <pre
-      class="mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-zinc-900 p-2 text-xs text-zinc-100"
+      class="mono mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all console p-2"
       data-testid="invoke-response-body"
     >
       {props.response.bodyEncoding === "base64"
@@ -235,10 +233,7 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
   };
 
   return (
-    <div
-      class="mt-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
-      data-testid={`invoke-${props.f.name}`}
-    >
+    <div class="mt-2 inset p-2" data-testid={`invoke-${props.f.name}`}>
       <Show
         when={callable()}
         fallback={
@@ -351,10 +346,7 @@ const EnqueueForm: Component<{
     );
   };
   return (
-    <div
-      class="mt-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
-      data-testid={`enqueue-${props.f.name}`}
-    >
+    <div class="mt-2 inset p-2" data-testid={`enqueue-${props.f.name}`}>
       <label class="block text-sm">
         <span class="label">{t("functions.enqueueData")}</span>
         <textarea
@@ -435,7 +427,7 @@ const FunctionRow: Component<{
           </details>
         </Show>
         <Show when={trigger().kind === "http" && appState.config().functionsAddr}>
-          <div class="mono text-zinc-500">
+          <div class="mono text-muted">
             http://{appState.config().functionsAddr}/{props.project}/{props.f.region}/{props.f.name}
           </div>
         </Show>
@@ -463,7 +455,7 @@ const FunctionRow: Component<{
         </Show>
         <Show when={trigger().kind === "tasks" && (props.f.pendingTaskCount ?? 0) > 0}>
           <div class="mt-1" data-testid={`pending-tasks-${props.f.name}`}>
-            <div class="text-zinc-500">
+            <div class="text-muted">
               {t("functions.pendingTasks", { count: props.f.pendingTaskCount ?? 0 })}
             </div>
             <For each={props.f.pendingTasks ?? []}>
@@ -472,16 +464,14 @@ const FunctionRow: Component<{
                   <span class="mono">{task.id}</span>
                   <Show when={task.scheduleTime}>
                     {(due) => (
-                      <span class="mono text-zinc-500">
+                      <span class="mono text-muted">
                         {t("functions.pendingTaskDue", { time: due() })}
                       </span>
                     )}
                   </Show>
                   <Show
                     when={!task.runNow}
-                    fallback={
-                      <span class="text-zinc-500">{t("functions.pendingTaskReleased")}</span>
-                    }
+                    fallback={<span class="text-muted">{t("functions.pendingTaskReleased")}</span>}
                   >
                     <AsyncButton
                       class="btn"
@@ -513,7 +503,7 @@ const FunctionRow: Component<{
         </Show>
         <Show when={trigger().kind === "schedule" && props.f.nextRun}>
           {(nextRun) => (
-            <div class="mono text-xs text-zinc-500" data-testid={`next-run-${props.f.name}`}>
+            <div class="mono text-xs text-muted" data-testid={`next-run-${props.f.name}`}>
               {t("functions.nextRun")}: {nextRun()}
               <RelativeTime value={nextRun()} />
             </div>
@@ -523,108 +513,112 @@ const FunctionRow: Component<{
       <td class="text-xs">{props.f.timeoutSeconds}s</td>
       <td class="text-xs">{props.f.retry ? t("app.yes") : t("app.no")}</td>
       <td class="text-xs">{props.f.concurrency}</td>
-      <td class="space-y-1 text-right whitespace-nowrap [&>button]:ml-1">
-        <Show when={trigger().kind === "schedule"}>
-          <AsyncButton
-            class="btn"
-            disabled={!props.active}
-            testId={`run-${props.f.name}`}
-            onClick={async () => {
-              const r = await runSchedule(appState.session(), props.f.name);
-              r.match(
-                () => props.onNotice(`${t("functions.runNow")}: ${props.f.name}`),
-                (e) => props.onError(e.message),
-              );
-            }}
-          >
-            {t("functions.runNow")}
-          </AsyncButton>
-          <Show when={props.f.nextRun}>
-            {(nextRun) => (
-              <AsyncButton
-                class="btn"
-                disabled={!props.active}
-                testId={`advance-to-next-${props.f.name}`}
-                onClick={async () => {
-                  const r = await setClock(appState.session(), nextRun(), false);
-                  await r.match(
-                    async (c) => {
-                      appState.setClock(c.clock);
-                      props.onNotice(t("functions.advancedToNextRun", { instant: nextRun() }));
-                      await props.onRefresh();
-                    },
-                    async (e) => props.onError(e.message),
-                  );
-                }}
-              >
-                {t("functions.advanceToNextRun")}
-              </AsyncButton>
-            )}
+      <td class="sticky-actions w-0 text-right">
+        <div class="flex flex-col items-end gap-1 [&>.btn]:text-xs">
+          <Show when={trigger().kind === "schedule"}>
+            <AsyncButton
+              class="btn"
+              disabled={!props.active}
+              testId={`run-${props.f.name}`}
+              onClick={async () => {
+                const r = await runSchedule(appState.session(), props.f.name);
+                r.match(
+                  () => props.onNotice(`${t("functions.runNow")}: ${props.f.name}`),
+                  (e) => props.onError(e.message),
+                );
+              }}
+            >
+              {t("functions.runNow")}
+            </AsyncButton>
+            <Show when={props.f.nextRun}>
+              {(nextRun) => (
+                <AsyncButton
+                  class="btn"
+                  disabled={!props.active}
+                  testId={`advance-to-next-${props.f.name}`}
+                  ariaLabel={t("functions.advanceToNextRun")}
+                  title={t("functions.advanceToNextRun")}
+                  onClick={async () => {
+                    const r = await setClock(appState.session(), nextRun(), false);
+                    await r.match(
+                      async (c) => {
+                        appState.setClock(c.clock);
+                        props.onNotice(t("functions.advancedToNextRun", { instant: nextRun() }));
+                        await props.onRefresh();
+                      },
+                      async (e) => props.onError(e.message),
+                    );
+                  }}
+                >
+                  {t("functions.advanceShort")}
+                </AsyncButton>
+              )}
+            </Show>
           </Show>
-        </Show>
-        <Show when={trigger().kind === "pubsub"}>
-          <button
-            type="button"
-            class="btn"
-            disabled={!props.active}
-            data-testid={`publish-${props.f.name}`}
-            onClick={() => setPublishing(!publishing())}
-          >
-            {t("functions.publish")}
-          </button>
-        </Show>
-        <Show when={trigger().kind === "http"}>
-          <Show
-            when={props.functionsAddr}
-            fallback={
-              <span class="text-xs text-zinc-500" title={t("functions.invokeUnavailable")}>
-                {t("functions.invokeUnavailable")}
-              </span>
-            }
-          >
+          <Show when={trigger().kind === "pubsub"}>
             <button
               type="button"
               class="btn"
               disabled={!props.active}
-              data-testid={`invoke-${props.f.name}-toggle`}
-              onClick={() => setInvoking(!invoking())}
+              data-testid={`publish-${props.f.name}`}
+              onClick={() => setPublishing(!publishing())}
             >
-              {t("functions.invoke")}
+              {t("functions.publish")}
             </button>
           </Show>
-        </Show>
-        <Show when={trigger().kind === "tasks" && (props.f.pendingTaskCount ?? 0) > 0}>
-          <AsyncButton
-            class="btn"
-            disabled={!props.active}
-            testId={`run-${props.f.name}`}
-            onClick={async () => {
-              const r = await runTasks(appState.session(), props.f.name);
-              await r.match(
-                async (released) => {
-                  props.onNotice(
-                    t("functions.ranTasks", { count: released.released, name: props.f.name }),
-                  );
-                  await props.onRefresh();
-                },
-                async (e) => props.onError(e.message),
-              );
-            }}
-          >
-            {t("functions.runWaitingTasks")}
-          </AsyncButton>
-        </Show>
-        <Show when={trigger().kind === "tasks"}>
-          <button
-            type="button"
-            class="btn"
-            disabled={!props.active}
-            data-testid={`enqueue-${props.f.name}-toggle`}
-            onClick={() => setEnqueuing(!enqueuing())}
-          >
-            {t("functions.enqueue")}
-          </button>
-        </Show>
+          <Show when={trigger().kind === "http"}>
+            <Show
+              when={props.functionsAddr}
+              fallback={
+                <span class="text-xs text-muted" title={t("functions.invokeUnavailable")}>
+                  {t("functions.invokeUnavailable")}
+                </span>
+              }
+            >
+              <button
+                type="button"
+                class="btn"
+                disabled={!props.active}
+                data-testid={`invoke-${props.f.name}-toggle`}
+                onClick={() => setInvoking(!invoking())}
+              >
+                {t("functions.invoke")}
+              </button>
+            </Show>
+          </Show>
+          <Show when={trigger().kind === "tasks" && (props.f.pendingTaskCount ?? 0) > 0}>
+            <AsyncButton
+              class="btn"
+              disabled={!props.active}
+              testId={`run-${props.f.name}`}
+              onClick={async () => {
+                const r = await runTasks(appState.session(), props.f.name);
+                await r.match(
+                  async (released) => {
+                    props.onNotice(
+                      t("functions.ranTasks", { count: released.released, name: props.f.name }),
+                    );
+                    await props.onRefresh();
+                  },
+                  async (e) => props.onError(e.message),
+                );
+              }}
+            >
+              {t("functions.runWaitingTasks")}
+            </AsyncButton>
+          </Show>
+          <Show when={trigger().kind === "tasks"}>
+            <button
+              type="button"
+              class="btn"
+              disabled={!props.active}
+              data-testid={`enqueue-${props.f.name}-toggle`}
+              onClick={() => setEnqueuing(!enqueuing())}
+            >
+              {t("functions.enqueue")}
+            </button>
+          </Show>
+        </div>
       </td>
     </tr>
   );
@@ -983,13 +977,13 @@ const Functions: Component = () => {
       >
         <Show
           when={configured()}
-          fallback={<p class="card text-sm text-zinc-500">{t("functions.notConfigured")}</p>}
+          fallback={<p class="card text-sm text-muted">{t("functions.notConfigured")}</p>}
         >
           <Show when={!active()}>
             <div
               role="status"
               data-testid="functions-session-mismatch"
-              class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+              class="callout callout-warning mb-4"
             >
               {t("functions.sessionMismatch", {
                 session: o()?.session ?? "",
@@ -1001,13 +995,10 @@ const Functions: Component = () => {
             title={t("functions.registered")}
             actions={
               <>
-                <span class="mono text-xs text-zinc-600 dark:text-zinc-400">
-                  {o()?.source ?? ""}
-                </span>
                 <label class="flex items-center gap-2 text-sm">
                   <span class="sr-only">{t("functions.searchRegistered")}</span>
                   <input
-                    class="input w-56"
+                    class="input w-80 max-w-full"
                     type="search"
                     placeholder={t("functions.searchRegistered")}
                     value={registeredFilter()}
@@ -1016,7 +1007,7 @@ const Functions: Component = () => {
                   />
                 </label>
                 <span
-                  class="text-xs whitespace-nowrap text-zinc-600 dark:text-zinc-400"
+                  class="text-xs whitespace-nowrap text-secondary"
                   data-testid="function-search-count"
                 >
                   {t("functions.searchCount", {
@@ -1037,6 +1028,13 @@ const Functions: Component = () => {
               </>
             }
           >
+            <p
+              class="mono mb-2 truncate text-xs text-muted"
+              title={o()?.source ?? ""}
+              data-testid="functions-source"
+            >
+              {o()?.source ?? ""}
+            </p>
             <div class="table-scroll">
               <table class="table" data-testid="function-table">
                 <thead>
@@ -1048,7 +1046,9 @@ const Functions: Component = () => {
                     <th>{t("functions.timeout")}</th>
                     <th>{t("functions.retry")}</th>
                     <th>{t("functions.concurrency")}</th>
-                    <th />
+                    <th class="sticky-actions">
+                      <span class="sr-only">{t("functions.actions")}</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1227,17 +1227,17 @@ const Functions: Component = () => {
             >
               <Show
                 when={invocations().length > 0}
-                fallback={<p class="text-sm text-zinc-500">{t("functions.noInvocations")}</p>}
+                fallback={<p class="text-sm text-muted">{t("functions.noInvocations")}</p>}
               >
                 <Show when={truncated()}>
-                  <p class="mb-1 text-xs text-zinc-500" data-testid="invocations-truncated">
+                  <p class="mb-1 text-xs text-muted" data-testid="invocations-truncated">
                     {t("functions.invocationsTruncated", { count: MAX_INVOCATIONS })}
                   </p>
                 </Show>
                 <Show
                   when={filteredInvocations().length > 0}
                   fallback={
-                    <p class="text-sm text-zinc-500" data-testid="invocations-no-match">
+                    <p class="text-sm text-muted" data-testid="invocations-no-match">
                       {t("functions.noMatchingInvocations")}
                     </p>
                   }
@@ -1310,11 +1310,9 @@ const Functions: Component = () => {
                   />
                   {t("functions.formatJson")}
                 </label>
-                <span
-                  class={`badge ${connected() ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100" : "bg-zinc-200 dark:bg-zinc-800"}`}
-                >
+                <StatusBadge tone={connected() ? "success" : "neutral"}>
                   {connected() ? t("firestore.live") : t("firestore.liveOff")}
-                </span>
+                </StatusBadge>
                 <Show when={!connected() && !connecting()}>
                   <button
                     type="button"
@@ -1339,7 +1337,7 @@ const Functions: Component = () => {
               </>
             }
           >
-            <div class="mb-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <div class="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted">
               <span data-testid="log-count">
                 {t("functions.logsFilteredCount", {
                   shown: filteredLines().length,
@@ -1361,7 +1359,7 @@ const Functions: Component = () => {
             </div>
             <pre
               ref={setLogBox}
-              class="mono h-72 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-900 p-3 text-xs text-zinc-100"
+              class="mono h-72 overflow-auto whitespace-pre-wrap console"
               data-testid="function-logs"
               onScroll={(e) => {
                 const box = e.currentTarget;

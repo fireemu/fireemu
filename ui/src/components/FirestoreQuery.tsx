@@ -198,14 +198,14 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
 
   return (
     <section
-      class="my-5 border-y border-zinc-200 py-4 dark:border-zinc-700"
+      class="my-5 border-y border-line-subtle py-4"
       data-testid="query-panel"
       aria-labelledby="firestore-query-heading"
     >
       <h3 id="firestore-query-heading" class="text-base font-semibold">
         {t("firestore.queryTitle")}
       </h3>
-      <p class="mt-1 text-sm text-zinc-500">{t("firestore.queryHint")}</p>
+      <p class="mt-1 text-sm text-muted">{t("firestore.queryHint")}</p>
       <p class="mono my-2 break-all text-xs">{scopeLabel()}</p>
       <form
         onSubmit={(event) => {
@@ -227,7 +227,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
         <For each={draft.filters}>
           {(row, index) => (
             <fieldset
-              class="mb-3 flex flex-wrap items-end gap-2 rounded border border-zinc-200 p-3 dark:border-zinc-700"
+              class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
               data-testid={`query-filter-${index()}`}
             >
               <legend class="px-1 text-sm">
@@ -308,11 +308,11 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
         >
           {t("firestore.queryAddFilter")}
         </button>
-        <p class="mb-3 text-xs text-zinc-500">{t("firestore.queryValueHint")}</p>
+        <p class="mb-3 text-xs text-muted">{t("firestore.queryValueHint")}</p>
         <For each={draft.orders}>
           {(row, index) => (
             <fieldset
-              class="mb-3 flex flex-wrap items-end gap-2 rounded border border-zinc-200 p-3 dark:border-zinc-700"
+              class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
               data-testid={`query-order-${index()}`}
             >
               <legend class="px-1 text-sm">
@@ -398,12 +398,12 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
             {t("firestore.queryShare")}
           </button>
         </div>
-        <p class="mb-3 text-xs text-zinc-500">{t("firestore.queryBounded")}</p>
+        <p class="mb-3 text-xs text-muted">{t("firestore.queryBounded")}</p>
         <ErrorBanner message={invalid()} />
         <Show when={compiled().isOk()}>
           <details class="mb-3">
             <summary class="cursor-pointer text-sm">{t("firestore.queryPreview")}</summary>
-            <pre class="mono max-h-64 overflow-auto rounded bg-zinc-100 p-3 text-xs dark:bg-zinc-900">
+            <pre class="mono max-h-64 overflow-auto code-block">
               {JSON.stringify(
                 compiled().match(
                   (value) => value,
@@ -416,10 +416,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
           </details>
           <details class="mb-3">
             <summary class="cursor-pointer text-sm">{t("firestore.querySdk")}</summary>
-            <pre
-              class="mono max-h-96 overflow-auto rounded bg-zinc-100 p-3 text-xs dark:bg-zinc-900"
-              data-testid="query-sdk"
-            >
+            <pre class="mono max-h-96 overflow-auto code-block" data-testid="query-sdk">
               {compiled().match(querySdkSource, () => "")}
             </pre>
           </details>
@@ -429,16 +426,12 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
       <Notice message={notice()} />
       <Show
         when={execution()}
-        fallback={<p class="text-sm text-zinc-500">{t("firestore.queryNoResults")}</p>}
+        fallback={<p class="text-sm text-muted">{t("firestore.queryNoResults")}</p>}
       >
         {(attempt) => (
           <>
             <Show when={attempt().draft !== encodedDraft()}>
-              <p
-                role="status"
-                class="mb-2 text-sm text-amber-700 dark:text-amber-300"
-                data-testid="query-stale"
-              >
+              <p role="status" class="mb-2 text-sm text-warning" data-testid="query-stale">
                 {t("firestore.queryStale")}
               </p>
             </Show>
@@ -479,7 +472,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                       {(document) => (
                         <li>
                           <A
-                            class="mono text-sm text-blue-700 underline dark:text-blue-300"
+                            class="mono text-sm link underline"
                             aria-label={t("firestore.queryOpenDocument", {
                               path: relativePath(document.name),
                             })}
@@ -493,7 +486,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                   </ul>
                   <details open>
                     <summary class="cursor-pointer text-sm">{t("firestore.queryExact")}</summary>
-                    <pre class="mono my-2 max-h-80 overflow-auto rounded bg-zinc-100 p-3 text-xs dark:bg-zinc-900">
+                    <pre class="mono my-2 max-h-80 overflow-auto code-block">
                       {JSON.stringify(result().rows, null, 2)}
                     </pre>
                   </details>
@@ -504,12 +497,12 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
         )}
       </Show>
       <section
-        class="mt-4 border-t border-zinc-200 pt-3 dark:border-zinc-700"
+        class="mt-4 border-t border-line-subtle pt-3"
         data-testid="query-indexes"
         aria-label={t("firestore.queryIndexes")}
       >
         <h4 class="font-semibold">{t("firestore.queryIndexes")}</h4>
-        <p class="my-2 text-xs text-zinc-500">{t("firestore.queryIndexHint")}</p>
+        <p class="my-2 text-xs text-muted">{t("firestore.queryIndexHint")}</p>
         <button
           type="button"
           class="btn mb-2"
