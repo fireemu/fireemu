@@ -5,7 +5,7 @@ import { splitLocale } from '../i18n/locales.mjs';
 
 export const headerNav = [
 	{ label: 'Docs', key: 'nav.docs', slug: 'getting-started/install', section: 'getting-started' },
-	{ label: 'Products', key: 'nav.products', slug: 'products/firestore', section: 'products' },
+	{ label: 'Supported services', key: 'nav.products', slug: 'products/firestore', section: 'products' },
 	{ label: 'Guides', key: 'nav.guides', slug: 'guides/configuration', section: 'guides' },
 	{ label: 'Compatibility', key: 'nav.compatibility', slug: 'compatibility', section: 'compatibility' },
 	{ label: 'npm', icon: 'npm', href: 'https://www.npmjs.com/package/fireemu' },

@@ -98,7 +98,7 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Products',
+					label: 'Supported services',
 					items: [
 						{ label: 'Cloud Firestore', slug: 'products/firestore' },
 						{ label: 'Authentication', slug: 'products/auth' },

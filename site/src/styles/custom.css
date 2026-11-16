@@ -594,3 +594,12 @@ header site-search kbd kbd {
 header .header-nav .label:lang(ja) {
 	transform: translateY(1px);
 }
+
+/* Spanish and German section labels are longer: below 80rem they would crowd the search box or push the header's last
+   button off the screen, so the section links give way there earlier (as all languages do below 72rem). */
+@media (max-width: 79.9375rem) {
+	header .header-nav:lang(es) a:not(.external):not(:first-child),
+	header .header-nav:lang(de) a:not(.external):not(:first-child) {
+		display: none;
+	}
+}

@@ -12,7 +12,7 @@ export const sidebarLabels = {
 		'zh-CN': '从 Local Emulator Suite 迁移',
 		ko: 'Local Emulator Suite에서 마이그레이션',
 	},
-	Products: { es: 'Productos', de: 'Produkte', ja: 'プロダクト', 'zh-CN': '产品', ko: '제품' },
+	'Supported services': { es: 'Servicios compatibles', de: 'Unterstützte Dienste', ja: '対応サービス', 'zh-CN': '支持的服务', ko: '지원 서비스' },
 	'Cloud Firestore': { es: 'Cloud Firestore', de: 'Cloud Firestore', ja: 'Cloud Firestore', 'zh-CN': 'Cloud Firestore', ko: 'Cloud Firestore' },
 	Authentication: { es: 'Authentication', de: 'Authentication', ja: 'Authentication', 'zh-CN': 'Authentication', ko: 'Authentication' },
 	'Cloud Storage': { es: 'Cloud Storage', de: 'Cloud Storage', ja: 'Cloud Storage', 'zh-CN': 'Cloud Storage', ko: 'Cloud Storage' },
