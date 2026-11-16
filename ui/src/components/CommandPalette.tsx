@@ -21,14 +21,13 @@ import { dotenvSnippet } from "../lib/sdkSnippets";
 import { requestScopeChange } from "../lib/unsaved";
 import { appState } from "../state";
 import { IconSearch } from "./icons";
+import { openCommandPalette, openShortcutHelp, paletteOpen, setPaletteOpen } from "./overlays";
 import { cycleTheme, themeLabel, themePreference } from "./ThemeToggle";
 
-const [open, setOpen] = createSignal(false);
+const open = paletteOpen;
+const setOpen = setPaletteOpen;
 
-/** Opens the palette (the sidebar button and the keyboard shortcut share it). */
-export const openCommandPalette = (): void => {
-  setOpen(true);
-};
+export { openCommandPalette };
 
 export type PaletteLink = { href: string; title: string; keywords?: string };
 
@@ -75,6 +74,13 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
       keywords: "dotenv environment FIRESTORE_EMULATOR_HOST",
       action: "copy-env",
     },
+    {
+      id: "shortcuts",
+      title: t("palette.showShortcuts"),
+      group: t("palette.groupActions"),
+      keywords: "keys help hotkeys",
+      action: "shortcuts",
+    },
   ]);
 
   const results = createMemo<PaletteCommand[]>(() => {
@@ -105,6 +111,7 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
     }
     const action = command.action ?? "";
     if (action === "theme") cycleTheme();
+    else if (action === "shortcuts") openShortcutHelp();
     else if (action === "copy-env") {
       const config = appState.config();
       void navigator.clipboard

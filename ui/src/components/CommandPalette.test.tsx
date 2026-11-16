@@ -4,6 +4,7 @@ import { Route, Router, useLocation } from "@solidjs/router";
 import type { ParentComponent } from "solid-js";
 import { appState } from "../state";
 import { CommandPalette, openCommandPalette } from "./CommandPalette";
+import { setShortcutHelpOpen, shortcutHelpOpen } from "./overlays";
 import { cycleTheme, themePreference } from "./ThemeToggle";
 
 const LINKS = [
@@ -96,6 +97,7 @@ it("lists pages, the other sessions and the actions, and filters as the query ch
     "Switch to session other (demo-b)Session",
     "Switch theme (now: System)Action",
     "Copy the .env lines for the selected sessionAction",
+    "Show keyboard shortcutsAction",
   ]);
   fireEvent.input(input, { target: { value: "logs" } });
   expect(options(ui)).toEqual(["FunctionsGo to"]);
@@ -115,7 +117,7 @@ it("moves the selection with the arrows, wrapping, and resets it for a new query
   expect(input.getAttribute("aria-activedescendant")).toBe("command-palette-option-1");
   press(input, "ArrowUp");
   press(input, "ArrowUp");
-  expect(selectedOption(ui)).toBe("Copy the .env lines for the selected sessionAction");
+  expect(selectedOption(ui)).toBe("Show keyboard shortcutsAction");
   press(input, "ArrowDown");
   expect(selectedOption(ui)).toBe("OverviewGo to");
   press(input, "ArrowDown");
@@ -213,4 +215,16 @@ it("the copy action writes the .env lines of the selected session's project", as
   expect(writeText).toHaveBeenCalledTimes(1);
   expect(writeText.mock.calls[0]![0]).toContain("GOOGLE_CLOUD_PROJECT=demo-a");
   expect(writeText.mock.calls[0]![0]).toContain("FIRESTORE_EMULATOR_HOST=127.0.0.1:8080");
+});
+
+it("the shortcuts action closes the palette and opens the shortcut list", async () => {
+  const ui = mount();
+  openCommandPalette();
+  const input = await ui.findByTestId("command-palette-input");
+  fireEvent.input(input, { target: { value: "hotkeys" } });
+  expect(options(ui)).toEqual(["Show keyboard shortcutsAction"]);
+  press(input, "Enter");
+  expect(ui.queryByTestId("command-palette")).toBeNull();
+  expect(shortcutHelpOpen()).toBe(true);
+  setShortcutHelpOpen(false);
 });

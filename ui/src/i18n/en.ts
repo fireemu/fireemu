@@ -1,6 +1,16 @@
 // English messages. Every user-visible string of the app lives here; components call
 // `t("key")`. Placeholders are `{name}`.
 export const en = {
+  "palette.showShortcuts": "Show keyboard shortcuts",
+  "shortcuts.title": "Keyboard shortcuts",
+  "shortcuts.open": "Shortcuts",
+  "shortcuts.or": "or",
+  "shortcuts.palette": "Open the command palette",
+  "shortcuts.help": "Show this list",
+  "shortcuts.close": "Close the palette or this list",
+  "shortcuts.goTo": "Go to {page}",
+  "shortcuts.note":
+    "Single keys work when no text field has focus. Press g, then the second key within 1.5 seconds.",
   "runtime.sectionNav": "Sections of this page",
   "functions.searchRegistered": "Filter by name, region or trigger",
   "functions.searchCount": "{shown} of {total}",

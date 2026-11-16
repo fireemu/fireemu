@@ -10,7 +10,9 @@ import {
   untrack,
   type Component,
 } from "solid-js";
-import { CommandPalette, openCommandPalette } from "./components/CommandPalette";
+import { CommandPalette } from "./components/CommandPalette";
+import { openCommandPalette, openShortcutHelp } from "./components/overlays";
+import { Shortcuts } from "./components/Shortcuts";
 import {
   IconAlerts,
   IconAppCheck,
@@ -30,45 +32,75 @@ import { t, type MessageKey } from "./i18n";
 import { requestScopeChange } from "./lib/unsaved";
 import { appState } from "./state";
 
-type NavItem = { href: string; key: MessageKey; icon: Component; keywords?: string };
+type NavItem = {
+  href: string;
+  key: MessageKey;
+  icon: Component;
+  keywords?: string;
+  /** The second key of the `g` navigation shortcut. */
+  go: string;
+};
 
 // The official Emulator Suite products, then the fireemu-only deterministic runtime controls,
 // kept in a visually and semantically separate group so the two are never conflated.
 const OFFICIAL_NAV: NavItem[] = [
   {
     href: "/",
+    go: "o",
     key: "nav.overview",
     icon: IconOverview,
     keywords: "home status environment snippets",
   },
   {
     href: "/firestore",
+    go: "f",
     key: "nav.firestore",
     icon: IconFirestore,
     keywords: "documents collections query",
   },
-  { href: "/database", key: "database.title", icon: IconDatabase, keywords: "rtdb" },
-  { href: "/auth", key: "nav.auth", icon: IconAuth, keywords: "users sign-in codes mfa" },
+  { href: "/database", go: "d", key: "database.title", icon: IconDatabase, keywords: "rtdb" },
+  { href: "/auth", go: "a", key: "nav.auth", icon: IconAuth, keywords: "users sign-in codes mfa" },
   {
     href: "/storage",
+    go: "s",
     key: "nav.storage",
     icon: IconStorage,
     keywords: "bucket objects files upload",
   },
   {
     href: "/functions",
+    go: "n",
     key: "nav.functions",
     icon: IconFunctions,
     keywords: "logs triggers invoke schedule tasks pubsub",
   },
-  { href: "/hosting", key: "nav.hosting", icon: IconHosting, keywords: "site rewrites" },
-  { href: "/alerts", key: "nav.alerts", icon: IconAlerts, keywords: "crashlytics eventarc" },
-  { href: "/rules", key: "nav.rules", icon: IconRules, keywords: "security coverage requests" },
-  { href: "/appcheck", key: "nav.appCheck", icon: IconAppCheck, keywords: "tokens attestation" },
+  { href: "/hosting", go: "h", key: "nav.hosting", icon: IconHosting, keywords: "site rewrites" },
+  {
+    href: "/alerts",
+    go: "l",
+    key: "nav.alerts",
+    icon: IconAlerts,
+    keywords: "crashlytics eventarc",
+  },
+  {
+    href: "/rules",
+    go: "r",
+    key: "nav.rules",
+    icon: IconRules,
+    keywords: "security coverage requests",
+  },
+  {
+    href: "/appcheck",
+    go: "c",
+    key: "nav.appCheck",
+    icon: IconAppCheck,
+    keywords: "tokens attestation",
+  },
 ];
 const RUNTIME_NAV: NavItem[] = [
   {
     href: "/runtime",
+    go: "t",
     key: "nav.runtime",
     icon: IconRuntime,
     keywords: "clock snapshots fault sessions resources",
@@ -119,6 +151,14 @@ export const App: Component<RouteSectionProps> = (props) => {
   return (
     <div class="flex min-h-screen flex-col md:flex-row">
       <CommandPalette links={paletteLinks()} />
+      <Shortcuts
+        pages={[...OFFICIAL_NAV, ...RUNTIME_NAV].map((item) => ({
+          key: item.go,
+          href: item.href,
+          title: t(item.key),
+        }))}
+        paletteKeys={shortcut}
+      />
       <button
         type="button"
         class="btn m-3 self-start md:hidden"
@@ -182,6 +222,15 @@ export const App: Component<RouteSectionProps> = (props) => {
           </For>
         </nav>
         <div class="mt-auto pt-4">
+          <button
+            type="button"
+            class="nav-link w-full"
+            data-testid="shortcut-help-open"
+            onClick={openShortcutHelp}
+          >
+            <span class="kbd">?</span>
+            <span>{t("shortcuts.open")}</span>
+          </button>
           <ThemeToggle />
           <Show when={appState.config().version}>
             {(version) => (
