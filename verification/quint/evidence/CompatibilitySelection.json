@@ -934,7 +934,7 @@
     },
     "crates/fireemu-adapter-http/src/identity_toolkit.rs": {
       "kind": "sha256",
-      "value": "f1d9c36f46462d5e1495ada08e0f156d03a06fa0d626eee39e44e233f4c6d0d9"
+      "value": "cdc24f0f3c63333e907bbc207536e2fb0852a8892891d537612bf9f0a6b93f33"
     },
     "crates/fireemu-adapter-http/src/identity_toolkit/authorized_domains.rs": {
       "kind": "sha256",

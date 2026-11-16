@@ -16590,6 +16590,44 @@ mod tests {
         ));
     }
 
+    /// A sign-in that reaches dispatch without a pre-verified snapshot (the imported hash
+    /// changed after the snapshot was taken) verifies under the request's profile: an
+    /// imported bcrypt cost above the local bound fails strict and answers `INVALID_PASSWORD`
+    /// in the emulator profile.
+    #[test]
+    fn the_sign_in_fallback_verifier_follows_the_profile() {
+        let bcrypt = format!("$2b$31${}", "a".repeat(53));
+        for (strict, expected) in [(true, 500), (false, 400)] {
+            let state = apple_alias_state(strict);
+            let options = DispatchOptions::from(&state);
+            let mut store = AuthStore::new("demo-app", SplitMix64::new(22), TotpPolicy::default());
+            let at = LogicalInstant::from_unix_seconds(1_788_004_860);
+            let imported = admin_batch_create(
+                &mut store,
+                &json!({"hashAlgorithm": "BCRYPT", "users": [{"localId": "slow",
+                    "email": "slow@example.com",
+                    "passwordHash": fireemu_core_types::hash::base64_standard(bcrypt.as_bytes())}]}),
+                at,
+                strict,
+            );
+            assert_eq!(imported.status, 200, "{}", imported.body);
+            let response = dispatch(
+                routes::Handler::SignInWithPassword,
+                &mut store,
+                None,
+                &json!({"email": "slow@example.com", "password": "password123"}),
+                &RequestHeaders::default(),
+                at,
+                &options,
+            );
+            assert_eq!(
+                response.status, expected,
+                "strict={strict}: {}",
+                response.body
+            );
+        }
+    }
+
     fn apple_alias_state(strict: bool) -> AuthState {
         let store = Arc::new(Mutex::new(AuthStore::new(
             "demo-app",
