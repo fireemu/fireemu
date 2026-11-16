@@ -478,6 +478,9 @@ pub struct Runner {
     logs: Arc<Mutex<LogBuffer>>,
     label: String,
     alive: Arc<AtomicBool>,
+    /// Set by [`Runner::shutdown`] and [`Runner::kill_now`]: the daemon stopped this runner on
+    /// purpose, so an exit it meets afterwards is expected rather than a crash.
+    stopped_on_purpose: AtomicBool,
     credential_sandbox: Mutex<Option<PathBuf>>,
     clock_revision: AsyncMutex<Option<u64>>,
     clock_sequence: AtomicU64,
@@ -638,6 +641,7 @@ impl Runner {
     /// Kills the process immediately (session reset: handlers still running must not write
     /// into the reset state). Waiters learn it through the reader task's exit.
     pub fn kill_now(&self) {
+        self.stopped_on_purpose.store(true, Ordering::SeqCst);
         self.alive.store(false, Ordering::SeqCst);
         remove_credential_sandbox(&self.credential_sandbox);
         if let Ok(mut slot) = self.child.try_lock() {
@@ -1001,6 +1005,7 @@ impl Runner {
             logs,
             label,
             alive,
+            stopped_on_purpose: AtomicBool::new(false),
             credential_sandbox: Mutex::new(Some(credential_sandbox)),
             clock_revision: AsyncMutex::new(None),
             clock_sequence: AtomicU64::new(0),
@@ -1025,6 +1030,7 @@ impl Runner {
             logs: Arc::new(Mutex::new(LogBuffer::default())),
             label: label.to_owned(),
             alive: Arc::new(AtomicBool::new(false)),
+            stopped_on_purpose: AtomicBool::new(false),
             credential_sandbox: Mutex::new(None),
             clock_revision: AsyncMutex::new(None),
             clock_sequence: AtomicU64::new(0),
@@ -1215,6 +1221,12 @@ impl Runner {
                 *revision = Some(snapshot.revision);
                 Ok(())
             }
+            // A runner the daemon stopped (shutdown, reload, reset) has no clock left to keep in
+            // step; its replacement starts with the current clock. Only an exit nobody asked for
+            // is a synchronization failure.
+            InvokeOutcome::RunnerGone(_) if self.stopped_on_purpose.load(Ordering::SeqCst) => {
+                Ok(())
+            }
             other => Err(format!("runner clock synchronization failed: {other:?}")),
         }
     }
@@ -1251,6 +1263,7 @@ impl Runner {
         // Retire the runner synchronously with the shutdown request. The stdout reader also
         // clears this flag on EOF, but waiting for that independent task would make the
         // postcondition scheduler-dependent and briefly admit work into a retiring process.
+        self.stopped_on_purpose.store(true, Ordering::SeqCst);
         self.alive.store(false, Ordering::SeqCst);
         // The polite part is bounded: a stalled runner or a full pipe must not keep the
         // daemon alive.
@@ -2268,5 +2281,113 @@ sys.stdin.readline()
         assert_eq!(log.invocation_id(), Some("inv-7"));
         assert!(log.is_user());
         assert_eq!(log.fields(), &fields);
+    }
+
+    /// A real bundled Node runner on a virtual Date clock, for the clock-sync stop tests.
+    async fn clock_runner(
+        dir: &trusted_temp::TrustedTempDir,
+        clock: &fireemu_core_session::clock::VirtualClock,
+    ) -> super::Runner {
+        let policy = crate::application_clock::ApplicationClockPolicy {
+            date_virtual: true,
+            timers_virtual: false,
+            tasks_virtual: false,
+        };
+        super::Runner::spawn(
+            &[
+                "node".into(),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../tools/runner-node/index.mjs"
+                )
+                .into(),
+                "--source".into(),
+                dir.to_string_lossy().into_owned(),
+            ],
+            Some(&dir.to_string_lossy()),
+            &[
+                ("GCLOUD_PROJECT".into(), "demo-clock".into()),
+                (
+                    "FIREEMU_CLOCK_JSON".into(),
+                    policy.runner_options(clock.snapshot()).to_string(),
+                ),
+            ],
+            NODE_HELLO_TIMEOUT,
+        )
+        .await
+        .unwrap()
+    }
+
+    fn clock_source(name: &str) -> trusted_temp::TrustedTempDir {
+        let dir = trusted_temp::TrustedTempDir::new(name);
+        std::fs::write(dir.join("package.json"), r#"{"main":"index.cjs"}"#).unwrap();
+        std::fs::write(
+            dir.join("index.cjs"),
+            r"
+            const die=async()=>{process.exit(3);};
+            die.run=die; die.__endpoint={platform:'gcfv2',scheduleTrigger:{schedule:'every 5 minutes'}};
+            module.exports={die};
+        ",
+        )
+        .unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn clock_sync_meeting_a_runner_stopped_on_purpose_is_not_a_failure() {
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
+        let dir = clock_source("clock-sync-stopped");
+        let mut clock = VirtualClock::new(LogicalInstant::from_nanos(1_000_000_000));
+        // Shutdown (Ctrl+C, the daemon's stop) and kill_now (reload, reset, deliberate stop).
+        for kill in [false, true] {
+            let runner = clock_runner(&dir, &clock).await;
+            clock.advance(LogicalDuration::from_millis(1)).unwrap();
+            runner.sync_clock(clock.snapshot()).await.unwrap();
+            if kill {
+                runner.kill_now();
+            } else {
+                runner.shutdown().await;
+            }
+            clock.advance(LogicalDuration::from_millis(1)).unwrap();
+            assert_eq!(
+                runner.sync_clock(clock.snapshot()).await,
+                Ok(()),
+                "kill={kill}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn clock_sync_meeting_an_unexpected_runner_exit_is_still_a_failure() {
+        use super::InvokeOutcome;
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
+        let dir = clock_source("clock-sync-died");
+        let mut clock = VirtualClock::new(LogicalInstant::from_nanos(1_000_000_000));
+        let runner = clock_runner(&dir, &clock).await;
+        let outcome = runner
+            .invoke(
+                serde_json::json!({"invocationId":"die","function":"die","trigger":"schedule","event":{}}),
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .outcome;
+        assert!(
+            matches!(outcome, InvokeOutcome::RunnerGone(_)),
+            "{outcome:?}"
+        );
+        for _ in 0..200 {
+            if !runner.is_alive() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        clock.advance(LogicalDuration::from_millis(1)).unwrap();
+        assert_eq!(
+            runner.sync_clock(clock.snapshot()).await,
+            Err(r#"runner clock synchronization failed: RunnerGone("runner exited")"#.to_owned())
+        );
+        runner.shutdown().await;
     }
 }

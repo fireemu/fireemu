@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- With a virtual `functions.clock.date` that follows real time (no `daemon.clockStart`), a normal shutdown (Ctrl+C) no longer logs `[functions] runner clock synchronization failed: RunnerGone("runner exited")`. A clock update that meets a runner the daemon stopped on purpose (shutdown, reload, reset) is no longer reported as a failure; a runner that exits unexpectedly is still reported with the same message.
+
 ## [0.56.0] - 2026-11-16
 
 ### Changed
