@@ -98,19 +98,36 @@ exports.crasher = onRequest((req, res) => {
     dir
 }
 
+/// The JavaScript that lists runner process command lines from `ps`. The scenarios and
+/// `the_runner_listing_finds_a_live_runner_process` share it; it expects `execFileSync` and `PS_LIMIT`.
+macro_rules! runner_table_js {
+    () => {
+        r"
+// Keyed on argv[0], not the command name: on Linux, Node 24 renames its main thread `MainThread`,
+// and `ps` reports that thread name as the command name of every Node process.
+const runnerTable = () => execFileSync('ps', ['-ax', '-o', 'args='], PS_LIMIT).toString().split('\n').map(line => line.trim())
+  .filter(line => /(^|\/)node$/.test(line.split(' ')[0]) && line.includes(' --source '));
+const runnerName = line => line.includes(' --function ') ? line.split(' --function ')[1].trim() : '(codebase)';
+"
+    };
+}
+
 /// The scenario, run by Node inside `fireemu exec` against the codebase, printing one JSON object.
-const SCENARIO: &str = r"
+const SCENARIO: &str = concat!(
+    r"
 const { execFileSync } = require('node:child_process');
 // Other processes on a shared machine can have very long command lines.
 const PS_LIMIT = { maxBuffer: 1 << 28 };
+",
+    runner_table_js!(),
+    r"
 const base = `http://${process.env.FIREEMU_FUNCTIONS_HOST}/demo-isolation/us-central1/`;
 const get = async path => { const r = await fetch(base + path); if (r.status !== 200) throw new Error(path + ' ' + r.status); return r.json(); };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const runnerLines = () => execFileSync('ps', ['-ax', '-o', 'ucomm=,args='], PS_LIMIT).toString().split('\n').map(line => line.trim())
-  .filter(line => line.startsWith('node ') && line.includes(' --source ' + process.argv[1]));
+const runnerLines = () => runnerTable().filter(line => line.includes(' --source ' + process.argv[1]));
 (async () => {
   const out = {};
-  out.runnersAtStart = runnerLines().map(line => line.includes(' --function ') ? line.split(' --function ')[1].trim() : '(codebase)').sort();
+  out.runnersAtStart = runnerLines().map(runnerName).sort();
   // An await in one function while another function of the codebase is called.
   const slow = get('beta?wait=2000');
   await sleep(400);
@@ -121,7 +138,7 @@ const runnerLines = () => execFileSync('ps', ['-ax', '-o', 'ucomm=,args='], PS_L
   await sleep(400);
   const plain = get('beta');
   [out.alpha, out.plainBeta] = await Promise.all([holding, plain]);
-  out.runnersAfterCalls = runnerLines().map(line => line.includes(' --function ') ? line.split(' --function ')[1].trim() : '(codebase)').sort();
+  out.runnersAfterCalls = runnerLines().map(runnerName).sort();
   // Another function's process dies; the others keep theirs.
   const before = { alpha: (await get('alpha')).after.pid, beta: (await get('beta')).after.pid };
   out.crashedPid = (await get('crasher')).pid;
@@ -133,10 +150,11 @@ const runnerLines = () => execFileSync('ps', ['-ax', '-o', 'ucomm=,args='], PS_L
     try { again = (await get('crasher')).pid; } catch { await sleep(250); }
   }
   out.restartedPid = again;
-  out.runnersAfter = runnerLines().map(line => line.includes(' --function ') ? line.split(' --function ')[1].trim() : '(codebase)').sort();
+  out.runnersAfter = runnerLines().map(runnerName).sort();
   console.log('RESULT ' + JSON.stringify(out));
 })().catch(error => { console.error(error); process.exitCode = 1; });
-";
+"
+);
 
 fn run(dir: &Path, isolation: &str) -> (Output, serde_json::Value) {
     let config = dir.join("fireemu.json");
@@ -220,6 +238,50 @@ fn text<'a>(value: &'a serde_json::Value, path: &[&str]) -> &'a str {
     }
     node.as_str()
         .unwrap_or_else(|| panic!("{path:?} is not text in {value}"))
+}
+
+/// The scenarios find runners with `runner_table_js!`. It must see a Node process on every platform
+/// CI uses: on Linux, Node 24 names its main thread `MainThread`, which `ps` reports as the command
+/// name, so a listing keyed on the command name sees no runner at all. This test needs no SDK and
+/// runs in the regular CI, so a listing that misses runners fails there rather than only in the
+/// push-only real SDK workflow.
+#[test]
+fn the_runner_listing_finds_a_live_runner_process() {
+    let node = real_node::real_node().path;
+    let marker = format!("/fireemu-runner-listing-{}", std::process::id());
+    let mut fake = Command::new(&node)
+        .args(["-e", "setTimeout(() => {}, 60000)", "--", "--source"])
+        .arg(&marker)
+        .args(["--function", "probe"])
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let script = concat!(
+        "const { execFileSync } = require('node:child_process');\n",
+        "const PS_LIMIT = { maxBuffer: 1 << 28 };\n",
+        runner_table_js!(),
+        "const marker = process.argv[1];\n",
+        "const seen = async () => { for (let i = 0; i < 100; i += 1) {",
+        " const found = runnerTable().filter(line => line.includes(' --source ' + marker)).map(runnerName);",
+        " if (found.length) return found; await new Promise(r => setTimeout(r, 50)); } return []; };\n",
+        "seen().then(found => console.log(JSON.stringify(found)));\n",
+    );
+    let output = Command::new(&node)
+        .args(["-e", script])
+        .arg(&marker)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let _ = fake.kill();
+    let _ = fake.wait();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let found: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the listing prints JSON");
+    assert_eq!(found, serde_json::json!(["probe"]));
 }
 
 #[test]
@@ -346,12 +408,16 @@ fn dedicated_runners_keep_identity_module_graph_secrets_and_lifecycle_per_functi
 }
 
 /// Run by Node inside `fireemu exec` against a function-isolated codebase whose source it rewrites.
-const RELOAD_SCENARIO: &str = r#"
+const RELOAD_SCENARIO: &str = concat!(
+    r#"
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 // Other processes on a shared machine can have very long command lines.
 const PS_LIMIT = { maxBuffer: 1 << 28 };
+"#,
+    runner_table_js!(),
+    r#"
 const dir = process.argv[1];
 const base = `http://${process.env.FIREEMU_FUNCTIONS_HOST}/demo-isolation/us-central1/`;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -365,10 +431,9 @@ const ancestors = () => {
 };
 const runners = () => {
   const chain = ancestors();
-  return execFileSync('ps', ['-ax', '-o', 'ucomm=,args='], PS_LIMIT).toString().split('\n').map(line => line.trim())
-    .filter(line => line.startsWith('node ') && line.includes(' --source ') &&
-      (line.includes(' --source ' + dir) || chain.some(pid => line.includes('/fireemu-functions-' + pid + '-'))))
-    .map(line => line.includes(' --function ') ? line.split(' --function ')[1].trim() : '(codebase)').sort();
+  return runnerTable()
+    .filter(line => line.includes(' --source ' + dir) || chain.some(pid => line.includes('/fireemu-functions-' + pid + '-')))
+    .map(runnerName).sort();
 };
 const until = async (check, what) => {
   for (let attempt = 0; attempt < 200; attempt += 1) { const value = await check(); if (value) return value; await sleep(100); }
@@ -393,7 +458,8 @@ const until = async (check, what) => {
   out.runnersAfterChange = await until(async () => { const now = runners(); return now.length === 2 ? now : null; }, 'the refused generation to stop');
   console.log('RESULT ' + JSON.stringify(out));
 })().catch(error => { console.error(error); process.exitCode = 1; });
-"#;
+"#
+);
 
 #[test]
 #[ignore = "requires tools/sdk-smoke dependencies; CI runs this test after npm ci"]
