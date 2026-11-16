@@ -34,6 +34,15 @@ Ist der Standardport belegt, startet `up` ohne die UI; prüfen Sie die Startausg
 | **App Check** | Registrierte Apps und Debug-Tokens sehen. |
 | **Runtime** | Die virtuelle Uhr vorstellen oder mit **Allow moving backwards** zurückstellen und einen Fault-Plan installieren (siehe unten). |
 
+## Navigation und Komfortfunktionen
+
+- **Befehlspalette**: Drücken Sie <kbd>Strg</kbd>+<kbd>K</kbd> (unter macOS <kbd>⌘</kbd>+<kbd>K</kbd>) oder wählen Sie in der Seitenleiste **Search or jump to**. Ein Seitenname öffnet die Seite, ein Firestore-Pfad wie `users/alice` öffnet das Dokument oder die Sammlung in der Standarddatenbank. Außerdem stehen Aktionen zur Wahl: die Session wechseln, das Farbschema wechseln oder die `.env`-Zeilen kopieren.
+- **Farbschema**: Die Schaltfläche unten in der Seitenleiste wechselt zwischen Systemeinstellung, Hell und Dunkel. Eine ausdrückliche Auswahl wird in diesem Browser gespeichert.
+- **Kennzahlen in der Overview**: Die Kacheln zeigen, was die ausgewählte Session enthält (Firestore-Dokumentdaten, Authentication-Benutzer, Storage-Objekte, registrierte Funktionen), und führen zur jeweiligen Seite. Eine Kennzahl, die der Daemon nicht meldet, erscheint als Strich und nicht als Null.
+- **Verbindungs-Snippets**: Die Overview bietet dieselben Verbindungseinstellungen als `.env`-Zeilen, Shell-Exports, Web-SDK-Code und Admin-SDK-Code an; jede Dienstadresse hat eine Schaltfläche **Copy**.
+- **Firestore-Felder**: Die Felder eines Dokuments werden als Baum angezeigt. Jede Zeile zeigt Name, Typ (Ganzzahlen und Gleitkommazahlen werden unterschieden) und Wert; Maps und Arrays lassen sich bei Bedarf öffnen. Eine Referenz in die gerade angezeigte Datenbank ist ein Link zu diesem Dokument.
+- **Functions-Suche**: Das Eingabefeld über den registrierten Funktionen filtert die Tabelle nach Name, Region oder Trigger.
+
 ## Einen Fault-Plan installieren
 
 Auf der Seite „Runtime“ unter **Fault plan**:

@@ -34,6 +34,15 @@ If the default port is busy, `up` starts without the UI; check the startup outpu
 | **App Check** | See registered apps and debug tokens. |
 | **Runtime** | Move the virtual clock forward, or backwards with **Allow moving backwards**, and install a fault plan (see below). |
 
+## Find your way around
+
+- **Command palette**: press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd> on macOS), or select **Search or jump to** in the sidebar. Type a page name to open it, a Firestore path such as `users/alice` to open that document or collection in the default database, or choose an action: switch the session, switch the theme, or copy the `.env` lines.
+- **Theme**: the button at the bottom of the sidebar cycles between the system setting, light and dark. An explicit choice is remembered in this browser.
+- **Overview figures**: the tiles show what the selected session holds (Firestore document data, Authentication users, Storage objects, registered functions) and link to each page. A figure the daemon does not report is shown as a dash, not as zero.
+- **Connection snippets**: the Overview offers the same connection settings as `.env` lines, shell exports, Web SDK code and Admin SDK code, and each service address has a **Copy** button.
+- **Firestore fields**: a document's fields are a tree. Each row shows the name, the type (integers and doubles are told apart) and the value; maps and arrays open on demand. A reference into the database you are browsing is a link to that document.
+- **Functions search**: the box above the registered functions filters the table by name, region or trigger.
+
 ## Install a fault plan
 
 On the Runtime page, under **Fault plan**:

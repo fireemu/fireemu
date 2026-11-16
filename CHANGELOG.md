@@ -8,6 +8,18 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Emulator UI: a command palette (Ctrl+K, or ⌘K on macOS) opens a page by name, a Firestore path typed with a slash (`users/alice`), or an action (switch the session, switch the theme, copy the `.env` lines).
+- Emulator UI: a theme button cycles between the system setting, light and dark; an explicit choice is remembered in the browser.
+- Emulator UI: the Overview shows what the selected session holds (Firestore document data, Authentication users, Storage objects, registered functions) with links to each page, a copy button for every service address, and the connection settings as `.env` lines, shell exports, Web SDK code or Admin SDK code.
+- Emulator UI: the registered functions table can be filtered by name, region or trigger.
+
+### Changed
+
+- Emulator UI: a Firestore document's fields are shown as a tree with the type of each value (integers and doubles told apart); maps and arrays open on demand, and a reference into the database being browsed links to its document.
+- Emulator UI: the navigation has icons and stays in view while a page scrolls; wide tables scroll inside their card instead of wrapping every column; the Runtime page has jump links to its sections and a usage bar for each gauge with a limit.
+
 ## [0.56.0] - 2026-11-16
 
 ### Changed

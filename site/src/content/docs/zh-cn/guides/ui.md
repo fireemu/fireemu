@@ -34,6 +34,15 @@ npx fireemu exec --ui -- npm test
 | **App Check** | 查看已注册的应用和调试令牌。 |
 | **Runtime** | 向前推进虚拟时钟，或通过 **Allow moving backwards** 向后调整，并安装故障计划（见下文）。 |
 
+## 导航与便捷功能
+
+- **命令面板**：按 <kbd>Ctrl</kbd>+<kbd>K</kbd>（macOS 上为 <kbd>⌘</kbd>+<kbd>K</kbd>），或选择侧边栏中的 **Search or jump to**。输入页面名称可打开该页面；输入 `users/alice` 这样的 Firestore 路径可在默认数据库中打开对应的文档或集合；也可以选择操作：切换会话、切换主题或复制 `.env` 行。
+- **主题**：侧边栏底部的按钮在系统设置、浅色和深色之间循环切换。明确选择的主题会保存在此浏览器中。
+- **Overview 数据**：各卡片显示所选会话当前保存的内容（Firestore 文档数据、Authentication 用户、Storage 对象、已注册的函数），并链接到相应页面。守护进程未报告的数据显示为短横线，而不是 0。
+- **连接代码片段**：Overview 以 `.env` 行、shell export、Web SDK 代码和 Admin SDK 代码的形式提供相同的连接设置，每个服务地址都有 **Copy** 按钮。
+- **Firestore 字段**：文档的字段以树形显示。每行显示名称、类型（区分整数和浮点数）和值；映射和数组可按需展开。指向当前浏览的数据库内的引用是指向该文档的链接。
+- **Functions 搜索**：已注册函数上方的输入框可按名称、区域或触发器筛选表格。
+
 ## 安装故障计划
 
 在 Runtime 页面的 **Fault plan** 下：
