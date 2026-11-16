@@ -482,7 +482,8 @@ pub struct Runner {
     /// purpose, so an exit it meets afterwards is expected rather than a crash.
     stopped_on_purpose: AtomicBool,
     credential_sandbox: Mutex<Option<PathBuf>>,
-    clock_revision: AsyncMutex<Option<u64>>,
+    /// The last clock revision and follow flag the runner acknowledged.
+    clock_revision: AsyncMutex<Option<(u64, bool)>>,
     clock_sequence: AtomicU64,
     clock_status: Arc<Mutex<Value>>,
 }
@@ -1189,17 +1190,24 @@ impl Runner {
         }
     }
 
-    /// Install a clock revision without waiting for application callbacks.
+    /// Install a clock revision without waiting for application callbacks. `following` says
+    /// whether the clock runs on with real time; it travels with every update, so a clock frozen
+    /// or unfrozen after the runner started reaches it too.
     pub async fn sync_clock(
         &self,
         snapshot: fireemu_core_session::clock::ClockSnapshot,
+        following: bool,
     ) -> Result<(), String> {
         if self.unstarted {
             // It starts with the clock of the moment it is started.
             return Ok(());
         }
         let mut revision = self.clock_revision.lock().await;
-        if revision.is_some_and(|previous| previous >= snapshot.revision) {
+        // A newer revision, or the same one with the flag changed, is news to the runner.
+        if revision.is_some_and(|(previous, was_following)| {
+            previous > snapshot.revision
+                || (previous == snapshot.revision && was_following == following)
+        }) {
             return Ok(());
         }
         let id = format!(
@@ -1211,14 +1219,15 @@ impl Runner {
                 json!({"invocationId":id,
             "instantNanos":snapshot.instant.as_nanos().to_string(),
             "elapsedNanos":snapshot.elapsed_nanos.to_string(),
-            "revision":snapshot.revision.to_string()}),
+            "revision":snapshot.revision.to_string(),
+            "following":following}),
                 Some(Duration::from_secs(5)),
                 "clock:set",
             )
             .await;
         match result.outcome {
             InvokeOutcome::Ok => {
-                *revision = Some(snapshot.revision);
+                *revision = Some((snapshot.revision, following));
                 Ok(())
             }
             // A runner the daemon stopped (shutdown, reload, reset) has no clock left to keep in
@@ -1568,7 +1577,7 @@ mod tests {
         );
         assert_eq!(runner.hello().clock.as_ref().unwrap()["version"], 1);
         clock.advance(LogicalDuration::from_millis(1000)).unwrap();
-        runner.sync_clock(clock.snapshot()).await.unwrap();
+        runner.sync_clock(clock.snapshot(), false).await.unwrap();
         let active = runner.clone();
         let invocation = tokio::spawn(async move {
             active.invoke(serde_json::json!({"invocationId":"test-clock","function":"clock","trigger":"schedule","event":{}}), std::time::Duration::from_secs(3)).await
@@ -1585,7 +1594,7 @@ mod tests {
         );
         assert!(!dir.join("timer.json").exists());
         clock.advance(LogicalDuration::from_millis(5)).unwrap();
-        runner.sync_clock(clock.snapshot()).await.unwrap();
+        runner.sync_clock(clock.snapshot(), false).await.unwrap();
         runner.run_due(1000).await.unwrap();
         assert_eq!(invocation.await.unwrap().outcome, InvokeOutcome::Ok);
         assert_eq!(
@@ -2333,6 +2342,68 @@ sys.stdin.readline()
         dir
     }
 
+    /// Two Date readings 100 ms of real time apart inside the runner.
+    async fn date_readings(
+        runner: &super::Runner,
+        dir: &trusted_temp::TrustedTempDir,
+    ) -> (i64, i64) {
+        let _ = std::fs::remove_file(dir.join("readings.json"));
+        let outcome = runner
+            .invoke(
+                serde_json::json!({"invocationId":"probe","function":"probe","trigger":"schedule","event":{}}),
+                std::time::Duration::from_secs(10),
+            )
+            .await
+            .outcome;
+        assert_eq!(outcome, super::InvokeOutcome::Ok);
+        let readings: Vec<i64> =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("readings.json")).unwrap())
+                .unwrap();
+        (readings[0], readings[1])
+    }
+
+    /// Every clock update carries whether the clock follows real time, so a clock that starts
+    /// frozen and is later unfrozen runs on in the runner, and one frozen later stops there,
+    /// even when the flag is the only thing that changed.
+    #[tokio::test]
+    async fn clock_sync_carries_the_follow_flag_on_every_update() {
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
+        let dir = clock_source("clock-sync-follow");
+        std::fs::write(
+            dir.join("index.cjs"),
+            r"
+            const fs=require('node:fs');
+            const probe=async()=>{const first=Date.now(); await new Promise(r=>setTimeout(r,100)); fs.writeFileSync('readings.json',JSON.stringify([first,Date.now()]));};
+            probe.run=probe; probe.__endpoint={platform:'gcfv2',scheduleTrigger:{schedule:'every 5 minutes'}};
+            module.exports={probe};
+        ",
+        )
+        .unwrap();
+        let mut clock = VirtualClock::new(LogicalInstant::from_nanos(1_000_000_000));
+        let runner = clock_runner(&dir, &clock).await;
+        let (first, second) = date_readings(&runner, &dir).await;
+        assert_eq!(first, second, "a runner started frozen stays pinned");
+        clock.advance(LogicalDuration::from_millis(1)).unwrap();
+        let snapshot = clock.snapshot();
+        runner.sync_clock(snapshot, true).await.unwrap();
+        let (first, second) = date_readings(&runner, &dir).await;
+        assert!(second >= first + 50, "unfrozen: {first} -> {second}");
+        // The same revision with only the flag changed still reaches the runner.
+        runner.sync_clock(snapshot, false).await.unwrap();
+        let (first, second) = date_readings(&runner, &dir).await;
+        assert_eq!(first, second, "frozen again");
+        // An older revision is still not sent, whatever its flag.
+        let stale = fireemu_core_session::clock::ClockSnapshot {
+            revision: snapshot.revision - 1,
+            ..snapshot
+        };
+        runner.sync_clock(stale, true).await.unwrap();
+        let (first, second) = date_readings(&runner, &dir).await;
+        assert_eq!(first, second, "a stale revision changes nothing");
+        runner.shutdown().await;
+    }
+
     #[tokio::test]
     async fn clock_sync_meeting_a_runner_stopped_on_purpose_is_not_a_failure() {
         use fireemu_core_session::clock::VirtualClock;
@@ -2343,7 +2414,7 @@ sys.stdin.readline()
         for kill in [false, true] {
             let runner = clock_runner(&dir, &clock).await;
             clock.advance(LogicalDuration::from_millis(1)).unwrap();
-            runner.sync_clock(clock.snapshot()).await.unwrap();
+            runner.sync_clock(clock.snapshot(), false).await.unwrap();
             if kill {
                 runner.kill_now();
             } else {
@@ -2351,7 +2422,7 @@ sys.stdin.readline()
             }
             clock.advance(LogicalDuration::from_millis(1)).unwrap();
             assert_eq!(
-                runner.sync_clock(clock.snapshot()).await,
+                runner.sync_clock(clock.snapshot(), false).await,
                 Ok(()),
                 "kill={kill}"
             );
@@ -2385,7 +2456,7 @@ sys.stdin.readline()
         }
         clock.advance(LogicalDuration::from_millis(1)).unwrap();
         assert_eq!(
-            runner.sync_clock(clock.snapshot()).await,
+            runner.sync_clock(clock.snapshot(), false).await,
             Err(r#"runner clock synchronization failed: RunnerGone("runner exited")"#.to_owned())
         );
         runner.shutdown().await;

@@ -4997,6 +4997,54 @@ async fn a_schedule_fires_as_real_time_passes_without_any_hand_move() {
     );
 }
 
+/// The runtime's clock updates tell the runner whether the daemon clock follows real time.
+#[tokio::test]
+async fn runtime_clock_sync_sends_the_clock_follow_flag() {
+    for following in [false, true] {
+        let dir = std::env::temp_dir().join(format!(
+            "fireemu-clock-follow-{following}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("clock.jsonl");
+        let clock = if following {
+            VirtualClock::following(START)
+        } else {
+            VirtualClock::new(START)
+        };
+        let clock = Arc::new(Mutex::new(clock));
+        let runtime = start_task_runtime_using_clock(
+            &dir.join("entries"),
+            1,
+            |_| (TaskRetryConfig::default(), TaskRateLimits::default()),
+            vec![(
+                "FIREEMU_FAKE_CLOCK_LOG".to_owned(),
+                log.display().to_string(),
+            )],
+            clock.clone(),
+            fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+                date_virtual: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        advance(&clock, 1);
+        runtime.sync_clock().await.unwrap();
+        let frames: Vec<serde_json::Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(!frames.is_empty(), "following={following}");
+        for frame in &frames {
+            assert_eq!(frame["following"], json!(following), "{frame}");
+        }
+        runtime.shutdown().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 fn advance(clock: &Mutex<VirtualClock>, seconds: i64) {
     clock
         .lock()
@@ -7091,7 +7139,7 @@ async fn an_unstarted_runner_is_down_without_being_dead_and_stops_quietly() {
     assert!(runner.never_started());
     assert!(runner.hello().http_port.is_none());
     runner
-        .sync_clock(VirtualClock::new(START).snapshot())
+        .sync_clock(VirtualClock::new(START).snapshot(), false)
         .await
         .unwrap();
     assert_eq!(runner.run_due(10).await.unwrap(), serde_json::Value::Null);

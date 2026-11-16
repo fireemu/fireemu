@@ -228,6 +228,10 @@ while True:
     if msg is None or msg.get("type") == "shutdown":
         break
     if msg.get("type") == "clock:set":
+        clock_log = os.environ.get("FIREEMU_FAKE_CLOCK_LOG")
+        if clock_log:
+            with open(clock_log, "a", encoding="utf-8") as frames:
+                frames.write(json.dumps(msg) + "\n")
         clock.update(msg)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
         continue

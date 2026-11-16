@@ -1879,6 +1879,12 @@ impl FunctionsRuntime {
         self.clock.lock().expect("clock lock").snapshot()
     }
 
+    /// The clock snapshot and whether the clock follows real time, read under one lock.
+    fn clock_state(&self) -> (fireemu_core_session::clock::ClockSnapshot, bool) {
+        let clock = self.clock.lock().expect("clock lock");
+        (clock.snapshot(), clock.is_following())
+    }
+
     /// Check Date representability before mutating the daemon clock.
     pub fn validate_clock(&self, instant: LogicalInstant) -> Result<(), String> {
         self.config.clock_policy.validate(instant)
@@ -1886,7 +1892,8 @@ impl FunctionsRuntime {
 
     async fn sync_runner_clock(&self, runner: &Runner) -> Result<(), String> {
         if self.config.clock_policy.date_virtual {
-            runner.sync_clock(self.clock_snapshot()).await?;
+            let (snapshot, following) = self.clock_state();
+            runner.sync_clock(snapshot, following).await?;
         }
         Ok(())
     }
@@ -1913,7 +1920,7 @@ impl FunctionsRuntime {
             return Ok(());
         }
         loop {
-            let snapshot = self.clock_snapshot();
+            let (snapshot, following) = self.clock_state();
             let runners: Vec<_> = self
                 .codebases
                 .iter()
@@ -1923,7 +1930,7 @@ impl FunctionsRuntime {
                 })
                 .collect();
             for (_, runner) in &runners {
-                runner.sync_clock(snapshot).await?;
+                runner.sync_clock(snapshot, following).await?;
             }
             if self.clock_snapshot().revision == snapshot.revision
                 && self
