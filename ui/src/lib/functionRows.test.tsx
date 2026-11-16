@@ -294,3 +294,48 @@ it("shows the runtime of each function in its own column, and a dash when the da
   expect(ui.getByTestId("function-runtime-node").textContent).toBe("Node.js");
   expect(ui.getByTestId("function-runtime-unknown").textContent).toBe("-");
 });
+
+it("hides rows the search text does not match and keeps an open form mounted while hidden", () => {
+  appState.setSession("default");
+  const consume = {
+    name: "consume",
+    region: "us-central1",
+    entryPoint: "consume",
+    trigger: { kind: "pubsub" as const, topic: "events" },
+    timeoutSeconds: 60,
+    retry: false,
+    concurrency: 1,
+  };
+  const other = { ...consume, name: "mirror", trigger: { kind: "pubsub" as const, topic: "jobs" } };
+  const [filter, setFilter] = createSignal("");
+  const ui = render(() => (
+    <table>
+      <tbody>
+        <FunctionRows
+          functions={[consume, other]}
+          project="demo-a"
+          filter={filter()}
+          onNotice={() => {}}
+          onError={() => {}}
+        />
+      </tbody>
+    </table>
+  ));
+  const row = (name: string) => ui.getByTestId(`function-row-${name}`) as HTMLTableRowElement;
+  expect(row("consume").hidden).toBe(false);
+  expect(row("mirror").hidden).toBe(false);
+  fireEvent.click(ui.getByTestId("publish-consume"));
+  const message = ui.getByLabelText("Message (JSON or text)") as HTMLTextAreaElement;
+  fireEvent.input(message, { target: { value: "draft" } });
+  // The trigger description (the topic) is searchable, not only the name.
+  setFilter("jobs");
+  expect(row("consume").hidden).toBe(true);
+  expect(row("mirror").hidden).toBe(false);
+  setFilter("");
+  expect(row("consume").hidden).toBe(false);
+  expect(ui.getByLabelText("Message (JSON or text)")).toBe(message);
+  expect(message.value).toBe("draft");
+  setFilter("nothing-matches");
+  expect(row("consume").hidden).toBe(true);
+  expect(row("mirror").hidden).toBe(true);
+});

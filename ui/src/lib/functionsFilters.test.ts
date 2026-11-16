@@ -31,3 +31,27 @@ describe("function filter links", () => {
     );
   });
 });
+
+describe("the registered-functions search box", () => {
+  const fn = { name: "onUserCreated", region: "us-central1", trigger: { kind: "auth" } };
+  it("matches everything for an empty or blank query", async () => {
+    const { matchesFunction } = await import("./functionsFilters");
+    expect(matchesFunction(fn, "Auth created", "")).toBe(true);
+    expect(matchesFunction(fn, "Auth created", "  \t ")).toBe(true);
+  });
+  it("matches name, region, trigger kind and trigger text, ignoring case", async () => {
+    const { matchesFunction } = await import("./functionsFilters");
+    expect(matchesFunction(fn, "x", "USERCRE")).toBe(true);
+    expect(matchesFunction(fn, "x", "central1")).toBe(true);
+    expect(matchesFunction(fn, "x", "auth")).toBe(true);
+    expect(matchesFunction(fn, "Firestore created on todos/{id}", "TODOS/")).toBe(true);
+    expect(matchesFunction(fn, "x", "storage")).toBe(false);
+  });
+  it("requires every term, in any order", async () => {
+    const { matchesFunction } = await import("./functionsFilters");
+    expect(matchesFunction(fn, "Auth created", "created  user")).toBe(true);
+    expect(matchesFunction(fn, "Auth created", "user deleted")).toBe(false);
+    // Terms do not match across the field boundary.
+    expect(matchesFunction(fn, "x", "onUserCreatedus")).toBe(false);
+  });
+});
