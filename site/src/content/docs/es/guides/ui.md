@@ -34,6 +34,19 @@ Si el puerto predeterminado está ocupado, `up` inicia sin la UI; comprueba la s
 | **App Check** | Ver las apps registradas y los debug tokens. |
 | **Runtime** | Mover el reloj virtual hacia delante, o hacia atrás con **Allow moving backwards**, e instalar un plan de fallos (consulta abajo). |
 
+## Moverse por la UI
+
+- **Paleta de comandos**: pulsa <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd> en macOS) o selecciona **Search or jump to** en la barra lateral. Escribe el nombre de una página para abrirla, una ruta de Firestore como `users/alice` para abrir ese documento o esa colección en la base de datos predeterminada, o elige una acción: cambiar la sesión, cambiar el tema o copiar las líneas de `.env`.
+- **Tema**: el botón de la parte inferior de la barra lateral alterna entre la configuración del sistema, claro y oscuro. Una elección explícita se recuerda en este navegador.
+- **Cifras de Overview**: los recuadros muestran lo que contiene la sesión seleccionada (datos de documentos de Firestore, usuarios de Authentication, objetos de Storage, funciones registradas) y enlazan a cada página. Una cifra que el daemon no informa se muestra como un guion, no como cero.
+- **Fragmentos de conexión**: Overview ofrece la misma configuración de conexión como líneas de `.env`, exports de shell, código del Web SDK y código del Admin SDK, y cada dirección de servicio tiene un botón **Copy**.
+- **Campos de Firestore**: los campos de un documento forman un árbol. Cada fila muestra el nombre, el tipo (se distinguen enteros y dobles) y el valor; los mapas y arrays se abren bajo demanda. Una referencia a la base de datos que estás explorando es un enlace a ese documento.
+- **Búsqueda en Functions**: el cuadro situado sobre las funciones registradas filtra la tabla por nombre, región o trigger.
+- **Atajos de teclado**: pulsa <kbd>?</kbd> (o selecciona **Shortcuts** en la barra lateral) para ver la lista. <kbd>/</kbd> abre la paleta de comandos, y <kbd>g</kbd> seguida de la tecla de una página abre esa página, por ejemplo <kbd>g</kbd> <kbd>f</kbd> para Firestore. Las teclas sueltas no hacen nada mientras un campo de texto tiene el foco.
+- **Tiempos relativos**: las marcas de tiempo van seguidas de su distancia respecto al reloj virtual de la sesión, como `(3 min ago)` o `(in 2 h)`. La distancia se mide respecto al reloj virtual, no al reloj de tu ordenador, así que cambia cuando avanzas el reloj.
+- **Subida y vista previa en Storage**: suelta uno o más archivos sobre la tarjeta **Objects**, o selecciona varios en el selector de archivos, para subirlos a la carpeta que estás viendo. Los archivos se envían de uno en uno; el primer fallo detiene el resto de ese lote e indica el archivo. Los archivos que sueltas mientras hay una subida en curso esperan a que termine y luego se suben a la carpeta que estaba abierta cuando los soltaste. Los detalles de un objeto muestran una vista previa para imágenes rasterizadas (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO) de hasta 10 MiB y para contenido de tipo texto (texto, JSON, XML y similares) de hasta 256 KiB. Las imágenes SVG no tienen vista previa; usa **Download**. El texto siempre se muestra como texto y nunca se renderiza como HTML.
+- **Logs de funciones como JSON**: selecciona **Format JSON** encima de los logs para mostrar con sangría el objeto o array JSON de una línea. Los filtros de nivel y de texto siguen comparando las líneas tal como se escribieron.
+
 ## Instalar un plan de fallos
 
 En la página Runtime, bajo **Fault plan**:
