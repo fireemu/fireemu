@@ -41,7 +41,8 @@ function decodeMessage(payload) {
   const decimal = (value, signed = false) => typeof value === 'string' && value.length <= 40 &&
     (signed ? /^(?:0|-?[1-9][0-9]*)$/ : /^(?:0|[1-9][0-9]*)$/).test(value);
   if (message.type === 'clock:set' && text(message.invocationId) &&
-      decimal(message.instantNanos, true) && decimal(message.elapsedNanos) && decimal(message.revision)) return message;
+      decimal(message.instantNanos, true) && decimal(message.elapsedNanos) && decimal(message.revision) &&
+      (message.following === undefined || typeof message.following === 'boolean')) return message;
   if (message.type === 'clock:runDue' && text(message.invocationId) &&
       (message.budget === undefined || (Number.isSafeInteger(message.budget) && message.budget >= 1 && message.budget <= 10000))) return message;
   // The daemon's answer to an Admin SDK App Check question (tools/runner-node/admin-app-check.mjs).

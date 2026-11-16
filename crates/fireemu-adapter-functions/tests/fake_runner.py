@@ -26,6 +26,9 @@ import threading
 import time
 
 clock = json.loads(os.environ.get("FIREEMU_CLOCK_JSON", "{}"))
+if clock_start_log := os.environ.get("FIREEMU_FAKE_CLOCK_LOG"):
+    with open(clock_start_log, "a", encoding="utf-8") as frames:
+        frames.write(json.dumps({"type": "start", "clock": clock}) + "\n")
 
 if probe := os.environ.get("FIREEMU_SANDBOX_PROBE"):
     pathlib.Path(probe).write_text(

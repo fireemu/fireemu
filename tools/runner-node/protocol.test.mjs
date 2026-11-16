@@ -50,6 +50,19 @@ for(const bytes of [Buffer.from('12'),Buffer.from('12\n'),Buffer.from('12\n{}')]
   });
 }
 
+const clockSet={type:'clock:set',invocationId:'c',instantNanos:'1',elapsedNanos:'0',revision:'1'};
+for(const following of [undefined,true,false]) {
+  test(`clock:set accepts following=${following}`,()=>{
+    const values=[];const parser=new FrameDecoder(v=>values.push(v));
+    parser.push(encode({...clockSet,following}));assert.equal(values.length,1);
+  });
+}
+for(const following of [null,0,1,'true','false',{}]) {
+  test(`clock:set rejects following=${JSON.stringify(following)}`,()=>{
+    const parser=new FrameDecoder(()=>assert.fail('must not dispatch'));
+    assert.throws(()=>parser.push(encode({...clockSet,following})),ProtocolError);
+  });
+}
 test('clean empty EOF and EOF after a complete frame are accepted',()=>{
   const empty=new FrameDecoder(()=>{});empty.end();empty.end();
   const values=[];const parser=new FrameDecoder(v=>values.push(v));parser.push(encode(message));parser.end();assert.equal(values.length,1);

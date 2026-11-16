@@ -5031,12 +5031,42 @@ async fn runtime_clock_sync_sends_the_clock_follow_flag() {
         .await;
         advance(&clock, 1);
         runtime.sync_clock().await.unwrap();
-        let frames: Vec<serde_json::Value> = std::fs::read_to_string(&log)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
+        let read_log = |kind: &str| -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .filter(|frame| frame["type"] == kind)
+                .collect()
+        };
+        let frames = read_log("clock:set");
         assert!(!frames.is_empty(), "following={following}");
+        // The same revision and flag again is not news to the runner.
+        let sent = frames.len();
+        runtime.sync_clock().await.unwrap();
+        if !following {
+            assert_eq!(
+                read_log("clock:set").len(),
+                sent,
+                "an identical update was resent"
+            );
+        }
+        // A runner the runtime starts again learns the flag from its start options.
+        runtime.runner().kill_now();
+        runtime
+            .enqueue_task("demo-app", "us-central1", "taskA", &task_body("respawn"))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while read_log("start").len() < 2 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the runtime starts the runner again");
+        assert_eq!(
+            read_log("start").last().unwrap()["clock"]["following"],
+            json!(following)
+        );
         for frame in &frames {
             assert_eq!(frame["following"], json!(following), "{frame}");
         }
