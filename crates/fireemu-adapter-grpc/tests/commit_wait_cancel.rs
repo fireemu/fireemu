@@ -233,7 +233,7 @@ async fn a_disconnected_rest_commit_does_not_leave_a_deadlock_edge() {
 
 #[tokio::test]
 async fn another_writers_lease_expiry_wakes_an_already_waiting_commit() {
-    let backend = backend().with_lock_lease(Duration::from_millis(80));
+    let backend = backend().with_lock_lease(Duration::from_millis(400));
     let holder = reader(&backend);
     let request = request(Vec::new());
     let (parent, writes) = LocalBackend::plan_commit(&request).unwrap();
@@ -250,11 +250,15 @@ async fn another_writers_lease_expiry_wakes_an_already_waiting_commit() {
             result
         }),
     );
+    // `biased`: once the first attempt has reported its contention, observe that before polling
+    // the wait again. The lease is long enough that a loaded runner cannot let it expire while the
+    // first attempt is still being observed (an 80 ms lease did, on CI, 2026-11-16).
     tokio::select! {
-        result = &mut waiting => panic!("wait unexpectedly finished: {result:?}"),
+        biased;
         () = async { receiver.await.unwrap(); } => {},
+        result = &mut waiting => panic!("wait unexpectedly finished: {result:?}"),
     }
-    tokio::time::sleep(Duration::from_millis(120)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     // A different writer expires the idle holder and succeeds without releasing a transaction itself.
     backend.commit(&request).unwrap();
     tokio::time::timeout(Duration::from_millis(500), &mut waiting)
