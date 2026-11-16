@@ -51,10 +51,10 @@ UUIDv4でない文字列は拒否されます: `403 PERMISSION_DENIED`、`App at
 
 ```text
 appCheck.enabled = false (default)
-  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
 ```
 
-`config show --json`は、同じ状態を`appCheck.enabled`行の`effective`オブジェクトとして返します。
+`config show --json`は、同じ状態を`appCheck.enabled`行の`effective`オブジェクトとして返します。`config show --only <services>`は、`fireemu up --only`が選択するプロダクトについてこの状態を報告します。たとえば`--only firestore`では、交換は`off`です。
 
 ### Web SDKからトークンを取得する
 

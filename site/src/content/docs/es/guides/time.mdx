@@ -102,7 +102,7 @@ A la inversa, una revocación o un cambio de contraseña hecho tras un retroceso
 
 ## Tiempo de aplicación en Functions
 
-Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock`. Sin `daemon.clockStart`, el reloj empieza a la hora del reloj de pared y sigue el tiempo real, así que `Date.now()` en tus funciones lee la hora actual hasta que muevas el reloj. Fija también `daemon.clockStart` para una ejecución reproducible, en la que el reloj permanece quieto hasta que se mueve:
+Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock`. Sin `daemon.clockStart`, el reloj empieza a la hora del reloj de pared y sigue el tiempo real, así que `Date.now()` en tus funciones lee la hora actual y los temporizadores virtuales se disparan tras su retraso a medida que pasa el tiempo real; un movimiento desplaza ambos. Fija también `daemon.clockStart` para una ejecución reproducible, en la que el reloj permanece quieto hasta que se mueve:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

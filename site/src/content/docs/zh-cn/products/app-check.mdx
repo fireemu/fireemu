@@ -51,10 +51,10 @@ curl -X POST 'http://127.0.0.1:9099/v1/projects/demo-app/apps/1%3A1234567890%3Aw
 
 ```text
 appCheck.enabled = false (default)
-  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
 ```
 
-`config show --json` 在 `appCheck.enabled` 行的 `effective` 对象中携带相同的状态。
+`config show --json` 在 `appCheck.enabled` 行的 `effective` 对象中携带相同的状态。`config show --only <services>` 会针对 `fireemu up --only` 将选中的产品报告该状态；例如使用 `--only firestore` 时，兑换为 `off`。
 
 ### 从 Web SDK 获取令牌
 

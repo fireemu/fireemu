@@ -78,4 +78,28 @@ describe("Auth codes", () => {
     await vi.advanceTimersByTimeAsync(CODE_POLL_MS * 3);
     expect(vi.mocked(auth.listOobCodes).mock.calls.length).toBe(calls);
   });
+
+  it("does not start another read while one is still pending", async () => {
+    const ui = mount();
+    await waitFor(() => expect(ui.getByText("No pending email action codes")).toBeTruthy());
+    vi.mocked(auth.listOobCodes).mockReturnValue(
+      new ResultAsync(new Promise(() => {})) as ReturnType<typeof auth.listOobCodes>,
+    );
+    const before = vi.mocked(auth.listOobCodes).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(CODE_POLL_MS * 3);
+    expect(vi.mocked(auth.listOobCodes).mock.calls.length).toBe(before + 1);
+  });
+
+  it("pauses while the tab is hidden", async () => {
+    const ui = mount();
+    await waitFor(() => expect(auth.listOobCodes).toHaveBeenCalled());
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const before = vi.mocked(auth.listOobCodes).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(CODE_POLL_MS * 3);
+    expect(vi.mocked(auth.listOobCodes).mock.calls.length).toBe(before);
+    hidden.mockRestore();
+    await vi.advanceTimersByTimeAsync(CODE_POLL_MS);
+    expect(vi.mocked(auth.listOobCodes).mock.calls.length).toBe(before + 1);
+    ui.unmount();
+  });
 });

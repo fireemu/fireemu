@@ -102,7 +102,7 @@ UI의 Functions 페이지에서는 예약 함수를 즉시 실행하거나 시�
 
 ## Functions의 애플리케이션 시간
 
-기본적으로 함수 코드는 실제 시간을 봅니다. `Date.now()`, 타이머, Cloud Tasks도 가상 시계를 따르게 하려면 `functions.clock`을 설정합니다. `daemon.clockStart`가 없으면 시계는 벽시계 시각에서 시작해 실제 시간을 따르므로, 시계를 이동하기 전까지 함수의 `Date.now()`는 현재 시각을 읽습니다. 재현 가능한 실행을 위해서는 `daemon.clockStart`도 고정하며, 이 경우 시계는 이동하기 전까지 멈춰 있습니다.
+기본적으로 함수 코드는 실제 시간을 봅니다. `Date.now()`, 타이머, Cloud Tasks도 가상 시계를 따르게 하려면 `functions.clock`을 설정합니다. `daemon.clockStart`가 없으면 시계는 벽시계 시각에서 시작해 실제 시간을 따르므로, 시계를 이동하기 전까지 함수의 `Date.now()`는 현재 시각을 읽고, 가상 타이머는 실제 시간이 흐르면서 지연 시간이 지난 뒤 실행되며, 시계를 이동하면 둘 다 이동합니다. 재현 가능한 실행을 위해서는 `daemon.clockStart`도 고정하며, 이 경우 시계는 이동하기 전까지 멈춰 있습니다.
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

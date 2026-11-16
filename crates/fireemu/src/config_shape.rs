@@ -838,6 +838,7 @@ mod tests {
                 "config_schema"
                     | "check_allow_entries"
                     | "config_show"
+                    | "config_show_for"
                     | "redact_config_row"
                     | "mask_secret"
                     | "resolve_project_alias"

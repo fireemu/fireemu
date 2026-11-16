@@ -1938,6 +1938,17 @@ impl AppCheckConfig {
             && matches!(self.debug_tokens, AppCheckDebugTokens::Any)
     }
 
+    /// Which debug tokens the exchange accepts, in the words of the startup banner and
+    /// `config show`.
+    #[must_use]
+    pub fn exchange_summary(&self) -> String {
+        if self.debug_tokens == AppCheckDebugTokens::Any {
+            "any well-formed debug token (appCheck.debugTokens \"any\")".to_owned()
+        } else {
+            format!("{} registered app(s)", self.apps.len())
+        }
+    }
+
     /// Whether App Check is served at all, enabled or implicit.
     #[must_use]
     pub const fn served(&self) -> bool {
@@ -2399,9 +2410,15 @@ impl RuntimeConfig {
         Ok(())
     }
 
-    /// Every schema leaf with its parsed effective value, provenance and description.
-    #[allow(clippy::too_many_lines)]
+    /// Every schema leaf with its parsed effective value, provenance and description, with the
+    /// App Check state of every product selected.
     pub fn config_show(&self, input: &Value) -> Vec<Value> {
+        self.config_show_for(input, &Selection::default())
+    }
+
+    /// [`Self::config_show`] with the App Check state of the products `only` selects.
+    #[allow(clippy::too_many_lines)]
+    pub fn config_show_for(&self, input: &Value, only: &Selection) -> Vec<Value> {
         use serde_json::json;
         let mut rows = Vec::new();
         for (key, schema) in config_schema() {
@@ -2466,7 +2483,7 @@ impl RuntimeConfig {
             if key == "appCheck.enabled" {
                 // The key alone does not say what is served: the strict development default
                 // serves the exchange and callable enforcement with the key false.
-                row["effective"] = self.app_check_effective(&Selection::default());
+                row["effective"] = self.app_check_effective(only);
                 row["note"] = json!(APP_CHECK_ENABLED_NOTE);
             }
             rows.push(row);
@@ -2483,12 +2500,10 @@ impl RuntimeConfig {
     #[must_use]
     pub fn app_check_effective(&self, only: &Selection) -> Value {
         let served = only.app_check_available(&self.app_check);
-        let exchange = if !served {
-            "off".to_owned()
-        } else if self.app_check.debug_tokens == AppCheckDebugTokens::Any {
-            "on: any well-formed debug token (appCheck.debugTokens \"any\")".to_owned()
+        let exchange = if served {
+            format!("on: {}", self.app_check.exchange_summary())
         } else {
-            format!("on: {} registered app(s)", self.app_check.apps.len())
+            "off".to_owned()
         };
         let callables = if served && only.functions {
             "on: enforceAppCheck is honoured per function"
@@ -2507,7 +2522,7 @@ impl RuntimeConfig {
 }
 
 /// What `appCheck.enabled` governs, printed by `config show` next to its value.
-pub const APP_CHECK_ENABLED_NOTE: &str = "appCheck.enabled = true serves App Check with the registered apps and turns on the appCheck.services modes; false written in an appCheck block turns App Check off. Unset, the strict profile's development default (appCheck.debugTokens \"any\", when there is no appCheck block) still serves the exchange and callable enforcement while every appCheck.services mode stays off. \"effective\" shows what this configuration serves when every product is selected.";
+pub const APP_CHECK_ENABLED_NOTE: &str = "appCheck.enabled = true serves App Check with the registered apps and turns on the appCheck.services modes; false written in an appCheck block turns App Check off. Unset, the strict profile's development default (appCheck.debugTokens \"any\", when there is no appCheck block) still serves the exchange and callable enforcement while every appCheck.services mode stays off. \"effective\" shows what this configuration serves for the selected products (every product, or config show --only).";
 
 /// Config keys whose values are secret-bearing. `config show` (text and `--json`) and
 /// `config lint --json` print these through [`redact_config_row`] instead of the value.
@@ -7550,6 +7565,32 @@ mod tests {
         let (_, row) = effective(json!({"profile": "strict", "appCheck": {"enabled": false}}));
         assert_eq!(row["effective"]["exchange"], "off");
         assert_eq!(row["effective"]["callables"], "off");
+    }
+
+    /// `config show --only` reports what the selected products serve (review S2): with only
+    /// Firestore selected, strict's implicit App Check is not served at all.
+    #[test]
+    fn config_show_reports_app_check_for_the_selected_products() {
+        let document = json!({"schemaVersion": 1, "profile": "strict"});
+        let cfg = RuntimeConfig::from_json(&document).unwrap();
+        let row = |only: &Selection| {
+            cfg.config_show_for(&document, only)
+                .into_iter()
+                .find(|row| row["key"] == "appCheck.enabled")
+                .unwrap()
+        };
+        let firestore = row(&Selection::parse("firestore").unwrap());
+        assert_eq!(firestore["effective"]["exchange"], "off");
+        assert_eq!(firestore["effective"]["callables"], "off");
+        let auth = row(&Selection::parse("auth,appcheck").unwrap());
+        assert_ne!(auth["effective"]["exchange"], "off");
+        assert_eq!(auth["effective"]["callables"], "off");
+        let functions = row(&Selection::parse("functions").unwrap());
+        assert_ne!(functions["effective"]["callables"], "off");
+        assert_eq!(
+            cfg.config_show(&document),
+            cfg.config_show_for(&document, &Selection::default())
+        );
     }
 
     /// Every combination of the PICT table (docs.local coverage ledger, `appcheck.pict`): the

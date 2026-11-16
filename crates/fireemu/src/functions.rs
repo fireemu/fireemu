@@ -5179,12 +5179,10 @@ async fn start_codebase(
             debug_features.to_owned(),
         ));
     }
-    env.push((
-        "FIREEMU_CLOCK_JSON".into(),
-        cfg.functions_clock
-            .runner_options(clock_snapshot)
-            .to_string(),
-    ));
+    // A clock that follows real time runs on in the runner between the daemon's updates.
+    let mut clock_options = cfg.functions_clock.runner_options(clock_snapshot);
+    clock_options["following"] = serde_json::json!(!cfg.clock_frozen());
+    env.push(("FIREEMU_CLOCK_JSON".into(), clock_options.to_string()));
     if let Some(environment) = &python_environment {
         // What `activate` gives firebase-tools' Python commands: the environment first in PATH.
         env.extend(crate::python_functions::launch_environment(
@@ -19385,15 +19383,18 @@ exports.{name}.__endpoint = {{platform:'gcfv2',scheduleTrigger:{{schedule:'* * *
                 );
             }
             runtime.shutdown().await;
-            assert_eq!(
-                captured[0], captured[1],
-                "{profile}: module initialization must share one clock snapshot"
+            // The clock follows real time, so each runner's Date runs on from the shared
+            // snapshot by the real time its start took; separate snapshots would differ by
+            // whole seconds of the fake source (one per read, an hour per scan).
+            let millis: Vec<i128> = captured
+                .iter()
+                .map(|line| line.strip_prefix("captured=").unwrap().parse().unwrap())
+                .collect();
+            assert!(
+                (millis[0] - millis[1]).abs() < 1_000,
+                "{profile}: module initialization must share one clock snapshot: {captured:?}"
             );
-            let initial_millis: i128 = captured[0]
-                .strip_prefix("captured=")
-                .unwrap()
-                .parse()
-                .unwrap();
+            let initial_millis = millis[0].min(millis[1]);
             assert!(
                 initial_millis >= cfg.clock_start.as_nanos() / 1_000_000 + 7_200_000,
                 "{profile}: the initial clock must include the time spent in both baseline scans"

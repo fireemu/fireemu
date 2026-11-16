@@ -229,3 +229,49 @@ test('promise timer imports can cancel later callbacks without awaiting applicat
   assert.deepEqual(calls, []);
   assert.equal(clock.status().pending, 1);
 `, {timers:'virtual'}));
+
+test('a following clock advances Date and fires due timers with real time', () => check(`
+  const start = Date.now();
+  let fired = 0;
+  setTimeout(() => { fired++; }, 50);
+  await nativeDelay(150);
+  assert.ok(Date.now() - start >= 100, String(Date.now() - start));
+  assert.equal(fired, 1);
+  // A frozen update stops both: Date stands still and a later timer waits.
+  clock.update({instantNanos: String(BigInt(Date.now()) * 1000000n), following: false});
+  const frozenAt = Date.now();
+  setTimeout(() => { fired++; }, 20);
+  await nativeDelay(80);
+  assert.equal(Date.now(), frozenAt);
+  assert.equal(fired, 1);
+`, { timers: 'virtual', following: true }));
+
+test('a following clock never steps Date back on a slightly older tick, but honours a rewind', () => check(`
+  await nativeDelay(30);
+  const shown = Date.now();
+  clock.update({instantNanos: String(BigInt(shown - 5) * 1000000n), elapsedNanos: '0', following: true});
+  assert.ok(Date.now() >= shown);
+  clock.update({instantNanos: '1000000000', elapsedNanos: '0', following: true});
+  assert.ok(Date.now() < shown - 1000 || shown - 1000 < 1000);
+`, { following: true, instantNanos: '5000000000' }));
+
+test('without the following flag Date stays pinned between updates', () => check(`
+  await nativeDelay(40);
+  assert.equal(Date.now(), 1000);
+`, { timers: 'virtual' }));
+
+test('a following update re-anchors Date, deadlines run from the live elapsed time, and freezing shows the frozen instant', () => check(`
+  await nativeDelay(100);
+  clock.update({instantNanos: '9000000000', following: true});
+  assert.ok(Date.now() - 9000 < 50, String(Date.now()));
+  await nativeDelay(100);
+  let fired = false;
+  setTimeout(() => { fired = true; }, 80);
+  await nativeDelay(20);
+  assert.equal(fired, false);
+  const shown = Date.now();
+  clock.update({instantNanos: String(BigInt(shown - 500) * 1000000n), following: false});
+  assert.equal(Date.now(), shown - 500);
+  clock.update({instantNanos: String(BigInt(shown - 500) * 1000000n), following: true});
+  assert.ok(Date.now() < shown, String(Date.now() - shown));
+`, { timers: 'virtual', following: true }));

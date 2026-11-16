@@ -102,7 +102,7 @@ UI 的 Functions 页面也可以立即运行定时函数，或把时钟推进到
 
 ## Functions 中的应用时间
 
-默认情况下，函数代码看到的是真实时间。要让 `Date.now()`、计时器和 Cloud Tasks 也跟随虚拟时钟，请设置 `functions.clock`。没有 `daemon.clockStart` 时，时钟从墙上时间开始并跟随真实时间，因此在你移动时钟之前，函数中的 `Date.now()` 读到的是当前时间。要获得可复现的运行，请同时固定 `daemon.clockStart`，此时时钟在被移动之前保持静止：
+默认情况下，函数代码看到的是真实时间。要让 `Date.now()`、计时器和 Cloud Tasks 也跟随虚拟时钟，请设置 `functions.clock`。没有 `daemon.clockStart` 时，时钟从墙上时间开始并跟随真实时间，因此在你移动时钟之前，函数中的 `Date.now()` 读到的是当前时间，虚拟计时器会随真实时间流逝在延迟后触发；移动时钟会同时平移二者。要获得可复现的运行，请同时固定 `daemon.clockStart`，此时时钟在被移动之前保持静止：
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

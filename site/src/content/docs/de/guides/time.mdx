@@ -102,7 +102,7 @@ Umgekehrt widerruft ein Widerruf oder eine Passwortänderung nach einem Zurücks
 
 ## Anwendungszeit in Functions
 
-Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock`. Ohne `daemon.clockStart` startet die Uhr zur Wanduhrzeit und folgt der Echtzeit, sodass `Date.now()` in Ihren Funktionen die aktuelle Zeit liest, bis Sie die Uhr bewegen. Fixieren Sie zusätzlich `daemon.clockStart` für einen reproduzierbaren Lauf, bei dem die Uhr stillsteht, bis sie bewegt wird:
+Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock`. Ohne `daemon.clockStart` startet die Uhr zur Wanduhrzeit und folgt der Echtzeit, sodass `Date.now()` in Ihren Funktionen die aktuelle Zeit liest und virtuelle Timer nach ihrer Verzögerung auslösen, während die Echtzeit vergeht; eine Verschiebung verschiebt beides. Fixieren Sie zusätzlich `daemon.clockStart` für einen reproduzierbaren Lauf, bei dem die Uhr stillsteht, bis sie bewegt wird:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

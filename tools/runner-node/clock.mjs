@@ -48,7 +48,7 @@ function options(value) {
   return value;
 }
 
-export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real', instantNanos = '0', elapsedNanos = '0'} = {}) {
+export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real', instantNanos = '0', elapsedNanos = '0', following: initiallyFollowing = false} = {}) {
   if (!['real','virtual'].includes(date) || !['real','virtual'].includes(timerPolicy) ||
       (timerPolicy === 'virtual' && date !== 'virtual')) throw new TypeError('invalid runtime clock policy');
   let instant = nanos(instantNanos, 'instant');
@@ -56,6 +56,15 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   let elapsed = nanos(elapsedNanos, 'elapsed');
   if (elapsed < 0n) throw new RangeError('negative timer elapsed time');
   let installed = false;
+  // While the daemon clock follows real time, application time runs on between its updates:
+  // the last update is the anchor and a monotonic reading counts the time since then.
+  let following = initiallyFollowing === true;
+  let anchor = process.hrtime.bigint();
+  let lastShown = -Infinity;
+  let autoHandle = null;
+  let autoDrain = null;
+  const live = () => following ? process.hrtime.bigint() - anchor : 0n;
+  const currentElapsed = () => elapsed + live();
   let sequence = 0;
   let draining = false;
   const queue = new Map();
@@ -74,10 +83,11 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     }
     refresh() {
       if (!this.cancelled) {
-        this.deadline = elapsed + this.duration;
+        this.deadline = currentElapsed() + this.duration;
         this.order = ++sequence;
         queue.set(this.id, this);
         handles.set(this.id, this);
+        arm();
       }
       return this;
     }
@@ -146,11 +156,33 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     }
   }
 
-  const now = () => epochMillis;
+  function now() {
+    if (!following) return epochMillis;
+    const value = milliseconds(instant + live());
+    lastShown = Math.max(lastShown, value);
+    return lastShown;
+  }
+
+  // Under a following clock nobody moves the clock, so due timers run on their own.
+  function arm() {
+    if (autoHandle !== null) { native.clearTimeout(autoHandle); autoHandle = null; }
+    if (!following || timerPolicy !== 'virtual' || !installed || queue.size === 0) return;
+    let earliest;
+    for (const handle of queue.values()) if (earliest === undefined || handle.deadline < earliest) earliest = handle.deadline;
+    const wait = earliest - currentElapsed();
+    const ms = wait <= 0n ? 0 : Number((wait + nanosPerMilli - 1n) / nanosPerMilli);
+    autoHandle = native.setTimeout(() => {
+      autoHandle = null;
+      if (draining) return;
+      autoDrain = api.runDue().catch(() => {}).finally(() => { autoDrain = null; arm(); });
+    }, Math.min(ms, 2_147_483_647));
+    autoHandle.unref?.();
+  }
+
   const VirtualDate = new Proxy(NativeDate, {
-    apply() { return new NativeDate(epochMillis).toString(); },
+    apply() { return new NativeDate(now()).toString(); },
     construct(target, args, newTarget) {
-      return Reflect.construct(target, args.length === 0 ? [epochMillis] : args, newTarget);
+      return Reflect.construct(target, args.length === 0 ? [now()] : args, newTarget);
     },
     get(target, key, receiver) {
       return key === 'now' ? now : Reflect.get(target, key, receiver);
@@ -165,11 +197,12 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
 
   function status() {
     let due = 0;
-    for (const handle of queue.values()) if (handle.deadline <= elapsed) due++;
-    return {pending:queue.size, due, instantNanos:instant.toString(), elapsedNanos:elapsed.toString()};
+    const current = currentElapsed();
+    for (const handle of queue.values()) if (handle.deadline <= current) due++;
+    return {pending:queue.size, due, instantNanos:(instant + live()).toString(), elapsedNanos:current.toString()};
   }
 
-  return {
+  const api = {
     install() {
       if (installed) return;
       installed = true;
@@ -184,10 +217,12 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
         promises.setInterval = promiseInterval;
         syncBuiltinESMExports();
       }
+      arm();
     },
     restore() {
       if (!installed) return;
       installed = false;
+      if (autoHandle !== null) { native.clearTimeout(autoHandle); autoHandle = null; }
       if (date === 'virtual') {
         globalThis.Date = NativeDate;
         Object.defineProperty(NativeDate.prototype, 'constructor', dateConstructor);
@@ -208,13 +243,21 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
         ? elapsed + (next > instant ? next - instant : 0n)
         : nanos(value.elapsedNanos, 'elapsed');
       if (nextElapsed < elapsed) throw new RangeError('timer elapsed time cannot rewind');
+      // A tick that lands slightly behind what was already shown does not step Date back; a
+      // rewind (a move back by more than a second) does.
+      if (date === 'virtual' && nextMillis < lastShown - 1000) lastShown = -Infinity;
+      if (value.following !== undefined) following = value.following === true;
+      if (!following) lastShown = -Infinity;
       instant = next;
       epochMillis = nextMillis;
       elapsed = nextElapsed;
+      anchor = process.hrtime.bigint();
+      arm();
       return status();
     },
     async runDue(budget = 1000) {
       if (!Number.isSafeInteger(budget) || budget < 1 || budget > maxDrain) throw new RangeError('invalid timer drain budget');
+      if (autoDrain && !draining) await autoDrain;
       if (draining) throw new Error('timer drain is already running');
       draining = true;
       let executed = 0;
@@ -222,7 +265,7 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
         while (executed < budget) {
           let next;
           for (const handle of queue.values()) {
-            if (handle.deadline <= elapsed && (!next || handle.deadline < next.deadline ||
+            if (handle.deadline <= currentElapsed() && (!next || handle.deadline < next.deadline ||
                 (handle.deadline === next.deadline && handle.order < next.order))) next = handle;
           }
           if (!next) break;
@@ -244,4 +287,5 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     },
     status,
   };
+  return api;
 }

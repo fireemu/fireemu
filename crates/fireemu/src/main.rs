@@ -413,7 +413,7 @@ fn test_world_config_command(args: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
-const CONFIG_USAGE: &str = "usage: fireemu config show [--config <path>] [--firebase-json <path>] [--json]\n       fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n       fireemu config schema [--out <path>]";
+const CONFIG_USAGE: &str = "usage: fireemu config show [--config <path>] [--firebase-json <path>] [--only <services>] [--json]\n       fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n       fireemu config schema [--out <path>]";
 
 /// What `config lint` reads from the command line besides the shared file flags.
 #[derive(Default)]
@@ -500,6 +500,7 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
     let mut flags = Vec::new();
     let mut json = false;
     let mut lint_options = LintOptions::default();
+    let mut only: Option<String> = None;
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -512,6 +513,13 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
                     .get(index + 1)
                     .ok_or_else(|| CliError::usage(format!("{} needs a value", args[index])))?;
                 flags.extend([args[index].clone(), value.clone()]);
+                index += 2;
+            }
+            "--only" if !lint => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| CliError::usage("--only needs a value"))?;
+                only = Some(value.clone());
                 index += 2;
             }
             "--deny-ineffective" if lint => {
@@ -543,10 +551,16 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
     if lint {
         return config_lint(&flags, json, &lint_options);
     }
+    let selection = match &only {
+        Some(services) => {
+            Selection::parse(services).map_err(|e| CliError::usage(format!("--only: {}", e.0)))?
+        }
+        None => Selection::default(),
+    };
     let mut raw = parse_raw_options(&flags, OptionContext::Start)?;
     let origin = discover_project_config(&mut raw)?;
     let (mut cfg, project_root, sources) =
-        load_project_config(&raw, &Selection::default()).map_err(note_discovered(&origin))?;
+        load_project_config(&raw, &selection).map_err(note_discovered(&origin))?;
     let project = resolve_project_dependent_config(&mut cfg, &origin, &project_root)?;
     let input = match &sources.canonical {
         Some(path) => config_document(&raw, path)?.0,
@@ -557,7 +571,7 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
         .as_ref()
         .map(|(path, _)| read_firebase_json(path).map(|(document, _)| document))
         .transpose()?;
-    let mut rows = cfg.config_show(&input);
+    let mut rows = cfg.config_show_for(&input, &selection);
     for row in &mut rows {
         let key = row["key"].as_str().expect("key");
         let firebase_path = match key {
@@ -636,7 +650,11 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
                     .iter()
                     .map(|(surface, state)| format!("{surface} = {}", state.as_str().unwrap_or("")))
                     .collect();
-                println!("  in effect: {}", surfaces.join("; "));
+                let scope = only.as_deref().map_or_else(
+                    || "every product selected".to_owned(),
+                    |list| format!("--only {list}"),
+                );
+                println!("  in effect ({scope}): {}", surfaces.join("; "));
                 if let Some(note) = row["note"].as_str() {
                     println!("  note: {note}");
                 }

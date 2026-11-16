@@ -240,6 +240,7 @@ options: every option of `up` (listed under up above); only --config and --fireb
 - 配置接受但守护进程不读取的键（例如 `bind`、`limits.catalog`、`firestore.textSearch.*`、`rules.staticLimitChecks`、`auth.enabled` 和 `trace.*`）的来源为 `accepted, no effect`：其值按所写的原样或 `(unset)` 显示，绝不会显示为已生效，并且设置了这类键的配置会在启动时打印一条 `note:` 行。
 - 包含机密的值在文本和 JSON 中都会被屏蔽为 `[redacted]`：`pubsub.authentication.localBearerToken`、每个 `auth.apiKeys` 值、`auth.customTokenSigners`、OIDC 提供方的 `clientSecret` 以及 App Check 应用的 `debugTokenSha256` 条目。其他字段保持可见，null 仍为 null。
 - `firebaseJson` 显示实际选定的 Firebase 配置文件，包括通过 `--firebase-json` 选定的文件。
+- 在 `appCheck.enabled` 下方，`in effect` 行按表面（兑换、callable、Auth、Firestore、Storage）显示 App Check 实际提供的内容，用语与启动横幅一致；仅看该键无法得知，因为严格配置文件在没有 `appCheck` 块时也会提供兑换。JSON 将其作为该行的 `effective` 对象携带。它涵盖所有产品，或 `--only <services>` 指定的产品，选取方式与 `fireemu up --only` 相同；`--only` 不会改变输出中的其他任何内容。
 
 ## config lint
 

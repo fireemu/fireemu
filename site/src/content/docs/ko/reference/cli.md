@@ -240,6 +240,7 @@ options: every option of `up` (listed under up above); only --config and --fireb
 - 구성이 수락하지만 데몬이 읽지 않는 키(예: `bind`, `limits.catalog`, `firestore.textSearch.*`, `rules.staticLimitChecks`, `auth.enabled`, `trace.*`)의 출처는 `accepted, no effect`입니다. 값은 작성된 그대로 또는 `(unset)`으로 표시되며 적용 중인 것처럼 표시되지 않고, 이러한 키를 설정한 구성은 시작 시 `note:` 줄을 출력합니다.
 - 비밀을 담은 값은 텍스트와 JSON에서 `[redacted]`로 가려집니다: `pubsub.authentication.localBearerToken`, 각 `auth.apiKeys` 값, `auth.customTokenSigners`, OIDC 공급자의 `clientSecret`, App Check 앱의 `debugTokenSha256` 항목. 다른 필드는 그대로 표시되고 null은 null로 유지됩니다.
 - `firebaseJson`은 `--firebase-json`으로 선택한 것을 포함해, 실제로 선택된 Firebase 구성 파일을 표시합니다.
+- `appCheck.enabled` 아래의 `in effect` 줄은 App Check가 표면별(교환, callable, Auth, Firestore, Storage)로 무엇을 제공하는지 시작 배너와 같은 용어로 보여 줍니다. 엄격 프로파일은 `appCheck` 블록 없이도 교환을 제공하므로 키만으로는 알 수 없습니다. JSON에서는 해당 행의 `effective` 객체로 담습니다. 모든 제품 또는 `fireemu up --only`가 선택하는 방식대로 `--only <services>`가 지정한 제품을 대상으로 하며, `--only`는 출력의 다른 부분을 바꾸지 않습니다.
 
 ## config lint
 

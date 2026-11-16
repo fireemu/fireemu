@@ -51,10 +51,10 @@ Por tanto, `appCheck.enabled` no indica por sí solo si App Check se sirve: con 
 
 ```text
 appCheck.enabled = false (default)
-  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
 ```
 
-`config show --json` incluye el mismo estado en el objeto `effective` de la fila `appCheck.enabled`.
+`config show --json` incluye el mismo estado en el objeto `effective` de la fila `appCheck.enabled`. `config show --only <services>` lo informa para los productos que seleccionaría `fireemu up --only`; con `--only firestore`, por ejemplo, el intercambio está `off`.
 
 ### Obtener un token desde el SDK web
 

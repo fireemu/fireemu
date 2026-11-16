@@ -5591,13 +5591,15 @@ impl FunctionsRuntime {
     fn clock_spawn_spec(&self, spec: &SpawnSpec) -> SpawnSpec {
         let mut spawn = spec.clone();
         spawn.env.retain(|(key, _)| key != "FIREEMU_CLOCK_JSON");
-        spawn.env.push((
-            "FIREEMU_CLOCK_JSON".into(),
-            self.config
-                .clock_policy
-                .runner_options(self.clock_snapshot())
-                .to_string(),
-        ));
+        // A clock that follows real time runs on in the runner between the daemon's updates.
+        let mut options = self
+            .config
+            .clock_policy
+            .runner_options(self.clock_snapshot());
+        options["following"] = json!(self.clock_follows_real_time());
+        spawn
+            .env
+            .push(("FIREEMU_CLOCK_JSON".into(), options.to_string()));
         spawn
     }
 

@@ -269,7 +269,13 @@ pub(crate) fn totp_clock_note(cfg: &RuntimeConfig) -> Option<String> {
             .is_some_and(|mfa| mfa.totp_enabled());
     let leaves_wall_time = cfg.clock_start_pinned || cfg.clock_frozen();
     (totp_on && leaves_wall_time).then(|| {
-        "  totp clock:       TOTP codes are checked at the emulator clock, which is pinned or frozen, so codes from an authenticator app do not match; leave daemon.clockStart and daemon.clock unset to use an authenticator app, or move the clock to the current time (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:set)".to_owned()
+        if cfg.clock_frozen() {
+            // A one-off move to now does not help: a still clock leaves the code behind
+            // within one 30-second step.
+            "  totp clock:       TOTP codes are checked at the emulator clock, which stands still, so codes from an authenticator app do not match; to use one, let the clock follow real time: leave daemon.clockStart and daemon.clock unset (or set daemon.clock = \"realtime\" and move the clock to the current time once)".to_owned()
+        } else {
+            "  totp clock:       TOTP codes are checked at the emulator clock, which runs from the pinned daemon.clockStart, not from the current time, so codes from an authenticator app do not match; to use one, leave daemon.clockStart unset, or move the clock to the current time once (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:set); it then keeps following real time".to_owned()
+        }
     })
 }
 
@@ -1080,12 +1086,8 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         );
         if let Some(state) = &app_check {
             println!(
-            "  app check:        {}   FIREEMU_APP_CHECK_EMULATOR_HOST={http_addr}   JWKS: http://{http_addr}/v1/jwks (kid {})",
-            if cfg.app_check.debug_tokens == crate::config::AppCheckDebugTokens::Any {
-                "any well-formed debug token exchanges (appCheck.debugTokens \"any\")".to_owned()
-            } else {
-                format!("{} app(s)", cfg.app_check.apps.len())
-            },
+            "  app check:        exchanges {}   FIREEMU_APP_CHECK_EMULATOR_HOST={http_addr}   JWKS: http://{http_addr}/v1/jwks (kid {})",
+            cfg.app_check.exchange_summary(),
             state.kid_for_banner()
         );
             if only.app_check_included_by_services(&cfg.app_check) {
@@ -2518,8 +2520,20 @@ mod tests {
             let text = note(daemon.clone(), "strict", false).unwrap_or_default();
             assert!(text.contains("authenticator app"), "{daemon}: {text}");
             assert!(text.contains("daemon.clockStart"), "{daemon}: {text}");
-            assert!(text.contains("clock:set"), "{daemon}: {text}");
         }
+        // A still clock: the advice is to follow real time, not a one-off move (review S3).
+        for daemon in [&pinned, &frozen] {
+            let text = note(daemon.clone(), "strict", false).unwrap();
+            assert!(text.contains("stands still"), "{daemon}: {text}");
+            assert!(text.contains("realtime"), "{daemon}: {text}");
+            assert!(!text.contains("clock:set"), "{daemon}: {text}");
+        }
+        // A running clock with a pinned start: one move to now is enough.
+        let text = note(running.clone(), "strict", false).unwrap();
+        assert!(
+            text.contains("clock:set") && text.contains("keeps following real time"),
+            "{text}"
+        );
         // The default clock shows the wall-clock time: no note.
         assert_eq!(note(json!({}), "strict", false), None);
         // No TOTP (production's new project under productionExact, the emulator profile without

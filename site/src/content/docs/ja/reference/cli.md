@@ -240,6 +240,7 @@ options: every option of `up` (listed under up above); only --config and --fireb
 - 設定が受け付けるが、デーモンが読まないキー(たとえば`bind`、`limits.catalog`、`firestore.textSearch.*`、`rules.staticLimitChecks`、`auth.enabled`、`trace.*`)の由来は`accepted, no effect`になります。値は記述されたとおりか`(unset)`として表示され、有効であるかのようには決して表示されません。そのようなキーを設定している構成は、起動時に`note:`行を出力します。
 - 秘密を含む値は、テキストでもJSONでも`[redacted]`としてマスクされます: `pubsub.authentication.localBearerToken`、`auth.apiKeys`の各値、`auth.customTokenSigners`、OIDCプロバイダーの`clientSecret`、App Checkアプリの`debugTokenSha256`の各エントリ。ほかのフィールドは表示されたままで、nullはnullのままです。
 - `firebaseJson`は、`--firebase-json`で選んだものも含めて、実際に選択されたFirebase設定ファイルを示します。
+- `appCheck.enabled`の下の`in effect`行は、App Checkがサーフェスごと（交換、callable、Auth、Firestore、Storage）に何を提供するかを、起動バナーと同じ用語で示します。strictプロファイルは`appCheck`ブロックなしで交換を提供するため、キーだけではそれは分かりません。JSONでは、その行の`effective`オブジェクトとして含まれます。対象は全プロダクト、または`fireemu up --only`が選択するとおりに`--only <services>`で指定したプロダクトです。`--only`は出力のそれ以外を変えません。
 
 ## config lint
 

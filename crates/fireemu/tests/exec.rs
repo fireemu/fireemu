@@ -577,7 +577,7 @@ fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_an
 
     let open = run(None);
     assert!(
-        open.contains("any well-formed debug token exchanges"),
+        open.contains("exchanges any well-formed debug token"),
         "{open}"
     );
     assert!(open.contains("(kid "), "{open}");
@@ -594,7 +594,7 @@ fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_an
 
     let exact = run(Some(r#"{"schemaVersion":1,"productionExact":true}"#));
     assert!(
-        !exact.contains("any well-formed debug token exchanges"),
+        !exact.contains("exchanges any well-formed debug token"),
         "{exact}"
     );
     assert!(exact.contains("service-"), "{exact}");

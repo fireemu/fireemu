@@ -51,10 +51,10 @@ UUIDv4가 아닌 문자열은 `403 PERMISSION_DENIED`, `App attestation failed.`
 
 ```text
 appCheck.enabled = false (default)
-  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
 ```
 
-`config show --json`은 같은 상태를 `appCheck.enabled` 행의 `effective` 객체로 담습니다.
+`config show --json`은 같은 상태를 `appCheck.enabled` 행의 `effective` 객체로 담습니다. `config show --only <services>`는 `fireemu up --only`가 선택할 제품에 대해 이 상태를 보고합니다. 예를 들어 `--only firestore`에서는 교환이 `off`입니다.
 
 ### Web SDK에서 토큰 받기
 

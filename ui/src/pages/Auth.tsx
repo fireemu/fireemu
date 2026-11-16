@@ -397,9 +397,11 @@ const AuthScope: Component<{ project: string }> = (props) => {
   );
 
   onMount(() => {
+    // Skip a tick while the tab is hidden or the previous read has not answered yet.
     const timer = window.setInterval(() => {
-      void refetchCodes();
-      void refetchPhoneCodes();
+      if (document.hidden) return;
+      if (!codes.loading) void refetchCodes();
+      if (!phoneCodes.loading) void refetchPhoneCodes();
     }, CODE_POLL_MS);
     onCleanup(() => window.clearInterval(timer));
   });

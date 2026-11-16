@@ -2215,11 +2215,11 @@ fn config_show_prints_the_app_check_state_in_effect_under_the_enabled_key() {
     for (profile, expected) in [
         (
             "strict",
-            "appCheck.enabled = false (default)\n  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens \"any\"); firestore = off; storage = off\n  note: appCheck.enabled = true",
+            "appCheck.enabled = false (default)\n  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens \"any\"); firestore = off; storage = off\n  note: appCheck.enabled = true",
         ),
         (
             "emulator",
-            "appCheck.enabled = false (default)\n  in effect: auth = off; callables = off; exchange = off; firestore = off; storage = off\n",
+            "appCheck.enabled = false (default)\n  in effect (every product selected): auth = off; callables = off; exchange = off; firestore = off; storage = off\n",
         ),
     ] {
         write(
@@ -2241,4 +2241,43 @@ fn config_show_prints_the_app_check_state_in_effect_under_the_enabled_key() {
             .unwrap();
         assert_eq!(row["effective"]["exchange"] == "off", profile == "emulator");
     }
+    // --only scopes the state to the selected products (review S2).
+    write(
+        &dir,
+        "fireemu.toml",
+        "schemaVersion = 1\nprofile = \"strict\"\n",
+    );
+    let out = run_in(
+        &dir,
+        &[
+            "config",
+            "show",
+            "--only",
+            "firestore",
+            "--config",
+            "fireemu.toml",
+        ],
+        None,
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains(
+            "  in effect (--only firestore): auth = off; callables = off; exchange = off;"
+        ),
+        "{text}"
+    );
+    let bad = run_in(
+        &dir,
+        &[
+            "config",
+            "show",
+            "--only",
+            "nonsense",
+            "--config",
+            "fireemu.toml",
+        ],
+        None,
+    );
+    assert_eq!(bad.status.code(), Some(2), "{}", stderr(&bad));
 }

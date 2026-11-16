@@ -51,10 +51,10 @@ A string that is not a UUIDv4 is refused: `403 PERMISSION_DENIED`, `App attestat
 
 ```text
 appCheck.enabled = false (default)
-  in effect: auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
+  in effect (every product selected): auth = off; callables = on: enforceAppCheck is honoured per function; exchange = on: any well-formed debug token (appCheck.debugTokens "any"); firestore = off; storage = off
 ```
 
-`config show --json` carries the same state as the `effective` object of the `appCheck.enabled` row.
+`config show --json` carries the same state as the `effective` object of the `appCheck.enabled` row. `config show --only <services>` reports it for the products `fireemu up --only` would select; with `--only firestore`, for example, the exchange is `off`.
 
 ### Get a token from the Web SDK
 

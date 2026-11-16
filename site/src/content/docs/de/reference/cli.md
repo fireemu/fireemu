@@ -240,6 +240,7 @@ Verwenden Sie `--config <path>` oder `--firebase-json <path>`, um Dateien auszuw
 - Ein Schlüssel, den die Konfiguration akzeptiert, den der Daemon aber nicht liest (zum Beispiel `bind`, `limits.catalog`, `firestore.textSearch.*`, `rules.staticLimitChecks`, `auth.enabled` und `trace.*`), hat die Quelle `accepted, no effect`: Sein Wert wird wie geschrieben angezeigt oder als `(unset)`, nie so, als wäre er wirksam, und eine Konfiguration, die einen setzt, gibt beim Start eine Zeile `note:` aus.
 - Secret-haltige Werte werden in Text und JSON als `[redacted]` maskiert: `pubsub.authentication.localBearerToken`, jeder Wert von `auth.apiKeys`, `auth.customTokenSigners`, das `clientSecret` von OIDC-Anbietern und die Einträge `debugTokenSha256` von App-Check-Apps. Andere Felder bleiben sichtbar, und Nullwerte bleiben null.
 - `firebaseJson` zeigt die tatsächlich ausgewählte Firebase-Konfigurationsdatei, einschließlich einer mit `--firebase-json` gewählten.
+- Unterhalb von `appCheck.enabled` zeigt eine `in effect`-Zeile, was App Check pro Oberfläche bereitstellt (Austausch, Callables, Auth, Firestore, Storage), in den Begriffen des Start-Banners; der Schlüssel allein sagt es nicht, weil das strikte Profil den Austausch ohne `appCheck`-Block bereitstellt. JSON enthält es als Objekt `effective` der Zeile. Es umfasst alle Produkte oder die Produkte, die `--only <services>` nennt, so wie `fireemu up --only` sie auswählt; `--only` ändert sonst nichts an der Ausgabe.
 
 ## config lint
 
