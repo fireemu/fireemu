@@ -26,6 +26,9 @@ import threading
 import time
 
 clock = json.loads(os.environ.get("FIREEMU_CLOCK_JSON", "{}"))
+if clock_start_log := os.environ.get("FIREEMU_FAKE_CLOCK_LOG"):
+    with open(clock_start_log, "a", encoding="utf-8") as frames:
+        frames.write(json.dumps({"type": "start", "clock": clock}) + "\n")
 
 if probe := os.environ.get("FIREEMU_SANDBOX_PROBE"):
     pathlib.Path(probe).write_text(
@@ -228,6 +231,10 @@ while True:
     if msg is None or msg.get("type") == "shutdown":
         break
     if msg.get("type") == "clock:set":
+        clock_log = os.environ.get("FIREEMU_FAKE_CLOCK_LOG")
+        if clock_log:
+            with open(clock_log, "a", encoding="utf-8") as frames:
+                frames.write(json.dumps(msg) + "\n")
         clock.update(msg)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
         continue

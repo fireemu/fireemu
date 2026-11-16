@@ -1879,6 +1879,12 @@ impl FunctionsRuntime {
         self.clock.lock().expect("clock lock").snapshot()
     }
 
+    /// The clock snapshot and whether the clock follows real time, read under one lock.
+    fn clock_state(&self) -> (fireemu_core_session::clock::ClockSnapshot, bool) {
+        let clock = self.clock.lock().expect("clock lock");
+        (clock.snapshot(), clock.is_following())
+    }
+
     /// Check Date representability before mutating the daemon clock.
     pub fn validate_clock(&self, instant: LogicalInstant) -> Result<(), String> {
         self.config.clock_policy.validate(instant)
@@ -1886,7 +1892,8 @@ impl FunctionsRuntime {
 
     async fn sync_runner_clock(&self, runner: &Runner) -> Result<(), String> {
         if self.config.clock_policy.date_virtual {
-            runner.sync_clock(self.clock_snapshot()).await?;
+            let (snapshot, following) = self.clock_state();
+            runner.sync_clock(snapshot, following).await?;
         }
         Ok(())
     }
@@ -1913,7 +1920,7 @@ impl FunctionsRuntime {
             return Ok(());
         }
         loop {
-            let snapshot = self.clock_snapshot();
+            let (snapshot, following) = self.clock_state();
             let runners: Vec<_> = self
                 .codebases
                 .iter()
@@ -1923,9 +1930,12 @@ impl FunctionsRuntime {
                 })
                 .collect();
             for (_, runner) in &runners {
-                runner.sync_clock(snapshot).await?;
+                runner.sync_clock(snapshot, following).await?;
             }
-            if self.clock_snapshot().revision == snapshot.revision
+            // A following clock's instant moves on every read; the revision and the flag are
+            // what the runners were sent.
+            let (latest, latest_following) = self.clock_state();
+            if (latest.revision, latest_following) == (snapshot.revision, following)
                 && self
                     .codebases
                     .iter()
@@ -5592,11 +5602,9 @@ impl FunctionsRuntime {
         let mut spawn = spec.clone();
         spawn.env.retain(|(key, _)| key != "FIREEMU_CLOCK_JSON");
         // A clock that follows real time runs on in the runner between the daemon's updates.
-        let mut options = self
-            .config
-            .clock_policy
-            .runner_options(self.clock_snapshot());
-        options["following"] = json!(self.clock_follows_real_time());
+        let (snapshot, following) = self.clock_state();
+        let mut options = self.config.clock_policy.runner_options(snapshot);
+        options["following"] = json!(following);
         spawn
             .env
             .push(("FIREEMU_CLOCK_JSON".into(), options.to_string()));
