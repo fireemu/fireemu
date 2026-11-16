@@ -571,12 +571,12 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         <td class="text-xs">
                           <MfaSummary enrollments={u.mfaInfo} />
                         </td>
-                        <td class="mono text-xs whitespace-nowrap">
-                          {formatMillis(u.createdAt)}
+                        <td class="mono text-xs">
+                          <span class="whitespace-nowrap">{formatMillis(u.createdAt)}</span>{" "}
                           <RelativeTime value={formatMillis(u.createdAt)} />
                         </td>
-                        <td class="mono text-xs whitespace-nowrap">
-                          {formatMillis(u.lastLoginAt)}
+                        <td class="mono text-xs">
+                          <span class="whitespace-nowrap">{formatMillis(u.lastLoginAt)}</span>{" "}
                           <RelativeTime value={formatMillis(u.lastLoginAt)} />
                         </td>
                         <td class="text-right">

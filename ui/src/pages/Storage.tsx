@@ -368,7 +368,7 @@ const Storage: Component = () => {
           </div>
         </div>
         <p class="mb-2 text-xs text-zinc-600 dark:text-zinc-400">
-          {t("storage.uploadPrefix")} {t("storage.dropHint")}
+          {t("storage.uploadPrefix")}. {t("storage.dropHint")}
         </p>
         <ErrorBanner message={error()} />
         <Notice message={notice()} />
