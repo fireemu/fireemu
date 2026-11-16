@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Authentication: in the emulator profile, a password sign-in against an imported bcrypt hash whose cost is above the local bound (or any imported spec outside the local work bounds) answers `INVALID_PASSWORD` without deriving, as firebase-tools does, instead of an internal error. The strict profile is unchanged.
+
 ## [0.57.0] - 2026-11-16
 
 ### Added

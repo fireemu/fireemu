@@ -13447,23 +13447,46 @@ fn imported_hash_work_is_bounded() {
     );
     assert_eq!(status, 400, "{refused}");
     assert_eq!(refused["error"]["message"], "INVALID_HASH_PARAMETER");
+    // A bcrypt cost above the local bound fails the strict sign-in internally. The emulator
+    // profile answers INVALID_PASSWORD, as firebase-tools 15.28.2 compares the password with
+    // its own fake hash and never with the imported one (`operations.js:1303-1310`). Neither
+    // derives. Cost 16 is the last cost inside the bound and still derives.
     let bcrypt = format!("$2b$31${}", "a".repeat(53));
-    let (status, imported) = admin(
-        &s,
-        "POST",
-        &format!("{ADMIN}/accounts:batchCreate"),
-        &json!({"hashAlgorithm": "BCRYPT",
-            "users": [{"localId": "slow", "email": "slow@example.com", "passwordHash": b64(bcrypt.as_bytes())}]}),
-    );
-    assert_eq!(status, 200, "{imported}");
-    let started = std::time::Instant::now();
-    let (status, refused) = post(
-        &s,
-        &format!("{V1}/accounts:signInWithPassword"),
-        &json!({"email": "slow@example.com", "password": "password123"}),
-    );
-    assert_eq!(status, 500, "{refused}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    for (profile, s, expected) in [
+        (
+            "strict",
+            strict_state(),
+            (500, "Internal error encountered."),
+        ),
+        ("emulator", s, (400, "INVALID_PASSWORD")),
+    ] {
+        let (status, imported) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &json!({"hashAlgorithm": "BCRYPT",
+                "users": [{"localId": "slow", "email": "slow@example.com", "passwordHash": b64(bcrypt.as_bytes())}]}),
+        );
+        assert_eq!(status, 200, "{profile}: {imported}");
+        let started = std::time::Instant::now();
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "slow@example.com", "password": "password123"}),
+        );
+        assert_eq!(
+            (
+                status,
+                refused["error"]["message"].as_str().unwrap_or_default()
+            ),
+            expected,
+            "{profile}: {refused}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{profile}"
+        );
+    }
 }
 
 /// The custom-attribute size limit applies to the stored text, so whitespace cannot carry an
@@ -17098,6 +17121,69 @@ fn the_emulator_profile_accepts_hash_parameters_firebase_tools_ignores() {
         let (status, response) = admin(&s, "POST", &format!("{ADMIN}/accounts:batchCreate"), &request);
         assert_eq!((status, response["error"]["message"].as_str()), (400, Some(code)), "{options}: {response}");
         assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+    }
+}
+
+/// firebase-tools 15.28.2 validates `signerKey` only as a JSON string: its `byte` format check
+/// accepts every string (`server.js:215-217`, `apiSpec.js:6168-6171`) and `batchCreate` never
+/// reads the key (`operations.js:256-345`). The emulator profile imports a key that is not
+/// base64, an empty key and a non-string key (which firebase-tools refuses; the emulator profile
+/// never refuses more), and the sign-in answers `INVALID_PASSWORD`. `HMAC_SHA512` left without a
+/// usable key keeps production's recorded internal error at sign-in
+/// (`keyless_hmac_sha512_sign_in_is_a_backend_failure`).
+#[test]
+fn the_emulator_profile_accepts_signer_keys_firebase_tools_accepts() {
+    for (options, sign_in) in [
+        (
+            json!({"hashAlgorithm": "HMAC_SHA256", "signerKey": "not base64!"}),
+            400,
+        ),
+        (json!({"hashAlgorithm": "HMAC_MD5", "signerKey": ""}), 400),
+        (json!({"hashAlgorithm": "HMAC_SHA1", "signerKey": 7}), 400),
+        (
+            json!({"hashAlgorithm": "HMAC_SHA1", "signerKey": "AQID"}),
+            400,
+        ),
+        (
+            json!({"hashAlgorithm": "SCRYPT", "signerKey": "not base64!", "saltSeparator": "Bw==", "rounds": 8, "memoryCost": 14}),
+            400,
+        ),
+        (
+            json!({"hashAlgorithm": "HMAC_SHA512", "signerKey": "not base64!"}),
+            500,
+        ),
+    ] {
+        let s = state();
+        let mut request = options.clone();
+        request["users"] = json!([{"localId": "kept", "email": "kept@example.com",
+            "passwordHash": "AAAA", "salt": "AAAA"}]);
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(status, 200, "{options}: {response}");
+        assert!(response.get("error").is_none(), "{options}: {response}");
+        assert!(
+            s.store.lock().unwrap().user_by_id("kept").is_some(),
+            "{options}"
+        );
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "kept@example.com", "password": "password123"}),
+        );
+        let message = if sign_in == 400 {
+            "INVALID_PASSWORD"
+        } else {
+            "Internal error encountered."
+        };
+        assert_eq!(
+            (status, refused["error"]["message"].as_str()),
+            (sign_in, Some(message)),
+            "{options}: {refused}"
+        );
     }
 }
 
