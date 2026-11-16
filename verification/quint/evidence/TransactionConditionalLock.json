@@ -352,7 +352,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "3486b7adc57aea869aabf65c055c0fc70bad85973b2189ed089aacf604e1bc79"
+      "value": "6db407a478257b49e2cb5b1c6a82fca51eb99e53d8a21214f0099527c4d21192"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",

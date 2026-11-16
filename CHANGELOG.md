@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-11-16
+
 ### Changed
 
 - A virtual `functions.clock` (`date`, `timers` or `tasks`) no longer needs `daemon.clockStart`: without it the clock starts at the wall-clock time of the daemon and follows real time, as it does without `functions.clock`. While the daemon clock follows real time, the runner's virtual `Date` and virtual timers run on with it between the daemon's updates, so `Date.now()` in a function reads the current time and a virtual `setTimeout` fires after its delay without anyone moving the clock. A pinned `daemon.clockStart` (or `daemon.clock = "frozen"`) still gives a reproducible run whose clock, `Date` and timers stand still until the clock is moved.
@@ -1400,7 +1402,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/fireemu/fireemu/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/fireemu/fireemu/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/fireemu/fireemu/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/fireemu/fireemu/compare/v0.52.0...v0.53.0
