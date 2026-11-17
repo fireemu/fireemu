@@ -591,6 +591,9 @@ async fn strict_copy_to_with_an_empty_text_body_is_a_parse_error() {
         ("gl%2Fb1.txt", "TEXT/PLAIN"),
         ("gl%2Fb2.txt", "text/plain; charset=utf-8"),
         ("gl%2Fb3.txt", " Text/Plain ;Charset=UTF-8"),
+        ("gl%2Fb4.txt", "text/plain; charset =utf-8"),
+        ("gl%2Fb5.txt", "text/plain;charset= UTF-8"),
+        ("gl%2Fb6.txt", "text/plain;charset=utf-8;charset=utf-8"),
     ] {
         let answer = send_with(
             addr,
@@ -619,6 +622,41 @@ async fn strict_copy_to_with_an_empty_text_body_is_a_parse_error() {
             "gl%2Fa4.txt",
             vec![("Content-Type", "text/plain;charset=UTF-8")],
             Some("{}"),
+        ),
+        (
+            "gl%2Fa5.txt",
+            vec![("Content-Type", "text/plain-extra")],
+            None,
+        ),
+        (
+            "gl%2Fa6.txt",
+            vec![("Content-Type", "text/plainx;charset=UTF-8")],
+            None,
+        ),
+        (
+            "gl%2Fa7.txt",
+            vec![("Content-Type", "text/plain; charset=latin1")],
+            None,
+        ),
+        (
+            "gl%2Fa8.txt",
+            vec![("Content-Type", "text/plain; format=flowed")],
+            None,
+        ),
+        (
+            "gl%2Fa9.txt",
+            vec![("Content-Type", "text/plain; charset=utf-8; format=flowed")],
+            None,
+        ),
+        (
+            "gl%2Fa10.txt",
+            vec![("Content-Type", "text/plain; utf-8")],
+            None,
+        ),
+        (
+            "gl%2Fa11.txt",
+            vec![("Content-Type", "text/plain; charset")],
+            None,
         ),
     ] {
         let answer = send_with(addr, "POST", &path(name), &headers, body).await;
