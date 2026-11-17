@@ -17,9 +17,11 @@ export function rehearsalConfig(target) {
       ],
       undeclaredBuckets: "refuse",
       cors:
-        target.stage === "v3"
-          ? { [`${target.tempBucket}-empty`]: [], [`${target.tempBucket}-configured`]: CORS }
-          : { [target.tempBucket]: CORS },
+        target.stage === "v4"
+          ? {}
+          : target.stage === "v3"
+            ? { [`${target.tempBucket}-empty`]: [], [`${target.tempBucket}-configured`]: CORS }
+            : { [target.tempBucket]: CORS },
     },
   };
 }
@@ -34,7 +36,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         "run-id": { type: "string" },
       },
     });
-    if (positionals.length > 1 || (positionals.length && positionals[0] !== "v3"))
+    if (positionals.length > 1 || (positionals.length && !["v3", "v4"].includes(positionals[0])))
       throw new Error("invalid stage");
     const target = targetOf({
       stage: positionals[0] ?? "v2",
