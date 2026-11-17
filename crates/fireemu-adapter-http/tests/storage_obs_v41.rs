@@ -562,6 +562,7 @@ const OBJECT: &str = "/storage/v1/b/demo-app.appspot.com/o/gl%2Fa.txt";
 /// V4-MD-copy (recorded): copyTo with no body and a text/plain content type (what the recorder's fetch
 /// adds to an empty string body) is a parse error. Every other shape is unrecorded and served.
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn strict_copy_to_with_an_empty_text_body_is_a_parse_error() {
     let (addr, s, task) = serve(glob_fixture(TokenAcceptance::Verified)).await;
     let path = |name: &str| format!("{OBJECT}/copyTo/b/{BUCKET}/o/{name}");
