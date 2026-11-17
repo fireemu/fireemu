@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   WEBCHANNEL_PATH,
@@ -143,6 +144,36 @@ export const FOLLOWUP_OWNED_NAMES = Object.freeze(
   ).toSorted(),
 );
 
+// Batch 3 (FS-5, FS-6, FS-7 and REST bytes line breaks): the pinned shape comes from the
+// recipes' own generator, `firestore-probe/write_limits_export.py --manifest`, and a test keeps
+// the committed file equal to it.
+const WRITE_LIMITS = JSON.parse(
+  readFileSync(new URL("./firestore-probe/write-limits-set.json", import.meta.url), "utf8"),
+);
+const WRITE_LIMITS_HTTP_CAP =
+  WRITE_LIMITS.restRequestCount + 1 + WRITE_LIMITS.ownedNames.length + 1;
+
+export { TASK_BY_MODE } from "./fs-data-write-admission.mjs";
+
+export const WRITE_LIMITS_SET = Object.freeze({
+  restIds: Object.freeze(WRITE_LIMITS.restIds),
+  streamIds: Object.freeze(WRITE_LIMITS.streamIds),
+  ownedNames: Object.freeze(WRITE_LIMITS.ownedNames),
+  // Documents only the gRPC recipes write; the REST preflight and cleanup still cover them.
+  streamOwnedNames: Object.freeze(WRITE_LIMITS.streamOwnedNames),
+  queriedCollection: null,
+  httpCap: WRITE_LIMITS_HTTP_CAP,
+  attemptEstimateUsd: 0.25,
+  // Each question freezes apart, so one nondeterministic band cannot take the others down.
+  freezeGroups: Object.freeze(
+    Object.fromEntries(
+      Object.entries(WRITE_LIMITS.freezeGroups).map(([group, ids]) => [group, Object.freeze(ids)]),
+    ),
+  ),
+  // The gRPC recipes' own group: it carries no REST program and all the stream recipes.
+  streamGroup: "write-stream",
+});
+
 /**
  * A recording set pins its recipes, the documents its cleanup owns, its per-attempt HTTP cap
  * and its per-attempt ledger estimate. The runner and the child both check a recording
@@ -175,6 +206,7 @@ export const RECORDING_SETS = Object.freeze({
       ),
     }),
   }),
+  writelimits: WRITE_LIMITS_SET,
 });
 
 export function recordingSet(name) {
