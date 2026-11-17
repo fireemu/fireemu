@@ -4,10 +4,7 @@
     "corpusSha256": "d39ea5dd8d66e28e053da718c0b0ece8f8fb594bc8e1de67a66d97e8d912634b",
     "project": "demo-firestore-probe",
     "database": "(default)",
-    "recordedAt": [
-      "2026-11-17T05:16:18.521Z",
-      "2026-11-17T05:18:17.725Z"
-    ],
+    "recordedAt": ["2026-11-17T05:16:18.521Z", "2026-11-17T05:18:17.725Z"],
     "harnessRevision": "5665cc8310c6cefee4a249b54445a5507abde105",
     "sdkVersions": {
       "firebase": "12.18.0",
@@ -443,9 +440,7 @@
           "status": 200,
           "code": "OK",
           "body": {
-            "status": [
-              {}
-            ],
+            "status": [{}],
             "writeResults": [
               {
                 "updateTime": "<now>"
@@ -613,9 +608,7 @@
           "status": 200,
           "code": "OK",
           "body": {
-            "status": [
-              {}
-            ],
+            "status": [{}],
             "writeResults": [
               {
                 "updateTime": "<now>"
