@@ -7438,6 +7438,9 @@ mod tests {
                 vec![9; 20],
             ),
             (r#"{"algorithm":"MD5","rounds":8192}"#, b"00".to_vec()),
+            // The emulator profile keeps a hash or salt that is not base64 as its own text
+            // bytes under the unspecified spec.
+            (r#"{"algorithm":"UNSPECIFIED"}"#, b"not base64!".to_vec()),
             (
                 r#"{"algorithm":"SCRYPT","key":"AQID","separator":"Bw==","rounds":8,"memoryCost":14}"#,
                 vec![1; 32],

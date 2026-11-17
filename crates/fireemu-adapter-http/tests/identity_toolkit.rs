@@ -17106,21 +17106,208 @@ fn the_emulator_profile_accepts_hash_parameters_firebase_tools_ignores() {
             "{options}: {refused}"
         );
     }
-    for (options, code) in [
-        (json!({"hashAlgorithm": 7}), "MISSING_HASH_ALGORITHM"),
+    let s = state();
+    let request = json!({"hashAlgorithm": 7, "users": [{"localId": "refused", "passwordHash": "AAAA", "salt": "AAAA"}]});
+    let (status, response) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &request,
+    );
+    assert_eq!(
+        (status, response["error"]["message"].as_str()),
+        (400, Some("MISSING_HASH_ALGORITHM")),
+        "{response}"
+    );
+    assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+}
+
+/// A `passwordHash` or `salt` that is not base64: firebase-tools 15.28.2 stores both as given
+/// (`operations.js:303-305`) and its `byte` format check accepts every string
+/// (`server.js:215-217`), so the row imports and a password sign-in answers
+/// `INVALID_PASSWORD`. The emulator profile imports it too, under the spec that never matches,
+/// and the account exports and restores. Strict keeps production's whole-request refusal.
+fn undecodable_hash_requests() -> Vec<(Value, &'static str)> {
+    vec![
         (
-            json!({"hashAlgorithm": "SHA256", "users": [{"localId": "refused", "passwordHash": "not base64!"}]}),
-            "Invalid value at 'users[0].password' (TYPE_BYTES), Base64 decoding failed for \"not base64!\"",
+            json!({"hashAlgorithm": "SHA256", "rounds": 1}),
+            "passwordHash",
         ),
-    ] {
+        (json!({}), "passwordHash"),
+        (json!({"hashAlgorithm": "SHA256", "rounds": 1}), "salt"),
+        (
+            json!({"hashAlgorithm": "HMAC_SHA256", "signerKey": "AQID"}),
+            "passwordHash",
+        ),
+        (json!({"hashAlgorithm": "BCRYPT"}), "passwordHash"),
+    ]
+}
+
+#[test]
+fn the_emulator_profile_imports_a_hash_or_salt_that_is_not_base64() {
+    for (options, member) in undecodable_hash_requests() {
         let s = state();
         let mut request = options.clone();
-        if request.get("users").is_none() {
-            request["users"] = json!([{"localId": "refused", "passwordHash": "AAAA", "salt": "AAAA"}]);
+        let mut row = json!({"localId": "kept", "email": "kept@example.com",
+            "passwordHash": "AAAA", "salt": "AAAA"});
+        row[member] = json!("not base64!");
+        request["users"] = json!([row]);
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(status, 200, "{options} {member}: {response}");
+        assert!(
+            response.get("error").is_none(),
+            "{options} {member}: {response}"
+        );
+        assert!(s.store.lock().unwrap().user_by_id("kept").is_some());
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "kept@example.com", "password": "password123"}),
+        );
+        assert_eq!(
+            (status, refused["error"]["message"].as_str()),
+            (400, Some("INVALID_PASSWORD")),
+            "{options} {member}: {refused}"
+        );
+        let imported = s
+            .store
+            .lock()
+            .unwrap()
+            .imported_password_for_sign_in("kept@example.com")
+            .expect("the credential is kept");
+        assert_eq!(
+            imported.spec, "{\"algorithm\":\"UNSPECIFIED\"}",
+            "{options} {member}"
+        );
+    }
+}
+
+/// A `fakeHash:` value that is not the `salt=..:password=..` form is just another hash no
+/// password matches for firebase-tools, so the emulator profile imports it; strict refuses.
+#[test]
+fn the_emulator_profile_imports_a_malformed_fake_hash() {
+    for hash in ["fakeHash:garbage", "fakeHash:salt=only-salt"] {
+        let s = state();
+        let request = json!({"users": [{"localId": "kept", "email": "kept@example.com", "passwordHash": hash}]});
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(
+            (status, response.get("error")),
+            (200, None),
+            "{hash}: {response}"
+        );
+        assert!(
+            s.store.lock().unwrap().user_by_id("kept").is_some(),
+            "{hash}"
+        );
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "kept@example.com", "password": "password123"}),
+        );
+        assert_eq!(
+            (status, refused["error"]["message"].as_str()),
+            (400, Some("INVALID_PASSWORD")),
+            "{hash}: {refused}"
+        );
+    }
+}
+
+/// Strict follows production for the same bodies: the whole request is refused for a row's
+/// undecodable bytes, and a malformed `fakeHash:` row is refused by its own row error.
+#[test]
+fn strict_still_refuses_a_hash_or_salt_that_is_not_base64() {
+    for (options, member) in undecodable_hash_requests() {
+        let s = strict_state();
+        let mut request = options.clone();
+        let mut row = json!({"localId": "refused", "email": "refused@example.com",
+            "passwordHash": "AAAA", "salt": "AAAA"});
+        row[member] = json!("not base64!");
+        request["users"] = json!([row]);
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        let field = if member == "passwordHash" {
+            "password"
+        } else {
+            "salt"
+        };
+        assert_eq!(
+            (status, response["error"]["message"].as_str()),
+            (
+                400,
+                Some(
+                    format!("Invalid value at 'users[0].{field}' (TYPE_BYTES), Base64 decoding failed for \"not base64!\"")
+                        .as_str()
+                )
+            ),
+            "{options} {member}: {response}"
+        );
+        assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+    }
+    let s = strict_state();
+    let request = json!({"users": [{"localId": "refused", "email": "refused@example.com", "passwordHash": "fakeHash:garbage"}]});
+    let (_, response) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &request,
+    );
+    assert_eq!(
+        response["error"][0]["message"], "INVALID_PASSWORD_HASH",
+        "{response}"
+    );
+    assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(48))]
+    /// Whatever a `passwordHash` or `salt` holds, as long as one of them cannot be base64, the
+    /// emulator profile imports the row and no password signs in with it, under every request
+    /// algorithm. `!` is outside both base64 alphabets, so the text never decodes.
+    #[test]
+    fn the_emulator_profile_imports_any_undecodable_hash_or_salt(
+        head in "\\PC{0,12}",
+        tail in "\\PC{0,12}",
+        in_salt in proptest::bool::ANY,
+        algorithm in proptest::sample::select(vec!["", "SHA256", "HMAC_SHA256", "MD5", "BCRYPT"]),
+    ) {
+        let junk = format!("{head}!{tail}");
+        proptest::prop_assume!(!junk.starts_with("fakeHash:"));
+        let s = state();
+        let mut request = json!({"users": [{"localId": "kept", "email": "kept@example.com",
+            "passwordHash": if in_salt { "AAAA" } else { junk.as_str() },
+            "salt": if in_salt { junk.as_str() } else { "AAAA" }}]});
+        if !algorithm.is_empty() {
+            request["hashAlgorithm"] = json!(algorithm);
+            request["rounds"] = json!(1);
+            request["signerKey"] = json!("AQID");
         }
         let (status, response) = admin(&s, "POST", &format!("{ADMIN}/accounts:batchCreate"), &request);
-        assert_eq!((status, response["error"]["message"].as_str()), (400, Some(code)), "{options}: {response}");
-        assert!(s.store.lock().unwrap().user_by_id("refused").is_none());
+        proptest::prop_assert_eq!(status, 200, "{}", response);
+        proptest::prop_assert!(response.get("error").is_none(), "{}", response);
+        let (status, refused) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithPassword"),
+            &json!({"email": "kept@example.com", "password": "password123"}),
+        );
+        proptest::prop_assert_eq!(
+            (status, refused["error"]["message"].as_str()),
+            (400, Some("INVALID_PASSWORD")),
+            "{}", refused
+        );
     }
 }
 
