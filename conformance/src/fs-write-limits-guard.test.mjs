@@ -11,10 +11,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { requireChildProductionAdmission } from "./fs-data-write-admission.mjs";
-import {
-  assertNoAmbientProductionToken,
-  requireBracketArguments,
-} from "./fs-data-write-sandbox-run.mjs";
+import { assertNoAmbientProductionToken, requireBracketArguments } from "./fs-write-limits-run.mjs";
 import { assertNoProxyEnvironment } from "./firestore-probe/webchannel-request-bytes.mjs";
 
 test("a production child refuses to start without the runner's admission", () => {

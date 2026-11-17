@@ -13,7 +13,7 @@ import {
   bracketGroupCorpora,
   prepareWriteLimitsCorpus,
   selectBracketRecipes,
-} from "./fs-data-write-sandbox-run.mjs";
+} from "./fs-write-limits-run.mjs";
 
 const { recordingCorpus } = selectBracketRecipes(await prepareWriteLimitsCorpus(), "writelimits");
 const groups = bracketGroupCorpora(recordingCorpus, "writelimits");

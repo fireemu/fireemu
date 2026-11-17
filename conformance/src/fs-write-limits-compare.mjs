@@ -11,7 +11,7 @@ import {
   prepareWriteLimitsCorpus,
   selectBracketRecipes,
   supplementRecipeDigests,
-} from "./fs-data-write-sandbox-run.mjs";
+} from "./fs-write-limits-run.mjs";
 
 export const SUPPLEMENTS = fileURLToPath(
   new URL("../fs-data-write-production-supplements/writelimits/", import.meta.url),

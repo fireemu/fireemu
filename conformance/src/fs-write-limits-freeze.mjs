@@ -13,7 +13,7 @@ import {
   recordingSdkVersions,
   selectBracketRecipes,
   supplementRecipeDigests,
-} from "./fs-data-write-sandbox-run.mjs";
+} from "./fs-write-limits-run.mjs";
 
 const pick = (entries, programs) =>
   Object.fromEntries(programs.map((program) => [program.id, entries[program.id]]));
