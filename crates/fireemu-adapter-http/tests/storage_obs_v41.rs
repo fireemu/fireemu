@@ -586,6 +586,22 @@ async fn strict_copy_to_with_an_empty_text_body_is_a_parse_error() {
             &ObjectName::try_new("gl/copy.txt").unwrap()
         )
         .is_none());
+    // Spelling of the recorded type: case and spaces do not matter, a charset of utf-8 may follow.
+    for (name, content_type) in [
+        ("gl%2Fb1.txt", "TEXT/PLAIN"),
+        ("gl%2Fb2.txt", "text/plain; charset=utf-8"),
+        ("gl%2Fb3.txt", " Text/Plain ;Charset=UTF-8"),
+    ] {
+        let answer = send_with(
+            addr,
+            "POST",
+            &path(name),
+            &[("Content-Type", content_type)],
+            None,
+        )
+        .await;
+        assert_eq!(error_of(&answer).1, "Parse Error", "{content_type}");
+    }
     // Near misses, all served: no content type, a JSON content type without a body, a JSON body, rewriteTo.
     for (name, headers, body) in [
         ("gl%2Fa1.txt", vec![], None),
@@ -783,11 +799,13 @@ async fn strict_bucket_patch_accepts_labels() {
 async fn the_emulator_profile_keeps_its_bucket_stub() {
     let (addr, _s, task) = serve(glob_fixture(TokenAcceptance::EmulatorMock)).await;
     let bucket = get(addr, BUCKET_PATH).await;
-    if bucket.status == 200 {
-        let value = bucket.json();
-        assert!(value.get("satisfiesPZI").is_none());
-        assert_eq!(value["etag"], "====");
-    }
+    assert_eq!(bucket.status, 200);
+    let value = bucket.json();
+    assert!(value.get("satisfiesPZI").is_none());
+    assert!(value.get("softDeletePolicy").is_none());
+    assert_eq!(value["etag"], "====");
+    assert_eq!(value["metageneration"], "1");
+    assert!(bucket.header("etag").is_none());
     task.abort();
 }
 
@@ -813,7 +831,11 @@ async fn strict_bucket_delete_answers_204_with_zero_length_and_json_type() {
 async fn the_emulator_profile_keeps_its_bucket_delete_answer() {
     let (addr, _s, task) = serve(state(TokenAcceptance::EmulatorMock)).await;
     let answer = send_with(addr, "DELETE", BUCKET_PATH, &[], None).await;
-    assert_ne!(answer.header("content-type"), Some("application/json"));
+    assert_eq!(answer.status, 501);
+    assert!(answer
+        .header("content-type")
+        .is_some_and(|value| value.starts_with("text/plain")));
+    assert!(answer.header("content-length") != Some("0"));
     task.abort();
 }
 

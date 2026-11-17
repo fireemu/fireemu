@@ -5814,6 +5814,20 @@ fn add_recorded_bucket_members(
     Ok(())
 }
 
+/// Whether a content type is the recorded `text/plain` (STORAGE-STRICTNESS-OBS v4.1, V4-MD-copy): that
+/// media type exactly, with no parameter or only `charset=utf-8` (any case, spaces around the `;`).
+fn is_recorded_text_plain(value: &str) -> bool {
+    let mut parts = value.split(';');
+    let media = parts.next().unwrap_or_default().trim();
+    media.eq_ignore_ascii_case("text/plain")
+        && parts.all(|param| {
+            param.trim().split_once('=').is_some_and(|(name, value)| {
+                name.trim().eq_ignore_ascii_case("charset")
+                    && value.trim().eq_ignore_ascii_case("utf-8")
+            })
+        })
+}
+
 /// `GET` and `PATCH /storage/v1/b/{bucket}`: the bucket resource with its `versioning`. `PATCH`
 /// accepts `versioning.enabled` only; any other field is refused rather than ignored, so a caller
 /// never believes it configured something this store does not model (a strict over-refusal:
@@ -6817,7 +6831,7 @@ fn gcs_copy(
         && req.body.is_empty()
         && req
             .header("content-type")
-            .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/plain"))
+            .is_some_and(is_recorded_text_plain)
     {
         return Err(gcs_json_error(400, "Parse Error", "parseError"));
     }

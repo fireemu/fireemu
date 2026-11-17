@@ -1,5 +1,5 @@
 {
-  "description": "STORAGE-STRICTNESS-OBS packet v4.1 production recording (masked): bucket named fireemu-obs-RUN; page tokens, generated ids, links and times are omitted or reduced to kind and length. Rows keep status, member order, names, counts and the framing headers. V4-L-itd-p4 was never sent (the previous page issued no token).",
+  "description": "STORAGE-STRICTNESS-OBS packet v4.1 production recording (masked): bucket named fireemu-obs-RUN; page tokens, generated ids, links and times are omitted or reduced to kind and length. Rows keep status, member order, names, counts and the framing headers. V4-L-itd-p4 was never sent (the previous page issued no token). V4-K-delete-bucket is a fixture-only row (cleanup; a local run cannot delete its declared bucket).",
   "rows": [
     {
       "case": "V4-L-delim",
@@ -186,7 +186,7 @@
     {
       "case": "V4-L-itd-p2",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=CgZ0bC9kMS8%3D",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -210,7 +210,7 @@
     {
       "case": "V4-L-itd-p3",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=CgZ0bC9kMi8%3D",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -277,7 +277,7 @@
     {
       "case": "V4-L-nf-p2",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=CgZ0bC9kMS8%3D",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -301,7 +301,7 @@
     {
       "case": "V4-L-nf-p3",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=CgZ0bC9kMi8%3D",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -373,7 +373,7 @@
     {
       "case": "V4-G-p2",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=2&pageToken=CgRwZy9i",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=2&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -446,7 +446,7 @@
     {
       "case": "V4-G-p2b",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=2&pageToken=CgRwZy9j",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=2&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -536,7 +536,7 @@
     {
       "case": "V4-G-p2c",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=1&pageToken=CgRwZy9h",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=pg%2F&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -603,7 +603,7 @@
     {
       "case": "V4-G-d2",
       "method": "GET",
-      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=CgZ0bC9kMS8%3D",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=%3Ctoken%3E",
       "status": 200,
       "shape": "object-list",
       "known": true,
@@ -1654,6 +1654,27 @@
         ],
         "metadataKeys": ["zeta", "alpha", "mid"]
       }
+    },
+    {
+      "case": "V4-K-delete-bucket",
+      "method": "DELETE",
+      "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-RUN",
+      "status": 204,
+      "shape": "empty",
+      "known": true,
+      "headerNames": ["vary"],
+      "headers": {
+        "vary": "Origin, X-Origin"
+      },
+      "json": null,
+      "xml": null,
+      "location": null,
+      "v4": {
+        "contentLength": "0",
+        "contentType": "application/json",
+        "cacheControl": "no-cache, no-store, max-age=0, must-revalidate"
+      },
+      "fixtureOnly": true
     }
   ]
 }

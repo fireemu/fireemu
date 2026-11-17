@@ -1397,8 +1397,8 @@ test("the recorded v4.1 fixture names its cases once and holds no body, hash or 
   );
   scanFixtureText(text, { runIds: ["ss-c89ab89c"] });
   const fixture = JSON.parse(text);
-  assert.equal(fixture.rows.length, 58);
-  assert.equal(new Set(fixture.rows.map((row) => row.case)).size, 58);
+  assert.equal(fixture.rows.length, 59);
+  assert.equal(new Set(fixture.rows.map((row) => row.case)).size, 59);
   for (const row of fixture.rows) {
     for (const key of ["bodyBase64", "sha256", "bodyBytes", "body"])
       assert.ok(!Object.hasOwn(row, key));
@@ -1412,6 +1412,14 @@ test("the recorded v4.1 fixture names its cases once and holds no body, hash or 
   assert.equal(byCase["V4-X-xml-delete"].v4.contentLength, "0");
   assert.equal(byCase["V4-X-xml-delete-again"].xml.Code, "NoSuchKey");
   assert.equal(byCase["V4-L-itd-p4"].known, false);
+  // The recorded bucket DELETE framing (n91), the shape the strict Rust test follows.
+  const del = byCase["V4-K-delete-bucket"];
+  assert.equal(del.status, 204);
+  assert.equal(del.v4.contentLength, "0");
+  assert.equal(del.v4.contentType, "application/json");
+  assert.equal(del.v4.cacheControl, "no-cache, no-store, max-age=0, must-revalidate");
+  assert.equal(del.headers.vary, "Origin, X-Origin");
+  assert.equal(del.fixtureOnly, true);
 });
 
 test("v4 comparison masks a run's bucket name wherever an error field holds it, on both sides", () => {
@@ -1483,4 +1491,21 @@ test("v4 comparison reads a fixture row that keeps neither error fields nor a bo
   assert.equal(comparable({ ...bare, v4: { contentLength: "981" } }).v4.contentLength, "<body>");
   assert.equal(comparable({ ...bare, v4: { contentLength: "0" } }).v4.contentLength, "0");
   assert.equal(comparable({ ...bare, v4: { contentLength: null } }).v4.contentLength, null);
+});
+
+test("v4 comparison leaves a fixture-only row out and still reports a local-only case", () => {
+  const row = {
+    case: "V4-K-delete-bucket",
+    status: 204,
+    shape: "empty",
+    known: true,
+    headerNames: [],
+    headers: {},
+    json: null,
+    xml: null,
+    location: null,
+  };
+  assert.deepEqual(compare([{ ...row, fixtureOnly: true }], []), []);
+  assert.equal(compare([row], [])[0].verdict, "NEEDS-REVIEW");
+  assert.equal(compare([{ ...row, fixtureOnly: true }], [row])[0].verdict, "NEEDS-REVIEW");
 });

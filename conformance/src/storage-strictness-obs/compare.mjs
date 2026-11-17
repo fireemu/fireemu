@@ -33,7 +33,9 @@ export function comparable(row) {
   return compared;
 }
 
-export function compare(production, local) {
+export function compare(recorded, local) {
+  // A fixture-only row (cleanup the local run cannot perform) is kept for its framing, not compared.
+  const production = recorded.filter((row) => !row.fixtureOnly);
   const cases = [...new Set([...production, ...local].map((row) => row.case))];
   return cases.map((id) => {
     const p = production.filter((row) => row.case === id);
