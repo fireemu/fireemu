@@ -5560,3 +5560,50 @@ async fn write_stream_deletes_are_refused_from_the_rest_delete_minimum() {
     }
     handle.abort();
 }
+
+/// A gRPC `Commit` is charged the sum of its documents like the REST one (`writelimits`
+/// recording, 2026-11-17): two documents at 0.60 of the create budget each are refused together,
+/// one is accepted, and the refused commit writes nothing.
+#[tokio::test]
+async fn a_grpc_commit_is_charged_the_sum_of_its_documents() {
+    let (mut client, handle) = start(false).await;
+    // The recorded 2,000-byte relative name: a 1,400-byte collection id and a 599-byte id.
+    let name = |tag: &str| format!("{tag}{}/{}", "c".repeat(1_400 - tag.len()), "d".repeat(599));
+    let integers = |count: i64| pb::Value {
+        value_type: Some(pb::value::ValueType::ArrayValue(pb::ArrayValue {
+            values: (0..count)
+                .map(|n| pb::Value {
+                    value_type: Some(pb::value::ValueType::IntegerValue(n)),
+                })
+                .collect(),
+        })),
+    };
+    let commit = |tags: &[&str]| pb::CommitRequest {
+        database: DB.to_owned(),
+        writes: tags
+            .iter()
+            .map(|tag| set_write(&name(tag), &[("a", integers(4_310))]))
+            .collect(),
+        ..Default::default()
+    };
+    client
+        .commit(commit(&["g0"]))
+        .await
+        .expect("one 0.60 document");
+    let refused = client.commit(commit(&["g1", "g2"])).await.unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::InvalidArgument);
+    assert_eq!(
+        refused.message(),
+        "Transaction too big. Decrease transaction size."
+    );
+    for tag in ["g1", "g2"] {
+        let read = client
+            .get_document(pb::GetDocumentRequest {
+                name: format!("{DOCS}/{}", name(tag)),
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(read.unwrap_err().code(), tonic::Code::NotFound, "{tag}");
+    }
+    handle.abort();
+}
