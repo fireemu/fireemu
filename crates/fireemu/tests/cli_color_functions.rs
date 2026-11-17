@@ -108,12 +108,22 @@ exports.hello = onRequest((req, res) => {
     }
 
     fn function_lines(stderr: &[u8]) -> Vec<String> {
-        String::from_utf8(stderr.to_vec())
+        // Sorted: the runner's stdout frames and its stderr lines are read by two tasks.
+        let mut lines: Vec<String> = String::from_utf8(stderr.to_vec())
             .unwrap()
             .lines()
-            .filter(|line| strip_ansi(line).starts_with("[functions:"))
+            .filter(|line| {
+                // The log lines of the function only: the runner's own lifecycle lines at
+                // shutdown race with the end of the command.
+                let plain = strip_ansi(line);
+                ["info", "warning", "error", "debug"]
+                    .iter()
+                    .any(|level| plain.starts_with(&format!("[functions:node] {level} ")))
+            })
             .map(strip_ansi)
-            .collect()
+            .collect();
+        lines.sort();
+        lines
     }
 
     #[test]
