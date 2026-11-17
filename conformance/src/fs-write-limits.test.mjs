@@ -947,3 +947,23 @@ test("the volatile tracking trailer is ignored wherever a stream recording carri
     [`${id}#grpc`],
   );
 });
+
+test("only an array made wholly of named batchGet rows is compared by name", () => {
+  const mixed = (order) => ({
+    q: {
+      steps: {
+        rows: {
+          status: 200,
+          code: "OK",
+          body: order.map((name) =>
+            name === "z"
+              ? { readTime: "t" }
+              : { missing: `projects/p/databases/(default)/documents/${name}` },
+          ),
+        },
+      },
+    },
+  });
+  assert.deepEqual(compareRecordings(mixed(["a", "b", "z"]), mixed(["b", "a", "z"])), ["q#rows"]);
+  assert.deepEqual(compareRecordings(mixed(["a", "b", "z"]), mixed(["a", "b", "z"])), []);
+});

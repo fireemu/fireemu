@@ -184,3 +184,53 @@ test("an attempt that did not answer a group refuses that group and keeps the ot
   });
   assert.match(refused.find(({ group }) => group === "budget").refused, /failed observation/);
 });
+
+test("differences come back sorted across groups, not in group order", () => {
+  const { rest, stream } = recordedAsLocal();
+  const local = structuredClone(rest);
+  local["writes/limits/composite-entry/heavy/6500"].steps.write.status = 200;
+  local["writes/limits/bytes-line-breaks/create/lf"].steps.write.status = 200;
+  const result = compareWriteLimits({ rest: local, stream, supplements, groups });
+  assert.deepEqual(result.differences, [
+    "writes/limits/bytes-line-breaks/create/lf#write",
+    "writes/limits/composite-entry/heavy/6500#write",
+  ]);
+});
+
+test("a frozen fixture records its attempts, its commit, and refuses attempts that disagree", async () => {
+  const { rest, stream } = recordedAsLocal();
+  const firstTime = "2026-11-17T05:16:18.521Z";
+  const secondTime = "2026-11-17T05:18:17.725Z";
+  const harnessRevision = "5665cc8310c6cefee4a249b54445a5507abde105";
+  const sdkVersions = supplements.budget.evidence.sdkVersions;
+  const same = await freezeRecordedGroups({
+    recordings: [
+      { rest, stream, startedAt: firstTime },
+      { rest: structuredClone(rest), stream, startedAt: secondTime },
+    ],
+    harnessRevision,
+    sdkVersions,
+  });
+  for (const { group, fixture } of same) {
+    assert.deepEqual(fixture.evidence.recordedAt, [firstTime, secondTime], group);
+    assert.equal(fixture.evidence.harnessRevision, harnessRevision, group);
+    assert.deepEqual(fixture.evidence.nondeterministicPrograms, [], group);
+    assert.equal(fixture.evidence.recordingDigests.length, 2, group);
+  }
+  // The second attempt answered differently: that is not a recording of production.
+  const other = structuredClone(rest);
+  other["writes/limits/composite-entry/heavy/6500"].steps.write.status = 200;
+  const refused = await freezeRecordedGroups({
+    recordings: [
+      { rest, stream, startedAt: firstTime },
+      { rest: other, stream, startedAt: secondTime },
+    ],
+    harnessRevision,
+    sdkVersions,
+  });
+  assert.match(
+    refused.find(({ group }) => group === "composite").refused,
+    /nondeterministic production rows/,
+  );
+  assert.ok(refused.find(({ group }) => group === "budget").fixture);
+});
