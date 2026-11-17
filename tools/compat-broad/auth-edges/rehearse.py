@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -22,7 +21,9 @@ def main():
         (args.child / 'instance.json').write_text(json.dumps({'childPid': os.getpid(), 'parentPid': os.getppid(), 'authOrigin': origin, 'nonce': args.nonce}) + '\n')
         sender = edges.local_send(origin)
         # AUTH-ACTION prepares this baseline only on its owned local emulator.
-        status, _ = sender({'path': edges.CONFIG + '?updateMask=signIn.email.enabled,signIn.email.passwordRequired,authorizedDomains,mfa', 'owner': True, 'method': 'PATCH'}, {'signIn': {'email': {'enabled': True, 'passwordRequired': True}}, 'authorizedDomains': [edges.DOMAIN], 'mfa': {'state': 'DISABLED'}})
+        mask = 'signIn.email.enabled,signIn.email.passwordRequired,signIn.phoneNumber,authorizedDomains,notification.defaultLocale,mfa'
+        baseline = {'signIn': {'email': {'enabled': True, 'passwordRequired': True}, 'phoneNumber': {'enabled': True, 'testPhoneNumbers': {n: edges.TEST_PHONE_CODE for n in edges.TEST_PHONES}}}, 'authorizedDomains': [edges.DOMAIN], 'notification': {'defaultLocale': 'en'}, 'mfa': {'state': 'DISABLED'}}
+        status, _ = sender({'path': edges.CONFIG + '?updateMask=' + mask, 'owner': True, 'method': 'PATCH', 'kind': 'config'}, baseline)
         if status != 200:
             raise ValueError('local baseline preparation failed')
         receipt = edges.collect(nonce=args.nonce, output=args.child / 'stage', send=sender)
@@ -44,7 +45,7 @@ def main():
         return argv
 
     with patch.object(shadow, 'artifact_command', command), patch.object(tempfile, 'tempdir', str(args.output)):
-        report = shadow.run(args.output, args.artifact, edges.PROJECT, args.nonce, timeout=960)
+        report = shadow.run(args.output, args.artifact, edges.PROJECT, args.nonce, timeout=2400)
     print(json.dumps({'status': report['status'], 'ownedProcess': report.get('ownedProcess')}))
     return 0 if report['status'] == 'shadow-complete' else 2
 
