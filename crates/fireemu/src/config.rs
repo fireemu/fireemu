@@ -13151,6 +13151,14 @@ mod tests {
         assert!(exact_on.auth_totp_reveal_codes);
         let off = parse(&json!({"totp": {"revealCodes": false}})).unwrap();
         assert!(!off.auth_totp_reveal_codes);
+        assert_eq!(
+            off.effective_value("auth.totp.revealCodes", &Value::Null),
+            Some(json!(false))
+        );
+        assert_eq!(
+            exact_on.effective_value("auth.totp.revealCodes", &Value::Null),
+            Some(json!(true))
+        );
         // The reveal key alone leaves TOTP enrollment refused as the official emulator does.
         assert_eq!(off.auth_totp, None);
         let both = parse(&json!({"totp": {"revealCodes": false, "digits": 8}})).unwrap();
