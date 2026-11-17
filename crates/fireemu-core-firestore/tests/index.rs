@@ -2212,3 +2212,52 @@ fn usage_entry(
         .unwrap()
         .maximum_entry_bytes
 }
+
+/// The create charge of one document is its index entries plus its stored bytes, and it is
+/// counted where production's budgets are enforced only: it is what a commit sums.
+#[test]
+fn the_create_charge_is_the_entries_plus_the_stored_bytes_in_production_only() {
+    use fireemu_core_firestore::path::DocumentPath;
+    use fireemu_core_firestore::size::document_size;
+    use fireemu_core_firestore::store::LimitScope;
+    use fireemu_core_types::ids::{DatabaseId, ProjectId};
+    use std::collections::BTreeMap;
+
+    let path = DocumentPath::parse(
+        &ProjectId::try_new("demo-app").unwrap(),
+        &DatabaseId::default_database(),
+        &format!("{}/{}", "c".repeat(1_400), "d".repeat(599)),
+    )
+    .unwrap();
+    let fields = |count: i64| {
+        BTreeMap::from([(
+            "a".to_owned(),
+            Value::Array((0..count).map(Value::Integer).collect()),
+        )])
+    };
+    let indexes = IndexSet::default();
+    let mut previous = 0;
+    for count in [0, 1, 2_872, 4_310, 7_184] {
+        let fields = fields(count);
+        let usage = indexes.document_index_usage(&path, &fields).unwrap();
+        let stored = document_size(&path, &fields).unwrap().total;
+        assert!(stored > 0);
+        assert_eq!(usage.charged_bytes, usage.total_bytes + stored, "{count}");
+        assert!(
+            usage.charged_bytes > previous,
+            "the charge grows with the array: {count}"
+        );
+        previous = usage.charged_bytes;
+        let counted = indexes
+            .document_index_usage_in(&path, &fields, LimitScope::OfficialEmulator)
+            .unwrap();
+        assert_eq!(
+            counted.charged_bytes, 0,
+            "the emulator scope charges nothing: {count}"
+        );
+        assert_eq!(counted.total_bytes, usage.total_bytes);
+    }
+    // The recorded 2,000-byte-name pair: 7,184 elements are accepted, 7,185 are over the budget.
+    assert!(previous <= 29_652_400, "{previous}");
+    assert!(indexes.document_index_usage(&path, &fields(7_185)).is_err());
+}

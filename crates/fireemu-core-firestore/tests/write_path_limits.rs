@@ -761,6 +761,28 @@ fn a_commit_is_charged_the_sum_of_its_documents_in_production_only() {
     strict
         .commit(&[write("f0", 4_310), write("f0", 4_310)], None, t(3))
         .expect("one document written twice is one charge");
+    // A document written and then deleted in the same commit leaves nothing to charge.
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    strict
+        .commit(
+            &[
+                write("h0", 4_310),
+                delete("h0"),
+                write("h1", 4_310),
+                write("h2", 2_872),
+            ],
+            None,
+            t(4),
+        )
+        .expect("a deleted document is not charged");
+    assert!(strict.get(&path(&name("h0"))).is_none());
+    assert!(strict.get(&path(&name("h1"))).is_some());
     let mut emulator = state(LimitScope::OfficialEmulator);
     emulator
         .commit(&[write("d0", 4_310), write("d1", 4_310)], None, t(0))
