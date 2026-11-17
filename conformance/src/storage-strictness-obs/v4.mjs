@@ -195,8 +195,6 @@ export function requestsV4(t) {
   return out;
 }
 
-export const V4_CLEANUP_KEYS = [...V4_OBJECTS.map(([key]) => key), "md-up", "md-copy"];
-
 // The observation steps in the order they run; the glob ladder is last so a stop loses only its tail.
 export const V4_OBSERVATIONS = [
   "V4-L-delim",

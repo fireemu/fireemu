@@ -429,12 +429,12 @@ export async function observeV4({ target, client }) {
     if (answer?.unknown && !tolerant) throw new Error("unknown answer");
     return answer;
   };
+  // Cleanup requests: a refusal or failure is recorded, and the answer is read back from `answers`.
   const safe = async (id) => {
     try {
-      return await send(id);
+      await send(id);
     } catch {
       failures.push(id);
-      return { status: null, unknown: true, body: Buffer.alloc(0), headers: {} };
     }
   };
   const pending = (resource) =>

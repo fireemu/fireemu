@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyRequest, GuardError, HOSTS, requests, SEND_FLAG, targetOf } from "./guard.mjs";
 import { main, observeV4, readback } from "./run.mjs";
+import { rehearsalConfig } from "./rehearse.mjs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { judgeJournal, settlement } from "./judge.mjs";
 import { compare } from "./compare.mjs";
 import { createWire } from "./wire.mjs";
@@ -767,4 +770,433 @@ test("v4 invariants hold under each pairwise fault combination", async () => {
     if (mode === "production")
       assert.equal(result.world.buckets.has(target.defaultBucket), true, label);
   }
+});
+
+test("v4 duplicate or malformed page tokens are refused by the page-token rule itself", () => {
+  const request = (url) => ({ ...plan["V4-G-p2"], url, headers: { authorization: "Bearer x" } });
+  const good = plan["V4-G-p2"].url.replace(TOKEN_MARK, "tokenvalue");
+  assert.equal(classifyRequest(target, request(good)).case, "V4-G-p2");
+  for (const url of [
+    `${good}&pageToken=tokenvalue`,
+    good.replace("tokenvalue", "a%20b"),
+    good.replace("&pageToken=tokenvalue", ""),
+  ])
+    assert.throws(() => classifyRequest(target, request(url)), /page token outside the plan/);
+  // A token on a case that does not take one is a different request, whatever its value.
+  const other = {
+    ...plan["V4-G-p1"],
+    url: `${plan["V4-G-p1"].url}&pageToken=tokenvalue`,
+    headers: { authorization: "Bearer x" },
+  };
+  assert.throws(() => classifyRequest(target, other), /request outside the plan/);
+});
+
+test("v4 a bucket that already exists is never written to or deleted", async () => {
+  const exists = (request, { answer }) => ({ ...answer, status: 200 });
+  const { report, world } = await run({
+    faults: { "V4-P-absent": { status: 200, headers: {}, body: Buffer.from("{}") } },
+  });
+  assert.deepEqual(report.violations, ["V4-P-absent"]);
+  assert.deepEqual(cases(world), ["V4-P-location", "V4-P-absent"]);
+  assert.equal(report.closureReady, false);
+  assert.equal(report.cleanupVerified, false);
+  assert.equal(typeof exists, "function");
+  // A refused first read stops before anything else, with nothing to clean.
+  const refused = await run({
+    faults: { "V4-P-location": { status: 403, headers: {}, body: empty() } },
+  });
+  assert.deepEqual(cases(refused.world), ["V4-P-location"]);
+  assert.deepEqual(refused.report.violations, ["V4-P-location"]);
+  assert.equal(refused.report.requests, 1);
+});
+
+test("v4 rehearsal configuration declares the temporary bucket and no CORS", () => {
+  const config = rehearsalConfig(target);
+  assert.deepEqual(config.storage.buckets, [target.defaultBucket, T]);
+  assert.deepEqual(config.storage.cors, {});
+  assert.equal(config.storage.undeclaredBuckets, "refuse");
+  const v3 = rehearsalConfig(targetOf({ ...identity, stage: "v3", runId: "ss-0123abcd" }));
+  assert.equal(v3.storage.buckets.length, 4);
+  assert.deepEqual(Object.keys(v3.storage.cors), [`${T}-empty`, `${T}-configured`]);
+  const v2 = rehearsalConfig(targetOf({ ...identity, stage: "v2", runId: "ss-0123abcd" }));
+  assert.deepEqual(Object.keys(v2.storage.cors), [T]);
+});
+
+test("v4 rehearsal command prints the v4 configuration and refuses other stages", () => {
+  const script = fileURLToPath(new URL("./rehearse.mjs", import.meta.url));
+  const args = [
+    "--project",
+    identity.project,
+    "--default-bucket",
+    identity.defaultBucket,
+    "--run-id",
+    "ss-0123abcd",
+  ];
+  const run = (stage) =>
+    spawnSync(process.execPath, [script, ...stage, ...args], { encoding: "utf8" });
+  const ok = run(["v4"]);
+  assert.equal(ok.status, 0);
+  assert.deepEqual(JSON.parse(ok.stdout).storage.buckets, [identity.defaultBucket, T]);
+  assert.equal(JSON.parse(run(["v3"]).stdout).storage.buckets.length, 4);
+  assert.equal(JSON.parse(run([]).stdout).storage.buckets.length, 2);
+  for (const stage of [["v5"], ["v4", "v3"], ["readback"]]) assert.notEqual(run(stage).status, 0);
+});
+
+const jsonAnswer = (status, value) => ({
+  status,
+  headers: { "content-type": "application/json; charset=UTF-8" },
+  body: Buffer.from(JSON.stringify(value)),
+});
+
+test("v4 vocabulary: the remaining fixed requests (cleanup deletes, reads, non-Firebase list)", () => {
+  const api = `https://storage.googleapis.com/storage/v1/b/${T}`;
+  assert.equal(
+    plan["V4-N-list"].url,
+    `https://firebasestorage.googleapis.com/v0/b/${T}/o?prefix=tl%2F`,
+  );
+  assert.equal(plan["V4-N-list"].method, "GET");
+  assert.equal(plan["V4-K-read-object"].url, `${api}/o/tl%2Ff.txt`);
+  assert.equal(plan["V4-A2-object"].url, `${api}/o/tl%2Ff.txt`);
+  assert.equal(plan["V4-A2-bucket"].url, api);
+  assert.equal(plan["V4-K-del-md-up"].url, `${api}/o/md%2Fup.txt`);
+  assert.equal(plan["V4-K-del-md-copy"].url, `${api}/o/${encodeURIComponent(V4_COPY_NAME)}`);
+  for (const [key, name] of V4_OBJECTS) {
+    assert.equal(plan[`V4-K-del-${key}`].url, `${api}/o/${encodeURIComponent(name)}`);
+    assert.equal(plan[`V4-K-del-${key}`].method, "DELETE");
+  }
+  assert.equal(plan["V4-K-delete-bucket"].url, api);
+  assert.equal(plan["V4-K-read-created-bucket"].resource, `/storage/v1/b/${T}`);
+});
+
+test("v4 the bucket create has the long timeout and the rest the short one", async () => {
+  const { entries } = await run();
+  const timeout = (id) => entries.find((e) => e.phase === "before" && e.case === id).timeoutMs;
+  assert.equal(timeout("V4-W-bucket"), 60_000);
+  assert.equal(timeout("V4-W-verify"), 30_000);
+  assert.equal(timeout("V4-K-delete-bucket"), 30_000);
+});
+
+test("v4 the first read and the bucket verification each stop the run for a wrong answer", async () => {
+  const bucket = (extra = {}) => ({
+    kind: "storage#bucket",
+    name: T,
+    location: "US",
+    softDeletePolicy: { retentionDurationSeconds: "0" },
+    ...extra,
+  });
+  const first = async (answer) => (await run({ faults: { "V4-P-location": answer } })).report;
+  assert.deepEqual((await first(jsonAnswer(200, { kind: "storage#bucket" }))).violations, [
+    "V4-P-location",
+  ]);
+  assert.deepEqual((await first(jsonAnswer(404, { location: "US" }))).violations, [
+    "V4-P-location",
+  ]);
+  const verify = async (answer, options = {}) =>
+    run({ faults: { "V4-W-verify": answer }, ...options });
+  for (const answer of [
+    jsonAnswer(404, bucket()),
+    jsonAnswer(200, bucket({ name: "other" })),
+    jsonAnswer(200, bucket({ softDeletePolicy: { retentionDurationSeconds: "604800" } })),
+    jsonAnswer(200, { kind: "storage#bucket", name: T }),
+  ]) {
+    const result = await verify(answer);
+    assert.deepEqual(result.report.violations, ["V4-W-verify"]);
+    assert.equal(result.report.completed, false);
+    // The bucket this run created is still removed, and no upload was sent.
+    assert.equal(result.world.buckets.has(T), false);
+    assert.equal(
+      cases(result.world).some((id) => id.startsWith("V4-U-")),
+      false,
+    );
+  }
+  const local = targetOf({ ...identity, runId: "ss-0123abcd", local: "http://127.0.0.1:39199" });
+  const localOk = await run(
+    { faults: { "V4-W-verify": jsonAnswer(200, { kind: "storage#bucket", name: T }) } },
+    local,
+  );
+  assert.deepEqual(localOk.report.violations, []);
+  const localWrong = await run(
+    { faults: { "V4-W-verify": jsonAnswer(200, { name: "other" }) } },
+    local,
+  );
+  assert.deepEqual(localWrong.report.violations, ["V4-W-verify"]);
+});
+
+test("v4 an answer that must be withheld is unknown even with a 2xx status, in setup and in cleanup", async () => {
+  const echoed = (status, value) => ({
+    status,
+    headers: { "content-type": "application/json" },
+    body: Buffer.from(JSON.stringify({ ...value, echo: "fake-owner" })),
+  });
+  const upload = await run({ faults: { "V4-U-pg-a": echoed(200, {}) } });
+  assert.equal(upload.report.completed, false);
+  assert.equal(
+    cases(upload.world).some((id) => id.startsWith("V4-L-")),
+    false,
+  );
+  assert.equal(upload.report.closureReady, false);
+  // An unknown 2xx create is owned only after its own positive read: a 404 read leaves nothing deleted.
+  const created = await run({
+    faults: { "V4-W-bucket": echoed(200, {}), "V4-K-read-created-bucket": jsonAnswer(404, {}) },
+  });
+  assert.equal(cases(created.world).includes("V4-K-read-created-bucket"), true);
+  assert.equal(
+    cases(created.world).some((id) => id.startsWith("V4-K-del") || id === "V4-K-delete-bucket"),
+    false,
+  );
+  assert.equal(created.report.closureReady, false);
+  // A 404 that had to be withheld is not a verified absence.
+  const absent = await run({
+    faults: { "V4-K-bucket": echoed(404, {}) },
+    applyBeforeFault: ["V4-K-bucket"],
+  });
+  assert.equal(absent.report.cleanupVerified, false);
+  assert.equal(absent.report.closureReady, false);
+});
+
+test("v4 a bucket that survives its delete keeps the run open and unverified", async () => {
+  const refused = jsonAnswer(409, {
+    error: { code: 409, message: "not empty", errors: [{ reason: "conflict" }] },
+  });
+  const { report, world } = await run({ faults: { "V4-K-delete-bucket": refused } });
+  assert.equal(report.cleanupVerified, false);
+  assert.equal(report.closureReady, false);
+  assert.equal(world.buckets.has(T), true);
+  assert.equal(cases(world).filter((id) => id === "V4-K-delete-bucket").length, 1);
+});
+
+test("v4 the run stops observing when the cleanup reserve is reached and still cleans up", async () => {
+  const clock = { t: 1_000_000, now: () => clock.t };
+  const entries = [];
+  const world = createFakeWorld(target, { clock });
+  const net = async (request, options) => {
+    const answer = await world.net(request, options);
+    if (request.case === "V4-U-pg-a") clock.t += 11 * 60_000;
+    return answer;
+  };
+  const client = createWire({
+    target,
+    net,
+    now: clock.now,
+    journal: { append: (entry) => entries.push(entry) },
+  });
+  const report = await observeV4({ target, client });
+  assert.equal(report.completed, false);
+  assert.equal(report.cleanupVerified, true);
+  assert.equal(world.buckets.has(T), false);
+  assert.equal(cases(world).includes("V4-U-pg-b"), false);
+  assert.equal(cases(world).includes("V4-K-del-pg-a"), true);
+  assert.deepEqual(report.failures, ["sequence stopped"]);
+});
+
+test("v4 page tokens are kept only from known 2xx JSON answers of the v4 stage", async () => {
+  const withToken = (status, value) => jsonAnswer(status, { kind: "storage#objects", ...value });
+  const tokensAfter = async (answer, runTarget = target) => {
+    const result = await run({ faults: { "V4-L-itd-p1": answer } }, runTarget);
+    return result;
+  };
+  // A valid token is stored; an invalid string, a number and a null each make the answer unknown.
+  const good = await tokensAfter(withToken(200, { nextPageToken: "abc-_=+/." }));
+  assert.equal(good.client.tokens.get("V4-L-itd-p1"), "abc-_=+/.");
+  for (const bad of ["bad token", 12345, null, ["x"], "a".repeat(1025)]) {
+    const result = await tokensAfter(withToken(200, { nextPageToken: bad }));
+    assert.equal(result.report.completed, false, String(bad));
+    assert.equal(result.client.tokens.has("V4-L-itd-p1"), false, String(bad));
+  }
+  // A known 4xx is never read for a token, even when its body holds an invalid one.
+  const refused = await tokensAfter(
+    jsonAnswer(400, {
+      error: { code: 400, message: "x", errors: [{ reason: "invalid" }] },
+      nextPageToken: "bad token",
+    }),
+  );
+  assert.equal(refused.report.completed, true);
+  assert.equal(refused.client.tokens.has("V4-L-itd-p1"), false);
+  // An answer withheld for echoing a secret yields no token and stops the run.
+  const echoed = await tokensAfter(withToken(200, { nextPageToken: "tok", echo: "fake-owner" }));
+  assert.equal(echoed.report.completed, false);
+  assert.equal(echoed.client.tokens.has("V4-L-itd-p1"), false);
+  // Other stages never read tokens.
+  const v3 = targetOf({ ...identity, stage: "v3", runId: "ss-0123abcd" });
+  const entriesV3 = [];
+  const worldV3 = createFakeWorld(v3);
+  const clientV3 = createWire({
+    target: v3,
+    net: worldV3.net,
+    journal: { append: (e) => entriesV3.push(e) },
+  });
+  await clientV3.wire(requests(v3)["V3-P-location"]);
+  assert.equal(clientV3.tokens.size, 0);
+  const stub = { net: async () => withToken(200, { nextPageToken: "bad token" }) };
+  const other = createWire({ target: v3, net: stub.net, journal: { append() {} } });
+  assert.equal((await other.wire(requests(v3)["V3-P-location"])).unknown, false);
+});
+
+test("v4 judge facts keep every generated key hidden and every other member visible", () => {
+  const hidden = [
+    "id",
+    "name",
+    "selfLink",
+    "mediaLink",
+    "projectNumber",
+    "etag",
+    "timeCreated",
+    "updated",
+    "generation",
+    "metageneration",
+    "crc32c",
+    "md5Hash",
+    "timeStorageClassUpdated",
+    "bucket",
+  ];
+  const facts = (value) =>
+    v4Facts(
+      { case: "V4-B-full" },
+      Buffer.from(JSON.stringify({ kind: "storage#bucket", ...value })),
+      {},
+    ).facts.members;
+  for (const key of hidden) {
+    assert.deepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbb" }), key);
+    assert.notDeepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbbb" }), key);
+  }
+  for (const key of ["location", "storageClass", "locationType", "rpo"])
+    assert.notDeepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbb" }), key);
+  assert.deepEqual(
+    facts({ softDeletePolicy: { effectiveTime: "2026-01-01" } }),
+    facts({ softDeletePolicy: { effectiveTime: "2027-01-01" } }),
+  );
+  for (const text of ["null", "[]", "5", '"x"', '[{"kind":"storage#bucket"}]', "{not json"])
+    assert.equal(v4Facts({ case: "V4-B-full" }, Buffer.from(text), {}).shape, null, text);
+});
+
+test("v4 the complete request vocabulary equals its reviewed snapshot", () => {
+  const snapshot = JSON.parse(
+    readFileSync(new URL("./v4-vocabulary.json", import.meta.url), "utf8"),
+  );
+  const fixed = targetOf({ ...identity, runId: "ss-00000000" });
+  const actual = JSON.parse(JSON.stringify(requests(fixed, "US-CENTRAL1")));
+  assert.deepEqual(Object.keys(actual), Object.keys(snapshot));
+  for (const id of Object.keys(snapshot)) assert.deepEqual(actual[id], snapshot[id], id);
+  // The snapshot is the packet's vocabulary: every request runs against a Google API host with the bucket T.
+  for (const request of Object.values(snapshot))
+    assert.match(request.url, /^https:\/\/(storage|firebasestorage)\.googleapis\.com\//);
+  assert.equal(Object.keys(snapshot).length, 104);
+  assert.equal(V4_BUDGET, 140);
+});
+
+test("v4 judge facts for every recognised kind, exactly", () => {
+  const facts = (value, headers = {}, text) =>
+    v4Facts({ case: "V4-L-delim" }, Buffer.from(text ?? JSON.stringify(value)), headers);
+  assert.deepEqual(
+    facts(
+      {
+        kind: "storage#objects",
+        items: [{ name: "a", metadata: { z: "1", y: "2" } }, { name: "b" }, {}],
+        prefixes: ["p/"],
+        nextPageToken: "t",
+      },
+      { "content-length": "9", "content-type": "application/json; charset=UTF-8" },
+    ),
+    {
+      shape: "object-list",
+      facts: {
+        contentLength: "9",
+        contentType: "application/json; charset=UTF-8",
+        memberOrder: ["kind", "items", "prefixes", "nextPageToken"],
+        items: ["a", "b", null],
+        prefixes: ["p/"],
+        nextPageToken: true,
+        itemMetadataKeys: { a: ["z", "y"], b: [], undefined: [] },
+      },
+    },
+  );
+  assert.deepEqual(facts({ kind: "storage#objects" }).facts, {
+    contentLength: null,
+    contentType: null,
+    memberOrder: ["kind"],
+    items: [],
+    prefixes: [],
+    nextPageToken: false,
+    itemMetadataKeys: {},
+  });
+  assert.deepEqual(facts({ kind: "storage#object", name: "n", metadata: { b: "1", a: "2" } }), {
+    shape: "object",
+    facts: {
+      contentLength: null,
+      contentType: null,
+      memberOrder: ["kind", "name", "metadata"],
+      metadataKeys: ["b", "a"],
+    },
+  });
+  assert.deepEqual(facts({ kind: "storage#object" }).facts.metadataKeys, []);
+  assert.deepEqual(
+    facts({
+      kind: "storage#bucket",
+      name: "b",
+      location: "US",
+      softDeletePolicy: { retentionDurationSeconds: "0", effectiveTime: "2026-01-01T00:00:00Z" },
+      labels: ["x"],
+    }),
+    {
+      shape: "bucket-resource",
+      facts: {
+        contentLength: null,
+        contentType: null,
+        memberOrder: ["kind", "name", "location", "softDeletePolicy", "labels"],
+        members: {
+          kind: "storage#bucket",
+          name: "<string:1>",
+          location: "US",
+          softDeletePolicy: { retentionDurationSeconds: "0", effectiveTime: "<string:20>" },
+          labels: ["x"],
+        },
+      },
+    },
+  );
+  assert.deepEqual(
+    facts({
+      kind: "storage#objectAccessControls",
+      items: [
+        { entity: "project-owners-123", role: "OWNER" },
+        { entity: "allUsers" },
+        { entity: 5, role: "READER" },
+      ],
+    }),
+    {
+      shape: "acl-list",
+      facts: {
+        contentLength: null,
+        contentType: null,
+        memberOrder: ["kind", "items"],
+        entries: [
+          ["project-owners-<n>", "OWNER"],
+          ["allUsers", null],
+          [null, "READER"],
+        ],
+      },
+    },
+  );
+  assert.deepEqual(facts({ kind: "storage#objectAccessControls" }).facts.entries, []);
+  assert.deepEqual(
+    facts({ kind: "storage#objectAccessControl", entity: "user-7", role: "READER" }),
+    {
+      shape: "acl-entry",
+      facts: {
+        contentLength: null,
+        contentType: null,
+        memberOrder: ["kind", "entity", "role"],
+        entries: [["user-<n>", "READER"]],
+      },
+    },
+  );
+  // Anything else, an error document included, carries framing only.
+  for (const value of [
+    { kind: "storage#other" },
+    { error: { code: 400 }, kind: "storage#objects" },
+    { name: "x" },
+  ])
+    assert.deepEqual(facts(value, { "content-type": "t" }), {
+      facts: { contentLength: null, contentType: "t" },
+      shape: null,
+    });
 });
