@@ -899,7 +899,8 @@ fn split_trailers_only(headers: &mut HeaderMap) -> HeaderMap {
 
 /// `responded` says whether the stream sent any response message. Production closes a `Write`
 /// stream with `content-disposition: attachment` after a response
-/// (`write-stream-terminal/*`), but not when it ends without one
+/// (`write-stream-terminal/*`, and a too-big write: `write-stream-delete/*`), but not when it
+/// ends without one
 /// (`grpc-stream-request-bytes/*`, recorded twice).
 #[allow(clippy::fn_params_excessive_bools)]
 fn normalize_transport_frame(
@@ -916,7 +917,11 @@ fn normalize_transport_frame(
             && Status::from_header_map(trailers).is_some_and(|status| {
                 status.code() == tonic::Code::Ok
                     || (status.code() == tonic::Code::InvalidArgument
-                        && status.message() == "empty write operation")
+                        && matches!(
+                            status.message(),
+                            "empty write operation"
+                                | "Transaction too big. Decrease transaction size."
+                        ))
             });
         if write_terminal && responded && !trailers.contains_key("content-disposition") {
             trailers.insert(
@@ -1363,6 +1368,47 @@ mod tests {
                 .into_trailers()
                 .expect("terminal trailers");
             assert!(!trailers.contains_key("content-disposition"));
+        }
+    }
+
+    /// A `Write` stream that refuses a write as too big after its handshake response ends with
+    /// `content-disposition: attachment` too (`writelimits` run 2026-11-17, gRPC, two recordings:
+    /// `INVALID_ARGUMENT` "Transaction too big. Decrease transaction size.").
+    #[test]
+    fn a_refused_too_big_write_terminal_retains_content_disposition() {
+        let too_big = "Transaction too big. Decrease transaction size.";
+        let terminal = |code, message: &str, strict, write_stream, responded| {
+            let frame: Frame<Bytes> = Frame::trailers(headers(&Status::new(code, message)));
+            normalize_transport_frame(frame, strict, write_stream, responded, false)
+                .into_trailers()
+                .expect("terminal trailers")
+        };
+        let kept = terminal(Code::InvalidArgument, too_big, true, true, true);
+        assert_eq!(
+            kept.get("content-disposition")
+                .and_then(|value| value.to_str().ok()),
+            Some("attachment")
+        );
+        for (code, message, strict, write_stream, responded) in [
+            (Code::InvalidArgument, too_big, false, true, true),
+            (Code::InvalidArgument, too_big, true, false, true),
+            // No response frame, no content-disposition.
+            (Code::InvalidArgument, too_big, true, true, false),
+            // Another refusal keeps no attachment trailer (unrecorded).
+            (
+                Code::InvalidArgument,
+                "Index entry is too large.",
+                true,
+                true,
+                true,
+            ),
+            (Code::FailedPrecondition, too_big, true, true, true),
+        ] {
+            let trailers = terminal(code, message, strict, write_stream, responded);
+            assert!(
+                !trailers.contains_key("content-disposition"),
+                "{code:?} {message}"
+            );
         }
     }
 

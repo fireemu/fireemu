@@ -19,9 +19,26 @@ pub enum WriteRoute {
     BatchWrite,
     /// `DeleteDocument`, which REST `DELETE` maps to.
     DeleteDocument,
+    /// A `Write` stream message (gRPC or `WebChannel`), each applied as one atomic commit.
+    WriteStream,
+    /// A managed Admin operation (import, bulk delete) committing its own chunks. Production's
+    /// pricing of these operations is unobserved: deletes are priced as `Commit` is (the
+    /// existing behaviour) and a chunk is not summed, so nothing that was accepted is refused.
+    Managed,
     /// Anything else; never charged for a delete.
     #[default]
     Internal,
+}
+
+impl WriteRoute {
+    /// Whether a commit on this route is charged the sum of its documents against the create
+    /// budget: every route but a managed operation, whose chunks production has not been
+    /// observed pricing. (`BatchWrite` and `DeleteDocument` commit one write at a time, so the
+    /// sum is the document's own charge there.)
+    #[must_use]
+    pub const fn sums_commit_charges(self) -> bool {
+        !matches!(self, Self::Managed)
+    }
 }
 
 /// The create transaction budget (owner decision D1, 2026-09-25). A create is charged its index
@@ -41,8 +58,12 @@ pub const TRANSACTION_BYTES: u64 = 29_652_400;
 /// estimate in the closure.
 const fn delete_charge(route: WriteRoute) -> Option<(u64, u64)> {
     match route {
-        WriteRoute::DeleteDocument | WriteRoute::BatchWrite => Some((DELETE_REST_NUM, DELETE_DEN)),
-        WriteRoute::Commit => Some((DELETE_COMMIT_NUM, DELETE_DEN)),
+        // The Write stream refused from the same size as REST DELETE and BatchWrite
+        // (`writelimits` run 2026-11-17: 12,112 deleted, 12,113 and 12,122 refused).
+        WriteRoute::DeleteDocument | WriteRoute::BatchWrite | WriteRoute::WriteStream => {
+            Some((DELETE_REST_NUM, DELETE_DEN))
+        }
+        WriteRoute::Commit | WriteRoute::Managed => Some((DELETE_COMMIT_NUM, DELETE_DEN)),
         WriteRoute::Internal => None,
     }
 }
@@ -68,16 +89,28 @@ pub const SINGLE_FIELD_ENTRY_BYTES: u64 = 5_530;
 /// The documented entry formulas do not explain this refusal; the bound is fitted to that pair.
 pub const DOCUMENT_NAME_ENTRY_BYTES: u64 = 4_644;
 
-/// The largest entry accepted per entry kind. Only single-field (collection scope) entries have
-/// a recorded production refusal. The published 7,680 bytes is not enforced for the others:
-/// production's single-field threshold shows that figure does not match its own accounting,
-/// and no composite or collection-group refusal is recorded, so strict refuses none.
+/// The largest composite (collection scope) entry production accepts, in documented bytes:
+/// it accepted 6,000 and refused 6,500 and 7,000 with "Index entry is too large."
+/// (`writes/limits/composite-entry/heavy/*`, `writelimits` run 2026-11-17, two recordings). The
+/// threshold lies in 6,001..=6,500; strict refuses from the smallest recorded refusal and the
+/// gap is unobserved. It is above the single-field figure, so the published 7,680 is not the
+/// composite figure either.
+pub const COMPOSITE_ENTRY_BYTES: u64 = 6_499;
+
+/// The largest collection-group single-field entry production accepts: it accepted 5,700 and
+/// refused 6,000 and 6,190 (`writes/limits/collection-group-entry/*`, same run). The threshold
+/// lies in 5,701..=6,000; strict refuses from the smallest recorded refusal.
+pub const COLLECTION_GROUP_ENTRY_BYTES: u64 = 5_999;
+
+/// The largest entry accepted per entry kind. Single-field (collection scope), composite
+/// (collection scope) and single-field collection-group entries have a recorded production
+/// refusal; the composite collection-group entry has none, so strict refuses none of those.
 const fn entry_limit(scope: IndexEntryScope) -> u64 {
     match scope {
         IndexEntryScope::SingleFieldCollection => SINGLE_FIELD_ENTRY_BYTES,
-        IndexEntryScope::SingleFieldCollectionGroup
-        | IndexEntryScope::CompositeCollection
-        | IndexEntryScope::CompositeCollectionGroup => u64::MAX,
+        IndexEntryScope::SingleFieldCollectionGroup => COLLECTION_GROUP_ENTRY_BYTES,
+        IndexEntryScope::CompositeCollection => COMPOSITE_ENTRY_BYTES,
+        IndexEntryScope::CompositeCollectionGroup => u64::MAX,
     }
 }
 
@@ -90,6 +123,9 @@ pub struct IndexUsage {
     pub total_bytes: u64,
     /// Largest individual entry.
     pub maximum_entry_bytes: u64,
+    /// The create charge of the document: its index entries plus its stored bytes. Counted only
+    /// where production's budgets are enforced; zero under the emulator profile.
+    pub charged_bytes: u64,
 }
 
 impl IndexUsage {
@@ -135,6 +171,16 @@ impl IndexUsage {
     }
 }
 
+/// Refuses a commit whose documents' create charges sum past the budget. Production prices the
+/// whole commit, not each document (`writelimits` run 2026-11-17: two documents at 0.55 of the
+/// budget each were refused together, two at 0.40 were accepted).
+pub fn check_commit_charge(total: u64) -> Result<(), FirestoreError> {
+    if total > TRANSACTION_BYTES {
+        return Err(transaction_too_big());
+    }
+    Ok(())
+}
+
 fn index_entry_too_large() -> FirestoreError {
     FirestoreError::InvalidArgument("Index entry is too large.".into())
 }
@@ -174,9 +220,11 @@ impl IndexSet {
         scope: LimitScope,
     ) -> Result<IndexUsage, FirestoreError> {
         let enforce = scope == LimitScope::Production;
-        let usage = self.index_usage_of(document, fields, enforce)?;
+        let mut usage = self.index_usage_of(document, fields, enforce)?;
         if enforce {
-            usage.finish(stored_bytes(document, fields)?)?;
+            let stored = stored_bytes(document, fields)?;
+            usage.finish(stored)?;
+            usage.charged_bytes = usage.total_bytes.saturating_add(stored);
         }
         Ok(usage)
     }
@@ -422,7 +470,10 @@ fn entry_size(
 
 #[cfg(test)]
 mod tests {
-    use super::{entry_limit, IndexUsage, WriteRoute, SINGLE_FIELD_ENTRY_BYTES};
+    use super::{
+        check_commit_charge, entry_limit, IndexUsage, WriteRoute, COLLECTION_GROUP_ENTRY_BYTES,
+        COMPOSITE_ENTRY_BYTES, SINGLE_FIELD_ENTRY_BYTES, TRANSACTION_BYTES,
+    };
     use crate::path::DocumentPath;
     use crate::size::IndexEntryScope;
     use fireemu_core_types::ids::{DatabaseId, ProjectId};
@@ -465,19 +516,58 @@ mod tests {
     }
 
     #[test]
-    fn only_single_field_collection_entries_have_a_size_limit() {
+    fn entry_limits_follow_the_recorded_refusals_of_each_kind() {
         assert_eq!(SINGLE_FIELD_ENTRY_BYTES, 5_530);
-        assert_eq!(
-            entry_limit(IndexEntryScope::SingleFieldCollection),
-            SINGLE_FIELD_ENTRY_BYTES
-        );
-        for scope in [
-            IndexEntryScope::SingleFieldCollectionGroup,
-            IndexEntryScope::CompositeCollection,
-            IndexEntryScope::CompositeCollectionGroup,
+        assert_eq!(COMPOSITE_ENTRY_BYTES, 6_499);
+        assert_eq!(COLLECTION_GROUP_ENTRY_BYTES, 5_999);
+        for (scope, limit) in [
+            (
+                IndexEntryScope::SingleFieldCollection,
+                SINGLE_FIELD_ENTRY_BYTES,
+            ),
+            (
+                IndexEntryScope::SingleFieldCollectionGroup,
+                COLLECTION_GROUP_ENTRY_BYTES,
+            ),
+            (IndexEntryScope::CompositeCollection, COMPOSITE_ENTRY_BYTES),
+            // Unobserved: no recorded refusal, so none.
+            (IndexEntryScope::CompositeCollectionGroup, u64::MAX),
         ] {
-            assert_eq!(entry_limit(scope), u64::MAX, "{scope:?}");
+            assert_eq!(entry_limit(scope), limit, "{scope:?}");
         }
+    }
+
+    #[test]
+    fn only_a_managed_chunk_is_exempt_from_the_commit_sum() {
+        for route in [
+            WriteRoute::Commit,
+            WriteRoute::WriteStream,
+            WriteRoute::BatchWrite,
+            WriteRoute::DeleteDocument,
+            WriteRoute::Internal,
+        ] {
+            assert!(route.sums_commit_charges(), "{route:?}");
+        }
+        assert!(!WriteRoute::Managed.sums_commit_charges());
+        // A managed operation prices a delete the way `Commit` does.
+        assert_eq!(
+            super::delete_charge(WriteRoute::Managed),
+            super::delete_charge(WriteRoute::Commit)
+        );
+        assert_ne!(
+            super::delete_charge(WriteRoute::Managed),
+            super::delete_charge(WriteRoute::WriteStream)
+        );
+    }
+
+    #[test]
+    fn a_commit_charge_over_the_budget_is_refused_and_one_at_it_is_not() {
+        assert!(check_commit_charge(TRANSACTION_BYTES).is_ok());
+        assert!(matches!(
+            check_commit_charge(TRANSACTION_BYTES + 1),
+            Err(crate::store::FirestoreError::InvalidArgument(message))
+                if message == "Transaction too big. Decrease transaction size."
+        ));
     }
 
     fn root_document(collection_bytes: usize, id_bytes: usize) -> DocumentPath {

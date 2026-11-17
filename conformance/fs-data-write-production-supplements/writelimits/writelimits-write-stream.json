@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "evidence": {
+    "corpusSha256": "24d740e2af16bb9689b8621e1916aea01cc6b93788768af69a176f6e6d3f0070",
+    "project": "demo-firestore-probe",
+    "database": "(default)",
+    "recordedAt": ["2026-11-17T05:16:18.521Z", "2026-11-17T05:18:17.725Z"],
+    "harnessRevision": "5665cc8310c6cefee4a249b54445a5507abde105",
+    "sdkVersions": {
+      "firebase": "12.18.0",
+      "firebaseAdmin": "14.3.0",
+      "firestore": "8.7.1",
+      "grpc": "1.14.4"
+    },
+    "recordingDigests": [
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    ],
+    "streamRecordingDigests": [
+      "6a7a251f5c17aa5fe78033aa4a6d6e446764218dbeea70335c9604014dfadce7",
+      "6a7a251f5c17aa5fe78033aa4a6d6e446764218dbeea70335c9604014dfadce7"
+    ],
+    "nondeterministicPrograms": []
+  },
+  "programs": {},
+  "streams": {
+    "writes/limits/write-stream-delete/12112": {
+      "events": [
+        {
+          "status": {
+            "code": 0,
+            "details": ""
+          },
+          "type": "seed"
+        },
+        {
+          "type": "data",
+          "value": {
+            "commitTime": null,
+            "streamId": "nonempty-string",
+            "streamToken": "nonempty-bytes",
+            "writeResults": []
+          }
+        },
+        {
+          "type": "data",
+          "value": {
+            "commitTime": "timestamp",
+            "streamId": "empty-string",
+            "streamToken": "nonempty-bytes",
+            "writeResults": [
+              {
+                "transformResults": [],
+                "updateTime": null
+              }
+            ]
+          }
+        },
+        {
+          "type": "status",
+          "value": {
+            "code": 0,
+            "details": "",
+            "trailers": [
+              {
+                "key": "content-disposition",
+                "kind": "ascii",
+                "value": "attachment"
+              },
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          }
+        },
+        {
+          "type": "end"
+        },
+        {
+          "arrayCount": 0,
+          "found": false,
+          "status": {
+            "code": 5,
+            "details": "Document \"projects/demo-firestore-probe/databases/(default)/documents/wlstream12112ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/d\" not found.",
+            "trailers": [
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          },
+          "type": "readback"
+        }
+      ],
+      "sentFrames": 2,
+      "status": {
+        "code": 0,
+        "details": "",
+        "trailers": [
+          {
+            "key": "content-disposition",
+            "kind": "ascii",
+            "value": "attachment"
+          },
+          {
+            "key": "x-debug-tracking-id",
+            "kind": "ascii",
+            "value": "nonempty-volatile-id"
+          }
+        ]
+      }
+    },
+    "writes/limits/write-stream-delete/12113": {
+      "events": [
+        {
+          "status": {
+            "code": 0,
+            "details": ""
+          },
+          "type": "seed"
+        },
+        {
+          "type": "data",
+          "value": {
+            "commitTime": null,
+            "streamId": "nonempty-string",
+            "streamToken": "nonempty-bytes",
+            "writeResults": []
+          }
+        },
+        {
+          "type": "status",
+          "value": {
+            "code": 3,
+            "details": "Transaction too big. Decrease transaction size.",
+            "trailers": [
+              {
+                "key": "content-disposition",
+                "kind": "ascii",
+                "value": "attachment"
+              },
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          }
+        },
+        {
+          "type": "error",
+          "value": {
+            "code": 3,
+            "details": "Transaction too big. Decrease transaction size.",
+            "trailers": [
+              {
+                "key": "content-disposition",
+                "kind": "ascii",
+                "value": "attachment"
+              },
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          }
+        },
+        {
+          "type": "close"
+        },
+        {
+          "type": "end"
+        },
+        {
+          "arrayCount": 12113,
+          "found": true,
+          "status": {
+            "code": 0,
+            "details": ""
+          },
+          "type": "readback"
+        }
+      ],
+      "sentFrames": 2,
+      "status": {
+        "code": 3,
+        "details": "Transaction too big. Decrease transaction size.",
+        "trailers": [
+          {
+            "key": "content-disposition",
+            "kind": "ascii",
+            "value": "attachment"
+          },
+          {
+            "key": "x-debug-tracking-id",
+            "kind": "ascii",
+            "value": "nonempty-volatile-id"
+          }
+        ]
+      }
+    },
+    "writes/limits/write-stream-delete/12122": {
+      "events": [
+        {
+          "status": {
+            "code": 0,
+            "details": ""
+          },
+          "type": "seed"
+        },
+        {
+          "type": "data",
+          "value": {
+            "commitTime": null,
+            "streamId": "nonempty-string",
+            "streamToken": "nonempty-bytes",
+            "writeResults": []
+          }
+        },
+        {
+          "type": "status",
+          "value": {
+            "code": 3,
+            "details": "Transaction too big. Decrease transaction size.",
+            "trailers": [
+              {
+                "key": "content-disposition",
+                "kind": "ascii",
+                "value": "attachment"
+              },
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          }
+        },
+        {
+          "type": "error",
+          "value": {
+            "code": 3,
+            "details": "Transaction too big. Decrease transaction size.",
+            "trailers": [
+              {
+                "key": "content-disposition",
+                "kind": "ascii",
+                "value": "attachment"
+              },
+              {
+                "key": "x-debug-tracking-id",
+                "kind": "ascii",
+                "value": "nonempty-volatile-id"
+              }
+            ]
+          }
+        },
+        {
+          "type": "close"
+        },
+        {
+          "type": "end"
+        },
+        {
+          "arrayCount": 12122,
+          "found": true,
+          "status": {
+            "code": 0,
+            "details": ""
+          },
+          "type": "readback"
+        }
+      ],
+      "sentFrames": 2,
+      "status": {
+        "code": 3,
+        "details": "Transaction too big. Decrease transaction size.",
+        "trailers": [
+          {
+            "key": "content-disposition",
+            "kind": "ascii",
+            "value": "attachment"
+          },
+          {
+            "key": "x-debug-tracking-id",
+            "kind": "ascii",
+            "value": "nonempty-volatile-id"
+          }
+        ]
+      }
+    }
+  },
+  "mode": "writelimits",
+  "recipeDigests": {
+    "programs": {},
+    "streams": {
+      "writes/limits/write-stream-delete/12112": "d6d25e0962a9c263b34d1659545e3a139660e80bb492084eb723250c31b02ad2",
+      "writes/limits/write-stream-delete/12113": "dbf737894841c1e4305ebdc33ec197bf75af5ec7ecd66f51f964be485218584a",
+      "writes/limits/write-stream-delete/12122": "ce9248b17173030ac6d59cfe91c449f60c5a316ae193f046b5a191e63c18eac8"
+    }
+  }
+}

@@ -13,7 +13,15 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TASK_ID = "FS-DATA-WRITE-SANDBOX";
-const MODES = new Set(["delta-v3", "partial", "bracket", "followup"]);
+const MODES = new Set(["delta-v3", "partial", "bracket", "followup", "writelimits", "rulesize"]);
+
+/** A mode that carries its own ledger task and cap; every other mode charges `TASK_ID`. */
+export const TASK_BY_MODE = Object.freeze({
+  writelimits: Object.freeze({ taskId: "FS-WRITE-LIMITS-SANDBOX", limitUsd: 10 }),
+  rulesize: Object.freeze({ taskId: "FS-WRITE-LIMITS-SANDBOX", limitUsd: 10 }),
+});
+
+export const taskIdForMode = (mode) => TASK_BY_MODE[mode]?.taskId ?? TASK_ID;
 const PACKET_OUTCOME = "reserved-presend-admission";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -58,7 +66,7 @@ export function admissionPacketRow({ mode, nonce, sourceCommit, planSha256, revi
     ts: ts ?? new Date().toISOString(),
     project: "fireemu-oracle-sbx",
     database: "(default)",
-    taskId: TASK_ID,
+    taskId: taskIdForMode(mode),
     packetId: admissionPacketId(mode, nonce),
     mode,
     nonce,
@@ -103,8 +111,9 @@ export function verifyProductionAdmission({
     if (!lines.has(line)) throw new Error(`admission review does not pin the ${label}`);
   }
   const packetId = admissionPacketId(mode, nonce);
+  const taskId = taskIdForMode(mode);
   const packets = (rows ?? []).filter(
-    (row) => row?.taskId === TASK_ID && row.packetId === packetId && row.outcome === PACKET_OUTCOME,
+    (row) => row?.taskId === taskId && row.packetId === packetId && row.outcome === PACKET_OUTCOME,
   );
   if (packets.length !== 1) throw new Error("admission requires one ledger packet reservation");
   const [packet] = packets;
@@ -120,7 +129,7 @@ export function verifyProductionAdmission({
   if (runId === undefined) return { packetId, packet };
   const attempts = rows.filter(
     (row) =>
-      row?.taskId === TASK_ID &&
+      row?.taskId === taskId &&
       row.outcome === "reserved" &&
       row.packetId === packetId &&
       row.runId === runId,

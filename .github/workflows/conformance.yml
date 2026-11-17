@@ -99,6 +99,14 @@ jobs:
           FIREEMU_BIN: ${{ github.workspace }}/target/release/fireemu
         run: node --test conformance/src/task-queue-production/strict-replay.test.mjs
 
+      # The same for the FS-DATA-WRITE Batch 3 recordings of 2026-11-17 (the two production attempts of
+      # the commit budget, composite and collection-group entries, bytes line breaks and the
+      # Write-stream delete): strict against all 64 recipes, in both local attempts.
+      - name: strict replay of the Batch 3 write-limit recordings
+        env:
+          FIREEMU_BIN: ${{ github.workspace }}/target/release/fireemu
+        run: node --test conformance/src/fs-write-limits-replay.test.mjs
+
       # `record` re-derives the fixtures from the official emulators. It never commits: a
       # difference is reported as a diff so that an upstream change becomes an explicit review
       # rather than a silently updated baseline.

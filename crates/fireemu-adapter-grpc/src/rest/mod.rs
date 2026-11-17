@@ -1315,6 +1315,7 @@ impl RestState {
             (!document_id.is_empty()).then(|| format!("{parent}/{collection_id}/{document_id}"));
         if self.gateway.production_refusals() {
             transcode::check_document_keys(body, "document")?;
+            validate_document_typed_bytes(body)?;
         }
         let req = pb::CreateDocumentRequest {
             parent: parent.to_owned(),
@@ -1354,6 +1355,9 @@ impl RestState {
         params: &BTreeMap<String, Vec<String>>,
         body: &Value,
     ) -> Result<RestResponse, Status> {
+        if self.gateway.production_refusals() {
+            validate_document_typed_bytes(body)?;
+        }
         let mut document =
             document_from_json(body, &FieldPath::root("document")).map_err(|e| bad(&e))?;
         if document.name.is_empty() {
@@ -1982,6 +1986,9 @@ impl RestState {
             labels: labels_from_json(body)?,
             request_options: None,
         };
+        if self.gateway.production_refusals() {
+            validate_commit_typed_bytes(body)?;
+        }
         // End users may not call batchWrite at all (FS-RULES, 2026-09-24).
         if let Some(rules) = &self.rules {
             rules.require_owner(principal, "batchWrite")?;
@@ -2546,6 +2553,18 @@ fn validate_typed_bytes(value: &Value, path: &str) -> Result<(), Status> {
     {
         for (i, item) in fields.values().enumerate() {
             validate_typed_bytes(item, &format!("{path}.map_value.fields[{i}].value"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The same refusal for a document written through the create and patch routes, whose request
+/// message names the document `document` (`writelimits` run 2026-11-17, two recordings:
+/// `document.fields[0].value.bytes_value`).
+fn validate_document_typed_bytes(body: &Value) -> Result<(), Status> {
+    if let Some(fields) = body.get("fields").and_then(Value::as_object) {
+        for (j, value) in fields.values().enumerate() {
+            validate_typed_bytes(value, &format!("document.fields[{j}].value"))?;
         }
     }
     Ok(())

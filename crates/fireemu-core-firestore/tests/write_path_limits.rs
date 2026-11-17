@@ -664,3 +664,318 @@ fn index_accounting_refusals_are_strict_profile_only() {
             .is_err());
     }
 }
+
+/// A Write-stream delete is priced like REST DELETE and `BatchWrite` (`writelimits` run 2026-11-17,
+/// two recordings): an array of 12,112 values under a 1,000-byte name was deleted over the
+/// stream, and 12,113 and 12,122 were refused with "Transaction too big." Commit's own minimum is
+/// one lower. The emulator profile adds no refusal.
+#[test]
+fn a_write_stream_delete_is_refused_from_the_rest_delete_minimum() {
+    use fireemu_core_firestore::index_usage::WriteRoute;
+
+    // A 1,000-byte relative name: a 998-byte collection id and one-byte document id.
+    let name = |tag: &str| format!("{}{}/d", tag, "c".repeat(997));
+    let seed = |store: &mut FirestoreState, tag: &str, count: i64| {
+        store
+            .commit(&[set(&name(tag), "a", integers(count))], None, t(0))
+            .unwrap_or_else(|error| panic!("seed {count}: {error}"));
+    };
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    for (route, minimum) in [
+        (WriteRoute::WriteStream, 12_113),
+        (WriteRoute::DeleteDocument, 12_113),
+        (WriteRoute::BatchWrite, 12_113),
+        (WriteRoute::Commit, 12_112),
+    ] {
+        let mut store = state(LimitScope::Production);
+        seed(&mut store, "a", minimum - 1);
+        seed(&mut store, "b", minimum);
+        store.set_write_route(route);
+        store
+            .commit(&[delete("a")], None, t(1))
+            .unwrap_or_else(|error| panic!("{route:?} {}: {error}", minimum - 1));
+        assert!(store.get(&path(&name("a"))).is_none());
+        let refused = store.commit(&[delete("b")], None, t(2)).unwrap_err();
+        assert_eq!(refused.to_string(), too_big, "{route:?} {minimum}");
+        assert!(
+            store.get(&path(&name("b"))).is_some(),
+            "a refused delete keeps the document"
+        );
+    }
+    let mut emulator = state(LimitScope::OfficialEmulator);
+    seed(&mut emulator, "b", 12_122);
+    emulator.set_write_route(WriteRoute::WriteStream);
+    emulator
+        .commit(&[delete("b")], None, t(1))
+        .expect("the emulator profile deletes it");
+}
+
+/// A commit is charged the sum of its documents' create charges (`writelimits` run 2026-11-17):
+/// the recorded 0.40 + 0.40 of the budget was accepted, 0.55 + 0.55, 0.60 + 0.60 and 0.40 x 3
+/// were refused as one commit with "Transaction too big." A refused commit writes nothing.
+#[test]
+fn a_commit_is_charged_the_sum_of_its_documents_in_production_only() {
+    // Distinct integers under the recorded 2,000-byte name (size 2,017): 4,126 bytes per element.
+    let name = |tag: &str| {
+        format!(
+            "{}{}/{}",
+            tag,
+            "c".repeat(1_400 - tag.len()),
+            "d".repeat(599)
+        )
+    };
+    let write = |tag: &str, count: i64| set(&name(tag), "a", integers(count));
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    let mut strict = state(LimitScope::Production);
+    strict
+        .commit(&[write("a0", 2_872), write("a1", 2_872)], None, t(0))
+        .expect("0.40 + 0.40 is accepted");
+    strict
+        .commit(&[write("b0", 4_310)], None, t(1))
+        .expect("a single 0.60 document is accepted");
+    for (label, writes) in [
+        ("0.55 x 2", vec![write("c0", 3_950), write("c1", 3_950)]),
+        ("0.60 x 2", vec![write("d0", 4_310), write("d1", 4_310)]),
+        (
+            "0.40 x 3",
+            vec![write("e0", 2_872), write("e1", 2_872), write("e2", 2_872)],
+        ),
+    ] {
+        let refused = strict.commit(&writes, None, t(2)).unwrap_err();
+        assert_eq!(refused.to_string(), too_big, "{label}");
+        for tag in ["c0", "c1", "d0", "d1", "e0", "e1", "e2"] {
+            assert!(
+                strict.get(&path(&name(tag))).is_none(),
+                "{label} wrote {tag}"
+            );
+        }
+    }
+    // Writing the same document twice in one commit charges it once (the later state).
+    strict
+        .commit(&[write("f0", 4_310), write("f0", 4_310)], None, t(3))
+        .expect("one document written twice is one charge");
+    // A document written and then deleted in the same commit leaves nothing to charge.
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    strict
+        .commit(
+            &[
+                write("h0", 4_310),
+                delete("h0"),
+                write("h1", 4_310),
+                write("h2", 2_872),
+            ],
+            None,
+            t(4),
+        )
+        .expect("a deleted document is not charged");
+    assert!(strict.get(&path(&name("h0"))).is_none());
+    assert!(strict.get(&path(&name("h1"))).is_some());
+    let mut emulator = state(LimitScope::OfficialEmulator);
+    emulator
+        .commit(&[write("d0", 4_310), write("d1", 4_310)], None, t(0))
+        .expect("the emulator profile adds no refusal");
+}
+
+mod commit_budget_properties {
+    use super::*;
+    use fireemu_core_firestore::index::IndexSet;
+    use fireemu_core_firestore::index_usage::TRANSACTION_BYTES;
+    use proptest::prelude::*;
+
+    // Distinct integers under the recorded 2,000-byte name: 4,126 charged bytes per element, so
+    // one document alone is accepted up to 7,184 elements.
+    fn name(index: usize) -> String {
+        let tag = format!("p{index}");
+        format!("{tag}{}/{}", "c".repeat(1_400 - tag.len()), "d".repeat(599))
+    }
+
+    fn charge(count: i64) -> u64 {
+        let indexes = IndexSet::default();
+        let fields = BTreeMap::from([("a".to_owned(), integers(count))]);
+        indexes
+            .document_index_usage(&path(&name(0)), &fields)
+            .expect("a document under the single-document budget")
+            .charged_bytes
+    }
+
+    proptest! {
+        /// A commit of documents that are each within the budget is accepted exactly when the
+        /// sum of their create charges is, writes all of them or none, and the emulator scope
+        /// accepts every one (production prices the commit, not each document).
+        #[test]
+        fn a_commit_is_accepted_exactly_when_the_sum_of_its_charges_fits(
+            counts in proptest::collection::vec(1_i64..=7_000, 1..=4)
+        ) {
+            let charges: Vec<u64> = counts.iter().map(|count| charge(*count)).collect();
+            let fits = charges.iter().sum::<u64>() <= TRANSACTION_BYTES;
+            let writes: Vec<Write> = counts
+                .iter()
+                .enumerate()
+                .map(|(index, count)| set(&name(index), "a", integers(*count)))
+                .collect();
+            let mut strict = state(LimitScope::Production);
+            let outcome = strict.commit(&writes, None, t(0));
+            prop_assert_eq!(outcome.is_ok(), fits, "{:?} {:?}", counts, charges);
+            for index in 0..counts.len() {
+                prop_assert_eq!(strict.get(&path(&name(index))).is_some(), fits);
+            }
+            if let Err(error) = outcome {
+                prop_assert_eq!(
+                    error.to_string(),
+                    "invalid argument: Transaction too big. Decrease transaction size."
+                );
+            }
+            let mut emulator = state(LimitScope::OfficialEmulator);
+            prop_assert!(emulator.commit(&writes, None, t(0)).is_ok());
+        }
+
+        /// The same documents committed one per commit are each accepted: the budget is per commit.
+        #[test]
+        fn the_same_documents_one_per_commit_are_each_accepted(
+            counts in proptest::collection::vec(1_i64..=7_000, 1..=4)
+        ) {
+            let mut strict = state(LimitScope::Production);
+            for (index, count) in counts.iter().enumerate() {
+                prop_assert!(strict
+                    .commit(&[set(&name(index), "a", integers(*count))], None, t(i64::try_from(index).unwrap()))
+                    .is_ok());
+            }
+        }
+    }
+}
+
+/// The sum is decided by what a commit leaves written, not by the order of its writes: the
+/// recorded rows are sets only, so a delete or a repeated write must never refuse a commit
+/// whose final contents fit. A managed operation's chunk is not summed at all (production's
+/// pricing of managed operations is unobserved), and its deletes are priced as `Commit`'s are.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn the_commit_sum_follows_the_final_contents_and_skips_managed_chunks() {
+    use fireemu_core_firestore::index_usage::WriteRoute;
+
+    let name = |tag: &str| {
+        format!(
+            "{}{}/{}",
+            tag,
+            "c".repeat(1_400 - tag.len()),
+            "d".repeat(599)
+        )
+    };
+    let write = |tag: &str, count: i64| set(&name(tag), "a", integers(count));
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    // 0.60 + 0.60 of the budget does not fit; with one of them deleted again it does, however
+    // the writes are ordered.
+    let cases: [(&str, Vec<Write>, bool); 7] = [
+        (
+            "set A, set B",
+            vec![write("a", 4_310), write("b", 4_310)],
+            false,
+        ),
+        (
+            "set A, set B, delete A",
+            vec![write("a", 4_310), write("b", 4_310), delete("a")],
+            true,
+        ),
+        (
+            "set A, delete A, set B",
+            vec![write("a", 4_310), delete("a"), write("b", 4_310)],
+            true,
+        ),
+        (
+            "set A, set B, delete B",
+            vec![write("a", 4_310), write("b", 4_310), delete("b")],
+            true,
+        ),
+        (
+            "set A twice",
+            vec![write("a", 4_310), write("a", 4_310)],
+            true,
+        ),
+        (
+            "set A, delete A, set A, set B",
+            vec![
+                write("a", 4_310),
+                delete("a"),
+                write("a", 4_310),
+                write("b", 4_310),
+            ],
+            false,
+        ),
+        (
+            "set A big, set A small, set B",
+            vec![write("a", 7_000), write("a", 100), write("b", 4_310)],
+            true,
+        ),
+    ];
+    for (label, writes, accepted) in cases {
+        let mut strict = state(LimitScope::Production);
+        let outcome = strict.commit(&writes, None, t(0));
+        if accepted {
+            outcome.unwrap_or_else(|error| panic!("{label}: {error}"));
+        } else {
+            assert_eq!(outcome.unwrap_err().to_string(), too_big, "{label}");
+            assert!(
+                strict.get(&path(&name("a"))).is_none(),
+                "{label} wrote nothing"
+            );
+        }
+    }
+
+    // A managed chunk is not summed.
+    let mut managed = state(LimitScope::Production);
+    managed.set_write_route(WriteRoute::Managed);
+    managed
+        .commit(&[write("a", 4_310), write("b", 4_310)], None, t(0))
+        .expect("a managed chunk of two documents that each fit is accepted");
+    // Its documents are still validated one by one.
+    let mut alone = state(LimitScope::Production);
+    alone.set_write_route(WriteRoute::Managed);
+    assert_eq!(
+        alone
+            .commit(&[write("c", 7_185)], None, t(1))
+            .unwrap_err()
+            .to_string(),
+        too_big
+    );
+    // Its deletes are priced as a Commit's are: 12,112 values under a 1,000-byte name refuse.
+    let big = |tag: &str| format!("{}{}/d", tag, "c".repeat(997));
+    let mut deletes = state(LimitScope::Production);
+    deletes
+        .commit(&[set(&big("a"), "a", integers(12_112))], None, t(2))
+        .expect("seed");
+    deletes.set_write_route(WriteRoute::Managed);
+    let refused = deletes
+        .commit(
+            &[Write {
+                op: WriteOp::Delete {
+                    path: path(&big("a")),
+                },
+                precondition: None,
+                transforms: vec![],
+            }],
+            None,
+            t(3),
+        )
+        .unwrap_err();
+    assert_eq!(refused.to_string(), too_big);
+}

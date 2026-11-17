@@ -309,6 +309,6 @@
     "spec/compatibility/fs-listen-sdk-local-shadow.json": "aea62689faa5e52ca96e1b3af9c6bc971cd72101ee588b371dd04f2121a56c95",
     "spec/compatibility/gaps.json": "d20fe030f9e2bdff1a587421ffae216c73b30fb7ff7468e7383be5bccbd3df9d",
     "spec/compatibility/hosting-production-packet.md": "024b9c30cb6e30e234f8fed0d509866063cc5d554e718706e6bb8d7351ed6cbe",
-    "spec/limits/firestore-standard-2026-08-25.json": "a5c9da71bd74c7341da1cb3d25542db3aecb935b2387d4a61c8cb43857055fa4"
+    "spec/limits/firestore-standard-2026-08-25.json": "9b0cb1621d70220e3636ce6c01b8db68fdc5938ff5ca41b7d315fd35680fdb85"
   }
 }

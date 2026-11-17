@@ -4661,6 +4661,10 @@ impl FirestoreState {
         // whose result equals the current document is a no-op: it keeps the existing version
         // and update time (Firestore semantics) and never creates a spurious conflict.
         let mut staged: BTreeMap<DocumentPath, StagedDocument> = BTreeMap::new();
+        // The create charge of every document this commit leaves written, summed against the
+        // budget once the whole commit is staged (production prices the commit, not each
+        // document; the final contents decide, so the order of writes that end alike does not).
+        let mut commit_charges: BTreeMap<DocumentPath, u64> = BTreeMap::new();
         let mut results = Vec::with_capacity(writes.len());
         let next_version = CommitVersion(self.version.0 + 1);
         for write in writes {
@@ -4707,11 +4711,14 @@ impl FirestoreState {
             let mut validated_size = None;
             if let Some(Cow::Owned(doc)) = &next {
                 validated_size = Some(validate_document(doc, self.limit_scope)?);
-                self.index_catalog.document_index_usage_in(
+                let usage = self.index_catalog.document_index_usage_in(
                     &doc.path,
                     &doc.fields,
                     self.limit_scope,
                 )?;
+                commit_charges.insert(doc.path.clone(), usage.charged_bytes);
+            } else if next.is_none() {
+                commit_charges.remove(&path);
             }
             if matches!(write.op, WriteOp::Verify { .. }) {
                 // A verify changes nothing and reports the document's current update time,
@@ -4740,6 +4747,9 @@ impl FirestoreState {
                 stage.changed = true;
             }
             results.push(result);
+        }
+        if self.write_route.sums_commit_charges() {
+            crate::index_usage::check_commit_charge(commit_charges.values().sum())?;
         }
 
         // Build the exact externally visible result before publishing either side.

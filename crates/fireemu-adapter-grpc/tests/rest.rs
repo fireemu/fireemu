@@ -8210,3 +8210,237 @@ fn strict_partition_query_accepts_request_options() {
         assert_eq!(status, 400, "strict={strict}: {body}");
     }
 }
+
+/// Production refuses a `bytesValue` with line breaks or a mixed alphabet on every write route,
+/// not only on Commit (FS-DATA-WRITE `writelimits` run 2026-11-17: `createDocument`, patch and
+/// `batchWrite`, two recordings). Create and patch name the field under `document`, `batchWrite`
+/// under `writes[0].update`, and the message quotes the text with its breaks. The proto field
+/// name `bytes_value` is read like `bytesValue`. The emulator profile keeps joining the lines.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn strict_refuses_bytes_line_breaks_and_mixed_alphabets_on_create_patch_and_batch_write() {
+    let mime = |separator: &str| {
+        let line = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5";
+        assert_eq!(line.len(), 76);
+        format!("{line}{separator}ent8fX5/gIGC")
+    };
+    let cases = [
+        ("lf", "QUJD\nQUJD".to_owned()),
+        ("cr", "QUJD\rQUJD".to_owned()),
+        ("crlf", "QUJD\r\nQUJD".to_owned()),
+        ("mime-76", mime("\r\n")),
+        ("mime-76-lf", mime("\n")),
+        ("mixed-plus-underscore", "+_AA".to_owned()),
+        ("mixed-minus-slash", "-/AA".to_owned()),
+    ];
+    let name = |id: &str| format!("projects/demo-app/databases/(default)/documents/wlbase64/{id}");
+    let message = |field: &str, text: &str| {
+        format!("Invalid value at '{field}' (TYPE_BYTES), Base64 decoding failed for \"{text}\"")
+    };
+    let strict = state_with_profile(true);
+    for (case, text) in &cases {
+        let fields = json!({"fields": {"b": {"bytesValue": text}}});
+        let (status, body) = call(
+            &strict,
+            "POST",
+            &format!("{DOCS}/wlbase64?documentId=create-{case}"),
+            fields.clone(),
+        );
+        assert_eq!(status, 400, "create {case}: {body}");
+        assert_eq!(
+            body["error"]["message"],
+            message("document.fields[0].value.bytes_value", text),
+            "create {case}"
+        );
+        let (status, body) = call(
+            &strict,
+            "PATCH",
+            &format!("{DOCS}/wlbase64/patch-{case}"),
+            fields,
+        );
+        assert_eq!(status, 400, "patch {case}: {body}");
+        assert_eq!(
+            body["error"]["message"],
+            message("document.fields[0].value.bytes_value", text),
+            "patch {case}"
+        );
+        let (status, body) = call(
+            &strict,
+            "POST",
+            &format!("{DOCS}:batchWrite"),
+            json!({"writes": [{"update": {
+                "name": name(&format!("batch-{case}")),
+                "fields": {"b": {"bytesValue": text}},
+            }}]}),
+        );
+        assert_eq!(status, 400, "batchWrite {case}: {body}");
+        assert_eq!(
+            body["error"]["message"],
+            message("writes[0].update.fields[0].value.bytes_value", text),
+            "batchWrite {case}"
+        );
+        for prefix in ["create", "patch", "batch"] {
+            let (status, _) = call(
+                &strict,
+                "GET",
+                &format!("{DOCS}/wlbase64/{prefix}-{case}"),
+                Value::Null,
+            );
+            assert_eq!(status, 404, "a refused {prefix} {case} writes nothing");
+        }
+    }
+
+    // Recorded controls: plain base64 and the proto field name are accepted on every route.
+    for (route, key) in [("control", "bytesValue"), ("proto-name", "bytes_value")] {
+        let fields = json!({"fields": {"b": {(key): "QUJD"}}});
+        let (status, body) = call(
+            &strict,
+            "POST",
+            &format!("{DOCS}/wlbase64?documentId=create-{route}"),
+            fields.clone(),
+        );
+        assert_eq!(status, 200, "create {route}: {body}");
+        let (status, body) = call(
+            &strict,
+            "PATCH",
+            &format!("{DOCS}/wlbase64/patch-{route}"),
+            fields,
+        );
+        assert_eq!(status, 200, "patch {route}: {body}");
+        let (status, body) = call(
+            &strict,
+            "POST",
+            &format!("{DOCS}:batchWrite"),
+            json!({"writes": [{"update": {
+                "name": name(&format!("batch-{route}")),
+                "fields": {"b": {(key): "QUJD"}},
+            }}]}),
+        );
+        assert_eq!(status, 200, "batchWrite {route}: {body}");
+    }
+
+    // The emulator profile is unchanged: the official emulator's reading is not measured for
+    // these routes, and the profile never refuses more than it does.
+    let emulator = state_with_profile(false);
+    for (case, text) in &cases {
+        let (status, body) = call(
+            &emulator,
+            "POST",
+            &format!("{DOCS}/wlbase64?documentId=create-{case}"),
+            json!({"fields": {"b": {"bytesValue": text}}}),
+        );
+        assert_eq!(status, 200, "emulator create {case}: {body}");
+        let (status, body) = call(
+            &emulator,
+            "PATCH",
+            &format!("{DOCS}/wlbase64/patch-{case}"),
+            json!({"fields": {"b": {"bytesValue": text}}}),
+        );
+        assert_eq!(status, 200, "emulator patch {case}: {body}");
+        let (status, body) = call(
+            &emulator,
+            "POST",
+            &format!("{DOCS}:batchWrite"),
+            json!({"writes": [{"update": {
+                "name": name(&format!("batch-{case}")),
+                "fields": {"b": {"bytesValue": text}},
+            }}]}),
+        );
+        assert_eq!(status, 200, "emulator batchWrite {case}: {body}");
+    }
+}
+
+/// A Commit is charged the sum of its documents against the create budget in production
+/// (`writelimits` run 2026-11-17: two documents at 0.55 and 0.60 of the budget each, and three
+/// at 0.40, were refused as one commit; two at 0.40 and a single one at 0.60 were accepted).
+/// A `BatchWrite` applies each write on its own, so two at 0.60 each were accepted. The emulator
+/// profile adds no refusal.
+#[test]
+fn a_commit_is_charged_the_sum_of_its_documents_and_a_batch_write_each_write() {
+    // Distinct integers under the recorded 2,000-byte name (name size 2,017): 4,126 charged
+    // bytes per element.
+    let name = |tag: &str| {
+        let collection = format!("{tag}{}", "c".repeat(1_400 - tag.len()));
+        format!(
+            "projects/demo-app/databases/(default)/documents/{collection}/{}",
+            "d".repeat(599)
+        )
+    };
+    let document = |tag: &str, count: i64| {
+        json!({"update": {
+            "name": name(tag),
+            "fields": {"a": {"arrayValue": {"values":
+                (0..count).map(|n| json!({"integerValue": n.to_string()})).collect::<Vec<_>>()
+            }}},
+        }})
+    };
+    let too_big = "Transaction too big. Decrease transaction size.";
+    let strict = state_with_profile(true);
+    let commit = |s: &RestState, writes: Vec<Value>| {
+        call(
+            s,
+            "POST",
+            &format!("{DOCS}:commit"),
+            json!({"writes": writes}),
+        )
+    };
+    let present = |s: &RestState, tag: &str| {
+        let relative = name(tag).replace("projects/demo-app/databases/(default)/documents/", "");
+        call(s, "GET", &format!("{DOCS}/{relative}"), Value::Null).0
+    };
+
+    // 0.40 + 0.40 of the budget: accepted. A single 0.60 document: accepted.
+    let (status, body) = commit(&strict, vec![document("a0", 2_872), document("a1", 2_872)]);
+    assert_eq!(status, 200, "40x2: {body}");
+    let (status, body) = commit(&strict, vec![document("b0", 4_310)]);
+    assert_eq!(status, 200, "60x1: {body}");
+    // 0.55 + 0.55, 0.60 + 0.60 and 0.40 x 3: refused as one commit, nothing written.
+    for (label, writes) in [
+        ("55x2", vec![document("c0", 3_950), document("c1", 3_950)]),
+        ("60x2", vec![document("d0", 4_310), document("d1", 4_310)]),
+        (
+            "40x3",
+            vec![
+                document("e0", 2_872),
+                document("e1", 2_872),
+                document("e2", 2_872),
+            ],
+        ),
+    ] {
+        let (status, body) = commit(&strict, writes);
+        assert_eq!(status, 400, "{label}: {body}");
+        assert_eq!(body["error"]["message"], too_big, "{label}");
+    }
+    for tag in ["c0", "c1", "d0", "d1", "e0", "e1", "e2"] {
+        assert_eq!(
+            present(&strict, tag),
+            404,
+            "a refused commit writes nothing: {tag}"
+        );
+    }
+
+    // BatchWrite: each write is its own transaction, so 0.60 + 0.60 is accepted.
+    let (status, body) = call(
+        &strict,
+        "POST",
+        &format!("{DOCS}:batchWrite"),
+        json!({"writes": [document("f0", 4_310), document("f1", 4_310)]}),
+    );
+    assert_eq!(status, 200, "batchWrite 60x2: {body}");
+    assert!(
+        body["status"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s.get("code").is_none()),
+        "{body}"
+    );
+
+    // The emulator profile adds no refusal the official emulator does not make.
+    let emulator = state_with_profile(false);
+    let (status, body) = commit(
+        &emulator,
+        vec![document("g0", 4_310), document("g1", 4_310)],
+    );
+    assert_eq!(status, 200, "emulator 60x2: {body}");
+}

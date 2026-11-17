@@ -88,9 +88,11 @@ def test_each_payload_hits_its_claimed_metric_and_declares_competing_limits(fami
     assert NONCE in parts[-1]
     assert case["write"]["update"] == case["document"]
     assert case["write"]["currentDocument"] == {"exists": False}
-    expected_acceptance = (
+    # A composite entry near the published 7,680 bytes is refused: production refused composite
+    # entries from 6,500 (writelimits run 2026-11-17).
+    expected_acceptance = family != "index-entry" and (
         (position != "over" and family != "document-name")
-        or family in ("indexed-value", "index-sum", "index-entry", "field-map", "field-array")
+        or family in ("indexed-value", "index-sum", "field-map", "field-array")
     )
     assert case["expect"]["accepted"] is expected_acceptance
     if family == "collection-id":
