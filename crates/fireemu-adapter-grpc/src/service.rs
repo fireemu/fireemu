@@ -739,7 +739,7 @@ impl Firestore for GatewayService {
                         if self.gateway.production_refusals()
                             && recorded_bit_internal(request.get_ref(), &error)
                         {
-                            eprintln!("[firestore] pipeline: recorded integer bit function returned an internal error");
+                            fireemu_adapter_support::eprintln_at!(fireemu_adapter_support::term::Level::Warn, "[firestore] pipeline: recorded integer bit function returned an internal error");
                             Status::internal("An internal error occurred.")
                         } else if self.gateway.production_refusals()
                             && recorded_geo_select(request.get_ref(), &error)

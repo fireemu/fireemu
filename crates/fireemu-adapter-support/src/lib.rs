@@ -10,5 +10,6 @@ pub mod connection;
 pub mod entropy;
 pub mod notice_limit;
 pub mod secret;
+pub mod term;
 
 pub mod lexical;

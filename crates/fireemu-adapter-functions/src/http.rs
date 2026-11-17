@@ -10,6 +10,8 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use fireemu_adapter_support::connection::{DrainBounds, GracefulClose};
+use fireemu_adapter_support::eprintln_at;
+use fireemu_adapter_support::term::Level;
 use fireemu_core_app_check::header::APP_CHECK_HEADER;
 use http_body_util::combinators::UnsyncBoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
@@ -959,13 +961,17 @@ fn publish_events(runtime: &FunctionsRuntime, channel: &str, body: &[u8]) -> Res
         match converted {
             Ok(event) => published.push(event),
             Err(why) => {
-                eprintln!("[functions] eventarc: an event on {channel} was not delivered: {why}");
+                eprintln_at!(
+                    Level::Warn,
+                    "[functions] eventarc: an event on {channel} was not delivered: {why}"
+                );
             }
         }
     }
     match runtime.publish_registered_custom_events(channel, &published) {
         Ok(delivered) => {
-            eprintln!(
+            eprintln_at!(
+                Level::Info,
                 "[functions] eventarc: {} event(s) on {channel} reached {delivered} function(s)",
                 published.len()
             );
@@ -1561,13 +1567,17 @@ fn deliver_strict(
         match crate::eventarc::convert_strict(event) {
             Ok(event) => published.push(event),
             Err(why) => {
-                eprintln!("[functions] eventarc: an event on {channel} was not delivered: {why}");
+                eprintln_at!(
+                    Level::Warn,
+                    "[functions] eventarc: an event on {channel} was not delivered: {why}"
+                );
             }
         }
     }
     match runtime.publish_registered_custom_events(channel, &published) {
         Ok(delivered) => {
-            eprintln!(
+            eprintln_at!(
+                Level::Info,
                 "[functions] eventarc: {} event(s) on {channel} reached {delivered} function(s)",
                 published.len()
             );

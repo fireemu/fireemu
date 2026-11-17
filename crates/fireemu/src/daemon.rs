@@ -3,6 +3,8 @@
 #![allow(clippy::too_many_lines)]
 
 use std::path::PathBuf;
+
+use crate::term::{errln, outln};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -131,7 +133,7 @@ fn auth_notice_sink(
 ) -> fireemu_adapter_http::identity_toolkit::AuthNoticeSink {
     Arc::new(move |notice| {
         let message = notice.message();
-        println!("  auth: {message}");
+        outln!("  auth: {message}");
         bus.publish(
             &fireemu_adapter_logging::LogInput::plain("info", message, clock_millis(&clock))
                 .for_emulator("auth"),
@@ -449,12 +451,12 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         storage_rules
             .registry
             .set_no_rules_notice(fireemu_adapter_http::storage::NoRulesNotice(Arc::new(
-                |event| eprintln!("{}", storage_no_rules_warning(event)),
+                |event| errln!("{}", storage_no_rules_warning(event)),
             )));
         // The adapter notes an undeclared bucket under the strict profile only.
         storage_rules.registry.set_unknown_bucket_notice(
             fireemu_adapter_http::storage::NoRulesNotice(Arc::new(|event| {
-                eprintln!("{}", storage_unknown_bucket_note(event));
+                errln!("{}", storage_unknown_bucket_note(event));
             })),
         );
         // The client sees production's 403, which does not say which rule refused.
@@ -893,9 +895,9 @@ fn denial_line_writer() -> (fireemu_core_rules::denial::DenialLog, DenialFlush) 
                     DenialLine::Line(line) => {
                         if let Some(note) = dropped_denials_note(counted.swap(0, Ordering::Relaxed))
                         {
-                            eprintln!("{note}");
+                            errln!("{note}");
                         }
-                        eprintln!("note: {line}");
+                        errln!("note: {line}");
                     }
                     DenialLine::Flush(done) => {
                         let _ = done.send(());
@@ -1019,7 +1021,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
             return true;
         };
         if !quiet {
-            eprintln!("note: --import {}: {reason}", dir.display());
+            errln!("note: --import {}: {reason}", dir.display());
         }
         false
     });
@@ -1034,18 +1036,18 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         .map_err(|e| format!("--import {}: {e}", dir.display()))?;
         if !quiet {
             for notice in &prepared.notices {
-                eprintln!("note: --import {}: {notice}", dir.display());
+                errln!("note: --import {}: {notice}", dir.display());
             }
         }
         let summary = prepared.summary();
         import_export::apply(prepared, &exporter.endpoints())
             .map_err(|e| format!("--import {}: {e}", dir.display()))?;
         if !quiet {
-            println!("  imported: {} ({summary})", dir.display());
+            outln!("  imported: {} ({summary})", dir.display());
         }
         if !quiet {
             for warning in import_export::import_limit_warnings(&exporter.endpoints()) {
-                eprintln!("warning: --import {}: {warning}", dir.display());
+                errln!("warning: --import {}: {warning}", dir.display());
             }
         }
     }
@@ -1056,7 +1058,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         &cfg,
         &registry,
         (!quiet).then_some(|id: &str| {
-            eprintln!(
+            errln!(
                 "warning: auth.tenants: the imported tenant {id:?} is used and its declared settings are ignored (an --import is authoritative for a tenant of the same id)"
             );
         }),
@@ -1072,7 +1074,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
     let locator = hub_addr.map(|_| {
         let (locator, note) = hub::Locator::write(&hub_state);
         if let (Some(note), false) = (note, quiet) {
-            eprintln!("note: {note}");
+            errln!("note: {note}");
         }
         locator
     });
@@ -1085,15 +1087,15 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
             functions_runtime.as_deref(),
         );
         if let Some(state) = &app_check {
-            println!(
+            outln!(
             "  app check:        exchanges {}   FIREEMU_APP_CHECK_EMULATOR_HOST={http_addr}   JWKS: http://{http_addr}/v1/jwks (kid {})",
             cfg.app_check.exchange_summary(),
             state.kid_for_banner()
         );
             if only.app_check_included_by_services(&cfg.app_check) {
-                println!("  note: the verifier is included although --only names neither appcheck nor functions, because appCheck.services configures a selected product; add appcheck to --only to silence this");
+                outln!("  note: the verifier is included although --only names neither appcheck nor functions, because appCheck.services configures a selected product; add appcheck to --only to silence this");
             }
-            println!(
+            outln!(
             "  app check modes:  auth={} firestore={} storage={}   (Firestore covers unary gRPC, REST, Write/Listen streams and WebChannel; Storage covers resumable uploads too){}",
             only.app_check_mode(&cfg.app_check, crate::config::AppCheckService::Auth),
             only.app_check_mode(&cfg.app_check, crate::config::AppCheckService::Firestore),
@@ -1106,16 +1108,16 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         );
         }
         if let Some(addr) = ui_addr {
-            println!("  ui:               http://{addr}/ui");
+            outln!("  ui:               http://{addr}/ui");
         }
         if let Some(note) = ui_note {
-            println!("{note}");
+            outln!("{note}");
         }
         if addrs.firestore.is_some() {
             print_rules_status(&cfg, rules.snapshot().is_ok_and(|r| r.is_loaded()));
         }
         if addrs.auth.is_some() {
-            println!(
+            outln!(
                 "{}",
                 auth_codes_line(
                     cfg.auth_log_action_codes,
@@ -1123,7 +1125,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
                 )
             );
             if let Some(note) = totp_clock_note(&cfg) {
-                println!("{note}");
+                outln!("{note}");
             }
         }
         if let Some(runtime) = &functions_runtime {
@@ -1133,11 +1135,11 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
                 .iter()
                 .map(|f| f.name.as_str())
                 .collect();
-            println!("  functions loaded: {}", names.join(", "));
+            outln!("  functions loaded: {}", names.join(", "));
         }
         if verbosity == Verbosity::Debug {
-            println!("  resolved config:  {:?}", RedactedRuntimeConfig(&cfg));
-            println!("  selection:        {only:?}");
+            outln!("  resolved config:  {:?}", RedactedRuntimeConfig(&cfg));
+            outln!("  selection:        {only:?}");
         }
     }
 
@@ -1156,7 +1158,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
             enforcer
         } else {
             let enforcer = enforcer.with_no_ruleset_notice(Arc::new(|event| {
-                eprintln!("{}", firestore_no_rules_warning(event));
+                errln!("{}", firestore_no_rules_warning(event));
             }));
             match &denial_log {
                 Some(log) => enforcer.with_denial_log(log.clone()),
@@ -1621,7 +1623,7 @@ async fn serve_suite(
                 &storage_admin_capability,
             );
             if !quiet {
-                println!("  running command");
+                outln!("  running command");
             }
             Some(spawn_child(plan, &env)?)
         }
@@ -1646,13 +1648,13 @@ async fn serve_suite(
             },
             () = interrupt.recv() => {
                 if !quiet {
-                    println!("shutting down");
+                    outln!("shutting down");
                 }
                 Ok::<Option<i32>, String>(None)
             }
             () = terminate.recv() => {
                 if !quiet {
-                    println!("shutting down (SIGTERM)");
+                    outln!("shutting down (SIGTERM)");
                 }
                 terminated = true;
                 Ok::<Option<i32>, String>(None)
@@ -1685,7 +1687,7 @@ async fn serve_suite(
         match exporter.export(dir, "exit") {
             Ok(_) => {
                 if !quiet {
-                    println!("exported to {}", dir.display());
+                    outln!("exported to {}", dir.display());
                 }
             }
             // The official CLI's `exportOnExit` catches the failure, logs "Automatic export
@@ -1694,7 +1696,7 @@ async fn serve_suite(
             // it as an error instead (owner decision 2026-10-13): a command that failed keeps
             // its own status, and any other run exits 1.
             Err(e) => {
-                eprintln!(
+                errln!(
                     "error: automatic export to {} failed, going to exit now: {e}",
                     dir.display()
                 );
@@ -1734,7 +1736,7 @@ async fn serve_suite(
     // the locator on the way out is kept as a fallback, not as the mechanism: a destructor
     // cannot be relied on to run at all.
     if let Some(note) = locator.and_then(hub::Locator::release) {
-        eprintln!("warning: {note}");
+        errln!("warning: {note}");
     }
     // The denial lines queued so far are written before the exit. A request still running in a
     // detached connection task when the listeners stop can queue a line after this flush, and
@@ -1828,7 +1830,7 @@ async fn bounded_stage<T>(
     if let Ok(done) = tokio::time::timeout(bound, work).await {
         Some(done)
     } else {
-        eprintln!(
+        errln!(
             "warning: shutdown: {stage} did not finish within {} ms; going on without it",
             bound.as_millis()
         );
@@ -1964,7 +1966,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
     let runtime = match build_runtime() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("error: {e}");
+            errln!("error: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -2096,7 +2098,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
             auth_startup::initialize_initial_store(&cfg, &mut store)?;
         }
         if let (Some(warning), false) = (cfg.auth_totp_warning(), quiet) {
-            eprintln!("warning: {warning}");
+            errln!("warning: {warning}");
         }
         // Both keys are 2048-bit RSA and slow to generate in a debug build; when both are
         // wanted they are generated concurrently on blocking tasks. They are always separate
@@ -2109,7 +2111,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
             && only.functions && only.auth;
         let want_app_check = only.app_check_available(&cfg.app_check);
         if (want_auth_key || want_blocking_key || (want_app_check && !cfg.app_check.implicit())) && !quiet {
-            println!("  generating the RSA signing keys ...");
+            outln!("  generating the RSA signing keys ...");
         }
         let auth_key = want_auth_key.then(|| {
             let seed = cfg.seed ^ 0x2256;
@@ -2146,7 +2148,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                     .name("fireemu-app-check-prewarm".to_owned())
                     .spawn(move || {
                         if let Err(error) = warm.prewarm() {
-                            eprintln!(
+                            errln!(
                                 "warning: the App Check key could not be generated: {error}"
                             );
                         }
@@ -2231,7 +2233,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                 ("pubsub", pubsub_addr),
                 ("database", database_addr),
             ]) {
-                eprintln!("warning: {warning}");
+                errln!("warning: {warning}");
             }
         }
         // A listener on every interface is advertised (environment, Hub, banner) at the
@@ -2294,7 +2296,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                     match functions::codebase_callable_trust(codebase) {
                         Ok(()) => true,
                         Err(why) => {
-                            eprintln!(
+                            errln!(
                                 "note: functions[{}]: callable App Check is not available ({why}); an enforceAppCheck callable keeps the SDK's own check",
                                 codebase.codebase
                             );
@@ -2308,7 +2310,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
         let blocking_signer = if let Some(task) = blocking_key {
             let signer = task.await.map_err(|e| format!("blocking RSA key: {e}"))??;
             if !quiet {
-                println!("  blocking tokens:  production (RS256 kid {}), key held in memory only", signer.kid());
+                outln!("  blocking tokens:  production (RS256 kid {}), key held in memory only", signer.kid());
             }
             Some(signer)
         } else {
@@ -2352,12 +2354,12 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
         if let Some(task) = auth_key {
             let signer = task.await.map_err(|e| format!("session RSA key: {e}"))??;
             if !quiet {
-                println!(
+                outln!(
                     "  id tokens:        RS256 (kid {})   JWKS: http://{}/.well-known/jwks.json",
                     signer.kid(),
                     cfg.http_addr
                 );
-                println!("  note: the Firebase Admin SDK verifies only unsigned tokens while FIREBASE_AUTH_EMULATOR_HOST is set; keep auth.idTokenSigning = \"unsigned-emulator\" when the Admin SDK calls verifyIdToken");
+                outln!("  note: the Firebase Admin SDK verifies only unsigned tokens while FIREBASE_AUTH_EMULATOR_HOST is set; keep auth.idTokenSigning = \"unsigned-emulator\" when the Admin SDK calls verifyIdToken");
             }
             if let Ok(mut store) = auth_store.lock() {
                 store.set_signer(signer);
@@ -2415,7 +2417,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(reportable_exit_code(code)),
         Err(e) => {
-            eprintln!("error: {e}");
+            errln!("error: {e}");
             ExitCode::FAILURE
         }
     }

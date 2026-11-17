@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use fireemu_adapter_grpc::local::CommitEvent;
 use fireemu_adapter_grpc::rules::RulesEnforcer;
+use fireemu_adapter_support::eprintln_at;
+use fireemu_adapter_support::term::Level;
 use fireemu_core_auth::store::{UserEvent, UserEventKind};
 use fireemu_core_events::event::{EventSource, EventType, LogicalEvent};
 use fireemu_core_events::outbox::Outbox;
@@ -1780,7 +1782,7 @@ impl FunctionsRuntime {
                         runtime.on_clock_changed();
                     }
                     if let Err(error) = runtime.sync_clock().await {
-                        eprintln!("[functions] {error}");
+                        eprintln_at!(Level::Error, "[functions] {error}");
                     }
                 }
             });
@@ -2900,7 +2902,8 @@ impl FunctionsRuntime {
             *count == 1
         });
         if first {
-            eprintln!(
+            eprintln_at!(
+                Level::Warn,
                 "warning: functions: a Realtime Database write to {instance} was applied, but \
                  {reason}, so those trigger events were dropped. Later drops are counted as \
                  admission.{DATABASE_FANOUT_DROPPED} in the resource diagnostics"
@@ -4192,7 +4195,7 @@ impl FunctionsRuntime {
             if crate::http::strict_callable_bearer_unverified(self, &presented) {
                 // The refusal never reaches the runner, so nothing else records it; the dispatch
                 // fails and is retried under the queue's policy. The credential is not logged.
-                eprintln!(
+                eprintln_at!(Level::Warn,
                     "[functions] a task for {:?} was refused by the strict Bearer check (401): its \
                      Authorization is not a Bearer for a user of this project, and the function is \
                      callable; the dispatch fails and is retried under the queue's retry policy",
@@ -4287,7 +4290,8 @@ impl FunctionsRuntime {
             if started.is_some_and(|first_delivery| {
                 task_retry_exhausted(first_delivery, dispatch.retry, attempt, self.task_now())
             }) {
-                eprintln!(
+                eprintln_at!(
+                    Level::Error,
                     "[functions] task {:?} gave up after {} attempt(s)",
                     task.name,
                     attempt - 1
@@ -4297,9 +4301,11 @@ impl FunctionsRuntime {
             let Some(target) =
                 self.http_target(&dispatch.project, &dispatch.region, &dispatch.function)
             else {
-                eprintln!(
+                eprintln_at!(
+                    Level::Warn,
                     "[functions] task {:?}: {} is no longer served",
-                    task.name, dispatch.function
+                    task.name,
+                    dispatch.function
                 );
                 return true;
             };
@@ -4361,7 +4367,8 @@ impl FunctionsRuntime {
             }
             attempt += 1;
             if task_retry_exhausted(first_delivery, dispatch.retry, attempt, self.task_now()) {
-                eprintln!(
+                eprintln_at!(
+                    Level::Error,
                     "[functions] task {:?} gave up after {} attempt(s)",
                     task.name,
                     attempt - 1
@@ -4638,7 +4645,7 @@ impl FunctionsRuntime {
             // answers 200 whatever the type is, so such an event is logged and not delivered; it does not
             // refuse the publication.
             let Some((payload_bytes, payload, raw_data)) = encoded else {
-                eprintln!(
+                eprintln_at!(Level::Warn,
                     "[functions] eventarc: an event on {channel} with a type this emulator cannot deliver was not delivered"
                 );
                 continue;
@@ -4764,7 +4771,10 @@ impl FunctionsRuntime {
             .admission_refusals
             .entry("auth_event_dropped")
             .or_default() += 1;
-        eprintln!("[functions] an Auth user event was dropped: {reason}");
+        eprintln_at!(
+            Level::Warn,
+            "[functions] an Auth user event was dropped: {reason}"
+        );
     }
 
     /// Plans the deliveries of one user event for every target that still exists. The payload
@@ -5500,7 +5510,7 @@ impl FunctionsRuntime {
                     runtime.wake.notify_one();
                 }
                 if let Err(error) = result {
-                    eprintln!("[functions] runner recovery failed: {error}");
+                    eprintln_at!(Level::Error, "[functions] runner recovery failed: {error}");
                     let codebase = &runtime.codebases[index];
                     let remaining = codebase
                         .restart_budget
@@ -5682,7 +5692,10 @@ impl FunctionsRuntime {
             let runner = match Runner::spawn_spec_with(&spawn, self.admin_app_check()).await {
                 Ok(runner) => Arc::new(runner),
                 Err(error) => {
-                    eprintln!("[functions] runner restart attempt failed: {error}");
+                    eprintln_at!(
+                        Level::Error,
+                        "[functions] runner restart attempt failed: {error}"
+                    );
                     if let Some(ticket) = expected_ticket {
                         self.release_failed_blocking_restart(index, epoch, &respawn, ticket);
                         return Err(error);
@@ -5841,7 +5854,7 @@ impl FunctionsRuntime {
             drop(gate);
             runtime.wake.notify_one();
             if let Err(error) = result {
-                eprintln!("[functions] runner restart failed: {error}");
+                eprintln_at!(Level::Error, "[functions] runner restart failed: {error}");
             }
         });
     }
@@ -7727,7 +7740,7 @@ enum HttpInvokeError {
 }
 
 fn log_http_timeout(timeout: u64) {
-    eprintln!(
+    eprintln_at!(Level::Warn,
         "[functions] Your function timed out after ~{timeout}s. To configure this timeout, see\n      https://firebase.google.com/docs/functions/manage-functions#set_timeout_and_memory_allocation."
     );
 }

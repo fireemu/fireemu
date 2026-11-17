@@ -115,7 +115,7 @@ where
                 AcceptError::Resources => {
                     resource_failures = resource_failures.saturating_add(1);
                     if reports(resource_failures) {
-                        eprintln!(
+                        crate::eprintln_at!(crate::term::Level::Warn,
                             "[{listener}] cannot accept a connection ({error}); retrying until resources are free"
                         );
                     }
