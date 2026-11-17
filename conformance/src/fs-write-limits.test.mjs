@@ -8,6 +8,7 @@ import {
   verifyProductionAdmission,
 } from "./fs-data-write-admission.mjs";
 import {
+  bracketGatePins,
   ownerRowParent,
   recordBracketProduction,
   prepareSandboxCorpus,
@@ -512,7 +513,12 @@ test("the faithful observation passes, and so does one without a database editio
   delete old.database.databaseEdition;
   assert.deepEqual(providerStateProblems(old), []);
   assert.equal(expectedComposites().length, committedIndexes.length);
-  assert.match(providerStateDigest(), /^[0-9a-f]{64}$/);
+  assert.equal(
+    providerStateDigest(),
+    sha(JSON.stringify(expectedProviderState())),
+    "the digest is the sha256 of the expectation itself",
+  );
+  assert.notEqual(providerStateDigest(), "0".repeat(64));
   assert.deepEqual(expectedProviderState().overrides["items/n"], [
     { scope: "COLLECTION_GROUP", fields: "n:ASCENDING" },
   ]);
@@ -775,4 +781,31 @@ test("the parent refuses to start, before any credential or ledger read, when th
     recordBracketProduction(args.slice(0, -6), "writelimits"),
     /--database-description/,
   );
+});
+
+test("the gate pins carry the mode's parent, the packet's path under the main checkout and the admission's pins", () => {
+  const admission = {
+    nonce: "a".repeat(24),
+    sourceCommit: "b".repeat(40),
+    planSha256: "c".repeat(64),
+  };
+  const pins = { packetSha256: "1".repeat(64) };
+  const make = (mode) =>
+    bracketGatePins({
+      mode,
+      admission,
+      pins,
+      mainRoot: "/main",
+      packetPath: "/main/docs.local/runs/fs-write-limits/v2-snapshot/PACKET-v2.md",
+    });
+  assert.deepEqual(make("writelimits"), {
+    parent: "FS-WRITE-LIMITS-SANDBOX",
+    packetId: `fs-data-write-writelimits-${"a".repeat(24)}`,
+    nonce: "a".repeat(24),
+    packetSha256: "1".repeat(64),
+    sourceCommit: "b".repeat(40),
+    planSha256: "c".repeat(64),
+    packetPath: "docs.local/runs/fs-write-limits/v2-snapshot/PACKET-v2.md",
+  });
+  assert.equal(make("followup").parent, "FS-DATA-WRITE");
 });

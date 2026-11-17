@@ -2574,6 +2574,19 @@ const PROVIDER_STATE_FLAGS = ["--composite-indexes", "--field-overrides", "--dat
 /** The owner-decisions parent a mode's approval row names. */
 export const ownerRowParent = (mode) => TASK_BY_MODE[mode]?.taskId ?? "FS-DATA-WRITE";
 
+/** What the owner-approval row must pin: the mode's parent, the packet, commit, plan and nonce. */
+export function bracketGatePins({ mode, admission, pins, mainRoot, packetPath }) {
+  return {
+    parent: ownerRowParent(mode),
+    packetId: admissionPacketId(mode, admission.nonce),
+    nonce: admission.nonce,
+    packetSha256: pins.packetSha256,
+    sourceCommit: admission.sourceCommit,
+    planSha256: admission.planSha256,
+    packetPath: relative(mainRoot, packetPath),
+  };
+}
+
 export function requireBracketArguments(args = [], mode = undefined) {
   const values = {};
   const flags =
@@ -2702,15 +2715,7 @@ export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   if (sha256(await readFile(packetPath)) !== pins.packetSha256) {
     throw new Error("the bracket packet differs from its pinned SHA-256");
   }
-  const gatePins = {
-    parent: ownerRowParent(mode),
-    packetId: admissionPacketId(mode, admission.nonce),
-    nonce: admission.nonce,
-    packetSha256: pins.packetSha256,
-    sourceCommit: admission.sourceCommit,
-    planSha256: admission.planSha256,
-    packetPath: relative(mainRoot, packetPath),
-  };
+  const gatePins = bracketGatePins({ mode, admission, pins, mainRoot, packetPath });
   const decisionsPath = join(mainRoot, "docs.local/instructions/owner-decisions.md");
   const generatedDir = await mkdtemp(join(RUNS_DIR, `fs-data-write-${mode}-`));
   const corpusIn = join(generatedDir, `${mode}-corpus.json`);
