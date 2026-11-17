@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-18
+
 ### Added
 
 - Authentication: current TOTP codes are revealed for local development, so no authenticator app is needed. When a TOTP enrollment starts and when a sign-in answers with the TOTP challenge, the daemon prints one line with the project, the tenant, the user, the factor and the current code with its seconds left (never the secret); `GET /emulator/v1/projects/{project}[/tenants/{tenant}]/totpCodes` lists the current code of every enrolled TOTP factor and every enrollment not finalized yet, under the project's TOTP period and digits and the virtual clock; the Emulator UI's Auth page shows them and refreshes them. Verification is unchanged. On by default in both profiles; `auth.totp.revealCodes = false` or `productionExact` turns it off (no line, and the route answers 404); an explicit `true` keeps it on under `productionExact`. Declaring only `auth.totp.revealCodes` does not enable the TOTP extension.
@@ -1464,7 +1466,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.59.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.60.0...HEAD
+[0.60.0]: https://github.com/fireemu/fireemu/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/fireemu/fireemu/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/fireemu/fireemu/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/fireemu/fireemu/compare/v0.57.0...v0.57.1
