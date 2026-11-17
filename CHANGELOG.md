@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Storage, strict profile: match the STORAGE-STRICTNESS-OBS v4.1 production recording of 2026-11-17 (the emulator profile is unchanged). The JSON API list serves `includeTrailingDelimiter=true` (an object named like its own prefix is listed as an item and as a prefix, one entry of the page; 400 `delimiter field required if include_trailing_delimiter field is set to true` without a delimiter), where it used to refuse the flag. A page token continues after its entry whether or not that entry still exists, where a token whose entry was deleted used to start the listing over (with and without `matchGlob`). `matchGlob` is limited to 1024 bytes and an unterminated `[` or `{` is a 400 with production's messages; `**/` may match no directory, and an empty `matchGlob` filters nothing. `copyTo` with no body and a `text/plain` content type is `400 Parse Error`. The bucket resource has production's member order and members (`generation`, `softDeletePolicy`, `satisfiesPZI`, `labels`), the etag as the protobuf of the metageneration (`CAE=`), the `etag` header and the Google framing; a bucket `PATCH` accepts `labels` (and moves the metageneration on). The bucket `DELETE` answers 204 with `Content-Length: 0` and `Content-Type: application/json`. The XML API `DELETE /{bucket}/{object}` is served (204 with a zero length, then `404 NoSuchKey`), where it answered 501. Bucket-specific values (location, the access flags' locking times, the soft-delete policy, the project number) are still the stub's, and the order of custom `metadata` members stays alphabetical (production's depends on how the object was written).
+
 ### Fixed
 
 - Authentication: the project config PATCH accepts the `mfa.state` update mask in the emulator profile too, as firebase-tools does (it was 400 INVALID_ARGUMENT); a body that carries no state under that mask (`mfa` a scalar, a string, an array, null or an object without a state) leaves MFA as it is and never turns it off. The strict profile refuses that body with 400.

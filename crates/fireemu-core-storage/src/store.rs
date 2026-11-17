@@ -911,6 +911,31 @@ impl BlobBody {
     }
 }
 
+/// How a listing treats a page token and a name that equals its own prefix.
+#[derive(Debug, Clone, Copy, Default)]
+struct ListMode {
+    /// Continue at the first entry at or after the token even when the token's entry is gone.
+    resume: bool,
+    /// List an object named like its prefix as an item too (`includeTrailingDelimiter`).
+    trailing_item: bool,
+}
+
+/// What a patch changed on a bucket: its labels and how many times its metadata was patched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BucketMetadata {
+    labels: BTreeMap<String, String>,
+    metageneration: u64,
+}
+
+impl Default for BucketMetadata {
+    fn default() -> Self {
+        Self {
+            labels: BTreeMap::new(),
+            metageneration: 1,
+        }
+    }
+}
+
 /// All buckets of one session. It has no `Clone`: a copy of a spilled upload session needs a
 /// file copy, which can fail, so a snapshot goes through [`Self::capture_buckets`].
 #[derive(Debug)]
@@ -942,6 +967,9 @@ pub struct StorageState {
     versioning: BTreeMap<BucketName, bool>,
     /// Explicit bucket access configuration; unconfigured buckets default to false.
     uniform_bucket_level_access: BTreeMap<BucketName, bool>,
+    /// The labels and the metageneration of a bucket whose metadata was patched (a bucket not
+    /// listed has no labels and metageneration 1).
+    bucket_metadata: BTreeMap<BucketName, BucketMetadata>,
     /// Generations that are no longer live, by `(bucket, name, generation)`. Their blobs are in
     /// `blobs` and count toward `stored_bytes`.
     noncurrent: BTreeMap<(BucketName, ObjectName, u64), NoncurrentVersion>,
@@ -1020,6 +1048,7 @@ impl StorageState {
             production_order: false,
             versioning: BTreeMap::new(),
             uniform_bucket_level_access: BTreeMap::new(),
+            bucket_metadata: BTreeMap::new(),
             noncurrent: BTreeMap::new(),
             public_read: BTreeSet::new(),
             #[cfg(test)]
@@ -1242,6 +1271,7 @@ impl StorageState {
         self.noncurrent.clear();
         self.versioning.clear();
         self.uniform_bucket_level_access.clear();
+        self.bucket_metadata.clear();
         self.public_read.clear();
         self.blobs.clear();
         self.stored_bytes = 0;
@@ -1267,6 +1297,7 @@ impl StorageState {
         self.versioning.retain(|b, _| !owned(b.as_str()));
         self.uniform_bucket_level_access
             .retain(|b, _| !owned(b.as_str()));
+        self.bucket_metadata.retain(|b, _| !owned(b.as_str()));
         self.public_read.retain(|(b, _, _)| !owned(b.as_str()));
     }
 
@@ -1403,6 +1434,12 @@ impl StorageState {
                 .filter(|(b, _)| owned(b.as_str()))
                 .map(|(b, enabled)| (b.clone(), *enabled))
                 .collect(),
+            bucket_metadata: self
+                .bucket_metadata
+                .iter()
+                .filter(|(b, _)| owned(b.as_str()))
+                .map(|(b, metadata)| (b.clone(), metadata.clone()))
+                .collect(),
             noncurrent,
             public_read,
             #[cfg(test)]
@@ -1457,6 +1494,12 @@ impl StorageState {
             if owned(bucket.as_str()) {
                 self.uniform_bucket_level_access
                     .insert(bucket.clone(), *enabled);
+            }
+        }
+        for (bucket, metadata) in &captured.bucket_metadata {
+            if owned(bucket.as_str()) {
+                self.bucket_metadata
+                    .insert(bucket.clone(), metadata.clone());
             }
         }
         for entry in &captured.public_read {
@@ -1572,6 +1615,44 @@ impl StorageState {
     pub fn set_uniform_bucket_level_access(&mut self, bucket: &BucketName, enabled: bool) {
         self.uniform_bucket_level_access
             .insert(bucket.clone(), enabled);
+    }
+
+    /// The labels of `bucket` (strict profile).
+    #[must_use]
+    pub fn bucket_labels(&self, bucket: &BucketName) -> BTreeMap<String, String> {
+        self.bucket_metadata
+            .get(bucket)
+            .map(|metadata| metadata.labels.clone())
+            .unwrap_or_default()
+    }
+
+    /// The metageneration of `bucket`: 1 until its metadata is patched, then one more per patch.
+    #[must_use]
+    pub fn bucket_metageneration(&self, bucket: &BucketName) -> u64 {
+        self.bucket_metadata
+            .get(bucket)
+            .map_or(1, |metadata| metadata.metageneration)
+    }
+
+    /// Applies a `labels` change to `bucket` (a `None` value removes the key); a patch (`bump`)
+    /// also moves the metageneration on by one, as a metadata patch does, where creating the bucket
+    /// with labels does not.
+    pub fn patch_bucket_labels(
+        &mut self,
+        bucket: &BucketName,
+        changes: &[(String, Option<String>)],
+        bump: bool,
+    ) {
+        let metadata = self.bucket_metadata.entry(bucket.clone()).or_default();
+        for (key, value) in changes {
+            match value {
+                Some(value) => metadata.labels.insert(key.clone(), value.clone()),
+                None => metadata.labels.remove(key),
+            };
+        }
+        if bump {
+            metadata.metageneration += 1;
+        }
     }
 
     /// Whether object versioning is enabled on `bucket`.
@@ -2768,6 +2849,59 @@ impl StorageState {
         max_results: Option<usize>,
         matches: &dyn Fn(&str) -> bool,
     ) -> ListPage {
+        self.list_page(
+            bucket,
+            prefix,
+            delimiter,
+            page_token,
+            max_results,
+            matches,
+            ListMode::default(),
+        )
+    }
+
+    /// [`Self::list_matching`] as production lists (strict profile, recorded in STORAGE-STRICTNESS-OBS
+    /// v4.1): a page token continues at the first entry at or after the one it names, whether or not
+    /// that entry still exists, where the emulator starts over; with `include_trailing_delimiter` an
+    /// object named exactly like the prefix it folds into is listed as an item as well as a prefix,
+    /// and the two are one entry of the page.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_matching_production(
+        &self,
+        bucket: &BucketName,
+        prefix: &str,
+        delimiter: Option<&str>,
+        page_token: Option<&str>,
+        max_results: Option<usize>,
+        include_trailing_delimiter: bool,
+        matches: &dyn Fn(&str) -> bool,
+    ) -> ListPage {
+        self.list_page(
+            bucket,
+            prefix,
+            delimiter,
+            page_token,
+            max_results,
+            matches,
+            ListMode {
+                resume: true,
+                trailing_item: include_trailing_delimiter,
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn list_page(
+        &self,
+        bucket: &BucketName,
+        prefix: &str,
+        delimiter: Option<&str>,
+        page_token: Option<&str>,
+        max_results: Option<usize>,
+        matches: &dyn Fn(&str) -> bool,
+        mode: ListMode,
+    ) -> ListPage {
         let max = max_results
             .unwrap_or(DEFAULT_LIST_PAGE_SIZE)
             .min(DEFAULT_LIST_PAGE_SIZE);
@@ -2813,11 +2947,17 @@ impl StorageState {
                 })
                 .any(|((_, name), _)| matches(name.as_str()))
         });
-        let start = page_token.filter(|_| token_is_entry).unwrap_or(prefix);
+        let start = if mode.resume {
+            page_token.filter(|token| token.starts_with(prefix))
+        } else {
+            page_token.filter(|_| token_is_entry)
+        }
+        .unwrap_or(prefix);
         let lower = (bucket.clone(), ObjectName::range_start(start));
         let mut items = Vec::with_capacity(max);
         let mut prefixes: Vec<String> = Vec::new();
         let mut next_page_token = None;
+        let mut entries = 0usize;
         for ((candidate_bucket, name), meta) in self.objects.range(lower..) {
             if candidate_bucket != bucket || !name.as_str().starts_with(prefix) {
                 break;
@@ -2830,12 +2970,17 @@ impl StorageState {
             if entry_name < start || folded.as_ref().is_some_and(|p| prefixes.last() == Some(p)) {
                 continue;
             }
-            if items.len() + prefixes.len() == max {
+            if entries == max {
                 next_page_token = Some(entry_name.to_owned());
                 break;
             }
+            entries += 1;
             if let Some(p) = folded {
+                let placeholder = mode.trailing_item && name.as_str() == p;
                 prefixes.push(p);
+                if placeholder {
+                    items.push(meta.clone());
+                }
             } else {
                 items.push(meta.clone());
             }

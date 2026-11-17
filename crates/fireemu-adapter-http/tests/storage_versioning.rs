@@ -198,15 +198,18 @@ fn the_bucket_resource_reads_and_writes_versioning_only() {
 fn a_bucket_patch_refuses_anything_but_versioning_enabled() {
     for acceptance in PROFILES {
         let (s, _) = state(acceptance);
+        // Strict accepts `labels` (recorded, STORAGE-STRICTNESS-OBS v4.1); the emulator profile refuses it.
         for bad in [
             "[]",
             r#"{"versioning": true}"#,
             r#"{"versioning": {"enabled": "yes"}}"#,
             r#"{"versioning": {"enabled": true, "extra": 1}}"#,
-            r#"{"labels": {"a": "b"}}"#,
             r#"{"versioning": {"enabled": true}, "location": "EU"}"#,
             "not json",
-        ] {
+        ]
+        .into_iter()
+        .chain((acceptance != TokenAcceptance::Verified).then_some(r#"{"labels": {"a": "b"}}"#))
+        {
             let r = call(
                 &s,
                 "PATCH",
