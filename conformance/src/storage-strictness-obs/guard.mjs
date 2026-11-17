@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { requestsV4, TOKEN_MARK, TOKEN_PATTERN, V4_BUDGET } from "./v4.mjs";
 
 export const SEND_FLAG = "STORAGE_STRICTNESS_OBS_PRODUCTION_SEND";
 export const HOSTS = ["storage.googleapis.com", "firebasestorage.googleapis.com"];
@@ -21,7 +22,7 @@ export function targetOf({
   stage = "v2",
 }) {
   if (
-    !["v2", "v3"].includes(stage) ||
+    !["v2", "v3", "v4"].includes(stage) ||
     project !== "fireemu-oracle-query" ||
     defaultBucket !== `${project}.firebasestorage.app` ||
     !/^ss-[a-f0-9]{8}$/.test(runId)
@@ -59,6 +60,7 @@ export function targetOf({
 export function requests(t, location = "US") {
   if (typeof location !== "string" || !/^[a-zA-Z0-9-]{1,64}$/.test(location))
     throw new GuardError("invalid location");
+  if (t.stage === "v4") return requestsV4({ ...t, location });
   const { defaultBucket: D, tempBucket: T, missingBucket: M, prefix } = t;
   const b = (bucket) => `/storage/v1/b/${bucket}`;
   const o = (bucket, name) => `${b(bucket)}/o/${encodeURIComponent(name)}`;
@@ -318,6 +320,13 @@ export function classifyRequest(target, request, location = "US") {
       throw new GuardError("session URL outside the plan");
     planned = { ...planned, url: request.url };
   }
+  if (target.stage === "v4" && planned?.token) {
+    // The one dynamic part of a v4 URL: a page token the previous answer issued.
+    const tokens = url.searchParams.getAll("pageToken");
+    if (tokens.length !== 1 || !TOKEN_PATTERN.test(tokens[0]))
+      throw new GuardError("page token outside the plan");
+    planned = { ...planned, url: planned.url.replace(TOKEN_MARK, encodeURIComponent(tokens[0])) };
+  }
   if (
     !planned ||
     request.url !== planned.url ||
@@ -336,7 +345,7 @@ export function classifyRequest(target, request, location = "US") {
   const expected =
     planned.auth === "malformed"
       ? "malformed"
-      : target.local || planned.auth === "none"
+      : (target.local && !planned.localBearer) || planned.auth === "none"
         ? "none"
         : planned.auth;
   if (
@@ -350,11 +359,16 @@ export function classifyRequest(target, request, location = "US") {
 
 export class RequestBudget {
   count = 0;
+  constructor(limit = 60) {
+    this.limit = limit;
+  }
   take() {
-    if (this.count >= 60) throw new GuardError("request budget exhausted");
+    if (this.count >= this.limit) throw new GuardError("request budget exhausted");
     return ++this.count;
   }
 }
+
+export const budgetFor = (stage) => new RequestBudget(stage === "v4" ? V4_BUDGET : 60);
 
 export const isUnknownStatus = (status) =>
   !Number.isInteger(status) || status < 200 || (status >= 300 && status < 400) || status >= 500;

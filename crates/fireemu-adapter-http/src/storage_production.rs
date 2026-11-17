@@ -23,6 +23,9 @@ pub enum Wire {
     Gcs,
     /// `/v0/b/...`.
     Firebase,
+    /// The XML API (`/{bucket}/{object}`): `Cache-Control: private, max-age=0`, `Vary: Origin` (one
+    /// line) and no CORS headers without an `Origin` (recorded, STORAGE-STRICTNESS-OBS v4.1).
+    Xml,
 }
 
 /// What the framing needs to know about the request that produced a response.
@@ -67,11 +70,15 @@ enum Caching {
     Private,
 }
 
-/// The headers an answer is given besides the ones its handler produced.
+/// The headers an answer is given besides the ones its handler produced. The bools are independent
+/// header choices, not states of a machine.
+#[allow(clippy::struct_excessive_bools)]
 struct Plan {
     cache: Option<Caching>,
     /// `Vary: Origin, X-Origin` (JSON API).
     vary: bool,
+    /// `Vary: Origin` alone (XML API).
+    vary_origin: bool,
     /// `Access-Control-Allow-Origin: *`, the Firebase expose list and `nosniff` (v0 JSON).
     firebase_cors: bool,
     nosniff: bool,
@@ -81,6 +88,7 @@ impl Plan {
     const NONE: Self = Self {
         cache: None,
         vary: false,
+        vary_origin: false,
         firebase_cors: false,
         nosniff: false,
     };
@@ -88,6 +96,11 @@ impl Plan {
 
 fn plan(shape: &Shape, status: u16, is_json: bool, is_text: bool) -> Plan {
     match shape.wire {
+        Wire::Xml => Plan {
+            cache: Some(Caching::Private),
+            vary_origin: true,
+            ..Plan::NONE
+        },
         Wire::Gcs => {
             if status == 308 {
                 return Plan::NONE;
@@ -108,6 +121,7 @@ fn plan(shape: &Shape, status: u16, is_json: bool, is_text: bool) -> Plan {
                 vary: true,
                 firebase_cors: false,
                 nosniff: false,
+                ..Plan::NONE
             }
         }
         Wire::Firebase => {
@@ -139,6 +153,7 @@ fn plan(shape: &Shape, status: u16, is_json: bool, is_text: bool) -> Plan {
                 vary: false,
                 firebase_cors: true,
                 nosniff: status != 204,
+                ..Plan::NONE
             }
         }
     }
@@ -168,6 +183,12 @@ fn is_replaced(name: &str, is_media: bool) -> bool {
 /// not cover is returned untouched and not framed.
 #[must_use]
 pub fn frame(shape: &Shape, mut response: StorageResponse) -> (StorageResponse, bool) {
+    // The XML API's 204 carries no content type (recorded, V4-X-xml-delete); the JSON API's does.
+    if shape.wire == Wire::Xml && response.status == 204 {
+        response
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+    }
     let content_type = response
         .headers
         .iter()
@@ -187,7 +208,10 @@ pub fn frame(shape: &Shape, mut response: StorageResponse) -> (StorageResponse, 
             // that answers an object, from a read, an update, an upload or a copy).
             if shape.wire == Wire::Gcs
                 && response.status == 200
-                && value.get("kind").and_then(Value::as_str) == Some("storage#object")
+                && matches!(
+                    value.get("kind").and_then(Value::as_str),
+                    Some("storage#object" | "storage#bucket")
+                )
             {
                 object_etag = value.get("etag").and_then(Value::as_str).map(str::to_owned);
             }
@@ -199,7 +223,7 @@ pub fn frame(shape: &Shape, mut response: StorageResponse) -> (StorageResponse, 
     let plan = plan(shape, response.status, is_json, is_text);
     // A shape the plan adds nothing to (the resumable protocol's text answers, the 308) is still
     // framed: production sends it without CORS, `Vary` or `nosniff`, so the server stamps none.
-    if plan.cache.is_none() && !plan.firebase_cors && !plan.vary {
+    if plan.cache.is_none() && !plan.firebase_cors && !plan.vary && !plan.vary_origin {
         reflect_origin(shape, &mut response);
         return (response, true);
     }
@@ -230,6 +254,9 @@ pub fn frame(shape: &Shape, mut response: StorageResponse) -> (StorageResponse, 
         // stage 3 v9 recording: `Vary: Origin` and `Vary: X-Origin`).
         add("vary", "Origin");
         add("vary", "X-Origin");
+    }
+    if plan.vary_origin {
+        add("vary", "Origin");
     }
     if let Some(etag) = &object_etag {
         add("etag", etag);
@@ -283,9 +310,12 @@ fn set_production_etags(value: &mut Value) {
                     .and_then(Value::as_str)
                     .and_then(|text| text.parse::<u64>().ok())
             };
-            if let (Some(generation), Some(metageneration)) =
-                (ids(map, "generation"), ids(map, "metageneration"))
-            {
+            let is_bucket = map.get("kind").and_then(Value::as_str) == Some("storage#bucket");
+            if let (Some(generation), Some(metageneration), false) = (
+                ids(map, "generation"),
+                ids(map, "metageneration"),
+                is_bucket,
+            ) {
                 if map.contains_key("etag") {
                     map.insert(
                         "etag".to_owned(),
@@ -390,6 +420,38 @@ const GCS_ORDER: &[&str] = &[
     "location",
 ];
 
+/// A bucket resource's member order (recorded, STORAGE-STRICTNESS-OBS v4.1): the members of the
+/// resource and of its `iamConfiguration`, `softDeletePolicy` and `versioning` objects. `versioning`
+/// and `labels` are placed where production's field numbers would put them (`labels` is recorded,
+/// between `updated` and `softDeletePolicy`; `versioning` is not recorded and follows `updated`).
+const BUCKET_ORDER: &[&str] = &[
+    "kind",
+    "selfLink",
+    "id",
+    "name",
+    "projectNumber",
+    "generation",
+    "metageneration",
+    "location",
+    "storageClass",
+    "etag",
+    "timeCreated",
+    "updated",
+    "versioning",
+    "labels",
+    "softDeletePolicy",
+    "iamConfiguration",
+    "locationType",
+    "satisfiesPZI",
+    "bucketPolicyOnly",
+    "uniformBucketLevelAccess",
+    "publicAccessPrevention",
+    "enabled",
+    "lockedTime",
+    "retentionDurationSeconds",
+    "effectiveTime",
+];
+
 /// The Firebase dialect's member order: object (`name` to `metadata`), list (`prefixes`, `items`,
 /// `nextPageToken`) and error body.
 const FIREBASE_ORDER: &[&str] = &[
@@ -442,6 +504,7 @@ fn layout_value(wire: Wire, body: &[u8], value: &Value) -> Option<Vec<u8>> {
     let order = match wire {
         Wire::Gcs => GCS_ORDER,
         Wire::Firebase => FIREBASE_ORDER,
+        Wire::Xml => return None,
     };
     let mut out = Vec::with_capacity(body.len() * 2);
     write_value(&mut out, value, 0, order, true);
@@ -455,6 +518,12 @@ fn write_value(out: &mut Vec<u8>, value: &Value, indent: usize, order: &[&str], 
     match value {
         Value::Object(map) if map.is_empty() => out.extend_from_slice(b"{}"),
         Value::Object(map) => {
+            // A bucket resource has its own order (it shares keys with the object's in another sequence).
+            let order = if map.get("kind").and_then(Value::as_str) == Some("storage#bucket") {
+                BUCKET_ORDER
+            } else {
+                order
+            };
             let mut entries: Vec<(&String, &Value)> = map.iter().collect();
             if ranked {
                 entries.sort_by_key(|(key, _)| {

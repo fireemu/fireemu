@@ -10,6 +10,7 @@ import { fetchNet, installEgressGuard } from "./egress.mjs";
 import { readJournal, settlement } from "./judge.mjs";
 import { createProductionClient, createWire, openJournal } from "./wire.mjs";
 import { createFakeWorld } from "./world.fake.mjs";
+import { TOKEN_MARK, V4_OBJECTS, V4_OBSERVATIONS } from "./v4.mjs";
 
 const parse = (answer) => {
   try {
@@ -383,6 +384,134 @@ export async function observe({
   };
 }
 
+// Stage v4: one fresh uniform-access bucket, finite requests, cleanup by attempted name.
+export async function observeV4({ target, client }) {
+  let plan = requests(target);
+  let location = "US";
+  let armed = false;
+  let completed = false;
+  const violations = [];
+  const failures = [];
+  const skipped = [];
+  const answers = {};
+  // Every object a creation was attempted for, answered or not: cleanup deletes exactly these.
+  const attempted = new Set();
+  const send = async (id) => {
+    let planned = plan[id];
+    if (planned.token) {
+      const token = client.tokens.get(planned.token);
+      if (!token) {
+        client.append({
+          phase: "skipped",
+          case: id,
+          reason: `no page token from ${planned.token}`,
+        });
+        skipped.push(id);
+        return null;
+      }
+      planned = { ...planned, url: planned.url.replace(TOKEN_MARK, encodeURIComponent(token)) };
+    }
+    const answer = await client.wire(planned, location);
+    answers[id] = answer;
+    return answer;
+  };
+  const check = (condition, id) => {
+    if (condition) return;
+    violations.push(id);
+    throw new Error("sequence precondition failed");
+  };
+  // A local emulator may answer an unimplemented route with a 5xx; the rehearsal records it and goes on
+  // (closureReady stays false). Production never continues past an unknown answer.
+  const executeCase = async (id, tolerant = false) => {
+    if (client.deadline - client.now() < CLEANUP_RESERVE_MS)
+      throw new Error("sequence stopped to keep the cleanup reserve");
+    const answer = await send(id);
+    if (answer?.unknown && !tolerant) throw new Error("unknown answer");
+    return answer;
+  };
+  // Cleanup requests: a refusal or failure is recorded, and the answer is read back from `answers`.
+  const safe = async (id) => {
+    try {
+      await send(id);
+    } catch {
+      failures.push(id);
+    }
+  };
+  const pending = (resource) =>
+    settlement(client.entries).unresolved.find((entry) => entry.resource === resource);
+  try {
+    const p1 = await executeCase("V4-P-location");
+    const metadata = parse(p1);
+    check(isSuccess(p1.status) && typeof metadata?.location === "string", "V4-P-location");
+    location = metadata.location;
+    plan = requests(target, location);
+    if (target.local) {
+      client.append({
+        phase: "skipped",
+        case: "V4-W-bucket",
+        reason: "local: predeclared bucket; no bucket management",
+      });
+      check(emptyList(await executeCase("V4-initial-list")), "V4-initial-list");
+    } else {
+      check((await executeCase("V4-P-absent")).status === 404, "V4-P-absent");
+    }
+    armed = true;
+    if (!target.local) check(isSuccess((await executeCase("V4-W-bucket")).status), "V4-W-bucket");
+    const verify = await executeCase("V4-W-verify");
+    const bucket = parse(verify);
+    check(
+      isSuccess(verify.status) &&
+        bucket?.name === target.tempBucket &&
+        (target.local || hardDeletes(bucket.softDeletePolicy)),
+      "V4-W-verify",
+    );
+    for (const key of [...V4_OBJECTS.map(([name]) => name), "md-up"]) {
+      attempted.add(key);
+      check(isSuccess((await executeCase(`V4-U-${key}`)).status), `V4-U-${key}`);
+    }
+    for (const id of V4_OBSERVATIONS) {
+      if (id === "V4-MD-copy") attempted.add("md-copy");
+      await executeCase(id, Boolean(target.local));
+    }
+    completed = true;
+  } catch {
+    failures.push("sequence stopped");
+  } finally {
+    if (armed) {
+      if (!target.local && pending(plan["V4-W-bucket"].resource)?.unknownCreate)
+        await safe("V4-K-read-created-bucket");
+      const ownsBucket =
+        target.local ||
+        (isSuccess(answers["V4-W-bucket"]?.status) && !answers["V4-W-bucket"].unknown) ||
+        answers["V4-K-read-created-bucket"]?.showsResource;
+      if (ownsBucket) {
+        for (const key of attempted) await safe(`V4-K-del-${key}`);
+        if (target.local) await safe("V4-K-read-object");
+        else if (!client.unknownDeletes.has(plan["V4-K-delete-bucket"].resource))
+          await safe("V4-K-delete-bucket");
+      }
+      if (!target.local) await safe("V4-K-bucket");
+    }
+  }
+  const settled = settlement(client.entries);
+  const unknownAnswers = client.entries.some((entry) => entry.phase === "after" && entry.unknown);
+  const final = target.local ? answers["V4-K-read-object"] : answers["V4-K-bucket"];
+  const cleanupVerified = Boolean(armed && final?.status === 404 && !final.unknown);
+  return {
+    completed,
+    location,
+    violations,
+    failures,
+    skipped,
+    requests: client.budget.count,
+    ...settled,
+    cleanupVerified,
+    closureReady: Boolean(
+      settled.closureReady && cleanupVerified && !unknownAnswers && !violations.length,
+    ),
+  };
+}
+
 export async function readback({ target, client, previous, now = Date.now }) {
   const header = previous[0];
   const summary = previous.at(-1);
@@ -401,7 +530,9 @@ export async function readback({ target, client, previous, now = Date.now }) {
   const answers = {};
   for (const id of target.stage === "v3"
     ? ["V3-A2-bucket", "V3-A2-object"]
-    : ["A2-bucket", "A2-prefix", "A2-object", "A2-cors", "A2-t-y", "A2-m-x", "A2-m-y"])
+    : target.stage === "v4"
+      ? ["V4-A2-bucket", "V4-A2-object"]
+      : ["A2-bucket", "A2-prefix", "A2-object", "A2-cors", "A2-t-y", "A2-m-x", "A2-m-y"])
     answers[id] = await client.wire(plan[id]);
   const evidence = client.entries.map((entry) => ({ ...entry, session: "a2" }));
   const settled = settlement([...previous, ...evidence]);
@@ -433,11 +564,11 @@ export async function main(argv = process.argv.slice(2)) {
       send: { type: "boolean", default: false },
     },
   });
-  const stage = positionals.includes("v3") ? "v3" : "v2";
+  const stage = ["v3", "v4"].find((name) => positionals.includes(name)) ?? "v2";
   const a2 = positionals[0] === "readback";
   if (
     JSON.stringify(positionals) !==
-      JSON.stringify([...(a2 ? ["readback"] : []), ...(stage === "v3" ? ["v3"] : [])]) ||
+      JSON.stringify([...(a2 ? ["readback"] : []), ...(stage === "v2" ? [] : [stage])]) ||
     !values.out ||
     (a2 && !values["run-id"]) ||
     (!a2 && values["run-id"] && !values.local) ||
@@ -506,7 +637,9 @@ export async function main(argv = process.argv.slice(2)) {
     const client = createWire({ target, net, journal, token, deadline: startedAt + 15 * 60_000 });
     const report = a2
       ? await readback({ target, client, previous })
-      : await observe({ target, client, ...(mode === "fake" ? { sleep: async () => {} } : {}) });
+      : stage === "v4"
+        ? await observeV4({ target, client })
+        : await observe({ target, client, ...(mode === "fake" ? { sleep: async () => {} } : {}) });
     const summary = { phase: "summary", mode, runId: target.runId, ...report, endedAt: Date.now() };
     journal.append(summary);
     console.log(JSON.stringify(summary));

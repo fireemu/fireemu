@@ -9181,7 +9181,8 @@ fn a_glob_listing_in_batches_equals_the_filtered_listing_page_by_page() {
             }
         }
     }
-    // A token that names no entry starts the listing over, with or without a glob.
+    // Strict: a token that names no entry continues at the first entry after it, with or without a
+    // glob (recorded in production, STORAGE-STRICTNESS-OBS v4.1); "nope" sorts before "top.txt".
     let listed = |query: &str| {
         json_body(&handle(
             &state,
@@ -9197,8 +9198,9 @@ fn a_glob_listing_in_batches_equals_the_filtered_listing_page_by_page() {
         "matchGlob={}&maxResults=2&pageToken=nope",
         encode("**")
     ));
-    let without_token = listed(&format!("matchGlob={}&maxResults=2", encode("**")));
-    assert_eq!(with_glob, without_token);
+    let without_glob = listed("maxResults=2&pageToken=nope");
+    assert_eq!(with_glob, without_glob);
+    assert_eq!(with_glob["items"][0]["name"], "top.txt");
 }
 
 /// A page reflects names as they are when it is read: a name deleted while the page is being made
@@ -9308,6 +9310,7 @@ fn glob_page_after(
             max,
             glob: &glob,
             in_offsets: &anything,
+            trailing: false,
         },
         &|| delete_names(state, delete),
     )
@@ -9447,6 +9450,7 @@ fn a_glob_page_reads_and_keeps_a_bounded_part_of_a_large_bucket() {
         max: 10,
         glob,
         in_offsets: &anything,
+        trailing: false,
     };
 
     // A page of 10 items: 11 entries kept, and the scan ends inside the first batch.
@@ -9745,13 +9749,19 @@ fn a_pathological_match_glob_neither_overflows_the_stack_nor_blocks_other_reques
             out
         })
     };
+    // Strict refuses a pattern over 1024 bytes and an unterminated `[` or `{` at once (recorded,
+    // STORAGE-STRICTNESS-OBS v4.1); the hostile shapes that stay admissible are the closed ones
+    // within the cap, which still must neither overflow the stack nor starve other requests.
     let patterns = [
-        "{".repeat(40),
-        format!("{}z", "{,}".repeat(2_000)),
-        format!("**{}", "*a".repeat(2_000)),
-        "{a,".repeat(30_000),
-        format!("{}x{}", "{a,".repeat(30_000), "}".repeat(30_000)),
-        "[".repeat(30_000),
+        ("{".repeat(40), 400),
+        (format!("{}z", "{,}".repeat(2_000)), 400),
+        (format!("**{}", "*a".repeat(2_000)), 400),
+        ("{a,".repeat(30_000), 400),
+        (format!("{}z", "{,}".repeat(300)), 200),
+        (format!("**{}", "*a".repeat(500)), 200),
+        (format!("{}x{}", "{a,".repeat(170), "}".repeat(170)), 200),
+        ("\\[".repeat(500), 200),
+        ("[".repeat(30_000), 400),
     ];
     let listing = |pattern: &str| {
         handle(
@@ -9768,8 +9778,8 @@ fn a_pathological_match_glob_neither_overflows_the_stack_nor_blocks_other_reques
         let hostile = std::thread::Builder::new()
             .stack_size(2 * 1024 * 1024)
             .spawn_scoped(scope, || {
-                for pattern in &patterns {
-                    assert_eq!(listing(pattern).status, 200);
+                for (pattern, status) in &patterns {
+                    assert_eq!(listing(pattern).status, *status, "{}", pattern.len());
                 }
             })
             .unwrap();
