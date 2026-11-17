@@ -7474,6 +7474,51 @@ mod tests {
         assert_eq!(restored("scrypt$whatever", Some("a")), None);
     }
 
+    /// Pins what a restore does with an edited `salt` member. An export always writes the stored
+    /// salt beside the hash, so these inputs only come from a hand-edited artifact; whoever can
+    /// edit the credential-bearing file can already replace the plaintext password in it, so
+    /// this is outside the threat model and the tests only fix the documented behaviour: the
+    /// salt member names the split exactly when the hash starts with it, otherwise the
+    /// convention's first `:password=` decides.
+    #[test]
+    fn an_edited_salt_member_selects_the_split_it_names_or_falls_back() {
+        use fireemu_core_export::auth::UserRecord;
+        let path = std::path::Path::new("offline.json");
+        let restored = |hash: &str, salt: &str| {
+            let record = UserRecord {
+                local_id: "p".to_owned(),
+                email: Some("p@example.com".to_owned()),
+                password_hash: Some(hash.to_owned()),
+                salt: Some(salt.to_owned()),
+                ..UserRecord::default()
+            };
+            super::imported_user(&record, path)
+                .ok()
+                .map(|user| user.password)
+        };
+        let pair = |salt: &str, password: &str| Some(Some((salt.to_owned(), password.to_owned())));
+        // An empty salt member names only `fakeHash:salt=:password=`; any other hash falls back.
+        assert_eq!(restored("fakeHash:salt=:password=pw", ""), pair("", "pw"));
+        assert_eq!(restored("fakeHash:salt=s:password=pw", ""), pair("s", "pw"));
+        assert_eq!(restored("fakeHash:salt=a:b:password=pw", ""), None);
+        // A crafted salt that reaches a later delimiter takes the password after that
+        // delimiter; a salt that is not a prefix of the hash's salt part is ignored.
+        let hash = "fakeHash:salt=s:password=original:password=attacker";
+        assert_eq!(
+            restored(hash, "s:password=original"),
+            pair("s:password=original", "attacker")
+        );
+        assert_eq!(
+            restored(hash, "s:password=orig"),
+            pair("s", "original:password=attacker"),
+            "the remainder `inal:password=attacker` does not start with the delimiter"
+        );
+        assert_eq!(
+            restored(hash, "other:password=original"),
+            pair("s", "original:password=attacker")
+        );
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::test_runner::Config::with_cases(64))]
         #[test]
