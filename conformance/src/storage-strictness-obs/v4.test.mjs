@@ -10,7 +10,7 @@ import { rehearsalConfig } from "./rehearse.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { judgeJournal, settlement } from "./judge.mjs";
-import { compare } from "./compare.mjs";
+import { compare, comparable } from "./compare.mjs";
 import { createWire } from "./wire.mjs";
 import { createFakeWorld } from "./world.fake.mjs";
 import { globRegex } from "./world.v4.mjs";
@@ -1343,15 +1343,30 @@ test("v4 judge facts reach generated values inside arrays and ignore a non-objec
 test("v4 local xml delete carries a bearer and no other local request does", async () => {
   const local = targetOf({ ...identity, runId: "ss-0123abcd", local: "http://127.0.0.1:39199" });
   const { world } = await run({}, local);
-  const withAuth = world.log.filter((r) => r.headers.authorization !== undefined).map((r) => r.case);
+  const withAuth = world.log
+    .filter((r) => r.headers.authorization !== undefined)
+    .map((r) => r.case);
   assert.deepEqual(withAuth, ["V4-X-xml-delete", "V4-X-xml-delete-again"]);
-  assert.match(world.log.find((r) => r.case === "V4-X-xml-delete").headers.authorization, /^Bearer \S+$/);
+  assert.match(
+    world.log.find((r) => r.case === "V4-X-xml-delete").headers.authorization,
+    /^Bearer \S+$/,
+  );
   // Production plans do not change, and the flag never turns a local request into a bearer elsewhere.
-  const plan = requests(local);
-  assert.equal(plan["V4-X-xml-delete"].localBearer, true);
-  assert.equal(plan["V4-L-delim"].localBearer, undefined);
-  assert.throws(() => classifyRequest(local, { ...plan["V4-L-delim"], headers: { authorization: "Bearer x" } }), GuardError);
-  assert.throws(() => classifyRequest(local, { ...plan["V4-X-xml-delete"], headers: {} }), GuardError);
+  const localPlan = requests(local);
+  assert.equal(localPlan["V4-X-xml-delete"].localBearer, true);
+  assert.equal(localPlan["V4-L-delim"].localBearer, undefined);
+  assert.throws(
+    () =>
+      classifyRequest(local, {
+        ...localPlan["V4-L-delim"],
+        headers: { authorization: "Bearer x" },
+      }),
+    GuardError,
+  );
+  assert.throws(
+    () => classifyRequest(local, { ...localPlan["V4-X-xml-delete"], headers: {} }),
+    GuardError,
+  );
 });
 
 test("v4 comparison treats a body's length as content and a zero length as framing", () => {
@@ -1385,9 +1400,10 @@ test("the recorded v4.1 fixture names its cases once and holds no body, hash or 
   assert.equal(fixture.rows.length, 58);
   assert.equal(new Set(fixture.rows.map((row) => row.case)).size, 58);
   for (const row of fixture.rows) {
-    for (const key of ["bodyBase64", "sha256", "bodyBytes", "body"]) assert.ok(!Object.hasOwn(row, key));
+    for (const key of ["bodyBase64", "sha256", "bodyBytes", "body"])
+      assert.ok(!Object.hasOwn(row, key));
   }
-  assert.ok(!text.includes("nextPageToken\": \""));
+  assert.ok(!text.includes('nextPageToken": "'));
   const byCase = Object.fromEntries(fixture.rows.map((row) => [row.case, row]));
   assert.deepEqual(byCase["V4-L-itd-true"].v4.items, ["tl/d1/", "tl/f.txt"]);
   assert.deepEqual(byCase["V4-L-itd-true"].v4.memberOrder, ["kind", "prefixes", "items"]);
@@ -1396,4 +1412,75 @@ test("the recorded v4.1 fixture names its cases once and holds no body, hash or 
   assert.equal(byCase["V4-X-xml-delete"].v4.contentLength, "0");
   assert.equal(byCase["V4-X-xml-delete-again"].xml.Code, "NoSuchKey");
   assert.equal(byCase["V4-L-itd-p4"].known, false);
+});
+
+test("v4 comparison masks a run's bucket name wherever an error field holds it, on both sides", () => {
+  const row = (json, xml = null) => ({
+    case: "V4-K-del-x-xml",
+    status: 404,
+    shape: "json-error",
+    known: true,
+    headerNames: [],
+    headers: {},
+    json,
+    xml,
+    location: null,
+  });
+  const recorded = row({
+    code: 404,
+    message: "No such object: fireemu-obs-RUN/x/xml.txt",
+    reason: "notFound",
+  });
+  const local = row({
+    code: 404,
+    message: "No such object: fireemu-obs-ss-0a1b2c3d/x/xml.txt",
+    reason: "notFound",
+  });
+  assert.equal(comparable(local).json.message, "No such object: fireemu-obs-RUN/x/xml.txt");
+  assert.equal(comparable(recorded).json.message, comparable(local).json.message);
+  assert.equal(compare([recorded], [local])[0].verdict, "MATCH");
+  // Only the run's own bucket name is masked: another bucket, a longer id or other text still differ.
+  for (const message of [
+    "No such object: other-bucket/x/xml.txt",
+    "No such object: fireemu-obs-ss-0a1b2c3/x/xml.txt",
+    "No such object: fireemu-obs-RUN/x/other.txt",
+  ])
+    assert.match(
+      compare([recorded], [row({ ...local.json, message })])[0].verdict,
+      /^DIFFERS/,
+      message,
+    );
+  // The mask reaches nested objects and arrays, and leaves numbers, nulls and other strings alone.
+  const nested = comparable(
+    row({
+      code: 404,
+      items: ["fireemu-obs-ss-00000000", { inner: "fireemu-obs-ss-ffffffff/a" }, 3, null],
+      reason: null,
+    }),
+  ).json;
+  assert.deepEqual(nested.items, ["fireemu-obs-RUN", { inner: "fireemu-obs-RUN/a" }, 3, null]);
+  assert.equal(nested.code, 404);
+  assert.equal(nested.reason, null);
+  assert.ok(Array.isArray(nested.items));
+  const xml = comparable(
+    row(null, { Code: "NoSuchKey", Message: "x fireemu-obs-ss-00000000 y" }),
+  ).xml;
+  assert.deepEqual(xml, { Code: "NoSuchKey", Message: "x fireemu-obs-RUN y" });
+});
+
+test("v4 comparison reads a fixture row that keeps neither error fields nor a body", () => {
+  const bare = {
+    case: "V4-L-delim",
+    status: 200,
+    shape: "object-list",
+    known: true,
+    headerNames: [],
+    headers: {},
+    location: null,
+  };
+  assert.deepEqual(comparable(bare).json, null);
+  assert.equal(compare([bare], [bare])[0].verdict, "MATCH");
+  assert.equal(comparable({ ...bare, v4: { contentLength: "981" } }).v4.contentLength, "<body>");
+  assert.equal(comparable({ ...bare, v4: { contentLength: "0" } }).v4.contentLength, "0");
+  assert.equal(comparable({ ...bare, v4: { contentLength: null } }).v4.contentLength, null);
 });

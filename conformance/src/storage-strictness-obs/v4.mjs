@@ -60,7 +60,16 @@ export function requestsV4(t) {
     id,
     method,
     path,
-    { firebase = false, headers = {}, body, action, resource, auth = "bearer", token, localBearer } = {},
+    {
+      firebase = false,
+      headers = {},
+      body,
+      action,
+      resource,
+      auth = "bearer",
+      token,
+      localBearer,
+    } = {},
   ) {
     out[id] = {
       case: id,
