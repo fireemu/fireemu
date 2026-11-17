@@ -1349,3 +1349,30 @@ test("v4 closure needs each part: the violation id, a verified local cleanup and
   assert.equal(inconsistent.report.unresolved.length, 1);
   assert.equal(inconsistent.report.closureReady, false);
 });
+
+test("v4 judge facts reach generated values inside arrays and ignore a non-object metadata", () => {
+  const facts = (value) => v4Facts({ case: "V4-B-full" }, Buffer.from(JSON.stringify(value)), {});
+  const bucket = facts({
+    kind: "storage#bucket",
+    selfLink: "https://example.test/b/x",
+    acl: [
+      {
+        id: "abcd",
+        selfLink: "https://example.test/acl",
+        entity: "project-owners-123",
+        role: "OWNER",
+      },
+    ],
+  });
+  assert.deepEqual(bucket.facts.members, {
+    kind: "storage#bucket",
+    selfLink: "<url>",
+    acl: [{ id: "<string:4>", selfLink: "<url>", entity: "project-owners-123", role: "OWNER" }],
+  });
+  assert.deepEqual(facts({ kind: "storage#object", metadata: ["x", "y"] }).facts.metadataKeys, []);
+  assert.deepEqual(
+    facts({ kind: "storage#objects", items: [{ name: "a", metadata: ["x"] }] }).facts
+      .itemMetadataKeys,
+    { a: [] },
+  );
+});
