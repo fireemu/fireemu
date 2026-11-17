@@ -875,6 +875,7 @@ mod tests {
                             "auth",
                         ) => "/auth",
                         ("inspect_json", "client") => "/auth/client",
+                        ("inspect_json", "totp") => "/auth/totp",
                         ("parse_auth_config_override_value", "client") => {
                             "/auth/configOverrides/*/config/client"
                         }
