@@ -9,6 +9,7 @@
 //! it here, and another project's default bucket is never usable: one project's export cannot
 //! write into, nor its import read from, a bucket another project uses.
 
+use crate::term::errln;
 use std::sync::Arc;
 
 use fireemu_adapter_grpc::admin::managed::{
@@ -156,7 +157,7 @@ impl StorageBridge {
         match store.body_bytes(meta) {
             Ok(bytes) => Some(bytes.into_owned()),
             Err(error) => {
-                eprintln!("storage spill read failed: {error}");
+                errln!("storage spill read failed: {error}");
                 None
             }
         }

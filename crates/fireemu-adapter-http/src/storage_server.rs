@@ -741,7 +741,8 @@ async fn respond(
         ));
     };
     if trace {
-        eprintln!(
+        fireemu_adapter_support::eprintln_at!(
+            fireemu_adapter_support::term::Level::Debug,
             "[storage] {trace_method} {trace_path}?{trace_query} body={trace_len} -> {} {}",
             response.status,
             if response.status >= 400 {

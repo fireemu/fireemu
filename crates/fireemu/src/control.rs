@@ -1,5 +1,6 @@
 //! Control-plane helpers for the binary: index file loading and the capability manifest.
 
+use crate::term::errln;
 use fireemu_core_firestore::field_path::FieldPath;
 use fireemu_core_firestore::index::{
     IndexDefinition, IndexField, IndexFieldMode, IndexQueryScope, IndexSet,
@@ -61,7 +62,7 @@ pub fn load_text_indexes(
                 &text,
                 cfg.production_exact,
             )? {
-                eprintln!("[firestore] {note}");
+                errln!("[firestore] {note}");
             }
         }
     }
@@ -244,7 +245,7 @@ fn add_text_definition(
         .add(&project, &database, definition)
         .map_err(|error| format!("{path}: indexes[{position}]: {error}"))?;
     for warning in warnings {
-        eprintln!("[firestore] text index {id}: {warning}");
+        errln!("[firestore] text index {id}: {warning}");
     }
     Ok(())
 }
@@ -622,7 +623,7 @@ pub fn load_index_file(
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let (indexes, ttl_policies, notes) = parse_index_file(path, &text, checks)?;
     for note in notes {
-        eprintln!("note: {note}");
+        errln!("note: {note}");
     }
     Ok((indexes, ttl_policies))
 }

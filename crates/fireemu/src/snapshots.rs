@@ -9,6 +9,7 @@
 //! rather than turned into an empty part: a snapshot that silently captured nothing would
 //! wipe the session the next time it was restored.
 
+use crate::term::errln;
 use std::sync::{Arc, Mutex};
 
 use fireemu_adapter_functions::runtime::FunctionsRuntime;
@@ -59,7 +60,7 @@ impl SnapshotHook for Firestore {
         // A restore is not checked against the history limits (as an import is not): say so
         // when it leaves a database above one.
         for warning in crate::import_export::firestore_limit_warnings(&self.0, scope) {
-            eprintln!("warning: snapshot restore: {warning}");
+            errln!("warning: snapshot restore: {warning}");
         }
         Ok(())
     }
@@ -256,7 +257,7 @@ impl SnapshotHook for Storage {
             })?;
         // Not checked against storage.maxStoredBytes either: say so when it is exceeded.
         for warning in crate::import_export::storage_limit_warnings(&store) {
-            eprintln!("warning: snapshot restore: {warning}");
+            errln!("warning: snapshot restore: {warning}");
         }
         Ok(())
     }
@@ -424,7 +425,7 @@ impl SnapshotHook for Auth {
             .map_err(|reason| self.failure(reason))?
             .totp_factors_dropped;
         if dropped > 0 {
-            eprintln!(
+            errln!(
                 "auth: restored project {} without {dropped} TOTP factor(s) whose secret the store no longer held (default snapshots carry no shared secret; enrol again)",
                 snapshot.project.project_id(),
             );

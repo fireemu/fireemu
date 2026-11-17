@@ -133,7 +133,7 @@ fn auth_notice_sink(
 ) -> fireemu_adapter_http::identity_toolkit::AuthNoticeSink {
     Arc::new(move |notice| {
         let message = notice.message();
-        println!("  auth: {message}");
+        outln!("  auth: {message}");
         bus.publish(
             &fireemu_adapter_logging::LogInput::plain("info", message, clock_millis(&clock))
                 .for_emulator("auth"),

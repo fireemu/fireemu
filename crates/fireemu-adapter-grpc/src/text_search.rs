@@ -308,7 +308,7 @@ fn execute_at_snapshot(
     let execution_time = responses.iter().find_map(|response| response.read_time);
     let (originals, hits) = search_snapshot(&responses, definitions, plan)?;
     if !config.warned.swap(true, Ordering::Relaxed) {
-        eprintln!("[firestore] text search uses fireemu-lexical-v1: approximate BM25, language-neutral tokenization; no stemming, synonyms, typo correction or language autodetection");
+        fireemu_adapter_support::eprintln_at!(fireemu_adapter_support::term::Level::Info, "[firestore] text search uses fireemu-lexical-v1: approximate BM25, language-neutral tokenization; no stemming, synonyms, typo correction or language autodetection");
     }
     let mut cursor =
         pipeline_exec::Cursor::new_in_with_runtime(compiled.stages, unrecorded, runtime);

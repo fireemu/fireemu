@@ -12,6 +12,7 @@
 //! environment (`--deny-inherited-emulator-env`), because the plan and the start-up check
 //! classify the same variables the same way.
 
+use crate::term::errln;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -496,7 +497,7 @@ pub(crate) fn guard_inherited_env(
             .iter()
             .filter(|entry| entry.disposition == Disposition::KeptServiceNotStarted)
         {
-            eprintln!("warning: {}", stale_warning(entry));
+            errln!("warning: {}", stale_warning(entry));
         }
     }
     Ok(())
@@ -533,7 +534,7 @@ pub(crate) fn check_bound_listeners(
     }
     if !quiet {
         for warning in bound_warnings(&inherited) {
-            eprintln!("warning: {warning}");
+            errln!("warning: {warning}");
         }
     }
     Ok(())
@@ -1163,7 +1164,7 @@ pub(crate) fn run(
                 ExitCode::SUCCESS
             } else {
                 for error in &errors {
-                    eprintln!("error: {}", diagnostic_text(error));
+                    errln!("error: {}", diagnostic_text(error));
                 }
                 ExitCode::FAILURE
             }
