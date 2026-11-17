@@ -1516,13 +1516,13 @@ pub const SMS_CODE_TTL_SECONDS: i64 = 600;
 /// codes). An account holds a bounded number of them (`bound_phone_enrollment_sessions`).
 pub const OBSERVED_MFA_PHONE_ENROLLMENT_SECONDS: i64 = 1_805;
 /// Under production's second-factor rules a TOTP sign-in whose pending credential is at least
-/// this old is `TOTP_CHALLENGE_TIMEOUT`: production accepted one 293 seconds old and refused
-/// one 303 seconds old (sandbox recordings 2026-09-24, `auth-mfa/lifetime-short#aged-pending-q290`
-/// and `auth-mfa/lifetime#aged-pending-p300`). Those ages run from one request's send to the
-/// next's, so the age the server saw differs from them by the two requests' latencies; the
-/// boundary sits one second below the refusal to absorb that, well above the accepted 293.
-/// Younger ages are unobserved and stay accepted.
-pub const OBSERVED_TOTP_CHALLENGE_TIMEOUT_SECONDS: i64 = 302;
+/// this old is `TOTP_CHALLENGE_TIMEOUT`: production accepted ones 293 and 298 seconds old and
+/// refused ones 300, 302 and 303 seconds old (sandbox recordings 2026-09-24,
+/// `auth-mfa/lifetime-short#aged-pending-q290` and `auth-mfa/lifetime#aged-pending-p300`, and
+/// AUTH-EDGES-OBS-20261117-01 w-probe-1, w-probe-2, w-probe-3). Those ages run from one
+/// request's send to the next's, so the age the server saw is a fraction of a second more than
+/// the one measured. Younger ages are unobserved and stay accepted.
+pub const OBSERVED_TOTP_CHALLENGE_TIMEOUT_SECONDS: i64 = 300;
 /// Under production's second-factor rules a TOTP enrollment start whose session signed in at
 /// least this long ago is `CREDENTIAL_TOO_OLD_LOGIN_AGAIN`: production started one with a
 /// sign-in 244 seconds old and refused one 333 seconds old (sandbox recording 2026-09-24,
@@ -1533,9 +1533,8 @@ pub const OBSERVED_TOTP_ENROLLMENT_LOGIN_AGE_SECONDS: i64 = 333;
 /// Under production's second-factor rules an SMS step started for a pending credential at least
 /// this old is `INVALID_MFA_PENDING_CREDENTIAL : MFA pending credential is expired.`:
 /// production started one about 453 seconds old and refused one about 603 seconds old (sandbox
-/// recording 2026-09-25, `auth-mfa/lifetime-sms`, response to response). As
-/// [`OBSERVED_TOTP_CHALLENGE_TIMEOUT_SECONDS`], the boundary sits one second below the refusal
-/// to absorb the requests' latency (the coordinator's delegated decision under the owner's M9
+/// recording 2026-09-25, `auth-mfa/lifetime-sms`, response to response). The boundary sits one
+/// second below the refusal to absorb the requests' latency (the coordinator's delegated decision under the owner's M9
 /// exception). A finalize after an accepted start is not refused, as that was not observed.
 pub const OBSERVED_SMS_PENDING_START_SECONDS: i64 = 602;
 /// A pending second-factor sign-in (`mfaPendingCredential`) expires after an hour of virtual

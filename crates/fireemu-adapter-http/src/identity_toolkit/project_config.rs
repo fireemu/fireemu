@@ -611,7 +611,7 @@ pub fn restored_config_members(
         cleared.set(member, None);
     }
     cleared.set(fireemu_core_auth::config_members::ALLOW_TENANTS, None);
-    let mut next = apply_stored_members(&cleared, &body, &fields, project)
+    let mut next = apply_stored_members(&cleared, &body, &fields, project, false)
         .map_err(|()| refused(&first(&fields)))?
         .unwrap_or(cleared);
     super::with_derived_members(&mut next, &body, &fields, false, None);
@@ -674,6 +674,7 @@ pub(super) fn apply_stored_members(
     body: &Value,
     fields: &[String],
     project: &str,
+    ignore_below_scalar: bool,
 ) -> Result<Option<fireemu_core_auth::config_members::StoredConfigMembers>, ()> {
     let mut next = current.clone();
     let mut changed = false;
@@ -721,6 +722,11 @@ pub(super) fn apply_stored_members(
                 &segments,
                 if unset { None } else { written.or(fallback) },
             ) {
+                // Strict: a path below a stored scalar is ignored, as production ignored
+                // `notification.defaultLocale.a` (AUTH-EDGES-OBS-20261117-01, mask-below-scalar).
+                if ignore_below_scalar {
+                    continue;
+                }
                 return Err(());
             }
         }

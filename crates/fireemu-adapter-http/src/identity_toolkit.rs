@@ -7346,6 +7346,28 @@ fn project_config_management(
         let body = project_config_document(state, project, &store, store.config());
         return JsonResponse { status: 200, body };
     }
+    // Strict: production names a masked `mfa` member's fault before another member's (a PATCH
+    // with an invalid `mfa.state` and an invalid `mobileLinksConfig.domain` answered the former,
+    // AUTH-EDGES-OBS-20261117-01, mask-precedence).
+    if !state.stateless_refresh_tokens {
+        if let Ok(Some(masked)) = update_mask_with(query, false) {
+            let refusal = if masked.iter().any(|field| field == "mfa") {
+                project_mfa::mfa_config_from_json_in(body.get("mfa").unwrap_or(&Value::Null), true)
+                    .err()
+            } else if masked.iter().any(|field| field == "mfa.state") {
+                project_mfa::mfa_state_update(
+                    &fireemu_core_auth::mfa_config::MfaProjectConfig::default(),
+                    body,
+                )
+                .err()
+            } else {
+                None
+            };
+            if let Some(refusal) = refusal {
+                return mfa_config_refusal(&refusal);
+            }
+        }
+    }
     // Production reads the body as proto3 JSON of its Config message (AUTH-CONFIG-SDK).
     let parsed = match config_proto::parse_config_body(body) {
         Ok(parsed) => parsed,
@@ -7428,8 +7450,11 @@ fn project_config_management(
     }
     // A writable path fireemu does not model (valid_project_config_field names the policy and
     // blocking paths it models) is refused.
+    // Strict also models the `mfa.state` mask (production answered 200 to it).
     if fields.iter().any(|field| {
-        !valid_project_config_field(field) && !project_config::stored_member_field(field)
+        !valid_project_config_field(field)
+            && !project_config::stored_member_field(field)
+            && (state.stateless_refresh_tokens || field != "mfa.state")
     }) {
         return error(400, "INVALID_ARGUMENT");
     }
@@ -7443,7 +7468,18 @@ fn project_config_management(
     }
     // The masked `mfa` member replaces the project's whole multi-factor configuration.
     let mfa_update = if fields.iter().any(|field| field == "mfa") {
-        match project_mfa::mfa_config_from_json(body.get("mfa").unwrap_or(&Value::Null)) {
+        match project_mfa::mfa_config_from_json_in(
+            body.get("mfa").unwrap_or(&Value::Null),
+            !state.stateless_refresh_tokens,
+        ) {
+            Ok(config) => Some(config),
+            Err(refusal) => return mfa_config_refusal(&refusal),
+        }
+    } else if !state.stateless_refresh_tokens && fields.iter().any(|field| field == "mfa.state") {
+        let Ok(store) = selected_store.lock() else {
+            return error(500, "INTERNAL");
+        };
+        match project_mfa::mfa_state_update(store.mfa_config(), body) {
             Ok(config) => Some(config),
             Err(refusal) => return mfa_config_refusal(&refusal),
         }
@@ -7464,6 +7500,7 @@ fn project_config_management(
             body,
             &fields,
             project,
+            !state.stateless_refresh_tokens,
         ) {
             Ok(update) => update,
             Err(()) => return error(400, "INVALID_ARGUMENT"),
@@ -7532,6 +7569,7 @@ fn project_config_management(
                     body,
                     &fields,
                     project,
+                    !state.stateless_refresh_tokens,
                 )
                 .map_err(|()| error(400, "INVALID_ARGUMENT"))?;
                 let mut next = next.unwrap_or_else(|| store.stored_config_members().clone());
@@ -7597,6 +7635,7 @@ fn project_config_management(
                 body,
                 &fields,
                 project,
+                !state.stateless_refresh_tokens,
             ) else {
                 return rollback_blocking(error(400, "INVALID_ARGUMENT"));
             };
@@ -11114,6 +11153,10 @@ struct UpdatePlan {
     unlink: Vec<String>,
     /// `mfa.enrollments` (phone factors replace the current ones).
     phone_factors: Option<Vec<(String, Option<String>)>>,
+    /// An `mfa.enrollments` entry that carries both `phoneInfo` and `totpInfo`: production refused
+    /// it (AUTH-EDGES-OBS-20261117-01, b-admin-both), the official emulator reads it as a phone
+    /// factor.
+    mixed_factor_entry: bool,
     /// `deleteProvider: password` / `deleteAttribute: PASSWORD`: drop the password credential.
     clear_password: bool,
     /// `deleteProvider: password` / `deleteAttribute: EMAIL`: drop the email address.
@@ -11170,6 +11213,18 @@ fn parse_identity(v: &Value) -> Result<FederatedIdentity, JsonResponse> {
     // itself.
     identity.validate().map_err(|e| auth_error(&e))?;
     Ok(identity)
+}
+
+/// Whether an `mfa.enrollments` entry carries both `phoneInfo` and `totpInfo`.
+fn has_mixed_factor_entry(body: &Value) -> bool {
+    body.pointer("/mfa/enrollments")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("phoneInfo").is_some_and(|v| !v.is_null())
+                    && item.get("totpInfo").is_some_and(|v| !v.is_null())
+            })
+        })
 }
 
 /// Phone factors of `mfaInfo` / `mfa.enrollments` entries (`{phoneInfo, displayName}`).
@@ -11452,6 +11507,7 @@ fn parse_update(body: &Value, self_service: bool) -> Result<UpdatePlan, JsonResp
     };
     // `mfa` replaces every factor; without `enrollments` it clears them, as production does
     // (sandbox recording 2026-09-24, auth-mfa/admin-factors#admin-lookup-cleared).
+    let mixed_factor_entry = has_mixed_factor_entry(body);
     let phone_factors = match body.get("mfa") {
         None | Some(Value::Null) => None,
         Some(mfa) => match mfa.get("enrollments") {
@@ -11473,6 +11529,7 @@ fn parse_update(body: &Value, self_service: bool) -> Result<UpdatePlan, JsonResp
         link,
         unlink,
         phone_factors,
+        mixed_factor_entry,
         clear_password,
         clear_email,
     })
@@ -11788,6 +11845,13 @@ fn update(
         if let Err(e) = claims.check_size() {
             return auth_error(&AuthError::LimitExceeded(e));
         }
+    }
+    if plan.mixed_factor_entry && store.second_factor_rules_are_production() {
+        // The wording was not recorded; the status was.
+        return error(
+            400,
+            "an enrollment may carry phoneInfo or totpInfo, not both",
+        );
     }
     if let Some(factors) = &plan.phone_factors {
         if let Err(e) = store.check_phone_factors(&uid, factors) {
@@ -13880,10 +13944,12 @@ fn send_oob_code(
             if strict && store.tenant_id().is_none() && str_field(body, "continueUrl").is_none() {
                 return error(400, "MISSING_CONTINUE_URI");
             }
-            // Only the Admin route was observed; a client under improved email privacy is
-            // not told that an address belongs to a disabled account.
+            // Production refused a disabled owner's link request with `USER_DISABLED` on the
+            // Admin route (sandbox recording 2026-09-24) and on the client route under improved
+            // email privacy (AUTH-EDGES-OBS-20261117-01, el-signin-disabled); a known active and
+            // an unknown address keep the sent-mail answer.
             let owner = store.user_by_email(&email);
-            if strict && privileged && owner.is_some_and(|u| u.disabled) {
+            if strict && owner.is_some_and(|u| u.disabled) {
                 return error(400, "USER_DISABLED");
             }
             let uid = owner.map(|u| u.local_id.clone());

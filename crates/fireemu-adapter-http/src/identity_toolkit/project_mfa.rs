@@ -81,7 +81,11 @@ pub fn mfa_config_json(config: &MfaProjectConfig) -> Value {
     Value::Object(out)
 }
 
-fn state_member(value: Option<&Value>, field: String) -> Result<MfaConfigState, MfaConfigRefusal> {
+fn state_member(
+    value: Option<&Value>,
+    field: String,
+    strict: bool,
+) -> Result<MfaConfigState, MfaConfigRefusal> {
     match value {
         None | Some(Value::Null) => Ok(MfaConfigState::Disabled),
         Some(Value::String(name)) => match name.as_str() {
@@ -94,14 +98,49 @@ fn state_member(value: Option<&Value>, field: String) -> Result<MfaConfigState, 
                 value: other.to_owned(),
             }),
         },
+        // Strict: proto3 JSON also reads an enum by its number (production answered 200 to
+        // `state: 2`, AUTH-EDGES-OBS-20261117-01, mask-state-numeric).
+        Some(Value::Number(number)) if strict => match number.as_i64() {
+            Some(0 | 1) => Ok(MfaConfigState::Disabled),
+            Some(2) => Ok(MfaConfigState::Enabled),
+            Some(3) => Ok(MfaConfigState::Mandatory),
+            _ => Err(MfaConfigRefusal::Shape),
+        },
         Some(_) => Err(MfaConfigRefusal::Shape),
     }
+}
+
+/// The project's configuration after a PATCH masked `mfa.state` alone: the body's state, every
+/// other member kept (a masked leaf takes the body's leaf). Strict only (production answered
+/// 200 to this mask, AUTH-EDGES-OBS-20261117-01, mask-state).
+pub fn mfa_state_update(
+    current: &MfaProjectConfig,
+    body: &Value,
+) -> Result<MfaProjectConfig, MfaConfigRefusal> {
+    let state = state_member(
+        body.get("mfa").and_then(|mfa| mfa.get("state")),
+        "config.mfa.state".to_owned(),
+        true,
+    )?;
+    let mut next = current.clone();
+    next.state = state;
+    Ok(next)
 }
 
 /// A `mfa` member a PATCH sent, as a configuration, or production's refusal. A provider entry
 /// without `totpProviderConfig` is dropped, as production drops it (sandbox recording
 /// 2026-09-24).
 pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfigRefusal> {
+    mfa_config_from_json_in(value, false)
+}
+
+/// As [`mfa_config_from_json`]; `strict` also reads an enum by its number and an interval count
+/// sent as a decimal string, as proto3 JSON does and production's answer 200 showed
+/// (AUTH-EDGES-OBS-20261117-01, mask-state-numeric, mask-interval-string).
+pub fn mfa_config_from_json_in(
+    value: &Value,
+    strict: bool,
+) -> Result<MfaProjectConfig, MfaConfigRefusal> {
     let object = match value {
         Value::Null => return Ok(MfaProjectConfig::default()),
         Value::Object(object) => object,
@@ -115,7 +154,7 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
     }) {
         return Err(MfaConfigRefusal::Shape);
     }
-    let state = state_member(object.get("state"), "config.mfa.state".to_owned())?;
+    let state = state_member(object.get("state"), "config.mfa.state".to_owned(), strict)?;
     let phone_sms = match object.get("enabledProviders") {
         None | Some(Value::Null) => false,
         Some(Value::Array(providers)) => {
@@ -153,6 +192,7 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
                 let entry_state = state_member(
                     entry.get("state"),
                     format!("config.mfa.provider_configs[{index}].state"),
+                    strict,
                 )?;
                 let adjacent_intervals = match entry.get("totpProviderConfig") {
                     None | Some(Value::Null) => continue,
@@ -163,7 +203,15 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
                         match config.get("adjacentIntervals") {
                             None | Some(Value::Null) => 0,
                             Some(value) => {
-                                let n = value.as_i64().ok_or(MfaConfigRefusal::Shape)?;
+                                let n = value
+                                    .as_i64()
+                                    .or_else(|| {
+                                        value
+                                            .as_str()
+                                            .filter(|_| strict)
+                                            .and_then(|text| text.parse().ok())
+                                    })
+                                    .ok_or(MfaConfigRefusal::Shape)?;
                                 u8::try_from(n)
                                     .ok()
                                     .filter(|n| *n <= MAX_ADJACENT_INTERVALS)

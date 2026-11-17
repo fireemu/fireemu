@@ -401,6 +401,7 @@ fn seed_multi_tenancy_when(
         &body,
         &fields,
         project,
+        false,
     )
     .map_err(|()| "multiTenant.allowTenants is not a valid member".to_owned())?
     .unwrap_or_else(|| store.stored_config_members().clone());
