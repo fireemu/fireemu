@@ -58,7 +58,7 @@ fn a_listener_row_has_a_cyan_name_a_bold_address_and_a_dim_variable() {
     assert_eq!(
         paint_line("  auth (REST):      127.0.0.1:9099   FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099"),
         format!(
-            "  \x1b[36mauth (REST){RESET}:      \x1b[1m127.0.0.1:9099{RESET}   \x1b[2mFIREBASE_AUTH_EMULATOR_HOST{RESET}=127.0.0.1:9099"
+            "  \x1b[36mauth (REST){RESET}:      \x1b[1m127.0.0.1:9099{RESET}   FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099"
         )
     );
 }
@@ -119,21 +119,17 @@ fn ready_and_shutdown_lines() {
 }
 
 #[test]
-fn an_environment_assignment_keeps_its_value_free_of_escape_sequences() {
-    // Scripts read `NAME=value` up to the next space; the value never ends in a reset.
+fn an_environment_assignment_is_left_whole_and_plain() {
+    // Scripts read `NAME=value` with a literal pattern; no escape sequence may sit inside it.
     let painted = paint_line(
         "  storage (HTTP):   127.0.0.1:1   FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:1   STORAGE_EMULATOR_HOST=http://127.0.0.1:1",
     );
-    for name in ["FIREBASE_STORAGE_EMULATOR_HOST", "STORAGE_EMULATOR_HOST"] {
-        let name_at = painted.find(name).unwrap();
-        let at = name_at + painted[name_at..].find('=').unwrap() + 1;
-        let value: String = painted[at..]
-            .chars()
-            .take_while(|c| !c.is_whitespace())
-            .collect();
-        assert!(!value.contains('\x1b'), "{name}: {value:?}");
+    for token in [
+        "FIREBASE_STORAGE_EMULATOR_HOST=127.0.0.1:1",
+        "STORAGE_EMULATOR_HOST=http://127.0.0.1:1",
+    ] {
+        assert!(painted.contains(token), "{token}: {painted:?}");
     }
-    assert!(painted.ends_with("http://127.0.0.1:1"), "{painted:?}");
 }
 
 #[test]
@@ -190,17 +186,14 @@ proptest! {
     }
 
     #[test]
-    fn an_environment_value_never_holds_an_escape_sequence(
+    fn an_environment_assignment_is_never_split_by_an_escape_sequence(
         name in "[A-Z][A-Z0-9_]{2,12}",
         value in "[a-z0-9.:/]{1,24}",
         before in "[a-z]{0,6}",
     ) {
         let line = format!("  svc ({before}):  {name}={value}  (note)");
-        let painted = paint_line(&line);
-        let name_at = painted.find(&name).unwrap();
-        let at = name_at + painted[name_at..].find('=').unwrap() + 1;
-        let read: String = painted[at..].chars().take_while(|c| !c.is_whitespace()).collect();
-        prop_assert_eq!(read, value);
+        let token = format!("{name}={value}");
+        prop_assert!(paint_line(&line).contains(&token));
     }
 
     #[test]

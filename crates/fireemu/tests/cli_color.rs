@@ -114,10 +114,7 @@ fn a_force_variable_colours_the_banner_and_only_adds_escape_sequences() {
             coloured.contains("\x1b[36mfirestore (gRPC + REST)\x1b[0m:"),
             "{coloured}"
         );
-        assert!(
-            coloured.contains("\x1b[2mFIRESTORE_EMULATOR_HOST\x1b[0m="),
-            "{coloured}"
-        );
+        assert!(coloured.contains("\x1b[1m127.0.0.1:"), "{coloured}");
         assert!(
             coloured.contains("\n  \x1b[32mrunning command\x1b[0m\n"),
             "{coloured}"
@@ -225,14 +222,17 @@ fn a_failing_plan_keeps_its_diagnostics_plain_when_colour_is_forced() {
 }
 
 #[test]
-fn a_forced_banner_keeps_every_environment_value_free_of_escape_sequences() {
+fn a_forced_banner_keeps_every_environment_assignment_whole_and_plain() {
     let dir = scratch::Scratch::new("cli-color", "env-values");
     let stdout = text(&exec(&dir, &[("FORCE_COLOR", "1")]).stdout);
     assert!(stdout.contains(ESC), "{stdout}");
     for name in ["FIRESTORE_EMULATOR_HOST", "FIREBASE_AUTH_EMULATOR_HOST"] {
-        // The value is read up to the next space, as the npm launcher test and scripts do.
-        let name_at = stdout.find(name).unwrap();
-        let at = name_at + stdout[name_at..].find('=').unwrap() + 1;
+        // The literal pattern scripts and the npm launcher test use: `NAME=([^\s]+)`.
+        let at = stdout
+            .find(&format!("{name}="))
+            .unwrap_or_else(|| panic!("{name}= is split or missing: {stdout:?}"))
+            + name.len()
+            + 1;
         let value: String = stdout[at..]
             .chars()
             .take_while(|c| !c.is_whitespace())
@@ -241,6 +241,79 @@ fn a_forced_banner_keeps_every_environment_value_free_of_escape_sequences() {
             value.parse::<std::net::SocketAddr>().is_ok(),
             "{name}: {value:?}"
         );
+    }
+}
+
+/// `--plan` and `--json` are read by tools: with colour forced, nothing they print is coloured,
+/// diagnostics and configuration notes included.
+#[test]
+fn plan_and_json_runs_stay_plain_when_colour_is_forced() {
+    let dir = scratch::Scratch::new("cli-color", "plan-plain");
+    std::fs::write(
+        dir.join("fireemu.json"),
+        r#"{"schemaVersion":1,"bind":"127.0.0.1"}"#,
+    )
+    .unwrap();
+    let forced = [("FORCE_COLOR", "1"), ("CLICOLOR_FORCE", "1")];
+    let cases: [(&[&str], bool, bool); 5] = [
+        // (arguments, expected to fail, a configuration note is printed)
+        (
+            &["up", "--no-config-discovery", "--only", "hosting", "--plan"],
+            true,
+            false,
+        ),
+        (
+            &[
+                "up",
+                "--no-config-discovery",
+                "--only",
+                "hosting",
+                "--plan",
+                "--json",
+            ],
+            true,
+            false,
+        ),
+        (
+            &[
+                "up",
+                "--config",
+                "fireemu.json",
+                "--only",
+                "firestore",
+                "--plan",
+            ],
+            false,
+            true,
+        ),
+        (
+            &[
+                "up",
+                "--config",
+                "fireemu.json",
+                "--only",
+                "firestore",
+                "--plan",
+                "--json",
+            ],
+            false,
+            true,
+        ),
+        (&["exec", "--bogus", "--json"], true, false),
+    ];
+    for (args, fails, note) in cases {
+        let plain = fireemu(&dir, args, &[]);
+        assert_eq!(plain.status.success(), !fails, "{args:?}: {plain:?}");
+        let stderr = text(&plain.stderr);
+        assert!(
+            stderr.starts_with(if fails { "error: " } else { "note: " }) || (!fails && !note),
+            "{args:?}: {stderr}"
+        );
+        let coloured = fireemu(&dir, args, &forced);
+        assert_eq!(plain.stdout, coloured.stdout, "{args:?}");
+        assert_eq!(plain.stderr, coloured.stderr, "{args:?}");
+        assert_eq!(plain.status.code(), coloured.status.code(), "{args:?}");
+        assert!(!text(&coloured.stderr).contains('\x1b'), "{args:?}");
     }
 }
 

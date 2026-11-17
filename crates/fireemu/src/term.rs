@@ -29,11 +29,19 @@ use regex::Regex;
 /// The line as it is written to `stream`: painted when colour is on there, otherwise unchanged.
 /// `text` may hold several lines.
 pub(crate) fn paint(stream: Stream, text: &str) -> String {
-    if enabled(stream) {
+    if enabled(stream) && !PLAIN.load(std::sync::atomic::Ordering::Relaxed) {
         paint_always(text)
     } else {
         text.to_owned()
     }
+}
+
+static PLAIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turns colour off for this process, whatever the environment says. `main` calls it when the
+/// command line asks for a plan or JSON, whose text and diagnostics are read by tools.
+pub(crate) fn disable() {
+    PLAIN.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Paints every line of `text`, whatever the environment says.
@@ -136,8 +144,7 @@ fn paint_row(label: &str, gap: &str, rest: &str) -> String {
     format!("{}:{gap}{rest}", wrap(CYAN, label))
 }
 
-/// Bold for addresses and URLs, dim for the names of environment variable assignments (never
-/// their values) and for remarks in
+/// Bold for addresses and URLs, dim for remarks in
 /// parentheses.
 fn paint_tokens(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
@@ -146,13 +153,10 @@ fn paint_tokens(text: &str) -> String {
         let whole = found.get(0).expect("whole match");
         out.push_str(&text[last..whole.start()]);
         if found.name("env").is_some() {
-            // `NAME=value`: only the name is styled, and the reset comes before the `=`, so the text after
-            // it is the plain value. The value is read by scripts and tests
-            // (`FIREBASE_AUTH_EMULATOR_HOST=([^\s]+)`) and must not end in an escape sequence.
-            let text = whole.as_str();
-            let (name, value) = text.split_at(text.find('=').unwrap_or(text.len()));
-            out.push_str(&wrap(DIM, name));
-            out.push_str(value);
+            // `NAME=value` is left whole and plain: scripts read it with patterns such as
+            // `FIREBASE_AUTH_EMULATOR_HOST=([^\s]+)`, which an escape sequence anywhere in the
+            // token would break.
+            out.push_str(whole.as_str());
         } else {
             let style = if found.name("url").is_some() || found.name("addr").is_some() {
                 BOLD

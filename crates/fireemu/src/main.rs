@@ -302,6 +302,15 @@ fn runtime_thread_counts(
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A plan and JSON are read by tools: nothing this process prints, diagnostics included, is
+    // coloured (the arguments after `--` belong to the command `exec` runs).
+    if args
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .any(|argument| matches!(argument.as_str(), "--plan" | "--json"))
+    {
+        term::disable();
+    }
     if let Some(code) = help_command(&args) {
         return code;
     }
