@@ -8,7 +8,11 @@ import {
   verifyProductionAdmission,
 } from "./fs-data-write-admission.mjs";
 import {
+  ownerRowParent,
+  recordBracketProduction,
   prepareSandboxCorpus,
+  requireBracketArguments,
+  verifyBracketSendGates,
   attemptEstimateFor,
   bracketGroupCorpora,
   bracketRequestBound,
@@ -443,4 +447,332 @@ test("an attempt reservation counts only under the new task for the new mode", (
     });
   assert.ok(verify([packet, attempt("FS-WRITE-LIMITS-SANDBOX")]).attempt);
   assert.throws(() => verify([packet, attempt("FS-DATA-WRITE-SANDBOX")]), /attempt reservation/);
+});
+
+// ---- the provider-state refusal and the owner row ----
+
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  checkProviderStateFiles,
+  expectedComposites,
+  expectedProviderState,
+  GCLOUD_COMMANDS,
+  providerStateDigest,
+  providerStateProblems,
+} from "./fs-write-limits-provider-state.mjs";
+
+const DB = "projects/fireemu-oracle-sbx/databases/(default)";
+const committedIndexes = JSON.parse(
+  readFileSync(new URL("../firestore.indexes.json", import.meta.url), "utf8"),
+).indexes;
+
+function goodObservation() {
+  return {
+    composite: committedIndexes.map((index, number) => ({
+      name: `${DB}/collectionGroups/${index.collectionGroup}/indexes/id${number}`,
+      queryScope: index.queryScope,
+      fields: structuredClone(index.fields),
+      state: "READY",
+    })),
+    fields: [
+      {
+        name: `${DB}/collectionGroups/items/fields/n`,
+        indexConfig: {
+          usesAncestorConfig: false,
+          indexes: [
+            {
+              queryScope: "COLLECTION_GROUP",
+              fields: [{ fieldPath: "n", order: "ASCENDING" }],
+              state: "READY",
+            },
+          ],
+        },
+      },
+      {
+        name: `${DB}/collectionGroups/pk/fields/*`,
+        indexConfig: { usesAncestorConfig: false, indexes: [] },
+      },
+    ],
+    database: {
+      name: DB,
+      type: "FIRESTORE_NATIVE",
+      locationId: "us-central1",
+      concurrencyMode: "PESSIMISTIC",
+      databaseEdition: "STANDARD",
+    },
+  };
+}
+
+test("the faithful observation passes, and so does one without a database edition", () => {
+  assert.deepEqual(providerStateProblems(goodObservation()), []);
+  const old = goodObservation();
+  delete old.database.databaseEdition;
+  assert.deepEqual(providerStateProblems(old), []);
+  assert.equal(expectedComposites().length, committedIndexes.length);
+  assert.match(providerStateDigest(), /^[0-9a-f]{64}$/);
+  assert.deepEqual(expectedProviderState().overrides["items/n"], [
+    { scope: "COLLECTION_GROUP", fields: "n:ASCENDING" },
+  ]);
+});
+
+test("each way the sandbox can differ from the judges' assumption is named and refused", () => {
+  const drift = (mutate) => {
+    const observation = goodObservation();
+    mutate(observation);
+    return providerStateProblems(observation).join("\n");
+  };
+  assert.match(
+    drift((o) => o.composite.pop()),
+    /composite index missing/,
+  );
+  assert.match(
+    drift((o) =>
+      o.composite.push({
+        name: `${DB}/collectionGroups/items/indexes/x`,
+        queryScope: "COLLECTION",
+        fields: [{ fieldPath: "n", order: "ASCENDING" }],
+        state: "READY",
+      }),
+    ),
+    /unexpected composite index: items\|COLLECTION\|n:ASCENDING/,
+  );
+  assert.match(
+    drift((o) => (o.composite.find((i) => i.name.includes("/flt/")).state = "CREATING")),
+    /composite index on flt is CREATING/,
+  );
+  assert.match(
+    drift(
+      (o) => (o.composite.find((i) => i.name.includes("/flt/")).fields[1].order = "DESCENDING"),
+    ),
+    /composite index missing/,
+  );
+  assert.match(
+    drift((o) => o.fields.shift()),
+    /field override missing: items\/n/,
+  );
+  assert.match(
+    drift((o) =>
+      o.fields[0].indexConfig.indexes.push({
+        queryScope: "COLLECTION",
+        fields: [{ fieldPath: "n", order: "DESCENDING" }],
+      }),
+    ),
+    /field override items\/n is/,
+  );
+  assert.match(
+    drift((o) => (o.fields[0].indexConfig.indexes[0].queryScope = "COLLECTION")),
+    /field override items\/n is/,
+  );
+  assert.match(
+    drift((o) =>
+      o.fields.push({
+        name: `${DB}/collectionGroups/flt/fields/s`,
+        indexConfig: { usesAncestorConfig: false, indexes: [] },
+      }),
+    ),
+    /unexpected field override: flt\/s/,
+  );
+  assert.match(
+    drift((o) =>
+      o.fields.push({
+        name: `${DB}/collectionGroups/wlbase64/fields/*`,
+        indexConfig: { usesAncestorConfig: false, indexes: [] },
+      }),
+    ),
+    /unexpected field override: wlbase64\/\*/,
+  );
+  assert.match(
+    drift((o) => (o.database.type = "DATASTORE_MODE")),
+    /database type is DATASTORE_MODE/,
+  );
+  assert.match(
+    drift((o) => (o.database.concurrencyMode = "OPTIMISTIC")),
+    /concurrency mode is OPTIMISTIC/,
+  );
+  assert.match(
+    drift((o) => (o.database.locationId = "nam5")),
+    /location is nam5/,
+  );
+  assert.match(
+    drift((o) => (o.database.databaseEdition = "ENTERPRISE")),
+    /edition is ENTERPRISE/,
+  );
+  assert.match(
+    drift((o) => (o.database.name = "projects/other/databases/(default)")),
+    /database description is not/,
+  );
+  assert.match(
+    drift((o) => (o.composite = {})),
+    /composite list is not a JSON array/,
+  );
+  assert.match(
+    drift((o) => (o.fields = null)),
+    /field list is not a JSON array/,
+  );
+});
+
+test("an override on a collection the judges do not use is ignored, one that inherits is not an override", () => {
+  const o = goodObservation();
+  o.fields.push({
+    name: `${DB}/collectionGroups/other/fields/z`,
+    indexConfig: { usesAncestorConfig: false, indexes: [] },
+  });
+  o.fields.push({
+    name: `${DB}/collectionGroups/flt/fields/s`,
+    indexConfig: { usesAncestorConfig: true, indexes: [] },
+  });
+  assert.deepEqual(providerStateProblems(o), []);
+});
+
+test("the files the coordinator saves are read, checked and digested", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fswl-ps-"));
+  const write = (name, value) => {
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify(value));
+    return path;
+  };
+  const o = goodObservation();
+  const paths = {
+    composite: write("c.json", o.composite),
+    fields: write("f.json", o.fields),
+    database: write("d.json", o.database),
+  };
+  const ok = checkProviderStateFiles(paths);
+  assert.deepEqual(ok.problems, []);
+  assert.deepEqual(Object.keys(ok.sha256), ["composite", "fields", "database"]);
+  o.database.concurrencyMode = "OPTIMISTIC";
+  paths.database = write("d2.json", o.database);
+  assert.equal(checkProviderStateFiles(paths).problems.length, 1);
+  assert.match(GCLOUD_COMMANDS.composite, /indexes composite list --project fireemu-oracle-sbx/);
+});
+
+test("the parent needs the three observation files for writelimits and refuses them elsewhere", () => {
+  const base = [
+    "--nonce",
+    "a",
+    "--review",
+    "r",
+    "--review-sha256",
+    "0".repeat(64),
+    "--packet",
+    "p",
+    "--packet-sha256",
+    "1".repeat(64),
+  ];
+  const extra = [
+    "--composite-indexes",
+    "c",
+    "--field-overrides",
+    "f",
+    "--database-description",
+    "d",
+  ];
+  assert.deepEqual(requireBracketArguments([...base, ...extra], "writelimits").providerState, {
+    composite: "c",
+    fields: "f",
+    database: "d",
+  });
+  assert.throws(() => requireBracketArguments(base, "writelimits"), /--composite-indexes/);
+  assert.throws(
+    () => requireBracketArguments([...base, ...extra.slice(0, 4)], "writelimits"),
+    /--database-description/,
+  );
+  assert.throws(() => requireBracketArguments([...base, ...extra], "bracket"), /requires --nonce/);
+  assert.throws(
+    () => requireBracketArguments([...base, ...extra, "--composite-indexes", "x"], "writelimits"),
+    /requires/,
+  );
+  assert.equal("providerState" in requireBracketArguments(base, "bracket"), false);
+});
+
+test("the plan pins the provider-state expectation for writelimits only", async () => {
+  const withState = productionAdmissionPlan("writelimits", {
+    sourceCorpusDigest: sha("c"),
+    recordingCorpus,
+  });
+  assert.equal(withState.providerStateSha256, providerStateDigest());
+  const old = (await prepareSandboxCorpus()).corpus;
+  const selection = selectBracketRecipes(old, "bracket");
+  assert.equal("providerStateSha256" in productionAdmissionPlan("bracket", selection), false);
+});
+
+const gatePins = (parent) => ({
+  parent,
+  packetId: "fs-data-write-writelimits-aaaa",
+  nonce: "a".repeat(24),
+  packetSha256: "1".repeat(64),
+  sourceCommit: "b".repeat(40),
+  planSha256: "c".repeat(64),
+  packetPath: "docs.local/runs/fs-write-limits/v2-snapshot/PACKET-v2.md",
+});
+const ownerRow = (parent, approver = "オーナー（台帳2568、Claude経由）") => {
+  const pins = gatePins(parent);
+  return `- 2026-11-17 | ${parent} | packetSha256=${pins.packetSha256}; sourceCommit=${pins.sourceCommit}; planSha256=${pins.planSha256}; nonce=${pins.nonce} | ${approver} | ${pins.packetPath}\n`;
+};
+const NOW = Date.parse("2026-11-18T00:00:00Z");
+
+test("writelimits is approved by a row naming its own parent and an owner approver, and by nothing looser", () => {
+  assert.equal(ownerRowParent("writelimits"), "FS-WRITE-LIMITS-SANDBOX");
+  assert.equal(ownerRowParent("bracket"), "FS-DATA-WRITE");
+  const gate = (decisions, pins) => verifyBracketSendGates({ rows: [], now: NOW, decisions, pins });
+  const parent = "FS-WRITE-LIMITS-SANDBOX";
+  assert.deepEqual(gate(ownerRow(parent), gatePins(parent)), { lastActivity: null });
+  assert.throws(() => gate(ownerRow("FS-DATA-WRITE"), gatePins(parent)), /approval row/);
+  assert.throws(() => gate(ownerRow(parent, "調整役"), gatePins(parent)), /approval row/);
+  assert.throws(() => gate(ownerRow(parent) + ownerRow(parent), gatePins(parent)), /approval row/);
+  assert.throws(
+    () =>
+      gate(
+        ownerRow(parent).replace("nonce=" + "a".repeat(24), "nonce=" + "d".repeat(24)),
+        gatePins(parent),
+      ),
+    /approval row/,
+  );
+  assert.throws(
+    () => gate(ownerRow(parent).replace("PACKET-v2", "PACKET-v1"), gatePins(parent)),
+    /approval row/,
+  );
+  // The older modes keep their parent: a row for the new parent does not approve them.
+  assert.deepEqual(gate(ownerRow("FS-DATA-WRITE"), gatePins(undefined)), { lastActivity: null });
+  assert.throws(() => gate(ownerRow(parent), gatePins(undefined)), /approval row/);
+});
+
+test("the parent refuses to start, before any credential or ledger read, when the sandbox differs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "fswl-parent-"));
+  const o = goodObservation();
+  o.fields.shift();
+  const save = (name, value) => {
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify(value));
+    return path;
+  };
+  const args = [
+    "--nonce",
+    "a".repeat(24),
+    "--review",
+    "r",
+    "--review-sha256",
+    "0".repeat(64),
+    "--packet",
+    "p",
+    "--packet-sha256",
+    "1".repeat(64),
+    "--composite-indexes",
+    save("c.json", o.composite),
+    "--field-overrides",
+    save("f.json", o.fields),
+    "--database-description",
+    save("d.json", o.database),
+  ];
+  await assert.rejects(
+    recordBracketProduction(args, "writelimits"),
+    /the sandbox differs from what the judges assume: field override missing: items\/n/,
+  );
+  await assert.rejects(
+    recordBracketProduction(args.slice(0, -6), "writelimits"),
+    /--database-description/,
+  );
 });

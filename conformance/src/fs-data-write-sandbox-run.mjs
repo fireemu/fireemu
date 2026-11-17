@@ -30,6 +30,7 @@ import {
   validateLiveStreamSubset,
   validateStreamRecipes,
 } from "./firestore-probe/stream-session.mjs";
+import { checkProviderStateFiles, providerStateDigest } from "./fs-write-limits-provider-state.mjs";
 import { assertNoProxyEnvironment } from "./firestore-probe/webchannel-request-bytes.mjs";
 import {
   legacyManagedClearNames,
@@ -561,6 +562,7 @@ export function productionAdmissionPlan(mode, selection) {
     mode,
     project: SANDBOX_PROJECT,
     database: "(default)",
+    ...(mode === "writelimits" ? { providerStateSha256: providerStateDigest() } : {}),
     sourceCorpusSha256: selection.sourceCorpusDigest,
     recordingCorpusSha256: sha256(JSON.stringify(recordingCorpus)),
     restIds: recordingCorpus.restPrograms.map((program) => program.id),
@@ -2522,7 +2524,7 @@ export function verifyBracketSendGates({ rows, now, decisions, pins }) {
     return (
       columns.length === 5 &&
       /^\d{4}-\d{2}-\d{2}$/.test(columns[0]) &&
-      columns[1] === "FS-DATA-WRITE" &&
+      columns[1] === (pins.parent ?? "FS-DATA-WRITE") &&
       required.every((token) => tokens.has(token)) &&
       OWNER_APPROVER.test(columns[3]) &&
       columns[4] === pins.packetPath
@@ -2565,12 +2567,20 @@ export async function releaseSharedLedgerLock(held) {
 }
 
 const BRACKET_FLAGS = ["--nonce", "--review", "--review-sha256", "--packet", "--packet-sha256"];
+// The read-only observations of the sandbox that `writelimits` judges assume; the coordinator
+// saves each command's JSON output (packet section 5) and passes the paths.
+const PROVIDER_STATE_FLAGS = ["--composite-indexes", "--field-overrides", "--database-description"];
 
-export function requireBracketArguments(args = []) {
+/** The owner-decisions parent a mode's approval row names. */
+export const ownerRowParent = (mode) => TASK_BY_MODE[mode]?.taskId ?? "FS-DATA-WRITE";
+
+export function requireBracketArguments(args = [], mode = undefined) {
   const values = {};
+  const flags =
+    mode === "writelimits" ? [...BRACKET_FLAGS, ...PROVIDER_STATE_FLAGS] : BRACKET_FLAGS;
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!BRACKET_FLAGS.includes(flag) || args[index + 1] === undefined || flag in values) {
+    if (!flags.includes(flag) || args[index + 1] === undefined || flag in values) {
       values.invalid = true;
       break;
     }
@@ -2578,15 +2588,22 @@ export function requireBracketArguments(args = []) {
   }
   if (
     values.invalid ||
-    BRACKET_FLAGS.some((flag) => !values[flag]) ||
+    flags.some((flag) => !values[flag]) ||
     !/^[a-f0-9]{64}$/.test(values["--packet-sha256"]) ||
     !/^[a-f0-9]{64}$/.test(values["--review-sha256"])
   ) {
-    throw new Error(
-      "record-bracket requires --nonce, --review, --review-sha256, --packet and --packet-sha256",
-    );
+    throw new Error(`record-bracket requires ${flags.join(", ")}`);
   }
   return {
+    ...(mode === "writelimits"
+      ? {
+          providerState: {
+            composite: values["--composite-indexes"],
+            fields: values["--field-overrides"],
+            database: values["--database-description"],
+          },
+        }
+      : {}),
     nonce: values["--nonce"],
     review: values["--review"],
     reviewSha256: values["--review-sha256"],
@@ -2649,7 +2666,18 @@ export function completeBracketGroups(recordingCorpus, setName, rest, stream) {
 export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   const set = recordingSet(mode);
   const estimate = set.attemptEstimateUsd;
-  const pins = requireBracketArguments(admissionArgs);
+  const pins = requireBracketArguments(admissionArgs, mode);
+  // The judges assume the sandbox's indexes, overrides and database; refuse before any
+  // credential is acquired when the coordinator's read-only observation differs.
+  let providerState;
+  if (mode === "writelimits") {
+    providerState = checkProviderStateFiles(pins.providerState);
+    if (providerState.problems.length > 0) {
+      throw new Error(
+        `the sandbox differs from what the judges assume: ${providerState.problems.join("; ")}`,
+      );
+    }
+  }
   assertNoProxyEnvironment(process.env);
   assertNoAmbientProductionToken(process.env);
   const gitCommonDir = (
@@ -2675,6 +2703,7 @@ export async function recordBracketProduction(admissionArgs, mode = "bracket") {
     throw new Error("the bracket packet differs from its pinned SHA-256");
   }
   const gatePins = {
+    parent: ownerRowParent(mode),
     packetId: admissionPacketId(mode, admission.nonce),
     nonce: admission.nonce,
     packetSha256: pins.packetSha256,
@@ -2686,6 +2715,13 @@ export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   const generatedDir = await mkdtemp(join(RUNS_DIR, `fs-data-write-${mode}-`));
   const corpusIn = join(generatedDir, `${mode}-corpus.json`);
   await writeFile(corpusIn, JSON.stringify(recordingCorpus));
+  if (providerState) {
+    await writeFile(
+      join(generatedDir, "provider-state-check.json"),
+      `${JSON.stringify({ sha256: providerState.sha256, problems: providerState.problems })}\n`,
+      { mode: 0o600 },
+    );
+  }
   // Held from before the first reservation until the last ledger row; kept if anything was
   // sent and the recording failed, so no other lane starts before the review.
   const sharedLock = await acquireSharedLedgerLock(`${ledgerPath}.lock`, gatePins.packetId);
@@ -3174,6 +3210,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     await recordBracketProduction(process.argv.slice(3), "followup");
   } else if (process.argv[2] === "record-writelimits") {
     await recordBracketProduction(process.argv.slice(3), "writelimits");
+  } else if (process.argv[2] === "check-provider-state") {
+    const args = process.argv.slice(3);
+    const flag = (name) => args[args.indexOf(name) + 1];
+    const { problems, sha256: digests } = checkProviderStateFiles({
+      composite: flag("--composite-indexes"),
+      fields: flag("--field-overrides"),
+      database: flag("--database-description"),
+    });
+    process.stdout.write(`${JSON.stringify({ problems, sha256: digests })}\n`);
+    process.exitCode = problems.length === 0 ? 0 : 1;
   } else if (process.argv[2] === "plan") {
     await printProductionPlan(process.argv[3]);
   } else if (process.argv[2] === "reserve-admission") {
