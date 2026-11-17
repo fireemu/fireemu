@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -38,11 +39,12 @@ class Clock:
 class World:
     """A small Identity Toolkit that answers the shapes the stage sends; no network, no secrets."""
 
-    def __init__(self, clock=None, *, fault=None, pending_ttl=300, quota_after=5, below_scalar='ignore', reset_target='issue', mfa_start_status=200, admin_duplicates=True, after=None):
+    def __init__(self, clock=None, *, fault=None, pending_ttl=300, quota_after=5, below_scalar='ignore', reset_target='issue', mfa_start_status=200, admin_duplicates=True, after=None, precedence='refuse'):
         self.clock = clock or Clock()
         self.fault, self.pending_ttl, self.quota_after = fault, pending_ttl, quota_after
         self.below_scalar, self.reset_target, self.mfa_start_status, self.admin_duplicates = below_scalar, reset_target, mfa_start_status, admin_duplicates
         self.after = after or {}
+        self.precedence = precedence
         self.accounts, self.codes, self.pendings, self.sessions, self.wrong, self.tokens = {}, {}, {}, {}, {}, {}
         self.sent, self.bodies, self.seq = [], {}, 0
         self.config = {'signIn': {'email': {'enabled': True, 'passwordRequired': True}, 'phoneNumber': {'enabled': True, 'testPhoneNumbers': {n: edges.TEST_PHONE_CODE for n in edges.TEST_PHONES}}}, 'authorizedDomains': [edges.DOMAIN], 'mfa': {'state': 'DISABLED'}, 'notification': {'defaultLocale': 'en'}}
@@ -262,7 +264,11 @@ class World:
                     p['totpProviderConfig']['adjacentIntervals'] = int(p['totpProviderConfig']['adjacentIntervals'])
             else:
                 config['mfa']['state'] = value['state']
+        elif mask == 'mfa.state,mobileLinksConfig.domain' and self.precedence == 'apply':
+            config['mobileLinksConfig'] = {'domain': 'CUSTOM_DOMAIN'}
         elif mask == 'notification.defaultLocale.a':
+            if self.below_scalar == 'apply':
+                config['notification']['defaultLocale'] = 'zz'
             return self.err('INVALID_ARGUMENT') if self.below_scalar == 'refuse' else (200, copy.deepcopy(config))
         else:
             return self.err('INVALID_ARGUMENT')
@@ -371,9 +377,9 @@ def test_addresses_are_example_invalid_and_duplicates_share_one_address():
     assert plan['ownedAccounts']['dupC']['email'] == plan['ownedAccounts']['dupD']['email']
 
 
-def test_v31_has_no_credential_rows_no_signing_route_and_no_premade_uid():
+def test_no_credential_rows_no_signing_route_and_no_premade_uid():
     plan = edges.manifest(NONCE)
-    assert plan['contract'] == 'auth-edges-v3.1'
+    assert plan['contract'] == 'auth-edges-v3.2'
     assert 'cred' not in plan['ownedAccounts'] and 'cred' not in edges.ROLES
     ids = [r['id'] for r in plan['stages']]
     assert not [i for i in ids if i.startswith(('sign-', 'cred-'))]
@@ -382,7 +388,7 @@ def test_v31_has_no_credential_rows_no_signing_route_and_no_premade_uid():
     assert not any(f.startswith('cred-') for f in edges.FAMILIES)
     assert not hasattr(edges, 'SIGN_JWT') and not hasattr(edges, 'SIGNER')
     assert plan['budget']['observationRequests'] == len(ids) == 154
-    assert plan['budget']['recoveryRequests'] == 51 and plan['budget']['totalRequests'] == 205
+    assert plan['budget']['recoveryRequests'] == 55 and plan['budget']['totalRequests'] == 209
 
 
 # ---- a whole stage --------------------------------------------------------------------------
@@ -993,7 +999,10 @@ MFA = lambda state, intervals=5, provider='ENABLED': {'mfa': {'state': state, 'p
     ('mfa', MFA('ENABLED'), True, False),
     ('mfa', MFA('ENABLED', intervals=4), False, False),
     ('mfa', MFA('ENABLED', provider='DISABLED'), False, False),
-    ('mfa', MFA('DISABLED', provider='DISABLED'), False, True),
+    ('mfa', MFA('DISABLED', provider='DISABLED'), False, False),
+    ('mfa', {'mfa': {'state': 'DISABLED', 'enabledProviders': ['PHONE_SMS']}}, False, False),
+    ('mfa', {'mfa': None}, False, True),
+    ('mfa', {'mfa': {}}, False, False),
     ('mfa', {'mfa': {'state': 'ENABLED'}}, False, False),
     ('mfa', {'mfa': {'state': 'DISABLED'}}, False, True),
     ('mfa', {'mfa': {'state': 'MANDATORY'}}, False, False),
@@ -1337,9 +1346,9 @@ def test_read_baseline_prints_booleans_and_refuses_a_mismatch(monkeypatch, capsy
     out = capsys.readouterr().out
     if answer[1]:
         assert out.count(': ok') + out.count(': MISMATCH') == 6
+        assert len(re.findall(r'(?m)^digest-(whole|mfa|mobileLinksConfig|notification): [0-9a-f]{64}$', out)) == 4
         assert (f'{drift}: MISMATCH' in out) == bool(drift)
-    import re
-    pattern = r'A\d+-[a-z0-9-]+: (ok|MISMATCH)' if answer[1] else r'config-read: unknown'
+    pattern = r'(A\d+-[a-z0-9-]+: (ok|MISMATCH))|(digest-[A-Za-z]+: [0-9a-f]{64})' if answer[1] else r'config-read: unknown'
     assert all(re.fullmatch(pattern, line) for line in out.splitlines()) and out.strip()
 
 
@@ -1360,3 +1369,339 @@ def test_stage_entry_requires_a_nonce(monkeypatch):
     monkeypatch.setattr(sys, 'argv', ['edges.py', '--production'])
     with pytest.raises(SystemExit):
         edges.main()
+
+
+# ---- v3.2: exact baseline, whole-config digests, restore edge cases ----------------------------------
+
+@pytest.mark.parametrize('mfa,ok', [
+    ({'state': 'DISABLED'}, True),
+    (None, True),
+    ('absent', True),
+    ({}, False),
+    ({'state': 'DISABLED', 'providerConfigs': [{'state': 'DISABLED', 'totpProviderConfig': {'adjacentIntervals': 3}}]}, False),
+    ({'state': 'DISABLED', 'enabledProviders': ['PHONE_SMS']}, False),
+    ({'state': 'DISABLED', 'enabledProviders': []}, False),
+    ({'state': 'ENABLED'}, False),
+])
+def test_baseline_mfa_must_be_exactly_disabled_or_absent(mfa, ok):
+    config = World().config
+    if mfa == 'absent':
+        config.pop('mfa')
+    else:
+        config['mfa'] = mfa
+    assert edges.baseline_findings(config)['A1-mfa-disabled'] is ok
+    if not ok:
+        with pytest.raises(ValueError, match='A1-mfa-disabled'):
+            edges.check_baseline(config)
+
+
+def test_config_digests_cover_the_whole_config_and_its_three_members():
+    config = World().config
+    config['mobileLinksConfig'] = {'domain': 'FIREBASE_DYNAMIC_LINK_DOMAIN'}
+    base = edges.config_digests(config)
+    assert set(base) == {'whole', 'mfa', 'mobileLinksConfig', 'notification'}
+    assert all(re.fullmatch('[0-9a-f]{64}', v) for v in base.values())
+    assert edges.config_digests(json.loads(json.dumps(config, sort_keys=True))) == base
+    changes = {
+        'mfa': lambda c: c.update(mfa={'state': 'ENABLED'}),
+        'mobileLinksConfig': lambda c: c['mobileLinksConfig'].update(domain='CUSTOM_DOMAIN'),
+        'notification': lambda c: c['notification'].update(defaultLocale='ja'),
+    }
+    for member, change in changes.items():
+        changed = copy.deepcopy(config)
+        change(changed)
+        digests = edges.config_digests(changed)
+        assert digests['whole'] != base['whole'] and digests[member] != base[member]
+        assert edges.differing_members(base, digests) == ['whole', member]
+    other = copy.deepcopy(config)
+    other['authorizedDomains'].append('x.example.invalid')
+    assert [m for m in edges.differing_members(base, edges.config_digests(other))] == ['whole']
+    assert edges.differing_members(base, base) == []
+
+
+def test_digest_treats_only_the_protobuf_omissions_as_equal():
+    config = World().config
+    base = edges.config_digests(config)
+    absent_mfa = copy.deepcopy(config)
+    absent_mfa.pop('mfa')
+    assert edges.config_digests(absent_mfa) == base
+    for spelling in (False, None):
+        dup = copy.deepcopy(config)
+        dup['signIn']['allowDuplicateEmails'] = spelling
+        assert edges.config_digests(dup) == base
+    dup = copy.deepcopy(config)
+    dup['signIn']['allowDuplicateEmails'] = True
+    assert edges.config_digests(dup)['whole'] != base['whole']
+    required = copy.deepcopy(config)
+    required['signIn']['email']['passwordRequired'] = False
+    assert edges.config_digests(required)['whole'] != base['whole']
+
+
+def test_baseline_digests_are_recorded_before_the_first_write(tmp_path):
+    world, result = run(tmp_path)
+    row = stage(result, 'config-baseline')
+    assert row['configDigests'] == edges.config_digests(World().config)
+    journal = [json.loads(l) for l in (tmp_path / 'run' / 'ownership.jsonl').read_text().splitlines()]
+    index = next(i for i, e in enumerate(journal) if e['kind'] == 'config-baseline')
+    assert journal[index]['digests'] == row['configDigests']
+    assert index < next(i for i, e in enumerate(journal) if e.get('id') == 'dup-enable')
+    assert result['configEqualsBaseline'] is True and result['cleanupComplete']
+
+
+def test_cleanup_reads_the_whole_config_back_and_compares_it(tmp_path):
+    world, result = run(tmp_path)
+    final = [r for r in result['recovery'] if r['id'].startswith('recover-config-final-')]
+    assert [r['id'] for r in final] == ['recover-config-final-0'] and final[0]['equalsBaseline'] is True
+    order = [r['id'] for r in result['recovery'] if 'status' in r]
+    assert order.index('recover-emaillink-readback-0') < order.index('recover-config-final-0')
+    assert 'recover-config-final-1' not in world.sent
+
+
+@pytest.mark.parametrize('option,changed', [({'precedence': 'apply'}, 'mobileLinksConfig'), ({'below_scalar': 'apply'}, 'notification')])
+def test_a_probe_that_changed_something_outside_the_toggles_is_needs_recovery(tmp_path, option, changed):
+    world, result = run(tmp_path, World(**option))
+    final = [r for r in result['recovery'] if r['id'].startswith('recover-config-final-')]
+    assert len(final) == 4 and all(r['equalsBaseline'] is False and changed in r['differs'] for r in final)
+    assert result['configEqualsBaseline'] is False and not result['cleanupComplete']
+    assert result['recordingComplete']
+    journal = [json.loads(l) for l in (tmp_path / 'run' / 'ownership.jsonl').read_text().splitlines()]
+    assert {'kind': 'recovery-required', 'reason': 'config-differs-from-baseline', 'members': ['whole', changed]} in journal
+
+
+def test_final_read_retries_until_it_matches_or_the_slots_end(tmp_path):
+    world = World()
+    seen = []
+    def send(row, body):
+        answer = world.send_stage(row, body)
+        if row['id'] == 'recover-config-final-0':
+            answer[1]['notification']['defaultLocale'] = 'lagging'
+        return answer
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    assert result['configEqualsBaseline'] is True and result['cleanupComplete']
+    assert 'recover-config-final-1' in world.sent and 'recover-config-final-2' not in world.sent
+
+
+def test_no_final_read_without_a_recorded_baseline(tmp_path):
+    world = World()
+    world.config['mfa'] = {'state': 'DISABLED', 'providerConfigs': [{'state': 'DISABLED'}]}
+    world, result = run(tmp_path, world)
+    assert not any(x.startswith('recover-config-final') for x in world.sent)
+    assert result['configEqualsBaseline'] is None and result['cleanupComplete']
+
+
+def test_recovery_entry_compares_against_the_journaled_baseline(tmp_path):
+    world, first = run(tmp_path, World(fault='delete'))
+    world.fault = None
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'again', send=world.send_stage, sleep=lambda _: None, recovery_journal=tmp_path / 'run' / 'ownership.jsonl')
+    assert result['configEqualsBaseline'] is True and result['cleanupComplete']
+    world2, _ = run(tmp_path / 'b', World(fault='delete', precedence='apply'))
+    world2.fault = None
+    again = edges.collect(nonce=NONCE, output=tmp_path / 'b2', send=world2.send_stage, sleep=lambda _: None, recovery_journal=tmp_path / 'b' / 'run' / 'ownership.jsonl')
+    assert again['configEqualsBaseline'] is False and not again['cleanupComplete']
+
+
+@pytest.mark.parametrize('toggle', ['mfa', 'dup', 'emaillink'])
+@pytest.mark.parametrize('applied', [True, False])
+def test_a_lost_restore_acknowledgement_is_reported_and_read_back(tmp_path, toggle, applied):
+    world = World()
+    target = f'recover-{toggle}-restore'
+    def send(row, body):
+        if row['id'] == target:
+            if applied:
+                world.send_stage(row, body)
+            raise TimeoutError('acknowledgement lost')
+        return world.send_stage(row, body)
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    rows = {r['id']: r for r in result['recovery']}
+    assert rows[target]['failure'] == 'TimeoutError'
+    assert not result['cleanupComplete']
+    journal = [json.loads(l) for l in (tmp_path / 'run' / 'ownership.jsonl').read_text().splitlines()]
+    unconfirmed = {'kind': 'recovery-required', 'reason': 'config-restore-unconfirmed', 'toggle': toggle}
+    if applied:
+        assert rows[f'recover-{toggle}-readback-0']['restored'] is True
+        assert unconfirmed not in journal
+        assert edges.toggle_restored(toggle, world.config)
+    else:
+        assert all(f'recover-{toggle}-readback-{i}' in rows for i in range(8))
+        assert not any(rows[f'recover-{toggle}-readback-{i}'].get('restored') for i in range(8))
+        assert unconfirmed in journal
+        assert not edges.toggle_restored(toggle, world.config)
+    others = [t for t in edges.TOGGLES if t != toggle]
+    assert all(edges.toggle_restored(t, world.config) for t in others)
+    assert f'recover-{toggle}-restore' in world.sent or not applied
+
+
+def test_a_failed_restore_read_back_still_tries_the_remaining_slots(tmp_path):
+    world = World()
+    def send(row, body):
+        if row['id'] in ('recover-mfa-readback-0', 'recover-mfa-readback-1'):
+            raise TimeoutError('read lost')
+        return world.send_stage(row, body)
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    rows = {r['id']: r for r in result['recovery']}
+    assert rows['recover-mfa-readback-0']['failure'] == 'TimeoutError' and rows['recover-mfa-readback-0']['superseded'] is True
+    assert rows['recover-mfa-readback-2']['restored'] is True and 'recover-mfa-readback-3' not in rows
+    assert result['cleanupComplete'] and result['configEqualsBaseline'] is True
+
+
+def test_every_restore_read_back_failing_leaves_the_toggle_unconfirmed(tmp_path):
+    world = World()
+    def send(row, body):
+        if row['id'].startswith('recover-mfa-readback-'):
+            return 503, {'error': {'message': 'UNAVAILABLE'}}
+        return world.send_stage(row, body)
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    rows = {r['id']: r for r in result['recovery']}
+    assert all(f'recover-mfa-readback-{i}' in rows for i in range(8))
+    assert not result['cleanupComplete'] and rows['recover-mfa-readback-7']['failure'] == 'ValueError'
+    assert 'superseded' not in rows['recover-mfa-readback-7']
+
+
+def test_transport_has_no_custom_token_route():
+    import transport
+    assert not any('signInWithCustomToken' in route for route in transport.CLIENT_ROUTES)
+    assert not any('Custom' in route for route in transport.CLIENT_ROUTES | transport.ADMIN_ROUTES)
+
+
+def test_baseline_out_is_private_exclusive_and_holds_the_three_members(monkeypatch, tmp_path, capsys):
+    import os
+    import stat
+    import transport
+    config = World().config
+    config['mobileLinksConfig'] = {'domain': 'FIREBASE_DYNAMIC_LINK_DOMAIN'}
+    monkeypatch.setattr(transport, 'production_send', lambda: (lambda row, body: (200, config)))
+    target = tmp_path / 'config-pre.json'
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--read-baseline', '--baseline-out', str(target)])
+    assert edges.main() == 0
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
+    saved = json.loads(target.read_text())
+    assert saved['digests'] == edges.config_digests(config)
+    assert saved['mfa'] == {'state': 'DISABLED'} and saved['mobileLinksConfig'] == config['mobileLinksConfig'] and saved['notification'] == config['notification']
+    out = capsys.readouterr().out
+    assert 'FIREBASE_DYNAMIC_LINK_DOMAIN' not in out and 'defaultLocale' not in out
+    with pytest.raises(FileExistsError):
+        edges.main()
+
+
+def test_baseline_out_is_not_written_on_a_mismatch(monkeypatch, tmp_path):
+    import transport
+    config = World().config
+    config['signIn']['allowDuplicateEmails'] = True
+    monkeypatch.setattr(transport, 'production_send', lambda: (lambda row, body: (200, config)))
+    target = tmp_path / 'config-pre.json'
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--read-baseline', '--baseline-out', str(target)])
+    assert edges.main() == 2 and not target.exists()
+
+
+def test_compare_to_baseline_reports_the_named_members():
+    config = World().config
+    digests = edges.config_digests(config)
+    assert edges.differing_members(digests, edges.config_digests(config)) == []
+    moved = copy.deepcopy(config)
+    moved['mobileLinksConfig'] = {'domain': 'CUSTOM_DOMAIN'}
+    assert edges.differing_members(digests, edges.config_digests(moved)) == ['whole', 'mobileLinksConfig']
+
+
+def test_baseline_out_needs_read_baseline(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--nonce', NONCE, '--output', str(tmp_path / 'run'), '--baseline-out', str(tmp_path / 'x.json')])
+    with pytest.raises(SystemExit):
+        edges.main()
+
+
+def test_final_config_read_is_exempt_from_the_account_cleanup_deadline(tmp_path):
+    world = World()
+    clock = Clock()
+    def send(row, body):
+        answer = world.send_stage(row, body)
+        if row['id'].startswith('recover-'):
+            clock.now += 11.5
+        return answer
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    assert 'recover-config-final-0' in world.sent
+    assert result['configEqualsBaseline'] is not None
+
+
+def test_baseline_survives_a_chain_of_recovery_runs(tmp_path):
+    world, first = run(tmp_path, World(fault='delete'))
+    world.fault = None
+    second = edges.collect(nonce=NONCE, output=tmp_path / 'second', send=world.send_stage, sleep=lambda _: None, recovery_journal=tmp_path / 'run' / 'ownership.jsonl')
+    journal = (tmp_path / 'second' / 'ownership.jsonl').read_text().splitlines()
+    assert sum(1 for l in journal if json.loads(l)['kind'] == 'config-baseline') == 1
+    world2, _ = run(tmp_path / 'b', World(fault='delete', precedence='apply'))
+    world2.fault = None
+    edges.collect(nonce=NONCE, output=tmp_path / 'b2', send=world2.send_stage, sleep=lambda _: None, recovery_journal=tmp_path / 'b' / 'run' / 'ownership.jsonl')
+    third = edges.collect(nonce=NONCE, output=tmp_path / 'b3', send=world2.send_stage, sleep=lambda _: None, recovery_journal=tmp_path / 'b2' / 'ownership.jsonl')
+    assert third['configEqualsBaseline'] is False
+
+
+@pytest.mark.parametrize('event', [
+    {'kind': 'config-baseline', 'nonce': '0' * 32, 'digests': {m: 'a' * 64 for m in edges.DIGEST_MEMBERS}},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': {m: 'a' * 63 for m in edges.DIGEST_MEMBERS}},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': {m: 'A' * 64 for m in edges.DIGEST_MEMBERS}},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': {'whole': 'a' * 64}},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': {**{m: 'a' * 64 for m in edges.DIGEST_MEMBERS}, 'extra': 'a' * 64}},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': 'x'},
+    {'kind': 'config-baseline', 'nonce': NONCE, 'digests': {m: 5 for m in edges.DIGEST_MEMBERS}},
+])
+def test_a_malformed_baseline_journal_line_is_refused(tmp_path, event):
+    journal = tmp_path / 'journal.jsonl'
+    journal.write_text(json.dumps(event) + '\n')
+    with pytest.raises(ValueError, match='baseline journal'):
+        edges.collect(nonce=NONCE, output=tmp_path / 'again', send=World().send_stage, sleep=lambda _: None, recovery_journal=journal)
+
+
+def test_failed_restore_read_backs_wait_between_slots(tmp_path):
+    world = World()
+    sleeps = []
+    clock = Clock()
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock.sleep(seconds)
+    def send(row, body):
+        if row['id'].startswith('recover-mfa-readback-'):
+            raise TimeoutError('read lost')
+        return world.send_stage(row, body)
+    edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=sleep, clock=clock)
+    # the stage's own planned waits sleep float seconds; the restore slots sleep the integer 2
+    assert [x for x in sleeps if type(x) is int and x == 2] == [2] * 7
+
+
+def test_a_failed_final_read_is_superseded_by_a_later_equal_one(tmp_path):
+    world = World()
+    def send(row, body):
+        if row['id'] == 'recover-config-final-0':
+            raise TimeoutError('read lost')
+        return world.send_stage(row, body)
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    rows = {r['id']: r for r in result['recovery']}
+    assert rows['recover-config-final-0']['failure'] == 'TimeoutError' and rows['recover-config-final-0']['superseded'] is True
+    assert rows['recover-config-final-1']['equalsBaseline'] is True
+    assert result['configEqualsBaseline'] is True and result['cleanupComplete']
+
+
+def test_final_reads_that_never_answer_are_failures_not_equality(tmp_path):
+    world = World()
+    def send(row, body):
+        if row['id'].startswith('recover-config-final-'):
+            return 503, {'error': {'message': 'UNAVAILABLE'}}
+        return world.send_stage(row, body)
+    clock = Clock()
+    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
+    final = [r for r in result['recovery'] if r['id'].startswith('recover-config-final-')]
+    assert len(final) == 4 and all(r['failure'] == 'ValueError' and 'differs' not in r and 'equalsBaseline' not in r for r in final)
+    assert result['configEqualsBaseline'] is False and not result['cleanupComplete']
+    journal = [json.loads(l) for l in (tmp_path / 'run' / 'ownership.jsonl').read_text().splitlines()]
+    assert {'kind': 'recovery-required', 'reason': 'config-differs-from-baseline', 'members': ['unread']} in journal
+
+
+def test_config_projections_carry_the_mobile_links_digest(tmp_path):
+    world, result = run(tmp_path)
+    expected = edges.config_digests(World().config)['mobileLinksConfig'][:16]
+    for identifier in ('config-baseline', 'mask-precedence-observe', 'dup-readback-0'):
+        row = stage(result, identifier)
+        assert (row.get('config') or row)['mobileLinksDigest'] == expected

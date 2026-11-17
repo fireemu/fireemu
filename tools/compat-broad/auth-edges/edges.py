@@ -12,6 +12,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
 import secrets
 import signal
@@ -45,8 +46,9 @@ TOKEN = '/securetoken.googleapis.com/v1/token'
 DOMAIN = PROJECT + '.firebaseapp.com'
 TEST_PHONES = ('+16505550101', '+16505550102', '+16505550103')
 TEST_PHONE_CODE = '123456'
-CONTRACT = 'auth-edges-v3.1'
+CONTRACT = 'auth-edges-v3.2'
 READBACK_SLOTS = 8
+FINAL_SLOTS = 4
 ROLES = ('dupA', 'dupB', 'dupC', 'dupD', 'elDisabled', 'elKnown', 'mfaA', 'mfaW', 'mfaP', 'mfaB', 'sess')
 FAMILIES = ('dup-reset', 'dup-n3', 'el-client', 'mfa-reuse', 'mfa-quota', 'mfa-window', 'mfa-phone', 'mfa-both', 'mask', 'securetoken-escape')
 REFUSALS = ('USER_DISABLED', 'INVALID_OOB_CODE', 'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'TOKEN_EXPIRED', 'INVALID_ID_TOKEN', 'INVALID_REFRESH_TOKEN', 'UNAUTHORIZED_DOMAIN', 'INVALID_CONTINUE_URI', 'MFA_ENROLLMENT_ALREADY_COMPLETE', 'INVALID_CODE', 'OPERATION_NOT_ALLOWED', 'QUOTA_EXCEEDED', 'INVALID_MFA_PENDING_CREDENTIAL', 'TOO_MANY_ATTEMPTS_TRY_LATER', 'EMAIL_EXISTS')
@@ -96,8 +98,36 @@ def toggle_restored(name, body):
     if name == 'emaillink':
         return state['passwordRequired'] is True
     if name == 'mfa':
-        return state['mfaState'] in (None, 'DISABLED') and not state['mfaProviderEnabled']
+        return body.get('mfa') is None or body.get('mfa') == {'state': 'DISABLED'}
     return state['allowDuplicateEmails'] in (None, False)
+
+
+def normalized_config(body):
+    """The config with the two protobuf omissions made explicit: absent mfa is DISABLED, false duplicates are absent."""
+    config = copy.deepcopy(body) if isinstance(body, dict) else {}
+    if config.get('mfa') is None:
+        config['mfa'] = {'state': 'DISABLED'}
+    sign = config.get('signIn')
+    if isinstance(sign, dict) and sign.get('allowDuplicateEmails') in (None, False):
+        sign.pop('allowDuplicateEmails', None)
+    return config
+
+
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def config_digests(body):
+    """One SHA-256 of the whole normalized config and one per member a probe or toggle can touch."""
+    config = normalized_config(body)
+    return {'whole': _digest(config), 'mfa': _digest(config.get('mfa')), 'mobileLinksConfig': _digest(config.get('mobileLinksConfig')), 'notification': _digest(config.get('notification'))}
+
+
+DIGEST_MEMBERS = ('whole', 'mfa', 'mobileLinksConfig', 'notification')
+
+
+def differing_members(expected, actual):
+    return [m for m in DIGEST_MEMBERS if expected.get(m) != actual.get(m)]
 
 
 def get_path(value, path):
@@ -291,6 +321,8 @@ def manifest(nonce):
         recovery.append(dict(id=f'recover-{toggle}-restore', path=CONFIG + '?updateMask=' + spec['mask'], method='PATCH', body=spec['restore'], owner=True, kind='config', toggle=toggle))
         for i in range(READBACK_SLOTS):
             recovery.append(dict(id=f'recover-{toggle}-readback-{i}', path=CONFIG, method='GET', body=None, owner=True, kind='config', toggle=toggle))
+    for i in range(FINAL_SLOTS):
+        recovery.append(dict(id=f'recover-config-final-{i}', path=CONFIG, method='GET', body=None, owner=True, kind='final'))
     return dict(contract=CONTRACT, project=PROJECT, nonce=nonce, ownedAccounts=accounts, aliases=aliases, addresses=addresses, unknownAddress=unknown_address, stages=rows, recovery=recovery, budget=dict(observationRequests=len(rows), recoveryRequests=len(recovery), totalRequests=len(rows) + len(recovery), wallSeconds=1200, recoverySeconds=630, configRestoreSeconds=450, requestsPerSecond=4, planningCeilingUsd=0.10), productionExecutable=False)
 
 
@@ -370,6 +402,7 @@ class StageRun(_Run):
         self.toggles = {}
         self.marks = {}
         self.totp = {}
+        self.baseline_digests = None
         self.record = lambda event: Adapter.record(self, event)
 
     def wait_until(self, anchor, seconds):
@@ -382,10 +415,10 @@ class StageRun(_Run):
             self.sleep(max(0.0, min(5.0, target - self.clock())))
         return self.clock() - target
 
-    def request(self, path, body, privileged):
+    def request(self, path, body, privileged, row_id=None):
         if self.recovering:
             guard = self.recovery_guard
-            matches = [(i, row) for i, row in enumerate(guard.rows) if i >= guard.index and (row['path'], row['body'], row['owner']) == (path, body, privileged)]
+            matches = [(i, row) for i, row in enumerate(guard.rows) if i >= guard.index and (row['path'], row['body'], row['owner']) == (path, body, privileged) and (row_id is None or row['id'] == row_id)]
             if not matches:
                 raise ValueError('cleanup outside frozen edge stage')
             index, row = matches[0]
@@ -394,7 +427,7 @@ class StageRun(_Run):
             guard, row = self.guard, self.current
             if (path, body, privileged) != (row['path'], row['body'], row['owner']):
                 raise ValueError('request outside edge slot')
-        if self.recovering and row['kind'] != 'config' and self.clock() - self.recovery_started >= self.plan['budget']['recoverySeconds'] - self.plan['budget']['configRestoreSeconds']:
+        if self.recovering and row['kind'] not in ('config', 'final') and self.clock() - self.recovery_started >= self.plan['budget']['recoverySeconds'] - self.plan['budget']['configRestoreSeconds']:
             raise CollectorError('account recovery deadline; config reserve retained')
         resolved = self.resolve(body)
         guard.check(row, resolved)
@@ -424,6 +457,7 @@ def recover(run, plan):
     deleted = set()
     discovered_uids = None
     restored = {}
+    final_equal = None
     try:
         for row in plan['recovery']:
             if row['kind'] == 'config':
@@ -444,7 +478,7 @@ def recover(run, plan):
             try:
                 if row['kind'] == 'delete':
                     deleted.add(uid)
-                status, body = run.request(row['path'], row['body'], True)
+                status, body = run.request(row['path'], row['body'], True, row['id'])
                 record['status'] = status if type(status) is int else None
                 if row['kind'] == 'delete':
                     if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
@@ -495,7 +529,7 @@ def recover(run, plan):
                     break
                 record = {'id': row['id']}
                 try:
-                    status, body = run.request(row['path'], row['body'], True)
+                    status, body = run.request(row['path'], row['body'], True, row['id'])
                     record['status'] = status if type(status) is int else None
                     if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
                         raise ValueError('config restore answer unknown')
@@ -507,17 +541,46 @@ def recover(run, plan):
                                 raise ValueError('config restore did not read back')
                             run.sleep(2)
                 except (Exception, KeyboardInterrupt) as error:
+                    # A lost PATCH reply still requires its own GET read-back, and a failed read-back
+                    # leaves the remaining slots to try (bounded: eight, two seconds apart).
                     record['failure'] = type(error).__name__
-                    # A lost PATCH reply still requires its own GET read-back.
-                    if row['method'] == 'GET':
-                        rows.append(record)
-                        break
+                    if row['method'] == 'GET' and not row['id'].endswith(f'readback-{READBACK_SLOTS - 1}'):
+                        run.sleep(2)
                 rows.append(record)
+            if restored.get(toggle):
+                for r in rows:
+                    if r['id'].startswith(f'recover-{toggle}-readback-') and 'failure' in r:
+                        r['superseded'] = True
             if run.toggles.get(toggle) and not restored.get(toggle):
                 run.record({'kind': 'recovery-required', 'reason': 'config-restore-unconfirmed', 'toggle': toggle})
+        # The whole config must read back equal to what was read before the first write.
+        if run.baseline_digests is not None:
+            final_equal, differs = False, None
+            for row in (r for r in plan['recovery'] if r['kind'] == 'final'):
+                record = {'id': row['id']}
+                try:
+                    status, body = run.request(row['path'], row['body'], True, row['id'])
+                    record['status'] = status if type(status) is int else None
+                    if type(status) is not int or status != 200 or not isinstance(body, dict) or 'error' in body:
+                        raise ValueError('final config answer unknown')
+                    differs = differing_members(run.baseline_digests, config_digests(body))
+                    record.update(equalsBaseline=not differs, differs=differs)
+                except (Exception, KeyboardInterrupt) as error:
+                    record['failure'] = type(error).__name__
+                rows.append(record)
+                if record.get('equalsBaseline'):
+                    final_equal = True
+                    break
+                run.sleep(2)
+            if final_equal:
+                for r in rows:
+                    if r['id'].startswith('recover-config-final-') and 'failure' in r:
+                        r['superseded'] = True
+            else:
+                run.record({'kind': 'recovery-required', 'reason': 'config-differs-from-baseline', 'members': differs or ['unread']})
     all_restored = all(restored.get(t) for t in RESTORE_ORDER if run.toggles.get(t))
-    complete = proven and remaining == 0 and not unknown and all(uid_proofs) and all_restored and not any('failure' in r for r in rows)
-    return rows, complete, remaining, failures, proven
+    complete = proven and remaining == 0 and not unknown and all(uid_proofs) and all_restored and final_equal is not False and not any('failure' in r and not r.get('superseded') for r in rows)
+    return rows, complete, remaining, failures, proven, final_equal
 
 
 def secret_values(run):
@@ -568,7 +631,7 @@ def project_config(body):
     state = config_state(body)
     notification = body.get('notification') if isinstance(body.get('notification'), dict) else {}
     locale = notification.get('defaultLocale')
-    return {**{k: v for k, v in state.items() if v is None or isinstance(v, (bool, int, str))}, 'notificationDigest': hashlib.sha256(json.dumps(notification, sort_keys=True).encode()).hexdigest()[:16], 'defaultLocalePresent': isinstance(locale, str)}
+    return {**{k: v for k, v in state.items() if v is None or isinstance(v, (bool, int, str))}, 'mobileLinksDigest': config_digests(body)['mobileLinksConfig'][:16], 'notificationDigest': hashlib.sha256(json.dumps(notification, sort_keys=True).encode()).hexdigest()[:16], 'defaultLocalePresent': isinstance(locale, str)}
 
 
 def baseline_findings(body):
@@ -583,7 +646,7 @@ def baseline_findings(body):
     sender = notification.get('sendEmail') if isinstance(notification.get('sendEmail'), dict) else {}
     domains = body.get('authorizedDomains') if isinstance(body.get('authorizedDomains'), list) else []
     return {
-        'A1-mfa-disabled': state['mfaState'] not in ('ENABLED', 'MANDATORY') and not state['mfaProviderEnabled'],
+        'A1-mfa-disabled': body.get('mfa') is None or body.get('mfa') == {'state': 'DISABLED'},
         'A2-email-link-baseline': state['passwordRequired'] is True and state['emailEnabled'] is True and DOMAIN in domains,
         'A3-duplicates-off': state['allowDuplicateEmails'] in (None, False),
         'A4-test-phones': phone.get('enabled') is True and all(numbers.get(n) == TEST_PHONE_CODE for n in TEST_PHONES),
@@ -655,6 +718,11 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                     raise ValueError('recovery journal identity conflicts')
                 run.secrets[role + '.localId'] = uid
                 run.owned[role] = {'localId': uid, 'email': event['email']}
+            elif event.get('kind') == 'config-baseline':
+                digests = event.get('digests')
+                if event.get('nonce') != nonce or not isinstance(digests, dict) or set(digests) != set(DIGEST_MEMBERS) or any(not isinstance(v, str) or not re.fullmatch('[0-9a-f]{64}', v) for v in digests.values()):
+                    raise ValueError('recovery baseline journal mismatch')
+                run.baseline_digests = digests
             elif event.get('kind') == 'config-attempt':
                 if event.get('nonce') != nonce or event.get('restore') is not True or event.get('toggle') not in TOGGLES:
                     raise ValueError('recovery config journal mismatch')
@@ -664,6 +732,8 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
             run.record({'kind': 'account-attempt', 'role': role, 'email': plan['ownedAccounts'][role]['email'], 'preflightAbsent': True})
         for role, account in run.owned.items():
             run.record({'kind': 'account-created', 'role': role, 'email': account['email'], 'uid': account['localId']})
+        if run.baseline_digests is not None:
+            run.record({'kind': 'config-baseline', 'nonce': nonce, 'digests': run.baseline_digests})
         for toggle in run.toggles:
             run.record({'kind': 'config-attempt', 'nonce': nonce, 'restore': True, 'toggle': toggle})
     stages, stopped = [], None
@@ -722,7 +792,9 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                     locale = (body.get('notification') or {}).get('defaultLocale')
                     if isinstance(locale, str) and locale and not any(ord(c) < 32 for c in locale):
                         run.secrets['config.defaultLocale'] = locale
-                    projection.update(project_config(body), baselineConfirmed=True)
+                    run.baseline_digests = config_digests(body)
+                    run.record({'kind': 'config-baseline', 'nonce': nonce, 'digests': run.baseline_digests})
+                    projection.update(project_config(body), baselineConfirmed=True, configDigests=run.baseline_digests)
                 elif row['phase'] == 'readback':
                     ok = toggle_applied(row['toggle'], body)
                     applied[row['toggle']] = ok
@@ -814,8 +886,8 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
         stopped = type(error).__name__
     finally:
         run.begin_recovery()
-        recovery, complete, remaining, failures, proven = recover(run, plan)
-    receipt = dict(contract=plan['contract'], manifestDigest=digest(plan), productionExecuted=production, side='production' if production else 'injected', recordingComplete=recovery_journal is None and stopped is None and len(stages) == len(plan['stages']), stopReason=stopped, stages=stages, recovery=recovery, cleanupComplete=complete, remainingAccounts=remaining, deleteFailures=failures, absenceProven=proven, requests=run.requests, recoveryRequests=run.recovery_requests, requestBudget=plan['budget'], deliveredMessages=0)
+        recovery, complete, remaining, failures, proven, config_equal = recover(run, plan)
+    receipt = dict(contract=plan['contract'], manifestDigest=digest(plan), productionExecuted=production, side='production' if production else 'injected', recordingComplete=recovery_journal is None and stopped is None and len(stages) == len(plan['stages']), stopReason=stopped, stages=stages, recovery=recovery, cleanupComplete=complete, remainingAccounts=remaining, deleteFailures=failures, absenceProven=proven, configEqualsBaseline=config_equal, requests=run.requests, recoveryRequests=run.recovery_requests, requestBudget=plan['budget'], deliveredMessages=0)
     receipt['classification'] = 'RECORDED' if receipt['recordingComplete'] and complete and all(r['classification'] == 'OBSERVED' for r in stages) else 'INDETERMINATE'
     assert_no_secret(receipt, secret_values(run))
     run.record({'kind': 'terminal', 'recordingComplete': receipt['recordingComplete'], 'cleanupComplete': complete, 'classification': receipt['classification']})
@@ -861,9 +933,9 @@ def _local_request(method, url, headers, payload):
 
 
 def read_baseline(args):
-    """The launch-time check: a single GET of the project config, projected to booleans only."""
+    """The launch-time check: a single GET of the project config, projected to booleans and digests only."""
     if args.production is False or args.origin is not None or args.output is not None or args.recover is not None or args.nonce is not None:
-        raise SystemExit('--read-baseline needs --production and nothing else')
+        raise SystemExit('--read-baseline needs --production and nothing else but --baseline-out')
     from transport import production_send
     status, body = production_send()({'path': CONFIG, 'method': 'GET', 'owner': True}, None)
     if status != 200 or not isinstance(body, dict):
@@ -872,7 +944,18 @@ def read_baseline(args):
     findings = baseline_findings(body)
     for name, ok in findings.items():
         print(f'{name}: {"ok" if ok else "MISMATCH"}')
-    return 0 if all(findings.values()) else 2
+    digests = config_digests(body)
+    for member in DIGEST_MEMBERS:
+        print(f'digest-{member}: {digests[member]}')
+    if not all(findings.values()):
+        return 2
+    if args.baseline_out is not None:
+        # Private and exclusive: the three members as read, for a hand restore if a recovery is ever needed.
+        fd = os.open(args.baseline_out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            json.dump({'digests': digests, 'mfa': body.get('mfa'), 'mobileLinksConfig': body.get('mobileLinksConfig'), 'notification': body.get('notification')}, stream, indent=2, sort_keys=True)
+            stream.write('\n')
+    return 0
 
 
 def main():
@@ -882,10 +965,13 @@ def main():
     parser.add_argument('--origin')
     parser.add_argument('--production', action='store_true')
     parser.add_argument('--recover', type=Path, help='Replay only recovery from an ownership journal')
+    parser.add_argument('--baseline-out', type=Path, help='With --read-baseline: write the digests and the three members to this new private file')
     parser.add_argument('--read-baseline', action='store_true', help='One read-only config GET; print one line per launch assumption; exit 2 on any mismatch')
     args = parser.parse_args()
     if args.read_baseline:
         return read_baseline(args)
+    if args.baseline_out is not None:
+        parser.error('--baseline-out needs --read-baseline')
     if args.nonce is None:
         parser.error('--nonce is required')
     if args.origin is None and not args.production:

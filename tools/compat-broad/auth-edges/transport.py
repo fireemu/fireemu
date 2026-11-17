@@ -9,7 +9,7 @@ import batch_adapter
 from edges import ADMIN, ADMIN_CREATE, CLIENT, CONFIG, CONFIG_MASKS, CONFIG_MEMBERS, MFA_V2, PROJECT, TOKEN
 
 HOSTS = {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'}
-CLIENT_ROUTES = {CLIENT + route for route in ('signUp', 'signInWithPassword', 'signInWithCustomToken', 'sendOobCode', 'resetPassword')} | {MFA_V2 + route for route in ('mfaEnrollment:start', 'mfaEnrollment:finalize', 'mfaSignIn:finalize')}
+CLIENT_ROUTES = {CLIENT + route for route in ('signUp', 'signInWithPassword', 'sendOobCode', 'resetPassword')} | {MFA_V2 + route for route in ('mfaEnrollment:start', 'mfaEnrollment:finalize', 'mfaSignIn:finalize')}
 ADMIN_ROUTES = {ADMIN + route for route in ('lookup', 'update', 'sendOobCode', 'delete')} | {ADMIN_CREATE}
 CONFIG_WRITES = {CONFIG + '?updateMask=' + mask for mask in CONFIG_MASKS}
 FORM_FIELDS = {'grant_type', 'refresh_token', 'rawSuffix'}
