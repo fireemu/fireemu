@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@solidjs/testing-library";
-import { okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { MemoryRouter, Route } from "@solidjs/router";
 import Auth, { CODE_POLL_MS } from "./Auth";
 import * as auth from "../api/auth";
@@ -11,6 +11,7 @@ vi.mock("../api/auth", async (importOriginal) => ({
   listUsers: vi.fn(),
   listOobCodes: vi.fn(),
   listVerificationCodes: vi.fn(),
+  listTotpCodes: vi.fn(),
 }));
 
 const mount = () =>
@@ -38,6 +39,9 @@ beforeEach(() => {
   vi.mocked(auth.listVerificationCodes)
     .mockReset()
     .mockReturnValue(okAsync({ verificationCodes: [] }));
+  vi.mocked(auth.listTotpCodes)
+    .mockReset()
+    .mockReturnValue(okAsync({ totpCodes: [] }));
 });
 afterEach(() => {
   cleanup();
@@ -45,6 +49,51 @@ afterEach(() => {
 });
 
 describe("Auth codes", () => {
+  it("shows the current TOTP code of each factor and refreshes it", async () => {
+    const ui = mount();
+    await waitFor(() => expect(ui.getByText("No TOTP factors or enrollments")).toBeTruthy());
+    vi.mocked(auth.listTotpCodes).mockReturnValue(
+      okAsync({
+        totpCodes: [
+          {
+            uid: "user-1",
+            mfaEnrollmentId: "factor-1",
+            displayName: "laptop",
+            code: "012345",
+            secondsRemaining: 17,
+          },
+          { uid: "user-2", pendingEnrollment: true, code: "999000", secondsRemaining: 4 },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(CODE_POLL_MS);
+    await waitFor(() => expect(ui.getByTestId("totp-table")).toBeTruthy());
+    expect(ui.getByText("012345")).toBeTruthy();
+    expect(ui.getByText("17s")).toBeTruthy();
+    expect(ui.getByText("laptop")).toBeTruthy();
+    expect(ui.getByText("Enrollment in progress")).toBeTruthy();
+    vi.mocked(auth.listTotpCodes).mockReturnValue(
+      okAsync({
+        totpCodes: [
+          {
+            uid: "user-1",
+            mfaEnrollmentId: "factor-1",
+            code: "543210",
+            secondsRemaining: 30,
+          },
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(CODE_POLL_MS);
+    await waitFor(() => expect(ui.getByText("543210")).toBeTruthy());
+  });
+
+  it("says the reveal is off when the route is absent", async () => {
+    vi.mocked(auth.listTotpCodes).mockReturnValue(errAsync({ status: 404, message: "Not Found" }));
+    const ui = mount();
+    await waitFor(() => expect(ui.getByTestId("totp-off")).toBeTruthy());
+  });
+
   // User report (0.54.0): a person following a flow in another tab (TOTP enrollment needs a
   // verified email) had to reload the page to see the code the flow had just issued.
   it("shows a code issued after the page opened without a reload", async () => {

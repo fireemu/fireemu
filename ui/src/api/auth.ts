@@ -114,6 +114,25 @@ export const listVerificationCodes = (
 ): ResultAsync<{ verificationCodes: VerificationCodeInfo[] }, ApiError> =>
   request("GET", `${emulator(project)}/verificationCodes`);
 
+/**
+ * The current code of an enrolled TOTP factor (`mfaEnrollmentId`) or of an enrollment not
+ * finalized yet (`pendingEnrollment`), revealed by fireemu so no authenticator app is needed.
+ */
+export type TotpCodeInfo = {
+  uid: string;
+  mfaEnrollmentId?: string;
+  displayName?: string;
+  pendingEnrollment?: boolean;
+  code: string;
+  secondsRemaining: number;
+};
+
+/** Answers 404 while `auth.totp.revealCodes` is off (and under `productionExact`). */
+export const listTotpCodes = (
+  project: string,
+): ResultAsync<{ totpCodes: TotpCodeInfo[] }, ApiError> =>
+  request("GET", `${emulator(project)}/totpCodes`);
+
 export const getConfig = (project: string): ResultAsync<Json, ApiError> =>
   request("GET", `${emulator(project)}/config`);
 

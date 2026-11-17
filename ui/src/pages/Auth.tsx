@@ -27,6 +27,7 @@ import {
   deleteAllUsers,
   deleteUser,
   listOobCodes,
+  listTotpCodes,
   listUsers,
   listVerificationCodes,
   lookupUser,
@@ -391,6 +392,9 @@ const AuthScope: Component<{ project: string }> = (props) => {
   const [phoneCodes, { refetch: refetchPhoneCodes }] = createResource(project, (p) =>
     settle(listVerificationCodes(p)),
   );
+  const [totpCodes, { refetch: refetchTotpCodes }] = createResource(project, (p) =>
+    settle(listTotpCodes(p)),
+  );
 
   onMount(() => {
     // Skip a tick while the tab is hidden or the previous read has not answered yet.
@@ -398,6 +402,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
       if (document.hidden) return;
       if (!codes.loading) void refetchCodes();
       if (!phoneCodes.loading) void refetchPhoneCodes();
+      if (!totpCodes.loading) void refetchTotpCodes();
     }, CODE_POLL_MS);
     onCleanup(() => window.clearInterval(timer));
   });
@@ -638,6 +643,50 @@ const AuthScope: Component<{ project: string }> = (props) => {
                   </For>
                 </tbody>
               </table>
+            </Show>
+          </Show>
+        </Section>
+        <Section title={t("auth.totpCodes")}>
+          <Show when={totpCodes.latest !== undefined} fallback={<Spinner />}>
+            <Show
+              when={totpCodes.latest?.isOk()}
+              fallback={
+                <p class="text-sm text-muted" data-testid="totp-off">
+                  {t("auth.totpCodesOff")}
+                </p>
+              }
+            >
+              <Show
+                when={(totpCodes.latest?.unwrapOr({ totpCodes: [] }).totpCodes.length ?? 0) > 0}
+                fallback={<p class="text-sm text-muted">{t("auth.noTotpCodes")}</p>}
+              >
+                <table class="table" data-testid="totp-table">
+                  <thead>
+                    <tr>
+                      <th>{t("auth.uid")}</th>
+                      <th>{t("auth.totpFactor")}</th>
+                      <th>{t("auth.oobCode")}</th>
+                      <th>{t("auth.totpSecondsLeft")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={totpCodes.latest?.unwrapOr({ totpCodes: [] }).totpCodes ?? []}>
+                      {(c) => (
+                        <tr>
+                          <td class="mono">{c.uid}</td>
+                          <td>
+                            {c.pendingEnrollment
+                              ? t("auth.totpPending")
+                              : (c.displayName ?? c.mfaEnrollmentId)}
+                          </td>
+                          <td class="mono">{c.code}</td>
+                          <td>{`${c.secondsRemaining}s`}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </Show>
             </Show>
           </Show>
         </Section>
