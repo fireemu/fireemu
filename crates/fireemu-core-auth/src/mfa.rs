@@ -688,6 +688,10 @@ impl MfaState {
             || self.phone.iter().any(|f| f.mfa_enrollment_id == id)
     }
 
+    pub(crate) fn pending_enrollments(&self) -> &BTreeMap<String, PendingEnrollment> {
+        &self.pending_enrollments
+    }
+
     pub(crate) fn pending_enrollments_mut(&mut self) -> &mut BTreeMap<String, PendingEnrollment> {
         &mut self.pending_enrollments
     }

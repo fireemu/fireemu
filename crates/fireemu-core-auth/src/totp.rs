@@ -41,3 +41,17 @@ pub fn time_step(params: &TotpParams, at: LogicalInstant) -> u64 {
 pub fn totp_at(secret: &[u8], params: &TotpParams, at: LogicalInstant) -> u32 {
     hotp(secret, time_step(params, at), params.digits)
 }
+
+/// The code an authenticator app would show at `at`, zero-padded to `params.digits`, and the
+/// whole seconds it stays valid before the next step (1 through the period). Used only to
+/// reveal codes to a local developer; verification keeps using [`totp_at`] and its window.
+#[must_use]
+pub fn current_code(secret: &[u8], params: &TotpParams, at: LogicalInstant) -> (String, u32) {
+    let code = totp_at(secret, params, at);
+    let width = usize::from(params.digits.min(9));
+    let period = i128::from(params.period_seconds.max(1));
+    let seconds = at.as_nanos().div_euclid(1_000_000_000).max(0);
+    let elapsed = seconds % period;
+    let left = u32::try_from(period - elapsed).unwrap_or(params.period_seconds);
+    (format!("{code:0width$}"), left)
+}

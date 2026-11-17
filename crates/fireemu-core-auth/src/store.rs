@@ -1330,6 +1330,8 @@ pub struct AuthStore {
     /// Whether second factors follow production's project rules (the strict profile): the
     /// project's `mfa` config decides whether a sign-in asks for one.
     production_mfa: bool,
+    /// Whether current TOTP codes are revealed (console lines and the emulator route).
+    reveal_totp_codes: bool,
     /// Whether an ID token with a future `iat` or `auth_time` is refused (strict) or accepted
     /// (the emulator profile), for the verifiers that do not take the profile from a
     /// [`crate::jwt::TokenAcceptance`].
@@ -1405,6 +1407,31 @@ pub enum PhoneCodeUse {
     MfaSignIn,
 }
 
+/// Which step a revealed TOTP code is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TotpCodePurpose {
+    /// `mfaEnrollment:start` with a TOTP factor: the code finalizes the enrollment.
+    Enrollment,
+    /// A sign-in that answered with the second-factor challenge.
+    SignIn,
+}
+
+/// A current TOTP code revealed for local development (owner decision ledger 2585): what an
+/// authenticator app would show, never the secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TotpCodeEntry {
+    /// The account.
+    pub uid: LocalId,
+    /// The enrolled factor; `None` for an enrollment session not finalized yet.
+    pub mfa_enrollment_id: Option<String>,
+    /// The factor's display name, when it has one.
+    pub display_name: Option<String>,
+    /// The zero-padded code.
+    pub code: String,
+    /// Whole seconds before the next time step.
+    pub seconds_remaining: u32,
+}
+
 /// A credential the official Auth emulator prints to its console instead of mailing or
 /// texting it (`firebase-tools/lib/emulator/auth/operations.js`, the `BULLET` log lines).
 /// Recorded by the request that issued the code and drained once by the shell after the
@@ -1421,6 +1448,26 @@ pub enum CredentialNotice {
         new_email: Option<String>,
         /// The action link, as the client would follow it.
         link: String,
+    },
+    /// The current code of a TOTP factor or enrollment session (fireemu only; the official
+    /// emulator has no TOTP). Carries no secret.
+    TotpCode {
+        /// The project.
+        project_id: String,
+        /// The tenant, when the store is a tenant's.
+        tenant_id: Option<String>,
+        /// The account.
+        uid: LocalId,
+        /// The enrolled factor; `None` while enrolling.
+        mfa_enrollment_id: Option<String>,
+        /// The factor's display name.
+        display_name: Option<String>,
+        /// The zero-padded code.
+        code: String,
+        /// Whole seconds before the next time step.
+        seconds_remaining: u32,
+        /// Which step it is for.
+        purpose: TotpCodePurpose,
     },
     /// An SMS code.
     PhoneCode {
@@ -1458,6 +1505,34 @@ impl CredentialNotice {
                     new_email.as_deref().unwrap_or_default()
                 ),
             },
+            Self::TotpCode {
+                project_id,
+                tenant_id,
+                uid,
+                mfa_enrollment_id,
+                display_name,
+                code,
+                seconds_remaining,
+                purpose,
+            } => {
+                let scope = tenant_id.as_ref().map_or_else(
+                    || format!("project {project_id}"),
+                    |tenant| format!("project {project_id}, tenant {tenant}"),
+                );
+                let factor = match (mfa_enrollment_id, display_name) {
+                    (Some(id), Some(name)) => format!(" factor {id} ({name})"),
+                    (Some(id), None) => format!(" factor {id}"),
+                    _ => String::new(),
+                };
+                let action = match purpose {
+                    TotpCodePurpose::Enrollment => "To enroll TOTP MFA for",
+                    TotpCodePurpose::SignIn => "To sign in with TOTP MFA as",
+                };
+                format!(
+                    "{action} user {} ({scope}){factor}, use the code {code} ({seconds_remaining}s left).",
+                    uid.as_str()
+                )
+            }
             Self::PhoneCode {
                 phone_number,
                 code,
@@ -1701,6 +1776,7 @@ impl AuthStore {
             legacy_tokens_issued: false,
             production_oob_lifetimes: false,
             production_mfa: false,
+            reveal_totp_codes: true,
             future_id_token_claims: crate::jwt::FutureClaims::Refuse,
             oob_codes: Arc::new(BTreeMap::new()),
             verification_codes: Arc::new(BTreeMap::new()),
@@ -3635,6 +3711,73 @@ impl AuthStore {
         self.production_mfa = production;
     }
 
+    /// Switches the TOTP code reveal (`auth.totp.revealCodes`) on or off.
+    pub fn set_reveal_totp_codes(&mut self, reveal: bool) {
+        self.reveal_totp_codes = reveal;
+    }
+
+    /// Whether current TOTP codes are revealed.
+    #[must_use]
+    pub const fn reveal_totp_codes(&self) -> bool {
+        self.reveal_totp_codes
+    }
+
+    /// Current codes of every enrolled TOTP factor with a live secret and of every enrollment
+    /// session neither expired nor finalized, at `now`, under the store's TOTP policy. Empty
+    /// while the reveal is off.
+    #[must_use]
+    pub fn totp_codes(&self, now: LogicalInstant) -> Vec<TotpCodeEntry> {
+        if !self.reveal_totp_codes {
+            return Vec::new();
+        }
+        let params = self.policy.params();
+        let mut entries = Vec::new();
+        for user in self.users.values() {
+            for factor in user.mfa.totp_factors() {
+                if factor.secret.is_detached() {
+                    continue;
+                }
+                let (code, seconds_remaining) =
+                    crate::totp::current_code(factor.secret.expose_for_enrollment(), &params, now);
+                entries.push(TotpCodeEntry {
+                    uid: user.local_id.clone(),
+                    mfa_enrollment_id: Some(factor.mfa_enrollment_id.clone()),
+                    display_name: factor.display_name.clone(),
+                    code,
+                    seconds_remaining,
+                });
+            }
+            for pending in user.mfa.pending_enrollments().values() {
+                if pending.completed || pending.expires_at < now || pending.secret.is_detached() {
+                    continue;
+                }
+                let (code, seconds_remaining) =
+                    crate::totp::current_code(pending.secret.expose_for_enrollment(), &params, now);
+                entries.push(TotpCodeEntry {
+                    uid: user.local_id.clone(),
+                    mfa_enrollment_id: None,
+                    display_name: None,
+                    code,
+                    seconds_remaining,
+                });
+            }
+        }
+        entries
+    }
+
+    fn totp_notice(&self, entry: TotpCodeEntry, purpose: TotpCodePurpose) -> CredentialNotice {
+        CredentialNotice::TotpCode {
+            project_id: self.project_id.clone(),
+            tenant_id: self.tenant_id.clone(),
+            uid: entry.uid,
+            mfa_enrollment_id: entry.mfa_enrollment_id,
+            display_name: entry.display_name,
+            code: entry.code,
+            seconds_remaining: entry.seconds_remaining,
+            purpose,
+        }
+    }
+
     /// Sets the profile's policy for ID tokens with a future `iat` or `auth_time`.
     pub fn set_future_id_token_claims(&mut self, future: crate::jwt::FutureClaims) {
         self.future_id_token_claims = future;
@@ -5210,6 +5353,9 @@ impl AuthStore {
         }
         let secret = self.random_secret();
         let session_id = self.next_id("enroll-");
+        let revealed = self.reveal_totp_codes.then(|| {
+            crate::totp::current_code(secret.expose_for_enrollment(), &policy.params(), now)
+        });
         let expires_at = now
             .checked_add(policy.enrollment_session_ttl)
             .unwrap_or(LogicalInstant::MAX);
@@ -5236,6 +5382,19 @@ impl AuthStore {
             },
         );
         self.pending_user_ids.insert(uid.clone());
+        if let Some((code, seconds_remaining)) = revealed {
+            let notice = self.totp_notice(
+                TotpCodeEntry {
+                    uid: uid.clone(),
+                    mfa_enrollment_id: None,
+                    display_name: None,
+                    code,
+                    seconds_remaining,
+                },
+                TotpCodePurpose::Enrollment,
+            );
+            self.push_credential_notice(notice);
+        }
         Ok(material)
     }
 
@@ -5446,6 +5605,17 @@ impl AuthStore {
         );
         Arc::make_mut(&mut self.pending_sign_in_owners).insert(pending_id.clone(), uid.clone());
         self.pending_user_ids.insert(uid.clone());
+        if self.reveal_totp_codes {
+            let notices: Vec<CredentialNotice> = self
+                .totp_codes(now)
+                .into_iter()
+                .filter(|entry| &entry.uid == uid && entry.mfa_enrollment_id.is_some())
+                .map(|entry| self.totp_notice(entry, TotpCodePurpose::SignIn))
+                .collect();
+            for notice in notices {
+                self.push_credential_notice(notice);
+            }
+        }
         Ok(PendingSignInId(pending_id))
     }
 
