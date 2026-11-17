@@ -788,3 +788,71 @@ fn a_commit_is_charged_the_sum_of_its_documents_in_production_only() {
         .commit(&[write("d0", 4_310), write("d1", 4_310)], None, t(0))
         .expect("the emulator profile adds no refusal");
 }
+
+mod commit_budget_properties {
+    use super::*;
+    use fireemu_core_firestore::index::IndexSet;
+    use fireemu_core_firestore::index_usage::TRANSACTION_BYTES;
+    use proptest::prelude::*;
+
+    // Distinct integers under the recorded 2,000-byte name: 4,126 charged bytes per element, so
+    // one document alone is accepted up to 7,184 elements.
+    fn name(index: usize) -> String {
+        let tag = format!("p{index}");
+        format!("{tag}{}/{}", "c".repeat(1_400 - tag.len()), "d".repeat(599))
+    }
+
+    fn charge(count: i64) -> u64 {
+        let indexes = IndexSet::default();
+        let fields = BTreeMap::from([("a".to_owned(), integers(count))]);
+        indexes
+            .document_index_usage(&path(&name(0)), &fields)
+            .expect("a document under the single-document budget")
+            .charged_bytes
+    }
+
+    proptest! {
+        /// A commit of documents that are each within the budget is accepted exactly when the
+        /// sum of their create charges is, writes all of them or none, and the emulator scope
+        /// accepts every one (production prices the commit, not each document).
+        #[test]
+        fn a_commit_is_accepted_exactly_when_the_sum_of_its_charges_fits(
+            counts in proptest::collection::vec(1_i64..=7_000, 1..=4)
+        ) {
+            let charges: Vec<u64> = counts.iter().map(|count| charge(*count)).collect();
+            let fits = charges.iter().sum::<u64>() <= TRANSACTION_BYTES;
+            let writes: Vec<Write> = counts
+                .iter()
+                .enumerate()
+                .map(|(index, count)| set(&name(index), "a", integers(*count)))
+                .collect();
+            let mut strict = state(LimitScope::Production);
+            let outcome = strict.commit(&writes, None, t(0));
+            prop_assert_eq!(outcome.is_ok(), fits, "{:?} {:?}", counts, charges);
+            for index in 0..counts.len() {
+                prop_assert_eq!(strict.get(&path(&name(index))).is_some(), fits);
+            }
+            if let Err(error) = outcome {
+                prop_assert_eq!(
+                    error.to_string(),
+                    "invalid argument: Transaction too big. Decrease transaction size."
+                );
+            }
+            let mut emulator = state(LimitScope::OfficialEmulator);
+            prop_assert!(emulator.commit(&writes, None, t(0)).is_ok());
+        }
+
+        /// The same documents committed one per commit are each accepted: the budget is per commit.
+        #[test]
+        fn the_same_documents_one_per_commit_are_each_accepted(
+            counts in proptest::collection::vec(1_i64..=7_000, 1..=4)
+        ) {
+            let mut strict = state(LimitScope::Production);
+            for (index, count) in counts.iter().enumerate() {
+                prop_assert!(strict
+                    .commit(&[set(&name(index), "a", integers(*count))], None, t(index as i64))
+                    .is_ok());
+            }
+        }
+    }
+}
