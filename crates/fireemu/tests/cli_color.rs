@@ -257,7 +257,7 @@ mod mixed_streams {
     fn under_pty(command: &str) -> Option<String> {
         let mut script = Command::new("script");
         if cfg!(target_os = "macos") {
-            script.args(["-q", "/dev/null", "sh", "-c", command]);
+            script.args(["-q", "/dev/null", "/bin/sh", "-c", command]);
         } else {
             script.args(["-qec", command, "/dev/null"]);
         }
