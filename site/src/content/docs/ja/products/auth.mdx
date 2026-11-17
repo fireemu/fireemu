@@ -417,7 +417,7 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
 # {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
 ```
 
-テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が受け入れるコードと一致します。検証そのものは変わりません。表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
+テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が照合するコードと一致します。検証そのものは変わらず、再利用の防止もそのままです。登録や先のサインインで同じ時間ステップのコードを使った後は拒否されるので、次のステップ（`secondsRemaining`）を待ってください。表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.totp.revealCodes = true`を明示すると、`productionExact`でも有効のままです。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
 
 ## マルチテナンシー
 

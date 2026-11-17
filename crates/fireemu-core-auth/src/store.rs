@@ -3733,36 +3733,51 @@ impl AuthStore {
             return Vec::new();
         }
         let params = self.policy.params();
+        self.users
+            .values()
+            .flat_map(|user| Self::user_totp_codes(user, params, now, true))
+            .collect()
+    }
+
+    /// Current codes of one account's enrolled TOTP factors with a live secret and, with
+    /// `pending`, of its enrollment sessions neither expired nor finalized.
+    fn user_totp_codes(
+        user: &UserRecord,
+        params: crate::totp::TotpParams,
+        now: LogicalInstant,
+        pending: bool,
+    ) -> Vec<TotpCodeEntry> {
         let mut entries = Vec::new();
-        for user in self.users.values() {
-            for factor in user.mfa.totp_factors() {
-                if factor.secret.is_detached() {
-                    continue;
-                }
-                let (code, seconds_remaining) =
-                    crate::totp::current_code(factor.secret.expose_for_enrollment(), &params, now);
-                entries.push(TotpCodeEntry {
-                    uid: user.local_id.clone(),
-                    mfa_enrollment_id: Some(factor.mfa_enrollment_id.clone()),
-                    display_name: factor.display_name.clone(),
-                    code,
-                    seconds_remaining,
-                });
+        for factor in user.mfa.totp_factors() {
+            if factor.secret.is_detached() {
+                continue;
             }
-            for pending in user.mfa.pending_enrollments().values() {
-                if pending.completed || pending.expires_at < now || pending.secret.is_detached() {
-                    continue;
-                }
-                let (code, seconds_remaining) =
-                    crate::totp::current_code(pending.secret.expose_for_enrollment(), &params, now);
-                entries.push(TotpCodeEntry {
-                    uid: user.local_id.clone(),
-                    mfa_enrollment_id: None,
-                    display_name: None,
-                    code,
-                    seconds_remaining,
-                });
+            let (code, seconds_remaining) =
+                crate::totp::current_code(factor.secret.expose_for_enrollment(), &params, now);
+            entries.push(TotpCodeEntry {
+                uid: user.local_id.clone(),
+                mfa_enrollment_id: Some(factor.mfa_enrollment_id.clone()),
+                display_name: factor.display_name.clone(),
+                code,
+                seconds_remaining,
+            });
+        }
+        if !pending {
+            return entries;
+        }
+        for session in user.mfa.pending_enrollments().values() {
+            if session.completed || session.expires_at < now || session.secret.is_detached() {
+                continue;
             }
+            let (code, seconds_remaining) =
+                crate::totp::current_code(session.secret.expose_for_enrollment(), &params, now);
+            entries.push(TotpCodeEntry {
+                uid: user.local_id.clone(),
+                mfa_enrollment_id: None,
+                display_name: None,
+                code,
+                seconds_remaining,
+            });
         }
         entries
     }
@@ -5608,10 +5623,14 @@ impl AuthStore {
         Arc::make_mut(&mut self.pending_sign_in_owners).insert(pending_id.clone(), uid.clone());
         self.pending_user_ids.insert(uid.clone());
         if self.reveal_totp_codes {
-            let notices: Vec<CredentialNotice> = self
-                .totp_codes(now)
+            let params = self.policy.params();
+            let entries = self
+                .users
+                .get(uid)
+                .map(|user| Self::user_totp_codes(user, params, now, false))
+                .unwrap_or_default();
+            let notices: Vec<CredentialNotice> = entries
                 .into_iter()
-                .filter(|entry| &entry.uid == uid && entry.mfa_enrollment_id.is_some())
                 .map(|entry| self.totp_notice(entry, TotpCodePurpose::SignIn))
                 .collect();
             for notice in notices {

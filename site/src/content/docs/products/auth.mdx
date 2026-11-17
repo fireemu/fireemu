@@ -417,7 +417,7 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
 # {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
 ```
 
-A tenant's codes are at `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. An enrollment not finalized yet is listed with `"pendingEnrollment": true` and no `mfaEnrollmentId`. The code uses the project's TOTP period and digits and Fireemu's clock, so it is the code verification accepts; verification itself is unchanged. The reveal is on by default in both profiles. `auth.totp.revealCodes = false`, or `productionExact`, turns it off: no line is printed and the route answers 404. `auth.logActionCodes = false` silences the line too. The lines and the route carry credentials, so keep them out of shared logs.
+A tenant's codes are at `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. An enrollment not finalized yet is listed with `"pendingEnrollment": true` and no `mfaEnrollmentId`. The code uses the project's TOTP period and digits and Fireemu's clock, so it is the code verification checks against; verification itself is unchanged, including replay protection: a code already used by the enrollment or by an earlier sign-in in the same time step is still refused, so wait for the next step (`secondsRemaining`). The reveal is on by default in both profiles. `auth.totp.revealCodes = false`, or `productionExact`, turns it off: no line is printed and the route answers 404. An explicit `auth.totp.revealCodes = true` keeps it on under `productionExact`. `auth.logActionCodes = false` silences the line too. The lines and the route carry credentials, so keep them out of shared logs.
 
 ## Multi-tenancy
 

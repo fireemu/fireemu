@@ -88,6 +88,13 @@ describe("Auth codes", () => {
     await waitFor(() => expect(ui.getByText("543210")).toBeTruthy());
   });
 
+  it("shows another failure as an error, not as the reveal being off", async () => {
+    vi.mocked(auth.listTotpCodes).mockReturnValue(errAsync({ status: 500, message: "INTERNAL" }));
+    const ui = mount();
+    await waitFor(() => expect(ui.getByTestId("totp-error").textContent).toContain("INTERNAL"));
+    expect(ui.queryByTestId("totp-off")).toBeNull();
+  });
+
   it("says the reveal is off when the route is absent", async () => {
     vi.mocked(auth.listTotpCodes).mockReturnValue(errAsync({ status: 404, message: "Not Found" }));
     const ui = mount();

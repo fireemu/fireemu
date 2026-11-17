@@ -595,7 +595,7 @@
             "revealCodes": {
               "type": "boolean",
               "default": true,
-              "description": "Reveal current TOTP codes so local development needs no authenticator app: the daemon prints one line with the project, tenant, uid, factor and current code (never the secret) when a TOTP enrollment starts and when a sign-in answers with the TOTP challenge, and GET /emulator/v1/projects/{project}[/tenants/{tenant}]/totpCodes lists the current code of every enrolled factor and open enrollment session. Verification is unchanged. A development default: true under the emulator and strict profiles, false under productionExact (the route then answers 404). auth.logActionCodes = false also silences the console lines. Declaring only this key does not enable the TOTP extension."
+              "description": "Reveal current TOTP codes so local development needs no authenticator app: the daemon prints one line with the project, tenant, uid, factor and current code (never the secret) when a TOTP enrollment starts and when a sign-in answers with the TOTP challenge, and GET /emulator/v1/projects/{project}[/tenants/{tenant}]/totpCodes lists the current code of every enrolled factor and open enrollment session. Verification is unchanged. A development default: true under the emulator and strict profiles, false under productionExact (the route then answers 404); an explicit true keeps it on under productionExact. A revealed code already used in its time step is still refused by replay protection. auth.logActionCodes = false also silences the console lines. Declaring only this key does not enable the TOTP extension."
             }
           }
         },

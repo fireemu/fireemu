@@ -408,6 +408,17 @@ Los códigos TOTP se comprueban con el reloj de Fireemu, igual que producción l
 
 Una inscripción TOTP correcta consume el intervalo de tiempo aceptado. Reutilizar ese código para iniciar sesión en el mismo intervalo se rechaza, por eso el ejemplo espera al siguiente. En una prueba con tiempo virtual, avanza el reloj del mundo según el periodo real del secreto y genera el código de inicio de sesión para ese nuevo instante; consulta la [receta de prueba de TOTP](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code).
 
+### Lee el código TOTP actual
+
+Fireemu muestra el código que mostraría una app de autenticación, así que una ejecución manual o una prueba no necesitan una app de autenticación ni calcular RFC 6238 por su cuenta. Cuando empieza una inscripción TOTP y cuando un inicio de sesión responde con el desafío TOTP, el daemon imprime una línea con el proyecto, el tenant (si lo hay), el usuario, el factor y el código actual con los segundos que le quedan, en el mismo lugar que los [mensajes de verificación locales](#mensajes-de-verificación-locales). El secreto nunca se imprime. Los mismos códigos se leen en una ruta exclusiva del emulador, para los factores inscritos y para las inscripciones aún sin finalizar; la página Auth de la Emulator UI los muestra y los actualiza:
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+```
+
+Los códigos de un tenant están en `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. Una inscripción aún sin finalizar aparece con `"pendingEnrollment": true` y sin `mfaEnrollmentId`. El código usa el periodo y los dígitos TOTP del proyecto y el reloj de Fireemu, así que es el código con el que compara la verificación. La verificación no cambia, tampoco la protección contra reutilización: un código que la inscripción o un inicio de sesión anterior ya usó en el mismo paso de tiempo se sigue rechazando; en ese caso espera al paso siguiente (`secondsRemaining`). La función está activa por defecto en ambos perfiles. `auth.totp.revealCodes = false` o `productionExact` la desactivan: no se imprime ninguna línea y la ruta responde 404. Un `auth.totp.revealCodes = true` explícito la mantiene activa con `productionExact`. `auth.logActionCodes = false` también silencia la línea. Las líneas y la ruta contienen credenciales; no las dejes en logs compartidos.
+
 ## Multi-tenancy
 
 Multi-tenancy está activada de forma predeterminada, así que la Admin API crea tenants y `auth.tenants` se carga sin habilitar nada antes. Con `productionExact`, un proyecto nuevo empieza como en producción, con los tenants rechazados hasta que `multiTenant.allowTenants` se habilite mediante la Admin API o en el archivo. `auth.multiTenant.allowTenants: false` la desactiva en cualquiera de los dos casos. Cada entrada de `auth.tenants` es un documento `Tenant` de Admin v2 más su `tenantId`:

@@ -651,9 +651,26 @@ const AuthScope: Component<{ project: string }> = (props) => {
             <Show
               when={totpCodes.latest?.isOk()}
               fallback={
-                <p class="text-sm text-muted" data-testid="totp-off">
-                  {t("auth.totpCodesOff")}
-                </p>
+                <Show
+                  when={totpCodes.latest?.match(
+                    () => false,
+                    (e) => e.status === 404,
+                  )}
+                  fallback={
+                    <div data-testid="totp-error">
+                      <ErrorBanner
+                        message={totpCodes.latest?.match(
+                          () => null,
+                          (e) => e.message,
+                        )}
+                      />
+                    </div>
+                  }
+                >
+                  <p class="text-sm text-muted" data-testid="totp-off">
+                    {t("auth.totpCodesOff")}
+                  </p>
+                </Show>
               }
             >
               <Show

@@ -2466,3 +2466,46 @@ fn strict_sms_finalize_in_a_tenant_without_sms_mfa_is_refused_first() {
         )
     );
 }
+
+/// The totpCodes route of the project lists only the project's accounts, and each tenant's
+/// route only that tenant's, in both profiles, with all three namespaces populated.
+#[test]
+fn totp_codes_of_the_project_and_each_tenant_stay_in_their_namespace() {
+    use fireemu_core_auth::store::NewUser;
+    for (profile, state, registry) in profiles() {
+        let now = LogicalInstant::from_unix_seconds(1_788_004_860);
+        let mut uids = Vec::new();
+        for (tenant, email) in [
+            (None, "project@example.com"),
+            (Some(TENANT_A), "a@example.com"),
+            (Some(TENANT_B), "b@example.com"),
+        ] {
+            let store = match tenant {
+                None => state.store.clone(),
+                Some(tenant) => registry.tenant_store("demo-app", tenant).unwrap(),
+            };
+            let mut store = store.lock().unwrap();
+            let uid = store.create_user(NewUser::email(email), now).unwrap();
+            store.start_totp_enrollment(&uid, now).unwrap();
+            uids.push((tenant, uid.as_str().to_owned()));
+        }
+        let distinct: std::collections::BTreeSet<&str> =
+            uids.iter().map(|(_, uid)| uid.as_str()).collect();
+        assert_eq!(distinct.len(), 3, "{profile}: {uids:?}");
+        for (tenant, uid) in &uids {
+            let path = match tenant {
+                None => format!("{EMULATOR}/totpCodes"),
+                Some(tenant) => format!("{EMULATOR}/tenants/{tenant}/totpCodes"),
+            };
+            let (status, body) = admin(&state, "GET", &path, &json!({}));
+            assert_eq!(status, 200, "{profile} {path}: {body}");
+            let listed: Vec<&str> = body["totpCodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["uid"].as_str().unwrap())
+                .collect();
+            assert_eq!(listed, vec![uid.as_str()], "{profile} {path}: {body}");
+        }
+    }
+}
