@@ -281,8 +281,63 @@ mod reference_glob {
         Literal(char),
         Segment,
         Any,
+        /// `**/`, with the stars and the slash written next to each other in the pattern as given: any
+        /// directories or none (recorded, STORAGE-STRICTNESS-OBS v4.1). The slash of a `**{x,}/` that
+        /// only meets the stars after the braces are expanded is an ordinary slash.
+        AnyDir,
         One,
         Class(Vec<(char, char)>, bool),
+    }
+
+    /// Replaces each run of two or more stars written directly before a slash (`**/`, `**\/`) with the
+    /// private marker U+0002, outside sets and escapes, before braces are expanded.
+    fn mark_any_dir(pattern: &[char]) -> Vec<char> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < pattern.len() {
+            match pattern[i] {
+                '\\' => {
+                    out.extend(pattern[i..(i + 2).min(pattern.len())].iter().copied());
+                    i += 2;
+                }
+                '[' => match set_end(pattern, i) {
+                    Some(end) => {
+                        out.extend_from_slice(&pattern[i..end]);
+                        i = end;
+                    }
+                    None => {
+                        out.push('[');
+                        i += 1;
+                    }
+                },
+                '*' => {
+                    let mut run = 1;
+                    while pattern.get(i + run) == Some(&'*') {
+                        run += 1;
+                    }
+                    let slash = match (pattern.get(i + run), pattern.get(i + run + 1)) {
+                        (Some('/'), _) => Some(1),
+                        (Some('\\'), Some('/')) => Some(2),
+                        _ => None,
+                    };
+                    match slash {
+                        Some(width) if run >= 2 => {
+                            out.push('\u{2}');
+                            i += run + width;
+                        }
+                        _ => {
+                            out.extend(std::iter::repeat_n('*', run));
+                            i += run;
+                        }
+                    }
+                }
+                other => {
+                    out.push(other);
+                    i += 1;
+                }
+            }
+        }
+        out
     }
 
     /// Every brace-free pattern a pattern stands for; an unterminated brace is a literal.
@@ -418,6 +473,10 @@ mod reference_glob {
                     i += 1;
                 }
                 '\u{1}' => i += 1,
+                '\u{2}' => {
+                    out.push(Element::AnyDir);
+                    i += 1;
+                }
                 '[' => match set_end(pattern, i) {
                     Some(end) => {
                         let mut at = i + 1;
@@ -493,10 +552,9 @@ mod reference_glob {
                         }
                         ok
                     }
-                    // `**/` is "any directories or none": the run and its slash are optional together.
-                    Element::Any if matches!(elements.get(i + 1), Some(Element::Literal('/'))) => {
-                        table[i + 2][j]
-                            || (j..name.len()).any(|k| name[k] == '/' && table[i + 2][k + 1])
+                    Element::AnyDir => {
+                        table[i + 1][j]
+                            || (j..name.len()).any(|k| name[k] == '/' && table[i + 1][k + 1])
                     }
                     Element::Any => (j..=name.len()).any(|k| table[i + 1][k]),
                 };
@@ -506,7 +564,7 @@ mod reference_glob {
     }
 
     pub fn matches(pattern: &str, name: &str) -> bool {
-        let pattern: Vec<char> = pattern.chars().collect();
+        let pattern = mark_any_dir(&pattern.chars().collect::<Vec<char>>());
         let name: Vec<char> = name.chars().collect();
         expand(&pattern)
             .iter()
