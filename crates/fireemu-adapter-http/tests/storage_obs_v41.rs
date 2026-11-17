@@ -70,6 +70,15 @@ impl Answer {
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     }
+    /// Every value of a header that is written on several lines, joined with ", ".
+    fn all(&self, name: &str) -> String {
+        self.headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
     fn text(&self) -> String {
         String::from_utf8(self.body.clone()).unwrap()
     }
@@ -238,13 +247,30 @@ fn token_of(page: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn member_order(value: &Value) -> Vec<&str> {
-    value
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect()
+/// The member names of the object at `indent` spaces in the pretty-printed body, in the order written.
+fn raw_keys(answer: &Answer, indent: usize, within: Option<&str>) -> Vec<String> {
+    let text = answer.text();
+    let pad = " ".repeat(indent);
+    let outer = " ".repeat(indent.saturating_sub(2));
+    let mut inside = within.is_none();
+    let mut keys = Vec::new();
+    for line in text.lines() {
+        if let Some(parent) = within {
+            if line.starts_with(&format!("{outer}\"{parent}\": {{")) {
+                inside = true;
+                continue;
+            }
+            if inside && line.starts_with(&format!("{outer}}}")) {
+                break;
+            }
+        }
+        if inside && line.starts_with(&format!("{pad}\"")) {
+            if let Some(key) = line[pad.len() + 1..].split('"').next() {
+                keys.push(key.to_owned());
+            }
+        }
+    }
+    keys
 }
 
 /// V4-L-delim, -itd-true, -itd-false, -sub, -itd-sub, -itd-nodelim (recorded 2026-11-17).
@@ -257,10 +283,10 @@ async fn strict_include_trailing_delimiter_lists_the_placeholder_as_item_and_pre
     assert_eq!(names(&plain, "prefixes"), ["tl/d1/", "tl/d2/"]);
     let yes = get(addr, &format!("{base}&includeTrailingDelimiter=true")).await;
     assert_eq!(yes.status, 200);
+    assert_eq!(raw_keys(&yes, 2, None), ["kind", "prefixes", "items"]);
     let yes = yes.json();
     assert_eq!(names(&yes, "items"), ["tl/d1/", "tl/f.txt"]);
     assert_eq!(names(&yes, "prefixes"), ["tl/d1/", "tl/d2/"]);
-    assert_eq!(member_order(&yes), ["kind", "prefixes", "items"]);
     let no = get(addr, &format!("{base}&includeTrailingDelimiter=false"))
         .await
         .json();
@@ -277,13 +303,13 @@ async fn strict_include_trailing_delimiter_lists_the_placeholder_as_item_and_pre
         assert!(sub.get("prefixes").is_none(), "{suffix}");
     }
     // The flag needs a delimiter.
-    let bare = get(
+    let without_delimiter = get(
         addr,
         &format!("{LIST}?prefix=tl%2F&includeTrailingDelimiter=true"),
     )
     .await;
-    assert_eq!(bare.status, 400);
-    let error = bare.json();
+    assert_eq!(without_delimiter.status, 400);
+    let error = without_delimiter.json();
     assert_eq!(
         error["error"]["message"],
         "delimiter field required if include_trailing_delimiter field is set to true"
@@ -533,26 +559,64 @@ async fn the_emulator_profile_ignores_a_malformed_or_long_match_glob() {
 
 const OBJECT: &str = "/storage/v1/b/demo-app.appspot.com/o/gl%2Fa.txt";
 
-/// V4-MD-copy (recorded): copyTo with no body at all is a parse error.
+/// V4-MD-copy (recorded): copyTo with no body and a text/plain content type (what the recorder's fetch
+/// adds to an empty string body) is a parse error. Every other shape is unrecorded and served.
 #[tokio::test]
-async fn strict_copy_to_with_an_empty_body_is_a_parse_error() {
-    let (addr, _s, task) = serve(glob_fixture(TokenAcceptance::Verified)).await;
-    let path = format!("{OBJECT}/copyTo/b/{BUCKET}/o/gl%2Fcopy.txt");
-    let empty = send_with(addr, "POST", &path, &[], None).await;
-    assert_eq!(
-        error_of(&empty),
-        (400, "Parse Error".to_owned(), "parseError".to_owned())
-    );
-    let with_body = send_with(
+async fn strict_copy_to_with_an_empty_text_body_is_a_parse_error() {
+    let (addr, s, task) = serve(glob_fixture(TokenAcceptance::Verified)).await;
+    let path = |name: &str| format!("{OBJECT}/copyTo/b/{BUCKET}/o/{name}");
+    let recorded = send_with(
         addr,
         "POST",
-        &path,
-        &[("Content-Type", "application/json")],
-        Some("{}"),
+        &path("gl%2Fcopy.txt"),
+        &[("Content-Type", "text/plain;charset=UTF-8")],
+        None,
     )
     .await;
-    assert_eq!(with_body.status, 200);
-    assert_eq!(with_body.json()["name"], "gl/copy.txt");
+    assert_eq!(
+        error_of(&recorded),
+        (400, "Parse Error".to_owned(), "parseError".to_owned())
+    );
+    assert!(s
+        .store
+        .lock()
+        .unwrap()
+        .get(
+            &BucketName::try_new(BUCKET).unwrap(),
+            &ObjectName::try_new("gl/copy.txt").unwrap()
+        )
+        .is_none());
+    // Near misses, all served: no content type, a JSON content type without a body, a JSON body, rewriteTo.
+    for (name, headers, body) in [
+        ("gl%2Fa1.txt", vec![], None),
+        (
+            "gl%2Fa2.txt",
+            vec![("Content-Type", "application/json")],
+            None,
+        ),
+        (
+            "gl%2Fa3.txt",
+            vec![("Content-Type", "application/json")],
+            Some("{}"),
+        ),
+        (
+            "gl%2Fa4.txt",
+            vec![("Content-Type", "text/plain;charset=UTF-8")],
+            Some("{}"),
+        ),
+    ] {
+        let answer = send_with(addr, "POST", &path(name), &headers, body).await;
+        assert_eq!(answer.status, 200, "{name}");
+    }
+    let rewrite = send_with(
+        addr,
+        "POST",
+        &format!("{OBJECT}/rewriteTo/b/{BUCKET}/o/gl%2Frewritten.txt"),
+        &[("Content-Type", "text/plain;charset=UTF-8")],
+        None,
+    )
+    .await;
+    assert_eq!(rewrite.status, 200);
     task.abort();
 }
 
@@ -560,7 +624,12 @@ async fn strict_copy_to_with_an_empty_body_is_a_parse_error() {
 async fn the_emulator_profile_still_copies_with_an_empty_body() {
     let (addr, _s, task) = serve(glob_fixture(TokenAcceptance::EmulatorMock)).await;
     let path = format!("{OBJECT}/copyTo/b/{BUCKET}/o/gl%2Fcopy.txt");
-    assert_eq!(send_with(addr, "POST", &path, &[], None).await.status, 200);
+    for headers in [vec![], vec![("Content-Type", "text/plain;charset=UTF-8")]] {
+        assert_eq!(
+            send_with(addr, "POST", &path, &headers, None).await.status,
+            200
+        );
+    }
     task.abort();
 }
 
@@ -574,7 +643,7 @@ async fn strict_bucket_resource_has_the_recorded_members_order_and_headers() {
     assert_eq!(answer.status, 200);
     let bucket = answer.json();
     assert_eq!(
-        member_order(&bucket),
+        raw_keys(&answer, 2, None),
         [
             "kind",
             "selfLink",
@@ -595,7 +664,7 @@ async fn strict_bucket_resource_has_the_recorded_members_order_and_headers() {
         ]
     );
     assert_eq!(
-        member_order(&bucket["iamConfiguration"]),
+        raw_keys(&answer, 4, Some("iamConfiguration")),
         [
             "bucketPolicyOnly",
             "uniformBucketLevelAccess",
@@ -605,7 +674,7 @@ async fn strict_bucket_resource_has_the_recorded_members_order_and_headers() {
     assert_eq!(bucket["etag"], "CAE=");
     assert_eq!(bucket["satisfiesPZI"], true);
     assert_eq!(answer.header("etag"), Some("CAE="));
-    assert_eq!(answer.header("vary"), Some("Origin, X-Origin"));
+    assert_eq!(answer.all("vary"), "Origin, X-Origin");
     assert!(answer.header("access-control-expose-headers").is_none());
     assert_eq!(
         answer.header("cache-control"),
@@ -643,8 +712,8 @@ async fn strict_bucket_patch_accepts_labels() {
         patch.header("cache-control"),
         Some("no-cache, no-store, max-age=0, must-revalidate")
     );
-    let order = member_order(&bucket);
-    let at = |name: &str| order.iter().position(|member| *member == name).unwrap();
+    let order = raw_keys(&patch, 2, None);
+    let at = |name: &str| order.iter().position(|member| member == name).unwrap();
     assert!(at("updated") + 1 == at("labels") && at("labels") + 1 == at("softDeletePolicy"));
     // The label stays on a later read, and a null value removes it.
     assert_eq!(
@@ -685,7 +754,7 @@ async fn strict_bucket_delete_answers_204_with_zero_length_and_json_type() {
     assert_eq!(answer.status, 204);
     assert_eq!(answer.header("content-length"), Some("0"));
     assert_eq!(answer.header("content-type"), Some("application/json"));
-    assert_eq!(answer.header("vary"), Some("Origin, X-Origin"));
+    assert_eq!(answer.all("vary"), "Origin, X-Origin");
     assert_eq!(
         answer.header("cache-control"),
         Some("no-cache, no-store, max-age=0, must-revalidate")
@@ -711,7 +780,7 @@ async fn strict_xml_delete_removes_an_object_and_repeats_as_no_such_key() {
     assert_eq!(first.status, 204);
     assert_eq!(first.header("content-length"), Some("0"));
     assert!(first.header("content-type").is_none());
-    assert_eq!(first.header("vary"), Some("Origin"));
+    assert_eq!(first.all("vary"), "Origin");
     assert!(first.body.is_empty());
     assert!(s
         .store
@@ -728,7 +797,7 @@ async fn strict_xml_delete_removes_an_object_and_repeats_as_no_such_key() {
         again.header("content-type"),
         Some("application/xml; charset=UTF-8")
     );
-    assert_eq!(again.header("vary"), Some("Origin"));
+    assert_eq!(again.all("vary"), "Origin");
     assert_eq!(
         again.text(),
         "<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Details>No such object: demo-app.appspot.com/gl/a.txt</Details></Error>"

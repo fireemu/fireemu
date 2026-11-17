@@ -345,7 +345,7 @@ export function classifyRequest(target, request, location = "US") {
   const expected =
     planned.auth === "malformed"
       ? "malformed"
-      : target.local || planned.auth === "none"
+      : (target.local && !planned.localBearer) || planned.auth === "none"
         ? "none"
         : planned.auth;
   if (

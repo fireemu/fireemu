@@ -24,9 +24,13 @@ export function comparable(row) {
       ? { json: row.json ?? null, xml: row.xml ?? null }
       : bodyErrorFields(row.body ?? ""),
   );
-  return Object.fromEntries(
+  const compared = Object.fromEntries(
     FIELDS.map((field) => [field, (Object.hasOwn(errors, field) ? errors : row)[field] ?? null]),
   );
+  // The length of a body follows its content; only an empty body (a 204) is a framing fact.
+  if (compared.v4 && compared.v4.contentLength !== null && compared.v4.contentLength !== "0")
+    compared.v4 = { ...compared.v4, contentLength: "<body>" };
+  return compared;
 }
 
 export function compare(production, local) {

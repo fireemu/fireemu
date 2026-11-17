@@ -1339,3 +1339,61 @@ test("v4 judge facts reach generated values inside arrays and ignore a non-objec
     { a: [] },
   );
 });
+
+test("v4 local xml delete carries a bearer and no other local request does", async () => {
+  const local = targetOf({ ...identity, runId: "ss-0123abcd", local: "http://127.0.0.1:39199" });
+  const { world } = await run({}, local);
+  const withAuth = world.log.filter((r) => r.headers.authorization !== undefined).map((r) => r.case);
+  assert.deepEqual(withAuth, ["V4-X-xml-delete", "V4-X-xml-delete-again"]);
+  assert.match(world.log.find((r) => r.case === "V4-X-xml-delete").headers.authorization, /^Bearer \S+$/);
+  // Production plans do not change, and the flag never turns a local request into a bearer elsewhere.
+  const plan = requests(local);
+  assert.equal(plan["V4-X-xml-delete"].localBearer, true);
+  assert.equal(plan["V4-L-delim"].localBearer, undefined);
+  assert.throws(() => classifyRequest(local, { ...plan["V4-L-delim"], headers: { authorization: "Bearer x" } }), GuardError);
+  assert.throws(() => classifyRequest(local, { ...plan["V4-X-xml-delete"], headers: {} }), GuardError);
+});
+
+test("v4 comparison treats a body's length as content and a zero length as framing", () => {
+  const row = (contentLength) => ({
+    case: "V4-L-delim",
+    status: 200,
+    shape: "object-list",
+    known: true,
+    headerNames: [],
+    headers: {},
+    json: null,
+    xml: null,
+    location: null,
+    v4: { contentLength, items: [] },
+  });
+  assert.equal(compare([row("981")], [row("1010")])[0].verdict, "MATCH");
+  assert.equal(compare([row("0")], [row("0")])[0].verdict, "MATCH");
+  assert.equal(compare([row("0")], [row("15")])[0].verdict, "DIFFERS(v4)");
+  assert.equal(compare([row(null)], [row("15")])[0].verdict, "DIFFERS(v4)");
+  assert.equal(compare([row("981")], [row(null)])[0].verdict, "DIFFERS(v4)");
+});
+
+test("the recorded v4.1 fixture names its cases once and holds no body, hash or token", async () => {
+  const { scanFixtureText } = await import("../storage-object-compare/scan.mjs");
+  const text = readFileSync(
+    new URL("../../storage-strictness-obs/recordings/run-3.json", import.meta.url),
+    "utf8",
+  );
+  scanFixtureText(text, { runIds: ["ss-c89ab89c"] });
+  const fixture = JSON.parse(text);
+  assert.equal(fixture.rows.length, 58);
+  assert.equal(new Set(fixture.rows.map((row) => row.case)).size, 58);
+  for (const row of fixture.rows) {
+    for (const key of ["bodyBase64", "sha256", "bodyBytes", "body"]) assert.ok(!Object.hasOwn(row, key));
+  }
+  assert.ok(!text.includes("nextPageToken\": \""));
+  const byCase = Object.fromEntries(fixture.rows.map((row) => [row.case, row]));
+  assert.deepEqual(byCase["V4-L-itd-true"].v4.items, ["tl/d1/", "tl/f.txt"]);
+  assert.deepEqual(byCase["V4-L-itd-true"].v4.memberOrder, ["kind", "prefixes", "items"]);
+  assert.equal(byCase["V4-MD-copy"].json.message, "Parse Error");
+  assert.equal(byCase["V4-M-len-1025"].json.message.includes("1025 bytes"), true);
+  assert.equal(byCase["V4-X-xml-delete"].v4.contentLength, "0");
+  assert.equal(byCase["V4-X-xml-delete-again"].xml.Code, "NoSuchKey");
+  assert.equal(byCase["V4-L-itd-p4"].known, false);
+});

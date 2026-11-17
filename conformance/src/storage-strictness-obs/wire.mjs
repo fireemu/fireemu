@@ -73,7 +73,8 @@ export function createWire({
   async function wire(planned, location = "US") {
     const headers = { ...planned.headers };
     if (planned.auth === "malformed") headers.authorization = "Firebase not-a-jwt";
-    else if (!target.local && planned.auth !== "none") headers.authorization = `Bearer ${token}`;
+    else if ((!target.local || planned.localBearer) && planned.auth !== "none")
+      headers.authorization = `Bearer ${token}`;
     const request = { ...planned, headers };
     const checked = classifyRequest(target, request, location);
     if (checked.action === "delete" && unknownDeletes.has(checked.resource))

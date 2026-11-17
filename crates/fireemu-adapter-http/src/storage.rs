@@ -2978,12 +2978,14 @@ fn route(method: &str, path: &str) -> Result<Route, String> {
 }
 
 fn fallback_route(method: &str, path: &str, segments: &[&str]) -> Result<Route, String> {
-    if method == "PUT" {
+    if method == "PUT" || method == "DELETE" {
         let original: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if matches!(
             original.as_slice(),
             ["internal" | "v0", ..] | ["storage", "v1", ..] | ["upload", "storage", "v1", ..]
-        ) {
+        ) || (method == "DELETE"
+            && matches!(original.as_slice(), ["download", "storage", "v1", ..]))
+        {
             return Ok(Route::NotImplemented);
         }
         fallthrough(method, &original)
@@ -2997,7 +2999,7 @@ fn fallback_route(method: &str, path: &str, segments: &[&str]) -> Result<Route, 
 /// form-data upload, and everything else is the 501 catch-all.
 fn fallthrough(method: &str, segments: &[&str]) -> Result<Route, String> {
     match (method, segments) {
-        ("GET" | "PUT", [bucket, rest @ ..]) if !rest.is_empty() => {
+        ("GET" | "PUT" | "DELETE", [bucket, rest @ ..]) if !rest.is_empty() => {
             let name = rest
                 .iter()
                 .map(|s| decode_segment(s))
@@ -3708,6 +3710,12 @@ fn is_end_user_read(
                 .is_some_and(|value| value.starts_with("Firebase ") && value != "Firebase owner"))
 }
 
+/// Whether `path` is `/storage/v1/b/{bucket}`, the bucket resource itself.
+fn is_bucket_resource_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    segments.len() == 4 && segments[..3] == ["storage", "v1", "b"] && !segments[3].is_empty()
+}
+
 /// What the strict profile's framing needs from a request, or `None` for a request the
 /// recordings do not cover (the form upload, the bucket listing, the XML-style read and
 /// the rules route keep the headers their handlers give them).
@@ -3724,8 +3732,14 @@ fn production_shape(
         Route::FbBucket { .. } => (Wire::Firebase, get, false),
         Route::FbObject { .. } => (Wire::Firebase, false, get),
         Route::GcsList { .. } => (Wire::Gcs, get, false),
-        Route::GcsObject { .. } => (Wire::Gcs, false, get),
+        // The bucket resource (RECORDED, STORAGE-STRICTNESS-OBS v4.1) is framed like an object read.
+        Route::GcsObject { .. } | Route::GcsBucket { .. } => (Wire::Gcs, false, get),
         Route::GcsCopy { .. } | Route::GcsUpload { .. } => (Wire::Gcs, false, false),
+        // RECORDED (STORAGE-STRICTNESS-OBS v4.1): the bucket delete is framed like the other JSON API answers.
+        Route::NotImplemented if req.method == "DELETE" && is_bucket_resource_path(&req.path) => {
+            (Wire::Gcs, false, false)
+        }
+        Route::XmlStyle { .. } if req.method == "DELETE" => (Wire::Xml, false, false),
         // RECORDED (STORAGE-STRICTNESS-OBS run ss-48adbd8e, case A8): ACL missing-bucket errors use the JSON API framing too.
         _ if acl_get => (Wire::Gcs, false, false),
         _ => return None,
@@ -3767,11 +3781,16 @@ fn handle_request(
     // Strict-only routes are mapped here, after admission classification: buckets.insert and
     // buckets.delete must stay the unsupported catch-all for the emulator profile, so that routing
     // them never opens the loopback server-side App Check path (the emulator refusal stays 403).
-    let strict_bucket_delete = state.is_strict() && req.method == "DELETE" && {
-        let segments: Vec<&str> = req.path.trim_matches('/').split('/').collect();
-        segments.len() == 4 && segments[..3] == ["storage", "v1", "b"] && !segments[3].is_empty()
-    };
-    let route = if state.is_strict()
+    let strict_bucket_delete =
+        state.is_strict() && req.method == "DELETE" && is_bucket_resource_path(&req.path);
+    // The official emulator has no XML DELETE route: the emulator profile keeps the 501 it answered
+    // before the strict profile served the recorded XML DELETE.
+    let route = if !state.is_strict()
+        && req.method == "DELETE"
+        && matches!(route, Route::XmlStyle { .. })
+    {
+        Route::NotImplemented
+    } else if state.is_strict()
         && req.method == "POST"
         && req.path.trim_matches('/') == "storage/v1/b"
     {
@@ -4145,6 +4164,9 @@ fn handle_request(
         Route::FormUpload { bucket } => form_upload(state, &bucket, req),
         Route::XmlStyle { bucket, name } if req.method == "PUT" => {
             xml_style_put(state, &bucket, &name, req, &params)
+        }
+        Route::XmlStyle { bucket, name } if req.method == "DELETE" => {
+            xml_style_delete(state, &bucket, &name, &req, &params)
         }
         Route::XmlStyle { bucket, name } => xml_style_get(state, &bucket, &name, &req, &params),
         // The short bucket spelling is resolved before dispatch; one that reaches here is the catch-all.
@@ -5744,7 +5766,52 @@ fn gcs_bucket_delete(state: &StorageState, bucket: &BucketName) -> Outcome {
             "conflict",
         ));
     }
-    Ok(plain_status(204))
+    // RECORDED (STORAGE-STRICTNESS-OBS ss-48adbd8e K3, STORAGE-CORS V3-K-delete-bucket, v4.1 V4-K-delete-bucket):
+    // 204, `Content-Length: 0` and `Content-Type: application/json` (the framing adds the type).
+    Ok(StorageResponse::empty(204).with_header("content-length", "0"))
+}
+
+/// The changes a `labels` member asks for: string values set a label and, in a patch, `null` removes one.
+fn parse_label_changes(
+    value: &Value,
+    patch: bool,
+) -> Result<Vec<(String, Option<String>)>, StorageResponse> {
+    let refusal = || gcs_json_error(400, "labels must be an object of strings", "invalid");
+    let object = value.as_object().ok_or_else(refusal)?;
+    object
+        .iter()
+        .map(|(label, label_value)| match label_value {
+            Value::String(text) => Ok((label.clone(), Some(text.clone()))),
+            Value::Null if patch => Ok((label.clone(), None)),
+            _ => Err(refusal()),
+        })
+        .collect()
+}
+
+/// The members of a strict bucket resource that the stub lacked, as the STORAGE-STRICTNESS-OBS v4.1
+/// recording shows them (see the call).
+fn add_recorded_bucket_members(
+    state: &StorageState,
+    bucket: &BucketName,
+    resource: &mut Value,
+) -> Result<(), StorageResponse> {
+    let (metageneration, labels) = {
+        let store = state.store()?;
+        (
+            store.bucket_metageneration(bucket),
+            store.bucket_labels(bucket),
+        )
+    };
+    resource["generation"] = json!(state.now().as_nanos().to_string());
+    resource["metageneration"] = json!(metageneration.to_string());
+    resource["etag"] = json!(fireemu_core_storage::etag::bucket_etag(metageneration));
+    resource["softDeletePolicy"] =
+        json!({"retentionDurationSeconds": "604800", "effectiveTime": rfc3339(state.now())});
+    resource["satisfiesPZI"] = json!(true);
+    if !labels.is_empty() {
+        resource["labels"] = json!(labels);
+    }
+    Ok(())
 }
 
 /// `GET` and `PATCH /storage/v1/b/{bucket}`: the bucket resource with its `versioning`. `PATCH`
@@ -5753,6 +5820,7 @@ fn gcs_bucket_delete(state: &StorageState, bucket: &BucketName) -> Outcome {
 /// production accepts `labels`, `lifecycle` and more). UNRECORDED: the 400 bodies of those
 /// refusals and the 404 of a bucket that does not exist. `fields` narrows the answer as the JSON
 /// API's partial-response syntax does: `a,b`, `a/b` and `a(b,c)`.
+#[allow(clippy::too_many_lines)]
 fn gcs_bucket(
     state: &StorageState,
     bucket: &str,
@@ -5787,7 +5855,14 @@ fn gcs_bucket(
         };
         let mut enabled = None;
         let mut uniform_access = (method == "POST").then_some(false);
+        let mut label_changes: Option<Vec<(String, Option<String>)>> = None;
         for (key, value) in fields {
+            // RECORDED (STORAGE-STRICTNESS-OBS v4.1, V4-B-patch): production accepts `labels` and a
+            // null value removes a label. The emulator profile keeps refusing it (below).
+            if state.is_strict() && key == "labels" {
+                label_changes = Some(parse_label_changes(value, method == "PATCH")?);
+                continue;
+            }
             if state.is_strict() && key == "iamConfiguration" {
                 uniform_access = Some(
                     value
@@ -5846,6 +5921,14 @@ fn gcs_bucket(
         if let Some(enabled) = enabled {
             state.store()?.set_versioning(&b, enabled);
         }
+        if state.is_strict() && (method == "PATCH" || label_changes.is_some()) {
+            // Every patch moves the metageneration on; creating a bucket with labels does not.
+            state.store()?.patch_bucket_labels(
+                &b,
+                label_changes.as_deref().unwrap_or(&[]),
+                method == "PATCH",
+            );
+        }
     }
     let versioning = state.store()?.versioning_state(&b);
     let mut resource = bucket_resource(bucket, versioning, &rfc3339(state.now()), host);
@@ -5853,6 +5936,13 @@ fn gcs_bucket(
         let enabled = state.store()?.uniform_bucket_level_access(&b);
         // The recording has both aliases; locking times and IAM policies are not modeled.
         resource["iamConfiguration"] = json!({"uniformBucketLevelAccess": {"enabled": enabled}, "bucketPolicyOnly": {"enabled": enabled}, "publicAccessPrevention": "inherited"});
+        // RECORDED (STORAGE-STRICTNESS-OBS v4.1): the members of a bucket resource that the stub
+        // lacked (`generation`, `softDeletePolicy`, `satisfiesPZI`), the etag as the protobuf of the
+        // metageneration (`CAE=` at 1) and the labels. Values production decides per bucket are not
+        // modeled: `softDeletePolicy` is the seven-day default whatever the bucket was created with
+        // (a creation with `retentionDurationSeconds` 0 is accepted and not kept), `projectNumber`
+        // stays the stub's.
+        add_recorded_bucket_members(state, &b, &mut resource)?;
     }
     let resource = match params.get("fields") {
         Some(fields) => project_fields(&resource, &FieldMask::parse(fields)),
@@ -5948,6 +6038,46 @@ fn project_fields(value: &Value, mask: &FieldMask) -> Value {
     }
 }
 
+/// The `includeTrailingDelimiter` flag and the `matchGlob` pattern of a list request, or the 400 production
+/// answers (strict only; the emulator profile ignores both). An empty `matchGlob` filters nothing.
+fn strict_list_options(
+    strict: bool,
+    params: &BTreeMap<String, String>,
+) -> Result<(bool, Option<&String>), StorageResponse> {
+    if !strict {
+        return Ok((false, None));
+    }
+    let trailing = match params.get("includeTrailingDelimiter").map(String::as_str) {
+        None | Some("false") => false,
+        Some("true") => {
+            if params.get("delimiter").is_none_or(String::is_empty) {
+                return Err(gcs_json_error(
+                    400,
+                    "delimiter field required if include_trailing_delimiter field is set to true",
+                    "required",
+                ));
+            }
+            true
+        }
+        // UNRECORDED: any other value.
+        Some(_) => {
+            return Err(gcs_json_error(
+                400,
+                "unsupported JSON API list parameter: includeTrailingDelimiter",
+                "invalid",
+            ));
+        }
+    };
+    let match_glob = params
+        .get("matchGlob")
+        .filter(|pattern| !pattern.is_empty());
+    if let Some(pattern) = match_glob {
+        fireemu_core_storage::glob::validate(pattern)
+            .map_err(|message| gcs_json_error(400, &message, "invalid"))?;
+    }
+    Ok((trailing, match_glob))
+}
+
 fn gcs_list(
     state: &StorageState,
     bucket: &str,
@@ -5959,30 +6089,21 @@ fn gcs_list(
     // lean-v5: the offsets `b.txt` and `zz.txt` list `b.txt`, `dir/c.txt`, `dir/d.txt` and
     // `dir2/e.txt`; the glob `dir/*` lists `dir/c.txt` and `dir/d.txt`). The official emulator
     // ignores all of them (measured, firebase-tools 15.28.2: the whole listing), as does the
-    // emulator profile. `includeTrailingDelimiter=true` was not recorded and is refused under
-    // strict. `versions=true` is served and the same three filters apply to every generation it
+    // emulator profile. Strict also follows the STORAGE-STRICTNESS-OBS v4.1 recording (2026-11-17):
+    // `includeTrailingDelimiter=true` lists an object named like its own prefix as an item as well as
+    // a prefix (one entry of the page) and needs a delimiter (400 `required` otherwise); a page token
+    // continues after its entry whether or not the entry still exists; `matchGlob` is limited to
+    // 1024 bytes and an unterminated `[` or `{` is a 400; an empty `matchGlob` filters nothing. The
+    // emulator profile ignores all of these. `versions=true` is served and the same three filters apply to every generation it
     // lists (the documented JSON API semantics; a versions listing with a filter was not
     // recorded, so this is UNRECORDED and not a refusal, which would answer a valid request with
     // an error production does not give).
     // https://cloud.google.com/storage/docs/json_api/v1/objects/list
     let strict = state.token_acceptance == TokenAcceptance::Verified;
-    if strict
-        && params
-            .get("includeTrailingDelimiter")
-            .is_some_and(|value| value != "false")
-    {
-        return Err(gcs_json_error(
-            400,
-            "unsupported JSON API list parameter: includeTrailingDelimiter",
-            "invalid",
-        ));
-    }
+    let (trailing, match_glob) = strict_list_options(strict, params)?;
     let start_offset = strict.then(|| params.get("startOffset").cloned()).flatten();
     let end_offset = strict.then(|| params.get("endOffset").cloned()).flatten();
-    let glob = strict
-        .then(|| params.get("matchGlob"))
-        .flatten()
-        .map(|pattern| fireemu_core_storage::glob::Glob::new(pattern));
+    let glob = match_glob.map(|pattern| fireemu_core_storage::glob::Glob::new(pattern));
     let in_offsets = |name: &str| {
         start_offset.as_deref().is_none_or(|start| name >= start)
             && end_offset.as_deref().is_none_or(|end| name < end)
@@ -6043,9 +6164,21 @@ fn gcs_list(
                 max,
                 glob,
                 in_offsets: &in_offsets,
+                trailing,
             },
             &|| {},
         )?
+    } else if strict {
+        let store = state.store()?;
+        store.list_matching_production(
+            &b,
+            &prefix,
+            Some(delimiter.as_str()),
+            page_token.as_deref(),
+            max_results,
+            trailing,
+            &in_offsets,
+        )
     } else {
         let store = state.store()?;
         store.list_matching(
@@ -6082,6 +6215,8 @@ pub struct GlobEntry {
     pub key: String,
     /// Whether the entry is an object.
     pub is_item: bool,
+    /// A prefix that an object named exactly like it also stands for (`includeTrailingDelimiter`).
+    pub trailing_item: bool,
 }
 
 /// What a glob listing found before its page was complete (public, hidden from the documentation,
@@ -6104,6 +6239,8 @@ pub struct GlobQuery<'a> {
     pub max: usize,
     pub glob: &'a fireemu_core_storage::glob::Glob,
     pub in_offsets: &'a dyn Fn(&str) -> bool,
+    /// `includeTrailingDelimiter=true`: an object named like its prefix is listed as an item too.
+    pub trailing: bool,
 }
 
 thread_local! {
@@ -6202,12 +6339,14 @@ pub fn glob_scan(
             }
             scan.entries.push(match folded {
                 Some(prefix) => GlobEntry {
+                    trailing_item: query.trailing && *name == prefix,
                     key: prefix,
                     is_item: false,
                 },
                 None => GlobEntry {
                     key: name.clone(),
                     is_item: true,
+                    trailing_item: false,
                 },
             });
             if scan.entries.len() > query.max {
@@ -6229,11 +6368,9 @@ pub fn glob_page(
     query: &GlobQuery<'_>,
     after_scan: &dyn Fn(),
 ) -> Result<fireemu_core_storage::store::ListPage, StorageResponse> {
-    let mut scan = glob_scan(state, bucket, query, query.token)?;
-    if query.token.is_some() && scan.entries.first().map(|e| e.key.as_str()) != query.token {
-        // A token that names no entry starts the listing over, as it does without a glob.
-        scan = glob_scan(state, bucket, query, None)?;
-    }
+    // A token continues at the first entry at or after the one it names, whether or not that entry
+    // still exists (recorded in production, STORAGE-STRICTNESS-OBS v4.1).
+    let scan = glob_scan(state, bucket, query, query.token)?;
     after_scan();
     let next_page_token = scan.entries.get(query.max).map(|entry| entry.key.clone());
     let shown = &scan.entries[..scan.entries.len().min(query.max)];
@@ -6241,6 +6378,14 @@ pub fn glob_page(
     let mut items = Vec::new();
     let mut prefixes = Vec::new();
     for entry in shown {
+        if entry.trailing_item {
+            if let Some(found) = fireemu_core_storage::name::ObjectName::try_new(&entry.key)
+                .ok()
+                .and_then(|name| store.get(bucket, &name).cloned())
+            {
+                items.push(found);
+            }
+        }
         if entry.is_item {
             let found = fireemu_core_storage::name::ObjectName::try_new(&entry.key)
                 .ok()
@@ -6662,6 +6807,20 @@ fn gcs_copy(
     let db = bucket_name(dst_bucket)?;
     let dn = object_name(dst_name)?;
     let now = state.now();
+    // RECORDED (STORAGE-STRICTNESS-OBS v4.1, V4-MD-copy): production answers a copyTo with no body and
+    // `Content-Type: text/plain;charset=UTF-8` (what the recorder's fetch adds to an empty string body)
+    // 400 `Parse Error` (reason `parseError`); the official emulator, and so the emulator profile,
+    // copies. UNRECORDED, and served: no content type at all (what several SDKs send), an empty JSON
+    // content type, and rewriteTo.
+    if state.is_strict()
+        && !rewrite
+        && req.body.is_empty()
+        && req
+            .header("content-type")
+            .is_some_and(|value| value.to_ascii_lowercase().starts_with("text/plain"))
+    {
+        return Err(gcs_json_error(400, "Parse Error", "parseError"));
+    }
     let incoming: Option<Value> = if req.body.is_empty() {
         None
     } else {
@@ -7884,6 +8043,64 @@ fn check_content_length_range(req: &StorageRequest) -> Result<(), StorageRespons
 
 /// The `GET /{bucket}/{object...}` fallback: object bytes when it exists, the JSON API's
 /// missing-object answer otherwise. Strict first applies [`xml_read_admission`].
+/// `DELETE /{bucket}/{object}` (strict only; the official emulator has no such route). RECORDED
+/// (STORAGE-STRICTNESS-OBS v4.1, V4-X-xml-delete and -again): 204 with `Content-Length: 0` and no
+/// content type, then `404 NoSuchKey` with the `Details` text `No such object: {bucket}/{object}`.
+/// UNRECORDED: a signed-URL DELETE and an anonymous one (served as the PUT does).
+fn xml_style_delete(
+    state: &StorageState,
+    bucket: &str,
+    name: &str,
+    req: &StorageRequest,
+    params: &BTreeMap<String, String>,
+) -> Outcome {
+    use crate::storage_xml::{check_signed_url, SignedUrl};
+    refuse_conflicting_signing_parameter(state, req)?;
+    match check_signed_url(params, now_unix_seconds(state)) {
+        SignedUrl::Valid => verify_signed_url(state, req)?,
+        SignedUrl::Expired => {
+            return Err(xml_error(
+                400,
+                "ExpiredToken",
+                "Invalid argument.",
+                Some("Request has expired."),
+            ))
+        }
+        SignedUrl::Invalid(details) => {
+            return Err(xml_error(
+                400,
+                "InvalidArgument",
+                "Invalid argument.",
+                Some(details),
+            ))
+        }
+        SignedUrl::Absent => {
+            if !(has_bearer_credential(req) || has_client_library_marker(req)) {
+                return Err(xml_error(403, "AccessDenied", "Access denied.", None));
+            }
+        }
+    }
+    let missing = || {
+        xml_error(
+            404,
+            "NoSuchKey",
+            "The specified key does not exist.",
+            Some(&format!("No such object: {bucket}/{name}")),
+        )
+    };
+    let (Ok(b), Ok(n)) = (BucketName::try_new(bucket), ObjectName::try_new(name)) else {
+        return Ok(missing());
+    };
+    let mut store = state.store()?;
+    if store.get(&b, &n).is_none() {
+        return Ok(missing());
+    }
+    store
+        .delete(&b, &n, Precondition::default(), state.now())
+        .map_err(gcs_core_err)?;
+    Ok(StorageResponse::empty(204).with_header("content-length", "0"))
+}
+
 fn xml_style_get(
     state: &StorageState,
     bucket: &str,

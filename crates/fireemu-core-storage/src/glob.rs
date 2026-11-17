@@ -4,9 +4,11 @@
 //! characters except `/`, `**` any run including `/`, `?` one character except `/`, `[...]` one
 //! character of a set or range (`[!...]` and `[^...]` negate it; a set never matches `/`),
 //! `{a,b}` any of the alternatives, and `\` takes the next character literally. Only the pattern
-//! `dir/*` was recorded in production; every other construct follows the documentation. An
-//! unterminated `[` or `{` is taken literally (production's answer to one was not recorded), as
-//! is a `}` that closes nothing and a `,` outside braces.
+//! `dir/*` and the constructs of the STORAGE-STRICTNESS-OBS v4.1 recording were recorded in
+//! production; every other construct follows the documentation. `**/` may match no directory
+//! (recorded: eight of them in a row match `gl/sub/c.txt`). [`validate`] reports the patterns
+//! production refuses (an unterminated `[` or `{`); [`Glob::new`] itself still reads such a
+//! pattern literally, as it does a `}` that closes nothing and a `,` outside braces.
 //!
 //! A pattern is compiled once into a small program and matched by simulating all of its states
 //! side by side, one name character at a time: the time is the program length times the name
@@ -56,6 +58,58 @@ enum Raw {
 #[derive(Debug, Clone)]
 pub struct Glob {
     program: Vec<Inst>,
+}
+
+/// The longest pattern production accepts, in bytes of UTF-8 (recorded).
+pub const MAX_PATTERN_BYTES: usize = 1024;
+
+/// Why production refuses a `matchGlob`, in its own words (recorded, STORAGE-STRICTNESS-OBS v4.1):
+/// a pattern over [`MAX_PATTERN_BYTES`], a `[` that never closes and a `{` that never closes. The
+/// index is the position, in characters, of the opening character. Which opener is named when
+/// several are unterminated is not recorded: the first one is.
+///
+/// # Errors
+///
+/// The refusal message when the pattern is one production refuses.
+pub fn validate(pattern: &str) -> Result<(), String> {
+    if pattern.len() > MAX_PATTERN_BYTES {
+        return Err(format!(
+            "Maximum length of the glob pattern is {MAX_PATTERN_BYTES} bytes in UTF-8 encoding, but glob was {} bytes long.",
+            pattern.len()
+        ));
+    }
+    let chars: Vec<char> = pattern.chars().collect();
+    let members = Members::of(&chars);
+    let mut open: Vec<usize> = Vec::new();
+    let mut at = 0;
+    while let Some(&c) = chars.get(at) {
+        match c {
+            '\\' => at += 2,
+            '[' => match members.class(&chars, at) {
+                Some((_, next)) => at = next,
+                None => {
+                    return Err(format!(
+                        "Glob pattern character class has no closing ']' for opening '[' at index {at}. Either add a closing ']' or use '\\[' to match a literal '['."
+                    ));
+                }
+            },
+            '{' => {
+                open.push(at);
+                at += 1;
+            }
+            '}' => {
+                open.pop();
+                at += 1;
+            }
+            _ => at += 1,
+        }
+    }
+    match open.first() {
+        Some(index) => Err(format!(
+            "Glob pattern brace expansion opening '{{' at index {index} has no closing '}}'. Use '\\{{' to match a literal '{{'."
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Whether `name` matches the glob `pattern` in full.
@@ -374,9 +428,23 @@ fn compile(raw: &[Raw]) -> Vec<Inst> {
 
     let mut program: Vec<Inst> = Vec::new();
     let mut groups: Vec<Group> = Vec::new();
+    let mut slash_taken = false;
     for (index, element) in raw.iter().enumerate() {
+        if std::mem::take(&mut slash_taken) {
+            continue;
+        }
         match element {
             Raw::Literal(c) => program.push(Inst::Literal(*c)),
+            // `**/` is "any directories, or none": a run of characters and its `/`, optional as a whole.
+            Raw::Any if raw.get(index + 1) == Some(&Raw::Literal('/')) => {
+                let start = program.len();
+                program.push(Inst::Split(start + 1, start + 5));
+                program.push(Inst::Split(start + 2, start + 4));
+                program.push(Inst::AnyChar);
+                program.push(Inst::Jump(start + 1));
+                program.push(Inst::Literal('/'));
+                slash_taken = true;
+            }
             Raw::Segment | Raw::Any => {
                 let start = program.len();
                 program.push(Inst::Split(start + 1, start + 3));
@@ -465,6 +533,140 @@ mod tests {
         matcher.current.generation = u32::MAX;
         matcher.next.generation = u32::MAX;
         assert_eq!(matcher.matches_unless("hello!", &|| false), Some(true));
+    }
+
+    #[test]
+    fn double_star_slash_matches_no_directory_one_or_many() {
+        let glob = Glob::new("gl/**/c.txt");
+        for (name, expected) in [
+            ("gl/c.txt", true),
+            ("gl/sub/c.txt", true),
+            ("gl/a/b/c.txt", true),
+            ("gl/sub/d.txt", false),
+            ("gl/c.txtx", false),
+            ("glc.txt", false),
+        ] {
+            assert_eq!(glob.matches(name), expected, "{name}");
+        }
+        let chain = Glob::new(&format!("gl/{}c.txt", "**/".repeat(8)));
+        assert!(chain.matches("gl/sub/c.txt"));
+        assert!(chain.matches("gl/c.txt"));
+        assert!(!chain.matches("gl/sub/d.txt"));
+        // Not followed by a slash, `**` keeps its meaning; an escaped slash after it counts as a slash.
+        assert!(Glob::new("a**").matches("a/b/c"));
+        assert!(Glob::new("**\\/x").matches("x"));
+        assert!(Glob::new("{**/x,y}").matches("x"));
+    }
+
+    #[test]
+    fn validate_reports_the_recorded_refusals_and_accepts_everything_else() {
+        assert_eq!(validate("gl/*"), Ok(()));
+        assert_eq!(validate(""), Ok(()));
+        assert_eq!(validate("gl/a\\"), Ok(()));
+        assert_eq!(validate("a}"), Ok(()));
+        assert_eq!(validate("a,b"), Ok(()));
+        assert_eq!(validate("\\[a"), Ok(()));
+        assert_eq!(validate("\\{a"), Ok(()));
+        assert_eq!(validate("gl/{a,b}"), Ok(()));
+        assert_eq!(validate("gl/[a-c]"), Ok(()));
+        assert_eq!(
+            validate("gl/[a").unwrap_err(),
+            "Glob pattern character class has no closing ']' for opening '[' at index 3. Either add a closing ']' or use '\\[' to match a literal '['."
+        );
+        assert_eq!(
+            validate("gl/{a,b").unwrap_err(),
+            "Glob pattern brace expansion opening '{' at index 3 has no closing '}'. Use '\\{' to match a literal '{'."
+        );
+        // The first unterminated opener is named; a closed pair inside does not hide it.
+        assert!(validate("{a,{b}").unwrap_err().contains("index 0"));
+        assert!(validate("x{a}{b").unwrap_err().contains("index 4"));
+        assert!(validate("a[b{c").unwrap_err().contains("character class"));
+        // 1024 bytes pass, 1025 do not; the length counts bytes, and is checked first.
+        assert_eq!(validate(&"a".repeat(1024)), Ok(()));
+        assert_eq!(
+            validate(&"a".repeat(1025)).unwrap_err(),
+            "Maximum length of the glob pattern is 1024 bytes in UTF-8 encoding, but glob was 1025 bytes long."
+        );
+        assert!(validate(&"あ".repeat(342))
+            .unwrap_err()
+            .contains("1026 bytes"));
+        assert!(validate(&format!("[{}", "a".repeat(1100)))
+            .unwrap_err()
+            .starts_with("Maximum length"));
+    }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// `validate` accepts exactly the patterns whose every `[` closes and `{` pairs, at most 1024 bytes.
+            #[test]
+            fn validate_agrees_with_a_reference_over_small_alphabets(pattern in "[a\\[\\]{},\\\\*/!-]{0,12}") {
+                let result = validate(&pattern);
+                let reference = reference_error(&pattern);
+                prop_assert_eq!(result.is_err(), reference);
+            }
+
+            /// `**/` between a prefix and a tail matches exactly the names that, with zero or more
+            /// directory segments inserted, equal prefix + directories + tail.
+            #[test]
+            fn double_star_slash_inserts_zero_or_more_directories(
+                dirs in proptest::collection::vec("[a-c]{1,3}", 0..4),
+                tail in "[d-f]{1,3}",
+            ) {
+                let glob = Glob::new("p/**/t");
+                let mut name = String::from("p/");
+                for dir in &dirs { name.push_str(dir); name.push('/'); }
+                name.push('t');
+                let longer = [name.as_str(), tail.as_str()].concat();
+                let other_root = name.replacen("p/", "q/", 1);
+                prop_assert!(glob.matches(&name));
+                prop_assert!(!glob.matches(&longer));
+                prop_assert!(!glob.matches(&other_root));
+            }
+        }
+
+        /// A reference with a plain scan: escapes, classes (first member may be `]`), braces by depth.
+        fn reference_error(pattern: &str) -> bool {
+            let chars: Vec<char> = pattern.chars().collect();
+            let mut depth = 0usize;
+            let mut at = 0;
+            while at < chars.len() {
+                match chars[at] {
+                    '\\' => at += 1,
+                    '[' => {
+                        let mut j = at + 1;
+                        if matches!(chars.get(j), Some('!' | '^')) {
+                            j += 1;
+                        }
+                        // The first member is a member even when it is `]`.
+                        if j < chars.len() {
+                            j += if chars[j] == '\\' { 2 } else { 1 };
+                        } else {
+                            return true;
+                        }
+                        let mut closed = false;
+                        while j < chars.len() {
+                            if chars[j] == ']' {
+                                closed = true;
+                                break;
+                            }
+                            j += if chars[j] == '\\' { 2 } else { 1 };
+                        }
+                        if !closed {
+                            return true;
+                        }
+                        at = j;
+                    }
+                    '{' => depth += 1,
+                    '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                at += 1;
+            }
+            depth > 0
+        }
     }
 
     #[test]

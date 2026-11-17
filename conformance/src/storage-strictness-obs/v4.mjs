@@ -60,7 +60,7 @@ export function requestsV4(t) {
     id,
     method,
     path,
-    { firebase = false, headers = {}, body, action, resource, auth = "bearer", token } = {},
+    { firebase = false, headers = {}, body, action, resource, auth = "bearer", token, localBearer } = {},
   ) {
     out[id] = {
       case: id,
@@ -72,6 +72,7 @@ export function requestsV4(t) {
       resource,
       auth,
       ...(token ? { token } : {}),
+      ...(localBearer ? { localBearer } : {}),
     };
   }
   const read = (id, resource) => add(id, "GET", resource, { action: "read", resource });
@@ -155,8 +156,9 @@ export function requestsV4(t) {
   patch("V4-MD-patch-plain", "md/plain.txt", { yb: "1", ya: "2", yc: "3" });
   list("V4-MD-list", "prefix=md%2F");
   // 204 framing. Legacy ACL routes are not observed: they need a fine-grained bucket and an ACL grant.
-  add("V4-X-xml-delete", "DELETE", `/${T}/x/xml.txt`);
-  add("V4-X-xml-delete-again", "DELETE", `/${T}/x/xml.txt`);
+  // The XML API refuses an anonymous DELETE, so a local run carries a bearer for these two requests.
+  add("V4-X-xml-delete", "DELETE", `/${T}/x/xml.txt`, { localBearer: true });
+  add("V4-X-xml-delete-again", "DELETE", `/${T}/x/xml.txt`, { localBearer: true });
   // The bucket resource (the fields-less GET is V4-W-verify) and a non-Firebase bucket on the Firebase API.
   add("V4-B-full", "GET", `${b(T)}?projection=full`);
   add("V4-B-patch", "PATCH", b(T), {
