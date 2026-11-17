@@ -292,3 +292,47 @@ proptest! {
         prop_assert_eq!(next_left, period);
     }
 }
+
+#[test]
+fn an_enrollment_is_listed_through_its_last_accepted_instant() {
+    let mut s = store();
+    let uid = s
+        .create_user(NewUser::email("edge@example.com"), t0())
+        .unwrap();
+    let material = s.start_totp_enrollment(&uid, t0()).unwrap();
+    let last = material.expires_at;
+    let codes = s.totp_codes(last);
+    assert_eq!(
+        codes.len(),
+        1,
+        "finalize still accepts at the expiry instant"
+    );
+    let code: u32 = codes[0].code.parse().unwrap();
+    assert!(s
+        .finalize_totp_enrollment(&uid, &material.session_id, code, last)
+        .is_ok());
+}
+
+#[test]
+fn a_sign_in_announces_only_its_own_factor_and_names_an_unnamed_factor_by_id() {
+    let mut s = store();
+    let (first, _) = enrolled(&mut s);
+    let second = s
+        .create_user(NewUser::email("other@example.com"), t0())
+        .unwrap();
+    let material = s.start_totp_enrollment(&second, t0()).unwrap();
+    let code = totp_at(material.secret_for_test(), &s.policy().params(), t0());
+    s.finalize_totp_enrollment(&second, &material.session_id, code, t0())
+        .unwrap();
+    s.take_credential_notices();
+    let id = s.user(&second).unwrap().mfa.totp_factors()[0]
+        .mfa_enrollment_id
+        .clone();
+    s.start_mfa_sign_in(&second, at(60)).unwrap();
+    let notices = s.take_credential_notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    let message = notices[0].message();
+    assert!(message.contains(second.as_str()), "{message}");
+    assert!(!message.contains(first.as_str()), "{message}");
+    assert!(message.contains(&format!(" factor {id},")), "{message}");
+}
