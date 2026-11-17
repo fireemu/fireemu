@@ -5223,7 +5223,8 @@ impl RuntimeConfig {
             (
                 "functions.taskRetryBackoff",
                 self.functions_task_retry_backoff.as_config_str(),
-            ),            (
+            ),
+            (
                 "auth.totp.revealCodes",
                 if self.auth_totp_reveal_codes {
                     "true"
@@ -7985,10 +7986,7 @@ mod tests {
                     "auth.allowUnsignedIdTokens",
                     json!(cfg.auth_allow_unsigned_id_tokens),
                 ),
-                (
-                    "auth.totp.revealCodes",
-                    json!(cfg.auth_totp_reveal_codes),
-                ),
+                ("auth.totp.revealCodes", json!(cfg.auth_totp_reveal_codes)),
                 (
                     "auth.requireClientApiKey",
                     json!(cfg.auth_require_client_api_key),
