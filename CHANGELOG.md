@@ -8,6 +8,13 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Firestore, strict profile: a Commit (and a transaction or Write stream message) is charged the sum of its documents against the create budget, as production does (recorded 2026-11-17: two documents at 0.55 or 0.60 of the budget each, and three at 0.40, were refused together with "Transaction too big"; two at 0.40 were accepted). BatchWrite still prices each write on its own, and managed import and bulk delete chunks are not summed (production's pricing of managed operations is not observed). The sum counts the documents a commit leaves written, whatever the order of its writes.
+- Firestore, strict profile: a delete over the Write stream (gRPC and WebChannel) is priced like REST DELETE and BatchWrite, so an array of 12,113 values under a 1,000-byte name is refused with "Transaction too big" and one of 12,112 is deleted; a refused stream write ends with the same `content-disposition: attachment` trailer production sends after a response.
+- Firestore, strict profile: a composite entry over 6,499 bytes and a collection-group single-field entry over 5,999 bytes (documented entry size) are refused with "Index entry is too large.", the smallest recorded refusals (production accepted 6,000 and 5,700 and refused 6,500 and 6,000).
+- Firestore, strict profile: createDocument, patch and batchWrite refuse a `bytesValue` with line breaks or a mixed alphabet, with production's message and field path (`document.fields[0].value.bytes_value`, or `writes[0].update...` for batchWrite), as Commit already did. The emulator profile is unchanged.
+
 ## [0.59.0] - 2026-11-17
 
 ### Added
@@ -16,10 +23,6 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ### Fixed
 
-- Firestore, strict profile: a Commit (and a transaction or Write stream message) is charged the sum of its documents against the create budget, as production does (recorded 2026-11-17: two documents at 0.55 or 0.60 of the budget each, and three at 0.40, were refused together with "Transaction too big"; two at 0.40 were accepted). BatchWrite still prices each write on its own, and managed import and bulk delete chunks are not summed (production's pricing of managed operations is not observed). The sum counts the documents a commit leaves written, whatever the order of its writes.
-- Firestore, strict profile: a delete over the Write stream (gRPC and WebChannel) is priced like REST DELETE and BatchWrite, so an array of 12,113 values under a 1,000-byte name is refused with "Transaction too big" and one of 12,112 is deleted; a refused stream write ends with the same `content-disposition: attachment` trailer production sends after a response.
-- Firestore, strict profile: a composite entry over 6,499 bytes and a collection-group single-field entry over 5,999 bytes (documented entry size) are refused with "Index entry is too large.", the smallest recorded refusals (production accepted 6,000 and 5,700 and refused 6,500 and 6,000).
-- Firestore, strict profile: createDocument, patch and batchWrite refuse a `bytesValue` with line breaks or a mixed alphabet, with production's message and field path (`document.fields[0].value.bytes_value`, or `writes[0].update...` for batchWrite), as Commit already did. The emulator profile is unchanged.
 - Authentication: in the emulator profile, an `accounts:batchCreate` row whose `passwordHash` or `salt` is not base64 (or a malformed `fakeHash:` value) is imported, as firebase-tools stores both as given, instead of refusing the request; a password sign-in against it answers `INVALID_PASSWORD`, and the account still exports and restores, including an account whose salt holds `:` or `:password=` (a restore reads the password after the record's own `salt`). The strict profile still refuses it, as production does.
 
 ## [0.58.0] - 2026-11-17
