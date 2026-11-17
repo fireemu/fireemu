@@ -24430,44 +24430,125 @@ fn read_mfa(s: &AuthState) -> Value {
 /// sent as the string `"5"` and to a `state` sent as the number 2, and read `mfa` back as
 /// `ENABLED` each time (AUTH-EDGES-OBS-20261117-01, mask-state, mask-interval-string,
 /// mask-state-numeric and their read-backs). The string and the number are proto3 JSON spellings
-/// of the same values. The emulator profile keeps refusing all three.
+/// of the same values. The emulator profile takes the `mfa.state` mask (firebase-tools applies it)
+/// and keeps refusing the other two spellings.
 #[test]
 fn strict_the_project_mfa_mask_accepts_the_spellings_production_accepted() {
-    for id in ["mask-state", "mask-interval-string", "mask-state-numeric"] {
+    // The recorded read-backs after each accepted PATCH bind the configuration used below: the
+    // enabled state, the provider's enabled flag and the TOTP interval count.
+    let mut recorded_read_back = None;
+    for id in [
+        "mask-state",
+        "mask-interval-string",
+        "mask-interval-number",
+        "mask-state-numeric",
+    ] {
         assert_eq!(edges_recorded(id)["status"], 200, "{id}");
+        let observed = edges_recorded(&format!("{id}-observe"))["config"].clone();
+        assert_eq!(observed["mfaState"], "ENABLED", "{id}");
+        let read_back = (
+            observed["mfaState"].clone(),
+            observed["mfaProviderEnabled"].clone(),
+            observed["totpIntervals"].clone(),
+        );
         assert_eq!(
-            edges_recorded(&format!("{id}-observe"))["config"]["mfaState"],
-            "ENABLED",
-            "{id}"
+            *recorded_read_back.get_or_insert(read_back.clone()),
+            read_back,
+            "{id}: every accepted spelling leaves the same read-back"
         );
     }
-    let enabled = project_mfa_enabled();
+    let (recorded_state, recorded_provider, recorded_intervals) = recorded_read_back.unwrap();
+    let mut enabled = project_mfa_enabled();
+    enabled["state"] = recorded_state;
+    enabled["providerConfigs"][0]["state"] = json!(if recorded_provider == json!(true) {
+        "ENABLED"
+    } else {
+        "DISABLED"
+    });
+    enabled["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"] = recorded_intervals;
+    // The interval spelled as a decimal string, and the state as its enum number, from the
+    // recorded values.
+    let interval_text =
+        enabled["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"].to_string();
     let with_interval = |interval: Value| {
-        json!({"mfa": {"state": "ENABLED", "enabledProviders": ["PHONE_SMS"],
-            "providerConfigs": [{"state": "ENABLED", "totpProviderConfig": {"adjacentIntervals": interval}}]}})
+        let mut body = enabled.clone();
+        body["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"] = interval;
+        json!({"mfa": body})
     };
+    let state_name = enabled["state"].as_str().unwrap().to_owned();
+    let state_number = ["STATE_UNSPECIFIED", "DISABLED", "ENABLED", "MANDATORY"]
+        .iter()
+        .position(|name| *name == state_name)
+        .unwrap();
     for strict in [true, false] {
         let s = if strict { strict_state() } else { state() };
         let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": enabled}));
         assert_eq!(status, 200, "{body}");
         let attempts = [
-            ("mfa.state", json!({"mfa": {"state": "ENABLED"}})),
-            ("mfa", with_interval(json!("5"))),
-            (
-                "mfa",
-                json!({"mfa": {"state": 2, "enabledProviders": ["PHONE_SMS"],
-                "providerConfigs": [{"state": "ENABLED", "totpProviderConfig": {"adjacentIntervals": 5}}]}}),
-            ),
+            ("mfa.state", json!({"mfa": {"state": state_name}})),
+            ("mfa", with_interval(json!(interval_text))),
+            ("mfa", {
+                let mut body = enabled.clone();
+                body["state"] = json!(state_number);
+                json!({"mfa": body})
+            }),
         ];
         for (mask, body) in attempts {
             let (status, answer) = patch_mfa(&s, mask, &body);
-            if strict {
+            if strict || mask == "mfa.state" {
                 assert_eq!(status, 200, "{mask} {body} {answer}");
                 assert_eq!(read_mfa(&s), enabled, "{mask}");
             } else {
                 assert_eq!(status, 400, "{mask} {body} {answer}");
                 assert_eq!(read_mfa(&s), enabled, "a refused value changes nothing");
             }
+        }
+    }
+}
+
+/// A PATCH that names `mfa.state` but carries no state (the `mfa` member is a scalar, a string, an
+/// array, null, or an object without a state) must never turn MFA off. Strict refuses it with the
+/// validator's wrong-type answer (400, nothing changes). The emulator profile follows firebase-tools
+/// 15.28.2 (`lib/emulator/auth/state.js` `applyMask`, lines 677-686: a non-object parent logs
+/// "singular and cannot have sub-fields" or "Unable to find field" and breaks; lines 693-696: the
+/// missing leaf is skipped), so it answers 200 and keeps the stored configuration. A scalar under
+/// the `mfa` mask is the wrong type in both profiles.
+#[test]
+fn a_project_mfa_update_without_a_state_never_disables_mfa() {
+    let enabled = project_mfa_enabled();
+    let bodies = [
+        json!({"mfa": true}),
+        json!({"mfa": 1}),
+        json!({"mfa": "x"}),
+        json!({"mfa": null}),
+        json!({"mfa": []}),
+        json!({"mfa": {}}),
+        json!({"mfa": {"state": null}}),
+        json!({"mfa": {"enabledProviders": []}}),
+        json!({}),
+    ];
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": enabled}));
+        assert_eq!(status, 200, "{body}");
+        for body in &bodies {
+            let (status, answer) = patch_mfa(&s, "mfa.state", body);
+            assert_eq!(
+                status,
+                if strict { 400 } else { 200 },
+                "strict {strict} {body}: {answer}"
+            );
+            assert_eq!(read_mfa(&s), enabled, "strict {strict} {body}");
+        }
+        for body in [
+            json!({"mfa": true}),
+            json!({"mfa": 1}),
+            json!({"mfa": "x"}),
+            json!({"mfa": []}),
+        ] {
+            let (status, answer) = patch_mfa(&s, "mfa", &body);
+            assert_eq!(status, 400, "strict {strict} {body}: {answer}");
+            assert_eq!(read_mfa(&s), enabled, "strict {strict} {body}");
         }
     }
 }
@@ -24496,25 +24577,27 @@ fn strict_the_project_mfa_state_number_names_the_enum_value() {
     }
 }
 
-/// Strict: a `mfa.state` mask changes only the state (a masked leaf takes the body's leaf and
+/// A `mfa.state` mask changes only the state (a masked leaf takes the body's leaf and
 /// keeps the other members), and a state the enum does not name is refused with production's words.
 #[test]
-fn strict_a_project_mfa_state_mask_changes_only_the_state() {
-    let s = strict_state();
-    let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": project_mfa_enabled()}));
-    assert_eq!(status, 200, "{body}");
-    let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "DISABLED"}}));
-    assert_eq!(status, 200, "{body}");
-    let mut expected = project_mfa_enabled();
-    expected["state"] = json!("DISABLED");
-    assert_eq!(read_mfa(&s), expected);
-    let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "NOT_A_STATE"}}));
-    assert_eq!(status, 400, "{body}");
-    assert!(
-        message(&body).is_some_and(|m| m.contains("config.mfa.state")),
-        "{body}"
-    );
-    assert_eq!(read_mfa(&s), expected, "a refused value changes nothing");
+fn a_project_mfa_state_mask_changes_only_the_state() {
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": project_mfa_enabled()}));
+        assert_eq!(status, 200, "{body}");
+        let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "DISABLED"}}));
+        assert_eq!(status, 200, "{body}");
+        let mut expected = project_mfa_enabled();
+        expected["state"] = json!("DISABLED");
+        assert_eq!(read_mfa(&s), expected);
+        let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "NOT_A_STATE"}}));
+        assert_eq!(status, 400, "{body}");
+        assert!(
+            !strict || message(&body).is_some_and(|m| m.contains("config.mfa.state")),
+            "{body}"
+        );
+        assert_eq!(read_mfa(&s), expected, "a refused value changes nothing");
+    }
 }
 
 /// Strict: with an invalid `mfa.state` and an invalid `mobileLinksConfig.domain` in one PATCH,

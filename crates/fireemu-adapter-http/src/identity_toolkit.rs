@@ -6252,6 +6252,7 @@ fn valid_project_config_field(field: &str) -> bool {
     matches!(
         field,
         "mfa"
+            | "mfa.state"
             | "signIn"
             | "signIn.allowDuplicateEmails"
             | "emailPrivacyConfig"
@@ -7358,6 +7359,7 @@ fn project_config_management(
                 project_mfa::mfa_state_update(
                     &fireemu_core_auth::mfa_config::MfaProjectConfig::default(),
                     body,
+                    true,
                 )
                 .err()
             } else {
@@ -7450,11 +7452,8 @@ fn project_config_management(
     }
     // A writable path fireemu does not model (valid_project_config_field names the policy and
     // blocking paths it models) is refused.
-    // Strict also models the `mfa.state` mask (production answered 200 to it).
     if fields.iter().any(|field| {
-        !valid_project_config_field(field)
-            && !project_config::stored_member_field(field)
-            && (state.stateless_refresh_tokens || field != "mfa.state")
+        !valid_project_config_field(field) && !project_config::stored_member_field(field)
     }) {
         return error(400, "INVALID_ARGUMENT");
     }
@@ -7475,12 +7474,16 @@ fn project_config_management(
             Ok(config) => Some(config),
             Err(refusal) => return mfa_config_refusal(&refusal),
         }
-    } else if !state.stateless_refresh_tokens && fields.iter().any(|field| field == "mfa.state") {
+    } else if fields.iter().any(|field| field == "mfa.state") {
         let Ok(store) = selected_store.lock() else {
             return error(500, "INTERNAL");
         };
-        match project_mfa::mfa_state_update(store.mfa_config(), body) {
-            Ok(config) => Some(config),
+        match project_mfa::mfa_state_update(
+            store.mfa_config(),
+            body,
+            !state.stateless_refresh_tokens,
+        ) {
+            Ok(config) => config,
             Err(refusal) => return mfa_config_refusal(&refusal),
         }
     } else {

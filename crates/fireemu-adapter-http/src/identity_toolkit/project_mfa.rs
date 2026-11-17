@@ -111,20 +111,33 @@ fn state_member(
 }
 
 /// The project's configuration after a PATCH masked `mfa.state` alone: the body's state, every
-/// other member kept (a masked leaf takes the body's leaf). Strict only (production answered
-/// 200 to this mask, AUTH-EDGES-OBS-20261117-01, mask-state).
+/// other member kept. `None` leaves the configuration as it is.
+///
+/// A body that carries no state (`mfa` a scalar, a string, an array, null, or an object without a
+/// state, or `state: null`) never becomes DISABLED. Strict refuses it as a wrong type. The emulator
+/// profile ignores it, as firebase-tools 15.28.2 does (`lib/emulator/auth/state.js` `applyMask`,
+/// lines 677-686 and 693-696: a parent that is not an object, or a leaf that is missing, is
+/// skipped with a warning). Production answered 200 to a state in this mask
+/// (AUTH-EDGES-OBS-20261117-01, mask-state).
 pub fn mfa_state_update(
     current: &MfaProjectConfig,
     body: &Value,
-) -> Result<MfaProjectConfig, MfaConfigRefusal> {
-    let state = state_member(
-        body.get("mfa").and_then(|mfa| mfa.get("state")),
-        "config.mfa.state".to_owned(),
-        true,
-    )?;
+    strict: bool,
+) -> Result<Option<MfaProjectConfig>, MfaConfigRefusal> {
+    let state = match body.get("mfa") {
+        Some(Value::Object(mfa)) => mfa.get("state").filter(|state| !state.is_null()),
+        _ => None,
+    };
+    let Some(state) = state else {
+        return if strict {
+            Err(MfaConfigRefusal::Shape)
+        } else {
+            Ok(None)
+        };
+    };
     let mut next = current.clone();
-    next.state = state;
-    Ok(next)
+    next.state = state_member(Some(state), "config.mfa.state".to_owned(), strict)?;
+    Ok(Some(next))
 }
 
 /// A `mfa` member a PATCH sent, as a configuration, or production's refusal. A provider entry
