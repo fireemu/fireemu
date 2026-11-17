@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Terminal output: the startup banner and listener table, the `error:`, `warning:` and `note:` lines and the shutdown lines are coloured when standard output or standard error is a terminal (service names cyan, addresses and URLs bold, environment variable names and remarks dim, services that are not started dim, warnings yellow, errors red, ready green). `NO_COLOR`, `CLICOLOR=0` and `TERM=dumb` turn it off; `CLICOLOR_FORCE` or `FORCE_COLOR` turn it on for a pipe. Output to a pipe or a file, JSON and `--plan` output, the Hub locator and the ready file are byte-for-byte unchanged.
+
 ## [0.58.0] - 2026-11-17
 
 ### Changed
