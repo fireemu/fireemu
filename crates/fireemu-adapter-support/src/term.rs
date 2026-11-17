@@ -1,8 +1,10 @@
 //! Terminal colour for the diagnostics the servers print while they run.
 //!
-//! Colour is a presentation of a line, never part of it: a stream that is not a terminal, or whose
-//! environment asks for none, receives exactly the bytes it received before colour existed, so a
-//! log file, a pipe, a CI transcript and every parser of this output are unchanged. Records kept
+//! Colour is a presentation of a line, never part of it: unless colour is forced with
+//! `CLICOLOR_FORCE` or `FORCE_COLOR` (which also colours redirected output), a stream that is not
+//! a terminal, or whose environment asks for none, receives exactly the bytes it received before
+//! colour existed, so a log file, a pipe, a CI transcript and every parser of this output are
+//! unchanged. Records kept
 //! for the Logging emulator and the Emulator UI are built from the plain text and never pass
 //! through this module.
 //!

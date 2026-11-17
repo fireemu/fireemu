@@ -1,9 +1,11 @@
 //! Colour for the human-facing text `fireemu` prints: the startup banner, the listener table, the
 //! `error:`, `warning:` and `note:` lines and the shutdown lines.
 //!
-//! Colour is a presentation of a line, never part of it: a stream that is not a terminal, or
-//! whose environment asks for none, receives exactly the bytes it received before colour existed,
-//! so a log file, a pipe, a CI transcript and every parser of this output are unchanged.
+//! Colour is a presentation of a line, never part of it: unless colour is forced with
+//! `CLICOLOR_FORCE` or `FORCE_COLOR` (which also colours redirected output), a stream that is not
+//! a terminal, or whose environment asks for none, receives exactly the bytes it received before
+//! colour existed, so a log file, a pipe, a CI transcript and every parser of this output are
+//! unchanged.
 //!
 //! Whether colour is used is decided in [`fireemu_adapter_support::term`] (shared with the
 //! servers' own diagnostics): `NO_COLOR` turns it off and wins over everything,
@@ -134,7 +136,8 @@ fn paint_row(label: &str, gap: &str, rest: &str) -> String {
     format!("{}:{gap}{rest}", wrap(CYAN, label))
 }
 
-/// Bold for addresses and URLs, dim for environment variable assignments and remarks in
+/// Bold for addresses and URLs, dim for the names of environment variable assignments (never
+/// their values) and for remarks in
 /// parentheses.
 fn paint_tokens(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
@@ -142,12 +145,22 @@ fn paint_tokens(text: &str) -> String {
     for found in patterns().token.captures_iter(text) {
         let whole = found.get(0).expect("whole match");
         out.push_str(&text[last..whole.start()]);
-        let style = if found.name("url").is_some() || found.name("addr").is_some() {
-            BOLD
+        if found.name("env").is_some() {
+            // `NAME=value`: only the name is styled, and the reset comes before the `=`, so the text after
+            // it is the plain value. The value is read by scripts and tests
+            // (`FIREBASE_AUTH_EMULATOR_HOST=([^\s]+)`) and must not end in an escape sequence.
+            let text = whole.as_str();
+            let (name, value) = text.split_at(text.find('=').unwrap_or(text.len()));
+            out.push_str(&wrap(DIM, name));
+            out.push_str(value);
         } else {
-            DIM
-        };
-        out.push_str(&wrap(style, whole.as_str()));
+            let style = if found.name("url").is_some() || found.name("addr").is_some() {
+                BOLD
+            } else {
+                DIM
+            };
+            out.push_str(&wrap(style, whole.as_str()));
+        }
         last = whole.end();
     }
     out.push_str(&text[last..]);

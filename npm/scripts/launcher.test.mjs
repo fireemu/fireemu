@@ -12,6 +12,9 @@ const launcher =
   fileURLToPath(new URL("../fireemu/bin/fireemu.mjs", import.meta.url));
 const unix = process.platform !== "win32";
 const timeout = 10_000;
+// Colour codes the daemon prints when the test environment forces colour (FORCE_COLOR).
+const ansi = new RegExp(String.raw`\u001b\[[0-9;]*m`, "g");
+const plain = (text) => text.replace(ansi, "");
 
 // Polling is intentionally sequential: each observation determines whether to wait again.
 /* eslint-disable no-await-in-loop */
@@ -255,7 +258,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       }, "native PID");
       const address = await until(() => {
         assert.equal(run.result(), undefined, `native startup failed: ${run.stderr()}`);
-        return /FIREBASE_AUTH_EMULATOR_HOST=([^\s]+)/.exec(run.stdout());
+        return /FIREBASE_AUTH_EMULATOR_HOST=([^\s]+)/.exec(plain(run.stdout()));
       }, "Auth listener");
       const url = `http://${address[1]}/`;
       await until(async () => {
