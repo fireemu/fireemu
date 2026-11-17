@@ -17143,6 +17143,36 @@ fn undecodable_hash_requests() -> Vec<(Value, &'static str)> {
     ]
 }
 
+/// Passwords a sign-in against an undecodable hash must not accept: the literal text, its
+/// base64, the salt, the emulator's own reversible form and a real bcrypt hash string.
+const UNDECODABLE_HASH_CANDIDATES: [&str; 7] = [
+    "password123",
+    "not base64!",
+    "bm90IGJhc2U2NCE=",
+    "AAAA",
+    "fakeHash:salt=x:password=not base64!",
+    "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW",
+    "U*U",
+];
+
+fn sign_in_answer(
+    s: &AuthState,
+    tenant: Option<&str>,
+    email: &str,
+    password: &str,
+) -> (u16, String) {
+    let mut body = json!({"email": email, "password": password});
+    if let Some(tenant) = tenant {
+        body["tenantId"] = json!(tenant);
+    }
+    let (status, response) = post(s, &format!("{V1}/accounts:signInWithPassword"), &body);
+    let message = response["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    (status, message)
+}
+
 #[test]
 fn the_emulator_profile_imports_a_hash_or_salt_that_is_not_base64() {
     for (options, member) in undecodable_hash_requests() {
@@ -17164,15 +17194,17 @@ fn the_emulator_profile_imports_a_hash_or_salt_that_is_not_base64() {
             "{options} {member}: {response}"
         );
         assert!(s.store.lock().unwrap().user_by_id("kept").is_some());
-        let (status, refused) = post(
-            &s,
-            &format!("{V1}/accounts:signInWithPassword"),
-            &json!({"email": "kept@example.com", "password": "password123"}),
-        );
+        for password in UNDECODABLE_HASH_CANDIDATES {
+            assert_eq!(
+                sign_in_answer(&s, None, "kept@example.com", password),
+                (400, "INVALID_PASSWORD".to_owned()),
+                "{options} {member} {password}"
+            );
+        }
         assert_eq!(
-            (status, refused["error"]["message"].as_str()),
-            (400, Some("INVALID_PASSWORD")),
-            "{options} {member}: {refused}"
+            sign_in_answer(&s, None, "kept@example.com", "").1,
+            "MISSING_PASSWORD",
+            "{options} {member}"
         );
         let imported = s
             .store
@@ -17184,6 +17216,199 @@ fn the_emulator_profile_imports_a_hash_or_salt_that_is_not_base64() {
             imported.spec, "{\"algorithm\":\"UNSPECIFIED\"}",
             "{options} {member}"
         );
+    }
+}
+
+/// A real bcrypt hash string pasted without base64 is the likely mistake. firebase-tools keeps
+/// it and no password matches, so neither profile may verify it; the same hash base64-encoded
+/// is the control that does verify.
+#[test]
+fn a_bcrypt_string_that_is_not_base64_never_verifies_but_its_base64_does() {
+    let bcrypt = "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW";
+    for strict in [false, true] {
+        let s = if strict { strict_state() } else { state() };
+        let encoded = fireemu_core_types::hash::base64_standard(bcrypt.as_bytes());
+        let request = json!({"hashAlgorithm": "BCRYPT", "users": [
+            {"localId": "valid", "email": "valid@example.com", "passwordHash": encoded},
+        ]});
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(
+            (status, response.get("error")),
+            (200, None),
+            "strict={strict}: {response}"
+        );
+        let (status, answer) = sign_in_answer(&s, None, "valid@example.com", "U*U");
+        assert_eq!(
+            (status, answer.as_str()),
+            (200, ""),
+            "control strict={strict}"
+        );
+        if !strict {
+            let request = json!({"hashAlgorithm": "BCRYPT", "users": [
+                {"localId": "raw", "email": "raw@example.com", "passwordHash": bcrypt},
+            ]});
+            let (status, response) = admin(
+                &s,
+                "POST",
+                &format!("{ADMIN}/accounts:batchCreate"),
+                &request,
+            );
+            assert_eq!((status, response.get("error")), (200, None), "{response}");
+            assert_eq!(
+                sign_in_answer(&s, None, "raw@example.com", "U*U"),
+                (400, "INVALID_PASSWORD".to_owned())
+            );
+        }
+    }
+}
+
+/// A valid row keeps its spec and verifies; an undecodable row beside it takes the spec that
+/// never matches; a row refused for another reason keeps its own row error.
+#[test]
+fn a_valid_row_beside_an_undecodable_row_keeps_its_spec() {
+    let bcrypt = "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW";
+    let s = state();
+    let encoded = fireemu_core_types::hash::base64_standard(bcrypt.as_bytes());
+    let request = json!({"hashAlgorithm": "BCRYPT", "users": [
+        {"localId": "valid", "email": "valid@example.com", "passwordHash": encoded},
+        {"localId": "junk", "email": "junk@example.com", "passwordHash": "not base64!"},
+        {"localId": "bad-email", "email": "no-at-sign", "passwordHash": "not base64!"},
+        {"localId": "junk-salt", "email": "junk-salt@example.com", "passwordHash": encoded, "salt": "not base64!"},
+    ]});
+    let (status, response) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &request,
+    );
+    assert_eq!(status, 200, "{response}");
+    assert_eq!(
+        response["error"],
+        json!([{"index": 2, "message": "email is invalid"}]),
+        "{response}"
+    );
+    {
+        let store = s.store.lock().unwrap();
+        assert!(store.user_by_id("bad-email").is_none());
+        let spec = |email: &str| store.imported_password_for_sign_in(email).unwrap().spec;
+        assert_eq!(spec("valid@example.com"), r#"{"algorithm":"BCRYPT"}"#);
+        assert_eq!(spec("junk@example.com"), r#"{"algorithm":"UNSPECIFIED"}"#);
+        assert_eq!(
+            spec("junk-salt@example.com"),
+            r#"{"algorithm":"UNSPECIFIED"}"#
+        );
+    }
+    assert_eq!(
+        sign_in_answer(&s, None, "valid@example.com", "U*U"),
+        (200, String::new())
+    );
+    assert_eq!(
+        sign_in_answer(&s, None, "valid@example.com", "wrong"),
+        (400, "INVALID_PASSWORD".to_owned())
+    );
+    for email in ["junk@example.com", "junk-salt@example.com"] {
+        assert_eq!(
+            sign_in_answer(&s, None, email, "U*U"),
+            (400, "INVALID_PASSWORD".to_owned()),
+            "{email}"
+        );
+    }
+}
+
+/// A `rawPassword` row keeps its salt as given (firebase-tools stores it as given), whatever
+/// the salt holds; only the raw password signs in. Strict still refuses the salt.
+#[test]
+fn a_raw_password_row_with_an_odd_salt_signs_in_with_the_raw_password_only() {
+    for salt in ["not base64!", "a:b", "a:password=zz", ":password="] {
+        let s = state();
+        let request = json!({"users": [{"localId": "raw", "email": "raw@example.com",
+            "rawPassword": "password123", "salt": salt}]});
+        let (status, response) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:batchCreate"),
+            &request,
+        );
+        assert_eq!(
+            (status, response.get("error")),
+            (200, None),
+            "{salt}: {response}"
+        );
+        assert_eq!(
+            sign_in_answer(&s, None, "raw@example.com", "password123"),
+            (200, String::new()),
+            "{salt}"
+        );
+        for wrong in [
+            "not base64!",
+            salt,
+            "zz:password=password123",
+            "password1234",
+        ] {
+            assert_eq!(
+                sign_in_answer(&s, None, "raw@example.com", wrong),
+                (400, "INVALID_PASSWORD".to_owned()),
+                "{salt} {wrong}"
+            );
+        }
+    }
+    let s = strict_state();
+    let request = json!({"users": [{"localId": "raw", "email": "raw@example.com",
+        "rawPassword": "password123", "salt": "a:b"}]});
+    let (status, response) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:batchCreate"),
+        &request,
+    );
+    assert_eq!(status, 400, "{response}");
+    assert!(s.store.lock().unwrap().user_by_id("raw").is_none());
+}
+
+/// The tenant route goes through the same import: an undecodable hash imports into the tenant
+/// and matches no password there, and strict refuses it there too.
+#[test]
+fn the_tenant_route_imports_an_undecodable_hash_like_the_project_route() {
+    use fireemu_core_auth::store::AuthRegistry;
+    for strict in [false, true] {
+        let mut s = if strict { strict_state() } else { state() };
+        let registry = Arc::new(AuthRegistry::new("demo-app", s.store.clone()));
+        s.registry = Some(registry.clone());
+        if strict {
+            let enabled = handle_with(
+                &s,
+                "PATCH",
+                "/identitytoolkit.googleapis.com/admin/v2/projects/demo-app/config?updateMask=multiTenant.allowTenants",
+                &owner(),
+                &json!({"multiTenant": {"allowTenants": true}}),
+            );
+            assert_eq!(enabled.status, 200, "{}", enabled.body);
+        }
+        registry.ensure_tenant("demo-app", "customer-a").unwrap();
+        let path = format!("{V1}/projects/demo-app/tenants/customer-a/accounts:batchCreate");
+        let request = json!({"users": [{"localId": "t1", "email": "t1@example.com",
+            "passwordHash": "not base64!", "salt": "not base64!"}]});
+        let (status, response) = admin(&s, "POST", &path, &request);
+        if strict {
+            assert_eq!(status, 400, "{response}");
+            continue;
+        }
+        assert_eq!((status, response.get("error")), (200, None), "{response}");
+        let tenant = registry.tenant_store("demo-app", "customer-a").unwrap();
+        assert!(tenant.lock().unwrap().user_by_id("t1").is_some());
+        assert!(s.store.lock().unwrap().user_by_id("t1").is_none());
+        for password in UNDECODABLE_HASH_CANDIDATES {
+            assert_eq!(
+                sign_in_answer(&s, Some("customer-a"), "t1@example.com", password),
+                (400, "INVALID_PASSWORD".to_owned()),
+                "{password}"
+            );
+        }
     }
 }
 
@@ -17283,6 +17508,7 @@ proptest::proptest! {
         tail in "\\PC{0,12}",
         in_salt in proptest::bool::ANY,
         algorithm in proptest::sample::select(vec!["", "SHA256", "HMAC_SHA256", "MD5", "BCRYPT"]),
+        password in "\\PC{1,24}",
     ) {
         let junk = format!("{head}!{tail}");
         proptest::prop_assume!(!junk.starts_with("fakeHash:"));
@@ -17301,7 +17527,7 @@ proptest::proptest! {
         let (status, refused) = post(
             &s,
             &format!("{V1}/accounts:signInWithPassword"),
-            &json!({"email": "kept@example.com", "password": "password123"}),
+            &json!({"email": "kept@example.com", "password": password}),
         );
         proptest::prop_assert_eq!(
             (status, refused["error"]["message"].as_str()),

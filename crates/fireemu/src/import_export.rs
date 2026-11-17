@@ -2501,7 +2501,15 @@ fn imported_user(record: &UserRecord, path: &Path) -> Result<ImportedUser, Artif
         })?,
         _ => CustomClaims::default(),
     };
-    let password = record.password_hash.as_deref().and_then(fake_hash::decode);
+    // The record's own `salt` member names the salt exactly, so a salt that holds `:` or
+    // `:password=` restores unchanged; a hash without a matching `salt` is split as before.
+    let password = record.password_hash.as_deref().and_then(|hash| {
+        record
+            .salt
+            .as_deref()
+            .and_then(|salt| fake_hash::decode_with_salt(hash, salt))
+            .or_else(|| fake_hash::decode(hash))
+    });
     if let (Some(hash), None) = (&record.password_hash, &password) {
         return Err(refuse(format!(
             "account {}: the passwordHash {:?} is not the emulator's own reversible form, so fireemu cannot install a credential a client could sign in with",
@@ -7386,6 +7394,98 @@ mod tests {
         restored.import_user_trusted(restored_user).unwrap();
         let uid = restored.user_by_id("h").unwrap().local_id.clone();
         assert!(restored.password_digest(&uid).is_some());
+    }
+
+    /// The emulator's reversible `fakeHash:salt=<salt>:password=<plaintext>` has no escaping,
+    /// and an import keeps a row's salt as given (firebase-tools stores it as given), so a salt
+    /// holding `:` or `:password=` must still restore as the same salt and password.
+    fn restored_emulator_password(salt: &str, password: &str) -> Option<(String, String)> {
+        use fireemu_core_auth::{mfa::TotpPolicy, store::AuthStore};
+        use fireemu_core_export::auth::UserRecord;
+        use fireemu_core_types::determinism::SplitMix64;
+        let path = std::path::Path::new("offline.json");
+        let record = UserRecord {
+            local_id: "p".to_owned(),
+            email: Some("p@example.com".to_owned()),
+            created_at: Some("100000".to_owned()),
+            ..UserRecord::default()
+        };
+        let mut user = super::imported_user(&record, path).unwrap();
+        user.password = Some((salt.to_owned(), password.to_owned()));
+        let mut store = AuthStore::new("demo-app", SplitMix64::new(1), TotpPolicy::default());
+        store.import_user(user).unwrap();
+        let exported = super::exported_account(&store, store.user_by_id("p").unwrap(), None);
+        // A second hop must also be stable: the export of the restored store is the same file.
+        let restored = super::imported_user(&exported, path).ok()?;
+        let mut again = AuthStore::new("demo-app", SplitMix64::new(2), TotpPolicy::default());
+        again.import_user_trusted(restored.clone()).unwrap();
+        let reexported = super::exported_account(&again, again.user_by_id("p").unwrap(), None);
+        assert_eq!(reexported.password_hash, exported.password_hash);
+        assert_eq!(reexported.salt, exported.salt);
+        restored.password
+    }
+
+    #[test]
+    fn an_emulator_password_restores_with_any_salt() {
+        for salt in [
+            "fakeSaltAbc",
+            ":",
+            "a:b",
+            "a:password=zz",
+            ":password=",
+            "x:",
+            "é:password=é",
+        ] {
+            for password in ["password123", "zz:password=password123", "p:q"] {
+                assert_eq!(
+                    restored_emulator_password(salt, password),
+                    Some((salt.to_owned(), password.to_owned())),
+                    "salt {salt:?} password {password:?}"
+                );
+            }
+        }
+    }
+
+    /// A record without a `salt` member, or whose `salt` is not the salt in its hash (a file
+    /// edited by hand), is split at the convention's first `:password=` as before; a hash that
+    /// is not the convention is still refused.
+    #[test]
+    fn a_hash_without_a_matching_salt_member_is_split_by_the_convention() {
+        use fireemu_core_export::auth::UserRecord;
+        let path = std::path::Path::new("offline.json");
+        let record = |hash: &str, salt: Option<&str>| UserRecord {
+            local_id: "p".to_owned(),
+            email: Some("p@example.com".to_owned()),
+            password_hash: Some(hash.to_owned()),
+            salt: salt.map(str::to_owned),
+            ..UserRecord::default()
+        };
+        let restored = |hash: &str, salt: Option<&str>| {
+            super::imported_user(&record(hash, salt), path)
+                .ok()
+                .map(|user| user.password)
+        };
+        let expected = Some(Some(("s".to_owned(), "pw:password=x".to_owned())));
+        let hash = "fakeHash:salt=s:password=pw:password=x";
+        assert_eq!(restored(hash, None), expected);
+        assert_eq!(restored(hash, Some("other")), expected);
+        assert_eq!(restored(hash, Some("s")), expected);
+        assert_eq!(restored("fakeHash:salt=a:b:password=p", None), None);
+        assert_eq!(restored("scrypt$whatever", Some("a")), None);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn an_emulator_password_restores_with_any_generated_salt(
+            salt in "[a-z:=]{1,12}|\\PC{1,12}",
+            password in "password[0-9]{3}|[a-z:=]{8,12}",
+        ) {
+            proptest::prop_assert_eq!(
+                restored_emulator_password(&salt, &password),
+                Some((salt, password))
+            );
+        }
     }
 
     /// One account holding `hash`, exported, as the record a restore reads.

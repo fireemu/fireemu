@@ -10,7 +10,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ### Fixed
 
-- Authentication: in the emulator profile, an `accounts:batchCreate` row whose `passwordHash` or `salt` is not base64 (or a malformed `fakeHash:` value) is imported, as firebase-tools stores both as given, instead of refusing the request; a password sign-in against it answers `INVALID_PASSWORD`, and the account still exports and restores. The strict profile still refuses it, as production does.
+- Authentication: in the emulator profile, an `accounts:batchCreate` row whose `passwordHash` or `salt` is not base64 (or a malformed `fakeHash:` value) is imported, as firebase-tools stores both as given, instead of refusing the request; a password sign-in against it answers `INVALID_PASSWORD`, and the account still exports and restores, including an account whose salt holds `:` or `:password=` (a restore reads the password after the record's own `salt`). The strict profile still refuses it, as production does.
 
 ## [0.58.0] - 2026-11-17
 

@@ -1458,7 +1458,7 @@
     },
     "crates/fireemu-core-export/src/auth.rs": {
       "kind": "sha256",
-      "value": "cd0d3d85658119c0b97d528647686bae9c7891316ac9e7cf5d768e2b0dceea09"
+      "value": "a31dbf565f0f24ff0918fc98261be1c128200885f313842e5e83d3eb8e61e39f"
     },
     "crates/fireemu-core-export/src/firestore.rs": {
       "kind": "sha256",
@@ -2114,7 +2114,7 @@
     },
     "crates/fireemu/src/import_export.rs": {
       "kind": "sha256",
-      "value": "086b32f058d067de5d3b322f0653e6fdf827e8dee0df32c66263f812d8578c5f"
+      "value": "187eb941bede6368a396944afce75aa85b5546dc60f7116d720b0aa18869e5f0"
     },
     "crates/fireemu/src/init.rs": {
       "kind": "sha256",
