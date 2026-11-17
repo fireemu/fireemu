@@ -832,14 +832,15 @@ test("v4 rehearsal command prints the v4 configuration and refuses other stages"
     "--run-id",
     "ss-0123abcd",
   ];
-  const run = (stage) =>
+  const rehearse = (stage) =>
     spawnSync(process.execPath, [script, ...stage, ...args], { encoding: "utf8" });
-  const ok = run(["v4"]);
+  const ok = rehearse(["v4"]);
   assert.equal(ok.status, 0);
   assert.deepEqual(JSON.parse(ok.stdout).storage.buckets, [identity.defaultBucket, T]);
-  assert.equal(JSON.parse(run(["v3"]).stdout).storage.buckets.length, 4);
-  assert.equal(JSON.parse(run([]).stdout).storage.buckets.length, 2);
-  for (const stage of [["v5"], ["v4", "v3"], ["readback"]]) assert.notEqual(run(stage).status, 0);
+  assert.equal(JSON.parse(rehearse(["v3"]).stdout).storage.buckets.length, 4);
+  assert.equal(JSON.parse(rehearse([]).stdout).storage.buckets.length, 2);
+  for (const stage of [["v5"], ["v4", "v3"], ["readback"]])
+    assert.notEqual(rehearse(stage).status, 0);
 });
 
 const jsonAnswer = (status, value) => ({
