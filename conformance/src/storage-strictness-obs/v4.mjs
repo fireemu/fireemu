@@ -1,5 +1,5 @@
 // Stage v4: the Storage strict residuals (list, glob, token, metadata order, 204 framing, bucket
-// resource and the non-Firebase bucket). One fresh fine-grained bucket T, every request fixed here.
+// resource and the non-Firebase bucket). One fresh uniform-access bucket T, every request fixed here.
 // This module holds the finite request vocabulary and the sequence; guard.mjs, wire.mjs and run.mjs
 // apply it with the same checks as v3.
 
@@ -22,7 +22,6 @@ export const V4_OBJECTS = [
   ["gl-c", "gl/sub/c.txt", "fire"],
   ["md-plain", "md/plain.txt", "fire"],
   ["x-xml", "x/xml.txt", "fire"],
-  ["x-acl", "x/acl.txt", "fire"],
 ];
 export const V4_MULTIPART_NAME = "md/up.txt";
 export const V4_COPY_NAME = "md/copy.txt";
@@ -84,7 +83,7 @@ export function requestsV4(t) {
     body: JSON.stringify({
       name: T,
       location: t.location ?? "US",
-      iamConfiguration: { uniformBucketLevelAccess: { enabled: false } },
+      iamConfiguration: { uniformBucketLevelAccess: { enabled: true } },
       softDeletePolicy: { retentionDurationSeconds: 0 },
     }),
     headers: json,
@@ -155,16 +154,9 @@ export function requestsV4(t) {
   patch("V4-MD-patch-delete", V4_MULTIPART_NAME, { zeta: null });
   patch("V4-MD-patch-plain", "md/plain.txt", { yb: "1", ya: "2", yc: "3" });
   list("V4-MD-list", "prefix=md%2F");
-  // 204 framing.
+  // 204 framing. Legacy ACL routes are not observed: they need a fine-grained bucket and an ACL grant.
   add("V4-X-xml-delete", "DELETE", `/${T}/x/xml.txt`);
   add("V4-X-xml-delete-again", "DELETE", `/${T}/x/xml.txt`);
-  add("V4-X-acl-insert", "POST", `${o(T, "x/acl.txt")}/acl`, {
-    headers: json,
-    body: JSON.stringify({ entity: "allAuthenticatedUsers", role: "READER" }),
-  });
-  add("V4-X-acl-get", "GET", `${o(T, "x/acl.txt")}/acl`);
-  add("V4-X-acl-delete", "DELETE", `${o(T, "x/acl.txt")}/acl/allAuthenticatedUsers`);
-  add("V4-X-acl-delete-again", "DELETE", `${o(T, "x/acl.txt")}/acl/allAuthenticatedUsers`);
   // The bucket resource (the fields-less GET is V4-W-verify) and a non-Firebase bucket on the Firebase API.
   add("V4-B-full", "GET", `${b(T)}?projection=full`);
   add("V4-B-patch", "PATCH", b(T), {
@@ -232,10 +224,6 @@ export const V4_OBSERVATIONS = [
   "V4-MD-list",
   "V4-X-xml-delete",
   "V4-X-xml-delete-again",
-  "V4-X-acl-insert",
-  "V4-X-acl-get",
-  "V4-X-acl-delete",
-  "V4-X-acl-delete-again",
   "V4-B-full",
   "V4-B-patch",
   "V4-N-get",

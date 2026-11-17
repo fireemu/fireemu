@@ -24,7 +24,7 @@
     "headers": {
       "content-type": "application/json"
     },
-    "body": "{\"name\":\"fireemu-obs-ss-00000000\",\"location\":\"US-CENTRAL1\",\"iamConfiguration\":{\"uniformBucketLevelAccess\":{\"enabled\":false}},\"softDeletePolicy\":{\"retentionDurationSeconds\":0}}",
+    "body": "{\"name\":\"fireemu-obs-ss-00000000\",\"location\":\"US-CENTRAL1\",\"iamConfiguration\":{\"uniformBucketLevelAccess\":{\"enabled\":true}},\"softDeletePolicy\":{\"retentionDurationSeconds\":0}}",
     "action": "create",
     "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
     "auth": "bearer"
@@ -179,16 +179,6 @@
     "case": "V4-U-x-xml",
     "method": "POST",
     "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=x%2Fxml.txt",
-    "headers": {
-      "content-type": "text/plain"
-    },
-    "body": "fire",
-    "auth": "bearer"
-  },
-  "V4-U-x-acl": {
-    "case": "V4-U-x-acl",
-    "method": "POST",
-    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=x%2Facl.txt",
     "headers": {
       "content-type": "text/plain"
     },
@@ -474,37 +464,6 @@
     "headers": {},
     "auth": "bearer"
   },
-  "V4-X-acl-insert": {
-    "case": "V4-X-acl-insert",
-    "method": "POST",
-    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Facl.txt/acl",
-    "headers": {
-      "content-type": "application/json"
-    },
-    "body": "{\"entity\":\"allAuthenticatedUsers\",\"role\":\"READER\"}",
-    "auth": "bearer"
-  },
-  "V4-X-acl-get": {
-    "case": "V4-X-acl-get",
-    "method": "GET",
-    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Facl.txt/acl",
-    "headers": {},
-    "auth": "bearer"
-  },
-  "V4-X-acl-delete": {
-    "case": "V4-X-acl-delete",
-    "method": "DELETE",
-    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Facl.txt/acl/allAuthenticatedUsers",
-    "headers": {},
-    "auth": "bearer"
-  },
-  "V4-X-acl-delete-again": {
-    "case": "V4-X-acl-delete-again",
-    "method": "DELETE",
-    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Facl.txt/acl/allAuthenticatedUsers",
-    "headers": {},
-    "auth": "bearer"
-  },
   "V4-B-full": {
     "case": "V4-B-full",
     "method": "GET",
@@ -750,13 +709,6 @@
     "case": "V4-K-del-x-xml",
     "method": "DELETE",
     "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Fxml.txt",
-    "headers": {},
-    "auth": "bearer"
-  },
-  "V4-K-del-x-acl": {
-    "case": "V4-K-del-x-acl",
-    "method": "DELETE",
-    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Facl.txt",
     "headers": {},
     "auth": "bearer"
   },

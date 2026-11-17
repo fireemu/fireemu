@@ -61,7 +61,7 @@ function prng(seed) {
 }
 
 test("v4 vocabulary: the fixed requests are exactly those the packet lists", () => {
-  assert.equal(Object.keys(plan).length, 104);
+  assert.equal(Object.keys(plan).length, 98);
   const url = (id) => new URL(plan[id].url);
   const api = `https://storage.googleapis.com/storage/v1/b/${T}`;
   assert.equal(
@@ -84,22 +84,22 @@ test("v4 vocabulary: the fixed requests are exactly those the packet lists", () 
   assert.equal(plan["V4-N-list"].auth, "none");
   assert.equal(plan["V4-X-xml-delete"].url, `https://storage.googleapis.com/${T}/x/xml.txt`);
   assert.equal(plan["V4-X-xml-delete"].method, "DELETE");
-  assert.equal(plan["V4-X-acl-delete"].url, `${api}/o/x%2Facl.txt/acl/allAuthenticatedUsers`);
+  assert.equal(plan["V4-X-acl-insert"], undefined);
+  assert.equal(
+    Object.keys(plan).some((id) => /acl/i.test(id)),
+    false,
+  );
   assert.equal(
     plan["V4-MD-copy"].url,
     `${api}/o/md%2Fup.txt/copyTo/b/${T}/o/${encodeURIComponent(V4_COPY_NAME)}`,
   );
   assert.equal(plan["V4-B-full"].url, `${api}?projection=full`);
   assert.deepEqual(JSON.parse(plan["V4-B-patch"].body), { labels: { "fireemu-obs": "v4" } });
-  assert.deepEqual(JSON.parse(plan["V4-X-acl-insert"].body), {
-    entity: "allAuthenticatedUsers",
-    role: "READER",
-  });
-  // A fine-grained bucket with hard deletes; production would otherwise keep soft-deleted copies.
+  // A uniform-access bucket (no ACL grant is ever made) with hard deletes; production would otherwise keep soft-deleted copies.
   assert.deepEqual(JSON.parse(plan["V4-W-bucket"].body), {
     name: T,
     location: "US",
-    iamConfiguration: { uniformBucketLevelAccess: { enabled: false } },
+    iamConfiguration: { uniformBucketLevelAccess: { enabled: true } },
     softDeletePolicy: { retentionDurationSeconds: 0 },
   });
   // The multipart body names the metadata keys in the order the question needs (not sorted).
@@ -172,7 +172,7 @@ test("v4 happy path: every object is deleted, the bucket is removed and the sequ
   assert.deepEqual(report.violations, []);
   assert.deepEqual(report.failures, []);
   assert.deepEqual(report.skipped, ["V4-L-itd-p4"]);
-  assert.equal(report.requests, 98);
+  assert.equal(report.requests, 92);
   assert.ok(report.requests <= V4_BUDGET);
   assert.equal(world.buckets.has(T), false);
   assert.equal(world.objects.size, 0);
@@ -186,7 +186,7 @@ test("v4 happy path: every object is deleted, the bucket is removed and the sequ
   assert.equal(order.at(-3), "V4-K-del-md-copy");
   assert.deepEqual(order.slice(-2), ["V4-K-delete-bucket", "V4-K-bucket"]);
   assert.equal(order.indexOf("V4-M-len-8000"), order.indexOf("V4-K-del-tl-d1") - 1);
-  assert.equal(entries.filter((entry) => entry.phase === "before").length, 98);
+  assert.equal(entries.filter((entry) => entry.phase === "before").length, 92);
   assert.equal(entries.filter((entry) => entry.phase === "skipped").length, 1);
   // Deletions of the planned objects only, each once.
   assert.deepEqual(
@@ -437,7 +437,7 @@ test("v4 local rehearsal skips bucket management and verifies the object cleanup
   assert.equal(cases(world).at(-1), "V4-K-read-object");
   // A non-empty bucket is never written to.
   const dirty = createFakeWorld(local);
-  dirty.objects.set("x", { bucket: T, name: "x", size: 1, metadata: {}, acl: [] });
+  dirty.objects.set("x", { bucket: T, name: "x", size: 1, metadata: {} });
   dirty.buckets.set(T, { name: T });
   const sink = [];
   const client = createWire({
@@ -536,8 +536,7 @@ test("v4 judge rows state the content of each answer, by names, order and framin
   assert.deepEqual(byCase["V4-MD-patch-delete"].v4.metadataKeys, ["alpha", "mid", "beta"]);
   assert.deepEqual(byCase["V4-MD-patch-plain"].v4.metadataKeys, ["yb", "ya", "yc"]);
   assert.deepEqual(byCase["V4-MD-list"].v4.itemMetadataKeys["md/up.txt"], ["alpha", "mid", "beta"]);
-  assert.equal(byCase["V4-X-acl-delete"].shape, "empty");
-  assert.equal(byCase["V4-X-acl-delete"].v4.contentLength, "0");
+  assert.equal(byCase["V4-X-xml-delete"].shape, "empty");
   assert.equal(byCase["V4-X-xml-delete"].v4.contentLength, null);
   assert.equal(byCase["V4-X-xml-delete-again"].shape, "xml-error");
   assert.equal(byCase["V4-N-get"].json.code, 412);
@@ -597,13 +596,13 @@ test("v4 comparison reports a difference in order, framing or listing and nothin
   const changed = structuredClone(production);
   const at = (id) => changed.find((row) => row.case === id);
   at("V4-MD-get-up").v4.metadataKeys.reverse();
-  at("V4-X-acl-delete").v4.contentLength = null;
+  at("V4-G-del-b").v4.contentLength = null;
   at("V4-L-itd-true").v4.items.pop();
   const verdict = Object.fromEntries(
     compare(production, changed).map((row) => [row.case, row.verdict]),
   );
   assert.equal(verdict["V4-MD-get-up"], "DIFFERS(v4)");
-  assert.equal(verdict["V4-X-acl-delete"], "DIFFERS(v4)");
+  assert.equal(verdict["V4-G-del-b"], "DIFFERS(v4)");
   assert.equal(verdict["V4-L-itd-true"], "DIFFERS(v4)");
   assert.equal(verdict["V4-L-delim"], "MATCH");
 });
@@ -631,7 +630,7 @@ test("v4 closure needs no unresolved resource: settlement ignores objects and tr
   assert.equal(entries.filter((e) => e.resource && e.case.startsWith("V4-U-")).length, 0);
 });
 
-// Pairwise table from PICT (model: Mode, Group, Fault, Applied; 51 rows, six required rows seeded).
+// Pairwise table from PICT (model: Mode, Group, Fault, Applied; 48 rows, 6 required rows seeded).
 const FAULT_GROUPS = {
   "bucket-create": "V4-W-bucket",
   "upload-first": "V4-U-tl-d1",
@@ -642,7 +641,6 @@ const FAULT_GROUPS = {
   patch: "V4-MD-patch-add",
   copy: "V4-MD-copy",
   xml: "V4-X-xml-delete",
-  acl: "V4-X-acl-insert",
   "bucket-patch": "V4-B-patch",
   nonfirebase: "V4-N-get",
   "glob-first": "V4-M-ctl",
@@ -658,51 +656,48 @@ const FAULT_ROWS = [
   ["local", "glob-last", "unknown", "yes"],
   ["production", "final-read", "unknown", "no"],
   ["production", "token-page", "known-4xx", "yes"],
-  ["local", "listing", "transport", "yes"],
-  ["local", "token-page", "unknown", "no"],
-  ["local", "acl", "known-4xx", "no"],
-  ["production", "delete-mid", "unknown", "no"],
-  ["production", "acl", "transport", "yes"],
-  ["local", "upload-last", "unknown", "yes"],
-  ["local", "bucket-patch", "transport", "no"],
-  ["local", "final-read", "transport", "yes"],
-  ["local", "upload-last", "known-4xx", "no"],
-  ["production", "listing", "unknown", "no"],
+  ["local", "upload-first", "unknown", "no"],
+  ["local", "upload-first", "known-4xx", "yes"],
+  ["local", "listing", "unknown", "yes"],
+  ["local", "token-page", "transport", "no"],
+  ["local", "copy", "unknown", "no"],
+  ["local", "delete-mid", "unknown", "no"],
+  ["production", "delete-mid", "transport", "yes"],
+  ["local", "nonfirebase", "unknown", "no"],
   ["production", "nonfirebase", "known-4xx", "yes"],
-  ["local", "delete-mid", "transport", "yes"],
-  ["local", "cleanup-object-delete", "transport", "yes"],
-  ["local", "bucket-create", "known-4xx", "no"],
-  ["production", "patch", "transport", "no"],
-  ["production", "glob-last", "known-4xx", "no"],
-  ["production", "bucket-patch", "unknown", "yes"],
-  ["production", "xml", "known-4xx", "no"],
-  ["local", "glob-first", "known-4xx", "no"],
-  ["production", "cleanup-object-delete", "known-4xx", "no"],
+  ["local", "token-page", "unknown", "yes"],
+  ["production", "patch", "transport", "yes"],
+  ["local", "glob-first", "transport", "yes"],
+  ["local", "cleanup-bucket-delete", "known-4xx", "no"],
+  ["production", "upload-first", "transport", "no"],
   ["local", "bucket-create", "transport", "no"],
-  ["local", "copy", "known-4xx", "yes"],
-  ["local", "nonfirebase", "transport", "no"],
-  ["production", "copy", "unknown", "no"],
-  ["local", "bucket-patch", "known-4xx", "yes"],
-  ["production", "acl", "unknown", "no"],
-  ["local", "patch", "unknown", "yes"],
-  ["production", "upload-first", "unknown", "yes"],
-  ["local", "cleanup-bucket-delete", "transport", "no"],
-  ["local", "nonfirebase", "unknown", "yes"],
-  ["production", "glob-first", "unknown", "yes"],
-  ["production", "delete-mid", "known-4xx", "yes"],
-  ["local", "xml", "unknown", "yes"],
-  ["local", "cleanup-bucket-delete", "known-4xx", "yes"],
-  ["local", "token-page", "transport", "yes"],
-  ["production", "glob-last", "transport", "yes"],
-  ["production", "glob-first", "transport", "yes"],
-  ["local", "upload-first", "transport", "no"],
-  ["production", "final-read", "known-4xx", "yes"],
-  ["production", "copy", "transport", "no"],
-  ["production", "upload-first", "known-4xx", "no"],
+  ["production", "glob-last", "transport", "no"],
+  ["local", "nonfirebase", "transport", "yes"],
+  ["local", "patch", "unknown", "no"],
+  ["production", "cleanup-bucket-delete", "transport", "yes"],
+  ["local", "upload-last", "known-4xx", "yes"],
+  ["local", "bucket-patch", "unknown", "no"],
+  ["production", "patch", "known-4xx", "no"],
+  ["production", "listing", "known-4xx", "no"],
+  ["production", "bucket-patch", "known-4xx", "yes"],
+  ["local", "cleanup-object-delete", "unknown", "yes"],
+  ["production", "copy", "transport", "yes"],
+  ["local", "final-read", "transport", "yes"],
+  ["production", "bucket-create", "known-4xx", "no"],
+  ["local", "bucket-patch", "transport", "no"],
   ["production", "xml", "transport", "yes"],
-  ["local", "cleanup-object-delete", "unknown", "no"],
-  ["production", "patch", "known-4xx", "yes"],
-  ["production", "listing", "known-4xx", "yes"],
+  ["local", "xml", "known-4xx", "no"],
+  ["local", "listing", "transport", "yes"],
+  ["local", "final-read", "known-4xx", "yes"],
+  ["production", "copy", "known-4xx", "yes"],
+  ["production", "upload-last", "unknown", "yes"],
+  ["local", "glob-last", "known-4xx", "no"],
+  ["local", "delete-mid", "known-4xx", "yes"],
+  ["production", "cleanup-object-delete", "known-4xx", "no"],
+  ["production", "glob-first", "known-4xx", "no"],
+  ["production", "cleanup-object-delete", "transport", "no"],
+  ["local", "xml", "unknown", "yes"],
+  ["production", "glob-first", "unknown", "yes"],
 ];
 const FAULTS = {
   unknown: (applied) =>
@@ -1086,7 +1081,7 @@ test("v4 the complete request vocabulary equals its reviewed snapshot", () => {
   // The snapshot is the packet's vocabulary: every request runs against a Google API host with the bucket T.
   for (const request of Object.values(snapshot))
     assert.match(request.url, /^https:\/\/(storage|firebasestorage)\.googleapis\.com\//);
-  assert.equal(Object.keys(snapshot).length, 104);
+  assert.equal(Object.keys(snapshot).length, 98);
   assert.equal(V4_BUDGET, 140);
 });
 
@@ -1159,45 +1154,10 @@ test("v4 judge facts for every recognised kind, exactly", () => {
       },
     },
   );
-  assert.deepEqual(
-    facts({
-      kind: "storage#objectAccessControls",
-      items: [
-        { entity: "project-owners-123", role: "OWNER" },
-        { entity: "allUsers" },
-        { entity: 5, role: "READER" },
-      ],
-    }),
-    {
-      shape: "acl-list",
-      facts: {
-        contentLength: null,
-        contentType: null,
-        memberOrder: ["kind", "items"],
-        entries: [
-          ["project-owners-<n>", "OWNER"],
-          ["allUsers", null],
-          [null, "READER"],
-        ],
-      },
-    },
-  );
-  assert.deepEqual(facts({ kind: "storage#objectAccessControls" }).facts.entries, []);
-  assert.deepEqual(
-    facts({ kind: "storage#objectAccessControl", entity: "user-7", role: "READER" }),
-    {
-      shape: "acl-entry",
-      facts: {
-        contentLength: null,
-        contentType: null,
-        memberOrder: ["kind", "entity", "role"],
-        entries: [["user-<n>", "READER"]],
-      },
-    },
-  );
-  // Anything else, an error document included, carries framing only.
+  // Anything else, an error document or an ACL document included, carries framing only.
   for (const value of [
     { kind: "storage#other" },
+    { kind: "storage#objectAccessControls", items: [{ entity: "allUsers" }] },
     { error: { code: 400 }, kind: "storage#objects" },
     { name: "x" },
   ])
@@ -1287,18 +1247,18 @@ test("v4 judge replays the recorded production layouts of the same routes (STORA
   const one = row("V4-MD-get-up", object);
   assert.equal(one.shape, "object");
   assert.deepEqual(one.v4.memberOrder, Object.keys(object));
-  // The recorded 400 ACL answer stays a json-error row with its code and reason.
+  // The recorded 400 JSON error layout (the legacy ACL answer under uniform access, V3-*-acl) stays a json-error row with its code and reason.
   const acl = judgeJournal([
     { phase: "header", stage: "v4" },
     {
       phase: "before",
       n: 1,
-      case: "V4-X-acl-get",
+      case: "V4-N-get",
       method: "GET",
       url: "https://storage.googleapis.com/x",
     },
     {
-      ...entry("V4-X-acl-get", {
+      ...entry("V4-N-get", {
         error: {
           code: 400,
           message:
@@ -1309,7 +1269,7 @@ test("v4 judge replays the recorded production layouts of the same routes (STORA
       n: 1,
       status: 400,
     },
-  ]).find((r) => r.case === "V4-X-acl-get");
+  ]).find((r) => r.case === "V4-N-get");
   assert.equal(acl.shape, "json-error");
   assert.equal(acl.json.reason, "invalid");
   assert.equal(acl.known, true);

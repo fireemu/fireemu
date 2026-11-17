@@ -78,7 +78,7 @@ export function createFakeV4World(
   });
   const key = (bucket, name) => `${bucket}\n${name}`;
   const store = (bucket, name, body, metadata = {}) =>
-    objects.set(key(bucket, name), { name, bucket, size: body.length, metadata, acl: [] });
+    objects.set(key(bucket, name), { name, bucket, size: body.length, metadata });
   function list(bucket, url) {
     const q = url.searchParams;
     const prefix = q.get("prefix") ?? "";
@@ -188,24 +188,6 @@ export function createFakeV4World(
       const copy = decodeURIComponent(parts[6]);
       store(bucket, copy, "fire", { ...object.metadata });
       return json(200, objectResource(objects.get(key(bucket, copy))));
-    }
-    if (parts[2] === "acl") {
-      const entity = parts[3] && decodeURIComponent(parts[3]);
-      if (r.method === "POST") {
-        const body = JSON.parse(r.body);
-        object.acl.push({ entity: body.entity, role: body.role });
-        return json(200, { kind: "storage#objectAccessControl", ...body });
-      }
-      if (r.method === "DELETE") {
-        const at = object.acl.findIndex((entry) => entry.entity === entity);
-        if (at < 0) return fail(404, "Not Found", "notFound");
-        object.acl.splice(at, 1);
-        return empty(204, { "content-length": "0", "content-type": "application/json" });
-      }
-      return json(200, {
-        kind: "storage#objectAccessControls",
-        items: object.acl.map((e) => ({ kind: "storage#objectAccessControl", ...e })),
-      });
     }
     if (r.method === "DELETE") {
       objects.delete(key(bucket, name));

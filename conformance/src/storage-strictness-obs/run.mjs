@@ -384,7 +384,7 @@ export async function observe({
   };
 }
 
-// Stage v4: one fresh fine-grained bucket, finite requests, cleanup by attempted name.
+// Stage v4: one fresh uniform-access bucket, finite requests, cleanup by attempted name.
 export async function observeV4({ target, client }) {
   let plan = requests(target);
   let location = "US";

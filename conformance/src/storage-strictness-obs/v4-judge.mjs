@@ -35,7 +35,6 @@ const scrub = (value) => {
   );
 };
 const keys = (value) => (isRecord(value) ? Object.keys(value) : []);
-const entity = (text) => (typeof text === "string" ? text.replace(/\d+/g, "<n>") : null);
 
 export function v4Facts(entry, body, headers) {
   const facts = {
@@ -73,20 +72,6 @@ export function v4Facts(entry, body, headers) {
     return {
       shape: "bucket-resource",
       facts: { ...facts, memberOrder: keys(value), members: scrub(value) },
-    };
-  if (value.kind === "storage#objectAccessControls")
-    return {
-      shape: "acl-list",
-      facts: {
-        ...facts,
-        memberOrder: keys(value),
-        entries: (value.items ?? []).map((item) => [entity(item.entity), item.role ?? null]),
-      },
-    };
-  if (value.kind === "storage#objectAccessControl")
-    return {
-      shape: "acl-entry",
-      facts: { ...facts, memberOrder: keys(value), entries: [[entity(value.entity), value.role]] },
     };
   return { facts, shape: null };
 }
