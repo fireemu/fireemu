@@ -727,9 +727,54 @@ async fn strict_bucket_patch_accepts_labels() {
         &[("Content-Type", "application/json")],
         Some(r#"{"labels":{"fireemu-obs":null}}"#),
     )
-    .await
-    .json();
+    .await;
+    assert_eq!(cleared.status, 200);
+    let cleared = cleared.json();
     assert!(cleared.get("labels").is_none());
+    assert_eq!(cleared["metageneration"], "3");
+    // A patch without labels (versioning only) is still a patch: the metageneration moves on.
+    let versioning = send_with(
+        addr,
+        "PATCH",
+        BUCKET_PATH,
+        &[("Content-Type", "application/json")],
+        Some(r#"{"versioning":{"enabled":true}}"#),
+    )
+    .await;
+    assert_eq!(versioning.status, 200);
+    assert_eq!(versioning.json()["metageneration"], "4");
+    assert_eq!(versioning.header("etag"), Some("CAQ="));
+    // Other fields stay refused, with the same message as before, and a refused patch changes nothing.
+    let refused = send_with(
+        addr,
+        "PATCH",
+        BUCKET_PATH,
+        &[("Content-Type", "application/json")],
+        Some(r#"{"location":"EU"}"#),
+    )
+    .await;
+    assert_eq!(error_of(&refused).1, "unsupported bucket field: location");
+    assert_eq!(get(addr, BUCKET_PATH).await.json()["metageneration"], "4");
+    // A label must be a string; null removes one in a patch only.
+    for body in [
+        r#"{"labels":{"k":1}}"#,
+        r#"{"labels":["k"]}"#,
+        r#"{"labels":"k"}"#,
+    ] {
+        let bad = send_with(
+            addr,
+            "PATCH",
+            BUCKET_PATH,
+            &[("Content-Type", "application/json")],
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            error_of(&bad).1,
+            "labels must be an object of strings",
+            "{body}"
+        );
+    }
     task.abort();
 }
 
@@ -781,6 +826,8 @@ async fn strict_xml_delete_removes_an_object_and_repeats_as_no_such_key() {
     assert_eq!(first.header("content-length"), Some("0"));
     assert!(first.header("content-type").is_none());
     assert_eq!(first.all("vary"), "Origin");
+    assert_eq!(first.header("cache-control"), Some("private, max-age=0"));
+    assert!(first.header("expires").is_some());
     assert!(first.body.is_empty());
     assert!(s
         .store
@@ -798,6 +845,7 @@ async fn strict_xml_delete_removes_an_object_and_repeats_as_no_such_key() {
         Some("application/xml; charset=UTF-8")
     );
     assert_eq!(again.all("vary"), "Origin");
+    assert_eq!(again.header("cache-control"), Some("private, max-age=0"));
     assert_eq!(
         again.text(),
         "<?xml version='1.0' encoding='UTF-8'?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message><Details>No such object: demo-app.appspot.com/gl/a.txt</Details></Error>"
@@ -815,5 +863,95 @@ async fn the_emulator_profile_keeps_the_501_for_an_xml_delete() {
             .status,
         501
     );
+    task.abort();
+}
+
+/// Creating a bucket with labels keeps metageneration 1; a null label is only meaningful in a patch.
+#[tokio::test]
+async fn strict_bucket_create_accepts_labels_without_a_patch() {
+    let (addr, _s, task) = serve(state(TokenAcceptance::Verified)).await;
+    let create = |body: &'static str| {
+        send_with(
+            addr,
+            "POST",
+            "/storage/v1/b?project=demo-app",
+            &[("Content-Type", "application/json")],
+            Some(body),
+        )
+    };
+    let null = create(r#"{"name":"new-one.appspot.com","labels":{"k":null}}"#).await;
+    assert_eq!(error_of(&null).1, "labels must be an object of strings");
+    let made = create(r#"{"name":"new-two.appspot.com","labels":{"k":"v"}}"#).await;
+    assert_eq!(made.status, 200);
+    let made = made.json();
+    assert_eq!(made["labels"], json!({"k": "v"}));
+    assert_eq!(made["metageneration"], "1");
+    assert_eq!(made["etag"], "CAE=");
+    task.abort();
+}
+
+/// Routes the XML DELETE must not capture, and answers that stay unframed (the official emulator's headers).
+#[tokio::test]
+async fn strict_unrelated_deletes_and_unknown_routes_keep_their_501_and_their_unframed_headers() {
+    let (addr, _s, task) = serve(glob_fixture(TokenAcceptance::Verified)).await;
+    for (method, path) in [
+        (
+            "DELETE",
+            "/download/storage/v1/b/demo-app.appspot.com/o/gl%2Fa.txt",
+        ),
+        ("DELETE", "/demo-app.appspot.com"),
+        ("DELETE", "/storage/v1/b/demo-app.appspot.com/o"),
+        ("DELETE", "/upload/storage/v1/b/demo-app.appspot.com/o/x"),
+        ("PATCH", "/upload/storage/v1/b/demo-app.appspot.com/o"),
+        ("PUT", "/storage/v1/b/demo-app.appspot.com"),
+    ] {
+        let answer = send_with(addr, method, path, &[], None).await;
+        assert_eq!(answer.status, 501, "{method} {path}");
+        assert_eq!(answer.all("vary"), "Origin", "{method} {path}");
+        assert!(answer.header("pragma").is_none(), "{method} {path}");
+        assert!(answer.header("etag").is_none(), "{method} {path}");
+    }
+    // The object survives all of it.
+    assert_eq!(get(addr, &format!("{OBJECT}?alt=media")).await.status, 200);
+    task.abort();
+}
+
+/// `includeTrailingDelimiter` with a `matchGlob`: the same entries, the placeholder once as item and prefix.
+#[tokio::test]
+async fn strict_include_trailing_delimiter_works_with_a_match_glob() {
+    let (addr, _s, task) = serve(trailing_fixture(TokenAcceptance::Verified)).await;
+    let q = |flag: &str| format!("prefix=tl%2F&delimiter=%2F&matchGlob=tl%2F**{flag}");
+    let with = page(addr, &q("&includeTrailingDelimiter=true"), None).await;
+    assert_eq!(names(&with, "items"), ["tl/d1/", "tl/f.txt"]);
+    assert_eq!(names(&with, "prefixes"), ["tl/d1/", "tl/d2/"]);
+    let without = page(addr, &q(""), None).await;
+    assert_eq!(names(&without, "items"), ["tl/f.txt"]);
+    assert_eq!(names(&without, "prefixes"), ["tl/d1/", "tl/d2/"]);
+    // A glob that rejects the placeholder leaves its prefix but not its item.
+    let hidden = page(
+        addr,
+        "prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&matchGlob=tl%2F*%2F%3F*",
+        None,
+    )
+    .await;
+    assert!(names(&hidden, "items").is_empty());
+    assert_eq!(names(&hidden, "prefixes"), ["tl/d1/", "tl/d2/"]);
+    // Paged one entry at a time, the pair is one entry and the token continues after it.
+    let first = page(
+        addr,
+        &format!("{}&maxResults=1", q("&includeTrailingDelimiter=true")),
+        None,
+    )
+    .await;
+    assert_eq!(names(&first, "items"), ["tl/d1/"]);
+    assert_eq!(names(&first, "prefixes"), ["tl/d1/"]);
+    let second = page(
+        addr,
+        &format!("{}&maxResults=1", q("&includeTrailingDelimiter=true")),
+        token_of(&first).as_deref(),
+    )
+    .await;
+    assert!(second.get("items").is_none());
+    assert_eq!(names(&second, "prefixes"), ["tl/d2/"]);
     task.abort();
 }
