@@ -850,7 +850,7 @@ mod commit_budget_properties {
             let mut strict = state(LimitScope::Production);
             for (index, count) in counts.iter().enumerate() {
                 prop_assert!(strict
-                    .commit(&[set(&name(index), "a", integers(*count))], None, t(index as i64))
+                    .commit(&[set(&name(index), "a", integers(*count))], None, t(i64::try_from(index).unwrap()))
                     .is_ok());
             }
         }
