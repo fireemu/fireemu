@@ -17,6 +17,7 @@ const GENERATED = new Set([
   "crc32c",
   "md5Hash",
   "timeStorageClassUpdated",
+  "lockedTime",
   "bucket",
 ]);
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);

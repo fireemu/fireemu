@@ -1045,6 +1045,7 @@ test("v4 judge facts keep every generated key hidden and every other member visi
     "crc32c",
     "md5Hash",
     "timeStorageClassUpdated",
+    "lockedTime",
     "bucket",
   ];
   const facts = (value) =>
