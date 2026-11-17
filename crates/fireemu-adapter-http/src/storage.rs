@@ -5822,13 +5822,18 @@ fn add_recorded_bucket_members(
 fn is_recorded_text_plain(value: &str) -> bool {
     let mut parts = value.split(';');
     let media = parts.next().unwrap_or_default().trim();
-    media.eq_ignore_ascii_case("text/plain")
-        && parts.all(|param| {
-            param.trim().split_once('=').is_some_and(|(name, value)| {
-                name.trim().eq_ignore_ascii_case("charset")
-                    && value.trim().eq_ignore_ascii_case("utf-8")
-            })
-        })
+    if !media.eq_ignore_ascii_case("text/plain") {
+        return false;
+    }
+    // The recording shows `text/plain;charset=UTF-8`: no parameter, or exactly one charset=utf-8.
+    match (parts.next(), parts.next()) {
+        (None, _) => true,
+        (Some(param), None) => param.trim().split_once('=').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("charset")
+                && value.trim().eq_ignore_ascii_case("utf-8")
+        }),
+        (Some(_), Some(_)) => false,
+    }
 }
 
 /// `GET` and `PATCH /storage/v1/b/{bucket}`: the bucket resource with its `versioning`. `PATCH`

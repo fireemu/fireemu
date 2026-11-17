@@ -1404,6 +1404,11 @@ test("the recorded v4.1 fixture names its cases once and holds no body, hash or 
       assert.ok(!Object.hasOwn(row, key));
   }
   assert.ok(!text.includes('nextPageToken": "'));
+  const requestTokens = fixture.rows.flatMap((row) =>
+    row.url === null ? [] : new URL(row.url).searchParams.getAll("pageToken"),
+  );
+  assert.ok(requestTokens.length >= 8);
+  for (const token of requestTokens) assert.equal(token, "<token>");
   const byCase = Object.fromEntries(fixture.rows.map((row) => [row.case, row]));
   assert.deepEqual(byCase["V4-L-itd-true"].v4.items, ["tl/d1/", "tl/f.txt"]);
   assert.deepEqual(byCase["V4-L-itd-true"].v4.memberOrder, ["kind", "prefixes", "items"]);
