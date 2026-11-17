@@ -2115,7 +2115,7 @@
     },
     "crates/fireemu/src/main_hosting_multisite_tests.rs": {
       "kind": "sha256",
-      "value": "5172120d3c4a3917a5d96ec9b5ad7bef799df956ddc3f6ee9649b3fc2993b5a1"
+      "value": "b3d3b36432a626604af519ceb54b5bed0bf358d8ce518b88426544bd4857437c"
     },
     "crates/fireemu/src/managed_storage.rs": {
       "kind": "sha256",
