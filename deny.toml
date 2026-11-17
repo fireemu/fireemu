@@ -9,6 +9,11 @@ ignore = [
     # loopback test runtime; no RSA decryption path exists and no upstream fix is published.
     # Revisit when `rsa` ships a constant-time release.
     { id = "RUSTSEC-2023-0071", reason = "rsa is used for local RS256 signatures only; no decryption oracle is exposed and no fixed release exists" },
+    # RUSTSEC-2026-0543 / RUSTSEC-2026-0555: chrono and chrono-tz are marked unmaintained (no known
+    # vulnerability). fireemu-adapter-functions and fireemu-adapter-grpc use them for schedule and
+    # time-zone arithmetic; the migration to a maintained crate is tracked separately.
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, not vulnerable; migration tracked" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained, not vulnerable; migration tracked" },
 ]
 
 [licenses]
