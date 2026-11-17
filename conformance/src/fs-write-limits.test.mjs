@@ -27,7 +27,12 @@ import {
   sandboxLedgerEntry,
   selectBracketRecipes,
 } from "./fs-data-write-sandbox-run.mjs";
-import { RECORDING_SETS, recordingSet } from "./fs-data-write-sandbox.mjs";
+import {
+  compareRecordings,
+  compareSandboxArtifact,
+  RECORDING_SETS,
+  recordingSet,
+} from "./fs-data-write-sandbox.mjs";
 import {
   createUnaryRpcCounter,
   maskWriteResponseTimes,
@@ -844,4 +849,101 @@ test("the gate pins carry the mode's parent, the packet's path under the main ch
     packetPath: "docs.local/runs/fs-write-limits/v2-snapshot/PACKET-v2.md",
   });
   assert.equal(make("followup").parent, "FS-DATA-WRITE");
+});
+
+// ---- the typed batchGet answer arrives in no fixed order (writelimits run 20261117-01) ----
+
+const rows = (order) => ({
+  "writes/limits/commit-budget/40x3": {
+    steps: {
+      write: {
+        status: 400,
+        code: "INVALID_ARGUMENT",
+        message: "Transaction too big. Decrease transaction size.",
+      },
+      readback: {
+        status: 200,
+        code: "OK",
+        body: order.map((name) => ({
+          missing: `projects/p/databases/(default)/documents/${name}`,
+        })),
+      },
+    },
+  },
+});
+
+test("two recordings that differ only in the order of a typed batchGet answer agree", () => {
+  assert.deepEqual(compareRecordings(rows(["a", "b", "c"]), rows(["b", "a", "c"])), []);
+  const found = (name) => ({
+    found: { name: `projects/p/databases/(default)/documents/${name}`, fields: {} },
+  });
+  const first = rows(["a"]);
+  first["writes/limits/commit-budget/40x3"].steps.readback.body = [
+    found("b"),
+    { missing: "projects/p/databases/(default)/documents/a" },
+  ];
+  const second = structuredClone(first);
+  second["writes/limits/commit-budget/40x3"].steps.readback.body.reverse();
+  assert.deepEqual(compareRecordings(first, second), []);
+});
+
+test("a batchGet answer that differs in content, and any other array's order, still differ", () => {
+  assert.deepEqual(compareRecordings(rows(["a", "b", "c"]), rows(["a", "b", "d"])), [
+    "writes/limits/commit-budget/40x3#readback",
+  ]);
+  assert.deepEqual(compareRecordings(rows(["a", "b"]), rows(["a", "b", "c"])), [
+    "writes/limits/commit-budget/40x3#readback",
+  ]);
+  const found = rows(["a", "b"]);
+  found["writes/limits/commit-budget/40x3"].steps.readback.body[0] = {
+    found: { name: "projects/p/databases/(default)/documents/a", fields: {} },
+  };
+  assert.deepEqual(compareRecordings(rows(["a", "b"]), found), [
+    "writes/limits/commit-budget/40x3#readback",
+  ]);
+  const stream = (order) => ({
+    q: {
+      steps: {
+        rows: { status: 200, code: "OK", body: order.map((n) => ({ document: { name: n } })) },
+      },
+    },
+  });
+  assert.deepEqual(compareRecordings(stream(["x", "y"]), stream(["y", "x"])), ["q#rows"]);
+});
+
+// ---- the volatile transport trailer on a unary status inside a stream recording ----
+
+const trailer = { key: "x-debug-tracking-id", kind: "ascii", value: "nonempty-volatile-id" };
+const attachment = { key: "content-disposition", kind: "ascii", value: "attachment" };
+const streamRecord = (readbackTrailers, statusTrailers) => ({
+  sentFrames: 2,
+  status: { code: 0, details: "", trailers: statusTrailers },
+  events: [
+    { type: "seed", status: { code: 0, details: "", trailers: readbackTrailers } },
+    { type: "status", value: { code: 0, details: "", trailers: statusTrailers } },
+    {
+      type: "readback",
+      found: false,
+      arrayCount: 0,
+      status: { code: 5, details: "gone", trailers: readbackTrailers },
+    },
+  ],
+});
+
+test("the volatile tracking trailer is ignored wherever a stream recording carries a status", () => {
+  const id = "writes/limits/write-stream-delete/12112";
+  const production = { streams: { [id]: streamRecord([trailer], [attachment, trailer]) } };
+  const local = { [id]: streamRecord([], [attachment]) };
+  assert.deepEqual(compareSandboxArtifact(production, {}, local, { restPrograms: [] }), []);
+  // A stable trailer is still compared, on the final status and inside a read-back.
+  const missing = { [id]: streamRecord([], []) };
+  assert.deepEqual(compareSandboxArtifact(production, {}, missing, { restPrograms: [] }), [
+    `${id}#grpc`,
+  ]);
+  const code = streamRecord([trailer], [attachment, trailer]);
+  code.events[2].status.code = 3;
+  assert.deepEqual(
+    compareSandboxArtifact({ streams: { [id]: code } }, {}, local, { restPrograms: [] }),
+    [`${id}#grpc`],
+  );
 });

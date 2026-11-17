@@ -2342,7 +2342,7 @@ async function reserveAdmission(mode, args) {
   process.stdout.write(`${JSON.stringify({ packetId: row.packetId, planSha256 })}\n`);
 }
 
-function recordingSdkVersions() {
+export function recordingSdkVersions() {
   return {
     firebase: require("firebase/package.json").version,
     firebaseAdmin: require("firebase-admin").SDK_VERSION,
@@ -2351,7 +2351,7 @@ function recordingSdkVersions() {
   };
 }
 
-function supplementRecipeDigests(recordingCorpus) {
+export function supplementRecipeDigests(recordingCorpus) {
   return {
     programs: Object.fromEntries(
       recordingCorpus.restPrograms.map((program) => [program.id, sha256(JSON.stringify(program))]),

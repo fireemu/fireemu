@@ -243,7 +243,11 @@ function comparableStream(result) {
       ? result.events.map((event) =>
           ["status", "error"].includes(event?.type)
             ? { ...event, value: stripTransportTrailers(event.value) }
-            : event,
+            : // A unary status the recipe recorded (the seed, the read-back) carries the same
+              // volatile trailer.
+              event?.status
+              ? { ...event, status: stripTransportTrailers(event.status) }
+              : event,
         )
       : result.events,
   };
@@ -454,6 +458,34 @@ export function validateSandboxCorpus(corpus) {
   return { requestCount };
 }
 
+const batchGetItemName = (item) => item?.found?.name ?? item?.missing;
+
+/**
+ * A `:batchGet` answer returns its documents in no fixed order (writelimits run 2026-11-17: the
+ * three typed `missing` rows of one read came back in two orders). Such a body is compared by
+ * name; every other array keeps its order.
+ */
+function orderInsensitiveBatchGet(step) {
+  const body = step?.body;
+  if (
+    Array.isArray(body) &&
+    body.length > 0 &&
+    body.every((item) => typeof batchGetItemName(item) === "string")
+  ) {
+    return {
+      ...step,
+      body: body.toSorted((left, right) =>
+        batchGetItemName(left) < batchGetItemName(right)
+          ? -1
+          : batchGetItemName(left) > batchGetItemName(right)
+            ? 1
+            : 0,
+      ),
+    };
+  }
+  return step;
+}
+
 /** A second recording must reproduce every normalized status, code and body. */
 export function compareRecordings(first, second) {
   const differences = [];
@@ -461,7 +493,10 @@ export function compareRecordings(first, second) {
     const left = first[programId]?.steps ?? {};
     const right = second[programId]?.steps ?? {};
     for (const stepId of new Set([...Object.keys(left), ...Object.keys(right)])) {
-      if (JSON.stringify(canonical(left[stepId])) !== JSON.stringify(canonical(right[stepId]))) {
+      if (
+        JSON.stringify(canonical(orderInsensitiveBatchGet(left[stepId]))) !==
+        JSON.stringify(canonical(orderInsensitiveBatchGet(right[stepId])))
+      ) {
         differences.push(`${programId}#${stepId}`);
       }
     }
