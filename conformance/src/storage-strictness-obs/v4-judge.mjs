@@ -20,14 +20,17 @@ const GENERATED = new Set([
   "bucket",
 ]);
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const masked = (value) => `<${typeof value}:${String(value).length}>`;
+// Links carry the serving host, which differs between production and a local emulator: hide their length too.
+const LINKS = new Set(["selfLink", "mediaLink"]);
+const masked = (value, key) =>
+  LINKS.has(key) ? "<url>" : `<${typeof value}:${String(value).length}>`;
 const scrub = (value) => {
   if (Array.isArray(value)) return value.map(scrub);
   if (!isRecord(value)) return value;
   return Object.fromEntries(
     Object.entries(value).map(([key, member]) => [
       key,
-      GENERATED.has(key) || key === "effectiveTime" ? masked(member) : scrub(member),
+      GENERATED.has(key) || key === "effectiveTime" ? masked(member, key) : scrub(member),
     ]),
   );
 };

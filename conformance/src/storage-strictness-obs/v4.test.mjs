@@ -1058,7 +1058,10 @@ test("v4 judge facts keep every generated key hidden and every other member visi
     ).facts.members;
   for (const key of hidden) {
     assert.deepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbb" }), key);
-    assert.notDeepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbbb" }), key);
+    // Link lengths depend on the serving host and are hidden; every other generated key keeps its length.
+    if (["selfLink", "mediaLink"].includes(key))
+      assert.deepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbbb" }), key);
+    else assert.notDeepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbbb" }), key);
   }
   for (const key of ["location", "storageClass", "locationType", "rpo"])
     assert.notDeepEqual(facts({ [key]: "aaaa" }), facts({ [key]: "bbbb" }), key);
@@ -1200,4 +1203,149 @@ test("v4 judge facts for every recognised kind, exactly", () => {
       facts: { contentLength: null, contentType: "t" },
       shape: null,
     });
+});
+
+test("v4 judge replays the recorded production layouts of the same routes (STORAGE-CORS-OBS rec-r1, masked)", () => {
+  const entry = (case_, value, headers = {}) => ({
+    phase: "after",
+    case: case_,
+    method: "GET",
+    url: `https://storage.googleapis.com/storage/v1/b/${T}/o`,
+    status: 200,
+    headers: { "content-type": "application/json; charset=UTF-8", ...headers },
+    bodyBytes: Buffer.byteLength(JSON.stringify(value)),
+    bodyBase64: Buffer.from(JSON.stringify(value)).toString("base64"),
+    unknown: false,
+  });
+  // Member order as production wrote it (n=4 bucket, n=6 object, n=9 list); values are masked.
+  const bucket = {
+    kind: "storage#bucket",
+    selfLink: "s",
+    id: "i",
+    name: T,
+    projectNumber: "0",
+    generation: "0",
+    metageneration: "1",
+    location: "US-CENTRAL1",
+    storageClass: "STANDARD",
+    etag: "CAE=",
+    timeCreated: "t",
+    updated: "t",
+    softDeletePolicy: { retentionDurationSeconds: "0" },
+    iamConfiguration: {
+      bucketPolicyOnly: { enabled: true, lockedTime: "t" },
+      uniformBucketLevelAccess: { enabled: true, lockedTime: "t" },
+      publicAccessPrevention: "inherited",
+    },
+    locationType: "region",
+    satisfiesPZI: true,
+  };
+  const object = {
+    kind: "storage#object",
+    id: "i",
+    selfLink: "s",
+    mediaLink: "m",
+    name: "cors/o.txt",
+    bucket: T,
+    generation: "0",
+    metageneration: "1",
+    contentType: "text/plain",
+    storageClass: "STANDARD",
+    size: "4",
+    md5Hash: "h",
+    crc32c: "c",
+    etag: "e",
+    timeCreated: "t",
+    updated: "t",
+    timeStorageClassUpdated: "t",
+    timeFinalized: "t",
+  };
+  const row = (case_, value) =>
+    judgeJournal([
+      { phase: "header", stage: "v4" },
+      {
+        phase: "before",
+        n: 1,
+        case: case_,
+        method: "GET",
+        url: `https://storage.googleapis.com/storage/v1/b/${T}`,
+      },
+      { ...entry(case_, value), n: 1 },
+    ]).find((r) => r.case === case_);
+  const verify = row("V4-W-verify", bucket);
+  assert.equal(verify.shape, "bucket-resource");
+  assert.equal(verify.known, true);
+  assert.deepEqual(verify.v4.memberOrder, Object.keys(bucket));
+  assert.equal(verify.v4.members.projectNumber, "<string:1>");
+  assert.equal(verify.v4.members.iamConfiguration.uniformBucketLevelAccess.enabled, true);
+  const listed = row("V4-MD-list", { kind: "storage#objects", items: [object] });
+  assert.equal(listed.shape, "object-list");
+  assert.deepEqual(listed.v4.items, ["cors/o.txt"]);
+  assert.deepEqual(listed.v4.itemMetadataKeys, { "cors/o.txt": [] });
+  const one = row("V4-MD-get-up", object);
+  assert.equal(one.shape, "object");
+  assert.deepEqual(one.v4.memberOrder, Object.keys(object));
+  // The recorded 400 ACL answer stays a json-error row with its code and reason.
+  const acl = judgeJournal([
+    { phase: "header", stage: "v4" },
+    {
+      phase: "before",
+      n: 1,
+      case: "V4-X-acl-get",
+      method: "GET",
+      url: "https://storage.googleapis.com/x",
+    },
+    {
+      ...entry("V4-X-acl-get", {
+        error: {
+          code: 400,
+          message:
+            "Cannot get legacy ACL for an object when uniform bucket-level access is enabled.",
+          errors: [{ message: "m", domain: "global", reason: "invalid" }],
+        },
+      }),
+      n: 1,
+      status: 400,
+    },
+  ]).find((r) => r.case === "V4-X-acl-get");
+  assert.equal(acl.shape, "json-error");
+  assert.equal(acl.json.reason, "invalid");
+  assert.equal(acl.known, true);
+});
+
+test("v4 closure needs each part: the violation id, a verified local cleanup and a settled bucket", async () => {
+  const refused = await run({
+    faults: {
+      "V4-W-bucket": jsonAnswer(409, {
+        error: { code: 409, message: "exists", errors: [{ reason: "conflict" }] },
+      }),
+    },
+  });
+  assert.deepEqual(refused.report.violations, ["V4-W-bucket"]);
+  // Local: an object that survives its delete means the cleanup is not verified.
+  const local = targetOf({ ...identity, runId: "ss-0123abcd", local: "http://127.0.0.1:39199" });
+  const alive = await run(
+    {
+      faults: { "V4-K-read-object": jsonAnswer(200, { kind: "storage#object", name: "tl/f.txt" }) },
+    },
+    local,
+  );
+  assert.equal(alive.report.completed, true);
+  assert.deepEqual(alive.report.violations, []);
+  assert.equal(alive.report.cleanupVerified, false);
+  assert.equal(alive.report.closureReady, false);
+  // Production: a 409 on the bucket delete followed by an inconsistent 404 read leaves the create unsettled.
+  const inconsistent = await run({
+    faults: {
+      "V4-K-delete-bucket": jsonAnswer(409, {
+        error: { code: 409, message: "not empty", errors: [{ reason: "conflict" }] },
+      }),
+      "V4-K-bucket": jsonAnswer(404, {
+        error: { code: 404, message: "gone", errors: [{ reason: "notFound" }] },
+      }),
+    },
+  });
+  assert.equal(inconsistent.report.cleanupVerified, true);
+  assert.equal(inconsistent.report.unresolved.length, 1);
+  assert.equal(inconsistent.report.closureReady, false);
 });
