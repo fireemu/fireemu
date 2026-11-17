@@ -1,0 +1,783 @@
+{
+  "V4-P-location": {
+    "case": "V4-P-location",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-oracle-query.firebasestorage.app",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-oracle-query.firebasestorage.app",
+    "auth": "bearer"
+  },
+  "V4-P-absent": {
+    "case": "V4-P-absent",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-W-bucket": {
+    "case": "V4-W-bucket",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/storage/v1/b?project=fireemu-oracle-query",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"name\":\"fireemu-obs-ss-00000000\",\"location\":\"US-CENTRAL1\",\"iamConfiguration\":{\"uniformBucketLevelAccess\":{\"enabled\":true}},\"softDeletePolicy\":{\"retentionDurationSeconds\":0}}",
+    "action": "create",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-W-verify": {
+    "case": "V4-W-verify",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-initial-list": {
+    "case": "V4-initial-list",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-U-tl-d1": {
+    "case": "V4-U-tl-d1",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=tl%2Fd1%2F",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "",
+    "auth": "bearer"
+  },
+  "V4-U-tl-d1a": {
+    "case": "V4-U-tl-d1a",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=tl%2Fd1%2Fa.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-tl-d2a": {
+    "case": "V4-U-tl-d2a",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=tl%2Fd2%2Fa.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-tl-f": {
+    "case": "V4-U-tl-f",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=tl%2Ff.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-pg-a": {
+    "case": "V4-U-pg-a",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=pg%2Fa",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-pg-b": {
+    "case": "V4-U-pg-b",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=pg%2Fb",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-pg-c": {
+    "case": "V4-U-pg-c",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=pg%2Fc",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-pg-d": {
+    "case": "V4-U-pg-d",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=pg%2Fd",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-pg-e": {
+    "case": "V4-U-pg-e",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=pg%2Fe",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-gl-a": {
+    "case": "V4-U-gl-a",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=gl%2Fa.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-gl-ab": {
+    "case": "V4-U-gl-ab",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=gl%2Fab.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-gl-c": {
+    "case": "V4-U-gl-c",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=gl%2Fsub%2Fc.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-md-plain": {
+    "case": "V4-U-md-plain",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=md%2Fplain.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-x-xml": {
+    "case": "V4-U-x-xml",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=media&name=x%2Fxml.txt",
+    "headers": {
+      "content-type": "text/plain"
+    },
+    "body": "fire",
+    "auth": "bearer"
+  },
+  "V4-U-md-up": {
+    "case": "V4-U-md-up",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/upload/storage/v1/b/fireemu-obs-ss-00000000/o?uploadType=multipart",
+    "headers": {
+      "content-type": "multipart/related; boundary=fireemuobsv4"
+    },
+    "body": "--fireemuobsv4\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n{\"name\":\"md/up.txt\",\"contentType\":\"text/plain\",\"metadata\":{\"zeta\":\"1\",\"alpha\":\"2\",\"mid\":\"3\"}}\r\n--fireemuobsv4\r\ncontent-type: text/plain\r\n\r\nfire\r\n--fireemuobsv4--",
+    "auth": "bearer"
+  },
+  "V4-L-delim": {
+    "case": "V4-L-delim",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-true": {
+    "case": "V4-L-itd-true",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-false": {
+    "case": "V4-L-itd-false",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=false",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-sub": {
+    "case": "V4-L-sub",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2Fd1%2F&delimiter=%2F",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-sub": {
+    "case": "V4-L-itd-sub",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2Fd1%2F&delimiter=%2F&includeTrailingDelimiter=true",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-nodelim": {
+    "case": "V4-L-itd-nodelim",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&includeTrailingDelimiter=true",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-p1": {
+    "case": "V4-L-itd-p1",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-itd-p2": {
+    "case": "V4-L-itd-p2",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-L-itd-p1"
+  },
+  "V4-L-itd-p3": {
+    "case": "V4-L-itd-p3",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-L-itd-p2"
+  },
+  "V4-L-itd-p4": {
+    "case": "V4-L-itd-p4",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&includeTrailingDelimiter=true&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-L-itd-p3"
+  },
+  "V4-L-nf-p1": {
+    "case": "V4-L-nf-p1",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&maxResults=1",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-L-nf-p2": {
+    "case": "V4-L-nf-p2",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-L-nf-p1"
+  },
+  "V4-L-nf-p3": {
+    "case": "V4-L-nf-p3",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-L-nf-p2"
+  },
+  "V4-G-p1": {
+    "case": "V4-G-p1",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=2",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-del-b": {
+    "case": "V4-G-del-b",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fb",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-p2": {
+    "case": "V4-G-p2",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=2&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-G-p1"
+  },
+  "V4-G-p1b": {
+    "case": "V4-G-p1b",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=2",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-del-d": {
+    "case": "V4-G-del-d",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fd",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-p2b": {
+    "case": "V4-G-p2b",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=2&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-G-p1b"
+  },
+  "V4-G-p1c": {
+    "case": "V4-G-p1c",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=1",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-del-c": {
+    "case": "V4-G-del-c",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fc",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-del-e": {
+    "case": "V4-G-del-e",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fe",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-p2c": {
+    "case": "V4-G-p2c",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=pg%2F&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-G-p1c"
+  },
+  "V4-G-d1": {
+    "case": "V4-G-d1",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&maxResults=1",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-del-d2a": {
+    "case": "V4-G-del-d2a",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Fd2%2Fa.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-G-d2": {
+    "case": "V4-G-d2",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=tl%2F&delimiter=%2F&maxResults=1&pageToken=<token>",
+    "headers": {},
+    "auth": "bearer",
+    "token": "V4-G-d1"
+  },
+  "V4-MD-copy": {
+    "case": "V4-MD-copy",
+    "method": "POST",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt/copyTo/b/fireemu-obs-ss-00000000/o/md%2Fcopy.txt",
+    "headers": {},
+    "body": "",
+    "auth": "bearer"
+  },
+  "V4-MD-get-up": {
+    "case": "V4-MD-get-up",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "auth": "bearer"
+  },
+  "V4-MD-patch-add": {
+    "case": "V4-MD-patch-add",
+    "method": "PATCH",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"metadata\":{\"beta\":\"4\"}}",
+    "auth": "bearer"
+  },
+  "V4-MD-patch-replace": {
+    "case": "V4-MD-patch-replace",
+    "method": "PATCH",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"metadata\":{\"alpha\":\"9\"}}",
+    "auth": "bearer"
+  },
+  "V4-MD-patch-delete": {
+    "case": "V4-MD-patch-delete",
+    "method": "PATCH",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"metadata\":{\"zeta\":null}}",
+    "auth": "bearer"
+  },
+  "V4-MD-patch-plain": {
+    "case": "V4-MD-patch-plain",
+    "method": "PATCH",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fplain.txt",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"metadata\":{\"yb\":\"1\",\"ya\":\"2\",\"yc\":\"3\"}}",
+    "auth": "bearer"
+  },
+  "V4-MD-list": {
+    "case": "V4-MD-list",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?prefix=md%2F",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-X-xml-delete": {
+    "case": "V4-X-xml-delete",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/fireemu-obs-ss-00000000/x/xml.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-X-xml-delete-again": {
+    "case": "V4-X-xml-delete-again",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/fireemu-obs-ss-00000000/x/xml.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-B-full": {
+    "case": "V4-B-full",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000?projection=full",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-B-patch": {
+    "case": "V4-B-patch",
+    "method": "PATCH",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "{\"labels\":{\"fireemu-obs\":\"v4\"}}",
+    "auth": "bearer"
+  },
+  "V4-N-get": {
+    "case": "V4-N-get",
+    "method": "GET",
+    "url": "https://firebasestorage.googleapis.com/v0/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "headers": {},
+    "auth": "none"
+  },
+  "V4-N-list": {
+    "case": "V4-N-list",
+    "method": "GET",
+    "url": "https://firebasestorage.googleapis.com/v0/b/fireemu-obs-ss-00000000/o?prefix=tl%2F",
+    "headers": {},
+    "auth": "none"
+  },
+  "V4-M-ctl": {
+    "case": "V4-M-ctl",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F*",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-doublestar": {
+    "case": "V4-M-doublestar",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F**",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-64": {
+    "case": "V4-M-len-64",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-512": {
+    "case": "V4-M-len-512",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-1024": {
+    "case": "V4-M-len-1024",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-1025": {
+    "case": "V4-M-len-1025",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-brace-3": {
+    "case": "V4-M-brace-3",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F%7B%7B%7Ba%2Czz%7D%2Czz%7D%2Czz%7D.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-brace-32": {
+    "case": "V4-M-brace-32",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7B%7Ba%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D%2Czz%7D.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-star-seg-64": {
+    "case": "V4-M-star-seg-64",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F****************************************************************.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-doublestar-chain-8": {
+    "case": "V4-M-doublestar-chain-8",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F**%2F**%2F**%2F**%2F**%2F**%2F**%2F**%2Fc.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-unterm-bracket": {
+    "case": "V4-M-unterm-bracket",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F%5Ba",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-unterm-brace": {
+    "case": "V4-M-unterm-brace",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2F%7Ba%2Cb",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-unterm-escape": {
+    "case": "V4-M-unterm-escape",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Fa%5C",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-empty": {
+    "case": "V4-M-empty",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-2048": {
+    "case": "V4-M-len-2048",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-4096": {
+    "case": "V4-M-len-4096",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-M-len-8000": {
+    "case": "V4-M-len-8000",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o?matchGlob=gl%2Faaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-tl-d1": {
+    "case": "V4-K-del-tl-d1",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Fd1%2F",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-tl-d1a": {
+    "case": "V4-K-del-tl-d1a",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Fd1%2Fa.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-tl-d2a": {
+    "case": "V4-K-del-tl-d2a",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Fd2%2Fa.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-tl-f": {
+    "case": "V4-K-del-tl-f",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-pg-a": {
+    "case": "V4-K-del-pg-a",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fa",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-pg-b": {
+    "case": "V4-K-del-pg-b",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fb",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-pg-c": {
+    "case": "V4-K-del-pg-c",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fc",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-pg-d": {
+    "case": "V4-K-del-pg-d",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fd",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-pg-e": {
+    "case": "V4-K-del-pg-e",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/pg%2Fe",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-gl-a": {
+    "case": "V4-K-del-gl-a",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/gl%2Fa.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-gl-ab": {
+    "case": "V4-K-del-gl-ab",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/gl%2Fab.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-gl-c": {
+    "case": "V4-K-del-gl-c",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/gl%2Fsub%2Fc.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-md-plain": {
+    "case": "V4-K-del-md-plain",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fplain.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-x-xml": {
+    "case": "V4-K-del-x-xml",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/x%2Fxml.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-md-up": {
+    "case": "V4-K-del-md-up",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fup.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-del-md-copy": {
+    "case": "V4-K-del-md-copy",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/md%2Fcopy.txt",
+    "headers": {},
+    "auth": "bearer"
+  },
+  "V4-K-read-object": {
+    "case": "V4-K-read-object",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "auth": "bearer"
+  },
+  "V4-K-read-created-bucket": {
+    "case": "V4-K-read-created-bucket",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-K-delete-bucket": {
+    "case": "V4-K-delete-bucket",
+    "method": "DELETE",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "delete",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-K-bucket": {
+    "case": "V4-K-bucket",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-A2-bucket": {
+    "case": "V4-A2-bucket",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000",
+    "auth": "bearer"
+  },
+  "V4-A2-object": {
+    "case": "V4-A2-object",
+    "method": "GET",
+    "url": "https://storage.googleapis.com/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "headers": {},
+    "action": "read",
+    "resource": "/storage/v1/b/fireemu-obs-ss-00000000/o/tl%2Ff.txt",
+    "auth": "bearer"
+  }
+}

@@ -1,11 +1,13 @@
 import { CORS } from "./guard.mjs";
 import { isDeepStrictEqual } from "node:util";
+import { createFakeV4World } from "./world.v4.mjs";
 
 // Synthetic answers exercise the recorder; they are never production evidence.
 export function createFakeWorld(
   target,
   { faults = {}, applyBeforeFault = [], clock = { now: Date.now } } = {},
 ) {
+  if (target.stage === "v4") return createFakeV4World(target, { faults, applyBeforeFault, clock });
   const buckets = new Map([[target.defaultBucket, { name: target.defaultBucket, location: "US" }]]);
   const objects = new Map();
   const sessions = new Map();

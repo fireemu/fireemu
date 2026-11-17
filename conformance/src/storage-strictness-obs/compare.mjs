@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { bodyErrorFields, judgeJournal, readJournal } from "./judge.mjs";
 
-const FIELDS = ["status", "shape", "headerNames", "headers", "json", "xml", "location"];
+const FIELDS = ["status", "shape", "headerNames", "headers", "json", "xml", "location", "v4"];
 
 // Brings a judged journal row and a published masked fixture row into one representation.
 // Fixture rows keep the recorded error body text instead of judged json/xml fields, and a

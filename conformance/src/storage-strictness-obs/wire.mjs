@@ -3,11 +3,12 @@ import {
   classifyRequest,
   GuardError,
   isUnknownStatus,
-  RequestBudget,
+  budgetFor,
   requests,
   SEND_FLAG,
 } from "./guard.mjs";
 import { fetchNet } from "./egress.mjs";
+import { TOKEN_PATTERN } from "./v4.mjs";
 
 export function redactHeaders(headers, secrets = []) {
   return Object.fromEntries(
@@ -56,12 +57,13 @@ export function createWire({
   journal,
   token = "fake-owner",
   now = Date.now,
-  budget = new RequestBudget(),
+  budget = budgetFor(target.stage),
   deadline = now() + 15 * 60_000,
 }) {
   const unknownDeletes = new Set();
   const sessions = new Map();
   const sessionDeletes = new Set();
+  const tokens = new Map();
   const entries = [];
   const secrets = [token, `Bearer ${token}`, "Firebase not-a-jwt", "not-a-jwt"];
   const append = (entry) => {
@@ -86,12 +88,17 @@ export function createWire({
         sessionDeletes.add(sessionCase[1]);
       }
     }
+    if (
+      checked.token &&
+      new URL(request.url).searchParams.get("pageToken") !== tokens.get(checked.token)
+    )
+      throw new GuardError("unissued page token");
     const remaining = deadline - now();
     if (remaining <= 0) throw new GuardError("whole-run deadline exhausted");
     const n = budget.take();
     const startedAt = now();
     const timeoutMs = Math.min(
-      ["W1", "V3-W-bucket"].includes(checked.case) ? 60_000 : 30_000,
+      ["W1", "V3-W-bucket", "V4-W-bucket"].includes(checked.case) ? 60_000 : 30_000,
       remaining,
     );
     const journalUrl = new URL(request.url);
@@ -193,6 +200,23 @@ export function createWire({
         unreadable,
       };
       if (
+        target.stage === "v4" &&
+        response.status >= 200 &&
+        response.status < 300 &&
+        !answer.unknown
+      ) {
+        try {
+          const issued = JSON.parse(body.toString("utf8")).nextPageToken;
+          if (issued !== undefined) {
+            if (typeof issued === "string" && TOKEN_PATTERN.test(issued))
+              tokens.set(checked.case, issued);
+            else answer.unknown = true;
+          }
+        } catch {
+          // Not JSON: no token to keep.
+        }
+      }
+      if (
         checked.action === "read" &&
         response.status >= 200 &&
         response.status < 300 &&
@@ -235,5 +259,5 @@ export function createWire({
     });
     return answer;
   }
-  return { wire, append, entries, budget, unknownDeletes, sessions, deadline, now };
+  return { wire, append, entries, budget, unknownDeletes, sessions, tokens, deadline, now };
 }

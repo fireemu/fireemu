@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isSuccess, isUnknownStatus } from "./guard.mjs";
+import { v4Facts, V4_ROW_CASES } from "./v4-judge.mjs";
 
 export function readJournal(path) {
   const text = readFileSync(path, "utf8");
@@ -305,6 +306,11 @@ export function judgeAnswer(entry) {
     row.location = resumableLocation(headers.location, entry.url);
     if (row.location) row.shape = "resumable-start";
   }
+  if (entry.case?.startsWith("V4-")) {
+    const { facts, shape } = v4Facts(entry, body, headers);
+    row.v4 = facts;
+    if (shape && row.shape === "unrecorded") row.shape = shape;
+  }
   row.known =
     row.shape !== "unrecorded" &&
     !entry.unknown &&
@@ -322,6 +328,17 @@ export function judgeJournal(entries) {
     entries.filter((entry) => entry.phase === "after").map((entry) => [entry.n, entry]),
   );
   const before = entries.filter((entry) => entry.phase === "before");
+  if (entries[0]?.stage === "v4") {
+    return V4_ROW_CASES.flatMap((id) => {
+      const matches = before.filter((entry) => entry.case === id);
+      return (matches.length ? matches : [{ case: id }]).map((entry) => {
+        const response = after.get(entry.n);
+        return judgeAnswer(
+          response ?? { ...entry, unknown: true, status: null, bodyBytes: 0, bodyBase64: "" },
+        );
+      });
+    });
+  }
   if (entries[0]?.stage === "v3") {
     const expected = ["absent", "empty", "configured"].flatMap((state) =>
       [
