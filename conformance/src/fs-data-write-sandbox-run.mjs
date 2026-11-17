@@ -26,7 +26,11 @@ import {
   recordingSet,
   validateSandboxCorpus,
 } from "./fs-data-write-sandbox.mjs";
-import { validateStreamRecipes } from "./firestore-probe/stream-session.mjs";
+import {
+  validateLiveStreamSubset,
+  validateStreamRecipes,
+} from "./firestore-probe/stream-session.mjs";
+import { checkProviderStateFiles, providerStateDigest } from "./fs-write-limits-provider-state.mjs";
 import { assertNoProxyEnvironment } from "./firestore-probe/webchannel-request-bytes.mjs";
 import {
   legacyManagedClearNames,
@@ -37,6 +41,8 @@ import {
   admissionPacketId,
   admissionPacketRow,
   admissionPlanDigest,
+  taskIdForMode,
+  TASK_BY_MODE,
   verifyProductionAdmission,
   verifyProductionAdmissionOnDisk,
 } from "./fs-data-write-admission.mjs";
@@ -473,9 +479,19 @@ export function bracketRequestBound(recordingCorpus, setName = "bracket") {
   ) {
     throw new Error(`the ${setName} corpus must carry exactly its fixed bracket recipes`);
   }
-  const names = ownedMutationNamesForPrograms(recordingCorpus.restPrograms);
+  const streamOwned = [...(set.streamOwnedNames ?? [])];
+  const names = [
+    ...new Set([...ownedMutationNamesForPrograms(recordingCorpus.restPrograms), ...streamOwned]),
+  ].toSorted();
   if (JSON.stringify(names) !== JSON.stringify(set.ownedNames)) {
     throw new Error("the bracket recipes write outside the owned cleanup names");
+  }
+  const streamDocuments = (recordingCorpus.streamRecipes ?? [])
+    .map((recipe) => recipe.documentName)
+    .filter((name) => name !== undefined)
+    .toSorted();
+  if (JSON.stringify(streamDocuments) !== JSON.stringify(streamOwned.toSorted())) {
+    throw new Error("the gRPC recipes write outside the owned cleanup names");
   }
   // A typed-missing read of the owned names, plus an empty-collection check when a recipe
   // reads a whole collection.
@@ -490,6 +506,12 @@ export function bracketRequestBound(recordingCorpus, setName = "bracket") {
       0,
     ),
   };
+  const unaryRpcs = recordingCorpus.streamRecipes.reduce(
+    (total, recipe) => total + (recipe.maxUnaryRpcs ?? 0),
+    0,
+  );
+  // Only a set whose gRPC recipes also send unary calls pins that bound.
+  if (unaryRpcs > 0) bound.maxUnaryRpcs = unaryRpcs;
   if (bound.maxHttpRequests !== set.httpCap) {
     throw new Error("the bracket request bound differs from the child's fixed cap");
   }
@@ -506,11 +528,14 @@ export function deltaV3RecordingCorpus(selection) {
   };
 }
 
+/** Modes that run one pinned recording set through the bracket child. */
+export function isSetMode(mode) {
+  return mode === "bracket" || mode === "followup" || mode === "writelimits";
+}
+
 /** The ledger estimate one attempt of `mode` reserves. */
 export function attemptEstimateFor(mode) {
-  return mode === "bracket" || mode === "followup"
-    ? recordingSet(mode).attemptEstimateUsd
-    : ATTEMPT_ESTIMATE_USD;
+  return isSetMode(mode) ? recordingSet(mode).attemptEstimateUsd : ATTEMPT_ESTIMATE_USD;
 }
 
 /** The deterministic plan the pre-send review pins by its digest. */
@@ -522,7 +547,7 @@ export function productionAdmissionPlan(mode, selection) {
     recordingCorpus = selection.recordingCorpus;
     bounds = partialRequestBound(recordingCorpus);
     managedNames = partialManagedClearNames(recordingCorpus);
-  } else if (mode === "bracket" || mode === "followup") {
+  } else if (isSetMode(mode)) {
     recordingCorpus = selection.recordingCorpus;
     bounds = bracketRequestBound(recordingCorpus, mode);
     managedNames = [...recordingSet(mode).ownedNames];
@@ -537,6 +562,7 @@ export function productionAdmissionPlan(mode, selection) {
     mode,
     project: SANDBOX_PROJECT,
     database: "(default)",
+    ...(mode === "writelimits" ? { providerStateSha256: providerStateDigest() } : {}),
     sourceCorpusSha256: selection.sourceCorpusDigest,
     recordingCorpusSha256: sha256(JSON.stringify(recordingCorpus)),
     restIds: recordingCorpus.restPrograms.map((program) => program.id),
@@ -586,6 +612,19 @@ export function comparisonExitCode(differences, pendingRestIds, pendingStreamIds
   return 0;
 }
 
+/** The Batch 3 corpus: its own generator, validated like the rest, gRPC recipes included. */
+export async function prepareWriteLimitsCorpus() {
+  const { stdout } = await execFileAsync(
+    "uv",
+    ["run", "python", join(CONFORMANCE_DIR, "src/firestore-probe/write_limits_export.py")],
+    { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 },
+  );
+  const corpus = JSON.parse(stdout);
+  validateSandboxCorpus(corpus);
+  validateLiveStreamSubset(corpus.streamRecipes);
+  return corpus;
+}
+
 export async function prepareSandboxCorpus() {
   const { stdout } = await execFileAsync(
     "uv",
@@ -601,14 +640,16 @@ export async function prepareSandboxCorpus() {
   return { corpus, restRequestCount: requestCount, liveStreamCount: live.length };
 }
 
-export function remainingSandboxBudget(rows, nextEstimateUsd = 0) {
+export function remainingSandboxBudget(rows, nextEstimateUsd = 0, mode = undefined) {
   if (!Array.isArray(rows) || !Number.isFinite(nextEstimateUsd) || nextEstimateUsd < 0) {
     throw new Error("invalid sandbox budget input");
   }
+  const taskId = taskIdForMode(mode);
+  const limitUsd = TASK_BY_MODE[mode]?.limitUsd ?? TASK_LIMIT_USD;
   let unlinkedSpent = 0;
   const attempts = new Map();
   for (const row of rows) {
-    if (row.taskId !== TASK_ID) continue;
+    if (row.taskId !== taskId) continue;
     if (!Number.isFinite(row.estimatedUsd) || row.estimatedUsd < 0) {
       throw new Error("invalid sandbox ledger cost");
     }
@@ -618,13 +659,15 @@ export function remainingSandboxBudget(rows, nextEstimateUsd = 0) {
   }
   const spent =
     unlinkedSpent + [...attempts.values()].reduce((total, row) => total + row.estimatedUsd, 0);
-  if (spent + nextEstimateUsd > TASK_LIMIT_USD + Number.EPSILON) {
+  if (spent + nextEstimateUsd > limitUsd + Number.EPSILON) {
     throw new Error("sandbox observation task budget exceeded");
   }
-  return TASK_LIMIT_USD - spent;
+  return limitUsd - spent;
 }
 
-export function requireHistoricalUnknownHold(rows) {
+export function requireHistoricalUnknownHold(rows, mode = undefined) {
+  // The hold belongs to the FS-DATA-WRITE-SANDBOX task; a mode with its own task has none.
+  if (TASK_BY_MODE[mode] !== undefined) return null;
   const holds = rows.filter(
     (row) => row.taskId === TASK_ID && row.outcome === "historical-unknown-hold",
   );
@@ -656,6 +699,7 @@ export function sandboxLedgerEntry({
   packetId,
   runId,
   requestCap: explicitRequestCap,
+  mode,
 }) {
   const requestCap =
     explicitRequestCap ??
@@ -679,7 +723,7 @@ export function sandboxLedgerEntry({
     requests,
     estimatedUsd,
     outcome,
-    taskId: TASK_ID,
+    taskId: taskIdForMode(mode),
     runDir,
     ...(attemptId === undefined ? {} : { attemptId }),
     ...(streamFrames === undefined ? {} : { streamFrames }),
@@ -697,9 +741,10 @@ export async function reserveProductionAttempt({
   packetId,
   runId,
   estimatedUsd = ATTEMPT_ESTIMATE_USD,
+  mode,
 }) {
-  requireHistoricalUnknownHold(rows);
-  remainingSandboxBudget(rows, estimatedUsd);
+  requireHistoricalUnknownHold(rows, mode);
+  remainingSandboxBudget(rows, estimatedUsd, mode);
   const attemptId = randomUUID().replaceAll("-", "");
   const reservation = sandboxLedgerEntry({
     gitSha,
@@ -711,6 +756,7 @@ export async function reserveProductionAttempt({
     attemptId,
     packetId,
     runId,
+    mode,
   });
   const handle = await open(ledgerPath, "a", 0o600);
   try {
@@ -733,6 +779,7 @@ export async function reserveProductionAttemptWithToken({
   packetId,
   runId,
   estimatedUsd = ATTEMPT_ESTIMATE_USD,
+  mode,
 }) {
   if (typeof acquireToken !== "function") {
     throw new Error("production credential provider is required");
@@ -746,6 +793,7 @@ export async function reserveProductionAttemptWithToken({
     packetId,
     runId,
     estimatedUsd,
+    mode,
   });
   const token = await acquireToken();
   if (typeof token !== "string" || !token.trim()) {
@@ -1835,6 +1883,7 @@ async function productionRecording({
     packetId,
     runId,
     estimatedUsd: attemptEstimateUsd,
+    mode: admission?.mode,
   });
   const tokens = [token];
   const restOut = join(runDir, "rest-results.json");
@@ -1944,6 +1993,7 @@ async function productionRecording({
       packetId,
       runId,
       requestCap: partial?.maxHttpRequests ?? bracket?.maxHttpRequests,
+      mode: admission?.mode,
     });
     const handle = await open(ledgerPath, "a", 0o600);
     try {
@@ -2210,6 +2260,7 @@ export function requireAdmissionArguments(command, args = []) {
 }
 
 async function loadProductionSelection(mode) {
+  if (mode === "writelimits") return selectBracketRecipes(await prepareWriteLimitsCorpus(), mode);
   const { corpus } = await prepareSandboxCorpus();
   const fixture = JSON.parse(
     await readFile(join(CONFORMANCE_DIR, "fs-data-write-production-matrix.json"), "utf8"),
@@ -2284,8 +2335,8 @@ async function reserveAdmission(mode, args) {
     if (rows.some((existing) => existing.packetId === row.packetId)) {
       throw new Error("this admission packet is already reserved");
     }
-    requireHistoricalUnknownHold(rows);
-    remainingSandboxBudget(rows, attemptEstimateFor(mode) * 2);
+    requireHistoricalUnknownHold(rows, mode);
+    remainingSandboxBudget(rows, attemptEstimateFor(mode) * 2, mode);
     await appendFile(ledgerPath, `${JSON.stringify(row)}\n`, { mode: 0o600 });
   });
   process.stdout.write(`${JSON.stringify({ packetId: row.packetId, planSha256 })}\n`);
@@ -2473,7 +2524,7 @@ export function verifyBracketSendGates({ rows, now, decisions, pins }) {
     return (
       columns.length === 5 &&
       /^\d{4}-\d{2}-\d{2}$/.test(columns[0]) &&
-      columns[1] === "FS-DATA-WRITE" &&
+      columns[1] === (pins.parent ?? "FS-DATA-WRITE") &&
       required.every((token) => tokens.has(token)) &&
       OWNER_APPROVER.test(columns[3]) &&
       columns[4] === pins.packetPath
@@ -2516,12 +2567,33 @@ export async function releaseSharedLedgerLock(held) {
 }
 
 const BRACKET_FLAGS = ["--nonce", "--review", "--review-sha256", "--packet", "--packet-sha256"];
+// The read-only observations of the sandbox that `writelimits` judges assume; the coordinator
+// saves each command's JSON output (packet section 5) and passes the paths.
+const PROVIDER_STATE_FLAGS = ["--composite-indexes", "--field-overrides", "--database-description"];
 
-export function requireBracketArguments(args = []) {
+/** The owner-decisions parent a mode's approval row names. */
+export const ownerRowParent = (mode) => TASK_BY_MODE[mode]?.taskId ?? "FS-DATA-WRITE";
+
+/** What the owner-approval row must pin: the mode's parent, the packet, commit, plan and nonce. */
+export function bracketGatePins({ mode, admission, pins, mainRoot, packetPath }) {
+  return {
+    parent: ownerRowParent(mode),
+    packetId: admissionPacketId(mode, admission.nonce),
+    nonce: admission.nonce,
+    packetSha256: pins.packetSha256,
+    sourceCommit: admission.sourceCommit,
+    planSha256: admission.planSha256,
+    packetPath: relative(mainRoot, packetPath),
+  };
+}
+
+export function requireBracketArguments(args = [], mode = undefined) {
   const values = {};
+  const flags =
+    mode === "writelimits" ? [...BRACKET_FLAGS, ...PROVIDER_STATE_FLAGS] : BRACKET_FLAGS;
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!BRACKET_FLAGS.includes(flag) || args[index + 1] === undefined || flag in values) {
+    if (!flags.includes(flag) || args[index + 1] === undefined || flag in values) {
       values.invalid = true;
       break;
     }
@@ -2529,15 +2601,22 @@ export function requireBracketArguments(args = []) {
   }
   if (
     values.invalid ||
-    BRACKET_FLAGS.some((flag) => !values[flag]) ||
+    flags.some((flag) => !values[flag]) ||
     !/^[a-f0-9]{64}$/.test(values["--packet-sha256"]) ||
     !/^[a-f0-9]{64}$/.test(values["--review-sha256"])
   ) {
-    throw new Error(
-      "record-bracket requires --nonce, --review, --review-sha256, --packet and --packet-sha256",
-    );
+    throw new Error(`record-bracket requires ${flags.join(", ")}`);
   }
   return {
+    ...(mode === "writelimits"
+      ? {
+          providerState: {
+            composite: values["--composite-indexes"],
+            fields: values["--field-overrides"],
+            database: values["--database-description"],
+          },
+        }
+      : {}),
     nonce: values["--nonce"],
     review: values["--review"],
     reviewSha256: values["--review-sha256"],
@@ -2558,19 +2637,21 @@ export function assertNoAmbientProductionToken(env) {
  * recipes in that group; a split set carries none.
  */
 export function bracketGroupCorpora(recordingCorpus, setName) {
-  const groups = Object.entries(recordingSet(setName).freezeGroups);
-  if (groups.length > 1 && recordingCorpus.streamRecipes.length > 0) {
+  const { freezeGroups, streamGroup } = recordingSet(setName);
+  const groups = Object.entries(freezeGroups);
+  if (groups.length > 1 && recordingCorpus.streamRecipes.length > 0 && !streamGroup) {
     throw new Error("a recording set with gRPC recipes freezes as one group");
   }
   return groups.map(([group, ids]) => {
     const wanted = new Set(ids);
     const restPrograms = recordingCorpus.restPrograms.filter((program) => wanted.has(program.id));
+    const carriesStreams = streamGroup ? group === streamGroup : groups.length === 1;
     return {
       group,
       corpus: {
         ...recordingCorpus,
         restPrograms,
-        streamRecipes: groups.length === 1 ? recordingCorpus.streamRecipes : [],
+        streamRecipes: carriesStreams ? recordingCorpus.streamRecipes : [],
         restRequestCount: restPrograms.reduce((total, program) => total + program.steps.length, 0),
       },
     };
@@ -2598,7 +2679,18 @@ export function completeBracketGroups(recordingCorpus, setName, rest, stream) {
 export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   const set = recordingSet(mode);
   const estimate = set.attemptEstimateUsd;
-  const pins = requireBracketArguments(admissionArgs);
+  const pins = requireBracketArguments(admissionArgs, mode);
+  // The judges assume the sandbox's indexes, overrides and database; refuse before any
+  // credential is acquired when the coordinator's read-only observation differs.
+  let providerState;
+  if (mode === "writelimits") {
+    providerState = checkProviderStateFiles(pins.providerState);
+    if (providerState.problems.length > 0) {
+      throw new Error(
+        `the sandbox differs from what the judges assume: ${providerState.problems.join("; ")}`,
+      );
+    }
+  }
   assertNoProxyEnvironment(process.env);
   assertNoAmbientProductionToken(process.env);
   const gitCommonDir = (
@@ -2615,26 +2707,26 @@ export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   const corpusDigest = selection.sourceCorpusDigest;
   const gitSha = admission.sourceCommit;
   const rows = await readLedger(ledgerPath);
-  requireHistoricalUnknownHold(rows);
-  remainingSandboxBudget(rows, estimate * 2);
+  requireHistoricalUnknownHold(rows, mode);
+  remainingSandboxBudget(rows, estimate * 2, mode);
   await mkdir(RUNS_DIR, { recursive: true });
   const mainRoot = resolve(privateDir, "../..");
   const packetPath = resolve(pins.packet);
   if (sha256(await readFile(packetPath)) !== pins.packetSha256) {
     throw new Error("the bracket packet differs from its pinned SHA-256");
   }
-  const gatePins = {
-    packetId: admissionPacketId(mode, admission.nonce),
-    nonce: admission.nonce,
-    packetSha256: pins.packetSha256,
-    sourceCommit: admission.sourceCommit,
-    planSha256: admission.planSha256,
-    packetPath: relative(mainRoot, packetPath),
-  };
+  const gatePins = bracketGatePins({ mode, admission, pins, mainRoot, packetPath });
   const decisionsPath = join(mainRoot, "docs.local/instructions/owner-decisions.md");
   const generatedDir = await mkdtemp(join(RUNS_DIR, `fs-data-write-${mode}-`));
   const corpusIn = join(generatedDir, `${mode}-corpus.json`);
   await writeFile(corpusIn, JSON.stringify(recordingCorpus));
+  if (providerState) {
+    await writeFile(
+      join(generatedDir, "provider-state-check.json"),
+      `${JSON.stringify({ sha256: providerState.sha256, problems: providerState.problems })}\n`,
+      { mode: 0o600 },
+    );
+  }
   // Held from before the first reservation until the last ledger row; kept if anything was
   // sent and the recording failed, so no other lane starts before the review.
   const sharedLock = await acquireSharedLedgerLock(`${ledgerPath}.lock`, gatePins.packetId);
@@ -2650,8 +2742,8 @@ export async function recordBracketProduction(admissionArgs, mode = "bracket") {
   async function recordBracketUnderLocks() {
     await withSandboxExclusiveLock(privateDir, async (lockedRows) => {
       verifyProductionAdmissionOnDisk({ admission });
-      requireHistoricalUnknownHold(lockedRows);
-      remainingSandboxBudget(lockedRows, estimate * 2);
+      requireHistoricalUnknownHold(lockedRows, mode);
+      remainingSandboxBudget(lockedRows, estimate * 2, mode);
       verifyBracketSendGates({
         rows: lockedRows,
         now: Date.now(),
@@ -2907,6 +2999,114 @@ async function localChild() {
   );
 }
 
+/**
+ * The real local path of a recording set: two attempts of the bracket child and the gRPC child
+ * against the loopback fireemu this process was launched under, then the per-group freeze the
+ * production runner applies. Nothing here can reach production: both children get `local`.
+ */
+async function rehearseSet(setName) {
+  const { host, port } = localTarget(process.env.FIRESTORE_EMULATOR_HOST);
+  const set = recordingSet(setName);
+  const corpus =
+    setName === "writelimits"
+      ? await prepareWriteLimitsCorpus()
+      : (await prepareSandboxCorpus()).corpus;
+  const { recordingCorpus } = selectBracketRecipes(corpus, setName);
+  const bound = bracketRequestBound(recordingCorpus, setName);
+  await mkdir(RUNS_DIR, { recursive: true });
+  const dir = await mkdtemp(join(RUNS_DIR, `fs-data-write-rehearse-${setName}-`));
+  const corpusIn = join(dir, `${setName}-corpus.json`);
+  await writeFile(corpusIn, JSON.stringify(recordingCorpus));
+  const attempts = [];
+  for (let index = 0; index < 2; index += 1) {
+    const out = join(dir, `rest-${index}.json`);
+    const meta = join(dir, `meta-${index}.json`);
+    const journal = join(dir, `journal-${index}.json`);
+    const streamOut = join(dir, `stream-${index}.json`);
+    await runNode("rehearsal REST", "firestore-probe/sandbox-session.mjs", {
+      FIRESTORE_PROBE_TARGET: "local",
+      FIRESTORE_PROBE_HOST: `${host}:${port}`,
+      FIRESTORE_PROBE_SCHEME: "http",
+      FIRESTORE_PROBE_TOKEN: "owner",
+      FIRESTORE_PROBE_PROJECT: SANDBOX_PROJECT,
+      FIRESTORE_PROBE_RECORD_PROJECT: RECORDED_PROJECT,
+      FIRESTORE_PROBE_IN: corpusIn,
+      FIRESTORE_PROBE_OUT: out,
+      FIRESTORE_PROBE_META_OUT: meta,
+      FIRESTORE_PROBE_MAX_REQUESTS: String(bound.maxHttpRequests),
+      FIRESTORE_PROBE_BRACKET: "1",
+      FIRESTORE_PROBE_RECORDING_SET: setName,
+      FIRESTORE_PROBE_MANAGED_CLEAR_NAMES: JSON.stringify(set.ownedNames),
+      FIRESTORE_PROBE_MANAGED_CLEAR_JOURNAL: journal,
+      FIRESTORE_PROBE_DELETE_RUN_ID: "ab".repeat(16),
+    });
+    let stream = {};
+    if (recordingCorpus.streamRecipes.length > 0) {
+      await runNode("rehearsal gRPC", "firestore-probe/stream-session.mjs", {
+        FIRESTORE_STREAM_CORPUS: corpusIn,
+        FIRESTORE_STREAM_OUT: streamOut,
+        FIRESTORE_STREAM_TARGET: "local",
+        FIRESTORE_STREAM_HOST: host,
+        FIRESTORE_STREAM_PORT: String(port),
+        FIRESTORE_STREAM_TOKEN: "owner",
+      });
+      stream = JSON.parse(await readFile(streamOut, "utf8"));
+    }
+    attempts.push({
+      rest: JSON.parse(await readFile(out, "utf8")),
+      stream,
+      meta: JSON.parse(await readFile(meta, "utf8")),
+      journal: JSON.parse(await readFile(journal, "utf8")),
+    });
+  }
+  const complete = completeBracketGroups(
+    recordingCorpus,
+    setName,
+    attempts[0].rest,
+    attempts[0].stream,
+  );
+  const groups = {};
+  const pick = (entries, programs) =>
+    Object.fromEntries(programs.map((program) => [program.id, entries[program.id]]));
+  for (const { group, corpus: part } of bracketGroupCorpora(recordingCorpus, setName)) {
+    if (!complete.includes(group)) {
+      groups[group] = "first attempt incomplete";
+      continue;
+    }
+    try {
+      const frozen = freezeSandboxFixture({
+        corpus: part,
+        first: pick(attempts[0].rest, part.restPrograms),
+        second: pick(attempts[1].rest, part.restPrograms),
+        firstStream: part.streamRecipes.length > 0 ? attempts[0].stream : {},
+        secondStream: part.streamRecipes.length > 0 ? attempts[1].stream : {},
+        recordedAt: [new Date().toISOString(), new Date().toISOString()],
+        harnessRevision: "0".repeat(40),
+        sdkVersions: recordingSdkVersions(),
+        credentialToken: "not-a-real-token-rehearsal",
+        refuseAuthFailures: true,
+      });
+      groups[group] = `frozen ${Object.keys(frozen.programs).length} programs`;
+    } catch (error) {
+      groups[group] = `refused: ${String(error.message).slice(0, 200)}`;
+    }
+  }
+  process.stdout.write(
+    `${JSON.stringify({
+      runDir: dir,
+      bound,
+      requests: attempts.map((attempt) => attempt.meta.requestCount),
+      journals: attempts.map((attempt) => ({
+        status: attempt.journal.status,
+        mode: attempt.journal.mode,
+        failedDeletes: attempt.journal.failedDeletes,
+      })),
+      complete,
+      groups,
+    })}\n`,
+  );
+}
+
 const SUPPLEMENTS_DIR = join(CONFORMANCE_DIR, "fs-data-write-production-supplements");
 
 async function readSupplements() {
@@ -2999,6 +3199,8 @@ async function compareLocal(runDir) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   if (process.argv[2] === "local-child") {
     await localChild();
+  } else if (process.argv[2] === "rehearse-set") {
+    await rehearseSet(process.argv[3]);
   } else if (process.argv[2] === "compare-local") {
     await compareLocal(process.argv[3]);
   } else if (process.argv[2] === "record-production") {
@@ -3011,6 +3213,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     await recordBracketProduction(process.argv.slice(3));
   } else if (process.argv[2] === "record-followup") {
     await recordBracketProduction(process.argv.slice(3), "followup");
+  } else if (process.argv[2] === "record-writelimits") {
+    await recordBracketProduction(process.argv.slice(3), "writelimits");
+  } else if (process.argv[2] === "check-provider-state") {
+    const args = process.argv.slice(3);
+    const flag = (name) => args[args.indexOf(name) + 1];
+    const { problems, sha256: digests } = checkProviderStateFiles({
+      composite: flag("--composite-indexes"),
+      fields: flag("--field-overrides"),
+      database: flag("--database-description"),
+    });
+    process.stdout.write(`${JSON.stringify({ problems, sha256: digests })}\n`);
+    process.exitCode = problems.length === 0 ? 0 : 1;
   } else if (process.argv[2] === "plan") {
     await printProductionPlan(process.argv[3]);
   } else if (process.argv[2] === "reserve-admission") {
@@ -3032,7 +3246,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     );
   } else {
     throw new Error(
-      "expected prepare, local-child, compare-local, record-production, record-delta-v3, record-partial, record-bracket, record-followup, plan, reserve-admission, recover-legacy, recover-v3 or recover-delta-v3",
+      "expected prepare, local-child, compare-local, record-production, record-delta-v3, record-partial, record-bracket, record-followup, record-writelimits, plan, reserve-admission, recover-legacy, recover-v3 or recover-delta-v3",
     );
   }
 }
