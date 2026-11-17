@@ -82,7 +82,9 @@ pub fn validate(pattern: &str) -> Result<(), String> {
     let members = Members::of(&chars);
     let mut open: Vec<usize> = Vec::new();
     let mut at = 0;
-    while let Some(&c) = chars.get(at) {
+    // Every pass consumes at least one character (as in `scan`), so the pattern's length bounds the passes.
+    for _ in 0..=chars.len() {
+        let Some(&c) = chars.get(at) else { break };
         match c {
             '\\' => at += 2,
             '[' => match members.class(&chars, at) {
