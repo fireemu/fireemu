@@ -1266,6 +1266,8 @@ impl AuthLifecycleEpoch {
 }
 
 /// Deterministic in-memory auth store for one project.
+// Independent profile switches, each set on its own by the adapter.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct AuthStore {
     project_id: String,
