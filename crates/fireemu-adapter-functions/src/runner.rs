@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use fireemu_adapter_support::eprintln_at;
+use fireemu_adapter_support::term::Level;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 #[cfg(not(windows))]
@@ -219,6 +221,26 @@ impl RunnerLog {
         self
     }
 
+    /// The line `fireemu` prints on the terminal for this log: `<label> <display>`, painted by
+    /// level when stderr takes colour. A log whose display is not `<level> [<id>] <message>` (the
+    /// truncation marker) is printed as its display, unpainted.
+    fn terminal_line(&self, label: &str) -> String {
+        let built = self.invocation_id.as_deref().map_or_else(
+            || format!("{} {}", self.level, self.message),
+            |id| format!("{} {id} {}", self.level, self.message),
+        );
+        if built == self.display {
+            fireemu_adapter_support::term::log_line(
+                label,
+                &self.level,
+                self.invocation_id.as_deref(),
+                &self.message,
+            )
+        } else {
+            format!("{label} {}", self.display)
+        }
+    }
+
     /// Existing text form consumed by the fireemu UI and stderr diagnostics.
     #[must_use]
     pub fn display(&self) -> &str {
@@ -398,7 +420,11 @@ impl AdminReplyChannel {
             // A frame that could not be written in full would desynchronize the protocol.
             *stdin = None;
             self.alive.store(false, Ordering::SeqCst);
-            eprintln!("{} runner stopped reading its stdin", self.label);
+            eprintln_at!(
+                Level::Warn,
+                "{} runner stopped reading its stdin",
+                self.label
+            );
         }
     }
 }
@@ -776,7 +802,7 @@ impl Runner {
                 let mut reader = BufReader::new(stderr);
                 while let Ok(Some((line, truncated))) = read_bounded_stderr_line(&mut reader).await
                 {
-                    eprintln!("{label} {line}");
+                    eprintln!("{}", fireemu_adapter_support::term::raw_line(&label, &line));
                     if let Ok(mut l) = logs.lock() {
                         l.push(RunnerLog::raw_with_truncation(line, truncated));
                     }
@@ -826,7 +852,7 @@ impl Runner {
                         Ok(Some(f)) => f,
                         Ok(None) => break,
                         Err(e) => {
-                            eprintln!("{label} protocol error: {e}");
+                            eprintln_at!(Level::Error, "{label} protocol error: {e}");
                             break;
                         }
                     };
@@ -910,7 +936,7 @@ impl Runner {
                                     .cloned()
                                     .unwrap_or_default(),
                             );
-                            eprintln!("{label} {}", log.display());
+                            eprintln!("{}", log.terminal_line(&label));
                             if let Ok(mut l) = logs.lock() {
                                 l.push(log);
                             }
@@ -921,7 +947,7 @@ impl Runner {
                 // The runner is gone: every waiter learns it and the runtime stops
                 // dispatching.
                 alive.store(false, Ordering::SeqCst);
-                eprintln!("{label} runner exited");
+                eprintln_at!(Level::Warn, "{label} runner exited");
                 if let Ok(mut w) = waiters.lock() {
                     for (_, tx) in w.drain() {
                         let _ = tx.send(InvokeOutcome::RunnerGone("runner exited".into()));
@@ -1158,7 +1184,11 @@ impl Runner {
         if !written {
             *stdin = None;
             self.alive.store(false, Ordering::SeqCst);
-            eprintln!("{} runner stopped reading its stdin", self.label);
+            eprintln_at!(
+                Level::Warn,
+                "{} runner stopped reading its stdin",
+                self.label
+            );
             forget(&self.waiters);
             return done(InvokeOutcome::RunnerGone(
                 "runner stopped reading its stdin".into(),
@@ -1296,7 +1326,7 @@ impl Runner {
             let _ = tokio::time::timeout(Duration::from_secs(2), wait_child(&mut child)).await;
         }
         if !self.unstarted {
-            eprintln!("{} stopped", self.label);
+            eprintln_at!(Level::Info, "{} stopped", self.label);
         }
         remove_credential_sandbox(&self.credential_sandbox);
     }
@@ -1380,7 +1410,10 @@ impl Drop for RunnerLifetimeGuard {
         }
         let _ = child.kill();
         let _ = child.wait();
-        eprintln!("[functions] lifetime guard {pid} exceeded cleanup grace");
+        eprintln_at!(
+            Level::Warn,
+            "[functions] lifetime guard {pid} exceeded cleanup grace"
+        );
     }
 }
 
@@ -1431,6 +1464,77 @@ mod tests {
     const NODE_HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
     use super::{child_env, LogBuffer, RunnerLog, LOCAL_SECRET_NAMES_VARIABLE, LOG_CAPACITY};
+
+    fn without_escape_sequences(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                for next in chars.by_ref() {
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_terminal_line_of_a_log_is_its_label_and_display_with_only_colour_added() {
+        let label = "[functions:x]";
+        let oversized = RunnerLog::structured(
+            "info",
+            "x".repeat(super::LOG_ENTRY_BYTE_LIMIT),
+            Some("id"),
+            None,
+            true,
+            serde_json::Map::new(),
+        );
+        let logs = [
+            RunnerLog::structured(
+                "error",
+                "boom\n  at stack",
+                Some("id-1"),
+                None,
+                true,
+                serde_json::Map::new(),
+            ),
+            RunnerLog::structured(
+                "warning",
+                "slow",
+                None,
+                Some("f"),
+                true,
+                serde_json::Map::new(),
+            ),
+            RunnerLog::structured("debug", "d", None, None, false, serde_json::Map::new()),
+            RunnerLog::raw("plain stderr line"),
+            oversized,
+        ];
+        for log in &logs {
+            assert_eq!(
+                without_escape_sequences(&log.terminal_line(label)),
+                format!("{label} {}", log.display())
+            );
+        }
+        let own = RunnerLog::structured(
+            "error",
+            "\x1b[35mmine\x1b[0m",
+            Some("id-2"),
+            None,
+            true,
+            serde_json::Map::new(),
+        );
+        assert!(own.terminal_line(label).ends_with(" \x1b[35mmine\x1b[0m"));
+        // The truncation marker is never repainted as a level and a message.
+        assert_eq!(
+            logs[4].terminal_line(label),
+            format!("{label} [runner log truncated: byte limit]")
+        );
+    }
 
     #[test]
     fn node_paths_preserve_drive_unc_and_non_verbatim_paths() {

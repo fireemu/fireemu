@@ -4,6 +4,7 @@
 //! rules in force and says why. Also the credentials the database reads: the profile's
 //! administrators and the ID tokens fireemu's Auth accepts (coordinator ruling Q-R6).
 
+use crate::term::errln;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use fireemu_adapter_database::rest::{Credentials, Database};
@@ -243,7 +244,7 @@ pub(crate) fn start_reload_supervisors(
                 let Some(database) = weak.upgrade() else {
                     return;
                 };
-                eprintln!("note: database: change detected, updating rules for {instance}");
+                errln!("note: database: change detected, updating rules for {instance}");
                 let loaded = String::from_utf8(bytes)
                     .map_err(|error| error.to_string())
                     .and_then(|text| {
@@ -253,8 +254,8 @@ pub(crate) fn start_reload_supervisors(
                             .load_rules(&instance, &text, clock())
                     });
                 match loaded {
-                    Ok(()) => eprintln!("note: database: rules updated for {instance}"),
-                    Err(error) => eprintln!(
+                    Ok(()) => errln!("note: database: rules updated for {instance}"),
+                    Err(error) => errln!(
                         "warning: database: {}:{}\nwarning: database: failed to update rules for {instance}; the previous rules stay in force",
                         shown(&path),
                         error.trim()

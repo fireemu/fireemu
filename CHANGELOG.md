@@ -12,6 +12,16 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 - Storage, strict profile: match the STORAGE-STRICTNESS-OBS v4.1 production recording of 2026-11-17 (the emulator profile is unchanged). The JSON API list serves `includeTrailingDelimiter=true` (an object named like its own prefix is listed as an item and as a prefix, one entry of the page; 400 `delimiter field required if include_trailing_delimiter field is set to true` without a delimiter), where it used to refuse the flag. A page token continues after its entry whether or not that entry still exists, where a token whose entry was deleted used to start the listing over (with and without `matchGlob`). `matchGlob` is limited to 1024 bytes and an unterminated `[` or `{` is a 400 with production's messages; `**/` may match no directory, and an empty `matchGlob` filters nothing. `copyTo` with no body and a `text/plain` content type is `400 Parse Error`. The bucket resource has production's member order and members (`generation`, `softDeletePolicy`, `satisfiesPZI`, `labels`), the etag as the protobuf of the metageneration (`CAE=`), the `etag` header and the Google framing; a bucket `PATCH` accepts `labels` (and moves the metageneration on). The bucket `DELETE` answers 204 with `Content-Length: 0` and `Content-Type: application/json`. The XML API `DELETE /{bucket}/{object}` is served (204 with a zero length, then `404 NoSuchKey`), where it answered 501. Bucket-specific values (location, the access flags' locking times, the soft-delete policy, the project number) are still the stub's, and the order of custom `metadata` members stays alphabetical (production's depends on how the object was written).
 
+## [0.59.0] - 2026-11-17
+
+### Added
+
+- Terminal output: the startup banner and listener table, the `error:`, `warning:` and `note:` lines, the shutdown lines, the Functions log lines and the other messages printed while fireemu runs are coloured when standard output or standard error is a terminal (service names cyan, addresses and URLs bold, environment variable names, source tags and remarks dim, services that are not started dim, warnings yellow, errors red, ready green; a Functions log line is styled by its level, and a function's own escape sequences are passed through). `NO_COLOR`, `CLICOLOR=0` and `TERM=dumb` turn it off; `CLICOLOR_FORCE` or `FORCE_COLOR` turn it on for a pipe. Unless colour is forced, output to a pipe or a file is byte-for-byte unchanged; forcing colour also colours redirected output (a log file written with `FORCE_COLOR=1` holds the escape sequences). JSON, `--plan` and `config` output, the Hub locator, the ready file, and the records of the Logging emulator and the Emulator UI never carry colour codes.
+
+### Fixed
+
+- Authentication: in the emulator profile, an `accounts:batchCreate` row whose `passwordHash` or `salt` is not base64 (or a malformed `fakeHash:` value) is imported, as firebase-tools stores both as given, instead of refusing the request; a password sign-in against it answers `INVALID_PASSWORD`, and the account still exports and restores, including an account whose salt holds `:` or `:password=` (a restore reads the password after the record's own `salt`). The strict profile still refuses it, as production does.
+
 ## [0.58.0] - 2026-11-17
 
 ### Changed
@@ -1440,7 +1450,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/fireemu/fireemu/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/fireemu/fireemu/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/fireemu/fireemu/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/fireemu/fireemu/compare/v0.56.0...v0.57.0

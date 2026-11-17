@@ -1617,7 +1617,10 @@ fn core_err(e: StorageError) -> (u16, String, &'static str) {
             "internalError",
         ),
         StorageError::SpillFailed(message) => {
-            eprintln!("storage spill failed: {message}");
+            fireemu_adapter_support::eprintln_at!(
+                fireemu_adapter_support::term::Level::Error,
+                "storage spill failed: {message}"
+            );
             (503, "spill storage unavailable".to_owned(), "backendError")
         }
         StorageError::EventAdmission(error) => {

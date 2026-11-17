@@ -1686,6 +1686,20 @@ pub mod fake_hash {
         }
         Some((salt.to_owned(), password.to_owned()))
     }
+
+    /// The plaintext a hash carries when it is exactly [`encode`]`(salt, plaintext)` for the
+    /// salt the same account record names. The record's `salt` member removes the ambiguity
+    /// [`decode`] refuses: an import keeps a row's salt as given (firebase-tools stores it as
+    /// given), so the salt may hold `:` or `:password=`, and splitting the hash would restore a
+    /// different salt and password.
+    #[must_use]
+    pub fn decode_with_salt(hash: &str, salt: &str) -> Option<(String, String)> {
+        let password = hash
+            .strip_prefix(HASH_PREFIX)?
+            .strip_prefix(salt)?
+            .strip_prefix(":password=")?;
+        Some((salt.to_owned(), password.to_owned()))
+    }
 }
 
 #[cfg(test)]
@@ -2409,5 +2423,57 @@ mod tests {
             Some(("fakeSaltAbc".to_owned(), "s3cret-password".to_owned()))
         );
         assert_eq!(fake_hash::decode("scrypt$whatever"), None);
+    }
+
+    /// The record's salt names the split exactly, so any salt restores; a hash that is not
+    /// `encode(salt, _)` for that salt is not read as one.
+    #[test]
+    fn a_named_salt_decodes_the_hash_it_encoded_and_nothing_else() {
+        for salt in [
+            "",
+            "a",
+            "a:b",
+            ":",
+            "a:password=zz",
+            ":password=",
+            "é:password=é",
+        ] {
+            let hash = fake_hash::encode(salt, "zz:password=pw");
+            assert_eq!(
+                fake_hash::decode_with_salt(&hash, salt),
+                Some((salt.to_owned(), "zz:password=pw".to_owned())),
+                "{salt:?}"
+            );
+        }
+        let hash = fake_hash::encode("a", "pw");
+        for (hash, salt) in [
+            (hash.as_str(), "b"),
+            (hash.as_str(), "a:"),
+            (hash.as_str(), "a:password"),
+            ("fakeHash:salt=a:password", "a"),
+            ("fakeHash:salt=a", "a"),
+            ("fakeHash:salt=a:pass=pw", "a"),
+            ("scrypt$a:password=pw", "a"),
+            ("fakeHash:salt=ab:password=pw", "a"),
+        ] {
+            assert_eq!(
+                fake_hash::decode_with_salt(hash, salt),
+                None,
+                "{hash} {salt}"
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn decode_with_salt_inverts_encode_for_every_salt_and_password(
+            salt in "\\PC{0,16}",
+            password in "\\PC{0,16}",
+        ) {
+            proptest::prop_assert_eq!(
+                fake_hash::decode_with_salt(&fake_hash::encode(&salt, &password), &salt),
+                Some((salt, password))
+            );
+        }
     }
 }
