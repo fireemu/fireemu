@@ -457,7 +457,7 @@ test("an attempt reservation counts only under the new task for the new mode", (
 
 // ---- the provider-state refusal and the owner row ----
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -674,8 +674,9 @@ test("the composite fixture has the key layout of the recorded index body", () =
   }
 });
 
-test("the files the coordinator saves are read, checked and digested", () => {
+test("the files the coordinator saves are read, checked and digested", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "fswl-ps-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const write = (name, value) => {
     const path = join(dir, name);
     writeFileSync(path, JSON.stringify(value));
@@ -787,8 +788,9 @@ test("writelimits is approved by a row naming its own parent and an owner approv
   assert.throws(() => gate(ownerRow(parent), gatePins(undefined)), /approval row/);
 });
 
-test("the parent refuses to start, before any credential or ledger read, when the sandbox differs", async () => {
+test("the parent refuses to start, before any credential or ledger read, when the sandbox differs", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "fswl-parent-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
   const o = goodObservation();
   o.fields.shift();
   const save = (name, value) => {
