@@ -281,8 +281,63 @@ mod reference_glob {
         Literal(char),
         Segment,
         Any,
+        /// `**/`, with the stars and the slash written next to each other in the pattern as given: any
+        /// directories or none (recorded, STORAGE-STRICTNESS-OBS v4.1). The slash of a `**{x,}/` that
+        /// only meets the stars after the braces are expanded is an ordinary slash.
+        AnyDir,
         One,
         Class(Vec<(char, char)>, bool),
+    }
+
+    /// Replaces each run of two or more stars written directly before a slash (`**/`, `**\/`) with the
+    /// private marker U+0002, outside sets and escapes, before braces are expanded.
+    fn mark_any_dir(pattern: &[char]) -> Vec<char> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < pattern.len() {
+            match pattern[i] {
+                '\\' => {
+                    out.extend(pattern[i..(i + 2).min(pattern.len())].iter().copied());
+                    i += 2;
+                }
+                '[' => match set_end(pattern, i) {
+                    Some(end) => {
+                        out.extend_from_slice(&pattern[i..end]);
+                        i = end;
+                    }
+                    None => {
+                        out.push('[');
+                        i += 1;
+                    }
+                },
+                '*' => {
+                    let mut run = 1;
+                    while pattern.get(i + run) == Some(&'*') {
+                        run += 1;
+                    }
+                    let slash = match (pattern.get(i + run), pattern.get(i + run + 1)) {
+                        (Some('/'), _) => Some(1),
+                        (Some('\\'), Some('/')) => Some(2),
+                        _ => None,
+                    };
+                    match slash {
+                        Some(width) if run >= 2 => {
+                            out.push('\u{2}');
+                            i += run + width;
+                        }
+                        _ => {
+                            out.extend(std::iter::repeat_n('*', run));
+                            i += run;
+                        }
+                    }
+                }
+                other => {
+                    out.push(other);
+                    i += 1;
+                }
+            }
+        }
+        out
     }
 
     /// Every brace-free pattern a pattern stands for; an unterminated brace is a literal.
@@ -418,6 +473,10 @@ mod reference_glob {
                     i += 1;
                 }
                 '\u{1}' => i += 1,
+                '\u{2}' => {
+                    out.push(Element::AnyDir);
+                    i += 1;
+                }
                 '[' => match set_end(pattern, i) {
                     Some(end) => {
                         let mut at = i + 1;
@@ -493,6 +552,10 @@ mod reference_glob {
                         }
                         ok
                     }
+                    Element::AnyDir => {
+                        table[i + 1][j]
+                            || (j..name.len()).any(|k| name[k] == '/' && table[i + 1][k + 1])
+                    }
                     Element::Any => (j..=name.len()).any(|k| table[i + 1][k]),
                 };
             }
@@ -501,7 +564,7 @@ mod reference_glob {
     }
 
     pub fn matches(pattern: &str, name: &str) -> bool {
-        let pattern: Vec<char> = pattern.chars().collect();
+        let pattern = mark_any_dir(&pattern.chars().collect::<Vec<char>>());
         let name: Vec<char> = name.chars().collect();
         expand(&pattern)
             .iter()
@@ -624,6 +687,11 @@ fn glob_constructs_match_as_documented() {
         ("?*", "a/b", false),
         ("*", "", true),
         ("**", "", true),
+        // Recorded, STORAGE-STRICTNESS-OBS v4.1: `**/` may match no directory.
+        ("gl/**/c.txt", "gl/c.txt", true),
+        ("gl/**/**/**/c.txt", "gl/sub/c.txt", true),
+        ("gl/**/c.txt", "gl/a/b/c.txt", true),
+        ("gl/**/c.txt", "gl/a/d.txt", false),
         ("*/*", "a/b", true),
         ("*/*", "a/b/c", false),
     ] {
@@ -816,6 +884,112 @@ proptest! {
                 Some(next) => token = Some(next),
                 None => {
                     prop_assert_eq!(seen, expected);
+                    return Ok(());
+                }
+            }
+        }
+        prop_assert!(false, "the walk did not end");
+    }
+}
+
+/// The production listing model (STORAGE-STRICTNESS-OBS v4.1): entries in byte order, a folded prefix
+/// once (as an item too when an object is named exactly like it and the flag is on), and a page token
+/// that continues at the first entry at or after it, whether or not the entry still exists.
+fn production_entries(
+    names: &BTreeSet<String>,
+    prefix: &str,
+    delimiter: Option<&str>,
+) -> BTreeMap<String, (bool, bool)> {
+    // key -> (is a folded prefix, an object is named exactly like it)
+    let mut entries: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+    for name in names {
+        let Some(rest) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        match delimiter.and_then(|d| rest.find(d).map(|i| (i, d))) {
+            Some((i, d)) => {
+                let key = format!("{prefix}{}{d}", &rest[..i]);
+                let entry = entries.entry(key.clone()).or_default();
+                entry.0 = true;
+                entry.1 |= *name == key;
+            }
+            None => {
+                entries.insert(name.clone(), (false, true));
+            }
+        }
+    }
+    entries
+}
+
+proptest! {
+    #[test]
+    fn production_listing_resumes_at_or_after_any_token_and_counts_a_placeholder_once(
+        names in names(),
+        placeholders in proptest::collection::btree_set(
+            proptest::sample::select(&["a/", "dir/", "dir2/", "x/"][..]).prop_map(str::to_owned),
+            0..=3,
+        ),
+        prefix in prefixes(),
+        delimiter in delimiters(),
+        trailing in any::<bool>(),
+        max in 1usize..=4,
+        token in proptest::option::of(proptest::sample::select(
+            &["", "a", "a/", "a/b", "dir/", "dir/c", "dir2/", "dir2/z", "x/", "zzz"][..],
+        )),
+    ) {
+        let all: BTreeSet<String> = names.union(&placeholders).cloned().collect();
+        let store = store_with(&all);
+        let entries = production_entries(&all, prefix, delimiter);
+        let start = token.filter(|t| t.starts_with(prefix)).unwrap_or(prefix);
+        let candidates: Vec<(&String, &(bool, bool))> =
+            entries.iter().filter(|(key, _)| key.as_str() >= start).collect();
+        let page = store.list_matching_production(
+            &bucket(), prefix, delimiter, token, Some(max), trailing, &|_| true,
+        );
+        let shown = &candidates[..candidates.len().min(max)];
+        let mut expected_items: Vec<String> = shown
+            .iter()
+            .filter(|(_, (is_prefix, named))| (!is_prefix && *named) || (*is_prefix && trailing && *named))
+            .map(|(key, _)| (*key).clone())
+            .collect();
+        let mut expected_prefixes: Vec<String> =
+            shown.iter().filter(|(_, (is_prefix, _))| *is_prefix).map(|(key, _)| (*key).clone()).collect();
+        expected_items.sort();
+        expected_prefixes.sort();
+        let mut items: Vec<String> = page.items.iter().map(|m| m.name.as_str().to_owned()).collect();
+        let mut prefixes_seen = page.prefixes.clone();
+        items.sort();
+        prefixes_seen.sort();
+        prop_assert_eq!(items, expected_items);
+        prop_assert_eq!(prefixes_seen, expected_prefixes);
+        prop_assert_eq!(page.next_page_token, candidates.get(max).map(|(key, _)| (*key).clone()));
+    }
+
+    /// Walking the pages of a production listing yields every entry once, in order, with or without the flag.
+    #[test]
+    fn production_listing_walk_yields_each_entry_once(
+        names in names(),
+        prefix in prefixes(),
+        delimiter in delimiters(),
+        trailing in any::<bool>(),
+        max in 1usize..=4,
+    ) {
+        let store = store_with(&names);
+        let expected = production_entries(&names, prefix, delimiter);
+        let mut seen: Vec<String> = Vec::new();
+        let mut token: Option<String> = None;
+        for _ in 0..expected.len() + 2 {
+            let page = store.list_matching_production(
+                &bucket(), prefix, delimiter, token.as_deref(), Some(max), trailing, &|_| true,
+            );
+            let mut keys: Vec<String> = page.items.iter().map(|m| m.name.as_str().to_owned()).chain(page.prefixes.iter().cloned()).collect();
+            keys.sort();
+            keys.dedup();
+            seen.extend(keys);
+            match page.next_page_token {
+                Some(next) => token = Some(next),
+                None => {
+                    prop_assert_eq!(seen, expected.keys().cloned().collect::<Vec<_>>());
                     return Ok(());
                 }
             }

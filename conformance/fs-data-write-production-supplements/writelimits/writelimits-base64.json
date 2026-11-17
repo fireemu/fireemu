@@ -1,0 +1,751 @@
+{
+  "schemaVersion": 1,
+  "evidence": {
+    "corpusSha256": "d39ea5dd8d66e28e053da718c0b0ece8f8fb594bc8e1de67a66d97e8d912634b",
+    "project": "demo-firestore-probe",
+    "database": "(default)",
+    "recordedAt": ["2026-11-17T05:16:18.521Z", "2026-11-17T05:18:17.725Z"],
+    "harnessRevision": "5665cc8310c6cefee4a249b54445a5507abde105",
+    "sdkVersions": {
+      "firebase": "12.18.0",
+      "firebaseAdmin": "14.3.0",
+      "firestore": "8.7.1",
+      "grpc": "1.14.4"
+    },
+    "recordingDigests": [
+      "3f47dcd447a14a3125e91868a8604f3412ee9bc498eac31a1e51201cb79d1f19",
+      "3f47dcd447a14a3125e91868a8604f3412ee9bc498eac31a1e51201cb79d1f19"
+    ],
+    "streamRecordingDigests": [],
+    "nondeterministicPrograms": []
+  },
+  "programs": {
+    "writes/limits/bytes-line-breaks/create/control": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "createTime": "<now>",
+            "fields": {
+              "b": {
+                "bytesValue": "QUJD"
+              }
+            },
+            "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-control",
+            "updateTime": "<now>"
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-control",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/cr": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\rQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-cr",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/crlf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\r\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-crlf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/mime-76": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\r\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-mime-76",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/mime-76-lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-mime-76-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/mixed-plus-underscore": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"+_AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-mixed-plus-underscore",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/mixed-minus-slash": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"-/AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-mixed-minus-slash",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/create/proto-name": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "createTime": "<now>",
+            "fields": {
+              "b": {
+                "bytesValue": "QUJD"
+              }
+            },
+            "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-proto-name",
+            "updateTime": "<now>"
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/create-proto-name",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/control": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "createTime": "<now>",
+            "fields": {
+              "b": {
+                "bytesValue": "QUJD"
+              }
+            },
+            "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-control",
+            "updateTime": "<now>"
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-control",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/cr": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\rQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-cr",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/crlf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\r\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-crlf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/mime-76": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\r\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-mime-76",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/mime-76-lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-mime-76-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/mixed-plus-underscore": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"+_AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-mixed-plus-underscore",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/mixed-minus-slash": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'document.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"-/AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-mixed-minus-slash",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/patch/proto-name": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "createTime": "<now>",
+            "fields": {
+              "b": {
+                "bytesValue": "QUJD"
+              }
+            },
+            "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-proto-name",
+            "updateTime": "<now>"
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/patch-proto-name",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/control": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "status": [{}],
+            "writeResults": [
+              {
+                "updateTime": "<now>"
+              }
+            ]
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-control",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/cr": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\rQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-cr",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/crlf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\r\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-crlf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/mime-76": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\r\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-mime-76",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/mime-76-lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5\nent8fX5/gIGC\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-mime-76-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/mixed-plus-underscore": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"+_AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-mixed-plus-underscore",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/mixed-minus-slash": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"-/AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-mixed-minus-slash",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/batch-write/proto-name": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "status": [{}],
+            "writeResults": [
+              {
+                "updateTime": "<now>"
+              }
+            ]
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/batch-write-proto-name",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/commit/control": {
+      "steps": {
+        "write": {
+          "status": 200,
+          "code": "OK",
+          "body": {
+            "commitTime": "<now>",
+            "writeResults": [
+              {
+                "updateTime": "<now>"
+              }
+            ]
+          }
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "found": {
+                "createTime": "<now>",
+                "fields": {
+                  "b": {
+                    "bytesValue": "QUJD"
+                  }
+                },
+                "name": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/commit-control",
+                "updateTime": "<now>"
+              },
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/commit/lf": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"QUJD\nQUJD\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/commit-lf",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    },
+    "writes/limits/bytes-line-breaks/commit/mixed-plus-underscore": {
+      "steps": {
+        "write": {
+          "status": 400,
+          "code": "INVALID_ARGUMENT",
+          "message": "Invalid value at 'writes[0].update.fields[0].value.bytes_value' (TYPE_BYTES), Base64 decoding failed for \"+_AA\""
+        },
+        "readback": {
+          "status": 200,
+          "code": "OK",
+          "body": [
+            {
+              "missing": "projects/demo-firestore-probe/databases/(default)/documents/wlbase64/commit-mixed-plus-underscore",
+              "readTime": "<now>"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "streams": {},
+  "mode": "writelimits",
+  "recipeDigests": {
+    "programs": {
+      "writes/limits/bytes-line-breaks/create/control": "91d6c54b19171a0f37983323ab66f33522f3f469bf042937a20c458e095dbd16",
+      "writes/limits/bytes-line-breaks/create/lf": "b7f6c3bb012e2c5e91e563f00e5fecfc3dae0fc2f4ac0c0b58c82bd58a0ec543",
+      "writes/limits/bytes-line-breaks/create/cr": "656afa7b74b3c12dd9cfb010790261ea3174e17fcbb1ff29beb7a1f94da15f26",
+      "writes/limits/bytes-line-breaks/create/crlf": "3461b1f5e481ca1399610130cde7e0864fa8e0efe16ae69199f9f74e3b6948f5",
+      "writes/limits/bytes-line-breaks/create/mime-76": "2e146a07bc102f4dc49a42c5fdf6e45c9fd66731dd63ed920997011fe50a35c4",
+      "writes/limits/bytes-line-breaks/create/mime-76-lf": "be4ace6f1dd76ca8324c5c8317ec24aa1a78b8e1c5de64cd4447dc8c081bd08b",
+      "writes/limits/bytes-line-breaks/create/mixed-plus-underscore": "9d4d2af4b1128321561b6bc015bcbc71c50d32e7c286679c7efb3785210cfe36",
+      "writes/limits/bytes-line-breaks/create/mixed-minus-slash": "aa5227e6276ce50e6479a5afa3bdf9b18e5e1335e7fdd56fef42d2a1239daaa3",
+      "writes/limits/bytes-line-breaks/create/proto-name": "cc4567e63118a4b729b4297d1d7266ddee5b99e889ec7f113f6e264a8c93fa7b",
+      "writes/limits/bytes-line-breaks/patch/control": "985ba4a86e014969f83bfb996f08b687ed2561492b2c3ea6513eb02d115c639d",
+      "writes/limits/bytes-line-breaks/patch/lf": "4f1aeeef06914673fe934d08d29f19c387879e4fc8abf9d4a9bcd4dc469ed5bf",
+      "writes/limits/bytes-line-breaks/patch/cr": "16f2b3cb9174e2122899bdbf7635320645ba0d7281733559dd6b801ecd5b0701",
+      "writes/limits/bytes-line-breaks/patch/crlf": "8745dde87c2707be9b8514dd006e7339b3c9af952076713744578df52f457898",
+      "writes/limits/bytes-line-breaks/patch/mime-76": "664acfaf2a725d31fff52903ffafd7f2a52810cfbf9bd56c554a323d311f5dfe",
+      "writes/limits/bytes-line-breaks/patch/mime-76-lf": "384d26185d708d18cb8180f570617fe1d5e4398b7b0d4114ebab0d7c043ffc24",
+      "writes/limits/bytes-line-breaks/patch/mixed-plus-underscore": "8cd184f8eca466db86ad7a141628e2de522785226b3427e425ac752cbad0c7eb",
+      "writes/limits/bytes-line-breaks/patch/mixed-minus-slash": "fb6f583a12a605e1d4f89b301f1b6bd96e675e9cad3bca22b100e6b91604023e",
+      "writes/limits/bytes-line-breaks/patch/proto-name": "8c0c31dbf3be6f749cef6f689ddee578e26d6471bc84bb6159a9b7e01e239c26",
+      "writes/limits/bytes-line-breaks/batch-write/control": "67746af591a7592041259be397785c6a2de1bc27ced7b4f4d613b3b379f20d4f",
+      "writes/limits/bytes-line-breaks/batch-write/lf": "aac5fc908da7d6be9e5e0443712bb667b867820d97826e569454eafbf0c6a31b",
+      "writes/limits/bytes-line-breaks/batch-write/cr": "de4442d41213a1a0690e3764eaa47236b723c35cea2490283c03c6673f3e76cb",
+      "writes/limits/bytes-line-breaks/batch-write/crlf": "8fcd65cc475b748846c328912d1c282f8d9413c47996032267c9a55190b198f0",
+      "writes/limits/bytes-line-breaks/batch-write/mime-76": "06b9fdd22a3f5d396c0fe62f2e54e9abd12af8f64be3fbe50603a8431ec08aa8",
+      "writes/limits/bytes-line-breaks/batch-write/mime-76-lf": "8d14bcd010be9b46d41ab6ccba27958b26127ac1eee41ad26fd77748ea2538d5",
+      "writes/limits/bytes-line-breaks/batch-write/mixed-plus-underscore": "922e8a057e6763a175a627ab5218a7b849dbd27877d860719c6bda8842d809bd",
+      "writes/limits/bytes-line-breaks/batch-write/mixed-minus-slash": "b8664e6f10eb1c8f758f8e84afbf1f48f9a132eb47a2ea4a1f5d25a7affaf43b",
+      "writes/limits/bytes-line-breaks/batch-write/proto-name": "f8851b67bf387f739b03c7dd3a6ac3272140a8efeecbffffb2ef2f53ebb2d1c9",
+      "writes/limits/bytes-line-breaks/commit/control": "02623e734300680a19be4d0cde57395e1880518e0e54c55c0a265b8ead22100e",
+      "writes/limits/bytes-line-breaks/commit/lf": "61d5567279aecb91dfe951a6b1da20d2ce0c06bf0b6fb1add95d0d03a6c46df6",
+      "writes/limits/bytes-line-breaks/commit/mixed-plus-underscore": "441bd04d93545a3d4cbfa5f4c9d47791c2361d6597c0d9d82deed2b31eaeb748"
+    },
+    "streams": {}
+  }
+}

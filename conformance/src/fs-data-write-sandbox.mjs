@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   WEBCHANNEL_PATH,
@@ -143,6 +144,36 @@ export const FOLLOWUP_OWNED_NAMES = Object.freeze(
   ).toSorted(),
 );
 
+// Batch 3 (FS-5, FS-6, FS-7 and REST bytes line breaks): the pinned shape comes from the
+// recipes' own generator, `firestore-probe/write_limits_export.py --manifest`, and a test keeps
+// the committed file equal to it.
+const WRITE_LIMITS = JSON.parse(
+  readFileSync(new URL("./firestore-probe/write-limits-set.json", import.meta.url), "utf8"),
+);
+const WRITE_LIMITS_HTTP_CAP =
+  WRITE_LIMITS.restRequestCount + 1 + WRITE_LIMITS.ownedNames.length + 1;
+
+export { TASK_BY_MODE } from "./fs-data-write-admission.mjs";
+
+export const WRITE_LIMITS_SET = Object.freeze({
+  restIds: Object.freeze(WRITE_LIMITS.restIds),
+  streamIds: Object.freeze(WRITE_LIMITS.streamIds),
+  ownedNames: Object.freeze(WRITE_LIMITS.ownedNames),
+  // Documents only the gRPC recipes write; the REST preflight and cleanup still cover them.
+  streamOwnedNames: Object.freeze(WRITE_LIMITS.streamOwnedNames),
+  queriedCollection: null,
+  httpCap: WRITE_LIMITS_HTTP_CAP,
+  attemptEstimateUsd: 0.25,
+  // Each question freezes apart, so one nondeterministic band cannot take the others down.
+  freezeGroups: Object.freeze(
+    Object.fromEntries(
+      Object.entries(WRITE_LIMITS.freezeGroups).map(([group, ids]) => [group, Object.freeze(ids)]),
+    ),
+  ),
+  // The gRPC recipes' own group: it carries no REST program and all the stream recipes.
+  streamGroup: "write-stream",
+});
+
 /**
  * A recording set pins its recipes, the documents its cleanup owns, its per-attempt HTTP cap
  * and its per-attempt ledger estimate. The runner and the child both check a recording
@@ -175,6 +206,7 @@ export const RECORDING_SETS = Object.freeze({
       ),
     }),
   }),
+  writelimits: WRITE_LIMITS_SET,
 });
 
 export function recordingSet(name) {
@@ -211,7 +243,11 @@ function comparableStream(result) {
       ? result.events.map((event) =>
           ["status", "error"].includes(event?.type)
             ? { ...event, value: stripTransportTrailers(event.value) }
-            : event,
+            : // A unary status the recipe recorded (the seed, the read-back) carries the same
+              // volatile trailer.
+              event?.status
+              ? { ...event, status: stripTransportTrailers(event.status) }
+              : event,
         )
       : result.events,
   };
@@ -422,6 +458,34 @@ export function validateSandboxCorpus(corpus) {
   return { requestCount };
 }
 
+const batchGetItemName = (item) => item?.found?.name ?? item?.missing;
+
+/**
+ * A `:batchGet` answer returns its documents in no fixed order (writelimits run 2026-11-17: the
+ * three typed `missing` rows of one read came back in two orders). Such a body is compared by
+ * name; every other array keeps its order.
+ */
+function orderInsensitiveBatchGet(step) {
+  const body = step?.body;
+  if (
+    Array.isArray(body) &&
+    body.length > 0 &&
+    body.every((item) => typeof batchGetItemName(item) === "string")
+  ) {
+    return {
+      ...step,
+      body: body.toSorted((left, right) =>
+        batchGetItemName(left) < batchGetItemName(right)
+          ? -1
+          : batchGetItemName(left) > batchGetItemName(right)
+            ? 1
+            : 0,
+      ),
+    };
+  }
+  return step;
+}
+
 /** A second recording must reproduce every normalized status, code and body. */
 export function compareRecordings(first, second) {
   const differences = [];
@@ -429,7 +493,10 @@ export function compareRecordings(first, second) {
     const left = first[programId]?.steps ?? {};
     const right = second[programId]?.steps ?? {};
     for (const stepId of new Set([...Object.keys(left), ...Object.keys(right)])) {
-      if (JSON.stringify(canonical(left[stepId])) !== JSON.stringify(canonical(right[stepId]))) {
+      if (
+        JSON.stringify(canonical(orderInsensitiveBatchGet(left[stepId]))) !==
+        JSON.stringify(canonical(orderInsensitiveBatchGet(right[stepId])))
+      ) {
         differences.push(`${programId}#${stepId}`);
       }
     }

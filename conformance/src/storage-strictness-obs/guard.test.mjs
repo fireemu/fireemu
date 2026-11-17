@@ -344,7 +344,7 @@ test("v3 pins each Origin probe and refuses v2 requests", () => {
     }
   }
   assert.throws(() => classifyRequest(t, authenticated(requests(target).C6)), GuardError);
-  assert.throws(() => targetOf({ ...target, stage: "v4" }), GuardError);
+  assert.throws(() => targetOf({ ...target, stage: "v5" }), GuardError);
 });
 
 test("v3 session URL classifier rejects each independent scope violation", () => {

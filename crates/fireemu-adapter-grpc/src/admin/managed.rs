@@ -657,7 +657,7 @@ fn apply_import(
     for chunk in writes.chunks(500) {
         state
             .local
-            .commit(&pb::CommitRequest {
+            .commit_managed(&pb::CommitRequest {
                 database: format!("projects/{project}/databases/{database}"),
                 writes: chunk.to_vec(),
                 transaction: Vec::new(),
@@ -725,7 +725,7 @@ pub(crate) fn bulk_delete(
                     ..pb::Write::default()
                 })
                 .collect();
-            if let Err(status) = state.local.commit(&pb::CommitRequest {
+            if let Err(status) = state.local.commit_managed(&pb::CommitRequest {
                 database: format!("projects/{project}/databases/{database}"),
                 writes,
                 transaction: Vec::new(),

@@ -4226,7 +4226,7 @@ impl LocalBackend {
         let now = self.write_time();
         let result = self.with_db(parent, |db| {
             guard(db, writes, now)?;
-            self.commit_with_events(parent, db, writes, None, now, WriteRoute::Internal)
+            self.commit_with_events(parent, db, writes, None, now, WriteRoute::WriteStream)
         })?;
         Ok(crate::streams::WireCommit::from_result(&result))
     }
@@ -6684,10 +6684,26 @@ impl LocalBackend {
         req: &pb::CommitRequest,
         guard: WriteGuard<'_>,
     ) -> Result<pb::CommitResponse, Status> {
+        self.commit_routed(req, guard, WriteRoute::Commit)
+    }
+
+    /// A chunk of a managed Admin operation (import, bulk delete): the `Commit` path, priced per
+    /// document as it always was, without the client `Commit`'s sum of its documents (production
+    /// has not been observed pricing managed operations).
+    pub fn commit_managed(&self, req: &pb::CommitRequest) -> Result<pb::CommitResponse, Status> {
+        self.commit_routed(req, &allow_all, WriteRoute::Managed)
+    }
+
+    fn commit_routed(
+        &self,
+        req: &pb::CommitRequest,
+        guard: WriteGuard<'_>,
+        route: WriteRoute,
+    ) -> Result<pb::CommitResponse, Status> {
         let (parent, writes) = Self::plan_commit(req)?;
         let own = self.txn(&parent, &req.transaction)?;
         self.retry_on_contention(&parent, own.as_ref(), &writes, || {
-            self.commit_once(req, guard)
+            self.commit_once_routed(req, guard, route)
         })
     }
 
@@ -6697,6 +6713,15 @@ impl LocalBackend {
         req: &pb::CommitRequest,
         guard: WriteGuard<'_>,
     ) -> Result<pb::CommitResponse, Status> {
+        self.commit_once_routed(req, guard, WriteRoute::Commit)
+    }
+
+    fn commit_once_routed(
+        &self,
+        req: &pb::CommitRequest,
+        guard: WriteGuard<'_>,
+        route: WriteRoute,
+    ) -> Result<pb::CommitResponse, Status> {
         let (parent, writes) = Self::plan_commit(req)?;
         self.fault(parent.project.as_str(), "firestore.commit")?;
         self.txn(&parent, &req.transaction)?;
@@ -6704,14 +6729,7 @@ impl LocalBackend {
         let result = self.with_db(&parent, |db| {
             let txn = self.txn(&parent, &req.transaction)?;
             guard(db, &writes, now)?;
-            let result = self.commit_with_events(
-                &parent,
-                db,
-                &writes,
-                txn.as_ref(),
-                now,
-                WriteRoute::Commit,
-            )?;
+            let result = self.commit_with_events(&parent, db, &writes, txn.as_ref(), now, route)?;
             Ok(result)
         })?;
         Ok(encode_commit(&result))

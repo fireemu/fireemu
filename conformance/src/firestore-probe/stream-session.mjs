@@ -61,6 +61,119 @@ export async function makeStreamRequestByWireBytes(targetBytes) {
   }
 }
 
+const WRITE_STREAM_DELETE_PREFIX = "writes/limits/write-stream-delete/";
+const WRITE_STREAM_DELETE_COUNTS = new Set([12_112, 12_113, 12_122]);
+const WRITE_STREAM_DELETE_NAME = new RegExp(
+  `^projects/${SANDBOX_PROJECT}/databases/\\(default\\)/documents/wlstream(\\d+)c+/d$`,
+);
+const WRITE_STREAM_UNARY_RPCS = 6;
+// The in-recipe cleanup removes this many leading values in one transform before it deletes,
+// leaving the document well under every route's delete boundary.
+const WRITE_STREAM_SHRINK_VALUES = 1_024;
+
+/**
+ * A write-stream delete recipe seeds one document of `arrayCount` distinct integers with a
+ * Commit, deletes it over the Write stream, reads it back, and removes anything left. The
+ * document sits under a 1,000-byte relative name, the shape of the recorded delete boundary.
+ */
+export function validateWriteStreamDeleteRecipe(recipe) {
+  const count = recipe?.arrayCount;
+  const match =
+    typeof recipe?.documentName === "string"
+      ? WRITE_STREAM_DELETE_NAME.exec(recipe.documentName)
+      : null;
+  if (
+    recipe?.transport !== "grpc" ||
+    recipe.action !== "write-stream-delete" ||
+    !WRITE_STREAM_DELETE_COUNTS.has(count) ||
+    recipe.id !== `${WRITE_STREAM_DELETE_PREFIX}${count}` ||
+    recipe.maxFrames !== 2 ||
+    recipe.maxUnaryRpcs !== WRITE_STREAM_UNARY_RPCS ||
+    !match ||
+    match[1] !== String(count) ||
+    recipe.documentName.slice(recipe.documentName.indexOf("/documents/") + 11).length !== 1_000
+  ) {
+    throw new Error("unsupported write-stream delete recipe");
+  }
+  return recipe;
+}
+
+const isWriteStreamDelete = (recipe) => recipe?.id?.startsWith(WRITE_STREAM_DELETE_PREFIX);
+
+/** The distinct integers 0..count-1 the recipe seeds. */
+export function writeStreamDeleteValues(count) {
+  return Array.from({ length: count }, (_, index) => ({ integerValue: String(index) }));
+}
+
+export function writeStreamSeedRequest(recipe) {
+  validateWriteStreamDeleteRecipe(recipe);
+  return {
+    database: `projects/${SANDBOX_PROJECT}/databases/(default)`,
+    writes: [
+      {
+        update: {
+          name: recipe.documentName,
+          fields: { a: { arrayValue: { values: writeStreamDeleteValues(recipe.arrayCount) } } },
+        },
+        currentDocument: { exists: false },
+      },
+    ],
+  };
+}
+
+export function writeStreamDeleteFrame(recipe, streamToken) {
+  validateWriteStreamDeleteRecipe(recipe);
+  return { streamToken, writes: [{ delete: recipe.documentName }] };
+}
+
+export function writeStreamShrinkRequest(recipe) {
+  validateWriteStreamDeleteRecipe(recipe);
+  return {
+    database: `projects/${SANDBOX_PROJECT}/databases/(default)`,
+    writes: [
+      {
+        transform: {
+          document: recipe.documentName,
+          fieldTransforms: [
+            {
+              fieldPath: "a",
+              removeAllFromArray: {
+                values: writeStreamDeleteValues(
+                  Math.min(WRITE_STREAM_SHRINK_VALUES, recipe.arrayCount),
+                ),
+              },
+            },
+          ],
+        },
+        currentDocument: { exists: true },
+      },
+    ],
+  };
+}
+
+export function writeStreamCleanupDeleteRequest(recipe) {
+  validateWriteStreamDeleteRecipe(recipe);
+  return {
+    database: `projects/${SANDBOX_PROJECT}/databases/(default)`,
+    writes: [{ delete: recipe.documentName }],
+  };
+}
+
+/** Counts every RPC of one recipe before it is sent; the seventh is refused. */
+export function createUnaryRpcCounter(limit = WRITE_STREAM_UNARY_RPCS) {
+  let used = 0;
+  return {
+    next() {
+      if (used >= limit) throw new Error("write-stream delete RPC budget reached before the send");
+      used += 1;
+      return used;
+    },
+    get used() {
+      return used;
+    },
+  };
+}
+
 const LIVE_SPECS = new Map([
   [TRAILERS_ID, { action: "invalid-empty-write-after-handshake", maxFrames: 2 }],
   [HALF_CLOSE_ID, { action: "half-close-after-handshake", maxFrames: 1 }],
@@ -94,6 +207,13 @@ export function validateLiveStreamSubset(recipes) {
   const live = [];
   const seen = new Set();
   for (const recipe of recipes) {
+    if (isWriteStreamDelete(recipe)) {
+      if (seen.has(recipe.id)) throw new Error("unsupported stream recipe subset");
+      validateWriteStreamDeleteRecipe(recipe);
+      seen.add(recipe.id);
+      live.push(recipe);
+      continue;
+    }
     if (recipe?.id === SAVED_ID) {
       if (recipe.transport !== "saved-reference" || recipe.source !== SAVED_SOURCE) {
         throw new Error("unsupported stream recipe subset");
@@ -171,11 +291,26 @@ function opaqueShape(value) {
 export function projectStreamResponse(response) {
   if (!response || typeof response !== "object") throw new Error("invalid stream response");
   const { streamId, streamToken, ...rest } = response;
-  return {
+  return maskWriteResponseTimes({
     ...(streamId === undefined ? {} : { streamId: opaqueShape(streamId) }),
     ...(streamToken === undefined ? {} : { streamToken: opaqueShape(streamToken) }),
     ...normalize(rest),
-  };
+  });
+}
+
+/**
+ * A Write response's commit and update times are instants of the run, not shapes: they are kept
+ * as "timestamp" when present and null when absent, so two recordings can agree.
+ */
+export function maskWriteResponseTimes(projected) {
+  const masked = { ...projected };
+  if (masked.commitTime) masked.commitTime = "timestamp";
+  if (Array.isArray(masked.writeResults)) {
+    masked.writeResults = masked.writeResults.map((result) =>
+      result?.updateTime ? { ...result, updateTime: "timestamp" } : result,
+    );
+  }
+  return masked;
 }
 
 export function projectStreamStatus(status) {
@@ -260,10 +395,162 @@ async function runUnaryRequestByteRecipe(recipe, { connection, projectId, token 
   }
 }
 
-/** Run one fixed, no-document-write terminal probe using the real Firestore gRPC client. */
+const unaryStatus = (error) => (error ? projectStreamStatus(error) : { code: 0, details: "" });
+
+/**
+ * Seed, delete over the Write stream, read back and clean up, all through one gRPC client.
+ * The recorded rows are the seed's status, every stream event, and the read-back; the cleanup
+ * is not an observation, but a cleanup that fails fails the recipe.
+ */
+const productionGrpcClient = ({ connection, projectId }) =>
+  new v1.FirestoreClient({
+    servicePath: connection.host,
+    port: connection.port,
+    projectId,
+    sslCreds: connection.tls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure(),
+    fallback: false,
+  });
+
+export async function runWriteStreamDeleteRecipe(
+  recipe,
+  {
+    connection,
+    projectId,
+    token,
+    // Tests inject a fake client, a counter they can read, and a short stream deadline.
+    makeClient = productionGrpcClient,
+    counter = createUnaryRpcCounter(),
+    streamTimeoutMs = 31_000,
+  },
+) {
+  validateWriteStreamDeleteRecipe(recipe);
+  const client = makeClient({ connection, projectId });
+  const options = () => ({
+    deadline: new Date(Date.now() + 30_000),
+    retry: { retryCodes: [] },
+    otherArgs: { headers: { authorization: `Bearer ${token}` } },
+  });
+  const unary = async (method, request) => {
+    counter.next();
+    try {
+      const [response] = await client[method](request, options());
+      return { response };
+    } catch (error) {
+      if (error?.code === 4) {
+        throw new Error(`indeterminate: ${method} client deadline`, { cause: error });
+      }
+      return { error };
+    }
+  };
+  const readBack = async () => {
+    const { response, error } = await unary("getDocument", { name: recipe.documentName });
+    if (error && error.code !== 5) throw new Error(`write-stream read-back failed: ${error.code}`);
+    return {
+      found: !error,
+      status: unaryStatus(error),
+      arrayCount: response?.fields?.a?.arrayValue?.values?.length ?? 0,
+    };
+  };
+  try {
+    const events = [];
+    const seed = await unary("commit", writeStreamSeedRequest(recipe));
+    if (seed.error) throw new Error(`write-stream seed was refused: ${seed.error.code}`);
+    events.push({ type: "seed", status: unaryStatus(undefined) });
+    counter.next();
+    const stream = await new Promise((resolve, reject) => {
+      const call = client.write(options());
+      const frames = { sent: 0 };
+      let status;
+      let sawEnd = false;
+      let sawClose = false;
+      let responses = 0;
+      let grace;
+      const timer = setTimeout(
+        () => finish(new Error("indeterminate: write-stream delete timeout")),
+        streamTimeoutMs,
+      );
+      function finish(error) {
+        clearTimeout(timer);
+        clearTimeout(grace);
+        if (error) {
+          call.destroy(error);
+          return reject(error);
+        }
+        return resolve({ status, frames: frames.sent });
+      }
+      const maybeFinish = () => {
+        if (status && (sawEnd || sawClose) && !grace) grace = setTimeout(() => finish(), 100);
+      };
+      call.on("data", (response) => {
+        events.push({ type: "data", value: projectStreamResponse(response) });
+        responses += 1;
+        if (responses === 1) {
+          call.write(writeStreamDeleteFrame(recipe, response.streamToken));
+          frames.sent += 1;
+        } else {
+          call.end();
+        }
+      });
+      call.on("status", (value) => {
+        status = projectStreamStatus(value);
+        events.push({ type: "status", value: status });
+        maybeFinish();
+      });
+      call.on("error", (error) =>
+        events.push({ type: "error", value: projectStreamStatus(error) }),
+      );
+      call.on("end", () => {
+        sawEnd = true;
+        events.push({ type: "end" });
+        maybeFinish();
+      });
+      call.on("close", () => {
+        sawClose = true;
+        events.push({ type: "close" });
+        maybeFinish();
+      });
+      call.write({ database: `projects/${projectId}/databases/(default)` });
+      frames.sent += 1;
+    });
+    if (stream.status?.code === 4) throw new Error("indeterminate: write-stream client deadline");
+    const read = await readBack();
+    events.push({
+      type: "readback",
+      found: read.found,
+      arrayCount: read.arrayCount,
+      status: read.status,
+    });
+    if (read.found) {
+      const shrink = await unary("commit", writeStreamShrinkRequest(recipe));
+      if (shrink.error) throw new Error(`write-stream cleanup shrink failed: ${shrink.error.code}`);
+      const removal = await unary("commit", writeStreamCleanupDeleteRequest(recipe));
+      if (removal.error)
+        throw new Error(`write-stream cleanup delete failed: ${removal.error.code}`);
+      if ((await readBack()).found) throw new Error("write-stream cleanup left the document");
+    }
+    const recorded = normalizeRecordedResponse(
+      { status: stream.status, sentFrames: stream.frames, events },
+      { project: SANDBOX_PROJECT, recordProject: "demo-firestore-probe", scope: "error" },
+    );
+    if (
+      JSON.stringify(recorded).includes(token) ||
+      JSON.stringify(recorded).includes(SANDBOX_PROJECT)
+    ) {
+      throw new Error("write-stream delete recording contains private identity or credential");
+    }
+    return recorded;
+  } finally {
+    await client.close();
+  }
+}
+
+/** Run one fixed terminal probe, or one write-stream delete, using the real gRPC client. */
 export async function runStreamRecipe(recipe, { target, projectId, host, port, token }) {
   const connection = validateStreamTarget({ target, projectId, host, port });
   if (typeof token !== "string" || token.length === 0) throw new Error("stream bearer is required");
+  if (isWriteStreamDelete(recipe)) {
+    return runWriteStreamDeleteRecipe(recipe, { connection, projectId, token });
+  }
   if (UNARY_IDS.has(recipe?.id)) {
     return runUnaryRequestByteRecipe(recipe, { connection, projectId, token });
   }

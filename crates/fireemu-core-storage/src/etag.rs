@@ -5,18 +5,6 @@
 /// generation 1790789164648913 at metageneration 2 is `CNGTm8DplpcDEAI=`, at 3 `CNGTm8DplpcDEAM=`).
 #[must_use]
 pub fn production_etag(generation: u64, metageneration: u64) -> String {
-    fn varint(mut value: u64, out: &mut Vec<u8>) {
-        // A 64-bit value takes at most ten bytes, so at most nine continuation bytes precede the
-        // last; the bound keeps a broken shift from growing the buffer without end.
-        for _ in 0..9 {
-            if value < 0x80 {
-                break;
-            }
-            out.push(u8::try_from(value & 0x7f).unwrap_or(0) | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap_or(0));
-    }
     let mut message = vec![0x08];
     varint(generation, &mut message);
     message.push(0x10);
@@ -24,9 +12,45 @@ pub fn production_etag(generation: u64, metageneration: u64) -> String {
     crate::hash::base64(&message)
 }
 
+/// A bucket's `etag` as production writes it: the standard base64 of a protobuf message with the
+/// metageneration as field 1 (recorded, STORAGE-STRICTNESS-OBS v4.1: metageneration 1 is `CAE=`,
+/// metageneration 2 after a labels patch is `CAI=`).
+#[must_use]
+pub fn bucket_etag(metageneration: u64) -> String {
+    let mut message = vec![0x08];
+    varint(metageneration, &mut message);
+    crate::hash::base64(&message)
+}
+
+fn varint(mut value: u64, out: &mut Vec<u8>) {
+    // A 64-bit value takes at most ten bytes, so at most nine continuation bytes precede the
+    // last; the bound keeps a broken shift from growing the buffer without end.
+    for _ in 0..9 {
+        if value < 0x80 {
+            break;
+        }
+        out.push(u8::try_from(value & 0x7f).unwrap_or(0) | 0x80);
+        value >>= 7;
+    }
+    out.push(u8::try_from(value).unwrap_or(0));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::production_etag;
+    use super::{bucket_etag, production_etag};
+
+    #[test]
+    fn a_bucket_etag_is_the_base64_of_its_metageneration() {
+        for (metageneration, expected) in [
+            (1, "CAE="),
+            (2, "CAI="),
+            (3, "CAM="),
+            (127, "CH8="),
+            (128, "CIAB"),
+        ] {
+            assert_eq!(bucket_etag(metageneration), expected, "{metageneration}");
+        }
+    }
 
     #[test]
     fn the_etag_is_the_protobuf_of_generation_and_metageneration() {

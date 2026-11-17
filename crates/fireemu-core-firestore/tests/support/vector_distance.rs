@@ -305,7 +305,14 @@ fn run_generated_pict_case(
         .iter()
         .map(|(id, vector)| candidate_cache_write_unpadded(id, vector.clone()))
         .collect::<Vec<_>>();
-    let mut state = FirestoreState::new();
+    // The over-cap dataset commits 4,200 documents at once, past the 500 writes a production
+    // commit takes; production prices a commit as the sum of its documents, so the dataset is
+    // seeded under the scope that only counts.
+    let mut state = FirestoreState::with_limit_scope(if document_count > 500 {
+        LimitScope::OfficialEmulator
+    } else {
+        LimitScope::Production
+    });
     let initial_version = state
         .commit(&initial_writes, None, LogicalInstant::UNIX_EPOCH)
         .unwrap()
