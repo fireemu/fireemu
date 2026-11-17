@@ -1705,3 +1705,193 @@ def test_config_projections_carry_the_mobile_links_digest(tmp_path):
     for identifier in ('config-baseline', 'mask-precedence-observe', 'dup-readback-0'):
         row = stage(result, identifier)
         assert (row.get('config') or row)['mobileLinksDigest'] == expected
+
+
+# ---- v3.3: A2 closes only on the lookup's own validated absence plus equal digests ---------------------------
+
+ABSENT = (200, {'kind': 'identitytoolkit#GetAccountInfoResponse'})
+
+
+def a2_setup(tmp_path, config=None, receipt='ok', pre_ok=True):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config = config if config is not None else World().config
+    digests = edges.config_digests(World().config)
+    (tmp_path / 'pre.json').write_text(json.dumps({'digests': digests if pre_ok else {**digests, 'whole': 'z'}}))
+    rows = [{'id': 'config-baseline', 'configDigests': digests}]
+    if receipt == 'missing-row':
+        rows = [{'id': 'preflight-absence'}]
+    elif receipt == 'two-rows':
+        rows = rows * 2
+    elif receipt == 'no-digests':
+        rows = [{'id': 'config-baseline'}]
+    (tmp_path / 'receipt.json').write_text(json.dumps({'stages': rows}))
+    sent = []
+
+    def sender(lookup, answer=ABSENT):
+        def send(row, body):
+            sent.append((row['path'], row.get('method'), row['owner'], body))
+            if row['path'] == edges.CONFIG:
+                return 200, copy.deepcopy(config)
+            if isinstance(lookup, Exception):
+                raise lookup
+            return lookup
+        return send
+    return sent, sender, config
+
+
+def a2_run(tmp_path, lookup, config=None, **options):
+    import a2
+    sent, sender, _ = a2_setup(tmp_path, config, **options)
+    code = a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', sender(lookup), sleep=lambda _: None)
+    return code, json.loads((tmp_path / 'out.json').read_text()), sent
+
+
+def test_a2_closes_on_a_typed_absence_and_equal_digests(tmp_path):
+    code, result, sent = a2_run(tmp_path, ABSENT)
+    assert code == 0 and result['verdict'] == 'CLOSE-OK' and all(result['checks'].values())
+    assert [(p, m, o) for p, m, o, _ in sent] == [(edges.ADMIN + 'lookup', 'POST', True), (edges.CONFIG, 'GET', True)]
+    assert sent[0][3] == {'email': edges.manifest(NONCE)['addresses']}
+    code, result, _ = a2_run(tmp_path / 'users', (200, {'users': []}))
+    assert code == 0
+
+
+@pytest.mark.parametrize('lookup', [
+    (500, {'users': []}),
+    (500, {'kind': 'identitytoolkit#GetAccountInfoResponse'}),
+    (200, {'users': {}}),
+    (200, {'users': [1]}),
+    (200, {'users': None}),
+    (200, {'users': [{'email': 'edges3-x@example.invalid'}]}),
+    (200, {'users': [], 'nextPageToken': 't'}),
+    (200, {'users': [], 'error': {'message': 'X'}}),
+    (200, {'kind': 'other'}),
+    (200, {}),
+    (200, None),
+    (200, []),
+    (True, {'users': []}),
+    (None, None),
+    (302, {'users': []}),
+    (200, {'users': [], 'extra': 1}),
+])
+def test_a2_refuses_every_malformed_or_failed_lookup(tmp_path, lookup):
+    code, result, sent = a2_run(tmp_path, lookup)
+    assert code == 2 and result['verdict'] == 'NEEDS-RECOVERY' and result['checks']['lookupAbsent'] is False
+    assert result['checks']['equalsPreLaunch'] is True and len(sent) == 2
+
+
+def test_a2_treats_a_failed_send_as_an_unknown_not_a_close(tmp_path):
+    code, result, sent = a2_run(tmp_path, TimeoutError('lost'))
+    assert code == 2 and result['lookup'] == {'status': None, 'absent': False}
+
+
+def test_a2_refuses_when_the_config_differs_or_cannot_be_read(tmp_path):
+    for index, change in enumerate((lambda c: c.update(mfa={'state': 'ENABLED'}), lambda c: c.update(mobileLinksConfig={'domain': 'CUSTOM_DOMAIN'}), lambda c: c['notification'].update(defaultLocale='ja'), lambda c: c['signIn'].update(allowDuplicateEmails=True), lambda c: c['authorizedDomains'].append('x.example.invalid'))):
+        config = World().config
+        change(config)
+        code, result, _ = a2_run(tmp_path / str(index), ABSENT, config)
+        assert code == 2 and result['checks']['equalsPreLaunch'] is False and result['differsFromPreLaunch']
+    import a2
+    assert a2.evaluate(ABSENT, (503, {'error': {}}), edges.config_digests(World().config), edges.config_digests(World().config))['verdict'] == 'NEEDS-RECOVERY'
+    assert a2.evaluate(ABSENT, (200, None), edges.config_digests(World().config), edges.config_digests(World().config))['checks']['configRead'] is False
+
+
+def test_a2_refuses_when_the_two_baselines_disagree(tmp_path):
+    import a2
+    digests = edges.config_digests(World().config)
+    other = {**digests, 'notification': 'f' * 64}
+    result = a2.evaluate(ABSENT, (200, World().config), digests, other)
+    assert result['checks']['baselinesAgree'] is False and result['verdict'] == 'NEEDS-RECOVERY'
+
+
+@pytest.mark.parametrize('options', [{'receipt': 'missing-row'}, {'receipt': 'two-rows'}, {'receipt': 'no-digests'}, {'pre_ok': False}])
+def test_a2_checks_its_baselines_before_sending_anything(tmp_path, options):
+    import a2
+    sent, sender, _ = a2_setup(tmp_path, **options)
+    with pytest.raises(ValueError):
+        a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', sender(ABSENT), sleep=lambda _: None)
+    assert sent == [] and not (tmp_path / 'out.json').exists()
+
+
+def test_a2_refuses_a_missing_receipt_or_an_existing_output_before_sending(tmp_path):
+    import a2
+    sent, sender, _ = a2_setup(tmp_path)
+    (tmp_path / 'receipt.json').unlink()
+    with pytest.raises(FileNotFoundError):
+        a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', sender(ABSENT), sleep=lambda _: None)
+    (tmp_path / 'receipt.json').write_text('{"stages": []}')
+    (tmp_path / 'out.json').write_text('{}')
+    with pytest.raises(FileExistsError):
+        a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', sender(ABSENT), sleep=lambda _: None)
+    assert sent == []
+    assert a2.valid_digests({m: 'a' * 64 for m in edges.DIGEST_MEMBERS}) and not a2.valid_digests({'whole': 'a' * 64})
+
+
+def test_a2_output_names_checks_and_never_the_config_body(tmp_path):
+    code, result, _ = a2_run(tmp_path, ABSENT)
+    text = (tmp_path / 'out.json').read_text()
+    assert '+1650555' not in text and '"defaultLocale"' not in text and '"authorizedDomains"' not in text and '"passwordRequired"' not in text
+    assert set(result['checks']) == {'lookupAbsent', 'configRead', 'baselineFindings', 'equalsPreLaunch', 'equalsStageBaseline', 'baselinesAgree'}
+
+
+def test_a2_digest_validation_never_raises_on_odd_values():
+    import a2
+    assert a2.valid_digests({m: 5 for m in edges.DIGEST_MEMBERS}) is False
+    assert a2.valid_digests({m: None for m in edges.DIGEST_MEMBERS}) is False
+    assert a2.valid_digests([]) is False and a2.valid_digests(None) is False
+
+
+def test_a2_takes_the_baseline_only_from_the_config_baseline_row(tmp_path):
+    import a2
+    sent, sender, _ = a2_setup(tmp_path)
+    digests = edges.config_digests(World().config)
+    (tmp_path / 'receipt.json').write_text(json.dumps({'stages': [{'id': 'something-else', 'configDigests': digests}]}))
+    with pytest.raises(ValueError):
+        a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', sender(ABSENT), sleep=lambda _: None)
+    assert sent == []
+
+
+def test_a2_needs_the_config_read_to_be_a_clean_200_and_baseline_findings_to_hold():
+    import a2
+    config = World().config
+    digests = edges.config_digests(config)
+    assert a2.evaluate(ABSENT, (200, config), digests, digests)['verdict'] == 'CLOSE-OK'
+    for status in (500, 302, True, None):
+        result = a2.evaluate(ABSENT, (status, config), digests, digests)
+        assert result['verdict'] == 'NEEDS-RECOVERY' and result['checks']['configRead'] is False
+        assert result['config'] == {'status': status if type(status) is int else None, 'baselineFindings': None, 'digests': None}
+        assert result['differsFromPreLaunch'] == list(edges.DIGEST_MEMBERS) == result['differsFromStageBaseline']
+    result = a2.evaluate(ABSENT, (200, {**config, 'error': {'message': 'X'}}), digests, digests)
+    assert result['checks']['configRead'] is False and result['verdict'] == 'NEEDS-RECOVERY'
+    # digests taken from a config that already violates a launch assumption must not close either
+    drifted = World().config
+    drifted['signIn']['allowDuplicateEmails'] = True
+    drifted_digests = edges.config_digests(drifted)
+    result = a2.evaluate(ABSENT, (200, drifted), drifted_digests, drifted_digests)
+    assert result['checks']['equalsPreLaunch'] and result['checks']['baselineFindings'] is False and result['verdict'] == 'NEEDS-RECOVERY'
+
+
+def test_a2_reports_each_baseline_separately():
+    import a2
+    config = World().config
+    digests = edges.config_digests(config)
+    other = {**digests, 'notification': 'f' * 64}
+    result = a2.evaluate(ABSENT, (200, config), digests, other)
+    assert result['differsFromPreLaunch'] == [] and result['differsFromStageBaseline'] == ['notification']
+    assert a2.evaluate(ABSENT, (200, config), other, digests)['differsFromPreLaunch'] == ['notification']
+
+
+def test_a2_records_only_integer_statuses(tmp_path):
+    code, result, _ = a2_run(tmp_path, (True, {'users': []}))
+    assert result['lookup'] == {'status': None, 'absent': False}
+
+
+def test_a2_never_overwrites_an_output_that_appears_during_the_run(tmp_path):
+    import a2
+    sent, sender, _ = a2_setup(tmp_path)
+    inner = sender(ABSENT)
+    def send(row, body):
+        (tmp_path / 'out.json').write_text('{"racing": true}')
+        return inner(row, body)
+    with pytest.raises(FileExistsError):
+        a2.run(NONCE, tmp_path / 'out.json', tmp_path / 'pre.json', tmp_path / 'receipt.json', send, sleep=lambda _: None)
+    assert (tmp_path / 'out.json').read_text() == '{"racing": true}'
