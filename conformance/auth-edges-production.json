@@ -1,0 +1,1807 @@
+{
+  "recordedAgainst": {
+    "note": "A projection of the stage receipt, not raw bodies: statuses, typed error codes, the errors a probe returned (digits masked), which owned account a sign-in reached, request ages in seconds measured from a marked response, and whether a row was skipped. Addresses, tokens, codes, UIDs and the project number never appear. create-dupD answered EMAIL_EXISTS, so the passwordless-duplicate rows are skipped (INDETERMINATE).",
+    "project": "demo-auth-account",
+    "recordedOn": "2026-11-17",
+    "run": "AUTH-EDGES-OBS-20261117-01",
+    "target": "production sandbox project (Auth / Identity Platform)"
+  },
+  "stages": [
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "preflight-absence",
+      "kind": "preflight",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": null,
+        "emailEnabled": true,
+        "mfaProviderEnabled": false,
+        "mfaState": "DISABLED",
+        "passwordRequired": true,
+        "totpIntervals": null
+      },
+      "family": "",
+      "id": "config-baseline",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-enable",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "applied": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": false,
+        "mfaState": "DISABLED",
+        "passwordRequired": true,
+        "toggle": "dup",
+        "totpIntervals": null
+      },
+      "family": "",
+      "id": "dup-readback-0",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-1",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-2",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-3",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-4",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-5",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-6",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "dup-readback-7",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupA",
+      "kind": "create",
+      "localIdRole": "dupA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupA-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupA", "dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupA",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupB",
+      "kind": "create",
+      "localIdRole": "dupB",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupB-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupB",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-signin-before-a",
+      "kind": "diagnostic",
+      "localIdRole": "dupA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-issue-1",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-issue-1-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupA", "dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupA",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "EMAIL_EXISTS",
+      "family": "dup-reset",
+      "id": "dup-move-b",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-move-b-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupB",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-reset-1",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-reset-1-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupA", "dupB"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": true,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupA",
+          "validSinceChanged": true
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-after-reset-1-b-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupB",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-signin-1-new1",
+      "kind": "diagnostic",
+      "localIdRole": "dupA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_LOGIN_CREDENTIALS",
+      "family": "dup-reset",
+      "id": "dup-signin-1-a",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_LOGIN_CREDENTIALS",
+      "family": "dup-reset",
+      "id": "dup-signin-1-b",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-issue-2",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-issue-2-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupA", "dupB"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupA",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-reset-2",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-reset-2-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupA", "dupB"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": true,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupA",
+          "validSinceChanged": true
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-after-reset-2-b-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "dupB",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "dup-reset",
+      "id": "dup-signin-2-new2",
+      "kind": "diagnostic",
+      "localIdRole": "dupA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_LOGIN_CREDENTIALS",
+      "family": "dup-reset",
+      "id": "dup-signin-2-new1",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupC",
+      "kind": "create",
+      "localIdRole": "dupC",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-dupC-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["dupC", "dupD"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": false,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": null,
+          "providers": [],
+          "uidRole": "dupC",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "EMAIL_EXISTS",
+      "family": "",
+      "id": "create-dupD",
+      "kind": "create",
+      "status": 400
+    },
+    {
+      "classification": "INDETERMINATE",
+      "family": "",
+      "id": "create-dupD-readback",
+      "kind": "readback",
+      "skipped": "dependency-unavailable"
+    },
+    {
+      "classification": "INDETERMINATE",
+      "family": "dup-n3",
+      "id": "dup-set-password-d",
+      "kind": "diagnostic",
+      "skipped": "dependency-unavailable",
+      "status": null
+    },
+    {
+      "classification": "INDETERMINATE",
+      "family": "dup-n3",
+      "id": "dup-set-password-d-readback",
+      "kind": "readback",
+      "skipped": "dependency-unavailable"
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_LOGIN_CREDENTIALS",
+      "family": "dup-n3",
+      "id": "dup-n3-signin",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-enable",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "applied": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": false,
+        "mfaState": "DISABLED",
+        "passwordRequired": null,
+        "toggle": "emaillink",
+        "totpIntervals": null
+      },
+      "family": "",
+      "id": "emaillink-readback-0",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-1",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-2",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-3",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-4",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-5",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-6",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "emaillink-readback-7",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-elDisabled",
+      "kind": "create",
+      "localIdRole": "elDisabled",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-elDisabled-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["elDisabled"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "elDisabled",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-elKnown",
+      "kind": "create",
+      "localIdRole": "elKnown",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-elKnown-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["elKnown"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "elKnown",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "disable-eldisabled",
+      "kind": "setup",
+      "localIdRole": "elDisabled",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "disable-eldisabled-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": true,
+          "emailRoles": ["elDisabled"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "elDisabled",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "USER_DISABLED",
+      "family": "el-client",
+      "id": "el-signin-disabled",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "el-client",
+      "id": "el-signin-known",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "el-client",
+      "id": "el-signin-unknown",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "el-client",
+      "id": "el-reset-known-ok",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "UNAUTHORIZED_DOMAIN",
+      "family": "el-client",
+      "id": "el-reset-known-untrusted",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CONTINUE_URI",
+      "family": "el-client",
+      "id": "el-reset-known-relative",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "el-client",
+      "id": "el-reset-unknown-untrusted",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "el-client",
+      "id": "el-reset-unknown-relative",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-enable",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "applied": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "toggle": "mfa",
+        "totpIntervals": 5
+      },
+      "family": "",
+      "id": "mfa-readback-0",
+      "kind": "config",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-1",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-2",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-3",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-4",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-5",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-6",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {},
+      "family": "",
+      "id": "mfa-readback-7",
+      "kind": "config",
+      "skipped": "config-already-confirmed"
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaW",
+      "kind": "create",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaW-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaW"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaW",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "verify-mfaW",
+      "kind": "setup",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "mfaW-signin",
+      "kind": "diagnostic",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "mfaW-totp-start",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "mfaW-totp-start-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaW"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaW",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "mfaW-totp-finalize",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "mfaW-totp-finalize-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaW"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": false,
+              "totp": true
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaW",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "w-pending-0",
+      "kind": "diagnostic",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "w-pending-1",
+      "kind": "diagnostic",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "w-pending-2",
+      "kind": "diagnostic",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "w-pending-3",
+      "kind": "diagnostic",
+      "localIdRole": "mfaW",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaP",
+      "kind": "create",
+      "localIdRole": "mfaP",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaP-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "verify-mfaP",
+      "kind": "setup",
+      "localIdRole": "mfaP",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-signin",
+      "kind": "diagnostic",
+      "localIdRole": "mfaP",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-start-1",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-start-1-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-start-2",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-start-2-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-finalize-fresh",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-finalize-fresh-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": true,
+              "totp": false
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": true
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaA",
+      "kind": "create",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaA-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaA"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaA",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "verify-mfaA",
+      "kind": "setup",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "mfaA-signin",
+      "kind": "diagnostic",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "mfaA-totp-start",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "mfaA-totp-start-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaA"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaA",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "mfaA-totp-finalize",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "mfaA-totp-finalize-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaA"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": false,
+              "totp": true
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaA",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "MFA_ENROLLMENT_ALREADY_COMPLETE",
+      "family": "mfa-reuse",
+      "id": "a-totp-reuse",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-reuse",
+      "id": "a-totp-reuse-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaA"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": false,
+              "totp": true
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaA",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-quota",
+      "id": "a-pending-1",
+      "kind": "diagnostic",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-1",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-2",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-3",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-4",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-5",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-6",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-7",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "errorCode": "QUOTA_EXCEEDED",
+      "family": "mfa-quota",
+      "id": "a-wrong-8",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-quota",
+      "id": "a-pending-2",
+      "kind": "diagnostic",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-quota",
+      "id": "a-correct-after",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "age": {
+        "atResponse": 58.4,
+        "atSend": 58.0
+      },
+      "classification": "OBSERVED",
+      "family": "mfa-quota",
+      "id": "a-pending-60",
+      "kind": "diagnostic",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "age": {
+        "atResponse": 60.4,
+        "atSend": 60.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-quota",
+      "id": "a-wrong-60",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 61.4,
+        "atSend": 61.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "QUOTA_EXCEEDED",
+      "family": "mfa-quota",
+      "id": "a-correct-60",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 178.4,
+        "atSend": 178.0
+      },
+      "classification": "OBSERVED",
+      "family": "mfa-quota",
+      "id": "a-pending-180",
+      "kind": "diagnostic",
+      "localIdRole": "mfaA",
+      "status": 200
+    },
+    {
+      "age": {
+        "atResponse": 180.4,
+        "atSend": 180.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "QUOTA_EXCEEDED",
+      "family": "mfa-quota",
+      "id": "a-wrong-180",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 181.4,
+        "atSend": 181.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "QUOTA_EXCEEDED",
+      "family": "mfa-quota",
+      "id": "a-correct-180",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 296.7,
+        "atSend": 296.0
+      },
+      "classification": "OBSERVED",
+      "family": "mfa-window",
+      "id": "w-probe-0",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "age": {
+        "atResponse": 298.4,
+        "atSend": 298.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "INVALID_CODE",
+      "family": "mfa-window",
+      "id": "w-probe-1",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 300.4,
+        "atSend": 300.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "TOTP_CHALLENGE_TIMEOUT",
+      "family": "mfa-window",
+      "id": "w-probe-2",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 302.4,
+        "atSend": 302.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "TOTP_CHALLENGE_TIMEOUT",
+      "family": "mfa-window",
+      "id": "w-probe-3",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "age": {
+        "atResponse": 345.4,
+        "atSend": 345.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "TOKEN_EXPIRED",
+      "family": "mfa-phone",
+      "id": "p-start-aged",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-start-aged-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": true,
+              "totp": false
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "age": {
+        "atResponse": 347.4,
+        "atSend": 347.0
+      },
+      "classification": "OBSERVED",
+      "errorCode": "TOKEN_EXPIRED",
+      "family": "mfa-phone",
+      "id": "p-finalize-aged",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-phone",
+      "id": "p-finalize-aged-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaP"],
+          "emailVerified": true,
+          "mfaCount": 1,
+          "mfaEntries": [
+            {
+              "phone": true,
+              "totp": false
+            }
+          ],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaP",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaB",
+      "kind": "create",
+      "localIdRole": "mfaB",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-mfaB-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaB"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaB",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "verify-mfaB",
+      "kind": "setup",
+      "localIdRole": "mfaB",
+      "status": 200
+    },
+    {
+      "classification": "INDETERMINATE",
+      "family": "mfa-both",
+      "id": "b-admin-both",
+      "kind": "diagnostic",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mfa-both",
+      "id": "b-admin-both-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["mfaB"],
+          "emailVerified": true,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": false,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "mfaB",
+          "validSinceChanged": false
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mask",
+      "id": "mask-state",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-state-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mask",
+      "id": "mask-interval-string",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-interval-string-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mask",
+      "id": "mask-interval-number",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-interval-number-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mask",
+      "id": "mask-state-numeric",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-state-numeric-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "errorMessage": "Invalid value at 'config.mfa.state' (type.googleapis.com/google.cloud.identitytoolkit.admin.v2.MultiFactorAuthConfig.State), \"NOT_A_STATE\"\nInvalid value at 'config.mobile_links_config.domain' (type.googleapis.com/google.cloud.identitytoolki",
+      "errorStatus": "INVALID_ARGUMENT",
+      "family": "mask",
+      "id": "mask-precedence",
+      "kind": "probe",
+      "status": 400
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-precedence-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "mask",
+      "id": "mask-below-scalar",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "config": {
+        "allowDuplicateEmails": true,
+        "defaultLocalePresent": true,
+        "emailEnabled": true,
+        "mfaProviderEnabled": true,
+        "mfaState": "ENABLED",
+        "passwordRequired": null,
+        "totpIntervals": 5
+      },
+      "family": "mask",
+      "id": "mask-below-scalar-observe",
+      "kind": "probe",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-sess",
+      "kind": "create",
+      "localIdRole": "sess",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "",
+      "id": "create-sess-readback",
+      "kind": "readback",
+      "status": 200,
+      "userCount": 1,
+      "users": [
+        {
+          "disabled": false,
+          "emailRoles": ["sess"],
+          "emailVerified": false,
+          "mfaCount": null,
+          "mfaEntries": [],
+          "passwordHashPresent": true,
+          "passwordUpdatedAtChanged": null,
+          "providerCount": 1,
+          "providers": ["password"],
+          "uidRole": "sess",
+          "validSinceChanged": null
+        }
+      ]
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-control",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-unread-zz",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-unread-trailing",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-unread-short",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-unread-utf8",
+      "kind": "diagnostic",
+      "status": 200
+    },
+    {
+      "classification": "OBSERVED",
+      "family": "securetoken-escape",
+      "id": "st-key-zz",
+      "kind": "diagnostic",
+      "status": 200
+    }
+  ],
+  "version": 1
+}

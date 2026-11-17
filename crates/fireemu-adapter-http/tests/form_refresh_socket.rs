@@ -320,11 +320,11 @@ async fn malformed_escapes_and_invalid_utf8_are_refused_with_a_json_4xx() {
         body.extend_from_slice(suffix);
         cases.push((case, body));
     }
-    // Not pinned here: a malformed escape or invalid UTF-8 in a field the refresh does not
-    // read (`&extra=%zz`) is kept literally or replaced with U+FFFD by the lenient decoder,
-    // and the refresh still answers 200. The JSON path refuses such a body outright. That
-    // leniency is pinned by `a_form_encoded_body_decodes_percent_escapes_strictly` (PCT-1)
-    // in identity_toolkit.rs, so changing it is an owner decision, not a test-only change.
+    // A malformed escape or invalid UTF-8 in a field the refresh does not read (`&extra=%zz`) is
+    // kept literally or replaced with U+FFFD by the lenient decoder, and the refresh still
+    // answers 200: production did the same (pinned by
+    // `malformed_escapes_in_unread_form_fields_refresh_as_production_did` below, from
+    // AUTH-EDGES-OBS-20261117-01). The JSON path refuses such a body outright.
 
     for (case, body) in &cases {
         let (status, response) = server.post_form(REFRESH, body).await;
@@ -921,5 +921,49 @@ async fn camel_case_json_refresh_keeps_its_refusals() {
                 .is_some_and(|m| m.starts_with(message)),
             "{body}: {got}"
         );
+    }
+}
+
+/// Production answered 200 to a form refresh whose unread field carried a malformed escape: a
+/// `%zz`, a trailing `%`, a truncated `%2`, an escaped invalid UTF-8 pair and a key `%zz`
+/// (AUTH-EDGES-OBS-20261117-01, st-unread-zz, st-unread-trailing, st-unread-short,
+/// st-unread-utf8, st-key-zz; the control st-control answered 200 too). Both profiles do the
+/// same, so no change was needed; this pins it.
+#[tokio::test]
+async fn malformed_escapes_in_unread_form_fields_refresh_as_production_did() {
+    let recording: Value = serde_json::from_str(include_str!(
+        "../../../conformance/auth-edges-production.json"
+    ))
+    .expect("the recording parses");
+    for id in [
+        "st-control",
+        "st-unread-zz",
+        "st-unread-trailing",
+        "st-unread-short",
+        "st-unread-utf8",
+        "st-key-zz",
+    ] {
+        let row = recording["stages"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+            .unwrap_or_else(|| panic!("recorded row {id}"));
+        assert_eq!(row["status"], 200, "{id}");
+    }
+    for stateless in [true, false] {
+        let server = Server::start_with(stateless).await;
+        let refresh = server.sign_up("escapes@example.com", "password1").await;
+        let valid = format!("grant_type=refresh_token&refresh_token={refresh}");
+        for suffix in [
+            "",
+            "&extra=%zz",
+            "&extra=%",
+            "&extra=%2",
+            "&extra=%C3%28",
+            "&%zz=1",
+        ] {
+            let body = format!("{valid}{suffix}").into_bytes();
+            let (status, answer) = server.post_form(REFRESH, &body).await;
+            assert_id_token(status, &answer);
+        }
     }
 }

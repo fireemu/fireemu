@@ -81,7 +81,11 @@ pub fn mfa_config_json(config: &MfaProjectConfig) -> Value {
     Value::Object(out)
 }
 
-fn state_member(value: Option<&Value>, field: String) -> Result<MfaConfigState, MfaConfigRefusal> {
+fn state_member(
+    value: Option<&Value>,
+    field: String,
+    strict: bool,
+) -> Result<MfaConfigState, MfaConfigRefusal> {
     match value {
         None | Some(Value::Null) => Ok(MfaConfigState::Disabled),
         Some(Value::String(name)) => match name.as_str() {
@@ -94,14 +98,62 @@ fn state_member(value: Option<&Value>, field: String) -> Result<MfaConfigState, 
                 value: other.to_owned(),
             }),
         },
+        // Strict: proto3 JSON also reads an enum by its number (production answered 200 to
+        // `state: 2`, AUTH-EDGES-OBS-20261117-01, mask-state-numeric).
+        Some(Value::Number(number)) if strict => match number.as_i64() {
+            Some(0 | 1) => Ok(MfaConfigState::Disabled),
+            Some(2) => Ok(MfaConfigState::Enabled),
+            Some(3) => Ok(MfaConfigState::Mandatory),
+            _ => Err(MfaConfigRefusal::Shape),
+        },
         Some(_) => Err(MfaConfigRefusal::Shape),
     }
+}
+
+/// The project's configuration after a PATCH masked `mfa.state` alone: the body's state, every
+/// other member kept. `None` leaves the configuration as it is.
+///
+/// A body that carries no state (`mfa` a scalar, a string, an array, null, or an object without a
+/// state, or `state: null`) never becomes DISABLED. Strict refuses it as a wrong type. The emulator
+/// profile ignores it, as firebase-tools 15.28.2 does (`lib/emulator/auth/state.js` `applyMask`,
+/// lines 677-686 and 693-696: a parent that is not an object, or a leaf that is missing, is
+/// skipped with a warning). Production answered 200 to a state in this mask
+/// (AUTH-EDGES-OBS-20261117-01, mask-state).
+pub fn mfa_state_update(
+    current: &MfaProjectConfig,
+    body: &Value,
+    strict: bool,
+) -> Result<Option<MfaProjectConfig>, MfaConfigRefusal> {
+    let state = match body.get("mfa") {
+        Some(Value::Object(mfa)) => mfa.get("state").filter(|state| !state.is_null()),
+        _ => None,
+    };
+    let Some(state) = state else {
+        return if strict {
+            Err(MfaConfigRefusal::Shape)
+        } else {
+            Ok(None)
+        };
+    };
+    let mut next = current.clone();
+    next.state = state_member(Some(state), "config.mfa.state".to_owned(), strict)?;
+    Ok(Some(next))
 }
 
 /// A `mfa` member a PATCH sent, as a configuration, or production's refusal. A provider entry
 /// without `totpProviderConfig` is dropped, as production drops it (sandbox recording
 /// 2026-09-24).
 pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfigRefusal> {
+    mfa_config_from_json_in(value, false)
+}
+
+/// As [`mfa_config_from_json`]; `strict` also reads an enum by its number and an interval count
+/// sent as a decimal string, as proto3 JSON does and production's answer 200 showed
+/// (AUTH-EDGES-OBS-20261117-01, mask-state-numeric, mask-interval-string).
+pub fn mfa_config_from_json_in(
+    value: &Value,
+    strict: bool,
+) -> Result<MfaProjectConfig, MfaConfigRefusal> {
     let object = match value {
         Value::Null => return Ok(MfaProjectConfig::default()),
         Value::Object(object) => object,
@@ -115,7 +167,7 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
     }) {
         return Err(MfaConfigRefusal::Shape);
     }
-    let state = state_member(object.get("state"), "config.mfa.state".to_owned())?;
+    let state = state_member(object.get("state"), "config.mfa.state".to_owned(), strict)?;
     let phone_sms = match object.get("enabledProviders") {
         None | Some(Value::Null) => false,
         Some(Value::Array(providers)) => {
@@ -153,6 +205,7 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
                 let entry_state = state_member(
                     entry.get("state"),
                     format!("config.mfa.provider_configs[{index}].state"),
+                    strict,
                 )?;
                 let adjacent_intervals = match entry.get("totpProviderConfig") {
                     None | Some(Value::Null) => continue,
@@ -163,7 +216,15 @@ pub fn mfa_config_from_json(value: &Value) -> Result<MfaProjectConfig, MfaConfig
                         match config.get("adjacentIntervals") {
                             None | Some(Value::Null) => 0,
                             Some(value) => {
-                                let n = value.as_i64().ok_or(MfaConfigRefusal::Shape)?;
+                                let n = value
+                                    .as_i64()
+                                    .or_else(|| {
+                                        value
+                                            .as_str()
+                                            .filter(|_| strict)
+                                            .and_then(|text| text.parse().ok())
+                                    })
+                                    .ok_or(MfaConfigRefusal::Shape)?;
                                 u8::try_from(n)
                                     .ok()
                                     .filter(|n| *n <= MAX_ADJACENT_INTERVALS)

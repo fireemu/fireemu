@@ -20153,23 +20153,65 @@ fn strict_a_backslash_ends_the_continue_url_authority() {
     );
 }
 
-/// Strict: only the Admin generator is told an address belongs to a disabled account; a client
-/// under improved email privacy gets the sent-mail answer (the client route is unobserved).
+/// One row of the AUTH-EDGES-OBS-20261117-01 production recording (`conformance/auth-edges-production.json`).
+fn edges_recorded(id: &str) -> Value {
+    let all: Value = serde_json::from_str(include_str!(
+        "../../../conformance/auth-edges-production.json"
+    ))
+    .expect("the recording parses");
+    all["stages"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["id"] == id))
+        .cloned()
+        .unwrap_or_else(|| panic!("recorded row {id}"))
+}
+
+/// Strict: a client sign-in link request for a disabled account is refused with `USER_DISABLED`,
+/// as production did under improved email privacy (AUTH-EDGES-OBS-20261117-01,
+/// el-signin-disabled); the sent-mail answer stays for a known active and an unknown address
+/// (el-signin-known, el-signin-unknown). The emulator profile keeps the sent-mail answer.
 #[test]
-fn strict_a_client_email_link_request_does_not_reveal_a_disabled_account() {
-    let s = strict_state();
-    with_email_privacy(&s);
-    email_links_on(&s);
-    create(
-        &s,
-        &json!({"email": "dl@example.com", "password": "password123", "disabled": true}),
+fn strict_a_client_email_link_request_for_a_disabled_account_is_refused_as_production_did() {
+    let disabled = edges_recorded("el-signin-disabled");
+    assert_eq!(
+        (disabled["status"].as_u64(), disabled["errorCode"].as_str()),
+        (Some(400), Some("USER_DISABLED"))
     );
-    let (status, body) = post(
-        &s,
-        &format!("{V1}/accounts:sendOobCode"),
-        &json!({"requestType": "EMAIL_SIGNIN", "email": "dl@example.com", "continueUrl": "https://demo-app.firebaseapp.com/finish"}),
-    );
-    assert_eq!(status, 200, "{body}");
+    for id in ["el-signin-known", "el-signin-unknown"] {
+        assert_eq!(edges_recorded(id)["status"], 200, "{id}");
+    }
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        with_email_privacy(&s);
+        email_links_on(&s);
+        create(
+            &s,
+            &json!({"email": "dl@example.com", "password": "password123", "disabled": true}),
+        );
+        create(
+            &s,
+            &json!({"email": "active@example.com", "password": "password123"}),
+        );
+        let send = |email: &str| {
+            post(
+                &s,
+                &format!("{V1}/accounts:sendOobCode"),
+                &json!({"requestType": "EMAIL_SIGNIN", "email": email, "continueUrl": "https://demo-app.firebaseapp.com/finish"}),
+            )
+        };
+        let (status, body) = send("dl@example.com");
+        if strict {
+            assert_eq!(
+                (status, message(&body)),
+                (400, Some("USER_DISABLED")),
+                "{body}"
+            );
+        } else {
+            assert_eq!(status, 200, "{body}");
+        }
+        assert_eq!(send("active@example.com").0, 200);
+        assert_eq!(send("nobody@example.com").0, 200);
+    }
 }
 
 /// Only strict records the address an applied change replaced; the official emulator records
@@ -22197,15 +22239,28 @@ fn totp_sign_in_aged(s: &AuthState, email: &str, age: i64) -> (u16, Value) {
     totp_sign_in(s, &pending, &factor, &totp_code_of(s, &started, 0))
 }
 
-/// Production accepted a TOTP pending credential 293 seconds old and refused one 303 seconds
-/// old with `TOTP_CHALLENGE_TIMEOUT`, both measured from send to send. Strict refuses from 302
-/// seconds, one second below the refusal to absorb the two requests' differing latencies; the
+/// Production accepted a TOTP pending credential 293 and 298 seconds old and refused one 300,
+/// 302 and 303 seconds old with `TOTP_CHALLENGE_TIMEOUT`, all measured from send to send
+/// (sandbox recordings 2026-09-24, and AUTH-EDGES-OBS-20261117-01 w-probe-1 at 298.0 s accepted,
+/// w-probe-2 at 300.0 s and w-probe-3 at 302.0 s refused). Strict refuses from 300 seconds; the
 /// ages below stay accepted.
 #[test]
 fn strict_a_totp_pending_credential_times_out_where_production_refused() {
+    let recorded = |id: &str| edges_recorded(id)["errorCode"].as_str().map(str::to_owned);
+    assert_eq!(recorded("w-probe-1").as_deref(), Some("INVALID_CODE"));
+    assert_eq!(
+        recorded("w-probe-2").as_deref(),
+        Some("TOTP_CHALLENGE_TIMEOUT")
+    );
+    assert_eq!(
+        recorded("w-probe-3").as_deref(),
+        Some("TOTP_CHALLENGE_TIMEOUT")
+    );
     for (age, refused) in [
         (293, false),
-        (301, false),
+        (298, false),
+        (299, false),
+        (300, true),
         (302, true),
         (303, true),
         (1_800, true),
@@ -22356,12 +22411,14 @@ fn strict_expired_enrollment_sessions_do_not_hold_the_pending_budget() {
 }
 
 /// An Admin factor entry with `phoneInfo` is a phone factor whatever else it carries, as the
-/// official emulator reads it (`getMfaEnrollmentsFromRequest` checks `phoneInfo` only).
-/// Production refused an entry with only `totpInfo`; one with both is unobserved, so neither
-/// profile refuses it (safety review 2026-09-25, SF-2).
+/// official emulator reads it (`getMfaEnrollmentsFromRequest` checks `phoneInfo` only), so the
+/// emulator profile accepts one with both `phoneInfo` and `totpInfo`. Production refused an
+/// entry with only `totpInfo` and one with both (AUTH-EDGES-OBS-20261117-01, b-admin-both: 400;
+/// its wording was not recorded), so strict refuses both and enrols nothing.
 #[test]
-fn an_admin_factor_entry_with_phone_info_is_a_phone_factor_in_both_profiles() {
-    for s in [state(), strict_mfa_state()] {
+fn an_admin_factor_entry_with_phone_info_is_a_phone_factor_only_in_the_emulator_profile() {
+    assert_eq!(edges_recorded("b-admin-both")["status"], 400);
+    for (strict, s) in [(false, state()), (true, strict_mfa_state())] {
         let (status, created) = admin(
             &s,
             "POST",
@@ -22376,7 +22433,27 @@ fn an_admin_factor_entry_with_phone_info_is_a_phone_factor_in_both_profiles() {
             &json!({"localId": created["localId"], "mfa": {"enrollments": [
                 {"phoneInfo": "+16505550101", "totpInfo": {}, "displayName": "Both"}]}}),
         );
-        assert_eq!(status, 200, "{body}");
+        if strict {
+            assert_eq!(status, 400, "{body}");
+            assert!(message(&body).is_some(), "{body}");
+            let (_, found) = admin(
+                &s,
+                "POST",
+                &format!("{ADMIN}/accounts:lookup"),
+                &json!({"localId": [created["localId"]]}),
+            );
+            assert!(found["users"][0].get("mfaInfo").is_none(), "{found}");
+            let (status, body) = admin(
+                &s,
+                "POST",
+                &format!("{ADMIN}/accounts:update"),
+                &json!({"localId": created["localId"], "mfa": {"enrollments": [
+                    {"phoneInfo": "+16505550101", "displayName": "Phone"}]}}),
+            );
+            assert_eq!(status, 200, "{body}");
+        } else {
+            assert_eq!(status, 200, "{body}");
+        }
         let (status, body) = admin(
             &s,
             "POST",
@@ -24327,4 +24404,287 @@ fn strict_email_link_without_a_password_to_remove_keeps_the_sessions() {
         old_session_answers(&s, &session),
         ((200, None), (200, None))
     );
+}
+
+// ---- AUTH-EDGES-OBS-20261117-01: the project `mfa` mask and the below-scalar mask ----
+
+fn project_mfa_enabled() -> Value {
+    json!({
+        "state": "ENABLED",
+        "enabledProviders": ["PHONE_SMS"],
+        "providerConfigs": [{"state": "ENABLED", "totpProviderConfig": {"adjacentIntervals": 5}}],
+    })
+}
+
+fn patch_mfa(s: &AuthState, mask: &str, body: &Value) -> (u16, Value) {
+    admin(
+        s,
+        "PATCH",
+        &format!("{PROJECT_CONFIG}?updateMask={mask}"),
+        body,
+    )
+}
+
+fn read_mfa(s: &AuthState) -> Value {
+    admin(s, "GET", PROJECT_CONFIG, &Value::Null).1["mfa"].clone()
+}
+
+/// Strict: production answered 200 to a PATCH whose mask was `mfa.state`, to `adjacentIntervals`
+/// sent as the string `"5"` and to a `state` sent as the number 2, and read `mfa` back as
+/// `ENABLED` each time (AUTH-EDGES-OBS-20261117-01, mask-state, mask-interval-string,
+/// mask-state-numeric and their read-backs). The string and the number are proto3 JSON spellings
+/// of the same values. The emulator profile takes the `mfa.state` mask (firebase-tools applies it)
+/// and keeps refusing the other two spellings.
+#[test]
+fn strict_the_project_mfa_mask_accepts_the_spellings_production_accepted() {
+    // The recorded read-backs after each accepted PATCH bind the configuration used below: the
+    // enabled state, the provider's enabled flag and the TOTP interval count.
+    let mut recorded_read_back = None;
+    for id in [
+        "mask-state",
+        "mask-interval-string",
+        "mask-interval-number",
+        "mask-state-numeric",
+    ] {
+        assert_eq!(edges_recorded(id)["status"], 200, "{id}");
+        let observed = edges_recorded(&format!("{id}-observe"))["config"].clone();
+        assert_eq!(observed["mfaState"], "ENABLED", "{id}");
+        let read_back = (
+            observed["mfaState"].clone(),
+            observed["mfaProviderEnabled"].clone(),
+            observed["totpIntervals"].clone(),
+        );
+        assert_eq!(
+            *recorded_read_back.get_or_insert(read_back.clone()),
+            read_back,
+            "{id}: every accepted spelling leaves the same read-back"
+        );
+    }
+    let (recorded_state, recorded_provider, recorded_intervals) = recorded_read_back.unwrap();
+    let mut enabled = project_mfa_enabled();
+    enabled["state"] = recorded_state;
+    enabled["providerConfigs"][0]["state"] = json!(if recorded_provider == json!(true) {
+        "ENABLED"
+    } else {
+        "DISABLED"
+    });
+    enabled["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"] = recorded_intervals;
+    // The interval spelled as a decimal string, and the state as its enum number, from the
+    // recorded values.
+    let interval_text =
+        enabled["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"].to_string();
+    let with_interval = |interval: Value| {
+        let mut body = enabled.clone();
+        body["providerConfigs"][0]["totpProviderConfig"]["adjacentIntervals"] = interval;
+        json!({"mfa": body})
+    };
+    let state_name = enabled["state"].as_str().unwrap().to_owned();
+    let state_number = ["STATE_UNSPECIFIED", "DISABLED", "ENABLED", "MANDATORY"]
+        .iter()
+        .position(|name| *name == state_name)
+        .unwrap();
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": enabled}));
+        assert_eq!(status, 200, "{body}");
+        let attempts = [
+            ("mfa.state", json!({"mfa": {"state": state_name}})),
+            ("mfa", with_interval(json!(interval_text))),
+            ("mfa", {
+                let mut body = enabled.clone();
+                body["state"] = json!(state_number);
+                json!({"mfa": body})
+            }),
+        ];
+        for (mask, body) in attempts {
+            let (status, answer) = patch_mfa(&s, mask, &body);
+            if strict || mask == "mfa.state" {
+                assert_eq!(status, 200, "{mask} {body} {answer}");
+                assert_eq!(read_mfa(&s), enabled, "{mask}");
+            } else {
+                assert_eq!(status, 400, "{mask} {body} {answer}");
+                assert_eq!(read_mfa(&s), enabled, "a refused value changes nothing");
+            }
+        }
+    }
+}
+
+/// A PATCH that names `mfa.state` but carries no state (the `mfa` member is a scalar, a string, an
+/// array, null, or an object without a state) must never turn MFA off. Strict refuses it with the
+/// validator's wrong-type answer (400, nothing changes). The emulator profile follows firebase-tools
+/// 15.28.2 (`lib/emulator/auth/state.js` `applyMask`, lines 677-686: a non-object parent logs
+/// "singular and cannot have sub-fields" or "Unable to find field" and breaks; lines 693-696: the
+/// missing leaf is skipped), so it answers 200 and keeps the stored configuration. A scalar under
+/// the `mfa` mask is the wrong type in both profiles.
+#[test]
+fn a_project_mfa_update_without_a_state_never_disables_mfa() {
+    let enabled = project_mfa_enabled();
+    let bodies = [
+        json!({"mfa": true}),
+        json!({"mfa": 1}),
+        json!({"mfa": "x"}),
+        json!({"mfa": null}),
+        json!({"mfa": []}),
+        json!({"mfa": {}}),
+        json!({"mfa": {"state": null}}),
+        json!({"mfa": {"enabledProviders": []}}),
+        json!({}),
+    ];
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": enabled}));
+        assert_eq!(status, 200, "{body}");
+        for body in &bodies {
+            let (status, answer) = patch_mfa(&s, "mfa.state", body);
+            assert_eq!(
+                status,
+                if strict { 400 } else { 200 },
+                "strict {strict} {body}: {answer}"
+            );
+            assert_eq!(read_mfa(&s), enabled, "strict {strict} {body}");
+        }
+        for body in [
+            json!({"mfa": true}),
+            json!({"mfa": 1}),
+            json!({"mfa": "x"}),
+            json!({"mfa": []}),
+        ] {
+            let (status, answer) = patch_mfa(&s, "mfa", &body);
+            assert_eq!(status, 400, "strict {strict} {body}: {answer}");
+            assert_eq!(read_mfa(&s), enabled, "strict {strict} {body}");
+        }
+    }
+}
+
+/// Strict reads `mfa.state` by its enum number: 0 and 1 are disabled, 2 enabled and 3 mandatory;
+/// another number is refused and changes nothing.
+#[test]
+fn strict_the_project_mfa_state_number_names_the_enum_value() {
+    let s = strict_state();
+    for (number, name) in [
+        (2, "ENABLED"),
+        (3, "MANDATORY"),
+        (1, "DISABLED"),
+        (0, "DISABLED"),
+    ] {
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": {"state": number}}));
+        assert_eq!(status, 200, "{number} {body}");
+        assert_eq!(read_mfa(&s), json!({"state": name}), "{number}");
+    }
+    let (status, _) = patch_mfa(&s, "mfa", &json!({"mfa": {"state": 2}}));
+    assert_eq!(status, 200);
+    for number in [4, -1] {
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": {"state": number}}));
+        assert_eq!(status, 400, "{number} {body}");
+        assert_eq!(read_mfa(&s), json!({"state": "ENABLED"}), "{number}");
+    }
+}
+
+/// A `mfa.state` mask changes only the state (a masked leaf takes the body's leaf and
+/// keeps the other members), and a state the enum does not name is refused with production's words.
+#[test]
+fn a_project_mfa_state_mask_changes_only_the_state() {
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let (status, body) = patch_mfa(&s, "mfa", &json!({"mfa": project_mfa_enabled()}));
+        assert_eq!(status, 200, "{body}");
+        let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "DISABLED"}}));
+        assert_eq!(status, 200, "{body}");
+        let mut expected = project_mfa_enabled();
+        expected["state"] = json!("DISABLED");
+        assert_eq!(read_mfa(&s), expected);
+        let (status, body) = patch_mfa(&s, "mfa.state", &json!({"mfa": {"state": "NOT_A_STATE"}}));
+        assert_eq!(status, 400, "{body}");
+        assert!(
+            !strict || message(&body).is_some_and(|m| m.contains("config.mfa.state")),
+            "{body}"
+        );
+        assert_eq!(read_mfa(&s), expected, "a refused value changes nothing");
+    }
+}
+
+/// Strict: with an invalid `mfa.state` and an invalid `mobileLinksConfig.domain` in one PATCH,
+/// production's error names the `mfa` member and changes nothing (AUTH-EDGES-OBS-20261117-01,
+/// mask-precedence, then mask-precedence-observe unchanged). The emulator profile keeps reporting
+/// the other member first.
+#[test]
+fn strict_an_invalid_project_mfa_member_is_reported_before_another_invalid_member() {
+    let recorded = edges_recorded("mask-precedence");
+    assert_eq!(recorded["status"], 400);
+    assert!(recorded["errorMessage"]
+        .as_str()
+        .unwrap()
+        .contains("config.mfa.state"));
+    let body =
+        json!({"mfa": {"state": "NOT_A_STATE"}, "mobileLinksConfig": {"domain": "CUSTOM_DOMAIN"}});
+    for strict in [true, false] {
+        let s = if strict { strict_state() } else { state() };
+        let before = admin(&s, "GET", PROJECT_CONFIG, &Value::Null).1;
+        let (status, answer) = patch_mfa(&s, "mfa.state,mobileLinksConfig.domain", &body);
+        assert_eq!(status, 400, "{answer}");
+        let text = message(&answer).unwrap_or_default();
+        assert_eq!(
+            text.contains("config.mfa.state"),
+            strict,
+            "strict {strict}: {answer}"
+        );
+        assert_eq!(admin(&s, "GET", PROJECT_CONFIG, &Value::Null).1, before);
+        // The whole `mfa` member masked: the same order.
+        let (status, answer) = patch_mfa(&s, "mfa,mobileLinksConfig.domain", &body);
+        assert_eq!(status, 400, "{answer}");
+        assert_eq!(
+            message(&answer)
+                .unwrap_or_default()
+                .contains("config.mfa.state"),
+            strict,
+            "strict {strict}: {answer}"
+        );
+        // An `mfa` member the mask does not name is not looked at: the other member's fault is
+        // the one reported.
+        let (status, answer) = patch_mfa(&s, "mobileLinksConfig.domain", &body);
+        assert_eq!(status, 400, "{answer}");
+        assert!(
+            message(&answer)
+                .unwrap_or_default()
+                .contains("mobile_links_config"),
+            "strict {strict}: {answer}"
+        );
+        assert_eq!(admin(&s, "GET", PROJECT_CONFIG, &Value::Null).1, before);
+    }
+}
+
+/// A mask below a stored member's scalar (`notification.defaultLocale.a`) is ignored in both
+/// profiles: 200, and the member unchanged. Production did the same (AUTH-EDGES-OBS-20261117-01,
+/// mask-below-scalar, and the final whole-config digest equal to the baseline). The official
+/// emulator (firebase-tools 15.28.2, `lib/emulator/auth/state.js` `applyMask`, lines 681-684 and
+/// 693-696) warns "Field 'defaultLocale' is singular and cannot have sub-fields", finds no `a` in
+/// the update and keeps the stored value, answering 200. The registry path is covered too.
+#[test]
+fn a_mask_below_a_stored_scalar_is_ignored_in_both_profiles() {
+    assert_eq!(edges_recorded("mask-below-scalar")["status"], 200);
+    for (strict, registry) in [(true, false), (true, true), (false, false), (false, true)] {
+        let s = match (strict, registry) {
+            (true, false) => strict_state(),
+            (true, true) => with_registry(strict_state()),
+            (false, true) => with_registry(state()),
+            (false, false) => state(),
+        };
+        let (status, body) = patch_sign_in(
+            &s,
+            "notification.defaultLocale",
+            &json!({"notification": {"defaultLocale": "ja"}}),
+        );
+        assert_eq!(status, 200, "{body}");
+        let (status, answer) = patch_sign_in(
+            &s,
+            "notification.defaultLocale.a",
+            &json!({"notification": {"defaultLocale": "ja"}}),
+        );
+        assert_eq!(status, 200, "strict {strict}: {answer}");
+        let (_, read) = admin(&s, "GET", PROJECT_CONFIG, &Value::Null);
+        assert_eq!(
+            read["notification"]["defaultLocale"], "ja",
+            "strict {strict}"
+        );
+    }
 }
