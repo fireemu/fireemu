@@ -4662,7 +4662,8 @@ impl FirestoreState {
         // and update time (Firestore semantics) and never creates a spurious conflict.
         let mut staged: BTreeMap<DocumentPath, StagedDocument> = BTreeMap::new();
         // The create charge of every document this commit leaves written, summed against the
-        // budget (production prices the commit, not each document).
+        // budget once the whole commit is staged (production prices the commit, not each
+        // document; the final contents decide, so the order of writes that end alike does not).
         let mut commit_charges: BTreeMap<DocumentPath, u64> = BTreeMap::new();
         let mut results = Vec::with_capacity(writes.len());
         let next_version = CommitVersion(self.version.0 + 1);
@@ -4716,7 +4717,6 @@ impl FirestoreState {
                     self.limit_scope,
                 )?;
                 commit_charges.insert(doc.path.clone(), usage.charged_bytes);
-                crate::index_usage::check_commit_charge(commit_charges.values().sum())?;
             } else if next.is_none() {
                 commit_charges.remove(&path);
             }
@@ -4747,6 +4747,9 @@ impl FirestoreState {
                 stage.changed = true;
             }
             results.push(result);
+        }
+        if self.write_route.sums_commit_charges() {
+            crate::index_usage::check_commit_charge(commit_charges.values().sum())?;
         }
 
         // Build the exact externally visible result before publishing either side.

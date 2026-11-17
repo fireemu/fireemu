@@ -2244,6 +2244,90 @@ fn strict_import_applies_commit_route_limits_to_exported_documents() {
     assert_eq!(status, 200);
 }
 
+/// A Commit is charged the sum of its documents in strict (`writelimits` recording), but
+/// production has not been observed pricing managed operations, so an import chunk is not
+/// summed: an export of two documents that each fit the create budget (the recorded
+/// 2,000-byte relative name with 4,310 distinct integers is 0.60 of it) imports together, as
+/// it did before the Commit sum. Each document is still validated alone.
+#[test]
+fn strict_import_does_not_sum_a_chunk_of_documents_against_the_create_budget() {
+    let storage = Arc::new(MemoryStorage::default());
+    let (emulator, _emulator_clock) = state_with_limits(false);
+    let (strict, _strict_clock) = state_with_limits(true);
+    for (target, db) in [(&emulator, "srcdb"), (&strict, "dstdb")] {
+        target
+            .local
+            .admin()
+            .set_managed_storage(Arc::clone(&storage) as _);
+        call(
+            target,
+            "POST",
+            &format!("/v1/projects/p/databases?databaseId={db}"),
+            native(),
+        );
+    }
+    let name = |tag: &str| format!("{tag}{}/{}", "c".repeat(1_400 - tag.len()), "d".repeat(599));
+    let fields = json!({"fields": {"a": {"arrayValue": {"values":
+        (0..4_310).map(|n| json!({"integerValue": n.to_string()})).collect::<Vec<_>>()
+    }}}});
+    for tag in ["m0", "m1"] {
+        let (status, body) = call(
+            &emulator,
+            "PATCH",
+            &format!("/v1/projects/p/databases/srcdb/documents/{}", name(tag)),
+            fields.clone(),
+        );
+        assert_eq!(status, 200, "{tag}: {body}");
+    }
+    // One such document is accepted by strict; two in one client Commit are not.
+    let (status, body) = call(
+        &strict,
+        "PATCH",
+        &format!("/v1/projects/p/databases/dstdb/documents/{}", name("solo")),
+        fields.clone(),
+    );
+    assert_eq!(status, 200, "{body}");
+    let writes = ["m0", "m1"].map(|tag| {
+        json!({"update": {
+            "name": format!("projects/p/databases/dstdb/documents/{}", name(tag)),
+            "fields": fields["fields"].clone(),
+        }})
+    });
+    let (status, body) = call(
+        &strict,
+        "POST",
+        "/v1/projects/p/databases/dstdb/documents:commit",
+        json!({ "writes": writes }),
+    );
+    assert_eq!(
+        (status, body["error"]["message"].as_str()),
+        (400, Some("Transaction too big. Decrease transaction size."))
+    );
+    let (status, _) = call(
+        &emulator,
+        "POST",
+        "/v1/projects/p/databases/srcdb:exportDocuments",
+        json!({"outputUriPrefix": "gs://run-bucket/x/sum"}),
+    );
+    assert_eq!(status, 200);
+    let (status, answer) = call(
+        &strict,
+        "POST",
+        "/v1/projects/p/databases/dstdb:importDocuments",
+        json!({"inputUriPrefix": "gs://run-bucket/x/sum"}),
+    );
+    assert_eq!(status, 200, "{answer}");
+    for tag in ["m0", "m1"] {
+        let (status, _) = call(
+            &strict,
+            "GET",
+            &format!("/v1/projects/p/databases/dstdb/documents/{}", name(tag)),
+            Value::Null,
+        );
+        assert_eq!(status, 200, "{tag} was imported");
+    }
+}
+
 #[test]
 fn enterprise_native_index_listing_requires_default_page_size() {
     let (state, _) = state();

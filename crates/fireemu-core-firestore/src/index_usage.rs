@@ -21,9 +21,24 @@ pub enum WriteRoute {
     DeleteDocument,
     /// A `Write` stream message (gRPC or `WebChannel`), each applied as one atomic commit.
     WriteStream,
+    /// A managed Admin operation (import, bulk delete) committing its own chunks. Production's
+    /// pricing of these operations is unobserved: deletes are priced as `Commit` is (the
+    /// existing behaviour) and a chunk is not summed, so nothing that was accepted is refused.
+    Managed,
     /// Anything else; never charged for a delete.
     #[default]
     Internal,
+}
+
+impl WriteRoute {
+    /// Whether a commit on this route is charged the sum of its documents against the create
+    /// budget: every route but a managed operation, whose chunks production has not been
+    /// observed pricing. (`BatchWrite` and `DeleteDocument` commit one write at a time, so the
+    /// sum is the document's own charge there.)
+    #[must_use]
+    pub const fn sums_commit_charges(self) -> bool {
+        !matches!(self, Self::Managed)
+    }
 }
 
 /// The create transaction budget (owner decision D1, 2026-09-25). A create is charged its index
@@ -48,7 +63,7 @@ const fn delete_charge(route: WriteRoute) -> Option<(u64, u64)> {
         WriteRoute::DeleteDocument | WriteRoute::BatchWrite | WriteRoute::WriteStream => {
             Some((DELETE_REST_NUM, DELETE_DEN))
         }
-        WriteRoute::Commit => Some((DELETE_COMMIT_NUM, DELETE_DEN)),
+        WriteRoute::Commit | WriteRoute::Managed => Some((DELETE_COMMIT_NUM, DELETE_DEN)),
         WriteRoute::Internal => None,
     }
 }
@@ -520,6 +535,29 @@ mod tests {
         ] {
             assert_eq!(entry_limit(scope), limit, "{scope:?}");
         }
+    }
+
+    #[test]
+    fn only_a_managed_chunk_is_exempt_from_the_commit_sum() {
+        for route in [
+            WriteRoute::Commit,
+            WriteRoute::WriteStream,
+            WriteRoute::BatchWrite,
+            WriteRoute::DeleteDocument,
+            WriteRoute::Internal,
+        ] {
+            assert!(route.sums_commit_charges(), "{route:?}");
+        }
+        assert!(!WriteRoute::Managed.sums_commit_charges());
+        // A managed operation prices a delete the way `Commit` does.
+        assert_eq!(
+            super::delete_charge(WriteRoute::Managed),
+            super::delete_charge(WriteRoute::Commit)
+        );
+        assert_ne!(
+            super::delete_charge(WriteRoute::Managed),
+            super::delete_charge(WriteRoute::WriteStream)
+        );
     }
 
     #[test]

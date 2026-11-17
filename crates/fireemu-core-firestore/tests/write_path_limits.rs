@@ -856,3 +856,126 @@ mod commit_budget_properties {
         }
     }
 }
+
+/// The sum is decided by what a commit leaves written, not by the order of its writes: the
+/// recorded rows are sets only, so a delete or a repeated write must never refuse a commit
+/// whose final contents fit. A managed operation's chunk is not summed at all (production's
+/// pricing of managed operations is unobserved), and its deletes are priced as `Commit`'s are.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn the_commit_sum_follows_the_final_contents_and_skips_managed_chunks() {
+    use fireemu_core_firestore::index_usage::WriteRoute;
+
+    let name = |tag: &str| {
+        format!(
+            "{}{}/{}",
+            tag,
+            "c".repeat(1_400 - tag.len()),
+            "d".repeat(599)
+        )
+    };
+    let write = |tag: &str, count: i64| set(&name(tag), "a", integers(count));
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    // 0.60 + 0.60 of the budget does not fit; with one of them deleted again it does, however
+    // the writes are ordered.
+    let cases: [(&str, Vec<Write>, bool); 7] = [
+        (
+            "set A, set B",
+            vec![write("a", 4_310), write("b", 4_310)],
+            false,
+        ),
+        (
+            "set A, set B, delete A",
+            vec![write("a", 4_310), write("b", 4_310), delete("a")],
+            true,
+        ),
+        (
+            "set A, delete A, set B",
+            vec![write("a", 4_310), delete("a"), write("b", 4_310)],
+            true,
+        ),
+        (
+            "set A, set B, delete B",
+            vec![write("a", 4_310), write("b", 4_310), delete("b")],
+            true,
+        ),
+        (
+            "set A twice",
+            vec![write("a", 4_310), write("a", 4_310)],
+            true,
+        ),
+        (
+            "set A, delete A, set A, set B",
+            vec![
+                write("a", 4_310),
+                delete("a"),
+                write("a", 4_310),
+                write("b", 4_310),
+            ],
+            false,
+        ),
+        (
+            "set A big, set A small, set B",
+            vec![write("a", 7_000), write("a", 100), write("b", 4_310)],
+            true,
+        ),
+    ];
+    for (label, writes, accepted) in cases {
+        let mut strict = state(LimitScope::Production);
+        let outcome = strict.commit(&writes, None, t(0));
+        if accepted {
+            outcome.unwrap_or_else(|error| panic!("{label}: {error}"));
+        } else {
+            assert_eq!(outcome.unwrap_err().to_string(), too_big, "{label}");
+            assert!(
+                strict.get(&path(&name("a"))).is_none(),
+                "{label} wrote nothing"
+            );
+        }
+    }
+
+    // A managed chunk is not summed.
+    let mut managed = state(LimitScope::Production);
+    managed.set_write_route(WriteRoute::Managed);
+    managed
+        .commit(&[write("a", 4_310), write("b", 4_310)], None, t(0))
+        .expect("a managed chunk of two documents that each fit is accepted");
+    // Its documents are still validated one by one.
+    let mut alone = state(LimitScope::Production);
+    alone.set_write_route(WriteRoute::Managed);
+    assert_eq!(
+        alone
+            .commit(&[write("c", 7_185)], None, t(1))
+            .unwrap_err()
+            .to_string(),
+        too_big
+    );
+    // Its deletes are priced as a Commit's are: 12,112 values under a 1,000-byte name refuse.
+    let big = |tag: &str| format!("{}{}/d", tag, "c".repeat(997));
+    let mut deletes = state(LimitScope::Production);
+    deletes
+        .commit(&[set(&big("a"), "a", integers(12_112))], None, t(2))
+        .expect("seed");
+    deletes.set_write_route(WriteRoute::Managed);
+    let refused = deletes
+        .commit(
+            &[Write {
+                op: WriteOp::Delete {
+                    path: path(&big("a")),
+                },
+                precondition: None,
+                transforms: vec![],
+            }],
+            None,
+            t(3),
+        )
+        .unwrap_err();
+    assert_eq!(refused.to_string(), too_big);
+}
