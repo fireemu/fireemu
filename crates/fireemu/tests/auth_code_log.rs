@@ -352,3 +352,103 @@ fn action_code_logging_can_be_switched_off_and_is_quiet_under_quiet_verbosity() 
     assert!(!text.contains(&sms_code), "{text}");
     assert!(!text.contains("auth: To "), "{text}");
 }
+
+/// Signs an account up, verifies its email with the issued link's code and starts a TOTP
+/// enrollment; returns the account id and the code listed on the totpCodes route (or the
+/// route's status when it is not 200).
+fn start_totp_enrollment(daemon: &Daemon, project: &str) -> (String, Result<String, u16>) {
+    let port = daemon.auth_port();
+    let (status, user) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:signUp?key=fake-api-key"),
+        &json!({"email": "totp@example.com", "password": "hunter22", "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{user}");
+    let (status, sent) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:sendOobCode?key=fake-api-key"),
+        &json!({"requestType": "VERIFY_EMAIL", "idToken": user["idToken"]}),
+    );
+    assert_eq!(status, 200, "{sent}");
+    let (_, oob) = http(
+        port,
+        "GET",
+        &format!("/emulator/v1/projects/{project}/oobCodes"),
+        &Value::Null,
+    );
+    let (status, verified) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:update?key=fake-api-key"),
+        &json!({"oobCode": oob["oobCodes"][0]["oobCode"]}),
+    );
+    assert_eq!(status, 200, "{verified}");
+    let (status, signed_in) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:signInWithPassword?key=fake-api-key"),
+        &json!({"email": "totp@example.com", "password": "hunter22", "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{signed_in}");
+    let (status, started) = http(
+        port,
+        "POST",
+        "/identitytoolkit.googleapis.com/v2/accounts/mfaEnrollment:start?key=fake-api-key",
+        &json!({"idToken": signed_in["idToken"], "totpEnrollmentInfo": {}}),
+    );
+    assert_eq!(status, 200, "{started}");
+    let (status, codes) = http(
+        port,
+        "GET",
+        &format!("/emulator/v1/projects/{project}/totpCodes"),
+        &Value::Null,
+    );
+    let uid = user["localId"].as_str().unwrap().to_owned();
+    if status != 200 {
+        return (uid, Err(status));
+    }
+    let code = codes["totpCodes"][0]["code"].as_str().unwrap().to_owned();
+    (uid, Ok(code))
+}
+
+#[test]
+fn totp_enrollment_codes_are_printed_and_listed_by_default() {
+    let daemon = Daemon::start("totp", &json!({"totp": {}}), "info");
+    let (uid, code) = start_totp_enrollment(&daemon, "demo-totp");
+    let code = code.expect("the totpCodes route answers 200");
+    let line =
+        format!("  auth: To enroll TOTP MFA for user {uid} (project demo-totp), use the code ");
+    let text = daemon.stdout_through(&line);
+    let printed = text
+        .lines()
+        .find(|l| l.starts_with(line.trim_end_matches(' ')))
+        .unwrap();
+    assert!(printed.ends_with("s left)."), "{printed}");
+    let printed_code = printed
+        .split("use the code ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap();
+    assert_eq!(printed_code.len(), 6, "{printed}");
+    assert!(
+        printed_code.bytes().all(|b| b.is_ascii_digit()),
+        "{printed}"
+    );
+    assert_eq!(code.len(), 6);
+    assert!(!text.contains("otpauth://"), "{text}");
+}
+
+#[test]
+fn totp_reveal_can_be_switched_off() {
+    let daemon = Daemon::start(
+        "totp-off",
+        &json!({"totp": {"revealCodes": false, "digits": 6}}),
+        "info",
+    );
+    let (_, code) = start_totp_enrollment(&daemon, "demo-totp-off");
+    assert_eq!(code, Err(404));
+    let text = daemon.stdout_at_exit();
+    assert!(!text.contains("TOTP MFA"), "{text}");
+}
