@@ -141,8 +141,46 @@ test("freezing the saved attempts again gives the committed supplements", async 
 });
 
 test("a freeze needs exactly two attempts", async () => {
-  await assert.rejects(
-    freezeRecordedGroups({ recordings: [], harnessRevision: "0".repeat(40), sdkVersions: {} }),
-    /two recorded attempts/,
-  );
+  const one = { rest: {}, stream: {}, startedAt: "2026-11-17T05:16:18.521Z" };
+  for (const recordings of [[], [one], [one, one, one], "two"]) {
+    await assert.rejects(
+      freezeRecordedGroups({ recordings, harnessRevision: "0".repeat(40), sdkVersions: {} }),
+      /two recorded attempts/,
+    );
+  }
+});
+
+test("an attempt that did not answer a group refuses that group and keeps the others", async () => {
+  const { rest, stream } = recordedAsLocal();
+  const partial = structuredClone(rest);
+  delete partial["writes/limits/composite-entry/heavy/6500"];
+  const results = await freezeRecordedGroups({
+    recordings: [
+      { rest: partial, stream, startedAt: "2026-11-17T05:16:18.521Z" },
+      { rest: partial, stream, startedAt: "2026-11-17T05:18:17.725Z" },
+    ],
+    harnessRevision: "0".repeat(40),
+    sdkVersions: supplements.budget.evidence.sdkVersions,
+  });
+  const byGroup = Object.fromEntries(results.map((result) => [result.group, result]));
+  assert.match(byGroup.composite.refused, /incomplete sandbox recording/);
+  for (const group of ["budget", "base64", "collection-group", "write-stream"]) {
+    assert.ok(byGroup[group].fixture, group);
+  }
+  // A 401 on a step that uses the recording's own credential is not an observation.
+  const unauthorized = structuredClone(rest);
+  unauthorized["writes/limits/commit-budget/40x2"].steps.write = {
+    status: 401,
+    code: "UNAUTHENTICATED",
+    message: "expired",
+  };
+  const refused = await freezeRecordedGroups({
+    recordings: [
+      { rest: unauthorized, stream, startedAt: "2026-11-17T05:16:18.521Z" },
+      { rest: unauthorized, stream, startedAt: "2026-11-17T05:18:17.725Z" },
+    ],
+    harnessRevision: "0".repeat(40),
+    sdkVersions: supplements.budget.evidence.sdkVersions,
+  });
+  assert.match(refused.find(({ group }) => group === "budget").refused, /failed observation/);
 });
