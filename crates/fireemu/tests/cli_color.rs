@@ -173,3 +173,13 @@ fn machine_readable_output_is_identical_when_colour_is_forced() {
         assert_eq!(plain.status.code(), forced.status.code(), "{args:?}");
     }
 }
+
+#[test]
+fn the_logging_line_says_the_port_was_set_to_zero() {
+    let dir = scratch::Scratch::new("cli-color", "logging");
+    let stdout = text(&exec(&dir, &[]).stdout);
+    assert!(
+        stdout.contains("\n  logging:          disabled (emulators.logging / daemon.loggingPort / --logging-port set to 0)\n"),
+        "{stdout}"
+    );
+}
