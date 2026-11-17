@@ -845,6 +845,10 @@ pub struct AuthState {
     pub wall_clock: Option<AuthWallClock>,
     /// Whether the fireemu-only TOTP extension was explicitly enabled by `auth.totp`.
     pub totp_extension_enabled: bool,
+    /// Whether current TOTP codes are revealed for local development (`auth.totp.revealCodes`):
+    /// console lines on enrollment start and on the sign-in challenge, and
+    /// `/emulator/v1/projects/{p}/totpCodes`. Off under `productionExact`.
+    pub reveal_totp_codes: bool,
     /// Session admission barrier (reset waits for requests in flight), when shared.
     pub barrier: Option<Arc<fireemu_core_session::barrier::AdmissionBarrier>>,
     /// User lifecycle observer; `None` drops the events.
@@ -5129,6 +5133,7 @@ fn handle_with_policy_inner(
     // code lives an hour and is then refused as expired (sandbox recording 2026-09-24).
     store.set_production_oob_lifetimes(!state.stateless_refresh_tokens);
     store.set_production_mfa(!state.stateless_refresh_tokens);
+    store.set_reveal_totp_codes(state.reveal_totp_codes);
     // Strict refuses an ID token with a future `iat` or `auth_time` (inferred); the emulator
     // profile accepts it as firebase-tools 15.28.2 does (owner decision ledger 781).
     store.set_future_id_token_claims(if state.stateless_refresh_tokens {
@@ -5807,6 +5812,7 @@ fn dispatch(
         Handler::EmulatorClearAccounts => {
             emulator_route(store, "DELETE", "accounts", headers, body)
         }
+        Handler::EmulatorTotpCodes => emulator_totp_codes(store, at),
         Handler::EmulatorGetConfig => emulator_route(store, "GET", "config", headers, body),
         Handler::EmulatorPatchConfig => {
             let body = emulator_config_patch(body, !options.stateless_refresh_tokens);
@@ -16514,6 +16520,39 @@ fn emulator_route(
     }
 }
 
+/// `GET /emulator/v1/projects/{p}[/tenants/{t}]/totpCodes` (fireemu only): the current code of
+/// every enrolled TOTP factor and of every open enrollment session, under the project's TOTP
+/// policy and the virtual clock, so a developer needs no authenticator app. Never the secret.
+/// A 404 while the reveal is off (`auth.totp.revealCodes = false` or `productionExact`).
+fn emulator_totp_codes(store: &AuthStore, at: LogicalInstant) -> JsonResponse {
+    if !store.reveal_totp_codes() {
+        return not_found();
+    }
+    let codes: Vec<Value> = store
+        .totp_codes(at)
+        .into_iter()
+        .map(|entry| {
+            let mut code = json!({
+                "uid": entry.uid.as_str(),
+                "code": entry.code,
+                "secondsRemaining": entry.seconds_remaining,
+            });
+            match entry.mfa_enrollment_id {
+                Some(id) => code["mfaEnrollmentId"] = json!(id),
+                None => code["pendingEnrollment"] = json!(true),
+            }
+            if let Some(name) = entry.display_name {
+                code["displayName"] = json!(name);
+            }
+            code
+        })
+        .collect();
+    JsonResponse {
+        status: 200,
+        body: json!({"totpCodes": codes}),
+    }
+}
+
 /// The body `PATCH /emulator/v1/projects/{p}/config` applies. The official emulator's
 /// `updateEmulatorProjectConfig` (firebase-tools 15.28.2) applies only `signIn` and
 /// `emailPrivacyConfig` and ignores `client.permissions`, which it never enforces; the emulator
@@ -16676,6 +16715,7 @@ mod tests {
             ))),
             wall_clock: None,
             totp_extension_enabled: false,
+            reveal_totp_codes: true,
             barrier: None,
             events: None,
             notices: None,
@@ -17683,6 +17723,7 @@ mod body_tenant_selector_tests {
             ))),
             wall_clock: None,
             totp_extension_enabled: false,
+            reveal_totp_codes: true,
             barrier: None,
             events: None,
             notices: None,

@@ -57,6 +57,7 @@ fn state(strict: bool) -> AuthState {
         clock: Arc::new(Mutex::new(VirtualClock::new(t0()))),
         wall_clock: None,
         totp_extension_enabled: true,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,

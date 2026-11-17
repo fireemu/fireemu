@@ -3685,6 +3685,7 @@ fn remote_config_wire_auth() -> fireemu_adapter_http::identity_toolkit::AuthStat
         ))),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,

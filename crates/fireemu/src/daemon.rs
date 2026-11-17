@@ -558,6 +558,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         clock: clock.clone(),
         wall_clock: None,
         totp_extension_enabled: cfg.auth_totp.is_some(),
+        reveal_totp_codes: cfg.auth_totp_reveal_codes,
         barrier: Some(barrier.clone()),
         events: functions_runtime.as_ref().map(functions::auth_sink),
         notices: (cfg.auth_log_action_codes && !quiet)

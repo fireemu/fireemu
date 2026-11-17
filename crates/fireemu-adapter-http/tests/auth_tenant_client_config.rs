@@ -46,6 +46,7 @@ fn emulator_state() -> AuthState {
         ))),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,

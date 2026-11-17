@@ -1151,6 +1151,11 @@ pub struct RuntimeConfig {
     /// fireemu-only TOTP policy. Absence preserves the official Auth emulator's rejection
     /// of TOTP enrollment; declaring `auth.totp` explicitly enables the extension.
     pub auth_totp: Option<TotpPolicy>,
+    /// `auth.totp.revealCodes`: print the current TOTP code on enrollment start and on the
+    /// sign-in challenge, and serve `/emulator/v1/projects/{p}/totpCodes` (owner decision ledger
+    /// 2585). A development default: on unless `productionExact`. Writing only this key does
+    /// not enable the TOTP extension.
+    pub auth_totp_reveal_codes: bool,
     /// The project's initial multi-factor configuration (`auth.mfa`, the Identity Platform
     /// `Config.mfa` shape), when the file declares one. It is the project's configuration at
     /// start, and a control-plane reset returns to it. Absent, a project starts with multi-factor
@@ -2067,6 +2072,7 @@ impl Default for RuntimeConfig {
             auth_project: "demo-app".to_owned(),
             auth_project_numbers: BTreeMap::new(),
             auth_totp: None,
+            auth_totp_reveal_codes: true,
             auth_mfa: None,
             auth_authorized_domains: None,
             auth_multi_tenant_allow_tenants: None,
@@ -2770,6 +2776,7 @@ impl RuntimeConfig {
             "auth.providers.saml" => Some(json!(self.auth_provider_seeds.saml.as_ref().map(|providers| providers.iter().map(|v| json!({"name": v.id, "displayName": v.display_name, "enabled": v.enabled, "idpConfig": {"idpEntityId": v.idp_entity_id, "ssoUrl": v.sso_url, "idpCertificates": v.idp_certificates.iter().map(|c| json!({"x509Certificate": c})).collect::<Vec<_>>(), "signRequest": v.sign_request}, "spConfig": {"spEntityId": v.sp_entity_id, "callbackUri": v.callback_uri}})).collect::<Vec<_>>() ))),
             "auth.totp.periodSeconds" => Some(json!(self.auth_totp.map(|v| v.period_seconds))),
             "auth.totp.digits" => Some(json!(self.auth_totp.map(|v| v.digits))),
+            "auth.totp.revealCodes" => Some(json!(self.auth_totp_reveal_codes)),
             "auth.totp.windowSteps" => Some(json!(self.auth_totp.map(|v| v.window_steps))),
             "auth.totp.enrollmentSessionTtlSeconds" => Some(json!(self.auth_totp.map(|v| v.enrollment_session_ttl.as_nanos() / 1_000_000_000))),
             "eventarc.oauthCredentials" => Some(json!(self.eventarc_oauth_credentials.as_ref().map(|catalog| catalog.iter().map(|(digest, scopes)| (fireemu_core_types::hash::hex_lower(digest), json!({"scopes": scopes}))).collect::<Map<_, _>>()))),
@@ -5021,6 +5028,7 @@ impl RuntimeConfig {
         self.storage_cors_unlisted_none = exact;
         self.auth_allow_unsigned_custom_tokens = !exact;
         self.auth_allow_unsigned_id_tokens = !exact;
+        self.auth_totp_reveal_codes = !exact;
         self.auth_idp_assertions = if exact {
             IdpAssertionMode::Signed
         } else {
@@ -5215,6 +5223,13 @@ impl RuntimeConfig {
             (
                 "functions.taskRetryBackoff",
                 self.functions_task_retry_backoff.as_config_str(),
+            ),            (
+                "auth.totp.revealCodes",
+                if self.auth_totp_reveal_codes {
+                    "true"
+                } else {
+                    "false"
+                },
             ),
         ];
         self.development_defaults = values
@@ -6922,11 +6937,12 @@ impl RuntimeConfig {
                 }
             }
             if let Some(totp) = auth.get("totp") {
-                const TOTP_KEYS: [&str; 4] = [
+                const TOTP_KEYS: [&str; 5] = [
                     "periodSeconds",
                     "digits",
                     "windowSteps",
                     "enrollmentSessionTtlSeconds",
+                    "revealCodes",
                 ];
                 let totp = totp
                     .as_object()
@@ -6935,6 +6951,11 @@ impl RuntimeConfig {
                     if !TOTP_KEYS.contains(&key.as_str()) {
                         return Err(ConfigError(format!("unknown config key auth.totp.{key}")));
                     }
+                }
+                if let Some(reveal) = totp.get("revealCodes") {
+                    cfg.auth_totp_reveal_codes = reveal.as_bool().ok_or_else(|| {
+                        ConfigError("auth.totp.revealCodes must be a boolean".to_owned())
+                    })?;
                 }
                 let positive = |key: &str, default: u64| -> Result<u64, ConfigError> {
                     match totp.get(key) {
@@ -6984,13 +7005,17 @@ impl RuntimeConfig {
                 .map_err(|_| {
                     ConfigError("auth.totp.enrollmentSessionTtlSeconds is too large".to_owned())
                 })?;
-                cfg.auth_totp = Some(TotpPolicy {
-                    period_seconds,
-                    digits,
-                    window_steps,
-                    enrollment_session_ttl: LogicalDuration::from_seconds(ttl_seconds),
-                    ..defaults
-                });
+                // `auth.totp` enables the extension, even empty; `revealCodes` alone leaves the
+                // official emulator's TOTP refusal in place.
+                if !(totp.len() == 1 && totp.contains_key("revealCodes")) {
+                    cfg.auth_totp = Some(TotpPolicy {
+                        period_seconds,
+                        digits,
+                        window_steps,
+                        enrollment_session_ttl: LogicalDuration::from_seconds(ttl_seconds),
+                        ..defaults
+                    });
+                }
             }
             // The project's initial multi-factor configuration is validated by the one validator
             // the Admin API's config update uses, so a file accepts and refuses what production does.
@@ -7961,6 +7986,10 @@ mod tests {
                     json!(cfg.auth_allow_unsigned_id_tokens),
                 ),
                 (
+                    "auth.totp.revealCodes",
+                    json!(cfg.auth_totp_reveal_codes),
+                ),
+                (
                     "auth.requireClientApiKey",
                     json!(cfg.auth_require_client_api_key),
                 ),
@@ -8130,6 +8159,7 @@ mod tests {
                         json!(false)
                     }
                     ("auth.idpAssertions", true) => json!("signed"),
+                    ("auth.totp.revealCodes", true) => json!(false),
                     ("auth.tenantIdFormat", true) => json!("generated"),
                     // The open exchange is the strict profile's development default.
                     ("appCheck.debugTokens", _) if exact || profile == "emulator" => {
@@ -13097,6 +13127,42 @@ mod tests {
                 .auth_forward_inbound_credentials
         );
         assert!(parse(&json!({"forwardInboundCredentials": "yes"})).is_err());
+    }
+
+    #[test]
+    fn totp_reveal_is_a_development_default_and_does_not_enable_totp() {
+        let base = |extra: Value| {
+            let mut input = json!({
+                "schemaVersion": 1,
+                "profile": "strict",
+                "firestore": {"edition": "standard", "apiMode": "native"},
+            });
+            for (key, value) in extra.as_object().unwrap() {
+                input[key] = value.clone();
+            }
+            RuntimeConfig::from_json(&input)
+        };
+        assert!(parse(&json!({})).unwrap().auth_totp_reveal_codes);
+        let emulator = base(json!({"profile": "emulator"})).unwrap();
+        assert!(emulator.auth_totp_reveal_codes);
+        let exact = base(json!({"productionExact": true})).unwrap();
+        assert!(!exact.auth_totp_reveal_codes);
+        let exact_on =
+            base(json!({"productionExact": true, "auth": {"totp": {"revealCodes": true}}}))
+                .unwrap();
+        assert!(exact_on.auth_totp_reveal_codes);
+        let off = parse(&json!({"totp": {"revealCodes": false}})).unwrap();
+        assert!(!off.auth_totp_reveal_codes);
+        // The reveal key alone leaves TOTP enrollment refused as the official emulator does.
+        assert_eq!(off.auth_totp, None);
+        let both = parse(&json!({"totp": {"revealCodes": false, "digits": 8}})).unwrap();
+        assert_eq!(both.auth_totp.map(|p| p.digits), Some(8));
+        assert_eq!(
+            parse(&json!({"totp": {"revealCodes": "yes"}})),
+            Err(ConfigError(
+                "auth.totp.revealCodes must be a boolean".to_owned()
+            ))
+        );
     }
 
     #[test]

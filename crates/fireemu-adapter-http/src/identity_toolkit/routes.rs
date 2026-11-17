@@ -243,6 +243,7 @@ pub(crate) enum Handler {
     AdminUpdateProjectConfig,
     EmulatorOobCodes,
     EmulatorVerificationCodes,
+    EmulatorTotpCodes,
     EmulatorClearAccounts,
     EmulatorGetConfig,
     EmulatorPatchConfig,
@@ -301,6 +302,7 @@ impl Handler {
         Self::AdminUpdateProjectConfig,
         Self::EmulatorOobCodes,
         Self::EmulatorVerificationCodes,
+        Self::EmulatorTotpCodes,
         Self::EmulatorClearAccounts,
         Self::EmulatorGetConfig,
         Self::EmulatorPatchConfig,
@@ -1146,6 +1148,12 @@ pub(crate) const ROUTES: &[Route] = &[
         Handler::EmulatorVerificationCodes,
     ),
     emulator(
+        "GET",
+        "/totpCodes",
+        "emulator/totpCodes",
+        Handler::EmulatorTotpCodes,
+    ),
+    emulator(
         "DELETE",
         "/accounts",
         "emulator/accounts",
@@ -1162,6 +1170,12 @@ pub(crate) const ROUTES: &[Route] = &[
         "/verificationCodes",
         "emulator/verificationCodes",
         Handler::EmulatorVerificationCodes,
+    ),
+    emulator_tenant(
+        "GET",
+        "/totpCodes",
+        "emulator/totpCodes",
+        Handler::EmulatorTotpCodes,
     ),
     emulator_tenant(
         "DELETE",

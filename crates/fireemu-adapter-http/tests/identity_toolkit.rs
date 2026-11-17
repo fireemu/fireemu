@@ -616,6 +616,7 @@ fn state() -> AuthState {
         ))),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,
@@ -642,6 +643,7 @@ fn state() -> AuthState {
 fn state_with_totp_extension() -> AuthState {
     AuthState {
         totp_extension_enabled: true,
+        reveal_totp_codes: true,
         ..state()
     }
 }
@@ -22775,6 +22777,7 @@ fn emulator_a_pending_sign_in_is_reaped_after_its_sibling_succeeds_by_phone() {
 fn strict_auth_totp_alone_does_not_enable_totp_enrollment() {
     let s = AuthState {
         totp_extension_enabled: true,
+        reveal_totp_codes: true,
         ..strict_state()
     };
     let token = verified_session(&s, "extension-only@example.com");

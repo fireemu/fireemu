@@ -90,6 +90,7 @@ fn state(strict: bool, handles_send_email: bool) -> (AuthState, Arc<Mutex<Vec<Ma
         ))),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,

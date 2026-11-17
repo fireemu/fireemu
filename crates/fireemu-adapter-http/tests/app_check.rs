@@ -109,6 +109,7 @@ fn auth_state(app_check: Option<Arc<AppCheckState>>) -> Arc<AuthState> {
         clock: clock(),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,

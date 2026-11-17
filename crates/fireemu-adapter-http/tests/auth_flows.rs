@@ -169,6 +169,7 @@ fn state() -> AuthState {
         ))),
         wall_clock: None,
         totp_extension_enabled: false,
+        reveal_totp_codes: true,
         barrier: None,
         events: None,
         notices: None,
@@ -9643,4 +9644,128 @@ fn last_refresh_at_has_millisecond_precision() {
         assert_eq!(at, "2026-08-29T12:01:00.123Z", "{production}");
         assert_eq!(at.len(), 24);
     }
+}
+
+/// `GET /emulator/v1/projects/{p}/totpCodes` (owner decision ledger 2585) lists the current code
+/// of an open enrollment session and then of the enrolled factor; each code is the one the
+/// finalizers accept, and the body never carries the secret.
+#[test]
+fn totp_codes_route_reveals_codes_that_finalize_enrollment_and_sign_in() {
+    let mut s = state();
+    s.totp_extension_enabled = true;
+    let email = "totp-reveal@example.com";
+    let user = sign_up(&s, email);
+    verify_email(&s, user["localId"].as_str().unwrap());
+    let (status, enrollment) = post(
+        &s,
+        &format!("{V2}/accounts/mfaEnrollment:start"),
+        &json!({"idToken": user["idToken"], "totpEnrollmentInfo": {}}),
+    );
+    assert_eq!(status, 200, "{enrollment}");
+    let (status, listed) = get(&s, &format!("{EMU}/totpCodes"));
+    assert_eq!(status, 200, "{listed}");
+    let secret = enrollment["totpSessionInfo"]["sharedSecretKey"]
+        .as_str()
+        .unwrap();
+    assert!(!listed.to_string().contains(secret), "{listed}");
+    let pending = &listed["totpCodes"][0];
+    assert_eq!(pending["uid"], user["localId"]);
+    assert_eq!(pending["pendingEnrollment"], true);
+    assert!(pending.get("mfaEnrollmentId").is_none());
+    let seconds = pending["secondsRemaining"].as_u64().unwrap();
+    assert!((1..=30).contains(&seconds), "{pending}");
+    let code = pending["code"].as_str().unwrap().to_owned();
+    assert_eq!(code.len(), 6);
+    let (status, enrolled) = post(
+        &s,
+        &format!("{V2}/accounts/mfaEnrollment:finalize"),
+        &json!({"idToken": user["idToken"], "displayName": "laptop", "totpVerificationInfo": {
+            "sessionInfo": enrollment["totpSessionInfo"]["sessionInfo"], "verificationCode": code}}),
+    );
+    assert_eq!(status, 200, "{enrolled}");
+    let enrollment_id = claims(enrolled["idToken"].as_str().unwrap())["firebase"]
+        ["second_factor_identifier"]
+        .clone();
+    let (_, listed) = get(&s, &format!("{EMU}/totpCodes"));
+    let codes = listed["totpCodes"].as_array().unwrap();
+    assert_eq!(codes.len(), 1, "{listed}");
+    assert_eq!(codes[0]["mfaEnrollmentId"], enrollment_id);
+    assert_eq!(codes[0]["displayName"], "laptop");
+
+    // A sign-in on the next step finishes with the revealed code.
+    s.clock
+        .lock()
+        .unwrap()
+        .advance(LogicalDuration::from_seconds(30))
+        .unwrap();
+    let pending = pending_login(&s, email);
+    let (_, listed) = get(&s, &format!("{EMU}/totpCodes"));
+    let (status, signed_in) = post(
+        &s,
+        &format!("{V2}/accounts/mfaSignIn:finalize"),
+        &json!({"mfaPendingCredential": pending["mfaPendingCredential"], "mfaEnrollmentId": enrollment_id,
+            "totpVerificationInfo": {"verificationCode": listed["totpCodes"][0]["code"]}}),
+    );
+    assert_eq!(status, 200, "{signed_in}");
+}
+
+/// With the reveal off the route is a 404, like any unknown emulator route, and TOTP keeps
+/// working with codes from an authenticator.
+#[test]
+fn totp_codes_route_is_absent_when_the_reveal_is_off() {
+    let mut s = state();
+    s.totp_extension_enabled = true;
+    s.reveal_totp_codes = false;
+    let (status, body) = get(&s, &format!("{EMU}/totpCodes"));
+    assert_eq!(status, 404, "{body}");
+    let user = sign_up(&s, "totp-hidden@example.com");
+    verify_email(&s, user["localId"].as_str().unwrap());
+    let (status, enrollment) = post(
+        &s,
+        &format!("{V2}/accounts/mfaEnrollment:start"),
+        &json!({"idToken": user["idToken"], "totpEnrollmentInfo": {}}),
+    );
+    assert_eq!(status, 200, "{enrollment}");
+    let (status, _) = get(&s, &format!("{EMU}/totpCodes"));
+    assert_eq!(status, 404);
+    let secret = base32::decode(
+        enrollment["totpSessionInfo"]["sharedSecretKey"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let code = totp_at(
+        &secret,
+        &TotpPolicy::default().params(),
+        LogicalInstant::from_unix_seconds(1_788_004_860),
+    );
+    let (status, enrolled) = post(
+        &s,
+        &format!("{V2}/accounts/mfaEnrollment:finalize"),
+        &json!({"idToken": user["idToken"], "totpVerificationInfo": {
+            "sessionInfo": enrollment["totpSessionInfo"]["sessionInfo"], "verificationCode": code}}),
+    );
+    assert_eq!(status, 200, "{enrolled}");
+}
+
+/// The tenant form answers like its sibling verificationCodes route, and only POST-free GET is
+/// served.
+#[test]
+fn totp_codes_route_follows_its_siblings_for_tenants_and_methods() {
+    let s = state();
+    let (status, body) = get(&s, &format!("{EMU}/totpCodes"));
+    assert_eq!((status, body), (200, json!({"totpCodes": []})));
+    let tenant = format!("{EMU}/tenants/tenant-a");
+    let (sibling, _) = get(&s, &format!("{tenant}/verificationCodes"));
+    let (status, _) = get(&s, &format!("{tenant}/totpCodes"));
+    assert_eq!(status, sibling);
+    let sibling = handle(
+        &s,
+        "DELETE",
+        &format!("{EMU}/verificationCodes"),
+        &json!({}),
+    )
+    .status;
+    let status = handle(&s, "DELETE", &format!("{EMU}/totpCodes"), &json!({})).status;
+    assert_eq!(status, sibling);
 }
