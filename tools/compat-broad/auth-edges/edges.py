@@ -2,13 +2,13 @@
 
 v3 observes what the closed v2 recording left open: MFA with the project MFA switch enabled, the
 duplicate-email reset path, the client email-link and reset routes, the project `mfa` mask and
-error-precedence probes, custom-token claim edges and malformed form escapes on the refresh route.
+error-precedence probes and malformed form escapes on the refresh route. Custom-token claim edges are
+not observed: they need an IAM signing grant that was not approved.
 Every request, dependency, wait and cleanup slot is frozen in `manifest` before the first write.
 """
 from __future__ import annotations
 
 import argparse
-import base64
 import copy
 import hashlib
 import json
@@ -42,19 +42,16 @@ ADMIN_CREATE = IDT + f'/v1/projects/{PROJECT}/accounts'
 MFA_V2 = IDT + '/v2/accounts/'
 CONFIG = IDT + f'/admin/v2/projects/{PROJECT}/config'
 TOKEN = '/securetoken.googleapis.com/v1/token'
-SIGNER = f'firebase-adminsdk-fbsvc@{PROJECT}.iam.gserviceaccount.com'
-SIGN_JWT = f'/iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{SIGNER}:signJwt'
-AUDIENCE = 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit'
 DOMAIN = PROJECT + '.firebaseapp.com'
 TEST_PHONES = ('+16505550101', '+16505550102', '+16505550103')
 TEST_PHONE_CODE = '123456'
-CONTRACT = 'auth-edges-v3'
+CONTRACT = 'auth-edges-v3.1'
 READBACK_SLOTS = 8
-ROLES = ('dupA', 'dupB', 'dupC', 'dupD', 'elDisabled', 'elKnown', 'mfaA', 'mfaW', 'mfaP', 'mfaB', 'sess', 'cred')
-FAMILIES = ('dup-reset', 'dup-n3', 'el-client', 'mfa-reuse', 'mfa-quota', 'mfa-window', 'mfa-phone', 'mfa-both', 'mask', 'cred-iat', 'cred-claims', 'cred-lifetime', 'cred-size', 'securetoken-escape')
-REFUSALS = ('USER_DISABLED', 'INVALID_OOB_CODE', 'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'TOKEN_EXPIRED', 'INVALID_ID_TOKEN', 'INVALID_REFRESH_TOKEN', 'UNAUTHORIZED_DOMAIN', 'INVALID_CONTINUE_URI', 'MFA_ENROLLMENT_ALREADY_COMPLETE', 'INVALID_CODE', 'OPERATION_NOT_ALLOWED', 'QUOTA_EXCEEDED', 'INVALID_MFA_PENDING_CREDENTIAL', 'TOO_MANY_ATTEMPTS_TRY_LATER', 'INVALID_CUSTOM_TOKEN', 'CREDENTIAL_MISMATCH', 'EMAIL_EXISTS')
+ROLES = ('dupA', 'dupB', 'dupC', 'dupD', 'elDisabled', 'elKnown', 'mfaA', 'mfaW', 'mfaP', 'mfaB', 'sess')
+FAMILIES = ('dup-reset', 'dup-n3', 'el-client', 'mfa-reuse', 'mfa-quota', 'mfa-window', 'mfa-phone', 'mfa-both', 'mask', 'securetoken-escape')
+REFUSALS = ('USER_DISABLED', 'INVALID_OOB_CODE', 'INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'TOKEN_EXPIRED', 'INVALID_ID_TOKEN', 'INVALID_REFRESH_TOKEN', 'UNAUTHORIZED_DOMAIN', 'INVALID_CONTINUE_URI', 'MFA_ENROLLMENT_ALREADY_COMPLETE', 'INVALID_CODE', 'OPERATION_NOT_ALLOWED', 'QUOTA_EXCEEDED', 'INVALID_MFA_PENDING_CREDENTIAL', 'TOO_MANY_ATTEMPTS_TRY_LATER', 'EMAIL_EXISTS')
 CODE = re.compile(r'[A-Z][A-Z0-9_]{0,63}(?=[:\s]|$)')
-SECRET_SUFFIXES = ('.email', '.localId', '.premint', '.enrollment')
+SECRET_SUFFIXES = ('.email', '.localId', '.enrollment')
 PLAIN_VALUES = ('config.defaultLocale',)
 MFA_ENABLED = {'state': 'ENABLED', 'enabledProviders': ['PHONE_SMS'], 'providerConfigs': [{'state': 'ENABLED', 'totpProviderConfig': {'adjacentIntervals': 5}}]}
 # Order of recovery: the duplicate switch cannot return while duplicate accounts exist.
@@ -123,13 +120,12 @@ def manifest(nonce):
     emails = {'dupA': address('dup1'), 'dupB': address('dup2'), 'dupC': address('dup3'), 'dupD': address('dup3'), 'elDisabled': address('eldis'), 'elKnown': address('elknown'), 'mfaA': address('mfaa'), 'mfaW': address('mfaw'), 'mfaP': address('mfap'), 'mfaB': address('mfab'), 'sess': address('sess')}
     unknown_address = address('elunknown')
     accounts = {role: {'email': emails.get(role)} for role in ROLES}
-    accounts['cred']['uid'] = 'edges3' + nonce + 'cred'
     aliases = {'dupB': [emails['dupA']]}
     addresses = sorted({*emails.values(), unknown_address})
     rows = []
 
-    def add(identifier, role, path, body, *, kind='setup', owner=False, family='', required=(), binds=None, method='POST', open=False, readback=True, wait=None, mark=False, pre=(), since=None, premint=False, refusals=(), optional=False):
-        row = dict(id=identifier, account=role, path=path, method=method, body=body, owner=owner, kind=kind, family=family, required=list(required), refusals=[*REFUSALS, *refusals], binds=binds or {}, open=open, wait=wait, mark=mark, pre=list(pre), since=since, premint=premint, optional=optional, paired=bool(readback and role is not None and kind == 'diagnostic'))
+    def add(identifier, role, path, body, *, kind='setup', owner=False, family='', required=(), binds=None, method='POST', open=False, readback=True, wait=None, mark=False, pre=(), since=None, refusals=(), optional=False):
+        row = dict(id=identifier, account=role, path=path, method=method, body=body, owner=owner, kind=kind, family=family, required=list(required), refusals=[*REFUSALS, *refusals], binds=binds or {}, open=open, wait=wait, mark=mark, pre=list(pre), since=since, optional=optional, paired=bool(readback and role is not None and kind == 'diagnostic'))
         rows.append(row)
         return row
 
@@ -168,7 +164,6 @@ def manifest(nonce):
 
     # ---- preflight and baseline ------------------------------------------------------
     add('preflight-absence', None, ADMIN + 'lookup', {'email': addresses}, kind='preflight', owner=True, required=('users',))
-    add('preflight-cred-absence', None, ADMIN + 'lookup', {'localId': ['$binding:cred.premint']}, kind='preflight', owner=True, required=('users',))
     add('config-baseline', None, CONFIG, None, kind='config', owner=True, method='GET').update(toggle=None, phase='baseline')
 
     # ---- duplicate-email reset path (item: resetPassword in duplicate-email mode, N3) -----
@@ -277,20 +272,6 @@ def manifest(nonce):
     probe('mask-precedence', 'mfa.state,mobileLinksConfig.domain', {'mfa': {'state': 'NOT_A_STATE'}, 'mobileLinksConfig': {'domain': 'CUSTOM_DOMAIN'}})
     probe('mask-below-scalar', 'notification.defaultLocale.a', {'notification': {'defaultLocale': '$binding:config.defaultLocale'}})
 
-    # ---- custom-token claim edges (AUTH-CREDENTIAL items 9, 10, 14), signing is optional -----
-    tokens = [('control', 'cred-claims', {}), *[(f'iat{k}', 'cred-iat', {'iatOffset': k}) for k in (299, 300, 301, 302)]]
-    tokens += [(name, 'cred-claims', {'claims': {name: value}}) for name, value in (('email', 'edges@example.invalid'), ('email_verified', True), ('identities', {'edges': ['x']}), ('phone_number', TEST_PHONES[0]), ('sign_in_provider', 'custom'))]
-    tokens += [('life3601', 'cred-lifetime', {'lifetime': 3601}), ('lifeneg', 'cred-lifetime', {'iatOffset': 30, 'lifetime': -10})]
-    tokens += [(f'size{n}', 'cred-size', {'padBytes': n}) for n in (1500, 4000, 8000)]
-    for label, family, spec in tokens:
-        add('sign-' + label, 'cred', SIGN_JWT, {'payload': '$binding:claims.' + label}, kind='sign', owner=True, family=family, required=('signedJwt',), binds={'token.' + label: 'signedJwt'}, mark=True, pre=[{'op': 'claims', 'label': label, 'spec': spec, 'out': 'claims.' + label}])
-        body = {'token': '$binding:token.' + label, 'returnSecureToken': True}
-        if label == 'control':
-            add('cred-control', 'cred', CLIENT + 'signInWithCustomToken', body, kind='diagnostic', family=family, required=('idToken',), binds={'cred.idToken': 'idToken'}, open='code', premint=True, since='sign-control')
-            read('cred-control', 'cred', family)
-        else:
-            add('cred-' + label, 'cred', CLIENT + 'signInWithCustomToken', body, kind='diagnostic', family=family, open='code', since='sign-' + label)
-
     # ---- malformed escapes in form fields the refresh route does not read -----------------
     create('sess')
     for label, suffix in (('control', ''), ('unread-zz', '&extra=%zz'), ('unread-trailing', '&extra=%'), ('unread-short', '&extra=%2'), ('unread-utf8', '&extra=%C3%28'), ('key-zz', '&%zz=1')):
@@ -301,7 +282,6 @@ def manifest(nonce):
     recovery = []
     for identifier in ('recover-discover', 'recover-absence'):
         recovery.append(dict(id=identifier, path=ADMIN + 'lookup', method='POST', body=lookup_body, owner=True, kind='recovery', routeClass='admin'))
-    recovery.insert(1, dict(id='recover-discover-uid', path=ADMIN + 'lookup', method='POST', body={'localId': ['$binding:cred.premint']}, owner=True, kind='recovery', routeClass='admin'))
     for role in ROLES:
         recovery.insert(-1, dict(id='recover-delete-' + role, path=ADMIN + 'delete', method='POST', body={'localId': '$binding:' + role + '.localId'}, owner=True, kind='delete', routeClass='admin'))
     for role in ROLES:
@@ -390,7 +370,6 @@ class StageRun(_Run):
         self.toggles = {}
         self.marks = {}
         self.totp = {}
-        self.confirmed = set()
         self.record = lambda event: Adapter.record(self, event)
 
     def wait_until(self, anchor, seconds):
@@ -443,7 +422,6 @@ def recover(run, plan):
         run.record({'kind': 'recovery-required', 'reason': 'unconfirmed-create', 'accounts': sorted(unknown)})
     remaining, proven = len(plan['ownedAccounts']), False
     deleted = set()
-    discovery = {}
     discovered_uids = None
     restored = {}
     try:
@@ -486,7 +464,7 @@ def recover(run, plan):
                         if not isinstance(user, dict):
                             raise ValueError('address identity invalid')
                         email, found_uid = user.get('email'), user.get('localId')
-                        names = owned_roles(plan, email) if email is not None else [r for r, a in plan['ownedAccounts'].items() if a.get('uid') == found_uid]
+                        names = owned_roles(plan, email)
                         if not names or not isinstance(found_uid, str) or not found_uid or found_uid in seen or any(ord(c) < 32 or ord(c) == 127 for c in found_uid):
                             raise ValueError('address identity invalid')
                         seen.add(found_uid)
@@ -496,10 +474,8 @@ def recover(run, plan):
                                 raise ValueError('address UID conflicts with creation')
                             # Discovery is read-only evidence; it never grants deletion authority.
                             run.record({'kind': 'recovery-required', 'reason': 'unconfirmed-address', 'accounts': names})
-                    if row['id'] in ('recover-discover', 'recover-discover-uid'):
-                        discovery[row['id']] = seen
-                        if len(discovery) == 2:
-                            discovered_uids = discovery['recover-discover'] | discovery['recover-discover-uid']
+                    if row['id'] == 'recover-discover':
+                        discovered_uids = seen
                     record['presentAddresses'] = len(body['users'])
                     if row['id'] == 'recover-absence':
                         remaining, proven = len(body['users']), True
@@ -595,20 +571,35 @@ def project_config(body):
     return {**{k: v for k, v in state.items() if v is None or isinstance(v, (bool, int, str))}, 'notificationDigest': hashlib.sha256(json.dumps(notification, sort_keys=True).encode()).hexdigest()[:16], 'defaultLocalePresent': isinstance(locale, str)}
 
 
+def baseline_findings(body):
+    """One boolean per launch-time assumption; the launch and the stage refuse on any False."""
+    state = config_state(body if isinstance(body, dict) else {})
+    body = body if isinstance(body, dict) else {}
+    signin = body.get('signIn') if isinstance(body.get('signIn'), dict) else {}
+    phone = signin.get('phoneNumber') if isinstance(signin.get('phoneNumber'), dict) else {}
+    numbers = phone.get('testPhoneNumbers') if isinstance(phone.get('testPhoneNumbers'), dict) else {}
+    notification = body.get('notification') if isinstance(body.get('notification'), dict) else {}
+    locale = notification.get('defaultLocale')
+    sender = notification.get('sendEmail') if isinstance(notification.get('sendEmail'), dict) else {}
+    domains = body.get('authorizedDomains') if isinstance(body.get('authorizedDomains'), list) else []
+    return {
+        'A1-mfa-disabled': state['mfaState'] not in ('ENABLED', 'MANDATORY') and not state['mfaProviderEnabled'],
+        'A2-email-link-baseline': state['passwordRequired'] is True and state['emailEnabled'] is True and DOMAIN in domains,
+        'A3-duplicates-off': state['allowDuplicateEmails'] in (None, False),
+        'A4-test-phones': phone.get('enabled') is True and all(numbers.get(n) == TEST_PHONE_CODE for n in TEST_PHONES),
+        'A5-default-locale': isinstance(locale, str) and bool(locale) and not any(ord(c) < 32 or ord(c) == 127 for c in locale),
+        'A11-default-mail-sender': sender.get('method') in (None, 'DEFAULT'),
+    }
+
+
 def check_baseline(body):
-    state = config_state(body)
-    if state['mfaState'] in ('ENABLED', 'MANDATORY') or state['mfaProviderEnabled']:
-        raise ValueError('recorded MFA baseline differs')
-    if state['passwordRequired'] is not True or state['emailEnabled'] is not True or DOMAIN not in body.get('authorizedDomains', []) or state['allowDuplicateEmails'] not in (None, False):
-        raise ValueError('recorded project baseline differs')
-    phone = (body.get('signIn') or {}).get('phoneNumber') or {}
-    numbers = phone.get('testPhoneNumbers') if isinstance(phone, dict) else None
-    if phone.get('enabled') is not True or not isinstance(numbers, dict) or any(numbers.get(n) != TEST_PHONE_CODE for n in TEST_PHONES):
-        raise ValueError('recorded test phone numbers differ')
+    bad = [name for name, ok in baseline_findings(body).items() if not ok]
+    if bad:
+        raise ValueError('recorded baseline differs: ' + ', '.join(bad))
 
 
 def execute_pre(run, row, plan):
-    """Compute run-time minted values (codes, claims) right before their request."""
+    """Compute run-time minted values (TOTP codes) right before their request."""
     for op in row['pre']:
         if op['op'] in ('totp', 'wrong-totp'):
             secret, parameters = run.secrets.get(op['role'] + '.secret'), run.totp.get(op['role'])
@@ -623,32 +614,6 @@ def execute_pre(run, row, plan):
                     offset += 1
                     code = totp_code(secret, now + offset * parameters.period_seconds, parameters)
             run.secrets[op['out']] = code
-        elif op['op'] == 'claims':
-            spec = op['spec']
-            iat = int(time.time()) + spec.get('iatOffset', 0)
-            claims = {'iss': SIGNER, 'sub': SIGNER, 'aud': AUDIENCE, 'iat': iat, 'exp': iat + spec.get('lifetime', 3600), 'uid': plan['ownedAccounts']['cred']['uid']}
-            if 'claims' in spec:
-                claims['claims'] = spec['claims']
-            if 'padBytes' in spec:
-                claims['claims'] = {'pad': 'x' * spec['padBytes']}
-            run.secrets[op['out']] = json.dumps(claims, sort_keys=True, separators=(',', ':'))
-            run.requested[op['label']] = claims
-
-
-def response_uid(body):
-    """The account a sign-in answer names: `localId`, else the `user_id` of its ID token."""
-    if isinstance(body.get('localId'), str) and body['localId']:
-        return body['localId']
-    claims = decode_claims(body.get('idToken')) if isinstance(body.get('idToken'), str) else None
-    uid = claims.get('user_id') if isinstance(claims, dict) else None
-    return uid if isinstance(uid, str) and uid else None
-
-
-def decode_claims(token):
-    try:
-        return json.loads(base64.urlsafe_b64decode(token.split('.')[1] + '=' * 3))
-    except (IndexError, ValueError, AttributeError):
-        return None
 
 
 def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, recovery_journal=None, production=False):
@@ -662,14 +627,13 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
     output = Path(output)
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     run = StageRun(plan, output, send, sleep, clock)
-    run.previous, run.requested = {}, {}
+    run.previous = {}
     for role, account in plan['ownedAccounts'].items():
         if account['email'] is not None:
             run.secrets[role + '.email'] = account['email']
         run.secrets[role + '.password'] = 'Aa9!' + secrets.token_urlsafe(24)
     for name in ('newPassword1', 'newPassword2'):
         run.secrets['dup.' + name] = 'Cc7!' + secrets.token_urlsafe(24)
-    run.secrets['cred.premint'] = plan['ownedAccounts']['cred']['uid']
     if recovery_journal is not None:
         for line in Path(recovery_journal).read_text().splitlines():
             event = json.loads(line)
@@ -689,8 +653,6 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                     raise ValueError('recovery journal lacks creation responsibility')
                 if any(a['localId'] == uid for a in run.owned.values()) or role in run.owned:
                     raise ValueError('recovery journal identity conflicts')
-                if plan['ownedAccounts'][role].get('uid') not in (None, uid):
-                    raise ValueError('recovery journal identity conflicts')
                 run.secrets[role + '.localId'] = uid
                 run.owned[role] = {'localId': uid, 'email': event['email']}
             elif event.get('kind') == 'config-attempt':
@@ -699,7 +661,7 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                 run.toggles[event['toggle']] = True
         # A subsequent recovery can use this journal without losing responsibility.
         for role in run.attempted:
-            run.record({'kind': 'account-attempt', 'role': role, 'email': plan['ownedAccounts'][role]['email'], 'uid': plan['ownedAccounts'][role].get('uid'), 'preflightAbsent': True})
+            run.record({'kind': 'account-attempt', 'role': role, 'email': plan['ownedAccounts'][role]['email'], 'preflightAbsent': True})
         for role, account in run.owned.items():
             run.record({'kind': 'account-created', 'role': role, 'email': account['email'], 'uid': account['localId']})
         for toggle in run.toggles:
@@ -714,9 +676,7 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
             skipped = None
             if kind == 'config' and row['phase'] == 'readback' and applied.get(row['toggle']):
                 skipped = 'config-already-confirmed'
-            elif row['id'] == 'mask-below-scalar' and 'config.defaultLocale' not in run.secrets:
-                skipped = 'dependency-unavailable'
-            elif kind == 'readback' and (row['account'] + '.localId' not in run.secrets or (plan['ownedAccounts'][row['account']].get('uid') and row['account'] not in run.confirmed)):
+            elif kind == 'readback' and row['account'] + '.localId' not in run.secrets:
                 skipped = 'dependency-unavailable'
             if skipped is not None:
                 run.guard.index += 1
@@ -732,21 +692,14 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                 if row['wait']:
                     late = run.wait_until(row['wait']['after'], row['wait']['seconds'])
             except BindingError:
-                if kind not in ('diagnostic', 'sign') and row['id'] != 'mask-below-scalar':
+                if kind != 'diagnostic':
                     raise
                 run.guard.index += 1
                 stages.append({k: row[k] for k in ('id', 'kind', 'family')} | {'classification': 'INDETERMINATE', 'status': None, 'skipped': 'dependency-unavailable'})
                 continue
-            if row['premint'] or kind == 'create':
+            if kind == 'create':
                 run.attempted.add(row['account'])
-                email = plan['ownedAccounts'][row['account']]['email']
-                preminted = plan['ownedAccounts'][row['account']].get('uid')
-                run.record({'kind': 'account-attempt', 'role': row['account'], 'email': email, 'uid': preminted, 'preflightAbsent': True})
-                if preminted is not None:
-                    # The UID is ours by construction, so responsibility precedes the request.
-                    run.secrets[row['account'] + '.localId'] = preminted
-                    run.owned[row['account']] = {'localId': preminted, 'email': email}
-                    run.record({'kind': 'account-created', 'role': row['account'], 'email': email, 'uid': preminted})
+                run.record({'kind': 'account-attempt', 'role': row['account'], 'email': plan['ownedAccounts'][row['account']]['email'], 'preflightAbsent': True})
             started = run.clock()
             try:
                 status, body = run.request(row['path'], row['body'], row['owner'])
@@ -782,10 +735,7 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                 run.record({'kind': 'response', 'observation': projection})
                 continue
             # Responsibility is journaled before anything about the answer can stop the stage.
-            if row['premint'] and status == 200:
-                run.confirmed.add(row['account'])
             if kind == 'create' and type(status) is int and status == 200 and isinstance(body, dict) and isinstance(body.get('localId'), str) and body['localId']:
-                run.confirmed.add(row['account'])
                 role, uid = row['account'], body['localId']
                 if any(a['localId'] == uid for r, a in run.owned.items() if r != role) or any(ord(c) < 32 or ord(c) == 127 for c in uid):
                     raise ValueError('creation identity conflicts')
@@ -812,10 +762,8 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
                         projection['config'] = project_config(body)
                 # Only declared fields are projected: arbitrary keys and prose are not logs.
                 projection['fields'] = publishable({k: body[k] for k in ('idToken', 'refreshToken', 'oobCode', 'mfaPendingCredential', 'id_token') if k in body})
-                if 'signedJwt' in body:
-                    projection['signedJwt'] = {'present': isinstance(body['signedJwt'], str) and bool(body['signedJwt'])}
-                uid = response_uid(body)
-                if uid is not None:
+                uid = body.get('localId')
+                if isinstance(uid, str) and uid:
                     projection['localIdRole'] = next((r for r, a in plan['ownedAccounts'].items() if run.secrets.get(r + '.localId') == uid), 'foreign')
                 if 'users' in body and isinstance(body['users'], list):
                     projection['userCount'] = len(body['users'])
@@ -829,12 +777,6 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
             run.record({'kind': 'response', 'observation': projection})
             if row['kind'] == 'preflight' and not absent_response(status, body):
                 raise ValueError('owned namespace not absent')
-            if kind == 'sign':
-                if status != 200 or verdict['classification'] != 'OBSERVED' or decode_claims(body.get('signedJwt')) != run.requested.get(row['id'].removeprefix('sign-')):
-                    projection['signingUnavailable'] = True
-                    continue
-            if row['premint'] and status == 200 and isinstance(body, dict) and response_uid(body) != plan['ownedAccounts'][row['account']]['uid']:
-                raise ValueError('custom-token account is not the preminted UID')
             if kind == 'create' and verdict['classification'] == 'OBSERVED' and status == 400 and row['account'] not in run.owned:
                 # A typed refusal proves the account was not created; nothing is left to delete.
                 run.attempted.discard(row['account'])
@@ -882,13 +824,10 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.monotonic, reco
 
 
 def local_send(origin):
-    """Use the bounded, no-proxy/no-redirect loopback transport; signing is a local stand-in."""
+    """Use the bounded, no-proxy/no-redirect loopback transport."""
     origin = _loopback_origin(origin)
 
     def send(row, body):
-        if row['kind'] == 'sign':
-            payload = base64.urlsafe_b64encode(body['payload'].encode()).rstrip(b'=').decode()
-            return 200, {'keyId': 'local', 'signedJwt': 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.' + payload + '.'}
         headers = {'content-type': 'application/json'}
         if row['owner']:
             headers['authorization'] = 'Bearer owner'
@@ -921,14 +860,34 @@ def _local_request(method, url, headers, payload):
         raise CollectorError('local transport failed: ' + type(error).__name__) from None
 
 
+def read_baseline(args):
+    """The launch-time check: a single GET of the project config, projected to booleans only."""
+    if args.production is False or args.origin is not None or args.output is not None or args.recover is not None or args.nonce is not None:
+        raise SystemExit('--read-baseline needs --production and nothing else')
+    from transport import production_send
+    status, body = production_send()({'path': CONFIG, 'method': 'GET', 'owner': True}, None)
+    if status != 200 or not isinstance(body, dict):
+        print('config-read: unknown')
+        return 2
+    findings = baseline_findings(body)
+    for name, ok in findings.items():
+        print(f'{name}: {"ok" if ok else "MISMATCH"}')
+    return 0 if all(findings.values()) else 2
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--nonce', required=True)
+    parser.add_argument('--nonce')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--origin')
     parser.add_argument('--production', action='store_true')
     parser.add_argument('--recover', type=Path, help='Replay only recovery from an ownership journal')
+    parser.add_argument('--read-baseline', action='store_true', help='One read-only config GET; print one line per launch assumption; exit 2 on any mismatch')
     args = parser.parse_args()
+    if args.read_baseline:
+        return read_baseline(args)
+    if args.nonce is None:
+        parser.error('--nonce is required')
     if args.origin is None and not args.production:
         print(json.dumps(manifest(args.nonce), indent=2))
         return 0

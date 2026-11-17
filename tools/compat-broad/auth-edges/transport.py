@@ -6,10 +6,9 @@ import re
 from urllib.parse import urlencode, urlsplit
 
 import batch_adapter
-from edges import ADMIN, ADMIN_CREATE, CLIENT, CONFIG, CONFIG_MASKS, CONFIG_MEMBERS, MFA_V2, PROJECT, SIGN_JWT, TOKEN
+from edges import ADMIN, ADMIN_CREATE, CLIENT, CONFIG, CONFIG_MASKS, CONFIG_MEMBERS, MFA_V2, PROJECT, TOKEN
 
-IAM_HOST = 'iamcredentials.googleapis.com'
-HOSTS = {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com', IAM_HOST}
+HOSTS = {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'}
 CLIENT_ROUTES = {CLIENT + route for route in ('signUp', 'signInWithPassword', 'signInWithCustomToken', 'sendOobCode', 'resetPassword')} | {MFA_V2 + route for route in ('mfaEnrollment:start', 'mfaEnrollment:finalize', 'mfaSignIn:finalize')}
 ADMIN_ROUTES = {ADMIN + route for route in ('lookup', 'update', 'sendOobCode', 'delete')} | {ADMIN_CREATE}
 CONFIG_WRITES = {CONFIG + '?updateMask=' + mask for mask in CONFIG_MASKS}
@@ -23,8 +22,6 @@ def shape_ok(path, method, owner, body):
         return owner and method == 'GET' and body is None
     if path in CONFIG_WRITES:
         return owner and method == 'PATCH' and isinstance(body, dict) and set(body) <= set(CONFIG_MEMBERS)
-    if path == SIGN_JWT:
-        return owner and method == 'POST' and isinstance(body, dict) and set(body) == {'payload'} and isinstance(body['payload'], str) and len(body['payload']) <= 12000
     if path == TOKEN:
         return not owner and method == 'POST' and isinstance(body, dict) and set(body) <= FORM_FIELDS and RAW_SUFFIX.fullmatch(body.get('rawSuffix', '')) is not None
     return method == 'POST' and isinstance(body, dict) and (path in ADMIN_ROUTES if owner else path in CLIENT_ROUTES)
@@ -36,10 +33,6 @@ def production_send():
     key = os.environ['AUTH_EDGES_BROWSER_API_KEY']
     if not token or not key or any(ord(c) < 33 or ord(c) == 127 for c in token + key):
         raise ValueError('runtime credentials required')
-    # The shared adapter's host list is a module constant that other packets pin by digest, so
-    # this stage widens its own process copy for the one reviewed IAM signing route instead of
-    # editing the file.
-    batch_adapter.HOSTS.add(IAM_HOST)
     rejected = False
 
     def send(row, body):
@@ -72,8 +65,7 @@ def production_send():
             raise ValueError('bounded Auth exchange failed') from None
         http = result.get('http', {}) if isinstance(result, dict) else {}
         status = http.get('status')
-        # A refused signing permission only makes the optional credential phase unavailable.
-        if status == 401 or (status == 403 and parsed.hostname != IAM_HOST):
+        if status in (401, 403):
             rejected = True
         answer = result.get('body') if http.get('complete') is True and http.get('bodyKind') == 'json' else None
         return status if type(status) is int else None, answer if isinstance(answer, dict) else None

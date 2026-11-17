@@ -38,11 +38,11 @@ class Clock:
 class World:
     """A small Identity Toolkit that answers the shapes the stage sends; no network, no secrets."""
 
-    def __init__(self, clock=None, *, fault=None, sign_status=200, pending_ttl=300, quota_after=5, below_scalar='ignore', reset_target='issue', mfa_start_status=200, admin_duplicates=True, custom_uid=None, after=None):
+    def __init__(self, clock=None, *, fault=None, pending_ttl=300, quota_after=5, below_scalar='ignore', reset_target='issue', mfa_start_status=200, admin_duplicates=True, after=None):
         self.clock = clock or Clock()
-        self.fault, self.sign_status, self.pending_ttl, self.quota_after = fault, sign_status, pending_ttl, quota_after
+        self.fault, self.pending_ttl, self.quota_after = fault, pending_ttl, quota_after
         self.below_scalar, self.reset_target, self.mfa_start_status, self.admin_duplicates = below_scalar, reset_target, mfa_start_status, admin_duplicates
-        self.custom_uid, self.after = custom_uid, after or {}
+        self.after = after or {}
         self.accounts, self.codes, self.pendings, self.sessions, self.wrong, self.tokens = {}, {}, {}, {}, {}, {}
         self.sent, self.bodies, self.seq = [], {}, 0
         self.config = {'signIn': {'email': {'enabled': True, 'passwordRequired': True}, 'phoneNumber': {'enabled': True, 'testPhoneNumbers': {n: edges.TEST_PHONE_CODE for n in edges.TEST_PHONES}}}, 'authorizedDomains': [edges.DOMAIN], 'mfa': {'state': 'DISABLED'}, 'notification': {'defaultLocale': 'en'}}
@@ -110,11 +110,6 @@ class World:
         path = row['path']
         if path.startswith(edges.CONFIG):
             return self.config_route(row, body)
-        if path == edges.SIGN_JWT:
-            if self.sign_status != 200:
-                return self.err('PERMISSION_DENIED', self.sign_status)
-            payload = base64.urlsafe_b64encode(body['payload'].encode()).rstrip(b'=').decode()
-            return 200, {'keyId': 'k', 'signedJwt': 'e30.' + payload + '.sig'}
         if path == edges.TOKEN:
             uid = body['refresh_token'].removeprefix('rt-')
             return (200, {'id_token': 'id-' + uid, 'refresh_token': body['refresh_token'], 'user_id': uid}) if uid in self.accounts else self.err('INVALID_REFRESH_TOKEN')
@@ -169,8 +164,6 @@ class World:
                 self.pendings[f'pend{self.seq}'] = (a['localId'], self.clock())
                 return 200, {'mfaPendingCredential': f'pend{self.seq}', 'mfaInfo': [{'mfaEnrollmentId': a['mfa'][0]['mfaEnrollmentId']}]}
             return 200, self.tokens_for(a)
-        if route == 'signInWithCustomToken':
-            return self.custom(body)
         return self.err('UNKNOWN_ROUTE')
 
     def oob(self, row, body):
@@ -191,18 +184,6 @@ class World:
             self.codes[code] = {'uid': holders[0]['localId'], 'email': email}
             return 200, {'email': email, 'oobCode': code, 'oobLink': 'https://x/' + code}
         return 200, {'email': email}
-
-    def custom(self, body):
-        claims = json.loads(base64.urlsafe_b64decode(body['token'].split('.')[1] + '=='))
-        if claims['iat'] - int(self.clock() * 0 + time.time()) > 300 or claims['exp'] - claims['iat'] > 3600 or claims['exp'] < claims['iat']:
-            return self.err('INVALID_CUSTOM_TOKEN : Invalid claims')
-        if len(json.dumps(claims.get('claims', {}))) > 1000:
-            return self.err('INVALID_CUSTOM_TOKEN : too large')
-        a = self.accounts.get(claims['uid']) or self.new(uid=claims['uid'])
-        self.tokens['id-' + a['localId']] = self.clock()
-        payload = base64.urlsafe_b64encode(json.dumps({'user_id': self.custom_uid or a['localId']}).encode()).rstrip(b'=').decode()
-        # production answers a custom-token sign-in with tokens only, no localId
-        return 200, {'idToken': 'e30.' + payload + '.sig', 'refreshToken': 'rt-' + a['localId'], 'isNewUser': True}
 
     def mfa_route(self, route, body):
         a = self.token_owner(body.get('idToken'))
@@ -315,7 +296,7 @@ def test_manifest_is_frozen_unique_and_bounded():
 
 def test_manifest_binds_every_placeholder_before_use():
     plan = edges.manifest(NONCE)
-    known = {f'{role}.password' for role in edges.ROLES} | {'dup.newPassword1', 'dup.newPassword2', 'cred.premint'}
+    known = {f'{role}.password' for role in edges.ROLES} | {'dup.newPassword1', 'dup.newPassword2'}
     known |= {f'{role}.email' for role in edges.ROLES}
 
     def refs(value):
@@ -337,7 +318,7 @@ def test_manifest_binds_every_placeholder_before_use():
         for name in refs(row['body']):
             assert name in known, (row['id'], name)
         known |= set(row['binds'])
-        if row['premint'] or row['kind'] == 'create':
+        if row['kind'] == 'create':
             known.add(row['account'] + '.localId')
     for row in plan['recovery']:
         for name in refs(row['body']):
@@ -384,12 +365,24 @@ def test_only_toggles_probes_and_owned_accounts_are_mutated():
             assert row['body']['localId'].startswith('$binding:')
 
 
-def test_addresses_are_example_invalid_and_cred_uid_is_ours():
+def test_addresses_are_example_invalid_and_duplicates_share_one_address():
     plan = edges.manifest(NONCE)
     assert all(a.endswith('@example.invalid') and NONCE in a for a in plan['addresses'])
-    assert plan['ownedAccounts']['cred']['uid'].startswith('edges3' + NONCE)
-    assert plan['ownedAccounts']['cred']['email'] is None
     assert plan['ownedAccounts']['dupC']['email'] == plan['ownedAccounts']['dupD']['email']
+
+
+def test_v31_has_no_credential_rows_no_signing_route_and_no_premade_uid():
+    plan = edges.manifest(NONCE)
+    assert plan['contract'] == 'auth-edges-v3.1'
+    assert 'cred' not in plan['ownedAccounts'] and 'cred' not in edges.ROLES
+    ids = [r['id'] for r in plan['stages']]
+    assert not [i for i in ids if i.startswith(('sign-', 'cred-'))]
+    assert not [r for r in plan['stages'] if r['kind'] == 'sign' or 'premint' in r]
+    assert not any('iamcredentials' in r['path'] for r in [*plan['stages'], *plan['recovery']])
+    assert not any(f.startswith('cred-') for f in edges.FAMILIES)
+    assert not hasattr(edges, 'SIGN_JWT') and not hasattr(edges, 'SIGNER')
+    assert plan['budget']['observationRequests'] == len(ids) == 154
+    assert plan['budget']['recoveryRequests'] == 51 and plan['budget']['totalRequests'] == 205
 
 
 # ---- a whole stage --------------------------------------------------------------------------
@@ -509,7 +502,7 @@ def test_partial_failure_preserves_cleanup_responsibility(tmp_path, fault):
         assert world.config['signIn'].get('allowDuplicateEmails') is True
 
 
-@pytest.mark.parametrize('stop', ['a-totp-reuse', 'dup-reset-1', 'mask-interval-string', 'sign-iat300', 'st-unread-zz'])
+@pytest.mark.parametrize('stop', ['a-totp-reuse', 'dup-reset-1', 'mask-interval-string', 'el-reset-known-ok', 'st-unread-zz'])
 def test_interrupted_stage_restores_every_attempted_toggle_after_deleting_accounts(tmp_path, stop):
     world = World(fault=stop)
     world, result = run(tmp_path, world)
@@ -525,56 +518,6 @@ def test_duplicate_switch_is_restored_only_after_duplicate_accounts_are_deleted(
     order = [r['id'] for r in result['recovery'] if 'status' in r]
     assert order.index('recover-delete-dupD') < order.index('recover-dup-restore')
     assert result['cleanupComplete']
-
-
-def test_signing_refusal_skips_only_the_credential_rows(tmp_path):
-    world, result = run(tmp_path, World(sign_status=403))
-    skipped = [r['id'] for r in result['stages'] if r.get('skipped') == 'dependency-unavailable']
-    assert 'cred-control' in skipped and 'cred-size8000' in skipped
-    assert 'cred-control-readback' in [r['id'] for r in result['stages'] if r.get('skipped')]
-    assert stage(result, 'st-control')['status'] == 200
-    assert result['cleanupComplete'] and not world.accounts
-    assert result['recordingComplete']
-    assert result['classification'] == 'INDETERMINATE'
-
-
-def test_custom_token_account_is_deleted_by_its_premade_uid_after_a_lost_acknowledgement(tmp_path):
-    world, result = run(tmp_path, World(fault='after-cred-control'))
-    assert not world.accounts
-    assert 'recover-delete-cred' in world.sent
-    assert result['cleanupComplete']
-
-
-def test_custom_token_claims_follow_their_frozen_spec(tmp_path):
-    world, result = run(tmp_path)
-    for k in (299, 300, 301, 302):
-        claims = json.loads(world.bodies[f'sign-iat{k}']['payload'])
-        assert claims['iat'] - int(time.time()) in (k, k - 1, k + 1)
-        assert claims['exp'] - claims['iat'] == 3600
-        assert claims['iss'] == claims['sub'] == edges.SIGNER
-    assert json.loads(world.bodies['sign-lifeneg']['payload'])['exp'] < json.loads(world.bodies['sign-lifeneg']['payload'])['iat']
-    assert json.loads(world.bodies['sign-life3601']['payload'])['exp'] - json.loads(world.bodies['sign-life3601']['payload'])['iat'] == 3601
-    assert len(world.bodies['sign-size8000']['payload']) >= 8000
-    for name in ('email', 'email_verified', 'identities', 'phone_number', 'sign_in_provider'):
-        assert list(json.loads(world.bodies['sign-' + name]['payload'])['claims']) == [name]
-    assert stage(result, 'cred-iat302')['errorCode'] == 'INVALID_CUSTOM_TOKEN'
-    assert stage(result, 'cred-iat299')['status'] == 200
-    assert stage(result, 'cred-iat299')['age']['atSend'] >= 0
-
-
-def test_unsigned_payload_swap_is_refused_before_use(tmp_path):
-    world = World()
-    def send(row, body):
-        status, answer = world.send_stage(row, body)
-        if row['id'] == 'sign-control':
-            claims = json.loads(base64.urlsafe_b64decode(answer['signedJwt'].split('.')[1] + '=='))
-            claims['uid'] = 'someone-else'
-            answer['signedJwt'] = 'e30.' + base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b'=').decode() + '.sig'
-        return status, answer
-    clock = Clock()
-    result = edges.collect(nonce=NONCE, output=tmp_path / 'run', send=send, sleep=clock.sleep, clock=clock)
-    assert stage(result, 'sign-control')['signingUnavailable'] is True
-    assert 'cred-control' not in world.sent
 
 
 def test_form_suffix_reaches_the_wire_unchanged(tmp_path):
@@ -655,7 +598,7 @@ def test_random_answers_are_observed_only_when_typed_and_required_fields_hold(se
             assert status == 400 and isinstance(body['error'], dict)
 
 
-@pytest.mark.parametrize('change', ['mfa-enabled', 'mfa-provider', 'dup-on', 'phone-missing', 'phone-code', 'domain', 'password-not-required'])
+@pytest.mark.parametrize('change', ['mfa-enabled', 'mfa-provider', 'dup-on', 'phone-missing', 'phone-code', 'domain', 'password-not-required', 'locale-missing', 'custom-smtp'])
 def test_baseline_drift_stops_before_any_mutation(tmp_path, change):
     world = World()
     c = world.config
@@ -671,6 +614,10 @@ def test_baseline_drift_stops_before_any_mutation(tmp_path, change):
         c['signIn']['phoneNumber']['testPhoneNumbers'][edges.TEST_PHONES[0]] = '000000'
     elif change == 'domain':
         c['authorizedDomains'] = []
+    elif change == 'locale-missing':
+        c['notification'].pop('defaultLocale')
+    elif change == 'custom-smtp':
+        c['notification']['sendEmail'] = {'method': 'CUSTOM_SMTP'}
     else:
         c['signIn']['email']['passwordRequired'] = False
     world, result = run(tmp_path, world)
@@ -772,12 +719,6 @@ def test_local_transport_rejects_non_loopback_origins_before_io(origin):
         edges.local_send(origin)
 
 
-def test_local_send_signs_with_a_visible_stand_in_and_encodes_the_form():
-    send = edges.local_send('http://127.0.0.1:1')
-    status, body = send({'kind': 'sign', 'owner': True, 'path': edges.SIGN_JWT}, {'payload': '{"a":1}'})
-    assert status == 200 and body['signedJwt'].startswith('eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.') and body['signedJwt'].endswith('.')
-
-
 # ---- production transport ------------------------------------------------------------------------
 
 @pytest.fixture
@@ -834,18 +775,18 @@ def wire_rows(seen):
     return [s for s in seen if s[0] != 'HOST']
 
 
-def test_transport_headers_form_suffix_and_iam_host(http_wire, capsys):
+def test_transport_headers_and_form_suffix(http_wire, capsys):
     from urllib.parse import parse_qs, urlsplit
     import transport
     send, seen, _ = http_wire
-    assert transport.IAM_HOST in transport.batch_adapter.HOSTS
+    assert not hasattr(transport, 'IAM_HOST')
     rows = {r['id']: r for r in edges.manifest(NONCE)['stages']}
-    cases = [('config-baseline', None), ('mfa-enable', rows['mfa-enable']['body']), ('create-dupA', {'email': 'fixture@example.invalid', 'password': 'fixture-pass', 'returnSecureToken': True}), ('st-unread-zz', {'grant_type': 'refresh_token', 'refresh_token': 'fixture-refresh+/=& value', 'rawSuffix': '&extra=%zz'}), ('sign-control', {'payload': '{"uid":"x"}'})]
+    cases = [('config-baseline', None), ('mfa-enable', rows['mfa-enable']['body']), ('create-dupA', {'email': 'fixture@example.invalid', 'password': 'fixture-pass', 'returnSecureToken': True}), ('st-unread-zz', {'grant_type': 'refresh_token', 'refresh_token': 'fixture-refresh+/=& value', 'rawSuffix': '&extra=%zz'})]
     for identifier, body in cases:
         assert send(rows[identifier], body) == (200, {})
     calls = wire_rows(seen)
-    assert [s[1] for s in seen if s[0] == 'HOST'][-1] == 'iamcredentials.googleapis.com'
-    for method, path, headers, raw in (calls[0], calls[1], calls[4]):
+    assert {s[1] for s in seen if s[0] == 'HOST'} == {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'}
+    for method, path, headers, raw in (calls[0], calls[1]):
         headers = {k.lower(): v for k, v in headers.items()}
         assert headers['authorization'] == 'Bearer fixture-owner-value'
         assert headers['x-goog-user-project'] == edges.PROJECT
@@ -877,18 +818,14 @@ def test_transport_latches_auth_failure_and_never_logs_secrets(http_wire, tmp_pa
         assert value not in saved + logs
 
 
-def test_signing_permission_refusal_does_not_latch_the_transport(http_wire):
+def test_any_403_or_401_latches_the_transport(http_wire):
     send, seen, response = http_wire
     rows = {r['id']: r for r in edges.manifest(NONCE)['stages']}
     response.update(status=403, body=b'{"error":{"message":"denied"}}')
-    assert send(rows['sign-control'], {'payload': '{}'})[0] == 403
-    response.update(status=200, body=b'{}')
-    assert send(rows['config-baseline'], None) == (200, {})
-    response.update(status=403)
     assert send(rows['config-baseline'], None)[0] == 403
     with pytest.raises(ValueError, match='latched'):
         send(rows['config-baseline'], None)
-    assert len(wire_rows(seen)) == 3
+    assert len(wire_rows(seen)) == 1
 
 
 def test_transport_non_json_unknown_and_refusals(http_wire):
@@ -901,9 +838,8 @@ def test_transport_non_json_unknown_and_refusals(http_wire):
     for path in bad:
         with pytest.raises(ValueError):
             send({**row, 'path': path}, row['body'])
-    for body in ({'payload': 'x', 'extra': 1}, {'payload': 1}, {'payload': 'x' * 12001}):
-        with pytest.raises(ValueError):
-            send({**row, 'path': edges.SIGN_JWT}, body)
+    with pytest.raises(ValueError):
+        send({**row, 'path': '/iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/x:signJwt'}, {'payload': 'x'})
     for suffix in ('&extra=<script>', 'extra=1', '&' + 'a' * 40):
         with pytest.raises(ValueError):
             send({**row, 'path': edges.TOKEN, 'owner': False}, {'grant_type': 'refresh_token', 'rawSuffix': suffix})
@@ -983,7 +919,7 @@ def test_pict_generated_matrix_runs_the_whole_stage(tmp_path):
         rows = list(csv.DictReader(stream, delimiter='\t'))
     assert rows
     for index, row in enumerate(rows):
-        world = World(fault=None if row['Fault'] == 'none' else row['Fault'], sign_status=200 if row['Signing'] == 'on' else 403, below_scalar=row['MaskAnswer'], reset_target=row['ResetTarget'], quota_after=int(row['Quota']))
+        world = World(fault=None if row['Fault'] == 'none' else row['Fault'], below_scalar=row['MaskAnswer'], reset_target=row['ResetTarget'], quota_after=int(row['Quota']))
         _, result = run(tmp_path / str(index), world)
         if row['Fault'] in ('before-create', 'after-create', 'delete', 'absence'):
             assert not result['cleanupComplete'], row
@@ -1026,20 +962,12 @@ def with_real_tokens(value):
     ('a-pending-1', 'auth-mfa/totp/sign-in', 'pending-1', ('OBSERVED', 'accepted')),
     ('a-wrong-1', 'auth-mfa/totp/sign-in', 'finalize-wrong-code', ('OBSERVED', 'refused')),
     ('a-correct-after', 'auth-mfa/totp/sign-in', 'pending-1-again', ('OBSERVED', 'accepted')),
-    ('cred-control', 'auth-mfa/first-factor/custom-token', 'custom-token-ct', ('OBSERVED', 'accepted')),
 ])
 def test_judge_replays_recorded_production_answers(row_id, program, step, expected):
     row = next(r for r in edges.manifest(NONCE)['stages'] if r['id'] == row_id)
     status, body = recorded_step(program, step)
     verdict = edges.judge(row, status, with_real_tokens(body))
     assert (verdict['classification'], verdict['outcome']) == expected
-
-
-def test_recorded_custom_token_answer_names_its_account_without_a_local_id():
-    status, body = recorded_step('auth-mfa/first-factor/custom-token', 'custom-token-ct')
-    answer = with_real_tokens(body)
-    assert 'localId' not in answer
-    assert edges.response_uid(answer) == 'aa-<run>-ct'
 
 
 def test_recorded_baseline_still_carries_the_provider_state_the_stage_checks():
@@ -1105,7 +1033,6 @@ def test_confirmed_toggles_read_back_once_each_way(tmp_path):
         assert f'{toggle}-readback-0' in world.sent and f'{toggle}-readback-1' not in world.sent
         assert f'recover-{toggle}-readback-0' in world.sent and f'recover-{toggle}-readback-1' not in world.sent
     assert not [r for r in result['stages'] if r.get('skipped') and r['skipped'] != 'config-already-confirmed']
-    assert stage(result, 'cred-control-readback')['status'] == 200
     assert stage(result, 'mfa-readback-1')['skipped'] == 'config-already-confirmed'
 
 
@@ -1137,13 +1064,6 @@ def test_a_late_wake_is_recorded_not_hidden(tmp_path):
     world, result = run(tmp_path, clock=Clock(overshoot=3.0))
     late = [r['lateSeconds'] for r in result['stages'] if 'lateSeconds' in r]
     assert late and max(late) > 0
-
-
-def test_custom_token_for_another_account_stops_the_stage(tmp_path):
-    world, result = run(tmp_path, World(custom_uid='someone-else'))
-    assert result['stopReason'] == 'ValueError' and not result['recordingComplete']
-    assert 'st-control' not in world.sent
-    assert result['cleanupComplete'] and not world.accounts
 
 
 def test_refused_create_journal_is_replayed_without_responsibility(tmp_path):
@@ -1270,14 +1190,38 @@ def test_probe_error_text_is_number_masked_and_bounded():
     assert len(edges.scrub('x' * 1000)) == 240
 
 
-def test_below_scalar_probe_needs_the_stored_locale(tmp_path):
-    world = World()
-    world.config.pop('notification')
-    world, result = run(tmp_path, world)
-    assert stage(result, 'mask-below-scalar')['skipped'] == 'dependency-unavailable'
-    assert 'mask-below-scalar' not in world.sent and 'mask-below-scalar-observe' in world.sent
-    assert world.bodies['mask-below-scalar-observe'] is None
-    assert result['recordingComplete'] and result['cleanupComplete']
+def test_baseline_findings_name_every_launch_assumption():
+    body = World().config
+    findings = edges.baseline_findings(body)
+    assert set(findings) == {'A1-mfa-disabled', 'A2-email-link-baseline', 'A3-duplicates-off', 'A4-test-phones', 'A5-default-locale', 'A11-default-mail-sender'}
+    assert all(findings.values())
+    drift = {
+        'A1-mfa-disabled': lambda c: c.update(mfa={'state': 'ENABLED'}),
+        'A2-email-link-baseline': lambda c: c['signIn']['email'].update(passwordRequired=False),
+        'A3-duplicates-off': lambda c: c['signIn'].update(allowDuplicateEmails=True),
+        'A4-test-phones': lambda c: c['signIn']['phoneNumber']['testPhoneNumbers'].pop(edges.TEST_PHONES[2]),
+        'A5-default-locale': lambda c: c['notification'].pop('defaultLocale'),
+        'A11-default-mail-sender': lambda c: c['notification'].update(sendEmail={'method': 'CUSTOM_SMTP'}),
+    }
+    for name, change in drift.items():
+        changed = World().config
+        change(changed)
+        result = edges.baseline_findings(changed)
+        assert [k for k, v in result.items() if not v] == [name], name
+        with pytest.raises(ValueError, match=name):
+            edges.check_baseline(changed)
+    disabled = World().config
+    disabled['signIn']['phoneNumber']['enabled'] = False
+    assert [k for k, v in edges.baseline_findings(disabled).items() if not v] == ['A4-test-phones']
+    for locale in ('', 5, None, 'e\nn'):
+        changed = World().config
+        changed['notification']['defaultLocale'] = locale
+        assert not edges.baseline_findings(changed)['A5-default-locale']
+    for method in (None, 'DEFAULT'):
+        changed = World().config
+        changed['notification']['sendEmail'] = {} if method is None else {'method': method}
+        assert edges.baseline_findings(changed)['A11-default-mail-sender']
+    assert edges.baseline_findings({'notification': None, 'signIn': None})['A5-default-locale'] is False
 
 
 def test_probe_bodies_and_address_moves_are_frozen():
@@ -1290,16 +1234,13 @@ def test_probe_bodies_and_address_moves_are_frozen():
     assert rows['mask-below-scalar']['body'] == {'notification': {'defaultLocale': '$binding:config.defaultLocale'}}
     assert rows['dup-move-b']['body']['email'] == plan['ownedAccounts']['dupA']['email']
     assert rows['b-admin-both']['body']['mfa']['enrollments'] == [{'phoneInfo': edges.TEST_PHONES[2], 'totpInfo': {}, 'displayName': 'edges-both'}]
-    assert [r['pre'][0]['spec'].get('claims') for r in plan['stages'] if r['id'] in ('sign-email', 'sign-phone_number')] == [{'email': 'edges@example.invalid'}, {'phone_number': edges.TEST_PHONES[0]}]
-    assert [r['pre'][0]['spec']['iatOffset'] for r in plan['stages'] if r['id'].startswith('sign-iat')] == [299, 300, 301, 302]
-    assert [r['pre'][0]['spec'].get('lifetime') for r in plan['stages'] if r['id'] in ('sign-life3601', 'sign-lifeneg')] == [3601, -10]
     assert [r['body']['rawSuffix'] for r in plan['stages'] if r['id'].startswith('st-')] == ['', '&extra=%zz', '&extra=%', '&extra=%2', '&extra=%C3%28', '&%zz=1']
     assert [r['path'] for r in plan['stages'] if r['id'].startswith('el-signin-')] == [edges.CLIENT + 'sendOobCode'] * 3
 
 
 def test_transport_host_set_and_config_write_shapes():
     import transport
-    assert transport.HOSTS == {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com', 'iamcredentials.googleapis.com'}
+    assert transport.HOSTS == {'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'}
     write = edges.CONFIG + '?updateMask=mfa'
     assert transport.shape_ok(write, 'PATCH', True, {'mfa': {}})
     assert not transport.shape_ok(write, 'PATCH', True, {'tenants': {}})
@@ -1376,3 +1317,46 @@ def test_wrong_code_op_never_lands_inside_the_accepted_window(offset):
     row = {'pre': [{'op': 'totp', 'role': 'r', 'offset': offset, 'out': 'r.right'}]}
     edges.execute_pre(run, row, edges.manifest(NONCE))
     assert run.secrets['r.right'] in {totp_code(SECRET, int(time.time()) + offset * 30 + d, PARAMETERS) for d in (-1, 0, 1)}
+
+
+@pytest.mark.parametrize('answer,drift,code', [((200, 'ok'), None, 0), ((200, 'ok'), 'A3-duplicates-off', 2), ((200, 'ok'), 'A4-test-phones', 2), ((200, 'ok'), 'A5-default-locale', 2), ((200, 'ok'), 'A11-default-mail-sender', 2), ((403, None), None, 2), ((200, None), None, 2)])
+def test_read_baseline_prints_booleans_and_refuses_a_mismatch(monkeypatch, capsys, answer, drift, code):
+    import transport
+    config = World().config
+    changes = {'A3-duplicates-off': lambda c: c['signIn'].update(allowDuplicateEmails=True), 'A4-test-phones': lambda c: c['signIn']['phoneNumber']['testPhoneNumbers'].pop(edges.TEST_PHONES[0]), 'A5-default-locale': lambda c: c['notification'].pop('defaultLocale'), 'A11-default-mail-sender': lambda c: c['notification'].update(sendEmail={'method': 'CUSTOM_SMTP'})}
+    if drift:
+        changes[drift](config)
+    calls = []
+    def sender(row, body):
+        calls.append((row, body))
+        return answer[0], (config if answer[1] else None)
+    monkeypatch.setattr(transport, 'production_send', lambda: sender)
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--read-baseline'])
+    assert edges.main() == code
+    assert calls == [({'path': edges.CONFIG, 'method': 'GET', 'owner': True}, None)]
+    out = capsys.readouterr().out
+    if answer[1]:
+        assert out.count(': ok') + out.count(': MISMATCH') == 6
+        assert (f'{drift}: MISMATCH' in out) == bool(drift)
+    import re
+    pattern = r'A\d+-[a-z0-9-]+: (ok|MISMATCH)' if answer[1] else r'config-read: unknown'
+    assert all(re.fullmatch(pattern, line) for line in out.splitlines()) and out.strip()
+
+
+def test_read_baseline_refuses_any_other_argument(monkeypatch):
+    for extra in (['--nonce', NONCE], ['--origin', 'http://127.0.0.1:1'], ['--output', 'x'], ['--recover', 'x']):
+        monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--read-baseline', *extra])
+        with pytest.raises(SystemExit):
+            edges.main()
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--read-baseline'])
+    with pytest.raises(SystemExit):
+        edges.main()
+
+
+def test_stage_entry_requires_a_nonce(monkeypatch):
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production', '--output', 'unused'])
+    with pytest.raises(SystemExit):
+        edges.main()
+    monkeypatch.setattr(sys, 'argv', ['edges.py', '--production'])
+    with pytest.raises(SystemExit):
+        edges.main()
