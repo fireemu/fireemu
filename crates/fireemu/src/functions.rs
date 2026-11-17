@@ -1,5 +1,6 @@
 //! Functions runtime wiring: runner process, event subscriptions, control hooks.
 
+use crate::term::errln;
 #[cfg(not(windows))]
 use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1286,7 +1287,7 @@ fn schedule_orphan_function_snapshot_sweep(root: PathBuf) -> tokio::task::JoinHa
     );
     tokio::task::spawn_blocking(move || {
         if let Err(reason) = sweep_orphan_function_snapshots(&root) {
-            eprintln!("warning: {reason}");
+            errln!("warning: {reason}");
         }
     })
 }
@@ -1966,7 +1967,7 @@ fn start_reload_supervisors(
     };
     let (supervised, unsupervised) = split_reload(cfg.functions_to_load());
     for codebase in unsupervised {
-        eprintln!(
+        errln!(
             "note: functions[{}]: source changes are not reloaded for Python codebases; restart fireemu to pick them up",
             codebase.codebase
         );
@@ -2005,14 +2006,14 @@ async fn join_codebase_starts<T: Send + 'static>(
 
 async fn discard_reload_snapshot(snapshot: FunctionsSourceSnapshot, codebase: &str) {
     if let Err(reason) = snapshot.remove().await {
-        eprintln!("warning: functions[{codebase}]: {reason}");
+        errln!("warning: functions[{codebase}]: {reason}");
     }
 }
 
 fn warn_reload_once(last: &mut bool, codebase: &str, operation: &str, reason: &str) -> bool {
     let first = !*last;
     if first {
-        eprintln!("warning: functions[{codebase}] reload {operation} failed: {reason}");
+        errln!("warning: functions[{codebase}] reload {operation} failed: {reason}");
     }
     *last = true;
     first
@@ -2118,7 +2119,7 @@ fn report_reload_install(
         Ok(generation) => {
             *observed_stamp = Some(stable_stamp);
             *last_start_error = false;
-            eprintln!("note: functions[{codebase}]: reloaded generation {generation}");
+            errln!("note: functions[{codebase}]: reloaded generation {generation}");
         }
         Err(reason) if fixed_inspector => {
             *observed_stamp = Some(stable_stamp);
@@ -2129,7 +2130,7 @@ fn report_reload_install(
                 &reason,
             );
         }
-        Err(reason) => eprintln!("warning: functions[{codebase}]: reload rejected: {reason}"),
+        Err(reason) => errln!("warning: functions[{codebase}]: reload rejected: {reason}"),
     }
 }
 
@@ -2276,7 +2277,7 @@ async fn supervise_codebase_reloads(
                         &reason,
                     );
                 } else {
-                    eprintln!(
+                    errln!(
                         "warning: functions[{}]: reload failed; keeping the last-known-good generation: {reason}",
                         codebase.codebase
                     );
@@ -2473,7 +2474,7 @@ pub fn load_user_environment(
             Some(value) => out.runtime_config = Some(value.to_string()),
             // `Found .runtimeconfig.json but the JSON format is invalid.`
             // (`emulatorLogger.js:199`), and the runtime is started without it.
-            None => eprintln!(
+            None => errln!(
                 "note: found {} but the JSON format is invalid; functions.config() will be empty",
                 runtime_config.display()
             ),
@@ -4775,7 +4776,7 @@ async fn check_started_runner(
                 cfg.functions_inspect_port,
             ));
         }
-        eprintln!(
+        errln!(
             "functions[{label}]: using debug port {}",
             reported.expect("the active inspector port was checked above")
         );
@@ -5013,7 +5014,7 @@ async fn start_codebase(
     }
     let selection = select_runner(cfg, codebase, &source, python, node_probe_cache).await?;
     for note in selection.node.iter().flat_map(|node| &node.notes) {
-        eprintln!("{note}");
+        errln!("{note}");
     }
     let python_environment = selection.python_environment;
     let mut command = selection.command;
@@ -5024,7 +5025,7 @@ async fn start_codebase(
     );
     if inspector.ignored {
         // firebase-tools says the same and goes on (`functionsEmulator.ts:1736-1738`).
-        eprintln!(
+        errln!(
             "warning: functions[{label}]: --inspect-functions is not supported for Python functions; ignored"
         );
     }
@@ -5046,7 +5047,7 @@ async fn start_codebase(
     )
     .map_err(|e| format!("the Functions codebase {label:?}: {e}"))?;
     if !user_env.files.is_empty() {
-        eprintln!(
+        errln!(
             "note: functions[{label}]: loaded environment variables from {}",
             user_env.files.join(", ")
         );
@@ -5203,7 +5204,7 @@ async fn start_codebase(
     );
     if admin_app_check_offered(hosts.admin_app_check.is_some(), python) {
         if let Some(note) = admin_app_check_note(label, runner.hello().admin_app_check.as_ref()) {
-            eprintln!("note: {note}");
+            errln!("note: {note}");
         }
     }
     check_started_runner(cfg, label, python, &runner, clock_snapshot).await?;
@@ -5235,13 +5236,13 @@ async fn start_codebase(
         // refusal or printed, one line each.
         let policy = UnservedTriggers::parse(&cfg.functions_unserved_triggers).unwrap_or_default();
         for line in ignored_warnings(&manifest, policy)? {
-            eprintln!("{line}");
+            errln!("{line}");
         }
         for line in missing_secret_warnings(&manifest, &user_env.secrets, label) {
-            eprintln!("warning: {line}");
+            errln!("warning: {line}");
         }
         for line in database_region_warnings(&manifest, label) {
-            eprintln!("warning: {line}");
+            errln!("warning: {line}");
         }
         if cfg.functions_manifest.is_some() {
             // A configured manifest replaces discovery outright. Security-sensitive trigger
@@ -5272,7 +5273,7 @@ async fn start_codebase(
                 clear_on_request_consumption(&mut manifest);
             } else {
                 for warning in reconcile_consumption_without_app_check(&mut manifest, &discovered) {
-                    eprintln!("warning: {warning}");
+                    errln!("warning: {warning}");
                 }
                 if cfg.profile == CompatibilityProfile::Strict {
                     for name in mark_strict_callable_ingress(&mut manifest, &discovered) {
@@ -5288,7 +5289,7 @@ async fn start_codebase(
                         } else {
                             ("a non-HTTP function", "a task")
                         };
-                        eprintln!(
+                        errln!(
                             "warning: the configured functions manifest serves {name:?} as \
                              {served_as}, but the codebase declares it callable; {sent} sent to \
                              it must carry no credential or a Bearer the Auth emulator verifies"
@@ -5303,7 +5304,7 @@ async fn start_codebase(
             callable_trusted_protocol,
         )?;
         if let Some(note) = consume_app_check_note(&manifest, callable_trusted_protocol) {
-            eprintln!("note: {note}");
+            errln!("note: {note}");
         }
         Ok(fireemu_adapter_functions::runtime::CodebaseSpec {
             function: None,

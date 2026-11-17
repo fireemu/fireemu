@@ -3661,7 +3661,10 @@ fn seed_new_projects(state: &AuthState) {
 /// thread would deadlock behind a waiting reset).
 fn seed_pending_projects(registry: &fireemu_core_auth::store::AuthRegistry) {
     if let Err(error) = registry.apply_pending_project_seeds() {
-        eprintln!("warning: auth.tenants: a routed project could not be seeded: {error}");
+        fireemu_adapter_support::eprintln_at!(
+            fireemu_adapter_support::term::Level::Warn,
+            "warning: auth.tenants: a routed project could not be seeded: {error}"
+        );
     }
 }
 

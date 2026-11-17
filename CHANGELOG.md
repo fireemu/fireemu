@@ -8,6 +8,12 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-11-17
+
+### Added
+
+- Terminal output: the startup banner and listener table, the `error:`, `warning:` and `note:` lines, the shutdown lines, the Functions log lines and the other messages printed while fireemu runs are coloured when standard output or standard error is a terminal (service names cyan, addresses and URLs bold, environment variable names, source tags and remarks dim, services that are not started dim, warnings yellow, errors red, ready green; a Functions log line is styled by its level, and a function's own escape sequences are passed through). `NO_COLOR`, `CLICOLOR=0` and `TERM=dumb` turn it off; `CLICOLOR_FORCE` or `FORCE_COLOR` turn it on for a pipe. Unless colour is forced, output to a pipe or a file is byte-for-byte unchanged; forcing colour also colours redirected output (a log file written with `FORCE_COLOR=1` holds the escape sequences). JSON, `--plan` and `config` output, the Hub locator, the ready file, and the records of the Logging emulator and the Emulator UI never carry colour codes.
+
 ### Fixed
 
 - Authentication: the project config PATCH accepts the `mfa.state` update mask in the emulator profile too, as firebase-tools does (it was 400 INVALID_ARGUMENT); a body that carries no state under that mask (`mfa` a scalar, a string, an array, null or an object without a state) leaves MFA as it is and never turns it off. The strict profile refuses that body with 400.
@@ -1443,7 +1449,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.59.0...HEAD
+[0.59.0]: https://github.com/fireemu/fireemu/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/fireemu/fireemu/compare/v0.57.1...v0.58.0
 [0.57.1]: https://github.com/fireemu/fireemu/compare/v0.57.0...v0.57.1
 [0.57.0]: https://github.com/fireemu/fireemu/compare/v0.56.0...v0.57.0

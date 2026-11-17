@@ -63,8 +63,10 @@ mod resources;
 mod session_rsa_cache;
 mod sessions;
 mod snapshots;
+mod term;
 mod ui;
 
+use crate::term::{errln, outln};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, RwLock};
@@ -300,6 +302,15 @@ fn runtime_thread_counts(
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // A plan and JSON are read by tools: nothing this process prints, diagnostics included, is
+    // coloured (the arguments after `--` belong to the command `exec` runs).
+    if args
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .any(|argument| matches!(argument.as_str(), "--plan" | "--json"))
+    {
+        term::disable();
+    }
     if let Some(code) = help_command(&args) {
         return code;
     }
@@ -775,7 +786,7 @@ fn config_lint(flags: &[String], json: bool, options: &LintOptions) -> Result<()
 
 /// Prints the failure and returns its exit code.
 fn fail(e: &CliError) -> ExitCode {
-    eprintln!("error: {}", e.message);
+    errln!("error: {}", e.message);
     ExitCode::from(e.code)
 }
 
@@ -794,7 +805,7 @@ fn is_unknown_argument(e: &CliError) -> bool {
 /// [`fail`] for a failure of `command`: an unknown argument also says where the options are.
 fn fail_for(command: &str, e: &CliError) -> ExitCode {
     if is_unknown_argument(e) {
-        eprintln!("error: {} ({})", e.message, options_hint(command));
+        errln!("error: {} ({})", e.message, options_hint(command));
         ExitCode::from(e.code)
     } else {
         fail(e)
@@ -957,10 +968,10 @@ fn export_command(args: &[String]) -> Result<(), CliError> {
         .unwrap_or_default()
     {
         if let Some(warning) = warning.as_str() {
-            eprintln!("warning: {warning}");
+            errln!("warning: {warning}");
         }
     }
-    println!("exported {project} to {}", absolute.display());
+    outln!("exported {project} to {}", absolute.display());
     Ok(())
 }
 
@@ -1583,7 +1594,7 @@ fn discovered_firebaserc(dir: &Path) -> Result<Option<serde_json::Value>, CliErr
             parse_firebaserc(&rc_path, &text).map(Some)
         }
         Err(skipped) => {
-            eprintln!(
+            errln!(
                 "{}",
                 skipped_config_warning(
                     &skipped,
@@ -1724,7 +1735,7 @@ fn discover_project_config(raw: &mut RawOptions) -> Result<ConfigOrigin, CliErro
     }
     if let Some(skipped) = &discovery.skipped {
         // A refused candidate never fails the run, but it must not go unnoticed either.
-        eprintln!(
+        errln!(
             "{}",
             skipped_config_warning(skipped, "the built-in defaults apply")
         );
@@ -1909,7 +1920,7 @@ fn load_project_config(
                 })?;
                 if raw.verbosity > Verbosity::Quiet {
                     for note in config::no_effect_notes(&json) {
-                        eprintln!("note: {}: {note}", diagnostic_path(path));
+                        errln!("note: {}: {note}", diagnostic_path(path));
                     }
                 }
                 let firebase = if raw.firebase_json.is_none() {
@@ -1947,7 +1958,7 @@ fn load_project_config(
         let report = cfg.apply_firebase_json(json, &project_root, only)?;
         if raw.verbosity > Verbosity::Quiet {
             for notice in &report.notices {
-                eprintln!("note: {}: {notice}", diagnostic_path(path));
+                errln!("note: {}: {notice}", diagnostic_path(path));
             }
         }
     }
@@ -3077,7 +3088,7 @@ fn start_rules_reload_supervisor(
                 match watched_file_off_thread(&path).await {
                     Ok(candidate) => candidate,
                     Err(reason) => {
-                        eprintln!("warning: {label} reload scan failed: {reason}");
+                        errln!("warning: {label} reload scan failed: {reason}");
                         continue;
                     }
                 };
@@ -3086,7 +3097,7 @@ fn start_rules_reload_supervisor(
             {
                 Ok(candidate) => candidate,
                 Err(error) => {
-                    eprintln!(
+                    errln!(
                         "warning: {label} reload failed; keeping the last-known-good rules: {error}"
                     );
                     continue;
@@ -3113,7 +3124,7 @@ fn start_rules_reload_supervisor(
             let source = match String::from_utf8(bytes) {
                 Ok(source) => source,
                 Err(error) => {
-                    eprintln!(
+                    errln!(
                         "warning: {label} reload failed; keeping the last-known-good rules: {error}"
                     );
                     continue;
@@ -3123,13 +3134,13 @@ fn start_rules_reload_supervisor(
                 Ok(candidate) => {
                     let _admitted = barrier.admit();
                     match rules.replace_loaded(candidate) {
-                        Ok(_) => eprintln!("note: reloaded {label} from {path}"),
-                        Err(error) => eprintln!(
+                        Ok(_) => errln!("note: reloaded {label} from {path}"),
+                        Err(error) => errln!(
                             "warning: {label} reload failed; keeping the last-known-good rules: {error}"
                         ),
                     }
                 }
-                Err(error) => eprintln!(
+                Err(error) => errln!(
                     "warning: {label} reload failed; keeping the last-known-good rules: {error}"
                 ),
             }
@@ -3167,7 +3178,7 @@ fn start_index_reload_supervisor(
                 match watched_file_off_thread(&path).await {
                     Ok(candidate) => candidate,
                     Err(reason) => {
-                        eprintln!("warning: Firestore index reload scan failed: {reason}");
+                        errln!("warning: Firestore index reload scan failed: {reason}");
                         continue;
                     }
                 };
@@ -3176,7 +3187,7 @@ fn start_index_reload_supervisor(
             {
                 Ok(candidate) => candidate,
                 Err(error) => {
-                    eprintln!(
+                    errln!(
                         "warning: Firestore index reload failed; keeping the last-known-good indexes: {error}"
                     );
                     continue;
@@ -3196,7 +3207,7 @@ fn start_index_reload_supervisor(
             let text = match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(error) => {
-                    eprintln!(
+                    errln!(
                         "warning: Firestore index reload failed; keeping the last-known-good indexes: {error}"
                     );
                     continue;
@@ -3207,7 +3218,7 @@ fn start_index_reload_supervisor(
                     match reload_file_text_indexes(&backend, text_reload.as_ref(), &database, &path, &text) {
                         Ok(text_notes) => notes.extend(text_notes),
                         Err(error) => {
-                            eprintln!(
+                            errln!(
                                 "warning: Firestore index reload failed; keeping the last-known-good indexes: {error}"
                             );
                             continue;
@@ -3217,17 +3228,17 @@ fn start_index_reload_supervisor(
                         backend.replace_shared_ttl_catalog(&database, ttl_policies);
                         observed_stamp = Some(stable_stamp);
                         observed_signature = Some(stable_signature);
-                        eprintln!("note: reloaded Firestore indexes for {database} from {path}");
+                        errln!("note: reloaded Firestore indexes for {database} from {path}");
                         for note in notes {
-                            eprintln!("note: {note}");
+                            errln!("note: {note}");
                         }
                     } else {
-                        eprintln!(
+                        errln!(
                             "warning: Firestore index reload failed; keeping the last-known-good indexes: index catalog lock poisoned"
                         );
                     }
                 }
-                Err(error) => eprintln!(
+                Err(error) => errln!(
                     "warning: Firestore index reload failed; keeping the last-known-good indexes: {error}"
                 ),
             }
@@ -3526,7 +3537,7 @@ async fn bind_relocatable_listener(
         match tokio::net::TcpListener::bind(&candidate_addr).await {
             Ok(listener) => {
                 if candidate != port {
-                    eprintln!(
+                    errln!(
                         "warning: {service} unable to start on port {port}, starting on {candidate} instead"
                     );
                 }
@@ -3644,7 +3655,7 @@ async fn bind_listeners_with(
     // before the first listener exists.
     let host_policy = cfg.host_policy();
     for warning in host_policy.warnings() {
-        eprintln!("{warning}");
+        errln!("{warning}");
     }
     fireemu_core_session::host_guard::install(host_policy);
     // An explicit Hub address wins over every port-zero listener. The default remains late
@@ -3892,10 +3903,10 @@ fn database_rules_line(cfg: &RuntimeConfig) -> String {
 fn print_database_lines(cfg: &RuntimeConfig, addrs: &BoundAddrs) {
     match addrs.database {
         Some(a) => {
-            println!("  database:         {a}   FIREBASE_DATABASE_EMULATOR_HOST={a}");
-            println!("  database rules:   {}", database_rules_line(cfg));
+            outln!("  database:         {a}   FIREBASE_DATABASE_EMULATOR_HOST={a}");
+            outln!("  database rules:   {}", database_rules_line(cfg));
         }
-        None => println!(
+        None => outln!(
             "  database:         not started (configure emulators.database / --database-port, or --only database)"
         ),
     }
@@ -3909,37 +3920,37 @@ fn print_banner(
     addrs: &BoundAddrs,
     functions_runtime: Option<&fireemu_adapter_functions::runtime::FunctionsRuntime>,
 ) {
-    println!("fireemu {verb}");
-    println!("  config:           {config_origin}");
+    outln!("fireemu {verb}");
+    outln!("  config:           {config_origin}");
     if let Some(sites) = &cfg.hosting {
         for (site, addr) in sites.iter().zip(&addrs.hosting_sites) {
             let name = site
                 .site()
                 .map_or_else(|| "hosting".to_owned(), |site| format!("hosting[{site}]"));
-            println!("  {name} (HTTP):     http://{addr}/");
+            outln!("  {name} (HTTP):     http://{addr}/");
         }
     } else {
-        println!("  hosting:          not selected by --only (nothing is bound)");
+        outln!("  hosting:          not selected by --only (nothing is bound)");
     }
     match addrs.firestore {
-        Some(a) => println!("  firestore (gRPC + REST): {a}   FIRESTORE_EMULATOR_HOST={a}"),
-        None => println!("  firestore:        not selected by --only (nothing is bound)"),
+        Some(a) => outln!("  firestore (gRPC + REST): {a}   FIRESTORE_EMULATOR_HOST={a}"),
+        None => outln!("  firestore:        not selected by --only (nothing is bound)"),
     }
     match addrs.auth {
         Some(a) => {
-            println!("  auth (REST):      {a}   FIREBASE_AUTH_EMULATOR_HOST={a}");
+            outln!("  auth (REST):      {a}   FIREBASE_AUTH_EMULATOR_HOST={a}");
             if let Some(note) = daemon::custom_token_signer_note(cfg) {
-                println!("{note}");
+                outln!("{note}");
             }
             if let Some(note) = daemon::idp_assertion_note(cfg) {
-                println!("{note}");
+                outln!("{note}");
             }
         }
-        None => println!("  auth:             not selected by --only (nothing is bound)"),
+        None => outln!("  auth:             not selected by --only (nothing is bound)"),
     }
     match addrs.storage {
         Some(a) => {
-            println!(
+            outln!(
                 "  storage (HTTP):   {a}   FIREBASE_STORAGE_EMULATOR_HOST={a}   STORAGE_EMULATOR_HOST=http://{a}"
             );
             // A run with no ruleset denies every end-user request, as production's default
@@ -3951,25 +3962,25 @@ fn print_banner(
                 if cfg.profile == config::CompatibilityProfile::Emulator
                     && cfg.auth_project.starts_with("demo-")
                 {
-                    println!(
+                    outln!(
                         "  storage rules:    none loaded, so the official emulator's open rules apply to this demo project and every request is allowed; set storage.rules in firebase.json to enforce rules"
                     );
                 } else if cfg.profile == config::CompatibilityProfile::Strict {
-                    println!(
+                    outln!(
                         "  storage rules:    none loaded, so every end-user request is refused with production's 400 \"bucket has not been set up\" answer; set storage.rules in firebase.json or fireemu.toml (the owner credential and the JSON API are unaffected)"
                     );
                 } else {
-                    println!(
+                    outln!(
                         "  storage rules:    none loaded, so every end-user request is denied with 403; set storage.rules in firebase.json or fireemu.toml (the owner credential and the JSON API are unaffected)"
                     );
                 }
             }
         }
-        None => println!("  storage:          not selected by --only (nothing is bound)"),
+        None => outln!("  storage:          not selected by --only (nothing is bound)"),
     }
     match addrs.functions {
         Some(addr) => {
-            println!(
+            outln!(
                 "  functions (HTTP): {addr}   (source: {})",
                 cfg.functions_source.as_deref().unwrap_or("")
             );
@@ -3979,7 +3990,7 @@ fn print_banner(
                         function.trigger,
                         fireemu_core_functions::manifest::Trigger::Http { .. }
                     ) {
-                        println!(
+                        outln!(
                             "  function URL: http://{addr}/{}/{}/{}",
                             runtime.project(),
                             function.region,
@@ -3990,55 +4001,55 @@ fn print_banner(
             }
         }
         None => {
-            println!("  functions:        not configured (functions.source or --functions <dir>)");
+            outln!("  functions:        not configured (functions.source or --functions <dir>)");
         }
     }
     match addrs.eventarc {
-        Some(a) => println!("  eventarc (HTTP):  {a}   CLOUD_EVENTARC_EMULATOR_HOST=http://{a}"),
-        None => println!("  eventarc:         not started (requires a Functions codebase)"),
+        Some(a) => outln!("  eventarc (HTTP):  {a}   CLOUD_EVENTARC_EMULATOR_HOST=http://{a}"),
+        None => outln!("  eventarc:         not started (requires a Functions codebase)"),
     }
     match addrs.tasks {
-        Some(a) => println!("  tasks (HTTP):     {a}   CLOUD_TASKS_EMULATOR_HOST={a}"),
-        None => println!("  tasks:            not started (requires a Functions codebase)"),
+        Some(a) => outln!("  tasks (HTTP):     {a}   CLOUD_TASKS_EMULATOR_HOST={a}"),
+        None => outln!("  tasks:            not started (requires a Functions codebase)"),
     }
     match addrs.pubsub {
         Some(a) => {
-            println!("  pubsub (gRPC):    {a}   PUBSUB_EMULATOR_HOST={a}");
+            outln!("  pubsub (gRPC):    {a}   PUBSUB_EMULATOR_HOST={a}");
             if cfg.profile == config::CompatibilityProfile::Strict {
-                println!("  dead letters:     {}", dead_letter_banner(cfg));
+                outln!("  dead letters:     {}", dead_letter_banner(cfg));
             }
         }
-        None => println!(
+        None => outln!(
             "  pubsub:           not started (configure emulators.pubsub / --pubsub-port, or --only pubsub)"
         ),
     }
     print_database_lines(cfg, addrs);
     match addrs.hub {
-        Some(a) => println!(
+        Some(a) => outln!(
             "  emulator hub:     {a}   FIREBASE_EMULATOR_HUB={a}   (GET /emulators discovers the suite)"
         ),
-        None => println!(
+        None => outln!(
             "  emulator hub:     disabled (cannot bind {}; choose one with --hub-port <n>)",
             cfg.hub_addr
         ),
     }
     match addrs.logging {
-        Some(a) => println!(
+        Some(a) => outln!(
             "  logging (WS):     {a}   FIREBASE_LOGGING_EMULATOR_HOST={a}   (EmulatorLog stream)"
         ),
-        None if !cfg.logging_enabled => println!(
+        None if !cfg.logging_enabled => outln!(
             "  logging:          disabled (emulators.logging / daemon.loggingPort / --logging-port set to 0)"
         ),
-        None => println!(
+        None => outln!(
             "  logging:          disabled (cannot bind {}; choose one with --logging-port <n>)",
             cfg.logging_addr
         ),
     }
-    println!(
+    outln!(
         "  control API:      http://{}/v1/  (health: /health/live)",
         addrs.control
     );
-    println!(
+    outln!(
         "  profile: {} ({})",
         cfg.profile.as_str(),
         match cfg.profile {
@@ -4048,16 +4059,16 @@ fn print_banner(
                 "behaves like production Firebase where the official emulators do not",
         }
     );
-    println!("  productionExact: {}", cfg.production_exact);
+    outln!("  productionExact: {}", cfg.production_exact);
     for setting in &cfg.development_defaults {
-        println!(
+        outln!(
             "    {}: {} ({})",
             setting["key"].as_str().unwrap_or_default(),
             setting["value"].as_str().unwrap_or_default(),
             setting["source"].as_str().unwrap_or_default()
         );
     }
-    println!(
+    outln!(
         "  edition: {}   clock: {}{}",
         cfg.edition,
         cfg.clock_start,
@@ -4327,15 +4338,15 @@ fn print_rules_status(cfg: &RuntimeConfig, loaded: bool) {
         "set firestore.rules in firebase.json, rules.source in fireemu.toml, or PUT /v1/rules";
     match (cfg.rules_enforced, loaded) {
         (false, _) => {
-            println!("  firestore rules:  disabled by config (every request is allowed)");
+            outln!("  firestore rules:  disabled by config (every request is allowed)");
         }
-        (true, false) if cfg.refuse_without_ruleset => println!(
+        (true, false) if cfg.refuse_without_ruleset => outln!(
             "  firestore rules:  none loaded, so every client request is refused with PERMISSION_DENIED, as production refuses it without a release; {HOW_TO_LOAD} (the owner credential and the Admin SDK are unaffected)"
         ),
-        (true, false) => println!(
+        (true, false) => outln!(
             "  firestore rules:  none loaded, so every request is allowed, as the official emulator allows it; {HOW_TO_LOAD} to enforce rules"
         ),
-        (true, true) => println!(
+        (true, true) => outln!(
             "  firestore rules:  enforced from {}",
             cfg.rules_file.as_deref().unwrap_or("config")
         ),
@@ -4346,7 +4357,7 @@ fn print_rules_status(cfg: &RuntimeConfig, loaded: bool) {
                 continue;
             }
             if let Some(path) = &files.rules {
-                println!("  firestore rules [{database}]: enforced from {path}");
+                outln!("  firestore rules [{database}]: enforced from {path}");
             }
         }
     }

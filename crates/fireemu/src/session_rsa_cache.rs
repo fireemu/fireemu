@@ -1,5 +1,7 @@
 //! Owner-only cache for the deterministic Auth session RSA key.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::term::errln;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -141,9 +143,7 @@ fn load_or_generate_at(root: &Path, seed: u64) -> Result<CachedSessionSigner, St
             hit: true,
         }),
         EntryLoad::Unsafe(reason) => {
-            eprintln!(
-                "note: session RSA key cache entry not used ({reason}); generating in memory"
-            );
+            errln!("note: session RSA key cache entry not used ({reason}); generating in memory");
             generate(seed)
         }
         EntryLoad::Invalid(rejected) => {
