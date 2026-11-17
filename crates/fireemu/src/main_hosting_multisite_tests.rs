@@ -104,18 +104,30 @@ async fn a_configured_hosting_port_is_never_moved() {
     assert!(error.contains("bind"), "{error}");
 }
 
+// Windows reserves excluded port ranges (binding there fails with os error 10013), so the
+// port primary + 5 can be unbindable on a runner. A bounded number of attempts with a fresh
+// busy port keeps the exact `primary + 5` assertion while tolerating such a runner; at least
+// one attempt must bind, so a broken allocation still fails the test.
 #[tokio::test]
 async fn a_secondary_site_port_is_based_on_the_relocated_primary_port() {
-    let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let requested = busy.local_addr().unwrap().port();
-    let cfg = multisite(hosting_only(format!("127.0.0.1:{requested}"), false));
-    let listeners = bind_hosting(&cfg, &Selection::parse("hosting").unwrap())
-        .await
-        .unwrap();
-    let primary = listeners[0].local_addr().unwrap().port();
-    let secondary = listeners[1].local_addr().unwrap().port();
-    assert_ne!(primary, requested);
-    assert_eq!(secondary, primary + 5);
+    const ATTEMPTS: usize = 16;
+    let mut last_error = String::new();
+    for _ in 0..ATTEMPTS {
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let requested = busy.local_addr().unwrap().port();
+        let cfg = multisite(hosting_only(format!("127.0.0.1:{requested}"), false));
+        match bind_hosting(&cfg, &Selection::parse("hosting").unwrap()).await {
+            Ok(listeners) => {
+                let primary = listeners[0].local_addr().unwrap().port();
+                let secondary = listeners[1].local_addr().unwrap().port();
+                assert_ne!(primary, requested);
+                assert_eq!(secondary, primary + 5);
+                return;
+            }
+            Err(error) => last_error = error,
+        }
+    }
+    panic!("no attempt bound a secondary site port in {ATTEMPTS} tries: {last_error}");
 }
 
 #[tokio::test]

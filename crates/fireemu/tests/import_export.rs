@@ -2071,6 +2071,139 @@ if post '{{"tenantId":"customer-a","email":"native-tenant@example.com","password
     }
 }
 
+/// An API import keeps a row's `passwordHash` and `salt` as given in the emulator profile
+/// (firebase-tools stores both as given), so an export must restore each credential exactly:
+/// a salt holding `:` or `:password=` keeps its password, and a hash or salt that is not base64
+/// stays a credential no password matches. Restored twice, the export does not drift.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn api_imported_odd_salts_and_undecodable_hashes_survive_two_export_round_trips() {
+    let dir = scratch("api-odd-salts-round-trip");
+    let source = copy_fixture("official-multiproduct", &dir);
+    std::fs::write(
+        source.join("auth_export/accounts-customer-a.json"),
+        r#"{"kind":"identitytoolkit#DownloadAccountResponse","users":[]}"#,
+    )
+    .unwrap();
+    let config = dir.join("fireemu.json");
+    std::fs::write(&config, r#"{"schemaVersion": 1, "profile": "emulator"}"#).unwrap();
+    let out = dir.join("out");
+    let create = r#"
+set -eu
+base="http://$FIREBASE_AUTH_EMULATOR_HOST/identitytoolkit.googleapis.com/v1"
+admin() { curl -fsS -X POST "$base/$1" -H 'Authorization: Bearer owner' -H 'Content-Type: application/json' -d "$2" >/dev/null; }
+admin projects/demo-export/accounts:batchCreate '{"hashAlgorithm":"SHA256","rounds":1,"users":[
+ {"localId":"raw-colon","email":"raw-colon@example.com","rawPassword":"password123","salt":"a:password=zz"},
+ {"localId":"raw-pair","email":"raw-pair@example.com","rawPassword":"password123","salt":"a:b"},
+ {"localId":"raw-junk","email":"raw-junk@example.com","rawPassword":"password123","salt":"not base64!"},
+ {"localId":"fake","email":"fake@example.com","passwordHash":"fakeHash:salt=c:d:password=pw1234"},
+ {"localId":"junk-hash","email":"junk-hash@example.com","passwordHash":"not base64!","salt":"not base64!"},
+ {"localId":"junk-salt","email":"junk-salt@example.com","passwordHash":"AAAA","salt":"not base64!"}]}'
+admin projects/demo-export/tenants/customer-a/accounts:batchCreate '{"users":[
+ {"localId":"tenant-colon","email":"tenant-colon@example.com","rawPassword":"password123","salt":"t:password=x"},
+ {"localId":"tenant-junk","email":"tenant-junk@example.com","passwordHash":"not base64!"}]}'
+"#;
+    let output = exec()
+        .arg("--config")
+        .arg(&config)
+        .args(["--only", "auth", "--import"])
+        .arg(&source)
+        .arg("--export-on-exit")
+        .arg(&out)
+        .args(["--", "/bin/sh", "-c"])
+        .arg(create)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+
+    let read = |dir: &std::path::Path, file: &str| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(dir.join("auth_export").join(file)).unwrap())
+            .unwrap()
+    };
+    let credentials = |dir: &std::path::Path, file: &str| -> Vec<serde_json::Value> {
+        let mut users: Vec<serde_json::Value> = read(dir, file)["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|user| {
+                ["raw-", "fake", "junk-", "tenant-"]
+                    .iter()
+                    .any(|prefix| user["localId"].as_str().unwrap().starts_with(prefix))
+            })
+            .map(|user| {
+                serde_json::json!({
+                    "localId": user["localId"],
+                    "passwordHash": user.get("passwordHash"),
+                    "salt": user.get("salt"),
+                    "imported": user.get("fireemuImportedPassword"),
+                })
+            })
+            .collect();
+        users.sort_by_key(|user| user["localId"].as_str().unwrap().to_owned());
+        users
+    };
+    let first = credentials(&out, "accounts.json");
+    let hash_of = |users: &[serde_json::Value], id: &str| {
+        users
+            .iter()
+            .find(|user| user["localId"] == id)
+            .unwrap_or_else(|| panic!("{id} is exported: {users:?}"))["passwordHash"]
+            .clone()
+    };
+    assert_eq!(
+        hash_of(&first, "raw-colon"),
+        "fakeHash:salt=a:password=zz:password=password123"
+    );
+    assert_eq!(first.len(), 6, "{first:?}");
+    assert_eq!(credentials(&out, "accounts-customer-a.json").len(), 2);
+
+    let probe = r#"
+set -eu
+base="http://$FIREBASE_AUTH_EMULATOR_HOST/identitytoolkit.googleapis.com/v1"
+sign_in() { curl -sS -X POST "$base/accounts:signInWithPassword?key=fake-api-key" -H 'Content-Type: application/json' -d "$1"; }
+accepts() { sign_in "$1" | grep -q '"idToken"'; }
+refuses() { sign_in "$1" | grep -q '"INVALID_PASSWORD"'; }
+for id in raw-colon raw-pair raw-junk; do
+    accepts '{"email":"'$id'@example.com","password":"password123"}'
+    refuses '{"email":"'$id'@example.com","password":"zz:password=password123"}'
+done
+accepts '{"email":"tenant-colon@example.com","tenantId":"customer-a","password":"password123"}'
+refuses '{"email":"tenant-colon@example.com","tenantId":"customer-a","password":"x:password=password123"}'
+refuses '{"email":"tenant-junk@example.com","tenantId":"customer-a","password":"password123"}'
+refuses '{"email":"tenant-junk@example.com","tenantId":"customer-a","password":"not base64!"}'
+accepts '{"email":"fake@example.com","password":"pw1234"}'
+refuses '{"email":"fake@example.com","password":"d:password=pw1234"}'
+for id in junk-hash junk-salt; do
+    for password in password123 'not base64!' bm90IGJhc2U2NCE= AAAA; do
+        refuses '{"email":"'$id'@example.com","password":"'"$password"'"}'
+    done
+done
+"#;
+    let mut input = out.clone();
+    for hop in ["again", "third"] {
+        let next = dir.join(hop);
+        let result = exec()
+            .arg("--config")
+            .arg(&config)
+            .args(["--only", "auth", "--import"])
+            .arg(&input)
+            .arg("--export-on-exit")
+            .arg(&next)
+            .args(["--", "/bin/sh", "-c"])
+            .arg(probe)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{hop}: {}", text(&result));
+        assert_eq!(credentials(&next, "accounts.json"), first, "{hop}");
+        assert_eq!(
+            credentials(&next, "accounts-customer-a.json"),
+            credentials(&out, "accounts-customer-a.json"),
+            "{hop}"
+        );
+        input = next;
+    }
+}
+
 #[test]
 fn removed_password_provider_is_not_reintroduced_by_export_round_trip() {
     let dir = scratch("removed-password-auth-round-trip");

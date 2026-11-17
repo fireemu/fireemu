@@ -12692,6 +12692,7 @@ fn batch_row_user(
     row: &Value,
     at: LogicalInstant,
     hash_spec: Option<&password_hash::HashSpec>,
+    strict: bool,
     store: &mut AuthStore,
 ) -> Result<fireemu_core_auth::store::ImportedUser, JsonResponse> {
     use fireemu_core_auth::store::{ImportedUser, Provider};
@@ -12742,7 +12743,7 @@ fn batch_row_user(
         batch_row_factors(row, local_id, email.is_some(), email_verified, at, store)?;
     let password = batch_row_password(row)?;
     let imported_password = if password.is_none() {
-        batch_row_imported_hash(row, hash_spec)?
+        batch_row_imported_hash(row, hash_spec, strict)?
     } else {
         None
     };
@@ -12779,35 +12780,53 @@ fn batch_row_user(
     })
 }
 
+/// Bytes of a `passwordHash` or `salt` as imported. Strict refuses base64 it cannot decode, as
+/// production does. The emulator profile keeps the text's own bytes instead and reports that
+/// they are not what the row meant: firebase-tools 15.28.2 stores both as given
+/// (`operations.js:303-305`) and its `byte` format check accepts every string
+/// (`server.js:215-217`), so it imports such a row.
+fn imported_hash_bytes(
+    text: &str,
+    strict: bool,
+    refusal: &str,
+) -> Result<(Vec<u8>, bool), JsonResponse> {
+    match password_hash::base64_decode(text) {
+        Some(bytes) => Ok((bytes, true)),
+        None if strict => Err(error(400, refusal)),
+        None => Ok((text.as_bytes().to_vec(), false)),
+    }
+}
+
 /// A row's `passwordHash` (and `salt`) under the request's hash algorithm, kept for the
-/// adapter's verifier. A row without a hash has no password credential.
+/// adapter's verifier. A row without a hash has no password credential. In the emulator profile
+/// a hash or salt that is not base64 is kept under the unspecified spec, so no derivation runs
+/// for it and no password matches it, as with firebase-tools, and it still exports and restores.
 fn batch_row_imported_hash(
     row: &Value,
     spec: Option<&password_hash::HashSpec>,
+    strict: bool,
 ) -> Result<Option<fireemu_core_auth::store::ImportedPasswordHash>, JsonResponse> {
     let Some(hash) = opt_str(row, "passwordHash")? else {
         return Ok(None);
     };
-    let hash =
-        password_hash::base64_decode(hash).ok_or_else(|| error(400, "INVALID_PASSWORD_HASH"))?;
+    let (hash, hash_decoded) = imported_hash_bytes(hash, strict, "INVALID_PASSWORD_HASH")?;
     // proto3 reads empty bytes as unset: an empty hash is no password credential (external
     // review 2026-09-24; unobserved in production).
     if hash.is_empty() {
         return Ok(None);
     }
-    let salt = match opt_str(row, "salt")? {
-        Some(salt) => {
-            password_hash::base64_decode(salt).ok_or_else(|| error(400, "INVALID_SALT"))?
-        }
-        None => Vec::new(),
+    let (salt, salt_decoded) = match opt_str(row, "salt")? {
+        Some(salt) => imported_hash_bytes(salt, strict, "INVALID_SALT")?,
+        None => (Vec::new(), true),
     };
     // Without `hashAlgorithm` production still keeps the hash as the password credential;
     // no password ever matches it.
+    let spec = match spec {
+        Some(spec) if hash_decoded && salt_decoded => password_hash::encode(spec),
+        _ => password_hash::UNSPECIFIED_SPEC.to_owned(),
+    };
     Ok(Some(fireemu_core_auth::store::ImportedPasswordHash {
-        spec: spec.map_or_else(
-            || password_hash::UNSPECIFIED_SPEC.to_owned(),
-            password_hash::encode,
-        ),
+        spec,
         hash,
         salt,
     }))
@@ -12818,8 +12837,11 @@ fn batch_row_imported_hash(
 /// contract of the route. With `allowOverwrite` an existing account of the same `localId`
 /// is replaced; without it the row is refused.
 /// Bytes and int64 fields of `batchCreate` rows are decoded with the request, before anything
-/// else is validated; a malformed one refuses the whole request.
-fn decode_batch_rows(rows: &[Value]) -> Result<(), JsonResponse> {
+/// else is validated; a malformed one refuses the whole request. The emulator profile refuses
+/// only the integer fields: firebase-tools keeps a row's `passwordHash` and `salt` as given
+/// whatever they hold (`operations.js:303-305`), so `strict` alone refuses bytes that are not
+/// base64.
+fn decode_batch_rows(rows: &[Value], strict: bool) -> Result<(), JsonResponse> {
     for (index, row) in rows.iter().enumerate() {
         for (key, field) in [
             ("createdAt", "created_at"),
@@ -12840,8 +12862,13 @@ fn decode_batch_rows(rows: &[Value]) -> Result<(), JsonResponse> {
                 ));
             }
         }
-        for (key, field) in [("passwordHash", "password"), ("salt", "salt")] {
-            if let Some(text) = row.get(key).and_then(Value::as_str) {
+        let bytes_fields: &[(&str, &str)] = if strict {
+            &[("passwordHash", "password"), ("salt", "salt")]
+        } else {
+            &[]
+        };
+        for (key, field) in bytes_fields {
+            if let Some(text) = row.get(*key).and_then(Value::as_str) {
                 if !text.starts_with("fakeHash:") && password_hash::base64_decode(text).is_none() {
                     let field = format!("users[{index}].{field}");
                     return Err(proto_field_error(
@@ -12889,7 +12916,7 @@ fn admin_batch_create(
     if let Some(response) = request_refusal {
         return response;
     }
-    if let Err(response) = decode_batch_rows(rows) {
+    if let Err(response) = decode_batch_rows(rows, strict) {
         return response;
     }
     // The hash algorithm and its parameters apply to every row of the request; production
@@ -12908,7 +12935,7 @@ fn admin_batch_create(
     let mut errors = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let refused = |message: String| json!({"index": index, "message": message});
-        let user = match batch_row_user(row, at, hash_spec.as_ref(), store) {
+        let user = match batch_row_user(row, at, hash_spec.as_ref(), strict, store) {
             Ok(u) => u,
             Err(r) => {
                 let message = r.body["error"]["message"]

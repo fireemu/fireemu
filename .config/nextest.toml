@@ -62,11 +62,23 @@ test-group = "process-contention"
 filter = 'binary(atomic_commit_outbox_connect) & test(/(staging_is_invisible_until_one_real_atomic_commit|real_multi_write_rejection_publishes_neither_documents_nor_changes|real_adapter_capacity_refusal_preserves_source_and_publishes_no_event|disabled_actions_preserve_every_projected_field|projection_fault_changes_exactly_one_field|deterministic_scenarios_cover_all_actions|every_projection_field_detects_drift|generated_traces_match_the_real_firestore_state)$/)'
 threads-required = "num-cpus"
 
+# These tests bind or hold fixed ports near 65535. Each runs in its own process, so a sibling
+# holding 65535 made another fail with "Address already in use"; run them one at a time.
+[[profile.pr.overrides]]
+filter = 'test(/hosting_bind_tests::(a_busy_secondary_site_port_retries_the_next_candidate|a_busy_maximum_secondary_site_port_preserves_the_bind_error|an_overflowing_secondary_port_releases_the_primary_listener)$/)'
+test-group = "fixed-high-ports"
+
 [profile.ci]
 retries = 0
 fail-fast = false
 slow-timeout = { period = "10s" }
 leak-timeout = { period = "30s", result = "fail" }
+
+# These tests bind or hold fixed ports near 65535. Each runs in its own process, so a sibling
+# holding 65535 made another fail with "Address already in use"; run them one at a time.
+[[profile.ci.overrides]]
+filter = 'test(/hosting_bind_tests::(a_busy_secondary_site_port_retries_the_next_candidate|a_busy_maximum_secondary_site_port_preserves_the_bind_error|an_overflowing_secondary_port_releases_the_primary_listener)$/)'
+test-group = "fixed-high-ports"
 
 [profile.ci.junit]
 path = "junit.xml"
@@ -90,4 +102,7 @@ fail-fast = false
 leak-timeout = { period = "200ms", result = "fail" }
 
 [test-groups.process-contention]
+max-threads = 1
+
+[test-groups.fixed-high-ports]
 max-threads = 1
