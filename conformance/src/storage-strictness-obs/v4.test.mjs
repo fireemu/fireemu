@@ -543,6 +543,8 @@ test("v4 judge rows state the content of each answer, by names, order and framin
   assert.equal(byCase["V4-N-get"].json.code, 412);
   assert.equal(byCase["V4-M-len-1025"].status, 400);
   assert.equal(byCase["V4-L-itd-p4"].known, false);
+  assert.equal(byCase["V4-L-itd-p4"].status, null);
+  assert.equal(byCase["V4-L-itd-p4"].bodyBytes, 0);
   assert.equal(byCase["V4-L-itd-p4"].shape, "unrecorded");
   assert.equal(byCase["V4-W-verify"].shape, "bucket-resource");
   for (const id of V4_OBSERVATIONS)
