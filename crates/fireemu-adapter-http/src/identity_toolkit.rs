@@ -7500,7 +7500,7 @@ fn project_config_management(
             body,
             &fields,
             project,
-            !state.stateless_refresh_tokens,
+            true,
         ) {
             Ok(update) => update,
             Err(()) => return error(400, "INVALID_ARGUMENT"),
@@ -7569,7 +7569,7 @@ fn project_config_management(
                     body,
                     &fields,
                     project,
-                    !state.stateless_refresh_tokens,
+                    true,
                 )
                 .map_err(|()| error(400, "INVALID_ARGUMENT"))?;
                 let mut next = next.unwrap_or_else(|| store.stored_config_members().clone());
@@ -7635,7 +7635,7 @@ fn project_config_management(
                 body,
                 &fields,
                 project,
-                !state.stateless_refresh_tokens,
+                true,
             ) else {
                 return rollback_blocking(error(400, "INVALID_ARGUMENT"));
             };

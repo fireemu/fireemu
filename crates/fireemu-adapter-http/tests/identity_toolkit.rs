@@ -24567,18 +24567,21 @@ fn strict_an_invalid_project_mfa_member_is_reported_before_another_invalid_membe
     }
 }
 
-/// Strict: a mask below a stored member's scalar (`notification.defaultLocale.a`) is ignored, as
-/// production ignored it: 200, and the member unchanged (AUTH-EDGES-OBS-20261117-01,
-/// mask-below-scalar, and the final whole-config digest equal to the baseline). The emulator
-/// profile keeps its refusal.
+/// A mask below a stored member's scalar (`notification.defaultLocale.a`) is ignored in both
+/// profiles: 200, and the member unchanged. Production did the same (AUTH-EDGES-OBS-20261117-01,
+/// mask-below-scalar, and the final whole-config digest equal to the baseline). The official
+/// emulator (firebase-tools 15.28.2, `lib/emulator/auth/state.js` `applyMask`, lines 681-684 and
+/// 693-696) warns "Field 'defaultLocale' is singular and cannot have sub-fields", finds no `a` in
+/// the update and keeps the stored value, answering 200. The registry path is covered too.
 #[test]
-fn strict_a_mask_below_a_stored_scalar_is_ignored() {
+fn a_mask_below_a_stored_scalar_is_ignored_in_both_profiles() {
     assert_eq!(edges_recorded("mask-below-scalar")["status"], 200);
-    for (strict, registry) in [(true, false), (true, true), (false, false)] {
+    for (strict, registry) in [(true, false), (true, true), (false, false), (false, true)] {
         let s = match (strict, registry) {
             (true, false) => strict_state(),
             (true, true) => with_registry(strict_state()),
-            _ => state(),
+            (false, true) => with_registry(state()),
+            (false, false) => state(),
         };
         let (status, body) = patch_sign_in(
             &s,
@@ -24591,11 +24594,7 @@ fn strict_a_mask_below_a_stored_scalar_is_ignored() {
             "notification.defaultLocale.a",
             &json!({"notification": {"defaultLocale": "ja"}}),
         );
-        assert_eq!(
-            status,
-            if strict { 200 } else { 400 },
-            "strict {strict}: {answer}"
-        );
+        assert_eq!(status, 200, "strict {strict}: {answer}");
         let (_, read) = admin(&s, "GET", PROJECT_CONFIG, &Value::Null);
         assert_eq!(
             read["notification"]["defaultLocale"], "ja",

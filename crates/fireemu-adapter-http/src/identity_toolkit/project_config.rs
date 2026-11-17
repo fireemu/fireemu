@@ -722,8 +722,11 @@ pub(super) fn apply_stored_members(
                 &segments,
                 if unset { None } else { written.or(fallback) },
             ) {
-                // Strict: a path below a stored scalar is ignored, as production ignored
-                // `notification.defaultLocale.a` (AUTH-EDGES-OBS-20261117-01, mask-below-scalar).
+                // A path below a stored scalar is ignored in both profiles: production ignored
+                // `notification.defaultLocale.a` (AUTH-EDGES-OBS-20261117-01, mask-below-scalar),
+                // and firebase-tools 15.28.2 warns "Field 'x' is singular and cannot have
+                // sub-fields" and moves on (`lib/emulator/auth/state.js` `applyMask`, lines
+                // 681-684 and 693-696).
                 if ignore_below_scalar {
                     continue;
                 }
