@@ -408,6 +408,17 @@ TOTPコードは、本番が自身の時刻で検証するのと同じように�
 
 TOTPの登録に成功すると、受け付けられたタイムステップが消費されます。同じステップ内でそのコードを使ってサインインすると拒否されるため、このサンプルは次のステップまで待ちます。仮想時間を使うテストでは、代わりにシークレットの実際の周期の分だけワールドクロックを進め、その新しい時刻に対するサインインコードを生成してください。[TOTPのテストレシピ](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code)を参照してください。
 
+### 現在のTOTPコードを読む
+
+Fireemuは認証アプリが表示するはずのコードを表示するので、手動の確認でもテストでも認証アプリやRFC 6238の計算は要りません。TOTPの登録を始めたときと、サインインがTOTPの確認を求めたときに、デーモンはプロジェクト、テナント（あれば）、ユーザー、因子、現在のコードと残り秒数を1行で表示します（[ローカルの検証メッセージ](#ローカルの検証メッセージ)と同じ場所）。秘密鍵は表示しません。同じコードはエミュレータ専用のルートでも読めます。登録済みの因子と、まだ確定していない登録が対象です。Emulator UIの「Auth」ページにも表示され、自動で更新されます。
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+```
+
+テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が受け入れるコードと一致します。検証そのものは変わりません。表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
+
 ## マルチテナンシー
 
 マルチテナンシーはデフォルトでオンなので、先に何かを有効にしなくても、Admin APIでテナントを作成でき、`auth.tenants`も読み込まれます。`productionExact`では、新しいプロジェクトは本番と同様の状態で開始し、Admin APIまたはファイルで`multiTenant.allowTenants`を有効にするまで、テナントは拒否されます。どちらの場合も、`auth.multiTenant.allowTenants: false`でオフにできます。`auth.tenants`の各エントリは、Admin v2の`Tenant`ドキュメントに`tenantId`を加えたものです。

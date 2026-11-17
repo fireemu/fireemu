@@ -408,6 +408,17 @@ TOTP 验证码按 Fireemu 的时钟校验，就像生产环境按其自身时间
 
 TOTP 注册成功会消耗被接受的时间步。在同一时间步内重复使用该验证码登录会被拒绝，因此示例会等待下一个时间步。在使用虚拟时间的测试中，请改为将世界时钟推进密钥的实际周期，并为该新时刻生成登录验证码；参见 [TOTP 测试方法](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code)。
 
+### 读取当前 TOTP 验证码
+
+Fireemu 会显示身份验证器应用本应显示的验证码，因此手动运行或测试都不需要身份验证器应用，也不需要自己实现 RFC 6238。开始 TOTP 注册时，以及登录返回 TOTP 质询时，守护进程会输出一行，包含项目、租户（如有）、用户、因素、当前验证码及其剩余秒数，与[本地验证消息](#本地验证消息)输出在同一处。密钥永远不会输出。同样的验证码也可以通过仅限模拟器的路由读取，涵盖已注册的因素和尚未完成的注册；Emulator UI 的 Auth 页面也会显示并自动刷新这些验证码。
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+```
+
+租户的验证码位于 `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`。尚未完成的注册带有 `"pendingEnrollment": true`，没有 `mfaEnrollmentId`。验证码使用项目的 TOTP 周期和位数以及 Fireemu 的时钟计算，因此与验证所接受的验证码一致；验证本身不变。两种 profile 默认都开启此功能。`auth.totp.revealCodes = false` 或 `productionExact` 会将其关闭：不再输出该行，路由返回 404。`auth.logActionCodes = false` 也会使该行不再输出。这些输出和路由包含凭据，请勿写入共享日志。
+
 ## 多租户
 
 多租户默认开启，因此 Admin API 可以创建租户，`auth.tenants` 也无需先启用任何内容即可加载。使用 `productionExact` 时，新项目与生产环境一样开始，在通过 Admin API 或在文件中启用 `multiTenant.allowTenants` 之前，租户会被拒绝。在任一情况下，`auth.multiTenant.allowTenants: false` 都会将其关闭。`auth.tenants` 的每个条目是一个 Admin v2 `Tenant` 文档加上其 `tenantId`：

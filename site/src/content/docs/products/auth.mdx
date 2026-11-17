@@ -408,6 +408,17 @@ TOTP codes are checked at Fireemu's clock, as production checks them at its own 
 
 Successful TOTP enrollment consumes the accepted time step. Reusing that code to sign in in the same step is refused, so the sample waits for the next step. In a test with virtual time, advance the world clock by the secret's actual period instead, and generate the sign-in code for that new instant; see the [TOTP test recipe](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#totp-enrollment-consumes-a-code).
 
+### Read the current TOTP code
+
+Fireemu reveals the code an authenticator app would show, so a manual run or a test needs no authenticator app and no RFC 6238 helper. When a TOTP enrollment starts and when a sign-in answers with the TOTP challenge, the daemon prints one line with the project, the tenant if any, the user, the factor and the current code with its seconds left, next to the [local verification messages](#local-verification-messages). The secret is never printed. The same codes are listed by an emulator-only route, for enrolled factors and for enrollments not finalized yet, and the Auth page of the Emulator UI shows them and refreshes them:
+
+```sh
+curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+```
+
+A tenant's codes are at `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. An enrollment not finalized yet is listed with `"pendingEnrollment": true` and no `mfaEnrollmentId`. The code uses the project's TOTP period and digits and Fireemu's clock, so it is the code verification accepts; verification itself is unchanged. The reveal is on by default in both profiles. `auth.totp.revealCodes = false`, or `productionExact`, turns it off: no line is printed and the route answers 404. `auth.logActionCodes = false` silences the line too. The lines and the route carry credentials, so keep them out of shared logs.
+
 ## Multi-tenancy
 
 Multi-tenancy is on by default, so the Admin API creates tenants and `auth.tenants` loads without enabling anything first. With `productionExact` a new project starts as production does, with tenants refused until `multiTenant.allowTenants` is enabled through the Admin API or in the file. `auth.multiTenant.allowTenants: false` turns it off in either case. Each entry of `auth.tenants` is an Admin v2 `Tenant` document plus its `tenantId`:
