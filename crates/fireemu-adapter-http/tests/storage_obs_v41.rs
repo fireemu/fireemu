@@ -835,7 +835,7 @@ async fn the_emulator_profile_keeps_its_bucket_delete_answer() {
     assert!(answer
         .header("content-type")
         .is_some_and(|value| value.starts_with("text/plain")));
-    assert!(answer.header("content-length") != Some("0"));
+    assert_ne!(answer.header("content-length"), Some("0"));
     task.abort();
 }
 
