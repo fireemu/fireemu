@@ -402,16 +402,29 @@ const unaryStatus = (error) => (error ? projectStreamStatus(error) : { code: 0, 
  * The recorded rows are the seed's status, every stream event, and the read-back; the cleanup
  * is not an observation, but a cleanup that fails fails the recipe.
  */
-async function runWriteStreamDeleteRecipe(recipe, { connection, projectId, token }) {
-  validateWriteStreamDeleteRecipe(recipe);
-  const counter = createUnaryRpcCounter();
-  const client = new v1.FirestoreClient({
+const productionGrpcClient = ({ connection, projectId }) =>
+  new v1.FirestoreClient({
     servicePath: connection.host,
     port: connection.port,
     projectId,
     sslCreds: connection.tls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure(),
     fallback: false,
   });
+
+export async function runWriteStreamDeleteRecipe(
+  recipe,
+  {
+    connection,
+    projectId,
+    token,
+    // Tests inject a fake client, a counter they can read, and a short stream deadline.
+    makeClient = productionGrpcClient,
+    counter = createUnaryRpcCounter(),
+    streamTimeoutMs = 31_000,
+  },
+) {
+  validateWriteStreamDeleteRecipe(recipe);
+  const client = makeClient({ connection, projectId });
   const options = () => ({
     deadline: new Date(Date.now() + 30_000),
     retry: { retryCodes: [] },
@@ -454,7 +467,7 @@ async function runWriteStreamDeleteRecipe(recipe, { connection, projectId, token
       let grace;
       const timer = setTimeout(
         () => finish(new Error("indeterminate: write-stream delete timeout")),
-        31_000,
+        streamTimeoutMs,
       );
       function finish(error) {
         clearTimeout(timer);

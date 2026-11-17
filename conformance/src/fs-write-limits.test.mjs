@@ -470,40 +470,64 @@ const committedIndexes = JSON.parse(
   readFileSync(new URL("../firestore.indexes.json", import.meta.url), "utf8"),
 ).indexes;
 
+// Bodies copied from the recorded production runs (conformance/fs-config-lifecycle-production.json),
+// with only their names re-pointed at the sandbox database. Production omits
+// `usesAncestorConfig` on an explicit override and sets it to true on an inherited field.
+const recordedPrograms = JSON.parse(
+  readFileSync(new URL("../fs-config-lifecycle-production.json", import.meta.url), "utf8"),
+).programs;
+const recordedExemption = recordedPrograms["fs-config/field/index-config/exemption"].steps;
+const repointed = (value, replacements = []) => {
+  let text = JSON.stringify(value).replaceAll("projects/demo-fs-config/databases/<db:a>", DB);
+  for (const [from, to] of replacements) text = text.replaceAll(from, to);
+  return JSON.parse(text);
+};
+// A COLLECTION_GROUP-only override: the shape of `items/n`.
+const overrideCollectionGroupOnly = () =>
+  repointed(recordedExemption["get-collection-group-only"].body, [
+    ["/fields/cg", "/fields/n"],
+    ['"fieldPath":"cg"', '"fieldPath":"n"'],
+  ]);
+// An exempted field: an override with no `indexes` at all.
+const overrideExempted = (group, field) =>
+  repointed(recordedExemption["exempted"].settled.body, [
+    ["/items/fields/nx", `/${group}/fields/${field}`],
+  ]);
+// An inherited field and a TTL-only field, both `usesAncestorConfig: true`.
+const inheritedField = (group, field) =>
+  repointed(recordedExemption["get-inherited"].body, [
+    ["/items/fields/nx", `/${group}/fields/${field}`],
+    ['"fieldPath":"nx"', `"fieldPath":"${field}"`],
+  ]);
+const ttlOnlyField = () =>
+  repointed(recordedPrograms["fs-config/field/ttl/policy"].steps["list-ttl"].body.fields[0]);
+const recordedDatabase = () =>
+  repointed(recordedPrograms["fs-config/database/create/basic"].steps.create.body.response, [
+    [`${DB}`, DB],
+  ]);
+const recordedIndexKeys = () => {
+  const step = recordedPrograms["fs-config/default-database/lifecycle"].steps["index-ready"];
+  return Object.keys(step.trace.at(-1).body).toSorted();
+};
+
 function goodObservation() {
   return {
     composite: committedIndexes.map((index, number) => ({
+      density: "SPARSE_ALL",
       name: `${DB}/collectionGroups/${index.collectionGroup}/indexes/id${number}`,
       queryScope: index.queryScope,
       fields: structuredClone(index.fields),
       state: "READY",
     })),
+    // gcloud lists the overrides: the recorded override shape for items/n, one inherited and
+    // one TTL-only field (ignored), and pk's wildcard (outside the judged groups).
     fields: [
-      {
-        name: `${DB}/collectionGroups/items/fields/n`,
-        indexConfig: {
-          usesAncestorConfig: false,
-          indexes: [
-            {
-              queryScope: "COLLECTION_GROUP",
-              fields: [{ fieldPath: "n", order: "ASCENDING" }],
-              state: "READY",
-            },
-          ],
-        },
-      },
-      {
-        name: `${DB}/collectionGroups/pk/fields/*`,
-        indexConfig: { usesAncestorConfig: false, indexes: [] },
-      },
+      overrideCollectionGroupOnly(),
+      inheritedField("flt", "s"),
+      ttlOnlyField(),
+      overrideExempted("pk", "*"),
     ],
-    database: {
-      name: DB,
-      type: "FIRESTORE_NATIVE",
-      locationId: "us-central1",
-      concurrencyMode: "PESSIMISTIC",
-      databaseEdition: "STANDARD",
-    },
+    database: Object.assign(recordedDatabase(), { name: DB }),
   };
 }
 
@@ -573,21 +597,11 @@ test("each way the sandbox can differ from the judges' assumption is named and r
     /field override items\/n is/,
   );
   assert.match(
-    drift((o) =>
-      o.fields.push({
-        name: `${DB}/collectionGroups/flt/fields/s`,
-        indexConfig: { usesAncestorConfig: false, indexes: [] },
-      }),
-    ),
+    drift((o) => o.fields.push(overrideExempted("flt", "s"))),
     /unexpected field override: flt\/s/,
   );
   assert.match(
-    drift((o) =>
-      o.fields.push({
-        name: `${DB}/collectionGroups/wlbase64/fields/*`,
-        indexConfig: { usesAncestorConfig: false, indexes: [] },
-      }),
-    ),
+    drift((o) => o.fields.push(overrideExempted("wlbase64", "*"))),
     /unexpected field override: wlbase64\/\*/,
   );
   assert.match(
@@ -620,17 +634,39 @@ test("each way the sandbox can differ from the judges' assumption is named and r
   );
 });
 
-test("an override on a collection the judges do not use is ignored, one that inherits is not an override", () => {
-  const o = goodObservation();
-  o.fields.push({
-    name: `${DB}/collectionGroups/other/fields/z`,
-    indexConfig: { usesAncestorConfig: false, indexes: [] },
-  });
-  o.fields.push({
-    name: `${DB}/collectionGroups/flt/fields/s`,
-    indexConfig: { usesAncestorConfig: true, indexes: [] },
-  });
-  assert.deepEqual(providerStateProblems(o), []);
+test("recorded shapes: an override is judged (key absent), inherited and TTL-only fields are ignored", () => {
+  const ok = goodObservation();
+  assert.deepEqual(providerStateProblems(ok), []);
+  // The pre-fix reading: entries with the key absent were skipped, so items/n looked missing.
+  const items = ok.fields[0];
+  assert.equal(Object.hasOwn(items.indexConfig, "usesAncestorConfig"), false);
+  assert.equal(inheritedField("flt", "s").indexConfig.usesAncestorConfig, true);
+  assert.equal(ttlOnlyField().indexConfig.usesAncestorConfig, true);
+  assert.equal(Object.hasOwn(ok.fields[3].indexConfig, "indexes"), false);
+  // An override on a group the judges do not use is ignored.
+  const other = goodObservation();
+  other.fields.push(overrideExempted("other", "z"));
+  assert.deepEqual(providerStateProblems(other), []);
+  // A judged group with only the inherited shape has no override.
+  const inheritedOnly = goodObservation();
+  inheritedOnly.fields[0] = inheritedField("items", "n");
+  assert.match(providerStateProblems(inheritedOnly).join("\n"), /field override missing: items\/n/);
+  // An explicit false (a client that keeps the default) is still an override.
+  const explicit = goodObservation();
+  explicit.fields[0].indexConfig.usesAncestorConfig = false;
+  assert.deepEqual(providerStateProblems(explicit), []);
+  // An entry that carries no indexConfig cannot be read.
+  const unreadable = goodObservation();
+  delete unreadable.fields[0].indexConfig;
+  assert.match(providerStateProblems(unreadable).join("\n"), /items\/n has no indexConfig/);
+});
+
+test("the composite fixture has the key layout of the recorded index body", () => {
+  assert.deepEqual(Object.keys(goodObservation().composite[0]).toSorted(), recordedIndexKeys());
+  const db = goodObservation().database;
+  for (const key of ["type", "locationId", "concurrencyMode", "databaseEdition", "name"]) {
+    assert.ok(Object.hasOwn(db, key), key);
+  }
 });
 
 test("the files the coordinator saves are read, checked and digested", () => {

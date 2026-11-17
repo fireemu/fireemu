@@ -81,8 +81,15 @@ export function providerStateProblems({ composite, fields, database }) {
     for (const entry of fields) {
       const group = groupOf(entry.name);
       const field = /\/fields\/(.+)$/.exec(entry.name ?? "")?.[1];
-      if (!JUDGED_GROUPS.has(group) || entry.indexConfig?.usesAncestorConfig !== false) continue;
+      // Production omits `usesAncestorConfig` when it is false (proto3 JSON drops the default), so
+      // an explicit override is any entry that does not say `true`; inherited fields (and
+      // TTL-only fields, which inherit) carry `usesAncestorConfig: true`.
+      if (!JUDGED_GROUPS.has(group) || entry.indexConfig?.usesAncestorConfig === true) continue;
       const key = `${group}/${field}`;
+      if (!entry.indexConfig) {
+        problems.push(`field entry ${key} has no indexConfig`);
+        continue;
+      }
       seen.add(key);
       const want = EXPECTED_OVERRIDES.get(key);
       if (!want) {
