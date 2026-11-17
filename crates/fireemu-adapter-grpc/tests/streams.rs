@@ -5481,3 +5481,82 @@ async fn waiting_write_streams_preserve_deadlines_and_reset_guards() {
         let _ = server.await;
     }
 }
+
+/// A `Write`-stream delete is priced like REST DELETE and `BatchWrite` (FS-DATA-WRITE
+/// `writelimits` run 2026-11-17, two recordings, gRPC): an array of 12,112 values under a
+/// 1,000-byte name was deleted over the stream, and 12,113 and 12,122 were refused with
+/// `INVALID_ARGUMENT` "Transaction too big. Decrease transaction size." and kept their document.
+#[tokio::test]
+async fn write_stream_deletes_are_refused_from_the_rest_delete_minimum() {
+    let (mut client, handle) = start(false).await;
+    // A 998-byte collection id and a one-byte document id: a 1,000-byte relative name.
+    let name = |tag: &str| format!("{tag}{}/d", "c".repeat(997));
+    let integers = |count: i64| pb::Value {
+        value_type: Some(pb::value::ValueType::ArrayValue(pb::ArrayValue {
+            values: (0..count)
+                .map(|n| pb::Value {
+                    value_type: Some(pb::value::ValueType::IntegerValue(n)),
+                })
+                .collect(),
+        })),
+    };
+    for (tag, count, refused) in [
+        ("a", 12_112, false),
+        ("b", 12_113, true),
+        ("e", 12_122, true),
+    ] {
+        let (tx, rx) = mpsc::channel(8);
+        let mut responses = client
+            .write(ReceiverStream::new(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        tx.send(pb::WriteRequest {
+            database: DB.to_owned(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let handshake = responses.next().await.unwrap().unwrap();
+        tx.send(pb::WriteRequest {
+            writes: vec![set_write(&name(tag), &[("a", integers(count))])],
+            stream_token: handshake.stream_token.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let seeded = responses.next().await.unwrap().unwrap();
+        tx.send(pb::WriteRequest {
+            writes: vec![delete_write(&name(tag))],
+            stream_token: seeded.stream_token.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let outcome = responses.next().await.unwrap();
+        let read = client
+            .get_document(pb::GetDocumentRequest {
+                name: format!("{DOCS}/{}", name(tag)),
+                ..Default::default()
+            })
+            .await;
+        if refused {
+            let error = outcome.unwrap_err();
+            assert_eq!(error.code(), tonic::Code::InvalidArgument, "{count}");
+            assert_eq!(
+                error.message(),
+                "Transaction too big. Decrease transaction size.",
+                "{count}"
+            );
+            assert!(read.is_ok(), "{count}: a refused delete keeps the document");
+        } else {
+            assert_eq!(outcome.unwrap().write_results.len(), 1, "{count}");
+            assert_eq!(
+                read.unwrap_err().code(),
+                tonic::Code::NotFound,
+                "{count}: the delete took effect"
+            );
+        }
+    }
+    handle.abort();
+}

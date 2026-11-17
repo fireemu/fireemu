@@ -4226,7 +4226,7 @@ impl LocalBackend {
         let now = self.write_time();
         let result = self.with_db(parent, |db| {
             guard(db, writes, now)?;
-            self.commit_with_events(parent, db, writes, None, now, WriteRoute::Internal)
+            self.commit_with_events(parent, db, writes, None, now, WriteRoute::WriteStream)
         })?;
         Ok(crate::streams::WireCommit::from_result(&result))
     }

@@ -664,3 +664,105 @@ fn index_accounting_refusals_are_strict_profile_only() {
             .is_err());
     }
 }
+
+/// A Write-stream delete is priced like REST DELETE and `BatchWrite` (`writelimits` run 2026-11-17,
+/// two recordings): an array of 12,112 values under a 1,000-byte name was deleted over the
+/// stream, and 12,113 and 12,122 were refused with "Transaction too big." Commit's own minimum is
+/// one lower. The emulator profile adds no refusal.
+#[test]
+fn a_write_stream_delete_is_refused_from_the_rest_delete_minimum() {
+    use fireemu_core_firestore::index_usage::WriteRoute;
+
+    // A 1,000-byte relative name: a 998-byte collection id and one-byte document id.
+    let name = |tag: &str| format!("{}{}/d", tag, "c".repeat(997));
+    let seed = |store: &mut FirestoreState, tag: &str, count: i64| {
+        store
+            .commit(&[set(&name(tag), "a", integers(count))], None, t(0))
+            .unwrap_or_else(|error| panic!("seed {count}: {error}"));
+    };
+    let delete = |tag: &str| Write {
+        op: WriteOp::Delete {
+            path: path(&name(tag)),
+        },
+        precondition: None,
+        transforms: vec![],
+    };
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    for (route, minimum) in [
+        (WriteRoute::WriteStream, 12_113),
+        (WriteRoute::DeleteDocument, 12_113),
+        (WriteRoute::BatchWrite, 12_113),
+        (WriteRoute::Commit, 12_112),
+    ] {
+        let mut store = state(LimitScope::Production);
+        seed(&mut store, "a", minimum - 1);
+        seed(&mut store, "b", minimum);
+        store.set_write_route(route);
+        store
+            .commit(&[delete("a")], None, t(1))
+            .unwrap_or_else(|error| panic!("{route:?} {}: {error}", minimum - 1));
+        assert!(store.get(&path(&name("a"))).is_none());
+        let refused = store.commit(&[delete("b")], None, t(2)).unwrap_err();
+        assert_eq!(refused.to_string(), too_big, "{route:?} {minimum}");
+        assert!(
+            store.get(&path(&name("b"))).is_some(),
+            "a refused delete keeps the document"
+        );
+    }
+    let mut emulator = state(LimitScope::OfficialEmulator);
+    seed(&mut emulator, "b", 12_122);
+    emulator.set_write_route(WriteRoute::WriteStream);
+    emulator
+        .commit(&[delete("b")], None, t(1))
+        .expect("the emulator profile deletes it");
+}
+
+/// A commit is charged the sum of its documents' create charges (`writelimits` run 2026-11-17):
+/// the recorded 0.40 + 0.40 of the budget was accepted, 0.55 + 0.55, 0.60 + 0.60 and 0.40 x 3
+/// were refused as one commit with "Transaction too big." A refused commit writes nothing.
+#[test]
+fn a_commit_is_charged_the_sum_of_its_documents_in_production_only() {
+    // Distinct integers under the recorded 2,000-byte name (size 2,017): 4,126 bytes per element.
+    let name = |tag: &str| {
+        format!(
+            "{}{}/{}",
+            tag,
+            "c".repeat(1_400 - tag.len()),
+            "d".repeat(599)
+        )
+    };
+    let write = |tag: &str, count: i64| set(&name(tag), "a", integers(count));
+    let too_big = "invalid argument: Transaction too big. Decrease transaction size.";
+    let mut strict = state(LimitScope::Production);
+    strict
+        .commit(&[write("a0", 2_872), write("a1", 2_872)], None, t(0))
+        .expect("0.40 + 0.40 is accepted");
+    strict
+        .commit(&[write("b0", 4_310)], None, t(1))
+        .expect("a single 0.60 document is accepted");
+    for (label, writes) in [
+        ("0.55 x 2", vec![write("c0", 3_950), write("c1", 3_950)]),
+        ("0.60 x 2", vec![write("d0", 4_310), write("d1", 4_310)]),
+        (
+            "0.40 x 3",
+            vec![write("e0", 2_872), write("e1", 2_872), write("e2", 2_872)],
+        ),
+    ] {
+        let refused = strict.commit(&writes, None, t(2)).unwrap_err();
+        assert_eq!(refused.to_string(), too_big, "{label}");
+        for tag in ["c0", "c1", "d0", "d1", "e0", "e1", "e2"] {
+            assert!(
+                strict.get(&path(&name(tag))).is_none(),
+                "{label} wrote {tag}"
+            );
+        }
+    }
+    // Writing the same document twice in one commit charges it once (the later state).
+    strict
+        .commit(&[write("f0", 4_310), write("f0", 4_310)], None, t(3))
+        .expect("one document written twice is one charge");
+    let mut emulator = state(LimitScope::OfficialEmulator);
+    emulator
+        .commit(&[write("d0", 4_310), write("d1", 4_310)], None, t(0))
+        .expect("the emulator profile adds no refusal");
+}

@@ -94,14 +94,26 @@ fn index_entry_size_and_total_size_budgets_are_independent() {
         ("v3", IndexFieldMode::Ascending),
         ("v4", IndexFieldMode::Ascending),
     ]));
-    // Composite entries have no recorded production refusal, so strict refuses none, even
-    // over the published 7,680 bytes.
+    // A composite entry is refused from the smallest recorded refusal (6,500 documented bytes:
+    // the `writelimits` run of 2026-11-17), well under the published 7,680; the sizes are
+    // counted under the emulator scope, which refuses nothing.
+    let counted = |indexes: &IndexSet| {
+        indexes
+            .document_index_usage_in(
+                &path,
+                &fields,
+                fireemu_core_firestore::store::LimitScope::OfficialEmulator,
+            )
+            .unwrap()
+            .maximum_entry_bytes
+    };
+    assert_eq!(counted(&indexes), 7_556);
     assert_eq!(
         indexes
             .document_index_usage(&path, &fields)
-            .unwrap()
-            .maximum_entry_bytes,
-        7_556
+            .unwrap_err()
+            .to_string(),
+        "invalid argument: Index entry is too large."
     );
     indexes.add_composite(composite(&[
         ("v0", IndexFieldMode::Ascending),
@@ -111,13 +123,7 @@ fn index_entry_size_and_total_size_budgets_are_independent() {
         ("v4", IndexFieldMode::Ascending),
         ("v5", IndexFieldMode::Ascending),
     ]));
-    assert_eq!(
-        indexes
-            .document_index_usage(&path, &fields)
-            .unwrap()
-            .maximum_entry_bytes,
-        9_056
-    );
+    assert_eq!(counted(&indexes), 9_056);
     let long_path = DocumentPath::parse(
         &ProjectId::try_new("demo-app").unwrap(),
         &DatabaseId::default_database(),
@@ -2058,4 +2064,151 @@ fn a_cleared_single_field_override_inherits_again() {
     assert!(set.clear_single_field_override(&group, &fp("nx")));
     assert_eq!(set.single_field_modes(&group, &fp("nx")).len(), 3);
     assert!(!set.clear_single_field_override(&group, &fp("nx")));
+}
+
+/// `writelimits` run 2026-11-17 (FS-7, two recordings). Production accepted a composite entry of
+/// 6,000 documented bytes and refused 6,500 and 7,000 with "Index entry is too large."; it
+/// accepted a collection-group single-field entry of 5,700 and refused 6,000 and 6,190. The
+/// composite refusal sits above the single-field figure (5,531), and the collection-group
+/// figure sits between 5,700 and 6,000. Strict refuses from the smallest recorded refusal, so
+/// 6,499 and 5,999 are the unobserved gaps it accepts. The pinned official emulator makes none
+/// of these refusals.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn composite_and_collection_group_entries_follow_the_recorded_production_thresholds() {
+    use fireemu_core_firestore::path::DocumentPath;
+    use fireemu_core_firestore::store::LimitScope;
+    use fireemu_core_types::ids::{DatabaseId, ProjectId};
+    use std::collections::BTreeMap;
+
+    let document = |segments: &[(&str, usize)]| {
+        let relative = segments
+            .iter()
+            .map(|(text, length)| text.repeat(*length))
+            .collect::<Vec<_>>()
+            .join("/");
+        DocumentPath::parse(
+            &ProjectId::try_new("demo-app").unwrap(),
+            &DatabaseId::default_database(),
+            &relative,
+        )
+        .unwrap()
+    };
+    let strings = |s: usize, n: usize| {
+        BTreeMap::from([
+            ("s".to_owned(), Value::String("s".repeat(s))),
+            ("n".to_owned(), Value::String("n".repeat(n))),
+        ])
+    };
+    // `flt` carries composites on (s, n): the deployed sandbox indexes.
+    let mut indexes = IndexSet::default();
+    indexes.add_composite(IndexDefinition {
+        collection_group: CollectionId::try_new("flt").unwrap(),
+        query_scope: IndexQueryScope::Collection,
+        fields: vec![
+            IndexField {
+                path: fp("s"),
+                mode: IndexFieldMode::Ascending,
+            },
+            IndexField {
+                path: fp("n"),
+                mode: IndexFieldMode::Ascending,
+            },
+        ],
+    });
+    // The composite entry is the name, its parent's name, both values and 32. These are the
+    // recorded `composite-entry/heavy/{6000,6500,7000}` names: parent segments of the given
+    // lengths, `flt`, and a 601-byte id.
+    let flt = |first: usize, second: usize| {
+        document(&[("p", first), ("y", second), ("flt", 1), ("i", 601)])
+    };
+    let heavy = |first: usize, second: usize| (flt(first, second), strings(1_500, 1_500));
+    for (first, second, entry, refused) in [
+        (582, 581, 6_000, false),
+        (707, 706, 6_500, true),
+        (832, 831, 7_000, true),
+    ] {
+        let (path, fields) = heavy(first, second);
+        assert_eq!(
+            usage_entry(&indexes, &path, &fields),
+            entry,
+            "{entry}: the fixture hits its documented entry size"
+        );
+        let strict = indexes.document_index_usage(&path, &fields);
+        if refused {
+            assert_eq!(
+                strict.unwrap_err().to_string(),
+                "invalid argument: Index entry is too large.",
+                "composite {entry} is refused"
+            );
+        } else {
+            assert!(strict.is_ok(), "composite {entry} is accepted");
+        }
+        assert!(
+            indexes
+                .document_index_usage_in(&path, &fields, LimitScope::OfficialEmulator)
+                .is_ok(),
+            "the emulator profile refuses nothing: {entry}"
+        );
+    }
+
+    // `items.n` has a collection-group-only single-field index (a field override): the only
+    // entry is the collection-group one, the name, `n`, the value and 48.
+    let mut group = IndexSet::default();
+    group.set_single_field_indexes(
+        &CollectionId::try_new("items").unwrap(),
+        &fp("n"),
+        vec![(IndexQueryScope::CollectionGroup, IndexFieldMode::Ascending)],
+    );
+    let item = |parent: [usize; 4], id: usize| {
+        document(&[
+            ("g", parent[0]),
+            ("y", parent[1]),
+            ("y", parent[2]),
+            ("y", parent[3]),
+            ("items", 1),
+            ("i", id),
+        ])
+    };
+    let value = BTreeMap::from([("n".to_owned(), Value::String("n".repeat(1_500)))]);
+    for (parent, entry, refused) in [
+        ([956, 956, 956, 955], 5_700, false),
+        ([1_031, 1_031, 1_031, 1_030], 6_000, true),
+    ] {
+        let path = item(parent, 300);
+        assert_eq!(
+            usage_entry(&group, &path, &value),
+            entry,
+            "{entry}: the fixture hits its documented entry size"
+        );
+        let strict = group.document_index_usage(&path, &value);
+        if refused {
+            assert_eq!(
+                strict.unwrap_err().to_string(),
+                "invalid argument: Index entry is too large.",
+                "collection-group {entry} is refused"
+            );
+        } else {
+            assert!(strict.is_ok(), "collection-group {entry} is accepted");
+        }
+        assert!(
+            group
+                .document_index_usage_in(&path, &value, LimitScope::OfficialEmulator)
+                .is_ok(),
+            "the emulator profile refuses nothing: {entry}"
+        );
+    }
+}
+
+/// The largest entry the document produces under the emulator scope (which only counts).
+fn usage_entry(
+    indexes: &IndexSet,
+    path: &fireemu_core_firestore::path::DocumentPath,
+    fields: &std::collections::BTreeMap<String, Value>,
+) -> u64 {
+    use fireemu_core_firestore::store::LimitScope;
+    indexes
+        .document_index_usage_in(path, fields, LimitScope::OfficialEmulator)
+        .unwrap()
+        .maximum_entry_bytes
 }
