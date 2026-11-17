@@ -117,7 +117,7 @@
     },
     "crates/fireemu-core-limits/src/generated/firestore_standard_2026_08_25.rs": {
       "kind": "sha256",
-      "value": "d4a998e66f9e1784c436fad827b2b7fc48f6b4dba43963031cfc56e62411562b"
+      "value": "3f939cbf061a1d8eeafb644a0ecca463d23c533fb7b5dec0f2c1cae6f11ba609"
     },
     "crates/fireemu-core-limits/src/generated/firestore_standard_query_2026_08_25.rs": {
       "kind": "sha256",
