@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Scheduled functions and Firestore pipeline calendar functions: IANA time zones now come from the zone database bundled with `jiff` (tzdb 2026f), replacing `chrono-tz` (tzdb 2025b), and the time zone database version reported by the daemon changes accordingly. 49 zones get the newer rules, among them the November 2026 changes for western Canada and Cuba and historical corrections for Brazil, Mexico (Tijuana), Iran, Moldova, Ireland and the `CST6CDT`-style zones. RFC 3339 parsing and formatting are unchanged. `chrono` and `chrono-tz`, no longer maintained (RUSTSEC-2026-0543, RUSTSEC-2026-0555), are no longer dependencies.
+
 ## [0.60.0] - 2026-11-18
 
 ### Added

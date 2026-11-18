@@ -46,11 +46,11 @@
         "path+crates/fireemu-core-types/Cargo.toml#fireemu-core-types@0.60.0",
         "path+crates/fireemu-proto-firestore/Cargo.toml#fireemu-proto-firestore@0.60.0",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
-        "registry+https://github.com/rust-lang/crates.io-index#chrono-tz@0.10.4",
-        "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.5",
         "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
         "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+        "registry+https://github.com/rust-lang/crates.io-index#jiff-tzdb@1.0.0",
+        "registry+https://github.com/rust-lang/crates.io-index#jiff@1.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#prost@0.13.5",
         "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.6",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
@@ -77,11 +77,10 @@
         "path+crates/fireemu-core-types/Cargo.toml#fireemu-core-types@0.60.0",
         "path+crates/fireemu-proto-firestore/Cargo.toml#fireemu-proto-firestore@0.60.0",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
-        "registry+https://github.com/rust-lang/crates.io-index#chrono-tz@0.10.4",
-        "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.5",
         "registry+https://github.com/rust-lang/crates.io-index#hyper-util@0.1.20",
         "registry+https://github.com/rust-lang/crates.io-index#hyper@1.11.0",
+        "registry+https://github.com/rust-lang/crates.io-index#jiff@1.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#md-5@0.10.6",
         "registry+https://github.com/rust-lang/crates.io-index#prost-types@0.13.5",
         "registry+https://github.com/rust-lang/crates.io-index#prost@0.13.5",
@@ -887,22 +886,6 @@
       "dependencies": []
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#chrono-tz@0.10.4",
-      "name": "chrono-tz",
-      "version": "0.10.4",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "manifest": null,
-      "procMacro": false,
-      "features": [
-        "default",
-        "std"
-      ],
-      "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
-        "registry+https://github.com/rust-lang/crates.io-index#phf@0.12.1"
-      ]
-    },
-    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
       "name": "chrono",
       "version": "0.4.45",
@@ -912,15 +895,10 @@
       "features": [
         "alloc",
         "clock",
-        "default",
         "iana-time-zone",
-        "js-sys",
         "now",
-        "oldtime",
         "serde",
         "std",
-        "wasm-bindgen",
-        "wasmbind",
         "winapi",
         "windows-link"
       ],
@@ -1932,6 +1910,33 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#jiff-core@1.0.0",
+      "name": "jiff-core",
+      "version": "1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [
+        "alloc",
+        "default",
+        "std",
+        "tz-fat"
+      ],
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34"
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#jiff-tzdb@1.0.0",
+      "name": "jiff-tzdb",
+      "version": "1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [],
+      "dependencies": []
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#jiff@0.2.35",
       "name": "jiff",
       "version": "0.2.35",
@@ -1949,6 +1954,25 @@
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#defmt@1.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#jiff-core@0.1.0",
+        "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34",
+        "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229"
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#jiff@1.0.0",
+      "name": "jiff",
+      "version": "1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "manifest": null,
+      "procMacro": false,
+      "features": [
+        "alloc",
+        "std",
+        "tzdb-bundle-always"
+      ],
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#jiff-core@1.0.0",
+        "registry+https://github.com/rust-lang/crates.io-index#jiff-tzdb@1.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#log@0.4.34",
         "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229"
       ]
@@ -2303,30 +2327,6 @@
         "std"
       ],
       "dependencies": []
-    },
-    {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#phf@0.12.1",
-      "name": "phf",
-      "version": "0.12.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "manifest": null,
-      "procMacro": false,
-      "features": [],
-      "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#phf_shared@0.12.1"
-      ]
-    },
-    {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#phf_shared@0.12.1",
-      "name": "phf_shared",
-      "version": "0.12.1",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "manifest": null,
-      "procMacro": false,
-      "features": [],
-      "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#siphasher@1.0.3"
-      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#pin-project-internal@1.1.13",
@@ -3193,19 +3193,6 @@
       "features": [
         "default",
         "text"
-      ],
-      "dependencies": []
-    },
-    {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#siphasher@1.0.3",
-      "name": "siphasher",
-      "version": "1.0.3",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "manifest": null,
-      "procMacro": false,
-      "features": [
-        "default",
-        "std"
       ],
       "dependencies": []
     },
