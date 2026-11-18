@@ -104,7 +104,7 @@ UI 的 Functions 页面也可以立即运行定时函数，或把时钟推进到
 
 有些时间是在 fireemu 之外、按主机的真实时间生成的：Admin SDK 用 `Date.now()` 设置自定义令牌的 `iat` 和 `exp`，`getSignedUrl()` 用当前时间为 Storage URL 签名，`taskQueue().enqueue({scheduleDelaySeconds})` 用 `Date.now()` 计算任务的 `scheduleTime`。当模拟器时钟被固定或移动时（`daemon.clockStart`、`clock:advance`、每个 `fireemu/testing` 世界），它与这些时间不一致。`daemon.callerTimes` 决定如何判断它们：
 
-- `clockOrWall`（默认）：自定义令牌或签名 URL 的时间只要对模拟器时钟或真实时间之一成立就会被接受。比起任务时钟更接近真实时间的任务 `scheduleTime` 会在任务时钟上保持其延迟，因此在 `functions.clock.tasks = "virtual"` 下，以 60 秒延迟入队的任务会在模拟器时间 60 秒后到期（`tasks = "real"` 且 `Date` 为虚拟时则相反）。拒绝时会同时给出模拟器时钟和真实时间，例如 `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`。
+- `clockOrWall`（默认）：自定义令牌或签名 URL 的时间只要对模拟器时钟或真实时间之一成立就会被接受。比起任务时钟更接近真实时间的任务 `scheduleTime` 会在任务时钟上保持其延迟，因此在 `functions.clock.tasks = "virtual"` 下，以 60 秒延迟入队的任务会在模拟器时间 60 秒后到期（`tasks = "real"` 且 `Date` 为虚拟时则相反）。这是按最近的时钟做出的推断：当两个时钟相差不到延迟的两倍时，该时间可能更接近任务时钟而被原样采用，因此当任务时钟比真实时间快 90 秒时，这个 60 秒的任务会立即到期。拒绝时会同时给出模拟器时钟和真实时间，例如 `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`。
 - `clock`：与生产环境按其唯一时钟判断一样，只按模拟器时钟判断，并返回生产环境的消息。`productionExact` 选择此项。
 
 ```json

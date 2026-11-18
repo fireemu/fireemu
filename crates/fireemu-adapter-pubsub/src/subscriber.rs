@@ -230,8 +230,6 @@ fn apply_stream_request(
             .collect();
         let _ = handle.acknowledge(sub, &ids);
     }
-    let now = handle.delivery_now();
-    let mut state = handle.state();
     for (id, secs) in req
         .modify_deadline_ack_ids
         .iter()
@@ -239,7 +237,7 @@ fn apply_stream_request(
     {
         let s = u32::try_from(*secs).unwrap_or(0);
         let id = crate::ack_token::internal(id, handle.paging_policy);
-        let _ = state.modify_ack_deadline(sub, std::slice::from_ref(&id), s, now);
+        let _ = handle.modify_ack_deadline(sub, std::slice::from_ref(&id), s);
     }
     Ok(())
 }
@@ -371,8 +369,9 @@ impl Subscriber for SubscriberService {
                 .then_some(parsed_policies.dead_letter_policy),
         };
         self.handle
-            .state()
-            .update_subscription_configuration(&name, update, strict)
+            .changing_delivery_mode(&name, |state| {
+                state.update_subscription_configuration(&name, update, strict)
+            })
             .map_err(|e| status(&e))?;
         let topic = self
             .handle
@@ -456,10 +455,8 @@ impl Subscriber for SubscriberService {
             u32::try_from(req.ack_deadline_seconds)
                 .map_err(|_| Status::invalid_argument("ackDeadlineSeconds must be non-negative"))?
         };
-        let now = self.handle.delivery_now();
         self.handle
-            .state()
-            .modify_ack_deadline(&name, &req.ack_ids, secs, now)
+            .modify_ack_deadline(&name, &req.ack_ids, secs)
             .map_err(|e| status(&e))?;
         Ok(Response::new(()))
     }
@@ -682,7 +679,6 @@ impl Subscriber for SubscriberService {
         let push = push_config_from_proto(req.push_config.as_ref(), self.handle.paging_policy)
             .map_err(|error| status(&error))?;
         self.handle
-            .state()
             .update_push_config(&name, push)
             .map_err(|error| status(&error))?;
         let topic = self
@@ -1195,12 +1191,13 @@ mod output_tests {
             .clock
             .lock()
             .unwrap()
-            .advance(LogicalDuration::from_nanos(10_000_000_000 - 1))
+            .advance(LogicalDuration::from_millis(10_000 - 100))
             .unwrap();
         let mut scheduled = None;
         let first = handle.pull_recheck_at(&name, &mut scheduled);
         // The lease was taken in delivery time: ten seconds after the pull, which came a few
-        // microseconds of wall time after the frozen clock last moved.
+        // microseconds of wall time after the frozen clock last moved. Those microseconds, and
+        // the ones before the advance, count on a still clock, so the advance stops 100 ms short.
         let deadline = scheduled.as_ref().unwrap().1.unwrap();
         assert!(
             deadline >= LogicalInstant::from_unix_seconds(10)

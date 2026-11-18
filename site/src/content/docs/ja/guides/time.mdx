@@ -104,7 +104,7 @@ UIのFunctionsページから、スケジュール関数をすぐに実行する
 
 fireemuの外、ホストの実時間で作られる時刻があります。Admin SDKはカスタムトークンの`iat`と`exp`を`Date.now()`で付け、`getSignedUrl()`は現在時刻でStorageのURLに署名し、`taskQueue().enqueue({scheduleDelaySeconds})`はタスクの`scheduleTime`を`Date.now()`から計算します。エミュレータのクロックを固定したり動かしたりすると（`daemon.clockStart`、`clock:advance`、すべての`fireemu/testing`のワールド）、これらの時刻と食い違います。その判定方法を`daemon.callerTimes`で決めます。
 
-- `clockOrWall`（既定）: カスタムトークンと署名付きURLは、その時刻がエミュレータのクロックか実時間のどちらかに対して有効なら受け入れます。タスククロックより実時間に近いタスクの`scheduleTime`は、タスククロック上で同じ遅延を保ちます。`functions.clock.tasks = "virtual"`なら、60秒の遅延で登録したタスクはエミュレータ時間で60秒後に実行されます（`tasks = "real"`で`Date`が仮想の場合はその逆）。拒否するときは、エミュレータのクロックと実時間の両方を示します。例: `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`。
+- `clockOrWall`（既定）: カスタムトークンと署名付きURLは、その時刻がエミュレータのクロックか実時間のどちらかに対して有効なら受け入れます。タスククロックより実時間に近いタスクの`scheduleTime`は、タスククロック上で同じ遅延を保ちます。`functions.clock.tasks = "virtual"`なら、60秒の遅延で登録したタスクはエミュレータ時間で60秒後に実行されます（`tasks = "real"`で`Date`が仮想の場合はその逆）。これは近い方のクロックで推定する規則です。2つのクロックの差が遅延の2倍より小さいと、時刻がタスククロックの方に近くなり、そのまま扱われます。タスククロックが実時間より90秒進んでいれば、この60秒のタスクはすぐに実行されます。拒否するときは、エミュレータのクロックと実時間の両方を示します。例: `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`。
 - `clock`: 本番が自分の一つのクロックで判定するのと同じく、エミュレータのクロックだけで判定し、本番のメッセージを返します。`productionExact`はこちらを選びます。
 
 ```json

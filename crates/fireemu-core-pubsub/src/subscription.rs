@@ -361,6 +361,22 @@ impl SubscriptionState {
         self.config.ack_deadline_seconds = seconds;
     }
 
+    /// Moves every retained retry time and lease deadline by `delta` nanoseconds (saturating).
+    /// Used when the subscription changes between pull and push delivery, whose times are kept
+    /// on different clocks.
+    pub fn shift_delivery_times(&mut self, delta: i128) {
+        let shift = |at: &mut LogicalInstant| {
+            *at = LogicalInstant::from_nanos(at.as_nanos().saturating_add(delta));
+        };
+        for entry in &mut self.entries[self.first_unacked..] {
+            match &mut entry.state {
+                Delivery::Available { available_at } => shift(available_at),
+                Delivery::Outstanding { deadline, .. } => shift(deadline),
+                Delivery::Acked | Delivery::ForwardPending => {}
+            }
+        }
+    }
+
     /// Sets the push configuration (used by `ModifyPushConfig`).
     pub fn set_push_config(&mut self, push: PushConfig) {
         self.config.push_config = push;

@@ -1988,6 +1988,21 @@ impl PubSubState {
         self.sub_mut(name)?.seek_to_time(time, now)
     }
 
+    /// Moves the subscription's retained retry times and lease deadlines by `delta` nanoseconds.
+    pub fn shift_delivery_times(&mut self, name: &SubscriptionName, delta: i128) -> Result<()> {
+        let _changed = self.delivery_change();
+        self.sub_mut(name)?.shift_delivery_times(delta);
+        Ok(())
+    }
+
+    /// Expires lapsed ack deadlines of one subscription. An ack or deadline change runs this
+    /// first, so a lease that lapsed with nobody pulling is not acknowledged or extended late.
+    pub fn expire_lapsed(&mut self, name: &SubscriptionName, now: LogicalInstant) -> Result<()> {
+        let _changed = self.delivery_change();
+        self.sub_mut(name)?.expire_deadlines(now);
+        Ok(())
+    }
+
     /// Expires lapsed ack deadlines across every subscription. Call on each clock advance so a
     /// later pull redelivers messages whose deadline passed while the clock moved.
     pub fn expire_all(&mut self, now: LogicalInstant) {

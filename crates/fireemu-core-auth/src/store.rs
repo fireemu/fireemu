@@ -6000,6 +6000,7 @@ impl AuthStore {
         user.tokens_revoked = true;
         user.emulator_valid_since = Some(Self::unix_second(at));
         self.activate_email_owner(uid);
+        self.note_same_second_revocation(uid, at);
         Ok(())
     }
 

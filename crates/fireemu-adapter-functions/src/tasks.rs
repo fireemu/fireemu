@@ -685,6 +685,28 @@ mod tests {
         );
     }
 
+    /// Codex r1 Should: the rule is a nearest-clock guess. With the virtual task clock 90 s
+    /// ahead of wall time, a host-minted 60-second delay (wall + 60 s) is nearer the task clock
+    /// than wall time, so it is taken as it is and is already 30 s in the task clock's past: the
+    /// task is due at once. The guide states this limit.
+    #[test]
+    fn a_delay_shorter_than_half_the_clock_gap_is_taken_as_it_is() {
+        use fireemu_core_types::time::LogicalInstant;
+        let second = 1_000_000_000_i128;
+        let wall = 1_795_000_000 * second;
+        let own = wall + 90 * second;
+        let minted = LogicalInstant::from_nanos(wall + 60 * second);
+        let kept = super::rebase_schedule_time(minted, own, wall);
+        assert_eq!(kept, minted);
+        assert!(kept.as_nanos() < own);
+        // A clock 150 s ahead: the same time is nearer wall time and keeps its delay.
+        let own = wall + 150 * second;
+        assert_eq!(
+            super::rebase_schedule_time(minted, own, wall).as_nanos(),
+            own + 60 * second
+        );
+    }
+
     /// A time exactly as far from both clocks is kept: only a time strictly nearer the other
     /// clock was minted there.
     #[test]

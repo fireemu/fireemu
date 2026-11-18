@@ -10676,10 +10676,16 @@ fn custom_token_times_follow_the_caller_times_rule_on_every_combination() {
             "strictSigners" => strict_state_with_signer(),
             _ => state(),
         };
+        // `followsWall` runs a clock that really follows real time from the wall sample.
+        let start = LogicalInstant::from_unix_seconds(clock);
+        let clock_state = if f[2] == "followsWall" {
+            VirtualClock::following(start)
+        } else {
+            VirtualClock::new(start)
+        };
+        assert_eq!(clock_state.is_following(), f[2] == "followsWall");
         let s = AuthState {
-            clock: Arc::new(Mutex::new(VirtualClock::new(
-                LogicalInstant::from_unix_seconds(clock),
-            ))),
+            clock: Arc::new(Mutex::new(clock_state)),
             caller_times,
             ..base
         };
@@ -24902,5 +24908,45 @@ fn a_mask_below_a_stored_scalar_is_ignored_in_both_profiles() {
             read["notification"]["defaultLocale"], "ja",
             "strict {strict}"
         );
+    }
+}
+
+/// Codex r1 M4: a privileged `accounts:update` that sets `validSince` to the second of the last
+/// sign-in is a same-second revocation too, and records the notice; one second later does not.
+#[test]
+fn a_valid_since_in_the_sign_in_second_records_the_same_second_notice() {
+    use fireemu_core_auth::store::CredentialNotice;
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorder = seen.clone();
+    let s = AuthState {
+        notices: Some(Arc::new(move |notice: &CredentialNotice| {
+            if matches!(notice, CredentialNotice::SameSecondRevocation { .. }) {
+                recorder.lock().unwrap().push(notice.message());
+            }
+        })),
+        ..strict_state()
+    };
+    let (status, signed_in) = post(
+        &s,
+        &format!("{V1}/accounts:signUp?key=k"),
+        &json!({"email": "same-second@example.com", "password": "hunter22", "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{signed_in}");
+    let auth_time = fireemu_core_auth::jwt::decode_unsigned(signed_in["idToken"].as_str().unwrap())
+        .unwrap()
+        .payload
+        .get("auth_time")
+        .and_then(fireemu_core_types::json::JsonValue::as_i64)
+        .unwrap();
+    for (seconds, expected) in [(auth_time + 1, 0), (auth_time, 1)] {
+        seen.lock().unwrap().clear();
+        let (status, body) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts:update"),
+            &json!({"localId": signed_in["localId"], "validSince": seconds.to_string()}),
+        );
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(seen.lock().unwrap().len(), expected, "validSince {seconds}");
     }
 }

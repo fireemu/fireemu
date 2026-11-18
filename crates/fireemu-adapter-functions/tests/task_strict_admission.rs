@@ -2124,3 +2124,27 @@ async fn strict_enqueue_rebases_a_schedule_time_minted_on_the_other_clock() {
     let kept = answered_schedule_time("keep-real", real, &rfc3339_at(start + 60)).await;
     assert!((kept - wall).abs() <= 2, "{kept} vs {wall}");
 }
+
+/// Codex r1 M5: strict admission judges the `scheduleTime` the caller sent. A lowercase `t`
+/// separator near wall time is refused as before, even though rebasing would rewrite it.
+#[tokio::test]
+async fn strict_enqueue_refuses_a_malformed_schedule_time_before_rebasing_it() {
+    let h = start_with_policy(
+        "rebase-malformed",
+        FunctionsHttpProfile::Strict,
+        NameReuse::Immediate,
+        600,
+        retry(1, 500),
+        ApplicationClockPolicy {
+            tasks_virtual: true,
+            rebase_caller_schedule_times: true,
+            ..ApplicationClockPolicy::default()
+        },
+        false,
+    )
+    .await;
+    let malformed = rfc3339_at(wall_seconds() + 60).replace('T', "t");
+    let (status, _) = refusal(&h, &body_of(&json!({"scheduleTime": malformed})));
+    assert_eq!(status, 400);
+    h.stop().await;
+}

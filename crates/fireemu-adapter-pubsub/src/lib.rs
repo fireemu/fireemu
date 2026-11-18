@@ -582,17 +582,26 @@ impl PubSubHandle {
     /// The delivery time ([`delivery_clock`]): what ack deadlines, retry backoff and push
     /// backoff are set and compared in. The logical clock is read first, as [`Self::now`] is.
     pub(crate) fn delivery_now(&self) -> LogicalInstant {
-        let logical = self.now();
+        self.delivery_reading().0
+    }
+
+    /// The delivery time and how far it is ahead of the logical clock. The logical clock is
+    /// read while the delivery clock is held, so readings are applied in the order they were
+    /// taken (an older sample applied late would look like a rewind).
+    fn delivery_reading(&self) -> (LogicalInstant, fireemu_core_types::time::LogicalDuration) {
+        let mut delivery = self.delivery_clock.lock().expect("delivery clock lock");
+        let (logical, stands_still) = {
+            let clock = self.clock.lock().expect("clock lock");
+            (clock.now(), !clock.is_following())
+        };
         #[allow(unused_mut)]
         let mut wall = self.wall_origin.elapsed().as_nanos();
         #[cfg(test)]
         {
             wall += u128::from(self.wall_skew_nanos.load(Ordering::Acquire));
         }
-        self.delivery_clock
-            .lock()
-            .expect("delivery clock lock")
-            .observe(logical, wall)
+        let at = delivery.observe(logical, wall, stands_still);
+        (at, delivery.offset())
     }
 
     /// Lets `seconds` of wall time pass for the delivery clock, without sleeping.
@@ -1035,14 +1044,88 @@ impl PubSubHandle {
         Ok(())
     }
 
+    /// How far the delivery clock is ahead of the logical clock now.
+    pub(crate) fn delivery_offset(&self) -> fireemu_core_types::time::LogicalDuration {
+        self.delivery_reading().1
+    }
+
+    /// `ModifyPushConfig`.
+    pub(crate) fn update_push_config(
+        &self,
+        subscription: &SubscriptionName,
+        push: fireemu_core_pubsub::PushConfig,
+    ) -> Result<(), PubSubError> {
+        self.changing_delivery_mode(subscription, |state| {
+            state.update_push_config(subscription, push)
+        })
+    }
+
+    /// Runs a configuration change under the broker lock. When it turns a pull subscription into
+    /// a push one, retained retry times and lease deadlines move from delivery time to logical
+    /// time (push waits on the logical clock), and back the other way.
+    pub(crate) fn changing_delivery_mode<T>(
+        &self,
+        subscription: &SubscriptionName,
+        change: impl FnOnce(&mut PubSubState) -> Result<T, PubSubError>,
+    ) -> Result<T, PubSubError> {
+        let offset = self.delivery_offset().as_nanos();
+        let mut state = self.state();
+        let was_push = state.subscription_config(subscription)?.is_push();
+        let out = change(&mut state)?;
+        let is_push = state
+            .subscription_config(subscription)
+            .is_ok_and(fireemu_core_pubsub::SubscriptionConfig::is_push);
+        if is_push != was_push {
+            state.shift_delivery_times(subscription, if is_push { -offset } else { offset })?;
+        }
+        Ok(out)
+    }
+
+    /// Modifies the ack deadline of `ack_ids` (zero nacks) at delivery time.
+    pub(crate) fn modify_ack_deadline(
+        &self,
+        subscription: &SubscriptionName,
+        ack_ids: &[String],
+        seconds: u32,
+    ) -> Result<(), PubSubError> {
+        let times = self.lease_times();
+        let mut state = self.state();
+        let now = Self::expire_lapsed_leases(&mut state, subscription, times)?;
+        state.modify_ack_deadline(subscription, ack_ids, seconds, now)
+    }
+
+    /// The logical time and the delivery time, read before the broker lock is taken.
+    fn lease_times(&self) -> (LogicalInstant, LogicalInstant) {
+        let delivery = self.delivery_now();
+        (self.now(), delivery)
+    }
+
+    /// Expires the subscription's lapsed leases under the broker lock and returns the time its
+    /// leases are kept in: logical time for a push subscription, delivery time for a pull one.
+    fn expire_lapsed_leases(
+        state: &mut PubSubState,
+        subscription: &SubscriptionName,
+        (logical, delivery): (LogicalInstant, LogicalInstant),
+    ) -> Result<LogicalInstant, PubSubError> {
+        let now = if state.subscription_config(subscription)?.is_push() {
+            logical
+        } else {
+            delivery
+        };
+        state.expire_lapsed(subscription, now)?;
+        Ok(now)
+    }
+
     pub(crate) fn acknowledge(
         &self,
         subscription: &SubscriptionName,
         ack_ids: &[String],
     ) -> Result<usize, PubSubError> {
+        let times = self.lease_times();
         let result = {
             let mut state = self.state();
-            state.acknowledge(subscription, ack_ids)
+            Self::expire_lapsed_leases(&mut state, subscription, times)
+                .and_then(|_| state.acknowledge(subscription, ack_ids))
         };
         if result.is_ok() {
             self.retry_pending_dead_letters();
@@ -2737,6 +2820,104 @@ mod dispatch_tests {
                 "{policy:?}"
             );
         }
+    }
+
+    /// Codex r1 M3: a retry kept in delivery time while the subscription pulled is moved to
+    /// logical time when it becomes a push subscription (push waits on the logical clock), and
+    /// back when it becomes a pull subscription again.
+    #[test]
+    fn switching_between_pull_and_push_moves_retained_times_between_the_clocks() {
+        let (handle, subscription, topic) = unary_pull_fixture(PagingPolicy::Emulator);
+        handle
+            .state()
+            .publish(
+                &topic,
+                vec![PubsubMessage {
+                    data: b"m".to_vec(),
+                    ..Default::default()
+                }],
+                handle.now(),
+            )
+            .unwrap();
+        handle.pass_wall_time(60);
+        let received = handle.pull(&subscription, 1).unwrap();
+        handle
+            .modify_ack_deadline(&subscription, &[received[0].ack_id.clone()], 0)
+            .unwrap();
+        let retry_at = |handle: &PubSubHandle| {
+            handle
+                .state()
+                .next_delivery_at(&subscription)
+                .unwrap()
+                .unwrap()
+        };
+        let in_delivery_time = retry_at(&handle);
+        assert!(in_delivery_time.as_nanos() >= 60_000_000_000);
+        let push = fireemu_core_pubsub::PushConfig {
+            push_endpoint: "http://127.0.0.1:1/push".to_owned(),
+            ..Default::default()
+        };
+        handle.update_push_config(&subscription, push).unwrap();
+        // The 60 s (and the few microseconds since) of still wall time are taken off: due at
+        // once on the logical clock. Real wall time keeps passing, so compare within 100 ms.
+        let close = |a: i128, b: i128| (a - b).abs() < 100_000_000;
+        let on_push = retry_at(&handle);
+        assert!(
+            close(
+                on_push.as_nanos(),
+                in_delivery_time.as_nanos() - 60_000_000_000
+            ),
+            "{on_push:?}"
+        );
+        assert!(on_push <= handle.now());
+        handle
+            .update_push_config(&subscription, fireemu_core_pubsub::PushConfig::default())
+            .unwrap();
+        assert!(close(
+            retry_at(&handle).as_nanos(),
+            in_delivery_time.as_nanos()
+        ));
+    }
+
+    /// Codex r1 M2: a lease that has expired in delivery time is gone, even if nobody pulled
+    /// since. A late ack does not remove the message and a late positive `ModifyAckDeadline` does
+    /// not extend the lease: the next pull redelivers it. The near miss acks in time.
+    #[test]
+    fn a_late_ack_or_extension_does_not_consume_an_expired_lease() {
+        for late in ["ack", "extend"] {
+            let (handle, subscription, ack_id) =
+                leased_recheck_fixture_with(PagingPolicy::Emulator);
+            handle.pass_wall_time(11);
+            if late == "ack" {
+                handle.acknowledge(&subscription, &[ack_id]).unwrap();
+            } else {
+                handle
+                    .modify_ack_deadline(&subscription, &[ack_id], 600)
+                    .unwrap();
+            }
+            assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1, "{late}");
+        }
+        let (handle, subscription, ack_id) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle.pass_wall_time(9);
+        handle.acknowledge(&subscription, &[ack_id]).unwrap();
+        handle.pass_wall_time(20);
+        assert!(handle.pull(&subscription, 1).unwrap().is_empty());
+    }
+
+    /// Codex r1 M1: wall time that passed on a frozen clock with nobody reading the delivery
+    /// clock still counts after a logical advance: 11 s of wall time, then a 1 s advance, and the
+    /// 10 s lease has expired.
+    #[test]
+    fn frozen_wall_time_survives_a_logical_advance() {
+        let (handle, subscription, _) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle.pass_wall_time(11);
+        handle
+            .clock
+            .lock()
+            .unwrap()
+            .advance(LogicalDuration::from_seconds(1))
+            .unwrap();
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
     }
 
     /// A nack under a retry policy (10 s minimum backoff) on a frozen clock: held for 9 s of

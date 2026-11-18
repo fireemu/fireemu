@@ -3872,8 +3872,11 @@ impl FunctionsRuntime {
         let body = match body
             .pointer("/task/scheduleTime")
             .and_then(Value::as_str)
-            .and_then(|text| self.rebased_schedule_time(text))
-        {
+            .and_then(|text| {
+                self.rebased_schedule_time(text, |text| {
+                    crate::tasks_production::parse_timestamp(text).is_some()
+                })
+            }) {
             Some(rebased) => {
                 let mut copy = body.clone();
                 copy["task"]["scheduleTime"] = Value::String(rebased);
@@ -4163,7 +4166,16 @@ impl FunctionsRuntime {
 
     /// `text` rebased onto the task clock ([`crate::tasks::rebase_schedule_time`]); unchanged
     /// when it is not a timestamp or no other clock applies.
-    fn rebased_schedule_time(&self, text: &str) -> Option<String> {
+    /// Only a time `well_formed` accepts as sent is rebased, so admission still judges the
+    /// caller's own text (a rewrite must never turn a refused timestamp into an accepted one).
+    fn rebased_schedule_time(
+        &self,
+        text: &str,
+        well_formed: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        if !well_formed(text) {
+            return None;
+        }
         let (own, other) = self.schedule_time_clocks()?;
         let at = LogicalInstant::parse_rfc3339(text).ok()?;
         let rebased = crate::tasks::rebase_schedule_time(at, own, other);
@@ -4178,7 +4190,7 @@ impl FunctionsRuntime {
         if let Some(rebased) = task
             .schedule_time
             .as_deref()
-            .and_then(|text| self.rebased_schedule_time(text))
+            .and_then(|text| self.rebased_schedule_time(text, crate::tasks::valid_schedule_time))
         {
             task.schedule_time = Some(rebased);
         }

@@ -925,7 +925,6 @@ async fn dispatch_subscription(
                 .transpose()?
                 .unwrap_or_default();
             handle
-                .state()
                 .update_push_config(&subscription, push)
                 .map_err(RestError::from_core)?;
             let topic = handle
@@ -1279,11 +1278,13 @@ fn update_subscription(
                 .map_err(RestError::from_core)?;
         }
     }
+    handle
+        .changing_delivery_mode(&subscription, |state| {
+            state.update_subscription_configuration(&subscription, change, strict)
+        })
+        .map_err(RestError::from_core)?;
     let (topic, mut response) = {
-        let mut state = handle.state();
-        state
-            .update_subscription_configuration(&subscription, change, strict)
-            .map_err(RestError::from_core)?;
+        let state = handle.state();
         let config = state
             .subscription_config(&subscription)
             .map_err(RestError::from_core)?
@@ -1613,8 +1614,7 @@ fn modify_ack_deadline(
             })?)?
         };
     handle
-        .state()
-        .modify_ack_deadline(&subscription, &ack_ids, seconds, handle.delivery_now())
+        .modify_ack_deadline(&subscription, &ack_ids, seconds)
         .map_err(RestError::from_core)?;
     Ok((StatusCode::OK, json!({})))
 }

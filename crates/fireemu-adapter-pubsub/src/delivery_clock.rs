@@ -4,11 +4,13 @@
 //! "frozen"`, a pinned `daemon.clockStart`, every `fireemu/testing` world) a deadline measured on
 //! the logical clock alone never arrives, so an unacknowledged message is never redelivered and a
 //! nack with a retry policy never comes back. The delivery clock is the logical clock plus the
-//! wall time that has passed while the logical clock stood still. On a clock that follows real
-//! time it is the logical clock; on a frozen one it moves with wall time; moving the logical
-//! clock forward (`clock:advance`) moves it by the same amount, so advancing past a deadline
-//! still passes it. A rewind starts it again at the rewound instant. Publish times and snapshot
-//! lifetimes stay on the logical clock.
+//! wall time that passed while the logical clock stood still (not following real time), whether
+//! or not it was moved by hand in that time. On a clock that follows real time it is the logical
+//! clock; on a still one it moves with wall time, and a move (`clock:advance`) moves it by the
+//! same amount on top. A rewind starts it again at the rewound instant. Publish times and snapshot
+//! lifetimes stay on the logical clock. Readings must be serialized with the update (the handle
+//! reads the logical clock while it holds the delivery clock), or an older logical sample applied
+//! after a newer one would look like a rewind.
 
 use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 
@@ -33,24 +35,42 @@ impl DeliveryClock {
         }
     }
 
-    /// The delivery time for a reading of the logical clock at `logical` and of wall time at
-    /// `wall_nanos`. It is never behind `logical` and never goes back while the logical clock
-    /// does not.
-    pub(crate) fn observe(&mut self, logical: LogicalInstant, wall_nanos: u128) -> LogicalInstant {
+    /// The delivery time for a reading of the logical clock at `logical`, of wall time at
+    /// `wall_nanos`, and of whether the logical clock `stands_still` (does not follow real time).
+    /// The wall time since the last reading counts when the clock stands still. It is never behind
+    /// `logical` and never goes back while the logical clock does not.
+    pub(crate) fn observe(
+        &mut self,
+        logical: LogicalInstant,
+        wall_nanos: u128,
+        stands_still: bool,
+    ) -> LogicalInstant {
         if logical < self.logical {
             *self = Self::new(logical, wall_nanos);
             return logical;
         }
-        if logical == self.logical {
+        if stands_still {
             self.offset_nanos = self
                 .offset_nanos
                 .saturating_add(wall_nanos.saturating_sub(self.wall_nanos));
         }
         self.logical = logical;
         self.wall_nanos = self.wall_nanos.max(wall_nanos);
+        self.at()
+    }
+
+    /// The delivery time at the last reading.
+    fn at(&self) -> LogicalInstant {
         let offset =
             LogicalDuration::from_nanos(i128::try_from(self.offset_nanos).unwrap_or(i128::MAX));
-        logical.checked_add(offset).unwrap_or(LogicalInstant::MAX)
+        self.logical
+            .checked_add(offset)
+            .unwrap_or(LogicalInstant::MAX)
+    }
+
+    /// How far the delivery clock is ahead of the logical clock.
+    pub(crate) fn offset(&self) -> LogicalDuration {
+        LogicalDuration::from_nanos(i128::try_from(self.offset_nanos).unwrap_or(i128::MAX))
     }
 }
 
@@ -66,38 +86,45 @@ mod tests {
     fn a_frozen_clock_moves_with_wall_time_and_an_advance_moves_it_at_once() {
         let start = LogicalInstant::from_unix_seconds(1_767_225_600);
         let mut clock = DeliveryClock::new(start, 0);
-        assert_eq!(clock.observe(start, 0), start);
+        assert_eq!(clock.observe(start, 0, true), start);
         assert_eq!(
-            clock.observe(start, 11 * SECOND),
+            clock.observe(start, 11 * SECOND, true),
             LogicalInstant::from_unix_seconds(1_767_225_611)
         );
-        // An advance of an hour moves it by an hour; the 11 s counted so far are kept, and
-        // the wall second during the advance is not counted.
+        // An advance of an hour moves it by an hour; the 11 s counted so far are kept, and the
+        // wall second before the advance was read counts too (the clock stood still).
         let advanced = LogicalInstant::from_unix_seconds(1_767_229_200);
         assert_eq!(
-            clock.observe(advanced, 12 * SECOND),
-            LogicalInstant::from_unix_seconds(1_767_229_211)
+            clock.observe(advanced, 12 * SECOND, true),
+            LogicalInstant::from_unix_seconds(1_767_229_212)
         );
+        // On a clock that follows real time nothing is added.
+        let mut following = DeliveryClock::new(start, 0);
+        let later = LogicalInstant::from_unix_seconds(1_767_225_605);
+        assert_eq!(following.observe(later, 5 * SECOND, false), later);
         // A rewind starts again from the rewound instant.
         let rewound = LogicalInstant::from_unix_seconds(1_767_000_000);
-        assert_eq!(clock.observe(rewound, 22 * SECOND), rewound);
+        assert_eq!(clock.observe(rewound, 22 * SECOND, true), rewound);
     }
 
     proptest! {
         /// Over any sequence of readings with wall time moving forward, against a reference
-        /// model: the delivery clock is the logical clock plus the wall time counted while it
-        /// stood still since the last rewind; so it is never behind the logical clock and never
-        /// goes back unless the logical clock does.
+        /// model: the delivery clock is the logical clock plus the wall time between readings
+        /// taken while the clock stood still, since the last rewind; so it is never behind the
+        /// logical clock and never goes back unless the logical clock does.
         #[test]
         fn the_delivery_clock_matches_its_reference_model(
-            steps in proptest::collection::vec((0_i64..3, 0_u64..5_000_000_000), 1..40),
+            steps in proptest::collection::vec(
+                (0_i64..3, 0_u64..5_000_000_000, proptest::bool::ANY),
+                1..40,
+            ),
         ) {
             let mut logical = LogicalInstant::from_unix_seconds(1_000);
             let mut wall: u128 = 0;
             let mut clock = DeliveryClock::new(logical, wall);
             let mut offset: i128 = 0;
             let mut previous = logical;
-            for (move_by, wall_step) in steps {
+            for (move_by, wall_step, still) in steps {
                 let before = logical;
                 wall += u128::from(wall_step);
                 // 0 stands still, 1 advances a second, 2 rewinds a second.
@@ -108,11 +135,12 @@ mod tests {
                 };
                 if logical < before {
                     offset = 0;
-                } else if logical == before {
+                } else if still {
                     offset += i128::from(wall_step);
                 }
-                let at = clock.observe(logical, wall);
+                let at = clock.observe(logical, wall, still);
                 prop_assert_eq!(at.as_nanos(), logical.as_nanos() + offset);
+                prop_assert_eq!(clock.offset().as_nanos(), offset);
                 prop_assert!(at >= logical);
                 if logical >= before {
                     prop_assert!(at >= previous);
