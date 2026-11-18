@@ -100,6 +100,24 @@ UI 的 Functions 页面也可以立即运行定时函数，或把时钟推进到
 
 反过来，在回拨之后进行的撤销或密码更改，不会撤销时间线上更晚时间签发的令牌：`emulator` profile 会立即接受它们，`strict` 会在时钟到达其签发时间后接受它们。请在撤销之前把时钟向前推进到越过其签发时间，或重置会话。
 
+## 你的代码生成的时间
+
+有些时间是在 fireemu 之外、按主机的真实时间生成的：Admin SDK 用 `Date.now()` 设置自定义令牌的 `iat` 和 `exp`，`getSignedUrl()` 用当前时间为 Storage URL 签名，`taskQueue().enqueue({scheduleDelaySeconds})` 用 `Date.now()` 计算任务的 `scheduleTime`。当模拟器时钟被固定或移动时（`daemon.clockStart`、`clock:advance`、每个 `fireemu/testing` 世界），它与这些时间不一致。`daemon.callerTimes` 决定如何判断它们：
+
+- `clockOrWall`（默认）：自定义令牌或签名 URL 的时间只要对模拟器时钟或真实时间之一成立就会被接受。比起任务时钟更接近真实时间的任务 `scheduleTime` 会在任务时钟上保持其延迟，因此在 `functions.clock.tasks = "virtual"` 下，以 60 秒延迟入队的任务会在模拟器时间 60 秒后到期（`tasks = "real"` 且 `Date` 为虚拟时则相反）。拒绝时会同时给出模拟器时钟和真实时间，例如 `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`。
+- `clock`：与生产环境按其唯一时钟判断一样，只按模拟器时钟判断，并返回生产环境的消息。`productionExact` 选择此项。
+
+```json
+{ "daemon": { "callerTimes": "clock" } }
+```
+
+## 冻结的时钟上
+
+静止的时钟会让每个到期都等到你移动它：操作代码、短信验证码、ID 令牌、Firestore TTL 和定时函数都要等时钟移动。有两点不同：
+
+- Pub/Sub 拉取订阅在投递时间中保存确认期限和重试退避，投递时间在时钟静止时随真实时间前进。被拉取但未确认的消息会在确认期限后重新投递，在 `retryPolicy` 下被 nack 的消息会在退避后重新投递，无需移动时钟；推进时钟仍会让两者前进同样的量。推送订阅的退避仍按模拟器时钟计算：推进时钟才会放行下一次推送。
+- 撤销与生产环境一样按整秒比较：与登录同一秒内的 `revokeRefreshTokens` 或密码更改不会使该次登录的 ID 令牌失效。在生产环境中测试会在撤销前等待一秒；在冻结的时钟上，请在登录与撤销之间把时钟推进至少一秒。
+
 ## Functions 中的应用时间
 
 默认情况下，函数代码看到的是真实时间。要让 `Date.now()`、计时器和 Cloud Tasks 也跟随虚拟时钟，请设置 `functions.clock`。没有 `daemon.clockStart` 时，时钟从墙上时间开始并跟随真实时间，因此在你移动时钟之前，函数中的 `Date.now()` 读到的是当前时间，虚拟计时器会随真实时间流逝在延迟后触发；移动时钟会同时平移二者。要获得可复现的运行，请同时固定 `daemon.clockStart`，此时时钟在被移动之前保持静止：

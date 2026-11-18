@@ -100,6 +100,24 @@ Un retroceso a antes de que se creara una cuenta, o antes de que se revocaran su
 
 A la inversa, una revocación o un cambio de contraseña hecho tras un retroceso no revoca los tokens emitidos en momentos posteriores de la línea temporal: el perfil `emulator` los acepta de inmediato, y `strict` los acepta cuando el reloj alcanza su hora de emisión. Mueve el reloj hacia delante más allá de su hora de emisión antes de revocar, o reinicia la sesión.
 
+## Horas que genera tu propio código
+
+Algunas horas se generan fuera de fireemu, con el reloj real del equipo: el Admin SDK pone el `iat` y el `exp` de un token personalizado con `Date.now()`, `getSignedUrl()` firma una URL de Storage con la hora actual y `taskQueue().enqueue({scheduleDelaySeconds})` calcula el `scheduleTime` de la tarea a partir de `Date.now()`. Cuando el reloj del emulador está fijado o se ha movido (`daemon.clockStart`, `clock:advance`, todo mundo de `fireemu/testing`), no coincide con esas horas. `daemon.callerTimes` indica cómo se juzgan:
+
+- `clockOrWall` (el valor predeterminado): un token personalizado o una URL firmada se aceptan cuando sus horas son válidas respecto al reloj del emulador o respecto a la hora real. Un `scheduleTime` más cercano a la hora real que al reloj de tareas conserva su retraso en el reloj de tareas, así que con `functions.clock.tasks = "virtual"` una tarea encolada con 60 segundos de retraso vence tras 60 segundos de tiempo del emulador (y al revés con un `Date` virtual y `tasks = "real"`). Un rechazo indica el reloj del emulador y la hora real, por ejemplo `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`.
+- `clock`: cada una de esas horas se juzga solo con el reloj del emulador, como producción juzga con su único reloj, con los mensajes de producción. `productionExact` lo selecciona.
+
+```json
+{ "daemon": { "callerTimes": "clock" } }
+```
+
+## Con el reloj congelado
+
+Un reloj detenido impide que llegue cualquier vencimiento hasta que lo muevas: los códigos de acción, los códigos SMS, los tokens de ID, el TTL de Firestore y las funciones programadas esperan a que se mueva el reloj. Hay dos diferencias:
+
+- Las suscripciones pull de Pub/Sub guardan los plazos de confirmación y la espera de reintento en tiempo de entrega, que avanza con la hora real mientras el reloj está detenido. Un mensaje recibido y no confirmado vuelve tras su plazo de confirmación, y un nack con `retryPolicy` vuelve tras su espera, sin mover el reloj; adelantar el reloj sigue moviendo ambos. Las suscripciones push mantienen su espera en el reloj del emulador: adelántalo para liberar el siguiente intento.
+- La revocación compara segundos enteros, como en producción: `revokeRefreshTokens` o un cambio de contraseña en el mismo segundo que el inicio de sesión deja válido el token de ID de ese inicio de sesión. En producción una prueba espera un segundo antes de revocar; con el reloj congelado, adelanta el reloj al menos un segundo entre el inicio de sesión y la revocación.
+
 ## Tiempo de aplicación en Functions
 
 Por defecto, el código de tus funciones ve el tiempo real. Para que `Date.now()`, los temporizadores y Cloud Tasks sigan también el reloj virtual, establece `functions.clock`. Sin `daemon.clockStart`, el reloj empieza a la hora del reloj de pared y sigue el tiempo real, así que `Date.now()` en tus funciones lee la hora actual y los temporizadores virtuales se disparan tras su retraso a medida que pasa el tiempo real; un movimiento desplaza ambos. Fija también `daemon.clockStart` para una ejecución reproducible, en la que el reloj permanece quieto hasta que se mueve:

@@ -100,6 +100,24 @@ Ein Zurückstellen auf vor die Erstellung eines Kontos oder vor den Widerruf sei
 
 Umgekehrt widerruft ein Widerruf oder eine Passwortänderung nach einem Zurückstellen keine Tokens, die zu späteren Zeitpunkten auf der Zeitachse ausgestellt wurden: Das Profil `emulator` akzeptiert sie sofort, und `strict` akzeptiert sie, sobald die Uhr ihre Ausstellungszeit erreicht. Stellen Sie die Uhr vor dem Widerruf über deren Ausstellungszeit hinaus vor oder setzen Sie die Sitzung zurück.
 
+## Zeiten, die dein eigener Code erzeugt
+
+Manche Zeiten entstehen außerhalb von fireemu auf der Echtzeituhr des Rechners: Das Admin SDK setzt `iat` und `exp` eines Custom Tokens mit `Date.now()`, `getSignedUrl()` signiert eine Storage-URL mit der aktuellen Zeit, und `taskQueue().enqueue({scheduleDelaySeconds})` berechnet die `scheduleTime` der Aufgabe aus `Date.now()`. Ist die Emulatoruhr festgelegt oder verschoben (`daemon.clockStart`, `clock:advance`, jede `fireemu/testing`-Welt), weicht sie von diesen Zeiten ab. `daemon.callerTimes` legt fest, wie sie beurteilt werden:
+
+- `clockOrWall` (Standard): Ein Custom Token oder eine signierte URL wird angenommen, wenn ihre Zeiten gegenüber der Emulatoruhr oder gegenüber der Echtzeit gelten. Eine `scheduleTime`, die näher an der Echtzeit als an der Aufgabenuhr liegt, behält ihre Verzögerung auf der Aufgabenuhr; mit `functions.clock.tasks = "virtual"` ist eine mit 60 Sekunden Verzögerung eingereihte Aufgabe nach 60 Sekunden Emulatorzeit fällig (und umgekehrt bei virtuellem `Date` mit `tasks = "real"`). Eine Ablehnung nennt die Emulatoruhr und die Echtzeit, zum Beispiel `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`.
+- `clock`: Jede solche Zeit wird nur gegenüber der Emulatoruhr beurteilt, so wie die Produktion gegenüber ihrer einen Uhr urteilt, mit den Meldungen der Produktion. `productionExact` wählt diese Einstellung.
+
+```json
+{ "daemon": { "callerTimes": "clock" } }
+```
+
+## Bei eingefrorener Uhr
+
+Eine stehende Uhr lässt jeden Ablauf warten, bis du sie bewegst: Aktionscodes, SMS-Codes, ID-Tokens, Firestore-TTL und geplante Funktionen warten auf eine Bewegung der Uhr. Zwei Dinge sind anders:
+
+- Pull-Abos von Pub/Sub führen Bestätigungsfristen und Wiederholungs-Backoff in Zustellzeit, die bei stehender Uhr mit der Echtzeit weiterläuft. Eine abgeholte, nicht bestätigte Nachricht kommt nach ihrer Bestätigungsfrist zurück, ein Nack unter einer `retryPolicy` nach dem Backoff, ohne dass die Uhr bewegt wird; das Vorstellen der Uhr bewegt beides weiterhin. Push-Abos halten ihren Backoff auf der Emulatoruhr: Stelle sie vor, um den nächsten Push-Versuch freizugeben.
+- Der Widerruf vergleicht ganze Sekunden, wie in der Produktion: `revokeRefreshTokens` oder eine Passwortänderung in derselben Sekunde wie die Anmeldung lässt das ID-Token dieser Anmeldung gültig. In der Produktion wartet ein Test vor dem Widerruf eine Sekunde; bei eingefrorener Uhr stelle die Uhr zwischen Anmeldung und Widerruf um mindestens eine Sekunde vor.
+
 ## Anwendungszeit in Functions
 
 Standardmäßig sieht Ihr Funktionscode die Echtzeit. Damit auch `Date.now()`, Timer und Cloud Tasks der virtuellen Uhr folgen, setzen Sie `functions.clock`. Ohne `daemon.clockStart` startet die Uhr zur Wanduhrzeit und folgt der Echtzeit, sodass `Date.now()` in Ihren Funktionen die aktuelle Zeit liest und virtuelle Timer nach ihrer Verzögerung auslösen, während die Echtzeit vergeht; eine Verschiebung verschiebt beides. Fixieren Sie zusätzlich `daemon.clockStart` für einen reproduzierbaren Lauf, bei dem die Uhr stillsteht, bis sie bewegt wird:

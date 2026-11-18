@@ -100,6 +100,24 @@ A rewind to before an account was created, or before its tokens were revoked, ma
 
 Conversely, a revocation or password change made after a rewind does not revoke tokens issued at later times on the timeline: the `emulator` profile accepts them at once, and `strict` accepts them once the clock reaches their issue time. Move the clock forward past their issue time before revoking, or reset the session.
 
+## Times your own code mints
+
+Some times are minted outside fireemu, on the host's wall clock: the Admin SDK stamps a custom token's `iat` and `exp` with `Date.now()`, `getSignedUrl()` signs a Storage URL with the current time, and `taskQueue().enqueue({scheduleDelaySeconds})` computes the task's `scheduleTime` from `Date.now()`. When the emulator clock is pinned or moved (`daemon.clockStart`, `clock:advance`, every `fireemu/testing` world), it disagrees with those times. `daemon.callerTimes` says how they are judged:
+
+- `clockOrWall` (the default): a custom token or signed URL is accepted when its times hold against the emulator clock or against wall time. A task `scheduleTime` that is nearer wall time than the task clock keeps its delay on the task clock, so with `functions.clock.tasks = "virtual"` a task enqueued with a 60-second delay is due after 60 seconds of emulator time (and the reverse for a virtual `Date` with `tasks = "real"`). A refusal names the emulator clock and wall time, for example `INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock (2026-01-01T00:00:00Z) nor against wall time (…)`.
+- `clock`: every such time is judged against the emulator clock alone, as production judges against its one clock, with production's messages. `productionExact` selects it.
+
+```json
+{ "daemon": { "callerTimes": "clock" } }
+```
+
+## On a frozen clock
+
+A clock that stands still keeps every expiry from arriving until you move it: action codes, SMS codes, ID tokens, Firestore TTL and scheduled functions all wait for a clock move. Two things differ:
+
+- Pub/Sub pull subscriptions keep ack deadlines and retry backoff in delivery time, which moves with wall time while the clock stands still. A message pulled and not acknowledged comes back after its ack deadline, and a nack under a `retryPolicy` comes back after its backoff, without a clock move; advancing the clock still moves both. Push subscriptions keep their backoff on the emulator clock: advance it to release the next push attempt.
+- Revocation compares whole seconds, as production does: `revokeRefreshTokens` or a password change in the same second as the sign-in leaves that sign-in's ID token valid. In production a test waits one second before revoking; on a frozen clock, advance the clock by at least one second between the sign-in and the revocation.
+
 ## Application time in Functions
 
 By default your function code sees real time. To make `Date.now()`, timers and Cloud Tasks follow the virtual clock too, set `functions.clock`. Without `daemon.clockStart` the clock starts at the wall-clock time and follows real time, so `Date.now()` in your functions reads the current time and virtual timers fire after their delay as real time passes; a move shifts both. Pin `daemon.clockStart` as well for a reproducible run, where the clock stands still until it is moved:
