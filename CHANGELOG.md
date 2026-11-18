@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-19
+
 ### Added
 
 - Clock: switch between a frozen clock and one that follows real time while the daemon runs. `POST /v1/sessions/{session}/clock:freeze` stops the shared clock at the current instant; `clock:resume` lets it follow real time from the instant it shows, and with `{"syncToRealTime": true}` first moves it to the current time (refused when that is backwards, unless `"allowBackwards": true`, as for `clock:set`). Every clock answer and `GET /v1/sessions/{session}` carry `running`. The Emulator UI's Runtime page shows Running or Frozen with Freeze / Resume and Sync to real time buttons, and the header and Overview show the live mode. The startup output says which mode the clock started in and how to switch it. A virtual `functions.clock` never shows `Date.now()` or timer time going back when the clock is frozen after a runner has already counted past the frozen instant; only a rewind moves it back. `daemon.clock` and `daemon.clockStart` still choose the mode at start.
@@ -1481,7 +1483,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.60.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.61.0...HEAD
+[0.61.0]: https://github.com/fireemu/fireemu/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/fireemu/fireemu/compare/v0.59.0...v0.60.0
 [0.59.0]: https://github.com/fireemu/fireemu/compare/v0.58.0...v0.59.0
 [0.58.0]: https://github.com/fireemu/fireemu/compare/v0.57.1...v0.58.0
