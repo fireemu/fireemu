@@ -274,11 +274,21 @@ pub(crate) fn totp_clock_note(cfg: &RuntimeConfig) -> Option<String> {
         if cfg.clock_frozen() {
             // A one-off move to now does not help: a still clock leaves the code behind
             // within one 30-second step.
-            "  totp clock:       TOTP codes are checked at the emulator clock, which stands still, so codes from an authenticator app do not match; to use one, let the clock follow real time: leave daemon.clockStart and daemon.clock unset (or set daemon.clock = \"realtime\" and move the clock to the current time once)".to_owned()
+            "  totp clock:       TOTP codes are checked at the emulator clock, which stands still, so codes from an authenticator app do not match; to use one, let the clock follow real time from the current time: POST /v1/sessions/default/clock:resume with {\"syncToRealTime\": true} (Sync to real time on the Runtime page of the Emulator UI), or leave daemon.clockStart and daemon.clock unset (or set daemon.clock = \"realtime\")".to_owned()
         } else {
             "  totp clock:       TOTP codes are checked at the emulator clock, which runs from the pinned daemon.clockStart, not from the current time, so codes from an authenticator app do not match; to use one, leave daemon.clockStart unset, or move the clock to the current time once (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:set); it then keeps following real time".to_owned()
         }
     })
+}
+
+/// The startup line saying whether the clock is frozen or follows real time, and how to switch
+/// it while the daemon runs.
+pub(crate) fn clock_mode_line(cfg: &RuntimeConfig) -> String {
+    if cfg.clock_frozen() {
+        "  clock mode: frozen; to follow real time: POST /v1/sessions/default/clock:resume (add {\"syncToRealTime\": true} to jump to the current time) or the Runtime page of the Emulator UI".to_owned()
+    } else {
+        "  clock mode: following real time; to freeze it: POST /v1/sessions/default/clock:freeze or the Runtime page of the Emulator UI".to_owned()
+    }
 }
 
 /// The startup notice when neither unsigned custom tokens nor trusted signers are available.
@@ -1803,16 +1813,26 @@ fn wall_nanos_of(time: std::time::SystemTime) -> i128 {
 /// clock's reading at which an unpinned start was taken; a pinned start begins to run now.
 /// Must be called inside the runtime.
 fn make_clock(cfg: &RuntimeConfig, reading: Option<i128>) -> Arc<Mutex<VirtualClock>> {
-    if cfg.clock_frozen() {
-        return Arc::new(Mutex::new(VirtualClock::new(cfg.clock_start)));
-    }
     // Real time is the wall clock's, so a clock that has run for days still agrees with the
-    // callers' clocks.
-    let clock = Arc::new(Mutex::new(VirtualClock::following_with(
-        cfg.clock_start,
-        Arc::new(|| wall_nanos_of(std::time::SystemTime::now())),
-        reading.unwrap_or_else(|| wall_nanos_of(std::time::SystemTime::now())),
-    )));
+    // callers' clocks. A frozen clock keeps the source too, so `clock:resume` can let it run.
+    let source: fireemu_core_session::clock::TimeSource =
+        Arc::new(|| wall_nanos_of(std::time::SystemTime::now()));
+    let wall: fireemu_core_session::clock::WallSource = Arc::new(|| {
+        fireemu_core_types::time::LogicalInstant::from_nanos(wall_nanos_of(
+            std::time::SystemTime::now(),
+        ))
+    });
+    let clock = if cfg.clock_frozen() {
+        VirtualClock::new(cfg.clock_start).with_time_source(source)
+    } else {
+        VirtualClock::following_with(
+            cfg.clock_start,
+            source,
+            reading.unwrap_or_else(|| wall_nanos_of(std::time::SystemTime::now())),
+        )
+    };
+    let clock = Arc::new(Mutex::new(clock.with_wall_clock(wall)));
+    // The ticker runs in both modes: a frozen clock publishes nothing until it resumes.
     tokio::spawn(clock_ticker(Arc::downgrade(&clock)));
     clock
 }
@@ -2530,6 +2550,7 @@ mod tests {
             assert!(text.contains("stands still"), "{daemon}: {text}");
             assert!(text.contains("realtime"), "{daemon}: {text}");
             assert!(!text.contains("clock:set"), "{daemon}: {text}");
+            assert!(text.contains("clock:resume"), "{daemon}: {text}");
         }
         // A running clock with a pinned start: one move to now is enough.
         let text = note(running.clone(), "strict", false).unwrap();
@@ -2808,6 +2829,46 @@ mod tests {
         tokio::time::sleep(super::CLOCK_TICK * 3).await;
         assert_eq!(frozen.lock().unwrap().now_for_test(), start);
         assert_eq!(seen.lock().unwrap().len(), 1);
+        // Resumed at runtime, the same ticker publishes the running time; synced, it shows
+        // the wall clock's time.
+        frozen.lock().unwrap().resume().unwrap();
+        tokio::time::sleep(super::CLOCK_TICK * 3).await;
+        assert!(
+            seen.lock().unwrap().len() >= 3,
+            "{:?}",
+            seen.lock().unwrap()
+        );
+        let wall = frozen.lock().unwrap().wall_now().unwrap();
+        let wall_now = super::wall_nanos_of(std::time::SystemTime::now());
+        assert!((wall_now - wall.as_nanos()).abs() < 1_000_000_000);
+        frozen.lock().unwrap().resume_at(wall, true).unwrap();
+        let shown = frozen.lock().unwrap().now_for_test().as_nanos();
+        assert!((shown - wall.as_nanos()).abs() < 1_000_000_000);
+    }
+
+    #[test]
+    fn the_clock_mode_line_names_the_mode_and_the_route_that_switches_it() {
+        let config = |daemon: serde_json::Value| {
+            crate::config::RuntimeConfig::from_json(
+                &serde_json::json!({"schemaVersion": 1, "daemon": daemon}),
+            )
+            .unwrap()
+        };
+        let frozen = super::clock_mode_line(&config(serde_json::json!({"clock": "frozen"})));
+        assert!(
+            frozen.contains("frozen") && frozen.contains("clock:resume"),
+            "{frozen}"
+        );
+        assert!(frozen.contains("syncToRealTime"), "{frozen}");
+        let pinned = super::clock_mode_line(&config(
+            serde_json::json!({"clockStart": "2026-01-01T00:00:00Z"}),
+        ));
+        assert_eq!(pinned, frozen, "a pinned start freezes the clock");
+        let running = super::clock_mode_line(&config(serde_json::json!({})));
+        assert!(
+            running.contains("following real time") && running.contains("clock:freeze"),
+            "{running}"
+        );
     }
 
     #[tokio::test]

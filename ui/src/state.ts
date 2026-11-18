@@ -1,11 +1,19 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { initialConfig, type RuntimeConfig, type Session } from "./config";
-import { sessionInfo, listSessions } from "./api/control";
+import { sessionInfo, listSessions, type ClockInfo } from "./api/control";
 
 /** App-wide reactive state: the runtime configuration, the clock, the sessions. */
 const store = createRoot(() => {
   const [config, setConfig] = createSignal<RuntimeConfig>(initialConfig());
   const [clock, setClock] = createSignal<string>("");
+  // The mode the daemon last reported; until it does (or on an older daemon), the configured one.
+  const [liveClockMode, setLiveClockMode] = createSignal<"frozen" | "realtime" | null>(null);
+  const clockMode = (): "frozen" | "realtime" => liveClockMode() ?? config().clockMode;
+  /** Takes a clock answer: its instant, and its mode when the daemon reports one. */
+  const setClockInfo = (info: ClockInfo) => {
+    setClock(info.clock);
+    if (typeof info.running === "boolean") setLiveClockMode(info.running ? "realtime" : "frozen");
+  };
   const [sessions, setSessionSnapshot] = createSignal<Session[]>(initialConfig().sessions);
   // Keep row-local forms for unchanged targets, but discard them for a replacement project.
   const setSessions = (snapshot: Session[]) => {
@@ -32,6 +40,7 @@ const store = createRoot(() => {
     setConnected(null);
     setLastConnectedAt(null);
     setClock("");
+    setLiveClockMode(null);
   };
   /** Whether the last poll of the daemon answered (null until the first one). */
   const [connected, setConnected] = createSignal<boolean | null>(null);
@@ -52,7 +61,7 @@ const store = createRoot(() => {
     list.map((l) => setSessions(l.sessions));
     if (mine <= completedEpoch) return;
     completedEpoch = mine;
-    info.map((i) => setClock(i.clock.clock));
+    info.map((i) => setClockInfo(i.clock));
     const answered = info.isOk() && list.isOk();
     if (answered) setLastConnectedAt(new Date().toISOString());
     setConnected(answered);
@@ -63,6 +72,8 @@ const store = createRoot(() => {
     setConfig,
     clock,
     setClock,
+    clockMode,
+    setClockInfo,
     sessions,
     setSessions,
     session,

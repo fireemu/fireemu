@@ -50,6 +50,21 @@ clock = "frozen"
 
 Eine virtuelle `functions.clock` (siehe [Anwendungszeit in Functions](#anwendungszeit-in-functions)) folgt dieser Uhr, was auch immer sie tut. Die Welten von `fireemu/testing` fixieren den Start, daher steht ihre Uhr still.
 
+### Während der Daemon läuft umschalten
+
+Die Konfiguration legt nur den Modus fest, in dem der Daemon startet. Zur Laufzeit schalten Sie mit **Freeze** / **Resume** auf der Seite „Runtime“ der [Emulator UI](../ui/) um, oder über die Control-API:
+
+```sh
+# Die Uhr beim aktuellen Zeitpunkt anhalten.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:freeze -H 'content-type: application/json' -d '{}'
+# Ab dem angezeigten Zeitpunkt wieder der Echtzeit folgen.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-type: application/json' -d '{}'
+# Zuerst auf die aktuelle Zeit springen, dann ihr folgen (Sync to real time auf der Seite „Runtime“).
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-type: application/json' -d '{"syncToRealTime": true}'
+```
+
+Jede Antwort mit der Uhr und `GET /v1/sessions/default` enthalten `"running": true`, solange die Uhr der Echtzeit folgt, und `false`, solange sie eingefroren ist. Ein Fortsetzen zählt die Zeit nicht, in der die Uhr stand. `syncToRealTime` ist ein Setzen: Eine Bewegung zurück (ein festgelegter Start in der Zukunft) wird abgelehnt, außer der Body enthält auch `"allowBackwards": true`. Alle Dienste sehen die Umschaltung sofort; geplante Funktionen, die während des Sprungs fällig wurden, laufen wie nach `clock:advance`. Die Uhr gehört allen Sitzungen gemeinsam, daher gilt die Umschaltung für alle. Die Startausgabe nennt den Startmodus und wie man umschaltet.
+
 ## Geplante Funktionen ausführen
 
 Ein Zeitplan läuft, wenn die Uhr ein Vorkommen erreicht.

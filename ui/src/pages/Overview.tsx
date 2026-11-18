@@ -349,11 +349,11 @@ const Overview: Component = () => {
           <Field label={t("overview.clock")} mono>
             <span data-testid="overview-clock">{appState.clock()}</span>{" "}
             <StatusBadge
-              tone={config().clockMode === "frozen" ? "paused" : "neutral"}
+              tone={appState.clockMode() === "frozen" ? "paused" : "neutral"}
               testId="overview-clock-mode"
               class="font-sans whitespace-normal"
             >
-              {config().clockMode === "frozen"
+              {appState.clockMode() === "frozen"
                 ? t("overview.clockFrozen")
                 : t("overview.clockRealtime")}
             </StatusBadge>

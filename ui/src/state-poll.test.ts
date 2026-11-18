@@ -95,3 +95,20 @@ it("does not let a superseded response restore an old session catalog", async ()
   expect(appState.project()).toBe("demo-after");
   expect(appState.clock()).not.toBe("old");
 });
+it("takes the clock mode the daemon reports over the configured one", async () => {
+  appState.setConfig({ ...appState.config(), clockMode: "realtime" });
+  vi.mocked(control.listSessions).mockReturnValue(okAsync({ sessions: [] }));
+  vi.mocked(control.sessionInfo).mockReturnValue(okAsync(info("a")));
+  await appState.refreshClock();
+  expect(appState.clockMode()).toBe("realtime");
+  vi.mocked(control.sessionInfo).mockReturnValue(
+    okAsync({ ...info("b"), clock: { clock: "b", backwardsSets: 0, running: false } }),
+  );
+  await appState.refreshClock();
+  expect(appState.clockMode()).toBe("frozen");
+  vi.mocked(control.sessionInfo).mockReturnValue(
+    okAsync({ ...info("c"), clock: { clock: "c", backwardsSets: 0, running: true } }),
+  );
+  await appState.refreshClock();
+  expect(appState.clockMode()).toBe("realtime");
+});

@@ -3,7 +3,8 @@ import { request, type ApiError, type Json } from "./client";
 import type { Session } from "../config";
 import type { Allowance, QuiescenceResult, ResourceReport } from "../lib/resources";
 
-export type ClockInfo = { clock: string; backwardsSets: number };
+/** `running` is whether the clock follows real time (absent on an older daemon). */
+export type ClockInfo = { clock: string; backwardsSets: number; running?: boolean };
 export type SessionInfo = {
   session: string;
   edition: string;
@@ -80,6 +81,21 @@ export const setClock = (
   allowBackwards: boolean,
 ): ResultAsync<ClockInfo, ApiError> =>
   request<ClockInfo>("POST", `${base(session)}/clock:set`, { instant, allowBackwards });
+
+export const freezeClock = (session: string): ResultAsync<ClockInfo, ApiError> =>
+  request<ClockInfo>("POST", `${base(session)}/clock:freeze`, {});
+
+/** Lets the clock follow real time; `syncToRealTime` first moves it to the current time. */
+export const resumeClock = (
+  session: string,
+  syncToRealTime: boolean,
+  allowBackwards: boolean,
+): ResultAsync<ClockInfo, ApiError> =>
+  request<ClockInfo>(
+    "POST",
+    `${base(session)}/clock:resume`,
+    syncToRealTime ? { syncToRealTime, allowBackwards } : {},
+  );
 
 export const listSnapshots = (
   session: string,

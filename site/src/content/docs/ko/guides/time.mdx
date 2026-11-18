@@ -50,6 +50,21 @@ clock = "frozen"
 
 가상 `functions.clock`([Functions의 애플리케이션 시간](#functions의-애플리케이션-시간) 참조)은 이 시계가 어떻게 움직이든 그것을 따릅니다. `fireemu/testing`의 월드는 시작 시각을 고정하므로 이들의 시계는 멈춰 있습니다.
 
+### 실행 중에 전환하기
+
+설정은 데몬이 시작할 때의 모드만 정합니다. 실행 중에 전환하려면 [Emulator UI](../ui/)의 Runtime 페이지에서 **Freeze** / **Resume**을 쓰거나 control API를 사용합니다.
+
+```sh
+# 현재 시각에서 시계를 멈춥니다.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:freeze -H 'content-type: application/json' -d '{}'
+# 표시된 시각부터 다시 실제 시간을 따릅니다.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-type: application/json' -d '{}'
+# 먼저 현재 시각으로 이동한 뒤 따릅니다(Runtime 페이지의 Sync to real time).
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-type: application/json' -d '{"syncToRealTime": true}'
+```
+
+시계를 돌려주는 모든 응답과 `GET /v1/sessions/default`에는 실제 시간을 따르는 동안 `"running": true`, 멈춘 동안 `false`가 들어 있습니다. 재개할 때 시계가 멈춰 있던 시간은 세지 않습니다. `syncToRealTime`은 set과 같아서, 시계를 뒤로 옮기는 이동(미래로 고정한 시작 시각 등)은 본문에 `"allowBackwards": true`가 없으면 거부합니다. 전환은 모든 서비스에 동시에 반영되며, 이동하는 동안 기한이 된 예약 함수는 `clock:advance` 이후와 같이 실행됩니다. 시계는 모든 세션이 공유하므로 전환도 모든 세션에 적용됩니다. 시작 출력에 시작 모드와 전환 방법이 표시됩니다.
+
 ## 예약 함수 실행
 
 스케줄은 시계가 발생 시점(occurrence)에 도달하면 실행됩니다.

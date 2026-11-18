@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Clock: switch between a frozen clock and one that follows real time while the daemon runs. `POST /v1/sessions/{session}/clock:freeze` stops the shared clock at the current instant; `clock:resume` lets it follow real time from the instant it shows, and with `{"syncToRealTime": true}` first moves it to the current time (refused when that is backwards, unless `"allowBackwards": true`, as for `clock:set`). Every clock answer and `GET /v1/sessions/{session}` carry `running`. The Emulator UI's Runtime page shows Running or Frozen with Freeze / Resume and Sync to real time buttons, and the header and Overview show the live mode. The startup output says which mode the clock started in and how to switch it. `daemon.clock` and `daemon.clockStart` still choose the mode at start.
+
 ## [0.60.0] - 2026-11-18
 
 ### Added

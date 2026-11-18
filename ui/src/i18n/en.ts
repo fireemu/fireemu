@@ -586,6 +586,13 @@ export const en = {
   "runtime.title": "Runtime",
   "runtime.clock": "Virtual clock",
   "runtime.clockNow": "Now",
+  "runtime.clockRunning": "Running: follows real time",
+  "runtime.clockFrozen": "Frozen: stands still until moved",
+  "runtime.freeze": "Freeze",
+  "runtime.resume": "Resume",
+  "runtime.syncToRealTime": "Sync to real time",
+  "runtime.syncHint":
+    "Moves the clock to the current time and follows it; going back needs Allow moving backwards.",
   "runtime.advanceBy": "Advance by",
   "runtime.seconds": "seconds",
   "runtime.advance": "Advance",

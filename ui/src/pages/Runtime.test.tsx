@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { okAsync } from "neverthrow";
-import { FaultPlanPanel } from "./Runtime";
+import { ClockPanel, FaultPlanPanel } from "./Runtime";
+import { appState } from "../state";
+import { waitFor } from "@solidjs/testing-library";
 import * as control from "../api/control";
 
 vi.mock("../api/control", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/control")>()),
   getFaultPlan: vi.fn(),
+  freezeClock: vi.fn(),
+  resumeClock: vi.fn(),
 }));
 beforeEach(() => {
   vi.mocked(control.getFaultPlan).mockReturnValue(
@@ -49,5 +53,38 @@ describe("Fault plan recipes", () => {
     expect(ui.queryByTestId("fault-snippet-testing")).toBeNull();
     fireEvent.input(draft, { target: { value: '{"seed":1,"rules":[]}' } });
     expect(ui.getByTestId("fault-snippet-control")).toBeTruthy();
+  });
+});
+
+describe("Clock mode", () => {
+  it("shows the mode, freezes and resumes, and syncs to real time", async () => {
+    appState.setConfig({ ...appState.config(), clockMode: "realtime" });
+    vi.mocked(control.freezeClock).mockReturnValue(
+      okAsync({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false }),
+    );
+    vi.mocked(control.resumeClock).mockImplementation((_session, sync) =>
+      okAsync({
+        clock: sync ? "2026-11-18T00:00:00Z" : "2026-01-01T00:00:05Z",
+        backwardsSets: 0,
+        running: true,
+      }),
+    );
+    const ui = render(() => <ClockPanel />);
+    expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Running");
+    fireEvent.click(ui.getByTestId("toggle-clock-mode"));
+    await waitFor(() =>
+      expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Frozen"),
+    );
+    expect(control.freezeClock).toHaveBeenCalledWith("default");
+    expect(appState.clock()).toBe("2026-01-01T00:00:05Z");
+    expect(ui.getByTestId("toggle-clock-mode").textContent).toContain("Resume");
+    fireEvent.click(ui.getByTestId("toggle-clock-mode"));
+    await waitFor(() =>
+      expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Running"),
+    );
+    expect(control.resumeClock).toHaveBeenLastCalledWith("default", false, false);
+    fireEvent.click(ui.getByTestId("sync-clock"));
+    await waitFor(() => expect(appState.clock()).toBe("2026-11-18T00:00:00Z"));
+    expect(control.resumeClock).toHaveBeenLastCalledWith("default", true, false);
   });
 });

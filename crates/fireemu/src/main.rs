@@ -4078,6 +4078,7 @@ fn print_banner(
             " (wall clock at start; pin with daemon.clockStart)"
         }
     );
+    outln!("{}", daemon::clock_mode_line(cfg));
 }
 
 /// Everything an export reads, held for as long as the daemon runs.

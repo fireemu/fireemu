@@ -11,6 +11,7 @@ import {
   RelativeTime,
   Section,
   SectionNav,
+  StatusBadge,
 } from "../components/common";
 import {
   advanceClock,
@@ -18,6 +19,7 @@ import {
   captureSnapshot,
   clearFaultPlan,
   createSession,
+  freezeClock,
   deleteSession,
   deleteSnapshot,
   getFaultPlan,
@@ -25,6 +27,7 @@ import {
   listSnapshots,
   resetSession,
   restoreSnapshot,
+  resumeClock,
   sessionResources,
   setClock,
 } from "../api/control";
@@ -52,7 +55,7 @@ import {
   type RecipeId,
 } from "../lib/faultRecipes";
 
-const ClockPanel: Component = () => {
+export const ClockPanel: Component = () => {
   const [seconds, setSeconds] = createSignal("60");
   const [instant, setInstant] = createSignal("");
   const [backwards, setBackwards] = createSignal(false);
@@ -72,7 +75,7 @@ const ClockPanel: Component = () => {
     }
     const r = await advanceClock(session(), Math.trunc(n));
     r.match(
-      (c) => appState.setClock(c.clock),
+      (c) => appState.setClockInfo(c),
       (e) => setError(e.message),
     );
   };
@@ -80,7 +83,24 @@ const ClockPanel: Component = () => {
     setError(null);
     const r = await setClock(session(), instant(), backwards());
     r.match(
-      (c) => appState.setClock(c.clock),
+      (c) => appState.setClockInfo(c),
+      (e) => setError(e.message),
+    );
+  };
+  const frozen = () => appState.clockMode() === "frozen";
+  const toggle = async () => {
+    setError(null);
+    const r = await (frozen() ? resumeClock(session(), false, false) : freezeClock(session()));
+    r.match(
+      (c) => appState.setClockInfo(c),
+      (e) => setError(e.message),
+    );
+  };
+  const sync = async () => {
+    setError(null);
+    const r = await resumeClock(session(), true, backwards());
+    r.match(
+      (c) => appState.setClockInfo(c),
       (e) => setError(e.message),
     );
   };
@@ -91,7 +111,19 @@ const ClockPanel: Component = () => {
         <span class="label">{t("runtime.clockNow")}</span>
         <span class="mono" data-testid="runtime-clock">
           {appState.clock()}
-        </span>
+        </span>{" "}
+        <StatusBadge tone={frozen() ? "paused" : "neutral"} testId="runtime-clock-mode">
+          {frozen() ? t("runtime.clockFrozen") : t("runtime.clockRunning")}
+        </StatusBadge>
+      </div>
+      <div class="mb-3 flex flex-wrap items-end gap-2">
+        <AsyncButton class="btn" onClick={toggle} testId="toggle-clock-mode">
+          {frozen() ? t("runtime.resume") : t("runtime.freeze")}
+        </AsyncButton>
+        <AsyncButton class="btn" onClick={sync} testId="sync-clock">
+          {t("runtime.syncToRealTime")}
+        </AsyncButton>
+        <span class="pb-1 text-sm">{t("runtime.syncHint")}</span>
       </div>
       <div class="mb-3 flex flex-wrap items-end gap-2">
         <label class="text-sm">
