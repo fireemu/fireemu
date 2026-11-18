@@ -143,6 +143,11 @@ mod tests {
             resolve(t, "Not/AZone", "hour", ZoneOperation::Extract),
             Err(ZoneError::InvalidZone)
         );
+        // Names are case-sensitive, as they were with chrono-tz.
+        assert_eq!(
+            resolve(t, "asia/tokyo", "hour", ZoneOperation::Extract),
+            Err(ZoneError::InvalidZone)
+        );
     }
 
     #[test]

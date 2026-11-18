@@ -64,10 +64,9 @@ fn days_in_month(year: i64, month: u32) -> u32 {
 /// Reads RFC 3339 text (see the module documentation), or `None` when it is not one.
 #[must_use]
 pub fn parse_rfc3339(text: &str) -> Option<Parsed> {
+    // Every field below is read with a bounds check, so text shorter than the 19 fixed bytes
+    // stops at its first missing digit; the separators are indexed only after that.
     let bytes = text.as_bytes();
-    if bytes.len() < 19 {
-        return None;
-    }
     let year = i64::from(two_digits(bytes, 0)? * 100 + two_digits(bytes, 2)?);
     let month = two_digits(bytes, 5)?;
     let day = two_digits(bytes, 8)?;
@@ -205,6 +204,14 @@ mod tests {
         }
 
         #[test]
+        fn any_text_or_prefix_is_read_without_panicking(text in "\\PC{0,40}", cut in 0usize..32) {
+            let _ = parse_rfc3339(&text);
+            let valid = "2026-01-02T03:04:05.123+09:00";
+            let prefix = &valid[..cut.min(valid.len())];
+            prop_assert_eq!(parse_rfc3339(prefix).is_some(), prefix.len() == valid.len());
+        }
+
+        #[test]
         fn offsets_shift_the_instant(
             seconds in 0i64..253_402_000_000,
             hours in 0i64..24,
@@ -242,6 +249,23 @@ mod tests {
         ("2026-01-02T03:60:05Z", None),
         ("2026-01-02T03:04:61Z", None),
         ("+2026-01-02T03:04:05Z", None),
+        ("2024-02-29T00:00:00Z", Some((1_709_164_800, 0))),
+        ("2000-02-29T00:00:00Z", Some((951_782_400, 0))),
+        ("1900-02-29T00:00:00Z", None),
+        ("2026-04-30T00:00:00Z", Some((1_777_507_200, 0))),
+        ("2026-04-31T00:00:00Z", None),
+        ("2026-06-31T00:00:00Z", None),
+        ("2026-09-31T00:00:00Z", None),
+        ("2026-11-31T00:00:00Z", None),
+        ("2026-01-31T00:00:00Z", Some((1_769_817_600, 0))),
+        ("2026", None),
+        ("2026/01-02T03:04:05Z", None),
+        ("2026-01/02T03:04:05Z", None),
+        ("2026-01-02_03:04:05Z", None),
+        ("2026-01-02T03-04:05Z", None),
+        ("2026-01-02T03:04-05Z", None),
+        ("2026-01-02T03:04:05+09:000", None),
+        ("2026-01-02T03:04:05+09-00", None),
     ];
 
     /// Formatted text recorded from chrono 0.4.45 before it was removed.
