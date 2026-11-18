@@ -125,7 +125,7 @@ export type TotpCodeInfo = {
   pendingEnrollment?: boolean;
   code: string;
   secondsRemaining: number;
-  /** The factor already accepted this step's code; it is refused until the next step. */
+  /** Submitting the listed code now would be refused as already used (see `advanceSeconds`). */
   alreadyUsed?: boolean;
   /** `false` while the emulator clock stands still: the code does not change until it moves. */
   clockRunning?: boolean;

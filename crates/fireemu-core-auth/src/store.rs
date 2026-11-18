@@ -1562,7 +1562,7 @@ impl CredentialNotice {
                         String::new()
                     };
                     format!(
-                        "{action} user {uid} ({scope}){factor}, the current code {code} was already used by this factor and is refused until the next time step; {wait}advance the clock by {advance_seconds} seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": {advance_seconds}}} on the Auth port)."
+                        "{action} user {uid} ({scope}){factor}, the current code {code} was already used by this factor; {wait}advance the clock by {advance_seconds} seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": {advance_seconds}}} on the Auth port)."
                     )
                 } else if *clock_running {
                     format!(

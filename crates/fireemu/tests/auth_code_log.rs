@@ -552,7 +552,7 @@ fn a_pinned_clock_reveals_the_used_code_as_used_and_a_clock_move_gives_a_fresh_o
     assert_eq!(listed["periodSeconds"], json!(30), "{listed}");
     assert_eq!(listed["advanceSeconds"], json!(30), "{listed}");
     let used_line = format!(
-        "  auth: To sign in with TOTP MFA as user {uid} (project {project}) factor {} (phone), the current code {enrolled_code} was already used by this factor and is refused until the next time step; advance the clock by 30 seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": 30}} on the Auth port).",
+        "  auth: To sign in with TOTP MFA as user {uid} (project {project}) factor {} (phone), the current code {enrolled_code} was already used by this factor; advance the clock by 30 seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": 30}} on the Auth port).",
         factor.as_str().unwrap()
     );
     let text = daemon.stdout_through(&used_line);

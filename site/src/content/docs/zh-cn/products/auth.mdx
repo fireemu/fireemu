@@ -417,9 +417,10 @@ curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
 # {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19,"alreadyUsed":false,"clockRunning":true,"periodSeconds":30}]}
 ```
 
-租户的验证码位于 `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`。尚未完成的注册带有 `"pendingEnrollment": true`，没有 `mfaEnrollmentId`。验证码使用项目的 TOTP 周期和位数以及 Fireemu 的时钟计算，因此与验证所比对的验证码一致；验证本身不变，防重放保护也不变：同一时间步内已被注册或之前的登录使用过的验证码仍会被拒绝，请等待下一个时间步（`secondsRemaining`）：在运行中的时钟上，从该因素最后接受的时间步之后的第一个时间步起，验证码会再次被接受。`"alreadyUsed": true` 表示现在提交列出的验证码会被当作已使用而拒绝，对应的日志行会说明这一点，而不是给出要使用的验证码。此时 `advanceSeconds` 是到第一个新时间步的秒数。由于相邻窗口允许注册或登录提前接受下一个时间步的验证码，它可能超过一个周期（`periodSeconds`，即 SDK 的 `codeIntervalSeconds`）。`"clockRunning": false` 表示时钟静止：固定了 `daemon.clockStart` 且未设置 `daemon.clock = "realtime"`，或设置了 `daemon.clock = "frozen"`。此时时钟移动前验证码不会变化，日志行不显示剩余秒数，等待也没有用；注册之后，登录挑战显示的是注册时用过的验证码。时钟运行时可等待 `advanceSeconds` 秒；无论哪种时钟，都可以在 Emulator UI 的 Runtime 页面或通过 control API 将时钟前进 `advanceSeconds` 秒：
+租户的验证码位于 `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`。尚未完成的注册带有 `"pendingEnrollment": true`，没有 `mfaEnrollmentId`。验证码使用项目的 TOTP 周期和位数以及 Fireemu 的时钟计算，因此与验证所比对的验证码一致；验证本身不变，防重放保护也不变：同一时间步内已被注册或之前的登录使用过的验证码仍会被拒绝。在运行中的时钟上，从该因素最后接受的时间步之后的第一个时间步起，验证码会再次被接受。`"alreadyUsed": true` 表示现在提交列出的验证码会被当作已使用而拒绝，对应的日志行会说明这一点，而不是给出要使用的验证码。此时 `advanceSeconds` 是到第一个新时间步的秒数。由于相邻窗口允许注册或登录提前接受下一个时间步的验证码，它可能超过一个周期（`periodSeconds`，即 SDK 的 `codeIntervalSeconds`）。`"clockRunning": false` 表示时钟静止：固定了 `daemon.clockStart` 且未设置 `daemon.clock = "realtime"`，或设置了 `daemon.clock = "frozen"`。此时时钟移动前验证码不会变化，日志行不显示剩余秒数，等待也没有用；注册之后，登录挑战显示的是注册时用过的验证码。时钟运行时可等待 `advanceSeconds` 秒；无论哪种时钟，都可以在 Emulator UI 的 Runtime 页面或通过 control API 将时钟前进 `advanceSeconds` 秒：
 
 ```sh
+# 示例：请用列出的 advanceSeconds 代替 30。
 curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 30}'
 ```
 
