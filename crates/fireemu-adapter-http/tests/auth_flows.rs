@@ -9769,3 +9769,70 @@ fn totp_codes_route_follows_its_siblings_for_tenants_and_methods() {
     let status = handle(&s, "DELETE", &format!("{EMU}/totpCodes"), &json!({})).status;
     assert_eq!(status, sibling);
 }
+
+/// Production replaces the whole multi-factor config under `updateMask=mfa`, and an `mfa` value
+/// without a state stores DISABLED while keeping the providers it names. Each recorded variant
+/// (AUTH-MFA-EMPTY-OBS-20261118-03, conformance/auth-mfa-empty-production.json) is replayed in
+/// both profiles from the recorded enabled config: status, the answered `mfa` and the read-back.
+/// The emulator profile shows `mfa` only while it differs from a new project's (the official
+/// emulator has no project `mfa` config), so there a bare `{state: DISABLED}` is omitted.
+#[test]
+fn whole_mfa_replace_without_a_state_follows_the_recording_in_both_profiles() {
+    let recording: Value = serde_json::from_str(include_str!(
+        "../../../conformance/auth-mfa-empty-production.json"
+    ))
+    .unwrap();
+    let path = "/identitytoolkit.googleapis.com/admin/v2/projects/demo-app/config";
+    let masked = format!("{path}?updateMask=mfa");
+    let strict = || AuthState {
+        stateless_refresh_tokens: false,
+        ..state()
+    };
+    let variants = recording["variants"].as_array().unwrap();
+    assert_eq!(variants.len(), 6);
+    for profile in ["emulator", "strict"] {
+        let make = || {
+            if profile == "strict" {
+                strict()
+            } else {
+                state()
+            }
+        };
+        let shown = |recorded: &Value| {
+            if profile == "emulator" && *recorded == json!({"state": "DISABLED"}) {
+                Value::Null
+            } else {
+                recorded.clone()
+            }
+        };
+        for variant in variants {
+            let s = make();
+            let id = variant["id"].as_str().unwrap();
+            let enabled = handle_with(&s, "PATCH", &masked, &owner(), &recording["enable"]);
+            assert_eq!(enabled.status, 200, "{profile} {id}: {}", enabled.body);
+            let read = handle_with(&s, "GET", path, &owner(), &Value::Null).body;
+            assert_eq!(
+                read["mfa"], recording["enabledReadBack"],
+                "{profile} {id}: enabled"
+            );
+            let r = handle_with(&s, "PATCH", &masked, &owner(), &variant["body"]);
+            assert_eq!(
+                json!(r.status),
+                variant["status"],
+                "{profile} {id}: {}",
+                r.body
+            );
+            assert_eq!(
+                r.body["mfa"],
+                shown(&variant["answeredMfa"]),
+                "{profile} {id}: answered"
+            );
+            let read = handle_with(&s, "GET", path, &owner(), &Value::Null).body;
+            assert_eq!(
+                read["mfa"],
+                shown(&variant["readBackMfa"]),
+                "{profile} {id}: read-back"
+            );
+        }
+    }
+}
