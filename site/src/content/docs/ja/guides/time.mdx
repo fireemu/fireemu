@@ -63,7 +63,7 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-
 curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-type: application/json' -d '{"syncToRealTime": true}'
 ```
 
-クロックを返す応答と`GET /v1/sessions/default`には、実時間に追従している間は`"running": true`、固定している間は`false`が入ります。再開しても、止まっていた間の時間は数えません。`syncToRealTime`はsetと同じ扱いで、クロックを戻す移動（未来に固定した開始時刻など）は、本文に`"allowBackwards": true`がない限り拒否します。本文が空なら通常の再開です。本文を送る場合はJSONオブジェクトにします（`null`そのものは拒否します）。追従する実時間の時刻源がないクロック（`fireemu/testing`のworld）は`400 FAILED_PRECONDITION`を返します。daemonの各サービスは共有のクロックを読むので、要求が返った時点で切り替えが見えます。syncで移動する間に期限が来たスケジュール関数は、`clock:advance`の後と同じように実行されます。仮想の`functions.clock`は各Functions runnerにメッセージで届き、要求（APIからでもRuntimeページからでも）はrunnerが受け取るまで待ちます（応答しないrunnerがあれば`503 CLOCK_NOT_SETTLED`）。固定してもアプリケーションの`Date.now()`は戻りません。クロックが追い越すまで最後に見せた値にとどまり、戻るのは巻き戻したときだけです。クロックはすべてのセッションで共有なので、切り替えも全セッションに効きます。snapshotのrestoreは記録した時刻を戻し、モードは今のまま保ちます。起動時の出力に、開始時のモードと切り替え方を表示します。
+クロックを返す応答と`GET /v1/sessions/default`には、実時間に追従している間は`"running": true`、固定している間は`false`が入ります。再開しても、止まっていた間の時間は数えません。`syncToRealTime`はsetと同じ扱いで、クロックを戻す移動（未来に固定した開始時刻など）は、本文に`"allowBackwards": true`がない限り拒否します。本文が空なら通常の再開です。本文を送る場合はJSONオブジェクトにします（`null`そのものは拒否します）。追従する実時間の時刻源がないクロック（`fireemu/testing`のworld）は`400 FAILED_PRECONDITION`を返します。daemonの各サービスは共有のクロックを読むので、要求が返った時点で切り替えが見えます。syncで移動する間に期限が来たスケジュール関数は、`clock:advance`の後と同じように実行されます。仮想の`functions.clock`は各Functions runnerにメッセージで届き、要求（APIからでもRuntimeページからでも）はrunnerが受け取るまで待ちます（10秒以内に応答しないrunnerがあれば`503 CLOCK_NOT_SETTLED`）。固定してもアプリケーションの`Date.now()`は戻りません。クロックが追い越すまで最後に見せた値にとどまり、戻るのは巻き戻したときだけです。クロックはすべてのセッションで共有なので、切り替えも全セッションに効きます。snapshotのrestoreは記録した時刻を戻し、モードは今のまま保ちます。起動時の出力に、開始時のモードと切り替え方を表示します。
 
 ## スケジュール関数を実行する
 

@@ -28,6 +28,10 @@ const store = createRoot(() => {
     completedEpoch = ++pollEpoch;
     setClockInfo(info);
   };
+  /** A mutation without a clock answer (a snapshot restore): polls started before it are stale. */
+  const invalidatePolls = () => {
+    completedEpoch = ++pollEpoch;
+  };
   const [sessions, setSessionSnapshot] = createSignal<Session[]>(initialConfig().sessions);
   // Keep row-local forms for unchanged targets, but discard them for a replacement project.
   const setSessions = (snapshot: Session[]) => {
@@ -89,6 +93,7 @@ const store = createRoot(() => {
     clockMode,
     setClockInfo,
     applyClockMutation,
+    invalidatePolls,
     clockGuard,
     sessions,
     setSessions,

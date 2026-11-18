@@ -639,6 +639,20 @@ fn a_pinned_clock_reveals_the_used_code_as_used_and_a_clock_move_gives_a_fresh_o
     let raw = read_response(&mut stream);
     assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
     assert_eq!(codes(port)["clockRunning"], json!(true));
+    // The same contract for a form-encoded body: `null` sent as a form is not an object.
+    switch("clock:freeze");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(20)))
+        .unwrap();
+    write!(
+        stream,
+        "POST /v1/sessions/default/clock:resume HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnull"
+    )
+    .unwrap();
+    let raw = read_response(&mut stream);
+    assert!(raw.starts_with("HTTP/1.1 400"), "{raw}");
+    assert_eq!(codes(port)["clockRunning"], json!(false));
 }
 
 #[test]

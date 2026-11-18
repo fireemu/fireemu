@@ -1521,6 +1521,28 @@ impl Drop for RunnerRestartGuard {
     }
 }
 
+/// Waits for `settle` for at most `bound`; past it the move of `target` is reported as not
+/// acknowledged.
+pub async fn settle_within(
+    target: u64,
+    bound: std::time::Duration,
+    settle: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    tokio::time::timeout(bound, settle)
+        .await
+        .unwrap_or_else(|_| {
+            Err(format!(
+                "the runners did not acknowledge clock revision {target} within {} ms",
+                bound.as_millis()
+            ))
+        })
+}
+
+/// How long settling a clock move may wait for every runner, so that a caller (the control
+/// API, the Emulator UI and its clock-control guard) always gets an answer: a runner that does
+/// not acknowledge in time is a 503 `CLOCK_NOT_SETTLED`. One frame has its own 5 s limit.
+pub const CLOCK_SETTLE_BOUND: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl FunctionsRuntime {
     fn empty_event_reservation(self: &Arc<Self>) -> EventBatchReservation {
         EventBatchReservation {
@@ -1912,11 +1934,20 @@ impl FunctionsRuntime {
         self.config.clock_policy
     }
 
-    /// Acknowledge the latest clock in each still-current runner generation.
+    /// Acknowledge the clock as it is now in each still-current runner generation: once every
+    /// runner has a frame of this revision or a later one, the move that led here has reached
+    /// them. A running clock publishes on every tick, so the loop does not wait for the revision
+    /// to stand still (it would chase the ticks of a slow runner forever); it repeats only when a
+    /// runner generation changed under it. The whole wait is bounded by [`CLOCK_SETTLE_BOUND`].
     pub async fn sync_clock(&self) -> Result<(), String> {
         if !self.config.clock_policy.date_virtual {
             return Ok(());
         }
+        let target = self.clock_state().0.revision;
+        settle_within(target, CLOCK_SETTLE_BOUND, self.sync_clock_to(target)).await
+    }
+
+    async fn sync_clock_to(&self, target: u64) -> Result<(), String> {
         loop {
             let (snapshot, following) = self.clock_state();
             let runners: Vec<_> = self
@@ -1930,10 +1961,9 @@ impl FunctionsRuntime {
             for (_, runner) in &runners {
                 runner.sync_clock(snapshot, following).await?;
             }
-            // A following clock's instant moves on every read; the revision and the flag are
-            // what the runners were sent.
-            let (latest, latest_following) = self.clock_state();
-            if (latest.revision, latest_following) == (snapshot.revision, following)
+            // A later publication (a tick, another move) wakes the clock observer, which sends
+            // it in turn; this call only owes the runners the revision it started from.
+            if snapshot.revision >= target
                 && self
                     .codebases
                     .iter()

@@ -324,13 +324,14 @@ impl VirtualClock {
         if instant < sample.instant {
             self.backwards_sets = self.backwards_sets.saturating_add(1);
         }
-        self.publish(instant, &sample);
         if let (Some(reading), Some(follow)) = (reading, &mut self.follow) {
-            // The clock is at the wall instant of `reading`, so it runs from that reading even
-            // when the source stepped back below the high-water mark the sample held.
-            follow.at = reading;
-            follow.peak.set(0);
+            // The clock lands at the wall instant of `reading` and runs from that reading, even
+            // when the source stepped back below the high-water mark the sample held. The anchor
+            // is set before the publication (which folds the sample's drift in), so the snapshot
+            // the observers get and the high-water mark it records hold for every later read.
+            follow.at = reading - sample.drift;
         }
+        self.publish(instant, &sample);
         Ok(())
     }
 

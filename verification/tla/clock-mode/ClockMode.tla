@@ -19,25 +19,33 @@
      (FALSE: it drops it on a freeze frame).
    - ElapsedFloor: the runner keeps the timer elapsed time it counted as a floor (FALSE: it
      takes the daemon's elapsed time as is).
-   - PublishModeChange: freeze and resume publish (FALSE: the mode changes silently). *)
+   - PublishModeChange: freeze and resume publish (FALSE: the mode changes silently).
+   - AnchorBeforeSnapshot: a sync sets its anchor before the publication snapshot the
+     observers get and keeps the high-water mark that snapshot records (FALSE: it publishes
+     with the folded anchor and resets anchor and mark after the snapshot, review r3 M1).
+   - SettleOnTarget: the sync loop is done once the runners have the revision it started
+     from (FALSE: it waits until the revision stands still, chasing ticks, review r3 M2). *)
 EXTENDS Integers
 
 CONSTANTS MaxWall, MaxInstant, MaxRev, MaxSteps,
-          PublishModeChange, OneWallRead, RawAnchor, RunnerFloor, ElapsedFloor
+          PublishModeChange, OneWallRead, RawAnchor, RunnerFloor, ElapsedFloor,
+          AnchorBeforeSnapshot, SettleOnTarget
 
 VARIABLES now, following, at, peak, elapsed, rev, backwards,
           wall, mono, steps,
           dirty, pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed,
           runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, rElapsed, rFloor,
           appShown, timerSeen, rewound,
-          syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced
+          syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced,
+          published, settleTarget, retries
 
 daemon == <<now, following, at, peak, elapsed, rev, backwards>>
 time == <<wall, mono, steps>>
-loop == <<dirty, pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
+loop == <<dirty, pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed,
+          settleTarget, retries>>
 runner == <<runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, rElapsed, rFloor,
             appShown, timerSeen, rewound>>
-sync == <<syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced>>
+sync == <<syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced, published>>
 vars == <<daemon, time, loop, runner, sync>>
 
 Max(a, b) == IF a >= b THEN a ELSE b
@@ -63,6 +71,7 @@ Init ==
   /\ appShown = 0 /\ timerSeen = 0 /\ rewound = FALSE
   /\ syncPc = "idle" /\ syncTarget = 0 /\ syncAllow = FALSE
   /\ atWallAtRead = FALSE /\ refusedAtWall = FALSE /\ synced = FALSE
+  /\ published = 0 /\ settleTarget = 0 /\ retries = 0
 
 \* A publication moves the clock to `instant`, folds the drift into elapsed (plus any forward
 \* hand move), re-anchors at `anchor` and marks the watch channel.
@@ -73,7 +82,7 @@ PublishAt(instant, mode, back, anchor) ==
   /\ dirty' = TRUE
 Publish(instant, mode, back) == PublishAt(instant, mode, back, at + Drift)
 
-Others == <<pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
+Others == <<pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed, settleTarget, retries>>
 Keep == <<Others, runner>>
 
 RealTimePasses ==
@@ -88,11 +97,12 @@ WallStepsBack ==
   /\ wall' = wall - 1 /\ steps' = steps + 1
   /\ synced' = FALSE
   /\ UNCHANGED <<daemon, mono, loop, runner, syncPc, syncTarget, syncAllow,
-                 atWallAtRead, refusedAtWall>>
+                 atWallAtRead, refusedAtWall, published>>
 
 DaemonStep(p) ==
   /\ syncPc = "idle" /\ p
   /\ synced' = FALSE
+  /\ published' = now'
   /\ UNCHANGED <<time, Keep, syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall>>
 
 Ticker == DaemonStep(following /\ Live > now /\ Publish(Live, TRUE, 0))
@@ -119,36 +129,52 @@ SyncAnchor(reading) == IF RawAnchor THEN reading ELSE IF following THEN at + Dri
 SyncOneRead(allow) ==
   /\ OneWallRead /\ syncPc = "idle"
   /\ IF wall >= Live \/ allow
-       THEN /\ PublishAt(wall, TRUE, IF wall < Live THEN 1 ELSE 0, SyncAnchor(wall))
+       THEN /\ PublishAt(wall, TRUE, IF wall < Live THEN 1 ELSE 0,
+                          IF AnchorBeforeSnapshot THEN SyncAnchor(wall) ELSE at + Drift)
             /\ synced' = TRUE /\ UNCHANGED refusedAtWall
-       ELSE /\ UNCHANGED <<daemon, dirty, synced>>
+            \* The publication's snapshot reads the source again (it may have moved).
+            /\ syncPc' = "snap" /\ syncTarget' = wall
+       ELSE /\ UNCHANGED <<daemon, dirty, synced, syncPc, syncTarget>>
             /\ refusedAtWall' = (refusedAtWall \/ Live = wall)
-  /\ UNCHANGED <<time, Keep, syncPc, syncTarget, syncAllow, atWallAtRead>>
+  /\ UNCHANGED <<time, Keep, syncAllow, atWallAtRead, published>>
+
+\* The snapshot inside the publication: the observers get it, and the read records the
+\* high-water mark. The defect then resets anchor and mark to the sync's reading.
+SyncSnapshot ==
+  /\ syncPc = "snap" /\ syncPc' = "idle"
+  /\ published' = Live
+  /\ IF AnchorBeforeSnapshot
+       THEN /\ peak' = IF following THEN Max(peak, wall - at) ELSE peak
+            /\ UNCHANGED at
+       ELSE /\ at' = syncTarget /\ peak' = 0
+  /\ UNCHANGED <<now, following, elapsed, rev, backwards, time, loop, runner,
+                 syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced>>
 
 \* The reviewed defect: the wall clock is read for the target first ...
 SyncReadWall(allow) ==
   /\ ~OneWallRead /\ syncPc = "idle"
   /\ syncPc' = "read" /\ syncTarget' = wall /\ syncAllow' = allow
   /\ atWallAtRead' = (Live = wall)
-  /\ UNCHANGED <<daemon, time, loop, runner, refusedAtWall, synced>>
+  /\ UNCHANGED <<daemon, time, loop, runner, refusedAtWall, synced, published>>
 
 \* ... and the clock is sampled (and anchored) at a later reading.
 SyncApply ==
   /\ syncPc = "read" /\ syncPc' = "idle"
   /\ IF syncTarget >= Live \/ syncAllow
        THEN /\ PublishAt(syncTarget, TRUE, IF syncTarget < Live THEN 1 ELSE 0, wall)
-            /\ UNCHANGED <<refusedAtWall, synced>>
-       ELSE /\ UNCHANGED <<daemon, dirty, synced>>
+            /\ UNCHANGED <<refusedAtWall, synced>> /\ published' = syncTarget
+       ELSE /\ UNCHANGED <<daemon, dirty, synced, published>>
             /\ refusedAtWall' = (refusedAtWall \/ atWallAtRead)
   /\ UNCHANGED <<time, Keep, syncTarget, syncAllow, atWallAtRead>>
 
 \* The Functions sync loop: take the publication, read (revision, mode, instant, elapsed),
 \* send it, and read again until nothing changed in between.
 SyncStart ==
-  /\ pc = "idle" /\ dirty
+  /\ syncPc # "snap" /\ pc = "idle" /\ dirty
   /\ dirty' = FALSE /\ pc' = "send"
   /\ seenRev' = rev /\ seenFollow' = following /\ seenInstant' = Live
   /\ seenBack' = backwards /\ seenElapsed' = ElapsedLive
+  /\ settleTarget' = rev /\ retries' = 0
   /\ UNCHANGED <<daemon, time, runner, sync>>
 
 \* The runner applies a frame when it arrives, re-anchoring on its monotonic clock. A rewind
@@ -165,15 +191,22 @@ SyncSend ==
                ELSE IF ~RunnerFloor /\ ~seenFollow THEN -1
                ELSE rShown
   /\ UNCHANGED <<appShown, timerSeen, daemon, time, dirty, seenRev, seenFollow, seenInstant,
-                 seenBack, seenElapsed, sync>>
+                 seenBack, seenElapsed, settleTarget, retries, sync>>
+
+\* Done once the runner has the revision the loop started from (a later publication marks
+\* `dirty` and is sent by the next round), or, in the defect, once the revision stands still.
+Settled == IF SettleOnTarget THEN seenRev >= settleTarget
+           ELSE <<rev, following>> = <<seenRev, seenFollow>>
 
 SyncCheck ==
-  /\ pc = "check"
-  /\ IF <<rev, following>> = <<seenRev, seenFollow>>
-       THEN pc' = "idle" /\ UNCHANGED <<seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
+  /\ syncPc # "snap" /\ pc = "check"
+  /\ IF Settled
+       THEN pc' = "idle" /\ UNCHANGED <<seenRev, seenFollow, seenInstant, seenBack, seenElapsed,
+                                        retries>>
        ELSE /\ pc' = "send" /\ seenRev' = rev /\ seenFollow' = following
             /\ seenInstant' = Live /\ seenBack' = backwards /\ seenElapsed' = ElapsedLive
-  /\ UNCHANGED <<daemon, time, dirty, runner, sync>>
+            /\ retries' = retries + 1
+  /\ UNCHANGED <<daemon, time, dirty, settleTarget, runner, sync>>
 
 \* Application code reads Date.now() and a timer compares its deadline in the runner.
 AppRead ==
@@ -187,13 +220,19 @@ Next ==
   \/ \E d \in 0..1 : Advance(d)
   \/ \E t \in 0..MaxInstant : Rewind(t)
   \/ \E allow \in BOOLEAN : SyncOneRead(allow) \/ SyncReadWall(allow)
-  \/ SyncApply
+  \/ SyncApply \/ SyncSnapshot
   \/ SyncStart \/ SyncSend \/ SyncCheck \/ AppRead
 
 Spec == Init /\ [][Next]_vars
 
 \* Bounds the search: every publication adds a revision.
 Bounded == rev <= MaxRev
+
+\* No read takes back what a publication showed the observers (rewinds republish).
+NeverBelowPublished == syncPc = "idle" => Live >= published
+
+\* One settle round answers: it never re-sends because the clock published again meanwhile.
+SettleWithoutChasing == retries = 0
 
 \* A frozen clock shows its last move.
 FrozenStandsStill == ~following => Live = now

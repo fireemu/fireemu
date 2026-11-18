@@ -4997,6 +4997,78 @@ async fn a_schedule_fires_as_real_time_passes_without_any_hand_move() {
     );
 }
 
+/// Settling a clock move does not chase the ticks of a running clock: a runner that takes
+/// 150 ms to acknowledge each frame, while the clock publishes every 100 ms, still settles the
+/// move (an acknowledgement of the move's revision or a later one is enough).
+#[tokio::test]
+async fn settling_a_clock_move_does_not_chase_running_ticks() {
+    let dir = std::env::temp_dir().join(format!("fireemu-clock-settle-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let clock = Arc::new(Mutex::new(VirtualClock::following(START)));
+    let runtime = start_task_runtime_using_clock(
+        &dir.join("entries"),
+        1,
+        |_| (TaskRetryConfig::default(), TaskRateLimits::default()),
+        vec![(
+            "FIREEMU_FAKE_CLOCK_ACK_DELAY_MS".to_owned(),
+            "150".to_owned(),
+        )],
+        clock.clone(),
+        fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+            date_virtual: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let ticking = clock.clone();
+    let ticker = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            ticking.lock().unwrap().sync();
+        }
+    });
+    advance(&clock, 1);
+    let settled = tokio::time::timeout(Duration::from_secs(4), runtime.sync_clock()).await;
+    ticker.abort();
+    runtime.runner().kill_now();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        matches!(settled, Ok(Ok(()))),
+        "the move did not settle: {settled:?}"
+    );
+}
+
+/// Settling is bounded: a wait that never ends is reported as not acknowledged once the bound
+/// has passed, so a caller (and the Emulator UI's clock guard) always gets an answer; one that
+/// ends in time answers what it answered.
+#[tokio::test]
+async fn settling_a_clock_move_is_bounded() {
+    use fireemu_adapter_functions::runtime::settle_within;
+    let started = std::time::Instant::now();
+    let stuck = settle_within(
+        7,
+        Duration::from_millis(50),
+        std::future::pending::<Result<(), String>>(),
+    )
+    .await;
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let message = stuck.unwrap_err();
+    assert!(
+        message.contains("revision 7") && message.contains("50 ms"),
+        "{message}"
+    );
+    assert_eq!(
+        settle_within(7, Duration::from_secs(5), async { Ok(()) }).await,
+        Ok(())
+    );
+    assert_eq!(
+        settle_within(7, Duration::from_secs(5), async { Err("gone".to_owned()) }).await,
+        Err("gone".to_owned())
+    );
+    assert!(fireemu_adapter_functions::runtime::CLOCK_SETTLE_BOUND <= Duration::from_secs(30));
+}
+
 /// The runtime's clock updates tell the runner whether the daemon clock follows real time.
 #[tokio::test]
 async fn runtime_clock_sync_sends_the_clock_follow_flag() {

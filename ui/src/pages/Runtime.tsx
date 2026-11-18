@@ -183,7 +183,7 @@ export const ClockPanel: Component = () => {
   );
 };
 
-const SnapshotsPanel: Component = () => {
+export const SnapshotsPanel: Component = () => {
   const session = appState.session;
   const [list, { refetch }] = createResource(session, (s) => settle(listSnapshots(s)));
   const [name, setName] = createSignal("");
@@ -268,16 +268,21 @@ const SnapshotsPanel: Component = () => {
                           clock: s.clock,
                         })}
                         testId={`snapshot-restore-${s.name}`}
-                        onConfirm={async () => {
-                          const r = await restoreSnapshot(session(), s.name);
-                          r.match(
-                            () => {
-                              setNotice(`${t("runtime.restore")}: ${s.name}`);
-                              void appState.refreshClock();
-                            },
-                            (e) => setError(e.message),
-                          );
-                        }}
+                        // A restore puts the captured instant back on the shared clock, so it
+                        // waits for and blocks the other clock mutations like they do each other.
+                        onConfirm={() =>
+                          appState.clockGuard.run(async () => {
+                            const r = await restoreSnapshot(session(), s.name);
+                            r.match(
+                              () => {
+                                setNotice(`${t("runtime.restore")}: ${s.name}`);
+                                appState.invalidatePolls();
+                                void appState.refreshClock();
+                              },
+                              (e) => setError(e.message),
+                            );
+                          })
+                        }
                       />
                       <ConfirmButton
                         label={t("app.delete")}

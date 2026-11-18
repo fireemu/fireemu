@@ -236,6 +236,8 @@ while True:
             with open(clock_log, "a", encoding="utf-8") as frames:
                 frames.write(json.dumps(msg) + "\n")
         clock.update(msg)
+        if delay := os.environ.get("FIREEMU_FAKE_CLOCK_ACK_DELAY_MS"):
+            time.sleep(int(delay) / 1000)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
         continue
     if msg.get("type") != "invoke":

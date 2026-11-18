@@ -344,7 +344,7 @@
     },
     "crates/fireemu-adapter-functions/src/runtime.rs": {
       "kind": "sha256",
-      "value": "eff1fb8ae9320d71bc6d41e9e9b52b39183e30d1844c723e6dc2e0c0dc2326c1"
+      "value": "dcf377b356588c43aefa10b060db8355610020442d2d3854cc09e72dd23db49b"
     },
     "crates/fireemu-adapter-functions/src/task_scheduler.rs": {
       "kind": "sha256",
@@ -368,7 +368,7 @@
     },
     "crates/fireemu-adapter-functions/tests/fake_runner.py": {
       "kind": "sha256",
-      "value": "5a836092cda2c87ab047494e5326f4fb1f6d1e423865e90344a2430f2c5401bf"
+      "value": "603ead28560f8559577ac5d122e882381ce6e02e60109565c9380af53a0c36a7"
     },
     "crates/fireemu-adapter-grpc/Cargo.toml": {
       "kind": "sha256",
@@ -988,7 +988,7 @@
     },
     "crates/fireemu-core-session/src/clock.rs": {
       "kind": "sha256",
-      "value": "05c27be5c940c19d01feb4bdb17cc95bf964d1e506aa7ca72df61cefb4853801"
+      "value": "d3d4b462de3c34373fec48dfab19b95d9474c4d46ead462833287270f4eed2c2"
     },
     "crates/fireemu-core-session/src/fault.rs": {
       "kind": "sha256",

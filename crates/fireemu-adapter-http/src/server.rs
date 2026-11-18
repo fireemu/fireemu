@@ -232,7 +232,9 @@ async fn respond(
                 .is_some_and(|ct| ct.starts_with("application/x-www-form-urlencoded"));
             let json: Option<serde_json::Value> = if bytes.is_empty() {
                 Some(serde_json::Value::Object(serde_json::Map::new()))
-            } else if is_form {
+            } else if is_form && !crate::control::is_control_path(&path) {
+                // The control API takes JSON whatever the content type says, so a form body
+                // cannot turn into an object its routes would accept.
                 Some(form_to_json(
                     &String::from_utf8_lossy(&bytes),
                     path.starts_with("/securetoken.googleapis.com/"),

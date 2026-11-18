@@ -366,3 +366,48 @@ fn a_sync_after_the_host_clock_steps_back_runs_from_the_raw_wall_reading() {
     rig.run_for(3 * SECOND);
     assert_eq!(clock.now(), clock.wall_now().unwrap());
 }
+
+/// A source that returns the readings in order, repeating the last one.
+fn scripted(readings: &[i128]) -> fireemu_core_session::clock::TimeSource {
+    let queue = Arc::new(Mutex::new(std::collections::VecDeque::from(
+        readings.to_vec(),
+    )));
+    Arc::new(move || {
+        let mut queue = queue.lock().unwrap();
+        if queue.len() > 1 {
+            queue.pop_front().unwrap()
+        } else {
+            *queue.front().unwrap()
+        }
+    })
+}
+
+#[test]
+fn a_sync_never_takes_back_what_its_publication_showed() {
+    let start = LogicalInstant::from_nanos(100);
+    // The anchor read, the sync's wall read, the publication's snapshot, then a read that is
+    // behind it.
+    let source = scripted(&[100, 100, 101, 99]);
+    let mut clock = VirtualClock::following_with(start, source, 100)
+        .with_wall_clock(Arc::new(LogicalInstant::from_nanos));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let observer: Arc<ClockObserver> = Arc::new(move |s| sink.lock().unwrap().push(s));
+    // Observing reads the source once (the first scripted 100).
+    clock.observe(&observer);
+    let wall = clock.read_wall().unwrap();
+    assert_eq!(wall.instant, LogicalInstant::from_nanos(100));
+    clock.resume_at_wall(wall, false).unwrap();
+    let published = *seen.lock().unwrap().last().unwrap();
+    let after = clock.snapshot();
+    assert_eq!(after.revision, published.revision);
+    assert!(
+        after.instant >= published.instant,
+        "{after:?} < {published:?}"
+    );
+    assert!(
+        after.elapsed_nanos >= published.elapsed_nanos,
+        "{after:?} < {published:?}"
+    );
+    assert_eq!(clock.backwards_sets(), 0);
+}

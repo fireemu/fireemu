@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { okAsync, ResultAsync } from "neverthrow";
-import { ClockPanel, FaultPlanPanel } from "./Runtime";
+import { ClockPanel, FaultPlanPanel, SnapshotsPanel } from "./Runtime";
 import { appState } from "../state";
 import { waitFor } from "@solidjs/testing-library";
 import * as control from "../api/control";
@@ -11,6 +11,8 @@ vi.mock("../api/control", async (importOriginal) => ({
   getFaultPlan: vi.fn(),
   freezeClock: vi.fn(),
   resumeClock: vi.fn(),
+  listSnapshots: vi.fn(),
+  restoreSnapshot: vi.fn(),
 }));
 beforeEach(() => {
   vi.mocked(control.getFaultPlan).mockReturnValue(
@@ -145,5 +147,38 @@ describe("Clock controls across navigation", () => {
       expect((second.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(false),
     );
     expect(second.getByTestId("runtime-clock-mode").textContent).toContain("Frozen");
+  });
+});
+
+describe("Snapshot restore", () => {
+  it("waits for a clock mutation in flight and blocks the next one", async () => {
+    appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
+    vi.mocked(control.listSnapshots).mockReturnValue(
+      okAsync({ snapshots: [{ name: "seed", clock: "2025-01-01T00:00:00Z", parts: 1 }] }),
+    );
+    vi.mocked(control.restoreSnapshot).mockReturnValue(okAsync({ restored: true }));
+    let finish!: () => void;
+    vi.mocked(control.freezeClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<control.ClockInfo>((r) => {
+          finish = () => r({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false });
+        }),
+      ),
+    );
+    const clock = render(() => <ClockPanel />);
+    const snapshots = render(() => <SnapshotsPanel />);
+    fireEvent.click(clock.getByTestId("toggle-clock-mode"));
+    const restore = await snapshots.findByTestId("snapshot-restore-seed");
+    fireEvent.click(restore);
+    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
+    await Promise.resolve();
+    expect(control.restoreSnapshot).not.toHaveBeenCalled();
+    finish();
+    await waitFor(() =>
+      expect((clock.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed"));
+    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
+    await waitFor(() => expect(control.restoreSnapshot).toHaveBeenCalledWith("default", "seed"));
   });
 });
