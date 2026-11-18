@@ -1116,6 +1116,8 @@ impl PubSubHandle {
         Ok(now)
     }
 
+    /// A client's acknowledgement: lapsed leases expire first, so an ack that arrives after its
+    /// lease lapsed (with nobody pulling since) does not remove the redelivered message.
     pub(crate) fn acknowledge(
         &self,
         subscription: &SubscriptionName,
@@ -1127,6 +1129,21 @@ impl PubSubHandle {
             Self::expire_lapsed_leases(&mut state, subscription, times)
                 .and_then(|_| state.acknowledge(subscription, ack_ids))
         };
+        if result.is_ok() {
+            self.retry_pending_dead_letters();
+        }
+        result
+    }
+
+    /// The push dispatcher's acknowledgement of a delivery its endpoint accepted. It is not a
+    /// late client ack: the request completed while it held the lease, even if a clock move
+    /// during the request lapsed that lease, so nothing expires first.
+    fn acknowledge_pushed(
+        &self,
+        subscription: &SubscriptionName,
+        ack_id: &str,
+    ) -> Result<usize, PubSubError> {
+        let result = self.state().acknowledge(subscription, &[ack_id.to_owned()]);
         if result.is_ok() {
             self.retry_pending_dead_letters();
         }
@@ -1460,7 +1477,7 @@ impl PubSubHandle {
                 return false;
             }
         }
-        self.acknowledge(subscription, &[ack_id.to_owned()]).is_ok()
+        self.acknowledge_pushed(subscription, ack_id).is_ok()
     }
 
     fn nack_push_if_current(
@@ -2901,6 +2918,20 @@ mod dispatch_tests {
         handle.pass_wall_time(9);
         handle.acknowledge(&subscription, &[ack_id]).unwrap();
         handle.pass_wall_time(20);
+        assert!(handle.pull(&subscription, 1).unwrap().is_empty());
+    }
+
+    /// The push dispatcher's own ack of an accepted delivery counts even when a clock move
+    /// during the request lapsed the lease (CI caught push tests redelivering after success);
+    /// a client's late ack does not (Codex r1 M2).
+    #[test]
+    fn a_pushed_delivery_is_acknowledged_even_after_its_lease_lapsed() {
+        let (handle, subscription, ack_id) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle.pass_wall_time(11);
+        assert_eq!(
+            handle.acknowledge_pushed(&subscription, &ack_id).unwrap(),
+            1
+        );
         assert!(handle.pull(&subscription, 1).unwrap().is_empty());
     }
 

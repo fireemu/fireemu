@@ -2942,6 +2942,59 @@ mod tests {
     /// A message published with a caller-chosen id (the one Cloud Scheduler's Gen1 publish carries) keeps that id and
     /// the given publish time, is seen by every subscription, and leaves the counter that numbers ordinary publishes
     /// alone, so the next ordinary message still gets the next number.
+    /// `expire_lapsed` returns a lapsed lease to the queue of one subscription (so a late ack
+    /// misses it), and `shift_delivery_times` moves retained lease and retry times by a delta.
+    #[test]
+    fn expire_lapsed_and_shift_delivery_times_move_one_subscriptions_leases() {
+        let mut s = PubSubState::new(42);
+        let at = |seconds| LogicalInstant::from_unix_seconds(seconds);
+        s.create_topic(topic("demo-app", "jobs"), BTreeMap::new())
+            .unwrap();
+        s.create_subscription(sub_cfg("demo-app", "jobs-sub", "jobs", Filter::always()))
+            .unwrap();
+        let subscription = SubscriptionName::new("demo-app", "jobs-sub").unwrap();
+        s.publish(&topic("demo-app", "jobs"), vec![data(b"x")], at(1000))
+            .unwrap();
+        let leased = s.pull(&subscription, 1, at(1000)).unwrap();
+        let lease = s
+            .next_pull_deadline(&subscription, at(1000))
+            .unwrap()
+            .unwrap();
+        // Shift the lease 5 s later, then back.
+        s.shift_delivery_times(&subscription, 5_000_000_000)
+            .unwrap();
+        assert_eq!(
+            s.next_pull_deadline(&subscription, at(1000))
+                .unwrap()
+                .unwrap()
+                .as_nanos(),
+            lease.as_nanos() + 5_000_000_000
+        );
+        s.shift_delivery_times(&subscription, -5_000_000_000)
+            .unwrap();
+        assert_eq!(
+            s.next_pull_deadline(&subscription, at(1000)).unwrap(),
+            Some(lease)
+        );
+        // Not lapsed yet: the ack id still acknowledges.
+        s.expire_lapsed(&subscription, at(1001)).unwrap();
+        assert_eq!(
+            s.next_pull_deadline(&subscription, at(1001)).unwrap(),
+            Some(lease)
+        );
+        // Lapsed: back in the queue, and the old ack id acknowledges nothing.
+        s.expire_lapsed(&subscription, lease).unwrap();
+        assert_eq!(
+            s.acknowledge(&subscription, &[leased[0].ack_id.clone()])
+                .unwrap(),
+            0
+        );
+        assert_eq!(s.pull(&subscription, 1, lease).unwrap().len(), 1);
+        assert!(s
+            .expire_lapsed(&SubscriptionName::new("demo-app", "none").unwrap(), lease)
+            .is_err());
+    }
+
     #[test]
     fn publish_with_message_ids_keeps_the_id_and_the_time_and_leaves_the_counter() {
         let mut s = PubSubState::new(42);
