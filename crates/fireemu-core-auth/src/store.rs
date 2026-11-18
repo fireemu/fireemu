@@ -1434,11 +1434,15 @@ pub struct TotpCodeEntry {
     pub code: String,
     /// Whole seconds before the next time step.
     pub seconds_remaining: u32,
-    /// Whether the factor already accepted this step's code, so verification refuses it as
-    /// replayed until the next step.
+    /// Whether submitting the displayed code now would be refused as replayed: the verification
+    /// window matches it only at steps the factor already accepted.
     pub already_used: bool,
-    /// The TOTP period, the seconds a clock move needs to reach a fresh code.
+    /// The TOTP period.
     pub period_seconds: u32,
+    /// With `already_used`, the seconds until the first step after the factor's last accepted
+    /// one, whose code is fresh (zero otherwise). With an adjacent window the last accepted
+    /// step can be ahead of the clock, so this can be more than one period.
+    pub advance_seconds: u64,
 }
 
 /// A credential the official Auth emulator prints to its console instead of mailing or
@@ -1479,6 +1483,8 @@ pub enum CredentialNotice {
         already_used: bool,
         /// The TOTP period.
         period_seconds: u32,
+        /// With `already_used`, the seconds until the first fresh step.
+        advance_seconds: u64,
         /// Whether the emulator clock runs with real time; a clock that stands still keeps
         /// the same code until it is moved.
         clock_running: bool,
@@ -1530,7 +1536,8 @@ impl CredentialNotice {
                 code,
                 seconds_remaining,
                 already_used,
-                period_seconds,
+                period_seconds: _,
+                advance_seconds,
                 clock_running,
                 purpose,
             } => {
@@ -1550,12 +1557,12 @@ impl CredentialNotice {
                 let uid = uid.as_str();
                 if *already_used {
                     let wait = if *clock_running {
-                        format!("wait {seconds_remaining} seconds or ")
+                        format!("wait {advance_seconds} seconds or ")
                     } else {
                         String::new()
                     };
                     format!(
-                        "{action} user {uid} ({scope}){factor}, the current code {code} was already used by this factor and is refused until the next time step; {wait}advance the clock by {period_seconds} seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": {period_seconds}}} on the Auth port)."
+                        "{action} user {uid} ({scope}){factor}, the current code {code} was already used by this factor and is refused until the next time step; {wait}advance the clock by {advance_seconds} seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": {advance_seconds}}} on the Auth port)."
                     )
                 } else if *clock_running {
                     format!(
@@ -3777,9 +3784,10 @@ impl AuthStore {
             return Vec::new();
         }
         let params = self.policy.params();
+        let window = self.totp_window();
         self.users
             .values()
-            .flat_map(|user| Self::user_totp_codes(user, params, now, true))
+            .flat_map(|user| Self::user_totp_codes(user, params, window, now, true))
             .collect()
     }
 
@@ -3788,6 +3796,7 @@ impl AuthStore {
     fn user_totp_codes(
         user: &UserRecord,
         params: crate::totp::TotpParams,
+        window: u8,
         now: LogicalInstant,
         pending: bool,
     ) -> Vec<TotpCodeEntry> {
@@ -3798,15 +3807,31 @@ impl AuthStore {
             }
             let (code, seconds_remaining) =
                 crate::totp::current_code(factor.secret.expose_for_enrollment(), &params, now);
-            let step = crate::totp::time_step(&params, now);
+            let already_used = code.parse::<u32>().is_ok_and(|digits| {
+                match_code(
+                    &factor.secret,
+                    &params,
+                    window,
+                    factor.last_accepted_step,
+                    digits,
+                    now,
+                ) == CodeMatch::Replayed
+            });
+            let advance_seconds = factor
+                .last_accepted_step
+                .filter(|_| already_used)
+                .map_or(0, |last| {
+                    Self::seconds_to_step(params, last.saturating_add(1), now)
+                });
             entries.push(TotpCodeEntry {
                 uid: user.local_id.clone(),
                 mfa_enrollment_id: Some(factor.mfa_enrollment_id.clone()),
                 display_name: factor.display_name.clone(),
                 code,
                 seconds_remaining,
-                already_used: factor.last_accepted_step.is_some_and(|last| last >= step),
+                already_used,
                 period_seconds: params.period_seconds,
+                advance_seconds,
             });
         }
         if !pending {
@@ -3826,9 +3851,17 @@ impl AuthStore {
                 seconds_remaining,
                 already_used: false,
                 period_seconds: params.period_seconds,
+                advance_seconds: 0,
             });
         }
         entries
+    }
+
+    /// Whole seconds from `now` to the start of TOTP step `step` (zero when it has begun).
+    fn seconds_to_step(params: crate::totp::TotpParams, step: u64, now: LogicalInstant) -> u64 {
+        let start = i128::from(step).saturating_mul(i128::from(params.period_seconds));
+        let seconds = now.as_nanos().div_euclid(1_000_000_000);
+        u64::try_from((start - seconds).max(0)).unwrap_or(u64::MAX)
     }
 
     fn totp_notice(&self, entry: TotpCodeEntry, purpose: TotpCodePurpose) -> CredentialNotice {
@@ -3842,6 +3875,7 @@ impl AuthStore {
             seconds_remaining: entry.seconds_remaining,
             already_used: entry.already_used,
             period_seconds: entry.period_seconds,
+            advance_seconds: entry.advance_seconds,
             clock_running: self.totp_clock_running,
             purpose,
         }
@@ -5461,6 +5495,7 @@ impl AuthStore {
                     seconds_remaining,
                     already_used: false,
                     period_seconds: policy.params().period_seconds,
+                    advance_seconds: 0,
                 },
                 TotpCodePurpose::Enrollment,
             );
@@ -5678,10 +5713,11 @@ impl AuthStore {
         self.pending_user_ids.insert(uid.clone());
         if self.reveal_totp_codes {
             let params = self.policy.params();
+            let window = self.totp_window();
             let entries = self
                 .users
                 .get(uid)
-                .map(|user| Self::user_totp_codes(user, params, now, false))
+                .map(|user| Self::user_totp_codes(user, params, window, now, false))
                 .unwrap_or_default();
             let notices: Vec<CredentialNotice> = entries
                 .into_iter()

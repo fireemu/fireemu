@@ -288,6 +288,52 @@ fn a_still_clock_reveals_the_used_enrollment_code_as_used_with_how_to_move_on() 
     );
 }
 
+/// With the adjacent window, an enrollment at step N can accept the code of step N+1. The
+/// displayed codes of N and N+1 are then both replays, and the fresh step is N+2: the advice
+/// names the seconds to reach it, not one period (Codex review 2026-11-18).
+#[test]
+fn an_enrollment_accepted_ahead_of_the_clock_names_the_advance_to_the_first_fresh_step() {
+    let mut s = store();
+    s.set_totp_clock_running(false);
+    assert!(s.totp_window() >= 1);
+    let uid = s
+        .create_user(NewUser::email("ahead@example.com"), t0())
+        .unwrap();
+    let material = s.start_totp_enrollment(&uid, t0()).unwrap();
+    let secret = material.secret_for_test().to_vec();
+    let ahead = totp_at(&secret, &s.policy().params(), at(30));
+    s.finalize_totp_enrollment(&uid, &material.session_id, ahead, t0())
+        .unwrap();
+    s.take_credential_notices();
+    let entry = &s.totp_codes(t0())[0];
+    assert!(entry.already_used);
+    assert_eq!(entry.advance_seconds, 60);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(
+        message.contains("advance the clock by 60 seconds"),
+        "{message}"
+    );
+    assert!(message.contains(r#"{"seconds": 60}"#), "{message}");
+    // One period later the displayed code is the accepted step's: still a replay.
+    let entry = &s.totp_codes(at(30))[0];
+    assert!(entry.already_used);
+    assert_eq!(entry.advance_seconds, 30);
+    let pending = s.start_mfa_sign_in(&uid, at(30)).unwrap();
+    let id = entry.mfa_enrollment_id.clone().unwrap();
+    assert!(s
+        .finalize_mfa_sign_in_for_factor(&uid, &pending, &id, entry.code.parse().unwrap(), at(30))
+        .is_err());
+    // At the named step the code is fresh and signs in.
+    let entry = &s.totp_codes(at(60))[0];
+    assert!(!entry.already_used);
+    assert_eq!(entry.advance_seconds, 0);
+    let pending = s.start_mfa_sign_in(&uid, at(60)).unwrap();
+    assert!(s
+        .finalize_mfa_sign_in_for_factor(&uid, &pending, &id, entry.code.parse().unwrap(), at(60))
+        .is_ok());
+}
+
 #[test]
 fn a_running_clock_reveals_a_used_code_with_the_wait_and_keeps_the_countdown_otherwise() {
     let mut s = store();

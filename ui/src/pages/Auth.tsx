@@ -700,7 +700,8 @@ const AuthScope: Component<{ project: string }> = (props) => {
                           <td>
                             {c.alreadyUsed
                               ? t("auth.totpAlreadyUsed", {
-                                  seconds: c.periodSeconds ?? c.secondsRemaining,
+                                  seconds:
+                                    c.advanceSeconds ?? c.periodSeconds ?? c.secondsRemaining,
                                 })
                               : c.clockRunning === false
                                 ? t("auth.totpClockStill")

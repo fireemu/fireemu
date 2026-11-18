@@ -16617,6 +16617,9 @@ fn emulator_totp_codes(store: &AuthStore, at: LogicalInstant) -> JsonResponse {
                 "clockRunning": clock_running,
                 "periodSeconds": entry.period_seconds,
             });
+            if entry.already_used {
+                code["advanceSeconds"] = json!(entry.advance_seconds);
+            }
             match entry.mfa_enrollment_id {
                 Some(id) => code["mfaEnrollmentId"] = json!(id),
                 None => code["pendingEnrollment"] = json!(true),

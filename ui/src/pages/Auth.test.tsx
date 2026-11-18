@@ -100,6 +100,7 @@ describe("Auth codes", () => {
             alreadyUsed: true,
             clockRunning: false,
             periodSeconds: 30,
+            advanceSeconds: 60,
           },
           {
             uid: "user-2",
@@ -115,7 +116,7 @@ describe("Auth codes", () => {
     );
     const ui = mount();
     await waitFor(() => expect(ui.getByTestId("totp-table")).toBeTruthy());
-    expect(ui.getByText("Already used: advance the clock by 30s (Runtime page)")).toBeTruthy();
+    expect(ui.getByText("Already used: advance the clock by 60s (Runtime page)")).toBeTruthy();
     expect(ui.getByText("Until the clock moves")).toBeTruthy();
     expect(ui.queryByText("30s")).toBeNull();
   });
