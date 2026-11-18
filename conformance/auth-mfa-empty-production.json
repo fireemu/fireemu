@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "recordedAgainst": {
+    "run": "AUTH-MFA-EMPTY-OBS-20261118-03",
+    "recordedOn": "2026-11-18",
+    "target": "production sandbox project (Identity Platform)",
+    "note": "A projection of the stage receipt: for each variant, the PATCH body sent under updateMask=mfa while MFA was enabled with the enable body, the PATCH status, and the stored mfa member as the PATCH answered it and as the following config GET read it back. No other config member and no project number is kept."
+  },
+  "enable": {
+    "mfa": {
+      "enabledProviders": ["PHONE_SMS"],
+      "providerConfigs": [
+        {
+          "state": "ENABLED",
+          "totpProviderConfig": {
+            "adjacentIntervals": 5
+          }
+        }
+      ],
+      "state": "ENABLED"
+    }
+  },
+  "enabledReadBack": {
+    "enabledProviders": ["PHONE_SMS"],
+    "providerConfigs": [
+      {
+        "state": "ENABLED",
+        "totpProviderConfig": {
+          "adjacentIntervals": 5
+        }
+      }
+    ],
+    "state": "ENABLED"
+  },
+  "variants": [
+    {
+      "id": "empty-object",
+      "body": {
+        "mfa": {}
+      },
+      "status": 200,
+      "answeredMfa": {
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "state": "DISABLED"
+      }
+    },
+    {
+      "id": "state-null",
+      "body": {
+        "mfa": {
+          "state": null
+        }
+      },
+      "status": 200,
+      "answeredMfa": {
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "state": "DISABLED"
+      }
+    },
+    {
+      "id": "providers-without-state",
+      "body": {
+        "mfa": {
+          "providerConfigs": [
+            {
+              "state": "ENABLED",
+              "totpProviderConfig": {
+                "adjacentIntervals": 5
+              }
+            }
+          ]
+        }
+      },
+      "status": 200,
+      "answeredMfa": {
+        "providerConfigs": [
+          {
+            "state": "ENABLED",
+            "totpProviderConfig": {
+              "adjacentIntervals": 5
+            }
+          }
+        ],
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "providerConfigs": [
+          {
+            "state": "ENABLED",
+            "totpProviderConfig": {
+              "adjacentIntervals": 5
+            }
+          }
+        ],
+        "state": "DISABLED"
+      }
+    },
+    {
+      "id": "sms-without-state",
+      "body": {
+        "mfa": {
+          "enabledProviders": ["PHONE_SMS"]
+        }
+      },
+      "status": 200,
+      "answeredMfa": {
+        "enabledProviders": ["PHONE_SMS"],
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "enabledProviders": ["PHONE_SMS"],
+        "state": "DISABLED"
+      }
+    },
+    {
+      "id": "mfa-null",
+      "body": {
+        "mfa": null
+      },
+      "status": 200,
+      "answeredMfa": {
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "state": "DISABLED"
+      }
+    },
+    {
+      "id": "mfa-absent",
+      "body": {},
+      "status": 200,
+      "answeredMfa": {
+        "state": "DISABLED"
+      },
+      "readBackMfa": {
+        "state": "DISABLED"
+      }
+    }
+  ]
+}
