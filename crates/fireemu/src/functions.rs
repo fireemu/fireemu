@@ -3925,7 +3925,11 @@ fn functions_config(
         catch_up: fireemu_adapter_functions::runtime::CatchUpPolicy::parse(&cfg.scheduler_catch_up)
             .unwrap_or_default(),
         functions_host,
-        clock_policy: cfg.functions_clock,
+        clock_policy: fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+            rebase_caller_schedule_times: cfg.caller_times
+                == fireemu_adapter_http::CallerTimes::ClockOrWall,
+            ..cfg.functions_clock
+        },
         // Cloud Tasks holds a task until its scheduleTime; the official emulator dispatches at
         // once, so only the strict profile waits.
         honour_task_schedule_time: cfg.profile == CompatibilityProfile::Strict,

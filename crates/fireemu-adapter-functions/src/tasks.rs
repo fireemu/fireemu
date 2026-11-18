@@ -616,6 +616,27 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A `scheduleTime` rebased onto the task clock. `own` is the task clock's instant and `other`
+/// the other clock's, in nanoseconds. A time nearer the other clock than the task clock was
+/// minted there (the Admin SDK computes `Date.now() + scheduleDelaySeconds` on the host), so it
+/// is moved by the offset between the clocks and keeps its delay; any other time is kept.
+#[must_use]
+pub fn rebase_schedule_time(
+    at: fireemu_core_types::time::LogicalInstant,
+    own: i128,
+    other: i128,
+) -> fireemu_core_types::time::LogicalInstant {
+    let to_own = at.as_nanos().saturating_sub(own).saturating_abs();
+    let to_other = at.as_nanos().saturating_sub(other).saturating_abs();
+    if to_other < to_own {
+        fireemu_core_types::time::LogicalInstant::from_nanos(
+            at.as_nanos().saturating_sub(other).saturating_add(own),
+        )
+    } else {
+        at
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -666,6 +687,25 @@ mod tests {
     }
 
     proptest::proptest! {
+        /// A time nearer the other clock keeps its delay from it on the task clock; any other
+        /// time is kept; equal clocks change nothing.
+        #[test]
+        fn rebase_keeps_the_delay_of_a_time_minted_on_the_other_clock(
+            own in -4_000_000_000_000_000_000_i128..4_000_000_000_000_000_000,
+            other in -4_000_000_000_000_000_000_i128..4_000_000_000_000_000_000,
+            delay in -100_000_000_000_000_i128..100_000_000_000_000,
+        ) {
+            use fireemu_core_types::time::LogicalInstant;
+            let minted = LogicalInstant::from_nanos(other + delay);
+            let rebased = super::rebase_schedule_time(minted, own, other);
+            if (other + delay - other).abs() < (other + delay - own).abs() {
+                proptest::prop_assert_eq!(rebased.as_nanos(), own + delay);
+            } else {
+                proptest::prop_assert_eq!(rebased, minted);
+            }
+            proptest::prop_assert_eq!(super::rebase_schedule_time(minted, own, own), minted);
+        }
+
         #[test]
         fn task_identity_filter_preserves_other_headers(entries in proptest::collection::vec((proptest::bool::ANY, "[a-z]{0,12}", "[a-z]{0,12}"), 0..40)) {
             let headers: Vec<(String, String)> = entries.into_iter().map(|(marker, name, value)| {

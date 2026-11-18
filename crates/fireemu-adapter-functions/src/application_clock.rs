@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 
 /// Independent choices for application dates, JavaScript timers and Cloud Tasks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+// Independent switches, not mutually exclusive states.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ApplicationClockPolicy {
     /// Bind Date to the daemon clock.
     pub date_virtual: bool,
@@ -13,6 +15,11 @@ pub struct ApplicationClockPolicy {
     pub timers_virtual: bool,
     /// Drive task eligibility and backoff by virtual time.
     pub tasks_virtual: bool,
+    /// `daemon.callerTimes = "clockOrWall"`: a task `scheduleTime` minted on the other clock
+    /// than the task clock (host code's `Date.now()` on the virtual task clock, a virtual `Date`
+    /// on the native one) is rebased onto the task clock by the offset between the two, so its
+    /// delay is kept. `false` (`productionExact`) takes every `scheduleTime` as it is.
+    pub rebase_caller_schedule_times: bool,
 }
 
 impl ApplicationClockPolicy {

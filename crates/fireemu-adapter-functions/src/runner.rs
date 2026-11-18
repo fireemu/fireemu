@@ -1648,6 +1648,7 @@ mod tests {
             date_virtual: true,
             timers_virtual: true,
             tasks_virtual: false,
+            rebase_caller_schedule_times: false,
         };
         let trace_path = dir.join("fireemu-runner-trace.log");
         let runner = std::sync::Arc::new(
@@ -2405,6 +2406,7 @@ sys.stdin.readline()
             date_virtual: true,
             timers_virtual: false,
             tasks_virtual: false,
+            rebase_caller_schedule_times: false,
         };
         super::Runner::spawn(
             &[

@@ -7327,3 +7327,139 @@ async fn a_lazy_runner_starts_on_its_first_http_request_and_a_reset_does_not_sta
     runtime.shutdown().await;
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Frozen-clock audit #5: on the virtual task clock, a task enqueued from host code
+/// (`scheduleDelaySeconds` becomes the caller's `Date.now()` plus the delay) is due after the
+/// same delay of emulator time, not when the emulator clock reaches host wall time.
+#[tokio::test]
+async fn a_host_minted_schedule_time_is_due_after_its_delay_on_the_virtual_task_clock() {
+    let dir =
+        std::env::temp_dir().join(format!("fireemu-host-schedule-time-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probe = dir.join("entries");
+    let clock = Arc::new(Mutex::new(VirtualClock::new(START)));
+    let runtime = start_task_runtime_using_clock(
+        &probe,
+        4,
+        |_| (TaskRetryConfig::default(), TaskRateLimits::default()),
+        Vec::new(),
+        clock.clone(),
+        fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+            tasks_virtual: true,
+            rebase_caller_schedule_times: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut body = task_body("host-delay");
+    body["task"]["scheduleTime"] = json!(LogicalInstant::from_unix_seconds(
+        i64::try_from(wall).unwrap() + 60
+    )
+    .to_rfc3339()
+    .unwrap());
+    runtime
+        .enqueue_task("demo-app", "us-central1", "taskA", &body)
+        .unwrap();
+    // 50 s of emulator time: not yet due.
+    clock
+        .lock()
+        .unwrap()
+        .advance(LogicalDuration::from_seconds(50))
+        .unwrap();
+    runtime.on_clock_changed();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(std::fs::read_to_string(&probe)
+        .unwrap_or_default()
+        .is_empty());
+    // 70 s: due.
+    clock
+        .lock()
+        .unwrap()
+        .advance(LogicalDuration::from_seconds(20))
+        .unwrap();
+    runtime.on_clock_changed();
+    wait_for_task_entries(&probe, 1).await;
+    runtime.shutdown().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The near miss of the test above: with `rebase_caller_schedule_times` off (`productionExact`),
+/// the host-minted time is taken as it is, so 70 s of emulator time do not make it due.
+#[tokio::test]
+async fn without_rebasing_a_host_minted_schedule_time_waits_for_host_wall_time() {
+    let dir = std::env::temp_dir().join(format!(
+        "fireemu-host-schedule-exact-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probe = dir.join("entries");
+    let clock = Arc::new(Mutex::new(VirtualClock::new(START)));
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_runner.py");
+    let spec = SpawnSpec {
+        command: vec!["python3".to_owned(), script.to_owned()],
+        cwd: None,
+        env: vec![(
+            "FIREEMU_FAKE_TASK_PROBE".to_owned(),
+            probe.display().to_string(),
+        )],
+        hello_timeout: Duration::from_secs(60),
+    };
+    let runner = Runner::spawn_spec(&spec).await.unwrap();
+    let mut manifest = parse_manifest(runner.hello().manifest.as_ref().unwrap()).unwrap();
+    let mut function = manifest.get("echo").unwrap().clone();
+    "taskA".clone_into(&mut function.name);
+    "taskA".clone_into(&mut function.entry_point);
+    function.trigger = Trigger::TaskQueue {
+        retry: TaskRetryConfig::default(),
+        rate_limits: TaskRateLimits::default(),
+    };
+    manifest.functions.push(function);
+    let runtime = FunctionsRuntime::new(
+        manifest,
+        FunctionsConfig {
+            retry_attempts: 1,
+            functions_host: Some("127.0.0.1:5001".into()),
+            clock_policy: fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+                tasks_virtual: true,
+                rebase_caller_schedule_times: false,
+                ..Default::default()
+            },
+            ..FunctionsConfig::for_tests(1, "s".into())
+        },
+        clock.clone(),
+        Arc::new(runner),
+        Some(spec),
+    );
+    tokio::spawn(runtime.clone().dispatch_loop());
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut body = task_body("host-exact");
+    body["task"]["scheduleTime"] = json!(LogicalInstant::from_unix_seconds(
+        i64::try_from(wall).unwrap() + 60
+    )
+    .to_rfc3339()
+    .unwrap());
+    runtime
+        .enqueue_task("demo-app", "us-central1", "taskA", &body)
+        .unwrap();
+    clock
+        .lock()
+        .unwrap()
+        .advance(LogicalDuration::from_seconds(70))
+        .unwrap();
+    runtime.on_clock_changed();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(std::fs::read_to_string(&probe)
+        .unwrap_or_default()
+        .is_empty());
+    runtime.shutdown().await;
+    let _ = std::fs::remove_dir_all(dir);
+}

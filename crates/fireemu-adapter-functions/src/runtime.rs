@@ -3871,6 +3871,21 @@ impl FunctionsRuntime {
             status: refusal.http,
             body: refusal.body().to_string(),
         };
+        // A `scheduleTime` minted on the other clock keeps its delay on the task clock.
+        let rebased_body;
+        let body = match body
+            .pointer("/task/scheduleTime")
+            .and_then(Value::as_str)
+            .and_then(|text| self.rebased_schedule_time(text))
+        {
+            Some(rebased) => {
+                let mut copy = body.clone();
+                copy["task"]["scheduleTime"] = Value::String(rebased);
+                rebased_body = copy;
+                &rebased_body
+            }
+            None => body,
+        };
         let served = self
             .manifest
             .get(queue)
@@ -4126,11 +4141,51 @@ impl FunctionsRuntime {
     /// 3339, at most 30 days ahead of the queue's clock; UNRECORDED: the error texts are not
     /// measured shapes), and on the virtual task clock stamps a task that names no time with the
     /// current virtual instant so it dispatches on the virtual axis.
+    /// The task clock's instant and the other clock's (wall time on the virtual task clock;
+    /// the virtual clock on the native one when `Date` is virtual), in nanoseconds, when a
+    /// `scheduleTime` may have been minted on the other one.
+    fn schedule_time_clocks(&self) -> Option<(i128, i128)> {
+        if !self.config.clock_policy.rebase_caller_schedule_times {
+            return None;
+        }
+        let wall = i128::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+        )
+        .ok()?;
+        let policy = self.config.clock_policy;
+        if policy.tasks_virtual {
+            Some((self.clock_snapshot().instant.as_nanos(), wall))
+        } else if policy.date_virtual && self.config.honour_task_schedule_time {
+            Some((wall, self.clock_snapshot().instant.as_nanos()))
+        } else {
+            None
+        }
+    }
+
+    /// `text` rebased onto the task clock ([`crate::tasks::rebase_schedule_time`]); unchanged
+    /// when it is not a timestamp or no other clock applies.
+    fn rebased_schedule_time(&self, text: &str) -> Option<String> {
+        let (own, other) = self.schedule_time_clocks()?;
+        let at = LogicalInstant::parse_rfc3339(text).ok()?;
+        let rebased = crate::tasks::rebase_schedule_time(at, own, other);
+        (rebased != at).then(|| rebased.to_rfc3339().ok()).flatten()
+    }
+
     fn check_schedule_time(
         &self,
         task: &mut crate::tasks::Task,
     ) -> Result<(), crate::tasks::EnqueueRefusal> {
         use crate::tasks::EnqueueRefusal;
+        if let Some(rebased) = task
+            .schedule_time
+            .as_deref()
+            .and_then(|text| self.rebased_schedule_time(text))
+        {
+            task.schedule_time = Some(rebased);
+        }
         let refuse = |body: &str| EnqueueRefusal {
             status: 400,
             body: body.to_owned(),
