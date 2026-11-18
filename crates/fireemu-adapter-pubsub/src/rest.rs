@@ -1614,7 +1614,7 @@ fn modify_ack_deadline(
         };
     handle
         .state()
-        .modify_ack_deadline(&subscription, &ack_ids, seconds, handle.now())
+        .modify_ack_deadline(&subscription, &ack_ids, seconds, handle.delivery_now())
         .map_err(RestError::from_core)?;
     Ok((StatusCode::OK, json!({})))
 }

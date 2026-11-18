@@ -199,7 +199,7 @@ fn stream_pull_max(
     let Some(limit) = message_limit else {
         return Ok(100);
     };
-    let now = handle.now();
+    let now = handle.delivery_now();
     handle
         .state()
         .retain_outstanding_ack_ids(subscription, outstanding_ack_ids, now)?;
@@ -230,7 +230,7 @@ fn apply_stream_request(
             .collect();
         let _ = handle.acknowledge(sub, &ids);
     }
-    let now = handle.now();
+    let now = handle.delivery_now();
     let mut state = handle.state();
     for (id, secs) in req
         .modify_deadline_ack_ids
@@ -456,7 +456,7 @@ impl Subscriber for SubscriberService {
             u32::try_from(req.ack_deadline_seconds)
                 .map_err(|_| Status::invalid_argument("ackDeadlineSeconds must be non-negative"))?
         };
-        let now = self.handle.now();
+        let now = self.handle.delivery_now();
         self.handle
             .state()
             .modify_ack_deadline(&name, &req.ack_ids, secs, now)
@@ -1199,9 +1199,13 @@ mod output_tests {
             .unwrap();
         let mut scheduled = None;
         let first = handle.pull_recheck_at(&name, &mut scheduled);
-        assert_eq!(
-            scheduled.as_ref().unwrap().1,
-            Some(LogicalInstant::from_unix_seconds(10))
+        // The lease was taken in delivery time: ten seconds after the pull, which came a few
+        // microseconds of wall time after the frozen clock last moved.
+        let deadline = scheduled.as_ref().unwrap().1.unwrap();
+        assert!(
+            deadline >= LogicalInstant::from_unix_seconds(10)
+                && deadline < LogicalInstant::from_unix_seconds(11),
+            "{deadline:?}"
         );
         tokio::time::sleep_until(first).await;
         let second = handle.pull_recheck_at(&name, &mut scheduled);

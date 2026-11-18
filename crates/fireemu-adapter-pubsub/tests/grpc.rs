@@ -1333,12 +1333,14 @@ async fn redelivery_after_ack_deadline_on_virtual_clock() {
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].delivery_attempt, 0);
 
-    // The message is not redelivered without ack until the deadline passes.
+    // The message is not redelivered without ack until the deadline passes. The pull returns at
+    // once: a waiting strict pull would see the deadline pass in wall time (frozen-clock audit #3).
+    #[allow(deprecated)]
     let none = subc
         .pull(pb::PullRequest {
             subscription: sub.clone(),
             max_messages: 10,
-            ..Default::default()
+            return_immediately: true,
         })
         .await
         .unwrap()
@@ -1871,11 +1873,13 @@ async fn streaming_pull_credit_is_per_stream() {
             .is_none()
     );
     let mut subscriber = h.subscriber().await;
+    // At once: a waiting strict pull would see the ack deadline pass in wall time.
+    #[allow(deprecated)]
     let before = subscriber
         .pull(pb::PullRequest {
             subscription: subscription.clone(),
             max_messages: 10,
-            ..Default::default()
+            return_immediately: true,
         })
         .await
         .unwrap()

@@ -24,6 +24,7 @@ mod admission;
 mod authentication;
 mod connection;
 mod convert;
+mod delivery_clock;
 mod publisher;
 mod push;
 mod rest;
@@ -444,6 +445,13 @@ pub struct PubSubHandle {
     push_cancel_notify: Arc<Notify>,
     push_clock_notify: Arc<Notify>,
     dead_letter_cancel_notify: Arc<Notify>,
+    /// The time ack deadlines and backoff are kept in ([`delivery_clock`]).
+    delivery_clock: Arc<Mutex<delivery_clock::DeliveryClock>>,
+    /// Monotonic origin of the delivery clock's wall readings.
+    wall_origin: std::time::Instant,
+    /// Wall time added to every reading, so a test can let wall time pass without sleeping.
+    #[cfg(test)]
+    wall_skew_nanos: Arc<AtomicU64>,
 }
 
 impl PubSubHandle {
@@ -473,7 +481,12 @@ impl PubSubHandle {
             signal.notify_waiters();
         });
         clock.lock().expect("clock lock").observe(&clock_observer);
+        let start = clock.lock().expect("clock lock").now();
         Self {
+            delivery_clock: Arc::new(Mutex::new(delivery_clock::DeliveryClock::new(start, 0))),
+            wall_origin: std::time::Instant::now(),
+            #[cfg(test)]
+            wall_skew_nanos: Arc::new(AtomicU64::new(0)),
             paging_policy: PagingPolicy::Emulator,
             local_bearer_token: None,
             rest_negative_cache: None,
@@ -561,6 +574,29 @@ impl PubSubHandle {
     /// The current virtual-clock instant.
     fn now(&self) -> LogicalInstant {
         self.clock.lock().expect("clock lock").now()
+    }
+
+    /// The delivery time ([`delivery_clock`]): what ack deadlines, retry backoff and push
+    /// backoff are set and compared in. The logical clock is read first, as [`Self::now`] is.
+    pub(crate) fn delivery_now(&self) -> LogicalInstant {
+        let logical = self.now();
+        #[allow(unused_mut)]
+        let mut wall = self.wall_origin.elapsed().as_nanos();
+        #[cfg(test)]
+        {
+            wall += u128::from(self.wall_skew_nanos.load(Ordering::Acquire));
+        }
+        self.delivery_clock
+            .lock()
+            .expect("delivery clock lock")
+            .observe(logical, wall)
+    }
+
+    /// Lets `seconds` of wall time pass for the delivery clock, without sleeping.
+    #[cfg(test)]
+    pub(crate) fn pass_wall_time(&self, seconds: u64) {
+        self.wall_skew_nanos
+            .fetch_add(seconds * 1_000_000_000, Ordering::AcqRel);
     }
 
     /// Locks the core state.
@@ -773,8 +809,20 @@ impl PubSubHandle {
         max: usize,
         batching: OrderedPullBatching,
     ) -> Result<Vec<ReceivedMessage>, PubSubError> {
+        let now = self.delivery_now();
+        self.pull_batched_at(subscription, max, batching, now)
+    }
+
+    /// A pull at `now`. Pull subscribers pull in delivery time; push delivery keeps the logical
+    /// clock, whose backoff only an advance releases.
+    fn pull_batched_at(
+        &self,
+        subscription: &SubscriptionName,
+        max: usize,
+        batching: OrderedPullBatching,
+        now: LogicalInstant,
+    ) -> Result<Vec<ReceivedMessage>, PubSubError> {
         let _dead_letter = self.lock_dead_letter();
-        let now = self.now();
         let outcome = {
             let mut state = self.state();
             state.pull_with_dead_letters_batching(subscription, max, now, batching)?
@@ -793,7 +841,7 @@ impl PubSubHandle {
         #[cfg(test)]
         self.stream_pull_checks.fetch_add(1, Ordering::Relaxed);
         let _dead_letter = self.lock_dead_letter();
-        let now = self.now();
+        let now = self.delivery_now();
         let outcome = self.state().pull_with_dead_letters_admitted(
             subscription,
             max,
@@ -812,7 +860,10 @@ impl PubSubHandle {
         subscription: &SubscriptionName,
         scheduled: &mut Option<(LogicalInstant, Option<LogicalInstant>, tokio::time::Instant)>,
     ) -> tokio::time::Instant {
-        let now = self.now();
+        // The cache is keyed on the logical clock; deadlines are in delivery time, which moves
+        // with wall time on a frozen clock, so the wake below is a real wait.
+        let logical = self.now();
+        let now = self.delivery_now();
         let deadline = self
             .state()
             .next_pull_deadline(subscription, now)
@@ -821,7 +872,7 @@ impl PubSubHandle {
         let wall = tokio::time::Instant::now();
         let fallback = std::time::Duration::from_secs(1);
         if let Some((seen_now, seen_deadline, wake)) = scheduled {
-            if *seen_now == now && *seen_deadline == deadline {
+            if *seen_now == logical && *seen_deadline == deadline {
                 // A pinned virtual clock must not repeatedly fire a wall timer at an unchanged
                 // near-future logical deadline. After checking it once, use the safety cadence.
                 if *wake <= wall {
@@ -837,7 +888,7 @@ impl PubSubHandle {
                 fallback.min(std::time::Duration::from_nanos(nanos))
             });
         let wake = wall + delay;
-        *scheduled = Some((now, deadline, wake));
+        *scheduled = Some((logical, deadline, wake));
         wake
     }
 
@@ -1175,7 +1226,9 @@ impl PubSubHandle {
                 self.next_push_delivery_at(&work.subscription),
             ));
         }
-        let received = self.pull(&work.subscription, 100).unwrap_or_default();
+        let received = self
+            .pull_batched_at(&work.subscription, 100, OrderedPullBatching::Mixed, now)
+            .unwrap_or_default();
         if received.is_empty() {
             // Nothing is deliverable yet. The retry policy schedules the next message; whether it
             // or an elapsing backoff decides, the subscription is looked at again then.
@@ -2602,7 +2655,14 @@ mod dispatch_tests {
 
     /// A strict subscription holding one leased message, with the lease's ack id.
     fn leased_recheck_fixture() -> (PubSubHandle, SubscriptionName, String) {
-        let (handle, subscription, topic) = unary_pull_fixture(PagingPolicy::Strict);
+        leased_recheck_fixture_with(PagingPolicy::Strict)
+    }
+
+    /// [`leased_recheck_fixture`] under `policy`.
+    fn leased_recheck_fixture_with(
+        policy: PagingPolicy,
+    ) -> (PubSubHandle, SubscriptionName, String) {
+        let (handle, subscription, topic) = unary_pull_fixture(policy);
         let now = handle.now();
         handle
             .state()
@@ -2619,6 +2679,98 @@ mod dispatch_tests {
         assert_eq!(received.len(), 1);
         let ack_id = received[0].ack_id.clone();
         (handle, subscription, ack_id)
+    }
+
+    /// Frozen-clock audit #3: on a logical clock that stands still, a leased message whose ack
+    /// deadline has passed in wall time is redelivered, and a nack under a retry policy comes
+    /// back once its backoff has passed in wall time. Before either, it is not.
+    #[test]
+    fn ack_deadlines_and_backoff_pass_on_a_frozen_clock() {
+        for policy in [PagingPolicy::Emulator, PagingPolicy::Strict] {
+            let (handle, subscription, _) = leased_recheck_fixture_with(policy);
+            // The default ack deadline is 10 s: at 9 s nothing is due.
+            handle.pass_wall_time(9);
+            assert!(
+                handle.pull(&subscription, 1).unwrap().is_empty(),
+                "{policy:?}"
+            );
+            handle.pass_wall_time(2);
+            let redelivered = handle.pull(&subscription, 1).unwrap();
+            assert_eq!(redelivered.len(), 1, "{policy:?}");
+            assert_eq!(redelivered[0].delivery_attempt, 2, "{policy:?}");
+            // The logical clock has not moved.
+            assert_eq!(handle.now(), LogicalInstant::UNIX_EPOCH);
+            // A nack makes it available again at once (no retry policy: no backoff).
+            let now = handle.delivery_now();
+            handle
+                .state()
+                .modify_ack_deadline(&subscription, &[redelivered[0].ack_id.clone()], 0, now)
+                .unwrap();
+            assert_eq!(
+                handle.pull(&subscription, 1).unwrap().len(),
+                1,
+                "{policy:?}"
+            );
+        }
+    }
+
+    /// A nack under a retry policy (10 s minimum backoff) on a frozen clock: held for 9 s of
+    /// wall time, back after 11 s, while the logical clock never moved.
+    #[test]
+    fn retry_policy_backoff_passes_on_a_frozen_clock() {
+        let handle = PubSubHandle::new(
+            Arc::new(Mutex::new(PubSubState::new(7))),
+            Arc::new(Mutex::new(VirtualClock::new(LogicalInstant::UNIX_EPOCH))),
+            None,
+        );
+        let topic = TopicName::new("demo-app", "backoff").unwrap();
+        let subscription = SubscriptionName::new("demo-app", "backoff").unwrap();
+        let config = crate::convert::subscription_from_proto_with_policy(
+            &fireemu_proto_pubsub::google::pubsub::v1::Subscription {
+                name: subscription.to_full(),
+                topic: topic.to_full(),
+                retry_policy: Some(fireemu_proto_pubsub::google::pubsub::v1::RetryPolicy {
+                    minimum_backoff: Some(prost_types::Duration {
+                        seconds: 10,
+                        nanos: 0,
+                    }),
+                    maximum_backoff: Some(prost_types::Duration {
+                        seconds: 10,
+                        nanos: 0,
+                    }),
+                }),
+                ..Default::default()
+            },
+            PagingPolicy::Emulator,
+        )
+        .unwrap();
+        handle
+            .state()
+            .create_topic(topic.clone(), BTreeMap::new())
+            .unwrap();
+        handle.state().create_subscription(config).unwrap();
+        handle
+            .state()
+            .publish(
+                &topic,
+                vec![PubsubMessage {
+                    data: b"n".to_vec(),
+                    ..Default::default()
+                }],
+                handle.now(),
+            )
+            .unwrap();
+        let received = handle.pull(&subscription, 1).unwrap();
+        let now = handle.delivery_now();
+        handle
+            .state()
+            .modify_ack_deadline(&subscription, &[received[0].ack_id.clone()], 0, now)
+            .unwrap();
+        handle.pass_wall_time(9);
+        assert!(handle.pull(&subscription, 1).unwrap().is_empty());
+        handle.pass_wall_time(2);
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
+        assert_eq!(handle.now(), LogicalInstant::UNIX_EPOCH);
     }
 
     fn next_recheck_deadline(
@@ -2655,8 +2807,11 @@ mod dispatch_tests {
         after: tokio::time::Instant,
         delay: std::time::Duration,
     ) {
+        // The delivery clock may already count a few microseconds of wall time spent while the
+        // fixture's frozen clock stood still, which shortens the delay by as much.
+        let slack = std::time::Duration::from_millis(5);
         assert!(
-            wake >= before + delay && wake <= after + delay,
+            wake + slack >= before + delay && wake <= after + delay,
             "wake {wake:?} is not {delay:?} after the call window {before:?}..{after:?}"
         );
     }
@@ -2723,12 +2878,15 @@ mod dispatch_tests {
         );
         assert_eq!(scheduled, Some((now, Some(deadline), first_wake)));
 
+        // Once the wake has passed, so has the deadline in delivery time (the logical clock
+        // stood still): nothing is pending, and the safety cadence takes over.
         tokio::time::sleep_until(first_wake).await;
         let before = tokio::time::Instant::now();
         let wake = handle.pull_recheck_at(&subscription, &mut scheduled);
         let after = tokio::time::Instant::now();
         assert_recomputed_wake(wake, before, after, std::time::Duration::from_secs(1));
-        assert_eq!(scheduled, Some((now, Some(deadline), wake)));
+        assert_eq!(scheduled, Some((now, None, wake)));
+        assert_eq!(handle.now(), now);
     }
 
     #[tokio::test]
