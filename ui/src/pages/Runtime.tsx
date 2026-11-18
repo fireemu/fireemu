@@ -32,6 +32,7 @@ import {
   setClock,
 } from "../api/control";
 import { errorOf, settle } from "../api/client";
+import { createSubmitGuard } from "../lib/submitGuard";
 import {
   formatQuantity,
   parseAllowances,
@@ -56,54 +57,60 @@ import {
 } from "../lib/faultRecipes";
 
 export const ClockPanel: Component = () => {
+  // One guard for every clock control, so a freeze and a resume (or a move) never race.
+  const guard = createSubmitGuard();
   const [seconds, setSeconds] = createSignal("60");
   const [instant, setInstant] = createSignal("");
   const [backwards, setBackwards] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const session = appState.session;
-  const advance = async () => {
-    setError(null);
-    const n = Number(seconds());
-    if (!Number.isFinite(n)) {
-      setError(
-        t("firestore.invalidValue", {
-          field: t("runtime.seconds"),
-          message: t("firestore.hintNumber"),
-        }),
+  const advance = () =>
+    guard.run(async () => {
+      setError(null);
+      const n = Number(seconds());
+      if (!Number.isFinite(n)) {
+        setError(
+          t("firestore.invalidValue", {
+            field: t("runtime.seconds"),
+            message: t("firestore.hintNumber"),
+          }),
+        );
+        return;
+      }
+      const r = await advanceClock(session(), Math.trunc(n));
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
       );
-      return;
-    }
-    const r = await advanceClock(session(), Math.trunc(n));
-    r.match(
-      (c) => appState.setClockInfo(c),
-      (e) => setError(e.message),
-    );
-  };
-  const set = async () => {
-    setError(null);
-    const r = await setClock(session(), instant(), backwards());
-    r.match(
-      (c) => appState.setClockInfo(c),
-      (e) => setError(e.message),
-    );
-  };
+    });
+  const set = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await setClock(session(), instant(), backwards());
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
   const frozen = () => appState.clockMode() === "frozen";
-  const toggle = async () => {
-    setError(null);
-    const r = await (frozen() ? resumeClock(session(), false, false) : freezeClock(session()));
-    r.match(
-      (c) => appState.setClockInfo(c),
-      (e) => setError(e.message),
-    );
-  };
-  const sync = async () => {
-    setError(null);
-    const r = await resumeClock(session(), true, backwards());
-    r.match(
-      (c) => appState.setClockInfo(c),
-      (e) => setError(e.message),
-    );
-  };
+  const toggle = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await (frozen() ? resumeClock(session(), false, false) : freezeClock(session()));
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
+  const sync = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await resumeClock(session(), true, backwards());
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
   return (
     <Section id="runtime-clock" title={t("runtime.clock")}>
       <ErrorBanner message={error()} />
@@ -117,10 +124,15 @@ export const ClockPanel: Component = () => {
         </StatusBadge>
       </div>
       <div class="mb-3 flex flex-wrap items-end gap-2">
-        <AsyncButton class="btn" onClick={toggle} testId="toggle-clock-mode">
+        <AsyncButton
+          class="btn"
+          onClick={toggle}
+          disabled={guard.pending()}
+          testId="toggle-clock-mode"
+        >
           {frozen() ? t("runtime.resume") : t("runtime.freeze")}
         </AsyncButton>
-        <AsyncButton class="btn" onClick={sync} testId="sync-clock">
+        <AsyncButton class="btn" onClick={sync} disabled={guard.pending()} testId="sync-clock">
           {t("runtime.syncToRealTime")}
         </AsyncButton>
         <span class="pb-1 text-sm">{t("runtime.syncHint")}</span>
@@ -136,7 +148,12 @@ export const ClockPanel: Component = () => {
           />
         </label>
         <span class="pb-1 text-sm">{t("runtime.seconds")}</span>
-        <AsyncButton class="btn btn-primary" onClick={advance} testId="advance-clock">
+        <AsyncButton
+          class="btn btn-primary"
+          onClick={advance}
+          disabled={guard.pending()}
+          testId="advance-clock"
+        >
           {t("runtime.advance")}
         </AsyncButton>
       </div>
@@ -158,7 +175,7 @@ export const ClockPanel: Component = () => {
           />
           {t("runtime.allowBackwards")}
         </label>
-        <AsyncButton class="btn" onClick={set}>
+        <AsyncButton class="btn" onClick={set} disabled={guard.pending()}>
           {t("runtime.set")}
         </AsyncButton>
       </div>

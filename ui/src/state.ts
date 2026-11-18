@@ -14,6 +14,14 @@ const store = createRoot(() => {
     setClock(info.clock);
     if (typeof info.running === "boolean") setLiveClockMode(info.running ? "realtime" : "frozen");
   };
+  /**
+   * Takes the answer of a clock mutation (advance, set, freeze, resume): a poll that started
+   * before it is older than the mutation and is discarded, so it cannot restore the old mode.
+   */
+  const applyClockMutation = (info: ClockInfo) => {
+    completedEpoch = ++pollEpoch;
+    setClockInfo(info);
+  };
   const [sessions, setSessionSnapshot] = createSignal<Session[]>(initialConfig().sessions);
   // Keep row-local forms for unchanged targets, but discard them for a replacement project.
   const setSessions = (snapshot: Session[]) => {
@@ -74,6 +82,7 @@ const store = createRoot(() => {
     setClock,
     clockMode,
     setClockInfo,
+    applyClockMutation,
     sessions,
     setSessions,
     session,

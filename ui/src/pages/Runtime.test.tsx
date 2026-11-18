@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
-import { okAsync } from "neverthrow";
+import { okAsync, ResultAsync } from "neverthrow";
 import { ClockPanel, FaultPlanPanel } from "./Runtime";
 import { appState } from "../state";
 import { waitFor } from "@solidjs/testing-library";
@@ -77,14 +77,46 @@ describe("Clock mode", () => {
     );
     expect(control.freezeClock).toHaveBeenCalledWith("default");
     expect(appState.clock()).toBe("2026-01-01T00:00:05Z");
+    await waitFor(() =>
+      expect((ui.getByTestId("toggle-clock-mode") as HTMLButtonElement).disabled).toBe(false),
+    );
     expect(ui.getByTestId("toggle-clock-mode").textContent).toContain("Resume");
     fireEvent.click(ui.getByTestId("toggle-clock-mode"));
     await waitFor(() =>
       expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Running"),
     );
+    await waitFor(() =>
+      expect((ui.getByTestId("toggle-clock-mode") as HTMLButtonElement).disabled).toBe(false),
+    );
     expect(control.resumeClock).toHaveBeenLastCalledWith("default", false, false);
     fireEvent.click(ui.getByTestId("sync-clock"));
     await waitFor(() => expect(appState.clock()).toBe("2026-11-18T00:00:00Z"));
     expect(control.resumeClock).toHaveBeenLastCalledWith("default", true, false);
+  });
+});
+
+describe("Clock controls", () => {
+  it("run one at a time", async () => {
+    appState.setConfig({ ...appState.config(), clockMode: "realtime" });
+    appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
+    let finish!: () => void;
+    vi.mocked(control.freezeClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<control.ClockInfo>((r) => {
+          finish = () => r({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false });
+        }),
+      ),
+    );
+    vi.mocked(control.resumeClock).mockClear();
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId("toggle-clock-mode"));
+    fireEvent.click(ui.getByTestId("sync-clock"));
+    expect(control.resumeClock).not.toHaveBeenCalled();
+    expect((ui.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(true);
+    finish();
+    await waitFor(() =>
+      expect((ui.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Frozen");
   });
 });

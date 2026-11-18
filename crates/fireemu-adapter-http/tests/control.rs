@@ -3880,14 +3880,13 @@ async fn the_auth_and_control_listener_refuses_a_rebound_host() {
 fn switchable_state(wall_ahead: i64) -> (ControlState, Arc<Mutex<i128>>) {
     let reading = Arc::new(Mutex::new(0_i128));
     let source = reading.clone();
-    let wall = reading.clone();
     let start = LogicalInstant::from_unix_seconds(1_788_004_860);
     let s = state(Arc::new(AtomicUsize::new(0)));
     *s.clock.lock().unwrap() = VirtualClock::new(start)
         .with_time_source(Arc::new(move || *source.lock().unwrap()))
-        .with_wall_clock(Arc::new(move || {
+        .with_wall_clock(Arc::new(move |reading| {
             LogicalInstant::from_nanos(
-                start.as_nanos() + i128::from(wall_ahead) * 1_000_000_000 + *wall.lock().unwrap(),
+                start.as_nanos() + i128::from(wall_ahead) * 1_000_000_000 + reading,
             )
         }));
     (s, reading)
@@ -3933,6 +3932,9 @@ fn the_clock_can_be_frozen_and_resumed_at_runtime() {
     for body in [
         json!({"syncToRealTime": "yes"}),
         json!({"allowBackwards": 1}),
+        json!([]),
+        json!(true),
+        json!("syncToRealTime"),
     ] {
         let refused = post("clock:resume", body);
         assert_eq!(refused.status, 400, "{}", refused.body);
@@ -3983,4 +3985,53 @@ fn a_clock_without_real_time_cannot_resume() {
     assert_eq!(frozen.body["running"], false);
     let wrong = handle(&s, "GET", "/v1/sessions/default/clock:freeze", &json!({}));
     assert_eq!(wrong.status, 404);
+}
+
+/// An empty POST (no body) resumes like `{}`.
+#[test]
+fn a_resume_without_a_body_is_a_plain_resume() {
+    let (s, _reading) = switchable_state(0);
+    let resumed = handle(
+        &s,
+        "POST",
+        "/v1/sessions/default/clock:resume",
+        &Value::Null,
+    );
+    assert_eq!(resumed.status, 200, "{}", resumed.body);
+    assert_eq!(resumed.body["running"], true);
+}
+
+/// A running clock already at the wall time syncs to it although every read of the source
+/// moves on: the target, the comparison and the anchor are one reading, so it is neither
+/// refused as backwards nor left behind the wall clock.
+#[test]
+fn a_sync_uses_one_wall_reading() {
+    let reads = Arc::new(Mutex::new(0_i128));
+    let counter = reads.clone();
+    let s = state(Arc::new(AtomicUsize::new(0)));
+    let source: fireemu_core_session::clock::TimeSource = Arc::new(move || {
+        let mut reads = counter.lock().unwrap();
+        *reads += 1_000;
+        *reads
+    });
+    *s.clock.lock().unwrap() = VirtualClock::following_with(LogicalInstant::UNIX_EPOCH, source, 0)
+        .with_wall_clock(Arc::new(LogicalInstant::from_nanos));
+    for _ in 0..3 {
+        let synced = handle(
+            &s,
+            "POST",
+            "/v1/sessions/default/clock:resume",
+            &json!({"syncToRealTime": true}),
+        );
+        assert_eq!(synced.status, 200, "{}", synced.body);
+        assert_eq!(synced.body["backwardsSets"], 0);
+    }
+    let clock = s.clock.lock().unwrap();
+    let shown = clock.now_for_test();
+    let last = *reads.lock().unwrap();
+    assert_eq!(
+        shown,
+        LogicalInstant::from_nanos(last),
+        "no lag behind the wall clock"
+    );
 }

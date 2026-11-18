@@ -542,7 +542,7 @@ const FunctionRow: Component<{
                     const r = await setClock(appState.session(), nextRun(), false);
                     await r.match(
                       async (c) => {
-                        appState.setClock(c.clock);
+                        appState.applyClockMutation(c);
                         props.onNotice(t("functions.advancedToNextRun", { instant: nextRun() }));
                         await props.onRefresh();
                       },

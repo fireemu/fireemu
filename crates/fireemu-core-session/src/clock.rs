@@ -25,8 +25,19 @@ struct Sample {
 /// A reading of real time in nanoseconds, from any origin. Only differences are used.
 pub type TimeSource = Arc<dyn Fn() -> i128 + Send + Sync>;
 
-/// A reading of the wall clock as an instant, for a resume that jumps to the current time.
-pub type WallSource = Arc<dyn Fn() -> LogicalInstant + Send + Sync>;
+/// The wall clock's instant at a reading of the clock's [`TimeSource`], for a resume that jumps
+/// to the current time. It maps the same reading the clock runs on, so the instant a sync judges
+/// and the anchor it runs from come from one read.
+pub type WallSource = Arc<dyn Fn(i128) -> LogicalInstant + Send + Sync>;
+
+/// One reading of the wall clock ([`VirtualClock::read_wall`]): the instant, and the reading of
+/// the time source it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WallReading {
+    /// The wall clock's instant at the reading.
+    pub instant: LogicalInstant,
+    reading: i128,
+}
 
 /// What a clock that follows real time counts: a source and its reading at the last move.
 #[derive(Clone)]
@@ -204,17 +215,37 @@ impl VirtualClock {
         self
     }
 
-    /// Gives the clock a wall clock, which [`Self::wall_now`] reads.
+    /// Gives the clock a wall clock: the instant at a reading of its time source.
     #[must_use]
     pub fn with_wall_clock(mut self, wall: WallSource) -> Self {
         self.wall = Some(wall);
         self
     }
 
+    /// The time source, running or paused.
+    fn time_source(&self) -> Option<&TimeSource> {
+        self.follow
+            .as_ref()
+            .map(|follow| &follow.source)
+            .or(self.paused.as_ref())
+    }
+
+    /// One reading of the wall clock, when the clock has a time source and a wall clock. Pass it
+    /// to [`Self::resume_at_wall`] to sync to exactly this reading.
+    #[must_use]
+    pub fn read_wall(&self) -> Option<WallReading> {
+        let wall = self.wall.as_ref()?;
+        let reading = (self.time_source()?)();
+        Some(WallReading {
+            instant: wall(reading),
+            reading,
+        })
+    }
+
     /// The wall clock's instant now, when the clock has one.
     #[must_use]
     pub fn wall_now(&self) -> Option<LogicalInstant> {
-        self.wall.as_ref().map(|wall| wall())
+        self.read_wall().map(|wall| wall.instant)
     }
 
     /// Stops the clock at the instant now. The real time that passed since the last move is
@@ -249,12 +280,32 @@ impl VirtualClock {
         instant: LogicalInstant,
         allow_backwards: bool,
     ) -> Result<(), ClockError> {
+        self.resume_to(instant, allow_backwards, None)
+    }
+
+    /// Moves the clock to the wall clock's instant at `wall` and lets it run on from that same
+    /// reading: what is judged, where the clock lands and what it runs from are one read, so a
+    /// clock already at the wall time is not refused and a synced clock does not lag.
+    pub fn resume_at_wall(
+        &mut self,
+        wall: WallReading,
+        allow_backwards: bool,
+    ) -> Result<(), ClockError> {
+        self.resume_to(wall.instant, allow_backwards, Some(wall.reading))
+    }
+
+    fn resume_to(
+        &mut self,
+        instant: LogicalInstant,
+        allow_backwards: bool,
+        reading: Option<i128>,
+    ) -> Result<(), ClockError> {
         if self.follow.is_none() && self.paused.is_none() {
             return Err(ClockError::NoTimeSource);
         }
         // One sample, taken before a frozen clock starts to run, so that the resume lands at
         // the instant it was judged against.
-        let sample = self.sample();
+        let sample = self.sample_at(reading);
         if instant < sample.instant && !allow_backwards {
             return Err(ClockError::WouldMoveBackwards {
                 current: sample.instant,
@@ -263,7 +314,7 @@ impl VirtualClock {
         }
         self.check(instant, &sample)?;
         if let Some(source) = self.paused.take() {
-            let at = source();
+            let at = reading.unwrap_or_else(|| source());
             self.follow = Some(Follow {
                 source,
                 at,
@@ -284,9 +335,10 @@ impl VirtualClock {
     }
 
     /// Nanoseconds the clock has run since its last move (zero for a frozen clock).
-    fn drift_nanos(&self) -> i128 {
+    fn drift_nanos(&self, reading: Option<i128>) -> i128 {
         self.follow.as_ref().map_or(0, |follow| {
-            let drift = ((follow.source)() - follow.at).max(follow.peak.get());
+            let reading = reading.unwrap_or_else(|| (follow.source)());
+            let drift = (reading - follow.at).max(follow.peak.get());
             follow.peak.set(drift);
             drift
         })
@@ -295,7 +347,12 @@ impl VirtualClock {
     /// One reading of the running time, taken once per operation so that what an operation
     /// checks, counts and publishes all come from the same sample of the source.
     fn sample(&self) -> Sample {
-        let drift = self.drift_nanos();
+        self.sample_at(None)
+    }
+
+    /// [`Self::sample`] at a given reading of the source, or a fresh one.
+    fn sample_at(&self, reading: Option<i128>) -> Sample {
+        let drift = self.drift_nanos(reading);
         let mut instant = if drift == 0 {
             self.now
         } else {

@@ -1817,11 +1817,10 @@ fn make_clock(cfg: &RuntimeConfig, reading: Option<i128>) -> Arc<Mutex<VirtualCl
     // callers' clocks. A frozen clock keeps the source too, so `clock:resume` can let it run.
     let source: fireemu_core_session::clock::TimeSource =
         Arc::new(|| wall_nanos_of(std::time::SystemTime::now()));
-    let wall: fireemu_core_session::clock::WallSource = Arc::new(|| {
-        fireemu_core_types::time::LogicalInstant::from_nanos(wall_nanos_of(
-            std::time::SystemTime::now(),
-        ))
-    });
+    // The source reads the wall clock in nanoseconds since the Unix epoch: that reading is the
+    // wall instant.
+    let wall: fireemu_core_session::clock::WallSource =
+        Arc::new(fireemu_core_types::time::LogicalInstant::from_nanos);
     let clock = if cfg.clock_frozen() {
         VirtualClock::new(cfg.clock_start).with_time_source(source)
     } else {
@@ -2838,12 +2837,18 @@ mod tests {
             "{:?}",
             seen.lock().unwrap()
         );
-        let wall = frozen.lock().unwrap().wall_now().unwrap();
+        let wall = frozen.lock().unwrap().read_wall().unwrap();
         let wall_now = super::wall_nanos_of(std::time::SystemTime::now());
-        assert!((wall_now - wall.as_nanos()).abs() < 1_000_000_000);
-        frozen.lock().unwrap().resume_at(wall, true).unwrap();
+        assert!((wall_now - wall.instant.as_nanos()).abs() < 1_000_000_000);
+        frozen.lock().unwrap().resume_at_wall(wall, true).unwrap();
+        // The synced clock reads the wall clock: no lag between two reads of each.
+        let before = super::wall_nanos_of(std::time::SystemTime::now());
         let shown = frozen.lock().unwrap().now_for_test().as_nanos();
-        assert!((shown - wall.as_nanos()).abs() < 1_000_000_000);
+        let after = super::wall_nanos_of(std::time::SystemTime::now());
+        assert!(
+            (before..=after).contains(&shown),
+            "{before} {shown} {after}"
+        );
     }
 
     #[test]

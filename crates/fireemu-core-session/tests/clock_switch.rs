@@ -28,11 +28,8 @@ impl Rig {
         let reading = self.reading.clone();
         Arc::new(move || *reading.lock().unwrap())
     }
-    fn wall(&self, wall_base: LogicalInstant) -> fireemu_core_session::clock::WallSource {
-        let reading = self.reading.clone();
-        Arc::new(move || {
-            LogicalInstant::from_nanos(wall_base.as_nanos() + *reading.lock().unwrap())
-        })
+    fn wall(wall_base: LogicalInstant) -> fireemu_core_session::clock::WallSource {
+        Arc::new(move |reading| LogicalInstant::from_nanos(wall_base.as_nanos() + reading))
     }
     fn run_for(&self, nanos: i128) {
         *self.reading.lock().unwrap() += nanos;
@@ -138,7 +135,7 @@ fn resuming_in_sync_jumps_to_the_wall_time_and_follows_it() {
     let wall_base = LogicalInstant::from_unix_seconds(1_900_000_000);
     let mut clock = VirtualClock::new(start())
         .with_time_source(rig.source())
-        .with_wall_clock(rig.wall(wall_base));
+        .with_wall_clock(Rig::wall(wall_base));
     let wall = clock.wall_now().unwrap();
     clock.resume_at(wall, false).unwrap();
     assert!(clock.is_following());
@@ -159,7 +156,7 @@ fn resuming_in_sync_refuses_a_backwards_jump_unless_allowed() {
     let wall_base = LogicalInstant::from_unix_seconds(1_700_000_000);
     let mut clock = VirtualClock::new(start())
         .with_time_source(rig.source())
-        .with_wall_clock(rig.wall(wall_base));
+        .with_wall_clock(Rig::wall(wall_base));
     let before = clock.snapshot();
     let wall = clock.wall_now().unwrap();
     assert_eq!(
@@ -305,4 +302,41 @@ fn a_resume_lands_where_it_was_judged_even_when_every_read_moves_the_source() {
     let frozen_at = clock.now();
     clock.resume_at(frozen_at, false).unwrap();
     assert_eq!(clock.backwards_sets(), 0);
+}
+
+#[test]
+fn a_sync_judges_lands_and_runs_from_one_reading() {
+    let calls = Arc::new(Mutex::new(0_i128));
+    let counted = calls.clone();
+    // Every read finds the source ten nanoseconds on; the wall instant is the reading itself.
+    let source: fireemu_core_session::clock::TimeSource = Arc::new(move || {
+        let mut calls = counted.lock().unwrap();
+        *calls += 10;
+        *calls
+    });
+    let wall: fireemu_core_session::clock::WallSource = Arc::new(LogicalInstant::from_nanos);
+    // Running, already at the wall time: a sync is not refused as backwards.
+    let mut running = VirtualClock::following_with(LogicalInstant::UNIX_EPOCH, source.clone(), 0)
+        .with_wall_clock(wall.clone());
+    let reading = running.read_wall().unwrap();
+    running.resume_at_wall(reading, false).unwrap();
+    assert_eq!(
+        running.now(),
+        LogicalInstant::from_nanos(*calls.lock().unwrap())
+    );
+    // Frozen behind: the synced clock runs from the reading it landed on, so it shows the wall
+    // time at every later read, without lag.
+    let mut frozen = VirtualClock::new(LogicalInstant::UNIX_EPOCH)
+        .with_time_source(source)
+        .with_wall_clock(wall);
+    let reading = frozen.read_wall().unwrap();
+    frozen.resume_at_wall(reading, false).unwrap();
+    assert_eq!(
+        frozen.now(),
+        LogicalInstant::from_nanos(*calls.lock().unwrap())
+    );
+    assert_eq!(frozen.backwards_sets(), 0);
+    assert!(VirtualClock::new(LogicalInstant::UNIX_EPOCH)
+        .read_wall()
+        .is_none());
 }

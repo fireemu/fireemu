@@ -112,3 +112,20 @@ it("takes the clock mode the daemon reports over the configured one", async () =
   await appState.refreshClock();
   expect(appState.clockMode()).toBe("realtime");
 });
+it("discards a poll that started before a clock mutation", async () => {
+  vi.mocked(control.listSessions).mockReturnValue(okAsync({ sessions: [] }));
+  let resolve!: (value: control.SessionInfo) => void;
+  vi.mocked(control.sessionInfo).mockReturnValueOnce(
+    ResultAsync.fromSafePromise(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    ),
+  );
+  const stale = appState.refreshClock();
+  appState.applyClockMutation({ clock: "frozen-at", backwardsSets: 0, running: false });
+  resolve({ ...info("before"), clock: { clock: "before", backwardsSets: 0, running: true } });
+  await stale;
+  expect(appState.clock()).toBe("frozen-at");
+  expect(appState.clockMode()).toBe("frozen");
+});

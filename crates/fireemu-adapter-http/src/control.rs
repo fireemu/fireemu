@@ -3312,6 +3312,10 @@ fn clock_route(
 /// `syncToRealTime`, from the wall clock's instant, which is a set and refuses to go backwards
 /// unless `allowBackwards` says so.
 fn resume_route(state: &ControlState, clock: &mut VirtualClock, body: &Value) -> JsonResponse {
+    // No body (an empty POST) is an empty object; any other non-object is refused.
+    if !(body.is_object() || body.is_null()) {
+        return error(400, "INVALID_ARGUMENT : the body must be a JSON object");
+    }
     let flag = |name: &str| match body.get(name) {
         None => Ok(false),
         Some(value) => value
@@ -3323,18 +3327,19 @@ fn resume_route(state: &ControlState, clock: &mut VirtualClock, body: &Value) ->
         (Err(message), _) | (_, Err(message)) => return error(400, &message),
     };
     let result = if sync {
-        let Some(target) = clock.wall_now() else {
+        // One reading: the target, the comparison and the anchor the clock runs from.
+        let Some(wall) = clock.read_wall() else {
             return error(
                 400,
                 "FAILED_PRECONDITION : this clock has no wall clock to sync to",
             );
         };
         if let Some(functions) = &state.functions {
-            if let Err(message) = functions.validate_clock_target(target) {
+            if let Err(message) = functions.validate_clock_target(wall.instant) {
                 return error(400, &message);
             }
         }
-        clock.resume_at(target, allow_backwards)
+        clock.resume_at_wall(wall, allow_backwards)
     } else {
         clock.resume()
     };

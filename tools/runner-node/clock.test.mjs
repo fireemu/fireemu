@@ -270,8 +270,36 @@ test('a following update re-anchors Date, deadlines run from the live elapsed ti
   await nativeDelay(20);
   assert.equal(fired, false);
   const shown = Date.now();
+  // A freeze frame for an instant behind what was shown (it arrived late) holds Date at what
+  // was shown; a later advance past it shows the advance.
   clock.update({instantNanos: String(BigInt(shown - 500) * 1000000n), following: false});
-  assert.equal(Date.now(), shown - 500);
-  clock.update({instantNanos: String(BigInt(shown - 500) * 1000000n), following: true});
-  assert.ok(Date.now() < shown, String(Date.now() - shown));
+  assert.equal(Date.now(), shown);
+  clock.update({instantNanos: String(BigInt(shown + 2000) * 1000000n), following: false});
+  assert.equal(Date.now(), shown + 2000);
 `, { timers: 'virtual', following: true }));
+
+test('a late freeze frame never takes Date or timer time back; a counted rewind does move Date back', () => check(`
+  // The daemon froze at 5.000 s with 0 elapsed, but this runner ran on for a while first.
+  await nativeDelay(60);
+  const shown = Date.now();
+  const before = clock.status().elapsedNanos;
+  assert.ok(shown >= 5050, String(shown));
+  let fired = 0;
+  setTimeout(() => { fired++; }, 30);
+  clock.update({instantNanos: '5000000000', elapsedNanos: '0', following: false});
+  assert.equal(Date.now(), shown);
+  assert.ok(BigInt(clock.status().elapsedNanos) >= BigInt(before));
+  await nativeDelay(60);
+  assert.equal(Date.now(), shown, 'frozen');
+  assert.equal(fired, 0, 'a frozen clock fires nothing');
+  // An advance of 10 ms on the daemon (still behind what this runner counted) shows nothing earlier.
+  clock.update({instantNanos: '5010000000', elapsedNanos: '10000000', following: false});
+  assert.equal(Date.now(), shown);
+  // A rewind the daemon counted (instant back while elapsed does not move back) is shown.
+  clock.update({instantNanos: '1000000000', elapsedNanos: '10000000', following: false});
+  assert.equal(Date.now(), 1000);
+  // Resuming runs on from there.
+  clock.update({instantNanos: '1000000000', elapsedNanos: '10000000', following: true});
+  await nativeDelay(40);
+  assert.ok(Date.now() >= 1030, String(Date.now()));
+`, { timers: 'virtual', following: true, instantNanos: '5000000000' }));
