@@ -1051,7 +1051,7 @@
     },
     "crates/fireemu-adapter-http/tests/auth_flows.rs": {
       "kind": "sha256",
-      "value": "0be0659b542eb75a573760de174873e354f3bee7036c464fa14f0053cb7c1b6a"
+      "value": "a348f445308c3001aafed3faa752e27e23bac6031ea253c239731a02632a401a"
     },
     "crates/fireemu-adapter-logging/Cargo.toml": {
       "kind": "sha256",
