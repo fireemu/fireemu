@@ -697,7 +697,16 @@ const AuthScope: Component<{ project: string }> = (props) => {
                               : (c.displayName ?? c.mfaEnrollmentId)}
                           </td>
                           <td class="mono">{c.code}</td>
-                          <td>{`${c.secondsRemaining}s`}</td>
+                          <td>
+                            {c.alreadyUsed
+                              ? t("auth.totpAlreadyUsed", {
+                                  seconds:
+                                    c.advanceSeconds ?? c.periodSeconds ?? c.secondsRemaining,
+                                })
+                              : c.clockRunning === false
+                                ? t("auth.totpClockStill")
+                                : `${c.secondsRemaining}s`}
+                          </td>
                         </tr>
                       )}
                     </For>
