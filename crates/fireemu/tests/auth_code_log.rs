@@ -580,14 +580,22 @@ fn a_pinned_clock_reveals_the_used_code_as_used_and_a_clock_move_gives_a_fresh_o
         "{refused}"
     );
 
-    // The named clock move yields a fresh code that signs in.
-    let (status, moved) = http(
-        port,
-        "POST",
-        "/v1/sessions/default/clock:advance",
-        &json!({"seconds": 30}),
-    );
-    assert_eq!(status, 200, "{moved}");
+    // Half the named move leaves the code used, with the rest of the move named.
+    let advance = |seconds: u64| {
+        let (status, moved) = http(
+            port,
+            "POST",
+            "/v1/sessions/default/clock:advance",
+            &json!({ "seconds": seconds }),
+        );
+        assert_eq!(status, 200, "{moved}");
+    };
+    advance(15);
+    let half = codes(port);
+    assert_eq!(half["alreadyUsed"], json!(true), "{half}");
+    assert_eq!(half["advanceSeconds"], json!(15), "{half}");
+    // The rest of the move yields a fresh code that signs in.
+    advance(15);
     let fresh = codes(port);
     assert_eq!(fresh["alreadyUsed"], json!(false), "{fresh}");
     assert!(fresh.get("advanceSeconds").is_none(), "{fresh}");

@@ -315,6 +315,15 @@ fn an_enrollment_accepted_ahead_of_the_clock_names_the_advance_to_the_first_fres
         "{message}"
     );
     assert!(message.contains(r#"{"seconds": 60}"#), "{message}");
+    // On a running clock the wait is to the same step, not to the next boundary.
+    s.set_totp_clock_running(true);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(
+        message.contains("wait 60 seconds or advance the clock by 60 seconds"),
+        "{message}"
+    );
+    s.set_totp_clock_running(false);
     // One period later the displayed code is the accepted step's: still a replay.
     let entry = &s.totp_codes(at(30))[0];
     assert!(entry.already_used);
