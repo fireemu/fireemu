@@ -87,8 +87,8 @@ pub fn body_text(value: &Ordered) -> String {
 }
 
 pub fn instant(text: &str) -> u64 {
-    let parsed = chrono::DateTime::parse_from_rfc3339(text).expect("a timestamp");
-    u64::try_from(parsed.timestamp_millis()).expect("after the epoch")
+    let parsed = fireemu_adapter_functions::time_text::parse_rfc3339(text).expect("a timestamp");
+    u64::try_from(parsed.epoch_nanos().div_euclid(1_000_000)).expect("after the epoch")
 }
 
 /// The nanoseconds since the epoch at which the server saw the request of a row.
@@ -100,12 +100,11 @@ pub fn server_instant(row: &Ordered, answered_at_ms: u64) -> u64 {
         let answer =
             parse(text(member(response, "rawBody").expect("a body")).as_bytes()).expect("JSON");
         let metadata = member(&answer, "metadata").expect("metadata");
-        let created = chrono::DateTime::parse_from_rfc3339(&text(
+        let created = fireemu_adapter_functions::time_text::parse_rfc3339(&text(
             member(metadata, "createTime").expect("createTime"),
         ))
         .expect("a time");
-        return u64::try_from(created.timestamp_nanos_opt().expect("nanoseconds"))
-            .expect("positive");
+        return u64::try_from(created.epoch_nanos()).expect("positive");
     }
     // Millisecond precision from the recording; the sub-millisecond digits keep every timestamp at nine
     // fractional digits, as production wrote them.
@@ -161,7 +160,7 @@ pub fn timestamp9(text: &str) -> bool {
         && text.ends_with('Z')
         && bytes[10] == b'T'
         && bytes[19] == b'.'
-        && chrono::DateTime::parse_from_rfc3339(text).is_ok()
+        && fireemu_adapter_functions::time_text::parse_rfc3339(text).is_some()
         && digits(&text[20..29], 9)
 }
 
@@ -405,18 +404,17 @@ pub fn recorded_durations(rows: &[Row]) -> BTreeMap<String, u64> {
         };
         if member(&answer, "done").is_some_and(|done| *done == Ordered::Bool(true)) {
             let metadata = member(&answer, "metadata").expect("metadata");
-            let start = chrono::DateTime::parse_from_rfc3339(&text(
+            let start = fireemu_adapter_functions::time_text::parse_rfc3339(&text(
                 member(metadata, "createTime").expect("createTime"),
             ))
             .expect("a time");
-            let end = chrono::DateTime::parse_from_rfc3339(&text(
+            let end = fireemu_adapter_functions::time_text::parse_rfc3339(&text(
                 member(metadata, "endTime").expect("endTime"),
             ))
             .expect("a time");
             durations.insert(
                 text(member(&answer, "name").expect("a name")),
-                u64::try_from((end - start).num_nanoseconds().expect("nanoseconds"))
-                    .expect("positive"),
+                u64::try_from(end.epoch_nanos() - start.epoch_nanos()).expect("positive"),
             );
         }
     }

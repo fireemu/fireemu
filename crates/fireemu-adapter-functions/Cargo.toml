@@ -41,8 +41,6 @@ rustix = { version = "1", features = ["process"] }
 workspace = true
 
 [dev-dependencies]
-chrono = "0.4"
-chrono-tz = "0.10"
 base64 = "0.22"
 fireemu-core-rules = { path = "../fireemu-core-rules" }
 proptest.workspace = true

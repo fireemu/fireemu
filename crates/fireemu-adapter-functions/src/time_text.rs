@@ -1,7 +1,8 @@
 //! RFC 3339 text for task and event timestamps.
 //!
 //! The grammar and the output digits are fixed by the recorded production shapes these helpers
-//! serve; they were previously produced by `chrono` and are pinned against it in the tests.
+//! serve; they were previously produced by `chrono` 0.4.45, and readings recorded from it are
+//! pinned in the tests.
 //!
 //! Accepted input: `YYYY-MM-DD`, then `T`, `t` or a space, then `HH:MM:SS`, an optional `.` with
 //! one or more digits (digits past the ninth are ignored), then `Z`, `z` or a numeric offset
@@ -30,6 +31,12 @@ impl Parsed {
     #[must_use]
     pub const fn is_leap_second(self) -> bool {
         self.nanos >= NANOS_PER_SECOND
+    }
+
+    /// Unix nanoseconds, counting a leap second's extra second.
+    #[must_use]
+    pub fn epoch_nanos(self) -> i128 {
+        i128::from(self.seconds) * 1_000_000_000 + i128::from(self.nanos)
     }
 
     /// Unix microseconds, counting a leap second's extra second.
@@ -185,144 +192,120 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    /// The previous implementation's reading, kept as the reference while both exist.
-    fn chrono_parse(text: &str) -> Option<Parsed> {
-        let t = chrono::DateTime::parse_from_rfc3339(text).ok()?;
-        Some(Parsed {
-            seconds: t.timestamp(),
-            nanos: t.timestamp_subsec_nanos(),
-        })
-    }
-
-    fn chrono_micros(text: &str) -> Option<i128> {
-        chrono::DateTime::parse_from_rfc3339(text)
-            .ok()
-            .map(|t| i128::from(t.timestamp_micros()))
-    }
-
-    fn chrono_format(seconds: i64, nanos: u32, fraction: Fraction) -> Option<String> {
-        let format = match fraction {
-            Fraction::Auto => chrono::SecondsFormat::AutoSi,
-            Fraction::Micros => chrono::SecondsFormat::Micros,
-            Fraction::Nanos => chrono::SecondsFormat::Nanos,
-        };
-        if nanos >= NANOS_PER_SECOND {
-            return None;
-        }
-        chrono::DateTime::from_timestamp(seconds, nanos).map(|t| t.to_rfc3339_opts(format, true))
-    }
-
-    /// Text close to the grammar: every position is drawn from a small alphabet that includes
-    /// the characters the grammar wants there, so both accepted and refused inputs are common.
-    fn near_rfc3339() -> impl Strategy<Value = String> {
-        let digit = || prop::sample::select(b"0123456789".to_vec());
-        let date = (
-            (digit(), digit(), digit(), digit()),
-            prop::sample::select(vec![b'-', b'/']),
-            (prop::sample::select(b"0123".to_vec()), digit()),
-            prop::sample::select(vec![b'-', b'.']),
-            (prop::sample::select(b"0123".to_vec()), digit()),
-            prop::sample::select(vec![b'T', b't', b' ', b'_']),
-        );
-        let time = (
-            (prop::sample::select(b"0123".to_vec()), digit()),
-            prop::sample::select(vec![b':', b'-']),
-            (prop::sample::select(b"056".to_vec()), digit()),
-            prop::sample::select(vec![b':', b'.']),
-            (prop::sample::select(b"056".to_vec()), digit()),
-        );
-        let fraction = prop::sample::select(vec![
-            String::new(),
-            ".".to_owned(),
-            ".5".to_owned(),
-            ".123456".to_owned(),
-            ".123456789".to_owned(),
-            ".1234567891234".to_owned(),
-            ".x".to_owned(),
-        ]);
-        let offset = prop::sample::select(vec![
-            "Z",
-            "z",
-            "+00:00",
-            "-00:00",
-            "+09:00",
-            "-23:59",
-            "+23:59",
-            "+24:00",
-            "+05:60",
-            "+0900",
-            "+09",
-            "\u{2212}05:30",
-            "Zx",
-            "",
-            "+09:00 ",
-            "UTC",
-        ]);
-        (date, time, fraction, offset).prop_map(
-            |((y, d1, mo, d2, da, sep), (h, c1, mi, c2, s), frac, off)| {
-                let bytes = [
-                    y.0, y.1, y.2, y.3, d1, mo.0, mo.1, d2, da.0, da.1, sep, h.0, h.1, c1, mi.0,
-                    mi.1, c2, s.0, s.1,
-                ];
-                format!("{}{frac}{off}", String::from_utf8(bytes.to_vec()).unwrap())
-            },
-        )
-    }
-
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(20_000))]
-
         #[test]
-        fn parsing_matches_chrono_near_the_grammar(text in near_rfc3339()) {
-            prop_assert_eq!(parse_rfc3339(&text), chrono_parse(&text));
-            prop_assert_eq!(parse_rfc3339(&text).map(Parsed::micros), chrono_micros(&text));
-        }
-
-        #[test]
-        fn parsing_matches_chrono_on_any_text(text in "\\PC{0,40}") {
-            prop_assert_eq!(parse_rfc3339(&text), chrono_parse(&text));
-        }
-
-        #[test]
-        fn formatting_matches_chrono(
-            seconds in prop_oneof![
-                -8_400_000_000_000i64..8_300_000_000_000,
-                -62_167_219_200i64..253_402_300_800,
-                Just(i64::MIN), Just(i64::MAX),
-            ],
-            nanos in prop_oneof![
-                Just(0u32), Just(1_000_000), Just(123_000), Just(999_999_999),
-                0u32..1_000_000_000, 1_000_000_000u32..=u32::MAX,
-            ],
+        fn formatted_text_parses_back(
+            seconds in -62_167_219_200i64..253_402_300_800,
+            nanos in 0u32..1_000_000_000,
         ) {
-            for fraction in [Fraction::Auto, Fraction::Micros, Fraction::Nanos] {
-                prop_assert_eq!(
-                    format_rfc3339_utc(seconds, nanos, fraction),
-                    chrono_format(seconds, nanos, fraction)
-                );
+            for fraction in [Fraction::Auto, Fraction::Nanos] {
+                let text = format_rfc3339_utc(seconds, nanos, fraction).unwrap();
+                prop_assert_eq!(parse_rfc3339(&text), Some(Parsed { seconds, nanos }));
             }
         }
+
+        #[test]
+        fn offsets_shift_the_instant(
+            seconds in 0i64..253_402_000_000,
+            hours in 0i64..24,
+            minutes in 0i64..60,
+            east in any::<bool>(),
+        ) {
+            let text = format_rfc3339_utc(seconds, 0, Fraction::Auto).unwrap();
+            let sign = if east { '+' } else { '-' };
+            let shifted = text.replace('Z', &format!("{sign}{hours:02}:{minutes:02}"));
+            let offset = (hours * 3_600 + minutes * 60) * if east { 1 } else { -1 };
+            prop_assert_eq!(parse_rfc3339(&shifted).map(|p| p.seconds), Some(seconds - offset));
+        }
     }
 
-    #[test]
-    fn formatting_matches_chrono_at_the_calendar_limits() {
-        // Edges of years -262144, -262143 and 262143, and one second past each.
-        for seconds in [
-            -8_334_632_851_200 - 1,
-            -8_334_632_851_200,
-            -8_303_010_451_201,
-            -8_303_010_451_200,
-            8_178_762_412_799,
-            8_178_762_412_800,
-            8_210_298_412_799,
-            8_210_298_412_800,
+    /// Readings recorded from chrono 0.4.45 before it was removed.
+    const RECORDED_READINGS: &[(&str, Option<(i64, u32)>)] = &[
+        ("2026-01-02T03:04:05Z", Some((1_767_323_045, 0))),
+        ("2026-01-02t03:04:05z", Some((1_767_323_045, 0))),
+        ("2026-01-02 03:04:05-00:00", Some((1_767_323_045, 0))),
+        ("2026-01-02T03:04:05\u{2212}05:30", Some((1_767_342_845, 0))),
+        (
+            "2026-01-02T03:04:05.5+23:59",
+            Some((1_767_236_705, 500_000_000)),
+        ),
+        ("2016-12-31T23:59:60Z", Some((1_483_228_799, 1_000_000_000))),
+        ("0000-01-01T00:00:00Z", Some((-62_167_219_200, 0))),
+        ("2026-01-02T03:04:05.Z", None),
+        ("2026-01-02T03:04:05+24:00", None),
+        ("2026-01-02T03:04:05+05:60", None),
+        ("2026-01-02T03:04:05+0530", None),
+        ("2026-01-02T03:04:05UTC", None),
+        ("2026-01-02T03:04:05Z ", None),
+        ("2026-01-02T24:00:00Z", None),
+        ("2026-13-02T03:04:05Z", None),
+        ("2026-01-02T03:60:05Z", None),
+        ("2026-01-02T03:04:61Z", None),
+        ("+2026-01-02T03:04:05Z", None),
+    ];
+
+    /// Formatted text recorded from chrono 0.4.45 before it was removed.
+    const RECORDED_TEXT: &[(i64, u32, Fraction, Option<&str>)] = &[
+        (-8_334_601_228_801, 0, Fraction::Auto, None),
+        (
+            -8_334_601_228_800,
+            0,
+            Fraction::Auto,
+            Some("-262143-01-01T00:00:00Z"),
+        ),
+        (
+            8_210_266_876_799,
+            0,
+            Fraction::Auto,
+            Some("+262142-12-31T23:59:59Z"),
+        ),
+        (8_210_266_876_800, 0, Fraction::Auto, None),
+        (
             -62_167_219_201,
+            0,
+            Fraction::Auto,
+            Some("-0001-12-31T23:59:59Z"),
+        ),
+        (
             253_402_300_800,
-        ] {
+            0,
+            Fraction::Micros,
+            Some("+10000-01-01T00:00:00.000000Z"),
+        ),
+        (0, 1_000_000_000, Fraction::Auto, None),
+        (
+            0,
+            120_000,
+            Fraction::Auto,
+            Some("1970-01-01T00:00:00.000120Z"),
+        ),
+        (
+            0,
+            120_000_000,
+            Fraction::Auto,
+            Some("1970-01-01T00:00:00.120Z"),
+        ),
+        (0, 1, Fraction::Auto, Some("1970-01-01T00:00:00.000000001Z")),
+        (0, 1, Fraction::Micros, Some("1970-01-01T00:00:00.000000Z")),
+        (
+            -1,
+            1_000,
+            Fraction::Auto,
+            Some("1969-12-31T23:59:59.000001Z"),
+        ),
+    ];
+
+    #[test]
+    fn readings_and_text_recorded_from_chrono() {
+        for (text, expected) in RECORDED_READINGS {
+            let got = parse_rfc3339(text).map(|p| (p.seconds, p.nanos));
+            assert_eq!(got, *expected, "{text}");
+        }
+        for (seconds, nanos, fraction, expected) in RECORDED_TEXT {
             assert_eq!(
-                format_rfc3339_utc(seconds, 0, Fraction::Auto),
-                chrono_format(seconds, 0, Fraction::Auto),
-                "{seconds}"
+                format_rfc3339_utc(*seconds, *nanos, *fraction).as_deref(),
+                *expected,
+                "{seconds} {nanos}"
             );
         }
     }

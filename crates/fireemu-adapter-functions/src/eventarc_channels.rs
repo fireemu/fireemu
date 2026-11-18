@@ -1444,9 +1444,9 @@ mod tests {
         fn the_text_of_a_timestamp_is_thirty_characters_and_parses_back(instant in 0u64..4_000_000_000_000_000_000) {
             let text = rfc3339(instant);
             prop_assert_eq!(text.len(), 30);
-            let parsed = chrono::DateTime::parse_from_rfc3339(&text).unwrap();
+            let parsed = crate::time_text::parse_rfc3339(&text).unwrap();
             prop_assert_eq!(
-                u64::try_from(parsed.timestamp_nanos_opt().unwrap()).unwrap(),
+                u64::try_from(parsed.epoch_nanos()).unwrap(),
                 instant
             );
         }
