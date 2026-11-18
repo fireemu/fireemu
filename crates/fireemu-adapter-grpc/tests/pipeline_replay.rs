@@ -5232,10 +5232,12 @@ fn every_verified_grpc_pipeline_match_replays_the_committed_recording() {
 
 /// The Unix seconds and nanoseconds of RFC 3339 text from a recorded body.
 ///
-/// The contract is narrower than chrono's reader, which this replaced: only the canonical form
-/// Firestore writes (`T` separator, at most nine fractional digits, `Z` or an ASCII `±HH:MM`
-/// offset, no leap second) is read. Recorded production bodies and the emulator's answers use
-/// only that form, so any other text is not a timestamp here and fails the check.
+/// The contract is narrower than chrono's reader, which this replaced: it reads the form
+/// Firestore writes (a `T` separator, at most nine fractional digits, `Z` or an ASCII `±HH:MM`
+/// offset, no leap second) and also lowercase `t` and `z`. Recorded production bodies and the
+/// emulator's answers use only the canonical form. Text this does not read is not a timestamp
+/// for the checks; the shared-timestamp normalizer leaves it literal, so two identical such
+/// strings still compare equal.
 fn rfc3339_parts(text: &str) -> Option<(i64, u32)> {
     let nanos = fireemu_core_types::time::LogicalInstant::parse_rfc3339(text)
         .ok()?
