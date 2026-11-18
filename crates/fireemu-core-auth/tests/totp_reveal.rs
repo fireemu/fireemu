@@ -244,6 +244,7 @@ fn enrollment_start_and_sign_in_challenge_announce_codes_without_the_secret() {
 fn a_still_clock_reveals_the_used_enrollment_code_as_used_with_how_to_move_on() {
     let mut s = store();
     s.set_totp_clock_running(false);
+    assert!(!s.totp_clock_running());
     let (uid, secret) = enrolled(&mut s);
     let codes = s.totp_codes(t0());
     assert_eq!(codes.len(), 1);
