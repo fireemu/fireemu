@@ -344,7 +344,7 @@
     },
     "crates/fireemu-adapter-grpc/src/pipeline_timezone.rs": {
       "kind": "sha256",
-      "value": "5970b6ef79f729088d584f7c3ce43db38f72ff3ad672e4627693adccd0a2c9c5"
+      "value": "7fbef0778136b3e9e920e475fb086b04f32874dab4995e5a4e7834bc669e803f"
     },
     "crates/fireemu-adapter-grpc/src/production_status.rs": {
       "kind": "sha256",
