@@ -11,6 +11,7 @@ import {
   RelativeTime,
   Section,
   SectionNav,
+  StatusBadge,
 } from "../components/common";
 import {
   advanceClock,
@@ -18,6 +19,7 @@ import {
   captureSnapshot,
   clearFaultPlan,
   createSession,
+  freezeClock,
   deleteSession,
   deleteSnapshot,
   getFaultPlan,
@@ -25,6 +27,7 @@ import {
   listSnapshots,
   resetSession,
   restoreSnapshot,
+  resumeClock,
   sessionResources,
   setClock,
 } from "../api/control";
@@ -52,38 +55,62 @@ import {
   type RecipeId,
 } from "../lib/faultRecipes";
 
-const ClockPanel: Component = () => {
+export const ClockPanel: Component = () => {
+  // The app-wide clock guard: a freeze and a resume (or a move) never race, even across a
+  // remount of this panel.
+  const guard = appState.clockGuard;
   const [seconds, setSeconds] = createSignal("60");
   const [instant, setInstant] = createSignal("");
   const [backwards, setBackwards] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const session = appState.session;
-  const advance = async () => {
-    setError(null);
-    const n = Number(seconds());
-    if (!Number.isFinite(n)) {
-      setError(
-        t("firestore.invalidValue", {
-          field: t("runtime.seconds"),
-          message: t("firestore.hintNumber"),
-        }),
+  const advance = () =>
+    guard.run(async () => {
+      setError(null);
+      const n = Number(seconds());
+      if (!Number.isFinite(n)) {
+        setError(
+          t("firestore.invalidValue", {
+            field: t("runtime.seconds"),
+            message: t("firestore.hintNumber"),
+          }),
+        );
+        return;
+      }
+      const r = await advanceClock(session(), Math.trunc(n));
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
       );
-      return;
-    }
-    const r = await advanceClock(session(), Math.trunc(n));
-    r.match(
-      (c) => appState.setClock(c.clock),
-      (e) => setError(e.message),
-    );
-  };
-  const set = async () => {
-    setError(null);
-    const r = await setClock(session(), instant(), backwards());
-    r.match(
-      (c) => appState.setClock(c.clock),
-      (e) => setError(e.message),
-    );
-  };
+    });
+  const set = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await setClock(session(), instant(), backwards());
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
+  const frozen = () => appState.clockMode() === "frozen";
+  const toggle = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await (frozen() ? resumeClock(session(), false, false) : freezeClock(session()));
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
+  const sync = () =>
+    guard.run(async () => {
+      setError(null);
+      const r = await resumeClock(session(), true, backwards());
+      r.match(
+        (c) => appState.applyClockMutation(c),
+        (e) => setError(e.message),
+      );
+    });
   return (
     <Section id="runtime-clock" title={t("runtime.clock")}>
       <ErrorBanner message={error()} />
@@ -91,7 +118,24 @@ const ClockPanel: Component = () => {
         <span class="label">{t("runtime.clockNow")}</span>
         <span class="mono" data-testid="runtime-clock">
           {appState.clock()}
-        </span>
+        </span>{" "}
+        <StatusBadge tone={frozen() ? "paused" : "neutral"} testId="runtime-clock-mode">
+          {frozen() ? t("runtime.clockFrozen") : t("runtime.clockRunning")}
+        </StatusBadge>
+      </div>
+      <div class="mb-3 flex flex-wrap items-end gap-2">
+        <AsyncButton
+          class="btn"
+          onClick={toggle}
+          disabled={guard.pending()}
+          testId="toggle-clock-mode"
+        >
+          {frozen() ? t("runtime.resume") : t("runtime.freeze")}
+        </AsyncButton>
+        <AsyncButton class="btn" onClick={sync} disabled={guard.pending()} testId="sync-clock">
+          {t("runtime.syncToRealTime")}
+        </AsyncButton>
+        <span class="pb-1 text-sm">{t("runtime.syncHint")}</span>
       </div>
       <div class="mb-3 flex flex-wrap items-end gap-2">
         <label class="text-sm">
@@ -104,7 +148,12 @@ const ClockPanel: Component = () => {
           />
         </label>
         <span class="pb-1 text-sm">{t("runtime.seconds")}</span>
-        <AsyncButton class="btn btn-primary" onClick={advance} testId="advance-clock">
+        <AsyncButton
+          class="btn btn-primary"
+          onClick={advance}
+          disabled={guard.pending()}
+          testId="advance-clock"
+        >
           {t("runtime.advance")}
         </AsyncButton>
       </div>
@@ -126,7 +175,7 @@ const ClockPanel: Component = () => {
           />
           {t("runtime.allowBackwards")}
         </label>
-        <AsyncButton class="btn" onClick={set}>
+        <AsyncButton class="btn" onClick={set} disabled={guard.pending()}>
           {t("runtime.set")}
         </AsyncButton>
       </div>
@@ -134,7 +183,7 @@ const ClockPanel: Component = () => {
   );
 };
 
-const SnapshotsPanel: Component = () => {
+export const SnapshotsPanel: Component = () => {
   const session = appState.session;
   const [list, { refetch }] = createResource(session, (s) => settle(listSnapshots(s)));
   const [name, setName] = createSignal("");
@@ -219,16 +268,21 @@ const SnapshotsPanel: Component = () => {
                           clock: s.clock,
                         })}
                         testId={`snapshot-restore-${s.name}`}
-                        onConfirm={async () => {
-                          const r = await restoreSnapshot(session(), s.name);
-                          r.match(
-                            () => {
-                              setNotice(`${t("runtime.restore")}: ${s.name}`);
-                              void appState.refreshClock();
-                            },
-                            (e) => setError(e.message),
-                          );
-                        }}
+                        // A restore puts the captured instant back on the shared clock, so it
+                        // waits for and blocks the other clock mutations like they do each other.
+                        onConfirm={() =>
+                          appState.clockGuard.run(async () => {
+                            const r = await restoreSnapshot(session(), s.name);
+                            r.match(
+                              () => {
+                                setNotice(`${t("runtime.restore")}: ${s.name}`);
+                                appState.invalidatePolls();
+                                void appState.refreshClock();
+                              },
+                              (e) => setError(e.message),
+                            );
+                          })
+                        }
                       />
                       <ConfirmButton
                         label={t("app.delete")}

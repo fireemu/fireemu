@@ -534,21 +534,23 @@ const FunctionRow: Component<{
               {(nextRun) => (
                 <AsyncButton
                   class="btn"
-                  disabled={!props.active}
+                  disabled={!props.active || appState.clockGuard.pending()}
                   testId={`advance-to-next-${props.f.name}`}
                   ariaLabel={t("functions.advanceToNextRun")}
                   title={t("functions.advanceToNextRun")}
-                  onClick={async () => {
-                    const r = await setClock(appState.session(), nextRun(), false);
-                    await r.match(
-                      async (c) => {
-                        appState.setClock(c.clock);
-                        props.onNotice(t("functions.advancedToNextRun", { instant: nextRun() }));
-                        await props.onRefresh();
-                      },
-                      async (e) => props.onError(e.message),
-                    );
-                  }}
+                  onClick={() =>
+                    appState.clockGuard.run(async () => {
+                      const r = await setClock(appState.session(), nextRun(), false);
+                      await r.match(
+                        async (c) => {
+                          appState.applyClockMutation(c);
+                          props.onNotice(t("functions.advancedToNextRun", { instant: nextRun() }));
+                          await props.onRefresh();
+                        },
+                        async (e) => props.onError(e.message),
+                      );
+                    })
+                  }
                 >
                   {t("functions.advanceShort")}
                 </AsyncButton>

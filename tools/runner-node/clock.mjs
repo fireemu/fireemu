@@ -64,7 +64,16 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   let autoHandle = null;
   let autoDrain = null;
   const live = () => following ? process.hrtime.bigint() - anchor : 0n;
-  const currentElapsed = () => elapsed + live();
+  // The daemon's elapsed time at its last update (it only counts forward moves), and the most
+  // this runner had already counted then: a freeze that arrives after the runner ran on past the
+  // daemon's frozen instant must not take timer time back, so time stays at that floor until the
+  // daemon catches up.
+  let daemonElapsed = elapsed;
+  let elapsedFloor = elapsed;
+  const currentElapsed = () => {
+    const counted = elapsed + live();
+    return counted > elapsedFloor ? counted : elapsedFloor;
+  };
   let sequence = 0;
   let draining = false;
   const queue = new Map();
@@ -157,7 +166,8 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   }
 
   function now() {
-    if (!following) return epochMillis;
+    // What was shown stays the floor until the daemon reaches it or rewinds the clock.
+    if (!following) return Math.max(epochMillis, lastShown);
     const value = milliseconds(instant + live());
     lastShown = Math.max(lastShown, value);
     return lastShown;
@@ -239,18 +249,25 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     update(value) {
       const next = nanos(value.instantNanos, 'instant');
       const nextMillis = date === 'virtual' ? milliseconds(next) : 0;
-      const nextElapsed = value.elapsedNanos === undefined
-        ? elapsed + (next > instant ? next - instant : 0n)
-        : nanos(value.elapsedNanos, 'elapsed');
-      if (nextElapsed < elapsed) throw new RangeError('timer elapsed time cannot rewind');
-      // A tick that lands slightly behind what was already shown does not step Date back; a
-      // rewind (a move back by more than a second) does.
-      if (date === 'virtual' && nextMillis < lastShown - 1000) lastShown = -Infinity;
+      const given = value.elapsedNanos !== undefined;
+      const nextElapsed = given
+        ? nanos(value.elapsedNanos, 'elapsed')
+        : daemonElapsed + (next > instant ? next - instant : 0n);
+      if (nextElapsed < daemonElapsed) throw new RangeError('timer elapsed time cannot rewind');
+      // The daemon counts only forward moves as elapsed time, so the instant moving less than
+      // the elapsed time is a rewind, which Date shows. Anything else (a tick, a freeze that
+      // arrives late) never steps Date back: what was shown stays the floor. Without the elapsed
+      // time, a move back by more than a second counts as a rewind.
+      const rewound = given
+        ? next - instant < nextElapsed - daemonElapsed
+        : date === 'virtual' && nextMillis < lastShown - 1000;
+      if (rewound) lastShown = -Infinity;
+      elapsedFloor = currentElapsed();
       if (value.following !== undefined) following = value.following === true;
-      if (!following) lastShown = -Infinity;
       instant = next;
       epochMillis = nextMillis;
       elapsed = nextElapsed;
+      daemonElapsed = nextElapsed;
       anchor = process.hrtime.bigint();
       arm();
       return status();

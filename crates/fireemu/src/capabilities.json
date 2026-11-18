@@ -324,6 +324,7 @@
       "clock:set",
       "clock:advance",
       "clock:advanceTo",
+      "clock:freeze (stops the shared clock at the current instant) and clock:resume (follows real time from the current instant; {syncToRealTime: true} first moves it to the wall clock's time and, like clock:set, refuses to go backwards without allowBackwards); every clock answer carries running",
       "sessions/{s}/reset (wipes the session's scope under the exclusive barrier; the default session's reset also resets the shared functions runtime; a store that refuses the wipe is reported as INTERNAL and no store is wiped)",
       "sessions/{s} DELETE (wipes the project's state, then deregisters the session; a store that refuses leaves the session registered and usable)",
       "sessions/{s}/snapshots (POST {name} captures the session's Firestore, Storage, Auth, fault plan and text indexes, plus the clock, both rulesets and the auto-ID generator for the default session; every part is copied before any is retained, so a store that cannot be read refuses the whole snapshot; GET lists with retained / limit / remaining; {name}:restore validates every part, takes a pre-image and applies in hook order under the reset barrier, rolling the hooks it already applied back when a later one refuses, and the default session's restore resets the functions runtime; DELETE releases what the name held)",

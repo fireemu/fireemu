@@ -8,6 +8,8 @@
 //! POST /v1/sessions/{session}/clock:set       { "instant": "<rfc3339>", "allowBackwards": bool? }
 //! POST /v1/sessions/{session}/clock:advance   { "seconds": n } | { "millis": n }
 //! POST /v1/sessions/{session}/clock:advanceTo { "instant": "<rfc3339>" }
+//! POST /v1/sessions/{session}/clock:freeze    {}
+//! POST /v1/sessions/{session}/clock:resume    { "syncToRealTime": bool?, "allowBackwards": bool? }
 //! POST /v1/sessions/{session}:awaitIdle       { "timeoutSeconds": n }
 //! GET  /v1/sessions/{session}/functions
 //! POST /v1/sessions/{session}/functions/{name}:run
@@ -746,7 +748,7 @@ fn with_session_books(
 }
 
 fn clock_json(clock: &VirtualClock) -> Value {
-    json!({"clock": clock.now().to_rfc3339().unwrap_or_else(|_| clock.now().to_string()), "backwardsSets": clock.backwards_sets()})
+    json!({"clock": clock.now().to_rfc3339().unwrap_or_else(|_| clock.now().to_string()), "backwardsSets": clock.backwards_sets(), "running": clock.is_following()})
 }
 
 /// Whether `path` belongs to the control API.
@@ -3297,7 +3299,57 @@ fn clock_route(
                 Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
             }
         }
+        ("POST", "clock:freeze") => match clock.freeze() {
+            Ok(()) => ok(clock_json(&clock)),
+            Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
+        },
+        ("POST", "clock:resume") => resume_route(state, &mut clock, body),
         _ => error(404, "NOT_FOUND"),
+    }
+}
+
+/// `clock:resume`: let the clock follow real time from the instant now, or, with
+/// `syncToRealTime`, from the wall clock's instant, which is a set and refuses to go backwards
+/// unless `allowBackwards` says so.
+fn resume_route(state: &ControlState, clock: &mut VirtualClock, body: &Value) -> JsonResponse {
+    // Both HTTP entry points read an empty POST as `{}`; any other non-object, a literal `null`
+    // included, is refused.
+    if !body.is_object() {
+        return error(400, "INVALID_ARGUMENT : the body must be a JSON object");
+    }
+    let flag = |name: &str| match body.get(name) {
+        None => Ok(false),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| format!("INVALID_ARGUMENT : {name} must be a boolean")),
+    };
+    let (sync, allow_backwards) = match (flag("syncToRealTime"), flag("allowBackwards")) {
+        (Ok(sync), Ok(allow)) => (sync, allow),
+        (Err(message), _) | (_, Err(message)) => return error(400, &message),
+    };
+    let result = if sync {
+        // One reading: the target, the comparison and the anchor the clock runs from.
+        let Some(wall) = clock.read_wall() else {
+            return error(
+                400,
+                "FAILED_PRECONDITION : this clock has no wall clock to sync to",
+            );
+        };
+        if let Some(functions) = &state.functions {
+            if let Err(message) = functions.validate_clock_target(wall.instant) {
+                return error(400, &message);
+            }
+        }
+        clock.resume_at_wall(wall, allow_backwards)
+    } else {
+        clock.resume()
+    };
+    match result {
+        Ok(()) => ok(clock_json(clock)),
+        Err(e @ fireemu_core_session::clock::ClockError::NoTimeSource) => {
+            error(400, &format!("FAILED_PRECONDITION : {e}"))
+        }
+        Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
     }
 }
 

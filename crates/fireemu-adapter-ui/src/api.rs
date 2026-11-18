@@ -886,13 +886,16 @@ async fn control(state: &UiState, path: &str, req: &UiRequest) -> UiResponse {
         if req.method == "POST" && fireemu_adapter_http::control::is_await_idle_path(&full) {
             fireemu_adapter_http::control::await_idle(&state.control, &body).await
         } else {
-            fireemu_adapter_http::control::handle_with(
+            // The settling path, as the control API itself: a clock move answers only once the
+            // Functions runners have it (503 CLOCK_NOT_SETTLED when one does not answer).
+            fireemu_adapter_http::control::handle_async(
                 &state.control,
                 &req.method,
                 &full,
                 &headers,
                 &body,
             )
+            .await
         };
     let out = UiResponse::json(response.status, &response.body);
     if fireemu_adapter_http::control::is_no_store_path(&full) {

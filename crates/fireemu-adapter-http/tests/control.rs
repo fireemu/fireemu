@@ -3875,3 +3875,168 @@ async fn the_auth_and_control_listener_refuses_a_rebound_host() {
     server.abort();
     let _ = server.await;
 }
+
+/// A frozen clock with a hand-moved real-time source and a wall clock `wall_ahead` seconds
+/// from the clock's start.
+fn switchable_state(wall_ahead: i64) -> (ControlState, Arc<Mutex<i128>>) {
+    let reading = Arc::new(Mutex::new(0_i128));
+    let source = reading.clone();
+    let start = LogicalInstant::from_unix_seconds(1_788_004_860);
+    let s = state(Arc::new(AtomicUsize::new(0)));
+    *s.clock.lock().unwrap() = VirtualClock::new(start)
+        .with_time_source(Arc::new(move || *source.lock().unwrap()))
+        .with_wall_clock(Arc::new(move |reading| {
+            LogicalInstant::from_nanos(
+                start.as_nanos() + i128::from(wall_ahead) * 1_000_000_000 + reading,
+            )
+        }));
+    (s, reading)
+}
+
+/// `clock:freeze` and `clock:resume` switch the mode at runtime; every clock answer and the
+/// session read say which mode the clock is in, and each switch tells the functions runtime.
+#[test]
+fn the_clock_can_be_frozen_and_resumed_at_runtime() {
+    let functions = Arc::new(ClockCounting(AtomicUsize::new(0)));
+    let (mut s, reading) = switchable_state(3600);
+    s.functions = Some(functions.clone());
+    let post = |action: &str, body: Value| {
+        handle(&s, "POST", &format!("/v1/sessions/default/{action}"), &body)
+    };
+    let session = handle(&s, "GET", "/v1/sessions/default", &json!({}));
+    assert_eq!(session.body["clock"]["running"], false, "{}", session.body);
+
+    let resumed = post("clock:resume", json!({}));
+    assert_eq!(resumed.status, 200, "{}", resumed.body);
+    assert_eq!(resumed.body["running"], true);
+    assert_eq!(resumed.body["clock"], "2026-08-29T12:01:00Z");
+    assert_eq!(functions.moves(), 1);
+    *reading.lock().unwrap() += 5_000_000_000;
+    let session = handle(&s, "GET", "/v1/sessions/default", &json!({}));
+    assert_eq!(session.body["clock"]["running"], true);
+    assert_eq!(session.body["clock"]["clock"], "2026-08-29T12:01:05Z");
+
+    let frozen = post("clock:freeze", json!({}));
+    assert_eq!(frozen.status, 200, "{}", frozen.body);
+    assert_eq!(frozen.body["running"], false);
+    assert_eq!(frozen.body["clock"], "2026-08-29T12:01:05Z");
+    *reading.lock().unwrap() += 5_000_000_000;
+    let advanced = post("clock:advance", json!({"seconds": 1}));
+    assert_eq!(advanced.body["clock"], "2026-08-29T12:01:06Z");
+    assert_eq!(advanced.body["running"], false, "a move keeps the mode");
+
+    let synced = post("clock:resume", json!({"syncToRealTime": true}));
+    assert_eq!(synced.status, 200, "{}", synced.body);
+    assert_eq!(synced.body["running"], true);
+    assert_eq!(synced.body["clock"], "2026-08-29T13:01:10Z");
+    assert_eq!(synced.body["backwardsSets"], 0);
+    for body in [
+        json!({"syncToRealTime": "yes"}),
+        json!({"allowBackwards": 1}),
+        json!([]),
+        json!(true),
+        json!("syncToRealTime"),
+    ] {
+        let refused = post("clock:resume", body);
+        assert_eq!(refused.status, 400, "{}", refused.body);
+    }
+    assert_eq!(functions.moves(), 4);
+}
+
+/// A resume in sync with real time is a set: it refuses to go backwards unless
+/// `allowBackwards` says so, and a refused resume leaves the clock frozen.
+#[test]
+fn a_resume_in_sync_refuses_a_backwards_jump_like_clock_set() {
+    let functions = Arc::new(ClockCounting(AtomicUsize::new(0)));
+    let (mut s, _reading) = switchable_state(-3600);
+    s.functions = Some(functions.clone());
+    let post = |body: Value| handle(&s, "POST", "/v1/sessions/default/clock:resume", &body);
+    let refused = post(json!({"syncToRealTime": true}));
+    assert_eq!(refused.status, 400, "{}", refused.body);
+    assert!(
+        refused.body.to_string().contains("backwards"),
+        "{}",
+        refused.body
+    );
+    assert!(!s.clock.lock().unwrap().is_following());
+    assert_eq!(functions.moves(), 0);
+    let allowed = post(json!({"syncToRealTime": true, "allowBackwards": true}));
+    assert_eq!(allowed.status, 200, "{}", allowed.body);
+    assert_eq!(allowed.body["clock"], "2026-08-29T11:01:00Z");
+    assert_eq!(allowed.body["backwardsSets"], 1);
+    assert_eq!(allowed.body["running"], true);
+}
+
+/// A clock with no real-time source (a test world) cannot resume, and a clock with no wall
+/// clock cannot sync; both answer `FAILED_PRECONDITION` and change nothing.
+#[test]
+fn a_clock_without_real_time_cannot_resume() {
+    let s = state(Arc::new(AtomicUsize::new(0)));
+    for body in [json!({}), json!({"syncToRealTime": true})] {
+        let refused = handle(&s, "POST", "/v1/sessions/default/clock:resume", &body);
+        assert_eq!(refused.status, 400, "{}", refused.body);
+        assert!(
+            refused.body.to_string().contains("FAILED_PRECONDITION"),
+            "{}",
+            refused.body
+        );
+    }
+    let frozen = handle(&s, "POST", "/v1/sessions/default/clock:freeze", &json!({}));
+    assert_eq!(frozen.status, 200, "freezing a frozen clock is a no-op");
+    assert_eq!(frozen.body["running"], false);
+    let wrong = handle(&s, "GET", "/v1/sessions/default/clock:freeze", &json!({}));
+    assert_eq!(wrong.status, 404);
+}
+
+/// The route takes an object; an empty POST reaches it as `{}` (both HTTP entry points) and is a
+/// plain resume, while a literal JSON `null` is refused.
+#[test]
+fn a_resume_body_must_be_an_object() {
+    let (s, _reading) = switchable_state(0);
+    let refused = handle(
+        &s,
+        "POST",
+        "/v1/sessions/default/clock:resume",
+        &Value::Null,
+    );
+    assert_eq!(refused.status, 400, "{}", refused.body);
+    assert!(!s.clock.lock().unwrap().is_following());
+    let resumed = handle(&s, "POST", "/v1/sessions/default/clock:resume", &json!({}));
+    assert_eq!(resumed.status, 200, "{}", resumed.body);
+    assert_eq!(resumed.body["running"], true);
+}
+
+/// A running clock already at the wall time syncs to it although every read of the source
+/// moves on: the target, the comparison and the anchor are one reading, so it is neither
+/// refused as backwards nor left behind the wall clock.
+#[test]
+fn a_sync_uses_one_wall_reading() {
+    let reads = Arc::new(Mutex::new(0_i128));
+    let counter = reads.clone();
+    let s = state(Arc::new(AtomicUsize::new(0)));
+    let source: fireemu_core_session::clock::TimeSource = Arc::new(move || {
+        let mut reads = counter.lock().unwrap();
+        *reads += 1_000;
+        *reads
+    });
+    *s.clock.lock().unwrap() = VirtualClock::following_with(LogicalInstant::UNIX_EPOCH, source, 0)
+        .with_wall_clock(Arc::new(LogicalInstant::from_nanos));
+    for _ in 0..3 {
+        let synced = handle(
+            &s,
+            "POST",
+            "/v1/sessions/default/clock:resume",
+            &json!({"syncToRealTime": true}),
+        );
+        assert_eq!(synced.status, 200, "{}", synced.body);
+        assert_eq!(synced.body["backwardsSets"], 0);
+    }
+    let clock = s.clock.lock().unwrap();
+    let shown = clock.now_for_test();
+    let last = *reads.lock().unwrap();
+    assert_eq!(
+        shown,
+        LogicalInstant::from_nanos(last),
+        "no lag behind the wall clock"
+    );
+}

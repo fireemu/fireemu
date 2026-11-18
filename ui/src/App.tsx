@@ -289,15 +289,15 @@ export const App: Component<RouteSectionProps> = (props) => {
                 {appState.clock()}
               </span>
               <StatusBadge
-                tone={appState.config().clockMode === "frozen" ? "paused" : "neutral"}
+                tone={appState.clockMode() === "frozen" ? "paused" : "neutral"}
                 testId="clock-mode"
                 title={
-                  appState.config().clockMode === "frozen"
+                  appState.clockMode() === "frozen"
                     ? t("overview.clockFrozen")
                     : t("overview.clockRealtime")
                 }
               >
-                {appState.config().clockMode === "frozen"
+                {appState.clockMode() === "frozen"
                   ? t("header.clockFrozen")
                   : t("header.clockRealtime")}
               </StatusBadge>
