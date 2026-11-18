@@ -253,17 +253,99 @@ impl SubscriptionConfig {
 /// The delivery state of one retained message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Delivery {
-    /// Not currently delivered; becomes deliverable once the clock reaches `available_at`.
-    Available { available_at: LogicalInstant },
+    /// Not currently delivered; becomes deliverable once its clock reaches `available_at`.
+    Available { available_at: Stamp },
     /// Delivered and awaiting acknowledgement.
-    Outstanding {
-        ack_id: String,
-        deadline: LogicalInstant,
-    },
+    Outstanding { ack_id: String, deadline: Stamp },
     /// Acknowledged (kept for seek).
     Acked,
     /// Exhausted and waiting for dead-letter destination admission.
     ForwardPending,
+}
+
+/// The clock a retry time or a lease deadline was written in. A push subscription keeps them
+/// in logical time, which only a clock move advances; a pull subscription keeps them in
+/// delivery time, the logical clock plus the wall time that passed while it stood still.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseClock {
+    /// The emulator's logical clock.
+    Logical,
+    /// The adapter's delivery clock (never behind the logical clock).
+    Delivery,
+}
+
+/// One reading of both clocks a subscription's delivery state is judged against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveryTimes {
+    /// The logical clock.
+    pub logical: LogicalInstant,
+    /// The delivery clock; never behind `logical`.
+    pub delivery: LogicalInstant,
+}
+
+impl DeliveryTimes {
+    /// A reading of both clocks; `delivery` is raised to `logical` if it is behind.
+    #[must_use]
+    pub fn new(logical: LogicalInstant, delivery: LogicalInstant) -> Self {
+        Self {
+            logical,
+            delivery: delivery.max(logical),
+        }
+    }
+
+    /// The reading of `clock`.
+    #[must_use]
+    pub const fn at(self, clock: LeaseClock) -> LogicalInstant {
+        match clock {
+            LeaseClock::Logical => self.logical,
+            LeaseClock::Delivery => self.delivery,
+        }
+    }
+
+    /// `at`, written in `from`, as the same distance from now on `to`.
+    fn convert(self, at: LogicalInstant, from: LeaseClock, to: LogicalInstant) -> LogicalInstant {
+        let delta = to.as_nanos().saturating_sub(self.at(from).as_nanos());
+        LogicalInstant::from_nanos(at.as_nanos().saturating_add(delta))
+    }
+}
+
+/// A logical-only caller (tests, an embedding without a delivery clock): both clocks agree.
+impl From<LogicalInstant> for DeliveryTimes {
+    fn from(now: LogicalInstant) -> Self {
+        Self::new(now, now)
+    }
+}
+
+/// A retry time or lease deadline, with the clock it was written in. Every check reads that
+/// clock, whoever checks it and whatever the subscription's mode is now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stamp {
+    at: LogicalInstant,
+    clock: LeaseClock,
+}
+
+impl Stamp {
+    /// Available at once: the logical instant now, which neither clock is ever behind.
+    const fn now(times: DeliveryTimes) -> Self {
+        Self {
+            at: times.logical,
+            clock: LeaseClock::Logical,
+        }
+    }
+
+    /// Whether the stamp's own clock has reached it.
+    fn due(self, times: DeliveryTimes) -> bool {
+        self.at <= times.at(self.clock)
+    }
+
+    /// The instant on `clock` that is as far from now as this stamp is on its own clock.
+    fn on(self, times: DeliveryTimes, clock: LeaseClock) -> LogicalInstant {
+        if self.clock == clock {
+            self.at
+        } else {
+            times.convert(self.at, self.clock, times.at(clock))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -361,18 +443,46 @@ impl SubscriptionState {
         self.config.ack_deadline_seconds = seconds;
     }
 
-    /// Moves every retained retry time and lease deadline by `delta` nanoseconds (saturating).
-    /// Used when the subscription changes between pull and push delivery, whose times are kept
-    /// on different clocks.
-    pub fn shift_delivery_times(&mut self, delta: i128) {
-        let shift = |at: &mut LogicalInstant| {
-            *at = LogicalInstant::from_nanos(at.as_nanos().saturating_add(delta));
-        };
+    /// The clock new retry times and lease deadlines are written in: logical while the
+    /// subscription has a push endpoint, delivery time otherwise.
+    #[must_use]
+    pub fn lease_clock(&self) -> LeaseClock {
+        if self.config.is_push() {
+            LeaseClock::Logical
+        } else {
+            LeaseClock::Delivery
+        }
+    }
+
+    /// A stamp `after` from now on the subscription's lease clock.
+    fn stamp(&self, times: DeliveryTimes, after: LogicalDuration) -> Stamp {
+        let clock = self.lease_clock();
+        Stamp {
+            at: times
+                .at(clock)
+                .checked_add(after)
+                .unwrap_or(LogicalInstant::MAX),
+            clock,
+        }
+    }
+
+    /// Rewrites every retained retry time and lease deadline that is still ahead into the
+    /// subscription's lease clock, keeping its distance from now. Run under the broker lock
+    /// after a change between pull and push delivery.
+    pub fn convert_to_lease_clock(&mut self, now: impl Into<DeliveryTimes>) {
+        let times = now.into();
+        let clock = self.lease_clock();
         for entry in &mut self.entries[self.first_unacked..] {
-            match &mut entry.state {
-                Delivery::Available { available_at } => shift(available_at),
-                Delivery::Outstanding { deadline, .. } => shift(deadline),
-                Delivery::Acked | Delivery::ForwardPending => {}
+            let stamp = match &mut entry.state {
+                Delivery::Available { available_at } => available_at,
+                Delivery::Outstanding { deadline, .. } => deadline,
+                Delivery::Acked | Delivery::ForwardPending => continue,
+            };
+            if stamp.clock != clock && !stamp.due(times) {
+                *stamp = Stamp {
+                    at: stamp.on(times, clock),
+                    clock,
+                };
             }
         }
     }
@@ -500,7 +610,7 @@ impl SubscriptionState {
     pub fn enqueue(
         &mut self,
         stored: impl Into<Arc<StoredMessage>>,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
     ) -> Result<()> {
         let stored = stored.into();
         let message_bytes = Self::message_bytes(&stored);
@@ -538,7 +648,9 @@ impl SubscriptionState {
         }
         self.entries.push(Entry {
             stored,
-            state: Delivery::Available { available_at: now },
+            state: Delivery::Available {
+                available_at: Stamp::now(now.into()),
+            },
             delivery_attempt: 0,
         });
         self.retained_bytes += message_bytes;
@@ -554,17 +666,21 @@ impl SubscriptionState {
     /// Whether any message is deliverable now or outstanding (used by await-idle: a subscription
     /// with undelivered or unacked messages is not idle).
     #[must_use]
-    pub fn has_pending(&self, now: LogicalInstant) -> bool {
+    pub fn has_pending(&self, now: impl Into<DeliveryTimes>) -> bool {
+        let times = now.into();
         self.entries[self.first_unacked..]
             .iter()
             .any(|e| match &e.state {
                 Delivery::Outstanding { .. } => true,
-                Delivery::Available { available_at } => *available_at <= now,
+                Delivery::Available { available_at } => available_at.due(times),
                 Delivery::Acked | Delivery::ForwardPending => false,
             })
     }
 
-    /// Returns the earliest logical instant at which an available message can be delivered.
+    /// Returns the earliest instant at which an available message can be delivered, on the
+    /// clock each retry was written in. A future retry is always on the subscription's lease
+    /// clock (a mode change converts them); one available at once reads as its logical instant,
+    /// which is never ahead of either clock.
     /// Outstanding, acknowledged and dead-letter-forwarding entries do not make a push worker
     /// eligible to run another pull quantum.
     #[must_use]
@@ -583,7 +699,7 @@ impl SubscriptionState {
                     return None;
                 }
                 match &entry.state {
-                    Delivery::Available { available_at } => Some(*available_at),
+                    Delivery::Available { available_at } => Some(available_at.at),
                     Delivery::Outstanding { .. } | Delivery::ForwardPending | Delivery::Acked => {
                         None
                     }
@@ -594,7 +710,13 @@ impl SubscriptionState {
 
     /// Earliest retry or lease deadline for pull rechecks. Ordering eligibility is still decided
     /// by candidate selection, so a ready message blocked by credit never causes a zero timer.
-    pub(crate) fn next_pull_deadline(&self, now: LogicalInstant) -> Option<LogicalInstant> {
+    /// On the subscription's lease clock, whatever clock each was written in.
+    pub(crate) fn next_pull_deadline(
+        &self,
+        now: impl Into<DeliveryTimes>,
+    ) -> Option<LogicalInstant> {
+        let times = now.into();
+        let clock = self.lease_clock();
         self.entries[self.first_unacked..]
             .iter()
             .filter_map(|entry| match entry.state {
@@ -602,7 +724,8 @@ impl SubscriptionState {
                 Delivery::Outstanding { deadline, .. } => Some(deadline),
                 Delivery::Acked | Delivery::ForwardPending => None,
             })
-            .filter(|deadline| *deadline > now)
+            .filter(|stamp| !stamp.due(times))
+            .map(|stamp| stamp.on(times, clock))
             .min()
     }
 
@@ -616,7 +739,7 @@ impl SubscriptionState {
     pub fn retain_outstanding_ack_ids(
         &mut self,
         ack_ids: &mut BTreeSet<String>,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
     ) {
         self.expire_deadlines(now);
         ack_ids.retain(|id| self.outstanding.contains_key(id));
@@ -624,12 +747,13 @@ impl SubscriptionState {
 
     /// Moves every outstanding message whose ack deadline has passed back to available, so the
     /// next pull redelivers it. Call this on every clock advance.
-    pub fn expire_deadlines(&mut self, now: LogicalInstant) {
+    pub fn expire_deadlines(&mut self, now: impl Into<DeliveryTimes>) {
+        let times = now.into();
         let expired: Vec<String> = self
             .outstanding
             .iter()
             .filter(|(_, index)| match &self.entries[**index].state {
-                Delivery::Outstanding { deadline, .. } => *deadline <= now,
+                Delivery::Outstanding { deadline, .. } => deadline.due(times),
                 Delivery::Available { .. } | Delivery::Acked | Delivery::ForwardPending => false,
             })
             .map(|(ack_id, _)| ack_id.clone())
@@ -640,7 +764,7 @@ impl SubscriptionState {
                     self.entries[index].delivery_attempt,
                     self.push_minimum_redelivery_interval,
                 );
-                let available_at = now.checked_add(backoff).unwrap_or(now);
+                let available_at = self.stamp(times, backoff);
                 self.entries[index].state = Delivery::Available { available_at };
             }
         }
@@ -652,7 +776,7 @@ impl SubscriptionState {
     pub fn pull(
         &mut self,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
         next_ack_id: impl FnMut() -> String,
     ) -> PullOutcome {
         self.pull_with_forwarding(max, now, true, OrderedPullBatching::Mixed, next_ack_id)
@@ -662,7 +786,7 @@ impl SubscriptionState {
     pub(crate) fn pull_with_forwarding(
         &mut self,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
         forwarding_authorized: bool,
         batching: OrderedPullBatching,
         next_ack_id: impl FnMut() -> String,
@@ -683,16 +807,19 @@ impl SubscriptionState {
     pub(crate) fn pull_with_admission(
         &mut self,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
         forwarding_authorized: bool,
         batching: OrderedPullBatching,
         mut next_ack_id: impl FnMut() -> String,
         admit: impl FnOnce(&[&StoredMessage]) -> bool,
     ) -> PullOutcome {
+        let times = now.into();
         if !forwarding_authorized {
             for entry in &mut self.entries {
                 if entry.state == Delivery::ForwardPending {
-                    entry.state = Delivery::Available { available_at: now };
+                    entry.state = Delivery::Available {
+                        available_at: Stamp::now(times),
+                    };
                 }
             }
         }
@@ -700,9 +827,7 @@ impl SubscriptionState {
         if max == 0 {
             return out;
         }
-        let deadline = now
-            .checked_add(self.config.ack_deadline())
-            .unwrap_or(LogicalInstant::MAX);
+        let deadline = self.stamp(times, self.config.ack_deadline());
         let max_attempts = self
             .config
             .dead_letter_policy
@@ -719,7 +844,7 @@ impl SubscriptionState {
             && batching == OrderedPullBatching::SeparateUnkeyed
             && self.entries[self.first_unacked..].iter().any(|entry| {
                 entry.stored.message.ordering_key.is_empty()
-                    && matches!(&entry.state, Delivery::Available { available_at } if *available_at <= now)
+                    && matches!(&entry.state, Delivery::Available { available_at } if available_at.due(times))
                     && max_attempts.is_none_or(|limit| entry.delivery_attempt < limit)
             });
 
@@ -740,7 +865,7 @@ impl SubscriptionState {
             if ordered && !ordering_key.is_empty() && blocked_keys.contains(&ordering_key) {
                 continue;
             }
-            if !matches!(&self.entries[i].state, Delivery::Available { available_at } if *available_at <= now)
+            if !matches!(&self.entries[i].state, Delivery::Available { available_at } if available_at.due(times))
             {
                 if ordered && !ordering_key.is_empty() {
                     blocked_keys.insert(ordering_key.clone());
@@ -838,10 +963,17 @@ impl SubscriptionState {
     }
 
     /// Restores a retained transfer to source delivery after a revoked grant.
-    pub(crate) fn resume_forward(&mut self, message: &Arc<StoredMessage>, now: LogicalInstant) {
+    pub(crate) fn resume_forward(
+        &mut self,
+        message: &Arc<StoredMessage>,
+        now: impl Into<DeliveryTimes>,
+    ) {
+        let times = now.into();
         for entry in &mut self.entries {
             if entry.state == Delivery::ForwardPending && Arc::ptr_eq(&entry.stored, message) {
-                entry.state = Delivery::Available { available_at: now };
+                entry.state = Delivery::Available {
+                    available_at: Stamp::now(times),
+                };
             }
         }
     }
@@ -859,7 +991,13 @@ impl SubscriptionState {
     /// Modifies the ack deadline of one outstanding message. A deadline of zero seconds nacks
     /// the message: it becomes available for immediate redelivery (after the retry backoff).
     /// Unknown ack ids are ignored.
-    pub fn modify_ack_deadline(&mut self, ack_id: &str, seconds: u32, now: LogicalInstant) {
+    pub fn modify_ack_deadline(
+        &mut self,
+        ack_id: &str,
+        seconds: u32,
+        now: impl Into<DeliveryTimes>,
+    ) {
+        let times = now.into();
         let Some(index) = self.outstanding.get(ack_id).copied() else {
             return;
         };
@@ -870,11 +1008,13 @@ impl SubscriptionState {
             );
             self.outstanding.remove(ack_id);
             self.entries[index].state = Delivery::Available {
-                available_at: now.checked_add(backoff).unwrap_or(now),
+                available_at: self.stamp(times, backoff),
             };
-        } else if let Delivery::Outstanding { deadline, .. } = &mut self.entries[index].state {
-            let duration = LogicalDuration::from_seconds(i64::from(seconds));
-            *deadline = now.checked_add(duration).unwrap_or(LogicalInstant::MAX);
+        } else {
+            let extended = self.stamp(times, LogicalDuration::from_seconds(i64::from(seconds)));
+            if let Delivery::Outstanding { deadline, .. } = &mut self.entries[index].state {
+                *deadline = extended;
+            }
         }
     }
 
@@ -882,7 +1022,12 @@ impl SubscriptionState {
     /// marked acked (skipped) and every message published at or after it becomes available for
     /// redelivery. Rejected for ordered subscriptions, which the official emulator does not
     /// support seeking by time.
-    pub fn seek_to_time(&mut self, time: LogicalInstant, now: LogicalInstant) -> Result<()> {
+    pub fn seek_to_time(
+        &mut self,
+        time: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
+    ) -> Result<()> {
+        let times = now.into();
         if self.config.enable_message_ordering {
             return Err(PubSubError::unimplemented(
                 "seek to a timestamp is not supported for ordered subscriptions (official emulator limitation)",
@@ -892,7 +1037,9 @@ impl SubscriptionState {
             if e.stored.publish_time < time {
                 e.state = Delivery::Acked;
             } else {
-                e.state = Delivery::Available { available_at: now };
+                e.state = Delivery::Available {
+                    available_at: Stamp::now(times),
+                };
                 e.delivery_attempt = 0;
             }
         }
@@ -970,8 +1117,9 @@ impl SubscriptionState {
         retained_message_ids: &BTreeSet<String>,
         unacknowledged_message_ids: &BTreeSet<String>,
         created_at: LogicalInstant,
-        now: LogicalInstant,
+        now: impl Into<DeliveryTimes>,
     ) -> Result<()> {
+        let times = now.into();
         let existing_ids = self
             .entries
             .iter()
@@ -1038,7 +1186,9 @@ impl SubscriptionState {
             insertion_index..insertion_index,
             missing_messages.into_iter().map(|stored| Entry {
                 stored,
-                state: Delivery::Available { available_at: now },
+                state: Delivery::Available {
+                    available_at: Stamp::now(times),
+                },
                 delivery_attempt: 0,
             }),
         );
@@ -1047,7 +1197,9 @@ impl SubscriptionState {
                 || (!retained_message_ids.contains(&entry.stored.message_id)
                     && entry.stored.publish_time >= created_at)
             {
-                entry.state = Delivery::Available { available_at: now };
+                entry.state = Delivery::Available {
+                    available_at: Stamp::now(times),
+                };
                 entry.delivery_attempt = 0;
             } else {
                 entry.state = Delivery::Acked;
@@ -1060,6 +1212,49 @@ impl SubscriptionState {
 
 #[cfg(test)]
 mod tests {
+    /// A stamp in logical time, as a logical-only caller writes it.
+    fn logical(at: LogicalInstant) -> super::Stamp {
+        super::Stamp {
+            at,
+            clock: super::LeaseClock::Logical,
+        }
+    }
+
+    /// Codex r3: a retry or lease is judged on the clock it was written in. A pull
+    /// subscription's lease written in delivery time is due when delivery time reaches it, not
+    /// logical time. (Conversion on a switch is tested in `state`.)
+    #[test]
+    fn stamps_are_judged_on_their_own_clock() {
+        use super::DeliveryTimes;
+        let at = |seconds| LogicalInstant::from_unix_seconds(seconds);
+        let mut s = SubscriptionState::new(cfg());
+        s.enqueue(stored("1", b"a", 100), at(100)).unwrap();
+        let mut ids = counter();
+        // Delivery time runs 60 s ahead of the still logical clock.
+        let ahead = DeliveryTimes::new(at(100), at(160));
+        let out = s.pull(1, ahead, &mut ids);
+        let ack = out.received[0].ack_id.clone();
+        s.modify_ack_deadline(&ack, 0, ahead);
+        // Retry written in delivery time (backoff 0): due at once on delivery time.
+        assert_eq!(s.pull(1, ahead, &mut ids).received.len(), 1);
+        // The lease of that pull: 10 s after 160 on the delivery clock, whatever logical time
+        // says. Delivery at 165 is not due (the lease reads as 170), delivery at 170 is.
+        assert_eq!(
+            s.next_pull_deadline(DeliveryTimes::new(at(100), at(165))),
+            Some(at(170))
+        );
+        s.expire_deadlines(DeliveryTimes::new(at(100), at(169)));
+        assert_eq!(s.outstanding_count(), 1);
+        s.expire_deadlines(DeliveryTimes::new(at(100), at(170)));
+        assert_eq!(s.outstanding_count(), 0);
+        // A logical-only reading (both clocks equal) would not have expired it at 110.
+        let lease = super::Stamp {
+            at: at(170),
+            clock: super::LeaseClock::Delivery,
+        };
+        assert!(!lease.due(DeliveryTimes::from(at(110))));
+    }
+
     use super::*;
     use crate::message::PubsubMessage;
     use proptest::prelude::*;
@@ -1893,7 +2088,7 @@ mod tests {
         // Backoff: the unkeyed message becomes available only later.
         let mut sub = ordered_log(&[("u", ""), ("k", "k1")], true);
         sub.entries[0].state = Delivery::Available {
-            available_at: later,
+            available_at: logical(later),
         };
         assert_eq!(
             message_ids(&separate_pull(&mut sub, 10, now, counter()).received),
@@ -1901,7 +2096,9 @@ mod tests {
         );
         // Available exactly at `now` counts as deliverable.
         let mut sub = ordered_log(&[("u", ""), ("k", "k1")], true);
-        sub.entries[0].state = Delivery::Available { available_at: now };
+        sub.entries[0].state = Delivery::Available {
+            available_at: logical(now),
+        };
         assert_eq!(
             message_ids(&separate_pull(&mut sub, 10, now, counter()).received),
             vec!["u"]
@@ -1966,7 +2163,7 @@ mod tests {
         let later = LogicalInstant::from_unix_seconds(90);
         let mut sub = ordered_log(&[("k", "k1"), ("u", "")], true);
         sub.entries[0].state = Delivery::Available {
-            available_at: later,
+            available_at: logical(later),
         };
         let mut ids = counter();
         let first = separate_pull(&mut sub, 10, now, &mut ids);
@@ -1976,7 +2173,7 @@ mod tests {
         assert_eq!(
             sub.entries[0].state,
             Delivery::Available {
-                available_at: later
+                available_at: logical(later)
             }
         );
         assert_eq!(sub.outstanding_count(), 1);

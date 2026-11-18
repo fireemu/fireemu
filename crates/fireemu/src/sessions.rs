@@ -307,10 +307,9 @@ impl ProjectHooks for Projects {
 
     fn clock_advanced(&self, now: fireemu_core_types::time::LogicalInstant) {
         self.backend.compact_all(now);
-        if let Ok(mut pubsub) = self.pubsub.lock() {
-            pubsub.expire_all(now);
-        }
-        self.pubsub_handle.on_clock_changed();
+        // Each lapsed lease expires on the clock it was written in (a pull lease on delivery
+        // time), and the hook wakes delivery.
+        self.pubsub_handle.expire_lapsed_on_clock_advance();
     }
 
     fn clock_settled(&self, scope: &Scope, now: fireemu_core_types::time::LogicalInstant) -> usize {

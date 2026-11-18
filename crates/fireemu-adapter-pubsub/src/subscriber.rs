@@ -219,15 +219,11 @@ fn apply_stream_request(
             crate::admission::ack_deadline(i64::from(*seconds)).map_err(|error| status(&error))?;
         }
     }
-    if !req.ack_ids.is_empty() {
-        let ids: Vec<_> = req
-            .ack_ids
-            .iter()
-            .map(|id| crate::ack_token::internal(id, handle.paging_policy))
-            .collect();
-        let _ = handle.acknowledge(sub, &ids);
-    }
-    // One expiry pass for the whole frame, then every change at that time.
+    let ids: Vec<_> = req
+        .ack_ids
+        .iter()
+        .map(|id| crate::ack_token::internal(id, handle.paging_policy))
+        .collect();
     let changes: Vec<(String, u32)> = req
         .modify_deadline_ack_ids
         .iter()
@@ -239,7 +235,8 @@ fn apply_stream_request(
             )
         })
         .collect();
-    let _ = handle.modify_ack_deadlines(sub, &changes);
+    // One clock sample and one expiry pass for the whole frame: acks first, then deadlines.
+    let _ = handle.apply_stream_frame(sub, &ids, &changes);
     Ok(())
 }
 

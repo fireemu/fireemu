@@ -389,7 +389,12 @@ impl PubSubState {
     }
 
     /// Releases a transfer reservation after authority is revoked, preserving delivered counters.
-    pub fn resume_dead_letter(&mut self, forward: &DeadLetterForward, now: LogicalInstant) {
+    pub fn resume_dead_letter(
+        &mut self,
+        forward: &DeadLetterForward,
+        now: impl Into<crate::subscription::DeliveryTimes>,
+    ) {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
         if let Some(sub) = self
             .subscriptions
@@ -933,8 +938,9 @@ impl PubSubState {
     pub fn next_pull_deadline(
         &self,
         name: &SubscriptionName,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<Option<LogicalInstant>> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         self.subscriptions
             .get(&name.to_full())
             .map(|sub| sub.next_pull_deadline(now))
@@ -1448,11 +1454,12 @@ impl PubSubState {
         &mut self,
         subscription: &SubscriptionName,
         snapshot_name: &str,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<()> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
         Self::parse_snapshot_name(snapshot_name)?;
-        let snapshot = self.get_snapshot(snapshot_name, now)?;
+        let snapshot = self.get_snapshot(snapshot_name, now.logical)?;
         let config = self.subscription_config(subscription)?;
         let current_topic_incarnation = self
             .topics
@@ -1791,12 +1798,13 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<Vec<ReceivedMessage>> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let outcome = self.pull_with_dead_letters(name, max, now)?;
         for forward in outcome.dead_lettered {
-            if let Ok(prepared) = self.prepare_dead_letter_publication(&forward, now) {
-                if self.commit_prepared(prepared, now).is_ok() {
+            if let Ok(prepared) = self.prepare_dead_letter_publication(&forward, now.logical) {
+                if self.commit_prepared(prepared, now.logical).is_ok() {
                     let _ = self.complete_dead_letter(
                         &forward.source_subscription,
                         &forward.message.message_id,
@@ -1814,8 +1822,9 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<PullResult> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         self.pull_with_dead_letters_batching(name, max, now, OrderedPullBatching::Mixed)
     }
 
@@ -1825,9 +1834,10 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
         batching: OrderedPullBatching,
     ) -> Result<PullResult> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         self.pull_with_dead_letters_admitted(name, max, now, batching, |_| true)
     }
 
@@ -1837,10 +1847,11 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         max: usize,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
         batching: OrderedPullBatching,
         admit: impl FnOnce(&[&StoredMessage]) -> bool,
     ) -> Result<PullResult> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let key = name.to_full();
         if !self.subscriptions.contains_key(&key) {
             return Err(PubSubError::not_found(format!(
@@ -1954,8 +1965,9 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         ack_ids: &mut BTreeSet<String>,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<()> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         self.sub_mut(name)?.retain_outstanding_ack_ids(ack_ids, now);
         Ok(())
     }
@@ -1967,8 +1979,9 @@ impl PubSubState {
         name: &SubscriptionName,
         ack_ids: &[String],
         seconds: u32,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<()> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
         let sub = self.sub_mut(name)?;
         for id in ack_ids {
@@ -1982,22 +1995,33 @@ impl PubSubState {
         &mut self,
         name: &SubscriptionName,
         time: LogicalInstant,
-        now: LogicalInstant,
+        now: impl Into<crate::subscription::DeliveryTimes>,
     ) -> Result<()> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
         self.sub_mut(name)?.seek_to_time(time, now)
     }
 
-    /// Moves the subscription's retained retry times and lease deadlines by `delta` nanoseconds.
-    pub fn shift_delivery_times(&mut self, name: &SubscriptionName, delta: i128) -> Result<()> {
+    /// Converts the subscription's retained retry times and lease deadlines to its lease clock
+    /// after a change between pull and push delivery.
+    pub fn convert_to_lease_clock(
+        &mut self,
+        name: &SubscriptionName,
+        now: impl Into<crate::subscription::DeliveryTimes>,
+    ) -> Result<()> {
         let _changed = self.delivery_change();
-        self.sub_mut(name)?.shift_delivery_times(delta);
+        self.sub_mut(name)?.convert_to_lease_clock(now);
         Ok(())
     }
 
     /// Expires lapsed ack deadlines of one subscription. An ack or deadline change runs this
     /// first, so a lease that lapsed with nobody pulling is not acknowledged or extended late.
-    pub fn expire_lapsed(&mut self, name: &SubscriptionName, now: LogicalInstant) -> Result<()> {
+    pub fn expire_lapsed(
+        &mut self,
+        name: &SubscriptionName,
+        now: impl Into<crate::subscription::DeliveryTimes>,
+    ) -> Result<()> {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
         self.sub_mut(name)?.expire_deadlines(now);
         Ok(())
@@ -2005,9 +2029,10 @@ impl PubSubState {
 
     /// Expires lapsed ack deadlines across every subscription. Call on each clock advance so a
     /// later pull redelivers messages whose deadline passed while the clock moved.
-    pub fn expire_all(&mut self, now: LogicalInstant) {
+    pub fn expire_all(&mut self, now: impl Into<crate::subscription::DeliveryTimes>) {
+        let now: crate::subscription::DeliveryTimes = now.into();
         let _changed = self.delivery_change();
-        self.remove_expired_snapshots(now);
+        self.remove_expired_snapshots(now.logical);
         for sub in self.subscriptions.values_mut() {
             sub.expire_deadlines(now);
         }
@@ -2943,7 +2968,7 @@ mod tests {
     /// the given publish time, is seen by every subscription, and leaves the counter that numbers ordinary publishes
     /// alone, so the next ordinary message still gets the next number.
     /// `expire_lapsed` returns a lapsed lease to the queue of one subscription (so a late ack
-    /// misses it), and `shift_delivery_times` moves retained lease and retry times by a delta.
+    /// misses it), and `convert_to_lease_clock` moves retained times between the two clocks.
     #[test]
     fn expire_lapsed_and_shift_delivery_times_move_one_subscriptions_leases() {
         let mut s = PubSubState::new(42);
@@ -2955,25 +2980,31 @@ mod tests {
         let subscription = SubscriptionName::new("demo-app", "jobs-sub").unwrap();
         s.publish(&topic("demo-app", "jobs"), vec![data(b"x")], at(1000))
             .unwrap();
-        let leased = s.pull(&subscription, 1, at(1000)).unwrap();
-        let lease = s
-            .next_pull_deadline(&subscription, at(1000))
-            .unwrap()
-            .unwrap();
-        // Shift the lease 5 s later, then back.
-        s.shift_delivery_times(&subscription, 5_000_000_000)
-            .unwrap();
+        // Delivery time runs 60 s ahead of the still logical clock.
+        let ahead = crate::subscription::DeliveryTimes::new(at(1000), at(1060));
+        let leased = s.pull(&subscription, 1, ahead).unwrap();
+        let lease = s.next_pull_deadline(&subscription, ahead).unwrap().unwrap();
+        assert_eq!(lease, at(1070));
+        // A switch to push converts the lease to logical time at the same distance from now; a
+        // switch back converts it again.
+        s.update_push_config(
+            &subscription,
+            PushConfig {
+                push_endpoint: "http://127.0.0.1:1/push".to_owned(),
+                ..PushConfig::default()
+            },
+        )
+        .unwrap();
+        s.convert_to_lease_clock(&subscription, ahead).unwrap();
         assert_eq!(
-            s.next_pull_deadline(&subscription, at(1000))
-                .unwrap()
-                .unwrap()
-                .as_nanos(),
-            lease.as_nanos() + 5_000_000_000
+            s.next_pull_deadline(&subscription, ahead).unwrap(),
+            Some(at(1010))
         );
-        s.shift_delivery_times(&subscription, -5_000_000_000)
+        s.update_push_config(&subscription, PushConfig::default())
             .unwrap();
+        s.convert_to_lease_clock(&subscription, ahead).unwrap();
         assert_eq!(
-            s.next_pull_deadline(&subscription, at(1000)).unwrap(),
+            s.next_pull_deadline(&subscription, ahead).unwrap(),
             Some(lease)
         );
         // Not lapsed yet: the ack id still acknowledges.

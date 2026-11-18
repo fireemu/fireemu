@@ -114,9 +114,30 @@ async fn start_with_bridge_and_policy(
     bridge: Option<Arc<dyn TopicDelivery>>,
     policy: fireemu_adapter_pubsub::PagingPolicy,
 ) -> Harness {
-    let clock = Arc::new(Mutex::new(VirtualClock::new(
-        LogicalInstant::from_unix_seconds(1_700_000_000),
-    )));
+    start_with_clock(
+        bridge,
+        policy,
+        VirtualClock::new(LogicalInstant::from_unix_seconds(1_700_000_000)),
+    )
+    .await
+}
+
+/// A strict harness whose clock follows real time, as a daemon without a pinned start.
+async fn start_following() -> Harness {
+    start_with_clock(
+        None,
+        fireemu_adapter_pubsub::PagingPolicy::Strict,
+        VirtualClock::following(LogicalInstant::from_unix_seconds(1_700_000_000)),
+    )
+    .await
+}
+
+async fn start_with_clock(
+    bridge: Option<Arc<dyn TopicDelivery>>,
+    policy: fireemu_adapter_pubsub::PagingPolicy,
+    clock: VirtualClock,
+) -> Harness {
+    let clock = Arc::new(Mutex::new(clock));
     let state = Arc::new(Mutex::new(PubSubState::new(42)));
     let handle = PubSubHandle::new(state.clone(), clock.clone(), bridge).with_paging_policy(policy);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -5511,6 +5532,72 @@ async fn a_push_whose_lease_lapsed_in_flight_is_pushed_again() {
     h.handle.on_clock_changed();
     release.store(true, Ordering::Release);
     await_push_count(&bodies, 2).await;
+    h.shutdown().await;
+    stop.store(true, Ordering::Release);
+    worker.join().unwrap();
+}
+
+/// Codex r3 M3b: on a clock that follows real time, a lease outstanding at a switch to push is
+/// pushed when it lapses with nobody moving the clock or waking the dispatcher: the dispatcher
+/// sleeps until the earliest deferral, not only until a notification.
+#[tokio::test]
+async fn a_lease_outstanding_at_a_switch_to_push_is_pushed_on_a_following_clock() {
+    let h = start_following().await;
+    let mut pubc = h.publisher().await;
+    let mut subc = h.subscriber().await;
+    let (endpoint, bodies, stop, worker) = push_sink(204);
+    let topic = "projects/demo-app/topics/switch-following";
+    let subscription = "projects/demo-app/subscriptions/switch-following";
+    pubc.create_topic(pb::Topic {
+        name: topic.to_owned(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    subc.create_subscription(pb::Subscription {
+        name: subscription.to_owned(),
+        topic: topic.to_owned(),
+        ack_deadline_seconds: 10,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    pubc.publish(pb::PublishRequest {
+        topic: topic.to_owned(),
+        messages: vec![msg(b"leased")],
+    })
+    .await
+    .unwrap();
+    let leased = subc
+        .pull(pb::PullRequest {
+            subscription: subscription.to_owned(),
+            max_messages: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .received_messages;
+    assert_eq!(leased.len(), 1);
+    subc.modify_push_config(pb::ModifyPushConfigRequest {
+        subscription: subscription.to_owned(),
+        push_config: Some(pb::PushConfig {
+            push_endpoint: endpoint,
+            ..Default::default()
+        }),
+    })
+    .await
+    .unwrap();
+    // Not before the lease lapses (10 s), and then within a few seconds, untouched.
+    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+    assert_eq!(bodies.lock().unwrap().len(), 0);
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        while bodies.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the lapsed lease is pushed without a clock move");
     h.shutdown().await;
     stop.store(true, Ordering::Release);
     worker.join().unwrap();
