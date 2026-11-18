@@ -977,6 +977,9 @@ pub struct StorageState {
     /// How server-side Cloud Storage JSON API traffic passes an `enforced` App Check policy
     /// (`appCheck.storageServerRequests`).
     pub server_requests: StorageServerRequests,
+    /// How the dates of a signed URL and the expiration of a form policy, minted on the
+    /// signer's clock, are judged (`daemon.callerTimes`).
+    pub caller_times: crate::CallerTimes,
     /// How a caller's ID token is verified before Storage Rules see it: the compatibility
     /// profile decides (`emulator` admits the official emulator's mock tokens, `strict`
     /// does not).
@@ -7569,6 +7572,14 @@ fn parse_content_range(cr: &str) -> Option<ContentRange> {
 /// The XML API's refusal of a form upload that breaks its policy (UNRECORDED: Cloud Storage's
 /// documented codes).
 fn post_policy_refusal(fault: crate::storage_xml::PolicyFault) -> StorageResponse {
+    post_policy_refusal_with_note(fault, None)
+}
+
+/// [`post_policy_refusal`] with the clock note an expired policy carries under `clockOrWall`.
+fn post_policy_refusal_with_note(
+    fault: crate::storage_xml::PolicyFault,
+    note: Option<&String>,
+) -> StorageResponse {
     use crate::storage_xml::PolicyFault;
     const CONDITIONS: &str =
         "The content of the form does not meet the conditions specified in the policy document.";
@@ -7589,7 +7600,7 @@ fn post_policy_refusal(fault: crate::storage_xml::PolicyFault) -> StorageRespons
             400,
             "ExpiredToken",
             "Invalid argument.",
-            Some("Policy expired."),
+            Some(&with_note("Policy expired.", note)),
         ),
         PolicyFault::Condition(condition) => xml_error(
             400,
@@ -7646,13 +7657,7 @@ fn form_upload(state: &StorageState, bucket: &str, mut req: StorageRequest) -> O
     let n = if state.is_strict() {
         let mut form = fields.clone();
         form.push(("key".to_owned(), key.clone()));
-        crate::storage_xml::check_post_policy(
-            &form,
-            bucket,
-            data.len() as u64,
-            now_unix_seconds(state),
-        )
-        .map_err(post_policy_refusal)?;
+        judged_post_policy(state, &form, bucket, data.len() as u64)?;
         upload_object_name(state, &key)?
     } else {
         object_name(&key)?
@@ -7710,9 +7715,85 @@ fn form_upload(state: &StorageState, bucket: &str, mut req: StorageRequest) -> O
     Ok(StorageResponse::empty(204))
 }
 
-/// Seconds since the Unix epoch on the run's clock.
-fn now_unix_seconds(state: &StorageState) -> i64 {
-    i64::try_from(state.now().as_nanos().div_euclid(1_000_000_000)).unwrap_or(0)
+fn unix_seconds(at: LogicalInstant) -> i64 {
+    i64::try_from(at.as_nanos().div_euclid(1_000_000_000)).unwrap_or(0)
+}
+
+/// A signed URL's dates judged under `daemon.callerTimes`: `getSignedUrl()` signs with the
+/// caller's wall time. The answer at the emulator clock stands unless it refuses a URL that
+/// `clockOrWall` accepts at wall time. A refusal that depends on the time carries the note
+/// [`clock_note`] gives.
+fn judged_signed_url(
+    state: &StorageState,
+    params: &BTreeMap<String, String>,
+) -> (crate::storage_xml::SignedUrl, Option<String>) {
+    use crate::storage_xml::{check_signed_url, SignedUrl};
+    let clock = state.now();
+    let wall = crate::host_wall_now();
+    let at_clock = check_signed_url(params, unix_seconds(clock));
+    if matches!(at_clock, SignedUrl::Valid | SignedUrl::Absent) {
+        return (at_clock, None);
+    }
+    let accepted = state.caller_times.holds(clock, wall, |at| {
+        check_signed_url(params, unix_seconds(at)) == SignedUrl::Valid
+    });
+    if accepted {
+        return (SignedUrl::Valid, None);
+    }
+    let time_dependent = matches!(at_clock, SignedUrl::Expired)
+        || at_clock == SignedUrl::Invalid(crate::storage_xml::SIGNED_DATE_IN_THE_FUTURE);
+    (
+        at_clock,
+        time_dependent
+            .then(|| clock_note(state.caller_times, clock, wall))
+            .flatten(),
+    )
+}
+
+/// A form upload's policy judged under `daemon.callerTimes`: the policy's `expiration` is minted
+/// on the signer's clock, so `clockOrWall` accepts a policy that holds at either time. An
+/// expired policy's refusal carries the clock note.
+fn judged_post_policy(
+    state: &StorageState,
+    form: &[(String, String)],
+    bucket: &str,
+    file_len: u64,
+) -> Result<(), StorageResponse> {
+    use crate::storage_xml::{check_post_policy, PolicyFault};
+    let clock = state.now();
+    let wall = crate::host_wall_now();
+    let at_clock = check_post_policy(form, bucket, file_len, unix_seconds(clock));
+    match at_clock {
+        Err(PolicyFault::Expired)
+            if state.caller_times.holds(clock, wall, |at| {
+                check_post_policy(form, bucket, file_len, unix_seconds(at)).is_ok()
+            }) =>
+        {
+            Ok(())
+        }
+        Err(PolicyFault::Expired) => Err(post_policy_refusal_with_note(
+            PolicyFault::Expired,
+            clock_note(state.caller_times, clock, wall).as_ref(),
+        )),
+        other => other.map_err(post_policy_refusal),
+    }
+}
+
+/// The sentence a time-dependent refusal ends with under `clockOrWall`: the two times it was
+/// judged against. `None` under `clock` (`productionExact`), which keeps production's text.
+fn clock_note(
+    caller_times: crate::CallerTimes,
+    clock: LogicalInstant,
+    wall: LogicalInstant,
+) -> Option<String> {
+    (caller_times == crate::CallerTimes::ClockOrWall).then(|| {
+        format!(" Fireemu: judged against the emulator clock ({clock}) and wall time ({wall}).")
+    })
+}
+
+/// `details` followed by the clock note, when there is one.
+fn with_note(details: &str, note: Option<&String>) -> String {
+    note.map_or_else(|| details.to_owned(), |note| format!("{details}{note}"))
 }
 
 /// Whether the request carries a credential a local run can accept on the public URL: a `Bearer`
@@ -7757,16 +7838,17 @@ fn xml_read_admission(
     req: &StorageRequest,
     params: &BTreeMap<String, String>,
 ) -> Result<(), StorageResponse> {
-    use crate::storage_xml::{check_signed_url, SignedUrl};
+    use crate::storage_xml::SignedUrl;
     refuse_conflicting_signing_parameter(state, req)?;
-    match check_signed_url(params, now_unix_seconds(state)) {
+    let (judged, note) = judged_signed_url(state, params);
+    match judged {
         SignedUrl::Valid => return verify_signed_url(state, req),
         SignedUrl::Expired => {
             return Err(xml_error(
                 400,
                 "ExpiredToken",
                 "Invalid argument.",
-                Some("Request has expired."),
+                Some(&with_note("Request has expired.", note.as_ref())),
             ))
         }
         SignedUrl::Invalid(details) => {
@@ -7774,7 +7856,7 @@ fn xml_read_admission(
                 400,
                 "InvalidArgument",
                 "Invalid argument.",
-                Some(details),
+                Some(&with_note(details, note.as_ref())),
             ))
         }
         SignedUrl::Absent => {}
@@ -7804,20 +7886,20 @@ fn xml_style_put(
     req: StorageRequest,
     params: &BTreeMap<String, String>,
 ) -> Outcome {
-    use crate::storage_xml::{
-        check_signed_url, v4_expiry_details, v4_signature_missing, SignedUrl,
-    };
+    use crate::storage_xml::{v4_expiry_details, v4_signature_missing, SignedUrl};
     refuse_conflicting_signing_parameter(state, &req)?;
-    match check_signed_url(params, now_unix_seconds(state)) {
+    let (judged, note) = judged_signed_url(state, params);
+    match judged {
         SignedUrl::Expired => {
             return Err(xml_error(
                 400,
                 "ExpiredToken",
                 "Invalid argument.",
-                Some(
+                Some(&with_note(
                     &v4_expiry_details(params)
                         .unwrap_or_else(|| "The provided token has expired.".to_owned()),
-                ),
+                    note.as_ref(),
+                )),
             ))
         }
         SignedUrl::Invalid(details) => {
@@ -7825,7 +7907,7 @@ fn xml_style_put(
                 400,
                 "InvalidArgument",
                 "Invalid argument.",
-                Some(details),
+                Some(&with_note(details, note.as_ref())),
             ))
         }
         // A V4 URL that names every signing parameter but the signature (recorded): production
@@ -8076,16 +8158,17 @@ fn xml_style_delete(
     req: &StorageRequest,
     params: &BTreeMap<String, String>,
 ) -> Outcome {
-    use crate::storage_xml::{check_signed_url, SignedUrl};
+    use crate::storage_xml::SignedUrl;
     refuse_conflicting_signing_parameter(state, req)?;
-    match check_signed_url(params, now_unix_seconds(state)) {
+    let (judged, note) = judged_signed_url(state, params);
+    match judged {
         SignedUrl::Valid => verify_signed_url(state, req)?,
         SignedUrl::Expired => {
             return Err(xml_error(
                 400,
                 "ExpiredToken",
                 "Invalid argument.",
-                Some("Request has expired."),
+                Some(&with_note("Request has expired.", note.as_ref())),
             ))
         }
         SignedUrl::Invalid(details) => {
@@ -8093,7 +8176,7 @@ fn xml_style_delete(
                 400,
                 "InvalidArgument",
                 "Invalid argument.",
-                Some(details),
+                Some(&with_note(details, note.as_ref())),
             ))
         }
         SignedUrl::Absent => {

@@ -68,6 +68,7 @@ fn harness_with(mode: BaselineMode, server_requests: StorageServerRequests) -> H
         app_check_policy: fixture::policy(&app_check, "storage", mode),
         admin_capability: Some("storage-capability".to_owned()),
         server_requests,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         token_acceptance: fireemu_core_auth::jwt::TokenAcceptance::default(),
         allow_unsigned_id_tokens: false,
         control_token: None,

@@ -21,6 +21,9 @@ use serde_json::Value;
 /// The longest lifetime a V4 signed URL may name: seven days.
 pub const MAX_SIGNED_URL_SECONDS: u64 = 604_800;
 
+/// The refusal of a V4 URL signed more than 15 minutes after the time it is judged at.
+pub const SIGNED_DATE_IN_THE_FUTURE: &str = "X-Goog-Date is more than 15 minutes in the future.";
+
 /// What a request's query says about being a signed URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignedUrl {
@@ -58,7 +61,7 @@ pub fn check_signed_url(params: &BTreeMap<String, String>, now_unix: i64) -> Sig
         }
         // Allow up to 15 minutes of clock skew before the signing time.
         if date > now_unix.saturating_add(900) {
-            return SignedUrl::Invalid("X-Goog-Date is more than 15 minutes in the future.");
+            return SignedUrl::Invalid(SIGNED_DATE_IN_THE_FUTURE);
         }
         let expires = date.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX));
         return if now_unix > expires {

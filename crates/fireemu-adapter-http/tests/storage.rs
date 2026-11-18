@@ -140,6 +140,7 @@ fn state_with(rules: Option<&str>, token_acceptance: TokenAcceptance) -> Storage
         app_check_policy: None,
         admin_capability: None,
         server_requests: fireemu_adapter_http::storage::StorageServerRequests::default(),
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         token_acceptance,
         allow_unsigned_id_tokens: token_acceptance == TokenAcceptance::EmulatorMock,
         control_token: Some(CONTROL_TOKEN.to_owned()),
@@ -11037,7 +11038,11 @@ type Case<'a> = (&'a str, String, Vec<(&'a str, &'a str)>, Vec<u8>, String);
 fn signed_xml_put_refusals_have_the_production_body_in_both_profiles() {
     let png = [137u8, 80, 78, 71];
     for acceptance in [TokenAcceptance::Verified, TokenAcceptance::EmulatorMock] {
-        let s = state_with(None, acceptance);
+        // Production's recorded bodies, judged on one clock as `productionExact` does.
+        let s = StorageState {
+            caller_times: fireemu_adapter_http::CallerTimes::Clock,
+            ..state_with(None, acceptance)
+        };
         let narrow = [
             ("content-type", "image/png"),
             ("x-goog-content-length-range", "5,8"),
@@ -12479,4 +12484,138 @@ fn a_storage_path_segment_decodes_to_the_object_it_names() {
             "XML {spelling}"
         );
     }
+}
+
+/// `X-Goog-Date` of a signed URL signed `offset` seconds from host wall time, as
+/// `getSignedUrl()` stamps it.
+fn wall_goog_date(offset: i64) -> String {
+    let now = fireemu_adapter_http::host_wall_now();
+    let at = fireemu_core_types::time::LogicalInstant::from_unix_seconds(
+        i64::try_from(now.as_nanos().div_euclid(1_000_000_000)).unwrap() + offset,
+    );
+    let text = at.to_rfc3339().unwrap();
+    text[..19].replace(['-', ':'], "") + "Z"
+}
+
+/// A strict state whose clock is pinned at 2026-01-01T00:00:00Z, as a `fireemu/testing` world.
+fn pinned_state() -> StorageState {
+    let s = state(None);
+    *s.clock.lock().unwrap() = VirtualClock::new(
+        fireemu_core_types::time::LogicalInstant::from_unix_seconds(1_767_225_600),
+    );
+    s
+}
+
+/// Frozen-clock audit #2: `getSignedUrl()` signs with host wall time. On a pinned clock far
+/// behind it, the default accepts the URL on each signed route because it holds against wall
+/// time.
+#[test]
+fn a_signed_url_minted_on_wall_time_is_accepted_on_a_pinned_clock() {
+    let s = pinned_state();
+    let query = format!(
+        "X-Goog-Signature=test&X-Goog-Date={}&X-Goog-Expires=900",
+        wall_goog_date(0)
+    );
+    let put = handle(
+        &s,
+        req("PUT", &format!("/{BUCKET}/wall.txt?{query}"), &[], b"wall"),
+    );
+    assert_eq!(put.status, 200, "{:?}", String::from_utf8_lossy(&put.body));
+    let get = handle(
+        &s,
+        req("GET", &format!("/{BUCKET}/wall.txt?{query}"), &[], &[]),
+    );
+    assert_eq!(get.status, 200, "{:?}", String::from_utf8_lossy(&get.body));
+    let v2 = format!(
+        "Signature=test&GoogleAccessId=x&Expires={}",
+        i64::try_from(fireemu_adapter_http::host_wall_now().as_nanos() / 1_000_000_000).unwrap()
+            + 900
+    );
+    let get = handle(
+        &s,
+        req("GET", &format!("/{BUCKET}/wall.txt?{v2}"), &[], &[]),
+    );
+    assert_eq!(get.status, 200, "{:?}", String::from_utf8_lossy(&get.body));
+    let delete = handle(
+        &s,
+        req("DELETE", &format!("/{BUCKET}/wall.txt?{query}"), &[], &[]),
+    );
+    assert!(
+        delete.status < 300,
+        "{:?}",
+        String::from_utf8_lossy(&delete.body)
+    );
+}
+
+/// The other side of #2: a URL that holds at neither time is refused with a note naming both;
+/// `callerTimes = clock` refuses a wall-minted URL with production's text alone, on a clock
+/// pinned behind (`X-Goog-Date` in the future) and ahead (expired).
+#[test]
+fn signed_url_refusals_follow_caller_times_and_name_the_clock() {
+    let body = |r: &fireemu_adapter_http::storage::StorageResponse| {
+        String::from_utf8_lossy(&r.body).into_owned()
+    };
+    let get = |s: &StorageState, date: &str, expires: u32| {
+        handle(
+            s,
+            req(
+                "GET",
+                &format!("/{BUCKET}/none.txt?X-Goog-Signature=test&X-Goog-Date={date}&X-Goog-Expires={expires}"),
+                &[],
+                &[],
+            ),
+        )
+    };
+    let behind = pinned_state();
+    // Signed an hour after wall time: in the future of both clocks.
+    let future = get(&behind, &wall_goog_date(3600), 900);
+    assert_eq!(future.status, 400);
+    assert!(
+        body(&future).contains("X-Goog-Date is more than 15 minutes in the future. Fireemu: judged against the emulator clock (2026-01-01T00:00:00Z) and wall time ("),
+        "{}",
+        body(&future)
+    );
+    // Near miss: 14 minutes ahead of wall time is within the skew allowance.
+    assert_eq!(get(&behind, &wall_goog_date(840), 900).status, 404);
+    // A shape refusal is not about time and carries no note.
+    let shape = get(&behind, &wall_goog_date(0), 0);
+    assert!(!body(&shape).contains("Fireemu"), "{}", body(&shape));
+    let exact = StorageState {
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
+        ..pinned_state()
+    };
+    let refused = get(&exact, &wall_goog_date(0), 900);
+    assert_eq!(refused.status, 400);
+    assert!(
+        body(&refused)
+            .contains("<Details>X-Goog-Date is more than 15 minutes in the future.</Details>"),
+        "{}",
+        body(&refused)
+    );
+    // A clock pinned a year ahead: the wall-minted URL has expired on the clock.
+    let ahead_at = fireemu_core_types::time::LogicalInstant::from_nanos(
+        fireemu_adapter_http::host_wall_now().as_nanos() + 365 * 86_400 * 1_000_000_000,
+    );
+    let ahead = state(None);
+    *ahead.clock.lock().unwrap() = VirtualClock::new(ahead_at);
+    assert_eq!(get(&ahead, &wall_goog_date(0), 900).status, 404);
+    // Near miss: signed 901 s before wall time with a 900 s lifetime has expired at both times.
+    let expired = get(&ahead, &wall_goog_date(-901), 900);
+    assert_eq!(expired.status, 400);
+    assert!(
+        body(&expired).contains("Request has expired. Fireemu:"),
+        "{}",
+        body(&expired)
+    );
+    let ahead_exact = StorageState {
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
+        ..state(None)
+    };
+    *ahead_exact.clock.lock().unwrap() = VirtualClock::new(ahead_at);
+    let expired = get(&ahead_exact, &wall_goog_date(0), 900);
+    assert!(
+        body(&expired).contains("<Details>Request has expired.</Details>"),
+        "{}",
+        body(&expired)
+    );
 }

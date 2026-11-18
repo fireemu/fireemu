@@ -53,6 +53,7 @@ fn state(acceptance: TokenAcceptance) -> StorageState {
         app_check_policy: None,
         admin_capability: None,
         server_requests: fireemu_adapter_http::storage::StorageServerRequests::default(),
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         token_acceptance: acceptance,
         allow_unsigned_id_tokens: acceptance == TokenAcceptance::EmulatorMock,
         control_token: Some("storage-test-control-token".to_owned()),

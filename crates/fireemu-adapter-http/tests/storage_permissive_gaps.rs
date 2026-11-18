@@ -54,6 +54,7 @@ fn state(acceptance: TokenAcceptance) -> StorageState {
         app_check_policy: None,
         admin_capability: None,
         server_requests: fireemu_adapter_http::storage::StorageServerRequests::default(),
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         token_acceptance: acceptance,
         allow_unsigned_id_tokens: acceptance == TokenAcceptance::EmulatorMock,
         control_token: Some("storage-test-control-token".to_owned()),
@@ -2318,4 +2319,79 @@ mod undeclared_bucket_modes {
             }
         }
     }
+}
+
+/// Frozen-clock audit #2, form policies: the policy's `expiration` is minted on the signer's
+/// wall clock. On a strict clock pinned at 2026-01-01 the development default accepts a policy
+/// that holds at wall time, and refuses one that holds at neither time with a note naming both;
+/// `callerTimes = clock` judges on the clock alone with production's text.
+#[test]
+fn a_form_policy_minted_on_wall_time_is_judged_under_caller_times() {
+    let pinned = |caller_times| {
+        let s = StorageState {
+            caller_times,
+            ..strict()
+        };
+        *s.clock.lock().unwrap() = fireemu_core_session::clock::VirtualClock::new(
+            fireemu_core_types::time::LogicalInstant::from_unix_seconds(1_767_225_600),
+        );
+        s
+    };
+    let wall = fireemu_adapter_http::host_wall_now().as_nanos() / 1_000_000_000;
+    let at = |offset: i128| {
+        fireemu_core_types::time::LogicalInstant::from_nanos((wall + offset) * 1_000_000_000)
+            .to_rfc3339()
+            .unwrap()
+    };
+    let post = |s: &StorageState, expiration: &str| {
+        let policy = signed_policy(&json!([]), expiration);
+        form_post(
+            s,
+            "demo-app.appspot.com",
+            &[
+                ("key", "p.txt"),
+                ("policy", &policy),
+                ("x-goog-signature", "abc"),
+            ],
+            b"hello",
+        )
+    };
+    let default = pinned(fireemu_adapter_http::CallerTimes::ClockOrWall);
+    let accepted = post(&default, &at(3600));
+    assert_eq!(accepted.status, 204, "{}", text(&accepted));
+    // Expired at both times: refused, and the note names the pinned clock.
+    let refused = post(&default, "2025-12-01T00:00:00Z");
+    assert_eq!(refused.status, 400, "{}", text(&refused));
+    assert!(
+        text(&refused).contains("Policy expired. Fireemu: judged against the emulator clock (2026-01-01T00:00:00Z) and wall time ("),
+        "{}",
+        text(&refused)
+    );
+    // Near misses on a clock pinned 400 days ahead: an expiration 5 s past wall time passes,
+    // one 5 s before it is refused.
+    let ahead = StorageState {
+        caller_times: fireemu_adapter_http::CallerTimes::ClockOrWall,
+        ..strict()
+    };
+    *ahead.clock.lock().unwrap() = fireemu_core_session::clock::VirtualClock::new(
+        fireemu_core_types::time::LogicalInstant::from_nanos((wall + 400 * 86_400) * 1_000_000_000),
+    );
+    assert_eq!(post(&ahead, &at(5)).status, 204);
+    assert_eq!(post(&ahead, &at(-5)).status, 400);
+    let exact = pinned(fireemu_adapter_http::CallerTimes::Clock);
+    // A policy valid at the pinned clock stays accepted on the clock alone.
+    let accepted = post(&exact, "2026-01-01T01:00:00Z");
+    assert_eq!(accepted.status, 204, "{}", text(&accepted));
+    assert_eq!(
+        post(&exact, &at(3600)).status,
+        204,
+        "the clock is behind, so not yet expired"
+    );
+    let refused = post(&exact, "2025-12-01T00:00:00Z");
+    assert_eq!(refused.status, 400);
+    assert!(
+        text(&refused).contains("<Details>Policy expired.</Details>"),
+        "{}",
+        text(&refused)
+    );
 }

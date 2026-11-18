@@ -3406,6 +3406,7 @@ fn storage_state(
         app_check_policy,
         admin_capability: Some(admin_capability),
         server_requests: cfg.app_check.storage_server_requests,
+        caller_times: cfg.caller_times,
         token_acceptance: cfg.token_acceptance,
         allow_unsigned_id_tokens: cfg.auth_allow_unsigned_id_tokens,
         control_token: Some(control_token),
