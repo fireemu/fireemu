@@ -1379,10 +1379,8 @@ fn epoch_millis() -> u64 {
 fn task_timestamp_from_nanos(nanos: i128) -> String {
     let seconds = i64::try_from(nanos.div_euclid(1_000_000_000)).unwrap_or(i64::MAX);
     let subsecond = u32::try_from(nanos.rem_euclid(1_000_000_000)).unwrap_or(0);
-    chrono::DateTime::from_timestamp(seconds, subsecond).map_or_else(
-        || "1970-01-01T00:00:00.000000Z".to_owned(),
-        |time| time.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-    )
+    crate::time_text::format_rfc3339_utc(seconds, subsecond, crate::time_text::Fraction::Micros)
+        .unwrap_or_else(|| "1970-01-01T00:00:00.000000Z".to_owned())
 }
 
 /// Where the message of a first-generation schedule goes. In production Cloud Scheduler publishes one message to the
@@ -1853,10 +1851,8 @@ impl FunctionsRuntime {
         });
         let seconds = i64::try_from(nanos.div_euclid(1_000_000_000)).unwrap_or(i64::MAX);
         let subsecond = u32::try_from(nanos.rem_euclid(1_000_000_000)).unwrap_or(0);
-        chrono::DateTime::from_timestamp(seconds, subsecond).map_or_else(
-            || "1970-01-01T00:00:00.000000Z".to_owned(),
-            |time| time.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-        )
+        crate::time_text::format_rfc3339_utc(seconds, subsecond, crate::time_text::Fraction::Micros)
+            .unwrap_or_else(|| "1970-01-01T00:00:00.000000Z".to_owned())
     }
 
     async fn wait_task_until(&self, deadline: crate::task_scheduler::TaskTime) {

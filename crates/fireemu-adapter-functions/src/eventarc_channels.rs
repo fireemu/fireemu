@@ -139,8 +139,9 @@ pub fn uuid_from(high: u64, low: u64) -> String {
 pub fn rfc3339(instant: Nanos) -> String {
     let seconds = i64::try_from(instant / NANOS_PER_SECOND).unwrap_or(i64::MAX);
     let nanos = instant % NANOS_PER_SECOND;
-    let date = chrono::DateTime::from_timestamp(seconds, 0).unwrap_or_default();
-    format!("{}.{nanos:09}Z", date.format("%Y-%m-%dT%H:%M:%S"))
+    let date = crate::time_text::format_rfc3339_utc(seconds, 0, crate::time_text::Fraction::Auto)
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned());
+    format!("{}.{nanos:09}Z", date.trim_end_matches('Z'))
 }
 
 /// What a channel is doing at an instant.
@@ -1443,9 +1444,9 @@ mod tests {
         fn the_text_of_a_timestamp_is_thirty_characters_and_parses_back(instant in 0u64..4_000_000_000_000_000_000) {
             let text = rfc3339(instant);
             prop_assert_eq!(text.len(), 30);
-            let parsed = chrono::DateTime::parse_from_rfc3339(&text).unwrap();
+            let parsed = crate::time_text::parse_rfc3339(&text).unwrap();
             prop_assert_eq!(
-                u64::try_from(parsed.timestamp_nanos_opt().unwrap()).unwrap(),
+                u64::try_from(parsed.epoch_nanos()).unwrap(),
                 instant
             );
         }
