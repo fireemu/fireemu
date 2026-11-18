@@ -2967,6 +2967,38 @@ mod tests {
     /// A message published with a caller-chosen id (the one Cloud Scheduler's Gen1 publish carries) keeps that id and
     /// the given publish time, is seen by every subscription, and leaves the counter that numbers ordinary publishes
     /// alone, so the next ordinary message still gets the next number.
+    /// `resume_dead_letter` releases a reserved transfer back to its source subscription.
+    #[test]
+    fn resume_dead_letter_releases_the_pending_transfer() {
+        let mut s = PubSubState::new(42);
+        let at = |seconds| LogicalInstant::from_unix_seconds(seconds);
+        s.create_topic(topic("demo-app", "jobs"), BTreeMap::new())
+            .unwrap();
+        s.create_topic(topic("demo-app", "dead-letters"), BTreeMap::new())
+            .unwrap();
+        let mut config = sub_cfg("demo-app", "jobs-sub", "jobs", Filter::always());
+        config.dead_letter_policy = Some(crate::subscription::DeadLetterPolicy {
+            dead_letter_topic: TopicName::new("demo-app", "dead-letters").unwrap(),
+            max_delivery_attempts: crate::subscription::MIN_DEAD_LETTER_ATTEMPTS,
+        });
+        s.create_subscription(config).unwrap();
+        let subscription = SubscriptionName::new("demo-app", "jobs-sub").unwrap();
+        s.publish(&topic("demo-app", "jobs"), vec![data(b"x")], at(1000))
+            .unwrap();
+        let mut now = at(1000);
+        let mut forwards = Vec::new();
+        for _ in 0..=crate::subscription::MIN_DEAD_LETTER_ATTEMPTS {
+            let outcome = s.pull_with_dead_letters(&subscription, 1, now).unwrap();
+            forwards.extend(outcome.dead_lettered);
+            now = LogicalInstant::from_nanos(now.as_nanos() + 11_000_000_000);
+            s.expire_all(now);
+        }
+        assert_eq!(forwards.len(), 1);
+        assert_eq!(s.pending_dead_letters().len(), 1);
+        s.resume_dead_letter(&forwards[0], now);
+        assert!(s.pending_dead_letters().is_empty());
+    }
+
     /// `expire_lapsed` returns a lapsed lease to the queue of one subscription (so a late ack
     /// misses it), and `convert_to_lease_clock` moves retained times between the two clocks.
     #[test]
@@ -2998,6 +3030,14 @@ mod tests {
         s.convert_to_lease_clock(&subscription, ahead).unwrap();
         assert_eq!(
             s.next_pull_deadline(&subscription, ahead).unwrap(),
+            Some(at(1010))
+        );
+        // Converted, the lease waits on the still logical clock: delivery time running on 30 s
+        // does not lapse it.
+        let drifted = crate::subscription::DeliveryTimes::new(at(1000), at(1090));
+        s.expire_lapsed(&subscription, drifted).unwrap();
+        assert_eq!(
+            s.next_pull_deadline(&subscription, drifted).unwrap(),
             Some(at(1010))
         );
         s.update_push_config(&subscription, PushConfig::default())

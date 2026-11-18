@@ -1097,7 +1097,7 @@
     },
     "crates/fireemu-adapter-pubsub/src/lib.rs": {
       "kind": "sha256",
-      "value": "fd73ea45091adb11cc2cab2abaafb4ca66f02a7b2858574e4c7e1954be21d96a"
+      "value": "08a0764370a50ec10cf7a4df3728b9bb371fa7aa287d1ad9783095314f05b676"
     },
     "crates/fireemu-adapter-pubsub/src/publisher.rs": {
       "kind": "sha256",
@@ -1745,11 +1745,11 @@
     },
     "crates/fireemu-core-pubsub/src/state.rs": {
       "kind": "sha256",
-      "value": "cb5568160eda2472402ba74aca115182acd52d935a3c81c49823f18900f003dc"
+      "value": "34ff3cc6b7aa89a5b3d985cbc06a900967c80800b850ee532f79b8221c7a3e08"
     },
     "crates/fireemu-core-pubsub/src/subscription.rs": {
       "kind": "sha256",
-      "value": "17ded9ae4779279cc811a1ca811bd426b4000d901006a51a13a4efd54802d17d"
+      "value": "c2db4451045050444b9e1e56b9ca4223de43b9717b5339dd6e26a27c86c51ab6"
     },
     "crates/fireemu-core-rules/Cargo.toml": {
       "kind": "sha256",

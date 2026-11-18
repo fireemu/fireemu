@@ -1104,9 +1104,9 @@ impl PubSubHandle {
                 )?;
             }
         }
-        if !ack_ids.is_empty() {
-            self.retry_pending_dead_letters();
-        }
+        // An ack can make room for a pending dead-letter transfer; retrying is cheap and
+        // idempotent, so every frame does it.
+        self.retry_pending_dead_letters();
         Ok(())
     }
 
@@ -3033,6 +3033,53 @@ mod dispatch_tests {
         (handle, subscription)
     }
 
+    /// Codex r3 M3b: the dispatcher sleeps until the earliest deferral on a clock that follows
+    /// real time (at least 1 ms), and an hour when nothing is deferred or the clock stands still.
+    #[test]
+    fn the_push_dispatcher_sleeps_until_its_earliest_deferral_on_a_following_clock() {
+        let hour = std::time::Duration::from_secs(3600);
+        let work = |handle: &PubSubHandle, subscription: &SubscriptionName| {
+            let mut dispatch = handle.push_dispatch.lock().unwrap();
+            dispatch.enqueue(subscription.clone(), handle.now());
+            dispatch.claim().unwrap()
+        };
+        let defer = |handle: &PubSubHandle, subscription: &SubscriptionName, after: i64| {
+            let work = work(handle, subscription);
+            let eligible = LogicalInstant::from_nanos(
+                handle.now().as_nanos() + i128::from(after) * 1_000_000_000,
+            );
+            let mut dispatch = handle.push_dispatch.lock().unwrap();
+            dispatch.active.clear();
+            dispatch
+                .deferred
+                .insert(subscription.to_full(), (work, eligible));
+        };
+        let (frozen, subscription, _) = unary_pull_fixture(PagingPolicy::Emulator);
+        assert_eq!(frozen.deferred_push_wait(), hour);
+        defer(&frozen, &subscription, 5);
+        assert_eq!(frozen.deferred_push_wait(), hour);
+        let following = PubSubHandle::new(
+            Arc::new(Mutex::new(PubSubState::new(7))),
+            Arc::new(Mutex::new(VirtualClock::following(
+                LogicalInstant::UNIX_EPOCH,
+            ))),
+            None,
+        );
+        assert_eq!(following.deferred_push_wait(), hour);
+        defer(&following, &subscription, 5);
+        let wait = following.deferred_push_wait();
+        assert!(
+            wait <= std::time::Duration::from_secs(5)
+                && wait > std::time::Duration::from_millis(4_500),
+            "{wait:?}"
+        );
+        defer(&following, &subscription, -5);
+        assert_eq!(
+            following.deferred_push_wait(),
+            std::time::Duration::from_millis(1)
+        );
+    }
+
     /// Codex r3 S2: a frame's acks apply before its deadline changes, from one sample: an ack
     /// and a nack of the same id in one frame acknowledge it.
     #[test]
@@ -3098,7 +3145,17 @@ mod dispatch_tests {
             .unwrap()
             .advance(LogicalDuration::from_seconds(75))
             .unwrap();
+        // The hook itself expires the lease (no pull needed): the retry is queued at once.
+        assert_eq!(
+            handle.state().next_delivery_at(&subscription).unwrap(),
+            None
+        );
         handle.expire_lapsed_on_clock_advance();
+        assert!(handle
+            .state()
+            .next_delivery_at(&subscription)
+            .unwrap()
+            .is_some());
         assert!(handle.pull(&subscription, 1).unwrap().is_empty());
         handle.pass_wall_time(11);
         assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);

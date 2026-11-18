@@ -466,8 +466,8 @@ impl SubscriptionState {
         }
     }
 
-    /// Rewrites every retained retry time and lease deadline that is still ahead into the
-    /// subscription's lease clock, keeping its distance from now. Run under the broker lock
+    /// Rewrites every retained retry time and lease deadline written in the other clock into
+    /// the subscription's lease clock, keeping its distance from now. Run under the broker lock
     /// after a change between pull and push delivery.
     pub fn convert_to_lease_clock(&mut self, now: impl Into<DeliveryTimes>) {
         let times = now.into();
@@ -478,7 +478,8 @@ impl SubscriptionState {
                 Delivery::Outstanding { deadline, .. } => deadline,
                 Delivery::Acked | Delivery::ForwardPending => continue,
             };
-            if stamp.clock != clock && !stamp.due(times) {
+            // A due stamp stays due when converted (the distance from now is kept).
+            if stamp.clock != clock {
                 *stamp = Stamp {
                     at: stamp.on(times, clock),
                     clock,
@@ -1719,6 +1720,26 @@ mod tests {
         let out = s.pull(10, now, &mut ids);
         assert_eq!(out.received.len(), 0);
         assert_eq!(out.dead_lettered.len(), 1);
+    }
+
+    /// `has_pending` and `resume_forward` with both clock readings: a pending entry is pending,
+    /// and a transfer released back to the queue is deliverable again at once.
+    #[test]
+    fn pending_and_resumed_forward_entries_are_deliverable() {
+        let (mut s, now) = pending_forward_state();
+        let times = super::DeliveryTimes::new(
+            now,
+            now.checked_add(LogicalDuration::from_seconds(60)).unwrap(),
+        );
+        let forwarded = s.pending_forwards()[0].clone();
+        assert!(s.pull(10, times, &mut counter()).received.is_empty());
+        s.resume_forward(&forwarded, times);
+        assert!(s.has_pending(times));
+        assert!(s.pending_forwards().is_empty());
+        // A different message is not released.
+        let (mut other, now) = pending_forward_state();
+        other.resume_forward(&Arc::new(stored("1", b"a", 100)), now);
+        assert_eq!(other.pending_forwards().len(), 1);
     }
 
     /// Exhausts the delivery budget and leaves the message waiting for destination admission.
