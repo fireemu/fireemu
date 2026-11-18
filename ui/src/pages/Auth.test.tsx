@@ -88,6 +88,38 @@ describe("Auth codes", () => {
     await waitFor(() => expect(ui.getByText("543210")).toBeTruthy());
   });
 
+  it("says when the clock stands still and when the current code was already used", async () => {
+    vi.mocked(auth.listTotpCodes).mockReturnValue(
+      okAsync({
+        totpCodes: [
+          {
+            uid: "user-1",
+            mfaEnrollmentId: "factor-1",
+            code: "215853",
+            secondsRemaining: 30,
+            alreadyUsed: true,
+            clockRunning: false,
+            periodSeconds: 30,
+          },
+          {
+            uid: "user-2",
+            pendingEnrollment: true,
+            code: "999000",
+            secondsRemaining: 30,
+            alreadyUsed: false,
+            clockRunning: false,
+            periodSeconds: 30,
+          },
+        ],
+      }),
+    );
+    const ui = mount();
+    await waitFor(() => expect(ui.getByTestId("totp-table")).toBeTruthy());
+    expect(ui.getByText("Already used: advance the clock by 30s (Runtime page)")).toBeTruthy();
+    expect(ui.getByText("Until the clock moves")).toBeTruthy();
+    expect(ui.queryByText("30s")).toBeNull();
+  });
+
   it("shows another failure as an error, not as the reveal being off", async () => {
     vi.mocked(auth.listTotpCodes).mockReturnValue(errAsync({ status: 500, message: "INTERNAL" }));
     const ui = mount();

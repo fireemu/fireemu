@@ -414,10 +414,16 @@ Fireemu muestra el código que mostraría una app de autenticación, así que un
 
 ```sh
 curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
-# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19,"alreadyUsed":false,"clockRunning":true,"periodSeconds":30}]}
 ```
 
-Los códigos de un tenant están en `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. Una inscripción aún sin finalizar aparece con `"pendingEnrollment": true` y sin `mfaEnrollmentId`. El código usa el periodo y los dígitos TOTP del proyecto y el reloj de Fireemu, así que es el código con el que compara la verificación. La verificación no cambia, tampoco la protección contra reutilización: un código que la inscripción o un inicio de sesión anterior ya usó en el mismo paso de tiempo se sigue rechazando; en ese caso espera al paso siguiente (`secondsRemaining`). La función está activa por defecto en ambos perfiles. `auth.totp.revealCodes = false` o `productionExact` la desactivan: no se imprime ninguna línea y la ruta responde 404. Un `auth.totp.revealCodes = true` explícito la mantiene activa con `productionExact`. `auth.logActionCodes = false` también silencia la línea. Las líneas y la ruta contienen credenciales; no las dejes en logs compartidos.
+Los códigos de un tenant están en `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. Una inscripción aún sin finalizar aparece con `"pendingEnrollment": true` y sin `mfaEnrollmentId`. El código usa el periodo y los dígitos TOTP del proyecto y el reloj de Fireemu, así que es el código con el que compara la verificación. La verificación no cambia, tampoco la protección contra reutilización: un código que la inscripción o un inicio de sesión anterior ya usó en el mismo paso de tiempo se sigue rechazando; en ese caso espera al paso siguiente (`secondsRemaining`). Un código así aparece con `"alreadyUsed": true` y su línea indica que ya se usó en lugar de ofrecerlo para usarlo. `"clockRunning": false` significa que el reloj está detenido (un `daemon.clockStart` fijado o `daemon.clock = "frozen"`): el código no cambia hasta que el reloj se mueva, por eso la línea no indica segundos restantes y, tras una inscripción, el desafío de inicio de sesión muestra el código que usó la inscripción. Para obtener un código nuevo, adelante el reloj un periodo (`periodSeconds`, el `codeIntervalSeconds` del SDK), en la página Runtime de la Emulator UI o con la API de control:
+
+```sh
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 30}'
+```
+
+La función está activa por defecto en ambos perfiles. `auth.totp.revealCodes = false` o `productionExact` la desactivan: no se imprime ninguna línea y la ruta responde 404. Un `auth.totp.revealCodes = true` explícito la mantiene activa con `productionExact`. `auth.logActionCodes = false` también silencia la línea. Las líneas y la ruta contienen credenciales; no las dejes en logs compartidos.
 
 ## Multi-tenancy
 

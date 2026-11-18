@@ -414,10 +414,16 @@ Fireemuは認証アプリが表示するはずのコードを表示するので�
 
 ```sh
 curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
-# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19,"alreadyUsed":false,"clockRunning":true,"periodSeconds":30}]}
 ```
 
-テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が照合するコードと一致します。検証そのものは変わらず、再利用の防止もそのままです。登録や先のサインインで同じ時間ステップのコードを使った後は拒否されるので、次のステップ（`secondsRemaining`）を待ってください。表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.totp.revealCodes = true`を明示すると、`productionExact`でも有効のままです。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
+テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が照合するコードと一致します。検証そのものは変わらず、再利用の防止もそのままです。登録や先のサインインで同じ時間ステップのコードを使った後は拒否されるので、次のステップ（`secondsRemaining`）を待ってください。そのようなコードは`"alreadyUsed": true`付きで並び、行には使うコードではなく、使用済みであることが表示されます。`"clockRunning": false`は時計が止まっていること（`daemon.clockStart`の固定や`daemon.clock = "frozen"`）を表します。時計を動かすまでコードは変わらないので、行に残り秒数は表示されず、登録の直後のサインインでは登録に使ったコードが表示されます。新しいコードは、時計を1周期（`periodSeconds`、SDKの`codeIntervalSeconds`）進めると得られます。Emulator UIのRuntimeページか、control APIを使ってください。
+
+```sh
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 30}'
+```
+
+表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.totp.revealCodes = true`を明示すると、`productionExact`でも有効のままです。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
 
 ## マルチテナンシー
 

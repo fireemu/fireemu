@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Authentication: the TOTP code reveal no longer offers a code verification refuses. With the clock standing still (a pinned `daemon.clockStart` or `daemon.clock = "frozen"`), the sign-in challenge after an enrollment showed the code the enrollment had just used, with a "30s left" countdown that never ran out, and signing in with it failed as already used. The line now says when the current code was already used by the factor and how to get a fresh one (advance the clock by the TOTP period on the Runtime page or with `POST /v1/sessions/default/clock:advance`), and says the code stays the same until the clock moves instead of counting down while the clock stands still. `GET /emulator/v1/projects/{project}/totpCodes` adds `alreadyUsed`, `clockRunning` and `periodSeconds`, and the Emulator UI's Auth page shows the same. Verification and replay protection are unchanged.
+
 ## [0.60.0] - 2026-11-18
 
 ### Added

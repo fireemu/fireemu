@@ -707,7 +707,7 @@
     },
     "crates/fireemu-core-auth/src/store.rs": {
       "kind": "sha256",
-      "value": "33a8600f0e49a8d5390897770727f3a4e72966dd9eb95a58f872e8f3fc5fa345"
+      "value": "39293582b96944423e4760dcaa3fd949788e50f71d4bc2060e7eea339f072c6d"
     },
     "crates/fireemu-core-auth/src/totp.rs": {
       "kind": "sha256",

@@ -125,6 +125,12 @@ export type TotpCodeInfo = {
   pendingEnrollment?: boolean;
   code: string;
   secondsRemaining: number;
+  /** The factor already accepted this step's code; it is refused until the next step. */
+  alreadyUsed?: boolean;
+  /** `false` while the emulator clock stands still: the code does not change until it moves. */
+  clockRunning?: boolean;
+  /** The TOTP period, the seconds a clock move needs to reach a fresh code. */
+  periodSeconds?: number;
 };
 
 /** Answers 404 while `auth.totp.revealCodes` is off (and under `productionExact`). */
