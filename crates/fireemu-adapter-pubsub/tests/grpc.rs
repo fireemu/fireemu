@@ -5400,3 +5400,118 @@ async fn streaming_pull_stays_live_across_minimum_and_maximum_raw_clock_replacem
     drop(responses);
     h.shutdown().await;
 }
+
+/// Codex r2 M3b: a lease still outstanding when a pull subscription becomes a push one is
+/// pushed once it expires. The push worker finds nothing available at the switch and must wait
+/// for the lease instead of stopping.
+#[tokio::test]
+async fn a_lease_outstanding_at_a_switch_to_push_is_pushed_when_it_expires() {
+    let h = start().await;
+    let mut pubc = h.publisher().await;
+    let mut subc = h.subscriber().await;
+    let (endpoint, bodies, stop, worker) = push_sink(204);
+    let topic = "projects/demo-app/topics/switch-lease";
+    let subscription = "projects/demo-app/subscriptions/switch-lease";
+    pubc.create_topic(pb::Topic {
+        name: topic.to_owned(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    subc.create_subscription(pb::Subscription {
+        name: subscription.to_owned(),
+        topic: topic.to_owned(),
+        ack_deadline_seconds: 10,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    pubc.publish(pb::PublishRequest {
+        topic: topic.to_owned(),
+        messages: vec![msg(b"leased")],
+    })
+    .await
+    .unwrap();
+    let leased = subc
+        .pull(pb::PullRequest {
+            subscription: subscription.to_owned(),
+            max_messages: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .received_messages;
+    assert_eq!(leased.len(), 1);
+    subc.modify_push_config(pb::ModifyPushConfigRequest {
+        subscription: subscription.to_owned(),
+        push_config: Some(pb::PushConfig {
+            push_endpoint: endpoint,
+            ..Default::default()
+        }),
+    })
+    .await
+    .unwrap();
+    assert_push_count_stays(&bodies, 0).await;
+    advance(&h, LogicalDuration::from_seconds(11));
+    await_push_count(&bodies, 1).await;
+    h.shutdown().await;
+    stop.store(true, Ordering::Release);
+    worker.join().unwrap();
+}
+
+/// Codex r2 S1: a clock advance while a push request is in flight runs the session hook, which
+/// expires the push lease and returns the message to the queue. The endpoint's later 2xx then
+/// finds no lease to acknowledge, so the message is not counted as acknowledged: it is pushed
+/// again, as production may redeliver after a lease lapses.
+#[tokio::test]
+async fn a_push_whose_lease_lapsed_in_flight_is_pushed_again() {
+    let h = start().await;
+    let mut pubc = h.publisher().await;
+    let mut subc = h.subscriber().await;
+    let (endpoint, bodies, started, release, stop, worker) = barrier_push_sink();
+    let topic = "projects/demo-app/topics/lapsed-in-flight";
+    let subscription = "projects/demo-app/subscriptions/lapsed-in-flight";
+    pubc.create_topic(pb::Topic {
+        name: topic.to_owned(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    subc.create_subscription(pb::Subscription {
+        name: subscription.to_owned(),
+        topic: topic.to_owned(),
+        ack_deadline_seconds: 10,
+        push_config: Some(pb::PushConfig {
+            push_endpoint: endpoint,
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    pubc.publish(pb::PublishRequest {
+        topic: topic.to_owned(),
+        messages: vec![msg(b"in-flight")],
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), started)
+        .await
+        .unwrap()
+        .unwrap();
+    // The session's clock hook: move, expire every lapsed lease, wake delivery.
+    let now = h
+        .clock
+        .lock()
+        .unwrap()
+        .advance(LogicalDuration::from_seconds(20))
+        .unwrap();
+    h.state.lock().unwrap().expire_all(now);
+    h.handle.on_clock_changed();
+    release.store(true, Ordering::Release);
+    await_push_count(&bodies, 2).await;
+    h.shutdown().await;
+    stop.store(true, Ordering::Release);
+    worker.join().unwrap();
+}

@@ -821,8 +821,8 @@ impl PubSubHandle {
         max: usize,
         batching: OrderedPullBatching,
     ) -> Result<Vec<ReceivedMessage>, PubSubError> {
-        let now = self.delivery_now();
-        self.pull_batched_at(subscription, max, batching, now)
+        let times = self.lease_times();
+        self.pull_batched_at(subscription, max, batching, times)
     }
 
     /// A pull at `now`. Pull subscribers pull in delivery time; push delivery keeps the logical
@@ -832,11 +832,12 @@ impl PubSubHandle {
         subscription: &SubscriptionName,
         max: usize,
         batching: OrderedPullBatching,
-        now: LogicalInstant,
+        times: (LogicalInstant, LogicalInstant),
     ) -> Result<Vec<ReceivedMessage>, PubSubError> {
         let _dead_letter = self.lock_dead_letter();
         let outcome = {
             let mut state = self.state();
+            let now = Self::lease_now(&state, subscription, times);
             state.pull_with_dead_letters_batching(subscription, max, now, batching)?
         };
         self.commit_dead_letters_locked(&outcome.dead_lettered);
@@ -853,14 +854,18 @@ impl PubSubHandle {
         #[cfg(test)]
         self.stream_pull_checks.fetch_add(1, Ordering::Relaxed);
         let _dead_letter = self.lock_dead_letter();
-        let now = self.delivery_now();
-        let outcome = self.state().pull_with_dead_letters_admitted(
-            subscription,
-            max,
-            now,
-            OrderedPullBatching::Mixed,
-            admit,
-        )?;
+        let times = self.lease_times();
+        let outcome = {
+            let mut state = self.state();
+            let now = Self::lease_now(&state, subscription, times);
+            state.pull_with_dead_letters_admitted(
+                subscription,
+                max,
+                now,
+                OrderedPullBatching::Mixed,
+                admit,
+            )?
+        };
         self.commit_dead_letters_locked(&outcome.dead_lettered);
         Ok(outcome.received)
     }
@@ -874,13 +879,16 @@ impl PubSubHandle {
     ) -> tokio::time::Instant {
         // The cache is keyed on the logical clock; deadlines are in delivery time, which moves
         // with wall time on a frozen clock, so the wake below is a real wait.
-        let logical = self.now();
-        let now = self.delivery_now();
-        let deadline = self
-            .state()
-            .next_pull_deadline(subscription, now)
-            .ok()
-            .flatten();
+        let times = self.lease_times();
+        let logical = times.0;
+        let (now, deadline) = {
+            let state = self.state();
+            let now = Self::lease_now(&state, subscription, times);
+            (
+                now,
+                state.next_pull_deadline(subscription, now).ok().flatten(),
+            )
+        };
         let wall = tokio::time::Instant::now();
         let fallback = std::time::Duration::from_secs(1);
         if let Some((seen_now, seen_deadline, wake)) = scheduled {
@@ -1044,6 +1052,25 @@ impl PubSubHandle {
         Ok(())
     }
 
+    /// Applies the deadline changes of one `StreamingPull` frame: lapsed leases expire once,
+    /// then each `(ack id, seconds)` applies at that time.
+    pub(crate) fn modify_ack_deadlines(
+        &self,
+        subscription: &SubscriptionName,
+        changes: &[(String, u32)],
+    ) -> Result<(), PubSubError> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let times = self.lease_times();
+        let mut state = self.state();
+        let now = Self::expire_lapsed_leases(&mut state, subscription, times)?;
+        for (ack_id, seconds) in changes {
+            state.modify_ack_deadline(subscription, std::slice::from_ref(ack_id), *seconds, now)?;
+        }
+        Ok(())
+    }
+
     /// How far the delivery clock is ahead of the logical clock now.
     pub(crate) fn delivery_offset(&self) -> fireemu_core_types::time::LogicalDuration {
         self.delivery_reading().1
@@ -1107,13 +1134,41 @@ impl PubSubHandle {
         subscription: &SubscriptionName,
         (logical, delivery): (LogicalInstant, LogicalInstant),
     ) -> Result<LogicalInstant, PubSubError> {
-        let now = if state.subscription_config(subscription)?.is_push() {
+        state.subscription_config(subscription)?;
+        let now = Self::lease_now(state, subscription, (logical, delivery));
+        state.expire_lapsed(subscription, now)?;
+        Ok(now)
+    }
+
+    /// The clock a subscription's leases and retries are kept in, which every write and check
+    /// of them uses: logical time while it has a push endpoint (push waits on the logical clock,
+    /// also for a client pull on it), delivery time otherwise. Changing the mode moves retained
+    /// times between the two (`changing_delivery_mode`).
+    fn lease_now(
+        state: &PubSubState,
+        subscription: &SubscriptionName,
+        (logical, delivery): (LogicalInstant, LogicalInstant),
+    ) -> LogicalInstant {
+        if state
+            .subscription_config(subscription)
+            .is_ok_and(fireemu_core_pubsub::SubscriptionConfig::is_push)
+        {
             logical
         } else {
             delivery
-        };
-        state.expire_lapsed(subscription, now)?;
-        Ok(now)
+        }
+    }
+
+    /// Reconciles a stream's ack ids with the subscription's live leases, at its lease clock.
+    pub(crate) fn retain_outstanding_ack_ids(
+        &self,
+        subscription: &SubscriptionName,
+        ack_ids: &mut std::collections::BTreeSet<String>,
+    ) -> Result<(), PubSubError> {
+        let times = self.lease_times();
+        let mut state = self.state();
+        let now = Self::lease_now(&state, subscription, times);
+        state.retain_outstanding_ack_ids(subscription, ack_ids, now)
     }
 
     /// A client's acknowledgement: lapsed leases expire first, so an ack that arrives after its
@@ -1330,12 +1385,29 @@ impl PubSubHandle {
             ));
         }
         let received = self
-            .pull_batched_at(&work.subscription, 100, OrderedPullBatching::Mixed, now)
+            .pull_batched_at(
+                &work.subscription,
+                100,
+                OrderedPullBatching::Mixed,
+                (now, now),
+            )
             .unwrap_or_default();
         if received.is_empty() {
             // Nothing is deliverable yet. The retry policy schedules the next message; whether it
             // or an elapsing backoff decides, the subscription is looked at again then.
-            return match self.next_push_delivery_at(&work.subscription) {
+            // A lease still outstanding (one taken before a switch from pull, or an in-flight
+            // attempt of another worker) comes back when it lapses: look again then.
+            let lease = self
+                .state()
+                .next_pull_deadline(&work.subscription, now)
+                .ok()
+                .flatten();
+            let next = self
+                .next_push_delivery_at(&work.subscription)
+                .into_iter()
+                .chain(lease)
+                .min();
+            return match next {
                 Some(next) if next > now => PushQuantumResult::Defer(next),
                 Some(_) => PushQuantumResult::Continue,
                 None => PushQuantumResult::Stop,
@@ -1477,6 +1549,11 @@ impl PubSubHandle {
                 return false;
             }
         }
+        // Zero acknowledged means the lease lapsed while the request was in flight (a clock
+        // move expired it): the message is back in the queue and is pushed again, as production
+        // may redeliver. That is not an acknowledgement; the attempt itself still succeeded, and
+        // the dispatcher goes on with the batch.
+        // Only a failure of the broker means the delivery is no longer the dispatcher's.
         self.acknowledge_pushed(subscription, ack_id).is_ok()
     }
 
@@ -2837,6 +2914,65 @@ mod dispatch_tests {
                 "{policy:?}"
             );
         }
+    }
+
+    /// Codex r2 S2: one `StreamingPull` frame expires lapsed leases once and then applies each
+    /// change: an extension of a lapsed lease is ignored, the nack in the same frame applies.
+    #[test]
+    fn a_stream_frame_applies_its_deadline_changes_after_one_expiry() {
+        let (handle, subscription, ack_id) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle.pass_wall_time(11);
+        handle
+            .modify_ack_deadlines(&subscription, &[(ack_id.clone(), 600), (ack_id, 0)])
+            .unwrap();
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
+        let (handle, subscription, ack_id) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle
+            .modify_ack_deadlines(&subscription, &[(ack_id, 600)])
+            .unwrap();
+        handle.pass_wall_time(30);
+        assert!(handle.pull(&subscription, 1).unwrap().is_empty());
+        handle.modify_ack_deadlines(&subscription, &[]).unwrap();
+    }
+
+    /// Codex r2 M2b: one clock per lease. A client pull on a push-configured subscription
+    /// writes its lease in logical time, the clock push keeps, so a late ack after a logical
+    /// advance past the lease does not consume the message, however far delivery time ran ahead.
+    #[test]
+    fn a_client_pull_on_a_push_subscription_leases_on_the_logical_clock() {
+        let (handle, subscription, topic) = unary_pull_fixture(PagingPolicy::Emulator);
+        handle
+            .update_push_config(
+                &subscription,
+                fireemu_core_pubsub::PushConfig {
+                    push_endpoint: "http://127.0.0.1:1/push".to_owned(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        handle
+            .state()
+            .publish(
+                &topic,
+                vec![PubsubMessage {
+                    data: b"m".to_vec(),
+                    ..Default::default()
+                }],
+                handle.now(),
+            )
+            .unwrap();
+        handle.pass_wall_time(60);
+        let received = handle.pull(&subscription, 1).unwrap();
+        handle
+            .clock
+            .lock()
+            .unwrap()
+            .advance(LogicalDuration::from_seconds(11))
+            .unwrap();
+        handle
+            .acknowledge(&subscription, &[received[0].ack_id.clone()])
+            .unwrap();
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
     }
 
     /// Codex r1 M3: a retry kept in delivery time while the subscription pulled is moved to

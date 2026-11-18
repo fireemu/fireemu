@@ -199,10 +199,7 @@ fn stream_pull_max(
     let Some(limit) = message_limit else {
         return Ok(100);
     };
-    let now = handle.delivery_now();
-    handle
-        .state()
-        .retain_outstanding_ack_ids(subscription, outstanding_ack_ids, now)?;
+    handle.retain_outstanding_ack_ids(subscription, outstanding_ack_ids)?;
     Ok(limit.saturating_sub(outstanding_ack_ids.len()).min(100))
 }
 
@@ -230,15 +227,19 @@ fn apply_stream_request(
             .collect();
         let _ = handle.acknowledge(sub, &ids);
     }
-    for (id, secs) in req
+    // One expiry pass for the whole frame, then every change at that time.
+    let changes: Vec<(String, u32)> = req
         .modify_deadline_ack_ids
         .iter()
         .zip(req.modify_deadline_seconds.iter())
-    {
-        let s = u32::try_from(*secs).unwrap_or(0);
-        let id = crate::ack_token::internal(id, handle.paging_policy);
-        let _ = handle.modify_ack_deadline(sub, std::slice::from_ref(&id), s);
-    }
+        .map(|(id, secs)| {
+            (
+                crate::ack_token::internal(id, handle.paging_policy),
+                u32::try_from(*secs).unwrap_or(0),
+            )
+        })
+        .collect();
+    let _ = handle.modify_ack_deadlines(sub, &changes);
     Ok(())
 }
 
