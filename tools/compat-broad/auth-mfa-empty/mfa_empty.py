@@ -5,7 +5,7 @@ Platform does for `PATCH .../config?updateMask=mfa` when the `mfa` value carries
 object, an explicit null state, providers without a state, a null `mfa`, or no `mfa` member at all)
 while MFA is enabled. Each variant runs as: enable MFA, read back, send the variant, read back. The
 stage then restores the baseline `mfa` (which the launch requires to be exactly `{state: DISABLED}` or
-absent, so the whole replace restores it) and compares whole-config digests with the baseline.
+present, so the whole replace restores it) and compares raw whole-config digests with the baseline.
 
 Every request is frozen in `manifest`. Only the owner config route is reachable: GET and PATCH with the
 mask `mfa`. The production transport is built only by `main` under `--production`, from credentials the
@@ -42,7 +42,7 @@ VARIANTS = (
     ('mfa-absent', {}),
 )
 FINAL_SLOTS = 3
-DIGEST_MEMBERS = ('whole', 'mfa', 'mobileLinksConfig', 'notification')
+DIGEST_MEMBERS = ('whole', 'mfa', 'signIn', 'mobileLinksConfig', 'notification')
 MAX_REQUESTS = 1 + len(VARIANTS) * 4 + 1 + FINAL_SLOTS
 
 
@@ -71,25 +71,20 @@ def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def normalized_config(body):
-    """The config with the protobuf omissions made explicit, as AUTH-EDGES v3.3: absent mfa is DISABLED."""
-    config = copy.deepcopy(body) if isinstance(body, dict) else {}
-    if config.get('mfa') is None:
-        config['mfa'] = {'state': 'DISABLED'}
-    sign = config.get('signIn')
-    if isinstance(sign, dict) and sign.get('allowDuplicateEmails') in (None, False):
-        sign.pop('allowDuplicateEmails', None)
-    return config
+ABSENT = {'$absent': True}
 
 
 def config_digests(body):
-    config = normalized_config(body)
-    return {'whole': _digest(config), 'mfa': _digest(config.get('mfa')), 'mobileLinksConfig': _digest(config.get('mobileLinksConfig')), 'notification': _digest(config.get('notification'))}
+    """SHA-256 of the raw config as answered and of each member a write could touch; no normalization,
+    so an absent member, a null member and `{state: DISABLED}` all differ."""
+    config = body if isinstance(body, dict) else {}
+    return {'whole': _digest(config), **{m: _digest(config[m] if m in config else ABSENT) for m in DIGEST_MEMBERS[1:]}}
 
 
 def baseline_mfa_ok(body):
-    """A1: the whole replace in `restore` puts back exactly this, so nothing else may be stored."""
-    return isinstance(body, dict) and (body.get('mfa') is None or body.get('mfa') == {'state': 'DISABLED'})
+    """A1: the stored `mfa` is present and exactly `{state: DISABLED}`, the value `restore` writes back.
+    An absent or null `mfa` is refused: the stage has no reviewed body that would restore it exactly."""
+    return isinstance(body, dict) and 'mfa' in body and body['mfa'] == {'state': 'DISABLED'}
 
 
 def mfa_enabled(body):
@@ -119,7 +114,7 @@ def project(status, body):
     return out
 
 
-def collect(*, nonce, output, send, sleep=time.sleep):
+def collect(*, nonce, output, send, sleep=time.sleep, clock=time.time):
     """Run the frozen rows. Stops the variants at the first unknown, refusal of a needed step or latch,
     always attempts the restore and the final reads, and writes `receipt.json` (never overwrites)."""
     plan = manifest(nonce)
@@ -154,7 +149,7 @@ def collect(*, nonce, output, send, sleep=time.sleep):
 
     stop = None
     baseline = call('config-baseline')
-    if baseline['status'] != 200 or not baseline_mfa_ok({'mfa': baseline.get('mfa')}) or 'digests' not in baseline:
+    if baseline['status'] != 200 or not (baseline.get('mfaPresent') and baseline_mfa_ok({'mfa': baseline.get('mfa')})) or 'digests' not in baseline:
         stop = 'baseline-not-confirmed'
     if stop is None:
         for name, _ in VARIANTS:
@@ -194,6 +189,7 @@ def collect(*, nonce, output, send, sleep=time.sleep):
         'stopReason': stop,
         'recordingComplete': stop is None,
         'requests': state['requests'],
+        'finishedAt': clock(),
         'latched': state['latched'],
         'unknowns': state['unknowns'],
         'baselineDigests': baseline.get('digests'),
@@ -219,14 +215,21 @@ def valid_digests(value):
     return isinstance(value, dict) and set(value) == set(DIGEST_MEMBERS) and all(isinstance(v, str) and re.fullmatch('[0-9a-f]{64}', v) for v in value.values())
 
 
-def a2_run(out, pre_path, receipt_path, send):
+A2_DELAY = 600
+
+
+def a2_run(out, pre_path, receipt_path, send, clock=time.time):
     out = Path(out)
     if out.exists():
         raise FileExistsError('A2 output exists')
     pre = json.loads(Path(pre_path).read_text()).get('digests')
-    stage = json.loads(Path(receipt_path).read_text()).get('baselineDigests')
+    receipt = json.loads(Path(receipt_path).read_text())
+    stage = receipt.get('baselineDigests')
     if not valid_digests(pre) or not valid_digests(stage):
         raise ValueError('A2 needs the pre-launch digests and the stage baseline digests')
+    finished = receipt.get('finishedAt')
+    if type(finished) not in (int, float) or clock() - finished < A2_DELAY:
+        raise ValueError('A2 runs at least 600 s after the recording finished')
     try:
         status, body = send({'id': 'a2-config', 'method': 'GET', 'path': CONFIG, 'body': None}, None)
     except Exception:
@@ -282,7 +285,7 @@ def read_baseline(out):
     if status != 200 or not isinstance(body, dict) or 'error' in body:
         print('config-read: unknown')
         return 2
-    print(f'A1-mfa-disabled-or-absent: {"ok" if baseline_mfa_ok(body) else "MISMATCH"}')
+    print(f'A1-mfa-exactly-disabled: {"ok" if baseline_mfa_ok(body) else "MISMATCH"}')
     digests = config_digests(body)
     for member in DIGEST_MEMBERS:
         print(f'digest-{member}: {digests[member]}')

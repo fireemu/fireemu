@@ -10,7 +10,7 @@ import pytest
 import mfa_empty as m
 
 NONCE = '0123456789abcdef0123456789abcdef'
-BASE = {'name': 'projects/123456789012/config', 'signIn': {'email': {'enabled': True}}, 'notification': {'defaultLocale': 'en'}}
+BASE = {'name': 'projects/123456789012/config', 'signIn': {'email': {'enabled': True}}, 'mfa': {'state': 'DISABLED'}, 'notification': {'defaultLocale': 'en'}}
 
 
 class World:
@@ -20,6 +20,8 @@ class World:
         self.config = copy.deepcopy(BASE)
         if mfa is not None:
             self.config['mfa'] = mfa
+            if mfa == 'absent':
+                del self.config['mfa']
         self.variant_effect = variant_effect or (lambda stored, body: (400, {'error': {'code': 400, 'message': 'INVALID_CONFIG : state required', 'status': 'INVALID_ARGUMENT'}}))
         self.answers = answers or {}
         self.sent = []
@@ -42,7 +44,7 @@ class World:
 
 
 def run(tmp_path, world):
-    return m.collect(nonce=NONCE, output=tmp_path / 'rec', send=world, sleep=lambda _s: None)
+    return m.collect(nonce=NONCE, output=tmp_path / 'rec', send=world, sleep=lambda _s: None, clock=lambda: 1000.0)
 
 
 def test_manifest_is_frozen_small_and_mask_mfa_only():
@@ -162,7 +164,11 @@ def test_shape_guard_refuses_anything_outside_the_manifest():
 def test_a2_closes_only_on_equal_digests():
     digests = m.config_digests(BASE)
     assert m.a2_evaluate(200, copy.deepcopy(BASE), digests, digests)['verdict'] == 'CLOSE-OK'
-    assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'mfa': {'state': 'DISABLED'}}, digests, digests)['verdict'] == 'CLOSE-OK'
+    absent = copy.deepcopy(BASE)
+    del absent['mfa']
+    assert m.a2_evaluate(200, absent, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
+    assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'mfa': None}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
+    assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'signIn': {'email': {'enabled': True}, 'allowDuplicateEmails': False}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'mfa': {'state': 'ENABLED'}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     assert m.a2_evaluate(None, None, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     assert m.a2_evaluate(404, {'error': {}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
@@ -179,10 +185,18 @@ def test_a2_run_validates_inputs_before_any_request(tmp_path):
     with pytest.raises(ValueError):
         m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: sent.append(r) or (200, BASE))
     assert sent == []
+    rec.write_text(json.dumps({'baselineDigests': m.config_digests(BASE), 'finishedAt': 1000.0}))
+    for early in (1000.0, 1599.9):
+        with pytest.raises(ValueError):
+            m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: sent.append(r) or (200, BASE), clock=lambda: early)
     rec.write_text(json.dumps({'baselineDigests': m.config_digests(BASE)}))
-    assert m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: (200, copy.deepcopy(BASE))) == 0
+    with pytest.raises(ValueError):
+        m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: sent.append(r) or (200, BASE), clock=lambda: 5000.0)
+    assert sent == []
+    rec.write_text(json.dumps({'baselineDigests': m.config_digests(BASE), 'finishedAt': 1000.0}))
+    assert m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: (200, copy.deepcopy(BASE)), clock=lambda: 1600.0) == 0
     with pytest.raises(FileExistsError):
-        m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: (200, BASE))
+        m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: (200, BASE), clock=lambda: 1600.0)
 
 
 def test_main_without_production_only_prints_the_manifest(capsys):
@@ -232,3 +246,61 @@ def test_production_transport_headers_shapes_and_latch(monkeypatch):
     with pytest.raises(ValueError):
         send(plan['config-baseline'], None)
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize('mfa', ['absent', None])
+def test_absent_or_null_baseline_mfa_refuses_every_write(tmp_path, mfa):
+    world = World()
+    if mfa == 'absent':
+        del world.config['mfa']
+    else:
+        world.config['mfa'] = None
+    receipt = run(tmp_path, world)
+    assert receipt['stopReason'] == 'baseline-not-confirmed' and [s[1] for s in world.sent] == ['GET']
+
+
+def test_digests_are_raw_so_absent_null_and_disabled_differ():
+    absent = copy.deepcopy(BASE)
+    del absent['mfa']
+    values = [m.config_digests(absent), m.config_digests(BASE | {'mfa': None}), m.config_digests(BASE)]
+    assert len({d['mfa'] for d in values}) == 3 and len({d['whole'] for d in values}) == 3
+    dup = copy.deepcopy(BASE)
+    dup['signIn']['allowDuplicateEmails'] = False
+    assert m.config_digests(dup)['signIn'] != m.config_digests(BASE)['signIn']
+
+
+def test_final_read_without_the_mfa_member_is_not_a_clean_close(tmp_path):
+    def stripped(w, r, b):
+        c = copy.deepcopy(w.config)
+        c.pop('mfa', None)
+        return 200, c
+    receipt = run(tmp_path, World(answers={f'final-readback-{i}': stripped for i in range(3)}))
+    assert not receipt['cleanupComplete'] and receipt['finishedAt'] == 1000.0
+
+
+def test_a2_refuses_invalid_digests_even_when_late_enough(tmp_path):
+    sent = []
+    pre = tmp_path / 'pre.json'
+    pre.write_text(json.dumps({'digests': m.config_digests(BASE)}))
+    rec = tmp_path / 'receipt.json'
+    rec.write_text(json.dumps({'baselineDigests': {'whole': 'x'}, 'finishedAt': 0}))
+    with pytest.raises(ValueError):
+        m.a2_run(tmp_path / 'a2.json', pre, rec, lambda r, b: sent.append(r) or (200, BASE), clock=lambda: 10_000.0)
+    assert sent == []
+
+
+@pytest.mark.parametrize('mfa, code', [('disabled', 0), ('absent', 2), (None, 2), ({'state': 'ENABLED'}, 2)])
+def test_launch_baseline_check_requires_mfa_exactly_disabled(tmp_path, monkeypatch, capsys, mfa, code):
+    body = copy.deepcopy(BASE)
+    if mfa == 'absent':
+        del body['mfa']
+    elif mfa != 'disabled':
+        body['mfa'] = mfa
+    monkeypatch.setattr(m, 'production_send', lambda: (lambda row, b: (200, copy.deepcopy(body))))
+    out = tmp_path / 'pre.json'
+    assert m.read_baseline(out) == code
+    printed = capsys.readouterr().out
+    assert ('A1-mfa-exactly-disabled: ok' in printed) == (code == 0)
+    assert out.exists() == (code == 0)
+    if code == 0:
+        assert json.loads(out.read_text())['digests'] == m.config_digests(BASE) and oct(out.stat().st_mode & 0o777) == '0o600'
