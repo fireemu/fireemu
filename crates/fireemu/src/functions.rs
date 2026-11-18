@@ -16984,6 +16984,20 @@ exit 0
                 config.honour_task_schedule_time, honours_schedule,
                 "{profile}"
             );
+            // `daemon.callerTimes` decides whether a task scheduleTime minted on the other
+            // clock is rebased: on by default, off when it judges on the clock alone.
+            assert!(
+                config.clock_policy.rebase_caller_schedule_times,
+                "{profile}"
+            );
+            let mut on_the_clock = cfg.clone();
+            on_the_clock.caller_times = fireemu_adapter_http::CallerTimes::Clock;
+            assert!(
+                !super::functions_config(&on_the_clock, None, "secret")
+                    .clock_policy
+                    .rebase_caller_schedule_times,
+                "{profile}"
+            );
             assert_eq!(config.project, cfg.auth_project);
             assert_eq!(config.functions_host.as_deref(), Some("127.0.0.1:5001"));
             assert_eq!(config.runner_secret, "secret");
