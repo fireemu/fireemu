@@ -55,6 +55,32 @@ async fn start_full(
     virtual_tasks: bool,
     production_gaps: bool,
 ) -> Harness {
+    start_with_policy(
+        name,
+        profile,
+        reuse,
+        deadline,
+        retry,
+        ApplicationClockPolicy {
+            tasks_virtual: virtual_tasks,
+            ..ApplicationClockPolicy::default()
+        },
+        production_gaps,
+    )
+    .await
+}
+
+/// [`start_full`] with an explicit application-clock policy.
+#[allow(clippy::too_many_lines)]
+async fn start_with_policy(
+    name: &str,
+    profile: FunctionsHttpProfile,
+    reuse: NameReuse,
+    deadline: u64,
+    retry: TaskRetryConfig,
+    clock_policy: ApplicationClockPolicy,
+    production_gaps: bool,
+) -> Harness {
     let dir =
         std::env::temp_dir().join(format!("fireemu-task-shape-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -118,10 +144,7 @@ async fn start_full(
         FunctionsConfig {
             project: "demo-app".into(),
             functions_host: Some("127.0.0.1:5001".into()),
-            clock_policy: ApplicationClockPolicy {
-                tasks_virtual: virtual_tasks,
-                ..ApplicationClockPolicy::default()
-            },
+            clock_policy,
             honour_task_schedule_time: true,
             task_name_reuse: reuse,
             task_default_deadline_seconds: deadline,
@@ -1973,4 +1996,119 @@ async fn strict_raw_body_size_boundaries_include_headers_and_base64_padding() {
         }
     }
     h.stop().await;
+}
+
+/// The `scheduleTime` the strict answer reports for a task enqueued with `schedule`, under
+/// `policy`, on a clock pinned at `START`.
+async fn answered_schedule_time(name: &str, policy: ApplicationClockPolicy, schedule: &str) -> i64 {
+    let h = start_with_policy(
+        name,
+        FunctionsHttpProfile::Strict,
+        NameReuse::Immediate,
+        600,
+        retry(1, 500),
+        policy,
+        false,
+    )
+    .await;
+    let answer = h
+        .runtime
+        .enqueue_task(
+            "demo-app",
+            "us-central1",
+            "taskA",
+            &body_of(&json!({"scheduleTime": schedule})),
+        )
+        .unwrap();
+    let at = LogicalInstant::parse_rfc3339(answer["scheduleTime"].as_str().unwrap()).unwrap();
+    h.stop().await;
+    i64::try_from(at.as_nanos() / 1_000_000_000).unwrap()
+}
+
+fn wall_seconds() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+}
+
+fn rfc3339_at(seconds: i64) -> String {
+    LogicalInstant::from_unix_seconds(seconds)
+        .to_rfc3339()
+        .unwrap()
+}
+
+/// Frozen-clock audit #5 on the strict enqueue path: a `scheduleTime` minted on the other clock
+/// keeps its delay on the task clock; a time minted on the task clock, and every time when
+/// rebasing is off or no other clock applies, is kept.
+#[tokio::test]
+async fn strict_enqueue_rebases_a_schedule_time_minted_on_the_other_clock() {
+    let start = i64::try_from(START.as_nanos() / 1_000_000_000).unwrap();
+    let virtual_tasks = ApplicationClockPolicy {
+        tasks_virtual: true,
+        rebase_caller_schedule_times: true,
+        ..ApplicationClockPolicy::default()
+    };
+    // Host code on the virtual task clock: wall + 60 s becomes START + 60 s.
+    let wall = wall_seconds();
+    let rebased =
+        answered_schedule_time("rebase-virtual", virtual_tasks, &rfc3339_at(wall + 60)).await;
+    assert!((rebased - (start + 60)).abs() <= 2, "{rebased} vs {start}");
+    // Minted on the task clock: kept.
+    assert_eq!(
+        answered_schedule_time("keep-virtual", virtual_tasks, &rfc3339_at(start + 60)).await,
+        start + 60
+    );
+    // Rebasing off (`productionExact`): judged as it is, so a time months past the pinned task
+    // clock is refused as more than 720 hours ahead, as production would refuse it.
+    let exact = ApplicationClockPolicy {
+        rebase_caller_schedule_times: false,
+        ..virtual_tasks
+    };
+    let h = start_with_policy(
+        "exact-virtual",
+        FunctionsHttpProfile::Strict,
+        NameReuse::Immediate,
+        600,
+        retry(1, 500),
+        exact,
+        false,
+    )
+    .await;
+    let (status, error) = refusal(
+        &h,
+        &body_of(&json!({"scheduleTime": rfc3339_at(wall_seconds() + 60)})),
+    );
+    assert_eq!(status, 400);
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("is too far in the future"),
+        "{error}"
+    );
+    h.stop().await;
+    // A virtual `Date` on the native task clock: START + 60 s becomes wall + 60 s.
+    let virtual_date = ApplicationClockPolicy {
+        date_virtual: true,
+        rebase_caller_schedule_times: true,
+        ..ApplicationClockPolicy::default()
+    };
+    let wall = wall_seconds();
+    let rebased =
+        answered_schedule_time("rebase-date", virtual_date, &rfc3339_at(start + 60)).await;
+    assert!((rebased - (wall + 60)).abs() <= 2, "{rebased} vs {wall}");
+    // A real `Date` on the native task clock has no other clock: the time is kept, so a time
+    // near the pinned clock is in the past of the native clock and reads as the enqueue time,
+    // not as wall time plus 60 s.
+    let real = ApplicationClockPolicy {
+        rebase_caller_schedule_times: true,
+        ..ApplicationClockPolicy::default()
+    };
+    let wall = wall_seconds();
+    let kept = answered_schedule_time("keep-real", real, &rfc3339_at(start + 60)).await;
+    assert!((kept - wall).abs() <= 2, "{kept} vs {wall}");
 }

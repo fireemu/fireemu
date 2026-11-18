@@ -686,6 +686,19 @@ mod tests {
         );
     }
 
+    /// A time exactly as far from both clocks is kept: only a time strictly nearer the other
+    /// clock was minted there.
+    #[test]
+    fn rebase_keeps_a_time_equally_far_from_both_clocks() {
+        use fireemu_core_types::time::LogicalInstant;
+        let at = LogicalInstant::from_nanos(150);
+        assert_eq!(super::rebase_schedule_time(at, 100, 200), at);
+        assert_eq!(
+            super::rebase_schedule_time(LogicalInstant::from_nanos(151), 100, 200).as_nanos(),
+            51
+        );
+    }
+
     proptest::proptest! {
         /// A time nearer the other clock keeps its delay from it on the task clock; any other
         /// time is kept; equal clocks change nothing.
