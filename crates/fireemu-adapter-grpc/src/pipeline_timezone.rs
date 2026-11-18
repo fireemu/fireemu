@@ -299,6 +299,20 @@ mod tests {
     }
 
     #[test]
+    fn a_half_hour_fold_is_ambiguous_by_its_minutes() {
+        let zone = TimeZoneDatabase::bundled()
+            .get("Australia/Lord_Howe")
+            .unwrap();
+        // 2024-04-07T01:45 is repeated; 01:15 and 02:15 are not.
+        assert_eq!(
+            unambiguous_wall_offset(&zone, 1_712_454_300),
+            Err(ZoneError::Ambiguous)
+        );
+        assert_eq!(unambiguous_wall_offset(&zone, 1_712_452_500), Ok(39_600));
+        assert_eq!(unambiguous_wall_offset(&zone, 1_712_456_100), Ok(37_800));
+    }
+
+    #[test]
     fn the_last_day_of_9999_keeps_working() {
         // 9999-12-31T12:00:00Z is 07:00 in New York; the day starts at 9999-12-31T05:00:00Z.
         let t = Timestamp::new(253_402_257_600, 0).unwrap();

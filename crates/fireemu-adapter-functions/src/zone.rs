@@ -165,6 +165,17 @@ mod tests {
     }
 
     #[test]
+    fn lord_howe_half_hour_fold_reads_the_minutes() {
+        // 2024-04-07 01:30-01:59 happens twice in Lord Howe (+11:00, then +10:30).
+        let zone = iana("Australia/Lord_Howe").unwrap();
+        assert_eq!(
+            wall_offsets(&zone, 1_712_454_300),
+            WallOffsets::Fold(39_600, 37_800)
+        );
+        assert_eq!(IanaZone(zone).utc_of(1_712_454_300), Some(1_712_414_700));
+    }
+
+    #[test]
     fn factory_is_refused_like_chrono_tz() {
         assert!(iana("Factory").is_none());
         assert!(resolve(Some("Factory")).is_err());
