@@ -205,3 +205,30 @@ def test_enable_read_back_must_show_the_whole_enabled_value(tmp_path, stored):
     world = World(answers={'empty-object-enable-readback': lambda w, r, b: (200, copy.deepcopy(BASE) | {'mfa': stored})})
     receipt = run(tmp_path, world)
     assert receipt['stopReason'] == 'empty-object-enable-not-read-back'
+
+
+def test_production_transport_headers_shapes_and_latch(monkeypatch):
+    """The real transport with the wire replaced: owner headers, JSON body, refusal of unlisted shapes, 403 latch."""
+    import batch_adapter
+
+    calls = []
+    answers = iter([{'http': {'status': 200, 'complete': True, 'bodyKind': 'json'}, 'body': {'mfa': {'state': 'DISABLED'}}}, {'http': {'status': 403, 'complete': True, 'bodyKind': 'json'}, 'body': {'error': {}}}])
+
+    def wire(url, method, body, headers, **kw):
+        calls.append((url, method, body, headers, kw))
+        return next(answers)
+    monkeypatch.setattr(batch_adapter, 'wire', wire)
+    monkeypatch.setenv('AUTH_MFA_EMPTY_ACCESS_TOKEN', 'tok')
+    send = m.production_send()
+    plan = {r['id']: r for r in m.manifest(NONCE)['rows']}
+    assert send(plan['empty-object-variant'], {'mfa': {}}) == (200, {'mfa': {'state': 'DISABLED'}})
+    url, method, body, headers, kw = calls[0]
+    assert url == 'https://identitytoolkit.googleapis.com/admin/v2/projects/fireemu-oracle-idp/config?updateMask=mfa' and method == 'PATCH' and body == {'mfa': {}}
+    assert headers['Authorization'] == 'Bearer tok' and headers['x-goog-user-project'] == 'fireemu-oracle-idp' and headers['Content-Type'] == 'application/json'
+    assert kw == {'timeout': 12, 'receipt': True}
+    with pytest.raises(ValueError):
+        send(plan['empty-object-variant'], {'mfa': {'state': 'ENABLED'}})
+    assert send(plan['config-baseline'], None)[0] == 403
+    with pytest.raises(ValueError):
+        send(plan['config-baseline'], None)
+    assert len(calls) == 2
