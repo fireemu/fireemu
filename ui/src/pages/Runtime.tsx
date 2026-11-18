@@ -32,7 +32,6 @@ import {
   setClock,
 } from "../api/control";
 import { errorOf, settle } from "../api/client";
-import { createSubmitGuard } from "../lib/submitGuard";
 import {
   formatQuantity,
   parseAllowances,
@@ -57,8 +56,9 @@ import {
 } from "../lib/faultRecipes";
 
 export const ClockPanel: Component = () => {
-  // One guard for every clock control, so a freeze and a resume (or a move) never race.
-  const guard = createSubmitGuard();
+  // The app-wide clock guard: a freeze and a resume (or a move) never race, even across a
+  // remount of this panel.
+  const guard = appState.clockGuard;
   const [seconds, setSeconds] = createSignal("60");
   const [instant, setInstant] = createSignal("");
   const [backwards, setBackwards] = createSignal(false);

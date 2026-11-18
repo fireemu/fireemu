@@ -3987,16 +3987,20 @@ fn a_clock_without_real_time_cannot_resume() {
     assert_eq!(wrong.status, 404);
 }
 
-/// An empty POST (no body) resumes like `{}`.
+/// The route takes an object; an empty POST reaches it as `{}` (both HTTP entry points) and is a
+/// plain resume, while a literal JSON `null` is refused.
 #[test]
-fn a_resume_without_a_body_is_a_plain_resume() {
+fn a_resume_body_must_be_an_object() {
     let (s, _reading) = switchable_state(0);
-    let resumed = handle(
+    let refused = handle(
         &s,
         "POST",
         "/v1/sessions/default/clock:resume",
         &Value::Null,
     );
+    assert_eq!(refused.status, 400, "{}", refused.body);
+    assert!(!s.clock.lock().unwrap().is_following());
+    let resumed = handle(&s, "POST", "/v1/sessions/default/clock:resume", &json!({}));
     assert_eq!(resumed.status, 200, "{}", resumed.body);
     assert_eq!(resumed.body["running"], true);
 }

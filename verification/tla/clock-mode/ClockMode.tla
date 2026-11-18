@@ -2,149 +2,188 @@
 (* Switching the shared virtual clock between frozen and following real time at runtime
    (clock:freeze, clock:resume, clock:resume with syncToRealTime), against the ticker that
    publishes the running time and the Functions runner sync loop that sends the daemon's
-   instant and mode to a Node runner.
+   instant, mode and elapsed time to a Node runner.
 
    The daemon side is VirtualClock under its mutex: every daemon step is one critical section.
-   `real` is the time source; the wall clock reads `real` too (the daemon's source is wall
-   nanoseconds since the epoch). `Live` is what a read of the daemon clock returns.
+   `wall` is the daemon's time source, the host wall clock, which can step back (an NTP
+   correction); the wall instant of a reading is the reading itself. A following clock holds at
+   its high-water mark (`peak`) while the source is behind it. `mono` is the runner's monotonic
+   clock (process.hrtime), which never steps back.
 
-   A sync to real time either takes one reading for its target, comparison and anchor
-   (OneWallRead, the implementation) or reads the wall clock for the target and samples the
-   clock later (the reviewed defect). The runner keeps what application code was last shown
-   as a floor (RunnerFloor, the implementation) or drops it on a freeze frame (the reviewed
-   defect). *)
+   Defects the reviews found, each behind a constant whose TRUE value is the implementation:
+   - OneWallRead: a sync reads the wall clock once for its target, comparison and anchor
+     (FALSE: the target is read first and the clock sampled later).
+   - RawAnchor: an accepted sync anchors at the raw wall reading (FALSE: at the anchor plus the
+     held drift, which leaves the clock behind the wall after a step back).
+   - RunnerFloor: the runner keeps the Date it showed as a floor across a late freeze frame
+     (FALSE: it drops it on a freeze frame).
+   - ElapsedFloor: the runner keeps the timer elapsed time it counted as a floor (FALSE: it
+     takes the daemon's elapsed time as is).
+   - PublishModeChange: freeze and resume publish (FALSE: the mode changes silently). *)
 EXTENDS Integers
 
-CONSTANTS MaxReal, MaxInstant, MaxRev, PublishModeChange, OneWallRead, RunnerFloor
+CONSTANTS MaxWall, MaxInstant, MaxRev, MaxSteps,
+          PublishModeChange, OneWallRead, RawAnchor, RunnerFloor, ElapsedFloor
 
-VARIABLES now, following, at, real, rev, backwards,
-          dirty, pc, seenRev, seenFollow, seenInstant, seenBack,
-          runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, appShown, rewound,
-          syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall
+VARIABLES now, following, at, peak, elapsed, rev, backwards,
+          wall, mono, steps,
+          dirty, pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed,
+          runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, rElapsed, rFloor,
+          appShown, timerSeen, rewound,
+          syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced
 
-daemon == <<now, following, at, rev, backwards>>
-loop == <<dirty, pc, seenRev, seenFollow, seenInstant, seenBack>>
-runner == <<runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, appShown, rewound>>
-sync == <<syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall>>
-vars == <<daemon, real, loop, runner, sync>>
+daemon == <<now, following, at, peak, elapsed, rev, backwards>>
+time == <<wall, mono, steps>>
+loop == <<dirty, pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
+runner == <<runnerRev, runnerFollow, rInstant, rAt, rShown, rBack, rElapsed, rFloor,
+            appShown, timerSeen, rewound>>
+sync == <<syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall, synced>>
+vars == <<daemon, time, loop, runner, sync>>
 
-Live == IF following THEN now + (real - at) ELSE now
-RLive == IF runnerFollow THEN rInstant + (real - rAt) ELSE rInstant
 Max(a, b) == IF a >= b THEN a ELSE b
 
+\* What a read of the daemon clock returns: the drift held at the high-water mark.
+Drift == IF following THEN Max(wall - at, peak) ELSE 0
+Live == now + Drift
+\* The elapsed time a read reports: forward movement only.
+ElapsedLive == elapsed + Drift
+
+RLive == IF runnerFollow THEN rInstant + (mono - rAt) ELSE rInstant
+RElapsedLive == Max(rElapsed + (IF runnerFollow THEN mono - rAt ELSE 0), rFloor)
+
 Init ==
-  /\ now = 0 /\ following \in BOOLEAN /\ at = 0 /\ real = 0
+  /\ now = 0 /\ following \in BOOLEAN /\ at = 0 /\ peak = 0 /\ elapsed = 0
   /\ rev = 0 /\ backwards = 0
+  /\ wall = 0 /\ mono = 0 /\ steps = 0
   /\ dirty = FALSE /\ pc = "idle"
   /\ seenRev = 0 /\ seenFollow = following /\ seenInstant = 0 /\ seenBack = 0
+  /\ seenElapsed = 0
   /\ runnerRev = 0 /\ runnerFollow = following /\ rInstant = 0 /\ rAt = 0
-  /\ rShown = -1 /\ rBack = 0 /\ appShown = 0 /\ rewound = FALSE
+  /\ rShown = -1 /\ rBack = 0 /\ rElapsed = 0 /\ rFloor = 0
+  /\ appShown = 0 /\ timerSeen = 0 /\ rewound = FALSE
   /\ syncPc = "idle" /\ syncTarget = 0 /\ syncAllow = FALSE
-  /\ atWallAtRead = FALSE /\ refusedAtWall = FALSE
+  /\ atWallAtRead = FALSE /\ refusedAtWall = FALSE /\ synced = FALSE
 
-\* A publication moves the clock to `instant`, re-anchors it at `anchor` and marks the watch
-\* channel. `back` counts an allowed rewind.
+\* A publication moves the clock to `instant`, folds the drift into elapsed (plus any forward
+\* hand move), re-anchors at `anchor` and marks the watch channel.
 PublishAt(instant, mode, back, anchor) ==
-  /\ now' = instant /\ following' = mode /\ at' = anchor
+  /\ now' = instant /\ following' = mode /\ at' = anchor /\ peak' = 0
+  /\ elapsed' = elapsed + Drift + Max(instant - Live, 0)
   /\ rev' = rev + 1 /\ backwards' = backwards + back
   /\ dirty' = TRUE
-Publish(instant, mode, back) == PublishAt(instant, mode, back, real)
+Publish(instant, mode, back) == PublishAt(instant, mode, back, at + Drift)
 
-Others == <<pc, seenRev, seenFollow, seenInstant, seenBack>>
+Others == <<pc, seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
+Keep == <<Others, runner>>
 
 RealTimePasses ==
-  /\ real < MaxReal /\ Live < MaxInstant
-  /\ real' = real + 1
-  /\ UNCHANGED <<daemon, loop, runner, sync>>
+  /\ wall < MaxWall /\ Live < MaxInstant
+  /\ wall' = wall + 1 /\ mono' = mono + 1
+  /\ peak' = IF following THEN Max(peak, wall' - at) ELSE peak
+  /\ UNCHANGED <<now, following, at, elapsed, rev, backwards, steps, loop, runner, sync>>
 
-Ticker ==
-  /\ syncPc = "idle" /\ following /\ Live > now /\ Publish(Live, TRUE, 0)
-  /\ UNCHANGED <<real, Others, runner, sync>>
+\* The host clock steps back by one; the runner's monotonic clock does not.
+WallStepsBack ==
+  /\ steps < MaxSteps /\ wall > 0
+  /\ wall' = wall - 1 /\ steps' = steps + 1
+  /\ synced' = FALSE
+  /\ UNCHANGED <<daemon, mono, loop, runner, syncPc, syncTarget, syncAllow,
+                 atWallAtRead, refusedAtWall>>
 
-Freeze ==
-  /\ syncPc = "idle" /\ following
+DaemonStep(p) ==
+  /\ syncPc = "idle" /\ p
+  /\ synced' = FALSE
+  /\ UNCHANGED <<time, Keep, syncPc, syncTarget, syncAllow, atWallAtRead, refusedAtWall>>
+
+Ticker == DaemonStep(following /\ Live > now /\ Publish(Live, TRUE, 0))
+
+Freeze == DaemonStep(
+  /\ following
   /\ IF PublishModeChange THEN Publish(Live, FALSE, 0)
-     ELSE /\ now' = Live /\ following' = FALSE /\ at' = real
-          /\ UNCHANGED <<rev, backwards, dirty>>
-  /\ UNCHANGED <<real, Others, runner, sync>>
+     ELSE /\ now' = Live /\ following' = FALSE /\ at' = wall /\ peak' = 0
+          /\ elapsed' = elapsed + Drift
+          /\ UNCHANGED <<rev, backwards, dirty>>)
 
-Resume ==
-  /\ syncPc = "idle" /\ ~following /\ Publish(now, TRUE, 0)
-  /\ UNCHANGED <<real, Others, runner, sync>>
+Resume == DaemonStep(~following /\ PublishAt(now, TRUE, 0, wall))
 
-Advance(d) ==
-  /\ syncPc = "idle" /\ Live + d <= MaxInstant /\ Publish(Live + d, following, 0)
-  /\ UNCHANGED <<real, Others, runner, sync>>
+Advance(d) == DaemonStep(Live + d <= MaxInstant /\ Publish(Live + d, following, 0))
 
 \* clock:set with allowBackwards: a counted rewind (keeps the mode).
-Rewind(t) ==
-  /\ syncPc = "idle" /\ t < Live /\ Publish(t, following, 1)
-  /\ UNCHANGED <<real, Others, runner, sync>>
+Rewind(t) == DaemonStep(t < Live /\ Publish(t, following, 1))
+
+\* The anchor an accepted sync runs from.
+SyncAnchor(reading) == IF RawAnchor THEN reading ELSE IF following THEN at + Drift ELSE reading
 
 \* clock:resume {syncToRealTime}, one reading: the target, the comparison and the anchor are
-\* the same `real`. A refusal changes nothing.
+\* the same wall reading. A refusal changes nothing.
 SyncOneRead(allow) ==
   /\ OneWallRead /\ syncPc = "idle"
-  /\ IF real >= Live \/ allow
-       THEN /\ PublishAt(real, TRUE, IF real < Live THEN 1 ELSE 0, real)
-            /\ UNCHANGED refusedAtWall
-       ELSE /\ UNCHANGED daemon /\ UNCHANGED dirty
-            /\ refusedAtWall' = (refusedAtWall \/ Live = real)
-  /\ UNCHANGED <<real, Others, runner, syncPc, syncTarget, syncAllow, atWallAtRead>>
+  /\ IF wall >= Live \/ allow
+       THEN /\ PublishAt(wall, TRUE, IF wall < Live THEN 1 ELSE 0, SyncAnchor(wall))
+            /\ synced' = TRUE /\ UNCHANGED refusedAtWall
+       ELSE /\ UNCHANGED <<daemon, dirty, synced>>
+            /\ refusedAtWall' = (refusedAtWall \/ Live = wall)
+  /\ UNCHANGED <<time, Keep, syncPc, syncTarget, syncAllow, atWallAtRead>>
 
 \* The reviewed defect: the wall clock is read for the target first ...
 SyncReadWall(allow) ==
   /\ ~OneWallRead /\ syncPc = "idle"
-  /\ syncPc' = "read" /\ syncTarget' = real /\ syncAllow' = allow
-  /\ atWallAtRead' = (Live = real)
-  /\ UNCHANGED <<daemon, real, loop, runner, refusedAtWall>>
+  /\ syncPc' = "read" /\ syncTarget' = wall /\ syncAllow' = allow
+  /\ atWallAtRead' = (Live = wall)
+  /\ UNCHANGED <<daemon, time, loop, runner, refusedAtWall, synced>>
 
 \* ... and the clock is sampled (and anchored) at a later reading.
 SyncApply ==
   /\ syncPc = "read" /\ syncPc' = "idle"
   /\ IF syncTarget >= Live \/ syncAllow
-       THEN /\ PublishAt(syncTarget, TRUE, IF syncTarget < Live THEN 1 ELSE 0, real)
-            /\ UNCHANGED refusedAtWall
-       ELSE /\ UNCHANGED daemon /\ UNCHANGED dirty
+       THEN /\ PublishAt(syncTarget, TRUE, IF syncTarget < Live THEN 1 ELSE 0, wall)
+            /\ UNCHANGED <<refusedAtWall, synced>>
+       ELSE /\ UNCHANGED <<daemon, dirty, synced>>
             /\ refusedAtWall' = (refusedAtWall \/ atWallAtRead)
-  /\ UNCHANGED <<real, Others, runner, syncTarget, syncAllow, atWallAtRead>>
+  /\ UNCHANGED <<time, Keep, syncTarget, syncAllow, atWallAtRead>>
 
-\* The Functions sync loop: take the publication, read (revision, mode, instant), send it, and
-\* read again until nothing changed in between.
+\* The Functions sync loop: take the publication, read (revision, mode, instant, elapsed),
+\* send it, and read again until nothing changed in between.
 SyncStart ==
   /\ pc = "idle" /\ dirty
   /\ dirty' = FALSE /\ pc' = "send"
-  /\ seenRev' = rev /\ seenFollow' = following /\ seenInstant' = Live /\ seenBack' = backwards
-  /\ UNCHANGED <<daemon, real, runner, sync>>
+  /\ seenRev' = rev /\ seenFollow' = following /\ seenInstant' = Live
+  /\ seenBack' = backwards /\ seenElapsed' = ElapsedLive
+  /\ UNCHANGED <<daemon, time, runner, sync>>
 
-\* The runner applies a frame when it arrives, re-anchoring at the real time of arrival.
-\* A rewind the daemon counted resets what was shown; otherwise what was shown stays the floor
-\* (RunnerFloor) or a freeze frame drops it (the reviewed defect).
+\* The runner applies a frame when it arrives, re-anchoring on its monotonic clock. A rewind
+\* the daemon counted resets what was shown; otherwise what was shown stays the floor. Timer
+\* elapsed time keeps what the runner had counted as its floor.
 SyncSend ==
   /\ pc = "send" /\ pc' = "check"
   /\ runnerRev' = seenRev /\ runnerFollow' = seenFollow
-  /\ rInstant' = seenInstant /\ rAt' = real /\ rBack' = seenBack
+  /\ rInstant' = seenInstant /\ rAt' = mono /\ rBack' = seenBack
+  /\ rElapsed' = seenElapsed
+  /\ rFloor' = IF ElapsedFloor THEN RElapsedLive ELSE 0
   /\ rewound' = (rewound \/ seenBack > rBack)
   /\ rShown' = IF seenBack > rBack THEN -1
                ELSE IF ~RunnerFloor /\ ~seenFollow THEN -1
                ELSE rShown
-  /\ UNCHANGED <<appShown, daemon, real, dirty, seenRev, seenFollow, seenInstant, seenBack, sync>>
+  /\ UNCHANGED <<appShown, timerSeen, daemon, time, dirty, seenRev, seenFollow, seenInstant,
+                 seenBack, seenElapsed, sync>>
 
 SyncCheck ==
   /\ pc = "check"
   /\ IF <<rev, following>> = <<seenRev, seenFollow>>
-       THEN pc' = "idle" /\ UNCHANGED <<seenRev, seenFollow, seenInstant, seenBack>>
+       THEN pc' = "idle" /\ UNCHANGED <<seenRev, seenFollow, seenInstant, seenBack, seenElapsed>>
        ELSE /\ pc' = "send" /\ seenRev' = rev /\ seenFollow' = following
-            /\ seenInstant' = Live /\ seenBack' = backwards
-  /\ UNCHANGED <<daemon, real, dirty, runner, sync>>
+            /\ seenInstant' = Live /\ seenBack' = backwards /\ seenElapsed' = ElapsedLive
+  /\ UNCHANGED <<daemon, time, dirty, runner, sync>>
 
-\* Application code reads Date.now() in the runner.
+\* Application code reads Date.now() and a timer compares its deadline in the runner.
 AppRead ==
   /\ appShown' = Max(RLive, rShown) /\ rShown' = Max(RLive, rShown) /\ rewound' = FALSE
-  /\ UNCHANGED <<daemon, real, loop, runnerRev, runnerFollow, rInstant, rAt, rBack, sync>>
+  /\ timerSeen' = RElapsedLive
+  /\ UNCHANGED <<daemon, time, loop, runnerRev, runnerFollow, rInstant, rAt, rBack,
+                 rElapsed, rFloor, sync>>
 
 Next ==
-  \/ RealTimePasses \/ Ticker \/ Freeze \/ Resume
+  \/ RealTimePasses \/ WallStepsBack \/ Ticker \/ Freeze \/ Resume
   \/ \E d \in 0..1 : Advance(d)
   \/ \E t \in 0..MaxInstant : Rewind(t)
   \/ \E allow \in BOOLEAN : SyncOneRead(allow) \/ SyncReadWall(allow)
@@ -165,11 +204,17 @@ RunnerAgrees == (pc = "idle" /\ ~dirty) => <<runnerRev, runnerFollow>> = <<rev, 
 \* A sync of a clock that shows the wall time is never refused as going backwards.
 SyncAtWallIsAccepted == ~refusedAtWall
 
+\* After a sync, until the wall steps back or the clock is moved again, it shows the wall time.
+SyncedFollowsWall == synced => Live = wall
+
 \* The daemon clock never reads earlier unless an allowed rewind was counted.
 NeverBackwardsUncounted == [][Live' >= Live \/ backwards' > backwards]_vars
 
 \* Application time in the runner never goes back unless a counted rewind reached it.
 AppTimeMonotonic == [][appShown' >= appShown \/ rewound]_vars
+
+\* Timer elapsed time in the runner never goes back.
+TimerElapsedMonotonic == [][timerSeen' >= timerSeen]_vars
 
 \* Freezing keeps the instant: the switch itself never moves the clock.
 FreezeKeepsTheInstant == [][(following /\ ~following') => Live' = Live]_vars

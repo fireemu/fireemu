@@ -325,6 +325,12 @@ impl VirtualClock {
             self.backwards_sets = self.backwards_sets.saturating_add(1);
         }
         self.publish(instant, &sample);
+        if let (Some(reading), Some(follow)) = (reading, &mut self.follow) {
+            // The clock is at the wall instant of `reading`, so it runs from that reading even
+            // when the source stepped back below the high-water mark the sample held.
+            follow.at = reading;
+            follow.peak.set(0);
+        }
         Ok(())
     }
 

@@ -120,3 +120,30 @@ describe("Clock controls", () => {
     expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Frozen");
   });
 });
+
+describe("Clock controls across navigation", () => {
+  it("keep one mutation at a time when the panel is left and opened again", async () => {
+    appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
+    let finish!: () => void;
+    vi.mocked(control.freezeClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<control.ClockInfo>((r) => {
+          finish = () => r({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false });
+        }),
+      ),
+    );
+    vi.mocked(control.resumeClock).mockClear();
+    const first = render(() => <ClockPanel />);
+    fireEvent.click(first.getByTestId("toggle-clock-mode"));
+    first.unmount();
+    const second = render(() => <ClockPanel />);
+    expect((second.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(second.getByTestId("sync-clock"));
+    expect(control.resumeClock).not.toHaveBeenCalled();
+    finish();
+    await waitFor(() =>
+      expect((second.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(second.getByTestId("runtime-clock-mode").textContent).toContain("Frozen");
+  });
+});

@@ -33,8 +33,16 @@ fn state() -> Arc<UiState> {
 
 /// The UI state, optionally with App Check wired into both the control API (the observation
 /// route reads its registry) and the UI front (the debug-token routes need the full state).
-#[allow(clippy::too_many_lines)]
 fn state_with(app_check: Option<Arc<AppCheckState>>) -> Arc<UiState> {
+    state_with_hook(app_check, None)
+}
+
+/// [`state_with`] with a Functions hook in the control API.
+#[allow(clippy::too_many_lines)]
+fn state_with_hook(
+    app_check: Option<Arc<AppCheckState>>,
+    functions: Option<Arc<dyn fireemu_adapter_http::control::FunctionsHook>>,
+) -> Arc<UiState> {
     let gateway = Gateway {
         enforce_limits: true,
         ctx: PlanningContext {
@@ -91,7 +99,7 @@ fn state_with(app_check: Option<Arc<AppCheckState>>) -> Arc<UiState> {
         rules,
         storage_rules,
         reset_hooks: Vec::new(),
-        functions: None,
+        functions,
         control_token: TOKEN.to_owned(),
         app_check: app_check.as_ref().map(|s| s.gate()),
         firestore_listen_expiry: None,
@@ -2467,4 +2475,87 @@ async fn a_codebase_that_registered_no_function_is_still_listed_with_its_runtime
         ])
     );
     runtime.runner().shutdown().await;
+}
+
+/// Functions whose runners never acknowledge a clock frame.
+struct UnsettledFunctions;
+
+impl fireemu_adapter_http::control::FunctionsHook for UnsettledFunctions {
+    fn sync_clock(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async { Err("runner did not answer".to_owned()) })
+    }
+    fn on_clock_changed(&self) {}
+    fn run_schedule(
+        &self,
+        _function: &str,
+    ) -> Result<(), fireemu_adapter_http::control::RunScheduleError> {
+        Ok(())
+    }
+    fn is_idle(&self) -> bool {
+        true
+    }
+    fn idle_notify(&self) -> Arc<tokio::sync::Notify> {
+        Arc::new(tokio::sync::Notify::new())
+    }
+    fn status(&self) -> Value {
+        json!({})
+    }
+    fn publish(
+        &self,
+        _topic: &str,
+        _messages: &[Value],
+    ) -> Result<Vec<String>, fireemu_adapter_http::control::PublishMessagesError> {
+        Err(fireemu_adapter_http::control::PublishMessagesError::Invalid("not used".to_owned()))
+    }
+    fn project(&self) -> String {
+        "demo-app".to_owned()
+    }
+}
+
+/// A clock move through the UI settles the Functions runners as the control API does: when a
+/// runner does not acknowledge it, the UI is told 503 `CLOCK_NOT_SETTLED`, not success.
+#[tokio::test]
+async fn the_control_front_settles_runner_clocks_like_the_control_api() {
+    let s = state_with_hook(None, Some(Arc::new(UnsettledFunctions)));
+    for action in ["clock:freeze", "clock:advance"] {
+        let (status, body) = call(
+            &s,
+            request(
+                "POST",
+                &format!("/ui/api/control/v1/sessions/default/{action}"),
+                &json!({"seconds": 1}),
+            ),
+        )
+        .await;
+        assert_eq!(status, 503, "{action}: {body}");
+        assert!(body.to_string().contains("CLOCK_NOT_SETTLED"), "{body}");
+    }
+}
+
+/// An empty POST to clock:resume through the UI is `{}`; a literal `null` body is refused.
+#[tokio::test]
+async fn the_control_front_reads_an_empty_resume_as_an_object_and_refuses_null() {
+    let s = state();
+    let mut literal_null = request(
+        "POST",
+        "/ui/api/control/v1/sessions/default/clock:resume",
+        &Value::Null,
+    );
+    literal_null.body = b"null".to_vec();
+    let (status, body) = call(&s, literal_null).await;
+    assert_eq!(status, 400, "{body}");
+    // The test clock has no real-time source: an empty body gets as far as that refusal.
+    let (status, body) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/control/v1/sessions/default/clock:resume",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(body.to_string().contains("FAILED_PRECONDITION"), "{body}");
 }

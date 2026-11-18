@@ -1,25 +1,31 @@
 # ClockMode
 
-TLA+ model of switching the shared virtual clock between frozen and following real time while the daemon runs (`clock:freeze`, `clock:resume`, `clock:resume` with `syncToRealTime`), together with the clock ticker, counted rewinds (`clock:set` with `allowBackwards`), the Functions sync loop (`FunctionsRuntime::sync_clock`, which repeats until the `(revision, following)` it sent is still the daemon's) and a Node runner that applies each frame when it arrives and shows application time (`tools/runner-node/clock.mjs`).
+TLA+ model of switching the shared virtual clock between frozen and following real time while the daemon runs (`clock:freeze`, `clock:resume`, `clock:resume` with `syncToRealTime`), together with the clock ticker, counted rewinds (`clock:set` with `allowBackwards`), the Functions sync loop (`FunctionsRuntime::sync_clock`, which repeats until the `(revision, following)` it sent is still the daemon's) and a Node runner that applies each frame when it arrives and shows application time and timer elapsed time (`tools/runner-node/clock.mjs`).
+
+The daemon's time source is the host wall clock, which can step back (an NTP correction); a following clock then holds at its high-water mark. The runner counts on its own monotonic clock, which never steps back.
 
 Checked properties:
 
 - `FrozenStandsStill`: a frozen clock reads its last move.
 - `RunnerAgrees`: once the sync loop has no publication left to take, the runner holds the daemon's revision and mode.
 - `SyncAtWallIsAccepted`: a sync of a clock that already shows the wall time is never refused as backwards.
+- `SyncedFollowsWall`: after a sync, until the wall steps back again or the clock is moved, the clock shows the wall time (also after a step back that the sync followed with `allowBackwards`).
 - `NeverBackwardsUncounted`: the daemon clock never reads an earlier instant unless an allowed rewind was counted.
 - `AppTimeMonotonic`: application time in the runner never goes back unless a counted rewind reached the runner.
+- `TimerElapsedMonotonic`: timer elapsed time in the runner never goes back.
 - `FreezeKeepsTheInstant`: freezing does not move the clock.
 
 Negative controls, each of which must fail:
 
-- `ClockModeUnpublished.cfg`: a freeze that changes the mode without publishing violates `RunnerAgrees` (why `VirtualClock::freeze` and `resume` publish).
-- `ClockModeSplitWallRead.cfg`: a sync that reads the wall clock for its target and samples the clock at a later reading violates `SyncAtWallIsAccepted` (why `read_wall` and `resume_at_wall` use one reading).
-- `ClockModeNoRunnerFloor.cfg`: a runner that drops what it showed on a freeze frame violates `AppTimeMonotonic` (why the runner keeps the shown time as a floor and resets it only on a rewind the daemon counted).
+- `ClockModeUnpublished.cfg`: a freeze that changes the mode without publishing violates `RunnerAgrees`.
+- `ClockModeSplitWallRead.cfg`: a sync that reads the wall clock for its target and samples the clock at a later reading violates `SyncAtWallIsAccepted`.
+- `ClockModeStaleAnchor.cfg`: a sync that anchors at the held drift instead of the raw wall reading violates `SyncedFollowsWall` (the review round 2 Must).
+- `ClockModeNoRunnerFloor.cfg`: a runner that drops what it showed on a freeze frame violates `AppTimeMonotonic`.
+- `ClockModeNoElapsedFloor.cfg`: a runner that takes the daemon's elapsed time without its own floor violates `TimerElapsedMonotonic`.
 
 ```sh
-tla2tools -workers 2 -config ClockMode.cfg ClockMode.tla               # no error (472,839 distinct states)
-tla2tools -workers 2 -config ClockModeUnpublished.cfg ClockMode.tla    # RunnerAgrees violated
-tla2tools -workers 2 -config ClockModeSplitWallRead.cfg ClockMode.tla  # SyncAtWallIsAccepted violated
-tla2tools -workers 2 -config ClockModeNoRunnerFloor.cfg ClockMode.tla  # AppTimeMonotonic violated
+tla2tools -workers 4 -config ClockMode.cfg ClockMode.tla   # no error (8,066,096 distinct states, about 4 minutes)
+for c in Unpublished SplitWallRead StaleAnchor NoRunnerFloor NoElapsedFloor; do
+  tla2tools -workers 2 -config ClockMode$c.cfg ClockMode.tla  # each reports its property violated
+done
 ```

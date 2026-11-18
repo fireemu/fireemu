@@ -340,3 +340,29 @@ fn a_sync_judges_lands_and_runs_from_one_reading() {
         .read_wall()
         .is_none());
 }
+
+#[test]
+fn a_sync_after_the_host_clock_steps_back_runs_from_the_raw_wall_reading() {
+    let rig = Rig::new();
+    let wall_base = LogicalInstant::from_unix_seconds(1_800_000_000);
+    // Running from the wall clock, with the wall instant equal to the clock.
+    let mut clock = VirtualClock::following_with(
+        LogicalInstant::from_nanos(wall_base.as_nanos() + rig.now()),
+        rig.source(),
+        rig.now(),
+    )
+    .with_wall_clock(Rig::wall(wall_base));
+    rig.run_for(2 * SECOND);
+    let high = clock.now();
+    // The host clock steps back two seconds: the clock holds at its high-water mark.
+    rig.run_for(-2 * SECOND);
+    assert_eq!(clock.now(), high);
+    let wall = clock.read_wall().unwrap();
+    assert!(wall.instant < high);
+    clock.resume_at_wall(wall, true).unwrap();
+    assert_eq!(clock.now(), wall.instant);
+    assert_eq!(clock.backwards_sets(), 1);
+    // From here on the clock shows the wall time.
+    rig.run_for(3 * SECOND);
+    assert_eq!(clock.now(), clock.wall_now().unwrap());
+}

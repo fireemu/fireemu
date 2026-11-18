@@ -3312,8 +3312,9 @@ fn clock_route(
 /// `syncToRealTime`, from the wall clock's instant, which is a set and refuses to go backwards
 /// unless `allowBackwards` says so.
 fn resume_route(state: &ControlState, clock: &mut VirtualClock, body: &Value) -> JsonResponse {
-    // No body (an empty POST) is an empty object; any other non-object is refused.
-    if !(body.is_object() || body.is_null()) {
+    // Both HTTP entry points read an empty POST as `{}`; any other non-object, a literal `null`
+    // included, is refused.
+    if !body.is_object() {
         return error(400, "INVALID_ARGUMENT : the body must be a JSON object");
     }
     let flag = |name: &str| match body.get(name) {

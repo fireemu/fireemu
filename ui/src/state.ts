@@ -1,6 +1,7 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { initialConfig, type RuntimeConfig, type Session } from "./config";
 import { sessionInfo, listSessions, type ClockInfo } from "./api/control";
+import { createSubmitGuard } from "./lib/submitGuard";
 
 /** App-wide reactive state: the runtime configuration, the clock, the sessions. */
 const store = createRoot(() => {
@@ -18,6 +19,11 @@ const store = createRoot(() => {
    * Takes the answer of a clock mutation (advance, set, freeze, resume): a poll that started
    * before it is older than the mutation and is discarded, so it cannot restore the old mode.
    */
+  /**
+   * One guard for every clock mutation in the app, so a mutation started on a page that was
+   * left and opened again still blocks the next one until its answer is in.
+   */
+  const clockGuard = createSubmitGuard();
   const applyClockMutation = (info: ClockInfo) => {
     completedEpoch = ++pollEpoch;
     setClockInfo(info);
@@ -83,6 +89,7 @@ const store = createRoot(() => {
     clockMode,
     setClockInfo,
     applyClockMutation,
+    clockGuard,
     sessions,
     setSessions,
     session,
