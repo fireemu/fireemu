@@ -170,7 +170,8 @@ def test_a2_closes_only_on_equal_digests():
     assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'mfa': None}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'signIn': {'email': {'enabled': True}, 'allowDuplicateEmails': False}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     assert m.a2_evaluate(200, copy.deepcopy(BASE) | {'mfa': {'state': 'ENABLED'}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
-    assert m.a2_evaluate(None, None, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
+    for status, body in ((None, None), (199, None), (302, None), (500, None), (503, {'error': {}}), (200, None)):
+        assert m.a2_evaluate(status, body, digests, digests)['verdict'] == 'A2-UNKNOWN'
     assert m.a2_evaluate(404, {'error': {}}, digests, digests)['verdict'] == 'NEEDS-RECOVERY'
     other = dict(digests, whole='0' * 64)
     assert m.a2_evaluate(200, copy.deepcopy(BASE), digests, other)['verdict'] == 'NEEDS-RECOVERY'
@@ -304,3 +305,24 @@ def test_launch_baseline_check_requires_mfa_exactly_disabled(tmp_path, monkeypat
     assert out.exists() == (code == 0)
     if code == 0:
         assert json.loads(out.read_text())['digests'] == m.config_digests(BASE) and oct(out.stat().st_mode & 0o777) == '0o600'
+
+
+def test_a2_unknown_answer_exits_3_and_a_rerun_uses_a_new_file(tmp_path):
+    pre = tmp_path / 'pre.json'
+    pre.write_text(json.dumps({'digests': m.config_digests(BASE)}))
+    rec = tmp_path / 'receipt.json'
+    rec.write_text(json.dumps({'baselineDigests': m.config_digests(BASE), 'finishedAt': 0}))
+    assert m.a2_run(tmp_path / 'a2-1.json', pre, rec, lambda r, b: (503, None), clock=lambda: 700.0) == 3
+    assert json.loads((tmp_path / 'a2-1.json').read_text())['verdict'] == 'A2-UNKNOWN'
+    assert m.a2_run(tmp_path / 'a2-2.json', pre, rec, lambda r, b: (200, copy.deepcopy(BASE) | {'mfa': {'state': 'ENABLED'}}), clock=lambda: 700.0) == 2
+    assert m.a2_run(tmp_path / 'a2-3.json', pre, rec, lambda r, b: (200, copy.deepcopy(BASE)), clock=lambda: 700.0) == 0
+
+
+def test_recovery_guard_is_required_on_a_latch_or_an_unclean_close(tmp_path):
+    for d in 'abc':
+        (tmp_path / d).mkdir()
+    assert run(tmp_path / 'a', World())['recoveryGuardRequired'] is False
+    latch = World(answers={'empty-object-variant': lambda w, r, b: (403, None)})
+    assert run(tmp_path / 'b', latch)['recoveryGuardRequired'] is True
+    drift = World(answers={f'final-readback-{i}': (lambda w, r, b: (503, None)) for i in range(3)})
+    assert run(tmp_path / 'c', drift)['recoveryGuardRequired'] is True

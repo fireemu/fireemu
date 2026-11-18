@@ -196,6 +196,8 @@ def collect(*, nonce, output, send, sleep=time.sleep, clock=time.time):
         'configEqualsBaseline': restored,
         'cleanupComplete': restored,
         'a2Required': True,
+        # Production may be left with MFA enabled: the idp project stays held until a recovery restore.
+        'recoveryGuardRequired': state['latched'] or not restored,
         'records': records,
     }
     with (output / 'receipt.json').open('x') as stream:
@@ -208,7 +210,11 @@ def a2_evaluate(status, body, pre, stage):
     ok = status == 200 and isinstance(body, dict) and 'error' not in body
     digests = config_digests(body) if ok else None
     checks = {'configRead': ok, 'mfaAtBaseline': ok and baseline_mfa_ok(body), 'equalsPreLaunch': ok and digests == pre, 'equalsStageBaseline': ok and digests == stage, 'baselinesAgree': pre == stage and pre is not None}
-    return {'status': status if type(status) is int else None, 'digests': digests, 'checks': checks, 'verdict': 'CLOSE-OK' if all(checks.values()) else 'NEEDS-RECOVERY'}
+    # An unknown answer (no status, sub-200, 3xx, 5xx, or a 2xx without a readable body) is not evidence of
+    # drift: A2-UNKNOWN, and A2 may be rerun into a new output file.
+    unknown = not known(status) or (200 <= status < 300 and not isinstance(body, dict))
+    verdict = 'CLOSE-OK' if all(checks.values()) else 'A2-UNKNOWN' if unknown else 'NEEDS-RECOVERY'
+    return {'status': status if type(status) is int else None, 'digests': digests, 'checks': checks, 'verdict': verdict}
 
 
 def valid_digests(value):
@@ -238,7 +244,7 @@ def a2_run(out, pre_path, receipt_path, send, clock=time.time):
     with out.open('x') as stream:
         stream.write(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: result[k] for k in ('status', 'checks', 'verdict')}))
-    return 0 if result['verdict'] == 'CLOSE-OK' else 2
+    return {'CLOSE-OK': 0, 'NEEDS-RECOVERY': 2, 'A2-UNKNOWN': 3}[result['verdict']]
 
 
 def shape_ok(row, body):
