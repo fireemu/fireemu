@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
-import { Route, Router } from "@solidjs/router";
+import { routed } from "../test/router";
 import type { FsValue } from "../lib/firestoreValue";
 import { buildValueTree, DEFAULT_LIMITS } from "../lib/valueTree";
 import { ValueTree } from "./ValueTree";
@@ -12,21 +12,21 @@ const mount = (
   referenceHref?: (path: string) => string | null,
   limits = DEFAULT_LIMITS,
 ) =>
-  render(() => (
-    <Router>
-      <Route
-        path="*"
-        component={() => (
+  render(
+    routed([
+      {
+        path: "*",
+        component: () => (
           <ValueTree
             nodes={buildValueTree(fields, limits)}
             typeLabel={(type) => type}
             referenceHref={referenceHref}
             testId="tree"
           />
-        )}
-      />
-    </Router>
-  ));
+        ),
+      },
+    ]),
+  );
 
 it("shows name, type and value per field, with integer and double told apart", () => {
   const ui = mount({
@@ -116,7 +116,8 @@ it("links a reference only when the page gives it a target", () => {
   });
   const anchor = linked.getByText("users/a");
   expect(anchor.tagName).toBe("A");
-  expect(anchor.getAttribute("href")).toBe("/firestore/users/a");
+  // Router 2 anchors carry the full served path (the app runs under /ui).
+  expect(anchor.getAttribute("href")).toBe("/ui/firestore/users/a");
   // The page decides from the full resource name, not from the shortened text.
   expect(new Set(seen)).toEqual(new Set(["projects/p/databases/(default)/documents/users/a"]));
   cleanup();

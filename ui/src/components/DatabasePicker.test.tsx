@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import DatabasePicker from "./DatabasePicker";
 import FirestoreQuery from "./FirestoreQuery";
@@ -23,8 +23,10 @@ it("offers known databases, keeps arbitrary input, and synchronizes navigation",
   fireEvent.click(view.getByText("Open database"));
   expect(db()).toBe("catalog");
   setDb("(default)");
+  flush();
   expect((view.getByTestId("database-input") as HTMLInputElement).value).toBe("(default)");
   setDb("missing");
+  flush();
   await waitFor(() => expect(view.getByRole("status").textContent).toContain("does not exist"));
 });
 it("does not present a failed list as an absent database", async () => {
@@ -51,6 +53,7 @@ it("ignores a late database list from another project", async () => {
     <DatabasePicker project={project()} session="default" database="new-db" onSelect={() => {}} />
   ));
   setProject("new");
+  flush();
   await waitFor(() => expect(view.getByTestId("database-options").textContent).toContain("new-db"));
   resolve(["old-db"]);
   await Promise.resolve();
@@ -69,6 +72,7 @@ it("refreshes the catalog when selecting a database created externally", async (
     expect(view.getByTestId("database-options").textContent).toContain("(default)"),
   );
   setDb("created");
+  flush();
   await waitFor(() => expect(api.listDatabases).toHaveBeenLastCalledWith("p"));
   await waitFor(() =>
     expect(view.getByTestId("database-options").textContent).toContain("created"),

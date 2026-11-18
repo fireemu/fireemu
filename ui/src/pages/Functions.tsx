@@ -3,16 +3,14 @@ import { readFunctionFilters, functionFiltersUrl, matchesFunction } from "../lib
 import {
   createEffect,
   createMemo,
-  createResource,
   createSignal,
   For,
-  onCleanup,
-  onMount,
-  on,
+  onSettled,
   Show,
   untrack,
   type Component,
 } from "solid-js";
+import { createResource } from "../lib/resource";
 import { t } from "../i18n";
 import { FunctionsTimeline } from "../components/FunctionsTimeline";
 import type { FunctionLog, FunctionsOverview } from "../api/functions";
@@ -677,9 +675,9 @@ const Functions: Component = () => {
   const [overview, { refetch }] = createResource(() => settle(functionsOverview()));
   // This global overview belongs to the Functions owner, independently of the top bar.
   const [lastOverview, setLastOverview] = createSignal<FunctionsOverview | null>(null);
-  createEffect(() => {
-    overview()?.match(
-      (value) => setLastOverview(value),
+  createEffect(overview, (value) => {
+    value?.match(
+      (latest) => setLastOverview(latest),
       () => {},
     );
   });
@@ -723,77 +721,80 @@ const Functions: Component = () => {
   const [includeSearch, setIncludeSearch] = createSignal(false);
   let filterScope: string | undefined;
   createEffect(
-    on(
-      () => [
-        filterSearch.event,
-        filterSearch.eventFunction,
-        filterSearch.eventSession,
-        filterSearch.eventProject,
-      ],
-      ([event, fn, session, project]) => {
-        if (
-          typeof event !== "string" ||
-          typeof fn !== "string" ||
-          typeof session !== "string" ||
-          typeof project !== "string"
-        )
-          return;
-        if (untrack(appState.session) !== session) {
-          appState.setSession(session);
-          filterScope = JSON.stringify([session, untrack(appState.project)]);
-        }
-      },
-      { defer: true },
-    ),
+    () => [
+      filterSearch.event,
+      filterSearch.eventFunction,
+      filterSearch.eventSession,
+      filterSearch.eventProject,
+    ],
+    ([event, fn, session, project]) => {
+      if (
+        typeof event !== "string" ||
+        typeof fn !== "string" ||
+        typeof session !== "string" ||
+        typeof project !== "string"
+      )
+        return;
+      if (untrack(appState.session) !== session) {
+        appState.setSession(session);
+        filterScope = JSON.stringify([session, appState.peekProject()]);
+      }
+    },
+    { defer: true },
   );
   const localSearchMemory = new Map<string, string>();
   const localSearchKey = () =>
     `fireemu.functionSearch.${JSON.stringify([appState.session(), appState.project()])}`;
-  createEffect(() => {
-    const currentFunction = filterSearch.function;
-    const currentLevel = filterSearch.level;
-    const currentQuery = filterSearch.q;
-    const scope = JSON.stringify([appState.session(), appState.project()]);
-    if (filterScope !== undefined && filterScope !== scope) {
+  createEffect(
+    () =>
+      [
+        filterSearch.function,
+        filterSearch.level,
+        filterSearch.q,
+        JSON.stringify([appState.session(), appState.project()]),
+      ] as const,
+    ([currentFunction, currentLevel, currentQuery, scope]) => {
+      if (filterScope !== undefined && filterScope !== scope) {
+        filterScope = scope;
+        setFnFilter("");
+        setLogLevel("all");
+        setLogText("");
+        setIncludeSearch(false);
+        setFilterSearch(
+          {
+            function: undefined,
+            level: undefined,
+            q: undefined,
+            event: undefined,
+            eventFunction: undefined,
+            eventSession: undefined,
+            eventProject: undefined,
+          },
+          { replace: true },
+        );
+        return;
+      }
       filterScope = scope;
-      setFnFilter("");
-      setLogLevel("all");
-      setLogText("");
-      setIncludeSearch(false);
-      setFilterSearch(
-        {
-          function: undefined,
-          level: undefined,
-          q: undefined,
-          event: undefined,
-          eventFunction: undefined,
-          eventSession: undefined,
-          eventProject: undefined,
-        },
-        { replace: true },
+      const restored = readFunctionFilters(
+        new URLSearchParams({
+          function: typeof currentFunction === "string" ? currentFunction : "",
+          level: typeof currentLevel === "string" ? currentLevel : "all",
+          q: typeof currentQuery === "string" ? currentQuery : "",
+        }),
       );
-      return;
-    }
-    filterScope = scope;
-    const restored = readFunctionFilters(
-      new URLSearchParams({
-        function: typeof currentFunction === "string" ? currentFunction : "",
-        level: typeof currentLevel === "string" ? currentLevel : "all",
-        q: typeof currentQuery === "string" ? currentQuery : "",
-      }),
-    );
-    setFnFilter(restored.function);
-    setLogLevel(restored.level);
-    let local = localSearchMemory.get(localSearchKey()) ?? "";
-    try {
-      local =
-        localSearchMemory.get(localSearchKey()) ?? sessionStorage.getItem(localSearchKey()) ?? "";
-    } catch {
-      /* Storage is optional. */
-    }
-    setLogText(typeof currentQuery === "string" ? restored.text : local);
-    setIncludeSearch(false);
-  });
+      setFnFilter(restored.function);
+      setLogLevel(restored.level);
+      let local = localSearchMemory.get(localSearchKey()) ?? "";
+      try {
+        local =
+          localSearchMemory.get(localSearchKey()) ?? sessionStorage.getItem(localSearchKey()) ?? "";
+      } catch {
+        /* Storage is optional. */
+      }
+      setLogText(typeof currentQuery === "string" ? restored.text : local);
+      setIncludeSearch(false);
+    },
+  );
   const editLogText = (text: string) => {
     localSearchMemory.set(localSearchKey(), text);
     try {
@@ -848,84 +849,86 @@ const Functions: Component = () => {
   };
 
   // Keep the tail in view after every render that changes the lines (or mounts the box).
-  createEffect(() => {
-    const box = logBox();
-    void filteredLines();
-    if (box && following()) box.scrollTop = box.scrollHeight;
-  });
+  createEffect(
+    () => [logBox(), filteredLines(), following()] as const,
+    ([box, , follow]) => {
+      if (box && follow) box.scrollTop = box.scrollHeight;
+    },
+  );
 
   const ownerProject = createMemo(() =>
     lastOverview()?.configured ? lastOverview()?.project : undefined,
   );
   let subscribedProject: string | undefined;
-  createEffect(() => {
-    const project = ownerProject();
-    void streamRevision();
-    if (!project) return;
-    if (project !== subscribedProject) {
-      setLines([]);
-      setInvocations([]);
-      setLogRecords([]);
-      setLogGaps(false);
-    }
-    subscribedProject = project;
-    setConnected(false);
-    setConnecting(true);
-    let disposed = false;
-    const stop = subscribeLogs(
-      (e) => {
-        if (disposed || (e.project && o()?.project && e.project !== o()?.project)) return;
-        if (e.kind === "snapshot") {
-          setStreamProject(e.project);
-          setLogRecords((records) => mergeFunctionLogs(records, e.logRecords, MAX_LINES));
-          setLogGaps(
-            (gaps) =>
-              gaps ||
-              e.logRecords.length > MAX_LINES ||
-              e.logScopes.some((scope) => scope.truncated || scope.replaced),
-          );
-          setLines(e.logs.slice(-MAX_LINES));
-          setInvocations(keepRecent(e.invocations));
-        } else if (e.kind === "logState") {
-          if (e.logScopes.some((scope) => scope.truncated || scope.replaced)) setLogGaps(true);
-        } else if (e.kind === "log") {
-          if (e.record) {
-            setLogRecords((records) => {
-              if (records.length >= MAX_LINES) setLogGaps(true);
-              return mergeFunctionLogs(records, [e.record!], MAX_LINES);
-            });
-            if (e.record.truncated) setLogGaps(true);
+  createEffect(
+    () => [ownerProject(), streamRevision()] as const,
+    ([project]) => {
+      if (!project) return;
+      if (project !== subscribedProject) {
+        setLines([]);
+        setInvocations([]);
+        setLogRecords([]);
+        setLogGaps(false);
+      }
+      subscribedProject = project;
+      setConnected(false);
+      setConnecting(true);
+      let disposed = false;
+      const stop = subscribeLogs(
+        (e) => {
+          if (disposed || (e.project && o()?.project && e.project !== o()?.project)) return;
+          if (e.kind === "snapshot") {
+            setStreamProject(e.project);
+            setLogRecords((records) => mergeFunctionLogs(records, e.logRecords, MAX_LINES));
+            setLogGaps(
+              (gaps) =>
+                gaps ||
+                e.logRecords.length > MAX_LINES ||
+                e.logScopes.some((scope) => scope.truncated || scope.replaced),
+            );
+            setLines(e.logs.slice(-MAX_LINES));
+            setInvocations(keepRecent(e.invocations));
+          } else if (e.kind === "logState") {
+            if (e.logScopes.some((scope) => scope.truncated || scope.replaced)) setLogGaps(true);
+          } else if (e.kind === "log") {
+            if (e.record) {
+              setLogRecords((records) => {
+                if (records.length >= MAX_LINES) setLogGaps(true);
+                return mergeFunctionLogs(records, [e.record!], MAX_LINES);
+              });
+              if (e.record.truncated) setLogGaps(true);
+            }
+            setLines((l) => [...l, e.line].slice(-MAX_LINES));
+            if (!following()) setUnseen((n) => n + 1);
+          } else if (e.kind === "resync") {
+            // The server could not answer this connection's cursor (a reset, or records that
+            // fell out of its retention window): replace the list rather than append a gap.
+            setInvocations(keepRecent(e.invocations));
+            void refetchStatus();
+          } else {
+            setInvocations((i) => keepRecent([...i, e.record]));
+            void refetchStatus();
           }
-          setLines((l) => [...l, e.line].slice(-MAX_LINES));
-          if (!following()) setUnseen((n) => n + 1);
-        } else if (e.kind === "resync") {
-          // The server could not answer this connection's cursor (a reset, or records that
-          // fell out of its retention window): replace the list rather than append a gap.
-          setInvocations(keepRecent(e.invocations));
-          void refetchStatus();
-        } else {
-          setInvocations((i) => keepRecent([...i, e.record]));
-          void refetchStatus();
-        }
-        setConnected(true);
-        setConnecting(false);
-      },
-      () => {
-        if (!disposed) {
-          setConnected(false);
+          setConnected(true);
           setConnecting(false);
-          setLogGaps(true);
-        }
-      },
-    );
-    onCleanup(() => {
-      disposed = true;
-      stop();
-    });
-  });
-  onMount(() => {
+        },
+        () => {
+          if (!disposed) {
+            setConnected(false);
+            setConnecting(false);
+            setLogGaps(true);
+          }
+        },
+      );
+      return () => {
+        disposed = true;
+        stop();
+      };
+    },
+  );
+  onSettled(() => {
     const timer = window.setInterval(() => void refetchStatus(), 3000);
-    onCleanup(() => window.clearInterval(timer));
+    return () => window.clearInterval(timer);
   });
 
   const o = () => lastOverview();

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { createRoot } from "solid-js";
+import { createRoot, flush } from "solid-js";
 import { createUploadQueue } from "./uploadQueue";
 
 const deferred = () => {
@@ -23,23 +23,30 @@ test("a job added while one runs is queued, then runs after it, in order", async
         await gate.promise;
       },
     });
+    // Solid 2 refuses signal writes in the synchronous body of an owner; act after it.
+    await Promise.resolve();
     expect(queue.add("a")).toBe("started");
+    flush();
     expect(queue.pending()).toBe(true);
     expect(queue.add("b")).toBe("queued");
     expect(queue.add("c")).toBe("queued");
+    flush();
     expect(queue.queued()).toBe(2);
     await tick();
     expect(seen).toEqual(["a"]);
     gates.get("a")!.resolve();
     await tick();
     expect(seen).toEqual(["a", "b"]);
+    flush();
     expect(queue.queued()).toBe(1);
     gates.get("b")!.resolve();
     await tick();
     gates.get("c")!.resolve();
     await queue.idle();
     expect(seen).toEqual(["a", "b", "c"]);
+    flush();
     expect(queue.pending()).toBe(false);
+    flush();
     expect(queue.queued()).toBe(0);
     // onStart runs once per busy period, not per job.
     expect(starts).toEqual([0]);
@@ -63,10 +70,13 @@ test("a failing job does not lose the jobs queued behind it", async () => {
         if (job === "a") throw new Error("boom");
       },
     });
+    // Solid 2 refuses signal writes in the synchronous body of an owner; act after it.
+    await Promise.resolve();
     queue.add("a");
     queue.add("b");
     await queue.idle();
     expect(seen).toEqual(["a", "b"]);
+    flush();
     expect(queue.pending()).toBe(false);
     dispose();
   });
@@ -76,6 +86,7 @@ test("idle resolves at once when nothing runs", async () => {
   await createRoot(async (dispose) => {
     const queue = createUploadQueue<string>({ run: async () => undefined });
     await queue.idle();
+    flush();
     expect(queue.pending()).toBe(false);
     dispose();
   });

@@ -1,7 +1,8 @@
+import { flush } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@solidjs/testing-library";
-import { createComponent } from "solid-js";
-import { createMemoryHistory, MemoryRouter, Route } from "@solidjs/router";
+import { memoryHistory } from "@solidjs/router";
+import { routed } from "../test/router";
 import { okAsync, ResultAsync } from "neverthrow";
 import Firestore from "../pages/Firestore";
 import { appState } from "../state";
@@ -45,6 +46,7 @@ describe("Firestore live updates with delayed responses", () => {
     );
     appState.setSessions([{ name: "default", project: "p" }]);
     appState.setSession("default");
+    flush();
     const root = "projects/p/databases/(default)/documents";
     const alice = {
       name: `${root}/users/alice`,
@@ -73,15 +75,8 @@ describe("Firestore live updates with delayed responses", () => {
         updateTime: "2026-11-13T12:00:01Z",
       }),
     );
-    const history = createMemoryHistory();
-    history.set({ value: "/users" });
-    const view = render(() =>
-      createComponent(MemoryRouter, {
-        history,
-        get children() {
-          return createComponent(Route, { path: "/:path", component: Firestore });
-        },
-      }),
+    const view = render(
+      routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
     );
     await vi.advanceTimersByTimeAsync(0);
     expect(listDocuments).toHaveBeenCalledTimes(1);
@@ -89,15 +84,18 @@ describe("Firestore live updates with delayed responses", () => {
       event: "commit",
       data: JSON.stringify({ changes: [{ path: alice.name, kind: "created" }] }),
     });
+    flush();
     expect(listDocuments).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(100);
     emit({
       event: "commit",
       data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
     });
+    flush();
     await vi.advanceTimersByTimeAsync(50);
     expect(getDocument).not.toHaveBeenCalled();
     release({ documents: [alice] });
+    flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(getDocument).toHaveBeenCalledExactlyOnceWith(root, "users/alice");
     expect(view.getByTestId("document-list").textContent).toContain("value2");
@@ -116,6 +114,7 @@ describe("Firestore live updates with delayed responses", () => {
       );
       appState.setSessions([{ name: "default", project: "p" }]);
       appState.setSession("default");
+      flush();
       const root = "projects/p/databases/(default)/documents";
       const alice = {
         name: `${root}/users/alice`,
@@ -148,32 +147,28 @@ describe("Firestore live updates with delayed responses", () => {
           }),
         ),
       );
-      const history = createMemoryHistory();
-      history.set({ value: "/users" });
-      const view = render(() =>
-        createComponent(MemoryRouter, {
-          history,
-          get children() {
-            return createComponent(Route, { path: "/:path", component: Firestore });
-          },
-        }),
+      const view = render(
+        routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
       );
       await vi.advanceTimersByTimeAsync(0);
       emit({
         event: "commit",
         data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
       });
+      flush();
       expect(getDocument).toHaveBeenCalledExactlyOnceWith(root, "users/alice");
       await vi.advanceTimersByTimeAsync(151);
       emit({
         event: "commit",
         data: JSON.stringify({ changes: [{ path: alice.name, kind: "deleted" }] }),
       });
+      flush();
       expect(memberships).toHaveLength(1);
       emit({
         event: "commit",
         data: JSON.stringify({ changes: [{ path: alice.name, kind: "created" }] }),
       });
+      flush();
       await vi.advanceTimersByTimeAsync(150);
       expect(memberships).toHaveLength(1);
       memberships[0]!({ documents: [] });
@@ -185,6 +180,7 @@ describe("Firestore live updates with delayed responses", () => {
       const recreatedRow = view.getByText("alice").closest("tr");
       expect(view.getByTestId("document-list").textContent).toContain("value2");
       releaseRow({ ...alice, fields: { value: { stringValue: "value1" } }, updateTime });
+      flush();
       await vi.advanceTimersByTimeAsync(0);
       expect(view.getByTestId("document-list").textContent).toContain("value2");
       expect(view.getByTestId("document-list").textContent).not.toContain("value1");
@@ -203,6 +199,7 @@ describe("Firestore live updates with delayed responses", () => {
     );
     appState.setSessions([{ name: "default", project: "p" }]);
     appState.setSession("default");
+    flush();
     const root = "projects/p/databases/(default)/documents";
     const alice = {
       name: `${root}/users/alice`,
@@ -230,26 +227,22 @@ describe("Firestore live updates with delayed responses", () => {
         }),
       ),
     );
-    const history = createMemoryHistory();
-    history.set({ value: "/users" });
-    const view = render(() =>
-      createComponent(MemoryRouter, {
-        history,
-        get children() {
-          return createComponent(Route, { path: "/:path", component: Firestore });
-        },
-      }),
+    const view = render(
+      routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
     );
     await vi.advanceTimersByTimeAsync(0);
     emit({
       event: "commit",
       data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
     });
+    flush();
     expect(getDocument).toHaveBeenCalledExactlyOnceWith(root, "users/alice");
     emit({ event: "reset", data: "{}" });
+    flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(view.getByTestId("document-list").textContent).toContain("restored");
     releaseRow(alice);
+    flush();
     await vi.advanceTimersByTimeAsync(150);
     expect(view.getByTestId("document-list").textContent).toContain("restored");
     expect(view.getByTestId("document-list").textContent).not.toContain("current");
@@ -278,6 +271,7 @@ describe("Firestore live updates with delayed responses", () => {
       );
       appState.setSessions([{ name: "default", project: "p" }]);
       appState.setSession("default");
+      flush();
       const root = "projects/p/databases/(default)/documents";
       const alice = {
         name: `${root}/users/alice`,
@@ -298,15 +292,8 @@ describe("Firestore live updates with delayed responses", () => {
           }),
         ),
       );
-      const history = createMemoryHistory();
-      history.set({ value: "/users" });
-      const view = render(() =>
-        createComponent(MemoryRouter, {
-          history,
-          get children() {
-            return createComponent(Route, { path: "/:path", component: Firestore });
-          },
-        }),
+      const view = render(
+        routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
       );
       await vi.advanceTimersByTimeAsync(0);
       const displayedRow = view.getByText("alice").closest("tr");
@@ -314,7 +301,9 @@ describe("Firestore live updates with delayed responses", () => {
         event: "commit",
         data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
       });
+      flush();
       releaseRow({ ...alice, fields: { value: { stringValue: "read" } }, updateTime: readTime });
+      flush();
       await vi.advanceTimersByTimeAsync(0);
       expect(view.getByTestId("document-list").textContent).toContain(
         accepted ? "read" : "displayed",
@@ -345,6 +334,7 @@ describe("Firestore live updates with delayed responses", () => {
       );
       appState.setSessions([{ name: "default", project: "p" }]);
       appState.setSession("default");
+      flush();
       const root = "projects/p/databases/(default)/documents";
       const alice = {
         name: `${root}/users/alice`,
@@ -379,21 +369,15 @@ describe("Firestore live updates with delayed responses", () => {
           }),
         ),
       );
-      const history = createMemoryHistory();
-      history.set({ value: "/users" });
-      const view = render(() =>
-        createComponent(MemoryRouter, {
-          history,
-          get children() {
-            return createComponent(Route, { path: "/:path", component: Firestore });
-          },
-        }),
+      const view = render(
+        routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
       );
       await vi.advanceTimersByTimeAsync(0);
       emit({
         event: "commit",
         data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
       });
+      flush();
       expect(getDocument).toHaveBeenCalledExactlyOnceWith(root, "users/alice");
       expect(listDocuments).toHaveBeenCalledTimes(1);
       releaseRow({
@@ -401,6 +385,7 @@ describe("Firestore live updates with delayed responses", () => {
         fields: { value: { stringValue: "value1" } },
         ...(readTime === undefined ? {} : { updateTime: readTime }),
       });
+      flush();
       await vi.advanceTimersByTimeAsync(0);
       expect(listDocuments).toHaveBeenCalledTimes(2);
       expect(view.getByTestId("document-list").textContent).toContain("value0");
@@ -414,6 +399,7 @@ describe("Firestore live updates with delayed responses", () => {
           },
         ],
       });
+      flush();
       await vi.runAllTimersAsync();
       expect(view.getByTestId("document-list").textContent).toContain("value2");
       expect(view.getByTestId("document-list").textContent).not.toContain("value0");
@@ -433,6 +419,7 @@ describe("Firestore live updates with delayed responses", () => {
     );
     appState.setSessions([{ name: "default", project: "p" }]);
     appState.setSession("default");
+    flush();
     const root = "projects/p/databases/(default)/documents";
     const alice = {
       name: `${root}/users/alice`,
@@ -456,27 +443,22 @@ describe("Firestore live updates with delayed responses", () => {
     vi.mocked(getDocument).mockReturnValue(
       okAsync({ ...alice, fields: { value: { stringValue: "value1" } } }),
     );
-    const history = createMemoryHistory();
-    history.set({ value: "/users" });
-    render(() =>
-      createComponent(MemoryRouter, {
-        history,
-        get children() {
-          return createComponent(Route, { path: "/:path", component: Firestore });
-        },
-      }),
+    render(
+      routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
     );
     await vi.advanceTimersByTimeAsync(0);
     emit({
       event: "commit",
       data: JSON.stringify({ changes: [{ path: alice.name, kind: "updated" }] }),
     });
+    flush();
     await vi.advanceTimersByTimeAsync(0);
     expect(getDocument).toHaveBeenCalledExactlyOnceWith(root, "users/alice");
     expect(listDocuments).toHaveBeenCalledTimes(2);
     releaseMembership({
       documents: [{ ...alice, fields: { value: { stringValue: "value2" } } }],
     });
+    flush();
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(listDocuments).toHaveBeenCalledTimes(2);
@@ -495,6 +477,7 @@ describe("Firestore live updates with delayed responses", () => {
       );
       appState.setSessions([{ name: "default", project: "p" }]);
       appState.setSession("default");
+      flush();
       const root = "projects/p/databases/(default)/documents";
       let value = 0;
       const alice = {
@@ -512,15 +495,8 @@ describe("Firestore live updates with delayed responses", () => {
       let maximumInFlight = 0;
       const completed: string[] = [];
       vi.mocked(listDocuments).mockReturnValue(okAsync({ documents: [alice, bob] }));
-      const history = createMemoryHistory();
-      history.set({ value: "/users" });
-      const view = render(() =>
-        createComponent(MemoryRouter, {
-          history,
-          get children() {
-            return createComponent(Route, { path: "/:path", component: Firestore });
-          },
-        }),
+      const view = render(
+        routed([{ path: "/:path", component: Firestore }], { history: memoryHistory("/users") }),
       );
       await vi.advanceTimersByTimeAsync(0);
       const unchangedRow = view.getByText("bob").closest("tr");
@@ -560,9 +536,11 @@ describe("Firestore live updates with delayed responses", () => {
       }
       value += 1;
       emit({ event: "commit", data: JSON.stringify({ changes: [{ path: alice.name, kind }] }) });
+      flush();
       const writes = setInterval(() => {
         value += 1;
         emit({ event: "commit", data: JSON.stringify({ changes: [{ path: alice.name, kind }] }) });
+        flush();
       }, 151);
       for (let response = 1; response <= 4; response += 1) {
         await vi.advanceTimersByTimeAsync(response === 1 || kind === "created" ? 300 : 151);
@@ -884,9 +862,12 @@ describe("changed row read ordering", () => {
         guard.markApplied("alice", newer);
       }
     });
+    flush();
     releaseNewer("value2");
+    flush();
     await second;
     releaseOlder("value1");
+    flush();
     await first;
     expect(shown).toBe("value2");
     const other = guard.issue("bob");

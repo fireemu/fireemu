@@ -16,26 +16,29 @@ const DatabasePicker: Component<{
   );
   const [input, setInput] = createSignal(props.database);
   const [recent, setRecent] = createSignal<string[]>([]);
-  createEffect(() => {
-    setInput(props.database);
-    const key = `fireemu.databases.${scope()}`;
-    let previous: unknown = [];
-    try {
-      previous = JSON.parse(sessionStorage.getItem(key) ?? "[]");
-    } catch {
-      /* Storage is optional. */
-    }
-    const names = Array.isArray(previous)
-      ? previous.filter((value): value is string => typeof value === "string")
-      : [];
-    const next = [props.database, ...names.filter((name) => name !== props.database)].slice(0, 8);
-    setRecent(next);
-    try {
-      sessionStorage.setItem(key, JSON.stringify(next));
-    } catch {
-      /* Storage is optional. */
-    }
-  });
+  createEffect(
+    () => [props.database, scope()] as const,
+    ([database, scopeKey]) => {
+      setInput(database);
+      const key = `fireemu.databases.${scopeKey}`;
+      let previous: unknown = [];
+      try {
+        previous = JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      } catch {
+        /* Storage is optional. */
+      }
+      const names = Array.isArray(previous)
+        ? previous.filter((value): value is string => typeof value === "string")
+        : [];
+      const next = [database, ...names.filter((name) => name !== database)].slice(0, 8);
+      setRecent(next);
+      try {
+        sessionStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        /* Storage is optional. */
+      }
+    },
+  );
   const options = () => [...new Set([...(catalog.data() ?? []), ...recent()])];
   return (
     <div>

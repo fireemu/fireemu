@@ -1,15 +1,16 @@
-import { A, type RouteSectionProps } from "@solidjs/router";
+import { ariaBool } from "./lib/aria";
+import { useLinkState, type RouteSectionProps } from "@solidjs/router";
 import {
   For,
+  Loading,
   Show,
   createMemo,
   createSignal,
-  on,
-  onCleanup,
-  onMount,
+  onSettled,
   untrack,
   type Component,
 } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { CommandPalette } from "./components/CommandPalette";
 import { StatusBadge, type Tone } from "./components/common";
 import { openCommandPalette, openShortcutHelp } from "./components/overlays";
@@ -32,6 +33,7 @@ import {
 } from "./components/icons";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { t, type MessageKey } from "./i18n";
+import { appHref } from "./lib/hrefs";
 import { requestScopeChange } from "./lib/unsaved";
 import { appState } from "./state";
 
@@ -110,13 +112,37 @@ const RUNTIME_NAV: NavItem[] = [
   },
 ];
 
+/**
+ * A sidebar link marked `aria-current="page"` while the path is the section's own, whatever the
+ * query, as Solid Router 1's `<A>` marked these links (a page inside a section, such as a
+ * Firestore document, leaves it unmarked). Router 2 marks a plain anchor current only when the
+ * query matches too.
+ */
+const NavLink: Component<{
+  href: string;
+  onClick: () => void;
+  children: JSX.Element;
+}> = (props) => {
+  const link = useLinkState(() => appHref(props.href), { end: true });
+  return (
+    <a
+      href={appHref(props.href)}
+      class="nav-link"
+      aria-current={link.active() ? "page" : undefined}
+      onClick={() => props.onClick()}
+    >
+      {props.children}
+    </a>
+  );
+};
+
 /** The frame: sidebar navigation, a status bar with the clock, the routed page. */
 export const App: Component<RouteSectionProps> = (props) => {
   const [navigationOpen, setNavigationOpen] = createSignal(false);
-  onMount(() => {
+  onSettled(() => {
     void appState.refreshClock();
     const timer = window.setInterval(() => void appState.refreshClock(), 5000);
-    onCleanup(() => window.clearInterval(timer));
+    return () => window.clearInterval(timer);
   });
   const connectionTone = (): Tone => {
     switch (appState.connected()) {
@@ -138,12 +164,14 @@ export const App: Component<RouteSectionProps> = (props) => {
         return t("header.connecting");
     }
   };
-  const announcement = createMemo(
-    on(appState.connected, () => ({
+  // Re-announced only when the connection state changes (Solid 2 dropped `on`).
+  const announcement = createMemo(() => {
+    appState.connected();
+    return untrack(() => ({
       label: connectionLabel(),
-      time: untrack(appState.lastConnectedAt),
-    })),
-  );
+      time: appState.lastConnectedAt(),
+    }));
+  });
   const paletteLinks = () =>
     [...OFFICIAL_NAV, ...RUNTIME_NAV].map((item) =>
       item.keywords
@@ -166,7 +194,7 @@ export const App: Component<RouteSectionProps> = (props) => {
         type="button"
         class="btn m-3 self-start md:hidden"
         aria-controls="console-navigation"
-        aria-expanded={navigationOpen()}
+        aria-expanded={ariaBool(navigationOpen())}
         onClick={() => setNavigationOpen(!navigationOpen())}
       >
         <IconMenu />
@@ -195,15 +223,10 @@ export const App: Component<RouteSectionProps> = (props) => {
         <nav class="space-y-0.5" aria-label={t("nav.sectionOfficial")}>
           <For each={OFFICIAL_NAV}>
             {(item) => (
-              <A
-                href={item.href}
-                class="nav-link"
-                onClick={() => setNavigationOpen(false)}
-                end={item.href === "/"}
-              >
+              <NavLink href={item.href} onClick={() => setNavigationOpen(false)}>
                 <item.icon />
                 {t(item.key)}
-              </A>
+              </NavLink>
             )}
           </For>
         </nav>
@@ -213,15 +236,10 @@ export const App: Component<RouteSectionProps> = (props) => {
         <nav class="space-y-0.5" aria-label={t("nav.sectionRuntime")}>
           <For each={RUNTIME_NAV}>
             {(item) => (
-              <A
-                href={item.href}
-                class="nav-link"
-                onClick={() => setNavigationOpen(false)}
-                end={false}
-              >
+              <NavLink href={item.href} onClick={() => setNavigationOpen(false)}>
                 <item.icon />
                 {t(item.key)}
-              </A>
+              </NavLink>
             )}
           </For>
         </nav>
@@ -333,7 +351,9 @@ export const App: Component<RouteSectionProps> = (props) => {
               <span class="min-w-0 flex-1">{t("app.tokenMissing")}</span>
             </div>
           </Show>
-          {props.children}
+          {/* A page chunk that is still loading leaves the frame in place (Solid 1 rendered nothing
+              in its spot); without this boundary Solid 2 would hold the whole frame back. */}
+          <Loading>{props.children}</Loading>
         </main>
       </div>
     </div>

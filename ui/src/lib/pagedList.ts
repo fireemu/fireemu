@@ -1,4 +1,5 @@
-import { batch, createSignal, type Accessor } from "solid-js";
+import { createSignal, type Accessor } from "solid-js";
+import { createLatestSignal } from "./latestSignal";
 import type { ResultAsync } from "neverthrow";
 import type { ApiError } from "../api/client";
 
@@ -33,11 +34,13 @@ export const createPagedList = <T>(
   fetchPage: (token: string | undefined) => ResultAsync<Page<T>, ApiError>,
   keyOf?: (item: T) => string,
 ): PagedList<T> => {
-  const [items, setItems] = createSignal<T[]>([]);
-  const [nextToken, setNextToken] = createSignal<string | undefined>(undefined);
+  const [items, setItems, peekItems] = createLatestSignal<T[]>([]);
+  const [nextToken, setNextToken, peekNextToken] = createLatestSignal<string | undefined>(
+    undefined,
+  );
   const [loading, setLoading] = createSignal(false);
   const [refreshing, setRefreshing] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  const [error, setError, peekError] = createLatestSignal<string | null>(null);
   const [stale, setStale] = createSignal<string | null>(null);
   let generation = 0;
   let activeRead: Promise<void> | undefined;
@@ -46,7 +49,7 @@ export const createPagedList = <T>(
   const newerItems = new Map<string, { revision: number; item: T }>();
   const preserveUnchanged = (incoming: T[], revisionAtStart: number): T[] => {
     if (!keyOf) return incoming;
-    const previous = new Map(items().map((item) => [keyOf(item), item]));
+    const previous = new Map(peekItems().map((item) => [keyOf(item), item]));
     return incoming.map((item) => {
       const key = keyOf(item);
       const update = newerItems.get(key);
@@ -85,18 +88,18 @@ export const createPagedList = <T>(
     const mine = ++generation;
     refreshPending = false;
     newerItems.clear();
-    batch(() => {
+    {
       setItems([]);
       setNextToken(undefined);
       setError(null);
       setStale(null);
       setLoading(true);
       setRefreshing(false);
-    });
+    }
     activeRead = (async () => {
       const r = await readFrom(1);
       if (mine !== generation) return;
-      batch(() => {
+      {
         setLoading(false);
         if (r.ok) {
           setItems(preserveUnchanged(r.page.items, revisionAtStart));
@@ -105,7 +108,7 @@ export const createPagedList = <T>(
         } else {
           setError(r.message);
         }
-      });
+      }
       activeRead = undefined;
       if (refreshPending) {
         refreshPending = false;
@@ -122,16 +125,16 @@ export const createPagedList = <T>(
     }
     // A failed load left nothing good to keep (the list is empty whenever `error` is set):
     // behave as a fresh load.
-    if (error() !== null) return load();
+    if (peekError() !== null) return load();
     activeRead = (async () => {
       do {
         refreshPending = false;
         const revisionAtStart = itemRevision;
         const mine = ++generation;
         setRefreshing(true);
-        const r = await readFrom(Math.max(items().length, 1));
+        const r = await readFrom(Math.max(peekItems().length, 1));
         if (mine !== generation) return;
-        batch(() => {
+        {
           setLoading(false);
           if (r.ok) {
             const stableItems = preserveUnchanged(r.page.items, revisionAtStart);
@@ -143,7 +146,7 @@ export const createPagedList = <T>(
             setStale(r.message);
           }
           setRefreshing(false);
-        });
+        }
       } while (refreshPending);
       activeRead = undefined;
     })();
@@ -151,7 +154,7 @@ export const createPagedList = <T>(
   };
 
   const more = async (): Promise<void> => {
-    const token = nextToken();
+    const token = peekNextToken();
     if (!token) return;
     const revisionAtStart = itemRevision;
     const mine = generation;
@@ -159,12 +162,12 @@ export const createPagedList = <T>(
     if (mine !== generation) return;
     r.match(
       (page) => {
-        batch(() => {
-          const nextItems = preserveUnchanged([...items(), ...page.items], revisionAtStart);
+        {
+          const nextItems = preserveUnchanged([...peekItems(), ...page.items], revisionAtStart);
           setItems(nextItems);
           pruneUpdates(nextItems);
           setNextToken(page.nextToken);
-        });
+        }
       },
       (e) => setStale(e.message),
     );
@@ -187,10 +190,10 @@ export const createPagedList = <T>(
   };
 
   const reportStale = (message: string): void => {
-    batch(() => {
-      if (items().length > 0) setStale(message);
+    {
+      if (peekItems().length > 0) setStale(message);
       else setError(message);
-    });
+    }
   };
 
   return {

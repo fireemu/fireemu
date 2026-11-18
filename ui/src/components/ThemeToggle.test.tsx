@@ -1,11 +1,15 @@
 import { afterEach, expect, it } from "vitest";
+import { flush } from "solid-js";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { THEME_STORAGE_KEY } from "../lib/theme";
 import { ThemeToggle, cycleTheme, themePreference } from "./ThemeToggle";
 
 afterEach(() => {
   cleanup();
-  while (themePreference() !== "system") cycleTheme();
+  while (themePreference() !== "system") {
+    cycleTheme();
+    flush();
+  }
 });
 
 it("starts on the system theme with no mark on the document and nothing stored", () => {
@@ -31,4 +35,12 @@ it("cycles light, dark and back to system, marking and storing only explicit cho
   expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
   expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
   expect(button.textContent).toBe("Theme: System");
+});
+
+it("moves one step per call even when called twice before a render", () => {
+  cycleTheme();
+  cycleTheme();
+  flush();
+  expect(themePreference()).toBe("dark");
+  expect(document.documentElement.dataset.theme).toBe("dark");
 });

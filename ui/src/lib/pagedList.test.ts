@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { createRoot } from "solid-js";
+import { createRoot, flush } from "solid-js";
 import { createPagedList, type Page } from "./pagedList";
 import type { ApiError } from "../api/client";
 
@@ -34,24 +34,29 @@ describe("serialized membership refreshes", () => {
       await createRoot(async (dispose) => {
         const { calls, fetchPage } = controlled();
         const list = createPagedList(fetchPage);
+        await Promise.resolve();
         const initial = list.load();
         calls[0]!.d.resolve({ items: ["initial"] });
         await initial;
         const first = list.refresh();
         const second = list.refresh();
         const third = list.refresh();
+        flush();
         expect(list.loading()).toBe(false);
         expect(list.refreshing()).toBe(true);
         expect(calls).toHaveLength(2);
         if (fails) calls[1]!.d.reject({ status: 500, message: "refresh failed" });
         else calls[1]!.d.resolve({ items: ["first"] });
         await vi.advanceTimersByTimeAsync(0);
+        flush();
         expect(list.items()).toEqual([fails ? "initial" : "first"]);
         expect(list.stale()).toBe(fails ? "refresh failed" : null);
         expect(calls).toHaveLength(3);
+        flush();
         expect(list.refreshing()).toBe(true);
         calls[2]!.d.resolve({ items: ["follow-up"] });
         await Promise.all([first, second, third]);
+        flush();
         expect(list.items()).toEqual(["follow-up"]);
         expect(list.stale()).toBeNull();
         expect(list.refreshing()).toBe(false);
@@ -66,18 +71,21 @@ describe("serialized membership refreshes", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const initial = list.load();
       const refresh = list.refresh();
       const repeated = list.refresh();
       expect(calls).toHaveLength(1);
       calls[0]!.d.resolve({ items: ["initial"] });
       await vi.advanceTimersByTimeAsync(0);
+      flush();
       expect(list.items()).toEqual(["initial"]);
       expect(list.loading()).toBe(false);
       expect(list.refreshing()).toBe(true);
       expect(calls).toHaveLength(2);
       calls[1]!.d.resolve({ items: ["latest"] });
       await Promise.all([initial, refresh, repeated]);
+      flush();
       expect(list.items()).toEqual(["latest"]);
       expect(list.refreshing()).toBe(false);
       expect(calls).toHaveLength(2);
@@ -90,6 +98,7 @@ describe("serialized membership refreshes", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.d.resolve({ items: ["old"] });
       await initial;
@@ -101,11 +110,13 @@ describe("serialized membership refreshes", () => {
       const newRefresh = list.refresh();
       calls[1]!.d.resolve({ items: ["obsolete"] });
       await Promise.all([oldRefresh, oldPending]);
+      flush();
       expect(list.items()).toEqual(["new"]);
       expect(list.refreshing()).toBe(true);
       expect(calls).toHaveLength(4);
       calls[3]!.d.resolve({ items: ["new refreshed"] });
       await newRefresh;
+      flush();
       expect(list.items()).toEqual(["new refreshed"]);
       expect(list.refreshing()).toBe(false);
       expect(calls).toHaveLength(4);
@@ -119,6 +130,7 @@ describe("createPagedList", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const first = list.load(); // target A
       const second = list.load(); // target B
       expect(calls.length).toBe(2);
@@ -127,6 +139,7 @@ describe("createPagedList", () => {
       calls[0]?.d.resolve({ items: ["a1"] });
       await first;
       await tick();
+      flush();
       expect(list.items()).toEqual(["b1"]);
       expect(list.loading()).toBe(false);
       dispose();
@@ -137,12 +150,14 @@ describe("createPagedList", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["1", "2"], nextToken: "p2" });
       await load;
       const more = list.more();
       calls[1]?.d.resolve({ items: ["3", "4"], nextToken: "p3" });
       await more;
+      flush();
       expect(list.items()).toEqual(["1", "2", "3", "4"]);
       const refresh = list.refresh();
       await tick();
@@ -152,9 +167,11 @@ describe("createPagedList", () => {
       expect(calls[3]?.token).toBe("p2");
       calls[3]?.d.resolve({ items: ["3", "4", "5"], nextToken: "p3" });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["1", "2b", "3", "4", "5"]);
       expect(list.nextToken()).toBe("p3");
       // The old list stayed on screen while the refresh ran.
+      flush();
       expect(list.loading()).toBe(false);
       dispose();
     });
@@ -164,12 +181,14 @@ describe("createPagedList", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["x"] });
       await load;
       const refresh = list.refresh();
       calls[1]?.d.reject({ status: 500, message: "boom" });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["x"]);
       expect(list.stale()).toBe("boom");
       expect(list.error()).toBeNull();
@@ -182,7 +201,9 @@ describe("createPagedList", () => {
       const list = createPagedList(() =>
         errAsync<Page<string>, ApiError>({ status: 0, message: "down" }),
       );
+      await Promise.resolve();
       await list.load();
+      flush();
       expect(list.error()).toBe("down");
       expect(list.items()).toEqual([]);
       expect(list.loading()).toBe(false);
@@ -196,15 +217,18 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const first = list.load();
       calls[0]?.d.resolve({ items: ["a"], nextToken: "a2" });
       await first;
       const second = list.load();
+      flush();
       expect(list.items()).toEqual([]);
       expect(list.nextToken()).toBeUndefined();
       expect(list.loading()).toBe(true);
       calls[1]?.d.resolve({ items: ["b"] });
       await second;
+      flush();
       expect(list.loading()).toBe(false);
       dispose();
     });
@@ -214,6 +238,7 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["1", "2"], nextToken: "p2" });
       await load;
@@ -222,6 +247,7 @@ describe("createPagedList, transitions the first tests left open", () => {
       calls[1]?.d.resolve({ items: ["1", "2"], nextToken: "p2-new" });
       await refresh;
       expect(calls.length).toBe(2);
+      flush();
       expect(list.nextToken()).toBe("p2-new");
       dispose();
     });
@@ -231,15 +257,19 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.reject({ status: 500, message: "down" });
       await load;
+      flush();
       expect(list.error()).toBe("down");
       const refresh = list.refresh();
+      flush();
       expect(list.loading()).toBe(true);
       expect(list.error()).toBeNull();
       calls[1]?.d.resolve({ items: ["x"] });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["x"]);
       expect(list.error()).toBeNull();
       expect(list.stale()).toBeNull();
@@ -251,16 +281,19 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["x"] });
       await load;
       const bad = list.refresh();
       calls[1]?.d.reject({ status: 500, message: "boom" });
       await bad;
+      flush();
       expect(list.stale()).toBe("boom");
       const good = list.refresh();
       calls[2]?.d.resolve({ items: ["y"] });
       await good;
+      flush();
       expect(list.stale()).toBeNull();
       expect(list.items()).toEqual(["y"]);
       dispose();
@@ -271,6 +304,7 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["a"] });
       await load;
@@ -281,6 +315,7 @@ describe("createPagedList, transitions the first tests left open", () => {
       calls[1]?.d.resolve({ items: ["a-stale"] });
       await refresh;
       await tick();
+      flush();
       expect(list.items()).toEqual(["b"]);
       dispose();
     });
@@ -290,6 +325,7 @@ describe("createPagedList, transitions the first tests left open", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["a"] });
       await load;
@@ -305,6 +341,7 @@ describe("createPagedList, transitions the first tests left open", () => {
       await other;
       calls[2]?.d.resolve({ items: ["b2"], nextToken: "p3" });
       await more;
+      flush();
       expect(list.items()).toEqual(["c"]);
       expect(list.nextToken()).toBeUndefined();
 
@@ -314,6 +351,7 @@ describe("createPagedList, transitions the first tests left open", () => {
       const failing = list.more();
       calls[5]?.d.reject({ status: 500, message: "page lost" });
       await failing;
+      flush();
       expect(list.items()).toEqual(["d"]);
       expect(list.nextToken()).toBe("p2");
       expect(list.stale()).toBe("page lost");
@@ -328,6 +366,7 @@ describe("createPagedList, survivors of the first mutation run", () => {
       const list = createPagedList(() =>
         errAsync<Page<string>, ApiError>({ status: 0, message: "" }),
       );
+      flush();
       expect(list.items()).toEqual([]);
       expect(list.loading()).toBe(false);
       expect(list.error()).toBeNull();
@@ -340,6 +379,7 @@ describe("createPagedList, survivors of the first mutation run", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["x"] });
       await load;
@@ -347,9 +387,11 @@ describe("createPagedList, survivors of the first mutation run", () => {
       calls[1]?.d.reject({ status: 500, message: "boom" });
       await bad;
       const again = list.load();
+      flush();
       expect(list.stale()).toBeNull();
       calls[2]?.d.resolve({ items: ["y"] });
       await again;
+      flush();
       expect(list.stale()).toBeNull();
       dispose();
     });
@@ -359,14 +401,17 @@ describe("createPagedList, survivors of the first mutation run", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: [] });
       await load;
       const refresh = list.refresh();
+      flush();
       expect(list.loading()).toBe(false);
       expect(calls[1]?.token).toBeUndefined();
       calls[1]?.d.resolve({ items: ["new"] });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["new"]);
       dispose();
     });
@@ -376,6 +421,7 @@ describe("createPagedList, survivors of the first mutation run", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const a = list.load();
       const b = list.load();
       calls[1]?.d.resolve({ items: ["b"] });
@@ -384,9 +430,11 @@ describe("createPagedList, survivors of the first mutation run", () => {
       calls[0]?.d.resolve({ items: ["a-late"] });
       await a;
       await tick();
+      flush();
       expect(list.items()).toEqual(["b"]);
       calls[2]?.d.resolve({ items: ["b2"] });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["b2"]);
       dispose();
     });
@@ -396,17 +444,20 @@ describe("createPagedList, survivors of the first mutation run", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage);
+      await Promise.resolve();
       const load = list.load();
       calls[0]?.d.resolve({ items: ["1"], nextToken: "p2" });
       await load;
       const more = list.more();
       calls[1]?.d.resolve({ items: ["2"], nextToken: "p3" });
       await more;
+      flush();
       expect(list.nextToken()).toBe("p3");
       const again = list.more();
       expect(calls[2]?.token).toBe("p3");
       calls[2]?.d.resolve({ items: ["3"] });
       await again;
+      flush();
       expect(list.items()).toEqual(["1", "2", "3"]);
       expect(list.nextToken()).toBeUndefined();
       dispose();
@@ -435,9 +486,11 @@ describe("createPagedList keyed rows", () => {
         () => okAsync(pages.shift()!),
         (item) => item.name,
       );
+      await Promise.resolve();
       await list.load();
       const unchanged = list.items()[1];
       await list.refresh();
+      flush();
       expect(list.items()[0]).not.toBe(unchanged);
       expect(list.items()[1]).toBe(unchanged);
       expect(list.items()[0]?.value).toBe(2);
@@ -454,7 +507,9 @@ describe("paged row update races", () => {
         () => okAsync({ items: [item] }),
         () => "key",
       );
+      await Promise.resolve();
       await list.load();
+      flush();
       expect(list.items()).toEqual([item]);
       expect(list.items()[0]).toBe(item);
       dispose();
@@ -465,16 +520,19 @@ describe("paged row update races", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage, (item) => item.split(":")[0]!);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.d.resolve({ items: ["a:1"], nextToken: "next" });
       await initial;
       const refresh = list.refresh();
       const more = list.more();
+      flush();
       expect(list.updateItem("b:2")).toBe(false);
       calls[1]!.d.resolve({ items: ["a:1"], nextToken: "next" });
       await refresh;
       calls[2]!.d.resolve({ items: ["b:1"] });
       await more;
+      flush();
       expect(list.items()).toEqual(["a:1", "b:1"]);
       dispose();
     });
@@ -484,16 +542,19 @@ describe("paged row update races", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage, (item) => item.split(":")[0]!);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.d.resolve({ items: ["a:1"], nextToken: "next" });
       await initial;
       const refresh = list.refresh();
       const more = list.more();
+      flush();
       expect(list.updateItem("b:2")).toBe(false);
       calls[1]!.d.resolve({ items: ["b:1"], nextToken: "next" });
       await refresh;
       calls[2]!.d.resolve({ items: ["b:1"] });
       await more;
+      flush();
       expect(list.items()).toEqual(["b:2", "b:2"]);
       dispose();
     });
@@ -502,13 +563,17 @@ describe("paged row update races", () => {
   it("returns false without a key function and reports errors for an empty list", async () => {
     await createRoot(async (dispose) => {
       const list = createPagedList(() => okAsync({ items: ["one"] }));
+      await Promise.resolve();
       list.reportStale("empty failure");
+      flush();
       expect(list.error()).toBe("empty failure");
       expect(list.stale()).toBeNull();
       await list.load();
+      flush();
       expect(list.updateItem("two")).toBe(false);
       expect(list.items()).toEqual(["one"]);
       list.reportStale("row failure");
+      flush();
       expect(list.error()).toBeNull();
       expect(list.stale()).toBe("row failure");
       dispose();
@@ -536,19 +601,24 @@ describe("paged row update races", () => {
         () => okAsync(pages.shift()!),
         (item) => item.name,
       );
+      await Promise.resolve();
       await list.load();
+      flush();
       const unchanged = list.items()[1];
       expect(list.updateItem({ name: "a", value: 2 })).toBe(true);
+      flush();
       expect(list.items()).toEqual([
         { name: "a", value: 2 },
         { name: "b", value: 1 },
       ]);
       await list.refresh();
+      flush();
       expect(list.items()).toEqual([
         { name: "a", value: 3 },
         { name: "b", value: 1 },
         { name: "c", value: 1 },
       ]);
+      flush();
       expect(list.items()[1]).toBe(unchanged);
       dispose();
     });
@@ -558,17 +628,21 @@ describe("paged row update races", () => {
     await createRoot(async (dispose) => {
       const { calls, fetchPage } = controlled();
       const list = createPagedList(fetchPage, (item) => item.split(":")[0]!);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.d.resolve({ items: ["a:1"], nextToken: "next" });
       await initial;
       const refresh = list.refresh();
+      flush();
       expect(list.updateItem("b:2")).toBe(false);
       const more = list.more();
       calls[2]!.d.resolve({ items: ["c:1"] });
       await more;
+      flush();
       expect(list.items()).toEqual(["a:1", "c:1"]);
       calls[1]!.d.resolve({ items: ["b:1"] });
       await refresh;
+      flush();
       expect(list.items()).toEqual(["b:1"]);
       dispose();
     });
@@ -583,11 +657,14 @@ describe("paged row update races", () => {
           (e) => e as ApiError,
         );
       const list = createPagedList(fetchPage, (item) => item.name);
+      await Promise.resolve();
       const initial = list.load();
+      flush();
       expect(list.loading()).toBe(true);
       expect(list.updateItem({ name: "one", value: 2 })).toBe(false);
       calls[0]!.resolve({ items: [{ name: "one", value: 1 }] });
       await initial;
+      flush();
       expect(list.items()).toEqual([{ name: "one", value: 2 }]);
       dispose();
     });
@@ -603,13 +680,16 @@ describe("paged row update races", () => {
           (e) => e as ApiError,
         );
       const list = createPagedList(fetchPage, (item) => item.name);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.resolve({ items: [{ name: "one", value: 1 }] });
       await initial;
       const staleRefresh = list.refresh();
+      flush();
       expect(list.updateItem({ name: "one", value: 2 })).toBe(true);
       calls[1]!.resolve({ items: [{ name: "one", value: 1 }] });
       await staleRefresh;
+      flush();
       expect(list.items()).toEqual([{ name: "one", value: 2 }]);
       dispose();
     });
@@ -625,14 +705,17 @@ describe("paged row update races", () => {
           (e) => e as ApiError,
         );
       const list = createPagedList(fetchPage, (item) => item.name);
+      await Promise.resolve();
       const initial = list.load();
       calls[0]!.resolve({ items: [{ name: "one", value: 1 }], nextToken: "next" });
       await initial;
       const more = list.more();
       expect(calls[1]!.token).toBe("next");
+      flush();
       expect(list.updateItem({ name: "two", value: 2 })).toBe(false);
       calls[1]!.resolve({ items: [{ name: "two", value: 1 }] });
       await more;
+      flush();
       expect(list.items()).toEqual([
         { name: "one", value: 1 },
         { name: "two", value: 2 },
@@ -644,8 +727,10 @@ describe("paged row update races", () => {
   it("reports a row read failure as stale while keeping the last good rows", async () => {
     await createRoot(async (dispose) => {
       const list = createPagedList(() => okAsync({ items: ["one"] }));
+      await Promise.resolve();
       await list.load();
       list.reportStale("row read failed");
+      flush();
       expect(list.items()).toEqual(["one"]);
       expect(list.stale()).toBe("row read failed");
       dispose();

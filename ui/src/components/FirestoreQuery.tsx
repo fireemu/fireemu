@@ -1,16 +1,14 @@
 import { querySdkSource } from "../lib/querySdk";
-import { A } from "@solidjs/router";
 import {
   createEffect,
   createMemo,
   createSignal,
   For,
-  on,
   onCleanup,
   Show,
   type Component,
 } from "solid-js";
-import { createStore, reconcile, unwrap } from "solid-js/store";
+import { createStore, reconcile, snapshot as storeSnapshot } from "solid-js";
 import {
   loadMissingIndexes,
   runQuery,
@@ -33,7 +31,7 @@ import {
   type QueryValueType,
 } from "../lib/firestoreQuery";
 import { relativePath } from "../lib/firestoreValue";
-import { firestoreHref } from "../lib/hrefs";
+import { appHref, firestoreHref } from "../lib/hrefs";
 import { ErrorBanner, Notice } from "./common";
 
 type Execution = {
@@ -107,28 +105,26 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
     return result.isErr() ? t("firestore.queryInvalid", { message: result.error }) : null;
   };
 
-  createEffect(
-    on(scopeKey, (scope) => {
-      if (previousScope !== undefined) {
-        drafts.set(previousScope, structuredClone(unwrap(draft)));
-      }
-      previousScope = scope;
-      queryId++;
-      reportId++;
-      queryAbort?.abort();
-      reportAbort?.abort();
-      setExecution(null);
-      setReports(null);
-      setReportError(null);
-      setReportsLoading(false);
-      setNotice(null);
-      setShareError(null);
-      const text = new URL(window.location.href).searchParams.get("query");
-      const shared = text === null ? null : decodeSharedQuery(text);
-      if (shared?.isErr()) setShareError(t("firestore.querySharedInvalid"));
-      setDraft(reconcile(drafts.get(scope) ?? (shared?.isOk() ? shared.value : defaultQuery())));
-    }),
-  );
+  createEffect(scopeKey, (scope) => {
+    if (previousScope !== undefined) {
+      drafts.set(previousScope, structuredClone(storeSnapshot(draft)));
+    }
+    previousScope = scope;
+    queryId++;
+    reportId++;
+    queryAbort?.abort();
+    reportAbort?.abort();
+    setExecution(null);
+    setReports(null);
+    setReportError(null);
+    setReportsLoading(false);
+    setNotice(null);
+    setShareError(null);
+    const text = new URL(window.location.href).searchParams.get("query");
+    const shared = text === null ? null : decodeSharedQuery(text);
+    if (shared?.isErr()) setShareError(t("firestore.querySharedInvalid"));
+    setDraft(reconcile(drafts.get(scope) ?? (shared?.isOk() ? shared.value : defaultQuery())));
+  });
   onCleanup(() => {
     queryId++;
     reportId++;
@@ -194,7 +190,9 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
     }
   };
   const updateFilter = (index: number, patch: Partial<QueryFilter>) =>
-    setDraft("filters", index, patch);
+    setDraft((d) => {
+      Object.assign(d.filters[index]!, patch);
+    });
 
   return (
     <section
@@ -218,7 +216,12 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
           <select
             class="input"
             value={draft.mode}
-            onChange={(event) => setDraft("mode", event.currentTarget.value as "AND" | "OR")}
+            onChange={(event) => {
+              const mode = event.currentTarget.value as "AND" | "OR";
+              setDraft((d) => {
+                d.mode = mode;
+              });
+            }}
           >
             <option value="AND">{t("firestore.queryAnd")}</option>
             <option value="OR">{t("firestore.queryOr")}</option>
@@ -283,7 +286,10 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                 type="button"
                 aria-label={t("firestore.queryRemoveFilter", { row: index() + 1 })}
                 onClick={() => {
-                  setDraft("filters", (rows) => rows.filter((_, position) => position !== index()));
+                  const position = index();
+                  setDraft((d) => {
+                    d.filters.splice(position, 1);
+                  });
                   queueMicrotask(() => addFilterButton?.focus());
                 }}
               >
@@ -300,10 +306,9 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
           type="button"
           disabled={draft.filters.length >= 20}
           onClick={() =>
-            setDraft("filters", (rows) => [
-              ...rows,
-              { field: "", op: "EQUAL", type: "string", text: "" },
-            ])
+            setDraft((d) => {
+              d.filters.push({ field: "", op: "EQUAL", type: "string", text: "" });
+            })
           }
         >
           {t("firestore.queryAddFilter")}
@@ -323,9 +328,13 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                 <input
                   class="input mono"
                   value={row.field}
-                  onInput={(event) =>
-                    setDraft("orders", index(), "field", event.currentTarget.value)
-                  }
+                  onInput={(event) => {
+                    const value = event.currentTarget.value;
+                    const position = index();
+                    setDraft((d) => {
+                      d.orders[position]!.field = value;
+                    });
+                  }}
                 />
               </label>
               <label class="grid gap-1 text-sm">
@@ -333,14 +342,13 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                 <select
                   class="input"
                   value={row.direction}
-                  onChange={(event) =>
-                    setDraft(
-                      "orders",
-                      index(),
-                      "direction",
-                      event.currentTarget.value as "ASCENDING" | "DESCENDING",
-                    )
-                  }
+                  onChange={(event) => {
+                    const value = event.currentTarget.value as "ASCENDING" | "DESCENDING";
+                    const position = index();
+                    setDraft((d) => {
+                      d.orders[position]!.direction = value;
+                    });
+                  }}
                 >
                   <option value="ASCENDING">{t("firestore.queryAscending")}</option>
                   <option value="DESCENDING">{t("firestore.queryDescending")}</option>
@@ -351,7 +359,10 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                 type="button"
                 aria-label={t("firestore.queryRemoveOrder", { row: index() + 1 })}
                 onClick={() => {
-                  setDraft("orders", (rows) => rows.filter((_, position) => position !== index()));
+                  const position = index();
+                  setDraft((d) => {
+                    d.orders.splice(position, 1);
+                  });
                   queueMicrotask(() => addOrderButton?.focus());
                 }}
               >
@@ -368,7 +379,9 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
           type="button"
           disabled={draft.orders.length >= 20}
           onClick={() =>
-            setDraft("orders", (rows) => [...rows, { field: "", direction: "ASCENDING" }])
+            setDraft((d) => {
+              d.orders.push({ field: "", direction: "ASCENDING" });
+            })
           }
         >
           {t("firestore.queryAddOrder")}
@@ -383,7 +396,12 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
               max="1000"
               step="1"
               value={draft.limit}
-              onInput={(event) => setDraft("limit", event.currentTarget.value)}
+              onInput={(event) => {
+                const limit = event.currentTarget.value;
+                setDraft((d) => {
+                  d.limit = limit;
+                });
+              }}
             />
           </label>
           <button class="btn btn-primary" type="submit" disabled={compiled().isErr()}>
@@ -471,15 +489,15 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
                     <For each={result().documents}>
                       {(document) => (
                         <li>
-                          <A
+                          <a
                             class="mono text-sm link underline"
                             aria-label={t("firestore.queryOpenDocument", {
                               path: relativePath(document.name),
                             })}
-                            href={firestoreHref(relativePath(document.name), props.db)}
+                            href={appHref(firestoreHref(relativePath(document.name), props.db))}
                           >
                             {relativePath(document.name)}
-                          </A>
+                          </a>
                         </li>
                       )}
                     </For>

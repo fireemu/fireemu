@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render } from "@solidjs/testing-library";
-import {
-  MemoryRouter,
-  Route,
-  useNavigate,
-  type MemoryHistory,
-  createMemoryHistory,
-} from "@solidjs/router";
-import { createSignal, type Component } from "solid-js";
+import { memoryHistory, useNavigate } from "@solidjs/router";
+import { routed } from "../test/router";
+import { createSignal, type Component, flush } from "solid-js";
 import { createLeaveGuard, LeavePrompt, requestScopeChange } from "./unsaved";
 
 /** A page with a draft flag, a guarded in-page action and a route link away. */
@@ -32,13 +27,16 @@ const harness = () => {
       </div>
     );
   };
-  const history: MemoryHistory = createMemoryHistory();
-  const ui = render(() => (
-    <MemoryRouter history={history}>
-      <Route path="/" component={Page} />
-      <Route path="/away" component={() => <p data-testid="away">away</p>} />
-    </MemoryRouter>
-  ));
+  const history = memoryHistory();
+  const ui = render(
+    routed(
+      [
+        { path: "/", component: Page },
+        { path: "/away", component: () => <p data-testid="away">away</p> },
+      ],
+      { history },
+    ),
+  );
   return { ...ui, setDirty, acted, history };
 };
 
@@ -54,6 +52,7 @@ describe("createLeaveGuard", () => {
   it("parks a request behind the prompt while dirty; keep forgets it, discard runs it", () => {
     const h = harness();
     h.setDirty(true);
+    flush();
     fireEvent.click(h.getByTestId("act"));
     expect(h.acted()).toBe(0);
     expect(h.getByTestId("unsaved-prompt").textContent).toContain("The draft");
@@ -72,6 +71,7 @@ describe("createLeaveGuard", () => {
   it("holds a route change while dirty and retries it on discard", async () => {
     const h = harness();
     h.setDirty(true);
+    flush();
     fireEvent.click(h.getByTestId("leave"));
     await new Promise((r) => setTimeout(r, 0));
     expect(h.queryByTestId("away")).toBeNull();
@@ -106,6 +106,7 @@ describe("createLeaveGuard", () => {
     };
     expect(fire()).toBe(false);
     h.setDirty(true);
+    flush();
     expect(fire()).toBe(true);
     h.unmount();
     expect(fire()).toBe(false);
@@ -115,22 +116,26 @@ describe("createLeaveGuard", () => {
 it("scope requests respect dirty guards and remove disposed registrations", () => {
   const h = harness();
   h.setDirty(true);
+  flush();
   let changes = 0;
   requestScopeChange(() => {
     changes += 1;
   });
+  flush();
   expect(changes).toBe(0);
   fireEvent.click(h.getByTestId("unsaved-keep"));
   expect(changes).toBe(0);
   requestScopeChange(() => {
     changes += 1;
   });
+  flush();
   fireEvent.click(h.getByTestId("unsaved-discard"));
   expect(changes).toBe(1);
   h.unmount();
   requestScopeChange(() => {
     changes += 1;
   });
+  flush();
   expect(changes).toBe(2);
 });
 
@@ -140,6 +145,7 @@ it("Keep editing returns focus to the last draft input", () => {
   h.container.append(input);
   input.focus();
   h.setDirty(true);
+  flush();
   fireEvent.click(h.getByTestId("act"));
   h.getByTestId("unsaved-keep").focus();
   fireEvent.click(h.getByTestId("unsaved-keep"));
@@ -157,10 +163,12 @@ it.each([
   const second = harness();
   first.setDirty(firstDirty);
   second.setDirty(secondDirty);
+  flush();
   let changed = false;
   requestScopeChange(() => {
     changed = true;
   });
+  flush();
   for (const [h, dirty] of [
     [first, firstDirty],
     [second, secondDirty],

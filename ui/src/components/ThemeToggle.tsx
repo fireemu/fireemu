@@ -1,4 +1,5 @@
-import { createSignal, Match, Switch, type Component } from "solid-js";
+import { Match, Switch, type Component } from "solid-js";
+import { createLatestSignal } from "../lib/latestSignal";
 import { t } from "../i18n";
 import {
   nextPreference,
@@ -23,7 +24,11 @@ const mark = (preference: ThemePreference): void => {
   else root.dataset.theme = preference;
 };
 
-const [preference, setPreference] = createSignal<ThemePreference>(readPreference(storage()));
+// Cycling reads the preference it may have written in the same tick (two clicks before a render),
+// so it reads the last written value rather than the committed one.
+const [preference, setPreference, peekPreference] = createLatestSignal<ThemePreference>(
+  readPreference(storage()),
+);
 mark(preference());
 
 /** The current theme preference (reactive). */
@@ -31,7 +36,7 @@ export const themePreference = preference;
 
 /** Moves to the next preference, remembers it and marks the document. */
 export const cycleTheme = (): void => {
-  const next = nextPreference(preference());
+  const next = nextPreference(peekPreference());
   writePreference(storage(), next);
   setPreference(next);
   mark(next);

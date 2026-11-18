@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, createEvent, fireEvent, render, waitFor } from "@solidjs/testing-library";
-import { Route, Router } from "@solidjs/router";
+import { routed } from "../test/router";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import Storage from "./Storage";
 import { appState } from "../state";
@@ -56,12 +56,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const mount = () =>
-  render(() => (
-    <Router>
-      <Route path="/storage/*path" component={Storage} />
-    </Router>
-  ));
+const mount = () => render(routed([{ path: "/storage/*path", component: Storage }]));
 
 it("uploads dropped files under the current prefix, in order, and lists them again", async () => {
   const ui = mount();

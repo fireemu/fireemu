@@ -1,4 +1,5 @@
-import { createEffect, createMemo, createSignal, For, on, Show, type Component } from "solid-js";
+import { ariaBool } from "../lib/aria";
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js";
 import type {
   FunctionLog,
   FunctionsCausality,
@@ -35,25 +36,23 @@ export const FunctionsTimeline: Component<{
   const byKey = createMemo(() => new Map(events().map((event) => [event.key, event])));
   const [selection, setSelection] = createSignal("");
   createEffect(
-    on(
-      () => props.linkSession,
-      () => setSelection(""),
-      { defer: true },
-    ),
+    () => props.linkSession,
+    () => {
+      setSelection("");
+    },
+    { defer: true },
   );
   createEffect(
-    on(
-      () => [props.linkedEvent, props.linkedFunction],
-      ([event, fn], previous) => {
-        if (
-          (event && fn) ||
-          (previous && selection() === JSON.stringify([props.project, previous[0], previous[1]]))
-        ) {
-          setSelection("");
-        }
-      },
-      { defer: true },
-    ),
+    () => [props.linkedEvent, props.linkedFunction],
+    ([event, fn], previous) => {
+      if (
+        (event && fn) ||
+        (previous && selection() === JSON.stringify([props.project, previous[0], previous[1]]))
+      ) {
+        setSelection("");
+      }
+    },
+    { defer: true },
   );
   const [source, setSource] = createSignal("");
   const [status, setStatus] = createSignal("");
@@ -206,7 +205,7 @@ export const FunctionsTimeline: Component<{
                             <button
                               type="button"
                               class="btn mono text-xs"
-                              aria-pressed={selectedKey() === key}
+                              aria-pressed={ariaBool(selectedKey() === key)}
                               onClick={() => {
                                 setSelection(key);
                                 props.onSelectEvent?.("", "");

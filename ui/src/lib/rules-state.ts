@@ -1,11 +1,4 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 import type { Result } from "neverthrow";
 import type { ApiError } from "../api/client";
 
@@ -46,9 +39,8 @@ export const createScopedFetch = <T>(
         setState((previous) => ({ ...previous, error: String(error), loading: false }));
     }
   };
-  createEffect(() => {
-    const key = scope();
-    untrack(() => void load(key, true));
+  createEffect(scope, (key) => {
+    void load(key, true);
   });
   return {
     data: createMemo(() => (state().scope === scope() ? state().data : undefined)),

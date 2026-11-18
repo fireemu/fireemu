@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import solid from "vite-plugin-solid";
+import solid from "@solidjs/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 
 // The app is served by the daemon under /ui; in development `vite` proxies the API to a
@@ -27,6 +27,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["src/test/setup.ts"],
     globals: false,
   },
 });

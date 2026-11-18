@@ -1,5 +1,6 @@
-import { A } from "@solidjs/router";
+import { ariaBool } from "../lib/aria";
 import { createSignal, For, Show, type Component } from "solid-js";
+import { appHref } from "../lib/hrefs";
 import { t } from "../i18n";
 import type { FieldType } from "../lib/firestoreValue";
 import type { ValueNode } from "../lib/valueTree";
@@ -49,9 +50,11 @@ const Row: Component<RowProps> = (props) => {
         <Show when={container() && props.node.size > 0} fallback={<span class="w-4 shrink-0" />}>
           <button
             type="button"
-            class="link w-4 shrink-0 self-center text-muted [&>svg]:size-3.5 [&>svg]:transition-transform"
-            classList={{ "[&>svg]:rotate-90": open() }}
-            aria-expanded={open()}
+            class={[
+              "link w-4 shrink-0 self-center text-muted [&>svg]:size-3.5 [&>svg]:transition-transform",
+              { "[&>svg]:rotate-90": open() },
+            ]}
+            aria-expanded={ariaBool(open())}
             aria-label={t(open() ? "firestore.collapseField" : "firestore.expandField", {
               name: props.node.key,
             })}
@@ -60,7 +63,7 @@ const Row: Component<RowProps> = (props) => {
             <IconChevron />
           </button>
         </Show>
-        <span class="mono shrink-0 font-medium" classList={{ "text-muted": props.indexed }}>
+        <span class={["mono shrink-0 font-medium", { "text-muted": props.indexed }]}>
           {props.node.key}
         </span>
         <span class="type-chip shrink-0">{typeText()}</span>
@@ -70,9 +73,9 @@ const Row: Component<RowProps> = (props) => {
             fallback={
               <Show when={href()} fallback={props.node.preview}>
                 {(target) => (
-                  <A class="link" href={target()}>
+                  <a class="link" href={appHref(target())}>
                     {props.node.preview}
-                  </A>
+                  </a>
                 )}
               </Show>
             }

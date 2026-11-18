@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { t } from "../i18n";
 import { FunctionsTimeline } from "./FunctionsTimeline";
 import type { FunctionsCausality } from "../api/functions";
@@ -52,11 +52,13 @@ it("preserves event selection and keyboard focus across polling and filtering; r
   expect(ui.getByTestId("timeline-no-outcomes")).toBeTruthy();
   expect(ui.getByTestId("timeline-phases").textContent).toContain("future-phase");
   setSnapshot({ ...causal, events: causal.events.map((e) => ({ ...e, phases: [...e.phases] })) });
+  flush();
   expect(document.activeElement).toBe(button);
   expect(ui.getByTestId("event-timeline").querySelector("a")).toBe(button);
   fireEvent.input(ui.container.querySelector("input")!, { target: { value: "unmatched" } });
   expect(ui.getByTestId("timeline-detail").textContent).toContain("17");
   setSnapshot({ ...causal, events: [] });
+  flush();
   expect(ui.getByTestId("timeline-detail").textContent).toContain(
     t("functions.timelineMissingSelection"),
   );
@@ -129,6 +131,7 @@ it("opens a linked event and explains when it is no longer retained", () => {
     "event=17",
   );
   setSnapshot({ ...causal, events: [] });
+  flush();
   expect(ui.getByTestId("timeline-detail").textContent).toContain(
     t("functions.timelineMissingSelection"),
   );

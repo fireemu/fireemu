@@ -20,13 +20,15 @@
     "mutation:sanity": "node scripts/mutation-sanity.mjs"
   },
   "dependencies": {
-    "@solidjs/router": "^1.0.0",
+    "@solidjs/router": "^2.0.0",
+    "@solidjs/web": "2.0.0",
     "neverthrow": "^8.2.0",
-    "solid-js": "^1.9.17"
+    "solid-js": "^2.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@solidjs/testing-library": "^0.8.10",
+    "@solidjs/testing-library": "1.0.0-rc.2",
+    "@solidjs/vite-plugin": "3.0.1",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -37,7 +39,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.4",
-    "vite-plugin-solid": "^2.11.14",
     "vitest": "^4.1.12"
   },
   "packageManager": "pnpm@10.32.1",

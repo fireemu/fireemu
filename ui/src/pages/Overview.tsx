@@ -1,4 +1,6 @@
-import { createEffect, createSignal, For, on, Show, type Component, type JSX } from "solid-js";
+import { ariaBool } from "../lib/aria";
+import { createEffect, createSignal, For, Show, type Component } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -133,14 +135,12 @@ const Stats: Component = () => {
   const functions = createScopedFetch(scope, () => settle(functionsStatus(appState.session())));
   // Follow the header's poll: the figures refresh when the daemon last answered.
   createEffect(
-    on(
-      appState.lastConnectedAt,
-      () => {
-        void resources.refetch();
-        if (appState.config().functionsConfigured) void functions.refetch();
-      },
-      { defer: true },
-    ),
+    appState.lastConnectedAt,
+    () => {
+      void resources.refetch();
+      if (appState.config().functionsConfigured) void functions.refetch();
+    },
+    { defer: true },
   );
   const stats = () => {
     const report = resources.data();
@@ -289,9 +289,9 @@ const Overview: Component = () => {
                 role="tab"
                 id={`snippet-tab-${entry.kind}`}
                 class="tab"
-                aria-selected={snippet() === entry.kind}
+                aria-selected={ariaBool(snippet() === entry.kind)}
                 aria-controls="snippet-panel"
-                tabIndex={snippet() === entry.kind ? 0 : -1}
+                tabindex={snippet() === entry.kind ? 0 : -1}
                 data-testid={`${SNIPPET_TEST_ID[entry.kind]}-tab`}
                 onClick={() => setSnippet(entry.kind)}
               >

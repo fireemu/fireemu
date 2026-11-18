@@ -1,13 +1,13 @@
 import {
   createEffect,
-  createResource,
   createSignal,
   For,
   onCleanup,
-  onMount,
+  onSettled,
   Show,
   type Component,
 } from "solid-js";
+import { createResource } from "../lib/resource";
 import { t } from "../i18n";
 import { createLeaveGuard, LeavePrompt } from "../lib/unsaved";
 import { appState } from "../state";
@@ -178,7 +178,9 @@ const UserEditor: Component<{
     photoUrl() !== initial.photoUrl ||
     verified() !== initial.verified ||
     claims() !== initial.claims;
-  createEffect(() => props.onDirty(dirty()));
+  createEffect(dirty, (value) => {
+    props.onDirty(value);
+  });
   onCleanup(() => props.onDirty(false));
   const apply = async (update: Omit<UserUpdate, "localId">) => {
     setError(null);
@@ -374,7 +376,8 @@ const AuthScope: Component<{ project: string }> = (props) => {
   const [query, setQuery] = createSignal("");
   const [users, setUsers] = createSignal<UserInfo[]>([]);
   const [nextToken, setNextToken] = createSignal<string | undefined>(undefined);
-  const [loading, setLoading] = createSignal(false);
+  // The first read starts as soon as the page mounts, so the page starts out loading.
+  const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
   const [adding, setAdding] = createSignal(false);
@@ -396,7 +399,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
     settle(listTotpCodes(p)),
   );
 
-  onMount(() => {
+  onSettled(() => {
     // Skip a tick while the tab is hidden or the previous read has not answered yet.
     const timer = window.setInterval(() => {
       if (document.hidden) return;
@@ -404,7 +407,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
       if (!phoneCodes.loading) void refetchPhoneCodes();
       if (!totpCodes.loading) void refetchTotpCodes();
     }, CODE_POLL_MS);
-    onCleanup(() => window.clearInterval(timer));
+    return () => window.clearInterval(timer);
   });
 
   const load = async (token?: string) => {
@@ -439,7 +442,8 @@ const AuthScope: Component<{ project: string }> = (props) => {
     void refetchCodes();
     void refetchPhoneCodes();
   };
-  void load();
+  // Solid 2 refuses signal writes in a component body; the first read starts once mounted.
+  onSettled(() => void load());
   const selectedUser = selectedRecord;
   return (
     <div>

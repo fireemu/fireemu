@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { appState } from "../state";
 import { FunctionRows } from "../pages/Functions";
 import type { FunctionInfo } from "../api/functions";
@@ -8,6 +8,7 @@ import type { FunctionInfo } from "../api/functions";
 afterEach(cleanup);
 it("preserves a publish draft and focus on refresh but resets it when its target changes", () => {
   appState.setSession("default");
+  flush();
   const initial: FunctionInfo = {
     name: "consume",
     region: "us-central1",
@@ -36,20 +37,25 @@ it("preserves a publish draft and focus on refresh but resets it when its target
   message.focus();
   fireEvent.input(message, { target: { value: "unsaved message" } });
   setFunctions([{ ...initial, timeoutSeconds: 90 }]);
+  flush();
   expect(ui.getByLabelText("Message (JSON or text)")).toBe(message);
   expect(message.value).toBe("unsaved message");
   expect(document.activeElement).toBe(message);
   expect(ui.container.textContent).toContain("90s");
   setFunctions([{ ...initial, trigger: { kind: "pubsub", topic: "other" } }]);
+  flush();
   expect(ui.queryByTestId("publish-events")).toBeNull();
   fireEvent.click(ui.getByTestId("publish-consume"));
   expect(ui.getByTestId("publish-other")).toBeTruthy();
   appState.setSession("other");
+  flush();
   expect(ui.queryByTestId("publish-other")).toBeNull();
   fireEvent.click(ui.getByTestId("publish-consume"));
   setProject("demo-b");
+  flush();
   expect(ui.queryByTestId("publish-other")).toBeNull();
   setFunctions([]);
+  flush();
   expect(ui.queryByTestId("function-row-consume")).toBeNull();
 });
 
@@ -171,6 +177,7 @@ it("disables every action when the functions do not belong to the selected sessi
   }
   // Selecting the functions' own session re-enables them.
   setActive(true);
+  flush();
   for (const id of [
     "invoke-echo-toggle",
     "enqueue-countJob-toggle",
@@ -227,6 +234,7 @@ it("lists the tasks a queue holds back and offers to run each one, or all, now",
   );
   expect(buttons.map((b) => b.disabled)).toEqual([true, true]);
   setActive(true);
+  flush();
   expect(buttons.map((b) => b.disabled)).toEqual([false, false]);
 });
 
@@ -302,6 +310,7 @@ it("shows the runtime of each function in its own column, and a dash when the da
 
 it("hides rows the search text does not match and keeps an open form mounted while hidden", () => {
   appState.setSession("default");
+  flush();
   const consume = {
     name: "consume",
     region: "us-central1",
@@ -334,13 +343,16 @@ it("hides rows the search text does not match and keeps an open form mounted whi
   fireEvent.input(message, { target: { value: "draft" } });
   // The trigger description (the topic) is searchable, not only the name.
   setFilter("jobs");
+  flush();
   expect(row("consume").hidden).toBe(true);
   expect(row("mirror").hidden).toBe(false);
   setFilter("");
+  flush();
   expect(row("consume").hidden).toBe(false);
   expect(ui.getByLabelText("Message (JSON or text)")).toBe(message);
   expect(message.value).toBe("draft");
   setFilter("nothing-matches");
+  flush();
   expect(row("consume").hidden).toBe(true);
   expect(row("mirror").hidden).toBe(true);
 });

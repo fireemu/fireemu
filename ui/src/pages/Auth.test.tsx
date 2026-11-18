@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@solidjs/testing-library";
+import { routed } from "../test/router";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
-import { MemoryRouter, Route } from "@solidjs/router";
+import { memoryHistory } from "@solidjs/router";
 import Auth, { CODE_POLL_MS } from "./Auth";
 import * as auth from "../api/auth";
 import type { OobCodeInfo } from "../api/auth";
@@ -14,12 +15,7 @@ vi.mock("../api/auth", async (importOriginal) => ({
   listTotpCodes: vi.fn(),
 }));
 
-const mount = () =>
-  render(() => (
-    <MemoryRouter>
-      <Route path="/" component={Auth} />
-    </MemoryRouter>
-  ));
+const mount = () => render(routed([{ path: "/", component: Auth }], { history: memoryHistory() }));
 
 const verify: OobCodeInfo = {
   email: "person@example.com",
@@ -157,5 +153,16 @@ describe("Auth codes", () => {
     await vi.advanceTimersByTimeAsync(CODE_POLL_MS);
     expect(vi.mocked(auth.listOobCodes).mock.calls.length).toBe(before + 1);
     ui.unmount();
+  });
+});
+
+describe("Auth users", () => {
+  it("reads the first page of users once the page is shown", async () => {
+    vi.mocked(auth.listUsers).mockReturnValue(
+      okAsync({ users: [{ localId: "first-user", email: "first@example.com" }] } as never),
+    );
+    const ui = mount();
+    await waitFor(() => expect(ui.getByText("first@example.com")).toBeTruthy());
+    expect(auth.listUsers).toHaveBeenCalledTimes(1);
   });
 });

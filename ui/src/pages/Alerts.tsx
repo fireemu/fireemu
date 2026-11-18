@@ -82,7 +82,7 @@ const Alerts: Component = () => {
         <textarea
           id="alert-payload"
           class="input mono h-56"
-          spellcheck={false}
+          spellcheck="false"
           data-testid="alert-payload"
           value={payload()}
           onInput={(e) => setPayload(e.currentTarget.value)}

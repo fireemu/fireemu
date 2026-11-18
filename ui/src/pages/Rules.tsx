@@ -1,3 +1,4 @@
+import { ariaBool } from "../lib/aria";
 import {
   createEffect,
   createSignal,
@@ -6,7 +7,6 @@ import {
   onCleanup,
   type Component,
   type Accessor,
-  untrack,
 } from "solid-js";
 import { t } from "../i18n";
 import { appState } from "../state";
@@ -134,7 +134,7 @@ const RulesEditor: Component<{ which: "firestore" | "storage"; title: string; sc
         <textarea
           id={`rules-${props.which}`}
           class="input mono h-72"
-          spellcheck={false}
+          spellcheck="false"
           value={source()}
           onInput={(e) => {
             revision++;
@@ -184,8 +184,8 @@ const RecordedSource: Component<{
     props.position && typeof props.source === "string" && !props.unavailable
       ? sourceRange(props.source, props.position.currentOffset, props.position.endOffset)
       : null;
-  createEffect(() => {
-    if (range())
+  createEffect(range, (value) => {
+    if (value)
       queueMicrotask(
         () => highlighted?.isConnected && highlighted.scrollIntoView?.({ block: "nearest" }),
       );
@@ -204,7 +204,7 @@ const RecordedSource: Component<{
         </Show>
         <pre
           class="mono max-h-80 overflow-auto whitespace-pre-wrap rounded border p-3"
-          tabIndex={0}
+          tabindex={0}
           aria-label={t("rules.recordedSource")}
           data-testid={`${props.testId}-source`}
         >
@@ -258,8 +258,8 @@ const moveExpression = (event: KeyboardEvent) => {
 /** Remember an interval snapshot only while it remains the visible fallback. */
 export const createPreviousInterval = <T,>(current: Accessor<T | undefined>) => {
   const [previous, setPrevious] = createSignal<T | undefined>();
-  createEffect(() => {
-    if (untrack(previous) !== current()) setPrevious(undefined);
+  createEffect(current, (value) => {
+    if (previous() !== value) setPrevious(undefined);
   });
   onCleanup(() => setPrevious(undefined));
   return { previous, remember: () => setPrevious(() => current()) };
@@ -275,16 +275,17 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
   const [selected, setSelected] = createSignal<string | null>(null);
   const [position, setPosition] = createSignal<Position | null>(null);
   const interval = createPreviousInterval(list.data);
-  createEffect(() => {
-    const revision = props.revision;
-    if (revision > 0)
-      untrack(() => {
+  createEffect(
+    () => props.revision,
+    (revision) => {
+      if (revision > 0) {
         setSelected(null);
         setPosition(null);
         interval.remember();
         void list.refetch();
-      });
-  });
+      }
+    },
+  );
   const requests = () => list.data()?.requests ?? [];
   const identity = (r: RulesRequest) =>
     JSON.stringify([props.scope, r.service, list.data()?.generation ?? null, r.sequence]);
@@ -294,8 +295,8 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
     typeof list.data()?.source === "string" &&
     typeof list.data()?.generation === "string" &&
     /^\d+$/.test(list.data()!.generation!);
-  createEffect(() => {
-    if (!current()) {
+  createEffect(current, (value) => {
+    if (!value) {
       setSelected(null);
       setPosition(null);
     }
@@ -351,7 +352,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                         <button
                           type="button"
                           class="btn"
-                          aria-expanded={selected() === identity(r)}
+                          aria-expanded={ariaBool(selected() === identity(r))}
                           data-testid={`rules-request-trace-${r.sequence}`}
                           onClick={() => {
                             setSelected(selected() === identity(r) ? null : identity(r));
@@ -396,7 +397,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                                     e.endOffset,
                                   ) === null
                                 }
-                                aria-pressed={sameRange(position(), e)}
+                                aria-pressed={ariaBool(sameRange(position(), e))}
                                 data-testid={`rules-request-expression-${index()}`}
                                 onKeyDown={moveExpression}
                                 onClick={() => setPosition(e)}
@@ -464,21 +465,21 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
   const setPosition = (position: Position | null) =>
     setSelection(position && cov.data() ? { snapshot: cov.data()!, position } : null);
   const interval = createPreviousInterval(cov.data);
-  createEffect(() => {
-    const revision = props.revision;
-    if (revision > 0)
-      untrack(() => {
+  createEffect(
+    () => props.revision,
+    (revision) => {
+      if (revision > 0) {
         setPosition(null);
         interval.remember();
         void cov.refetch();
-      });
-  });
+      }
+    },
+  );
   const rows = () => (cov.data() ? coverageRows(cov.data()!.report) : []);
   const summary = () => (cov.data() ? coverageSummary(cov.data()!) : { reached: 0, total: 0 });
   const file = () =>
     cov.data()?.rules.files.length === 1 ? cov.data()!.rules.files[0] : undefined;
-  createEffect(() => {
-    cov.data();
+  createEffect(cov.data, () => {
     setPosition(null);
   });
   return (
@@ -529,7 +530,7 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
                             !file() ||
                             sourceRange(file()!.content, row.currentOffset, row.endOffset) === null
                           }
-                          aria-pressed={sameRange(position(), row)}
+                          aria-pressed={ariaBool(sameRange(position(), row))}
                           data-testid={`rules-coverage-expression-${index()}`}
                           onKeyDown={moveExpression}
                           onClick={() => setPosition(row)}

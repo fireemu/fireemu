@@ -1,6 +1,8 @@
+import { flush } from "solid-js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
-import { Route, Router, useLocation } from "@solidjs/router";
+import { routed } from "../test/router";
+import { useLocation } from "@solidjs/router";
 import type { ParentComponent } from "solid-js";
 import { appState } from "../state";
 import { CommandPalette, openCommandPalette } from "./CommandPalette";
@@ -28,29 +30,30 @@ const Shell: ParentComponent = (props) => {
 };
 
 const mount = () =>
-  render(() => (
-    <Router root={Shell}>
-      <Route path="*" component={() => null} />
-    </Router>
-  ));
+  render(routed([{ path: "*", component: () => null }], { root: Shell, base: "/ui" }));
 
 const press = (target: Element | Window, key: string, init: KeyboardEventInit = {}) =>
   fireEvent.keyDown(target, { key, ...init });
 
 beforeEach(() => {
-  window.history.replaceState(null, "", "/");
+  // The daemon serves the app under /ui; links and navigation carry that base.
+  window.history.replaceState(null, "", "/ui/");
   appState.setSessions([
     { name: "default", project: "demo-a" },
     { name: "other", project: "demo-b" },
   ]);
   appState.setSession("default");
+  flush();
 });
 afterEach(() => {
   // Leave the module-level palette closed for the next test.
   const input = document.querySelector('[data-testid="command-palette-input"]');
   if (input) press(input, "Escape");
   cleanup();
-  while (themePreference() !== "system") cycleTheme();
+  while (themePreference() !== "system") {
+    cycleTheme();
+    flush();
+  }
   vi.restoreAllMocks();
 });
 
@@ -79,6 +82,7 @@ it("focuses the input when opened and returns focus to the opener on Escape", as
   const opener = ui.getByTestId("opener");
   opener.focus();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   await waitFor(() => expect(document.activeElement).toBe(input));
   press(input, "Escape");
@@ -89,6 +93,7 @@ it("focuses the input when opened and returns focus to the opener on Escape", as
 it("lists pages, the other sessions and the actions, and filters as the query changes", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   expect(options(ui)).toEqual([
     "OverviewGo to",
@@ -109,6 +114,7 @@ it("lists pages, the other sessions and the actions, and filters as the query ch
 it("moves the selection with the arrows, wrapping, and resets it for a new query", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   expect(selectedOption(ui)).toBe("OverviewGo to");
   expect(input.getAttribute("aria-activedescendant")).toBe("command-palette-option-0");
@@ -128,62 +134,70 @@ it("moves the selection with the arrows, wrapping, and resets it for a new query
 it("Enter opens the highlighted page through the router and closes the palette", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "func" } });
   press(input, "Enter");
-  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/functions"));
+  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/ui/functions"));
   expect(ui.queryByTestId("command-palette")).toBeNull();
   // The next opening starts from an empty query.
   openCommandPalette();
+  flush();
   expect(((await ui.findByTestId("command-palette-input")) as HTMLInputElement).value).toBe("");
 });
 
 it("a query with a slash offers the Firestore path first, encoded", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "users/a b" } });
   expect(options(ui)[0]).toBe("Open users/a b in FirestoreFirestore");
   press(input, "Enter");
   await waitFor(() =>
-    expect(ui.getByTestId("where").textContent).toBe("/firestore/users/a%20b?db=(default)"),
+    expect(ui.getByTestId("where").textContent).toBe("/ui/firestore/users/a%20b?db=(default)"),
   );
 });
 
 it("Enter during IME composition does not run a command", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   press(input, "ArrowDown");
   press(input, "Enter", { isComposing: true });
   expect(ui.getByTestId("command-palette")).toBeTruthy();
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
 });
 
 it("clicking a row runs it; clicking the backdrop only closes", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   await ui.findByTestId("command-palette-input");
   fireEvent.click(ui.getByTestId("command-palette"));
   expect(ui.getByTestId("command-palette")).toBeTruthy();
   fireEvent.click(ui.getByTestId("command-palette-backdrop"));
   expect(ui.queryByTestId("command-palette")).toBeNull();
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
   openCommandPalette();
+  flush();
   await ui.findByTestId("command-palette-input");
   fireEvent.click(ui.getByText("Firestore"));
-  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/firestore"));
+  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/ui/firestore"));
 });
 
 it("the theme action cycles the theme and the session action switches the session", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   let input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "theme" } });
   press(input, "Enter");
   expect(themePreference()).toBe("light");
   const refresh = vi.spyOn(appState, "refreshClock").mockResolvedValue();
   openCommandPalette();
+  flush();
   input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "session other" } });
   expect(options(ui)).toEqual(["Switch to session other (demo-b)Session"]);
@@ -192,6 +206,7 @@ it("the theme action cycles the theme and the session action switches the sessio
   expect(refresh).toHaveBeenCalledTimes(1);
   // The selected session is not offered as a target.
   openCommandPalette();
+  flush();
   await ui.findByTestId("command-palette-input");
   expect(options(ui).some((o) => o?.includes("session other"))).toBe(false);
   expect(options(ui).some((o) => o?.includes("session default"))).toBe(true);
@@ -207,8 +222,10 @@ it("the copy action writes the .env lines of the selected session's project", as
     storageAddr: "127.0.0.1:9199",
     functionsAddr: null,
   });
+  flush();
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "dotenv" } });
   press(input, "Enter");
@@ -220,6 +237,7 @@ it("the copy action writes the .env lines of the selected session's project", as
 it("the shortcuts action closes the palette and opens the shortcut list", async () => {
   const ui = mount();
   openCommandPalette();
+  flush();
   const input = await ui.findByTestId("command-palette-input");
   fireEvent.input(input, { target: { value: "hotkeys" } });
   expect(options(ui)).toEqual(["Show keyboard shortcutsAction"]);
@@ -227,4 +245,5 @@ it("the shortcuts action closes the palette and opens the shortcut list", async 
   expect(ui.queryByTestId("command-palette")).toBeNull();
   expect(shortcutHelpOpen()).toBe(true);
   setShortcutHelpOpen(false);
+  flush();
 });

@@ -1,9 +1,10 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, waitFor, cleanup } from "@solidjs/testing-library";
-import { MemoryRouter, Route } from "@solidjs/router";
+import { routed } from "../test/router";
+import { memoryHistory } from "@solidjs/router";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import Rules, { createPreviousInterval } from "./Rules";
-import { createRoot, createSignal } from "solid-js";
+import { createRoot, createSignal, flush } from "solid-js";
 import Overview from "./Overview";
 import { appState } from "../state";
 import * as api from "../api/control";
@@ -56,11 +57,7 @@ const coverage = {
   ],
 };
 const mount = (component = Rules) =>
-  render(() => (
-    <MemoryRouter>
-      <Route path="/" component={component} />
-    </MemoryRouter>
-  ));
+  render(routed([{ path: "/", component }], { history: memoryHistory() }));
 afterEach(cleanup);
 beforeEach(() => {
   vi.resetAllMocks();
@@ -618,11 +615,13 @@ describe("previous interval payload lifetime", () => {
     const snapshot = { source: "old scope" };
     const dispose = createRoot((cleanupScope) => {
       interval = createPreviousInterval(() => snapshot);
-      interval.remember();
       return cleanupScope;
     });
+    interval.remember();
+    flush();
     expect(interval.previous()).toBe(snapshot);
     dispose();
+    flush();
     expect(interval.previous()).toBeUndefined();
   });
 });

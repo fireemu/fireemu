@@ -1,6 +1,8 @@
+import { flush } from "solid-js";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
-import { Route, Router, useLocation } from "@solidjs/router";
+import { routed } from "../test/router";
+import { useLocation } from "@solidjs/router";
 import type { ParentComponent } from "solid-js";
 import { CommandPalette } from "./CommandPalette";
 import { paletteOpen, setPaletteOpen, setShortcutHelpOpen, shortcutHelpOpen } from "./overlays";
@@ -24,10 +26,10 @@ const Shell: ParentComponent = (props) => {
       <select data-testid="choice">
         <option>one</option>
       </select>
-      <div contenteditable={true} data-testid="rich">
+      <div contenteditable="true" data-testid="rich">
         <span data-testid="rich-child">text</span>
       </div>
-      <div contenteditable={false} data-testid="not-rich" tabIndex={0} />
+      <div contenteditable="false" data-testid="not-rich" tabindex={0} />
       <output data-testid="where">{location.pathname}</output>
       <CommandPalette links={[]} />
       <Shortcuts pages={PAGES} paletteKeys="Ctrl K" />
@@ -37,11 +39,7 @@ const Shell: ParentComponent = (props) => {
 };
 
 const mount = () =>
-  render(() => (
-    <Router root={Shell}>
-      <Route path="*" component={() => null} />
-    </Router>
-  ));
+  render(routed([{ path: "*", component: () => null }], { root: Shell, base: "/ui" }));
 
 // jsdom stamps every event with the current time; the sequence tests set it explicitly.
 const press = (
@@ -53,15 +51,18 @@ const press = (
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
   if (at !== undefined) Object.defineProperty(event, "timeStamp", { value: at });
   target.dispatchEvent(event);
+  flush();
   return event;
 };
 
 beforeEach(() => {
-  window.history.replaceState(null, "", "/");
+  // The daemon serves the app under /ui; links and navigation carry that base.
+  window.history.replaceState(null, "", "/ui/");
 });
 afterEach(() => {
   setShortcutHelpOpen(false);
   setPaletteOpen(false);
+  flush();
   cleanup();
 });
 
@@ -70,10 +71,10 @@ it("g then a page key navigates through the router", async () => {
   press(document.body, "g", {}, 1000);
   const second = press(document.body, "f", {}, 1200);
   expect(second.defaultPrevented).toBe(true);
-  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/firestore"));
+  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/ui/firestore"));
   press(document.body, "g", {}, 2000);
   press(document.body, "t", {}, 2100);
-  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/runtime"));
+  await waitFor(() => expect(ui.getByTestId("where").textContent).toBe("/ui/runtime"));
 });
 
 it("a page key without g, after the timeout, or after an unknown key does nothing", () => {
@@ -84,7 +85,7 @@ it("a page key without g, after the timeout, or after an unknown key does nothin
   press(document.body, "g", {}, 5000);
   press(document.body, "x", {}, 5100);
   press(document.body, "f", {}, 5200);
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
 });
 
 it("? opens the list, which names every shortcut, and Escape returns focus", async () => {
@@ -145,7 +146,7 @@ it("nothing fires while typing in a field, a select or editable content", () => 
     expect(shortcutHelpOpen(), id).toBe(false);
     expect(paletteOpen(), id).toBe(false);
   }
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
   // contenteditable="false" is not a text field.
   press(ui.getByTestId("not-rich"), "?");
   expect(shortcutHelpOpen()).toBe(true);
@@ -156,7 +157,7 @@ it("typing between g and the page key abandons the sequence", () => {
   press(document.body, "g", {}, 100);
   press(ui.getByTestId("field"), "a", {}, 150);
   press(document.body, "f", {}, 200);
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
 });
 
 it("a modifier makes the key not a shortcut", () => {
@@ -167,25 +168,28 @@ it("a modifier makes the key not a shortcut", () => {
     press(document.body, "f", {}, 200);
   }
   expect(shortcutHelpOpen()).toBe(false);
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
 });
 
 it("shortcuts are off while an overlay is open, and a started sequence does not survive it", async () => {
   const ui = mount();
   press(document.body, "g", {}, 100);
   setPaletteOpen(true);
+  flush();
   await ui.findByTestId("command-palette-input");
   press(document.body, "?", {}, 150);
   expect(shortcutHelpOpen()).toBe(false);
   setPaletteOpen(false);
+  flush();
   press(document.body, "f", {}, 200);
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
   setShortcutHelpOpen(true);
+  flush();
   press(document.body, "g", {}, 300);
   press(document.body, "f", {}, 350);
   expect(press(document.body, "/", {}, 400).defaultPrevented).toBe(false);
   expect(paletteOpen()).toBe(false);
-  expect(ui.getByTestId("where").textContent).toBe("/");
+  expect(ui.getByTestId("where").textContent).toBe("/ui/");
 });
 
 it("opening one overlay closes the other", async () => {
@@ -193,9 +197,11 @@ it("opening one overlay closes the other", async () => {
   mount();
   openCommandPalette();
   openShortcutHelp();
+  flush();
   expect(paletteOpen()).toBe(false);
   expect(shortcutHelpOpen()).toBe(true);
   openCommandPalette();
+  flush();
   expect(paletteOpen()).toBe(true);
   expect(shortcutHelpOpen()).toBe(false);
 });

@@ -1,17 +1,8 @@
 import DatabasePicker from "../components/DatabasePicker";
-import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
-import {
-  createEffect,
-  createMemo,
-  on,
-  createResource,
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  type Component,
-} from "solid-js";
-import { createStore, produce, type SetStoreFunction } from "solid-js/store";
+import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
+import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createResource } from "../lib/resource";
+import { createStore, reconcile, type StoreSetter } from "solid-js";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -27,7 +18,7 @@ import {
 import { ValueTree } from "../components/ValueTree";
 import { buildValueTree } from "../lib/valueTree";
 import FirestoreQuery from "../components/FirestoreQuery";
-import { decodeSplat, firestoreHref, referenceHref } from "../lib/hrefs";
+import { appHref, splatSegments, firestoreHref, referenceHref } from "../lib/hrefs";
 import { createPagedList } from "../lib/pagedList";
 import {
   affectedFirestoreViews,
@@ -122,16 +113,22 @@ const hint = (type: FieldType): string => {
  */
 export const createFieldsStore = (
   initial: EditableField[],
-): [EditableField[], SetStoreFunction<EditableField[]>] => createStore<EditableField[]>(initial);
+): [EditableField[], StoreSetter<EditableField[]>] => createStore<EditableField[]>(initial);
 
 /** The typed field editor: a name, a type and a value per row. */
 export const FieldsEditor: Component<{
   fields: EditableField[];
-  setFields: SetStoreFunction<EditableField[]>;
+  setFields: StoreSetter<EditableField[]>;
   disabled?: boolean;
 }> = (props) => {
-  const update = (index: number, patch: Partial<EditableField>) => props.setFields(index, patch);
-  const remove = (index: number) => props.setFields(produce((rows) => void rows.splice(index, 1)));
+  const update = (index: number, patch: Partial<EditableField>) =>
+    props.setFields((rows) => {
+      Object.assign(rows[index]!, patch);
+    });
+  const remove = (index: number) =>
+    props.setFields((rows) => {
+      rows.splice(index, 1);
+    });
   return (
     <div>
       <table class="table">
@@ -223,7 +220,9 @@ export const FieldsEditor: Component<{
         data-testid="add-field"
         disabled={props.disabled}
         onClick={() =>
-          props.setFields(produce((rows) => void rows.push({ name: "", type: "string", text: "" })))
+          props.setFields((rows) => {
+            rows.push({ name: "", type: "string", text: "" });
+          })
         }
       >
         {t("firestore.addField")}
@@ -243,16 +242,16 @@ const Breadcrumbs: Component<{ path: string; db: string }> = (props) => {
     );
   return (
     <nav class="mono mb-3 flex flex-wrap items-center gap-1" aria-label={t("firestore.title")}>
-      <A href={firestoreHref("", props.db)} class="link">
+      <a href={appHref(firestoreHref("", props.db))} class="link">
         {t("firestore.root")}
-      </A>
+      </a>
       <For each={segments()}>
         {(s, i) => (
           <>
             <span class="text-muted">/</span>
-            <A href={link(i())} class="link">
+            <a href={appHref(link(i()))} class="link">
               {s}
-            </A>
+            </a>
           </>
         )}
       </For>
@@ -275,17 +274,13 @@ const CollectionList: Component<{
     })),
   );
   createEffect(
-    on(
-      () => [props.root, props.parent] as const,
-      () => void list.load(),
-    ),
+    () => [props.root, props.parent] as const,
+    () => void list.load(),
   );
   createEffect(
-    on(
-      () => props.version,
-      () => void list.refresh(),
-      { defer: true },
-    ),
+    () => props.version,
+    () => void list.refresh(),
+    { defer: true },
   );
   return (
     <FetchState
@@ -300,12 +295,12 @@ const CollectionList: Component<{
         <For each={list.items()}>
           {(id) => (
             <li>
-              <A
-                href={firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db)}
+              <a
+                href={appHref(firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db))}
                 class="link"
               >
                 {id}
-              </A>
+              </a>
             </li>
           )}
         </For>
@@ -486,7 +481,7 @@ const DocumentView: Component<{
   const [notice, setNotice] = createSignal<string | null>(null);
   const [showJson, setShowJson] = createSignal(false);
   const [newCollection, setNewCollection] = createSignal(false);
-  const current = createMemo<FsDocument | null>((previous) => {
+  const current = createMemo<FsDocument | null>((previous = null) => {
     const result = doc();
     const name = `${props.root}/${props.path}`;
     if (result?.isOk()) return result.value.name === name ? result.value : null;
@@ -501,7 +496,7 @@ const DocumentView: Component<{
       previous?.name === name
       ? previous
       : null;
-  }, null);
+  });
   const loadError = () =>
     doc()?.match(
       () => null,
@@ -520,23 +515,24 @@ const DocumentView: Component<{
     ) ?? false;
   let editGeneration = 0;
   let editOperation = 0;
-  createEffect(() => {
-    void props.root;
-    void props.path;
-    editGeneration += 1;
-    editOperation += 1;
-    setEditing(false);
-    setEditSession(null);
-    setConflict(false);
-    setEditBusy(false);
-  });
+  createEffect(
+    () => [props.root, props.path] as const,
+    () => {
+      editGeneration += 1;
+      editOperation += 1;
+      setEditing(false);
+      setEditSession(null);
+      setConflict(false);
+      setEditBusy(false);
+    },
+  );
   const startEdit = () => {
     const selected = current();
     if (!selected?.updateTime) return;
     const original = selected.fields ?? {};
     editGeneration += 1;
     editOperation += 1;
-    setFields(toEditable(original));
+    setFields(reconcile(toEditable(original), null));
     setEditSession({
       root: props.root,
       path: props.path,
@@ -657,7 +653,7 @@ const DocumentView: Component<{
       fields: latest.fields ?? {},
       updateTime: latest.updateTime!,
     });
-    setFields(toEditable(applyFieldDiff(latest.fields ?? {}, draftChanges)));
+    setFields(reconcile(toEditable(applyFieldDiff(latest.fields ?? {}, draftChanges)), null));
     setConflict(false);
     setError(null);
     setNotice(t("firestore.draftReapplied"));
@@ -808,7 +804,7 @@ const DocumentView: Component<{
             onDone={(path) => {
               setNewCollection(false);
               setNotice(null);
-              navigate(firestoreHref(path, props.db));
+              navigate(appHref(firestoreHref(path, props.db)));
             }}
             onCancel={() => setNewCollection(false)}
           />
@@ -862,80 +858,79 @@ const CollectionView: Component<{
     await list.refresh();
   };
   createEffect(
-    on(
-      () => [props.root, props.path] as const,
-      () => void load(),
-    ),
+    () => [props.root, props.path] as const,
+    () => void load(),
   );
   createEffect(
-    on(
-      () => props.rowUpdates,
-      (ids) => {
-        ids.forEach((id) => pendingRowUpdates.add(id));
-        setPendingRowRevision((revision) => revision + 1);
-      },
-      { defer: true },
-    ),
+    () => props.rowUpdates,
+    (ids) => {
+      ids.forEach((id) => pendingRowUpdates.add(id));
+      setPendingRowRevision((revision) => revision + 1);
+    },
+    { defer: true },
   );
-  createEffect(() => {
-    pendingRowRevision();
-    const prefix = `${props.root}/${props.path}/`;
-    const ready = drainPendingRowUpdates(
-      pendingRowUpdates,
-      new Set(list.items().map((document) => document.name.slice(prefix.length))),
-      list.loading() || list.refreshing(),
-      Boolean(list.nextToken()),
-    );
-    for (const id of ready) {
-      const ticket = rowReadGuard.issue(id);
-      void getDocument(props.root, `${props.path}/${id}`).match(
-        (document) => {
-          if (rowReadGuard.isCurrent(id, ticket)) {
-            const displayed = list.items().find((item) => item.name === document.name);
-            if (!displayed) return;
-            if (!displayed.updateTime || !document.updateTime) {
-              void refresh();
-              return;
-            }
-            // Compare whole seconds and nanoseconds separately, including differing precision.
-            const readSeconds = Date.parse(document.updateTime.replace(/\.\d+/, ""));
-            const displayedSeconds = Date.parse(displayed.updateTime.replace(/\.\d+/, ""));
-            if (!Number.isFinite(readSeconds) || !Number.isFinite(displayedSeconds)) {
-              void refresh();
-              return;
-            }
-            const readNanos = Number(
-              document.updateTime.match(/\.(\d+)/)?.[1]?.padEnd(9, "0") ?? 0,
-            );
-            const displayedNanos = Number(
-              displayed.updateTime.match(/\.(\d+)/)?.[1]?.padEnd(9, "0") ?? 0,
-            );
-            if (
-              !(
-                readSeconds > displayedSeconds ||
-                (readSeconds === displayedSeconds && readNanos >= displayedNanos)
+  createEffect(
+    () => {
+      pendingRowRevision();
+      const prefix = `${props.root}/${props.path}/`;
+      return {
+        path: props.path,
+        loaded: new Set(list.items().map((document) => document.name.slice(prefix.length))),
+        busy: list.loading() || list.refreshing(),
+        more: Boolean(list.nextToken()),
+      };
+    },
+    ({ path: listPath, loaded, busy, more }) => {
+      const ready = drainPendingRowUpdates(pendingRowUpdates, loaded, busy, more);
+      for (const id of ready) {
+        const ticket = rowReadGuard.issue(id);
+        void getDocument(props.root, `${listPath}/${id}`).match(
+          (document) => {
+            if (rowReadGuard.isCurrent(id, ticket)) {
+              const displayed = list.items().find((item) => item.name === document.name);
+              if (!displayed) return;
+              if (!displayed.updateTime || !document.updateTime) {
+                void refresh();
+                return;
+              }
+              // Compare whole seconds and nanoseconds separately, including differing precision.
+              const readSeconds = Date.parse(document.updateTime.replace(/\.\d+/, ""));
+              const displayedSeconds = Date.parse(displayed.updateTime.replace(/\.\d+/, ""));
+              if (!Number.isFinite(readSeconds) || !Number.isFinite(displayedSeconds)) {
+                void refresh();
+                return;
+              }
+              const readNanos = Number(
+                document.updateTime.match(/\.(\d+)/)?.[1]?.padEnd(9, "0") ?? 0,
+              );
+              const displayedNanos = Number(
+                displayed.updateTime.match(/\.(\d+)/)?.[1]?.padEnd(9, "0") ?? 0,
+              );
+              if (
+                !(
+                  readSeconds > displayedSeconds ||
+                  (readSeconds === displayedSeconds && readNanos >= displayedNanos)
+                )
               )
-            )
-              return;
-            list.updateItem(document);
-            rowReadGuard.markApplied(id, ticket);
-          }
-        },
-        (readError) => {
-          if (!rowReadGuard.isCurrent(id, ticket)) return;
-          if (readError.status === 404) void refresh();
-          else list.reportStale(readError.message);
-        },
-      );
-    }
-  });
+                return;
+              list.updateItem(document);
+              rowReadGuard.markApplied(id, ticket);
+            }
+          },
+          (readError) => {
+            if (!rowReadGuard.isCurrent(id, ticket)) return;
+            if (readError.status === 404) void refresh();
+            else list.reportStale(readError.message);
+          },
+        );
+      }
+    },
+  );
   // Collection membership changes re-read loaded pages without dropping pagination progress.
   createEffect(
-    on(
-      () => props.version,
-      () => void refresh(),
-      { defer: true },
-    ),
+    () => props.version,
+    () => void refresh(),
+    { defer: true },
   );
   const remove = async () => {
     setError(null);
@@ -998,7 +993,7 @@ const CollectionView: Component<{
           collection={props.path}
           onDone={(path) => {
             setAdding(false);
-            navigate(firestoreHref(path, props.db));
+            navigate(appHref(firestoreHref(path, props.db)));
           }}
           onCancel={() => setAdding(false)}
         />
@@ -1023,9 +1018,9 @@ const CollectionView: Component<{
               {(d) => (
                 <tr>
                   <td class="mono">
-                    <A href={firestoreHref(relativePath(d.name), props.db)} class="link">
+                    <a href={appHref(firestoreHref(relativePath(d.name), props.db))} class="link">
                       {lastSegment(d.name)}
-                    </A>
+                    </a>
                     <Show when={!d.createTime && !d.fields}>
                       <span class="ml-2 text-xs text-muted">({t("firestore.missing")})</span>
                     </Show>
@@ -1074,7 +1069,7 @@ const RootView: Component<{ root: string; db: string; version: number }> = (prop
           parent=""
           onDone={(path) => {
             setAdding(false);
-            navigate(firestoreHref(path, props.db));
+            navigate(appHref(firestoreHref(path, props.db)));
           }}
           onCancel={() => setAdding(false)}
         />
@@ -1095,7 +1090,7 @@ const Firestore: Component = () => {
   const [search, setSearch] = useSearchParams<{ db?: string }>();
   const navigate = useNavigate();
   const db = () => (typeof search.db === "string" && search.db ? search.db : "(default)");
-  const path = () => decodeSplat(params.path).join("/");
+  const path = () => splatSegments(params.path).join("/");
   const root = () => documentsRoot(appState.project(), db());
   const [collectionVersion, setCollectionVersion] = createSignal(0);
   const [documentVersion, setDocumentVersion] = createSignal(0);
@@ -1104,85 +1099,85 @@ const Firestore: Component = () => {
   const [live, setLive] = createSignal(false);
 
   // Live updates refresh only views touched by the commit paths.
-  createEffect(() => {
-    const project = appState.project();
-    const database = db();
-    const route = path();
-    let documentTimer: number | undefined;
-    let pending = {
-      collection: false,
-      subcollections: false,
-      full: false,
-      updatedRows: new Set<string>(),
-    };
-    const scheduler = createLiveUpdateScheduler(() => {
-      const current = pending;
-      pending = {
+  createEffect(
+    () => [appState.project(), db(), path()] as const,
+    ([project, database, route]) => {
+      let documentTimer: number | undefined;
+      let pending = {
         collection: false,
         subcollections: false,
         full: false,
         updatedRows: new Set<string>(),
       };
-      if (current.collection || current.full) setCollectionVersion((v) => v + 1);
-      if (current.subcollections || current.full) setSubcollectionVersion((v) => v + 1);
-      if (current.updatedRows.size > 0) setRowUpdates([...current.updatedRows]);
-    }, 150);
-    const stop = subscribe(
-      `firestore/watch?project=${encodeURIComponent(project)}&database=${encodeURIComponent(database)}`,
-      (event) => {
-        if (event.event === "ready") {
-          setLive(true);
-        } else {
-          const parsed = parseFirestoreWatchEvent(event);
-          const affected = affectedFirestoreViews(parsed, root(), route);
-          // Keep the editor's authoritative reads on the original delayed invalidation path.
-          if (
-            isDocumentPath(route) &&
-            (parsed.kind === "commit" || affected.full) &&
-            documentTimer === undefined
-          ) {
-            documentTimer = window.setTimeout(() => {
-              documentTimer = undefined;
-              setDocumentVersion((v) => v + 1);
-            }, 150);
+      const scheduler = createLiveUpdateScheduler(() => {
+        const current = pending;
+        pending = {
+          collection: false,
+          subcollections: false,
+          full: false,
+          updatedRows: new Set<string>(),
+        };
+        if (current.collection || current.full) setCollectionVersion((v) => v + 1);
+        if (current.subcollections || current.full) setSubcollectionVersion((v) => v + 1);
+        if (current.updatedRows.size > 0) setRowUpdates([...current.updatedRows]);
+      }, 150);
+      const stop = subscribe(
+        `firestore/watch?project=${encodeURIComponent(project)}&database=${encodeURIComponent(database)}`,
+        (event) => {
+          if (event.event === "ready") {
+            setLive(true);
+          } else {
+            const parsed = parseFirestoreWatchEvent(event);
+            const affected = affectedFirestoreViews(parsed, root(), route);
+            // Keep the editor's authoritative reads on the original delayed invalidation path.
+            if (
+              isDocumentPath(route) &&
+              (parsed.kind === "commit" || affected.full) &&
+              documentTimer === undefined
+            ) {
+              documentTimer = window.setTimeout(() => {
+                documentTimer = undefined;
+                setDocumentVersion((v) => v + 1);
+              }, 150);
+            }
+            // A restore starts a new row epoch even inside an active coalescing window.
+            if (parsed.kind === "reset") {
+              pending.collection = false;
+              pending.subcollections = false;
+              pending.full = false;
+              pending.updatedRows.clear();
+              setCollectionVersion((v) => v + 1);
+              setSubcollectionVersion((v) => v + 1);
+              return;
+            }
+            pending.collection ||= affected.collection;
+            pending.subcollections ||= affected.subcollections;
+            pending.full ||= affected.full;
+            for (const id of affected.updatedRows) pending.updatedRows.add(id);
+            if (
+              affected.full ||
+              affected.collection ||
+              affected.subcollections ||
+              affected.updatedRows.length > 0
+            )
+              scheduler.notify();
           }
-          // A restore starts a new row epoch even inside an active coalescing window.
-          if (parsed.kind === "reset") {
-            pending.collection = false;
-            pending.subcollections = false;
-            pending.full = false;
-            pending.updatedRows.clear();
-            setCollectionVersion((v) => v + 1);
-            setSubcollectionVersion((v) => v + 1);
-            return;
-          }
-          pending.collection ||= affected.collection;
-          pending.subcollections ||= affected.subcollections;
-          pending.full ||= affected.full;
-          for (const id of affected.updatedRows) pending.updatedRows.add(id);
-          if (
-            affected.full ||
-            affected.collection ||
-            affected.subcollections ||
-            affected.updatedRows.length > 0
-          )
-            scheduler.notify();
-        }
-      },
-      () => setLive(false),
-    );
-    onCleanup(() => {
-      stop();
-      scheduler.dispose();
-      if (documentTimer !== undefined) window.clearTimeout(documentTimer);
-    });
-  });
+        },
+        () => setLive(false),
+      );
+      return () => {
+        stop();
+        scheduler.dispose();
+        if (documentTimer !== undefined) window.clearTimeout(documentTimer);
+      };
+    },
+  );
 
-  const up = () => navigate(firestoreHref(parentPath(path()), db()));
+  const up = () => navigate(appHref(firestoreHref(parentPath(path()), db())));
   const [jump, setJump] = createSignal("");
   const goTo = () => {
     const target = jump().split("/").filter(Boolean).join("/");
-    navigate(firestoreHref(target, db()));
+    navigate(appHref(firestoreHref(target, db())));
     setJump("");
   };
   return (

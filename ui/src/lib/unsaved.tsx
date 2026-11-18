@@ -1,5 +1,5 @@
 import { useBeforeLeave } from "@solidjs/router";
-import { createSignal, onCleanup, onMount, Show, type Accessor, type Component } from "solid-js";
+import { createSignal, onCleanup, onSettled, Show, type Accessor, type Component } from "solid-js";
 import { t } from "../i18n";
 
 /**
@@ -41,21 +41,23 @@ export const createLeaveGuard = (dirty: Accessor<boolean>): LeaveGuard => {
     }
   });
   let draftInput: HTMLInputElement | HTMLTextAreaElement | null = null;
-  onMount(() => {
+  onSettled(() => {
     const rememberInput = (event: FocusEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
         draftInput = event.target;
       }
     };
     document.addEventListener("focusin", rememberInput);
-    onCleanup(() => document.removeEventListener("focusin", rememberInput));
     const onUnload = (event: BeforeUnloadEvent) => {
       if (dirty()) {
         event.preventDefault();
       }
     };
     window.addEventListener("beforeunload", onUnload);
-    onCleanup(() => window.removeEventListener("beforeunload", onUnload));
+    return () => {
+      document.removeEventListener("focusin", rememberInput);
+      window.removeEventListener("beforeunload", onUnload);
+    };
   });
   const guard: LeaveGuard = {
     pending,

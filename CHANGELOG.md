@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Changed
+
+- Emulator UI: moved from Solid 1.9 to Solid 2.0 (`solid-js` 2.0.0, `@solidjs/web` 2.0.0, `@solidjs/router` 2.0.0, built with `@solidjs/vite-plugin` 3.0.1). The pages, their behavior and their look are unchanged; the initial UI bundle grows by about 31 KB gzip (53.6 to 84.8 KB). Links inside the UI now carry the full `/ui/...` path, and a Firestore document ID or Storage name that looks like a percent escape (`%41`) opens as typed instead of being decoded twice.
+
 ## [0.60.0] - 2026-11-18
 
 ### Added

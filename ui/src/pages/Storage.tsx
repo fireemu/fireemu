@@ -1,14 +1,7 @@
-import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
-import {
-  createEffect,
-  createResource,
-  createSignal,
-  For,
-  on,
-  onCleanup,
-  Show,
-  type Component,
-} from "solid-js";
+import { ariaBool } from "../lib/aria";
+import { useNavigate, useParams, useSearchParams } from "@solidjs/router";
+import { createEffect, createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import { createResource } from "../lib/resource";
 import { dragHasFiles, previewKind } from "../lib/storagePreview";
 import { createPreviewUrls } from "../lib/previewUrls";
 import { createUploadQueue } from "../lib/uploadQueue";
@@ -24,7 +17,7 @@ import {
   RelativeTime,
   Spinner,
 } from "../components/common";
-import { decodeSplat, storageHref } from "../lib/hrefs";
+import { appHref, splatSegments, storageHref } from "../lib/hrefs";
 import { createPagedList } from "../lib/pagedList";
 import {
   deleteObject,
@@ -208,7 +201,7 @@ const Storage: Component = () => {
   const bucket = () =>
     (typeof search.bucket === "string" && search.bucket) || `${appState.project()}.appspot.com`;
   const prefix = () => {
-    const p = decodeSplat(params.path).join("/");
+    const p = splatSegments(params.path).join("/");
     return p ? `${p}/` : "";
   };
   // Folders and objects share one listing: a row is either a prefix or an object.
@@ -230,10 +223,8 @@ const Storage: Component = () => {
   const [fileInput, setFileInput] = createSignal<HTMLInputElement>();
 
   createEffect(
-    on(
-      () => [bucket(), prefix()] as const,
-      () => void list.load(),
-    ),
+    () => [bucket(), prefix()] as const,
+    () => void list.load(),
   );
   const link = (folder: string) => storageHref(folder, bucket());
   const [dragging, setDragging] = createSignal(false);
@@ -301,7 +292,7 @@ const Storage: Component = () => {
             value={bucket()}
             onChange={(e) => {
               setSearch({ bucket: e.currentTarget.value });
-              navigate(storageHref("", e.currentTarget.value));
+              navigate(appHref(storageHref("", e.currentTarget.value)));
             }}
           >
             <For each={bucketList()}>{(b) => <option value={b.name}>{b.name}</option>}</For>
@@ -313,32 +304,33 @@ const Storage: Component = () => {
         </span>
       </div>
       <nav class="mono mb-3 flex flex-wrap items-center gap-1" aria-label={t("storage.path")}>
-        <A href={storageHref("", bucket())} class="link">
+        <a href={appHref(storageHref("", bucket()))} class="link">
           {bucket()}
-        </A>
+        </a>
         <For each={prefix().split("/").filter(Boolean)}>
           {(s, i) => (
             <>
               <span class="text-muted">/</span>
-              <A
-                href={link(
-                  prefix()
-                    .split("/")
-                    .filter(Boolean)
-                    .slice(0, i() + 1)
-                    .join("/"),
+              <a
+                href={appHref(
+                  link(
+                    prefix()
+                      .split("/")
+                      .filter(Boolean)
+                      .slice(0, i() + 1)
+                      .join("/"),
+                  ),
                 )}
                 class="link"
               >
                 {s}
-              </A>
+              </a>
             </>
           )}
         </For>
       </nav>
       <div
-        class="card transition-shadow"
-        classList={{ "ring-2 ring-selection-indicator": dragging() }}
+        class={["card transition-shadow", { "ring-2 ring-selection-indicator": dragging() }]}
         data-testid="upload-dropzone"
         data-dragging={dragging() ? "true" : undefined}
         onDragOver={onDragOver}
@@ -368,7 +360,7 @@ const Storage: Component = () => {
               type="button"
               class="btn btn-primary"
               disabled={uploads.pending()}
-              aria-busy={uploads.pending()}
+              aria-busy={ariaBool(uploads.pending())}
               data-testid="upload-button"
               onClick={upload}
             >
@@ -416,9 +408,9 @@ const Storage: Component = () => {
                 {(f) => (
                   <tr>
                     <td class="mono">
-                      <A href={link(f)} class="link">
+                      <a href={appHref(link(f))} class="link">
                         {f.slice(prefix().length)}
-                      </A>
+                      </a>
                     </td>
                     <td class="text-xs text-muted">{t("storage.folder")}</td>
                     <td />

@@ -9,7 +9,8 @@ describe("Realtime Database route", () => {
 
 import { afterEach, beforeEach, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
-import { MemoryRouter, Route } from "@solidjs/router";
+import { routed } from "../test/router";
+import { memoryHistory } from "@solidjs/router";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import Database from "./Database";
 import { appState } from "../state";
@@ -25,11 +26,7 @@ vi.mock("../api/database", () => ({
 }));
 const reply = (body: string): TextReply => ({ status: 200, body, etag: '"v1"' });
 const mount = () =>
-  render(() => (
-    <MemoryRouter>
-      <Route path="/" component={Database} />
-    </MemoryRouter>
-  ));
+  render(routed([{ path: "/", component: Database }], { history: memoryHistory() }));
 afterEach(cleanup);
 beforeEach(() => {
   vi.resetAllMocks();

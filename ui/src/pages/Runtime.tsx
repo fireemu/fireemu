@@ -1,4 +1,5 @@
-import { createResource, createSignal, For, Show, type Component } from "solid-js";
+import { createSignal, For, Show, type Component } from "solid-js";
+import { createResource } from "../lib/resource";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -467,7 +468,7 @@ export const FaultPlanPanel: Component = () => {
       <textarea
         id="fault-plan"
         class="input mono h-40"
-        spellcheck={false}
+        spellcheck="false"
         value={draft()}
         onInput={(e) => setDraft(e.currentTarget.value)}
       />
@@ -856,7 +857,7 @@ const ResourcesPanel: Component = () => {
         <textarea
           class="input mono h-20 w-full"
           data-testid="resources-allowances"
-          spellcheck={false}
+          spellcheck="false"
           value={allowances()}
           onInput={(e) => setAllowances(e.currentTarget.value)}
         />

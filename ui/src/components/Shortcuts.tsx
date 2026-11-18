@@ -1,5 +1,6 @@
 import { useNavigate } from "@solidjs/router";
-import { createEffect, For, on, onCleanup, onMount, Show, type Component } from "solid-js";
+import { createEffect, For, onSettled, Show, type Component } from "solid-js";
+import { appHref } from "../lib/hrefs";
 import { t } from "../i18n";
 import { trapTab } from "../lib/focusTrap";
 import { IDLE, stepShortcut, type ShortcutState } from "../lib/shortcuts";
@@ -59,19 +60,17 @@ export const Shortcuts: Component<{ pages: PageShortcut[]; paletteKeys: string }
     event.preventDefault();
     if (action.kind === "help") openShortcutHelp();
     else if (action.kind === "palette") openCommandPalette();
-    else navigate(action.href);
+    else navigate(appHref(action.href));
   };
-  onMount(() => {
+  onSettled(() => {
     window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    return () => window.removeEventListener("keydown", onKey);
   });
-  createEffect(
-    on(shortcutHelpOpen, (isOpen) => {
-      if (!isOpen) return;
-      opener = document.activeElement;
-      queueMicrotask(() => closeButton?.focus());
-    }),
-  );
+  createEffect(shortcutHelpOpen, (isOpen) => {
+    if (!isOpen) return;
+    opener = document.activeElement;
+    queueMicrotask(() => closeButton?.focus());
+  });
 
   return (
     <Show when={shortcutHelpOpen()}>

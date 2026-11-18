@@ -1,4 +1,6 @@
-import { createSignal, For, onCleanup, Show, type Component, type JSX } from "solid-js";
+import { ariaBool } from "../lib/aria";
+import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import type { JSX } from "@solidjs/web";
 import { t } from "../i18n";
 import { relativeTime } from "../lib/relativeTime";
 import { createSubmitGuard } from "../lib/submitGuard";
@@ -45,7 +47,11 @@ export const StatusBadge: Component<{
       data-tone={props.tone}
       data-testid={props.testId}
       title={props.title}
-      aria-hidden={props["aria-hidden"]}
+      aria-hidden={
+        props["aria-hidden"] === undefined
+          ? undefined
+          : ariaBool(props["aria-hidden"] === true || props["aria-hidden"] === "true")
+      }
     >
       {icon()({})}
       {props.children}
@@ -109,7 +115,7 @@ export const AsyncButton: Component<{
       type="button"
       class={props.class ?? "btn"}
       disabled={props.disabled || guard.pending()}
-      aria-busy={guard.pending()}
+      aria-busy={ariaBool(guard.pending())}
       aria-label={props.ariaLabel}
       title={props.title}
       data-testid={props.testId}
@@ -304,7 +310,7 @@ export const CopyField: Component<{
           id={props.testId}
           ref={setField}
           class="input mono"
-          readOnly
+          readonly
           value={props.value}
           data-testid={props.testId}
           onFocus={(e) => e.currentTarget.select()}

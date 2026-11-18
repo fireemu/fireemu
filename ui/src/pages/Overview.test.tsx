@@ -4,6 +4,7 @@ import { errAsync, okAsync } from "neverthrow";
 import Overview from "./Overview";
 import { appState } from "../state";
 import * as control from "../api/control";
+import type { ResourceReport } from "../lib/resources";
 
 vi.mock("../api/control", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/control")>()),
@@ -315,4 +316,37 @@ it("offers keyboard-selectable manual text when clipboard and selection APIs are
     (field as HTMLTextAreaElement).value.length,
   );
   selection.mockRestore();
+});
+
+describe("Overview figures follow the header's poll", () => {
+  it("re-reads the session's resources each time the daemon answers a poll", async () => {
+    const report = (users: number) =>
+      okAsync({
+        schemaVersion: 1,
+        session: "default",
+        project: "demo-a",
+        complete: true,
+        rootBudget: 100,
+        errors: [],
+        services: [
+          {
+            service: "auth",
+            gauges: [{ id: "users.count", current: users, unit: "count" }],
+            roots: { items: [], truncated: false },
+          },
+        ],
+      } as unknown as ResourceReport);
+    vi.mocked(control.sessionResources).mockImplementation(() => report(0));
+    vi.spyOn(control, "sessionInfo").mockImplementation(() =>
+      okAsync({ clock: { clock: "2026-11-18T00:00:00Z" } } as never),
+    );
+    vi.spyOn(control, "listSessions").mockImplementation(() =>
+      okAsync({ sessions: [{ name: "default", project: "demo-a" }] }),
+    );
+    const view = render(() => <Overview />);
+    await waitFor(() => expect(view.getByTestId("stat-auth-value").textContent).toBe("0"));
+    vi.mocked(control.sessionResources).mockImplementation(() => report(1));
+    await appState.refreshClock();
+    await waitFor(() => expect(view.getByTestId("stat-auth-value").textContent).toBe("1"));
+  });
 });

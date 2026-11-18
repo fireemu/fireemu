@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createRoot } from "solid-js";
+import { createRoot, flush } from "solid-js";
 import { createSubmitGuard } from "./submitGuard";
 
 describe("submit guard", () => {
   it("runs one action at a time and refuses re-entry synchronously", async () => {
     await createRoot(async (dispose) => {
       const guard = createSubmitGuard();
+      // Solid 2 refuses signal writes in the synchronous body of an owner; act after it.
+      await Promise.resolve();
       let runs = 0;
       let release: () => void = () => {};
       const first = guard.run(
@@ -15,6 +17,7 @@ describe("submit guard", () => {
             release = () => resolve("first");
           }),
       );
+      flush();
       expect(guard.pending()).toBe(true);
       const second = await guard.run(async () => {
         runs += 1;
@@ -23,6 +26,7 @@ describe("submit guard", () => {
       expect(second).toBeUndefined();
       release();
       expect(await first).toBe("first");
+      flush();
       expect(guard.pending()).toBe(false);
       expect(runs).toBe(1);
       const third = await guard.run(async () => "third");

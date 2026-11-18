@@ -1,15 +1,15 @@
+import { ariaBool } from "../lib/aria";
 import { useNavigate } from "@solidjs/router";
 import {
   createEffect,
   createMemo,
   createSignal,
   For,
-  on,
-  onCleanup,
-  onMount,
+  onSettled,
   Show,
   type Component,
 } from "solid-js";
+import { appHref } from "../lib/hrefs";
 import { t } from "../i18n";
 import {
   filterCommands,
@@ -94,7 +94,13 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
     return path ? [path, ...matched] : matched;
   });
   // A new query always starts from the best match.
-  createEffect(on(query, () => setSelected(0), { defer: true }));
+  createEffect(
+    query,
+    () => {
+      setSelected(0);
+    },
+    { defer: true },
+  );
 
   const close = () => {
     setOpen(false);
@@ -107,7 +113,7 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
     if (!command) return;
     close();
     if (command.href !== undefined) {
-      navigate(command.href);
+      navigate(appHref(command.href));
       return;
     }
     const action = command.action ?? "";
@@ -134,17 +140,15 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
       else openCommandPalette();
     }
   };
-  onMount(() => {
+  onSettled(() => {
     window.addEventListener("keydown", onGlobalKey);
-    onCleanup(() => window.removeEventListener("keydown", onGlobalKey));
+    return () => window.removeEventListener("keydown", onGlobalKey);
   });
-  createEffect(
-    on(open, (isOpen) => {
-      if (!isOpen) return;
-      opener = document.activeElement;
-      queueMicrotask(() => input?.focus());
-    }),
-  );
+  createEffect(open, (isOpen) => {
+    if (!isOpen) return;
+    opener = document.activeElement;
+    queueMicrotask(() => input?.focus());
+  });
 
   const onKeyDown = (event: KeyboardEvent & { currentTarget: HTMLElement }) => {
     trapTab(event, event.currentTarget);
@@ -214,7 +218,7 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
                 <li
                   id={`command-palette-option-${index()}`}
                   role="option"
-                  aria-selected={index() === selected()}
+                  aria-selected={ariaBool(index() === selected())}
                   class="flex cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 text-sm aria-selected:bg-selected aria-selected:text-on-selected"
                   onMouseMove={() => setSelected(index())}
                   onClick={() => run(command)}

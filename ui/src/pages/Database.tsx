@@ -132,7 +132,7 @@ const Editor: Component<{ scope: DatabaseScope; path: string }> = (props) => {
           <textarea
             id="database-source"
             class="input mono h-56"
-            spellcheck={false}
+            spellcheck="false"
             value={source()}
             onInput={(event) => {
               revision++;
@@ -179,7 +179,7 @@ const Editor: Component<{ scope: DatabaseScope; path: string }> = (props) => {
           <textarea
             id="database-rules"
             class="input mono h-48"
-            spellcheck={false}
+            spellcheck="false"
             value={rulesSource()}
             onInput={(event) => {
               rulesRevision++;
@@ -264,10 +264,12 @@ const Scope: Component<{ session: string; project: string; initialPath: string }
   const [namespace, setNamespace] = createSignal("");
   const [path, setPath] = createSignal(props.initialPath || "/");
   const [pathDraft, setPathDraft] = createSignal(path());
-  createEffect(() => {
-    const names = instances.data()?.instances ?? [];
-    if (!names.some((item) => item.name === namespace())) setNamespace(names[0]?.name ?? "");
-  });
+  createEffect(
+    () => [instances.data()?.instances ?? [], namespace()] as const,
+    ([names, current]) => {
+      if (!names.some((item) => item.name === current)) setNamespace(names[0]?.name ?? "");
+    },
+  );
   return (
     <FetchState
       loading={instances.loading() && instances.data() === undefined}

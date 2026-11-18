@@ -1,4 +1,5 @@
-import type { Component, JSX } from "solid-js";
+import type { Component } from "solid-js";
+import type { JSX } from "@solidjs/web";
 
 // Decorative line icons (24x24 grid, currentColor). Always paired with a text label, so
 // they are hidden from assistive technology.

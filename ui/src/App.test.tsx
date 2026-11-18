@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, waitFor } from "@solidjs/testing-library";
-import { Router } from "@solidjs/router";
+import { routed } from "./test/router";
 import { errAsync, okAsync } from "neverthrow";
 import { App } from "./App";
 import { appState } from "./state";
@@ -31,22 +31,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 it("links the Hosting page in the products navigation, after Functions", () => {
-  const ui = render(() => <Router root={App}>{routes}</Router>);
+  const ui = render(routed(routes, { root: App }));
   const links = [...ui.getByLabelText("Emulator products").querySelectorAll("a")];
   const names = links.map((a) => a.textContent);
   expect(names.indexOf("Hosting")).toBe(names.indexOf("Functions") + 1);
-  expect(links[names.indexOf("Hosting")]!.getAttribute("href")).toBe("/hosting");
+  expect(links[names.indexOf("Hosting")]!.getAttribute("href")).toBe("/ui/hosting");
 });
 
 it("says in the header whether the clock is frozen or follows real time", () => {
   appState.setConfig({ ...appState.config(), clockMode: "frozen" });
-  const frozen = render(() => <Router root={App}>{routes}</Router>);
+  const frozen = render(routed(routes, { root: App }));
   expect(frozen.getByTestId("clock-mode").textContent).toBe("Frozen");
   expect(frozen.getByTestId("clock-mode").title).toContain("stands still until advanced");
   expect(frozen.getByTestId("clock-mode").dataset.tone).toBe("paused");
   cleanup();
   appState.setConfig({ ...appState.config(), clockMode: "realtime" });
-  const live = render(() => <Router root={App}>{routes}</Router>);
+  const live = render(routed(routes, { root: App }));
   expect(live.getByTestId("clock-mode").textContent).toBe("Real time");
   expect(live.getByTestId("clock-mode").title).toContain("wall clock");
   expect(live.getByTestId("clock-mode").dataset.tone).toBe("neutral");
@@ -54,7 +54,7 @@ it("says in the header whether the clock is frozen or follows real time", () => 
 });
 
 it("announces connection transitions without announcing each successful poll", async () => {
-  const ui = render(() => <Router root={App}>{routes}</Router>);
+  const ui = render(routed(routes, { root: App }));
   await waitFor(() =>
     expect(ui.getByTestId("connection-status").textContent).toContain("Control API responding"),
   );
@@ -68,4 +68,24 @@ it("announces connection transitions without announcing each successful poll", a
   expect(status.textContent).toContain("Last");
   await appState.refreshClock();
   expect(status.textContent).toContain("Control API responding");
+});
+
+it("marks the navigation entry of the section shown, by path and whatever the query", async () => {
+  const current = async (url: string) => {
+    window.history.replaceState(null, "", url);
+    const ui = render(routed(routes, { root: App, base: "/ui" }));
+    const nav = [...ui.getByLabelText("Emulator products").querySelectorAll("a")];
+    await waitFor(() => expect(nav.length).toBeGreaterThan(0));
+    await new Promise((r) => setTimeout(r, 0));
+    const marked = nav.filter((a) => a.getAttribute("aria-current") === "page");
+    cleanup();
+    return marked.map((a) => a.textContent);
+  };
+  // As Solid Router 1's links did: the section's own path, the query ignored, and a page
+  // inside a section (a Firestore document) leaves the entry unmarked.
+  expect(await current("/ui/auth?tab=users")).toEqual(["Authentication"]);
+  expect(await current("/ui/firestore?db=(default)")).toEqual(["Firestore"]);
+  expect(await current("/ui/")).toEqual(["Overview"]);
+  expect(await current("/ui/firestore/cities/tokyo")).toEqual([]);
+  window.history.replaceState(null, "", "/");
 });

@@ -1,4 +1,5 @@
-import { createResource, createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import { createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import { createResource } from "../lib/resource";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -290,7 +291,7 @@ const AppCheck: Component = () => {
                     id="appcheck-secret-input"
                     class="input mono"
                     autocomplete="off"
-                    spellcheck={false}
+                    spellcheck="false"
                     disabled={generate()}
                     value={draft()}
                     onInput={(e) => setDraft(e.currentTarget.value)}

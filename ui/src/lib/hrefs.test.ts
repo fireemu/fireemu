@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { decodeSplat, firestoreHref, storageHref } from "./hrefs";
+import { createRouter } from "@solidjs/router";
+import { firestoreHref, splatSegments, storageHref } from "./hrefs";
+import { routes } from "../routes";
+
+/** The `path` splat the app router hands the page for an in-app link. */
+const routedSplat = (href: string): string | undefined => {
+  const Router = createRouter({ routes });
+  const params = Router.match(href).at(-1)?.params as { path?: string } | undefined;
+  return params?.path;
+};
 
 describe("in-app links encode names the URL would misread", () => {
   it("keeps # and ? inside a document ID as path data", () => {
@@ -9,10 +18,10 @@ describe("in-app links encode names the URL would misread", () => {
   });
 
   it("round-trips every segment through the router splat", () => {
-    const names = ["tick`slash\\", "100%", "東京", "a b"];
-    const href = firestoreHref(names.join("/"), "db-1");
-    const splat = href.slice("/firestore/".length, href.indexOf("?"));
-    expect(decodeSplat(splat)).toEqual(names);
+    // `%41` would turn into `A` if the name were decoded twice.
+    const names = ["tick`slash\\", "100%", "%41", "東京", "a b", "a#b?c"];
+    expect(splatSegments(routedSplat(firestoreHref(names.join("/"), "db-1")))).toEqual(names);
+    expect(splatSegments(routedSplat(storageHref(`${names.join("/")}/`, "b")))).toEqual(names);
   });
 
   it("links the root without a trailing slash", () => {
@@ -27,8 +36,8 @@ describe("in-app links encode names the URL would misread", () => {
   });
 
   it("leaves a segment that is not a valid escape as typed", () => {
-    expect(decodeSplat("100%/ok")).toEqual(["100%", "ok"]);
-    expect(decodeSplat(undefined)).toEqual([]);
+    expect(splatSegments(routedSplat("/firestore/100%/ok"))).toEqual(["100%", "ok"]);
+    expect(splatSegments(undefined)).toEqual([]);
   });
 });
 

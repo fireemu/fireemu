@@ -1,8 +1,8 @@
 /**
  * In-app links for names the API accepts but a URL would misread. Every segment of a
  * Firestore path or Storage prefix is percent-encoded so `#`, `?`, `%` and non-ASCII
- * characters travel as data; the router hands the splat back still encoded, and
- * `decodeSplat` restores the name. Display strings never go through these functions.
+ * characters travel as data; the router decodes each segment of the splat back into the name
+ * (`splatSegments`). Display strings never go through these functions.
  */
 
 const encodeSegments = (path: string): string =>
@@ -12,18 +12,13 @@ const encodeSegments = (path: string): string =>
     .map((s) => encodeURIComponent(s))
     .join("/");
 
-const decodeSegment = (segment: string): string => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    // A raw `%` typed by hand is not an escape: keep the segment as it came.
-    return segment;
-  }
-};
-
-/** The path segments of a router splat (`params.path`), decoded, without empty ones. */
-export const decodeSplat = (splat: string | undefined): string[] =>
-  (splat ?? "").split("/").filter(Boolean).map(decodeSegment);
+/**
+ * The path segments of a router splat (`params.path`), without empty ones. Router 2 already
+ * decodes every segment of a splat, so the names arrive as data and are not decoded again (a
+ * second decode would turn a stored `%41` into `A`).
+ */
+export const splatSegments = (splat: string | undefined): string[] =>
+  (splat ?? "").split("/").filter(Boolean);
 
 /** The Firestore browser at `path` (`""` for the root) of `db`. */
 export const firestoreHref = (path: string, db: string): string => {

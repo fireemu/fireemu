@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { Section, SectionNav } from "./common";
 
@@ -52,6 +52,7 @@ it("shows the distance of an instant from the session's virtual clock, not the w
   const { RelativeTime } = await import("./common");
   const { appState } = await import("../state");
   appState.setClock("2026-08-29T12:00:00Z");
+  flush();
   const [value, setValue] = createSignal<string | undefined>("2026-08-29T11:57:00Z");
   const ui = render(() => (
     <span data-testid="cell">
@@ -62,17 +63,24 @@ it("shows the distance of an instant from the session's virtual clock, not the w
   // The instant itself stays the visible value; the distance is an addition.
   expect(ui.getByTestId("cell").textContent).toBe("2026-08-29T11:57:00Z(3 min ago)");
   appState.setClock("2026-08-29T13:57:00Z");
+  flush();
   expect(ui.getByTestId("relative-time").textContent).toBe("(2 h ago)");
   setValue("2026-08-29T14:02:00Z");
+  flush();
   expect(ui.getByTestId("relative-time").textContent).toBe("(in 5 min)");
   // Nothing rather than a wrong distance: no value, an unparsable value, no clock yet.
   setValue(undefined);
+  flush();
   expect(ui.queryByTestId("relative-time")).toBeNull();
   setValue("");
+  flush();
   expect(ui.queryByTestId("relative-time")).toBeNull();
   setValue("not a time");
+  flush();
   expect(ui.queryByTestId("relative-time")).toBeNull();
   setValue("2026-08-29T11:57:00Z");
+  flush();
   appState.setClock("");
+  flush();
   expect(ui.queryByTestId("relative-time")).toBeNull();
 });

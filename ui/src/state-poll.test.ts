@@ -1,3 +1,4 @@
+import { flush } from "solid-js";
 import { afterEach, expect, it, vi } from "vitest";
 import { okAsync, errAsync, ResultAsync } from "neverthrow";
 import { appState } from "./state";
@@ -92,6 +93,7 @@ it("does not let a superseded response restore an old session catalog", async ()
   await appState.refreshClock();
   resolve(info("old"));
   await old;
+  flush();
   expect(appState.project()).toBe("demo-after");
   expect(appState.clock()).not.toBe("old");
 });

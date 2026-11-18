@@ -1,6 +1,7 @@
-import { Router, Route } from "@solidjs/router";
+import { flush } from "solid-js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
+import { routed } from "../test/router";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import Functions from "../pages/Functions";
 import { appState } from "../state";
@@ -35,6 +36,7 @@ vi.mock("../lib/logFilter", async (importOriginal) => {
     ...original,
     matchesLog: (...args: Parameters<typeof original.matchesLog>) => {
       mocks.filter();
+      flush();
       return original.matchesLog(...args);
     },
   };
@@ -82,14 +84,11 @@ beforeEach(() => {
     { name: "other", project: "demo-other" },
   ]);
   appState.setSession("other");
+  flush();
 });
 afterEach(cleanup);
 it("shows owner status with another session selected and rejects wrong-owner stream records", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() =>
     expect(ui.getByTestId("timeline-owner").textContent).toContain("owner / demo-owner"),
   );
@@ -106,6 +105,7 @@ it("shows owner status with another session selected and rejects wrong-owner str
     logRecords: [],
     logScopes: [],
   });
+  flush();
   expect(ui.getByTestId("function-logs").textContent).not.toContain("wrong-owner");
   mocks.event?.({
     kind: "snapshot",
@@ -116,17 +116,15 @@ it("shows owner status with another session selected and rejects wrong-owner str
     logRecords: [],
     logScopes: [],
   });
+  flush();
   expect(ui.getByTestId("event-timeline").textContent).toContain("7");
   cleanup();
   expect(mocks.stop).toHaveBeenCalledTimes(1);
   mocks.event?.({ kind: "log", project: "demo-owner", line: "late after cleanup" });
+  flush();
 });
 it("keeps the last successful owner snapshot visible with a refresh error and recovers", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   mocks.overview.mockReturnValue(errAsync({ status: 503, message: "refresh unavailable" }));
   fireEvent.click(ui.getByRole("button", { name: "Refresh" }));
@@ -153,40 +151,24 @@ it("distinguishes loading, initial failure, empty and not-configured responses",
       () => ({ status: 500, message: "failed" }),
     ),
   );
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   expect(ui.queryByTestId("timeline-empty")).toBeNull();
   resolve(owner);
   await waitFor(() => expect(ui.getByTestId("timeline-empty")).toBeTruthy());
   cleanup();
   mocks.overview.mockReturnValue(errAsync({ status: 500, message: "initial failure" }));
-  const failed = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const failed = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(failed.getByRole("alert").textContent).toContain("initial failure"));
   expect(failed.queryByTestId("timeline-empty")).toBeNull();
   cleanup();
   mocks.overview.mockReturnValue(okAsync({ ...owner, configured: false }));
-  const absent = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const absent = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(absent.container.textContent).toContain(t("functions.notConfigured")));
   expect(absent.queryByTestId("timeline-empty")).toBeNull();
 });
 
 it("formats JSON log lines on request without changing what the filters match or count", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   mocks.event?.({
     kind: "snapshot",
@@ -197,6 +179,7 @@ it("formats JSON log lines on request without changing what the filters match or
     logRecords: [],
     logScopes: [],
   });
+  flush();
   const logs = () => ui.getByTestId("function-logs").textContent;
   const raw = 'info {"user":"a","n":1}\nwarn plain text\nerror [1,2]';
   expect(logs()).toBe(raw);
@@ -216,11 +199,7 @@ it("formats JSON log lines on request without changing what the filters match or
 });
 
 it("filters the capped log window once per change even when multiple views consume it", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   mocks.filter.mockClear();
   mocks.event?.({
@@ -232,6 +211,7 @@ it("filters the capped log window once per change even when multiple views consu
     logRecords: [],
     logScopes: [],
   });
+  flush();
   expect(mocks.filter).toHaveBeenCalledTimes(2000);
   expect(ui.getByTestId("function-logs").textContent).not.toContain("info line-499\n");
   fireEvent.input(ui.getByTestId("log-text-filter"), { target: { value: "line-2499" } });
@@ -242,11 +222,7 @@ it("filters the capped log window once per change even when multiple views consu
 });
 
 it("discards a late overview and old stream callback after the owner project changes", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner").textContent).toContain("demo-owner"));
   const oldEvent = mocks.event!;
   let resolve!: (value: FunctionsOverview) => void;
@@ -289,11 +265,7 @@ it("reconnects explicitly without dropping retained attributed logs or accepting
       },
     }),
   );
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   const first = {
     project: "demo-owner",
@@ -315,10 +287,12 @@ it("reconnects explicitly without dropping retained attributed logs or accepting
     logRecords: [first],
     logScopes: [],
   });
+  flush();
   fireEvent.click(ui.getByTestId("event-timeline").querySelector("a")!);
   const oldEvent = mocks.event!;
   expect(ui.queryByTestId("logs-reconnect")).toBeNull();
   mocks.close?.();
+  flush();
   fireEvent.click(ui.getByTestId("logs-reconnect"));
   expect(mocks.stop).toHaveBeenCalledTimes(1);
   mocks.event?.({
@@ -333,6 +307,7 @@ it("reconnects explicitly without dropping retained attributed logs or accepting
     logRecords: [second, second],
     logScopes: [],
   });
+  flush();
   expect(ui.getByTestId("timeline-logs").textContent).toContain(first.line);
   expect(ui.getByTestId("timeline-logs").textContent).toContain(second.line);
   expect(ui.getByTestId("timeline-logs").textContent!.split(second.line)).toHaveLength(2);
@@ -351,11 +326,7 @@ it("does not show a late idle result from a previous Functions owner", async () 
       () => ({ status: 500, message: "failed" }),
     ),
   );
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   fireEvent.click(ui.getByTestId("await-idle"));
   mocks.overview.mockReturnValue(okAsync({ ...owner, project: "demo-new", session: "new" }));
@@ -364,6 +335,7 @@ it("does not show a late idle result from a previous Functions owner", async () 
     project: "demo-owner",
     record: { eventId: "7", function: "consume", attempt: 1, outcome: "success" },
   });
+  flush();
   await waitFor(() => expect(ui.getByTestId("timeline-owner").textContent).toContain("demo-new"));
   resolve({ idle: true });
   await waitFor(() =>
@@ -428,11 +400,7 @@ it("shows the held Auth events, the queue and schedule counters, each codebase's
       },
     }),
   );
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("function-status")).toBeTruthy());
   const status = ui.getByTestId("function-status").textContent ?? "";
   expect(ui.getByTestId("status-auth-events-pending").textContent).toBe("3");
@@ -457,11 +425,7 @@ it("shows the held Auth events, the queue and schedule counters, each codebase's
 });
 
 it("shows zero for counters an older daemon does not send and hides the empty sections", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("function-status")).toBeTruthy());
   expect(ui.getByTestId("status-auth-events-pending").textContent).toBe("0");
   expect(ui.getByTestId("status-tasks-in-flight").textContent).toBe("0");
@@ -475,11 +439,7 @@ it("restores filters, excludes private text by default and shares it only on req
   history.replaceState(null, "", "/functions?function=unknown&level=error&q=shared");
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("log-text-filter")).toBeTruthy());
   expect((ui.getByTestId("log-level-filter") as HTMLSelectElement).value).toBe("error");
   expect((ui.getByTestId("log-text-filter") as HTMLInputElement).value).toBe("shared");
@@ -501,23 +461,16 @@ it("restores filters, excludes private text by default and shares it only on req
 });
 
 it("keeps URL filters reactive after changing sessions and restores private text on remount", async () => {
-  let ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  let ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("log-text-filter")).toBeTruthy());
   fireEvent.input(ui.getByTestId("log-text-filter"), { target: { value: "private" } });
   cleanup();
-  ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() =>
     expect((ui.getByTestId("log-text-filter") as HTMLInputElement).value).toBe("private"),
   );
   appState.setSession("owner");
+  flush();
   expect((ui.getByTestId("log-text-filter") as HTMLInputElement).value).toBe("");
   fireEvent.input(ui.getByTestId("log-level-filter"), { target: { value: "error" } });
   expect((ui.getByTestId("log-level-filter") as HTMLSelectElement).value).toBe("error");
@@ -532,11 +485,7 @@ it("keeps private text across filter changes when browser storage is blocked", a
     throw new Error("blocked");
   });
   try {
-    const ui = render(() => (
-      <Router>
-        <Route path="*" component={Functions} />
-      </Router>
-    ));
+    const ui = render(routed([{ path: "*", component: Functions }]));
     await waitFor(() => expect(ui.getByTestId("log-text-filter")).toBeTruthy());
     fireEvent.input(ui.getByTestId("log-text-filter"), { target: { value: "private" } });
     fireEvent.input(ui.getByTestId("log-level-filter"), { target: { value: "error" } });
@@ -555,11 +504,8 @@ it("restores an event link, reports eviction, and clears it on session change", 
     "/functions?event=7&eventFunction=consume&eventSession=owner&eventProject=demo-owner",
   );
   appState.setSession("default");
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  flush();
+  const ui = render(routed([{ path: "*", component: Functions }]));
   expect(appState.session()).toBe("owner");
   await waitFor(() =>
     expect(ui.getByTestId("timeline-detail").textContent).toContain(
@@ -575,6 +521,7 @@ it("restores an event link, reports eviction, and clears it on session change", 
     logRecords: [],
     logScopes: [],
   });
+  flush();
   await waitFor(() =>
     expect(ui.getByTestId("timeline-detail").textContent).toContain("7 / consume"),
   );
@@ -582,6 +529,7 @@ it("restores an event link, reports eviction, and clears it on session change", 
     "event=7",
   );
   appState.setSession("other");
+  flush();
   await waitFor(() => expect(ui.queryByTestId("timeline-detail")).toBeNull());
 });
 
@@ -591,11 +539,7 @@ it("restores the linked session when navigating back and forward through event l
     "",
     "/functions?event=7&eventFunction=consume&eventSession=owner&eventProject=demo-owner",
   );
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-detail")).toBeTruthy());
   mocks.event?.({
     kind: "snapshot",
@@ -609,11 +553,13 @@ it("restores the linked session when navigating back and forward through event l
     logRecords: [],
     logScopes: [],
   });
+  flush();
   fireEvent.click(ui.getByRole("link", { name: /Select event 8/ }));
   await waitFor(() => expect(location.search).toContain("event=8"));
   history.back();
   await waitFor(() => expect(location.search).toContain("event=7"));
   appState.setSession("other");
+  flush();
   await waitFor(() => expect(location.search).not.toContain("event="));
   history.forward();
   await waitFor(() => expect(appState.session()).toBe("owner"));
@@ -623,6 +569,7 @@ it("restores the linked session when navigating back and forward through event l
   fireEvent.click(ui.getByRole("link", { name: /Select event 7/ }));
   await waitFor(() => expect(location.search).toContain("event=7"));
   appState.setSession("other");
+  flush();
   await waitFor(() => expect(location.search).not.toContain("event="));
   history.back();
   await waitFor(() => expect(appState.session()).toBe("owner"));
@@ -632,11 +579,7 @@ it("restores the linked session when navigating back and forward through event l
 });
 
 it("opens a synthetic invocation after selecting a linked event", async () => {
-  const ui = render(() => (
-    <Router>
-      <Route path="*" component={Functions} />
-    </Router>
-  ));
+  const ui = render(routed([{ path: "*", component: Functions }]));
   await waitFor(() => expect(ui.getByTestId("timeline-owner")).toBeTruthy());
   mocks.event?.({
     kind: "snapshot",
@@ -650,6 +593,7 @@ it("opens a synthetic invocation after selecting a linked event", async () => {
     logRecords: [],
     logScopes: [],
   });
+  flush();
   fireEvent.click(ui.getByRole("link", { name: /Select event 7/ }));
   await waitFor(() =>
     expect(ui.getByTestId("timeline-detail").textContent).toContain("7 / consume"),
