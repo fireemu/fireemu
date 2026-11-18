@@ -115,8 +115,8 @@ Some times are minted outside fireemu, on the host's wall clock: the Admin SDK s
 
 A clock that stands still keeps every expiry from arriving until you move it: action codes, SMS codes, ID tokens, Firestore TTL and scheduled functions all wait for a clock move. Two things differ:
 
-- Pub/Sub pull subscriptions keep ack deadlines and retry backoff in delivery time, which moves with wall time while the clock stands still. A message pulled and not acknowledged comes back after its ack deadline, and a nack under a `retryPolicy` comes back after its backoff, without a clock move; advancing the clock still moves both. Push subscriptions keep their backoff on the emulator clock: advance it to release the next push attempt.
-- Revocation compares whole seconds, as production does: `revokeRefreshTokens` or a password change in the same second as the sign-in leaves that sign-in's ID token valid. In production a test waits one second before revoking; on a frozen clock, advance the clock by at least one second between the sign-in and the revocation.
+- Pub/Sub pull subscriptions keep ack deadlines and retry backoff in delivery time, which moves with wall time while the clock stands still. A message pulled and not acknowledged comes back after its ack deadline, and a nack under a `retryPolicy` comes back after its backoff, without a clock move; advancing the clock still moves both. Push subscriptions keep their backoff on the emulator clock: advance it to release the next push attempt. The first time a push endpoint fails on a clock that stands still, the daemon prints a hint.
+- Revocation compares whole seconds, as production does: `revokeRefreshTokens` or a password change in the same second as the sign-in leaves that sign-in's ID token valid. In production a test waits one second before revoking; on a frozen clock, advance the clock by at least one second between the sign-in and the revocation. On such a clock the daemon prints a hint when a revocation lands in the second of the account's last sign-in.
 
 ## Application time in Functions
 

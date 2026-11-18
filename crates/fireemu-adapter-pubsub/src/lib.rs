@@ -449,6 +449,8 @@ pub struct PubSubHandle {
     delivery_clock: Arc<Mutex<delivery_clock::DeliveryClock>>,
     /// Monotonic origin of the delivery clock's wall readings.
     wall_origin: std::time::Instant,
+    /// Whether the hint that a push backoff waits on a still clock was printed.
+    push_still_clock_hinted: Arc<std::sync::atomic::AtomicBool>,
     /// Wall time added to every reading, so a test can let wall time pass without sleeping.
     #[cfg(test)]
     wall_skew_nanos: Arc<AtomicU64>,
@@ -485,6 +487,7 @@ impl PubSubHandle {
         Self {
             delivery_clock: Arc::new(Mutex::new(delivery_clock::DeliveryClock::new(start, 0))),
             wall_origin: std::time::Instant::now(),
+            push_still_clock_hinted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(test)]
             wall_skew_nanos: Arc::new(AtomicU64::new(0)),
             paging_policy: PagingPolicy::Emulator,
@@ -1289,10 +1292,32 @@ impl PubSubHandle {
     /// or `None` when the delivering incarnation is no longer the current one.
     fn record_push_failure(&self, key: &str, generation: u64) -> Option<LogicalInstant> {
         let now = self.now();
-        self.push_dispatch
+        let resume_at = self
+            .push_dispatch
             .lock()
             .expect("push dispatch lock")
-            .record_push_failure(key, generation, now)
+            .record_push_failure(key, generation, now);
+        if resume_at.is_some() {
+            if let Some(hint) = self.push_still_clock_hint(key) {
+                eprintln!("{hint}");
+            }
+        }
+        resume_at
+    }
+
+    /// The one-time hint that a push backoff waits on the emulator clock, when that clock stands
+    /// still: push delivery keeps its backoff on the emulator clock (pull subscriptions use the
+    /// delivery clock), so only a clock move releases the next attempt. `None` on a clock that
+    /// follows real time, and after the first time.
+    fn push_still_clock_hint(&self, key: &str) -> Option<String> {
+        if self.clock.lock().expect("clock lock").is_following()
+            || self.push_still_clock_hinted.swap(true, Ordering::AcqRel)
+        {
+            return None;
+        }
+        Some(format!(
+            "pubsub: the push endpoint of {key} failed; its retry waits for the emulator clock, which stands still, so advance it to release the next attempt (POST /v1/sessions/default/clock:advance, or the Runtime page). Shown once."
+        ))
     }
 
     /// Releases a subscription's push backoff after a delivery the endpoint accepted. Returns
@@ -2771,6 +2796,28 @@ mod dispatch_tests {
         handle.pass_wall_time(2);
         assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
         assert_eq!(handle.now(), LogicalInstant::UNIX_EPOCH);
+    }
+
+    /// The push hint is given once, and only on a clock that stands still.
+    #[test]
+    fn the_push_still_clock_hint_is_given_once_on_a_still_clock() {
+        let (handle, _, _) = unary_pull_fixture(PagingPolicy::Emulator);
+        let hint = handle.push_still_clock_hint("projects/demo-app/subscriptions/s");
+        assert!(
+            hint.as_deref()
+                .is_some_and(|hint| hint.contains("clock:advance")
+                    && hint.contains("projects/demo-app/subscriptions/s")),
+            "{hint:?}"
+        );
+        assert_eq!(handle.push_still_clock_hint("other"), None);
+        let following = PubSubHandle::new(
+            Arc::new(Mutex::new(PubSubState::new(7))),
+            Arc::new(Mutex::new(VirtualClock::following(
+                LogicalInstant::UNIX_EPOCH,
+            ))),
+            None,
+        );
+        assert_eq!(following.push_still_clock_hint("s"), None);
     }
 
     fn next_recheck_deadline(

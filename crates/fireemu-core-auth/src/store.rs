@@ -1471,6 +1471,16 @@ pub enum CredentialNotice {
         /// Which step it is for.
         purpose: TotpCodePurpose,
     },
+    /// A revocation (`revokeRefreshTokens`, a password change) in the same whole second as the
+    /// account's last sign-in or token refresh (fireemu only). Revocation compares whole seconds,
+    /// as production does, so that sign-in's ID token stays valid; on a clock that stands still
+    /// it stays valid until the clock moves. The shell prints it only on such a clock.
+    SameSecondRevocation {
+        /// The account.
+        uid: LocalId,
+        /// When the revocation was made.
+        at: LogicalInstant,
+    },
     /// An SMS code.
     PhoneCode {
         /// The number the SMS would have gone to.
@@ -1487,6 +1497,10 @@ impl CredentialNotice {
     #[must_use]
     pub fn message(&self) -> String {
         match self {
+            Self::SameSecondRevocation { uid, at } => format!(
+                "Tokens of {} were revoked at {at}, in the same second as its last sign-in, so that sign-in's ID token stays valid (revocation compares whole seconds, as production does). On a clock that stands still, advance it by at least 1 second between the sign-in and the revocation (POST /v1/sessions/default/clock:advance, or the Runtime page).",
+                uid.as_str()
+            ),
             Self::EmailAction {
                 request_type,
                 email,
@@ -4841,6 +4855,7 @@ impl AuthStore {
         user.tokens_valid_after = user.tokens_valid_after.max(Self::whole_second(now));
         user.emulator_valid_since = Some(Self::unix_second(now));
         self.activate_email_owner(uid);
+        self.note_same_second_revocation(uid, now);
         Ok(())
     }
 
@@ -5852,8 +5867,24 @@ impl AuthStore {
         })
     }
 
+    /// Records [`CredentialNotice::SameSecondRevocation`] when a revocation at `now` falls in
+    /// the whole second of the account's last sign-in or token refresh.
+    fn note_same_second_revocation(&mut self, uid: &LocalId, now: LogicalInstant) {
+        let last = self
+            .users
+            .get(uid)
+            .and_then(|user| user.last_sign_in_at.max(user.last_refresh_at));
+        if last.is_some_and(|last| Self::whole_second(last) == Self::whole_second(now)) {
+            self.push_credential_notice(CredentialNotice::SameSecondRevocation {
+                uid: uid.clone(),
+                at: now,
+            });
+        }
+    }
+
     /// Revokes refresh tokens: tokens issued before `now` become invalid.
     pub fn revoke_tokens(&mut self, uid: &LocalId, now: LogicalInstant) -> Result<(), AuthError> {
+        self.note_same_second_revocation(uid, now);
         let user = self
             .users
             .get_mut(uid)

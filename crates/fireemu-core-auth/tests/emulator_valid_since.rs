@@ -428,3 +428,52 @@ proptest! {
         prop_assert_eq!(bound(&restored), captured);
     }
 }
+
+/// Frozen-clock audit #4 (coordinator ruling: production semantics plus a hint): a revocation in
+/// the same whole second as the account's last sign-in records a notice, since that sign-in's ID
+/// token stays valid; one a second later, or with no sign-in, records none. A password change
+/// is a revocation too.
+#[test]
+fn a_revocation_in_the_sign_in_second_leaves_a_notice() {
+    use fireemu_core_auth::store::CredentialNotice;
+    let same_second = |store: &mut AuthStore| {
+        store
+            .take_credential_notices()
+            .into_iter()
+            .filter(|notice| matches!(notice, CredentialNotice::SameSecondRevocation { .. }))
+            .count()
+    };
+    let mut store = emulator_store();
+    let uid = store
+        .create_user_with_password(email(41), "password1", at(NOW - 60))
+        .unwrap();
+    let _ = store.take_credential_notices();
+    // No sign-in yet: nothing to warn about.
+    store.revoke_tokens(&uid, at(NOW - 30)).unwrap();
+    assert_eq!(same_second(&mut store), 0);
+    // Sign-in and revocation in one second (a frozen clock): one notice.
+    store.record_sign_in(
+        &uid,
+        LogicalInstant::from_nanos(i128::from(NOW) * 1_000_000_000 + 10),
+    );
+    store
+        .revoke_tokens(
+            &uid,
+            LogicalInstant::from_nanos(i128::from(NOW) * 1_000_000_000 + 999),
+        )
+        .unwrap();
+    assert_eq!(same_second(&mut store), 1);
+    let message = CredentialNotice::SameSecondRevocation {
+        uid: uid.clone(),
+        at: at(NOW),
+    }
+    .message();
+    assert!(message.contains("clock:advance"), "{message}");
+    // A second later: the sign-in's token is revoked, no notice.
+    store.revoke_tokens(&uid, at(NOW + 1)).unwrap();
+    assert_eq!(same_second(&mut store), 0);
+    // A password change in the sign-in second is a revocation too.
+    store.record_sign_in(&uid, at(NOW + 5));
+    store.set_password(&uid, "password2", at(NOW + 5)).unwrap();
+    assert_eq!(same_second(&mut store), 1);
+}

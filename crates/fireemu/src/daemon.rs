@@ -132,6 +132,15 @@ fn auth_notice_sink(
     clock: Arc<Mutex<VirtualClock>>,
 ) -> fireemu_adapter_http::identity_toolkit::AuthNoticeSink {
     Arc::new(move |notice| {
+        // A same-second revocation is only a trap on a clock that stands still: on one that
+        // follows real time the next second comes by itself, as in production.
+        if matches!(
+            notice,
+            fireemu_core_auth::store::CredentialNotice::SameSecondRevocation { .. }
+        ) && clock.lock().map_or(true, |clock| clock.is_following())
+        {
+            return;
+        }
         let message = notice.message();
         outln!("  auth: {message}");
         bus.publish(
@@ -2476,6 +2485,34 @@ fn configured_pubsub_handle(
 
 #[cfg(test)]
 mod tests {
+    /// Frozen-clock audit #4: the same-second revocation hint reaches the log only on a clock
+    /// that stands still; other notices are logged either way.
+    #[test]
+    fn the_same_second_revocation_hint_is_logged_only_on_a_still_clock() {
+        use fireemu_core_auth::store::{AuthStore, CredentialNotice, NewUser};
+        let start = fireemu_core_types::time::LogicalInstant::from_unix_seconds(1_767_225_600);
+        let uid = AuthStore::new(
+            "demo-app",
+            fireemu_core_types::determinism::SplitMix64::new(1),
+            fireemu_core_auth::mfa::TotpPolicy::default(),
+        )
+        .create_user(NewUser::anonymous(), start)
+        .unwrap();
+        let notice = CredentialNotice::SameSecondRevocation { uid, at: start };
+        for (clock, logged) in [
+            (fireemu_core_session::clock::VirtualClock::new(start), 1),
+            (
+                fireemu_core_session::clock::VirtualClock::following(start),
+                0,
+            ),
+        ] {
+            let bus = fireemu_adapter_logging::LogBus::new();
+            let sink = super::auth_notice_sink(bus.clone(), Arc::new(Mutex::new(clock)));
+            sink(&notice);
+            assert_eq!(bus.len(), logged);
+        }
+    }
+
     /// User report (0.54.0): a person following the TOTP flow in a browser could not read the
     /// email verification code there (the emulator routes refuse a browser without the control
     /// token). The banner names the Emulator UI's Auth page, which lists the codes.
