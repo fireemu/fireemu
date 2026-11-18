@@ -216,6 +216,8 @@ test("the historical daemonLog may name only the binding's own paths", async (t)
     `  config:           ${config} (--config); ${cwd}/firebase.json in a parent directory is not loaded`,
     "  control API:      http://127.0.0.1:64251/v1/  (health: /health/live)",
     "  profile: strict (behaves like production Firebase where the official emulators do not)",
+    // The frozen-clock hint fireemu exec prints since v0.61.0.
+    '  clock mode: frozen; to follow real time: POST /v1/sessions/default/clock:resume (add {"syncToRealTime": true} to jump to the current time) or the Runtime page of the Emulator UI',
     // Every other exempt path, including one with spaces and regex metacharacters.
     "  binary: /tmp/fireemu-verify.x/fireemu try ✓/bin/fireemu",
     `  source: ${cwd}/firestore-probe.fireemu.json`,
@@ -276,6 +278,9 @@ test("the historical daemonLog may name only the binding's own paths", async (t)
     "\n  note: /[secret.json]\n",
     "\n  note: /health/live;/srv/x\n",
     "\n  note: (/srv/x)\n",
+    // Only the exact clock route is allowed, not another session or a path below it.
+    "\n  note: /v1/sessions/other/clock:resume\n",
+    "\n  note: /v1/sessions/default/clock:resume/x\n",
     "\n  note: C:\\Users\\someone\\secret.json\n",
     // Only the exact exempt path is masked: a dot in it matches no other character.
     "\n  binary: /tmp/fireemu-verifyXx/fireemu try ✓/bin/fireemu\n",

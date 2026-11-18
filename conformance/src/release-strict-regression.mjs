@@ -1265,7 +1265,13 @@ const isPlainObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** The slash-led words the strict `fireemu exec` banner of the historical replay prints. */
-const DAEMON_LOG_ROUTES = new Set(["/", "/health/live", "/v1/rules"]);
+const DAEMON_LOG_ROUTES = new Set([
+  "/",
+  "/health/live",
+  "/v1/rules",
+  // The frozen-clock hint (since v0.61.0).
+  "/v1/sessions/default/clock:resume",
+]);
 const LOOPBACK_URL = /^http:\/\/127\.0\.0\.1:\d{1,5}(?:\/[\w-][\w.-]*)*\/?$/;
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
