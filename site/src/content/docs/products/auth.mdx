@@ -414,10 +414,17 @@ Fireemu reveals the code an authenticator app would show, so a manual run or a t
 
 ```sh
 curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
-# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19,"alreadyUsed":false,"clockRunning":true,"periodSeconds":30}]}
 ```
 
-A tenant's codes are at `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. An enrollment not finalized yet is listed with `"pendingEnrollment": true` and no `mfaEnrollmentId`. The code uses the project's TOTP period and digits and Fireemu's clock, so it is the code verification checks against; verification itself is unchanged, including replay protection: a code already used by the enrollment or by an earlier sign-in in the same time step is still refused, so wait for the next step (`secondsRemaining`). The reveal is on by default in both profiles. `auth.totp.revealCodes = false`, or `productionExact`, turns it off: no line is printed and the route answers 404. An explicit `auth.totp.revealCodes = true` keeps it on under `productionExact`. `auth.logActionCodes = false` silences the line too. The lines and the route carry credentials, so keep them out of shared logs.
+A tenant's codes are at `/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`. An enrollment not finalized yet is listed with `"pendingEnrollment": true` and no `mfaEnrollmentId`. The code uses the project's TOTP period and digits and Fireemu's clock, so it is the code verification checks against; verification itself is unchanged, including replay protection: a code already used by the enrollment or by an earlier sign-in in the same time step is still refused. On a running clock a code is accepted again from the first step after the one the factor last accepted. `"alreadyUsed": true` means that submitting the listed code now would be refused as already used, and its line says so instead of giving the code to use. `advanceSeconds` is then the number of seconds until that first fresh step. It can be more than one period (`periodSeconds`, the SDK's `codeIntervalSeconds`), because the adjacent window lets an enrollment or a sign-in accept the next step's code ahead of the clock. `"clockRunning": false` means the clock stands still: a pinned `daemon.clockStart` without `daemon.clock = "realtime"`, or `daemon.clock = "frozen"`. The code then does not change until the clock moves, so the line gives no seconds left, and waiting does not help: after an enrollment the sign-in challenge shows the code the enrollment used. On a running clock, wait `advanceSeconds`; on either clock, move it forward by `advanceSeconds` on the Runtime page of the Emulator UI or with the control API:
+
+```sh
+# Example: use the listed advanceSeconds instead of 30.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 30}'
+```
+
+The reveal is on by default in both profiles. `auth.totp.revealCodes = false`, or `productionExact`, turns it off: no line is printed and the route answers 404. An explicit `auth.totp.revealCodes = true` keeps it on under `productionExact`. `auth.logActionCodes = false` silences the line too. The lines and the route carry credentials, so keep them out of shared logs.
 
 ## Multi-tenancy
 

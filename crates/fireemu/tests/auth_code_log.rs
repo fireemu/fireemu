@@ -99,13 +99,17 @@ struct Daemon {
 
 impl Daemon {
     fn start(name: &str, auth: &Value, verbosity: &str) -> Self {
+        Self::start_config(
+            name,
+            &json!({"schemaVersion": 1, "profile": "emulator", "auth": auth}),
+            verbosity,
+        )
+    }
+
+    fn start_config(name: &str, document: &Value, verbosity: &str) -> Self {
         let dir = TrustedTempDir::new(&format!("auth-code-log-{name}"));
         let config = dir.join("fireemu.json");
-        std::fs::write(
-            &config,
-            json!({"schemaVersion": 1, "profile": "emulator", "auth": auth}).to_string(),
-        )
-        .unwrap();
+        std::fs::write(&config, document.to_string()).unwrap();
         let hub_port = free_port();
         let mut child = Command::new(env!("CARGO_BIN_EXE_fireemu"))
             .args([
@@ -438,6 +442,182 @@ fn totp_enrollment_codes_are_printed_and_listed_by_default() {
     );
     assert_eq!(code.len(), 6);
     assert!(!text.contains("otpauth://"), "{text}");
+}
+
+/// The owner's repro (2026-11-18): with `daemon.clockStart` pinned the clock stands still, so
+/// the sign-in challenge reveals the very code that finalized the enrollment, which verification
+/// refuses as already used. The reveal says so, gives no countdown, and names the clock move
+/// that yields a fresh code; after that move the revealed code signs in.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_pinned_clock_reveals_the_used_code_as_used_and_a_clock_move_gives_a_fresh_one() {
+    let project = "demo-totp-still";
+    let daemon = Daemon::start_config(
+        "totp-still",
+        &json!({
+            "schemaVersion": 1,
+            "profile": "emulator",
+            "daemon": {"clockStart": "2026-11-18T00:00:00Z"},
+            "auth": {"totp": {}},
+        }),
+        "info",
+    );
+    let port = daemon.auth_port();
+    let codes = |port| {
+        let (status, codes) = http(
+            port,
+            "GET",
+            &format!("/emulator/v1/projects/{project}/totpCodes"),
+            &Value::Null,
+        );
+        assert_eq!(status, 200, "{codes}");
+        codes["totpCodes"][0].clone()
+    };
+    let (status, user) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:signUp?key=fake-api-key"),
+        &json!({"email": "still@example.com", "password": "hunter22", "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{user}");
+    let uid = user["localId"].as_str().unwrap().to_owned();
+    let (status, sent) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:sendOobCode?key=fake-api-key"),
+        &json!({"requestType": "VERIFY_EMAIL", "idToken": user["idToken"]}),
+    );
+    assert_eq!(status, 200, "{sent}");
+    let (_, oob) = http(
+        port,
+        "GET",
+        &format!("/emulator/v1/projects/{project}/oobCodes"),
+        &Value::Null,
+    );
+    let (status, verified) = http(
+        port,
+        "POST",
+        &format!("{V1}/accounts:update?key=fake-api-key"),
+        &json!({"oobCode": oob["oobCodes"][0]["oobCode"]}),
+    );
+    assert_eq!(status, 200, "{verified}");
+    let password = || {
+        http(
+            port,
+            "POST",
+            &format!("{V1}/accounts:signInWithPassword?key=fake-api-key"),
+            &json!({"email": "still@example.com", "password": "hunter22", "returnSecureToken": true}),
+        )
+    };
+    let (status, signed_in) = password();
+    assert_eq!(status, 200, "{signed_in}");
+    let (status, started) = http(
+        port,
+        "POST",
+        "/identitytoolkit.googleapis.com/v2/accounts/mfaEnrollment:start?key=fake-api-key",
+        &json!({"idToken": signed_in["idToken"], "totpEnrollmentInfo": {}}),
+    );
+    assert_eq!(status, 200, "{started}");
+    let pending = codes(port);
+    assert_eq!(pending["clockRunning"], json!(false), "{pending}");
+    assert_eq!(pending["alreadyUsed"], json!(false), "{pending}");
+    let enrolled_code = pending["code"].as_str().unwrap().to_owned();
+    let enroll_line = format!(
+        "  auth: To enroll TOTP MFA for user {uid} (project {project}), use the code {enrolled_code} (the emulator clock stands still, so the code stays the same until the clock moves)."
+    );
+    daemon.stdout_through(&enroll_line);
+    let (status, finalized) = http(
+        port,
+        "POST",
+        "/identitytoolkit.googleapis.com/v2/accounts/mfaEnrollment:finalize?key=fake-api-key",
+        &json!({
+            "idToken": signed_in["idToken"],
+            "displayName": "phone",
+            "totpVerificationInfo": {
+                "sessionInfo": started["totpSessionInfo"]["sessionInfo"],
+                "verificationCode": enrolled_code,
+            },
+        }),
+    );
+    assert_eq!(status, 200, "{finalized}");
+
+    // Sign out and back in: the challenge's code is the one just used.
+    let (status, challenge) = password();
+    assert_eq!(status, 200, "{challenge}");
+    let factor = challenge["mfaInfo"][0]["mfaEnrollmentId"].clone();
+    let listed = codes(port);
+    assert_eq!(listed["code"].as_str(), Some(enrolled_code.as_str()));
+    assert_eq!(listed["alreadyUsed"], json!(true), "{listed}");
+    assert_eq!(listed["clockRunning"], json!(false), "{listed}");
+    assert_eq!(listed["periodSeconds"], json!(30), "{listed}");
+    assert_eq!(listed["advanceSeconds"], json!(30), "{listed}");
+    let used_line = format!(
+        "  auth: To sign in with TOTP MFA as user {uid} (project {project}) factor {} (phone), the current code {enrolled_code} was already used by this factor; advance the clock by 30 seconds for a fresh code (Runtime page of the Emulator UI, or POST /v1/sessions/default/clock:advance with {{\"seconds\": 30}} on the Auth port).",
+        factor.as_str().unwrap()
+    );
+    let text = daemon.stdout_through(&used_line);
+    assert!(!text.contains("s left)"), "{text}");
+    // Verification is unchanged: the used code is refused.
+    let finalize = |code: &str| {
+        http(
+            port,
+            "POST",
+            "/identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=fake-api-key",
+            &json!({
+                "mfaPendingCredential": challenge["mfaPendingCredential"],
+                "mfaEnrollmentId": factor,
+                "totpVerificationInfo": {"verificationCode": code},
+            }),
+        )
+    };
+    let (status, refused) = finalize(&enrolled_code);
+    assert_eq!(status, 400, "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("verification code already used"),
+        "{refused}"
+    );
+
+    // Half the named move leaves the code used, with the rest of the move named.
+    let advance = |seconds: u64| {
+        let (status, moved) = http(
+            port,
+            "POST",
+            "/v1/sessions/default/clock:advance",
+            &json!({ "seconds": seconds }),
+        );
+        assert_eq!(status, 200, "{moved}");
+    };
+    advance(15);
+    let half = codes(port);
+    assert_eq!(half["alreadyUsed"], json!(true), "{half}");
+    assert_eq!(half["advanceSeconds"], json!(15), "{half}");
+    // The rest of the move yields a fresh code that signs in.
+    advance(15);
+    let fresh = codes(port);
+    assert_eq!(fresh["alreadyUsed"], json!(false), "{fresh}");
+    assert!(fresh.get("advanceSeconds").is_none(), "{fresh}");
+    let fresh_code = fresh["code"].as_str().unwrap().to_owned();
+    assert_ne!(fresh_code, enrolled_code);
+    let (status, done) = finalize(&fresh_code);
+    assert_eq!(status, 200, "{done}");
+
+    // Switching the clock at runtime switches what the reveal reports.
+    let switch = |action: &str| {
+        let (status, clock) = http(
+            port,
+            "POST",
+            &format!("/v1/sessions/default/{action}"),
+            &json!({}),
+        );
+        assert_eq!(status, 200, "{clock}");
+    };
+    switch("clock:resume");
+    assert_eq!(codes(port)["clockRunning"], json!(true));
+    switch("clock:freeze");
+    assert_eq!(codes(port)["clockRunning"], json!(false));
 }
 
 #[test]

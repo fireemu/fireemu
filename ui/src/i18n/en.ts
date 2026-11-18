@@ -360,6 +360,8 @@ export const en = {
   "auth.totpFactor": "Factor",
   "auth.totpPending": "Enrollment in progress",
   "auth.totpSecondsLeft": "Valid for",
+  "auth.totpAlreadyUsed": "Already used: advance the clock by {seconds}s (Runtime page)",
+  "auth.totpClockStill": "Until the clock moves",
   "auth.config": "Project configuration",
   "auth.signInAllowDuplicates": "Allow duplicate emails",
   "auth.uidOptional": "Leave empty for a generated UID",

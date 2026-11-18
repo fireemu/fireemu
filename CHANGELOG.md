@@ -12,6 +12,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 - Clock: switch between a frozen clock and one that follows real time while the daemon runs. `POST /v1/sessions/{session}/clock:freeze` stops the shared clock at the current instant; `clock:resume` lets it follow real time from the instant it shows, and with `{"syncToRealTime": true}` first moves it to the current time (refused when that is backwards, unless `"allowBackwards": true`, as for `clock:set`). Every clock answer and `GET /v1/sessions/{session}` carry `running`. The Emulator UI's Runtime page shows Running or Frozen with Freeze / Resume and Sync to real time buttons, and the header and Overview show the live mode. The startup output says which mode the clock started in and how to switch it. `daemon.clock` and `daemon.clockStart` still choose the mode at start.
 
+### Fixed
+
+- Authentication: the TOTP code reveal no longer offers a code verification refuses. With the clock standing still (a pinned `daemon.clockStart` or `daemon.clock = "frozen"`), the sign-in challenge after an enrollment showed the code the enrollment had just used, with a "30s left" countdown that never ran out, and signing in with it failed as already used. The line now says when the current code was already used by the factor and how to get a fresh one (advance the clock to the first step after the one the factor last accepted, which can be more than one period when an adjacent-window code was accepted ahead of the clock, on the Runtime page or with `POST /v1/sessions/default/clock:advance`), and says the code stays the same until the clock moves instead of counting down while the clock stands still. `GET /emulator/v1/projects/{project}/totpCodes` adds `alreadyUsed` (submitting the listed code now would be refused as already used), `advanceSeconds`, `clockRunning` and `periodSeconds`, and the Emulator UI's Auth page shows the same. Verification and replay protection are unchanged.
+
 ## [0.60.0] - 2026-11-18
 
 ### Added

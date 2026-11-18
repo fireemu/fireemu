@@ -1277,6 +1277,12 @@ fn now(state: &AuthState) -> LogicalInstant {
     clock.now()
 }
 
+/// Whether the virtual clock moves on its own (it follows real time, or an unpinned session
+/// advances it to the wall clock); `false` when it stands still until it is moved.
+fn clock_runs(state: &AuthState) -> bool {
+    state.wall_clock.is_some() || state.clock.lock().is_ok_and(|clock| clock.is_following())
+}
+
 fn str_field<'a>(body: &'a Value, key: &str) -> Option<&'a str> {
     body.get(key).and_then(Value::as_str)
 }
@@ -5134,6 +5140,7 @@ fn handle_with_policy_inner(
     store.set_production_oob_lifetimes(!state.stateless_refresh_tokens);
     store.set_production_mfa(!state.stateless_refresh_tokens);
     store.set_reveal_totp_codes(state.reveal_totp_codes);
+    store.set_totp_clock_running(clock_runs(state));
     // Strict refuses an ID token with a future `iat` or `auth_time` (inferred); the emulator
     // profile accepts it as firebase-tools 15.28.2 does (owner decision ledger 781).
     store.set_future_id_token_claims(if state.stateless_refresh_tokens {
@@ -16597,6 +16604,7 @@ fn emulator_totp_codes(store: &AuthStore, at: LogicalInstant) -> JsonResponse {
     if !store.reveal_totp_codes() {
         return not_found();
     }
+    let clock_running = store.totp_clock_running();
     let codes: Vec<Value> = store
         .totp_codes(at)
         .into_iter()
@@ -16605,7 +16613,13 @@ fn emulator_totp_codes(store: &AuthStore, at: LogicalInstant) -> JsonResponse {
                 "uid": entry.uid.as_str(),
                 "code": entry.code,
                 "secondsRemaining": entry.seconds_remaining,
+                "alreadyUsed": entry.already_used,
+                "clockRunning": clock_running,
+                "periodSeconds": entry.period_seconds,
             });
+            if entry.already_used {
+                code["advanceSeconds"] = json!(entry.advance_seconds);
+            }
             match entry.mfa_enrollment_id {
                 Some(id) => code["mfaEnrollmentId"] = json!(id),
                 None => code["pendingEnrollment"] = json!(true),
