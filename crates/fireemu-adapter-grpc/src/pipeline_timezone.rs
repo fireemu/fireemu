@@ -1,11 +1,10 @@
 //! Named time zones for pipeline calendar functions.
 
-use chrono::{DateTime, TimeZone, Utc};
-use chrono_tz::Tz;
 use fireemu_core_firestore::pipeline_exec::{
     local_calendar_value, ZoneError, ZoneOperation, ZoneResult,
 };
 use fireemu_core_firestore::value::Timestamp;
+use jiff::tz::{AmbiguousOffset, TimeZone, TimeZoneDatabase};
 
 pub(crate) fn resolve(
     timestamp: Timestamp,
@@ -13,32 +12,64 @@ pub(crate) fn resolve(
     unit: &str,
     operation: ZoneOperation,
 ) -> Result<ZoneResult, ZoneError> {
-    let zone: Tz = match zone.parse() {
-        Ok(zone) => zone,
-        Err(_) if is_custom_gmt_offset(zone) => return Err(ZoneError::Unsupported),
-        Err(_) => return Err(ZoneError::InvalidZone),
+    let zone = match TimeZoneDatabase::bundled().get(zone) {
+        // `Factory` is refused, as chrono-tz did.
+        Ok(found) if zone != "Factory" && found.iana_name() == Some(zone) => found,
+        _ if is_custom_gmt_offset(zone) => return Err(ZoneError::Unsupported),
+        _ => return Err(ZoneError::InvalidZone),
     };
-    let utc = DateTime::<Utc>::from_timestamp(timestamp.seconds(), timestamp.nanos())
-        .ok_or(ZoneError::OutOfRange)?;
-    let local = utc.with_timezone(&zone).naive_local();
-    let wall = local.and_utc();
-    let local_timestamp = Timestamp::new(wall.timestamp(), wall.timestamp_subsec_nanos())
-        .map_err(|_| ZoneError::OutOfRange)?;
+    let local_timestamp = Timestamp::new(
+        timestamp.seconds() + offset_at(&zone, timestamp.seconds()),
+        timestamp.nanos(),
+    )
+    .map_err(|_| ZoneError::OutOfRange)?;
     match local_calendar_value(local_timestamp, unit, operation)? {
         ZoneResult::Integer(value) => Ok(ZoneResult::Integer(value)),
         ZoneResult::Timestamp(boundary) => {
-            let wall = DateTime::<Utc>::from_timestamp(boundary.seconds(), boundary.nanos())
-                .ok_or(ZoneError::OutOfRange)?
-                .naive_utc();
-            let resolved = zone
-                .from_local_datetime(&wall)
-                .single()
-                .ok_or(ZoneError::Ambiguous)?
-                .with_timezone(&Utc);
-            let result = Timestamp::new(resolved.timestamp(), resolved.timestamp_subsec_nanos())
+            let offset = unambiguous_wall_offset(&zone, boundary.seconds())?;
+            let result = Timestamp::new(boundary.seconds() - offset, boundary.nanos())
                 .map_err(|_| ZoneError::OutOfRange)?;
             Ok(ZoneResult::Timestamp(result))
         }
+    }
+}
+
+/// The offset of `zone` at Unix second `utc_secs`. jiff's instants end late on 9999-12-30
+/// (Firestore's run to the end of 9999); past them the offset of the nearest representable
+/// instant applies, as the calendar functions did with chrono-tz.
+fn offset_at(zone: &TimeZone, utc_secs: i64) -> i64 {
+    let clamped = utc_secs.clamp(
+        jiff::Timestamp::MIN.as_second(),
+        jiff::Timestamp::MAX.as_second(),
+    );
+    let instant = jiff::Timestamp::from_second(clamped).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    i64::from(zone.to_offset(instant).seconds())
+}
+
+/// The single offset of local wall second `local_secs`, or `Ambiguous` for a skipped or
+/// repeated wall time. Wall times past jiff's civil range use the nearest instant's offset.
+fn unambiguous_wall_offset(zone: &TimeZone, local_secs: i64) -> Result<i64, ZoneError> {
+    let days = local_secs.div_euclid(86_400);
+    let of_day = local_secs.rem_euclid(86_400);
+    let (year, month, day) = fireemu_core_types::time::civil_from_days(days);
+    let civil = (|| {
+        jiff::civil::DateTime::new(
+            i16::try_from(year).ok()?,
+            i8::try_from(month).ok()?,
+            i8::try_from(day).ok()?,
+            i8::try_from(of_day / 3_600).ok()?,
+            i8::try_from(of_day / 60 % 60).ok()?,
+            i8::try_from(of_day % 60).ok()?,
+            0,
+        )
+        .ok()
+    })();
+    let Some(civil) = civil else {
+        return Ok(offset_at(zone, local_secs));
+    };
+    match zone.to_ambiguous_timestamp(civil).offset() {
+        AmbiguousOffset::Unambiguous { offset } => Ok(i64::from(offset.seconds())),
+        AmbiguousOffset::Fold { .. } | AmbiguousOffset::Gap { .. } => Err(ZoneError::Ambiguous),
     }
 }
 
@@ -127,6 +158,15 @@ mod tests {
         );
         assert_eq!(
             resolve(t, "Not/AZone", "hour", ZoneOperation::Extract),
+            Err(ZoneError::InvalidZone)
+        );
+        assert_eq!(
+            resolve(t, "Factory", "hour", ZoneOperation::Extract),
+            Err(ZoneError::InvalidZone)
+        );
+        // Names are case-sensitive, as they were with chrono-tz.
+        assert_eq!(
+            resolve(t, "asia/tokyo", "hour", ZoneOperation::Extract),
             Err(ZoneError::InvalidZone)
         );
     }
@@ -255,6 +295,46 @@ mod tests {
         assert_eq!(
             resolve(winter, "Europe/Berlin", "hour", ZoneOperation::Extract),
             Ok(ZoneResult::Integer(1))
+        );
+    }
+
+    #[test]
+    fn a_half_hour_fold_is_ambiguous_by_its_minutes() {
+        let zone = TimeZoneDatabase::bundled()
+            .get("Australia/Lord_Howe")
+            .unwrap();
+        // 2024-04-07T01:45 is repeated; 01:15 and 02:15 are not.
+        assert_eq!(
+            unambiguous_wall_offset(&zone, 1_712_454_300),
+            Err(ZoneError::Ambiguous)
+        );
+        assert_eq!(unambiguous_wall_offset(&zone, 1_712_452_500), Ok(39_600));
+        assert_eq!(unambiguous_wall_offset(&zone, 1_712_456_100), Ok(37_800));
+    }
+
+    #[test]
+    fn the_last_day_of_9999_keeps_working() {
+        // 9999-12-31T12:00:00Z is 07:00 in New York; the day starts at 9999-12-31T05:00:00Z.
+        let t = Timestamp::new(253_402_257_600, 0).unwrap();
+        assert_eq!(
+            resolve(t, "America/New_York", "hour", ZoneOperation::Extract),
+            Ok(ZoneResult::Integer(7))
+        );
+        assert_eq!(
+            resolve(t, "America/New_York", "day", ZoneOperation::Trunc),
+            Ok(ZoneResult::Timestamp(
+                Timestamp::new(253_402_232_400, 0).unwrap()
+            ))
+        );
+        let last = Timestamp::new(253_402_300_799, 999_999_999).unwrap();
+        assert_eq!(
+            resolve(last, "America/Los_Angeles", "hour", ZoneOperation::Extract),
+            Ok(ZoneResult::Integer(15))
+        );
+        // Tokyo's wall clock is already in year 10000, which a Firestore timestamp cannot hold.
+        assert_eq!(
+            resolve(last, "Asia/Tokyo", "year", ZoneOperation::Extract),
+            Err(ZoneError::OutOfRange)
         );
     }
 }

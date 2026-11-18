@@ -125,6 +125,17 @@ export type TotpCodeInfo = {
   pendingEnrollment?: boolean;
   code: string;
   secondsRemaining: number;
+  /** Submitting the listed code now would be refused as already used (see `advanceSeconds`). */
+  alreadyUsed?: boolean;
+  /** `false` while the emulator clock stands still: the code does not change until it moves. */
+  clockRunning?: boolean;
+  /** The TOTP period. */
+  periodSeconds?: number;
+  /**
+   * With `alreadyUsed`, the seconds until the first step after the factor's last accepted one;
+   * more than one period when an adjacent-window code was accepted ahead of the clock.
+   */
+  advanceSeconds?: number;
 };
 
 /** Answers 404 while `auth.totp.revealCodes` is off (and under `productionExact`). */

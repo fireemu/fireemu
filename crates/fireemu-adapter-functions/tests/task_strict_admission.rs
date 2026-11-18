@@ -1488,8 +1488,7 @@ async fn strict_get_task_returns_pending_task_with_basic_and_full_views() {
     let (addr, server) = tasks_listener(&h).await;
     std::fs::remove_file(h.probe.with_file_name("entries.taskA.release")).unwrap();
     let name = format!("{BASE}/tasks/get-me");
-    let schedule_time = (chrono::Utc::now() + chrono::Duration::days(7))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let schedule_time = a_week_from_now();
     let raw = [0xff, 0x00, b'{', b'}'];
     let encoded = {
         use base64::Engine as _;
@@ -1835,7 +1834,7 @@ async fn strict_get_distinguishes_recent_completion_and_deletion_from_unknown_na
         h.idle().await;
         let deleted = body_of(&json!({
             "name": format!("{BASE}/tasks/deleted"),
-            "scheduleTime": (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            "scheduleTime": a_week_from_now()
         }));
         h.runtime
             .enqueue_task("demo-app", "us-central1", "taskA", &deleted)
@@ -1948,8 +1947,7 @@ async fn strict_raw_body_size_boundaries_include_headers_and_base64_padding() {
         600,
     )
     .await;
-    let schedule_time = (chrono::Utc::now() + chrono::Duration::days(7))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let schedule_time = a_week_from_now();
     // A text/plain header costs 22 bytes. The existing size estimate rounds decoded bytes up to a base64 group.
     // 1,048,554 body bytes plus that header is exactly one mebibyte; padding does not change this estimate.
     for (index, (size, extra_header, accepted)) in [
@@ -1996,6 +1994,20 @@ async fn strict_raw_body_size_boundaries_include_headers_and_base64_padding() {
         }
     }
     h.stop().await;
+}
+
+/// RFC 3339 text, in whole seconds, for seven days after now.
+fn a_week_from_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs();
+    fireemu_adapter_functions::time_text::format_rfc3339_utc(
+        i64::try_from(now).expect("in range") + 7 * 86_400,
+        0,
+        fireemu_adapter_functions::time_text::Fraction::Auto,
+    )
+    .expect("representable")
 }
 
 /// The `scheduleTime` the strict answer reports for a task enqueued with `schedule`, under

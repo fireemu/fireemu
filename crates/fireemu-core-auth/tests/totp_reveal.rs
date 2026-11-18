@@ -237,6 +237,132 @@ fn enrollment_start_and_sign_in_challenge_announce_codes_without_the_secret() {
     assert!(message.contains("left"), "{message}");
 }
 
+/// The owner's repro (2026-11-18): with the clock standing still, the code used to enroll is the
+/// code the sign-in challenge reveals, and verification refuses it as already used. The reveal
+/// says so and how to get a fresh code instead of a countdown that never runs out.
+#[test]
+fn a_still_clock_reveals_the_used_enrollment_code_as_used_with_how_to_move_on() {
+    let mut s = store();
+    s.set_totp_clock_running(false);
+    assert!(!s.totp_clock_running());
+    let (uid, secret) = enrolled(&mut s);
+    let codes = s.totp_codes(t0());
+    assert_eq!(codes.len(), 1);
+    assert!(codes[0].already_used);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let notices = s.take_credential_notices();
+    assert_eq!(notices.len(), 1);
+    let message = notices[0].message();
+    let used = format!("{:06}", totp_at(&secret, &s.policy().params(), t0()));
+    assert!(message.contains(&used), "{message}");
+    assert!(message.contains("already used"), "{message}");
+    assert!(!message.contains("s left"), "{message}");
+    assert!(
+        message.contains("advance the clock by 30 seconds"),
+        "{message}"
+    );
+    assert!(
+        message.contains(r#"POST /v1/sessions/default/clock:advance with {"seconds": 30}"#),
+        "{message}"
+    );
+    assert!(!message.contains("or wait"), "{message}");
+    // Verification is unchanged: the revealed code is refused as replayed.
+    let pending = s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let id = codes[0].mfa_enrollment_id.clone().unwrap();
+    assert!(s
+        .finalize_mfa_sign_in_for_factor(&uid, &pending, &id, used.parse().unwrap(), t0())
+        .is_err());
+    // One step later the code is fresh again and the countdown is gone only while still.
+    let next = at(30);
+    let fresh = &s.totp_codes(next)[0];
+    assert!(!fresh.already_used);
+    s.take_credential_notices();
+    s.start_mfa_sign_in(&uid, next).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(message.contains(&fresh.code), "{message}");
+    assert!(!message.contains("already used"), "{message}");
+    assert!(!message.contains("s left"), "{message}");
+    assert!(
+        message.contains("stays the same until the clock moves"),
+        "{message}"
+    );
+}
+
+/// With the adjacent window, an enrollment at step N can accept the code of step N+1. The
+/// displayed codes of N and N+1 are then both replays, and the fresh step is N+2: the advice
+/// names the seconds to reach it, not one period (Codex review 2026-11-18).
+#[test]
+fn an_enrollment_accepted_ahead_of_the_clock_names_the_advance_to_the_first_fresh_step() {
+    let mut s = store();
+    s.set_totp_clock_running(false);
+    assert!(s.totp_window() >= 1);
+    let uid = s
+        .create_user(NewUser::email("ahead@example.com"), t0())
+        .unwrap();
+    let material = s.start_totp_enrollment(&uid, t0()).unwrap();
+    let secret = material.secret_for_test().to_vec();
+    let ahead = totp_at(&secret, &s.policy().params(), at(30));
+    s.finalize_totp_enrollment(&uid, &material.session_id, ahead, t0())
+        .unwrap();
+    s.take_credential_notices();
+    let entry = &s.totp_codes(t0())[0];
+    assert!(entry.already_used);
+    assert_eq!(entry.advance_seconds, 60);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(
+        message.contains("advance the clock by 60 seconds"),
+        "{message}"
+    );
+    assert!(message.contains(r#"{"seconds": 60}"#), "{message}");
+    // On a running clock the wait is to the same step, not to the next boundary.
+    s.set_totp_clock_running(true);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(
+        message.contains("wait 60 seconds or advance the clock by 60 seconds"),
+        "{message}"
+    );
+    s.set_totp_clock_running(false);
+    // One period later the displayed code is the accepted step's: still a replay.
+    let entry = &s.totp_codes(at(30))[0];
+    assert!(entry.already_used);
+    assert_eq!(entry.advance_seconds, 30);
+    let pending = s.start_mfa_sign_in(&uid, at(30)).unwrap();
+    let id = entry.mfa_enrollment_id.clone().unwrap();
+    assert!(s
+        .finalize_mfa_sign_in_for_factor(&uid, &pending, &id, entry.code.parse().unwrap(), at(30))
+        .is_err());
+    // At the named step the code is fresh and signs in.
+    let entry = &s.totp_codes(at(60))[0];
+    assert!(!entry.already_used);
+    assert_eq!(entry.advance_seconds, 0);
+    let pending = s.start_mfa_sign_in(&uid, at(60)).unwrap();
+    assert!(s
+        .finalize_mfa_sign_in_for_factor(&uid, &pending, &id, entry.code.parse().unwrap(), at(60))
+        .is_ok());
+}
+
+#[test]
+fn a_running_clock_reveals_a_used_code_with_the_wait_and_keeps_the_countdown_otherwise() {
+    let mut s = store();
+    assert!(s.totp_clock_running());
+    let (uid, _) = enrolled(&mut s);
+    s.start_mfa_sign_in(&uid, t0()).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    // t0 is a step boundary, so the whole period is left.
+    let left = 30;
+    assert!(message.contains("already used"), "{message}");
+    assert!(
+        message.contains(&format!("wait {left} seconds")),
+        "{message}"
+    );
+    s.start_mfa_sign_in(&uid, at(30)).unwrap();
+    let message = s.take_credential_notices()[0].message();
+    assert!(message.ends_with("s left)."), "{message}");
+    assert!(!message.contains("already used"), "{message}");
+}
+
 #[test]
 fn phone_only_sign_in_announces_no_totp_code() {
     let mut s = store();

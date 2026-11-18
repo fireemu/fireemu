@@ -508,12 +508,8 @@ fn sample_timestamp(value: Option<&Value>, placeholder: &str, recorded: bool) ->
     if recorded && text == placeholder {
         return true;
     }
-    chrono::DateTime::parse_from_rfc3339(text).is_ok_and(|time| {
-        fireemu_core_firestore::value::Timestamp::new(
-            time.timestamp(),
-            time.timestamp_subsec_nanos(),
-        )
-        .is_ok()
+    rfc3339_parts(text).is_some_and(|(seconds, nanos)| {
+        fireemu_core_firestore::value::Timestamp::new(seconds, nanos).is_ok()
     })
 }
 
@@ -1081,8 +1077,7 @@ fn normalize_grpc_shared_timestamps(value: &Value) -> Value {
                 for (key, value) in fields {
                     if matches!(key.as_str(), "executionTime" | "createTime" | "updateTime") {
                         if let Some(text) = value.as_str() {
-                            if let Ok(time) = chrono::DateTime::parse_from_rfc3339(text) {
-                                let instant = (time.timestamp(), time.timestamp_subsec_nanos());
+                            if let Some(instant) = rfc3339_parts(text) {
                                 let next = symbols.len() + 1;
                                 let symbol = symbols
                                     .entry(instant)
@@ -1239,22 +1234,15 @@ fn current_timestamp_matches(
     let Some(text) = body.pointer(LEAF).and_then(Value::as_str) else {
         return false;
     };
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) else {
+    let Some(parsed) = rfc3339_parts(text) else {
         return false;
     };
-    if fireemu_core_firestore::value::Timestamp::new(
-        parsed.timestamp(),
-        parsed.timestamp_subsec_nanos(),
-    )
-    .is_err()
-    {
+    if fireemu_core_firestore::value::Timestamp::new(parsed.0, parsed.1).is_err() {
         return false;
     }
     let seconds = clock_nanos.div_euclid(1_000_000_000);
     let nanos = clock_nanos.rem_euclid(1_000_000_000) / 1_000 * 1_000;
-    if i128::from(parsed.timestamp()) != seconds
-        || i128::from(parsed.timestamp_subsec_nanos()) != nanos
-    {
+    if i128::from(parsed.0) != seconds || i128::from(parsed.1) != nanos {
         return false;
     }
     let mut actual = body.clone();
@@ -3614,11 +3602,8 @@ fn timestamp_recorded_clock_request_reaches_rest_and_grpc() {
             .pointer("/0/results/0/fields/v/timestampValue")
             .and_then(Value::as_str)
             .unwrap();
-        let parsed = chrono::DateTime::parse_from_rfc3339(value).unwrap();
-        assert_eq!(
-            (parsed.timestamp(), parsed.timestamp_subsec_nanos()),
-            (seconds, u32::try_from(nanos).unwrap())
-        );
+        let parsed = rfc3339_parts(value).unwrap();
+        assert_eq!(parsed, (seconds, u32::try_from(nanos).unwrap()));
         let (status, body) = internal_case_at(
             false,
             "o8c/timestamps-main",
@@ -5243,4 +5228,20 @@ fn every_verified_grpc_pipeline_match_replays_the_committed_recording() {
             "missing PICT row {stratum:?}"
         );
     }
+}
+
+/// The Unix seconds and nanoseconds of RFC 3339 text from a recorded body.
+///
+/// The contract is narrower than chrono's reader, which this replaced: only the canonical form
+/// Firestore writes (`T` separator, at most nine fractional digits, `Z` or an ASCII `±HH:MM`
+/// offset, no leap second) is read. Recorded production bodies and the emulator's answers use
+/// only that form, so any other text is not a timestamp here and fails the check.
+fn rfc3339_parts(text: &str) -> Option<(i64, u32)> {
+    let nanos = fireemu_core_types::time::LogicalInstant::parse_rfc3339(text)
+        .ok()?
+        .as_nanos();
+    Some((
+        i64::try_from(nanos.div_euclid(1_000_000_000)).ok()?,
+        u32::try_from(nanos.rem_euclid(1_000_000_000)).ok()?,
+    ))
 }

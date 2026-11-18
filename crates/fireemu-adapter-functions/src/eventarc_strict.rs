@@ -1730,11 +1730,11 @@ pub fn base64_len(text: &str) -> Option<usize> {
 /// The seconds and nanoseconds of an RFC 3339 timestamp, or `None` when it is not one.
 #[must_use]
 pub fn timestamp(text: &str) -> Option<(i64, u32)> {
-    let parsed = chrono::DateTime::parse_from_rfc3339(text).ok()?;
+    let parsed = crate::time_text::parse_rfc3339(text)?;
     if !text.is_ascii() || text.bytes().any(|b| b == b' ' || b == b't' || b == b'z') {
         return None;
     }
-    Some((parsed.timestamp(), parsed.timestamp_subsec_nanos()))
+    Some((parsed.seconds, parsed.nanos))
 }
 
 #[cfg(test)]
@@ -2793,9 +2793,8 @@ mod tests {
     }
 
     fn rfc3339(seconds: i64, nanos: u32) -> String {
-        chrono::DateTime::from_timestamp(seconds, nanos)
+        crate::time_text::format_rfc3339_utc(seconds, nanos, crate::time_text::Fraction::Auto)
             .expect("a representable time")
-            .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
     }
 
     fn json_of(value: &Value2) -> String {

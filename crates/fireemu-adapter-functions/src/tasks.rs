@@ -441,8 +441,7 @@ pub enum DispatchShape<'a> {
 /// JSON mapping. UNRECORDED.)
 #[must_use]
 pub fn valid_schedule_time(text: &str) -> bool {
-    chrono::DateTime::parse_from_rfc3339(text)
-        .is_ok_and(|time| chrono::Timelike::nanosecond(&time) < 1_000_000_000)
+    crate::time_text::parse_rfc3339(text).is_some_and(|time| !time.is_leap_second())
 }
 
 /// The ETA production writes: Unix seconds with six decimals, from the signed total of
@@ -451,9 +450,9 @@ pub fn valid_schedule_time(text: &str) -> bool {
 fn production_eta(schedule_time: Option<&str>, now_millis: u64) -> String {
     let micros: i128 = match schedule_time {
         None => i128::from(now_millis) * 1000,
-        Some(text) => match chrono::DateTime::parse_from_rfc3339(text) {
-            Ok(time) => i128::from(time.timestamp_micros()),
-            Err(_) => return text.to_owned(),
+        Some(text) => match crate::time_text::parse_rfc3339(text) {
+            Some(time) => time.micros(),
+            None => return text.to_owned(),
         },
     };
     let sign = if micros < 0 { "-" } else { "" };

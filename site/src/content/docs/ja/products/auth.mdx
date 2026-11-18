@@ -414,10 +414,17 @@ Fireemuは認証アプリが表示するはずのコードを表示するので�
 
 ```sh
 curl http://127.0.0.1:9099/emulator/v1/projects/demo-shop/totpCodes
-# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19}]}
+# {"totpCodes":[{"uid":"x2lK...","mfaEnrollmentId":"...","displayName":"Authenticator","code":"042817","secondsRemaining":19,"alreadyUsed":false,"clockRunning":true,"periodSeconds":30}]}
 ```
 
-テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が照合するコードと一致します。検証そのものは変わらず、再利用の防止もそのままです。登録や先のサインインで同じ時間ステップのコードを使った後は拒否されるので、次のステップ（`secondsRemaining`）を待ってください。表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.totp.revealCodes = true`を明示すると、`productionExact`でも有効のままです。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
+テナントのコードは`/emulator/v1/projects/{project}/tenants/{tenant}/totpCodes`にあります。確定前の登録は`"pendingEnrollment": true`付きで、`mfaEnrollmentId`なしで並びます。コードはプロジェクトのTOTPの周期と桁数、Fireemuの時計で計算するので、検証が照合するコードと一致します。検証そのものは変わらず、再利用の防止もそのままです。登録や先のサインインで同じ時間ステップのコードを使った後は拒否されます。時計が進んでいれば、その要素が最後に受け付けたステップの次のステップから、再び受け付けられます。`"alreadyUsed": true`は、表示中のコードを今送ると使用済みとして拒否されることを表し、行には使うコードではなく、使用済みであることが表示されます。このとき`advanceSeconds`は、その最初の新しいステップまでの秒数です。隣接ウィンドウにより登録やサインインが時計より先のステップのコードを受け付けることがあるので、1周期（`periodSeconds`、SDKの`codeIntervalSeconds`）より長くなる場合があります。`"clockRunning": false`は時計が止まっていることを表します（`daemon.clock = "realtime"`なしで`daemon.clockStart`を固定した場合か、`daemon.clock = "frozen"`）。時計を動かすまでコードは変わらないので、行に残り秒数は表示されず、待っても変わりません。登録の直後のサインインでは、登録に使ったコードが表示されます。時計が進んでいるなら`advanceSeconds`秒待ってください。どちらの場合も、Emulator UIのRuntimeページかcontrol APIで時計を`advanceSeconds`秒進めれば、新しいコードが得られます。
+
+```sh
+# 例: 30の代わりに、表示されたadvanceSecondsを使ってください。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"seconds": 30}'
+```
+
+表示は両方のプロファイルで既定で有効です。`auth.totp.revealCodes = false`または`productionExact`で無効になり、行は表示されず、ルートは404を返します。`auth.totp.revealCodes = true`を明示すると、`productionExact`でも有効のままです。`auth.logActionCodes = false`でも行は表示されません。行とルートは認証情報を含むので、共有のログに残さないでください。
 
 ## マルチテナンシー
 
