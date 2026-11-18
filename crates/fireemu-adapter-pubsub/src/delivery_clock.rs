@@ -5,7 +5,8 @@
 //! the logical clock alone never arrives, so an unacknowledged message is never redelivered and a
 //! nack with a retry policy never comes back. The delivery clock is the logical clock plus the
 //! wall time that passed while the logical clock stood still (not following real time), whether
-//! or not it was moved by hand in that time. On a clock that follows real time it is the logical
+//! or not it was moved by hand in that time. An interval between two readings counts in the mode
+//! of the earlier one, so a freeze or resume in between does not reclassify it. On a clock that follows real time it is the logical
 //! clock; on a still one it moves with wall time, and a move (`clock:advance`) moves it by the
 //! same amount on top. A rewind starts it again at the rewound instant. Publish times and snapshot
 //! lifetimes stay on the logical clock. Readings must be serialized with the update (the handle
@@ -23,15 +24,21 @@ pub(crate) struct DeliveryClock {
     wall_nanos: u128,
     /// Wall time that passed while the logical clock stood still.
     offset_nanos: u128,
+    /// Whether the logical clock stood still at the last reading: the interval up to the next
+    /// reading counts in that mode, so a freeze or resume in between (which the next reading sees)
+    /// does not reclassify the time before it.
+    still: bool,
 }
 
 impl DeliveryClock {
-    /// A delivery clock that starts at `logical`, read at `wall_nanos`.
-    pub(crate) const fn new(logical: LogicalInstant, wall_nanos: u128) -> Self {
+    /// A delivery clock that starts at `logical`, read at `wall_nanos`, while the logical clock
+    /// `stands_still` or not.
+    pub(crate) const fn new(logical: LogicalInstant, wall_nanos: u128, stands_still: bool) -> Self {
         Self {
             logical,
             wall_nanos,
             offset_nanos: 0,
+            still: stands_still,
         }
     }
 
@@ -46,10 +53,14 @@ impl DeliveryClock {
         stands_still: bool,
     ) -> LogicalInstant {
         if logical < self.logical {
-            *self = Self::new(logical, wall_nanos);
+            *self = Self::new(logical, wall_nanos, stands_still);
             return logical;
         }
-        if stands_still {
+        // The interval since the last reading ran in the mode of that reading (the outgoing
+        // mode across a freeze or resume).
+        let counted = self.still;
+        self.still = stands_still;
+        if counted {
             self.offset_nanos = self
                 .offset_nanos
                 .saturating_add(wall_nanos.saturating_sub(self.wall_nanos));
@@ -85,7 +96,7 @@ mod tests {
     #[test]
     fn a_frozen_clock_moves_with_wall_time_and_an_advance_moves_it_at_once() {
         let start = LogicalInstant::from_unix_seconds(1_767_225_600);
-        let mut clock = DeliveryClock::new(start, 0);
+        let mut clock = DeliveryClock::new(start, 0, true);
         assert_eq!(clock.observe(start, 0, true), start);
         assert_eq!(
             clock.observe(start, 11 * SECOND, true),
@@ -99,7 +110,7 @@ mod tests {
             LogicalInstant::from_unix_seconds(1_767_229_212)
         );
         // On a clock that follows real time nothing is added.
-        let mut following = DeliveryClock::new(start, 0);
+        let mut following = DeliveryClock::new(start, 0, false);
         let later = LogicalInstant::from_unix_seconds(1_767_225_605);
         assert_eq!(following.observe(later, 5 * SECOND, false), later);
         // A rewind starts again from the rewound instant.
@@ -110,7 +121,8 @@ mod tests {
     proptest! {
         /// Over any sequence of readings with wall time moving forward, against a reference
         /// model: the delivery clock is the logical clock plus the wall time between readings
-        /// taken while the clock stood still, since the last rewind; so it is never behind the
+        /// whose earlier reading saw the clock stand still (the mode in force through that
+        /// interval), since the last rewind; so it is never behind the
         /// logical clock and never goes back unless the logical clock does.
         #[test]
         fn the_delivery_clock_matches_its_reference_model(
@@ -121,7 +133,8 @@ mod tests {
         ) {
             let mut logical = LogicalInstant::from_unix_seconds(1_000);
             let mut wall: u128 = 0;
-            let mut clock = DeliveryClock::new(logical, wall);
+            let mut clock = DeliveryClock::new(logical, wall, true);
+            let mut previous_still = true;
             let mut offset: i128 = 0;
             let mut previous = logical;
             for (move_by, wall_step, still) in steps {
@@ -133,11 +146,13 @@ mod tests {
                     1 => LogicalInstant::from_nanos(logical.as_nanos() + 1_000_000_000),
                     _ => LogicalInstant::from_nanos(logical.as_nanos() - 1_000_000_000),
                 };
+                // The interval counts in the mode of the previous reading.
                 if logical < before {
                     offset = 0;
-                } else if still {
+                } else if previous_still {
                     offset += i128::from(wall_step);
                 }
+                previous_still = still;
                 let at = clock.observe(logical, wall, still);
                 prop_assert_eq!(at.as_nanos(), logical.as_nanos() + offset);
                 prop_assert_eq!(clock.offset().as_nanos(), offset);

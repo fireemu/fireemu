@@ -71,6 +71,10 @@ struct PushWork {
     generation: u64,
 }
 
+/// A test hook run inside a push quantum.
+#[cfg(test)]
+type QuantumPause = Arc<dyn Fn() + Send + Sync>;
+
 #[derive(Debug, Clone, Copy)]
 enum PushQuantumResult {
     Continue,
@@ -457,6 +461,9 @@ pub struct PubSubHandle {
     delivery_clock: Arc<Mutex<delivery_clock::DeliveryClock>>,
     /// Monotonic origin of the delivery clock's wall readings.
     wall_origin: std::time::Instant,
+    /// Runs in a push quantum between its empty pull and its deadline lookup (tests only).
+    #[cfg(test)]
+    quantum_pause: Arc<Mutex<Option<QuantumPause>>>,
     /// Whether the hint that a push backoff waits on a still clock was printed.
     push_still_clock_hinted: Arc<std::sync::atomic::AtomicBool>,
     /// Wall time added to every reading, so a test can let wall time pass without sleeping.
@@ -491,11 +498,18 @@ impl PubSubHandle {
             signal.notify_waiters();
         });
         clock.lock().expect("clock lock").observe(&clock_observer);
-        let start = clock.lock().expect("clock lock").now();
+        let (start, still) = {
+            let clock = clock.lock().expect("clock lock");
+            (clock.now(), !clock.is_following())
+        };
         Self {
-            delivery_clock: Arc::new(Mutex::new(delivery_clock::DeliveryClock::new(start, 0))),
+            delivery_clock: Arc::new(Mutex::new(delivery_clock::DeliveryClock::new(
+                start, 0, still,
+            ))),
             wall_origin: std::time::Instant::now(),
             push_still_clock_hinted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            quantum_pause: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             wall_skew_nanos: Arc::new(AtomicU64::new(0)),
             paging_policy: PagingPolicy::Emulator,
@@ -1447,14 +1461,23 @@ impl PubSubHandle {
                 self.next_push_delivery_at(&work.subscription),
             ));
         }
+        // One sample for the pull and for the lookup after it: a lease that lapses between them
+        // is still ahead on this sample, so it defers the work instead of being dropped as due.
+        let times = self.lease_times();
         let received = self
-            .pull_batched_at(
-                &work.subscription,
-                100,
-                OrderedPullBatching::Mixed,
-                self.lease_times(),
-            )
+            .pull_batched_at(&work.subscription, 100, OrderedPullBatching::Mixed, times)
             .unwrap_or_default();
+        #[cfg(test)]
+        {
+            let pause = self
+                .quantum_pause
+                .lock()
+                .expect("quantum pause lock")
+                .clone();
+            if let Some(pause) = pause {
+                pause();
+            }
+        }
         if received.is_empty() {
             // Nothing is deliverable yet. The retry policy schedules the next message; whether it
             // or an elapsing backoff decides, the subscription is looked at again then.
@@ -1462,7 +1485,7 @@ impl PubSubHandle {
             // attempt of another worker) comes back when it lapses: look again then.
             let lease = self
                 .state()
-                .next_pull_deadline(&work.subscription, self.lease_times())
+                .next_pull_deadline(&work.subscription, times)
                 .ok()
                 .flatten();
             let next = self
@@ -3031,6 +3054,144 @@ mod dispatch_tests {
             )
             .unwrap();
         (handle, subscription)
+    }
+
+    /// Codex r4 T2: a push worker paused after its empty pull until the lease it saw lapses
+    /// still defers to that lease instead of stopping, so the dispatcher comes back for it.
+    #[tokio::test]
+    async fn a_push_worker_paused_past_a_lease_defers_instead_of_stopping() {
+        let (handle, subscription, _) = leased_recheck_fixture_with(PagingPolicy::Emulator);
+        handle
+            .update_push_config(
+                &subscription,
+                fireemu_core_pubsub::PushConfig {
+                    push_endpoint: "http://127.0.0.1:1/push".to_owned(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let work = {
+            let mut dispatch = handle.push_dispatch.lock().unwrap();
+            dispatch.enqueue(subscription.clone(), handle.now());
+            dispatch.claim().unwrap()
+        };
+        let clock = handle.clock.clone();
+        *handle.quantum_pause.lock().unwrap() = Some(Arc::new(move || {
+            clock
+                .lock()
+                .unwrap()
+                .advance(LogicalDuration::from_seconds(11))
+                .unwrap();
+        }));
+        let result = handle.run_push_quantum(&work).await;
+        assert!(
+            matches!(
+                result,
+                PushQuantumResult::Defer(_) | PushQuantumResult::Continue
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// Codex r4 T1 (running, then frozen): the 6 s before `clock:freeze` already ran on the
+    /// logical clock, so the hook's reading after the freeze must not count them again; the
+    /// 10 s lease is still held.
+    #[test]
+    fn a_freeze_does_not_count_the_running_interval_twice() {
+        let handle = PubSubHandle::new(
+            Arc::new(Mutex::new(PubSubState::new(7))),
+            Arc::new(Mutex::new(VirtualClock::following(
+                LogicalInstant::UNIX_EPOCH,
+            ))),
+            None,
+        );
+        let topic = TopicName::new("demo-app", "freeze").unwrap();
+        let subscription = SubscriptionName::new("demo-app", "freeze").unwrap();
+        let config = crate::convert::subscription_from_proto_with_policy(
+            &fireemu_proto_pubsub::google::pubsub::v1::Subscription {
+                name: subscription.to_full(),
+                topic: topic.to_full(),
+                ..Default::default()
+            },
+            PagingPolicy::Emulator,
+        )
+        .unwrap();
+        handle
+            .state()
+            .create_topic(topic.clone(), BTreeMap::new())
+            .unwrap();
+        handle.state().create_subscription(config).unwrap();
+        handle
+            .state()
+            .publish(
+                &topic,
+                vec![PubsubMessage {
+                    data: b"m".to_vec(),
+                    ..Default::default()
+                }],
+                handle.now(),
+            )
+            .unwrap();
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
+        // 6 s pass on the running clock (it reads wall time), then it freezes.
+        handle.pass_wall_time(6);
+        {
+            let mut clock = handle.clock.lock().unwrap();
+            let at = clock.now();
+            clock
+                .advance_to(LogicalInstant::from_nanos(at.as_nanos() + 6_000_000_000))
+                .unwrap();
+            clock.freeze().unwrap();
+        }
+        handle.expire_lapsed_on_clock_advance();
+        assert!(handle.pull(&subscription, 1).unwrap().is_empty());
+    }
+
+    /// Codex r4 T1 (frozen, then running): the 11 s before `clock:resume` passed on a still
+    /// clock, so they count as delivery time even though the hook reads after the resume: the
+    /// 10 s lease has lapsed and an immediate ack does not consume the message.
+    #[test]
+    fn a_resume_counts_the_still_interval() {
+        let mut clock = VirtualClock::following(LogicalInstant::UNIX_EPOCH);
+        clock.freeze().unwrap();
+        let handle = PubSubHandle::new(
+            Arc::new(Mutex::new(PubSubState::new(7))),
+            Arc::new(Mutex::new(clock)),
+            None,
+        );
+        let topic = TopicName::new("demo-app", "resume").unwrap();
+        let subscription = SubscriptionName::new("demo-app", "resume").unwrap();
+        let config = crate::convert::subscription_from_proto_with_policy(
+            &fireemu_proto_pubsub::google::pubsub::v1::Subscription {
+                name: subscription.to_full(),
+                topic: topic.to_full(),
+                ..Default::default()
+            },
+            PagingPolicy::Emulator,
+        )
+        .unwrap();
+        handle
+            .state()
+            .create_topic(topic.clone(), BTreeMap::new())
+            .unwrap();
+        handle.state().create_subscription(config).unwrap();
+        handle
+            .state()
+            .publish(
+                &topic,
+                vec![PubsubMessage {
+                    data: b"m".to_vec(),
+                    ..Default::default()
+                }],
+                handle.now(),
+            )
+            .unwrap();
+        let ack_id = handle.pull(&subscription, 1).unwrap()[0].ack_id.clone();
+        handle.pass_wall_time(11);
+        handle.clock.lock().unwrap().resume().unwrap();
+        handle.expire_lapsed_on_clock_advance();
+        handle.acknowledge(&subscription, &[ack_id]).unwrap();
+        assert_eq!(handle.pull(&subscription, 1).unwrap().len(), 1);
     }
 
     /// Codex r3 M3b: the dispatcher sleeps until the earliest deferral on a clock that follows

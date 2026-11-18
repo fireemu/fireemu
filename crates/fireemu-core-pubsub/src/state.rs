@@ -2964,9 +2964,6 @@ mod tests {
         }
     }
 
-    /// A message published with a caller-chosen id (the one Cloud Scheduler's Gen1 publish carries) keeps that id and
-    /// the given publish time, is seen by every subscription, and leaves the counter that numbers ordinary publishes
-    /// alone, so the next ordinary message still gets the next number.
     /// `resume_dead_letter` releases a reserved transfer back to its source subscription.
     #[test]
     fn resume_dead_letter_releases_the_pending_transfer() {
@@ -3066,6 +3063,9 @@ mod tests {
             .is_err());
     }
 
+    /// A message published with a caller-chosen id (the one Cloud Scheduler's Gen1 publish carries) keeps that id and
+    /// the given publish time, is seen by every subscription, and leaves the counter that numbers ordinary publishes
+    /// alone, so the next ordinary message still gets the next number.
     #[test]
     fn publish_with_message_ids_keeps_the_id_and_the_time_and_leaves_the_counter() {
         let mut s = PubSubState::new(42);
