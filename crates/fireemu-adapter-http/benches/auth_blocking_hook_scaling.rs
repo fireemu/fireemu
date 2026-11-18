@@ -77,6 +77,7 @@ fn state(users: usize, sessions: usize) -> AuthState {
         fake_custom_token_expiry: FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: IdpAssertionPolicy::Fixture,
         app_check: None,
         app_check_policy: None,

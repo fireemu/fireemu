@@ -881,6 +881,9 @@ pub struct AuthState {
     pub custom_token_trust: Option<Arc<CustomTokenTrust>>,
     /// Accept well-formed unsigned emulator custom tokens independently of the profile.
     pub allow_unsigned_custom_tokens: bool,
+    /// How a custom token's `iat` and `exp`, minted on the caller's clock, are judged
+    /// (`daemon.callerTimes`).
+    pub caller_times: crate::CallerTimes,
     /// How `signInWithIdp` assertions are verified when no embedder trust is given.
     pub idp_assertions: IdpAssertionPolicy,
     /// Profile-specific Admin query behavior.
@@ -5500,6 +5503,7 @@ struct DispatchOptions {
     fake_custom_token_expiry: FakeCustomTokenExpiry,
     custom_token_trust: Option<Arc<CustomTokenTrust>>,
     allow_unsigned_custom_tokens: bool,
+    caller_times: crate::CallerTimes,
     /// Whether sign-in without `returnSecureToken` answers with the legacy token, as
     /// production does. The emulator profile (stateless refresh tokens) keeps the official
     /// emulator's secure tokens. A request whose blocking trigger is selected keeps secure tokens
@@ -5558,6 +5562,7 @@ impl From<&AuthState> for DispatchOptions {
             fake_custom_token_expiry: state.fake_custom_token_expiry,
             custom_token_trust: state.custom_token_trust.clone(),
             allow_unsigned_custom_tokens: state.allow_unsigned_custom_tokens,
+            caller_times: state.caller_times,
             legacy_tokens: !state.stateless_refresh_tokens,
             query_limits: state.query_limits,
             idp_signers: match &state.idp_assertions {
@@ -5630,6 +5635,7 @@ fn dispatch(
             options.custom_token_trust.as_deref(),
             options.allow_unsigned_custom_tokens,
             options.legacy_tokens,
+            options.caller_times,
         ),
         // The emulator profile serves an end-user lookup, update or delete that carries the owner
         // credential as the official emulator's `Oauth2` branch does: a lookup by the body's
@@ -10274,7 +10280,7 @@ pub const CUSTOM_TOKEN_AUDIENCE: &str =
 
 /// `accounts:signInWithCustomToken`: the Admin SDK mints unsigned (`alg: none`) custom
 /// tokens against an emulator; the user is created on first sign-in.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn sign_in_with_custom_token(
     store: &mut AuthStore,
     body: &Value,
@@ -10283,6 +10289,7 @@ fn sign_in_with_custom_token(
     trust: Option<&CustomTokenTrust>,
     allow_unsigned: bool,
     legacy_tokens: bool,
+    caller_times: crate::CallerTimes,
 ) -> JsonResponse {
     // Production's rules apply with configured signers and in the strict profile; the
     // emulator profile keeps the official emulator's leniency (sandbox recording 2026-09-24).
@@ -10333,9 +10340,12 @@ fn sign_in_with_custom_token(
             },
         );
     };
-    let now_secs = i64::try_from(at.as_nanos().div_euclid(1_000_000_000)).unwrap_or(i64::MAX);
-    if production_rules && jwt && !custom_token_claims_hold(&payload, now_secs) {
-        return error(400, "INVALID_CUSTOM_TOKEN");
+    if production_rules && jwt {
+        if let Some(refusal) =
+            custom_token_time_refusal(&payload, at, crate::host_wall_now(), caller_times)
+        {
+            return error(400, &refusal);
+        }
     }
     // Production (strict): a claim other than the named tenant is refused with its text, and
     // a token without a claim exchanged in a tenant is its internal error (AUTH-TENANT-BLOCKING
@@ -10474,6 +10484,47 @@ fn sign_in_with_custom_token(
         }
         Err(r) => r,
     }
+}
+
+fn unix_seconds(at: LogicalInstant) -> i64 {
+    i64::try_from(at.as_nanos().div_euclid(1_000_000_000)).unwrap_or(i64::MAX)
+}
+
+/// The refusal message of a custom token whose claims do not hold, or `None` when they hold.
+///
+/// The Admin SDK stamps `iat` with the caller's wall time. Under `daemon.callerTimes =
+/// "clockOrWall"` (the development default) the claims hold when they hold against the emulator
+/// clock or against wall time, and a refusal says what the time checks were made against, since
+/// production's bare message does not tell a test which clock disagreed. Under `"clock"`
+/// (`productionExact`) they are judged against the emulator clock alone and refused with
+/// production's bare `INVALID_CUSTOM_TOKEN` (sandbox recording 2026-09-24).
+fn custom_token_time_refusal(
+    payload: &JsonValue,
+    clock: LogicalInstant,
+    wall: LogicalInstant,
+    caller_times: crate::CallerTimes,
+) -> Option<String> {
+    use crate::CallerTimes;
+    if caller_times.holds(clock, wall, |at| {
+        custom_token_claims_hold(payload, unix_seconds(at))
+    }) {
+        return None;
+    }
+    // A token that fails without any time check (audience, issuer, a missing claim or a
+    // lifetime over an hour) keeps the bare message: no clock would accept it.
+    let times_matter = custom_token_claims_hold(
+        payload,
+        payload
+            .get("iat")
+            .and_then(JsonValue::as_i64)
+            .unwrap_or_default(),
+    );
+    Some(match caller_times {
+        CallerTimes::ClockOrWall if times_matter => format!(
+            "INVALID_CUSTOM_TOKEN : the token's iat and exp hold neither against the emulator clock ({clock}) nor against wall time ({wall})"
+        ),
+        _ => "INVALID_CUSTOM_TOKEN".to_owned(),
+    })
 }
 
 /// The claims production requires of a custom token (sandbox recording 2026-09-24): its
@@ -16796,6 +16847,7 @@ mod tests {
             stateless_refresh_tokens: !strict,
             custom_token_trust: None,
             allow_unsigned_custom_tokens: true,
+            caller_times: crate::CallerTimes::default(),
             idp_assertions: IdpAssertionPolicy::Fixture,
             query_limits: if strict {
                 AuthQueryLimits::ProductionBounded
@@ -17810,6 +17862,7 @@ mod body_tenant_selector_tests {
             },
             custom_token_trust: None,
             allow_unsigned_custom_tokens: true,
+            caller_times: crate::CallerTimes::default(),
             idp_assertions: IdpAssertionPolicy::Fixture,
             query_limits: if strict {
                 AuthQueryLimits::ProductionBounded

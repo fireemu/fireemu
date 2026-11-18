@@ -633,6 +633,7 @@ fn state() -> AuthState {
             fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
         app_check: None,
         app_check_policy: None,
@@ -1669,6 +1670,9 @@ fn strict_state_with_signer() -> AuthState {
     AuthState {
         custom_token_trust: Some(Arc::new(trust)),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
+        // These tests replay production's recorded answers, judged on one clock as
+        // `productionExact` does (`daemon.callerTimes = "clock"`).
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
         ..strict_state()
     }
 }
@@ -9763,6 +9767,8 @@ fn signed_custom_tokens_follow_production_claim_rules() {
         custom_token_trust: Some(Arc::new(trust)),
         allow_unsigned_custom_tokens: false,
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
+        // Production's recorded answers, judged on one clock as `productionExact` does.
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
         ..strict_state()
     };
     let now = 1_788_004_860_i64;
@@ -10489,7 +10495,11 @@ fn legacy_v3_custom_token_exchange_matches_v1() {
 
 #[test]
 fn strict_profile_rejects_an_expired_custom_token() {
-    let s = strict_state();
+    // Production's recorded answer, judged on one clock as `productionExact` does.
+    let s = AuthState {
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
+        ..strict_state()
+    };
     // Past the five-minute allowance production refuses it as invalid (sandbox recording
     // 2026-09-24, auth-credential/expiry/one-hour#custom-token-expired-later).
     let expired = custom_token("strict-expired", &json!({}), 1_788_004_860 - 300);
@@ -10500,6 +10510,212 @@ fn strict_profile_rejects_an_expired_custom_token() {
     );
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["error"]["message"], "INVALID_CUSTOM_TOKEN");
+}
+
+/// Seconds since the Unix epoch on the host, as `firebase-admin` `createCustomToken` reads them.
+fn host_unix_seconds() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+}
+
+/// A strict state whose clock is pinned at 2026-01-01T00:00:00Z, as a `fireemu/testing` world.
+fn strict_state_pinned_at_new_year() -> AuthState {
+    AuthState {
+        clock: Arc::new(Mutex::new(VirtualClock::new(
+            LogicalInstant::from_unix_seconds(1_767_225_600),
+        ))),
+        ..strict_state()
+    }
+}
+
+/// Frozen-clock audit #1: the Admin SDK stamps a custom token with host wall time. On a clock
+/// pinned far from wall time the strict profile accepts the token by default, because it holds
+/// against wall time.
+#[test]
+fn strict_accepts_a_custom_token_minted_on_wall_time_when_the_clock_is_pinned() {
+    let s = strict_state_pinned_at_new_year();
+    let iat = host_unix_seconds();
+    let token = custom_token("wall-minted", &json!({}), iat + 3600);
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithCustomToken"),
+        &json!({"token": token, "returnSecureToken": true}),
+    );
+    assert_eq!(status, 200, "{body}");
+}
+
+/// Under `callerTimes = clock` (`productionExact`) the same token is judged on the pinned clock
+/// alone and refused with production's bare message.
+#[test]
+fn production_exact_judges_a_wall_minted_custom_token_on_the_clock_alone() {
+    let s = AuthState {
+        caller_times: fireemu_adapter_http::CallerTimes::Clock,
+        ..strict_state_pinned_at_new_year()
+    };
+    let token = custom_token("wall-minted", &json!({}), host_unix_seconds() + 3600);
+    let (status, body) = post(
+        &s,
+        &format!("{V1}/accounts:signInWithCustomToken"),
+        &json!({"token": token, "returnSecureToken": true}),
+    );
+    assert_eq!(
+        (status, body["error"]["message"].clone()),
+        (400, json!("INVALID_CUSTOM_TOKEN"))
+    );
+}
+
+/// The development default still refuses a token that holds against neither clock, and says
+/// which times it was judged against. The near misses on each side of the wall-time window
+/// (iat 301 s ahead, exp 300 s behind) are refused; their neighbours are accepted. A token that
+/// fails a check no clock affects keeps production's bare message.
+#[test]
+fn the_development_default_names_both_clocks_when_it_refuses_a_custom_token() {
+    let s = strict_state_pinned_at_new_year();
+    let sign_in = |token: String| {
+        let (status, body) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithCustomToken"),
+            &json!({"token": token, "returnSecureToken": true}),
+        );
+        (
+            status,
+            body["error"]["message"].as_str().unwrap_or("").to_owned(),
+        )
+    };
+    let wall = host_unix_seconds();
+    // `custom_token` sets iat = exp - 3600. Generous margins keep the test off the wall second.
+    let (status, message) = sign_in(custom_token("ahead", &json!({}), wall + 3600 + 330));
+    assert_eq!(status, 400);
+    assert!(
+        message.starts_with("INVALID_CUSTOM_TOKEN : ")
+            && message.contains("emulator clock (2026-01-01T00:00:00Z)")
+            && message.contains("wall time ("),
+        "{message}"
+    );
+    assert_eq!(
+        sign_in(custom_token("ahead-ok", &json!({}), wall + 3600 + 270)).0,
+        200
+    );
+    let (status, message) = sign_in(custom_token("behind", &json!({}), wall - 330));
+    assert_eq!(status, 400);
+    assert!(message.contains("emulator clock"), "{message}");
+    assert_eq!(
+        sign_in(custom_token("behind-ok", &json!({}), wall - 270)).0,
+        200
+    );
+    // A token valid at the pinned clock is still accepted (the clock half of "either").
+    assert_eq!(
+        sign_in(custom_token("clock-ok", &json!({}), 1_767_225_600 + 3600)).0,
+        200
+    );
+    // A lifetime over an hour fails at every time: production's bare message.
+    let long = custom_token_from_payload(&json!({
+        "aud": fireemu_adapter_http::identity_toolkit::CUSTOM_TOKEN_AUDIENCE,
+        "iss": "firebase-auth-emulator@example.com",
+        "sub": "firebase-auth-emulator@example.com",
+        "uid": "long",
+        "iat": wall,
+        "exp": wall + 3601,
+    }));
+    assert_eq!(sign_in(long), (400, "INVALID_CUSTOM_TOKEN".to_owned()));
+}
+
+/// The pairwise combinations (PICT) of profile, `callerTimes`, clock position, `iat` position
+/// and token shape, each checked against the rule: the emulator profile never judges an unsigned
+/// token's times; production's rules accept a valid token when it holds against the clock, or,
+/// under `clockOrWall`, against wall time.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn custom_token_times_follow_the_caller_times_rule_on_every_combination() {
+    use fireemu_adapter_http::identity_toolkit::CUSTOM_TOKEN_AUDIENCE;
+    use fireemu_adapter_http::CallerTimes;
+    const ROWS: &[&str] = &[
+        "strict clockOrWall pinnedBehind atWall valid",
+        "strict clock pinnedBehind atWall valid",
+        "strict clockOrWall followsWall atWall valid",
+        "strictSigners clock pinnedBehind atClock valid",
+        "strictSigners clockOrWall pinnedAhead atWall lifetimeOverHour",
+        "strict clock followsWall behindBoth lifetimeOverHour",
+        "emulator clock pinnedAhead atWall valid",
+        "strict clockOrWall pinnedAhead aheadOfBoth lifetimeOverHour",
+        "strictSigners clock followsWall aheadOfBoth valid",
+        "strict clockOrWall followsWall atClock lifetimeOverHour",
+        "emulator clockOrWall pinnedBehind aheadOfBoth lifetimeOverHour",
+        "emulator clockOrWall followsWall atClock lifetimeOverHour",
+        "emulator clockOrWall pinnedBehind behindBoth valid",
+        "strictSigners clock pinnedAhead atClock lifetimeOverHour",
+        "strictSigners clock pinnedAhead behindBoth lifetimeOverHour",
+    ];
+    for (n, row) in ROWS.iter().enumerate() {
+        let f: Vec<&str> = row.split(' ').collect();
+        let wall = host_unix_seconds();
+        let clock = match f[2] {
+            "followsWall" => wall,
+            "pinnedBehind" => 1_767_225_600,
+            _ => wall + 400 * 86_400,
+        };
+        let iat = match f[3] {
+            "atWall" => wall,
+            "atClock" => clock,
+            "aheadOfBoth" => wall.max(clock) + 1_000,
+            _ => wall.min(clock) - 10_000,
+        };
+        let exp = iat + if f[4] == "valid" { 3600 } else { 3601 };
+        let caller_times = if f[1] == "clock" {
+            CallerTimes::Clock
+        } else {
+            CallerTimes::ClockOrWall
+        };
+        let base = match f[0] {
+            "strict" => strict_state(),
+            "strictSigners" => strict_state_with_signer(),
+            _ => state(),
+        };
+        let s = AuthState {
+            clock: Arc::new(Mutex::new(VirtualClock::new(
+                LogicalInstant::from_unix_seconds(clock),
+            ))),
+            caller_times,
+            ..base
+        };
+        let uid = format!("pict-{n}");
+        let token = if f[0] == "strictSigners" {
+            signed_payload(
+                test_signer_key(),
+                &json!({"aud": CUSTOM_TOKEN_AUDIENCE, "iss": TEST_SIGNER, "sub": TEST_SIGNER,
+                    "uid": uid, "iat": iat, "exp": exp}),
+            )
+        } else {
+            custom_token_from_payload(&json!({"aud": CUSTOM_TOKEN_AUDIENCE,
+                "iss": "firebase-auth-emulator@example.com",
+                "sub": "firebase-auth-emulator@example.com",
+                "uid": uid, "iat": iat, "exp": exp}))
+        };
+        let holds = |at: i64| iat <= at + 300 && at < exp + 300;
+        let accepted = f[0] == "emulator"
+            || (f[4] == "valid"
+                && (holds(clock) || (caller_times == CallerTimes::ClockOrWall && holds(wall))));
+        let (status, body) = post(
+            &s,
+            &format!("{V1}/accounts:signInWithCustomToken"),
+            &json!({"token": token, "returnSecureToken": true}),
+        );
+        assert_eq!(status == 200, accepted, "{row}: {body}");
+        if !accepted {
+            let message = body["error"]["message"].as_str().unwrap();
+            let detailed = caller_times == CallerTimes::ClockOrWall && f[4] == "valid";
+            assert_eq!(
+                message != "INVALID_CUSTOM_TOKEN",
+                detailed,
+                "{row}: {message}"
+            );
+        }
+    }
 }
 
 #[test]

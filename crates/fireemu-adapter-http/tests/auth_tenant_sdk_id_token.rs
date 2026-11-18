@@ -60,6 +60,7 @@ fn emulator_state() -> AuthState {
         fake_custom_token_expiry: FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         app_check: None,
         app_check_policy: None,
         tenancy: None,
@@ -75,6 +76,7 @@ fn strict_state() -> AuthState {
         fake_custom_token_expiry: FakeCustomTokenExpiry::Reject,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         ..emulator_state()
     }
 }

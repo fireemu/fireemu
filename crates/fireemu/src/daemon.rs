@@ -631,6 +631,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         },
         custom_token_trust,
         allow_unsigned_custom_tokens: cfg.auth_allow_unsigned_custom_tokens,
+        caller_times: cfg.caller_times,
         idp_assertions,
         tenancy: Some(tenancy.clone()),
         app_check: app_check.clone(),

@@ -600,7 +600,7 @@
     },
     "crates/fireemu-adapter-http/src/identity_toolkit.rs": {
       "kind": "sha256",
-      "value": "e3dc61234124073354ff55aafff6ded22885a525dae10e30fe982e97ad23932b"
+      "value": "361f37a236a756c76eaa3a417f34a74edfb01a6f0bbdecef131109383af95cc1"
     },
     "crates/fireemu-adapter-http/src/identity_toolkit/authorized_domains.rs": {
       "kind": "sha256",
@@ -664,7 +664,7 @@
     },
     "crates/fireemu-adapter-http/src/lib.rs": {
       "kind": "sha256",
-      "value": "7bf9c5d570833688fb53f79db1096dd0dee32c4f1dc9634a0c0ffeaf8ce6a6a1"
+      "value": "5f9f08c334528a159efe70f3e0fb967dfa1745f2d8ce9597f70afb3f51fd6e8d"
     },
     "crates/fireemu-adapter-http/src/oidc.rs": {
       "kind": "sha256",

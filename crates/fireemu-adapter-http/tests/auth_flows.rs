@@ -186,6 +186,7 @@ fn state() -> AuthState {
             fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
         app_check: None,
         app_check_policy: None,
@@ -762,6 +763,7 @@ fn strict_profile_password_reset_revokes_the_existing_refresh_token() {
             fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Reject,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
         ..state()
     };

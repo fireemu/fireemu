@@ -67,6 +67,7 @@ fn state(strict: bool) -> AuthState {
         },
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
         app_check: None,
         app_check_policy: None,

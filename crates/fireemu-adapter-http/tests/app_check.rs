@@ -126,6 +126,7 @@ fn auth_state(app_check: Option<Arc<AppCheckState>>) -> Arc<AuthState> {
             fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
         app_check_policy: None,
         tenancy: None,

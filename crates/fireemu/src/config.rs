@@ -1138,6 +1138,10 @@ pub struct RuntimeConfig {
     /// `daemon.clock`, when set. Unset, the virtual clock follows real time unless
     /// `daemon.clockStart` pins it (see [`Self::clock_frozen`]).
     pub clock_mode: Option<ClockMode>,
+    /// `daemon.callerTimes`: how a time a caller minted on its own clock (a custom token's
+    /// `iat`, a signed URL's date, a task `scheduleTime`) is judged. A development default:
+    /// `clockOrWall` unless `productionExact`, which judges on the emulator clock alone.
+    pub caller_times: fireemu_adapter_http::CallerTimes,
     /// Deterministic seed.
     pub seed: u64,
     /// Whether `daemon.seed` named the seed. Without it the Functions event ids are not a
@@ -2067,6 +2071,7 @@ impl Default for RuntimeConfig {
             clock_start: LogicalInstant::from_unix_seconds(1_788_004_860),
             clock_start_pinned: false,
             clock_mode: None,
+            caller_times: fireemu_adapter_http::CallerTimes::ClockOrWall,
             seed: 42,
             seed_pinned: false,
             auth_project: "demo-app".to_owned(),
@@ -2707,6 +2712,7 @@ impl RuntimeConfig {
             })),
             "daemon.clockStart" => Some(json!(self.clock_start_pinned.then(|| self.clock_start.to_rfc3339().ok()).flatten())),
             "daemon.clock" => Some(json!(if self.clock_frozen() { "frozen" } else { "realtime" })),
+            "daemon.callerTimes" => Some(json!(self.caller_times.as_config_str())),
             "daemon.seed" => Some(json!(self.seed)),
             "daemon.authProject" => Some(json!(self.auth_project)),
             "daemon.authProjectNumbers" => Some(json!(self.auth_project_numbers)),
@@ -2796,7 +2802,7 @@ impl RuntimeConfig {
 }
 
 /// The keys of the `daemon` section (spec/config/fireemu.schema.json).
-pub(crate) const DAEMON_KEYS: [&str; 17] = [
+pub(crate) const DAEMON_KEYS: [&str; 18] = [
     "firestorePort",
     "storagePort",
     "httpPort",
@@ -2811,6 +2817,7 @@ pub(crate) const DAEMON_KEYS: [&str; 17] = [
     "loggingPort",
     "clockStart",
     "clock",
+    "callerTimes",
     "seed",
     "authProject",
     "authProjectNumbers",
@@ -5029,6 +5036,11 @@ impl RuntimeConfig {
         self.auth_allow_unsigned_custom_tokens = !exact;
         self.auth_allow_unsigned_id_tokens = !exact;
         self.auth_totp_reveal_codes = !exact;
+        self.caller_times = if exact {
+            fireemu_adapter_http::CallerTimes::Clock
+        } else {
+            fireemu_adapter_http::CallerTimes::ClockOrWall
+        };
         self.auth_idp_assertions = if exact {
             IdpAssertionMode::Signed
         } else {
@@ -5232,6 +5244,7 @@ impl RuntimeConfig {
                     "false"
                 },
             ),
+            ("daemon.callerTimes", self.caller_times.as_config_str()),
         ];
         self.development_defaults = values
             .into_iter()
@@ -5420,6 +5433,18 @@ impl RuntimeConfig {
                     ))
                 }
             });
+        }
+        if let Some(times) = d.get("callerTimes") {
+            use fireemu_adapter_http::CallerTimes;
+            cfg.caller_times = match times.as_str() {
+                Some("clock") => CallerTimes::Clock,
+                Some("clockOrWall") => CallerTimes::ClockOrWall,
+                _ => {
+                    return Err(ConfigError(
+                        "daemon.callerTimes must be \"clock\" or \"clockOrWall\"".to_owned(),
+                    ))
+                }
+            };
         }
         if let Some(seed) = d.get("seed").and_then(Value::as_u64) {
             cfg.seed = seed;
@@ -7412,6 +7437,7 @@ mod tests {
             ("daemon.loggingPort", json!(4500), "default"),
             ("daemon.clockStart", json!(null), "unset"),
             ("daemon.clock", json!("realtime"), "default"),
+            ("daemon.callerTimes", json!("clockOrWall"), "default"),
             ("daemon.seed", json!(42), "default"),
             ("daemon.authProject", json!("demo-app"), "default"),
             ("daemon.authProjectNumbers", json!({}), "default"),
@@ -7988,6 +8014,10 @@ mod tests {
                 ),
                 ("auth.totp.revealCodes", json!(cfg.auth_totp_reveal_codes)),
                 (
+                    "daemon.callerTimes",
+                    json!(cfg.caller_times.as_config_str()),
+                ),
+                (
                     "auth.requireClientApiKey",
                     json!(cfg.auth_require_client_api_key),
                 ),
@@ -8158,6 +8188,7 @@ mod tests {
                     }
                     ("auth.idpAssertions", true) => json!("signed"),
                     ("auth.totp.revealCodes", true) => json!(false),
+                    ("daemon.callerTimes", true) => json!("clock"),
                     ("auth.tenantIdFormat", true) => json!("generated"),
                     // The open exchange is the strict profile's development default.
                     ("appCheck.debugTokens", _) if exact || profile == "emulator" => {
@@ -13125,6 +13156,48 @@ mod tests {
                 .auth_forward_inbound_credentials
         );
         assert!(parse(&json!({"forwardInboundCredentials": "yes"})).is_err());
+    }
+
+    #[test]
+    fn caller_times_is_a_development_default() {
+        use fireemu_adapter_http::CallerTimes;
+        let base = |extra: Value| {
+            let mut input = json!({
+                "schemaVersion": 1,
+                "profile": "strict",
+                "firestore": {"edition": "standard", "apiMode": "native"},
+            });
+            for (key, value) in extra.as_object().unwrap() {
+                input[key] = value.clone();
+            }
+            RuntimeConfig::from_json(&input)
+        };
+        assert_eq!(
+            base(json!({})).unwrap().caller_times,
+            CallerTimes::ClockOrWall
+        );
+        assert_eq!(
+            base(json!({"profile": "emulator"})).unwrap().caller_times,
+            CallerTimes::ClockOrWall
+        );
+        let exact = base(json!({"productionExact": true})).unwrap();
+        assert_eq!(exact.caller_times, CallerTimes::Clock);
+        assert_eq!(
+            exact.effective_value("daemon.callerTimes", &Value::Null),
+            Some(json!("clock"))
+        );
+        let exact_wall =
+            base(json!({"productionExact": true, "daemon": {"callerTimes": "clockOrWall"}}))
+                .unwrap();
+        assert_eq!(exact_wall.caller_times, CallerTimes::ClockOrWall);
+        let clock = base(json!({"daemon": {"callerTimes": "clock"}})).unwrap();
+        assert_eq!(clock.caller_times, CallerTimes::Clock);
+        assert_eq!(
+            base(json!({"daemon": {"callerTimes": "wall"}})),
+            Err(ConfigError(
+                "daemon.callerTimes must be \"clock\" or \"clockOrWall\"".to_owned()
+            ))
+        );
     }
 
     #[test]

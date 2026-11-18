@@ -80,6 +80,7 @@ fn state(strict: bool) -> AuthState {
             fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Ignore,
         custom_token_trust: None,
         allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
         // Strict with no OIDC issuer keys: SAML needs none (its certificates are the provider's).
         idp_assertions: if strict {
             IdpAssertionPolicy::SignedOidc(Arc::new(IdpSignerTrust::default()))
