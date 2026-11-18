@@ -1,11 +1,10 @@
 //! Named time zones for pipeline calendar functions.
 
-use chrono::{DateTime, TimeZone, Utc};
-use chrono_tz::Tz;
 use fireemu_core_firestore::pipeline_exec::{
     local_calendar_value, ZoneError, ZoneOperation, ZoneResult,
 };
 use fireemu_core_firestore::value::Timestamp;
+use jiff::tz::{AmbiguousOffset, Offset, TimeZoneDatabase};
 
 pub(crate) fn resolve(
     timestamp: Timestamp,
@@ -13,33 +12,48 @@ pub(crate) fn resolve(
     unit: &str,
     operation: ZoneOperation,
 ) -> Result<ZoneResult, ZoneError> {
-    let zone: Tz = match zone.parse() {
-        Ok(zone) => zone,
-        Err(_) if is_custom_gmt_offset(zone) => return Err(ZoneError::Unsupported),
-        Err(_) => return Err(ZoneError::InvalidZone),
+    let zone = match TimeZoneDatabase::bundled().get(zone) {
+        Ok(found) if found.iana_name() == Some(zone) => found,
+        _ if is_custom_gmt_offset(zone) => return Err(ZoneError::Unsupported),
+        _ => return Err(ZoneError::InvalidZone),
     };
-    let utc = DateTime::<Utc>::from_timestamp(timestamp.seconds(), timestamp.nanos())
-        .ok_or(ZoneError::OutOfRange)?;
-    let local = utc.with_timezone(&zone).naive_local();
-    let wall = local.and_utc();
-    let local_timestamp = Timestamp::new(wall.timestamp(), wall.timestamp_subsec_nanos())
-        .map_err(|_| ZoneError::OutOfRange)?;
+    let utc = instant(timestamp.seconds(), timestamp.nanos())?;
+    let local_timestamp = Timestamp::new(
+        timestamp.seconds() + i64::from(zone.to_offset(utc).seconds()),
+        timestamp.nanos(),
+    )
+    .map_err(|_| ZoneError::OutOfRange)?;
     match local_calendar_value(local_timestamp, unit, operation)? {
         ZoneResult::Integer(value) => Ok(ZoneResult::Integer(value)),
         ZoneResult::Timestamp(boundary) => {
-            let wall = DateTime::<Utc>::from_timestamp(boundary.seconds(), boundary.nanos())
-                .ok_or(ZoneError::OutOfRange)?
-                .naive_utc();
-            let resolved = zone
-                .from_local_datetime(&wall)
-                .single()
-                .ok_or(ZoneError::Ambiguous)?
-                .with_timezone(&Utc);
-            let result = Timestamp::new(resolved.timestamp(), resolved.timestamp_subsec_nanos())
+            let wall = Offset::UTC.to_datetime(instant(boundary.seconds(), boundary.nanos())?);
+            let AmbiguousOffset::Unambiguous { offset } =
+                zone.to_ambiguous_timestamp(wall).offset()
+            else {
+                return Err(ZoneError::Ambiguous);
+            };
+            let resolved = offset
+                .to_timestamp(wall)
                 .map_err(|_| ZoneError::OutOfRange)?;
+            let nanos = resolved.as_nanosecond();
+            let result = Timestamp::new(
+                i64::try_from(nanos.div_euclid(1_000_000_000))
+                    .map_err(|_| ZoneError::OutOfRange)?,
+                u32::try_from(nanos.rem_euclid(1_000_000_000))
+                    .map_err(|_| ZoneError::OutOfRange)?,
+            )
+            .map_err(|_| ZoneError::OutOfRange)?;
             Ok(ZoneResult::Timestamp(result))
         }
     }
+}
+
+fn instant(seconds: i64, nanos: u32) -> Result<jiff::Timestamp, ZoneError> {
+    jiff::Timestamp::new(
+        seconds,
+        i32::try_from(nanos).map_err(|_| ZoneError::OutOfRange)?,
+    )
+    .map_err(|_| ZoneError::OutOfRange)
 }
 
 // Recognize documented numeric GMT offset syntax without choosing its offset semantics.
@@ -256,5 +270,144 @@ mod tests {
             resolve(winter, "Europe/Berlin", "hour", ZoneOperation::Extract),
             Ok(ZoneResult::Integer(1))
         );
+    }
+}
+
+#[cfg(test)]
+mod chrono_parity_tests {
+    use super::*;
+    use chrono::{DateTime, TimeZone, Utc};
+    use proptest::prelude::*;
+
+    /// The previous chrono-tz implementation, kept as the reference while both exist.
+    fn old_resolve(
+        timestamp: Timestamp,
+        zone: &str,
+        unit: &str,
+        operation: ZoneOperation,
+    ) -> Result<ZoneResult, ZoneError> {
+        let zone: chrono_tz::Tz = match zone.parse() {
+            Ok(zone) => zone,
+            Err(_) if is_custom_gmt_offset(zone) => return Err(ZoneError::Unsupported),
+            Err(_) => return Err(ZoneError::InvalidZone),
+        };
+        let utc = DateTime::<Utc>::from_timestamp(timestamp.seconds(), timestamp.nanos())
+            .ok_or(ZoneError::OutOfRange)?;
+        let wall = utc.with_timezone(&zone).naive_local().and_utc();
+        let local_timestamp = Timestamp::new(wall.timestamp(), wall.timestamp_subsec_nanos())
+            .map_err(|_| ZoneError::OutOfRange)?;
+        match local_calendar_value(local_timestamp, unit, operation)? {
+            ZoneResult::Integer(value) => Ok(ZoneResult::Integer(value)),
+            ZoneResult::Timestamp(boundary) => {
+                let wall = DateTime::<Utc>::from_timestamp(boundary.seconds(), boundary.nanos())
+                    .ok_or(ZoneError::OutOfRange)?
+                    .naive_utc();
+                let resolved = zone
+                    .from_local_datetime(&wall)
+                    .single()
+                    .ok_or(ZoneError::Ambiguous)?
+                    .with_timezone(&Utc);
+                Timestamp::new(resolved.timestamp(), resolved.timestamp_subsec_nanos())
+                    .map(ZoneResult::Timestamp)
+                    .map_err(|_| ZoneError::OutOfRange)
+            }
+        }
+    }
+
+    fn zones() -> Vec<String> {
+        // Zones whose data changed between chrono-tz's database (2025b) and jiff's (2026f); the
+        // list is checked exhaustively in fireemu-adapter-functions' zone tests.
+        const CHANGED: &[&str] = &[
+            "Africa/Casablanca",
+            "Africa/El_Aaiun",
+            "America/Araguaina",
+            "America/Bahia",
+            "America/Belem",
+            "America/Boa_Vista",
+            "America/Bogota",
+            "America/Campo_Grande",
+            "America/Cuiaba",
+            "America/Edmonton",
+            "America/Eirunepe",
+            "America/Ensenada",
+            "America/Fortaleza",
+            "America/Havana",
+            "America/Inuvik",
+            "America/Maceio",
+            "America/Manaus",
+            "America/Noronha",
+            "America/Porto_Acre",
+            "America/Porto_Velho",
+            "America/Rainy_River",
+            "America/Recife",
+            "America/Rio_Branco",
+            "America/Santa_Isabel",
+            "America/Santarem",
+            "America/Sao_Paulo",
+            "America/Tijuana",
+            "America/Vancouver",
+            "America/Winnipeg",
+            "America/Yellowknife",
+            "Asia/Tehran",
+            "Brazil/Acre",
+            "Brazil/DeNoronha",
+            "Brazil/East",
+            "Brazil/West",
+            "CST6CDT",
+            "Canada/Central",
+            "Canada/Mountain",
+            "Canada/Pacific",
+            "Cuba",
+            "EST5EDT",
+            "Eire",
+            "Europe/Chisinau",
+            "Europe/Dublin",
+            "Europe/Tiraspol",
+            "Iran",
+            "MST7MDT",
+            "Mexico/BajaNorte",
+            "PST8PDT",
+        ];
+        let mut names: Vec<String> = chrono_tz::TZ_VARIANTS
+            .iter()
+            .map(|tz| tz.name())
+            .filter(|name| !CHANGED.contains(name))
+            .map(str::to_owned)
+            .collect();
+        names.extend(
+            [
+                "asia/tokyo",
+                "UTC",
+                "utc",
+                "GMT+05:30",
+                "GMT+5",
+                "Not/AZone",
+                "",
+                "EST5EDT",
+            ]
+            .map(str::to_owned),
+        );
+        names
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20_000))]
+
+        #[test]
+        fn calendar_values_match_chrono_tz(
+            zone in prop::sample::select(zones()),
+            seconds in -2_208_988_800i64..2_145_916_800,
+            nanos in prop_oneof![Just(0u32), 0u32..1_000_000_000],
+            unit in prop::sample::select(vec![
+                "microsecond", "millisecond", "second", "minute", "hour", "day", "week",
+                "week(monday)", "isoweek", "month", "quarter", "year", "isoyear", "dayofweek",
+                "dayofyear",
+            ]),
+            trunc in any::<bool>(),
+        ) {
+            let t = Timestamp::new(seconds, nanos).unwrap();
+            let op = if trunc { ZoneOperation::Trunc } else { ZoneOperation::Extract };
+            prop_assert_eq!(resolve(t, &zone, unit, op), old_resolve(t, &zone, unit, op));
+        }
     }
 }

@@ -28,8 +28,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 tokio-stream = "0.1"
-chrono-tz = "0.10"
-chrono = "0.4"
+jiff = { version = "1", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff-tzdb = "1"
 
 [target.'cfg(windows)'.dependencies]
 process-wrap = { version = "8.2.1", default-features = false, features = ["job-object", "kill-on-drop", "tokio1"] }
@@ -41,6 +41,8 @@ rustix = { version = "1", features = ["process"] }
 workspace = true
 
 [dev-dependencies]
+chrono = "0.4"
+chrono-tz = "0.10"
 base64 = "0.22"
 fireemu-core-rules = { path = "../fireemu-core-rules" }
 proptest.workspace = true
