@@ -22,7 +22,8 @@ The other two findings concern how the result depends on the configuration:
 - `members_depend_on_order`: the members chosen depend on the order composites were added in
   (whether a merge exists does not: `merged_perm`).
 - `one_member_merge`: a composite that repeats an equality field makes a "merge" of one member,
-  and that member serves no duplicate-free set of the equality fields on its own.
+  and that member serves no duplicate-free set of the equality fields on its own;
+  `repeated_single_equality_refused`: with one equality the same composite is refused.
 
 Fields are numbers: 1 is `a`, 2 is `b`, 3 is `tags`, 4 is `e`; collection group 0.
 -/

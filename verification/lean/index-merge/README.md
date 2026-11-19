@@ -73,7 +73,9 @@ None of these has a recorded production verdict; each is pinned by a Rust test.
 4. The members chosen depend on the order composites were added in; whether a query is served
    does not (`members_depend_on_order`, `decide_served_perm`).
 5. A composite that repeats a field, such as `(a, a, b)`, makes a merge of one member that serves
-   no duplicate-free set of the equalities on its own (`one_member_merge`).
+   no duplicate-free set of the equalities on its own (`one_member_merge`); with a single
+   equality, `(a, a)` is refused instead (`repeated_single_equality_refused`). `IndexSet` accepts
+   such composites; whether production does is not recorded.
 
 ## Commands
 
