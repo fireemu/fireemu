@@ -700,7 +700,13 @@ test("status reads each entry once and each named operation once", async () => {
     session: session(fake, requestCap("status", "all")),
     set: "all",
     forms: FORMS,
-    operations: { "apply:E3": `${DB_NUMBER}/operations/op1`, "apply:E1": "null" },
+    operations: {
+      "apply:E3": {
+        name: `${DB_NUMBER}/operations/op1`,
+        target: `${DB_NUMBER}/collectionGroups/ima/fields/a`,
+      },
+      "apply:E1": { name: "null", target: `${DB_NUMBER}/collectionGroups/imx/indexes/CICAgimx` },
+    },
   });
   assert.equal(result.applied, true);
   assert.equal(result.baseline, false);
@@ -1464,23 +1470,30 @@ test("an operation counts only in the recorded shape, for its own entry", () => 
       ...extra,
     },
   });
-  assert.equal(operationState(field(), name, FORMS, ENTRIES.E4), "done");
+  assert.equal(operationState(field(), name, FORMS, ENTRIES.E4, E4_NAME), "done");
   assert.equal(
     operationState(
       { status: 200, json: { metadata: { "@type": FIELD_META, field: E4_NAME }, name } },
       name,
       FORMS,
       ENTRIES.E4,
+      E4_NAME,
     ),
     "running",
   );
   assert.equal(
-    operationState(field({ response: undefined, error: { code: 13 } }), name, FORMS, ENTRIES.E4),
+    operationState(
+      field({ response: undefined, error: { code: 13 } }),
+      name,
+      FORMS,
+      ENTRIES.E4,
+      E4_NAME,
+    ),
     "failed",
   );
   for (const [label, answer, entry] of [
     ["done without a response", field({ response: undefined }), ENTRIES.E4],
-    ["another field", field(), ENTRIES.E5],
+    ["another field's entry", field(), ENTRIES.E5],
     [
       "an index operation for a field",
       {
@@ -1498,7 +1511,7 @@ test("an operation counts only in the recorded shape, for its own entry", () => 
     ["another name", field({ name: `${DB}/operations/op8` }), ENTRIES.E4],
   ])
     assert.equal(
-      operationState(JSON.parse(JSON.stringify(answer)), name, FORMS, entry),
+      operationState(JSON.parse(JSON.stringify(answer)), name, FORMS, entry, E4_NAME),
       "unreadable",
       label,
     );
@@ -1514,9 +1527,11 @@ test("an operation counts only in the recorded shape, for its own entry", () => 
       response: {},
     },
   };
-  assert.equal(operationState(index, name, FORMS, ENTRIES.E2), "done");
+  const imc = `${DB_NUMBER}/collectionGroups/imc/indexes/CICAgimc`;
+  assert.equal(operationState(index, name, FORMS, ENTRIES.E2, imc), "done");
+  assert.equal(operationState(index, name, FORMS, ENTRIES.E2), "unreadable", "no target");
   assert.equal(
-    operationState(index, name, FORMS, ENTRIES.E1),
+    operationState(index, name, FORMS, ENTRIES.E1, imc),
     "unreadable",
     "another group's index",
   );
@@ -1666,4 +1681,213 @@ test("unreadable bodies and the reasons a reviewer reads", () => {
     ).reason,
     "the field has a TTL",
   );
+});
+
+// ---- packet v5 (coordinator ruling 5) ------------------------------------------------------
+
+test("a composite list with a null, scalar or object `indexes` is unexpected and apply sends nothing", async () => {
+  for (const indexes of [null, "x", 0, false, {}]) {
+    const state = entryState(ENTRIES.E1, { status: 200, json: { indexes } }, FORMS).state;
+    assert.equal(state, "unexpected", JSON.stringify(indexes));
+    const fake = fakeFirestore({
+      fail: (r) =>
+        r.method === "GET" && r.url.includes("/imx/indexes")
+          ? { status: 200, json: { indexes } }
+          : undefined,
+    });
+    const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+    assert.equal(result.refusedBeforeSending, true, JSON.stringify(indexes));
+    assert.deepEqual(writesOf(fake), []);
+  }
+  // Absent `indexes` (proto3 omits an empty list) and an empty list both mean none.
+  assert.equal(entryState(ENTRIES.E1, { status: 200, json: {} }, FORMS).state, "absent");
+  assert.equal(
+    entryState(ENTRIES.E1, { status: 200, json: { indexes: [] } }, FORMS).state,
+    "absent",
+  );
+});
+
+test("null in a field read is unexpected wherever a key may be absent", () => {
+  const base = { indexConfig: { ancestorField: ANCESTOR_ID }, name: E4_NAME };
+  for (const [label, json] of [
+    ["indexes null", { ...base, indexConfig: { ...base.indexConfig, indexes: null } }],
+    [
+      "usesAncestorConfig null",
+      { ...base, indexConfig: { ...base.indexConfig, usesAncestorConfig: null } },
+    ],
+    ["ancestorField null", { ...base, indexConfig: { ancestorField: null } }],
+    ["indexConfig null", { ...base, indexConfig: null }],
+    ["ttlConfig null", { ...base, ttlConfig: null }],
+    [
+      "a mode state null",
+      {
+        ...base,
+        indexConfig: {
+          ...base.indexConfig,
+          indexes: [
+            {
+              fields: [{ fieldPath: "a", order: "ASCENDING" }],
+              queryScope: "COLLECTION",
+              state: null,
+            },
+          ],
+        },
+      },
+    ],
+  ])
+    assert.equal(entryState(ENTRIES.E4, { status: 200, json }, FORMS).state, "unexpected", label);
+});
+
+test("an operation settles a create only when it names the exact index or field the create gave", async () => {
+  const created = `${DB_NUMBER}/collectionGroups/imx/indexes/created`;
+  const different = `${DB_NUMBER}/collectionGroups/imx/indexes/different`;
+  const opName = `${DB_NUMBER}/operations/opX`;
+  const fake = fakeFirestore({
+    fail: (r) => {
+      if (r.method === "POST" && r.url.includes("/imx/indexes")) {
+        fake.state.composites.imx = [listedIndex("imx", { name: created })];
+        return {
+          status: 200,
+          json: { metadata: { "@type": INDEX_META, index: created }, name: opName },
+        };
+      }
+      if (r.url.endsWith(`/${opName}`))
+        return {
+          status: 200,
+          json: {
+            done: true,
+            metadata: { "@type": INDEX_META, index: different },
+            name: opName,
+            response: {},
+          },
+        };
+      return undefined;
+    },
+  });
+  const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(result.entries.E1.write.target, created);
+  assert.equal(result.entries.E1.operation, "unreadable");
+  assert.notEqual(result.entries.E1.outcome, "created");
+  // The same operation naming the created index settles it.
+  assert.equal(
+    operationState(
+      {
+        status: 200,
+        json: {
+          done: true,
+          metadata: { "@type": INDEX_META, index: created },
+          name: opName,
+          response: {},
+        },
+      },
+      opName,
+      FORMS,
+      ENTRIES.E1,
+      created,
+    ),
+    "done",
+  );
+  // A list that shows another index than the one created does not make it created either.
+  const other = fakeFirestore({
+    fail: (r) =>
+      r.method === "GET" &&
+      r.url.includes("/imx/indexes") &&
+      other.requests.some((q) => q.method === "POST")
+        ? { status: 200, json: { indexes: [listedIndex("imx", { name: different })] } }
+        : undefined,
+  });
+  const second = await apply({ session: session(other), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(second.entries.E1.operation, "done");
+  assert.notEqual(second.entries.E1.outcome, "created");
+});
+
+test("every key production records on index and field operations is accepted", () => {
+  const name = `${DB}/operations/op9`;
+  const fieldMeta = {
+    "@type": FIELD_META,
+    field: E4_NAME,
+    state: "SUCCESSFUL",
+    startTime: "t",
+    endTime: "t",
+    indexConfigDeltas: [],
+    progressDocuments: {},
+    progressBytes: {},
+    ttlConfigDelta: {},
+  };
+  assert.equal(
+    operationState(
+      { status: 200, json: { done: true, metadata: fieldMeta, name, response: {} } },
+      name,
+      FORMS,
+      ENTRIES.E4,
+      E4_NAME,
+    ),
+    "done",
+  );
+  const index = `${DB}/collectionGroups/imc/indexes/CICAgimc`;
+  const indexMeta = {
+    "@type": INDEX_META,
+    index,
+    state: "SUCCESSFUL",
+    startTime: "t",
+    endTime: "t",
+    progressDocuments: {},
+    progressBytes: {},
+  };
+  assert.equal(
+    operationState(
+      { status: 200, json: { done: true, metadata: indexMeta, name, response: {} } },
+      name,
+      FORMS,
+      ENTRIES.E2,
+      index,
+    ),
+    "done",
+  );
+  assert.equal(
+    operationState(
+      {
+        status: 200,
+        json: {
+          done: true,
+          metadata: { ...indexMeta, outputUriPrefix: "gs://x" },
+          name,
+          response: {},
+        },
+      },
+      name,
+      FORMS,
+      ENTRIES.E2,
+      index,
+    ),
+    "unreadable",
+    "a key of another operation type",
+  );
+  assert.equal(
+    operationState(
+      {
+        status: 200,
+        json: { done: true, metadata: { ...indexMeta, ttlConfigDelta: {} }, name, response: {} },
+      },
+      name,
+      FORMS,
+      ENTRIES.E2,
+      index,
+    ),
+    "unreadable",
+    "a field-operation key on an index operation",
+  );
+});
+
+test("main never reaches for the real token when the http layer is injected", async () => {
+  const root = await mkdtemp(join(tmpdir(), "merge-config-token-"));
+  try {
+    const out = join(root, "x");
+    const fake = fakeFirestore();
+    assert.equal(await main(["status", "--set", "all", "--out", out], { http: fake.http }), 3);
+    assert.deepEqual(fake.requests, []);
+    await assert.rejects(readFile(join(out, "result.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

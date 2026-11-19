@@ -184,16 +184,34 @@ const FIELD_KEYS = ["name", "indexConfig"];
 const INDEX_CONFIG_KEYS = ["ancestorField", "indexes", "usesAncestorConfig"];
 const MODE_KEYS = ["fields", "queryScope", "state"];
 const OPERATION_KEYS = ["name", "metadata", "done", "response", "error"];
-const METADATA_KEYS = [
-  "@type",
-  "index",
-  "field",
-  "state",
-  "startTime",
-  "endTime",
-  "indexConfigDeltas",
-  "progressDocuments",
-];
+/**
+ * The metadata keys of each operation type: the ones recorded in fs-config-lifecycle-production.json
+ * (IndexOperationMetadata: index, state, startTime, endTime, progressDocuments; FieldOperationMetadata:
+ * also indexConfigDeltas and ttlConfigDelta) and progressBytes, which both messages define (Firestore
+ * Admin API v1) and the recording shows on its bulk operations.
+ */
+const METADATA_KEYS = {
+  [INDEX_META]: [
+    "@type",
+    "index",
+    "state",
+    "startTime",
+    "endTime",
+    "progressDocuments",
+    "progressBytes",
+  ],
+  [FIELD_META]: [
+    "@type",
+    "field",
+    "state",
+    "startTime",
+    "endTime",
+    "indexConfigDeltas",
+    "progressDocuments",
+    "progressBytes",
+    "ttlConfigDelta",
+  ],
+};
 
 /** A composite as listed matches its entry exactly: scope, and the fields then `__name__` ASC. */
 export function compositeMatches(index, entry) {
@@ -227,8 +245,10 @@ const unexpected = (reason) => ({ state: "unexpected", reason });
 function compositeState(entry, body, forms) {
   if (body.nextPageToken !== undefined) return unexpected("more than one page");
   if (!onlyKeys(body, ["indexes"])) return unexpected("unknown list keys");
-  const indexes = body.indexes ?? [];
-  if (!Array.isArray(indexes)) return unexpected("malformed list");
+  // Absent means none (proto3 JSON omits an empty list); present must be an array.
+  if (Object.hasOwn(body, "indexes") && !Array.isArray(body.indexes))
+    return unexpected("malformed list");
+  const indexes = Object.hasOwn(body, "indexes") ? body.indexes : [];
   if (indexes.length === 0) return { state: "absent" };
   if (indexes.length > 1) return unexpected(`${indexes.length} indexes`);
   const [index] = indexes;
@@ -260,15 +280,16 @@ function fieldState(entry, body, forms) {
     return unexpected("ancestor field outside the expected pattern");
   if (![undefined, true, false].includes(config.usesAncestorConfig))
     return unexpected("malformed usesAncestorConfig");
-  if (config.indexes !== undefined && !Array.isArray(config.indexes))
+  if (Object.hasOwn(config, "indexes") && !Array.isArray(config.indexes))
     return unexpected("malformed indexes");
-  const modes = (config.indexes ?? []).map((index) => modeOf(index, entry.field));
+  const listed = Object.hasOwn(config, "indexes") ? config.indexes : [];
+  const modes = listed.map((index) => modeOf(index, entry.field));
   if (modes.includes(undefined)) return unexpected("a mode outside the recorded shape");
   if (config.usesAncestorConfig === true) return { state: "absent" };
   const sort = (list) => list.map((m) => canonical(m)).toSorted();
   if (!same(sort(modes), sort(entry.indexes)))
     return unexpected("the override differs from the entry");
-  const ready = (config.indexes ?? []).every((index) => index.state === "READY");
+  const ready = listed.every((index) => index.state === "READY");
   return { state: "present", name: body.name, ready };
 }
 
@@ -368,25 +389,28 @@ const entryOfKey = (key) => ENTRIES[String(key).split(":").pop()];
  * An operation answer for an entry: `done` (done with a response), `failed` (done with an error),
  * `running` (not done, neither), or `unreadable`: not a 200 JSON object in the recorded shape
  * ({name, metadata, done?, response?, error?}), another name, or metadata of another type or
- * target than the entry's (IndexOperationMetadata with the entry's group, FieldOperationMetadata
- * with the entry's field).
+ * target: the metadata must name exactly `target`, the index or field the create or reset answer
+ * named, which must itself be of the entry's group or field.
  */
-export function operationState(answer, name, forms, entry) {
-  if (!readOk(answer) || !isObject(answer.json) || !entry) return "unreadable";
+export function operationState(answer, name, forms, entry, target) {
+  if (!readOk(answer) || !isObject(answer.json) || !entry || typeof target !== "string")
+    return "unreadable";
   const op = answer.json;
   if (!onlyKeys(op, OPERATION_KEYS)) return "unreadable";
   if (op.name !== name || !operationNamePattern(forms).test(name)) return "unreadable";
   const meta = op.metadata;
-  if (!isObject(meta) || !onlyKeys(meta, METADATA_KEYS)) return "unreadable";
-  const target =
+  if (!isObject(meta) || !Object.hasOwn(METADATA_KEYS, meta["@type"])) return "unreadable";
+  if (!onlyKeys(meta, METADATA_KEYS[meta["@type"]])) return "unreadable";
+  // The operation must name exactly the index or field its create or reset answer named.
+  const named =
     entry.kind === "composite"
       ? meta["@type"] === INDEX_META &&
-        typeof meta.index === "string" &&
-        indexNamePattern(forms, entry.group).test(meta.index)
+        meta.index === target &&
+        indexNamePattern(forms, entry.group).test(target)
       : meta["@type"] === FIELD_META &&
-        typeof meta.field === "string" &&
-        fieldNamePattern(forms, entry.group, entry.field).test(meta.field);
-  if (!target) return "unreadable";
+        meta.field === target &&
+        fieldNamePattern(forms, entry.group, entry.field).test(target);
+  if (!named) return "unreadable";
   if (op.done === undefined)
     return op.response === undefined && op.error === undefined ? "running" : "unreadable";
   if (op.done !== true) return "unreadable";
@@ -407,19 +431,26 @@ export async function pollOperations(session, operations, forms, sleep) {
     if (open.length === 0) break;
     if (round > 0) await sleep(POLL_INTERVAL_MS);
     for (const id of open) {
-      const name = operations[id];
+      const { name, target } = operations[id];
       const answer = await session.send("poll", { method: "GET", url: `${API}/${name}` });
-      states[id] = operationState(answer, name, forms, entryOfKey(id));
+      states[id] = operationState(answer, name, forms, entryOfKey(id), target);
     }
   }
   return states;
 }
 
-/** The operation name of a done create or reset, when the answer is a readable operation of it. */
+/**
+ * The operation of a done create or reset and the exact index or field it names, when the answer is
+ * a readable operation of the entry; polls must then name that same target.
+ */
 function operationOf(answer, forms, entry) {
   const name = answer?.json?.name;
-  if (typeof name !== "string") return undefined;
-  return operationState(answer, name, forms, entry) === "unreadable" ? undefined : name;
+  const meta = answer?.json?.metadata;
+  const target = entry.kind === "composite" ? meta?.index : meta?.field;
+  if (typeof name !== "string" || typeof target !== "string") return undefined;
+  return operationState(answer, name, forms, entry, target) === "unreadable"
+    ? undefined
+    : { name, target };
 }
 
 /**
@@ -446,7 +477,7 @@ export async function apply({ session, set, forms, sleep }) {
     writes[id] = {
       class: classify(answer),
       status: answer.status,
-      ...(operation ? { operation } : {}),
+      ...(operation ? { operation: operation.name, target: operation.target } : {}),
     };
     if (operation) operations[id] = operation;
   }
@@ -459,7 +490,13 @@ export async function apply({ session, set, forms, sleep }) {
     let outcome = "open";
     if (write.class === "not-sent" && read.state === "absent") outcome = "not-sent";
     else if (write.class === "refused" && read.state === "absent") outcome = "not-created";
-    else if (read.state === "present" && read.ready && polled[id] === "done") outcome = "created";
+    else if (
+      read.state === "present" &&
+      read.ready &&
+      polled[id] === "done" &&
+      (ENTRIES[id].kind === "override" || read.name === write.target)
+    )
+      outcome = "created";
     // Without an operation of its own, only a composite's READY read shows it in effect; an
     // override (an exemption has no index state at all) stays pending.
     else if (read.state === "present" && read.ready && polled[id] === undefined)
@@ -509,7 +546,7 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
     writes[id] = {
       class: classify(answer),
       status: answer.status,
-      ...(operation ? { operation } : {}),
+      ...(operation ? { operation: operation.name, target: operation.target } : {}),
     };
     if (operation) operations[id] = operation;
   }
@@ -537,8 +574,8 @@ export async function status({ session, set, forms, operations = {} }) {
   const states = await readStates(session, "status", ids, forms);
   const names = Object.entries(operations).slice(0, STATUS_MAX_OPERATIONS);
   const polled = {};
-  for (const [id, name] of names) {
-    if (!operationNamePattern(forms).test(name)) {
+  for (const [id, { name, target }] of names) {
+    if (typeof name !== "string" || !operationNamePattern(forms).test(name)) {
       polled[id] = "unreadable";
       continue;
     }
@@ -547,6 +584,7 @@ export async function status({ session, set, forms, operations = {} }) {
       name,
       forms,
       entryOfKey(id),
+      target,
     );
   }
   const ok = ids.every((id) => states[id].state === "absent" || states[id].state === "present");
@@ -568,7 +606,7 @@ export function fromJournals(texts) {
   for (const result of results)
     for (const [id, entry] of Object.entries(result.entries ?? {})) {
       const name = entry.write?.operation;
-      if (name) operations[`${result.command}:${id}`] = name;
+      if (name) operations[`${result.command}:${id}`] = { name, target: entry.write.target };
     }
   return {
     operations,
@@ -717,6 +755,11 @@ export async function main(argv, { env = process.env, http, token = adcToken, sl
     }
     console.log(JSON.stringify(verdict));
     return verdict.allowed ? 0 : 2;
+  }
+  // An injected request layer (a test) never gets the real token: the caller injects one too.
+  if (http && token === adcToken) {
+    console.error("an injected http layer needs an injected token");
+    return 3;
   }
   let send;
   try {
