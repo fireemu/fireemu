@@ -52,7 +52,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6.8.0
       # Only the oracle needs a JVM, but installing it unconditionally keeps the two modes
       # otherwise identical, so a `record` run cannot differ from a `check` run by setup.
-      - uses: actions/setup-java@v4.9.1
+      - uses: actions/setup-java@v6.3.0
         with:
           distribution: temurin
           java-version: "21"
