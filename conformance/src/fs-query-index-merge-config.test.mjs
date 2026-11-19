@@ -876,3 +876,103 @@ test(
     );
   },
 );
+
+test("an entry that reads present but not READY, or whose operation failed, is not created", async () => {
+  const creating = fakeFirestore();
+  const original = creating.http;
+  const notReady = async (request) => {
+    const answer = await original(request);
+    if (request.method === "GET" && answer.json?.indexes)
+      answer.json = { indexes: answer.json.indexes.map((i) => ({ ...i, state: "CREATING" })) };
+    if (request.method === "GET" && answer.json?.indexConfig?.usesAncestorConfig === false)
+      answer.json = {
+        ...answer.json,
+        indexConfig: {
+          ...answer.json.indexConfig,
+          indexes: [
+            {
+              queryScope: "COLLECTION",
+              fields: [{ fieldPath: "a", order: "ASCENDING" }],
+              state: "CREATING",
+            },
+          ],
+        },
+      };
+    return answer;
+  };
+  for (const set of ["f2", "f1"]) {
+    const result = await apply({
+      session: createSession({
+        http: notReady,
+        token: async () => "t",
+        cap: 1000,
+        wallMs: 3_600_000,
+      }),
+      set,
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    const id = set === "f2" ? "E3" : "E1";
+    assert.equal(result.entries[id].outcome, "created-not-ready", set);
+    assert.equal(result.ok, false, set);
+    creating.state.composites = {};
+    creating.state.fields = {};
+  }
+  const failed = fakeFirestore({
+    fail: (r) =>
+      r.url.includes("/operations/")
+        ? {
+            status: 200,
+            json: { name: r.url.slice(API.length + 1), done: true, error: { code: 9 } },
+          }
+        : undefined,
+  });
+  const result = await apply({ session: session(failed), set: "f2", forms: FORMS, sleep: noSleep });
+  assert.equal(result.entries.E3.operation, "failed");
+  assert.equal(result.entries.E3.outcome, "created-not-ready");
+});
+
+test("a reset closes only when its own operation reads done under its own name", async () => {
+  for (const [label, answer] of [
+    [
+      "never done",
+      (r) => ({ status: 200, json: { name: r.url.slice(API.length + 1), done: false } }),
+    ],
+    ["another name", () => ({ status: 200, json: { name: `${DB}/operations/other`, done: true } })],
+    [
+      "done with an error",
+      (r) => ({
+        status: 200,
+        json: { name: r.url.slice(API.length + 1), done: true, error: { code: 13 } },
+      }),
+    ],
+  ]) {
+    const { fake } = await appliedFake();
+    const original = fake.http;
+    const http = async (r) => (r.url.includes("/operations/") ? answer(r) : original(r));
+    const result = await remove({
+      session: createSession({ http, token: async () => "t", cap: 1000, wallMs: 3_600_000 }),
+      set: "f2",
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    assert.equal(result.entries.E3.after.state, "absent", label);
+    assert.equal(result.entries.E3.outcome, "open", label);
+  }
+});
+
+test("only apply results give apply outcomes, and status baseline needs every entry absent", async () => {
+  const journal = [
+    { result: { command: "apply", entries: { E1: { outcome: "not-created" } } } },
+    { result: { command: "remove", entries: { E1: { outcome: "open" } } } },
+  ]
+    .map((row) => JSON.stringify(row))
+    .join("\n");
+  assert.deepEqual(fromJournals([journal]).applied, { E1: "not-created" });
+  const fake = fakeFirestore();
+  await apply({ session: session(fake), set: "f2", forms: FORMS, sleep: noSleep });
+  const partial = await status({ session: session(fake), set: "all", forms: FORMS });
+  assert.equal(partial.ok, true);
+  assert.equal(partial.baseline, false);
+  assert.equal(partial.applied, false);
+});

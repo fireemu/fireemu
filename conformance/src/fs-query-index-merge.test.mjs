@@ -327,4 +327,10 @@ test("the preflight's index lists stop after MAX_LIST_PAGES pages each", async (
   assert.equal(composites.length, 2);
   assert.equal(overrides.length, 3);
   assert.equal(urls.length, 5);
+  // The field list already carries ?filter=, so a later page appends &pageToken=.
+  const fieldPages = urls.filter((u) => u.includes("/fields"));
+  assert.ok(
+    fieldPages.slice(1).every((u) => u.includes("&pageToken=n") && u.split("?").length === 2),
+  );
+  assert.ok(urls.filter((u) => u.includes("/indexes"))[1].includes("/indexes?pageToken=n"));
 });
