@@ -205,61 +205,67 @@ def combinatorial : List B := Id.run do
 
 /-! ## Scenario traces -/
 
+/-- A trace from a list of steps `(reading, wall instant, operation)`. -/
+def run (name : String) (init : Init) (wall : Bool) (steps : List (Int × Int × Op)) : B :=
+  steps.foldl (fun b (r, w, op) => b.step r w op) (B.start name init wall)
+
 def scenarios : List B := [
   -- The elapsed budget: one move across the whole i128 range uses all of it.
-  ((((((((B.start "budget/exhaust" (.new i128Min) false).step 0 0 (.advanceTo i128Max)).step 0 0 .tick
-    ).step 0 0 (.advance 0)).step 0 0 (.setAllowBackwards 0)).step 0 0 .tick
-    ).step 0 0 (.trySetAllowBackwards i128Min)).step 0 0 (.advanceTo (i128Min + 1))),
-  -- A following clock with almost no budget left: the drift saturates, a forward move is refused.
-  (((((((B.start "budget/drift-saturates" (.paused i128Min) false).step 0 0 (.advanceTo (i128Max - 1000))
-    ).step 0 0 .resume).step 50 0 .read).step 50 0 (.advance 60)).step 50 0 .sync
-    ).step 100 0 (.advance 0)),
-  ((((B.start "budget/forward-exact" (.new i128Min) false).step 0 0 (.advanceTo (i128Max - 1))
-    ).step 0 0 .tick).step 0 0 .tick),
+  run "budget/exhaust" (.new i128Min) false [(0, 0, .advanceTo i128Max), (0, 0, .tick),
+    (0, 0, .advance 0), (0, 0, .setAllowBackwards 0), (0, 0, .tick),
+    (0, 0, .trySetAllowBackwards i128Min), (0, 0, .advanceTo (i128Min + 1))],
+  -- A following clock with 1000 ns of budget left: the drift counts against a forward move,
+  -- a sync folds it in, and a drift past the budget saturates instead of being refused.
+  run "budget/drift-counts" (.paused i128Min) false [(0, 0, .advanceTo (i128Max - 1000)),
+    (0, 0, .setAllowBackwards (i128Max - 3000)), (0, 0, .resume), (600, 0, .read),
+    (600, 0, .advance 500), (600, 0, .advance 400), (600, 0, .sync), (600, 0, .advance 400),
+    (600, 0, .tick), (1600, 0, .read), (1600, 0, .sync), (1600, 0, .advance 0)],
+  run "budget/forward-exact" (.new i128Min) false [(0, 0, .advanceTo (i128Max - 1)), (0, 0, .tick),
+    (0, 0, .tick)],
   -- Finding: a read steps back, uncounted, once the drift overflows i128.
-  (((B.start "finding/i128-top-steps-back" (.following (i128Max - 10) 0) false).step 5 0 .read
-    ).step 20 0 .read),
-  (((((B.start "finding/i128-top-steps-back-then-sync" (.following (i128Max - 10) 0) false).step 5 0 .read
-    ).step 20 0 .sync).step 20 0 (.advance 0)).step 30 0 .read),
-  -- Finding: a read below the range minimum.
-  (((B.start "finding/read-below-range-min" (.following 10 0) false).step 10 0
-    (.restrictRange 15 100)).step i128Max 0 .read),
+  run "finding/i128-top-steps-back" (.following (i128Max - 10) 0) false [(5, 0, .read), (20, 0, .read)],
+  run "finding/i128-top-steps-back-then-sync" (.following (i128Max - 10) 0) false
+    [(5, 0, .read), (20, 0, .sync), (20, 0, .advance 0), (30, 0, .read)],
+  -- Finding: a read below the range minimum, and a freeze in that state, which is refused
+  -- because the instant it would publish is below the minimum.
+  run "finding/read-below-range-min" (.following 10 0) false
+    [(10, 0, .restrictRange 15 100), (i128Max, 0, .read)],
+  run "finding/read-below-range-min-then-freeze" (.following 10 0) false
+    [(10, 0, .restrictRange 15 100), (i128Max, 0, .freeze), (i128Max, 0, .sync)],
   -- Panics in unchecked i128 arithmetic.
-  ((B.start "panic/reading-minus-anchor" (.following 0 i128Min) false).step i128Max 0 .read),
-  (((B.start "panic/wall-anchor" (.following 0 i128Min) true).step (i128Min + 100) 0 .read
-    ).step (i128Min + 5) 7 (.resumeWall true)),
-  (((B.start "panic/publish-snapshot" (.following 0 0) false).step i128Max 0 .read).step (-10) 0 .sync),
+  run "panic/reading-minus-anchor" (.following 0 i128Min) false [(i128Max, 0, .read)],
+  run "panic/wall-anchor" (.following 0 i128Min) true
+    [(i128Min + 100, 0, .read), (i128Min + 5, 7, .resumeWall true)],
+  run "panic/publish-snapshot" (.following 0 0) false [(i128Max, 0, .read), (-10, 0, .sync)],
   -- Freeze and resume.
-  ((((((((B.start "mode/freeze-resume" (.following base 0) true).step 30 0 .read).step 30 0 .freeze
-    ).step 90 0 .read).step 90 0 .freeze).step 120 0 .resume).step 120 0 .resume).step 125 0 .read),
-  (((((B.start "mode/freeze-at-the-step-back" (.following base 0) false).step 30 0 .read
-    ).step 10 0 .freeze).step 40 0 .resume).step 45 0 .read),
-  (((((B.start "mode/no-source" (.new base) true).step 0 0 .resume).step 0 0 (.resumeAt base true)
-    ).step 0 base (.resumeWall true)).step 0 0 .freeze),
-  ((((B.start "mode/no-wall" (.following base 0) false).step 5 0 (.resumeWall false)
-    ).step 5 0 .freeze).step 9 0 (.resumeWall true)),
+  run "mode/freeze-resume" (.following base 0) true [(30, 0, .read), (30, 0, .freeze),
+    (90, 0, .read), (90, 0, .freeze), (120, 0, .resume), (120, 0, .resume), (125, 0, .read)],
+  run "mode/freeze-at-the-step-back" (.following base 0) false
+    [(30, 0, .read), (10, 0, .freeze), (40, 0, .resume), (45, 0, .read)],
+  run "mode/no-source" (.new base) true [(0, 0, .resume), (0, 0, .resumeAt base true),
+    (0, base, .resumeWall true), (0, 0, .freeze)],
+  run "mode/no-wall" (.following base 0) false
+    [(5, 0, .resumeWall false), (5, 0, .freeze), (9, 0, .resumeWall true)],
   -- Wall resumes: a clock already at the wall instant is accepted; a wall that stepped back
   -- needs allowBackwards, is counted, and the clock then follows the wall.
-  (((((B.start "wall/at-the-wall" (.following base 0) true).step 40 (base + 40) (.resumeWall false)
-    ).step 70 0 .read).step 70 (base + 70) (.resumeWall false)).step 80 0 .read),
-  ((((((B.start "wall/stepped-back" (.following base 0) true).step 40 0 .read
-    ).step 30 (base + 30) (.resumeWall false)).step 30 (base + 30) (.resumeWall true)
-    ).step 35 0 .read).step 36 0 .sync),
-  ((((B.start "wall/frozen-sync" (.paused base) true).step 500 (base + 9000) (.resumeWall false)
-    ).step 510 0 .read).step 400 (base + 10) (.resumeWall true)),
+  run "wall/at-the-wall" (.following base 0) true [(40, base + 40, .resumeWall false),
+    (70, 0, .read), (70, base + 70, .resumeWall false), (80, 0, .read)],
+  run "wall/stepped-back" (.following base 0) true [(40, 0, .read),
+    (30, base + 30, .resumeWall false), (30, base + 30, .resumeWall true), (35, 0, .read),
+    (36, 0, .sync)],
+  run "wall/frozen-sync" (.paused base) true [(500, base + 9000, .resumeWall false),
+    (510, 0, .read), (400, base + 10, .resumeWall true)],
   -- Ranges: nesting, empty intersection, and the edges of LogicalInstant.
-  ((((((B.start "range/nested" (.new 50) false).step 0 0 (.restrictRange 0 100)
-    ).step 0 0 (.restrictRange 40 200)).step 0 0 (.restrictRange 200 300)).step 0 0 (.advanceTo 101)
-    ).step 0 0 (.trySetAllowBackwards 39)),
-  (((((B.start "range/edges" (.new 0) false).step 0 0 (.restrictRange i128Min i128Max)
-    ).step 0 0 (.setAllowBackwards i128Min)).step 0 0 (.advance i128Max)).step 0 0 .tick),
-  ((((B.start "range/following-clamps" (.following 0 0) false).step 0 0 (.restrictRange 0 10)
-    ).step 25 0 .read).step 25 0 .sync),
+  run "range/nested" (.new 50) false [(0, 0, .restrictRange 0 100), (0, 0, .restrictRange 40 200),
+    (0, 0, .restrictRange 200 300), (0, 0, .advanceTo 101), (0, 0, .trySetAllowBackwards 39)],
+  run "range/edges" (.new 0) false [(0, 0, .restrictRange i128Min i128Max),
+    (0, 0, .setAllowBackwards i128Min), (0, 0, .advance i128Max), (0, 0, .tick)],
+  run "range/following-clamps" (.following 0 0) false
+    [(0, 0, .restrictRange 0 10), (25, 0, .read), (25, 0, .sync)],
   -- LogicalInstant edges without a range.
-  ((((B.start "edge/max" (.new i128Max) false).step 0 0 .tick).step 0 0 (.advance 0)
-    ).step 0 0 (.advance (-1))),
-  ((((B.start "edge/min" (.new i128Min) false).step 0 0 (.setAllowBackwards i128Min)
-    ).step 0 0 (.resumeAt i128Min false)).step 0 0 (.advanceTo i128Min))
+  run "edge/max" (.new i128Max) false [(0, 0, .tick), (0, 0, .advance 0), (0, 0, .advance (-1))],
+  run "edge/min" (.new i128Min) false [(0, 0, .setAllowBackwards i128Min),
+    (0, 0, .resumeAt i128Min false), (0, 0, .advanceTo i128Min)]
 ]
 
 /-! ## Pseudo-random traces -/

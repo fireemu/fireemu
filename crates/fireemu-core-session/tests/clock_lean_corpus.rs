@@ -433,8 +433,10 @@ fn golden_traces_cover_every_operation_result_and_finding() {
     }
     for name in [
         "budget/exhaust",
+        "budget/drift-counts",
         "finding/i128-top-steps-back",
         "finding/read-below-range-min",
+        "finding/read-below-range-min-then-freeze",
         "panic/reading-minus-anchor",
         "panic/wall-anchor",
         "panic/publish-snapshot",
