@@ -1,0 +1,9 @@
+name = "virtual-clock"
+defaultTargets = ["VirtualClock", "corpus"]
+
+[[lean_lib]]
+name = "VirtualClock"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
