@@ -47,6 +47,7 @@ assert(lint_conditional.empty?, "the txn04-replay contract step must be uncondit
 lockfile_steps = jobs.fetch("lint").fetch("steps").select { |step| step["run"].to_s.include?("actions-lock") }
 assert(lockfile_steps.map { |step| step["run"] } == ["ruby scripts/actions-lock-contract.test.rb", "gh extension install github/gh-actions-lock --pin v0.4.1\ngh actions-lock --verify\n"], "the lint job must test the lockfile contract and verify the lockfile with the pinned gh actions-lock")
 assert(lockfile_steps.none? { |step| step.key?("if") || step.key?("continue-on-error") }, "the workflow lockfile steps must be unconditional")
+assert(!jobs.fetch("lint").key?("continue-on-error"), "a failing lint step must fail the lint job")
 
 assert(trigger.key?("pull_request"), "CI must run on pull requests")
 assert(trigger.dig("push", "branches") == ["main"], "CI must run on pushes to main")
@@ -275,7 +276,7 @@ assert(
 )
 assert(release["env"].keys.sort == %w[CARGO_TERM_COLOR RUSTFLAGS SOURCE_DATE_EPOCH], "the release workflow's env is exactly the reproducibility inputs")
 every_use = release.fetch("jobs").values.flat_map { |definition| definition.fetch("steps", []).map { |step| step["uses"] }.compact }
-assert(every_use.group_by { |use| use.split("@").first }.values.all? { |uses| uses.uniq.length == 1 }, "an action is pinned to one commit across the release workflow")
+assert(every_use.group_by { |use| use.split("@").first.downcase }.values.all? { |uses| uses.uniq.length == 1 }, "an action is pinned to one commit across the release workflow")
 release.fetch("jobs").each do |job, definition|
   allowed = %w[needs if runs-on outputs steps strategy timeout-minutes permissions environment]
   allowed << "name" if job == "strict-production" && definition["name"] == 'strict-production (${{ matrix.group }})'

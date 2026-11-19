@@ -92,6 +92,38 @@ class ActionsLockContractTest < Minitest::Test
     refute_nil ActionsLockContract.problem(lock({ WORKFLOW => [] }, {}), WORKFLOW, uses)
   end
 
+  def test_only_the_owner_and_repository_fold_case
+    entry = { "commit" => "sha1-#{LOCKED}" }
+    # The ref and an action's path inside its repository are case-sensitive.
+    assert_nil ActionsLockContract.commit(lock({ WORKFLOW => ["owner/action@v1"] }, { "owner/action@v1" => entry }), WORKFLOW, "Owner/Action@V1")
+    assert_nil ActionsLockContract.commit(lock({ WORKFLOW => ["owner/repo/path@v1"] }, { "owner/repo/path@v1" => entry }), WORKFLOW, "Owner/Repo/Path@v1")
+    assert_equal LOCKED, ActionsLockContract.commit(lock({ WORKFLOW => ["owner/repo/Path/sub@v1"] }, { "owner/repo/Path/sub@v1" => entry }), WORKFLOW, "Owner/Repo/Path/sub@v1")
+  end
+
+  def test_a_container_image_is_not_an_action_reference
+    image = "docker://alpine@sha256:#{'d' * 64}"
+    locked = lock({ WORKFLOW => [image] }, { image => { "commit" => "sha1-#{LOCKED}" } })
+    assert_nil ActionsLockContract.commit(locked, WORKFLOW, image)
+    refute_nil ActionsLockContract.problem(locked, WORKFLOW, image)
+    refute_nil ActionsLockContract.problem(nil, WORKFLOW, "docker://alpine@#{SHA}")
+  end
+
+  def test_an_ambiguous_lockfile_is_refused
+    entry = "  'owner/action@v1':\n    commit: 'sha1-%s'\n"
+    head = "workflows:\n  '#{WORKFLOW}':\n    - 'owner/action@v1'\ndependencies:\n"
+    assert_equal LOCKED, ActionsLockContract.commit(ActionsLockContract.parse(head + format(entry, LOCKED)), WORKFLOW, "owner/action@v1")
+    [
+      head + format(entry, SHA) + format(entry, LOCKED),
+      head + format(entry, LOCKED) + "workflows: {}\n",
+      head + "  'owner/action@v1': { <<: { commit: 'sha1-#{LOCKED}' } }\n",
+      head + format(entry, LOCKED) + "---\n" + head + format(entry, SHA),
+      "--- !ruby/object:Object {}\n",
+      head + "  ? [owner, action]\n  : { commit: 'sha1-#{LOCKED}' }\n",
+    ].each do |source|
+      assert_raises(ActionsLockContract::Malformed, source) { ActionsLockContract.parse(source) }
+    end
+  end
+
   def test_only_a_sha1_commit_of_forty_hex_digits_counts
     ["sha1-#{LOCKED[0, 39]}", "sha1-#{LOCKED}0", "sha1-#{LOCKED.upcase}", LOCKED, "sha256-#{LOCKED}", nil, 7].each do |commit|
       locked = lock({ WORKFLOW => ["owner/action@v1"] }, { "owner/action@v1" => { "commit" => commit } })

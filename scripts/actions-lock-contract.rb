@@ -20,7 +20,8 @@ module ActionsLockContract
   LOCK_PATH = ".github/workflows/actions.lock"
   SHA = /\A[0-9a-f]{40}\z/.freeze
   COMMIT = /\Asha1-([0-9a-f]{40})\z/.freeze
-  REFERENCE = %r{\A([^\s@/]+/[^\s@]+)@([^\s@]+)\z}.freeze
+  # owner/repo, an optional path inside the repository, and a ref. A container image (`docker://...`) is not one.
+  REFERENCE = %r{\A([\w.-]+/[\w.-]+)((?:/[^\s@/]+)*)@([^\s@]+)\z}.freeze
 
   class Malformed < StandardError; end
 
@@ -29,6 +30,9 @@ module ActionsLockContract
   # The parsed lockfile, or nil when there is none.
   def parse(source)
     return nil if source.nil?
+    documents = Psych.parse_stream(source).children
+    raise Malformed, "the lockfile must be one YAML document" unless documents.length == 1
+    unambiguous!(documents.first.root)
     lock = YAML.safe_load(source, aliases: false)
     workflows = lock.is_a?(Hash) ? lock["workflows"] : nil
     dependencies = lock.is_a?(Hash) ? lock["dependencies"] : nil
@@ -39,15 +43,33 @@ module ActionsLockContract
     raise Malformed, "the lockfile is not plain YAML: #{error.message}"
   end
 
+  # A repeated key, a merge key or an alias would let two readers of the same file see different commits.
+  def unambiguous!(node)
+    case node
+    when Psych::Nodes::Mapping
+      keys = node.children.each_slice(2).map(&:first)
+      raise Malformed, "lockfile keys must be plain strings" unless keys.all? { |key| key.is_a?(Psych::Nodes::Scalar) }
+      names = keys.map(&:value)
+      raise Malformed, "the lockfile repeats a key" unless names.uniq.length == names.length
+      raise Malformed, "the lockfile must not use YAML merge keys" if names.include?("<<")
+      node.children.each_slice(2) { |_, value| unambiguous!(value) }
+    when Psych::Nodes::Sequence
+      node.children.each { |child| unambiguous!(child) }
+    when Psych::Nodes::Alias
+      raise Malformed, "the lockfile must not use YAML aliases"
+    end
+  end
+
   def read(root)
     path = File.join(root, LOCK_PATH)
     File.exist?(path) ? parse(File.read(path)) : nil
   end
 
-  # gh actions-lock writes the owner and repository in lower case and keeps the ref as written.
+  # gh actions-lock writes the owner and repository in lower case; a path inside the repository and
+  # the ref are case-sensitive and stay as written.
   def key(uses)
     match = REFERENCE.match(uses.to_s)
-    match && "#{match[1].downcase}@#{match[2]}"
+    match && "#{match[1].downcase}#{match[2]}@#{match[3]}"
   end
 
   def onboarded?(lock, workflow)
