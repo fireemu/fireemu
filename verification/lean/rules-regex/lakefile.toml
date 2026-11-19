@@ -1,0 +1,9 @@
+name = "rules-regex"
+defaultTargets = ["RulesRegex", "corpus"]
+
+[[lean_lib]]
+name = "RulesRegex"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

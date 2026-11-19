@@ -1,0 +1,9 @@
+name = "rfc3339-time"
+defaultTargets = ["Rfc3339Time", "corpus"]
+
+[[lean_lib]]
+name = "Rfc3339Time"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

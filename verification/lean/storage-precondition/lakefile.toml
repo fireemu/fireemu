@@ -1,0 +1,9 @@
+name = "storage-precondition"
+defaultTargets = ["StoragePrecondition", "corpus"]
+
+[[lean_lib]]
+name = "StoragePrecondition"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
