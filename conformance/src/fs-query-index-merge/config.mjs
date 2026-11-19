@@ -1,10 +1,12 @@
 // The configuration changes of an index-merge observation send: the five entries that
-// fs-query-index-merge.indexes.json adds to fs-query-index.indexes.json, created before the
-// recording and removed after it, in the sandbox `(default)` database of fireemu-oracle-query.
+// fs-query-index-merge.indexes.json adds to fs-query-index.indexes.json (the first observation),
+// and the three group-scope overrides fs-query-index-merge2.indexes.json adds to that file (the
+// second observation, set `obs2a`), created before the recording and removed after it, in the
+// sandbox `(default)` database of fireemu-oracle-query.
 //
-//   node src/fs-query-index-merge/config.mjs status --set <f2|f1|all> --out <new dir> [--journal <file>]...
-//   node src/fs-query-index-merge/config.mjs apply  --set <f2|f1|all> --out <new dir>
-//   node src/fs-query-index-merge/config.mjs remove --set <f2|f1|all> --out <new dir> [--journal <file>]...
+//   node src/fs-query-index-merge/config.mjs status --set <set> --out <new dir> [--journal <file>]...
+//   node src/fs-query-index-merge/config.mjs apply  --set <set> --out <new dir>
+//   node src/fs-query-index-merge/config.mjs remove --set <set> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs may-retry --set <s> --first <remove result.json> --a2 <status result.json>...
 //
 // `status` is read-only: which entries of the set exist (composites by the one-page, database-wide
@@ -53,7 +55,11 @@ export const SEND_FLAG_VALUE = "index-merge-obs-launch-v3";
 const ASC = { fieldPath: "a", order: "ASCENDING" };
 const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
 
-/** The five entries, as the lane index file states them (the test derives them from the file). */
+/**
+ * The entries, as the lane index files state them (the test derives them from the files): E1 to
+ * E5 are fs-query-index-merge.indexes.json's, E6 to E8 the overrides on collection groups igc and
+ * iga that fs-query-index-merge2.indexes.json adds.
+ */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
   E2: { kind: "composite", group: "imc", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -65,13 +71,36 @@ export const ENTRIES = {
   },
   E4: { kind: "override", group: "imx", field: "a", indexes: [] },
   E5: { kind: "override", group: "imx", field: "tags", indexes: [] },
+  E6: {
+    kind: "override",
+    group: "igc",
+    field: "a",
+    indexes: [{ queryScope: "COLLECTION_GROUP", order: "ASCENDING" }],
+  },
+  E7: {
+    kind: "override",
+    group: "iga",
+    field: "a",
+    indexes: [{ queryScope: "COLLECTION_GROUP", order: "DESCENDING" }],
+  },
+  E8: {
+    kind: "override",
+    group: "iga",
+    field: "tags",
+    indexes: [{ queryScope: "COLLECTION_GROUP", arrayConfig: "CONTAINS" }],
+  },
 };
 
-/** F2 alone needs E3; F1 needs the composites and the exemptions. */
+/**
+ * F2 alone needs E3; F1 needs the composites and the exemptions; `all` is the first observation.
+ * `g` is the group-scope overrides alone; `obs2a` the second observation: all of the first and `g`.
+ */
 export const SETS = {
   f2: ["E3"],
   f1: ["E1", "E2", "E4", "E5"],
   all: ["E3", "E1", "E2", "E4", "E5"],
+  g: ["E6", "E7", "E8"],
+  obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
 };
 
 export const POLL_ROUNDS = 40;
@@ -757,7 +786,8 @@ export function parseArgs(argv) {
     else if (key === "--a2" && command === "may-retry") args.a2.push(value);
     else throw new Error(`unknown argument ${key}`);
   }
-  if (!Object.hasOwn(SETS, args.set ?? "")) throw new Error("--set must be f2, f1 or all");
+  if (!Object.hasOwn(SETS, args.set ?? ""))
+    throw new Error(`--set must be one of ${Object.keys(SETS).join(", ")}`);
   if (command === "may-retry") {
     if (!args.first || args.out || args.journals.length)
       throw new Error("may-retry takes --set, --first and --a2 only");

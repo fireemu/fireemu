@@ -240,11 +240,17 @@ async function appliedFake(options = {}) {
   return { fake, result };
 }
 
-test("the entries are exactly what the merge index file adds to the base file", () => {
+test("the entries are exactly what the merge index files add to the base file", () => {
   const base = readJson("fs-query-index.indexes.json");
   const merge = readJson("fs-query-index-merge.indexes.json");
+  const merge2 = readJson("fs-query-index-merge2.indexes.json");
   const added = merge.indexes.slice(base.indexes.length);
-  const overrides = merge.fieldOverrides.slice(base.fieldOverrides.length);
+  // E1 to E5 are the first observation's (fs-query-index-merge.indexes.json); E6 to E8 the
+  // group-scope overrides the second observation's file adds to it.
+  assert.deepEqual(merge2.indexes, merge.indexes);
+  const overrides = merge2.fieldOverrides.slice(base.fieldOverrides.length);
+  assert.deepEqual(merge.fieldOverrides.slice(base.fieldOverrides.length), overrides.slice(0, 3));
+  assert.deepEqual(Object.keys(ENTRIES), ["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"]);
   const composites = Object.values(ENTRIES).filter((e) => e.kind === "composite");
   assert.deepEqual(
     composites.map((e) => ({
@@ -263,6 +269,8 @@ test("the entries are exactly what the merge index file adds to the base file", 
     f2: ["E3"],
     f1: ["E1", "E2", "E4", "E5"],
     all: ["E3", "E1", "E2", "E4", "E5"],
+    g: ["E6", "E7", "E8"],
+    obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
   });
 });
 
@@ -350,11 +358,143 @@ test("the request caps of each subcommand and set", () => {
     Object.fromEntries(
       ["status", "apply", "remove"].map((c) => [
         c,
-        ["f2", "f1", "all"].map((s) => requestCap(c, s)),
+        ["f2", "f1", "all", "g", "obs2a"].map((s) => requestCap(c, s)),
       ]),
     ),
-    { status: [6, 17, 18], apply: [43, 188, 231], remove: [43, 108, 151] },
+    {
+      status: [6, 17, 18, 8, 21],
+      apply: [43, 188, 231, 129, 360],
+      remove: [43, 108, 151, 129, 280],
+    },
   );
+});
+
+test("a group-scope override is created and read in the recorded shape", () => {
+  const g = (group) => `${API}/${DB}/collectionGroups/${group}`;
+  assert.deepEqual(createRequest(ENTRIES.E6), {
+    method: "PATCH",
+    url: `${g("igc")}/fields/a?updateMask=indexConfig`,
+    body: {
+      indexConfig: {
+        indexes: [
+          { queryScope: "COLLECTION_GROUP", fields: [{ fieldPath: "a", order: "ASCENDING" }] },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(createRequest(ENTRIES.E7).body.indexConfig.indexes, [
+    { queryScope: "COLLECTION_GROUP", fields: [{ fieldPath: "a", order: "DESCENDING" }] },
+  ]);
+  assert.deepEqual(createRequest(ENTRIES.E8), {
+    method: "PATCH",
+    url: `${g("iga")}/fields/tags?updateMask=indexConfig`,
+    body: {
+      indexConfig: {
+        indexes: [
+          {
+            queryScope: "COLLECTION_GROUP",
+            fields: [{ fieldPath: "tags", arrayConfig: "CONTAINS" }],
+          },
+        ],
+      },
+    },
+  });
+  // The read: fs-config-lifecycle-production.json records a group-only override as
+  // {indexConfig: {ancestorField, indexes: [{fields, queryScope: COLLECTION_GROUP, state}]}, name}.
+  const name = (group, field) => `${DB_NUMBER}/collectionGroups/${group}/fields/${field}`;
+  const read = (entry, json) => entryState(entry, { status: 200, json }, FORMS);
+  const groupMode = (mode) => ({ queryScope: "COLLECTION_GROUP", ...mode });
+  assert.deepEqual(
+    read(ENTRIES.E6, overrideJson(name("igc", "a"), "a", [groupMode({ order: "ASCENDING" })])),
+    { state: "present", name: name("igc", "a"), ready: true },
+  );
+  assert.deepEqual(
+    read(
+      ENTRIES.E8,
+      overrideJson(name("iga", "tags"), "tags", [groupMode({ arrayConfig: "CONTAINS" })]),
+    ),
+    { state: "present", name: name("iga", "tags"), ready: true },
+  );
+  assert.deepEqual(read(ENTRIES.E7, inherited(name("iga", "a"), "a")), { state: "absent" });
+  // The same mode at collection scope, the other direction, or an extra mode is not the entry.
+  for (const modes of [
+    [{ queryScope: "COLLECTION", order: "ASCENDING" }],
+    [groupMode({ order: "DESCENDING" })],
+    [groupMode({ order: "ASCENDING" }), { queryScope: "COLLECTION", order: "ASCENDING" }],
+  ])
+    assert.equal(read(ENTRIES.E6, overrideJson(name("igc", "a"), "a", modes)).state, "unexpected");
+  // The field of another group is not the entry's field.
+  assert.equal(
+    read(ENTRIES.E6, overrideJson(name("iga", "a"), "a", [groupMode({ order: "ASCENDING" })]))
+      .state,
+    "unexpected",
+  );
+});
+
+test("the obs2a cycle creates, reads and removes all eight entries", async () => {
+  const fake = fakeFirestore({ opRounds: 2, pageSize: 13 });
+  const applied = await apply({
+    session: session(fake, requestCap("apply", "obs2a")),
+    set: "obs2a",
+    forms: FORMS,
+    sleep: noSleep,
+  });
+  assert.equal(applied.ok, true);
+  for (const id of SETS.obs2a) assert.equal(applied.entries[id].outcome, "created", id);
+  assert.deepEqual(
+    writesOf(fake).map((r) => `${r.method} ${r.url.split("/collectionGroups/")[1]}`),
+    [
+      "PATCH ima/fields/a?updateMask=indexConfig",
+      "POST imx/indexes",
+      "POST imc/indexes",
+      "PATCH imx/fields/a?updateMask=indexConfig",
+      "PATCH imx/fields/tags?updateMask=indexConfig",
+      "PATCH igc/fields/a?updateMask=indexConfig",
+      "PATCH iga/fields/a?updateMask=indexConfig",
+      "PATCH iga/fields/tags?updateMask=indexConfig",
+    ],
+  );
+  assert.ok(applied.sent <= requestCap("apply", "obs2a"));
+  const between = await status({
+    session: session(fake, requestCap("status", "obs2a")),
+    set: "obs2a",
+    forms: FORMS,
+  });
+  assert.equal(between.applied, true);
+  assert.equal(between.baseline, false);
+  fake.requests.length = 0;
+  const removed = await remove({
+    session: session(fake, requestCap("remove", "obs2a")),
+    set: "obs2a",
+    forms: FORMS,
+    sleep: noSleep,
+    applied: fromJournals([`${JSON.stringify({ result: { command: "apply", ...applied } })}\n`])
+      .applied,
+  });
+  assert.equal(removed.ok, true);
+  for (const id of SETS.obs2a) assert.equal(removed.entries[id].outcome, "closed", id);
+  assert.deepEqual(
+    writesOf(fake).map((r) => [r.method, r.url.split("/collectionGroups/")[1], r.body]),
+    [
+      ["PATCH", "ima/fields/a?updateMask=indexConfig", {}],
+      ["DELETE", "imx/indexes/CICAgimx", undefined],
+      ["DELETE", "imc/indexes/CICAgimc", undefined],
+      ["PATCH", "imx/fields/a?updateMask=indexConfig", {}],
+      ["PATCH", "imx/fields/tags?updateMask=indexConfig", {}],
+      ["PATCH", "igc/fields/a?updateMask=indexConfig", {}],
+      ["PATCH", "iga/fields/a?updateMask=indexConfig", {}],
+      ["PATCH", "iga/fields/tags?updateMask=indexConfig", {}],
+    ],
+  );
+  assert.ok(removed.sent <= requestCap("remove", "obs2a"));
+  const after = await status({
+    session: session(fake, requestCap("status", "obs2a")),
+    set: "obs2a",
+    forms: FORMS,
+  });
+  assert.equal(after.baseline, true);
+  // The other groups' 24 composites were never touched.
+  assert.equal(fake.state.others.length, BASE_INDEXES.length);
 });
 
 test("apply creates the five entries, polls their operations and reads them back", async () => {
