@@ -41,6 +41,21 @@ export const LANES = {
     harness: "src/fs-query-index",
     sources: ["src/fs-query-index", "src/fs-list"],
   },
+  // The index-merge observation (shapes F1 to F3 of the Lean index-merge model): the same
+  // request layer and `(default)` database as FS-QUERY-INDEX, with its own corpus, fixture,
+  // ledger task and index file. The index file is fs-query-index.indexes.json plus entries on
+  // collection groups only this corpus uses, so the harness digest the FS-QUERY-INDEX and
+  // FS-DATA-WRITE-LIST rows were recorded with (it reads their index file) stays theirs.
+  "fs-query-index-merge": {
+    id: "fs-query-index-merge",
+    taskId: "FS-QUERY-INDEX-MERGE",
+    corpus: "../fs-query-index-merge/corpus.mjs",
+    fixture: "fs-query-index-merge-production.json",
+    indexes: "fs-query-index-merge.indexes.json",
+    localConfig: "fs-query-index-merge.fireemu.json",
+    harness: "src/fs-query-index",
+    sources: ["src/fs-query-index", "src/fs-query-index-merge"],
+  },
   // FS-ENT-ORACLE O-1 (owner ledger 1468 Q1): pipeline semantics in the named Enterprise
   // database `entpipe1`, which this campaign creates and deletes in its own packet steps. No
   // index file: Enterprise runs pipelines without indexes, and the lane never deploys any. The
