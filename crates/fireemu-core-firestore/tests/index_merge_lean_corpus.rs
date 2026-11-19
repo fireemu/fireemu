@@ -622,10 +622,11 @@ fn composite_serves_alone(
 /// The declarative merge condition (`IM.MergeSpec`): at least two wanted fields, no explicit
 /// order on an equality field, and members covering every wanted field, where a member is a
 /// configured composite that on its own serves some of the equality filters with the same
-/// order (and, when it carries the array field after them and nothing but `__name__` is
-/// ordered, ascending, the array filter too: production F1), the enabled automatic index of an equality field in the requested `__name__`
-/// direction (nothing but `__name__` ordered), or the array field's enabled contains index
-/// (nothing but `__name__` ordered, either direction: production F3).
+/// order (and, at collection scope, when it carries the array field after them and nothing but
+/// `__name__` is ordered, ascending, the array filter too: production F1), the enabled
+/// automatic index of an equality field in the requested `__name__` direction (nothing but
+/// `__name__` ordered), or the array field's enabled contains index (nothing but `__name__`
+/// ordered; descending only at collection scope: production F3).
 fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     let q = shape_query(s, &s.eq, s.contains);
     let wanted = s.eq.len() + usize::from(s.contains);
@@ -650,6 +651,7 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
                 covered.extend(subset.iter().copied());
             }
             if s.contains
+                && !s.group
                 && only_name_ordered(&q)
                 && name_direction(&q) == Direction::Ascending
                 && composite_serves_alone(s, member, &subset, true)
@@ -670,6 +672,7 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
             }
         }
         if s.contains
+            && (nm == IndexFieldMode::Ascending || !s.group)
             && set
                 .single_field_modes(&coll("qx"), &fp("tags"))
                 .contains(&(group_scope, IndexFieldMode::Contains))
@@ -717,6 +720,7 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
     // array field follows them it serves the array filter too.
     if set.composites().contains(member) && !leading.is_empty() {
         let carries = s.contains
+            && !s.group
             && only_name_ordered(&q)
             && name_direction(&q) == Direction::Ascending
             && member
@@ -754,6 +758,7 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
     let name = field.path.canonical();
     if field.mode == IndexFieldMode::Contains {
         assert!(s.contains && name == "tags");
+        assert!(nm == IndexFieldMode::Ascending || !s.group, "{member:?}");
     } else {
         assert_eq!(field.mode, nm, "{member:?}");
         assert!(s.eq.contains(&name.as_str()), "{member:?}");
@@ -1167,4 +1172,254 @@ fn corpus_names_sort_like_field_paths() {
     paths.sort();
     let sorted: Vec<String> = paths.iter().map(FieldPath::canonical).collect();
     assert_eq!(sorted, names);
+}
+
+// ---- Ruling 9: coverage by filter kind, and the recorded boundaries of stage B -------------
+
+fn qx_query(filters: Vec<FilterExpr>, orders: &[(FieldPath, Direction)], group: bool) -> Query {
+    build_query("qx", group, filters, orders)
+}
+
+/// `tags == [1]`: an equality on the array field itself.
+fn eq_tags_array() -> FilterExpr {
+    FilterExpr::Field {
+        field: fp("tags"),
+        op: FieldOp::Equal,
+        value: Value::Array(vec![Value::Integer(1)]),
+    }
+}
+
+fn modes_only(set: &mut IndexSet, field: &str, modes: &[IndexFieldMode], scope: IndexQueryScope) {
+    set.set_single_field_indexes(
+        &coll("qx"),
+        &fp(field),
+        modes.iter().map(|m| (scope, *m)).collect(),
+    );
+}
+
+/// An array-contains member covers the array filter only, never an equality on the same path
+/// (Codex stage-B review, Must 4): `tags == [1] AND tags array-contains 1` needs an ordered
+/// member for `tags` too, in either `__name__` direction and through a composite as well.
+#[test]
+fn an_array_member_never_covers_an_equality_on_the_same_path() {
+    let c = IndexQueryScope::Collection;
+    let filters = || {
+        vec![
+            filter("eq", "a", "qx"),
+            eq_tags_array(),
+            filter("contains", "tags", "qx"),
+        ]
+    };
+    for (direction, a_mode) in [
+        (Direction::Descending, IndexFieldMode::Descending),
+        (Direction::Ascending, IndexFieldMode::Ascending),
+    ] {
+        let mut set = IndexSet::default();
+        modes_only(&mut set, "a", &[a_mode], c);
+        modes_only(&mut set, "tags", &[IndexFieldMode::Contains], c);
+        let q = qx_query(filters(), &[(FieldPath::document_name(), direction)], false);
+        assert!(
+            matches!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MissingRequired { .. }
+            ),
+            "{direction:?}"
+        );
+        // With the ordered mode of `tags` in that direction, the equality is covered.
+        modes_only(&mut set, "tags", &[IndexFieldMode::Contains, a_mode], c);
+        assert!(
+            matches!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MergeIndexes { .. }
+            ),
+            "{direction:?}"
+        );
+    }
+    // The composite carrying the array field covers `a` and the array filter, not `tags ==`.
+    let mut set = IndexSet::default();
+    modes_only(&mut set, "a", &[], c);
+    modes_only(&mut set, "tags", &[], c);
+    set.add_composite(parse_index("qx C a:asc,tags:contains"));
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            eq_tags_array(),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        false,
+    );
+    assert!(matches!(
+        decide(&q, &set, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+}
+
+/// The single-equality refusal (c) is exactly the recorded shape. Every neighbour keeps its
+/// pre-stage-B answer and has no production verdict (unrecorded): collection-group scope, an
+/// order naming the equality field, and Enterprise.
+#[test]
+fn the_single_equality_refusal_keeps_every_unrecorded_neighbour() {
+    let name_desc = [(FieldPath::document_name(), Direction::Descending)];
+    // Collection-group scope with only the group-scoped ascending mode.
+    let mut group = IndexSet::default();
+    modes_only(
+        &mut group,
+        "a",
+        &[IndexFieldMode::Ascending],
+        IndexQueryScope::CollectionGroup,
+    );
+    let q = qx_query(vec![filter("eq", "a", "qx")], &name_desc, true);
+    assert_eq!(
+        decide(&q, &group, &standard()),
+        IndexDecision::UseIndex {
+            index: parse_index("qx G a:asc,__name__:desc")
+        }
+    );
+    let mut asc_only = IndexSet::default();
+    modes_only(
+        &mut asc_only,
+        "a",
+        &[IndexFieldMode::Ascending],
+        IndexQueryScope::Collection,
+    );
+    // `ORDER BY a DESC` and `ORDER BY a ASC, __name__ DESC` name the equality field.
+    for orders in [
+        vec![(fp("a"), Direction::Descending)],
+        vec![
+            (fp("a"), Direction::Ascending),
+            (FieldPath::document_name(), Direction::Descending),
+        ],
+    ] {
+        let q = qx_query(vec![filter("eq", "a", "qx")], &orders, false);
+        assert_eq!(
+            decide(&q, &asc_only, &standard()),
+            IndexDecision::UseIndex {
+                index: parse_index("qx C a:asc,__name__:desc")
+            },
+            "{orders:?}"
+        );
+    }
+    // Enterprise keeps the automatic index.
+    let q = qx_query(vec![filter("eq", "a", "qx")], &name_desc, false);
+    assert_eq!(
+        decide(&q, &asc_only, &context("production", "enterprise")),
+        IndexDecision::UseIndex {
+            index: parse_index("qx C a:asc,__name__:desc")
+        }
+    );
+}
+
+/// The merges (a) and (b) are collection-scope rules: at collection-group scope both keep the
+/// pre-stage-B refusal. (a) is for a plain array-contains only. Any number of equalities may
+/// join. An ascending merge of automatic members keeps its pre-stage-B member order, and so
+/// does a merge the automatic members already served (the non-exempt composite, imc).
+#[test]
+fn the_merges_keep_their_recorded_boundaries_and_member_order() {
+    let name_desc = [(FieldPath::document_name(), Direction::Descending)];
+    let g = IndexQueryScope::CollectionGroup;
+    // (a) at collection-group scope: refused.
+    let mut group = IndexSet::default();
+    modes_only(&mut group, "a", &[IndexFieldMode::Descending], g);
+    modes_only(&mut group, "tags", &[IndexFieldMode::Contains], g);
+    let q = qx_query(
+        vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")],
+        &name_desc,
+        true,
+    );
+    assert!(matches!(
+        decide(&q, &group, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // (b) at collection-group scope: refused.
+    let mut group_f1 = IndexSet::default();
+    modes_only(&mut group_f1, "a", &[], g);
+    modes_only(&mut group_f1, "tags", &[], g);
+    let mut composite = parse_index("qx G a:asc,tags:contains");
+    composite.query_scope = g;
+    group_f1.add_composite(composite);
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        true,
+    );
+    assert!(matches!(
+        decide(&q, &group_f1, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // (a) with array-contains-any: refused, as before.
+    let any = FilterExpr::Field {
+        field: fp("tags"),
+        op: FieldOp::ArrayContainsAny,
+        value: Value::Array(vec![Value::Integer(1)]),
+    };
+    let q = qx_query(vec![filter("eq", "a", "qx"), any], &name_desc, false);
+    assert!(matches!(
+        decide(&q, &IndexSet::default(), &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // (a) with three equalities: served, the contains member first.
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("eq", "c", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &name_desc,
+        false,
+    );
+    assert_eq!(
+        decide(&q, &IndexSet::default(), &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C tags:contains,__name__:desc"),
+                parse_index("qx C a:desc,__name__:desc"),
+                parse_index("qx C b:desc,__name__:desc"),
+                parse_index("qx C c:desc,__name__:desc"),
+            ]
+        }
+    );
+    // Ascending merge of automatic members: the equality members first, as before stage B.
+    let q = qx_query(
+        vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")],
+        &[],
+        false,
+    );
+    assert_eq!(
+        decide(&q, &IndexSet::default(), &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C a:asc,__name__:asc"),
+                parse_index("qx C tags:contains,__name__:asc"),
+            ]
+        }
+    );
+    // The non-exempt composite (imc): the automatic members serve, as before stage B.
+    let mut imc = IndexSet::default();
+    imc.add_composite(parse_index("qx C a:asc,tags:contains"));
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        false,
+    );
+    assert_eq!(
+        decide(&q, &imc, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C a:asc,__name__:asc"),
+                parse_index("qx C b:asc,__name__:asc"),
+                parse_index("qx C tags:contains,__name__:asc"),
+            ]
+        }
+    );
 }

@@ -25,17 +25,23 @@ comparison already accepts that divergence, decision S4).
 
 - `IndexMerge/Model.lean`: the Rust functions, one definition each, with field paths as numbers
   (`NAME` is `__name__`).
-- `IndexMerge/Spec.lean`: `MergeSpec`, the declarative condition (at least two wanted fields, no
-  order on an equality field, every wanted field covered by some `Member`), the broader
+- `IndexMerge/Spec.lean`: `MergeSpec`, the declarative condition (at least two wanted filters,
+  no order on an equality field, every wanted filter covered by some `Member` of the phase that
+  applies, by kind: an equality by an ordered field, the array filter by a contains field), the
+  broader
   `BroadSpec`, and the invariant `WF` that every requirement built from a query satisfies.
-- `IndexMerge/Lemmas.lean`, `IndexMerge/Theorems.lean`: `merged_sound`, `merged_iff_spec`,
-  `merged_none_iff`, `merged_refuses_few`, `merged_refuses_eq_ordered`, `merged_mono`,
+- `IndexMerge/Lemmas.lean`, `IndexMerge/Theorems.lean`: `phase_sound`, `phase_iff`,
+  `member_recorded`, `merged_sound`, `merged_iff_spec`, `merged_kinds`, `merged_none_iff`, `merged_refuses_few`, `merged_refuses_eq_ordered`, `merged_mono`,
   `decide_mono`, `automatic_mono`, `merged_perm`, `decide_served_perm`, `reqOf_wf`,
   `not_exempt_of_hasMode` and the greedy-cover lemmas.
 - `IndexMerge/Counterexamples.lean`: `spec_implies_broad`, the recorded shapes
   `merge_composite_with_array_field` (F1), `opposite_direction_automatic_refused` (F2) and
   `merge_contains_with_descending_name` (F3), the unrecorded refusal
-  `composite_with_array_field_descending_name_refused`, the counterexample
+  `composite_with_array_field_descending_name_refused`, the unrecorded boundaries
+  `composite_with_array_field_group_refused`, `contains_descending_name_group_refused`,
+  `contains_any_descending_name_refused` and `single_equality_neighbours_served`, the kind
+  refusals `array_member_never_covers_equality` and `carried_array_field_never_covers_equality`,
+  the counterexample
   `broad_mirror_direction_automatic` with `broad_not_complete`, `members_depend_on_order`,
   `one_member_merge` and `repeated_single_equality_refused`.
 - `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
@@ -52,18 +58,25 @@ comparison already accepts that divergence, decision S4).
 
 ## What the proofs say
 
-The algorithm collects candidates (each composite's maximal ordered equality prefix, followed by
-the array field when the composite carries it right after the prefix and nothing but `__name__`
-is ordered, ascending, when the composite serves
-those fields with the query's order; then, when nothing but `__name__` is ordered, the array
-field's contains index and the enabled automatic indexes of the equality fields, all in the
-requested `__name__` direction), sorts the composites by size and takes the candidates greedily. `merged_iff_spec`
-proves that this merges exactly when `MergeSpec` holds: the maximal prefix is the only prefix a
+The algorithm makes up to two attempts: first with the rules as before the index-merge
+observation, then, at collection scope only, with the rules production was recorded adding.
+Each attempt collects candidates (each composite's maximal ordered equality prefix, when the
+composite serves those fields with the query's order, followed in the recorded attempt by the
+array field when the composite carries it right after the prefix and nothing but `__name__` is
+ordered, ascending; then, when nothing but `__name__` is ordered, the enabled automatic indexes
+of the equality fields and the array field's contains index in the requested `__name__`
+direction: ascending after the equality members, and in the recorded attempt for a plain
+array-contains also descending, before them), sorts the composites by size and takes the
+candidates greedily. What is covered is a filter by kind: an equality on a field, or the array
+filter. `merged_iff_spec` proves that this merges exactly when `MergeSpec` holds: the maximal prefix is the only prefix a
 serving composite can have (an order never names an equality field), and the greedy loop covers
-the union of all candidates whatever their order. The members it returns are members in the
-sense of the specification (`merged_sound`), and more indexes never refuse a served query
+the union of all candidates whatever their order, and the recorded attempt has every member of
+the other (`member_recorded`). The members it returns are members in the sense of the
+specification (`merged_sound`), they cover equalities by ordered fields and the array filter by
+a contains field (`merged_kinds`), and more indexes never refuse a served query
 (`decide_mono`, `automatic_mono`, including production's rule that an equality ordered by
-`__name__` descending needs the field's descending index).
+`__name__` descending needs the field's descending index; that rule applies to one equality,
+with no order on it, on Standard at collection scope).
 
 ## Findings
 
@@ -82,11 +95,25 @@ single-index rule; the model now follows production on each:
 2. F2: with only `a`'s ascending index enabled, production refuses `a == x ORDER BY __name__
    DESC` and `a == x AND b == y ORDER BY __name__ DESC`; under production's rules the
    single-index rule refuses the first too, so the second is no longer a counterexample
-   (`opposite_direction_automatic_refused`). The emulator policy keeps serving the first from
-   the ascending index.
-3. F3: the contains index joins a merge in either `__name__` direction, listed before the
-   equality members; production's plan is `(tags ARRAY_CONTAINS, __name__ DESC)`,
-   `(a DESC, __name__ DESC)` (`merge_contains_with_descending_name`).
+   (`opposite_direction_automatic_refused`). The refusal applies to one equality with no order
+   on it, on Standard at collection scope; the emulator policy, Enterprise and collection-group
+   scope keep serving the first from the ascending index (`single_equality_neighbours_served`,
+   unrecorded).
+3. F3: for a plain array-contains the contains index joins a merge for a descending `__name__`
+   too, listed before the equality members; production's plan is
+   `(tags ARRAY_CONTAINS, __name__ DESC)`, `(a DESC, __name__ DESC)`
+   (`merge_contains_with_descending_name`).
+
+The rules F1 and F3 added apply only where the merge was refused without them and only at
+collection scope, so every answer given before keeps its members and their order. Their
+boundaries have no recorded verdict: collection-group scope refuses both shapes
+(`composite_with_array_field_group_refused`, `contains_descending_name_group_refused`), and
+array-contains-any refuses F3 (`contains_any_descending_name_refused`).
+
+Coverage is by filter kind: a contains member covers the array filter only, never an equality
+on the same path, so `tags == [z] AND tags array-contains z` needs an ordered member for `tags`
+(`array_member_never_covers_equality`, `carried_array_field_never_covers_equality`,
+`merged_kinds`). The model used to let the contains member cover both.
 
 Open findings, without a recorded production verdict, each pinned by a Rust test:
 

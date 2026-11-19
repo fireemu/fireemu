@@ -5,31 +5,39 @@ import IndexMerge.Model
 
 `MergeSpec r s coll group` says when production's rules serve requirement `r` by merging
 indexes, as a statement about the existence of members, without candidate lists, ordering or a
-greedy choice: there are at least two wanted fields (the equality fields and the array field),
-no explicit order names an equality field, and every wanted field is covered by some member.
+greedy choice: there are at least two wanted filters, no explicit order names an equality
+field, and every wanted filter is covered by some member of the phase that applies
+(`Covers r s coll group (!group)`). A wanted filter is an equality on a field, `(.eq, f)`, or
+the array filter, `(.contains, c)`; a member covers equalities by ordered index fields and the
+array filter by a contains index field, never one for the other (`tags == [z] AND tags
+array-contains z` needs an ordered member for `tags`).
 
-A member (`Member`) is one of what production merges (recorded in
-`conformance/fs-query-index-merge-production.json` and `conformance/fs-query-index-production.json`):
+A member (`Member r s coll group recorded`) is one of:
 
 - a configured composite that, on its own, serves the requirement made of some of the equality
-  fields and the same order (`compositeServes`, the single-index rule), or, when nothing but
-  `__name__` is ordered, ascending (`carryOk`), of some of the equality fields followed by the
-  array field (production merges `(a ASC, tags CONTAINS)` with `(b ASC)` for `a == x AND
-  b == y AND tags array-contains z`; other orders have no recorded verdict and keep the
-  equality-only member);
+  fields and the same order (`compositeServes`, the single-index rule), covering those
+  equalities; in the recorded phase, with nothing but `__name__` ordered, ascending
+  (`carryOk`), also of some equality fields followed by the array field, covering the array
+  filter too (production merges `(a ASC, tags CONTAINS)` with `(b ASC)` for `a == x AND b == y
+  AND tags array-contains z`);
 - the automatic index `(f m, __name__ m)` of an equality field `f`, when nothing but `__name__`
   is ordered and that index is enabled for the query's scope, `m` being the requested
   `__name__` direction;
 - the automatic contains index `(c CONTAINS, __name__ m)` of the array field, when nothing but
-  `__name__` is ordered and the index is enabled, `m` being the requested `__name__` direction
+  `__name__` is ordered and the index is enabled, for an ascending `__name__`, and in the
+  recorded phase also for a descending one when the array filter is a plain array-contains
   (production merges `(tags CONTAINS, __name__ DESC)` with `(a DESC, __name__ DESC)`).
 
-`BroadSpec` is the wider reading of the plan ("each member serves a subset of the wanted fields
-followed by the same order suffix") with the planner's own single-index rules under
-production's rules: a member is any index that `automaticIndexFor` (with `production_rules`)
-or `compositeServes` accepts for a sub-requirement of some equality fields and, optionally, the
-array field. `Counterexamples.lean` proves `MergeSpec → BroadSpec` and shows that the converse
-fails.
+The recorded phase (`recorded = true`) applies at collection scope only; its members include
+those of the other phase (`member_recorded`), so at collection scope `Covers` of the recorded
+phase is the condition, and at collection-group scope that of the other phase.
+
+`BroadSpec` is the wider reading of the plan ("each member serves a subset of the wanted
+filters followed by the same order suffix") with the planner's own single-index rules under
+production's rules on Standard: a member is any index that `automaticIndexFor` or
+`compositeServes` accepts for a sub-requirement of some distinct equality fields and,
+optionally, the array field. `Counterexamples.lean` proves `MergeSpec → BroadSpec` and shows
+that the converse fails.
 -/
 
 namespace IM
@@ -40,41 +48,48 @@ structure WF (r : Req) : Prop where
   name_not_eq : NAME ∉ r.eq
   order_not_eq : ∀ o ∈ r.order, o.path ∉ r.eq
 
-/-- The fields a merge must cover. -/
-def Wanted (r : Req) (x : Field) : Prop := x ∈ r.eq ∨ r.contains = some x
+/-- The filters a merge must cover. -/
+def Wanted (r : Req) (x : Cov) : Prop := x ∈ wanted r
 
-inductive Member (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Index → List Field → Prop
+inductive Member (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) :
+    Index → List Cov → Prop
   | composite (idx : Index) (S : List Field) (c : Option Field) :
       idx ∈ s.composites → S ≠ [] → (∀ x ∈ S, x ∈ r.eq) →
-      (c = none ∨ (c = r.contains ∧ carryOk r = true)) →
+      (c = none ∨ (c = r.contains ∧ carryOk r recorded = true)) →
       compositeServes idx (subReqC r S c) coll group = true →
-      Member r s coll group idx (S ++ c.toList)
+      Member r s coll group recorded idx (eqCov S ++ containsCov c)
   | automatic (f : Field) :
       f ∈ r.eq → (∀ o ∈ r.order, o.path = NAME) →
       hasMode s coll f group (modeFor (nameDirOf r.order)) = true →
-      Member r s coll group
+      Member r s coll group recorded
         (singleFieldIndex coll group f (modeFor (nameDirOf r.order)) (modeFor (nameDirOf r.order)))
-        [f]
+        [(.eq, f)]
   | arrayContains (c : Field) :
       r.contains = some c → (∀ o ∈ r.order, o.path = NAME) →
       hasMode s coll c group .contains = true →
-      Member r s coll group
-        (singleFieldIndex coll group c .contains (modeFor (nameDirOf r.order))) [c]
+      (nameDirOf r.order = .asc ∨ (recorded = true ∧ r.containsAny = false)) →
+      Member r s coll group recorded
+        (singleFieldIndex coll group c .contains (modeFor (nameDirOf r.order))) [(.contains, c)]
+
+/-- Every wanted filter is covered by a member of the phase. -/
+def Covers (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) : Prop :=
+  ∀ x, Wanted r x → ∃ m S, Member r s coll group recorded m S ∧ x ∈ S
 
 def MergeSpec (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Prop :=
-  2 ≤ wantedCount r ∧ r.eqOrdered = false ∧
-    ∀ x, Wanted r x → ∃ m S, Member r s coll group m S ∧ x ∈ S
+  2 ≤ wantedCount r ∧ r.eqOrdered = false ∧ Covers r s coll group (!group)
 
-/-- The planner's single-index rules (under production's rules) applied to a sub-requirement. -/
+/-- The planner's single-index rules (production's rules, Standard) applied to a
+sub-requirement; the automatic rule takes distinct equality fields, as every requirement built
+from a query has. -/
 def SingleServes (r : Req) (s : ISet) (coll : Nat) (group : Bool) (m : Index) (S : List Field)
     (c : Option Field) : Prop :=
   (S ≠ [] ∨ c.isSome) ∧ (∀ x ∈ S, x ∈ r.eq) ∧ (c = none ∨ c = r.contains) ∧
-    (automaticIndexFor (subReqC r S c) s coll group true = some m ∨
+    ((S.Nodup ∧ automaticIndexFor (subReqC r S c) s coll group (!group) = some m) ∨
       (m ∈ s.composites ∧ compositeServes m (subReqC r S c) coll group = true))
 
 def BroadSpec (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Prop :=
   2 ≤ wantedCount r ∧ r.eqOrdered = false ∧
-    ∀ x, Wanted r x → ∃ m S c, SingleServes r s coll group m S c ∧ (x ∈ S ∨ c = some x)
+    ∀ x, Wanted r x → ∃ m S c, SingleServes r s coll group m S c ∧ x ∈ eqCov S ++ containsCov c
 
 /-- One index set is contained in another: every composite of the first is in the second, and
 every enabled single-field mode of the first is enabled in the second. -/

@@ -101,6 +101,8 @@ def Filter.render : Filter → String
   | .eq f => s!"filter eq {fname f}"
   | .isNull f => s!"filter isnull {fname f}"
   | .contains f => s!"filter contains {fname f}"
+  -- Never generated: the corpus format has no array-contains-any filter.
+  | .containsAny f => s!"filter containsany {fname f}"
   | .gt f => s!"filter gt {fname f}"
 
 def Policy.tag : Policy → String

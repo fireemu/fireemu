@@ -18586,7 +18586,7 @@ ctx production standard
 filter eq a
 filter contains tags
 production served fs-query-index/index-selection/automatic-and-merge#equality-and-array-contains-merge
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 7 fs-query-index/index-selection/automatic-and-merge#equalities-with-order-merged
 uses 0
@@ -19527,7 +19527,7 @@ filter eq a
 filter contains tags
 order __name__ asc
 production served fs-query-index-merge/shapes/builtin#f3-contains-name-asc
-expect merge imb C tags:contains,__name__:asc ; imb C a:asc,__name__:asc
+expect merge imb C a:asc,__name__:asc ; imb C tags:contains,__name__:asc
 end
 case 79 fs-query-index-merge/shapes/builtin#contains-alone-name-desc
 uses 2
@@ -19565,7 +19565,7 @@ filter eq a
 filter eq b
 filter contains tags
 production served fs-query-index-merge/shapes/builtin#f1-equalities-and-contains
-expect merge imb C tags:contains,__name__:asc ; imb C a:asc,__name__:asc ; imb C b:asc,__name__:asc
+expect merge imb C a:asc,__name__:asc ; imb C b:asc,__name__:asc ; imb C tags:contains,__name__:asc
 end
 case 83 fs-query-index-merge/shapes/builtin#f3-contains-name-desc-plan
 uses 2
@@ -19720,7 +19720,7 @@ filter eq a
 filter eq b
 filter contains tags
 production served fs-query-index-merge/shapes/composite-not-exempt#f1-equalities-and-contains
-expect merge imc C a:asc,tags:contains ; imc C b:asc,__name__:asc
+expect merge imc C a:asc,__name__:asc ; imc C b:asc,__name__:asc ; imc C tags:contains,__name__:asc
 end
 case 100 fs-query-index-merge/shapes/composite-not-exempt#a-and-contains
 uses 2
@@ -19763,7 +19763,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 105 pict/1/yes/nameDesc/none/builtin/C/prodStd/forward/no
 uses 3
@@ -20229,7 +20229,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 156 pict/0/yes/fieldDesc/pairs/aAscOnly/G/prodEnt/reversed/yes
 uses 42
@@ -21262,7 +21262,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 279 product/none/eq1a/tags/shape0/G
 uses 3
@@ -21279,7 +21279,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 281 product/none/eq1a/tags/shape1/G
 uses 3
@@ -21409,7 +21409,7 @@ ctx production standard
 filter eq a
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 295 product/none/eq1a/tags/shape8/G
 uses 3
@@ -21682,7 +21682,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 327 product/none/eq1b/tags/shape0/G
 uses 3
@@ -21699,7 +21699,7 @@ ctx production standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 329 product/none/eq1b/tags/shape1/G
 uses 3
@@ -21829,7 +21829,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 343 product/none/eq1b/tags/shape8/G
 uses 3
@@ -22102,7 +22102,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 375 product/none/eq1c/tags/shape0/G
 uses 3
@@ -22119,7 +22119,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 377 product/none/eq1c/tags/shape1/G
 uses 3
@@ -22249,7 +22249,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 391 product/none/eq1c/tags/shape8/G
 uses 3
@@ -22547,7 +22547,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 423 product/none/eq2ab/tags/shape0/G
 uses 3
@@ -22566,7 +22566,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 425 product/none/eq2ab/tags/shape1/G
 uses 3
@@ -22710,7 +22710,7 @@ filter eq a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 439 product/none/eq2ab/tags/shape8/G
 uses 3
@@ -23015,7 +23015,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 471 product/none/eq2ac/tags/shape0/G
 uses 3
@@ -23034,7 +23034,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 473 product/none/eq2ac/tags/shape1/G
 uses 3
@@ -23178,7 +23178,7 @@ filter eq a
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 487 product/none/eq2ac/tags/shape8/G
 uses 3
@@ -23483,7 +23483,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 519 product/none/eq2bc/tags/shape0/G
 uses 3
@@ -23502,7 +23502,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 521 product/none/eq2bc/tags/shape1/G
 uses 3
@@ -23646,7 +23646,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 535 product/none/eq2bc/tags/shape8/G
 uses 3
@@ -23976,7 +23976,7 @@ filter eq a
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 567 product/none/eq3abc/tags/shape0/G
 uses 3
@@ -23997,7 +23997,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 569 product/none/eq3abc/tags/shape1/G
 uses 3
@@ -24155,7 +24155,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 583 product/none/eq3abc/tags/shape8/G
 uses 3
@@ -24814,7 +24814,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 663 product/pairs/eq1a/tags/shape0/G
 uses 4
@@ -24831,7 +24831,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 665 product/pairs/eq1a/tags/shape1/G
 uses 4
@@ -24961,7 +24961,7 @@ ctx production standard
 filter eq a
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 679 product/pairs/eq1a/tags/shape8/G
 uses 4
@@ -25234,7 +25234,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 711 product/pairs/eq1b/tags/shape0/G
 uses 4
@@ -25251,7 +25251,7 @@ ctx production standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 713 product/pairs/eq1b/tags/shape1/G
 uses 4
@@ -25381,7 +25381,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 727 product/pairs/eq1b/tags/shape8/G
 uses 4
@@ -25654,7 +25654,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 759 product/pairs/eq1c/tags/shape0/G
 uses 4
@@ -25671,7 +25671,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 761 product/pairs/eq1c/tags/shape1/G
 uses 4
@@ -25801,7 +25801,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 775 product/pairs/eq1c/tags/shape8/G
 uses 4
@@ -26567,7 +26567,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 855 product/pairs/eq2ac/tags/shape0/G
 uses 4
@@ -26586,7 +26586,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 857 product/pairs/eq2ac/tags/shape1/G
 uses 4
@@ -26730,7 +26730,7 @@ filter eq a
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 871 product/pairs/eq2ac/tags/shape8/G
 uses 4
@@ -28786,7 +28786,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1095 product/contains/eq1b/tags/shape0/G
 uses 17
@@ -28803,7 +28803,7 @@ ctx production standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1097 product/contains/eq1b/tags/shape1/G
 uses 17
@@ -28933,7 +28933,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1111 product/contains/eq1b/tags/shape8/G
 uses 17
@@ -29206,7 +29206,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1143 product/contains/eq1c/tags/shape0/G
 uses 17
@@ -29223,7 +29223,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1145 product/contains/eq1c/tags/shape1/G
 uses 17
@@ -29353,7 +29353,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1159 product/contains/eq1c/tags/shape8/G
 uses 17
@@ -29651,7 +29651,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1191 product/contains/eq2ab/tags/shape0/G
 uses 17
@@ -29670,7 +29670,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1193 product/contains/eq2ab/tags/shape1/G
 uses 17
@@ -29814,7 +29814,7 @@ filter eq a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1207 product/contains/eq2ab/tags/shape8/G
 uses 17
@@ -30119,7 +30119,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C a:asc,tags:contains ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1239 product/contains/eq2ac/tags/shape0/G
 uses 17
@@ -30138,7 +30138,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1241 product/contains/eq2ac/tags/shape1/G
 uses 17
@@ -30282,7 +30282,7 @@ filter eq a
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1255 product/contains/eq2ac/tags/shape8/G
 uses 17
@@ -30587,7 +30587,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1287 product/contains/eq2bc/tags/shape0/G
 uses 17
@@ -30606,7 +30606,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1289 product/contains/eq2bc/tags/shape1/G
 uses 17
@@ -30750,7 +30750,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1303 product/contains/eq2bc/tags/shape8/G
 uses 17
@@ -31080,7 +31080,7 @@ filter eq a
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1335 product/contains/eq3abc/tags/shape0/G
 uses 17
@@ -31101,7 +31101,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1337 product/contains/eq3abc/tags/shape1/G
 uses 17
@@ -31259,7 +31259,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1351 product/contains/eq3abc/tags/shape8/G
 uses 17
@@ -31918,7 +31918,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1431 product/names/eq1a/tags/shape0/G
 uses 59
@@ -31935,7 +31935,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1433 product/names/eq1a/tags/shape1/G
 uses 59
@@ -32065,7 +32065,7 @@ ctx production standard
 filter eq a
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1447 product/names/eq1a/tags/shape8/G
 uses 59
@@ -32338,7 +32338,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1479 product/names/eq1b/tags/shape0/G
 uses 59
@@ -32355,7 +32355,7 @@ ctx production standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1481 product/names/eq1b/tags/shape1/G
 uses 59
@@ -32485,7 +32485,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1495 product/names/eq1b/tags/shape8/G
 uses 59
@@ -32758,7 +32758,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1527 product/names/eq1c/tags/shape0/G
 uses 59
@@ -32775,7 +32775,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1529 product/names/eq1c/tags/shape1/G
 uses 59
@@ -32905,7 +32905,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1543 product/names/eq1c/tags/shape8/G
 uses 59
@@ -33203,7 +33203,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1575 product/names/eq2ab/tags/shape0/G
 uses 59
@@ -33222,7 +33222,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1577 product/names/eq2ab/tags/shape1/G
 uses 59
@@ -33366,7 +33366,7 @@ filter eq a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1591 product/names/eq2ab/tags/shape8/G
 uses 59
@@ -33671,7 +33671,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1623 product/names/eq2ac/tags/shape0/G
 uses 59
@@ -33690,7 +33690,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1625 product/names/eq2ac/tags/shape1/G
 uses 59
@@ -33834,7 +33834,7 @@ filter eq a
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1639 product/names/eq2ac/tags/shape8/G
 uses 59
@@ -34139,7 +34139,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1671 product/names/eq2bc/tags/shape0/G
 uses 59
@@ -34158,7 +34158,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1673 product/names/eq2bc/tags/shape1/G
 uses 59
@@ -34302,7 +34302,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1687 product/names/eq2bc/tags/shape8/G
 uses 59
@@ -34632,7 +34632,7 @@ filter eq a
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1719 product/names/eq3abc/tags/shape0/G
 uses 59
@@ -34653,7 +34653,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1721 product/names/eq3abc/tags/shape1/G
 uses 59
@@ -34811,7 +34811,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1735 product/names/eq3abc/tags/shape8/G
 uses 59
@@ -35890,7 +35890,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1863 product/exempt-a/eq1b/tags/shape0/G
 uses 60
@@ -35907,7 +35907,7 @@ ctx production standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1865 product/exempt-a/eq1b/tags/shape1/G
 uses 60
@@ -36037,7 +36037,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1879 product/exempt-a/eq1b/tags/shape8/G
 uses 60
@@ -36310,7 +36310,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1911 product/exempt-a/eq1c/tags/shape0/G
 uses 60
@@ -36327,7 +36327,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1913 product/exempt-a/eq1c/tags/shape1/G
 uses 60
@@ -36457,7 +36457,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 1927 product/exempt-a/eq1c/tags/shape8/G
 uses 60
@@ -37691,7 +37691,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2055 product/exempt-a/eq2bc/tags/shape0/G
 uses 60
@@ -37710,7 +37710,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2057 product/exempt-a/eq2bc/tags/shape1/G
 uses 60
@@ -37854,7 +37854,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2071 product/exempt-a/eq2bc/tags/shape8/G
 uses 60
@@ -42324,7 +42324,7 @@ filter eq a
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx G a:asc,b:asc ; qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx G a:asc,b:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2546 random/36
 uses 98
@@ -42722,7 +42722,7 @@ ctx production enterprise
 filter eq a
 filter gt __name__
 order __name__ desc
-expect fullscan qx C a:asc,__name__:desc
+expect use qx C a:asc,__name__:desc
 end
 case 2590 random/80
 uses 140
@@ -43215,7 +43215,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2644 random/134
 uses 191
@@ -43384,7 +43384,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2663 random/153
 uses 210
@@ -44122,7 +44122,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2744 random/234
 uses 286
@@ -44304,7 +44304,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2764 random/254
 uses 306
@@ -44540,7 +44540,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2790 random/280
 uses 332
@@ -44665,7 +44665,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C a:asc,b:asc ; qx C a:asc,tags:contains
+expect merge qx C a:asc,b:asc ; qx C tags:contains,__name__:asc
 end
 case 2804 random/294
 uses 346
@@ -45525,7 +45525,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2899 random/389
 uses 439
@@ -45580,7 +45580,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2905 random/395
 uses 445
@@ -45935,7 +45935,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2944 random/434
 uses 481
@@ -46119,7 +46119,7 @@ ctx production standard
 filter isnull b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 2964 random/454
 uses 501
@@ -46612,7 +46612,7 @@ ctx production standard
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3019 random/509
 uses 551
@@ -46978,7 +46978,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3059 random/549
 uses 586
@@ -47608,7 +47608,7 @@ ctx report standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3129 random/619
 uses 654
@@ -47712,7 +47712,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3140 random/630
 uses 663
@@ -47894,7 +47894,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3160 random/650
 uses 680
@@ -48303,7 +48303,7 @@ ctx production standard
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3205 random/695
 uses 721
@@ -48594,7 +48594,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ desc
-expect merge qx G tags:contains,__name__:desc ; qx G b:desc,__name__:desc ; qx G c:desc,__name__:desc
+expect missing qx G b:asc,c:asc,tags:contains,__name__:desc
 end
 case 3237 random/727
 uses 752
@@ -49342,7 +49342,7 @@ ctx production standard
 filter isnull b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3320 random/810
 uses 826
@@ -49701,7 +49701,7 @@ ctx production enterprise
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3359 random/849
 uses 862
@@ -50054,7 +50054,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3398 random/888
 uses 899
@@ -50210,7 +50210,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3415 random/905
 uses 912
@@ -50238,7 +50238,7 @@ query qx G
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx G tags:contains,__name__:asc ; qx G a:asc,__name__:asc
+expect merge qx G a:asc,__name__:asc ; qx G tags:contains,__name__:asc
 end
 case 3418 random/908
 uses 915
@@ -50752,7 +50752,7 @@ ctx production enterprise
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3474 random/964
 uses 966
@@ -50922,7 +50922,7 @@ ctx production standard
 filter isnull c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3493 random/983
 uses 984
@@ -50933,7 +50933,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3494 random/984
 uses 985
@@ -51215,7 +51215,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3525 random/1015
 uses 1015
@@ -51560,7 +51560,7 @@ ctx production standard
 filter isnull b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3563 random/1053
 uses 1049
@@ -51845,7 +51845,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3594 random/1084
 uses 240
@@ -51854,7 +51854,7 @@ ctx production enterprise
 filter isnull a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3595 random/1085
 uses 1077
@@ -52204,7 +52204,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C a:asc,b:asc ; qx C a:asc,tags:contains
+expect merge qx C a:asc,b:asc ; qx C tags:contains,__name__:asc
 end
 case 3634 random/1124
 uses 1113
@@ -52379,7 +52379,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3653 random/1143
 uses 1130
@@ -53015,7 +53015,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx G a:asc,b:asc ; qx C a:asc,tags:contains
+expect merge qx G a:asc,b:asc ; qx C tags:contains,__name__:asc
 end
 case 3723 random/1213
 uses 1195
@@ -53477,7 +53477,7 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3774 random/1264
 uses 1240
@@ -53841,7 +53841,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx G tags:contains,__name__:asc ; qx G a:asc,__name__:asc ; qx G b:asc,__name__:asc
+expect merge qx G a:asc,__name__:asc ; qx G b:asc,__name__:asc ; qx G tags:contains,__name__:asc
 end
 case 3814 random/1304
 uses 1277
@@ -53940,7 +53940,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3825 random/1315
 uses 1285
@@ -54706,7 +54706,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3909 random/1399
 uses 1358
@@ -55264,7 +55264,7 @@ query qx C
 ctx report standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 3971 random/1461
 uses 1413
@@ -55439,7 +55439,7 @@ filter eq a
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx G a:asc,b:asc
+expect merge qx G a:asc,b:asc ; qx C tags:contains,__name__:asc
 end
 case 3990 random/1480
 uses 235
@@ -55613,7 +55613,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4009 random/1499
 uses 1444
@@ -55805,7 +55805,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,b:asc ; qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,b:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4030 random/1520
 uses 1464
@@ -56440,7 +56440,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4100 random/1590
 uses 1032
@@ -56670,7 +56670,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4125 random/1615
 uses 1548
@@ -57021,7 +57021,7 @@ filter isnull a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C a:desc,b:asc
+expect merge qx C a:desc,b:asc ; qx C tags:contains,__name__:asc
 end
 case 4164 random/1654
 uses 1584
@@ -57371,7 +57371,7 @@ filter eq c
 filter contains tags
 filter gt __name__
 order __name__ desc
-expect merge qx G tags:contains,__name__:desc ; qx G c:desc,__name__:desc
+expect missing qx G c:asc,tags:contains,__name__:desc
 end
 case 4203 random/1693
 uses 1619
@@ -57584,7 +57584,7 @@ filter isnull a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4226 random/1716
 uses 1640
@@ -57711,7 +57711,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4240 random/1730
 uses 1652
@@ -58475,7 +58475,7 @@ filter eq b
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C a:desc,b:asc ; qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:desc,b:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4324 random/1814
 uses 1730
@@ -59571,7 +59571,7 @@ ctx production standard
 filter eq c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4445 random/1935
 uses 1831
@@ -60457,7 +60457,7 @@ ctx production enterprise
 filter isnull b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4542 random/2032
 uses 1913
@@ -61475,7 +61475,7 @@ ctx production enterprise
 filter isnull b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4655 random/2145
 uses 2010
@@ -61606,7 +61606,7 @@ filter eq a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4669 random/2159
 uses 2021
@@ -61734,7 +61734,7 @@ query qx C
 ctx report standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4683 random/2173
 uses 2035
@@ -62067,7 +62067,7 @@ ctx production enterprise
 filter isnull a
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4720 random/2210
 uses 2068
@@ -63860,7 +63860,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:asc,tags:contains ; qx G a:asc,b:asc ; qx C c:asc,__name__:asc
+expect merge qx G a:asc,b:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4918 random/2408
 uses 2235
@@ -63869,7 +63869,7 @@ ctx production standard
 filter isnull c
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4919 random/2409
 uses 341
@@ -63966,7 +63966,7 @@ ctx production standard
 filter isnull a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4930 random/2420
 uses 2242
@@ -64151,7 +64151,7 @@ query qx C
 ctx production standard
 filter eq b
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 4950 random/2440
 uses 2257
@@ -64784,7 +64784,7 @@ filter isnull a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5019 random/2509
 uses 2317
@@ -64963,7 +64963,7 @@ ctx report standard
 filter eq b
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5039 random/2529
 uses 2331
@@ -65506,7 +65506,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C a:desc,b:asc ; qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:desc,b:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5098 random/2588
 uses 2382
@@ -65603,7 +65603,7 @@ ctx production enterprise
 filter eq a
 filter contains tags
 order __name__ asc
-expect merge qx G tags:contains,__name__:asc ; qx G a:asc,__name__:asc
+expect merge qx G a:asc,__name__:asc ; qx G tags:contains,__name__:asc
 end
 case 5109 random/2599
 uses 2391
@@ -65612,7 +65612,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5110 random/2600
 uses 2392
@@ -65785,7 +65785,7 @@ ctx report standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5129 random/2619
 uses 2407
@@ -66069,7 +66069,7 @@ ctx production standard
 filter eq b
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5160 random/2650
 uses 2435
@@ -66197,7 +66197,7 @@ filter eq a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5174 random/2664
 uses 2445
@@ -66246,7 +66246,7 @@ query qx C
 ctx production standard
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5180 random/2670
 uses 2450
@@ -66477,7 +66477,7 @@ filter isnull a
 filter eq b
 filter contains tags
 filter gt __name__
-expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5205 random/2695
 uses 311
@@ -66924,7 +66924,7 @@ query qx C
 ctx production enterprise
 filter eq a
 order __name__ desc
-expect fullscan qx C a:asc,__name__:desc
+expect use qx C a:asc,__name__:desc
 end
 case 5254 random/2744
 uses 620
@@ -67752,7 +67752,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5345 random/2835
 uses 1644
@@ -68574,7 +68574,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5435 random/2925
 uses 2660
@@ -68744,7 +68744,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5454 random/2944
 uses 2248
@@ -68850,7 +68850,7 @@ ctx production standard
 filter eq a
 filter eq c
 filter contains tags
-expect merge qx C a:asc,tags:contains ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5466 random/2956
 uses 2686
@@ -69024,7 +69024,7 @@ filter eq b
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C b:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5485 random/2975
 uses 2702
@@ -69098,7 +69098,7 @@ filter eq a
 filter eq c
 filter contains tags
 order __name__ asc
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C c:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5493 random/2983
 uses 317
@@ -69106,7 +69106,7 @@ query qx C
 ctx production standard
 filter eq a
 filter contains tags
-expect merge qx C tags:contains,__name__:asc ; qx C a:asc,__name__:asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 end
 case 5494 random/2984
 uses 2709
@@ -69202,7 +69202,7 @@ ctx production enterprise
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx G tags:contains,__name__:asc ; qx G a:asc,__name__:asc ; qx G b:asc,__name__:asc
+expect merge qx G a:asc,__name__:asc ; qx G b:asc,__name__:asc ; qx G tags:contains,__name__:asc
 end
 case 5505 random/2995
 uses 2718

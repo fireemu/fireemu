@@ -103,3 +103,48 @@ info: 'IM.broad_mirror_direction_automatic' depends on axioms: [propext, Classic
 info: 'IM.repeated_single_equality_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms IM.repeated_single_equality_refused
+
+/-- info: 'IM.phase_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.phase_sound
+
+/-- info: 'IM.phase_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.phase_iff
+
+/-- info: 'IM.member_recorded' depends on axioms: [propext] -/
+#guard_msgs in #print axioms IM.member_recorded
+
+/-- info: 'IM.member_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.member_fields
+
+/-- info: 'IM.merged_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.merged_kinds
+
+/--
+info: 'IM.composite_with_array_field_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.composite_with_array_field_group_refused
+
+/--
+info: 'IM.contains_descending_name_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.contains_descending_name_group_refused
+
+/--
+info: 'IM.contains_any_descending_name_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.contains_any_descending_name_refused
+
+/--
+info: 'IM.array_member_never_covers_equality' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.array_member_never_covers_equality
+
+/--
+info: 'IM.carried_array_field_never_covers_equality' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.carried_array_field_never_covers_equality
+
+/--
+info: 'IM.single_equality_neighbours_served' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.single_equality_neighbours_served
