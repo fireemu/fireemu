@@ -1024,3 +1024,45 @@ test("a second remove closes what the first removed and removes what it left", a
   });
   assert.equal(blind.ok, false);
 });
+
+test("main passes earlier remove journals on, so a second remove can close the send", async () => {
+  const root = await mkdtemp(join(tmpdir(), "merge-config-second-"));
+  try {
+    const fake = fakeFirestore();
+    const run = (argv, http = fake.http) =>
+      main(argv, {
+        env: { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+        http,
+        token: async () => "t",
+        sleep: noSleep,
+      });
+    const j = (name) => join(root, name, "journal.jsonl");
+    assert.equal(await run(["apply", "--set", "all", "--out", join(root, "apply")]), 0);
+    const timeoutImc = (r) =>
+      r.method === "DELETE" && r.url.includes("/imc/") ? { error: "timeout" } : fake.http(r);
+    assert.equal(
+      await run(
+        ["remove", "--set", "all", "--out", join(root, "r1"), "--journal", j("apply")],
+        timeoutImc,
+      ),
+      2,
+    );
+    assert.equal(
+      await run([
+        "remove",
+        "--set",
+        "all",
+        "--out",
+        join(root, "r2"),
+        "--journal",
+        j("apply"),
+        "--journal",
+        j("r1"),
+      ]),
+      0,
+    );
+    assert.deepEqual(fake.state.composites, { imx: [], imc: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
