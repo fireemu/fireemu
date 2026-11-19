@@ -2102,3 +2102,58 @@ fn merge_b_needs_an_ascending_carrier() {
         }
     );
 }
+
+/// Accepted generalisations of (b) (coordinator ruling 13 addition; candidates for the second
+/// observation): each meets every condition the recorded F1 row states and only removes a
+/// strict refusal. The test pins the current answers.
+#[test]
+fn merge_b_accepted_generalisations_are_pinned() {
+    let c = IndexQueryScope::Collection;
+    let f1 = |extra: &[&str]| {
+        let mut filters = vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ];
+        filters.extend(extra.iter().map(|f| filter("eq", f, "qx")));
+        qx_query(filters, &[], false)
+    };
+    let carrier = || parse_index("qx C a:asc,tags:contains");
+    // `tags` with ordered modes but no CONTAINS, not exempt.
+    let mut ordered_tags = IndexSet::default();
+    modes_only(&mut ordered_tags, "a", &[], c);
+    modes_only(
+        &mut ordered_tags,
+        "tags",
+        &[IndexFieldMode::Ascending, IndexFieldMode::Descending],
+        c,
+    );
+    ordered_tags.add_composite(carrier());
+    let f1_plan = IndexDecision::MergeIndexes {
+        indexes: vec![carrier(), parse_index("qx C b:asc,__name__:asc")],
+    };
+    assert_eq!(decide(&f1(&[]), &ordered_tags, &standard()), f1_plan);
+    // `tags CONTAINS` enabled only at collection-group scope.
+    let mut group_contains = IndexSet::default();
+    modes_only(&mut group_contains, "a", &[], c);
+    modes_only(
+        &mut group_contains,
+        "tags",
+        &[IndexFieldMode::Contains],
+        IndexQueryScope::CollectionGroup,
+    );
+    group_contains.add_composite(carrier());
+    assert_eq!(decide(&f1(&[]), &group_contains, &standard()), f1_plan);
+    // A carrier with a two-field ordered prefix `(a ASC, b ASC, tags CONTAINS)`, `c` automatic.
+    let mut two_field = IndexSet::default();
+    modes_only(&mut two_field, "a", &[], c);
+    modes_only(&mut two_field, "tags", &[], c);
+    let wide = parse_index("qx C a:asc,b:asc,tags:contains");
+    two_field.add_composite(wide.clone());
+    assert_eq!(
+        decide(&f1(&["c"]), &two_field, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![wide, parse_index("qx C c:asc,__name__:asc")]
+        }
+    );
+}
