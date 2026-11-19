@@ -1,0 +1,9 @@
+name = "write-precondition"
+defaultTargets = ["WritePrecondition", "corpus"]
+
+[[lean_lib]]
+name = "WritePrecondition"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

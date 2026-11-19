@@ -1,0 +1,31 @@
+import WritePrecondition.Theorems
+
+namespace WP
+
+theorem missing_updates_without_precondition_upsert :
+    stage 11000 none ⟨.replace (some 7), .none⟩ = .ok (some ⟨11000, some 7⟩) ∧
+    stage 11000 none ⟨.patch (some 7), .none⟩ = .ok (some ⟨11000, some 7⟩) ∧
+    stage 11000 none ⟨.emptyMask, .none⟩ = .ok (some ⟨11000, none⟩) ∧
+    stage 11000 none ⟨.replace (some 7), .exists true⟩ = .error .notFound ∧
+    stage 11000 none ⟨.patch (some 7), .exists true⟩ = .error .notFound ∧
+    stage 11000 none ⟨.emptyMask, .exists true⟩ = .error .notFound := ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem no_op_can_retry_with_unchanged_time :
+    stage 11000 (some ⟨10000, some 7⟩) ⟨.replace (some 7), .none⟩ =
+      .ok (some ⟨10000, some 7⟩) ∧
+    stage 12000 (some ⟨10000, some 7⟩) ⟨.replace (some 7), .updateTime 10000⟩ =
+      .ok (some ⟨10000, some 7⟩) := ⟨rfl, rfl⟩
+
+theorem changed_fields_can_reuse_imported_time :
+    stage (nextCommitTime (some 10000) 10001) (some ⟨11000, some 7⟩)
+      ⟨.replace (some 8), .none⟩ = .ok (some ⟨11000, some 8⟩) := rfl
+
+theorem delete_can_change_existence_without_a_retry_time :
+    step 11000 (some 10000) .none .delete = .ok none ∧
+    step 12000 none (.updateTime 10000) .delete = .error .failedPrecondition := ⟨rfl, rfl⟩
+
+theorem submicrosecond_precondition_is_not_truncated :
+    checkPrecondition (.updateTime 10001) (some 10000) = some .failedPrecondition ∧
+    checkPrecondition (.updateTime 10001) (some 10001) = none := by decide
+
+end WP
