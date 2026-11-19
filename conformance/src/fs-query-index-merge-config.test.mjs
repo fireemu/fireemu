@@ -2250,6 +2250,14 @@ test("a sixth page, a repeated, empty or non-string token, or a bad later page s
     const fake = fakeFirestore({ pageSize: 12, fail: second(page2) });
     assert.equal((await states(fake)).state, expected, label);
   }
+  // The repeated token is refused as such, after two pages, not by running into the cap.
+  const repeated = fakeFirestore({
+    pageSize: 12,
+    fail: second({ indexes: BASE_INDEXES.slice(12, 13), nextPageToken: "t12" }),
+  });
+  const read = await readStates(session(repeated), "x", ["E1"], FORMS);
+  assert.equal(read.E1.reason, "a page token that is not a new non-empty string");
+  assert.equal(repeated.requests.length, 2);
   const unreadable = fakeFirestore({
     pageSize: 12,
     fail: (r) =>
@@ -2293,4 +2301,12 @@ test("a page token goes back only as the encoded pageToken of the fixed list URL
   });
   await prod({ method: "GET", url: urls[1], token: "t" });
   assert.deepEqual(sent, [urls[1]]);
+});
+
+test("an entry on an earlier page than the last is still found", async () => {
+  const fake = fakeFirestore({ others: [], pageSize: 1 });
+  const applied = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(applied.ok, true);
+  const read = await status({ session: session(fake), set: "f1", forms: FORMS });
+  assert.equal(read.applied, true, "imx on page 1, imc on page 2");
 });
