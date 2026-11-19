@@ -36,6 +36,7 @@ import {
   parseArgs,
   productionHttp,
   projectForms,
+  readStates,
   remove,
   requestCap,
   status,
@@ -131,6 +132,7 @@ function fakeFirestore({
   composites = {},
   fields = {},
   others = BASE_INDEXES,
+  pageSize = Infinity,
 } = {}) {
   const state = {
     composites: structuredClone(composites),
@@ -174,8 +176,13 @@ function fakeFirestore({
           };
     }
     if (kind === "indexes" && !id && request.method === "GET") {
+      // Pages of `pageSize`; a page's token is `t<next offset>`, passed back as ?pageToken=.
       const all = [...state.others, ...Object.values(state.composites).flat()];
-      return { status: 200, json: all.length ? { indexes: all } : {} };
+      const token = new URL(request.url).searchParams.get("pageToken");
+      const start = token === null ? 0 : Number(token.slice(1));
+      const page = all.slice(start, start + pageSize);
+      const next = start + pageSize < all.length ? { nextPageToken: `t${start + pageSize}` } : {};
+      return { status: 200, json: { ...(page.length ? { indexes: page } : {}), ...next } };
     }
     if (kind === "indexes" && !id && request.method === "POST") {
       const index = listedIndex(group, { state: "READY" });
@@ -346,7 +353,7 @@ test("the request caps of each subcommand and set", () => {
         ["f2", "f1", "all"].map((s) => requestCap(c, s)),
       ]),
     ),
-    { status: [6, 9, 10], apply: [43, 172, 215], remove: [43, 92, 135] },
+    { status: [6, 17, 18], apply: [43, 188, 231], remove: [43, 108, 151] },
   );
 });
 
@@ -2121,4 +2128,169 @@ test("main exits non-zero when status cannot read every entry, as at the v5.1 be
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ---- packet v7 (coordinator ruling 7) ------------------------------------------------------
+
+/** The whole send's config steps against one fake; the states and outcomes it reached. */
+async function cycle(fake) {
+  const before = await status({
+    session: session(fake, requestCap("status", "all")),
+    set: "all",
+    forms: FORMS,
+  });
+  const applied = await apply({
+    session: session(fake, requestCap("apply", "all")),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+  });
+  const during = await status({
+    session: session(fake, requestCap("status", "all")),
+    set: "all",
+    forms: FORMS,
+  });
+  const removed = await remove({
+    session: session(fake, requestCap("remove", "all")),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+    ...fromJournals([`${JSON.stringify({ result: { command: "apply", ...applied } })}\n`]),
+  });
+  const after = await status({
+    session: session(fake, requestCap("status", "all")),
+    set: "all",
+    forms: FORMS,
+  });
+  const shape = (r) =>
+    Object.fromEntries(
+      Object.entries(r.states ?? r.entries).map(([id, e]) => [id, e.state ?? e.outcome]),
+    );
+  return {
+    before: shape(before),
+    applied: shape(applied),
+    during: shape(during),
+    removed: shape(removed),
+    after: shape(after),
+    ok: [before.baseline, applied.ok, during.applied, removed.ok, after.baseline],
+  };
+}
+
+test("the recorded 24 plus the two created read the same in one, two and five pages", async () => {
+  const one = await cycle(fakeFirestore());
+  assert.deepEqual(one.ok, [true, true, true, true, true]);
+  for (const pageSize of [13, 6]) {
+    const fake = fakeFirestore({ pageSize });
+    const paged = await cycle(fake);
+    assert.deepEqual(paged, one, `page size ${pageSize}`);
+    const pages = fake.requests.filter((r) => r.url.includes("/-/indexes?pageToken="));
+    assert.ok(pages.length > 0, `page size ${pageSize} followed its pages`);
+    for (const r of pages)
+      assert.match(
+        r.url,
+        new RegExp(
+          `^${API.replaceAll(".", "\\.")}/${DB.replace("(", "\\(").replace(")", "\\)")}/collectionGroups/-/indexes\\?pageToken=t\\d+$`,
+        ),
+      );
+  }
+  // 26 composites in pages of 6 are five pages: the last read after apply takes all five.
+  const five = fakeFirestore({ pageSize: 6 });
+  await apply({ session: session(five), set: "all", forms: FORMS, sleep: noSleep });
+  five.requests.length = 0;
+  await status({ session: session(five), set: "f1", forms: FORMS });
+  assert.equal(five.requests.filter((r) => r.url.includes("/-/indexes")).length, 2 * 5);
+});
+
+test("a sixth page, a repeated, empty or non-string token, or a bad later page sends nothing", async () => {
+  const states = async (fake) => {
+    const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+    assert.equal(result.refusedBeforeSending, true);
+    assert.deepEqual(writesOf(fake), []);
+    const removal = await remove({
+      session: session(fake),
+      set: "f1",
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    assert.equal(removal.refusedBeforeSending, true);
+    assert.deepEqual(writesOf(fake), []);
+    return result.before.E1;
+  };
+  // 24 in pages of 4: six pages.
+  assert.match((await states(fakeFirestore({ pageSize: 4 }))).reason, /more than 5 pages/);
+  const second = (json) => (r) =>
+    r.method === "GET" && r.url.includes("/-/indexes?pageToken=t12")
+      ? { status: 200, json }
+      : undefined;
+  for (const [label, page2, expected] of [
+    [
+      "a repeated token",
+      { indexes: BASE_INDEXES.slice(12, 13), nextPageToken: "t12" },
+      "unexpected",
+    ],
+    ["an empty token", { indexes: BASE_INDEXES.slice(12, 13), nextPageToken: "" }, "unexpected"],
+    ["a numeric token", { indexes: BASE_INDEXES.slice(12, 13), nextPageToken: 7 }, "unexpected"],
+    ["a null token", { indexes: BASE_INDEXES.slice(12, 13), nextPageToken: null }, "unexpected"],
+    ["an object token", { indexes: BASE_INDEXES.slice(12, 13), nextPageToken: {} }, "unexpected"],
+    ["null indexes on page 2", { indexes: null }, "unexpected"],
+    [
+      "a foreign name on page 2",
+      {
+        indexes: [
+          {
+            ...BASE_INDEXES[12],
+            name: "projects/other/databases/(default)/collectionGroups/qx/indexes/A",
+          },
+        ],
+      },
+      "unexpected",
+    ],
+    ["an extra key on page 2", { indexes: BASE_INDEXES.slice(12), extra: 1 }, "unexpected"],
+  ]) {
+    const fake = fakeFirestore({ pageSize: 12, fail: second(page2) });
+    assert.equal((await states(fake)).state, expected, label);
+  }
+  const unreadable = fakeFirestore({
+    pageSize: 12,
+    fail: (r) =>
+      r.method === "GET" && r.url.includes("pageToken=") ? { status: 503, json: {} } : undefined,
+  });
+  assert.equal((await states(unreadable)).state, "unreadable");
+  // An empty token on the first page is no better than on a later one.
+  const first = fakeFirestore({
+    fail: (r) =>
+      r.method === "GET" && r.url.endsWith("/-/indexes")
+        ? { status: 200, json: { indexes: BASE_INDEXES, nextPageToken: "" } }
+        : undefined,
+  });
+  assert.equal((await states(first)).state, "unexpected");
+});
+
+test("a page token goes back only as the encoded pageToken of the fixed list URL", async () => {
+  const token = "a/b+c==?&#'!(x)*% z";
+  const urls = [];
+  const http = async (r) => {
+    urls.push(r.url);
+    return urls.length === 1
+      ? { status: 200, json: { indexes: BASE_INDEXES.slice(0, 1), nextPageToken: token } }
+      : { status: 200, json: { indexes: BASE_INDEXES.slice(1) } };
+  };
+  const read = await readStates(
+    createSession({ http, token: async () => "t", cap: 10, wallMs: 60_000 }),
+    "x",
+    ["E1"],
+    FORMS,
+  );
+  assert.equal(read.E1.state, "absent");
+  assert.equal(urls[1].split("?")[0], `${API}/${DB}/collectionGroups/-/indexes`);
+  assert.equal(new URL(urls[1]).searchParams.get("pageToken"), token);
+  assert.equal(new URL(urls[1]).search.split("&").length, 1, "one parameter");
+  // The production layer sends that URL as it is (its href check holds for the encoded form).
+  const sent = [];
+  const prod = productionHttp({ [SEND_FLAG]: SEND_FLAG_VALUE }, async (url) => {
+    sent.push(url);
+    return { status: 200, text: async () => "{}" };
+  });
+  await prod({ method: "GET", url: urls[1], token: "t" });
+  assert.deepEqual(sent, [urls[1]]);
 });

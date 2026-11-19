@@ -81,6 +81,8 @@ export const TOKEN_MAX_AGE_MS = 10 * 60_000;
 export const WALL_MS = { status: 5 * 60_000, apply: 20 * 60_000, remove: 20 * 60_000 };
 /** Operations an earlier journal may name that `status` reads once each. */
 export const STATUS_MAX_OPERATIONS = 5;
+/** Pages one composite list may take, as the base runner's productionIndexes allows. */
+export const MAX_LIST_PAGES = 5;
 /** The least time between the last request of a send step and its A2 read. */
 export const A2_DELAY_MS = 10 * 60_000;
 
@@ -104,9 +106,14 @@ export const fieldUrl = (entry) => `${API}/${groupPath(entry.group)}/fields/${en
 export function requestCap(command, set) {
   const n = SETS[set].length;
   const resets = SETS[set].filter((id) => ENTRIES[id].kind === "override").length;
-  if (command === "status") return n + STATUS_MAX_OPERATIONS;
-  if (command === "apply") return n + n + POLL_ROUNDS * n + n;
-  if (command === "remove") return n + n + POLL_ROUNDS * resets + n;
+  // One read of the set: a field GET per override, up to MAX_LIST_PAGES list pages per composite.
+  const read = SETS[set].reduce(
+    (sum, id) => sum + (ENTRIES[id].kind === "composite" ? MAX_LIST_PAGES : 1),
+    0,
+  );
+  if (command === "status") return read + STATUS_MAX_OPERATIONS;
+  if (command === "apply") return read + n + POLL_ROUNDS * n + read;
+  if (command === "remove") return read + n + POLL_ROUNDS * resets + read;
   throw new Error(`unknown command ${command}`);
 }
 
@@ -255,6 +262,7 @@ function modeOf(index, fieldPath) {
 const unexpected = (reason) => ({ state: "unexpected", reason });
 
 function compositeState(entry, body, forms) {
+  if (typeof body.invalidPage === "string") return unexpected(body.invalidPage);
   if (body.nextPageToken !== undefined) return unexpected("more than one page");
   if (!onlyKeys(body, ["indexes"])) return unexpected("unknown list keys");
   // Absent means none (proto3 JSON omits an empty list); present must be an array.
@@ -388,17 +396,57 @@ export function createSession({ http, token, cap, wallMs, now = Date.now, journa
   };
 }
 
-const readEntry = (session, phase, entry) =>
-  session.send(phase, {
-    method: "GET",
-    url: entry.kind === "composite" ? indexReadUrl : fieldUrl(entry),
-  });
+/** A query value encoded so that the URL parser keeps it byte for byte (the href check holds). */
+const encodeQueryValue = (value) =>
+  encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+/** A page of the database-wide list: the fixed URL, and the token only as its one query parameter. */
+export const pageUrl = (token) =>
+  token === undefined ? indexReadUrl : `${indexReadUrl}?pageToken=${encodeQueryValue(token)}`;
+
+/**
+ * Reads the database-wide composite list, following nextPageToken as the base runner does, up to
+ * MAX_LIST_PAGES pages. Returns the answer entryState reads: the union of every page's indexes, or
+ * the first page that is not a readable page in the recorded shape. A page must be a JSON object
+ * with keys only `indexes` (absent or an array) and `nextPageToken` (a non-empty string not seen
+ * before); a further page past the cap, or anything else, makes the read unexpected.
+ */
+export async function readCompositeList(session, phase) {
+  const union = [];
+  const seen = new Set();
+  let token;
+  for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+    const answer = await session.send(phase, { method: "GET", url: pageUrl(token) });
+    if (!readOk(answer)) return answer;
+    const body = answer.json;
+    const bad = (reason) => ({ status: 200, json: { indexes: [], invalidPage: reason } });
+    if (!isObject(body) || !onlyKeys(body, ["indexes", "nextPageToken"]))
+      return bad("a page outside the recorded shape");
+    if (Object.hasOwn(body, "indexes") && !Array.isArray(body.indexes))
+      return bad("malformed list");
+    union.push(...(Object.hasOwn(body, "indexes") ? body.indexes : []));
+    if (!Object.hasOwn(body, "nextPageToken")) return { status: 200, json: { indexes: union } };
+    token = body.nextPageToken;
+    if (typeof token !== "string" || token === "" || seen.has(token))
+      return bad("a page token that is not a new non-empty string");
+    seen.add(token);
+  }
+  return { status: 200, json: { indexes: [], invalidPage: `more than ${MAX_LIST_PAGES} pages` } };
+}
 
 /** Reads every entry of the set; the states keyed by entry id. */
 export async function readStates(session, phase, ids, forms) {
   const states = {};
-  for (const id of ids)
-    states[id] = entryState(ENTRIES[id], await readEntry(session, phase, ENTRIES[id]), forms);
+  for (const id of ids) {
+    const entry = ENTRIES[id];
+    const answer =
+      entry.kind === "composite"
+        ? await readCompositeList(session, phase)
+        : await session.send(phase, { method: "GET", url: fieldUrl(entry) });
+    states[id] = entryState(entry, answer, forms);
+  }
   return states;
 }
 
