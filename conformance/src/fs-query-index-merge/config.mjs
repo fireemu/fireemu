@@ -619,7 +619,7 @@ export function productionHttp(env = process.env, fetchImpl = fetch) {
   const allowed = namePattern(projectForms(env), "[^\\s#]+");
   return async ({ method, url, body, token, timeoutMs = REQUEST_TIMEOUT_MS }) => {
     // The URL sent is the URL checked: one that the URL parser would rewrite (dot segments,
-    // an explicit port, credentials, a fragment) is refused, and redirects are never followed.
+    // an explicit port, credentials) is refused, and the name pattern admits no fragment, and redirects are never followed.
     let parsed;
     try {
       parsed = new URL(url);
@@ -629,7 +629,6 @@ export function productionHttp(env = process.env, fetchImpl = fetch) {
     if (
       !parsed ||
       parsed.href !== url ||
-      parsed.hash !== "" ||
       !url.startsWith(`${API}/`) ||
       !allowed.test(url.slice(API.length + 1))
     )

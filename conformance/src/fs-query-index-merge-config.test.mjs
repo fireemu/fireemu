@@ -462,6 +462,22 @@ test("a done create with a malformed operation name is not polled", async () => 
   const result = await apply({ session: session(fake), set: "f2", forms: FORMS, sleep: noSleep });
   assert.equal(result.entries.E3.write.operation, undefined);
   assert.equal(fake.requests.filter((r) => r.url.endsWith("/null")).length, 0);
+  assert.equal(result.entries.E3.outcome, "open", "the override was never made");
+  // The server made the override but answered without a readable operation: pending, not created.
+  let patched = false;
+  const made = fakeFirestore({
+    fail: (r) =>
+      r.method === "PATCH" && !patched
+        ? async () => {
+            patched = true;
+            await made.http(r);
+            return { status: 200, json: { name: "null" } };
+          }
+        : undefined,
+  });
+  const second = await apply({ session: session(made), set: "f2", forms: FORMS, sleep: noSleep });
+  assert.equal(second.entries.E3.read.state, "present");
+  assert.equal(second.entries.E3.outcome, "created-pending");
 });
 
 test("remove deletes by the names it read and resets with an empty body; all close", async () => {
@@ -1624,4 +1640,30 @@ test("may-retry reads result files only and answers by attempt2Allowed", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("unreadable bodies and the reasons a reviewer reads", () => {
+  for (const entry of [ENTRIES.E1, ENTRIES.E4])
+    for (const json of [null, 7, "x", [{}]])
+      assert.equal(
+        entryState(entry, { status: 200, json }, FORMS).state,
+        "unexpected",
+        JSON.stringify(json),
+      );
+  assert.equal(
+    entryState(ENTRIES.E1, { status: 200, json: { indexes: [], nextPageToken: "p" } }, FORMS)
+      .reason,
+    "more than one page",
+  );
+  assert.equal(
+    entryState(
+      ENTRIES.E4,
+      {
+        status: 200,
+        json: { indexConfig: { ancestorField: ANCESTOR_ID }, name: E4_NAME, ttlConfig: {} },
+      },
+      FORMS,
+    ).reason,
+    "the field has a TTL",
+  );
 });
