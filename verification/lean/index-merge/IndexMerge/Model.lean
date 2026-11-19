@@ -160,6 +160,17 @@ def singleFieldIndex (coll : Nat) (group : Bool) (f : Field) (m nm : Mode) : Ind
 def touched (r : Req) : List Field :=
   (r.eq ++ r.contains.toList ++ (r.order.filter (·.path != NAME)).map (·.path)).eraseDups
 
+/-- The mode `automatic_index_for` picks for the one touched field `f`, before checking that
+it is enabled. -/
+def autoMode (r : Req) (s : ISet) (coll : Nat) (group : Bool) (f : Field) : Option Mode :=
+  let nd := nameDirOf r.order
+  let ordered := r.order.find? (·.path == f)
+  if r.contains.isSome then (if ordered.isSome then none else some .contains)
+  else
+    match ordered with
+    | some o => if o.dir != nd then none else some (modeFor o.dir)
+    | none => [modeFor nd, .asc, .desc].find? (fun m => hasMode s coll f group m)
+
 def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option Index :=
   let t := touched r
   if t.length > 1 then none
@@ -171,14 +182,7 @@ def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option 
     | f :: _ =>
       if isExempt s coll f group then none
       else
-        let ordered := r.order.find? (·.path == f)
-        let mode? : Option Mode :=
-          if r.contains.isSome then (if ordered.isSome then none else some .contains)
-          else
-            match ordered with
-            | some o => if o.dir != nd then none else some (modeFor o.dir)
-            | none => [nm, .asc, .desc].find? (fun m => hasMode s coll f group m)
-        match mode? with
+        match autoMode r s coll group f with
         | none => none
         | some m => if hasMode s coll f group m then some (singleFieldIndex coll group f m nm) else none
 

@@ -291,7 +291,7 @@ fn parse_corpus() -> Corpus {
             "uses" => c.config = rest.parse().expect("config number"),
             "query" => {
                 let (name, g) = rest.split_once(' ').expect("query");
-                c.collection = name.to_owned();
+                name.clone_into(&mut c.collection);
                 c.group = g == "G";
             }
             "ctx" => {
@@ -317,7 +317,7 @@ fn parse_corpus() -> Corpus {
                 let (verdict, row) = rest.split_once(' ').expect("production");
                 c.production = Some((verdict == "served", row.to_owned()));
             }
-            "expect" => c.expect = line.to_owned(),
+            "expect" => line.clone_into(&mut c.expect),
             "end" => cases.push(case.take().expect("open case")),
             other => panic!("case line {other}"),
         }
@@ -402,6 +402,15 @@ fn the_corpus_covers_every_decision_kind_and_merge_shape() {
         kinds,
         BTreeSet::from(["assumed", "fullscan", "merge", "missing", "use"])
     );
+    // The pairwise rows of the coverage ledger's PICT model (`pictRows` in `Main.lean`).
+    assert_eq!(
+        corpus
+            .cases
+            .iter()
+            .filter(|c| c.label.starts_with("pict/"))
+            .count(),
+        105
+    );
     let merges: Vec<&CorpusCase> = corpus
         .cases
         .iter()
@@ -433,12 +442,16 @@ struct Shape {
     group: bool,
 }
 
-/// The same order shapes as `orderShapes` in `Main.lean`, without the one that orders an
-/// equality field (`equality_ordered` is tested on its own).
-fn order_shapes() -> Vec<(
+/// Extra filters (kind, field) and explicit orders of a query shape.
+type OrderShape = (
     Vec<(&'static str, &'static str)>,
     Vec<(&'static str, Direction)>,
-)> {
+);
+
+/// The same order shapes as `orderShapes` in `Main.lean`, without the ones that order an
+/// equality field (`equality_ordered` is tested on its own) or a field before `__name__`
+/// with the opposite direction.
+fn order_shapes() -> Vec<OrderShape> {
     use Direction::{Ascending as A, Descending as D};
     vec![
         (vec![], vec![]),

@@ -169,8 +169,157 @@ def randomCases (n : Nat) : List Case :=
       config := { composites, defaults := modes.1, overrides := modes.2 }
       policy, edition }
 
+/-! ## Pairwise rows
+
+The rows PICT generated (`/r:7`, with the required rows of the coverage ledger as seeds) for
+the axes `Eq Contains Order Composites Modes Group Ctx CompositeOrder NullFirst`. -/
+
+def pictRows : List String := [
+  "2 no none none builtin C prodStd forward no",
+  "2 no fieldAsc pairs builtin C prodStd forward no",
+  "3 no none pairs builtin C prodStd forward no",
+  "1 yes none none builtin C prodStd forward no",
+  "1 yes nameDesc none builtin C prodStd forward no",
+  "2 no nameDesc none aAscOnly C prodStd forward no",
+  "2 no eqOrdered none builtin C prodStd forward no",
+  "2 no none none exemptA C prodStd forward no",
+  "0 no nameDesc none builtin C prodStd forward no",
+  "1 yes none contains exemptA C prodStd forward no",
+  "2 no fieldAsc pairs builtin C prodStd reversed no",
+  "2 no none none builtin G prodStd forward no",
+  "2 no none none groupAll G prodStd forward no",
+  "2 no none none builtin C emuStd forward no",
+  "2 no fieldAsc none builtin C reportStd forward no",
+  "2 no fieldAsc none builtin C prodEnt forward no",
+  "2 no none none wildcard C prodStd forward no",
+  "0 no nameRange none wildcard C prodStd forward no",
+  "0 yes rangeDesc names aAscOnly G emuEnt reversed yes",
+  "3 yes eqOrdered mixed wildcard G emuStd reversed yes",
+  "1 no fieldNameDesc contains tagsNoContains G reportStd forward yes",
+  "1 yes nameDesc pairs eGroupAsc G prodEnt reversed yes",
+  "2 yes descThenName mixed aAscOnly C reportStd reversed yes",
+  "3 no nameDesc names wildcard C emuEnt forward no",
+  "0 no descThenName contains builtin G emuEnt forward yes",
+  "0 no nameAsc mixed eGroupAsc C emuStd forward no",
+  "3 yes fieldAsc none eGroupAsc G emuEnt reversed yes",
+  "0 yes eqOrdered contains bDescOnly C prodEnt reversed yes",
+  "1 yes range names exemptA G emuStd reversed yes",
+  "2 no fieldNameDesc pairs bDescOnly G emuEnt forward no",
+  "3 yes nameRange names builtin G reportStd reversed yes",
+  "1 yes eqOrdered pairs tagsNoContains C emuEnt reversed no",
+  "3 yes fieldAsc contains aAscOnly C emuStd forward yes",
+  "1 yes fieldNameDesc mixed wildcard C prodEnt reversed yes",
+  "2 no none names aAscOnly C prodEnt reversed yes",
+  "3 no descThenName names eGroupAsc C prodStd reversed no",
+  "0 yes fieldAsc mixed tagsNoContains G prodStd reversed yes",
+  "0 yes nameAsc pairs builtin G reportStd reversed yes",
+  "3 no rangeDesc mixed builtin C prodEnt forward no",
+  "1 yes descThenName pairs groupAll C emuStd reversed yes",
+  "1 no fieldDesc mixed builtin C emuEnt reversed yes",
+  "2 yes nameRangeDesc contains groupAll C prodEnt forward no",
+  "3 no nameRange mixed groupAll C emuEnt forward yes",
+  "3 yes descThenName none bDescOnly G prodEnt forward yes",
+  "1 no rangeDesc none groupAll C reportStd reversed no",
+  "1 no nameRangeDesc names bDescOnly G prodStd reversed yes",
+  "3 yes fieldNameDesc pairs exemptA G prodEnt reversed no",
+  "2 yes fieldDesc contains eGroupAsc G reportStd forward no",
+  "0 yes none mixed eGroupAsc C reportStd reversed yes",
+  "1 no fieldAsc names bDescOnly C reportStd forward no",
+  "2 no range pairs builtin C emuEnt forward no",
+  "1 yes nameRange contains eGroupAsc C emuStd reversed yes",
+  "0 yes nameAsc names exemptA G emuEnt reversed yes",
+  "0 yes eqOrdered names groupAll C reportStd forward no",
+  "3 yes nameAsc contains groupAll C prodStd reversed no",
+  "0 yes fieldDesc pairs aAscOnly G prodEnt reversed yes",
+  "1 no nameAsc none aAscOnly C prodEnt forward no",
+  "3 yes range mixed groupAll G reportStd forward no",
+  "2 yes rangeDesc pairs exemptA G emuStd forward yes",
+  "3 no fieldDesc contains wildcard C emuStd reversed no",
+  "2 yes rangeDesc contains tagsNoContains G emuStd reversed yes",
+  "0 no range contains aAscOnly G prodEnt reversed no",
+  "3 no descThenName none tagsNoContains G prodEnt forward yes",
+  "0 yes rangeDesc mixed bDescOnly C emuStd reversed no",
+  "1 yes fieldDesc names tagsNoContains G prodStd reversed yes",
+  "1 yes range none tagsNoContains C prodStd reversed no",
+  "2 yes nameRange pairs bDescOnly G prodEnt forward yes",
+  "0 yes nameRangeDesc pairs tagsNoContains G emuEnt reversed no",
+  "3 no nameDesc mixed exemptA C reportStd reversed yes",
+  "3 yes eqOrdered pairs eGroupAsc G emuEnt forward no",
+  "0 yes range pairs wildcard G reportStd forward yes",
+  "2 no fieldDesc none groupAll C prodEnt reversed yes",
+  "0 no fieldDesc contains bDescOnly C prodStd forward no",
+  "1 yes range none bDescOnly C emuStd forward yes",
+  "0 yes fieldAsc mixed wildcard G emuEnt reversed yes",
+  "3 no nameRangeDesc none builtin G reportStd forward no",
+  "2 yes nameRange mixed aAscOnly G prodEnt forward no",
+  "2 yes nameRangeDesc mixed aAscOnly G emuStd forward no",
+  "0 no nameRange names exemptA G prodStd forward yes",
+  "2 no nameAsc names tagsNoContains C prodEnt forward yes",
+  "2 no rangeDesc names eGroupAsc G prodStd forward no",
+  "1 yes none names tagsNoContains C emuEnt forward yes",
+  "0 no fieldNameDesc names eGroupAsc C prodStd reversed no",
+  "2 yes nameDesc contains groupAll G emuStd reversed yes",
+  "0 yes fieldAsc names exemptA G prodStd forward no",
+  "0 yes rangeDesc pairs wildcard G emuEnt forward no",
+  "1 no fieldNameDesc none builtin G emuStd reversed no",
+  "2 yes eqOrdered mixed aAscOnly G prodStd reversed yes",
+  "3 no nameAsc pairs bDescOnly G prodStd forward yes",
+  "0 yes nameRange none tagsNoContains G prodStd forward no",
+  "3 no eqOrdered contains exemptA G prodEnt reversed yes",
+  "1 no descThenName mixed wildcard G emuEnt reversed yes",
+  "2 yes fieldDesc names exemptA C prodEnt forward yes",
+  "2 no nameRangeDesc pairs eGroupAsc G prodStd reversed yes",
+  "1 no range none eGroupAsc C emuStd reversed yes",
+  "0 no none names bDescOnly C reportStd reversed no",
+  "0 yes fieldAsc none groupAll G emuEnt forward yes",
+  "0 no fieldNameDesc names aAscOnly G reportStd reversed yes",
+  "2 no descThenName contains exemptA C reportStd forward no",
+  "1 yes nameDesc pairs bDescOnly C emuStd forward no",
+  "1 yes nameRangeDesc none exemptA G prodStd forward yes",
+  "0 no nameAsc pairs wildcard G prodEnt forward no",
+  "1 no nameDesc contains tagsNoContains C emuStd reversed no",
+  "2 no fieldNameDesc none groupAll C prodEnt forward yes",
+  "0 yes nameRangeDesc pairs wildcard C prodEnt forward yes"
+]
+
+def pictComposites : String → List Index
+  | "pairs" => [pool[0]!, pool[1]!, pool[2]!, pool[13]!]
+  | "contains" => [pool[4]!, pool[11]!, pool[3]!]
+  | "names" => [pool[6]!, pool[7]!, pool[12]!]
+  | "mixed" => [pool[0]!, pool[4]!, pool[6]!, pool[1]!, pool[10]!, pool[14]!, pool[15]!, pool[8]!,
+      pool[9]!]
+  | _ => []
+
+def orderNames : List String := ["none", "nameAsc", "nameDesc", "fieldAsc", "fieldDesc",
+  "fieldNameDesc", "range", "rangeDesc", "nameRange", "nameRangeDesc", "eqOrdered", "descThenName"]
+
+def modeNames : List String := ["builtin", "exemptA", "aAscOnly", "wildcard", "tagsNoContains",
+  "groupAll", "bDescOnly", "eGroupAsc"]
+
+instance : Inhabited Case := ⟨{ label := "", query := query qx [], config := {} }⟩
+
+def pictCase (row : String) : Case :=
+  match row.splitOn " " with
+  | [eq, contains, order, composites, modes, group, ctx, compositeOrder, nullFirst] =>
+    let eqs := [[], ["a"], ["a", "b"], ["a", "b", "c"]][eq.toNat!]!
+    let shape := orderShapes[orderNames.idxOf order]!
+    let ms := modeConfigs[modeNames.idxOf modes]!
+    let cs := pictComposites composites
+    let (policy, edition) : Policy × Edition := match ctx with
+      | "reportStd" => (.report, .standard)
+      | "emuStd" => (.emulator, .standard)
+      | "prodEnt" => (.production, .enterprise)
+      | "emuEnt" => (.emulator, .enterprise)
+      | _ => (.production, .standard)
+    { label := s!"pict/{"/".intercalate (row.splitOn " ")}"
+      query := mkQuery eqs (nullFirst == "yes") (contains == "yes") (group == "G") shape
+      config := { composites := if compositeOrder == "reversed" then cs.reverse else cs,
+                  defaults := ms.1, overrides := ms.2 }
+      policy, edition }
+  | _ => panic! s!"bad PICT row {row}"
+
 def main : IO Unit := do
-  let all := productionRows ++ productCases ++ randomCases 3000
+  let all := productionRows ++ pictRows.map pictCase ++ productCases ++ randomCases 3000
   let g := all.foldl Gen.add {}
   IO.println "# Golden corpus of the Lean index-merge model (verification/lean/index-merge)."
   IO.println "# Generated by `lake exe corpus`; do not edit. The format is in Main.lean."
