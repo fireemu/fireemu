@@ -76,7 +76,7 @@ jobs:
         run: python3 run.py --backend both --fireemu ../../target/debug/fireemu
       - name: Upload sanitized case summaries
         if: always()
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: flutterfire-case-summaries
           path: tools/sdk-smoke-flutter/reports/*.json

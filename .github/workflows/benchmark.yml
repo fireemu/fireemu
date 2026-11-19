@@ -108,7 +108,7 @@ jobs:
           pnpm --version >> bench-bin/toolchain.txt
           printf '%s\n' "source_commit=$BUILD_COMMIT" "target=x86_64-unknown-linux-musl" "profile=release" > bench-bin/build.txt
           (cd bench-bin && sha256sum fireemu commit.txt toolchain.txt build.txt > SHA256SUMS)
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.role == 'baseline' && 'benchmark-baseline-binary' || 'benchmark-binary' }}
           path: bench-bin/
@@ -201,7 +201,7 @@ jobs:
           # On malformed input, report.py still writes a readable failure summary.
           python3 tools/bench/report.py .bench-output \
             --github-summary "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: benchmark-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

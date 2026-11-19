@@ -395,7 +395,7 @@ jobs:
             0 | 2 | 3) exit 0 ;;
             *) exit "$code" ;;
           esac
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: mutants-shard-${{ matrix.shard }}
@@ -434,7 +434,7 @@ jobs:
             cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$code"
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: mutants-summary
@@ -514,7 +514,7 @@ jobs:
           mkdir -p "$HEAVY_OUT"
           # The script writes everything it wants kept below $HEAVY_OUT.
           bash "$SCRIPT"
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: linux-measure-output

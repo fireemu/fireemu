@@ -68,7 +68,7 @@ jobs:
           node_modules/.bin/firebase emulators:exec --project demo-app --config firebase.json --only auth,firestore,storage,database 'python3 run.py --binary .build/debug/sdk-smoke-swift --output logs/official' > .cache/official.log 2>&1
       - name: Publish sanitized case results
         if: always()
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: swift-sdk-cases
           path: tools/sdk-smoke-swift/logs/

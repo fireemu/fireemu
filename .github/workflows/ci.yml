@@ -417,7 +417,7 @@ jobs:
             --binary target/debug/fireemu --dep-info target/debug/fireemu.d --out "$RUNNER_TEMP/txn04-replay"
       - name: keep the result
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: txn04-replay-${{ matrix.os }}
           path: ${{ runner.temp }}/txn04-replay/result.json

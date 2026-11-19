@@ -97,7 +97,7 @@ jobs:
       # the file, not the repository.
       - name: hand the release notes to the GitHub Release job
         if: steps.version.outputs.publish == 'true'
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-notes
           path: ${{ runner.temp }}/release-notes.md
@@ -122,7 +122,7 @@ jobs:
       # cache entry in the main scope can be written by any workflow run on main.
       - run: pnpm -C ui install --frozen-lockfile
       - run: pnpm -C ui build
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: ui-dist
           path: ui/dist
@@ -260,12 +260,12 @@ jobs:
           fi
           ls -l dist
 
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: package-${{ matrix.platform.name }}
           path: npm/platforms/build/${{ matrix.platform.name }}
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: archive-${{ matrix.platform.name }}
           path: dist/*
@@ -353,7 +353,7 @@ jobs:
           (cd "${{ steps.install.outputs.dir }}" && npm sbom --sbom-format cyclonedx --omit dev) \
             > "sbom/fireemu-${VERSION}.npm.cdx.json"
           node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "sbom/fireemu-${VERSION}.npm.cdx.json"
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: sbom-npm
           path: sbom/*
@@ -474,7 +474,7 @@ jobs:
             sh -c 'ip link set lo up && exec setpriv --reuid="$1" --regid="$2" --init-groups -- \
               node conformance/src/release-strict-regression.mjs --out strict-regression --dist npm/dist --group "$GROUP"' \
             sh "$(id -u)" "$(id -g)"
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: strict-regression-${{ matrix.group }}
@@ -568,7 +568,7 @@ jobs:
       # of the release.
       - name: hand the release assets to the GitHub Release job
         if: needs.plan.outputs.publish == 'true'
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: release-assets
           path: dist/*
@@ -602,7 +602,7 @@ jobs:
 
       - name: the dry run's artifacts
         if: needs.plan.outputs.publish != 'true'
-        uses: actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: dry-run-archives
           path: dist/*
@@ -680,7 +680,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node npm/scripts/recover-v0381.mjs
-      - uses: actions/upload-artifact@v4.6.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: recovery-v0381-release-assets
           path: recovery-output/*
