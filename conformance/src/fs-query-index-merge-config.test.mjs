@@ -2340,3 +2340,57 @@ test("an operation whose metadata type cannot become a string is unreadable for 
   for (const id of SETS.f1) assert.equal(result.entries[id].operation, "unreadable", id);
   assert.equal(result.ok, false);
 });
+
+// ---- ruling 9 item 4 -------------------------------------------------------------------------
+
+test("a create or reset answer whose operation cannot be classified stops the writes", async () => {
+  const weird = () => JSON.parse('{"toString": 1, "valueOf": 2}');
+  // apply: the first create (E1) answers 200 with an unclassifiable operation.
+  const fake = fakeFirestore();
+  let posted = false;
+  const wrapped = async (r) => {
+    const answer = await fake.http(r);
+    if (r.method === "POST" && !posted) {
+      posted = true;
+      return {
+        status: 200,
+        json: { ...answer.json, metadata: { ...answer.json.metadata, "@type": weird() } },
+      };
+    }
+    return answer;
+  };
+  const result = await apply({
+    session: createSession({ http: wrapped, token: async () => "t", cap: 1000, wallMs: 3_600_000 }),
+    set: "f1",
+    forms: FORMS,
+    sleep: noSleep,
+  });
+  assert.equal(writesOf(fake).length, 1, "no write after the unclassifiable answer");
+  assert.equal(result.entries.E1.write.unclassified, true);
+  for (const id of ["E2", "E4", "E5"]) assert.equal(result.entries[id].write.class, "not-sent", id);
+  assert.equal(result.ok, false);
+  // remove: the first reset (E3) answers 200 with an unclassifiable operation.
+  const { fake: applied } = await appliedFake();
+  applied.requests.length = 0;
+  let reset = false;
+  const http = async (r) => {
+    if (r.method === "PATCH" && !reset) {
+      reset = true;
+      const answer = await applied.http(r);
+      return {
+        status: 200,
+        json: { ...answer.json, metadata: { ...answer.json.metadata, "@type": weird() } },
+      };
+    }
+    return applied.http(r);
+  };
+  const removal = await remove({
+    session: createSession({ http, token: async () => "t", cap: 1000, wallMs: 3_600_000 }),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+  });
+  assert.equal(applied.requests.filter((r) => r.method !== "GET").length, 1, "no write after it");
+  assert.equal(removal.entries.E3.write.unclassified, true);
+  assert.equal(removal.ok, false);
+});

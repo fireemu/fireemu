@@ -533,6 +533,22 @@ function operationOf(answer, forms, entry) {
 }
 
 /**
+ * Whether a create or reset answer carries an operation whose classification cannot even be
+ * attempted: its metadata type is not a string, or reading it throws. The writes stop there
+ * (no further mutating request in the run), as they did before the poll path learned to treat
+ * such a body as unreadable for its entry (coordinator ruling 9).
+ */
+export function unclassifiable(answer) {
+  try {
+    const meta = answer?.json?.metadata;
+    if (!isObject(meta) || !Object.hasOwn(meta, "@type")) return false;
+    return typeof meta["@type"] !== "string";
+  } catch {
+    return true;
+  }
+}
+
+/**
  * apply: every entry of the set must read absent; then one create per entry, in the set's order,
  * stopping at the first answer that is not done; polls; reads back. Each entry ends as `created`
  * (done or unknown write, then its operation done or an own read showing it), `not-created` (its
@@ -547,7 +563,7 @@ export async function apply({ session, set, forms, sleep }) {
   const writes = {};
   const operations = {};
   for (const id of ids) {
-    if (Object.values(writes).some((w) => w.class !== "done")) {
+    if (Object.values(writes).some((w) => w.class !== "done" || w.unclassified)) {
       writes[id] = { class: "not-sent" };
       continue;
     }
@@ -557,6 +573,7 @@ export async function apply({ session, set, forms, sleep }) {
       class: classify(answer),
       status: answer.status,
       ...(operation ? { operation: operation.name, target: operation.target } : {}),
+      ...(unclassifiable(answer) ? { unclassified: true } : {}),
     };
     if (operation) operations[id] = operation;
   }
@@ -615,6 +632,10 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
   const operations = {};
   for (const id of ids) {
     if (before[id].state !== "present") continue;
+    if (Object.values(writes).some((w) => w.unclassified)) {
+      writes[id] = { class: "not-sent" };
+      continue;
+    }
     const entry = ENTRIES[id];
     const request =
       entry.kind === "composite"
@@ -626,6 +647,7 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
       class: classify(answer),
       status: answer.status,
       ...(operation ? { operation: operation.name, target: operation.target } : {}),
+      ...(unclassifiable(answer) ? { unclassified: true } : {}),
     };
     if (operation) operations[id] = operation;
   }
