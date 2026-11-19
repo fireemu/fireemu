@@ -1,0 +1,10 @@
+# Dependabot proposes new versions of the actions the workflows use. Each pull request changes the
+# `uses:` tag and the matching entry of .github/workflows/actions.lock together; review the lockfile
+# diff as a code change (docs/development.md, "Workflow action versions").
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
