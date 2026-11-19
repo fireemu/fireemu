@@ -976,3 +976,51 @@ test("only apply results give apply outcomes, and status baseline needs every en
   assert.equal(partial.baseline, false);
   assert.equal(partial.applied, false);
 });
+
+test("a second remove closes what the first removed and removes what it left", async () => {
+  // The first remove's imc DELETE timed out; the index stayed. A later remove deletes it, and the
+  // entries the first remove closed stay closed by its journal.
+  const { fake, result: applied } = await appliedFake();
+  const applyJournal = `${JSON.stringify({ result: { command: "apply", ...applied } })}\n`;
+  const first = await remove({
+    session: createSession({
+      http: async (r) =>
+        r.method === "DELETE" && r.url.includes("/imc/") ? { error: "timeout" } : fake.http(r),
+      token: async () => "t",
+      cap: 1000,
+      wallMs: 3_600_000,
+    }),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+    ...fromJournals([applyJournal]),
+  });
+  assert.equal(first.entries.E2.outcome, "open");
+  assert.equal(first.entries.E1.outcome, "closed");
+  const firstJournal = `${JSON.stringify({ result: { command: "remove", ...first } })}\n`;
+  const earlier = fromJournals([applyJournal, firstJournal]);
+  assert.deepEqual(earlier.removed.toSorted(), ["E1", "E3", "E4", "E5"]);
+  assert.deepEqual(earlier.applied.E1, "created", "remove results do not change apply outcomes");
+  fake.requests.length = 0;
+  const second = await remove({
+    session: session(fake),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+    ...earlier,
+  });
+  assert.equal(second.ok, true);
+  assert.deepEqual(
+    writesOf(fake).map((r) => r.method),
+    ["DELETE"],
+  );
+  // Without the first remove's journal the entries it removed cannot close.
+  const blind = await remove({
+    session: session(fake),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+    ...fromJournals([applyJournal]),
+  });
+  assert.equal(blind.ok, false);
+});

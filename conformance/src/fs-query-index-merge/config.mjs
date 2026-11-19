@@ -22,7 +22,7 @@
 //   (a definite 4xx other than 408, 429 and 499, with a readable body) or unknown (anything else).
 //   An unknown create settles only on an own read showing the entry or its operation reading done;
 //   absence never settles it. `remove` settles an entry's absence only against the journals of
-//   the apply that created it (--journal).
+//   the apply that created it, or of an earlier remove that removed it (--journal).
 // - Bounds: a request cap per subcommand computed from the set, a wall-time cap, at most one page
 //   per list, a 30 s timeout per request, a fresh token at least every 10 minutes; the journal
 //   (journal.jsonl in --out, which must not exist yet) records every request and the counter.
@@ -372,9 +372,10 @@ export function applyOutcomes(results) {
  * Deletes the present composites by the names read, resets the present overrides, polls the
  * resets, reads back. An entry is `closed` when it reads absent at the end and either this run
  * removed it (own DELETE or reset done, then absent) or the apply's own answers show it was never
- * created (`not-created`, `not-sent`). Everything else is `open` (A2).
+ * created (`not-created`, `not-sent`), or an earlier remove closed it
+ * (its journal). Everything else is `open` (A2).
  */
-export async function remove({ session, set, forms, sleep, applied = {} }) {
+export async function remove({ session, set, forms, sleep, applied = {}, removed = [] }) {
   const ids = SETS[set];
   const before = await readStates(session, "before", ids, forms);
   const blocked = ids.filter((id) => !["absent", "present"].includes(before[id].state));
@@ -407,7 +408,9 @@ export async function remove({ session, set, forms, sleep, applied = {} }) {
     const removedHere =
       write?.class === "done" && (ENTRIES[id].kind === "composite" || polled[id] === "done");
     const neverCreated = ["not-created", "not-sent"].includes(applied[id]);
-    const outcome = absent && (removedHere || (!write && neverCreated)) ? "closed" : "open";
+    const removedEarlier = removed.includes(id);
+    const outcome =
+      absent && (removedHere || (!write && (neverCreated || removedEarlier))) ? "closed" : "open";
     entries[id] = { before: before[id], write, operation: polled[id], after: after[id], outcome };
   }
   const ok = ids.every((id) => entries[id].outcome === "closed");
@@ -455,6 +458,16 @@ export function fromJournals(texts) {
   return {
     operations,
     applied: applyOutcomes(results.filter((r) => r.command === "apply")),
+    // Entries an earlier remove closed (its own DELETE or reset done, then read absent).
+    removed: [
+      ...new Set(
+        results
+          .filter((r) => r.command === "remove")
+          .flatMap((r) => Object.entries(r.entries ?? {}))
+          .filter(([, entry]) => entry.outcome === "closed")
+          .map(([id]) => id),
+      ),
+    ],
   };
 }
 
@@ -566,6 +579,7 @@ export async function main(argv, { env = process.env, http, token = adcToken, sl
         forms,
         sleep: pause,
         applied: earlier.applied,
+        removed: earlier.removed,
       });
   } catch (error) {
     result = { ok: false, error: String(error.message), sent: session.sent };
