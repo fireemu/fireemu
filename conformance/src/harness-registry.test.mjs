@@ -695,6 +695,7 @@ test("the waived fixtures are exactly these, so a new waiver is a visible edit h
     "fs-ent-pipeline",
     "fs-ent-pipeline-regex",
     "fs-query-index",
+    "fs-query-index-merge",
     "fs-rules",
     "pubsub-resource-names",
     "securetoken-body",

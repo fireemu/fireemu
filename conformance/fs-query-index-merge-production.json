@@ -1,0 +1,881 @@
+{
+  "version": 1,
+  "recordedAgainst": {
+    "target": "production Firestore REST v1 and gRPC google.firestore.v1, Standard edition, us-central1, database (default)",
+    "project": "demo-fs-query-index",
+    "indexes": "conformance/fs-query-index-merge.indexes.json",
+    "note": "Two recordings per program. Run-window times, execution durations, page and transaction tokens (also where an answer echoes a token the request carried) and the project id are placeholders; the project id is recorded as demo-fs-query-index in every lane. Missing-index links keep their encoded index with the project id replaced. `second` holds the other recording of rows that differed."
+  },
+  "programs": {
+    "fs-query-index-merge/shapes/ascending-only": {
+      "corpusDigest": "1c94671cdfa89cf1784c3879acc6e26a70955a9b3b553745b3558e03e6f2ec7b",
+      "harnessDigest": "72c5aec1496562c4d23120788a356cc0bfcfe9960aa716d2cac7e6be2276b562",
+      "recordedAt": "2026-11-19T14:46:57.232Z",
+      "gitSha": "4fcd8a7a3834ef6e74a24d7bf2740cc7b47bda0b",
+      "steps": {
+        "f2-equalities-name-desc": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_composite=ClBwcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbWEvaW5kZXhlcy9fEAEaBQoBYRABGgUKAWIQARoMCghfX25hbWVfXxAC",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "f2-equalities-name-asc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "a-alone-name-desc": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_composite=ClBwcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbWEvaW5kZXhlcy9fEAEaBQoBYRABGgwKCF9fbmFtZV9fEAI",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "a-alone-name-asc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "5"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x5",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "b-alone-name-desc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "6"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x6",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "2"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x2",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "order-a-desc": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires a COLLECTION_DESC index for collection ima and field a. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_exemption=Ck9wcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbWEvZmllbGRzL2EQARoFCgFhEAI",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "order-a-asc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "0"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x0",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "2"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x2",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "4"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x4",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "6"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x6",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "5"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x5",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/ima/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "f2-equalities-name-desc-plan": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "no matching index found.",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "fs-query-index-merge/shapes/builtin": {
+      "corpusDigest": "5e05bc089ca63447fa4b28226d321ae5ea7e757c1f32a6d68f0f3294f375481d",
+      "harnessDigest": "72c5aec1496562c4d23120788a356cc0bfcfe9960aa716d2cac7e6be2276b562",
+      "recordedAt": "2026-11-19T14:46:57.232Z",
+      "gitSha": "4fcd8a7a3834ef6e74a24d7bf2740cc7b47bda0b",
+      "steps": {
+        "f3-contains-name-desc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "f3-contains-name-asc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "contains-alone-name-desc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "a-alone-name-desc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "5"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x5",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "f2-equalities-name-desc": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "f1-equalities-and-contains": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imb/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "f3-contains-name-desc-plan": {
+          "status": 200,
+          "body": [
+            {
+              "explainMetrics": {
+                "planSummary": {
+                  "indexesUsed": [
+                    {
+                      "properties": "(tags ARRAY_CONTAINS, __name__ DESC)",
+                      "query_scope": "Collection"
+                    },
+                    {
+                      "properties": "(a DESC, __name__ DESC)",
+                      "query_scope": "Collection"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "fs-query-index-merge/shapes/composite-not-exempt": {
+      "corpusDigest": "2c1bcb6689fbdb52e57da753376ca53e6edb12043993d01b429df5394f6b5ccc",
+      "harnessDigest": "72c5aec1496562c4d23120788a356cc0bfcfe9960aa716d2cac7e6be2276b562",
+      "recordedAt": "2026-11-19T14:46:57.232Z",
+      "gitSha": "4fcd8a7a3834ef6e74a24d7bf2740cc7b47bda0b",
+      "steps": {
+        "f1-equalities-and-contains": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imc/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imc/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "a-and-contains": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imc/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imc/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imc/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        }
+      }
+    },
+    "fs-query-index-merge/shapes/exempt-with-composite": {
+      "corpusDigest": "63164d65ab9133f9aa9926729cd7f7530d463034e7f99af59746a6c74b81b943",
+      "harnessDigest": "72c5aec1496562c4d23120788a356cc0bfcfe9960aa716d2cac7e6be2276b562",
+      "recordedAt": "2026-11-19T14:46:57.232Z",
+      "gitSha": "4fcd8a7a3834ef6e74a24d7bf2740cc7b47bda0b",
+      "steps": {
+        "f1-equalities-and-contains": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "a-and-contains": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "1"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x1",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "b-alone": {
+          "status": 200,
+          "body": [
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "2"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x2",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "3"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x3",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "6"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x6",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            },
+            {
+              "document": {
+                "createTime": "<t1>",
+                "fields": {
+                  "c": {
+                    "integerValue": "7"
+                  }
+                },
+                "name": "projects/demo-fs-query-index/databases/(default)/documents/imx/x7",
+                "updateTime": "<t1>"
+              },
+              "readTime": "<t2>"
+            }
+          ]
+        },
+        "a-and-b": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_composite=ClBwcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbXgvaW5kZXhlcy9fEAEaBQoBYRABGgUKAWIQARoMCghfX25hbWVfXxAB",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "order-a-desc": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires a COLLECTION_DESC index for collection imx and field a. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_exemption=Ck9wcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbXgvZmllbGRzL2EQARoFCgFhEAI",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "contains-alone": {
+          "status": 400,
+          "body": [
+            {
+              "error": {
+                "code": 400,
+                "message": "The query requires a COLLECTION_CONTAINS index for collection imx and field tags. You can create it here: https://console.firebase.google.com/v1/r/project/demo-fs-query-index/firestore/indexes?create_exemption=ClJwcm9qZWN0cy9kZW1vLWZzLXF1ZXJ5LWluZGV4L2RhdGFiYXNlcy8oZGVmYXVsdCkvY29sbGVjdGlvbkdyb3Vwcy9pbXgvZmllbGRzL3RhZ3MQARoICgR0YWdzGAE",
+                "status": "FAILED_PRECONDITION"
+              }
+            }
+          ]
+        },
+        "f1-equalities-and-contains-plan": {
+          "status": 200,
+          "body": [
+            {
+              "explainMetrics": {
+                "planSummary": {
+                  "indexesUsed": [
+                    {
+                      "properties": "(a ASC, tags ARRAY_CONTAINS, __name__ ASC)",
+                      "query_scope": "Collection"
+                    },
+                    {
+                      "properties": "(b ASC, __name__ ASC)",
+                      "query_scope": "Collection"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

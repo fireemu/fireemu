@@ -192,6 +192,14 @@ export const HARNESS_LANES = {
     extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index.indexes.json"), "utf8"),
     guarded: ["conformance/fs-query-index.indexes.json"],
   },
+  // The index-merge observation lane (lanes.mjs fs-query-index-merge): the same request layer,
+  // with its own index file as the data its digest reads.
+  "fs-query-index-merge": {
+    fixture: "fs-query-index-merge-production.json",
+    files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
+    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge.indexes.json"), "utf8"),
+    guarded: ["conformance/fs-query-index-merge.indexes.json"],
+  },
   // FS-ENT-ORACLE: the pipeline lane's own copy of the query request layer (named database
   // support), without an index file.
   "fs-ent-pipeline": {
