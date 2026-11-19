@@ -43,6 +43,10 @@ lint_runs = jobs.fetch("lint").fetch("steps").map { |step| step["run"] }.compact
 assert(lint_runs.include?("ruby scripts/txn04-replay-contract.test.rb"), "the lint job must check the txn04-replay job contract")
 lint_conditional = jobs.fetch("lint").fetch("steps").select { |step| step["run"] == "ruby scripts/txn04-replay-contract.test.rb" && (step.key?("if") || step.key?("continue-on-error")) }
 assert(lint_conditional.empty?, "the txn04-replay contract step must be unconditional")
+# The workflow lockfile is checked offline (the contract's tests) and against upstream (--verify), on every run.
+lockfile_steps = jobs.fetch("lint").fetch("steps").select { |step| step["run"].to_s.include?("actions-lock") }
+assert(lockfile_steps.map { |step| step["run"] } == ["ruby scripts/actions-lock-contract.test.rb", "gh extension install github/gh-actions-lock --pin v0.4.1\ngh actions-lock --verify\n"], "the lint job must test the lockfile contract and verify the lockfile with the pinned gh actions-lock")
+assert(lockfile_steps.none? { |step| step.key?("if") || step.key?("continue-on-error") }, "the workflow lockfile steps must be unconditional")
 
 assert(trigger.key?("pull_request"), "CI must run on pull requests")
 assert(trigger.dig("push", "branches") == ["main"], "CI must run on pushes to main")
@@ -165,8 +169,13 @@ assert(File.read(File.join(ROOT, "tools", "sdk-smoke", "fireemu.smoke.json")).ma
 assert(File.read(File.join(ROOT, "tools", "sdk-smoke", "fireemu.smoke-emulator.json")).match?(/"profile":\s*"emulator"/), "fireemu.smoke-emulator.json must stay the emulator-profile config")
 
 release = load_workflow("release.yml")
-release_source = File.read(File.join(ROOT, ".github", "workflows", "release.yml"))
-assert(!release_source.match?(/uses:\s+[^\s]+@(v\d+|stable)\b/), "release actions must be pinned to immutable commits")
+# The workflows name their actions by tag; the workflow lockfile fixes the commit each one runs at.
+workflow_lock = ActionsLockContract.read(ROOT)
+
+def locked_uses?(lock, name)
+  uses = load_workflow(name).fetch("jobs").values.flat_map { |definition| definition.fetch("steps", []).map { |step| step["uses"] }.compact }
+  !uses.empty? && uses.all? { |use| ActionsLockContract.commit(lock, ".github/workflows/#{name}", use) }
+end
 toolchain_source = File.read(File.join(ROOT, "rust-toolchain.toml"))
 toolchain_channel = toolchain_source.match(/^channel\s*=\s*"([^"]+)"$/)&.captures&.first
 assert(toolchain_channel, "rust-toolchain.toml must declare a channel")
@@ -273,7 +282,7 @@ release.fetch("jobs").each do |job, definition|
   extra = definition.keys - allowed
   assert(extra.empty?, "release #{job} sets #{extra.join(', ')}: no job-level env, defaults, container, services or continue-on-error")
 end
-assert(every_use.all? { |use| use.match?(/\A[\w.-]+\/[\w.-]+(\/[\w.\/-]+)?@[0-9a-f]{40}\z/) }, "every action in the release workflow is pinned to a 40-hex commit, never a branch or a tag")
+assert(every_use.all? { |use| use.match?(/\A[\w.-]+\/[\w.-]+(\/[\w.\/-]+)?@[\w.-]+\z/) && ActionsLockContract.commit(workflow_lock, ".github/workflows/release.yml", use) }, "every action in the release workflow runs at a commit the workflow lockfile fixes, never at whatever a branch or a tag names")
 expected_permissions = Hash.new({ "contents" => "read" }).merge(
   "publish" => { "contents" => "read", "id-token" => "write", "attestations" => "write" },
   "github-release" => { "contents" => "write" },
@@ -456,8 +465,7 @@ end
 benchmark = load_workflow("benchmark.yml")
 benchmark_trigger = benchmark["on"] || benchmark[true]
 assert(benchmark_trigger.keys == ["workflow_dispatch"], "benchmark.yml must be manual-only: no schedule, no PR trigger")
-benchmark_source = File.read(File.join(ROOT, ".github", "workflows", "benchmark.yml"))
-assert(!benchmark_source.match?(/uses:\s+[^\s]+@(v\d+|stable)\b/), "benchmark actions must be pinned to immutable commits")
+assert(locked_uses?(workflow_lock, "benchmark.yml"), "benchmark actions must run at commits the workflow lockfile fixes")
 assert(benchmark.dig("concurrency", "cancel-in-progress") == false, "a benchmark series must never be cancelled in progress")
 benchmark.fetch("jobs").each do |job, definition|
   assert(definition["timeout-minutes"], "benchmark #{job} must declare a timeout")
@@ -523,7 +531,7 @@ assert(spill_trigger.keys == ["workflow_dispatch"], "storage-spill-memory.yml mu
 assert(spill_memory["permissions"] == { "contents" => "read" }, "storage-spill-memory.yml must default to contents: read only")
 spill_source = File.read(File.join(ROOT, ".github", "workflows", "storage-spill-memory.yml"))
 assert(!spill_source.match?(/actions\/cache|actions\/cache\/save|actions\/cache\/restore|Swatinem\/rust-cache/), "storage-spill-memory.yml must not read or write caches")
-assert(!spill_source.match?(/uses:\s+[^\s#]+@(v\d+|stable|main|master)\b/), "storage-spill-memory.yml actions must be pinned to immutable commits")
+assert(locked_uses?(workflow_lock, "storage-spill-memory.yml"), "storage-spill-memory.yml actions must run at commits the workflow lockfile fixes")
 spill_steps = spill_memory.dig("jobs", "measure", "steps")
 assert(spill_steps.any? { |step| step["run"].to_s.include?("tools/bench/spill_memory.py") }, "storage-spill-memory.yml must run tools/bench/spill_memory.py")
 assert(spill_memory.dig("jobs", "measure", "timeout-minutes"), "storage-spill-memory.yml must declare a timeout")

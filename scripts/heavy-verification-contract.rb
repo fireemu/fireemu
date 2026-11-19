@@ -9,17 +9,20 @@
 # checks that each rule fails on a workflow that breaks it.
 
 require "yaml"
+require_relative "actions-lock-contract"
 
 ROOT = File.expand_path("..", __dir__)
-WORKFLOW = File.join(ROOT, ".github", "workflows", "heavy-verification.yml")
+WORKFLOW_PATH = ".github/workflows/heavy-verification.yml"
+WORKFLOW = File.join(ROOT, WORKFLOW_PATH)
 
-# The only commits an action may be pinned to: commits, not tag objects (the table is shared in
-# spirit with release.yml, which pins the same ones).
+# The only commits an action may run at: commits, not tag objects (the table is shared in
+# spirit with release.yml, which runs the same ones). The workflow names each action by tag and the
+# workflow lockfile fixes the commit (scripts/actions-lock-contract.rb).
 PINS = {
   "actions/checkout" => "11d5960a326750d5838078e36cf38b85af677262",
   "actions/upload-artifact" => "ea165f8d65b6e75b540449e92b4886f43607fa02",
   "actions/download-artifact" => "d3f86a106a0bac45b974a628896c90dbdf5c8093",
-  "dtolnay/rust-toolchain" => "6bed0761d98439e5a578e2877258200ad565ba87",
+  "dtolnay/rust-toolchain" => "683b588c487a69d01f6c6ddf40f036ff682cc2c8",
   "taiki-e/install-action" => "7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c",
   "Swatinem/rust-cache" => "6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
   "pnpm/action-setup" => "b906affcce14559ad1aafd4ab0e942779e9f58b1",
@@ -60,7 +63,8 @@ def strings_in(value)
 end
 
 # Returns the list of violations of the contract in `source` (the workflow's YAML text).
-def violations(source, toolchain_channel: nil)
+# `lock` is the parsed workflow lockfile; the default is the repository's own.
+def violations(source, toolchain_channel: nil, lock: ActionsLockContract.read(ROOT))
   errors = []
   workflow = YAML.safe_load(source, aliases: true)
   code = source.lines.reject { |line| line.strip.start_with?("#") }.join
@@ -105,9 +109,9 @@ def violations(source, toolchain_channel: nil)
       label = "#{name} step #{index + 1}"
       action = nil
       if step["uses"]
-        action, ref = step["uses"].split("@", 2)
+        action, = step["uses"].split("@", 2)
         if PINS.key?(action)
-          errors << "#{label}: #{action} must be pinned by a full commit SHA (#{PINS[action]})" unless ref == PINS[action]
+          errors << "#{label}: #{action} must run at the pinned commit (#{PINS[action]})" unless ActionsLockContract.commit(lock, WORKFLOW_PATH, step["uses"]) == PINS[action]
         else
           errors << "#{label}: #{action} is not in the table of allowed actions"
         end

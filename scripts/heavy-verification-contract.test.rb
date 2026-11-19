@@ -127,7 +127,25 @@ class HeavyVerificationContractTest < Minitest::Test
   end
 
   def test_a_tag_pinned_action_is_refused
-    assert_violation(REAL.sub(/actions\/checkout@[0-9a-f]{40}/, "actions/checkout@v4"), "pinned by a full commit SHA")
+    assert_includes REAL, "actions/checkout@v4.4.0"
+    assert_violation(REAL.sub("actions/checkout@v4.4.0", "actions/checkout@v4"), "must run at the pinned commit")
+    assert_violation(REAL.sub("actions/checkout@v4.4.0", "actions/checkout@v4.4.1"), "must run at the pinned commit")
+    # A full SHA is not in the lockfile either: an onboarded workflow runs only what the lockfile lists.
+    assert_violation(REAL.sub("actions/checkout@v4.4.0", "actions/checkout@#{PINS.fetch('actions/checkout')}"), "must run at the pinned commit")
+  end
+
+  def test_the_lockfile_decides_the_commit_an_action_runs
+    lock = ActionsLockContract.read(ROOT)
+    moved = Marshal.load(Marshal.dump(lock))
+    moved["dependencies"]["actions/checkout@v4.4.0"]["commit"] = "sha1-#{'c' * 40}"
+    found = violations(REAL, toolchain_channel: CHANNEL, lock: moved)
+    assert(found.any? { |error| error.include?("actions/checkout must run at the pinned commit") }, found.inspect)
+    assert(found.none? { |error| error.include?("actions/upload-artifact") }, found.inspect)
+    # Without the lockfile no tag has a commit.
+    assert_operator violations(REAL, toolchain_channel: CHANNEL, lock: nil).length, :>=, PINS.length
+    # Outside the lockfile a full SHA is the commit.
+    pinned = REAL.gsub(%r{^(\s*-? ?uses: )([\w-]+/[\w-]+)@\S+}) { "#{$1}#{$2}@#{PINS.fetch($2)}" }
+    assert_equal [], violations(pinned, toolchain_channel: CHANNEL, lock: nil)
   end
 
   def test_a_missing_timeout_is_refused

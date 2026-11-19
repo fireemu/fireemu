@@ -61,7 +61,7 @@ jobs:
       RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src --remap-path-prefix=/home/runner/.cargo=/cargo -D warnings
       SOURCE_DATE_EPOCH: '0'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -75,18 +75,18 @@ jobs:
           fi
           test "$(git cat-file -t "$BASELINE_COMMIT")" = commit
           git merge-base --is-ancestor "$BASELINE_COMMIT" "$GITHUB_SHA"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@v4.4.0
         if: matrix.role == 'baseline'
         with:
           ref: ${{ inputs.baseline_commit }}
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@v4.3.0
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: '1.100.0' # Keep in sync with rust-toolchain.toml.
           targets: x86_64-unknown-linux-musl
@@ -108,7 +108,7 @@ jobs:
           pnpm --version >> bench-bin/toolchain.txt
           printf '%s\n' "source_commit=$BUILD_COMMIT" "target=x86_64-unknown-linux-musl" "profile=release" > bench-bin/build.txt
           (cd bench-bin && sha256sum fireemu commit.txt toolchain.txt build.txt > SHA256SUMS)
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: ${{ matrix.role == 'baseline' && 'benchmark-baseline-binary' || 'benchmark-binary' }}
           path: bench-bin/
@@ -120,14 +120,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@v4.3.0
         with:
           name: benchmark-binary
           path: bench-bin
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@v4.3.0
         if: inputs.baseline_commit != ''
         with:
           name: benchmark-baseline-binary
@@ -145,15 +145,15 @@ jobs:
             verify_binary bench-baseline "$BASELINE_COMMIT"
             cmp bench-bin/toolchain.txt bench-baseline/toolchain.txt
           fi
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@v4.3.0
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: conformance/pnpm-lock.yaml
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      - uses: actions/setup-java@v4.9.1
         with:
           distribution: temurin
           java-version: '21.0.8+9.0.LTS' # Measurement baseline, not a claim this is the latest JDK.
@@ -201,7 +201,7 @@ jobs:
           # On malformed input, report.py still writes a readable failure summary.
           python3 tools/bench/report.py .bench-output \
             --github-summary "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: benchmark-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

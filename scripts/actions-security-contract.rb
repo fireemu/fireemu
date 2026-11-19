@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 # Validate original workflow YAML; action-level save settings do not bound cache tokens.
 require "yaml"
+require_relative "actions-lock-contract"
 
 module ActionsSecurityContract
   MODES = %w[read write write-only none].freeze
@@ -33,7 +34,8 @@ module ActionsSecurityContract
     end
   end
 
-  def self.violations(source, name:)
+  # `lock` is the parsed workflow lockfile (ActionsLockContract.parse), or nil for a workflow outside it.
+  def self.violations(source, name:, lock: nil)
     errors = []
     tree = Psych.parse(source)
     return ["workflow must be a mapping"] unless tree&.root.is_a?(Psych::Nodes::Mapping)
@@ -44,10 +46,11 @@ module ActionsSecurityContract
     return ["jobs must be a mapping"] unless jobs.is_a?(Hash)
     jobs.each do |job_name, job|
       next unless job.is_a?(Hash)
-      uses = [job["uses"], *job.fetch("steps", []).map { |step| step["uses"] }].compact
-      uses.each do |use|
-        next if use.is_a?(String) && use.start_with?("./")
-        errors << "#{job_name}: external uses must pin a full commit SHA: #{use}" unless use.is_a?(String) && use.match?(%r{\A[^\s@]+/[^\s@]+@[0-9a-f]{40}\z})
+      path = "#{File.dirname(ActionsLockContract::LOCK_PATH)}/#{name}"
+      uses = [[job["uses"], true], *job.fetch("steps", []).map { |step| [step["uses"], false] }].reject { |use, _| use.nil? }
+      uses.each do |use, reusable|
+        problem = ActionsLockContract.problem(lock, path, use, reusable: reusable)
+        errors << "#{job_name}: #{problem}" if problem
       end
     end
     if name == "sdk-latest.yml"
@@ -92,9 +95,13 @@ module ActionsSecurityContract
   end
 
   def self.check!(root)
-    errors = Dir.glob(File.join(root, ".github/workflows/*.{yml,yaml}")).sort.flat_map do |path|
-      violations(File.read(path), name: File.basename(path)).map { |error| "#{File.basename(path)}: #{error}" }
+    lock = ActionsLockContract.read(root)
+    paths = Dir.glob(File.join(root, ".github/workflows/*.{yml,yaml}")).sort
+    errors = paths.flat_map do |path|
+      violations(File.read(path), name: File.basename(path), lock: lock).map { |error| "#{File.basename(path)}: #{error}" }
     end
+    # A workflow outside the lockfile would run its actions' own dependencies at whatever their tags name.
+    errors += ActionsLockContract.not_onboarded(lock, paths.map { |path| path.delete_prefix("#{root}/") }).map { |path| "#{File.basename(path)}: not in #{ActionsLockContract::LOCK_PATH} (run gh actions-lock)" }
     raise errors.join("\n") unless errors.empty?
   end
 end

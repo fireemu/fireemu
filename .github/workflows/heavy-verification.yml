@@ -303,20 +303,20 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ needs.plan.outputs.ref }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.100.0
       - name: the pinned toolchain is the one in use
         run: rustc --version | tee /dev/stderr | grep -q "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
-      - uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c
+      - uses: taiki-e/install-action@v2.87.6
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.143
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: heavy-mutants
           save-if: "false"
@@ -325,10 +325,10 @@ jobs:
       # the same preparation as the nextest job.
       - name: fetch locked dependency graph for offline authority checks
         run: cargo fetch --locked
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: 24
       - name: the pinned real SDKs for the suites that run them
@@ -395,7 +395,7 @@ jobs:
             0 | 2 | 3) exit 0 ;;
             *) exit "$code" ;;
           esac
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: mutants-shard-${{ matrix.shard }}
@@ -409,10 +409,10 @@ jobs:
     timeout-minutes: 15
     steps:
       # The workflow's own commit: the merge script is not taken from the verified ref.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@v4.3.0
         with:
           pattern: mutants-shard-*
           path: shards
@@ -434,7 +434,7 @@ jobs:
             cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$code"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: mutants-summary
@@ -454,19 +454,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.100.0
       - name: the pinned toolchain is the one in use
         run: rustc --version | tee /dev/stderr | grep -q "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)"
-      - uses: taiki-e/install-action@7b8d4719ee4aaa279bdf55df38dacb9ebfe12a6c
+      - uses: taiki-e/install-action@v2.87.6
         with:
           tool: cargo-nextest@0.9.143
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: heavy-nextest-${{ matrix.os }}
           save-if: "false"
@@ -476,10 +476,10 @@ jobs:
         run: cargo fetch --locked
       # Suites that run the real SDKs (the Functions runtime, eventarc_authentication) load them from
       # the pinned conformance install, as the ci.yml and release.yml test jobs do. No pnpm cache.
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@v4.4.0
         with:
           node-version: 24
       - name: the pinned real SDKs for the suites that run them
@@ -493,14 +493,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v4.4.0
         with:
           ref: ${{ needs.plan.outputs.ref }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.100.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@v2.9.2
         with:
           key: heavy-measure
           save-if: "false"
@@ -514,7 +514,7 @@ jobs:
           mkdir -p "$HEAVY_OUT"
           # The script writes everything it wants kept below $HEAVY_OUT.
           bash "$SCRIPT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v4.6.2
         if: always()
         with:
           name: linux-measure-output

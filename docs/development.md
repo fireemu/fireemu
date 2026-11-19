@@ -55,6 +55,23 @@ handling. The native self-test and the real workspace still have to run. Exclusi
 publication is not a power-loss durability guarantee, nor a complete source-tree
 attestation; the report's `commit` and `dirty` fields retain their existing scope.
 
+## Workflow action versions
+
+The workflows name each action by tag (`actions/checkout@v4.4.0`), and `.github/workflows/actions.lock` records the commit each reference runs at, for the workflows' own steps and for the actions those actions use. GitHub runs the locked commit even if the tag moves. The lockfile is written by the `gh actions-lock` extension and is never edited by hand.
+
+To change an action's version, or to add an action or a workflow:
+
+```sh
+gh extension install github/gh-actions-lock --pin v0.4.1   # once
+# edit the `uses:` line, then
+gh actions-lock            # rewrites .github/workflows/actions.lock
+gh actions-lock --verify   # what the ci.yml lint job runs
+```
+
+Review the lockfile diff as a code change: a changed `commit` is new code in CI, and a changed `owner_id` or `repo_id` means the action's repository itself changed hands. The contract scripts read the lockfile without the network (`scripts/actions-lock-contract.rb`): every workflow must be in it, every external step must have a commit in it, and `heavy-verification.yml`, `kani.yml` and `release.yml` must run the commits their contracts name, so a version change there also updates the commit in `scripts/heavy-verification-contract.rb` or `scripts/kani-ci-contract.rb`. A reusable workflow call is outside the lockfile and needs a full commit SHA. `.github/workflows/quint.yml` is an input of the Quint evidence, so a change to it regenerates `verification/quint/evidence/`.
+
+`dtolnay/rust-toolchain` is named as `@v1` with an explicit `toolchain:` input. Its per-toolchain branches such as `stable` are rebuilt on every upstream change, which leaves an older commit of them unreachable from any ref, and the lockfile refuses an unreachable commit.
+
 ## Post-pressure recovery harness
 
 `crates/fireemu/tests/recovery.rs` drives a real daemon through four phases (baseline, saturate, release, reuse) and samples what it retains after each: the logical Firestore charge and version count from `GET /v1/sessions/default/resources`, the retained snapshot bytes, the session count, and the process RSS, open file descriptors and child processes. The verdict is about retention, not speed: every logical gauge must return to its baseline after the release, and the reuse phase must be fully admitted and charge the store again. RSS is recorded but never asserted, because an allocator cache keeps it high after the logical charge is gone. A measurement that fails is recorded as missing with its reason and fails the verdict; it is never written as zero. The test also holds a snapshot across one release on purpose and checks that the verdict names it as a leak.

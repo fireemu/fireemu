@@ -1,11 +1,17 @@
 #!/usr/bin/env ruby
 
 require "yaml"
+require_relative "actions-lock-contract"
 
 module KaniCiContract
   ROOT = File.expand_path("..", __dir__)
-  CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
-  RUST_TOOLCHAIN = "dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec"
+  WORKFLOW_PATH = ".github/workflows/kani.yml"
+  # The commits the two actions run at. kani.yml names them by tag and the workflow lockfile fixes the
+  # commit (scripts/actions-lock-contract.rb); a workflow outside the lockfile names the commit itself.
+  CHECKOUT = "actions/checkout"
+  CHECKOUT_COMMIT = "11d5960a326750d5838078e36cf38b85af677262"
+  RUST_TOOLCHAIN = "dtolnay/rust-toolchain"
+  RUST_TOOLCHAIN_COMMIT = "683b588c487a69d01f6c6ddf40f036ff682cc2c8"
   TOOLCHAIN_VERSION = "1.100.0"
   INSTALL_KANI = "cargo install --locked kani-verifier --version 0.67.0"
   SETUP_KANI = "cargo kani setup"
@@ -15,13 +21,14 @@ module KaniCiContract
 
   module_function
 
-  def validate_file(path = File.join(ROOT, ".github", "workflows", "kani.yml"))
-    validate_hash(YAML.safe_load(File.read(path), aliases: true))
+  # `lock` is the parsed workflow lockfile, or nil to accept full commit SHAs only.
+  def validate_file(path = File.join(ROOT, WORKFLOW_PATH), lock: nil)
+    validate_hash(YAML.safe_load(File.read(path), aliases: true), lock: lock)
   rescue Psych::Exception, SystemCallError => error
     ["cannot read or parse workflow: #{error.message}"]
   end
 
-  def validate_hash(workflow)
+  def validate_hash(workflow, lock: nil)
     errors = []
     assert(errors, workflow.is_a?(Hash), "workflow must be a YAML mapping")
     return errors unless workflow.is_a?(Hash)
@@ -60,12 +67,12 @@ module KaniCiContract
     return errors unless steps.is_a?(Array)
 
     checkout, toolchain, verify, install, setup, runner_tests, proofs = steps
-    assert(errors, checkout.is_a?(Hash) && exact_keys?(checkout.keys, %w[uses with]) && checkout["uses"] == CHECKOUT,
+    assert(errors, checkout.is_a?(Hash) && exact_keys?(checkout.keys, %w[uses with]) && runs_at?(lock, checkout["uses"], CHECKOUT, CHECKOUT_COMMIT),
       "checkout must use the pinned actions/checkout commit")
     checkout_with = checkout.is_a?(Hash) ? checkout["with"] : nil
     assert(errors, checkout_with.is_a?(Hash) && checkout_with == { "persist-credentials" => false },
       "checkout must disable persisted credentials")
-    assert(errors, toolchain.is_a?(Hash) && exact_keys?(toolchain.keys, %w[uses with]) && toolchain["uses"] == RUST_TOOLCHAIN,
+    assert(errors, toolchain.is_a?(Hash) && exact_keys?(toolchain.keys, %w[uses with]) && runs_at?(lock, toolchain["uses"], RUST_TOOLCHAIN, RUST_TOOLCHAIN_COMMIT),
       "Rust toolchain setup must use the pinned dtolnay action commit")
     assert(errors, toolchain.is_a?(Hash) && toolchain["with"] == { "toolchain" => TOOLCHAIN_VERSION },
       "Rust toolchain setup must use the repository's fixed toolchain")
@@ -76,6 +83,11 @@ module KaniCiContract
     assert_step(errors, proofs, "run bounded proofs", RUN_PROOFS)
     errors
   end
+
+  def runs_at?(lock, uses, action, commit)
+    uses.is_a?(String) && uses.split("@", 2).first == action && ActionsLockContract.commit(lock, WORKFLOW_PATH, uses) == commit
+  end
+  private_class_method :runs_at?
 
   def assert_step(errors, step, name, command)
     assert(errors, step.is_a?(Hash) && exact_keys?(step.keys, %w[name run]) && step["name"] == name && step["run"] == command,
@@ -95,7 +107,7 @@ module KaniCiContract
 end
 
 if $PROGRAM_NAME == __FILE__
-  errors = KaniCiContract.validate_file(ARGV.fetch(0, File.join(KaniCiContract::ROOT, ".github", "workflows", "kani.yml")))
+  errors = KaniCiContract.validate_file(ARGV.fetch(0, File.join(KaniCiContract::ROOT, KaniCiContract::WORKFLOW_PATH)), lock: ActionsLockContract.read(KaniCiContract::ROOT))
   if errors.empty?
     puts "Kani workflow contract passed"
   else

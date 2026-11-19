@@ -1,0 +1,8 @@
+Kind	Ref	Lock	Onboarded	Entry
+step	semver	given	yes	present
+step	sha	none	no	absent
+step	major	given	yes	present
+reusable	semver	given	yes	present
+step	semver	given	no	unlisted
+step	branch	given	yes	bad_commit
+reusable	sha	none	no	absent

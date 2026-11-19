@@ -28,7 +28,7 @@ class KaniCiContractTest < Minitest::Test
           - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
             with:
               persist-credentials: false
-          - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+          - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
             with:
               toolchain: 1.100.0
           - name: verify the pinned toolchain
@@ -70,7 +70,26 @@ class KaniCiContractTest < Minitest::Test
     runner_test = workflow.dig("jobs", "kani", "steps").find { |step| step["name"] == "test Kani runner" }
 
     assert_equal "python3 -m unittest discover -s verification/kani -p 'test_*.py'", runner_test&.fetch("run")
-    assert_empty KaniCiContract.validate_file(workflow_path)
+    lock = ActionsLockContract.read(KaniCiContract::ROOT)
+    assert_empty KaniCiContract.validate_file(workflow_path, lock: lock)
+    # kani.yml names its actions by tag: without the lockfile, or with another commit in it, nothing fixes what runs.
+    refute_empty KaniCiContract.validate_file(workflow_path)
+    { "actions/checkout@v4.4.0" => "checkout must use", "dtolnay/rust-toolchain@v1" => "Rust toolchain setup must use" }.each do |key, message|
+      moved = Marshal.load(Marshal.dump(lock))
+      moved["dependencies"].fetch(key)["commit"] = "sha1-#{'c' * 40}"
+      errors = KaniCiContract.validate_file(workflow_path, lock: moved)
+      assert_equal 1, errors.length, errors.inspect
+      assert_includes errors.first, message
+    end
+  end
+
+  def test_another_action_at_the_pinned_commit_is_rejected
+    workflow = YAML.safe_load(BASE_WORKFLOW, aliases: true)
+    workflow.dig("jobs", "kani", "steps").first["uses"] = "actions/checkout-fork@#{KaniCiContract::CHECKOUT_COMMIT}"
+    assert_rejected_yaml workflow, "another action"
+    workflow = YAML.safe_load(BASE_WORKFLOW, aliases: true)
+    workflow.dig("jobs", "kani", "steps")[1]["uses"] = "dtolnay/rust-toolchain@#{KaniCiContract::CHECKOUT_COMMIT}"
+    assert_rejected_yaml workflow, "another commit"
   end
 
   def test_yaml_mutations_that_remove_required_guards_are_rejected

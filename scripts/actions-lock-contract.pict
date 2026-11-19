@@ -1,0 +1,15 @@
+# How a workflow may name an external action or reusable workflow (scripts/actions-lock-contract.rb).
+# Kind: a step's `uses`, or a job-level reusable workflow call (the lockfile never covers those).
+# Ref: a full commit SHA, a full semver tag, a major tag, or a branch.
+# Lock: whether the contract was given a lockfile at all.
+# Onboarded: the workflow is listed under `workflows` in the lockfile.
+# Entry: the dependency entry for this `uses`: present with a commit, absent, present with a malformed
+#        commit, or present in `dependencies` but not listed for this workflow.
+Kind:      step, reusable
+Ref:       sha, semver, major, branch
+Lock:      given, none
+Onboarded: yes, no
+Entry:     present, absent, bad_commit, unlisted
+
+IF [Lock] = "none" THEN [Onboarded] = "no" AND [Entry] = "absent";
+IF [Onboarded] = "no" THEN [Entry] IN {"absent", "unlisted"};

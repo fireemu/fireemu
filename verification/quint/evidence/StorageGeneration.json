@@ -71,7 +71,7 @@
   "digests": {
     ".github/workflows/quint.yml": {
       "kind": "sha256",
-      "value": "a0df2816a9a46927a49e0c59e01a2ff24003deb969c56d5c563a2bc03bac17bc"
+      "value": "7d6b0a4d8020259a9546f0be49b0775033a7e31f1806886886580207497de705"
     },
     "crates/fireemu-core-storage/Cargo.toml": {
       "kind": "sha256",
