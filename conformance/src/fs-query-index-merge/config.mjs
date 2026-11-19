@@ -461,13 +461,24 @@ const entryOfKey = (key) => ENTRIES[String(key).split(":").pop()];
  * named, which must itself be of the entry's group or field.
  */
 export function operationState(answer, name, forms, entry, target) {
+  // An answer of any shape is classified, never thrown on: a value that cannot become a string
+  // (a JSON object with a `toString` key, say) is unreadable for this entry only.
+  try {
+    return operationStateOf(answer, name, forms, entry, target);
+  } catch {
+    return "unreadable";
+  }
+}
+
+function operationStateOf(answer, name, forms, entry, target) {
   if (!readOk(answer) || !isObject(answer.json) || !entry || typeof target !== "string")
     return "unreadable";
   const op = answer.json;
   if (!onlyKeys(op, OPERATION_KEYS)) return "unreadable";
   if (op.name !== name || !operationNamePattern(forms).test(name)) return "unreadable";
   const meta = op.metadata;
-  if (!isObject(meta) || !Object.hasOwn(METADATA_KEYS, meta["@type"])) return "unreadable";
+  if (!isObject(meta) || typeof meta["@type"] !== "string") return "unreadable";
+  if (!Object.hasOwn(METADATA_KEYS, meta["@type"])) return "unreadable";
   if (!onlyKeys(meta, METADATA_KEYS[meta["@type"]])) return "unreadable";
   // The operation must name exactly the index or field its create or reset answer named.
   const named =

@@ -2310,3 +2310,33 @@ test("an entry on an earlier page than the last is still found", async () => {
   const read = await status({ session: session(fake), set: "f1", forms: FORMS });
   assert.equal(read.applied, true, "imx on page 1, imc on page 2");
 });
+
+// ---- stage B (coordinator ruling 8 item 5) -------------------------------------------------
+
+test("an operation whose metadata type cannot become a string is unreadable for its entry", async () => {
+  const name = `${DB}/operations/op9`;
+  const weird = JSON.parse('{"toString": 1, "valueOf": 2}');
+  const answer = {
+    status: 200,
+    json: { done: true, metadata: { "@type": weird, field: E4_NAME }, name, response: {} },
+  };
+  assert.equal(operationState(answer, name, FORMS, ENTRIES.E4, E4_NAME), "unreadable");
+  // In apply, after the writes: the entry's operation is unreadable and apply still settles.
+  const fake = fakeFirestore({
+    fail: (r) =>
+      r.url.includes("/operations/")
+        ? {
+            status: 200,
+            json: {
+              done: true,
+              metadata: { "@type": JSON.parse('{"toString": 1}') },
+              name: r.url.slice(API.length + 1),
+              response: {},
+            },
+          }
+        : undefined,
+  });
+  const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  for (const id of SETS.f1) assert.equal(result.entries[id].operation, "unreadable", id);
+  assert.equal(result.ok, false);
+});
