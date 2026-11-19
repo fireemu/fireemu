@@ -556,7 +556,7 @@ jobs:
       - name: build provenance
         id: attest
         if: needs.plan.outputs.publish == 'true'
-        uses: actions/attest-build-provenance@v2.4.0
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-path: "dist/fireemu-*"
       - name: provenance outcome
