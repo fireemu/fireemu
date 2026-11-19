@@ -23,6 +23,8 @@ import {
   ceilings,
   estimatedUsd,
   indexKey,
+  MAX_LIST_PAGES,
+  productionIndexes,
   programDigest,
   selectPrograms,
 } from "./fs-query-index/run.mjs";
@@ -295,4 +297,34 @@ test("a production request addresses only the sandbox (default) database", () =>
     assert.equal(init.method, "POST");
     assert.equal(init.headers["x-goog-user-project"], "fireemu-oracle-query");
   }
+});
+
+test("the preflight's index lists stop after MAX_LIST_PAGES pages each", async () => {
+  assert.equal(MAX_LIST_PAGES, 5);
+  const urls = [];
+  const endless = async (url) => {
+    urls.push(url);
+    return { ok: true, status: 200, json: async () => ({ indexes: [{}], nextPageToken: "p" }) };
+  };
+  await assert.rejects(productionIndexes("t", endless), /more than 5 pages/);
+  assert.equal(urls.length, MAX_LIST_PAGES);
+  urls.length = 0;
+  const pages = { indexes: 2, fields: 3 };
+  const finite = async (url) => {
+    urls.push(url);
+    const kind = url.includes("/indexes") ? "indexes" : "fields";
+    pages[kind] -= 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        [kind]: [{ k: kind }],
+        ...(pages[kind] > 0 ? { nextPageToken: "n" } : {}),
+      }),
+    };
+  };
+  const { composites, overrides } = await productionIndexes("t", finite);
+  assert.equal(composites.length, 2);
+  assert.equal(overrides.length, 3);
+  assert.equal(urls.length, 5);
 });

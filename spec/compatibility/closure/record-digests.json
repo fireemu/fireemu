@@ -56,7 +56,7 @@
     "conformance/src/fs-ent-pipeline/o7-order-policy.mjs": "4b2846e23f7e9b170403d8ec2045b6f83d19a05b4cd985b96fc9769548ac3a47",
     "conformance/src/fs-ent-text-refusal-evidence.test.mjs": "142b80fd6a7ee87c85efdb32d3a99fd7a0b00619cc31178ed9f73daa288ba03e",
     "conformance/src/fs-pipeline-closure.test.mjs": "824ce14c2f3047c61233b6bdaf456caeae718da8c7fd9c78b9d9b4f7c8fa17ae",
-    "conformance/src/fs-query-index/run.mjs": "de7ed8ecccb95d9d69fdf4be3dca891a6bd5ebb0791c1db5e5391470fac05a4d",
+    "conformance/src/fs-query-index/run.mjs": "98eab1c98e67851eba9f7d3c1caf26c87b0aac6df1b00819ce420b7a3c2d12dd",
     "conformance/src/functions-python-closure.test.mjs": "06514720111f5e6b9202c97ef56aa07c32e9b1c10b99a4184b72b7274cb3e070",
     "conformance/src/functions-python-replay.test.mjs": "cbcc02cb8ac4d53bdbb5a43ba5a98e5d8f6bfdd149050513904c545994192e1f",
     "conformance/src/hosting-production/corpus.manifest.json": "9c86405766440def7b565417de145b01cfed2395b7819fdba2596f6183b355ab",

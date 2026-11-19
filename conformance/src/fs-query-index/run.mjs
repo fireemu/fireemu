@@ -224,29 +224,34 @@ async function adminGet(path, token, fetchImpl = fetch) {
 const fieldKey = (field) =>
   `${field.fieldPath}:${field.order ?? ""}${field.arrayConfig ?? ""}${field.vectorConfig ? `vector${field.vectorConfig.dimension}` : ""}`;
 
+/** Pages one index list may take before the preflight gives up (a bound on its requests). */
+export const MAX_LIST_PAGES = 5;
+
 /** The configured indexes of the sandbox database, in the file's canonical form. */
-export async function productionIndexes(token) {
+export async function productionIndexes(token, fetchImpl = fetch) {
   const group = `projects/${SANDBOX_PROJECT}/databases/${DATABASE}/collectionGroups/-`;
-  const composites = [];
-  let pageToken = "";
-  do {
-    const page = await adminGet(
-      `${group}/indexes${pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : ""}`,
-      token,
-    );
-    composites.push(...(page.indexes ?? []));
-    pageToken = page.nextPageToken ?? "";
-  } while (pageToken);
-  const overrides = [];
-  pageToken = "";
-  do {
-    const page = await adminGet(
-      `${group}/fields?filter=${encodeURIComponent("indexConfig.usesAncestorConfig:false")}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`,
-      token,
-    );
-    overrides.push(...(page.fields ?? []));
-    pageToken = page.nextPageToken ?? "";
-  } while (pageToken);
+  const list = async (path, key, separator) => {
+    const items = [];
+    let pageToken = "";
+    for (let page = 0; ; page += 1) {
+      if (page === MAX_LIST_PAGES)
+        throw new Error(`${key}: more than ${MAX_LIST_PAGES} pages; the preflight stops`);
+      const body = await adminGet(
+        `${path}${pageToken ? `${separator}pageToken=${encodeURIComponent(pageToken)}` : ""}`,
+        token,
+        fetchImpl,
+      );
+      items.push(...(body[key] ?? []));
+      pageToken = body.nextPageToken ?? "";
+      if (!pageToken) return items;
+    }
+  };
+  const composites = await list(`${group}/indexes`, "indexes", "?");
+  const overrides = await list(
+    `${group}/fields?filter=${encodeURIComponent("indexConfig.usesAncestorConfig:false")}`,
+    "fields",
+    "&",
+  );
   return { composites, overrides };
 }
 
