@@ -1007,6 +1007,16 @@ fn a_composite_repeating_a_field_is_a_one_member_merge() {
             indexes: vec![repeated]
         }
     );
+    // One wanted field never merges, although `(a, a)` would cover it
+    // (`IM.repeated_single_equality_refused`).
+    let mut single = IndexSet::default();
+    single.set_default_single_field_indexes(&coll("qx"), Vec::new());
+    single.add_composite(parse_index("qx C a:asc,a:asc"));
+    let one = build_query("qx", false, vec![filter("eq", "a", "qx")], &[]);
+    assert!(matches!(
+        decide(&one, &single, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
 }
 
 #[test]

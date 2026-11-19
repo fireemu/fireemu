@@ -205,4 +205,13 @@ theorem one_member_merge :
         compositeServes repeated (subReq repeatedReq S) 0 false = false := by
   constructor <;> decide
 
+/-- With one equality the repeated composite `(a, a)` is refused: one wanted field never merges,
+although the composite would cover it. -/
+theorem repeated_single_equality_refused :
+    let r : Req := ⟨[1], none, nameAsc, false⟩
+    let s : ISet := ⟨[⟨0, .collection, [⟨1, .asc⟩, ⟨1, .asc⟩]⟩], fun _ _ => []⟩
+    decideReq r s 0 false .production .standard = .missing (requiredIndex r 0 false) ∧
+      (greedy [] (candidates r s 0 false)).1 = [1] := by
+  constructor <;> decide
+
 end IM

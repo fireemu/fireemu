@@ -88,3 +88,8 @@ info: 'IM.broad_contains_with_descending_name' depends on axioms: [propext, Clas
 
 /-- info: 'IM.one_member_merge' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.one_member_merge
+
+/--
+info: 'IM.repeated_single_equality_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.repeated_single_equality_refused

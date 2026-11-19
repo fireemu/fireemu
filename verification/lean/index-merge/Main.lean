@@ -54,7 +54,8 @@ def pool : List Index := [
   ix qx [("c", .asc), ("__name__", .desc)],
   ix qx [("b", .asc), ("c", .asc)],
   ix qx [("c", .desc), ("e", .asc)],
-  ix qx [("e", .asc), ("a", .asc)]]
+  ix qx [("e", .asc), ("a", .asc)],
+  ix qx [("a", .asc), ("b", .contains)]]
 
 def allModes : List (Scope × Mode) :=
   [(.collection, .asc), (.collection, .desc), (.collection, .contains),
@@ -130,7 +131,7 @@ def productCases : List Case := Id.run do
   let configs : List (String × Config) := [
     ("none", {}),
     ("pairs", { composites := [pool[0]!, pool[1]!, pool[2]!, pool[13]!] }),
-    ("contains", { composites := [pool[4]!, pool[11]!, pool[3]!] }),
+    ("contains", { composites := [pool[4]!, pool[11]!, pool[3]!, pool[16]!] }),
     ("names", { composites := [pool[6]!, pool[7]!, pool[12]!] }),
     ("exempt-a", { composites := [pool[1]!, pool[2]!], overrides := (modeConfigs[1]!).2 }),
     ("wildcard", { composites := [pool[0]!, pool[5]!], defaults := (modeConfigs[3]!).1 })]
@@ -284,7 +285,7 @@ def pictRows : List String := [
 
 def pictComposites : String → List Index
   | "pairs" => [pool[0]!, pool[1]!, pool[2]!, pool[13]!]
-  | "contains" => [pool[4]!, pool[11]!, pool[3]!]
+  | "contains" => [pool[4]!, pool[11]!, pool[3]!, pool[16]!]
   | "names" => [pool[6]!, pool[7]!, pool[12]!]
   | "mixed" => [pool[0]!, pool[4]!, pool[6]!, pool[1]!, pool[10]!, pool[14]!, pool[15]!, pool[8]!,
       pool[9]!]
