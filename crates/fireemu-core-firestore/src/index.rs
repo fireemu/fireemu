@@ -15,6 +15,7 @@ use fireemu_core_types::ids::CollectionId;
 use crate::field_path::FieldPath;
 use crate::query::{Direction, FieldOp, FilterExpr, OrderClause, Query, UnaryOp};
 use crate::store::Aggregation;
+use crate::value::Value;
 
 /// Index field mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -555,15 +556,11 @@ struct Requirement {
     /// that carries it: it merges no single-field indexes (FS-QUERY-INDEX
     /// query-limits/components#equalities-99-and-order).
     equality_ordered: bool,
-    /// Whether the array filter is `array-contains-any` (kept as such by the DNF), not a plain
-    /// `array-contains`.
-    contains_any: bool,
 }
 
 fn requirement_for(disjunction: &[FilterExpr], effective_order: &[OrderClause]) -> Requirement {
     let mut equality: Vec<FieldPath> = Vec::new();
     let mut contains = None;
-    let mut contains_any = false;
     for atom in disjunction {
         match atom {
             FilterExpr::Field {
@@ -583,12 +580,9 @@ fn requirement_for(disjunction: &[FilterExpr], effective_order: &[OrderClause]) 
             }
             FilterExpr::Field {
                 field,
-                op: op @ (FieldOp::ArrayContains | FieldOp::ArrayContainsAny),
+                op: FieldOp::ArrayContains | FieldOp::ArrayContainsAny,
                 ..
-            } => {
-                contains = Some(field.clone());
-                contains_any = *op == FieldOp::ArrayContainsAny;
-            }
+            } => contains = Some(field.clone()),
             _ => {}
         }
     }
@@ -604,7 +598,6 @@ fn requirement_for(disjunction: &[FilterExpr], effective_order: &[OrderClause]) 
         contains,
         order,
         equality_ordered,
-        contains_any,
     }
 }
 
@@ -749,15 +742,12 @@ fn single_field_index(
 /// exempt, and the index's implicit `__name__` runs in the requested direction. Each automatic index is
 /// `(field ASC, __name__ ASC)`, `(field DESC, __name__ DESC)` or `(field CONTAINS, __name__
 /// ASC)`; a `__name__` direction none of them provides needs a composite index. Returns the
-/// concrete index that serves the query. `recorded_refusals` holds under the production rules,
-/// on Standard, at collection scope: there production refuses a single equality ordered by
-/// nothing but `__name__` descending when only the field's ascending mode is enabled.
+/// concrete index that serves the query.
 fn automatic_index_for(
     req: &Requirement,
     set: &IndexSet,
     collection: &CollectionId,
     group: bool,
-    recorded_refusals: bool,
 ) -> Option<IndexDefinition> {
     let mut touched: BTreeSet<FieldPath> = req.equality.iter().cloned().collect();
     if let Some(c) = &req.contains {
@@ -810,18 +800,6 @@ fn automatic_index_for(
             return None;
         }
         mode_for_direction(o.direction)
-    } else if recorded_refusals
-        && name_direction == Direction::Descending
-        && req.equality.len() == 1
-        && !req.equality_ordered
-    {
-        // One equality, nothing but `__name__` ordered, descending: production serves it only
-        // by the field's descending mode; with only the ascending one enabled it asks for
-        // `(field ASC, __name__ DESC)` (fs-query-index-merge ascending-only#a-alone-name-desc,
-        // recorded 2026-11-19, collection scope, Standard). Collection-group scope, an order
-        // naming the equality field, Enterprise and the ascending request with only the
-        // descending mode enabled have no recorded verdict and keep the fallback below.
-        IndexFieldMode::Descending
     } else {
         // Equality only: an equality prefix serves either direction, so any enabled ordered
         // mode does; prefer the one whose `__name__` runs in the requested direction.
@@ -841,25 +819,12 @@ fn automatic_index_for(
     ))
 }
 
-/// What a merge member covers: an equality filter on a field (by an ordered index field) or the
-/// array filter (by a contains index field). A contains member never covers an equality on the
-/// same path, and the reverse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Cover {
-    Equality,
-    Contains,
-}
-
-/// Production merges indexes for a conjunction of equality filters and at most one array
-/// filter (no inequality): each member serves some of them followed by the same order suffix,
-/// and together the members cover every filter. Members are explicit composite indexes; with
-/// nothing but `__name__` ordered, the automatic single-field indexes qualify too, provided the
-/// one in the requested `__name__` direction is enabled. The rules production was recorded
-/// adding to that (fs-query-index-merge, 2026-11-19) apply only where the merge was refused
-/// without them and only at collection scope, so they never change the members or the order
-/// of a merge the other members already make (coverage by filter kind, `Cover`, does change
-/// one earlier answer on purpose: an array-contains member no longer covers an equality on
-/// the same field). Returns the members chosen.
+/// Production merges indexes for a conjunction of scalar equality filters (no array filter,
+/// no inequality): each member serves a subset of the equality fields followed by the same
+/// order suffix, and together the members cover every equality field. Members are explicit
+/// composite indexes; with nothing but `__name__` ordered, the automatic single-field indexes
+/// qualify too, provided the one in the requested `__name__` direction is enabled. Returns the
+/// members chosen, largest equality prefix first.
 fn merged_indexes_for(
     req: &Requirement,
     set: &IndexSet,
@@ -873,38 +838,251 @@ fn merged_indexes_for(
     if members < 2 || req.equality_ordered {
         return None;
     }
-    merge_members(req, set, collection, group, false).or_else(|| {
-        (!group)
-            .then(|| merge_members(req, set, collection, group, true))
-            .flatten()
-    })
+    let equalities: BTreeSet<&FieldPath> = req.equality.iter().collect();
+    let mut wanted = equalities.clone();
+    if let Some(contains) = &req.contains {
+        wanted.insert(contains);
+    }
+    // (equality fields served, index), composites first.
+    let mut candidates: Vec<(BTreeSet<&FieldPath>, IndexDefinition)> = Vec::new();
+    for index in set.composites() {
+        let served: Vec<FieldPath> = index
+            .fields
+            .iter()
+            .take_while(|f| equalities.contains(&f.path) && f.mode.is_ordered())
+            .map(|f| f.path.clone())
+            .collect();
+        if served.is_empty() {
+            continue;
+        }
+        let sub = Requirement {
+            equality: served,
+            contains: None,
+            order: req.order.clone(),
+            equality_ordered: false,
+        };
+        if composite_serves(index, &sub, collection, group) {
+            let fields: BTreeSet<&FieldPath> = sub
+                .equality
+                .iter()
+                .filter_map(|f| wanted.get(f).copied())
+                .collect();
+            candidates.push((fields, index.clone()));
+        }
+    }
+    candidates.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
+    if req.order.iter().all(|o| o.field.is_document_name()) {
+        let name_mode = mode_for_direction(requested_name_direction(req));
+        let mut fields = req.equality.clone();
+        fields.sort();
+        for field in &fields {
+            if !set.is_exempt(collection, field, group)
+                && has_single_field_mode(set, collection, field, group, name_mode)
+            {
+                candidates.push((
+                    BTreeSet::from([wanted.get(field).copied()?]),
+                    single_field_index(collection, group, field, name_mode, name_mode),
+                ));
+            }
+        }
+        // The array field joins through its automatic contains index, whose `__name__` runs
+        // ascending.
+        if let Some(contains) = &req.contains {
+            if name_mode == IndexFieldMode::Ascending
+                && !set.is_exempt(collection, contains, group)
+                && has_single_field_mode(set, collection, contains, group, IndexFieldMode::Contains)
+            {
+                candidates.push((
+                    BTreeSet::from([wanted.get(contains).copied()?]),
+                    single_field_index(
+                        collection,
+                        group,
+                        contains,
+                        IndexFieldMode::Contains,
+                        name_mode,
+                    ),
+                ));
+            }
+        }
+    }
+    let mut covered: BTreeSet<&FieldPath> = BTreeSet::new();
+    let mut members = Vec::new();
+    for (fields, index) in candidates {
+        if fields.is_subset(&covered) {
+            continue;
+        }
+        covered.extend(fields);
+        members.push(index);
+    }
+    (covered == wanted).then_some(members)
 }
 
-/// One merge attempt. `recorded` adds the members production was recorded merging that the
-/// planner did not take before (collection scope only, see `merged_indexes_for`): a composite
-/// whose equality prefix is followed by the query's array field, with nothing but `__name__`
-/// ordered, ascending (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags
-/// CONTAINS)` merged with `(b ASC, __name__ ASC)`); and the array field's automatic contains
-/// index for a plain array-contains with `__name__` descending, listed first
-/// (builtin#f3-contains-name-desc: `(tags ARRAY_CONTAINS, __name__ DESC)` merged with `(a DESC,
-/// __name__ DESC)`).
-fn merge_members(
+/// The client's query as far as the stage-B rules need it. Production was recorded answering
+/// plain queries (fs-query-index-merge, 2026-11-19) whose filter is a conjunction of plain
+/// equalities on distinct fields other than `__name__`, with ordinary values, and at most one
+/// plain array-contains on another field. The rules apply only to that shape, judged on the
+/// whole query and not on a DNF arm: an OR, an IN, array-contains-any, IS NULL / IS NAN, an
+/// equality with null or NaN, a repeated path, a filter on `__name__`, an aggregation or a
+/// nearest-neighbour stage keeps the pre-stage-B answer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RecordedShape {
+    /// The filter is such a conjunction (or absent).
+    conjunction: bool,
+    /// The filter is exactly one such equality.
+    single_equality: bool,
+}
+
+impl RecordedShape {
+    fn of(query: &Query, aggregations: &[Aggregation]) -> Self {
+        if !aggregations.is_empty() || query.find_nearest.is_some() {
+            return Self::default();
+        }
+        let mut atoms = Vec::new();
+        if let Some(filter) = &query.filter {
+            if !conjunction_atoms(filter, &mut atoms) {
+                return Self::default();
+            }
+        }
+        let mut paths = BTreeSet::new();
+        let mut contains = 0;
+        for (field, op, value) in &atoms {
+            let ordinary =
+                !matches!(value, Value::Null) && !matches!(value, Value::Double(d) if d.is_nan());
+            if field.is_document_name() || !ordinary || !paths.insert(*field) {
+                return Self::default();
+            }
+            match op {
+                FieldOp::Equal => {}
+                FieldOp::ArrayContains => contains += 1,
+                _ => return Self::default(),
+            }
+        }
+        if contains > 1 {
+            return Self::default();
+        }
+        Self {
+            conjunction: true,
+            single_equality: atoms.len() == 1 && atoms[0].1 == FieldOp::Equal,
+        }
+    }
+}
+
+/// Collects the field filters of a conjunction (nested `and`s included); false for anything
+/// else.
+fn conjunction_atoms<'a>(
+    filter: &'a FilterExpr,
+    atoms: &mut Vec<(&'a FieldPath, FieldOp, &'a Value)>,
+) -> bool {
+    match filter {
+        FilterExpr::Field { field, op, value } => {
+            atoms.push((field, *op, value));
+            true
+        }
+        FilterExpr::And(children) => children.iter().all(|c| conjunction_atoms(c, atoms)),
+        FilterExpr::Unary { .. } | FilterExpr::Or(_) => false,
+    }
+}
+
+/// Whether the stage-B rules may change the pre-stage-B answer: the production rules, on
+/// Standard, at collection scope, for the recorded shape. Elsewhere (the emulator profile,
+/// Enterprise, collection-group scope, any other query) the answer is the pre-stage-B one.
+fn stage_b_applies(ctx: PlanningContext, group: bool, shape: RecordedShape) -> bool {
+    ctx.policy.production_rules()
+        && ctx.edition == FirestoreEdition::Standard
+        && !group
+        && shape.conjunction
+}
+
+/// Refusal (c): one equality ordered by nothing but `__name__` descending is served by the
+/// field's descending mode only. With only the ascending one enabled the pre-stage-B planner
+/// took the automatic `(field ASC, __name__ DESC)`; production asks for that index
+/// (fs-query-index-merge ascending-only#a-alone-name-desc, recorded 2026-11-19). `base` is the
+/// pre-stage-B index; the refusal applies only when it is that automatic index and no
+/// composite serves the query (with one, the reported index stays as it was).
+fn refuses_single_equality(
     req: &Requirement,
     set: &IndexSet,
     collection: &CollectionId,
-    group: bool,
-    recorded: bool,
+    shape: RecordedShape,
+    base: &IndexDefinition,
+) -> bool {
+    shape.single_equality
+        && req.equality.len() == 1
+        && req.contains.is_none()
+        && !req.equality_ordered
+        && req.order.iter().all(|o| o.field.is_document_name())
+        && requested_name_direction(req) == Direction::Descending
+        && base.fields.first().map(|f| f.mode) == Some(IndexFieldMode::Ascending)
+        && automatic_index_for(req, set, collection, false).as_ref() == Some(base)
+        && !set
+            .composites()
+            .iter()
+            .any(|i| composite_serves(i, req, collection, false))
+}
+
+/// What a member of a stage-B merge covers: an equality filter on a field (by an ordered index
+/// field) or the array filter (by a contains index field). Only the stage-B merges cover by
+/// kind; the pre-stage-B attempt covers by path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Cover {
+    Equality,
+    Contains,
+}
+
+/// The merges production was recorded making where the pre-stage-B planner refused
+/// (fs-query-index-merge, 2026-11-19; collection scope, Standard, the recorded shape), for
+/// equalities and a plain array-contains with nothing but `__name__` ordered:
+/// (a) `__name__` descending: the array field's automatic contains index first, then the
+/// automatic `(field DESC, __name__ DESC)` of each equality field, automatic members only
+/// (builtin#f3-contains-name-desc: `(tags ARRAY_CONTAINS, __name__ DESC)`, `(a DESC, __name__
+/// DESC)`);
+/// (b) `__name__` ascending: one composite whose equality prefix is followed by the array field
+/// (`CONTAINS`), then the automatic `(field ASC, __name__ ASC)` of each remaining equality
+/// field (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags CONTAINS)`, `(b ASC,
+/// __name__ ASC)`). The carrying composites are tried by decreasing prefix length, in
+/// configuration order on a tie.
+fn recorded_merge(
+    req: &Requirement,
+    set: &IndexSet,
+    collection: &CollectionId,
 ) -> Option<Vec<IndexDefinition>> {
-    let equalities: BTreeSet<&FieldPath> = req.equality.iter().collect();
-    let mut wanted: BTreeSet<(Cover, &FieldPath)> =
-        req.equality.iter().map(|f| (Cover::Equality, f)).collect();
-    if let Some(contains) = &req.contains {
-        wanted.insert((Cover::Contains, contains));
+    let contains = req.contains.as_ref()?;
+    if req.equality.is_empty()
+        || req.equality_ordered
+        || !req.order.iter().all(|o| o.field.is_document_name())
+    {
+        return None;
     }
-    let name_only = req.order.iter().all(|o| o.field.is_document_name());
     let name_direction = requested_name_direction(req);
-    // (filters covered, index), composites first.
-    let mut candidates: Vec<(BTreeSet<(Cover, &FieldPath)>, IndexDefinition)> = Vec::new();
+    let name_mode = mode_for_direction(name_direction);
+    let automatic = |field: &FieldPath, mode: IndexFieldMode| {
+        (!set.is_exempt(collection, field, false)
+            && has_single_field_mode(set, collection, field, false, mode))
+        .then(|| single_field_index(collection, false, field, mode, name_mode))
+    };
+    let mut fields: Vec<&FieldPath> = req.equality.iter().collect();
+    fields.sort();
+    let wanted: BTreeSet<(Cover, &FieldPath)> = req
+        .equality
+        .iter()
+        .map(|f| (Cover::Equality, f))
+        .chain([(Cover::Contains, contains)])
+        .collect();
+    let complete = |first: IndexDefinition, mut covered: BTreeSet<_>| {
+        let mut members = vec![first];
+        for field in &fields {
+            if covered.insert((Cover::Equality, *field)) {
+                members.push(automatic(field, name_mode)?);
+            }
+        }
+        (covered == wanted).then_some(members)
+    };
+    if name_direction == Direction::Descending {
+        let member = automatic(contains, IndexFieldMode::Contains)?;
+        return complete(member, BTreeSet::from([(Cover::Contains, contains)]));
+    }
+    let equalities: BTreeSet<&FieldPath> = req.equality.iter().collect();
+    let mut carrying: Vec<(Vec<&FieldPath>, &IndexDefinition)> = Vec::new();
     for index in set.composites() {
         let served: Vec<&FieldPath> = index
             .fields
@@ -912,88 +1090,29 @@ fn merge_members(
             .take_while(|f| equalities.contains(&f.path) && f.mode.is_ordered())
             .map(|f| &f.path)
             .collect();
-        if served.is_empty() {
-            continue;
-        }
-        let carries_contains = req
-            .contains
-            .as_ref()
-            .filter(|_| recorded && name_only && name_direction == Direction::Ascending)
-            .filter(|contains| {
-                index
-                    .fields
-                    .get(served.len())
-                    .is_some_and(|f| &f.path == *contains && f.mode == IndexFieldMode::Contains)
-            });
+        let next = index.fields.get(served.len());
         let sub = Requirement {
             equality: served.iter().map(|f| (*f).clone()).collect(),
-            contains: carries_contains.cloned(),
+            contains: Some(contains.clone()),
             order: req.order.clone(),
             equality_ordered: false,
-            contains_any: false,
         };
-        if composite_serves(index, &sub, collection, group) {
-            let mut covers: BTreeSet<(Cover, &FieldPath)> =
-                served.iter().map(|f| (Cover::Equality, *f)).collect();
-            if let Some(contains) = carries_contains {
-                covers.insert((Cover::Contains, contains));
-            }
-            candidates.push((covers, index.clone()));
+        if !served.is_empty()
+            && next.is_some_and(|f| &f.path == contains && f.mode == IndexFieldMode::Contains)
+            && composite_serves(index, &sub, collection, false)
+        {
+            carrying.push((served, index));
         }
     }
-    candidates.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
-    if name_only {
-        let name_mode = mode_for_direction(name_direction);
-        // The array field joins through its automatic contains index, whose `__name__` runs in
-        // the requested direction: ascending as before stage B (after the equality members),
-        // descending only as recorded (before them).
-        let contains_member = req.contains.as_ref().filter(|contains| {
-            !set.is_exempt(collection, contains, group)
-                && has_single_field_mode(set, collection, contains, group, IndexFieldMode::Contains)
-                && (name_direction == Direction::Ascending || (recorded && !req.contains_any))
-        });
-        let contains_candidate = contains_member.map(|contains| {
-            (
-                BTreeSet::from([(Cover::Contains, contains)]),
-                single_field_index(
-                    collection,
-                    group,
-                    contains,
-                    IndexFieldMode::Contains,
-                    name_mode,
-                ),
-            )
-        });
-        let descending = name_direction == Direction::Descending;
-        if descending {
-            candidates.extend(contains_candidate.clone());
-        }
-        let mut fields: Vec<&FieldPath> = req.equality.iter().collect();
-        fields.sort();
-        for field in fields {
-            if !set.is_exempt(collection, field, group)
-                && has_single_field_mode(set, collection, field, group, name_mode)
-            {
-                candidates.push((
-                    BTreeSet::from([(Cover::Equality, field)]),
-                    single_field_index(collection, group, field, name_mode, name_mode),
-                ));
-            }
-        }
-        if !descending {
-            candidates.extend(contains_candidate);
-        }
-    }
-    let mut covered: BTreeSet<(Cover, &FieldPath)> = BTreeSet::new();
-    let mut members = Vec::new();
-    for (covers, index) in candidates {
-        if covers.is_subset(&covered) {
-            continue;
-        }
-        covered.extend(covers);
-        members.push(index);
-    }
-    (covered == wanted).then_some(members)
+    carrying.sort_by_key(|(served, _)| std::cmp::Reverse(served.len()));
+    carrying.into_iter().find_map(|(served, index)| {
+        let covered = served
+            .into_iter()
+            .map(|f| (Cover::Equality, f))
+            .chain([(Cover::Contains, contains)])
+            .collect();
+        complete(index.clone(), covered)
+    })
 }
 
 /// Whether composite `index` serves `req`: equality fields (any order) as a prefix, then the
@@ -1125,6 +1244,7 @@ pub enum PlannedScan {
 }
 
 /// The planner's answer for one DNF disjunct.
+#[cfg_attr(test, derive(Debug, PartialEq))]
 enum DisjunctDecision {
     Scan(PlannedScan),
     /// `IndexValidationPolicy::Emulator` or `ProductionReport` on Standard: served as if the
@@ -1133,16 +1253,47 @@ enum DisjunctDecision {
     Missing(IndexDefinition),
 }
 
+/// The planner's answer for one DNF disjunct: the pre-stage-B answer, changed by the stage-B
+/// rules only where they apply (`stage_b_applies`) and only by refusal (c) of a single
+/// equality or by a recorded merge (a) or (b) of a disjunct refused before. Every other answer
+/// (verdict, members and their order) is the pre-stage-B one.
 fn decide_disjunct(
     req: &Requirement,
     indexes: &IndexSet,
     collection: &CollectionId,
     group: bool,
     ctx: PlanningContext,
+    shape: RecordedShape,
 ) -> DisjunctDecision {
-    let recorded_refusals =
-        ctx.policy.production_rules() && ctx.edition == FirestoreEdition::Standard && !group;
-    if let Some(auto) = automatic_index_for(req, indexes, collection, group, recorded_refusals) {
+    let base = decide_disjunct_base(req, indexes, collection, group, ctx);
+    if !stage_b_applies(ctx, group, shape) {
+        return base;
+    }
+    match base {
+        DisjunctDecision::Scan(PlannedScan::Index(index))
+            if refuses_single_equality(req, indexes, collection, shape, &index) =>
+        {
+            unserved(req, collection, group, ctx)
+        }
+        DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_) => {
+            match recorded_merge(req, indexes, collection) {
+                Some(members) => DisjunctDecision::Scan(PlannedScan::Merge(members)),
+                None => base,
+            }
+        }
+        base @ DisjunctDecision::Scan(_) => base,
+    }
+}
+
+/// The pre-stage-B (4fcd8a7a3) answer for one DNF disjunct.
+fn decide_disjunct_base(
+    req: &Requirement,
+    indexes: &IndexSet,
+    collection: &CollectionId,
+    group: bool,
+    ctx: PlanningContext,
+) -> DisjunctDecision {
+    if let Some(auto) = automatic_index_for(req, indexes, collection, group) {
         return DisjunctDecision::Scan(PlannedScan::Index(auto));
     }
     if let Some(i) = indexes
@@ -1160,6 +1311,17 @@ fn decide_disjunct(
     {
         return DisjunctDecision::Scan(PlannedScan::Merge(members));
     }
+    unserved(req, collection, group, ctx)
+}
+
+/// The answer for a disjunct no index serves: assumed where the policy assumes missing
+/// indexes on Standard, missing otherwise.
+fn unserved(
+    req: &Requirement,
+    collection: &CollectionId,
+    group: bool,
+    ctx: PlanningContext,
+) -> DisjunctDecision {
     let requirement = required_index(req, collection, group);
     if ctx.policy.assumes_missing_indexes() && ctx.edition == FirestoreEdition::Standard {
         DisjunctDecision::Assumed(requirement)
@@ -1194,6 +1356,7 @@ fn decide_with_requirements(
     query: &Query,
     indexes: &IndexSet,
     ctx: PlanningContext,
+    shape: RecordedShape,
     mut requirement_for_query: impl FnMut(&[FilterExpr], &[OrderClause]) -> Requirement,
 ) -> IndexDecision {
     let Some(collection) = query.scope.collection_id() else {
@@ -1206,7 +1369,7 @@ fn decide_with_requirements(
     let mut assumed: Option<IndexDefinition> = None;
     for disjunction in query.dnf() {
         let req = requirement_for_query(&disjunction, &effective_order);
-        match decide_disjunct(&req, indexes, collection, group, ctx) {
+        match decide_disjunct(&req, indexes, collection, group, ctx, shape) {
             DisjunctDecision::Scan(PlannedScan::Index(index)) => {
                 chosen.get_or_insert(index);
             }
@@ -1395,6 +1558,7 @@ pub fn missing_requirements(
         query.clone()
     };
     let order = query.effective_order_by();
+    let shape = RecordedShape::of(&query, aggregations);
     let mut missing = Vec::new();
     for disjunction in query.dnf() {
         let decision = if let Some(nearest) = &query.find_nearest {
@@ -1413,7 +1577,7 @@ pub fn missing_requirements(
             } else {
                 requirement_for_aggregation(&disjunction, &order, aggregations)
             };
-            decide_disjunct(&requirement, indexes, collection, group, *ctx)
+            decide_disjunct(&requirement, indexes, collection, group, *ctx, shape)
         };
         if let DisjunctDecision::Missing(requirement) | DisjunctDecision::Assumed(requirement) =
             decision
@@ -1465,6 +1629,7 @@ pub fn plan_scans(
             .collect();
     }
     let effective_order = query.effective_order_by();
+    let shape = RecordedShape::of(query, aggregations);
     query
         .dnf()
         .iter()
@@ -1474,7 +1639,9 @@ pub fn plan_scans(
             } else {
                 requirement_for_aggregation(disjunction, &effective_order, aggregations)
             };
-            scan(decide_disjunct(&req, indexes, collection, group, *ctx))
+            scan(decide_disjunct(
+                &req, indexes, collection, group, *ctx, shape,
+            ))
         })
         .collect()
 }
@@ -1502,7 +1669,13 @@ pub fn decide(query: &Query, indexes: &IndexSet, ctx: &PlanningContext) -> Index
     if query.find_nearest.is_some() {
         return decide_find_nearest(query, indexes, *ctx);
     }
-    decide_with_requirements(query, indexes, *ctx, requirement_for)
+    decide_with_requirements(
+        query,
+        indexes,
+        *ctx,
+        RecordedShape::of(query, &[]),
+        requirement_for,
+    )
 }
 
 /// Decides how a canonical aggregation query is served. `sum` and `avg` fields are added to the
@@ -1522,9 +1695,16 @@ pub fn validate_aggregation_query(
             *ctx,
         );
     }
-    decide_with_requirements(query, indexes, *ctx, |disjunction, effective_order| {
-        requirement_for_aggregation(disjunction, effective_order, aggregations)
-    })
+    let shape = RecordedShape::of(query, aggregations);
+    decide_with_requirements(
+        query,
+        indexes,
+        *ctx,
+        shape,
+        |disjunction, effective_order| {
+            requirement_for_aggregation(disjunction, effective_order, aggregations)
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1579,6 +1759,228 @@ mod performance_tests {
                         let expected = indexes.single_fields.iter().filter(|((c, path), _)| c == collection.as_str() && field.segments().starts_with(path)).max_by_key(|((_, path), _)| path.len()).map_or_else(|| vec![(IndexQueryScope::Collection, IndexFieldMode::Ascending), (IndexQueryScope::Collection, IndexFieldMode::Descending), (IndexQueryScope::Collection, IndexFieldMode::Contains)], |(_, modes)| modes.clone());
                         proptest::prop_assert_eq!(indexes.single_field_modes(collection, field), expected);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The stage-B layer changes the pre-stage-B answer only under its gate and only by its two
+/// overrides (the Rust side of `IM.head_eq_base_outside_guards`, `IM.head_eq_base_emulator` and
+/// `IM.first_attempt_kept`).
+#[cfg(test)]
+mod stage_b_layer_tests {
+    use super::*;
+    use crate::query::QueryScope;
+    use proptest::prelude::*;
+
+    const FIELDS: [&str; 5] = ["a", "b", "tags", "e", "__name__"];
+    const MODES: [IndexFieldMode; 3] = [
+        IndexFieldMode::Ascending,
+        IndexFieldMode::Descending,
+        IndexFieldMode::Contains,
+    ];
+
+    fn path(name: &str) -> FieldPath {
+        FieldPath::parse(name).unwrap()
+    }
+
+    fn atom(kind: u8, field: usize) -> FilterExpr {
+        let field = path(FIELDS[field]);
+        let value = if field.is_document_name() {
+            Value::Reference("projects/p/databases/(default)/documents/qx/d".to_owned())
+        } else {
+            Value::Integer(1)
+        };
+        let array = Value::Array(vec![Value::Integer(1), Value::Integer(2)]);
+        match kind {
+            0..=2 => FilterExpr::Field {
+                field,
+                op: FieldOp::Equal,
+                value,
+            },
+            3 => FilterExpr::Field {
+                field,
+                op: FieldOp::ArrayContains,
+                value,
+            },
+            4 => FilterExpr::Field {
+                field,
+                op: FieldOp::ArrayContainsAny,
+                value: array,
+            },
+            5 => FilterExpr::Field {
+                field,
+                op: FieldOp::In,
+                value: array,
+            },
+            6 => FilterExpr::Unary {
+                field,
+                op: UnaryOp::IsNull,
+            },
+            7 => FilterExpr::Field {
+                field,
+                op: FieldOp::Equal,
+                value: Value::Null,
+            },
+            _ => FilterExpr::Field {
+                field,
+                op: FieldOp::GreaterThan,
+                value,
+            },
+        }
+    }
+
+    fn query_strategy() -> impl Strategy<Value = Query> {
+        (
+            proptest::collection::vec((0u8..9, 0usize..5), 0..4),
+            proptest::bool::weighted(0.15),
+            0usize..5,
+            proptest::bool::weighted(0.2),
+        )
+            .prop_filter_map("canonical", |(atoms, or, order, group)| {
+                let id = CollectionId::try_new("qx").unwrap();
+                let mut q = Query::new(if group {
+                    QueryScope::collection_group(id)
+                } else {
+                    QueryScope::collection(None, id)
+                });
+                let mut atoms: Vec<FilterExpr> =
+                    atoms.into_iter().map(|(k, f)| atom(k, f)).collect();
+                match atoms.len() {
+                    0 => {}
+                    1 => q = q.with_filter(atoms.remove(0)),
+                    _ if or => q = q.with_filter(FilterExpr::Or(atoms)),
+                    _ => q = q.with_filter(FilterExpr::And(atoms)),
+                }
+                let orders: &[(&str, Direction)] = match order {
+                    0 => &[],
+                    1 => &[("__name__", Direction::Ascending)],
+                    2 => &[("__name__", Direction::Descending)],
+                    3 => &[("e", Direction::Ascending)],
+                    _ => &[("a", Direction::Descending)],
+                };
+                for (f, d) in orders {
+                    q = q.with_order(OrderClause {
+                        field: path(f),
+                        direction: *d,
+                    });
+                }
+                q.canonicalize().ok()
+            })
+    }
+
+    fn set_strategy() -> impl Strategy<Value = IndexSet> {
+        (
+            proptest::collection::vec(
+                (
+                    proptest::collection::vec((0usize..5, 0usize..3), 1..4),
+                    proptest::bool::weighted(0.2),
+                ),
+                0..4,
+            ),
+            proptest::collection::vec(
+                proptest::option::weighted(
+                    0.4,
+                    proptest::collection::vec((any::<bool>(), 0usize..3), 0..4),
+                ),
+                4,
+            ),
+        )
+            .prop_map(|(composites, overrides)| {
+                let collection = CollectionId::try_new("qx").unwrap();
+                let mut set = IndexSet::default();
+                for (fields, group) in composites {
+                    let mut seen = BTreeSet::new();
+                    let fields: Vec<IndexField> = fields
+                        .into_iter()
+                        .filter(|(f, _)| seen.insert(*f))
+                        .map(|(f, m)| IndexField {
+                            path: path(FIELDS[f]),
+                            mode: if f == 4 && m == 2 {
+                                IndexFieldMode::Ascending
+                            } else {
+                                MODES[m]
+                            },
+                        })
+                        .collect();
+                    set.add_composite(IndexDefinition {
+                        collection_group: collection.clone(),
+                        query_scope: scope_for(group),
+                        fields,
+                    });
+                }
+                for (field, modes) in FIELDS.iter().zip(overrides) {
+                    if let Some(modes) = modes {
+                        let modes = modes
+                            .into_iter()
+                            .map(|(g, m)| (scope_for(g), MODES[m]))
+                            .collect();
+                        set.set_single_field_indexes(&collection, &path(field), modes);
+                    }
+                }
+                set
+            })
+    }
+
+    fn ctx_strategy() -> impl Strategy<Value = PlanningContext> {
+        (0usize..3, any::<bool>()).prop_map(|(policy, enterprise)| PlanningContext {
+            edition: if enterprise {
+                FirestoreEdition::Enterprise
+            } else {
+                FirestoreEdition::Standard
+            },
+            api_mode: FirestoreApiMode::Native,
+            policy: [
+                IndexValidationPolicy::Production,
+                IndexValidationPolicy::ProductionReport,
+                IndexValidationPolicy::Emulator,
+            ][policy],
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+
+        #[test]
+        fn the_head_answer_is_the_base_answer_outside_the_stage_b_guards(
+            query in query_strategy(),
+            set in set_strategy(),
+            ctx in ctx_strategy(),
+            aggregate in proptest::bool::weighted(0.1),
+        ) {
+            let aggregations: &[Aggregation] = if aggregate { &[Aggregation::Count { up_to: None }] } else { &[] };
+            let shape = RecordedShape::of(&query, aggregations);
+            let collection = query.scope.collection_id().unwrap();
+            let group = query.scope.all_descendants();
+            let order = query.effective_order_by();
+            for disjunction in query.dnf() {
+                let req = requirement_for(&disjunction, &order);
+                let head = decide_disjunct(&req, &set, collection, group, ctx, shape);
+                let base = decide_disjunct_base(&req, &set, collection, group, ctx);
+                if head == base {
+                    continue;
+                }
+                // Only under the gate: production rules, Standard, collection scope, the
+                // recorded shape (so never under the emulator profile).
+                prop_assert!(ctx.policy.production_rules());
+                prop_assert_eq!(ctx.edition, FirestoreEdition::Standard);
+                prop_assert!(!group);
+                prop_assert!(shape.conjunction && !aggregate);
+                prop_assert_eq!(query.dnf().len(), 1);
+                match (&base, &head) {
+                    // (c): a single plain equality loses the automatic index.
+                    (DisjunctDecision::Scan(PlannedScan::Index(index)), _) => {
+                        prop_assert!(shape.single_equality);
+                        prop_assert_eq!(head, unserved(&req, collection, group, ctx));
+                        prop_assert_eq!(index.fields.first().map(|f| f.mode), Some(IndexFieldMode::Ascending));
+                    }
+                    // (a) or (b): a refused disjunct becomes a recorded merge.
+                    (DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_), DisjunctDecision::Scan(PlannedScan::Merge(members))) => {
+                        prop_assert_eq!(Some(members.clone()), recorded_merge(&req, &set, collection));
+                    }
+                    // A served merge of the first attempt is never changed.
+                    _ => prop_assert!(false, "{base:?} became {head:?}"),
                 }
             }
         }
@@ -1693,6 +2095,7 @@ mod normalized_core_bridge_tests {
                                 &collection,
                                 group,
                                 ctx,
+                                RecordedShape::of(&query, &[]),
                             ) {
                                 DisjunctDecision::Scan(PlannedScan::Index(index)) => {
                                     IndexDecision::UseIndex { index }
@@ -2058,7 +2461,6 @@ mod composite_kernel_tests {
             contains: wanted_contains,
             order,
             equality_ordered: false,
-            contains_any: false,
         };
         compare_real_and_scalar(&index, &req, &collection, scope != "collection", &paths)
     }
@@ -2159,7 +2561,6 @@ mod composite_kernel_tests {
                 contains: contains.map(path),
                 order: order.into_iter().map(|(id, descending)| OrderClause { field: path(id), direction: if descending { Direction::Descending } else { Direction::Ascending } }).collect(),
                 equality_ordered: false,
-                contains_any: false,
             };
             let mapping = (0..7).map(path).collect::<Vec<_>>();
             compare_real_and_scalar(&index, &req, &collection, group, &mapping);

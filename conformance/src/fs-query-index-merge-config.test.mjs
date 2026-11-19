@@ -2394,3 +2394,85 @@ test("a create or reset answer whose operation cannot be classified stops the wr
   assert.equal(removal.entries.E3.write.unclassified, true);
   assert.equal(removal.ok, false);
 });
+
+// ---- ruling 10 item 4 ------------------------------------------------------------------------
+
+test("a done create or reset is accepted only as a readable operation of its entry", async () => {
+  const variants = {
+    "unknown string type": (meta) => ({ ...meta, "@type": "unknown" }),
+    "another admin type": (meta) => ({
+      ...meta,
+      "@type": "type.googleapis.com/google.firestore.admin.v1.ExportDocumentsMetadata",
+    }),
+    "no metadata": () => undefined,
+    "another target": (meta) => ({
+      ...meta,
+      index: `${DB}/collectionGroups/imc/indexes/Z`,
+      field: `${DB}/collectionGroups/imc/fields/zz`,
+    }),
+  };
+  const replaced = (answer, change) => {
+    const { metadata, ...rest } = answer.json;
+    const changed = change(metadata);
+    return { status: 200, json: changed === undefined ? rest : { ...rest, metadata: changed } };
+  };
+  for (const [label, change] of Object.entries(variants)) {
+    // apply: the first create (E1) answers 200 with that body.
+    const fake = fakeFirestore();
+    let posted = false;
+    const wrapped = async (r) => {
+      const answer = await fake.http(r);
+      if (r.method === "POST" && !posted) {
+        posted = true;
+        return replaced(answer, change);
+      }
+      return answer;
+    };
+    const result = await apply({
+      session: createSession({
+        http: wrapped,
+        token: async () => "t",
+        cap: 1000,
+        wallMs: 3_600_000,
+      }),
+      set: "f1",
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    assert.equal(writesOf(fake).length, 1, `${label}: no write after it`);
+    assert.equal(result.entries.E1.write.unclassified, true, label);
+    for (const id of ["E2", "E4", "E5"])
+      assert.equal(result.entries[id].write.class, "not-sent", `${label} ${id}`);
+    // remove: the first reset (E3) answers 200 with that body.
+    const { fake: applied } = await appliedFake();
+    applied.requests.length = 0;
+    let reset = false;
+    const http = async (r) => {
+      const answer = await applied.http(r);
+      if (r.method === "PATCH" && !reset) {
+        reset = true;
+        return replaced(answer, change);
+      }
+      return answer;
+    };
+    const removal = await remove({
+      session: createSession({ http, token: async () => "t", cap: 1000, wallMs: 3_600_000 }),
+      set: "all",
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    const writes = applied.requests.filter((r) => r.method !== "GET");
+    assert.deepEqual(
+      writes.map((r) => r.method),
+      ["PATCH"],
+      `${label}: no write after the reset`,
+    );
+    assert.equal(removal.entries.E3.write.unclassified, true, label);
+    assert.equal(removal.ok, false, label);
+  }
+  // The recorded answers are accepted: apply writes every entry.
+  const fake = fakeFirestore();
+  const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  for (const id of SETS.f1) assert.equal(result.entries[id].write.unclassified, undefined, id);
+  assert.equal(result.ok, true);
+});

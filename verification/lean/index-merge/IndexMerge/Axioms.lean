@@ -1,4 +1,5 @@
 import IndexMerge.Counterexamples
+import IndexMerge.HeadTheorems
 import IndexMerge.Production
 
 /-!
@@ -66,29 +67,19 @@ info: 'IM.merged_refuses_eq_ordered' depends on axioms: [propext, Classical.choi
 #guard_msgs in #print axioms IM.spec_implies_broad
 
 /--
-info: 'IM.merge_composite_with_array_field' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.broad_composite_with_array_field' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.merge_composite_with_array_field
+#guard_msgs in #print axioms IM.broad_composite_with_array_field
 
 /--
-info: 'IM.composite_with_array_field_descending_name_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.broad_opposite_direction_automatic' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.composite_with_array_field_descending_name_refused
+#guard_msgs in #print axioms IM.broad_opposite_direction_automatic
 
 /--
-info: 'IM.opposite_direction_automatic_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.broad_contains_with_descending_name' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.opposite_direction_automatic_refused
-
-/--
-info: 'IM.merge_contains_with_descending_name' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms IM.merge_contains_with_descending_name
-
-/--
-info: 'IM.broad_mirror_direction_automatic' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms IM.broad_mirror_direction_automatic
+#guard_msgs in #print axioms IM.broad_contains_with_descending_name
 
 /-- info: 'IM.broad_not_complete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.broad_not_complete
@@ -104,47 +95,84 @@ info: 'IM.repeated_single_equality_refused' depends on axioms: [propext, Classic
 -/
 #guard_msgs in #print axioms IM.repeated_single_equality_refused
 
-/-- info: 'IM.phase_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.phase_sound
+/--
+info: 'IM.head_eq_base_outside_guards' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.head_eq_base_outside_guards
 
-/-- info: 'IM.phase_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.phase_iff
+/-- info: 'IM.guardOf_off_gate' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.guardOf_off_gate
 
-/-- info: 'IM.member_recorded' depends on axioms: [propext] -/
-#guard_msgs in #print axioms IM.member_recorded
+/-- info: 'IM.head_eq_base_off_gate' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_base_off_gate
 
-/-- info: 'IM.member_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.member_fields
-
-/-- info: 'IM.merged_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.merged_kinds
+/-- info: 'IM.head_eq_base_emulator' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_base_emulator
 
 /--
-info: 'IM.composite_with_array_field_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_eq_base_enterprise' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.composite_with_array_field_group_refused
+#guard_msgs in #print axioms IM.head_eq_base_enterprise
+
+/-- info: 'IM.head_eq_base_group' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_base_group
+
+/-- info: 'IM.head_override' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_override
+
+/-- info: 'IM.first_attempt_kept' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.first_attempt_kept
+
+/-- info: 'IM.base_merge_kept' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.base_merge_kept
+
+/-- info: 'IM.recorded_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.recorded_kinds
+
+/-- info: 'IM.head_merge_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_merge_kinds
+
+/-- info: 'IM.head_f1' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_f1
+
+/-- info: 'IM.head_f3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_f3
+
+/-- info: 'IM.head_f2_refused' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_f2_refused
 
 /--
-info: 'IM.contains_descending_name_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_single_equality_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.contains_descending_name_group_refused
+#guard_msgs in #print axioms IM.head_single_equality_refused
 
 /--
-info: 'IM.contains_any_descending_name_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_single_equality_neighbours_served' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.contains_any_descending_name_refused
+#guard_msgs in #print axioms IM.head_single_equality_neighbours_served
 
 /--
-info: 'IM.array_member_never_covers_equality' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_f1_descending_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.array_member_never_covers_equality
+#guard_msgs in #print axioms IM.head_f1_descending_refused
+
+/-- info: 'IM.head_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_group_refused
 
 /--
-info: 'IM.carried_array_field_never_covers_equality' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_contains_any_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.carried_array_field_never_covers_equality
+#guard_msgs in #print axioms IM.head_contains_any_refused
+
+/-- info: 'IM.head_enterprise_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_enterprise_base
 
 /--
-info: 'IM.single_equality_neighbours_served' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.first_attempt_conflation' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.single_equality_neighbours_served
+#guard_msgs in #print axioms IM.first_attempt_conflation
+
+/--
+info: 'IM.carried_array_field_with_equality_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.carried_array_field_with_equality_refused

@@ -6,7 +6,8 @@ import IndexMerge.Corpus
 Every row that concerns the index-merge decision and can be read offline, with the verdict
 production returned: served (`200`, gRPC `OK`) or refused for a missing index (`400`
 `FAILED_PRECONDITION`, gRPC `9`). The `#guard` at the end fails the build when the model
-disagrees with any of them.
+disagrees with any of them (the head decision, `decideHead`); a second `#guard` pins the rows
+the base decision alone contradicts.
 
 Sources:
 
@@ -323,6 +324,21 @@ def productionDisagreements : List String :=
   (productionRows.filter (!·.agreesWithProduction)).map (·.label)
 
 #guard productionDisagreements == []
+
+/-- The rows the base planner alone contradicts: exactly the three recorded shapes the head's
+overrides exist for, (c), (a) and (b), and their plans. -/
+def baseDisagreements : List String :=
+  (productionRows.filter fun c =>
+    match c.production with
+    | some (served, _) => c.baseDecision.served != served
+    | none => false).map (·.label)
+
+#guard baseDisagreements == [
+  "fs-query-index-merge/shapes/builtin#f3-contains-name-desc",
+  "fs-query-index-merge/shapes/builtin#f3-contains-name-desc-plan",
+  "fs-query-index-merge/shapes/ascending-only#a-alone-name-desc",
+  "fs-query-index-merge/shapes/exempt-with-composite#f1-equalities-and-contains",
+  "fs-query-index-merge/shapes/exempt-with-composite#f1-equalities-and-contains-plan"]
 #guard mergeObsRows.length == 24
 #guard productionRows.length == 101
 

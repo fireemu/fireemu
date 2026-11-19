@@ -8,7 +8,7 @@ namespace IM
 
 /-! ## Sorting keeps the elements -/
 
-theorem mem_insertDesc {x y : List Cov × Index} {l : List (List Cov × Index)} :
+theorem mem_insertDesc {x y : List Field × Index} {l : List (List Field × Index)} :
     y ∈ insertDesc x l ↔ y = x ∨ y ∈ l := by
   induction l with
   | nil => simp [insertDesc]
@@ -16,7 +16,7 @@ theorem mem_insertDesc {x y : List Cov × Index} {l : List (List Cov × Index)} 
     unfold insertDesc
     split <;> simp_all [or_left_comm]
 
-theorem mem_sortDesc {y : List Cov × Index} {l : List (List Cov × Index)} :
+theorem mem_sortDesc {y : List Field × Index} {l : List (List Field × Index)} :
     y ∈ sortDesc l ↔ y ∈ l := by
   induction l with
   | nil => simp [sortDesc]
@@ -38,8 +38,8 @@ theorem mem_sortFields {y : Field} {l : List Field} : y ∈ sortFields l ↔ y �
 
 /-- What the greedy loop covers is what it started with plus the fields of the candidates it
 took, and every member it returns is a candidate it took. -/
-theorem greedy_spec (cov : List Cov) (cs : List (List Cov × Index)) :
-    ∃ chosen : List (List Cov × Index), (∀ p ∈ chosen, p ∈ cs) ∧
+theorem greedy_spec (cov : List Field) (cs : List (List Field × Index)) :
+    ∃ chosen : List (List Field × Index), (∀ p ∈ chosen, p ∈ cs) ∧
       (greedy cov cs).2 = chosen.map (·.2) ∧
       ∀ x, x ∈ (greedy cov cs).1 ↔ (x ∈ cov ∨ ∃ p ∈ chosen, x ∈ p.1) := by
   induction cs generalizing cov with
@@ -61,13 +61,13 @@ theorem greedy_spec (cov : List Cov) (cs : List (List Cov × Index)) :
         exact or_assoc
 
 /-- Everything the greedy loop started with stays covered. -/
-theorem greedy_keeps (cov : List Cov) (cs : List (List Cov × Index)) {x : Cov}
+theorem greedy_keeps (cov : List Field) (cs : List (List Field × Index)) {x : Field}
     (h : x ∈ cov) : x ∈ (greedy cov cs).1 := by
   obtain ⟨_, _, _, hcov⟩ := greedy_spec cov cs
   exact (hcov x).2 (Or.inl h)
 
 /-- The greedy loop covers the fields of every candidate: a skipped one was already covered. -/
-theorem greedy_covers (cov : List Cov) (cs : List (List Cov × Index)) :
+theorem greedy_covers (cov : List Field) (cs : List (List Field × Index)) :
     ∀ p ∈ cs, ∀ x ∈ p.1, x ∈ (greedy cov cs).1 := by
   induction cs generalizing cov with
   | nil => simp

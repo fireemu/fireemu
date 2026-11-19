@@ -549,6 +549,17 @@ export function unclassifiable(answer) {
 }
 
 /**
+ * Whether a create or reset answer lets the writes go on: it must not be `unclassifiable`, and a
+ * done one must be positively classified, a readable operation of its entry in one of the known
+ * operation types (`operation`, from `operationOf`). A done answer with another or an unknown
+ * metadata type, no metadata, or another target stops the writes (coordinator ruling 10).
+ */
+export function accepted(answer, operation) {
+  if (unclassifiable(answer)) return false;
+  return classify(answer) !== "done" || operation !== undefined;
+}
+
+/**
  * apply: every entry of the set must read absent; then one create per entry, in the set's order,
  * stopping at the first answer that is not done; polls; reads back. Each entry ends as `created`
  * (done or unknown write, then its operation done or an own read showing it), `not-created` (its
@@ -573,7 +584,7 @@ export async function apply({ session, set, forms, sleep }) {
       class: classify(answer),
       status: answer.status,
       ...(operation ? { operation: operation.name, target: operation.target } : {}),
-      ...(unclassifiable(answer) ? { unclassified: true } : {}),
+      ...(accepted(answer, operation) ? {} : { unclassified: true }),
     };
     if (operation) operations[id] = operation;
   }
@@ -647,7 +658,10 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
       class: classify(answer),
       status: answer.status,
       ...(operation ? { operation: operation.name, target: operation.target } : {}),
-      ...(unclassifiable(answer) ? { unclassified: true } : {}),
+      // A composite DELETE answers no operation; a reset must answer a readable one.
+      ...((entry.kind === "override" ? accepted(answer, operation) : !unclassifiable(answer))
+        ? {}
+        : { unclassified: true }),
     };
     if (operation) operations[id] = operation;
   }

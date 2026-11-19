@@ -1,4 +1,4 @@
-import IndexMerge.Model
+import IndexMerge.Head
 
 /-!
 # Corpus cases: configurations, names and the text format
@@ -46,7 +46,15 @@ structure Case where
   productionPlan : Option (List (List IField)) := none
 
 def Case.decision (c : Case) : Decision :=
-  decideQuery c.query c.config.toISet c.policy c.edition
+  decideHead c.query c.config.toISet c.policy c.edition
+
+/-- The base answer (the planner before the recorded rules). -/
+def Case.baseDecision (c : Case) : Decision :=
+  decideBase c.query c.config.toISet c.policy c.edition
+
+/-- The override that fires, if any. -/
+def Case.guard (c : Case) : Guard :=
+  guardOf c.query c.config.toISet c.policy c.edition
 
 /-! ## Names -/
 
@@ -101,7 +109,6 @@ def Filter.render : Filter → String
   | .eq f => s!"filter eq {fname f}"
   | .isNull f => s!"filter isnull {fname f}"
   | .contains f => s!"filter contains {fname f}"
-  -- Never generated: the corpus format has no array-contains-any filter.
   | .containsAny f => s!"filter containsany {fname f}"
   | .gt f => s!"filter gt {fname f}"
 
@@ -114,12 +121,21 @@ def Edition.tag : Edition → String
   | .standard => "standard"
   | .enterprise => "enterprise"
 
-def Decision.render : Decision → String
-  | .use i => s!"expect use {renderIndex i}"
-  | .merge ms => "expect merge " ++ " ; ".intercalate (ms.map renderIndex)
-  | .missing i => s!"expect missing {renderIndex i}"
-  | .assumed i => s!"expect assumed {renderIndex i}"
-  | .fullScan i => s!"expect fullscan {renderIndex i}"
+/-- A decision after a keyword (`expect` for the head answer, `base` for the base answer). -/
+def Decision.renderAs (key : String) : Decision → String
+  | .use i => s!"{key} use {renderIndex i}"
+  | .merge ms => s!"{key} merge " ++ " ; ".intercalate (ms.map renderIndex)
+  | .missing i => s!"{key} missing {renderIndex i}"
+  | .assumed i => s!"{key} assumed {renderIndex i}"
+  | .fullScan i => s!"{key} fullscan {renderIndex i}"
+
+def Decision.render (d : Decision) : String := d.renderAs "expect"
+
+def Guard.tag : Guard → String
+  | .none => "none"
+  | .a => "a"
+  | .b => "b"
+  | .c => "c"
 
 def Case.render (c : Case) (n : Nat) : List String :=
   [s!"case {n} {c.label}",
@@ -133,7 +149,7 @@ def Case.render (c : Case) (n : Nat) : List String :=
   ++ (match c.production with
       | some (served, row) => [s!"production {if served then "served" else "refused"} {row}"]
       | none => [])
-  ++ [c.decision.render, "end"]
+  ++ [c.decision.render, c.baseDecision.renderAs "base", s!"guard {c.guard.tag}", "end"]
 
 /-! ## Construction helpers -/
 

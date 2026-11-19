@@ -19,15 +19,20 @@ where `<modes>` is `-` (none) or a comma list of `<C|G>:<asc|desc|contains>`, an
     uses <k>
     query <collection> <C|G>
     ctx <production|report|emulator> <standard|enterprise>
-    filter <eq|isnull|contains|gt> <field>   -- any number, in order
+    filter <eq|isnull|contains|containsany|gt> <field>   -- any number, in order
     order <field> <asc|desc>                 -- any number, in order
     production <served|refused> <row>        -- optional: the recorded production verdict
     expect <use|missing|assumed|fullscan> <index>
     expect merge <index> ; <index> ; ...
+    base <use|missing|assumed|fullscan> <index>
+    base merge <index> ; <index> ; ...
+    guard <none|a|b|c>
     end
 
 Field `__name__` in a filter is a filter on the document name (the replay gives it a reference
-value); every other filter value is an integer. The expected decision is `IM.decideQuery`.
+value); every other filter value is an integer. The expected decision is the head answer
+`IM.decideHead`; `base` is the base answer `IM.decideBase` and `guard` the override that fires
+(`IM.guardOf`: `none` when the head answer is the base answer).
 -/
 
 open IM
@@ -319,8 +324,96 @@ def pictCase (row : String) : Case :=
       policy, edition }
   | _ => panic! s!"bad PICT row {row}"
 
+/-! ## The head's guards and their neighbours
+
+Shapes that reach each override of `IM.decideHead` and the neighbours where it must not fire. -/
+
+def shapeCase (label : String) (q : Query) (config : Config) (policy : Policy := .production)
+    (edition : Edition := .standard) : Case :=
+  { label := s!"shape/{label}", query := q, config, policy, edition }
+
+def containsAnyF (name : String) : Filter := .containsAny (fid name)
+def isNullF (name : String) : Filter := .isNull (fid name)
+
+def aAscOnly : List (Nat × Field × List (Scope × Mode)) := [(qx, fid "a", [(.collection, .asc)])]
+def f1Config (composites : List Index) : Config :=
+  { composites, overrides := [(qx, fid "a", []), (qx, fid "tags", [])] }
+def aTagsC : Index := ix qx [("a", .asc), ("tags", .contains)]
+
+def shapeCases : List Case :=
+  let dirs : List (String × OrderC) := [("asc", asc "__name__"), ("desc", desc "__name__")]
+  let f1q := query qx [eqF "a", eqF "b", hasF "tags"]
+  let f3q := query qx [eqF "a", hasF "tags"] [desc "__name__"]
+  -- An equality and an array-contains on the same path.
+  (dirs.flatMap fun (dn, o) =>
+    [shapeCase s!"shared-path/builtin/{dn}" (query qx [eqF "a", eqF "tags", hasF "tags"] [o]) {},
+     shapeCase s!"shared-path/a-asc-tags-contains/{dn}"
+       (query qx [eqF "a", eqF "tags", hasF "tags"] [o])
+       { overrides := [(qx, fid "a", [(.collection, .asc)]),
+           (qx, fid "tags", [(.collection, .contains)])] }])
+  ++ [
+    -- IS NULL fails the shape.
+    shapeCase "isnull-and-eq/builtin" (query qx [isNullF "a", eqF "b"]) {},
+    shapeCase "isnull-and-eq/a-asc-only/desc" (query qx [isNullF "a", eqF "b"] [desc "__name__"])
+      { overrides := aAscOnly },
+    shapeCase "isnull-alone/a-asc-only/desc" (query qx [isNullF "a"] [desc "__name__"])
+      { overrides := aAscOnly },
+    -- A filter on `__name__` fails the shape: (c) does not fire.
+    shapeCase "name-eq-and-eq/a-asc-only/desc" (query qx [eqF "__name__", eqF "a"] [desc "__name__"])
+      { overrides := aAscOnly },
+    shapeCase "single-eq/a-asc-only/desc" (query qx [eqF "a"] [desc "__name__"])
+      { overrides := aAscOnly },
+    shapeCase "single-eq/a-asc-only/desc/report" (query qx [eqF "a"] [desc "__name__"])
+      { overrides := aAscOnly } .report,
+    shapeCase "single-eq/a-asc-only/desc/emulator" (query qx [eqF "a"] [desc "__name__"])
+      { overrides := aAscOnly } .emulator,
+    shapeCase "single-eq/a-asc-only/desc/enterprise" (query qx [eqF "a"] [desc "__name__"])
+      { overrides := aAscOnly } .production .enterprise,
+    shapeCase "single-eq/a-asc-only/desc/group" (query qx [eqF "a"] [desc "__name__"] true)
+      { overrides := [(qx, fid "a", [(.group, .asc)])] },
+    shapeCase "single-eq/a-asc-only/order-a-desc" (query qx [eqF "a"] [desc "a"])
+      { overrides := aAscOnly },
+    -- The serving-composite neighbour of (c).
+    shapeCase "single-eq/a-asc-only/desc/serving-composite" (query qx [eqF "a"] [desc "__name__"])
+      { composites := [ix qx [("a", .desc), ("__name__", .desc)]], overrides := aAscOnly },
+    -- array-contains-any fails the shape.
+    shapeCase "contains-any/f1-set" (query qx [eqF "a", eqF "b", containsAnyF "tags"])
+      (f1Config [aTagsC]),
+    shapeCase "contains-any/builtin/desc" (query qx [eqF "a", containsAnyF "tags"] [desc "__name__"])
+      {},
+    -- (b) with a non-carrying composite, with two carrying ones, and with a remaining field
+    -- that lacks its ascending index.
+    shapeCase "b/non-carrying-and-carrying" f1q
+      (f1Config [ix qx [("a", .asc), ("b", .asc)], aTagsC]),
+    -- Two carrying composites: the larger cover is tried first.
+    shapeCase "b/two-carrying" (query qx [eqF "a", eqF "b", eqF "c", hasF "tags"])
+      (f1Config [aTagsC, ix qx [("a", .asc), ("c", .asc), ("tags", .contains)]]),
+    shapeCase "b/remaining-desc-only" f1q
+      { composites := [aTagsC],
+        overrides := [(qx, fid "a", []), (qx, fid "tags", []), (qx, fid "b", [(.collection, .desc)])] },
+    shapeCase "b/three-equalities" (query qx [eqF "a", eqF "b", eqF "c", hasF "tags"])
+      (f1Config [aTagsC]),
+    -- (a) with an exempt equality field and a configured `(a ASC, __name__ DESC)`.
+    shapeCase "a/exempt-equality-with-composite" f3q
+      { composites := [ix qx [("a", .asc), ("__name__", .desc)]],
+        overrides := [(qx, fid "a", [])] },
+    shapeCase "a/three-equalities" (query qx [eqF "a", eqF "b", eqF "c", hasF "tags"] [desc "__name__"]) {},
+    -- F1 and F3 outside the gate.
+    shapeCase "f1/enterprise" f1q (f1Config [aTagsC]) .production .enterprise,
+    shapeCase "f3/enterprise" f3q {} .production .enterprise,
+    shapeCase "f1/report" f1q (f1Config [aTagsC]) .report,
+    shapeCase "f3/report" f3q {} .report,
+    shapeCase "f1/emulator" f1q (f1Config [aTagsC]) .emulator,
+    shapeCase "f3/emulator" f3q {} .emulator,
+    shapeCase "f1/group" (query qx [eqF "a", eqF "b", hasF "tags"] [] true)
+      { composites := [ix qx [("a", .asc), ("tags", .contains)] .group],
+        overrides := [(qx, fid "a", []), (qx, fid "tags", []), (qx, fid "b", [(.group, .asc)])] },
+    shapeCase "f3/group" (query qx [eqF "a", hasF "tags"] [desc "__name__"] true)
+      { overrides := [(qx, fid "a", [(.group, .desc)]), (qx, fid "tags", [(.group, .contains)])] }]
+
 def main : IO Unit := do
-  let all := productionRows ++ pictRows.map pictCase ++ productCases ++ randomCases 3000
+  let all := productionRows ++ pictRows.map pictCase ++ productCases ++ shapeCases ++
+    randomCases 3000
   let g := all.foldl Gen.add {}
   IO.println "# Golden corpus of the Lean index-merge model (verification/lean/index-merge)."
   IO.println "# Generated by `lake exe corpus`; do not edit. The format is in Main.lean."
@@ -341,4 +434,6 @@ def main : IO Unit := do
     | some (served, row) => IO.println s!"production {if served then "served" else "refused"} {row}"
     | none => pure ()
     IO.println c.decision.render
+    IO.println (c.baseDecision.renderAs "base")
+    IO.println s!"guard {c.guard.tag}"
     IO.println "end"

@@ -3,6 +3,8 @@ import IndexMerge.Spec
 import IndexMerge.Lemmas
 import IndexMerge.Theorems
 import IndexMerge.Counterexamples
+import IndexMerge.Head
+import IndexMerge.HeadTheorems
 import IndexMerge.Corpus
 import IndexMerge.Production
 import IndexMerge.Axioms

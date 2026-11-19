@@ -1,16 +1,16 @@
 /-!
-# The index planner as `crates/fireemu-core-firestore/src/index.rs` computes it
+# The base planner: `crates/fireemu-core-firestore/src/index.rs` before the recorded rules
 
-A transcription of the functions the index-merge decision depends on, one Lean definition per
-Rust function, in the same order of checks:
+The decision at 4fcd8a7a3 (before the index-merge observation's rules, "stage B"), which the
+planner keeps as its base: `IndexMerge/Head.lean` applies the recorded rules on top of it under
+one gate. A transcription of the functions the index-merge decision depends on, one Lean
+definition per Rust function, in the same order of checks:
 
 - `compositeServes` is `composite_fields_serve` (through `composite_serves`);
 - `automaticIndexFor` is `automatic_index_for`;
-- `compositeCandidates`, `sortDesc`, `autoCandidates`, `greedy` and `mergeMembers` are
-  `merge_members` (candidate collection, largest-cover-first ordering, greedy cover over
-  filters by kind, `Kind`), with `recorded` selecting the rules production was recorded adding;
-  `mergedIndexesFor` is `merged_indexes_for` (the attempt without them, then, at collection scope
-  only, the attempt with them);
+- `compositeCandidates`, `sortDesc`, `autoCandidates`, `greedy` and `mergedIndexesFor` are the
+  three phases of `merged_indexes_for` (candidate collection, largest-prefix-first ordering,
+  greedy cover);
 - `requiredIndex`, `decideReq` are `required_index` and `decide_disjunct` with
   `missing_decision` for one disjunct;
 - `reqOf` is `requirement_for` over `Query::effective_order_by` for one conjunction.
@@ -82,8 +82,6 @@ structure Req where
   contains : Option Field
   order : List OrderC
   eqOrdered : Bool
-  /-- Whether the array filter is `array-contains-any` rather than a plain `array-contains`. -/
-  containsAny : Bool
   deriving DecidableEq, Repr
 
 /-- `IndexSet`: the composites in the order they were added and the effective single-field
@@ -165,24 +163,17 @@ def touched (r : Req) : List Field :=
   (r.eq ++ r.contains.toList ++ (r.order.filter (·.path != NAME)).map (·.path)).eraseDups
 
 /-- The mode `automatic_index_for` picks for the one touched field `f`, before checking that
-it is enabled. `prod` is `recorded_refusals` (production's rules, Standard, collection scope):
-there one equality, with nothing but `__name__` ordered, descending, is served only by the
-field's descending mode; otherwise any enabled ordered mode serves an equality, preferring the
-requested `__name__` direction. -/
-def autoMode (r : Req) (s : ISet) (coll : Nat) (group : Bool) (prod : Bool) (f : Field) :
-    Option Mode :=
+it is enabled. -/
+def autoMode (r : Req) (s : ISet) (coll : Nat) (group : Bool) (f : Field) : Option Mode :=
   let nd := nameDirOf r.order
   let ordered := r.order.find? (·.path == f)
   if r.contains.isSome then (if ordered.isSome then none else some .contains)
   else
     match ordered with
     | some o => if o.dir != nd then none else some (modeFor o.dir)
-    | none =>
-      if prod && nd == .desc && r.eq.length == 1 && !r.eqOrdered then some .desc
-      else [modeFor nd, .asc, .desc].find? (fun m => hasMode s coll f group m)
+    | none => [modeFor nd, .asc, .desc].find? (fun m => hasMode s coll f group m)
 
-def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) (prod : Bool) :
-    Option Index :=
+def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option Index :=
   let t := touched r
   if t.length > 1 then none
   else
@@ -193,7 +184,7 @@ def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) (prod : B
     | f :: _ =>
       if isExempt s coll f group then none
       else
-        match autoMode r s coll group prod f with
+        match autoMode r s coll group f with
         | none => none
         | some m => if hasMode s coll f group m then some (singleFieldIndex coll group f m nm) else none
 
@@ -204,66 +195,25 @@ that are equality fields. -/
 def servedPrefix (r : Req) (idx : Index) : List Field :=
   (idx.fields.takeWhile (fun f => r.eq.contains f.path && f.mode.ordered)).map (·.path)
 
-/-- The sub-requirement a member must serve: some equality fields, optionally the array
-field, and the same order. -/
-def subReqC (r : Req) (eqs : List Field) (c : Option Field) : Req := ⟨eqs, c, r.order, false, false⟩
+/-- The sub-requirement a member must serve: some equality fields and the same order. -/
+def subReq (r : Req) (eqs : List Field) : Req := ⟨eqs, none, r.order, false⟩
 
-/-- The sub-requirement of equality fields only. -/
-def subReq (r : Req) (eqs : List Field) : Req := subReqC r eqs none
-
-/-- What a member covers (`Cover`): an equality filter on a field, by an ordered index field,
-or the array filter, by a contains index field. -/
-inductive Kind where
-  | eq
-  | contains
-  deriving DecidableEq, Repr
-
-abbrev Cov := Kind × Field
-
-/-- The equality filters on `fs`. -/
-def eqCov (fs : List Field) : List Cov := fs.map (Kind.eq, ·)
-
-/-- The array filter on `c`, if any. -/
-def containsCov (c : Option Field) : List Cov := c.toList.map (Kind.contains, ·)
-
-/-- Whether a composite may carry the array field after its served prefix: only in the
-recorded phase, with nothing but `__name__` ordered, ascending (the shape production
-recorded). -/
-def carryOk (r : Req) (recorded : Bool) : Bool :=
-  recorded && r.order.all (·.path == NAME) && nameDirOf r.order == .asc
-
-/-- The array field, when the shape allows it (`carryOk`) and the composite's field right after
-the served prefix is the query's array field in contains mode (`carries_contains`). -/
-def carriedContains (r : Req) (recorded : Bool) (idx : Index) (served : List Field) :
-    Option Field :=
-  if carryOk r recorded then
-    match r.contains with
-    | some c =>
-      match idx.fields[served.length]? with
-      | some f => if f.path == c && f.mode == .contains then some c else none
-      | none => none
-    | none => none
-  else none
-
-/-- Candidate members from the composites, in list order: the served prefix, followed by the
-array field when the composite carries it there (`carriedContains`). The cover set is a
-`BTreeSet` in Rust; `eraseDups` keeps its size. -/
-def compositeCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) :
-    List (List Cov × Index) :=
+/-- Candidate members from the composites, in list order. The field set is a `BTreeSet`
+in Rust; `eraseDups` keeps its size. -/
+def compositeCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) :
+    List (List Field × Index) :=
   s.composites.filterMap fun idx =>
     let served := servedPrefix r idx
-    let c := carriedContains r recorded idx served
     if served.isEmpty then none
-    else if compositeServes idx (subReqC r served c) coll group then
-      some ((eqCov served ++ containsCov c).eraseDups, idx)
+    else if compositeServes idx (subReq r served) coll group then some (served.eraseDups, idx)
     else none
 
-/-- One step of a stable sort by decreasing cover count (`sort_by_key` with `Reverse`). -/
-def insertDesc (x : List Cov × Index) : List (List Cov × Index) → List (List Cov × Index)
+/-- One step of a stable sort by decreasing field count (`sort_by_key` with `Reverse`). -/
+def insertDesc (x : List Field × Index) : List (List Field × Index) → List (List Field × Index)
   | [] => [x]
   | y :: ys => if y.1.length > x.1.length then y :: insertDesc x ys else x :: y :: ys
 
-def sortDesc : List (List Cov × Index) → List (List Cov × Index)
+def sortDesc : List (List Field × Index) → List (List Field × Index)
   | [] => []
   | x :: xs => insertDesc x (sortDesc xs)
 
@@ -277,36 +227,29 @@ def sortFields : List Field → List Field
   | x :: xs => insertField x (sortFields xs)
 
 /-- The automatic single-field candidates, only when nothing but `__name__` is ordered: each
-equality field whose index in the requested `__name__` direction is enabled, and the array
-field through its contains index (whose `__name__` runs in the requested direction). The
-contains member is taken for an ascending `__name__`, after the equality members (as before
-the recorded rules); in the recorded phase also for a descending one when the array filter is a
-plain array-contains, before the equality members. -/
-def autoCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) :
-    List (List Cov × Index) :=
+equality field whose index in the requested `__name__` direction is enabled, then the array
+field through its contains index when `__name__` runs ascending. -/
+def autoCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) : List (List Field × Index) :=
   if r.order.all (·.path == NAME) then
-    let nd := nameDirOf r.order
-    let nm := modeFor nd
+    let nm := modeFor (nameDirOf r.order)
     let eqs := (sortFields r.eq).filterMap fun f =>
       if !isExempt s coll f group && hasMode s coll f group nm then
-        some ([(Kind.eq, f)], singleFieldIndex coll group f nm nm)
+        some ([f], singleFieldIndex coll group f nm nm)
       else none
     let cs := match r.contains with
       | some c =>
-        if !isExempt s coll c group && hasMode s coll c group .contains &&
-            (nd == .asc || (recorded && !r.containsAny)) then
-          [([(Kind.contains, c)], singleFieldIndex coll group c .contains nm)]
+        if nm == .asc && !isExempt s coll c group && hasMode s coll c group .contains then
+          [([c], singleFieldIndex coll group c .contains nm)]
         else []
       | none => []
-    if nd == .desc then cs ++ eqs else eqs ++ cs
+    eqs ++ cs
   else []
 
-def candidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) :
-    List (List Cov × Index) :=
-  sortDesc (compositeCandidates r s coll group recorded) ++ autoCandidates r s coll group recorded
+def candidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) : List (List Field × Index) :=
+  sortDesc (compositeCandidates r s coll group) ++ autoCandidates r s coll group
 
-/-- The greedy cover: a candidate whose filters are all covered is skipped, any other is taken. -/
-def greedy : List Cov → List (List Cov × Index) → List Cov × List Index
+/-- The greedy cover: a candidate whose fields are all covered is skipped, any other is taken. -/
+def greedy : List Field → List (List Field × Index) → List Field × List Index
   | covered, [] => (covered, [])
   | covered, p :: rest =>
     if p.1.all (· ∈ covered) then greedy covered rest
@@ -314,26 +257,17 @@ def greedy : List Cov → List (List Cov × Index) → List Cov × List Index
       let res := greedy (covered ++ p.1) rest
       (res.1, p.2 :: res.2)
 
-/-- The filters a merge must cover. -/
-def wanted (r : Req) : List Cov := eqCov r.eq ++ containsCov r.contains
+/-- The fields a merge must cover. -/
+def wanted (r : Req) : List Field := r.eq ++ r.contains.toList
 
 /-- `members` in Rust: the equality fields plus the array field. -/
 def wantedCount (r : Req) : Nat := r.eq.length + (if r.contains.isSome then 1 else 0)
 
-/-- `merge_members`: one merge attempt. -/
-def mergeMembers (r : Req) (s : ISet) (coll : Nat) (group : Bool) (recorded : Bool) :
-    Option (List Index) :=
-  let res := greedy [] (candidates r s coll group recorded)
-  if (wanted r).all (· ∈ res.1) && res.1.all (· ∈ wanted r) then some res.2 else none
-
-/-- `merged_indexes_for`: the merge as before the recorded rules, or else, at collection scope
-only, with them. -/
 def mergedIndexesFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (List Index) :=
   if wantedCount r < 2 || r.eqOrdered then none
   else
-    match mergeMembers r s coll group false with
-    | some ms => some ms
-    | none => if group then none else mergeMembers r s coll group true
+    let res := greedy [] (candidates r s coll group)
+    if (wanted r).all (· ∈ res.1) && res.1.all (· ∈ wanted r) then some res.2 else none
 
 /-! ## `decide_disjunct` for one disjunct -/
 
@@ -374,7 +308,7 @@ def requiredIndex (r : Req) (coll : Nat) (group : Bool) : Index :=
 
 def decideReq (r : Req) (s : ISet) (coll : Nat) (group : Bool) (p : Policy) (e : Edition) :
     Decision :=
-  match automaticIndexFor r s coll group (p.productionRules && e == .standard && !group) with
+  match automaticIndexFor r s coll group with
   | some a => .use a
   | none =>
     match s.composites.find? (fun i => compositeServes i r coll group) with
@@ -404,7 +338,8 @@ inductive Filter where
   /-- `field IS NULL` (a unary equality). -/
   | isNull (f : Field)
   | contains (f : Field)
-  /-- `field array-contains-any [value]` (one disjunct of the DNF keeps it as such). -/
+  /-- `field array-contains-any [value]` (one disjunct of the DNF keeps it as such); the
+  requirement takes it as the array filter, like `contains`. -/
   | containsAny (f : Field)
   /-- `field > value`; with `NAME` a range on the document name. -/
   | gt (f : Field)
@@ -427,15 +362,12 @@ def eqFields (fs : List Filter) : List Field :=
     | .isNull f => if f == NAME then acc else addUniq acc f
     | _ => acc) []
 
-/-- The array filter's field and whether it is `array-contains-any`; the last array atom wins. -/
-def arrayFilter (fs : List Filter) : Option (Field × Bool) :=
+def containsField (fs : List Filter) : Option Field :=
   fs.foldl (fun acc a =>
     match a with
-    | .contains f => some (f, false)
-    | .containsAny f => some (f, true)
+    | .contains f => some f
+    | .containsAny f => some f
     | _ => acc) none
-
-def containsField (fs : List Filter) : Option Field := (arrayFilter fs).map (·.1)
 
 /-- `Query::inequality_fields` (a `BTreeSet`, so sorted and without duplicates). -/
 def ineqFields (fs : List Filter) : List Field :=
@@ -454,9 +386,13 @@ def reqOf (q : Query) : Req :=
   let eq := eqFields q.filters
   let eff := effectiveOrder q
   ⟨eq, containsField q.filters, eff.filter (fun o => !(eq.contains o.path)),
-    eff.any (fun o => eq.contains o.path), ((arrayFilter q.filters).map (·.2)).getD false⟩
+    eff.any (fun o => eq.contains o.path)⟩
 
 def decideQuery (q : Query) (s : ISet) (p : Policy) (e : Edition) : Decision :=
   decideReq (reqOf q) s q.coll q.group p e
+
+/-- The base decision for a whole query (one conjunction). -/
+def decideBase (q : Query) (s : ISet) (p : Policy) (e : Edition) : Decision :=
+  decideQuery q s p e
 
 end IM
