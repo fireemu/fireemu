@@ -52,6 +52,7 @@ where one of three recorded rules fires.
   `head_f1`, `head_f3`, `head_f2_refused`, `head_single_equality_refused`, and their
   unrecorded neighbours `head_single_equality_neighbours_served`, `head_f1_descending_refused`,
   `head_group_refused`, `head_contains_any_refused`, `head_enterprise_base`,
+  `head_two_carriers_base`, `head_group_carrier_base`,
   `first_attempt_conflation` and `carried_array_field_with_equality_refused`.
 - `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
   `conformance/fs-query-index-production.json`, 18 expectations of
@@ -69,6 +70,15 @@ where one of three recorded rules fires.
   axioms (no `sorry`).
 
 ## What the proofs say
+
+The theorems are about the model's query language: a `Query` is one flat conjunction of
+filters without values (`==`, `IS NULL`, `array-contains`, `array-contains-any`, `>`) and
+explicit orders. The gate judges the canonical query, the query after canonicalization:
+identical repeated equalities are deduplicated, a singleton AND or OR is unwrapped, and an
+explicit `ORDER BY __name__ ASC` equals the implicit order (coordinator ruling 12 treats these as
+the recorded query); the Lean `Query` is already in that form. OR, IN, filter values (null,
+NaN), aggregation, nearest-neighbour stages and wire canonicalization are outside the model;
+the Rust proptest `stage_b_layer_tests` and the pinned Rust tests cover them.
 
 The base algorithm collects candidates (each composite's maximal ordered equality prefix, when
 the composite serves those fields with the query's order; then the enabled automatic indexes
@@ -93,10 +103,12 @@ The index-merge observation (`conformance/fs-query-index-merge-production.json`,
 2026-11-19) settled the three shapes the base refuses or serves against production; the head
 overrides exactly those:
 
-1. (b), F1: a composite that carries the array field after its equality prefix, such as
-   `(a ASC, tags CONTAINS)`, is merged with the remaining equality fields' ascending indexes;
-   production's plan is `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`, `(b ASC, __name__ ASC)`
-   (`head_f1`). The base never takes such a composite (`broad_composite_with_array_field`).
+1. (b), F1: the one collection-scoped composite that carries the array field after its
+   equality prefix, such as `(a ASC, tags CONTAINS)`, is merged with the remaining equality
+   fields' ascending indexes; production's plan is `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`,
+   `(b ASC, __name__ ASC)` (`head_f1`). With two carriers, or a carrier scoped to the collection
+   group, the base answer stays (`head_two_carriers_base`, `head_group_carrier_base`,
+   unrecorded). The base never takes such a composite (`broad_composite_with_array_field`).
 2. (c): with only `a`'s ascending index enabled, production refuses `a == x ORDER BY __name__
    DESC`; the base serves it from `(a ASC, __name__ DESC)` (`broad_opposite_direction_automatic`
    is about the base), the head refuses it (`head_single_equality_refused`). Its unrecorded

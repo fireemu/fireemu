@@ -347,4 +347,38 @@ theorem carried_array_field_with_equality_refused :
     decideHead q f1Set .production .standard = .missing (requiredIndex (reqOf q) 0 false) := by
   decide
 
+/-- Two carriers, unrecorded: (b) applies only when exactly one composite carries the array
+field. With `(a ASC, tags CONTAINS)` and `(a ASC, b ASC, tags CONTAINS)` the second serves the
+F1 query on its own and the base answer stays; with `(a ASC, tags CONTAINS)` and `(b ASC, tags
+CONTAINS)` the base refuses and so does the head. -/
+def f1TwoSet (second : Index) : ISet := { f1Set with composites := [f1Composite, second] }
+def abTags : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨2, .asc⟩, ⟨3, .contains⟩]⟩
+def bTags : Index := ⟨0, .collection, [⟨2, .asc⟩, ⟨3, .contains⟩]⟩
+
+theorem head_two_carriers_base :
+    decideHead qF1 (f1TwoSet abTags) .production .standard =
+        decideBase qF1 (f1TwoSet abTags) .production .standard ∧
+      decideBase qF1 (f1TwoSet abTags) .production .standard = .use abTags ∧
+      guardOf qF1 (f1TwoSet abTags) .production .standard = .none ∧
+      decideHead qF1 (f1TwoSet bTags) .production .standard =
+        decideBase qF1 (f1TwoSet bTags) .production .standard ∧
+      decideBase qF1 (f1TwoSet bTags) .production .standard =
+        .missing (requiredIndex (reqOf qF1) 0 false) ∧
+      guardOf qF1 (f1TwoSet bTags) .production .standard = .none := by
+  refine ⟨by decide, by decide, by decide, by decide, by decide, by decide⟩
+
+/-- A collection-group carrier, unrecorded: the F1 collection query with `(a ASC, tags
+CONTAINS)` scoped to the collection group. A carrier must be collection-scoped, so the base
+refusal stays. -/
+def f1GroupCarrierSet : ISet :=
+  { f1Set with composites := [⟨0, .group, [⟨1, .asc⟩, ⟨3, .contains⟩]⟩] }
+
+theorem head_group_carrier_base :
+    decideHead qF1 f1GroupCarrierSet .production .standard =
+        decideBase qF1 f1GroupCarrierSet .production .standard ∧
+      decideBase qF1 f1GroupCarrierSet .production .standard =
+        .missing (requiredIndex (reqOf qF1) 0 false) ∧
+      guardOf qF1 f1GroupCarrierSet .production .standard = .none := by
+  refine ⟨by decide, by decide, by decide⟩
+
 end IM

@@ -385,9 +385,16 @@ def shapeCases : List Case :=
     -- that lacks its ascending index.
     shapeCase "b/non-carrying-and-carrying" f1q
       (f1Config [ix qx [("a", .asc), ("b", .asc)], aTagsC]),
-    -- Two carrying composites: the larger cover is tried first.
+    -- Two carrying composites: (b) needs exactly one, so the base answer stays.
     shapeCase "b/two-carrying" (query qx [eqF "a", eqF "b", eqF "c", hasF "tags"])
       (f1Config [aTagsC, ix qx [("a", .asc), ("c", .asc), ("tags", .contains)]]),
+    shapeCase "b/two-carrying-f1" f1q
+      (f1Config [aTagsC, ix qx [("a", .asc), ("b", .asc), ("tags", .contains)]]),
+    shapeCase "b/two-carrying-disjoint" f1q
+      (f1Config [aTagsC, ix qx [("b", .asc), ("tags", .contains)]]),
+    -- A carrier must be collection-scoped.
+    shapeCase "b/group-carrier" f1q
+      (f1Config [ix qx [("a", .asc), ("tags", .contains)] .group]),
     shapeCase "b/remaining-desc-only" f1q
       { composites := [aTagsC],
         overrides := [(qx, fid "a", []), (qx, fid "tags", []), (qx, fid "b", [(.collection, .desc)])] },

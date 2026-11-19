@@ -917,13 +917,16 @@ fn merged_indexes_for(
     (covered == wanted).then_some(members)
 }
 
-/// The client's query as far as the stage-B rules need it. Production was recorded answering
+/// The canonical query as far as the stage-B rules need it. Production was recorded answering
 /// plain queries (fs-query-index-merge, 2026-11-19) whose filter is a conjunction of plain
 /// equalities on distinct fields other than `__name__`, with ordinary values, and at most one
 /// plain array-contains on another field. The rules apply only to that shape, judged on the
-/// whole query and not on a DNF arm: an OR, an IN, array-contains-any, IS NULL / IS NAN, an
-/// equality with null or NaN, a repeated path, a filter on `__name__`, an aggregation or a
-/// nearest-neighbour stage keeps the pre-stage-B answer.
+/// whole canonical query and not on a DNF arm: an OR, an IN, array-contains-any, IS NULL / IS
+/// NAN, an equality with null or NaN, a repeated path, a filter on `__name__`, an aggregation or
+/// a nearest-neighbour stage keeps the pre-stage-B answer. Canonicalization has already removed
+/// an identical repeated equality and unwrapped a singleton `and` / `or`, and an explicit
+/// `ORDER BY __name__ ASC` is the implicit order: those forms are the recorded query itself
+/// (coordinator ruling 12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RecordedShape {
     /// The filter is such a conjunction (or absent).
@@ -1036,11 +1039,12 @@ enum Cover {
 /// automatic `(field DESC, __name__ DESC)` of each equality field, automatic members only
 /// (builtin#f3-contains-name-desc: `(tags ARRAY_CONTAINS, __name__ DESC)`, `(a DESC, __name__
 /// DESC)`);
-/// (b) `__name__` ascending: one composite whose equality prefix is followed by the array field
+/// (b) `__name__` ascending: the composite whose equality prefix is followed by the array field
 /// (`CONTAINS`), then the automatic `(field ASC, __name__ ASC)` of each remaining equality
 /// field (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags CONTAINS)`, `(b ASC,
-/// __name__ ASC)`). The carrying composites are tried by decreasing prefix length, in
-/// configuration order on a tie.
+/// __name__ ASC)`). The carrier is collection-scoped, as recorded, and the only configured
+/// composite that qualifies; with two or more the pre-stage-B answer stays (coordinator
+/// ruling 12).
 fn recorded_merge(
     req: &Requirement,
     set: &IndexSet,
@@ -1097,22 +1101,22 @@ fn recorded_merge(
             order: req.order.clone(),
             equality_ordered: false,
         };
-        if !served.is_empty()
+        if index.query_scope == IndexQueryScope::Collection
+            && !served.is_empty()
             && next.is_some_and(|f| &f.path == contains && f.mode == IndexFieldMode::Contains)
             && composite_serves(index, &sub, collection, false)
         {
             carrying.push((served, index));
         }
     }
-    carrying.sort_by_key(|(served, _)| std::cmp::Reverse(served.len()));
-    carrying.into_iter().find_map(|(served, index)| {
-        let covered = served
-            .into_iter()
-            .map(|f| (Cover::Equality, f))
-            .chain([(Cover::Contains, contains)])
-            .collect();
-        complete(index.clone(), covered)
-    })
+    // The recorded row shows one carrier; which of several production takes is not recorded.
+    let [(served, index)] = <[_; 1]>::try_from(carrying).ok()?;
+    let covered = served
+        .into_iter()
+        .map(|f| (Cover::Equality, f))
+        .chain([(Cover::Contains, contains)])
+        .collect();
+    complete(index.clone(), covered)
 }
 
 /// Whether composite `index` serves `req`: equality fields (any order) as a prefix, then the

@@ -176,3 +176,9 @@ info: 'IM.first_attempt_conflation' depends on axioms: [propext, Classical.choic
 info: 'IM.carried_array_field_with_equality_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms IM.carried_array_field_with_equality_refused
+
+/-- info: 'IM.head_two_carriers_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_two_carriers_base
+
+/-- info: 'IM.head_group_carrier_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_group_carrier_base

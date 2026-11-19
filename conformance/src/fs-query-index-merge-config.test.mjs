@@ -2476,3 +2476,52 @@ test("a done create or reset is accepted only as a readable operation of its ent
   for (const id of SETS.f1) assert.equal(result.entries[id].write.unclassified, undefined, id);
   assert.equal(result.ok, true);
 });
+
+// ---- ruling 12 item 3 ------------------------------------------------------------------------
+
+test("an unknown, empty or non-JSON reset answer stops the writes of remove all", async () => {
+  for (const answer of [
+    { status: 200, json: undefined },
+    { status: 200 },
+    { status: 503, json: {} },
+    { error: "reset" },
+  ]) {
+    const { fake } = await appliedFake({
+      fail: (r) => (r.method === "PATCH" && r.body && !r.body.indexConfig ? answer : undefined),
+    });
+    fake.requests.length = 0;
+    const result = await remove({
+      session: session(fake),
+      set: "all",
+      forms: FORMS,
+      sleep: noSleep,
+    });
+    const label = JSON.stringify(answer);
+    // E3 is reset first; E1, E2 (composites) and E4, E5 stay present and get no write.
+    assert.deepEqual(
+      writesOf(fake).map((r) => r.method),
+      ["PATCH"],
+      `${label}: no write after the reset`,
+    );
+    assert.equal(result.entries.E3.write.unclassified, true, label);
+    for (const id of ["E1", "E2", "E4", "E5"])
+      assert.equal(result.entries[id].write.class, "not-sent", `${label} ${id}`);
+    assert.equal(result.ok, false, label);
+  }
+});
+
+test("a refused reset is classified, so remove all goes on with the other entries", async () => {
+  const refused = { status: 400, json: { error: { code: 400, status: "FAILED_PRECONDITION" } } };
+  const { fake } = await appliedFake({
+    fail: (r) => (r.method === "PATCH" && r.body && !r.body.indexConfig ? refused : undefined),
+  });
+  fake.requests.length = 0;
+  const result = await remove({ session: session(fake), set: "all", forms: FORMS, sleep: noSleep });
+  assert.equal(result.entries.E3.write.class, "refused");
+  assert.equal(result.entries.E3.write.unclassified, undefined);
+  assert.ok(
+    writesOf(fake).some((r) => r.method === "DELETE"),
+    "the composites are deleted",
+  );
+  assert.equal(result.entries.E3.outcome, "open");
+});

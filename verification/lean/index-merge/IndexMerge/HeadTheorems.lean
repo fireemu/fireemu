@@ -211,16 +211,14 @@ theorem recorded_kinds {r : Req} {s : ISet} {coll : Nat} {group : Bool} {ms : Li
             exact ⟨_, List.mem_cons_self, ⟨t, .contains⟩, by simp [singleFieldIndex], rfl, rfl⟩
         · contradiction
       · -- (b)
-        obtain ⟨p, hp, hpm⟩ := List.exists_of_findSome?_eq_some h
-        obtain ⟨ms0, hms0, rfl⟩ := Option.map_eq_some_iff.mp hpm
-        rw [automaticMembers_spec hms0]
-        have hpc := mem_sortDesc.mp hp
-        unfold carryingComposites at hpc
-        obtain ⟨idx, _, hidx⟩ := List.mem_filterMap.mp hpc
-        simp only at hidx
-        split at hidx
-        · rename_i hcond
-          cases hidx
+        split at h
+        · rename_i idx hcar
+          obtain ⟨ms0, hms0, rfl⟩ := Option.map_eq_some_iff.mp h
+          rw [automaticMembers_spec hms0]
+          have hmem : idx ∈ carryingComposites r s coll group t := by
+            rw [hcar]; exact List.mem_singleton_self _
+          unfold carryingComposites at hmem
+          have hcond := (List.mem_filter.mp hmem).2
           simp only [Bool.and_eq_true, beq_iff_eq] at hcond
           refine ⟨fun f hf => ?_, fun t' ht' => ?_⟩
           · by_cases hsp : (servedPrefix r idx).contains f = true

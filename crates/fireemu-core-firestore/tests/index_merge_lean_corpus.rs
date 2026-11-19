@@ -1845,3 +1845,130 @@ fn merge_a_keeps_to_the_recorded_query() {
         IndexDecision::MergeIndexes { .. }
     ));
 }
+
+// ---- Ruling 12: the canonical query, and one collection-scoped carrier for (b) --------------
+
+/// The gate judges the canonical query (coordinator ruling 12): a repeated identical equality,
+/// a singleton `or` and an explicit `ORDER BY __name__ ASC` are the recorded query itself, so
+/// they reach the override like it.
+#[test]
+fn the_canonical_forms_of_the_recorded_queries_reach_the_overrides() {
+    let set = f2_set();
+    let twice = qx_query(
+        vec![filter("eq", "a", "qx"), filter("eq", "a", "qx")],
+        &name_desc(),
+        false,
+    );
+    let singleton_or = qx_query(
+        vec![FilterExpr::Or(vec![filter("eq", "a", "qx")])],
+        &name_desc(),
+        false,
+    );
+    for (label, q) in [
+        ("repeated identical", twice),
+        ("singleton or", singleton_or),
+    ] {
+        assert!(
+            matches!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MissingRequired { .. }
+            ),
+            "{label}"
+        );
+    }
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[(FieldPath::document_name(), Direction::Ascending)],
+        false,
+    );
+    assert_eq!(
+        decide(&q, &f1_set(), &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C a:asc,tags:contains"),
+                parse_index("qx C b:asc,__name__:asc"),
+            ]
+        }
+    );
+}
+
+/// Merge (b) takes its carrier only as recorded: a collection-scoped composite, and only when
+/// exactly one configured composite qualifies (coordinator ruling 12). A collection-group
+/// carrier, or two carriers, keep the pre-stage-B refusal (unrecorded).
+#[test]
+fn merge_b_needs_exactly_one_collection_scoped_carrier() {
+    let f1 = || {
+        qx_query(
+            vec![
+                filter("eq", "a", "qx"),
+                filter("eq", "b", "qx"),
+                filter("contains", "tags", "qx"),
+            ],
+            &[],
+            false,
+        )
+    };
+    let c = IndexQueryScope::Collection;
+    let mut group_carrier = IndexSet::default();
+    modes_only(&mut group_carrier, "a", &[], c);
+    modes_only(&mut group_carrier, "tags", &[], c);
+    let mut composite = parse_index("qx G a:asc,tags:contains");
+    composite.query_scope = IndexQueryScope::CollectionGroup;
+    group_carrier.add_composite(composite);
+    assert!(matches!(
+        decide(&f1(), &group_carrier, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // `(b ASC, tags CONTAINS)` is a second carrier (it would not complete: `a` is exempt), and
+    // neither serves the query alone.
+    let mut two = f1_set();
+    two.add_composite(parse_index("qx C b:asc,tags:contains"));
+    assert!(matches!(
+        decide(&f1(), &two, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // A composite carrying every equality serves the query alone (the base answer).
+    let mut larger = IndexSet::default();
+    modes_only(&mut larger, "a", &[], c);
+    modes_only(&mut larger, "tags", &[], c);
+    larger.add_composite(parse_index("qx C a:asc,b:asc,tags:contains"));
+    assert_eq!(
+        decide(&f1(), &larger, &standard()),
+        IndexDecision::UseIndex {
+            index: parse_index("qx C a:asc,b:asc,tags:contains")
+        }
+    );
+}
+
+/// The scope guard of the stage-B rules on its own: a collection-group query whose
+/// collection-scoped configuration would complete (b) and (a) through the collection-scoped
+/// lookups keeps the pre-stage-B refusal (Codex round 3, Should 1).
+#[test]
+fn a_collection_group_query_never_reaches_the_overrides() {
+    let f1 = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        true,
+    );
+    assert!(matches!(
+        decide(&f1, &f1_set(), &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    let f3 = qx_query(
+        vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")],
+        &name_desc(),
+        true,
+    );
+    assert!(matches!(
+        decide(&f3, &IndexSet::default(), &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+}

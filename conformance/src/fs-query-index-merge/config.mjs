@@ -549,14 +549,17 @@ export function unclassifiable(answer) {
 }
 
 /**
- * Whether a create or reset answer lets the writes go on: it must not be `unclassifiable`, and a
- * done one must be positively classified, a readable operation of its entry in one of the known
- * operation types (`operation`, from `operationOf`). A done answer with another or an unknown
- * metadata type, no metadata, or another target stops the writes (coordinator ruling 10).
+ * Whether a create or reset answer lets the writes go on, only when it is positively classified:
+ * not `unclassifiable`, and either refused (a 4xx that is not a timeout or rate limit) or done as
+ * a readable operation of its entry in one of the known operation types (`operation`, from
+ * `operationOf`). Anything else stops the writes: an unknown answer (no status, a transport
+ * error, a 5xx, an empty or non-JSON body), or a done one with another or an unknown metadata
+ * type, no metadata or another target (coordinator rulings 10 and 12).
  */
 export function accepted(answer, operation) {
   if (unclassifiable(answer)) return false;
-  return classify(answer) !== "done" || operation !== undefined;
+  const verdict = classify(answer);
+  return verdict === "refused" || (verdict === "done" && operation !== undefined);
 }
 
 /**

@@ -15,9 +15,11 @@ plain conjunction (`Query.conjunction`). Everywhere else the head answer is the 
 - (a) A plain array-contains with equalities, ordered by nothing but `__name__` descending: a
   refused base answer becomes the merge of the array field's contains index and the equality
   fields' descending indexes (builtin#f3-contains-name-desc).
-- (b) The same ordered ascending: a refused base answer becomes the merge of one composite
-  that carries the array field after its equality prefix and the ascending indexes of the
-  remaining equality fields (exempt-with-composite#f1-equalities-and-contains).
+- (b) The same ordered ascending: a refused base answer becomes the merge of the one
+  collection-scoped composite that carries the array field after its equality prefix and the
+  ascending indexes of the remaining equality fields
+  (exempt-with-composite#f1-equalities-and-contains); with no carrier or with several, the
+  base answer stays.
 
 Coverage in (a) and (b) is by filter kind; the gate's distinct paths make it coincide with the
 base's coverage by path.
@@ -73,17 +75,15 @@ def automaticMembers (s : ISet) (coll : Nat) (group : Bool) (m : Mode) (fs : Lis
     some (fs.map fun f => singleFieldIndex coll group f m m)
   else none
 
-/-- The composites that carry the array field `t` right after a non-empty served equality
-prefix and serve that prefix followed by `t` with the query's order, each with its cover (the
-prefix's distinct fields and `t`), in `composites()` order. -/
+/-- The composites that carry the array field `t`: collection-scoped, with a non-empty served
+equality prefix followed by `(t CONTAINS)`, serving that prefix followed by `t` with the
+query's order, in `composites()` order. -/
 def carryingComposites (r : Req) (s : ISet) (coll : Nat) (group : Bool) (t : Field) :
-    List (List Field × Index) :=
-  s.composites.filterMap fun idx =>
+    List Index :=
+  s.composites.filter fun idx =>
     let sp := servedPrefix r idx
-    if !sp.isEmpty && idx.fields[sp.length]? == some ⟨t, .contains⟩ &&
-        compositeServes idx ⟨sp, some t, r.order, false⟩ coll group then
-      some (sp.eraseDups ++ [t], idx)
-    else none
+    idx.scope == .collection && !sp.isEmpty && idx.fields[sp.length]? == some ⟨t, .contains⟩ &&
+      compositeServes idx ⟨sp, some t, r.order, false⟩ coll group
 
 /-- The members of the recorded merge, when it applies. -/
 def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (List Index) :=
@@ -100,12 +100,14 @@ def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (Lis
             singleFieldIndex coll group t .contains .desc :: ms
         else none
       else
-        -- (b): the largest carrying composite whose remaining equality fields all have their
-        -- ascending index.
-        (sortDesc (carryingComposites r s coll group t)).findSome? fun p =>
-          let sp := servedPrefix r p.2
+        -- (b): exactly one carrying composite, completed by the ascending indexes of the
+        -- remaining equality fields.
+        match carryingComposites r s coll group t with
+        | [idx] =>
+          let sp := servedPrefix r idx
           (automaticMembers s coll group .asc (eqs.filter (fun f => !sp.contains f))).map
-            fun ms => p.2 :: ms
+            fun ms => idx :: ms
+        | _ => none
 
 /-! ## The single-equality refusal (c) -/
 
