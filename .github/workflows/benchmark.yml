@@ -123,11 +123,11 @@ jobs:
       - uses: actions/checkout@v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4.3.0
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: benchmark-binary
           path: bench-bin
-      - uses: actions/download-artifact@v4.3.0
+      - uses: actions/download-artifact@v8.0.2
         if: inputs.baseline_commit != ''
         with:
           name: benchmark-baseline-binary
