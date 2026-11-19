@@ -2096,3 +2096,29 @@ test("the inherited field read recorded at the v5.1 begin reads absent", () => {
   };
   assert.equal(entryState(ENTRIES.E3, { status: 200, json }, FORMS).state, "absent");
 });
+
+test("main exits non-zero when status cannot read every entry, as at the v5.1 begin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "merge-config-status-"));
+  try {
+    // Two indexes in imx: the entry cannot be read, so status is not ok.
+    const fake = fakeFirestore({
+      composites: {
+        imx: [
+          listedIndex("imx"),
+          listedIndex("imx", { name: `${DB_NUMBER}/collectionGroups/imx/indexes/Y` }),
+        ],
+      },
+    });
+    const out = join(root, "status");
+    const code = await main(["status", "--set", "all", "--out", out], {
+      http: fake.http,
+      token: async () => "t",
+    });
+    assert.equal(code, 2);
+    const result = JSON.parse(await readFile(join(out, "result.json"), "utf8"));
+    assert.equal(result.ok, false);
+    assert.equal(result.baseline, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

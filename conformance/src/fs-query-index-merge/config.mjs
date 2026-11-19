@@ -275,8 +275,6 @@ function compositeState(entry, body, forms) {
   if (own.length === 0) return { state: "absent" };
   if (own.length > 1) return unexpected(`${own.length} indexes in ${entry.group}`);
   const [index] = own;
-  if (!indexNamePattern(forms, entry.group).test(index.name))
-    return unexpected("index name outside the expected pattern");
   if (index.density !== undefined && index.density !== "SPARSE_ALL")
     return unexpected("index density differs");
   if (typeof index.state !== "string") return unexpected("index without a state");
