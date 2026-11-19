@@ -1924,11 +1924,13 @@ test("operation targets are compared as exact strings, and unknown metadata type
       String(type),
     );
   // A create answer naming another group's index carries no operation, so it is never polled.
+  let posted = false;
   const fake = fakeFirestore({
     fail: (r) =>
-      r.method === "POST" && r.url.includes("/imx/indexes")
+      r.method === "POST" && r.url.includes("/imx/indexes") && !posted
         ? async () => {
-            await fake.http({ ...r, url: r.url });
+            posted = true;
+            await fake.http(r);
             return {
               status: 200,
               json: {
@@ -1943,6 +1945,8 @@ test("operation targets are compared as exact strings, and unknown metadata type
         : undefined,
   });
   const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(result.entries.E1.write.class, "done");
   assert.equal(result.entries.E1.write.operation, undefined);
   assert.equal(fake.requests.filter((r) => r.url.endsWith("/opY")).length, 0);
+  assert.equal(result.entries.E1.outcome, "created", "settled by its own READY read");
 });
