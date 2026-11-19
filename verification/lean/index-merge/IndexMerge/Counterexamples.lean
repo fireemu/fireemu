@@ -397,4 +397,32 @@ theorem head_b_automatic_contains_base :
       guardOf qF1 bAutoContainsSet .production .standard = .none := by
   refine ⟨by decide, by decide, by decide⟩
 
+/-- A carrier's prefix must be ascending, unrecorded: with `a` and `tags` exempt and only the
+composite `(a DESC, tags CONTAINS, __name__ ASC)`, (b) does not apply and the base refusal
+stays. -/
+def descCarrier : Index := ⟨0, .collection, [⟨1, .desc⟩, ⟨3, .contains⟩, ⟨NAME, .asc⟩]⟩
+
+theorem head_b_descending_carrier_base :
+    let s : ISet := { f1Set with composites := [descCarrier] }
+    decideHead qF1 s .production .standard = decideBase qF1 s .production .standard ∧
+      decideBase qF1 s .production .standard = .missing (requiredIndex (reqOf qF1) 0 false) ∧
+      guardOf qF1 s .production .standard = .none := by
+  refine ⟨by decide, by decide, by decide⟩
+
+/-- The carrier with an explicit trailing `__name__`, unrecorded: `(a ASC, tags CONTAINS,
+__name__ ASC)` is merged as F1's carrier is; `(a ASC, tags CONTAINS, __name__ DESC)` does not
+serve the ascending query, and the base refusal stays. -/
+def nameAscCarrier : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨3, .contains⟩, ⟨NAME, .asc⟩]⟩
+def nameDescCarrier : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨3, .contains⟩, ⟨NAME, .desc⟩]⟩
+
+theorem head_b_explicit_name_carrier :
+    let sa : ISet := { f1Set with composites := [nameAscCarrier] }
+    let sd : ISet := { f1Set with composites := [nameDescCarrier] }
+    decideHead qF1 sa .production .standard =
+        .merge [nameAscCarrier, singleFieldIndex 0 false 2 .asc .asc] ∧
+      guardOf qF1 sa .production .standard = .b ∧
+      decideHead qF1 sd .production .standard = .missing (requiredIndex (reqOf qF1) 0 false) ∧
+      guardOf qF1 sd .production .standard = .none := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
 end IM

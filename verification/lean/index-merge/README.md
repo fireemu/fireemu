@@ -53,6 +53,7 @@ where one of three recorded rules fires.
   unrecorded neighbours `head_single_equality_neighbours_served`, `head_f1_descending_refused`,
   `head_group_refused`, `head_contains_any_refused`, `head_enterprise_base`,
   `head_two_carriers_base`, `head_group_carrier_base`, `head_b_automatic_contains_base`,
+  `head_b_descending_carrier_base`, `head_b_explicit_name_carrier`,
   `first_attempt_conflation` and `carried_array_field_with_equality_refused`.
 - `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
   `conformance/fs-query-index-production.json`, 18 expectations of
@@ -109,9 +110,12 @@ overrides exactly those:
    fields' ascending indexes; production's plan is `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`,
    `(b ASC, __name__ ASC)` (`head_f1`). The recorded configuration exempts `tags`, and (b)
    applies only when the array field's automatic contains index is unavailable at collection
-   scope. With that index available, two carriers, or a carrier scoped to the collection
-   group, the base answer stays (`head_b_automatic_contains_base`, `head_two_carriers_base`,
-   `head_group_carrier_base`, unrecorded). The base never takes such a composite (`broad_composite_with_array_field`).
+   scope, and only to a carrier whose served prefix is ascending (a trailing `__name__` is left
+   to the serving check: `__name__ ASC` serves, `__name__ DESC` does not). With that index
+   available, two carriers, a carrier scoped to the collection group, or a descending prefix,
+   the base answer stays (`head_b_automatic_contains_base`, `head_two_carriers_base`,
+   `head_group_carrier_base`, `head_b_descending_carrier_base`, `head_b_explicit_name_carrier`,
+   unrecorded). The base never takes such a composite (`broad_composite_with_array_field`).
 2. (c): with only `a`'s ascending index enabled, production refuses `a == x ORDER BY __name__
    DESC`; the base serves it from `(a ASC, __name__ DESC)` (`broad_opposite_direction_automatic`
    is about the base), the head refuses it (`head_single_equality_refused`). Its unrecorded

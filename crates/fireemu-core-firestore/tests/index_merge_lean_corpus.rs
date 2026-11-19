@@ -2057,3 +2057,48 @@ fn a_collection_group_query_never_reaches_the_overrides() {
         IndexDecision::MissingRequired { .. }
     ));
 }
+
+/// The carrier of merge (b) has ascending prefix fields, as the recorded `(a ASC, tags
+/// CONTAINS)`; a descending prefix field keeps the pre-stage-B refusal (Codex round 4,
+/// coordinator ruling 13; unrecorded). An explicit trailing `__name__ ASC` is the recorded
+/// index itself (production lists it so); a trailing `__name__ DESC` never serves the ascending
+/// query.
+#[test]
+fn merge_b_needs_an_ascending_carrier() {
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        false,
+    );
+    let with = |composite: &str| {
+        let mut set = IndexSet::default();
+        modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+        modes_only(&mut set, "tags", &[], IndexQueryScope::Collection);
+        set.add_composite(parse_index(composite));
+        decide(&q, &set, &standard())
+    };
+    for composite in [
+        "qx C a:desc,tags:contains,__name__:asc",
+        "qx C a:desc,tags:contains",
+        "qx C a:asc,tags:contains,__name__:desc",
+    ] {
+        assert!(
+            matches!(with(composite), IndexDecision::MissingRequired { .. }),
+            "{composite}"
+        );
+    }
+    let explicit = "qx C a:asc,tags:contains,__name__:asc";
+    assert_eq!(
+        with(explicit),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index(explicit),
+                parse_index("qx C b:asc,__name__:asc")
+            ]
+        }
+    );
+}

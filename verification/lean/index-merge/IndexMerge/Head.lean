@@ -77,13 +77,16 @@ def automaticMembers (s : ISet) (coll : Nat) (group : Bool) (m : Mode) (fs : Lis
   else none
 
 /-- The composites that carry the array field `t`: collection-scoped, with a non-empty served
-equality prefix followed by `(t CONTAINS)`, serving that prefix followed by `t` with the
-query's order, in `composites()` order. -/
+equality prefix of ascending fields followed by `(t CONTAINS)` (the recorded carrier is `(a ASC,
+tags CONTAINS)`), serving that prefix followed by `t` with the query's order, in
+`composites()` order. -/
 def carryingComposites (r : Req) (s : ISet) (coll : Nat) (group : Bool) (t : Field) :
     List Index :=
   s.composites.filter fun idx =>
     let sp := servedPrefix r idx
-    idx.scope == .collection && !sp.isEmpty && idx.fields[sp.length]? == some ⟨t, .contains⟩ &&
+    idx.scope == .collection && !sp.isEmpty &&
+      (idx.fields.take sp.length).all (·.mode == .asc) &&
+      idx.fields[sp.length]? == some ⟨t, .contains⟩ &&
       compositeServes idx ⟨sp, some t, r.order, false⟩ coll group
 
 /-- The members of the recorded merge, when it applies. -/

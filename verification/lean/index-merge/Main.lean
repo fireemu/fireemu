@@ -395,6 +395,13 @@ def shapeCases : List Case :=
     -- (b) needs the array field's automatic contains index to be unavailable.
     shapeCase "b/automatic-contains-available" f1q
       { composites := [aTagsC], overrides := [(qx, fid "a", [])] },
+    -- A carrier's prefix must be ascending; a trailing `__name__` is left to the serving check.
+    shapeCase "b/descending-carrier" f1q
+      (f1Config [ix qx [("a", .desc), ("tags", .contains), ("__name__", .asc)]]),
+    shapeCase "b/carrier-name-asc" f1q
+      (f1Config [ix qx [("a", .asc), ("tags", .contains), ("__name__", .asc)]]),
+    shapeCase "b/carrier-name-desc" f1q
+      (f1Config [ix qx [("a", .asc), ("tags", .contains), ("__name__", .desc)]]),
     -- A carrier must be collection-scoped.
     shapeCase "b/group-carrier" f1q
       (f1Config [ix qx [("a", .asc), ("tags", .contains)] .group]),

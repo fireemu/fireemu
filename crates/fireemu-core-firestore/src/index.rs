@@ -1043,8 +1043,9 @@ enum Cover {
 /// (b) `__name__` ascending: the composite whose equality prefix is followed by the array field
 /// (`CONTAINS`), then the automatic `(field ASC, __name__ ASC)` of each remaining equality
 /// field (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags CONTAINS)`, `(b ASC,
-/// __name__ ASC)`). The carrier is collection-scoped, as recorded, and the only configured
-/// composite that qualifies, and the array field has no automatic contains index at collection
+/// __name__ ASC)`). The carrier is collection-scoped with ascending prefix fields, as recorded
+/// (its `__name__`, implicit or explicit, runs ascending like the query's), and the only
+/// configured composite that qualifies, and the array field has no automatic contains index at collection
 /// scope (F1 exempts it); otherwise the pre-stage-B answer stays (coordinator ruling 12).
 fn recorded_merge(
     req: &Requirement,
@@ -1106,7 +1107,12 @@ fn recorded_merge(
             order: req.order.clone(),
             equality_ordered: false,
         };
+        // As recorded (`(a ASC, tags CONTAINS)`): collection scope and ascending prefix fields.
+        let ascending = index.fields[..served.len()]
+            .iter()
+            .all(|f| f.mode == IndexFieldMode::Ascending);
         if index.query_scope == IndexQueryScope::Collection
+            && ascending
             && !served.is_empty()
             && next.is_some_and(|f| &f.path == contains && f.mode == IndexFieldMode::Contains)
             && composite_serves(index, &sub, collection, false)
