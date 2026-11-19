@@ -924,6 +924,10 @@ test("main writes a fresh journal and result, refuses an existing directory and 
     );
     const statusResult = JSON.parse(await readFile(join(statusOut, "result.json"), "utf8"));
     assert.equal(statusResult.baseline, true);
+    // The operations the journals name are read back under their own targets.
+    assert.ok(Object.keys(statusResult.operations).length > 0);
+    for (const [key, state] of Object.entries(statusResult.operations))
+      assert.equal(state, "done", key);
     assert.ok(statusResult.sent <= requestCap("status", "all"));
     // A cap hit ends the run with the error in the result, not a thrown exception.
     const tiny = join(root, "tiny");
@@ -1890,4 +1894,55 @@ test("main never reaches for the real token when the http layer is injected", as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("operation targets are compared as exact strings, and unknown metadata types are unreadable", async () => {
+  const name = `${DB}/operations/op9`;
+  const answer = (metadata) => ({
+    status: 200,
+    json: { done: true, metadata, name, response: {} },
+  });
+  // The same field in the project-number form is not the exact name the reset answer gave.
+  assert.equal(
+    operationState(
+      answer({ "@type": FIELD_META, field: `${DB_NUMBER}/collectionGroups/imx/fields/a` }),
+      name,
+      FORMS,
+      ENTRIES.E4,
+      E4_NAME,
+    ),
+    "unreadable",
+  );
+  for (const type of [
+    "type.googleapis.com/google.firestore.admin.v1.ExportDocumentsMetadata",
+    "x",
+    undefined,
+  ])
+    assert.equal(
+      operationState(answer({ "@type": type, field: E4_NAME }), name, FORMS, ENTRIES.E4, E4_NAME),
+      "unreadable",
+      String(type),
+    );
+  // A create answer naming another group's index carries no operation, so it is never polled.
+  const fake = fakeFirestore({
+    fail: (r) =>
+      r.method === "POST" && r.url.includes("/imx/indexes")
+        ? async () => {
+            await fake.http({ ...r, url: r.url });
+            return {
+              status: 200,
+              json: {
+                metadata: {
+                  "@type": INDEX_META,
+                  index: `${DB_NUMBER}/collectionGroups/imc/indexes/Z`,
+                },
+                name: `${DB_NUMBER}/operations/opY`,
+              },
+            };
+          }
+        : undefined,
+  });
+  const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(result.entries.E1.write.operation, undefined);
+  assert.equal(fake.requests.filter((r) => r.url.endsWith("/opY")).length, 0);
 });
