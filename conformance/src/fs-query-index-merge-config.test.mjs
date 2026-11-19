@@ -101,15 +101,41 @@ const listedIndex = (group, extra = {}) => ({
   ...extra,
 });
 
+/**
+ * The 24 composites of the sandbox `(default)` today, in the shape the send of packet v5.1 recorded
+ * (send-v5/status-begin, 2026-11-19: keys name, queryScope, fields, state, density) with the ids
+ * replaced: the lane superset fs-query-index.indexes.json, every one on a group the merge corpus
+ * does not use.
+ */
+const BASE_INDEXES = readJson("fs-query-index.indexes.json").indexes.map((index, n) => {
+  const vector = index.fields.at(-1)?.vectorConfig ? index.fields.slice(-1) : [];
+  const ordered = vector.length ? index.fields.slice(0, -1) : index.fields;
+  const hasName = ordered.at(-1)?.fieldPath === "__name__";
+  const last = ordered.at(-1)?.order ?? "ASCENDING";
+  return {
+    name: `${DB_NUMBER}/collectionGroups/${index.collectionGroup}/indexes/BASE${n}`,
+    queryScope: index.queryScope,
+    fields: [...ordered, ...(hasName ? [] : [{ fieldPath: "__name__", order: last }]), ...vector],
+    state: "READY",
+    density: "SPARSE_ALL",
+  };
+});
+
+/**
+ * Production's index list ignores the group of its path (send of packet v5.1: `.../collectionGroups/imx/indexes`
+ * answered every composite of the database), so the fake answers every list with all of them.
+ */
 function fakeFirestore({
   opRounds = 1,
   fail = () => undefined,
   composites = {},
   fields = {},
+  others = BASE_INDEXES,
 } = {}) {
   const state = {
     composites: structuredClone(composites),
     fields: structuredClone(fields),
+    others: structuredClone(others),
     ops: {},
   };
   const requests = [];
@@ -147,11 +173,10 @@ function fakeFirestore({
             },
           };
     }
-    if (kind === "indexes" && !id && request.method === "GET")
-      return {
-        status: 200,
-        json: (state.composites[group] ?? []).length ? { indexes: state.composites[group] } : {},
-      };
+    if (kind === "indexes" && !id && request.method === "GET") {
+      const all = [...state.others, ...Object.values(state.composites).flat()];
+      return { status: 200, json: all.length ? { indexes: all } : {} };
+    }
     if (kind === "indexes" && !id && request.method === "POST") {
       const index = listedIndex(group, { state: "READY" });
       state.composites[group] = [...(state.composites[group] ?? []), index];
@@ -368,7 +393,7 @@ test("apply sends nothing unless every entry of the set reads absent", async () 
     ],
     [
       "a read fails",
-      { fail: (r) => (r.url.includes("/imc/") ? { status: 503, json: {} } : undefined) },
+      { fail: (r) => (r.url.includes("/-/indexes") ? { status: 503, json: {} } : undefined) },
     ],
     [
       "a read times out",
@@ -548,7 +573,6 @@ test("remove sends nothing unless every read is the expected entry or its absenc
       "collection-group scope",
       { composites: { imx: [listed("imx", { queryScope: "COLLECTION_GROUP" })] } },
     ],
-    ["a name of another group", { composites: { imx: [listed("qx")] } }],
     [
       "a name of another project",
       {
@@ -565,14 +589,14 @@ test("remove sends nothing unless every read is the expected entry or its absenc
       "a second page",
       {
         fail: (r) =>
-          r.url.includes("/imc/indexes")
+          r.url.includes("/-/indexes")
             ? { status: 200, json: { indexes: [], nextPageToken: "p" } }
             : undefined,
       },
     ],
     [
       "a 403 read",
-      { fail: (r) => (r.url.includes("/imx/indexes") ? { status: 403, json: {} } : undefined) },
+      { fail: (r) => (r.url.includes("/-/indexes") ? { status: 403, json: {} } : undefined) },
     ],
     [
       "a 503 read",
@@ -1695,7 +1719,7 @@ test("a composite list with a null, scalar or object `indexes` is unexpected and
     assert.equal(state, "unexpected", JSON.stringify(indexes));
     const fake = fakeFirestore({
       fail: (r) =>
-        r.method === "GET" && r.url.includes("/imx/indexes")
+        r.method === "GET" && r.url.includes("/-/indexes")
           ? { status: 200, json: { indexes } }
           : undefined,
     });
@@ -1795,7 +1819,7 @@ test("an operation settles a create only when it names the exact index or field 
   const other = fakeFirestore({
     fail: (r) =>
       r.method === "GET" &&
-      r.url.includes("/imx/indexes") &&
+      r.url.includes("/-/indexes") &&
       other.requests.some((q) => q.method === "POST")
         ? { status: 200, json: { indexes: [listedIndex("imx", { name: different })] } }
         : undefined,
@@ -1949,4 +1973,126 @@ test("operation targets are compared as exact strings, and unknown metadata type
   assert.equal(result.entries.E1.write.operation, undefined);
   assert.equal(fake.requests.filter((r) => r.url.endsWith("/opY")).length, 0);
   assert.equal(result.entries.E1.outcome, "created", "settled by its own READY read");
+});
+
+// ---- packet v6 (coordinator ruling 6) ------------------------------------------------------
+
+test("entries are read from the database-wide list the base lane uses, by their own group", async () => {
+  const fake = fakeFirestore();
+  const before = await status({ session: session(fake), set: "all", forms: FORMS });
+  assert.equal(before.baseline, true, "24 indexes of other groups are not the entries");
+  const lists = fake.requests.filter((r) => r.url.includes("/indexes"));
+  assert.equal(lists.length, 2);
+  for (const r of lists) assert.equal(r.url, `${API}/${DB}/collectionGroups/-/indexes`);
+  const applied = await apply({ session: session(fake), set: "all", forms: FORMS, sleep: noSleep });
+  assert.equal(applied.ok, true);
+  for (const id of ["E1", "E2"]) assert.equal(applied.entries[id].outcome, "created", id);
+  fake.requests.length = 0;
+  const removed = await remove({
+    session: session(fake),
+    set: "all",
+    forms: FORMS,
+    sleep: noSleep,
+    ...fromJournals([`${JSON.stringify({ result: { command: "apply", ...applied } })}\n`]),
+  });
+  assert.equal(removed.ok, true);
+  const deletes = fake.requests
+    .filter((r) => r.method === "DELETE")
+    .map((r) => r.url.split("/collectionGroups/")[1]);
+  assert.deepEqual(deletes, ["imx/indexes/CICAgimx", "imc/indexes/CICAgimc"]);
+  assert.equal(
+    fake.state.others.length,
+    BASE_INDEXES.length,
+    "no index of another group is touched",
+  );
+});
+
+test("an index of another group is never an entry, even with the entry's exact fields", async () => {
+  const lookalike = listedIndex("qx", { name: `${DB_NUMBER}/collectionGroups/qx/indexes/LOOK` });
+  const fake = fakeFirestore({ others: [...BASE_INDEXES, lookalike] });
+  assert.equal(
+    entryState(ENTRIES.E1, { status: 200, json: { indexes: fake.state.others } }, FORMS).state,
+    "absent",
+  );
+  const result = await remove({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  assert.equal(result.refusedBeforeSending, undefined);
+  assert.equal(fake.requests.filter((r) => r.method === "DELETE").length, 0);
+});
+
+test("every index of the list must have a well-formed name of this database", () => {
+  const read = (extra) =>
+    entryState(ENTRIES.E1, { status: 200, json: { indexes: [...BASE_INDEXES, extra] } }, FORMS);
+  for (const [label, index] of [
+    [
+      "another project",
+      {
+        ...BASE_INDEXES[0],
+        name: "projects/other/databases/(default)/collectionGroups/qx/indexes/A",
+      },
+    ],
+    [
+      "another database",
+      {
+        ...BASE_INDEXES[0],
+        name: `${DB_NUMBER}`.replace("(default)", "named") + "/collectionGroups/qx/indexes/A",
+      },
+    ],
+    ["no name", { ...BASE_INDEXES[0], name: undefined }],
+    [
+      "a malformed id",
+      { ...BASE_INDEXES[0], name: `${DB_NUMBER}/collectionGroups/qx/indexes/a/b` },
+    ],
+    ["an extra key", { ...BASE_INDEXES[0], multikey: true }],
+    ["not an object", "x"],
+  ])
+    assert.equal(read(JSON.parse(JSON.stringify(index))).state, "unexpected", label);
+  // Two indexes in the entry's own group, or one of the wrong shape there, are unexpected.
+  assert.equal(read(listedIndex("imx")).state, "present");
+  assert.equal(
+    entryState(
+      ENTRIES.E1,
+      {
+        status: 200,
+        json: {
+          indexes: [
+            ...BASE_INDEXES,
+            listedIndex("imx"),
+            listedIndex("imx", { name: `${DB_NUMBER}/collectionGroups/imx/indexes/Y` }),
+          ],
+        },
+      },
+      FORMS,
+    ).state,
+    "unexpected",
+  );
+  assert.equal(read(listedIndex("imx", { queryScope: "COLLECTION_GROUP" })).state, "unexpected");
+});
+
+test("the inherited field read recorded at the v5.1 begin reads absent", () => {
+  // send-v5/status-begin seq 1, key order as answered, the project as its id.
+  const json = {
+    name: `${DB}/collectionGroups/ima/fields/a`,
+    indexConfig: {
+      indexes: [
+        {
+          queryScope: "COLLECTION",
+          fields: [{ fieldPath: "a", order: "ASCENDING" }],
+          state: "READY",
+        },
+        {
+          queryScope: "COLLECTION",
+          fields: [{ fieldPath: "a", order: "DESCENDING" }],
+          state: "READY",
+        },
+        {
+          queryScope: "COLLECTION",
+          fields: [{ fieldPath: "a", arrayConfig: "CONTAINS" }],
+          state: "READY",
+        },
+      ],
+      usesAncestorConfig: true,
+      ancestorField: `${DB}/collectionGroups/__default__/fields/*`,
+    },
+  };
+  assert.equal(entryState(ENTRIES.E3, { status: 200, json }, FORMS).state, "absent");
 });

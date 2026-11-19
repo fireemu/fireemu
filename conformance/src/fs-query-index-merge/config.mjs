@@ -7,8 +7,9 @@
 //   node src/fs-query-index-merge/config.mjs remove --set <f2|f1|all> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs may-retry --set <s> --first <remove result.json> --a2 <status result.json>...
 //
-// `status` is read-only: which entries of the set exist (composites by a one-page list of their
-// group, overrides by a GET of their field) and the state of the operations named in earlier
+// `status` is read-only: which entries of the set exist (composites by the one-page, database-wide
+// list `collectionGroups/-/indexes`, filtered by each validated name's own group; overrides by a GET
+// of their field) and the state of the operations named in earlier
 // journals. `apply` requires every entry of the set to be absent, then sends one POST or PATCH per
 // entry, polls the operations they return and reads every entry back. `remove` reads every entry
 // of the set first and sends nothing unless every read succeeded and showed either the expected
@@ -85,7 +86,15 @@ export const A2_DELAY_MS = 10 * 60_000;
 
 const databasePath = `projects/${PROJECT}/databases/${DATABASE}`;
 const groupPath = (group) => `${databasePath}/collectionGroups/${group}`;
+/** Where a composite is created: its own group (CreateIndex needs the parent group). */
 export const indexListUrl = (group) => `${API}/${groupPath(group)}/indexes`;
+/**
+ * Where composites are read: the database-wide list with the `-` group, as the base lane's
+ * verify-indexes (run.mjs productionIndexes) and firebase-tools list them. Production ignores the
+ * group of a list path anyway: the send of packet v5.1 (2026-11-19) asked
+ * `.../collectionGroups/imx/indexes` and got all 24 composites of the database in one page.
+ */
+export const indexReadUrl = `${API}/${groupPath("-")}/indexes`;
 export const fieldUrl = (entry) => `${API}/${groupPath(entry.group)}/fields/${entry.field}`;
 
 /**
@@ -113,6 +122,9 @@ const namePattern = (forms, tail) =>
   new RegExp(`^projects/(?:${forms.map(escape).join("|")})/databases/\\(default\\)/${tail}$`);
 export const indexNamePattern = (forms, group) =>
   namePattern(forms, `collectionGroups/${escape(group)}/indexes/[A-Za-z0-9_-]+`);
+/** An index of this project and database in any group. */
+export const anyIndexNamePattern = (forms) =>
+  namePattern(forms, "collectionGroups/([A-Za-z0-9_-]+)/indexes/[A-Za-z0-9_-]+");
 export const fieldNamePattern = (forms, group, field) =>
   namePattern(forms, `collectionGroups/${escape(group)}/fields/${escape(field)}`);
 export const operationNamePattern = (forms) => namePattern(forms, "operations/[A-Za-z0-9_-]+");
@@ -248,12 +260,22 @@ function compositeState(entry, body, forms) {
   // Absent means none (proto3 JSON omits an empty list); present must be an array.
   if (Object.hasOwn(body, "indexes") && !Array.isArray(body.indexes))
     return unexpected("malformed list");
-  const indexes = Object.hasOwn(body, "indexes") ? body.indexes : [];
-  if (indexes.length === 0) return { state: "absent" };
-  if (indexes.length > 1) return unexpected(`${indexes.length} indexes`);
-  const [index] = indexes;
-  if (!isObject(index) || !onlyKeys(index, COMPOSITE_KEYS)) return unexpected("unknown index keys");
-  if (typeof index.name !== "string" || !indexNamePattern(forms, entry.group).test(index.name))
+  const listed = Object.hasOwn(body, "indexes") ? body.indexes : [];
+  // Every index of the database is listed: each must be a well-formed index of this project and
+  // database (any group), and only the ones of the entry's own group are the entry's.
+  const own = [];
+  for (const index of listed) {
+    if (!isObject(index) || !onlyKeys(index, COMPOSITE_KEYS))
+      return unexpected("unknown index keys");
+    const group =
+      typeof index.name === "string" ? anyIndexNamePattern(forms).exec(index.name)?.[1] : undefined;
+    if (group === undefined) return unexpected("index name outside the expected pattern");
+    if (group === entry.group) own.push(index);
+  }
+  if (own.length === 0) return { state: "absent" };
+  if (own.length > 1) return unexpected(`${own.length} indexes in ${entry.group}`);
+  const [index] = own;
+  if (!indexNamePattern(forms, entry.group).test(index.name))
     return unexpected("index name outside the expected pattern");
   if (index.density !== undefined && index.density !== "SPARSE_ALL")
     return unexpected("index density differs");
@@ -371,7 +393,7 @@ export function createSession({ http, token, cap, wallMs, now = Date.now, journa
 const readEntry = (session, phase, entry) =>
   session.send(phase, {
     method: "GET",
-    url: entry.kind === "composite" ? indexListUrl(entry.group) : fieldUrl(entry),
+    url: entry.kind === "composite" ? indexReadUrl : fieldUrl(entry),
   });
 
 /** Reads every entry of the set; the states keyed by entry id. */
