@@ -3,7 +3,7 @@
 // and the production request layer refuses without the launch script's flag, which no test sets.
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,8 @@ import { readFileSync } from "node:fs";
 import {
   API,
   BudgetExceeded,
+  adcToken,
+  attempt2Allowed,
   ENTRIES,
   POLL_ROUNDS,
   SEND_FLAG,
@@ -24,11 +26,13 @@ import {
   classify,
   createRequest,
   createSession,
+  entryState,
   fieldNamePattern,
   fromJournals,
   indexNamePattern,
   main,
   operationNamePattern,
+  operationState,
   parseArgs,
   productionHttp,
   projectForms,
@@ -45,10 +49,58 @@ const readJson = (path) =>
   JSON.parse(readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), "utf8"));
 
 /**
- * A fake Firestore Admin API: composites per group, field overrides, operations that finish after
- * `opRounds` reads. `fail(request)` may return an answer to send instead (an injected failure).
- * Names carry the project number, as production may return them.
+ * A fake Firestore Admin API that answers in the shapes production was recorded answering
+ * (conformance/fs-config-lifecycle-production.json, program fs-config/field/index-config/exemption:
+ * an inherited field carries usesAncestorConfig true, an override omits it, an exemption omits
+ * `indexes`, operations are database-level with Index/FieldOperationMetadata; composites as the
+ * FS-CONFIG lists show them, with density SPARSE_ALL). Composites per group, field overrides,
+ * operations that finish after `opRounds` reads. `fail(request)` may return an answer to send
+ * instead (an injected failure). Names carry the project number, as production may return them.
  */
+const ANCESTOR = `${DB_NUMBER}/collectionGroups/__default__/fields/*`;
+const INDEX_META = "type.googleapis.com/google.firestore.admin.v1.IndexOperationMetadata";
+const FIELD_META = "type.googleapis.com/google.firestore.admin.v1.FieldOperationMetadata";
+const modeJson = (fieldPath, mode) => ({
+  fields: [
+    mode.arrayConfig
+      ? { arrayConfig: mode.arrayConfig, fieldPath }
+      : { fieldPath, order: mode.order },
+  ],
+  queryScope: mode.queryScope,
+  state: "READY",
+});
+const inherited = (name, fieldPath) => ({
+  indexConfig: {
+    ancestorField: ANCESTOR,
+    indexes: [
+      modeJson(fieldPath, { queryScope: "COLLECTION", order: "ASCENDING" }),
+      modeJson(fieldPath, { queryScope: "COLLECTION", order: "DESCENDING" }),
+      modeJson(fieldPath, { queryScope: "COLLECTION", arrayConfig: "CONTAINS" }),
+    ],
+    usesAncestorConfig: true,
+  },
+  name,
+});
+const overrideJson = (name, fieldPath, modes) => ({
+  indexConfig: {
+    ancestorField: ANCESTOR,
+    ...(modes.length ? { indexes: modes.map((m) => modeJson(fieldPath, m)) } : {}),
+  },
+  name,
+});
+const listedIndex = (group, extra = {}) => ({
+  name: `${DB_NUMBER}/collectionGroups/${group}/indexes/CICAg${group}`,
+  queryScope: "COLLECTION",
+  fields: [
+    { fieldPath: "a", order: "ASCENDING" },
+    { arrayConfig: "CONTAINS", fieldPath: "tags" },
+    { fieldPath: "__name__", order: "ASCENDING" },
+  ],
+  state: "READY",
+  density: "SPARSE_ALL",
+  ...extra,
+});
+
 function fakeFirestore({
   opRounds = 1,
   fail = () => undefined,
@@ -62,11 +114,11 @@ function fakeFirestore({
   };
   const requests = [];
   let next = 0;
-  const op = (target) => {
+  const op = (metadata, response) => {
     next += 1;
     const name = `${DB_NUMBER}/operations/op${next}`;
-    state.ops[name] = { left: opRounds, target };
-    return { name, metadata: { "@type": "type.googleapis.com/x" } };
+    state.ops[name] = { left: opRounds, metadata, response };
+    return { metadata: { ...metadata, state: "INITIALIZING" }, name };
   };
   const http = async (request) => {
     requests.push(request);
@@ -77,12 +129,23 @@ function fakeFirestore({
       /^projects\/(?:fireemu-oracle-query|\d+)\/databases\/\(default\)\/(collectionGroups\/([^/]+)\/(indexes|fields)(?:\/([^/?]+))?)?(operations\/[^/]+)?(\?.*)?$/,
     );
     if (!m) return { status: 404, json: { error: { code: 404 } } };
-    const [, , group, kind, id, opPath] = m;
+    const [, , group, kind, id, opPath, query] = m;
     if (opPath) {
-      const o = state.ops[`${DB_NUMBER}/${opPath}`];
+      const name = `${DB_NUMBER}/${opPath}`;
+      const o = state.ops[name];
       if (!o) return { status: 404, json: { error: { code: 404 } } };
       o.left -= 1;
-      return { status: 200, json: { name: `${DB_NUMBER}/${opPath}`, done: o.left <= 0 } };
+      return o.left > 0
+        ? { status: 200, json: { metadata: { ...o.metadata, state: "PROCESSING" }, name } }
+        : {
+            status: 200,
+            json: {
+              done: true,
+              metadata: { ...o.metadata, state: "SUCCESSFUL" },
+              name,
+              response: o.response,
+            },
+          };
     }
     if (kind === "indexes" && !id && request.method === "GET")
       return {
@@ -90,14 +153,12 @@ function fakeFirestore({
         json: (state.composites[group] ?? []).length ? { indexes: state.composites[group] } : {},
       };
     if (kind === "indexes" && !id && request.method === "POST") {
-      const index = {
-        name: `${DB_NUMBER}/collectionGroups/${group}/indexes/CICAg${group}`,
-        queryScope: request.body.queryScope,
-        fields: [...request.body.fields, { fieldPath: "__name__", order: "ASCENDING" }],
-        state: "READY",
-      };
+      const index = listedIndex(group, { state: "READY" });
       state.composites[group] = [...(state.composites[group] ?? []), index];
-      return { status: 200, json: op(index.name) };
+      return {
+        status: 200,
+        json: op({ "@type": INDEX_META, index: index.name }, { ...index }),
+      };
     }
     if (kind === "indexes" && id && request.method === "DELETE") {
       const before = state.composites[group] ?? [];
@@ -110,24 +171,23 @@ function fakeFirestore({
       const key = `${group}/${id}`;
       const name = `${DB_NUMBER}/collectionGroups/${group}/fields/${id}`;
       if (request.method === "GET")
-        return {
-          status: 200,
-          json: state.fields[key] ?? {
-            name,
-            indexConfig: { usesAncestorConfig: true, indexes: [{ queryScope: "COLLECTION" }] },
-          },
-        };
-      if (request.method === "PATCH") {
+        return { status: 200, json: state.fields[key] ?? inherited(name, id) };
+      if (request.method === "PATCH" && query === "?updateMask=indexConfig") {
         if (request.body.indexConfig === undefined) delete state.fields[key];
         else
-          state.fields[key] = {
+          state.fields[key] = overrideJson(
             name,
-            indexConfig: {
-              usesAncestorConfig: false,
-              indexes: request.body.indexConfig.indexes.map((i) => ({ ...i, state: "READY" })),
-            },
-          };
-        return { status: 200, json: op(name) };
+            id,
+            request.body.indexConfig.indexes.map((i) => ({
+              queryScope: i.queryScope,
+              ...(i.fields[0].order ? { order: i.fields[0].order } : {}),
+              ...(i.fields[0].arrayConfig ? { arrayConfig: i.fields[0].arrayConfig } : {}),
+            })),
+          );
+        return {
+          status: 200,
+          json: op({ "@type": FIELD_META, field: name }, state.fields[key] ?? inherited(name, id)),
+        };
       }
     }
     return { status: 400, json: { error: { code: 400 } } };
@@ -421,11 +481,12 @@ test("remove deletes by the names it read and resets with an empty body; all clo
   assert.deepEqual(
     writes.map((r) => [r.method, r.url.split("/collectionGroups/")[1], r.body]),
     [
-      ["PATCH", "ima/fields/a", {}],
+      // The reset is the request the FS-CONFIG-LIFECYCLE recording sent (step "revert").
+      ["PATCH", "ima/fields/a?updateMask=indexConfig", {}],
       ["DELETE", "imx/indexes/CICAgimx", undefined],
       ["DELETE", "imc/indexes/CICAgimc", undefined],
-      ["PATCH", "imx/fields/a", {}],
-      ["PATCH", "imx/fields/tags", {}],
+      ["PATCH", "imx/fields/a?updateMask=indexConfig", {}],
+      ["PATCH", "imx/fields/tags?updateMask=indexConfig", {}],
     ],
   );
   assert.deepEqual(fake.state.composites, { imx: [], imc: [] });
@@ -749,6 +810,7 @@ test("arguments: the set is required and closed, --out is required, apply takes 
     set: "f2",
     out: "o",
     journals: [],
+    a2: [],
   });
   for (const argv of [
     [],
@@ -884,7 +946,12 @@ test("an entry that reads present but not READY, or whose operation failed, is n
     const answer = await original(request);
     if (request.method === "GET" && answer.json?.indexes)
       answer.json = { indexes: answer.json.indexes.map((i) => ({ ...i, state: "CREATING" })) };
-    if (request.method === "GET" && answer.json?.indexConfig?.usesAncestorConfig === false)
+    if (
+      request.method === "GET" &&
+      answer.json?.indexConfig &&
+      answer.json.indexConfig.usesAncestorConfig !== true &&
+      answer.json.indexConfig.indexes
+    )
       answer.json = {
         ...answer.json,
         indexConfig: {
@@ -923,7 +990,15 @@ test("an entry that reads present but not READY, or whose operation failed, is n
       r.url.includes("/operations/")
         ? {
             status: 200,
-            json: { name: r.url.slice(API.length + 1), done: true, error: { code: 9 } },
+            json: {
+              done: true,
+              error: { code: 9 },
+              metadata: {
+                "@type": FIELD_META,
+                field: `${DB_NUMBER}/collectionGroups/ima/fields/a`,
+              },
+              name: r.url.slice(API.length + 1),
+            },
           }
         : undefined,
   });
@@ -1062,6 +1137,490 @@ test("main passes earlier remove journals on, so a second remove can close the s
       0,
     );
     assert.deepEqual(fake.state.composites, { imx: [], imc: [] });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ---- packet v4 (coordinator ruling 4) ------------------------------------------------------
+
+test("the production layer never follows a redirect, and a 3xx is unknown or unreadable", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push([url, init]);
+    return { status: 307, text: async () => "" };
+  };
+  const http = productionHttp({ [SEND_FLAG]: SEND_FLAG_VALUE }, fetchImpl);
+  const answer = await http({
+    method: "PATCH",
+    url: `${API}/${DB}/collectionGroups/imx/fields/a?updateMask=indexConfig`,
+    body: { indexConfig: { indexes: [] } },
+    token: "t",
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].redirect, "manual");
+  assert.equal(classify(answer), "unknown");
+  const json307 = { status: 307, json: { name: "x" } };
+  assert.equal(classify(json307), "unknown");
+  const read = entryState(ENTRIES.E4, json307, FORMS);
+  assert.equal(read.state, "unreadable");
+  // A URL that a fetch would normalize to another resource is refused before sending.
+  for (const url of [
+    `${API}/${DB}/collectionGroups/imx/fields/a/../../../../../../other/x`,
+    `${API}/${DB}/collectionGroups/imx/fields/%2e%2e/x`,
+    `https://firestore.googleapis.com:443/v1/${DB}/collectionGroups/imx/fields/a`,
+    `https://user@firestore.googleapis.com/v1/${DB}/collectionGroups/imx/fields/a`,
+    `${API}/${DB}/collectionGroups/imx/fields/a#x`,
+  ])
+    await assert.rejects(http({ method: "GET", url, token: "t" }), /refusing a request/, url);
+  assert.equal(calls.length, 1);
+});
+
+test("the wall time is checked after the token, and a request gets only the time left", async () => {
+  let t = 0;
+  const seen = [];
+  const http = async (r) => (seen.push(r.timeoutMs), { status: 200, json: {} });
+  const late = createSession({
+    http,
+    token: async () => ((t = 1_000), "t"),
+    cap: 10,
+    wallMs: 1_000,
+    now: () => t,
+  });
+  await assert.rejects(late.send("x", { method: "PATCH", url: "u", body: {} }), BudgetExceeded);
+  assert.equal(late.sent, 0);
+  assert.deepEqual(seen, []);
+  t = 0;
+  const near = createSession({
+    http,
+    token: async () => "t",
+    cap: 10,
+    wallMs: 100_000,
+    now: () => t,
+  });
+  t = 95_000;
+  await near.send("x", { method: "GET", url: "u" });
+  t = 10_000;
+  const far = createSession({
+    http,
+    token: async () => "t",
+    cap: 10,
+    wallMs: 100_000,
+    now: () => t,
+  });
+  await far.send("x", { method: "GET", url: "u" });
+  assert.deepEqual(seen, [5_000, 30_000]);
+  // The production layer uses that timeout.
+  const signals = [];
+  const prod = productionHttp({ [SEND_FLAG]: SEND_FLAG_VALUE }, async (url, init) => {
+    signals.push(init.signal);
+    return { status: 200, text: async () => "{}" };
+  });
+  await prod({
+    method: "GET",
+    url: `${API}/${DB}/collectionGroups/imx/indexes`,
+    token: "t",
+    timeoutMs: 7,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(signals[0].aborted, true, "a 7 ms budget aborts");
+});
+
+test("the ADC token comes from gcloud with a timeout", async () => {
+  const calls = [];
+  const token = await adcToken(async (file, args, options) => {
+    calls.push([file, args, options]);
+    return { stdout: "ya29.token\n" };
+  });
+  assert.equal(token, "ya29.token");
+  assert.deepEqual(calls[0][0], "gcloud");
+  assert.deepEqual(calls[0][1], ["auth", "application-default", "print-access-token"]);
+  assert.equal(calls[0][2].timeout, 30_000);
+  await assert.rejects(
+    adcToken(async () => ({ stdout: "\n" })),
+    /empty/,
+  );
+});
+
+const fieldAnswer = (json) => ({ status: 200, json });
+const E3_NAME = `${DB}/collectionGroups/ima/fields/a`;
+const E4_NAME = `${DB}/collectionGroups/imx/fields/a`;
+const ANCESTOR_ID = `${DB}/collectionGroups/__default__/fields/*`;
+
+test("a field read is present or absent only in a recorded shape, field by field", () => {
+  const e3Index = (extra = {}, field = { fieldPath: "a", order: "ASCENDING" }) => ({
+    fields: [field],
+    queryScope: "COLLECTION",
+    state: "READY",
+    ...extra,
+  });
+  const state = (entry, json) => entryState(entry, fieldAnswer(json), FORMS).state;
+  // Recorded shapes: an exemption, an override with indexes, an inherited field.
+  assert.equal(
+    state(ENTRIES.E4, { indexConfig: { ancestorField: ANCESTOR_ID }, name: E4_NAME }),
+    "present",
+  );
+  assert.equal(
+    state(ENTRIES.E3, {
+      indexConfig: { ancestorField: ANCESTOR_ID, indexes: [e3Index()] },
+      name: E3_NAME,
+    }),
+    "present",
+  );
+  assert.equal(
+    state(ENTRIES.E4, {
+      indexConfig: {
+        ancestorField: ANCESTOR_ID,
+        indexes: [e3Index({}, { fieldPath: "a", order: "DESCENDING" })],
+        usesAncestorConfig: true,
+      },
+      name: E4_NAME,
+    }),
+    "absent",
+  );
+  for (const [label, entry, json] of [
+    ["only a name", ENTRIES.E4, { name: E4_NAME }],
+    ["no ancestor", ENTRIES.E4, { indexConfig: {}, name: E4_NAME }],
+    [
+      "another ancestor",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: `${DB}/collectionGroups/imx/fields/*` }, name: E4_NAME },
+    ],
+    [
+      "reverting",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: ANCESTOR_ID, reverting: true }, name: E4_NAME },
+    ],
+    [
+      "usesAncestorConfig a string",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: ANCESTOR_ID, usesAncestorConfig: "false" }, name: E4_NAME },
+    ],
+    [
+      "indexes not an array",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: ANCESTOR_ID, indexes: {} }, name: E4_NAME },
+    ],
+    [
+      "an extra top-level key",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: ANCESTOR_ID }, name: E4_NAME, extra: 1 },
+    ],
+    [
+      "an extra indexConfig key",
+      ENTRIES.E4,
+      { indexConfig: { ancestorField: ANCESTOR_ID, other: 1 }, name: E4_NAME },
+    ],
+    [
+      "a TTL",
+      ENTRIES.E4,
+      {
+        indexConfig: { ancestorField: ANCESTOR_ID },
+        name: E4_NAME,
+        ttlConfig: { state: "ACTIVE" },
+      },
+    ],
+    [
+      "a mode field of another path",
+      ENTRIES.E3,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [e3Index({}, { fieldPath: "wrong", order: "ASCENDING" })],
+        },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "two fields in a mode",
+      ENTRIES.E3,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [
+            {
+              ...e3Index(),
+              fields: [
+                { fieldPath: "a", order: "ASCENDING" },
+                { fieldPath: "b", order: "ASCENDING" },
+              ],
+            },
+          ],
+        },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "an extra key in a mode field",
+      ENTRIES.E3,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [e3Index({}, { fieldPath: "a", order: "ASCENDING", vectorConfig: {} })],
+        },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "order and arrayConfig",
+      ENTRIES.E3,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [e3Index({}, { fieldPath: "a", order: "ASCENDING", arrayConfig: "CONTAINS" })],
+        },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "an extra key in a mode",
+      ENTRIES.E3,
+      {
+        indexConfig: { ancestorField: ANCESTOR_ID, indexes: [e3Index({ density: "DENSE" })] },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "a second mode",
+      ENTRIES.E3,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [e3Index(), e3Index({}, { fieldPath: "a", order: "DESCENDING" })],
+        },
+        name: E3_NAME,
+      },
+    ],
+    [
+      "an inherited field with a malformed mode",
+      ENTRIES.E4,
+      {
+        indexConfig: {
+          ancestorField: ANCESTOR_ID,
+          indexes: [{ fields: [], queryScope: "COLLECTION" }],
+          usesAncestorConfig: true,
+        },
+        name: E4_NAME,
+      },
+    ],
+    ["a body that is an array", ENTRIES.E4, [{ name: E4_NAME }]],
+  ])
+    assert.equal(state(entry, json), "unexpected", label);
+});
+
+test("a composite read is present only in the recorded shape", () => {
+  const listed = (extra = {}) => ({ indexes: [listedIndex("imx", extra)] });
+  const state = (json) => entryState(ENTRIES.E1, fieldAnswer(json), FORMS).state;
+  assert.equal(state(listed()), "present");
+  assert.equal(state(listed({ density: undefined })), "present", "density omitted");
+  assert.equal(state({}), "absent");
+  for (const [label, json] of [
+    ["multikey", listed({ multikey: true })],
+    ["another density", listed({ density: "SPARSE_ANY" })],
+    ["an API scope", listed({ apiScope: "MONGODB_COMPATIBLE_API" })],
+    [
+      "an extra key in a field",
+      listed({
+        fields: [
+          { fieldPath: "a", order: "ASCENDING", x: 1 },
+          { arrayConfig: "CONTAINS", fieldPath: "tags" },
+          { fieldPath: "__name__", order: "ASCENDING" },
+        ],
+      }),
+    ],
+    ["an extra list key", { indexes: [listedIndex("imx")], unreachable: ["x"] }],
+    ["indexes not an array", { indexes: {} }],
+    ["no state", listed({ state: undefined })],
+    ["a body that is an array", [listedIndex("imx")]],
+  ])
+    assert.equal(state(JSON.parse(JSON.stringify(json))), "unexpected", label);
+});
+
+test("an operation counts only in the recorded shape, for its own entry", () => {
+  const name = `${DB}/operations/op9`;
+  const field = (extra = {}) => ({
+    status: 200,
+    json: {
+      done: true,
+      metadata: { "@type": FIELD_META, field: E4_NAME, state: "SUCCESSFUL" },
+      name,
+      response: {},
+      ...extra,
+    },
+  });
+  assert.equal(operationState(field(), name, FORMS, ENTRIES.E4), "done");
+  assert.equal(
+    operationState(
+      { status: 200, json: { metadata: { "@type": FIELD_META, field: E4_NAME }, name } },
+      name,
+      FORMS,
+      ENTRIES.E4,
+    ),
+    "running",
+  );
+  assert.equal(
+    operationState(field({ response: undefined, error: { code: 13 } }), name, FORMS, ENTRIES.E4),
+    "failed",
+  );
+  for (const [label, answer, entry] of [
+    ["done without a response", field({ response: undefined }), ENTRIES.E4],
+    ["another field", field(), ENTRIES.E5],
+    [
+      "an index operation for a field",
+      {
+        status: 200,
+        json: {
+          ...field().json,
+          metadata: { "@type": INDEX_META, index: `${DB}/collectionGroups/imx/indexes/X` },
+        },
+      },
+      ENTRIES.E4,
+    ],
+    ["no metadata", { status: 200, json: { done: true, name, response: {} } }, ENTRIES.E4],
+    ["an extra key", field({ other: 1 }), ENTRIES.E4],
+    ["done not a boolean", field({ done: "true" }), ENTRIES.E4],
+    ["another name", field({ name: `${DB}/operations/op8` }), ENTRIES.E4],
+  ])
+    assert.equal(
+      operationState(JSON.parse(JSON.stringify(answer)), name, FORMS, entry),
+      "unreadable",
+      label,
+    );
+  const index = {
+    status: 200,
+    json: {
+      done: true,
+      metadata: {
+        "@type": INDEX_META,
+        index: `${DB_NUMBER}/collectionGroups/imc/indexes/CICAgimc`,
+      },
+      name,
+      response: {},
+    },
+  };
+  assert.equal(operationState(index, name, FORMS, ENTRIES.E2), "done");
+  assert.equal(
+    operationState(index, name, FORMS, ENTRIES.E1),
+    "unreadable",
+    "another group's index",
+  );
+});
+
+test("an exemption whose operation never finishes is pending, not created", async () => {
+  const fake = fakeFirestore({ opRounds: Infinity });
+  const result = await apply({ session: session(fake), set: "f1", forms: FORMS, sleep: noSleep });
+  for (const id of ["E4", "E5"]) {
+    assert.equal(result.entries[id].read.state, "present", id);
+    assert.equal(result.entries[id].operation, "running", id);
+    assert.equal(result.entries[id].outcome, "created-pending", id);
+  }
+  assert.equal(result.ok, false);
+});
+
+test("attempt 2 of remove needs an a2 read after attempt 1, 10 minutes later, showing an entry present", () => {
+  const t = (minutes) => new Date(Date.UTC(2026, 10, 19, 12, minutes)).toISOString();
+  const first = { command: "remove", set: "all", finishedAt: t(0), ok: false };
+  const a2 = (minutes, states, extra = {}) => ({
+    command: "status",
+    set: "all",
+    ok: true,
+    startedAt: t(minutes),
+    states,
+    ...extra,
+  });
+  const present = {
+    E1: { state: "present" },
+    E2: { state: "absent" },
+    E3: { state: "absent" },
+    E4: { state: "absent" },
+    E5: { state: "absent" },
+  };
+  const none = { ...present, E1: { state: "absent" } };
+  assert.equal(attempt2Allowed({ set: "all", first, a2: [a2(10, present)] }).allowed, true);
+  for (const [label, args] of [
+    ["no a2", { set: "all", first, a2: [] }],
+    ["a2 too early", { set: "all", first, a2: [a2(9, present)] }],
+    ["a2 before attempt 1", { set: "all", first, a2: [a2(-5, present)] }],
+    ["nothing present", { set: "all", first, a2: [a2(12, none)] }],
+    ["a2 not readable", { set: "all", first, a2: [a2(12, present, { ok: false })] }],
+    ["a2 of another set", { set: "all", first, a2: [a2(12, present, { set: "f2" })] }],
+    ["no attempt 1", { set: "all", first: undefined, a2: [a2(12, present)] }],
+    [
+      "attempt 1 of another set",
+      { set: "all", first: { ...first, set: "f1" }, a2: [a2(12, present)] },
+    ],
+    [
+      "attempt 1 closed everything",
+      { set: "all", first: { ...first, ok: true }, a2: [a2(12, present)] },
+    ],
+  ])
+    assert.equal(attempt2Allowed(args).allowed, false, label);
+});
+
+test("result files carry their start and finish times", async () => {
+  const root = await mkdtemp(join(tmpdir(), "merge-config-times-"));
+  try {
+    let t = Date.UTC(2026, 10, 19, 12, 0);
+    const fake = fakeFirestore();
+    const out = join(root, "status");
+    await main(["status", "--set", "all", "--out", out], {
+      http: fake.http,
+      token: async () => "t",
+      now: () => (t += 1000),
+    });
+    const result = JSON.parse(await readFile(join(out, "result.json"), "utf8"));
+    assert.match(result.startedAt, /^2026-11-19T12:00:0\d\.000Z$/);
+    assert.ok(result.finishedAt > result.startedAt);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("may-retry reads result files only and answers by attempt2Allowed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "merge-config-retry-"));
+  try {
+    const write = async (name, json) => {
+      const path = join(root, name);
+      await writeFile(path, JSON.stringify(json));
+      return path;
+    };
+    const first = await write("first.json", {
+      command: "remove",
+      set: "all",
+      ok: false,
+      finishedAt: "2026-11-19T12:00:00.000Z",
+    });
+    const states = { E1: { state: "present" } };
+    const early = await write("early.json", {
+      command: "status",
+      set: "all",
+      ok: true,
+      startedAt: "2026-11-19T12:05:00.000Z",
+      states,
+    });
+    const late = await write("late.json", {
+      command: "status",
+      set: "all",
+      ok: true,
+      startedAt: "2026-11-19T12:11:00.000Z",
+      states,
+    });
+    const noHttp = async () => assert.fail("may-retry sends nothing");
+    assert.equal(
+      await main(["may-retry", "--set", "all", "--first", first, "--a2", early], {
+        http: noHttp,
+        env: {},
+      }),
+      2,
+    );
+    assert.equal(
+      await main(["may-retry", "--set", "all", "--first", first, "--a2", early, "--a2", late], {
+        http: noHttp,
+        env: {},
+      }),
+      0,
+    );
+    assert.equal(await main(["may-retry", "--set", "all", "--a2", late], { env: {} }), 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

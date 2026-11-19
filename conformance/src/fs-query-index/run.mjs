@@ -214,6 +214,8 @@ async function adminGet(path, token, fetchImpl = fetch) {
       authorization: `Bearer ${token}`,
       "x-goog-user-project": SANDBOX_PROJECT,
     },
+    // A redirect is an error: a preflight read goes only where it was sent.
+    redirect: "error",
     signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS),
   });
   const body = await response.json();
@@ -339,6 +341,8 @@ export async function databaseDocuments(token, database = DATABASE_ID, fetchImpl
     `https://firestore.googleapis.com/v1/projects/${SANDBOX_PROJECT}/databases/${database}/documents:runQuery`,
     {
       method: "POST",
+      // A redirect is an error: a preflight read goes only where it was sent.
+      redirect: "error",
       signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT_MS),
       headers: {
         authorization: `Bearer ${token}`,

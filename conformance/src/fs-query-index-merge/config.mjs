@@ -5,6 +5,7 @@
 //   node src/fs-query-index-merge/config.mjs status --set <f2|f1|all> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs apply  --set <f2|f1|all> --out <new dir>
 //   node src/fs-query-index-merge/config.mjs remove --set <f2|f1|all> --out <new dir> [--journal <file>]...
+//   node src/fs-query-index-merge/config.mjs may-retry --set <s> --first <remove result.json> --a2 <status result.json>...
 //
 // `status` is read-only: which entries of the set exist (composites by a one-page list of their
 // group, overrides by a GET of their field) and the state of the operations named in earlier
@@ -12,19 +13,25 @@
 // entry, polls the operations they return and reads every entry back. `remove` reads every entry
 // of the set first and sends nothing unless every read succeeded and showed either the expected
 // entry or its absence; then it deletes the composites by the names it read, resets the overrides
-// with the body firebase-tools sends to delete one (`{}`), polls the resets and reads back.
+// with the request the FS-CONFIG-LIFECYCLE recording sent to revert one (PATCH
+// ?updateMask=indexConfig, body `{}`), polls the resets and reads back. `may-retry` sends nothing:
+// it says from this send's result files whether a second remove may run (attempt2Allowed).
 //
 // Rules (presend reviews of packet v2, coordinator ruling 3, 2026-11-19):
 // - Targets are fixed here; a name read from production is used only after it matches its full
 //   expected pattern (project id or the FIREEMU_SANDBOX_PROJECT_NUMBER number, `(default)`, its
-//   own group). A failed or malformed read sends nothing.
+//   own group). A read counts only in a shape production was recorded answering (entryState,
+//   operationState); a failed, malformed or unrecorded read sends nothing.
+// - Redirects are never followed (a 3xx is unknown for a write, unreadable for a read), and the URL
+//   sent is exactly the URL checked.
 // - Every mutating request is sent once and classified done (2xx with a readable body), refused
 //   (a definite 4xx other than 408, 429 and 499, with a readable body) or unknown (anything else).
 //   An unknown create settles only on an own read showing the entry or its operation reading done;
 //   absence never settles it. `remove` settles an entry's absence only against the journals of
 //   the apply that created it, or of an earlier remove that removed it (--journal).
-// - Bounds: a request cap per subcommand computed from the set, a wall-time cap, at most one page
-//   per list, a 30 s timeout per request, a fresh token at least every 10 minutes; the journal
+// - Bounds: a request cap per subcommand computed from the set, a wall-time cap checked before and
+//   after the token, at most one page per list, a timeout per request of 30 s or the time left, a
+//   fresh token at least every 10 minutes from a gcloud call limited to 30 s; the journal
 //   (journal.jsonl in --out, which must not exist yet) records every request and the counter.
 // - Nothing is sent unless FIREEMU_MERGE_CONFIG_SEND has the launch script's exact value. No test
 //   sets it.
@@ -73,6 +80,8 @@ export const TOKEN_MAX_AGE_MS = 10 * 60_000;
 export const WALL_MS = { status: 5 * 60_000, apply: 20 * 60_000, remove: 20 * 60_000 };
 /** Operations an earlier journal may name that `status` reads once each. */
 export const STATUS_MAX_OPERATIONS = 5;
+/** The least time between the last request of a send step and its A2 read. */
+export const A2_DELAY_MS = 10 * 60_000;
 
 const databasePath = `projects/${PROJECT}/databases/${DATABASE}`;
 const groupPath = (group) => `${databasePath}/collectionGroups/${group}`;
@@ -148,68 +157,131 @@ export function classify(answer) {
 
 const readOk = (answer) => answer?.status === 200 && answer.json !== undefined && !answer.error;
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const fieldKey = (f) => `${f.fieldPath}:${f.order ?? f.arrayConfig ?? "?"}`;
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const onlyKeys = (object, allowed) => Object.keys(object).every((key) => allowed.includes(key));
+/** An object's JSON with sorted keys, so key order never decides equality. */
+const canonical = (object) =>
+  JSON.stringify(
+    Object.fromEntries(Object.entries(object).toSorted(([a], [b]) => a.localeCompare(b))),
+  );
+export const ancestorPattern = (forms) =>
+  namePattern(forms, "collectionGroups/__default__/fields/\\*");
 
-/** A composite as listed matches its entry: same scope, the entry's fields then `__name__` ASC. */
+export const INDEX_META = "type.googleapis.com/google.firestore.admin.v1.IndexOperationMetadata";
+export const FIELD_META = "type.googleapis.com/google.firestore.admin.v1.FieldOperationMetadata";
+
+/**
+ * The shapes production was recorded answering (conformance/fs-config-lifecycle-production.json,
+ * program fs-config/field/index-config/exemption, and the composite lists of FS-CONFIG-LIFECYCLE):
+ * a composite is {name, queryScope, fields, state, density SPARSE_ALL}; a field is {name,
+ * indexConfig} whose indexConfig is {ancestorField, indexes?, usesAncestorConfig?} (proto3 JSON
+ * omits a false usesAncestorConfig and an empty indexes list, so an exemption reads
+ * {ancestorField} only); a single-field mode is {fields: [one {fieldPath, order} or {fieldPath,
+ * arrayConfig}], queryScope, state}. Anything else is `unexpected`.
+ */
+const COMPOSITE_KEYS = ["name", "queryScope", "fields", "state", "density"];
+const FIELD_KEYS = ["name", "indexConfig"];
+const INDEX_CONFIG_KEYS = ["ancestorField", "indexes", "usesAncestorConfig"];
+const MODE_KEYS = ["fields", "queryScope", "state"];
+const OPERATION_KEYS = ["name", "metadata", "done", "response", "error"];
+const METADATA_KEYS = [
+  "@type",
+  "index",
+  "field",
+  "state",
+  "startTime",
+  "endTime",
+  "indexConfigDeltas",
+  "progressDocuments",
+];
+
+/** A composite as listed matches its entry exactly: scope, and the fields then `__name__` ASC. */
 export function compositeMatches(index, entry) {
+  const expected = [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }];
   return (
     index?.queryScope === entry.queryScope &&
     Array.isArray(index.fields) &&
-    same(
-      index.fields.map(fieldKey),
-      [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }].map(fieldKey),
-    )
+    index.fields.length === expected.length &&
+    index.fields.every((field, i) => isObject(field) && canonical(field) === canonical(expected[i]))
   );
 }
 
-/** The single-field indexes of a field as read, in the entry's form. */
-const modesOf = (field) =>
-  (field.indexConfig?.indexes ?? []).map((index) => {
-    const mode = { queryScope: index.queryScope };
-    const [first] = index.fields ?? [];
-    if (first?.order) mode.order = first.order;
-    if (first?.arrayConfig) mode.arrayConfig = first.arrayConfig;
-    return mode;
-  });
+/** One single-field mode in the entry's form, or undefined when it is not a recorded shape. */
+function modeOf(index, fieldPath) {
+  if (!isObject(index) || !onlyKeys(index, MODE_KEYS)) return undefined;
+  if (!["COLLECTION", "COLLECTION_GROUP"].includes(index.queryScope)) return undefined;
+  if (index.state !== undefined && typeof index.state !== "string") return undefined;
+  if (!Array.isArray(index.fields) || index.fields.length !== 1) return undefined;
+  const [field] = index.fields;
+  if (!isObject(field) || field.fieldPath !== fieldPath) return undefined;
+  const keys = Object.keys(field).toSorted().join(",");
+  if (keys === "fieldPath,order" && ["ASCENDING", "DESCENDING"].includes(field.order))
+    return { queryScope: index.queryScope, order: field.order };
+  if (keys === "arrayConfig,fieldPath" && field.arrayConfig === "CONTAINS")
+    return { queryScope: index.queryScope, arrayConfig: "CONTAINS" };
+  return undefined;
+}
 
-/**
- * One entry's state from its read: `absent`, `present` (with `name` and `ready`), or `unexpected`
- * (with a reason). A read that failed is `unreadable`.
- */
-export function entryState(entry, answer, forms) {
-  if (!readOk(answer)) return { state: "unreadable", reason: `read answered ${answer?.status}` };
-  const body = answer.json;
-  if (entry.kind === "composite") {
-    if (body.nextPageToken) return { state: "unexpected", reason: "more than one page" };
-    const indexes = body.indexes ?? [];
-    if (!Array.isArray(indexes)) return { state: "unexpected", reason: "malformed list" };
-    if (indexes.length === 0) return { state: "absent" };
-    if (indexes.length > 1) return { state: "unexpected", reason: `${indexes.length} indexes` };
-    const [index] = indexes;
-    if (typeof index.name !== "string" || !indexNamePattern(forms, entry.group).test(index.name))
-      return { state: "unexpected", reason: "index name outside the expected pattern" };
-    if (!compositeMatches(index, entry))
-      return { state: "unexpected", reason: "index fields or scope differ" };
-    return { state: "present", name: index.name, ready: index.state === "READY" };
-  }
+const unexpected = (reason) => ({ state: "unexpected", reason });
+
+function compositeState(entry, body, forms) {
+  if (body.nextPageToken !== undefined) return unexpected("more than one page");
+  if (!onlyKeys(body, ["indexes"])) return unexpected("unknown list keys");
+  const indexes = body.indexes ?? [];
+  if (!Array.isArray(indexes)) return unexpected("malformed list");
+  if (indexes.length === 0) return { state: "absent" };
+  if (indexes.length > 1) return unexpected(`${indexes.length} indexes`);
+  const [index] = indexes;
+  if (!isObject(index) || !onlyKeys(index, COMPOSITE_KEYS)) return unexpected("unknown index keys");
+  if (typeof index.name !== "string" || !indexNamePattern(forms, entry.group).test(index.name))
+    return unexpected("index name outside the expected pattern");
+  if (index.density !== undefined && index.density !== "SPARSE_ALL")
+    return unexpected("index density differs");
+  if (typeof index.state !== "string") return unexpected("index without a state");
+  if (!compositeMatches(index, entry)) return unexpected("index fields or scope differ");
+  return { state: "present", name: index.name, ready: index.state === "READY" };
+}
+
+function fieldState(entry, body, forms) {
+  if (body.ttlConfig !== undefined) return unexpected("the field has a TTL");
+  if (!onlyKeys(body, FIELD_KEYS)) return unexpected("unknown field keys");
   if (
     typeof body.name !== "string" ||
     !fieldNamePattern(forms, entry.group, entry.field).test(body.name)
   )
-    return { state: "unexpected", reason: "field name outside the expected pattern" };
-  if (body.ttlConfig !== undefined) return { state: "unexpected", reason: "the field has a TTL" };
-  if (body.indexConfig?.usesAncestorConfig === true) return { state: "absent" };
+    return unexpected("field name outside the expected pattern");
+  const config = body.indexConfig;
+  if (!isObject(config) || !onlyKeys(config, INDEX_CONFIG_KEYS))
+    return unexpected("malformed indexConfig");
   if (
-    body.indexConfig?.usesAncestorConfig !== false &&
-    body.indexConfig?.usesAncestorConfig !== undefined
+    typeof config.ancestorField !== "string" ||
+    !ancestorPattern(forms).test(config.ancestorField)
   )
-    return { state: "unexpected", reason: "malformed indexConfig" };
-  const modes = modesOf(body);
-  const sort = (list) => list.map((m) => JSON.stringify(m)).toSorted();
+    return unexpected("ancestor field outside the expected pattern");
+  if (![undefined, true, false].includes(config.usesAncestorConfig))
+    return unexpected("malformed usesAncestorConfig");
+  if (config.indexes !== undefined && !Array.isArray(config.indexes))
+    return unexpected("malformed indexes");
+  const modes = (config.indexes ?? []).map((index) => modeOf(index, entry.field));
+  if (modes.includes(undefined)) return unexpected("a mode outside the recorded shape");
+  if (config.usesAncestorConfig === true) return { state: "absent" };
+  const sort = (list) => list.map((m) => canonical(m)).toSorted();
   if (!same(sort(modes), sort(entry.indexes)))
-    return { state: "unexpected", reason: "the override differs from the entry" };
-  const ready = (body.indexConfig?.indexes ?? []).every((index) => index.state === "READY");
+    return unexpected("the override differs from the entry");
+  const ready = (config.indexes ?? []).every((index) => index.state === "READY");
   return { state: "present", name: body.name, ready };
+}
+
+/**
+ * One entry's state from its read: `absent`, `present` (with `name` and `ready`), or `unexpected`
+ * (with a reason). A read that failed (anything but a 200 with a JSON object) is `unreadable`.
+ */
+export function entryState(entry, answer, forms) {
+  if (!readOk(answer)) return { state: "unreadable", reason: `read answered ${answer?.status}` };
+  if (!isObject(answer.json)) return unexpected("the body is not an object");
+  return entry.kind === "composite"
+    ? compositeState(entry, answer.json, forms)
+    : fieldState(entry, answer.json, forms);
 }
 
 /** Thrown when a cap would be exceeded; the request is not sent. */
@@ -232,15 +304,24 @@ export function createSession({ http, token, cap, wallMs, now = Date.now, journa
     }
     return current;
   }
+  /** The wall time left, or BudgetExceeded when none is. */
+  function timeLeft(method, url) {
+    const left = wallMs - (now() - started);
+    if (left <= 0)
+      throw new BudgetExceeded(`wall time ${wallMs} ms reached before ${method} ${url}`);
+    return left;
+  }
   async function send(phase, { method, url, body }) {
     if (sent >= cap) throw new BudgetExceeded(`request cap ${cap} reached before ${method} ${url}`);
-    if (now() - started >= wallMs)
-      throw new BudgetExceeded(`wall time ${wallMs} ms reached before ${method} ${url}`);
+    timeLeft(method, url);
     const bearer = await freshToken();
+    // Checked again after the token: the request goes out only inside the budget, and its
+    // timeout never reaches past it.
+    const timeoutMs = Math.min(REQUEST_TIMEOUT_MS, timeLeft(method, url));
     sent += 1;
     let answer;
     try {
-      answer = await http({ method, url, body, token: bearer });
+      answer = await http({ method, url, body, token: bearer, timeoutMs });
     } catch (error) {
       answer = { error: String(error?.message ?? error) };
     }
@@ -249,6 +330,7 @@ export function createSession({ http, token, cap, wallMs, now = Date.now, journa
       phase,
       method,
       url,
+      timeoutMs,
       ...(body === undefined ? {} : { body }),
       status: answer.status,
       ...(answer.error ? { error: answer.error } : {}),
@@ -279,12 +361,38 @@ export async function readStates(session, phase, ids, forms) {
   return states;
 }
 
-/** An operation answer: `done`, `failed` (done with an error), `running` or `unreadable`. */
-export function operationState(answer, name, forms) {
-  if (!readOk(answer)) return "unreadable";
-  if (answer.json.name !== name || !operationNamePattern(forms).test(name)) return "unreadable";
-  if (answer.json.done !== true) return "running";
-  return answer.json.error === undefined ? "done" : "failed";
+/** The entry an operation key names (`E3`, or `apply:E3` from a journal). */
+const entryOfKey = (key) => ENTRIES[String(key).split(":").pop()];
+
+/**
+ * An operation answer for an entry: `done` (done with a response), `failed` (done with an error),
+ * `running` (not done, neither), or `unreadable`: not a 200 JSON object in the recorded shape
+ * ({name, metadata, done?, response?, error?}), another name, or metadata of another type or
+ * target than the entry's (IndexOperationMetadata with the entry's group, FieldOperationMetadata
+ * with the entry's field).
+ */
+export function operationState(answer, name, forms, entry) {
+  if (!readOk(answer) || !isObject(answer.json) || !entry) return "unreadable";
+  const op = answer.json;
+  if (!onlyKeys(op, OPERATION_KEYS)) return "unreadable";
+  if (op.name !== name || !operationNamePattern(forms).test(name)) return "unreadable";
+  const meta = op.metadata;
+  if (!isObject(meta) || !onlyKeys(meta, METADATA_KEYS)) return "unreadable";
+  const target =
+    entry.kind === "composite"
+      ? meta["@type"] === INDEX_META &&
+        typeof meta.index === "string" &&
+        indexNamePattern(forms, entry.group).test(meta.index)
+      : meta["@type"] === FIELD_META &&
+        typeof meta.field === "string" &&
+        fieldNamePattern(forms, entry.group, entry.field).test(meta.field);
+  if (!target) return "unreadable";
+  if (op.done === undefined)
+    return op.response === undefined && op.error === undefined ? "running" : "unreadable";
+  if (op.done !== true) return "unreadable";
+  if (isObject(op.error) && op.response === undefined) return "failed";
+  if (isObject(op.response) && op.error === undefined) return "done";
+  return "unreadable";
 }
 
 /**
@@ -301,16 +409,17 @@ export async function pollOperations(session, operations, forms, sleep) {
     for (const id of open) {
       const name = operations[id];
       const answer = await session.send("poll", { method: "GET", url: `${API}/${name}` });
-      states[id] = operationState(answer, name, forms);
+      states[id] = operationState(answer, name, forms, entryOfKey(id));
     }
   }
   return states;
 }
 
-/** The operation name of a done create or reset, when it has the expected form. */
-function operationOf(answer, forms) {
+/** The operation name of a done create or reset, when the answer is a readable operation of it. */
+function operationOf(answer, forms, entry) {
   const name = answer?.json?.name;
-  return typeof name === "string" && operationNamePattern(forms).test(name) ? name : undefined;
+  if (typeof name !== "string") return undefined;
+  return operationState(answer, name, forms, entry) === "unreadable" ? undefined : name;
 }
 
 /**
@@ -333,7 +442,7 @@ export async function apply({ session, set, forms, sleep }) {
       continue;
     }
     const answer = await session.send("create", createRequest(ENTRIES[id]));
-    const operation = operationOf(answer, forms);
+    const operation = operationOf(answer, forms, ENTRIES[id]);
     writes[id] = {
       class: classify(answer),
       status: answer.status,
@@ -350,8 +459,13 @@ export async function apply({ session, set, forms, sleep }) {
     let outcome = "open";
     if (write.class === "not-sent" && read.state === "absent") outcome = "not-sent";
     else if (write.class === "refused" && read.state === "absent") outcome = "not-created";
-    else if (read.state === "present" && read.ready && (polled[id] ?? "done") !== "failed")
-      outcome = "created";
+    else if (read.state === "present" && read.ready && polled[id] === "done") outcome = "created";
+    // Without an operation of its own, only a composite's READY read shows it in effect; an
+    // override (an exemption has no index state at all) stays pending.
+    else if (read.state === "present" && read.ready && polled[id] === undefined)
+      outcome = ENTRIES[id].kind === "composite" ? "created" : "created-pending";
+    else if (read.state === "present" && read.ready && polled[id] !== "failed")
+      outcome = "created-pending";
     else if (read.state === "present") outcome = "created-not-ready";
     entries[id] = { write, operation: polled[id], read, outcome };
   }
@@ -389,9 +503,9 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
     const request =
       entry.kind === "composite"
         ? { method: "DELETE", url: `${API}/${before[id].name}` }
-        : { method: "PATCH", url: fieldUrl(entry), body: {} };
+        : { method: "PATCH", url: `${fieldUrl(entry)}?updateMask=indexConfig`, body: {} };
     const answer = await session.send("remove", request);
-    const operation = entry.kind === "override" ? operationOf(answer, forms) : undefined;
+    const operation = entry.kind === "override" ? operationOf(answer, forms, entry) : undefined;
     writes[id] = {
       class: classify(answer),
       status: answer.status,
@@ -432,6 +546,7 @@ export async function status({ session, set, forms, operations = {} }) {
       await session.send("status", { method: "GET", url: `${API}/${name}` }),
       name,
       forms,
+      entryOfKey(id),
     );
   }
   const ok = ids.every((id) => states[id].state === "absent" || states[id].state === "present");
@@ -473,18 +588,25 @@ export function fromJournals(texts) {
 
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
-  if (!["status", "apply", "remove"].includes(command))
-    throw new Error("usage: status|apply|remove");
-  const args = { command, journals: [] };
+  if (!["status", "apply", "remove", "may-retry"].includes(command))
+    throw new Error("usage: status|apply|remove|may-retry");
+  const args = { command, journals: [], a2: [] };
   for (let i = 0; i < rest.length; i += 2) {
     const [key, value] = [rest[i], rest[i + 1]];
     if (value === undefined) throw new Error(`${key} needs a value`);
     if (key === "--set") args.set = value;
     else if (key === "--out") args.out = value;
     else if (key === "--journal") args.journals.push(value);
+    else if (key === "--first" && command === "may-retry") args.first = value;
+    else if (key === "--a2" && command === "may-retry") args.a2.push(value);
     else throw new Error(`unknown argument ${key}`);
   }
   if (!Object.hasOwn(SETS, args.set ?? "")) throw new Error("--set must be f2, f1 or all");
+  if (command === "may-retry") {
+    if (!args.first || args.out || args.journals.length)
+      throw new Error("may-retry takes --set, --first and --a2 only");
+    return args;
+  }
   if (!args.out) throw new Error("--out is required");
   if (command === "apply" && args.journals.length) throw new Error("apply takes no --journal");
   return args;
@@ -494,9 +616,23 @@ export function parseArgs(argv) {
 export function productionHttp(env = process.env, fetchImpl = fetch) {
   if (env[SEND_FLAG] !== SEND_FLAG_VALUE)
     throw new Error(`refusing to send: ${SEND_FLAG} is not the launch script's value`);
-  const allowed = namePattern(projectForms(env), "\\S+");
-  return async ({ method, url, body, token }) => {
-    if (!url.startsWith(`${API}/`) || !allowed.test(url.slice(API.length + 1)))
+  const allowed = namePattern(projectForms(env), "[^\\s#]+");
+  return async ({ method, url, body, token, timeoutMs = REQUEST_TIMEOUT_MS }) => {
+    // The URL sent is the URL checked: one that the URL parser would rewrite (dot segments,
+    // an explicit port, credentials, a fragment) is refused, and redirects are never followed.
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      parsed = undefined;
+    }
+    if (
+      !parsed ||
+      parsed.href !== url ||
+      parsed.hash !== "" ||
+      !url.startsWith(`${API}/`) ||
+      !allowed.test(url.slice(API.length + 1))
+    )
       throw new Error(`refusing a request outside ${PROJECT}/${DATABASE}: ${url}`);
     const response = await fetchImpl(url, {
       method,
@@ -506,7 +642,8 @@ export function productionHttp(env = process.env, fetchImpl = fetch) {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
     let json;
@@ -520,13 +657,40 @@ export function productionHttp(env = process.env, fetchImpl = fetch) {
 }
 
 const execFileAsync = promisify(execFile);
-async function adcToken() {
-  const { stdout } = await execFileAsync("gcloud", [
-    "auth",
-    "application-default",
-    "print-access-token",
-  ]);
-  return stdout.trim();
+/** The owner's ADC access token, from gcloud, which must answer within 30 s. */
+export async function adcToken(exec = execFileAsync) {
+  const { stdout } = await exec("gcloud", ["auth", "application-default", "print-access-token"], {
+    timeout: 30_000,
+  });
+  const token = String(stdout).trim();
+  if (!token) throw new Error("ADC returned an empty token");
+  return token;
+}
+
+/**
+ * Whether a second remove of the set may run: the first remove of the same set ended open, and
+ * an a2 status read of the set (or of all entries) that started at least 10 minutes after the
+ * first remove finished read every entry and showed one of the set still present.
+ */
+export function attempt2Allowed({ set, first, a2 = [] }) {
+  const no = (reason) => ({ allowed: false, reason });
+  if (!first || first.command !== "remove" || first.set !== set)
+    return no("no first remove of the set");
+  if (first.ok !== false) return no("the first remove closed every entry");
+  const finished = Date.parse(first.finishedAt ?? "");
+  if (!Number.isFinite(finished)) return no("the first remove has no finish time");
+  const ids = SETS[set] ?? [];
+  const reads = a2.filter(
+    (r) =>
+      r?.command === "status" &&
+      (r.set === set || r.set === "all") &&
+      r.ok === true &&
+      Date.parse(r.startedAt ?? "") - finished >= A2_DELAY_MS,
+  );
+  if (reads.length === 0) return no("no a2 read 10 minutes after the first remove");
+  if (!reads.some((r) => ids.some((id) => r.states?.[id]?.state === "present")))
+    return no("no entry of the set read present");
+  return { allowed: true };
 }
 
 /** Runs one subcommand; returns the exit code (0 ok, 2 open or refused, 3 usage or setup). */
@@ -537,6 +701,23 @@ export async function main(argv, { env = process.env, http, token = adcToken, sl
   } catch (error) {
     console.error(String(error.message));
     return 3;
+  }
+  if (args.command === "may-retry") {
+    // Local only: reads result files of this send and sends nothing.
+    let verdict;
+    try {
+      const read = async (path) => JSON.parse(await readFile(path, "utf8"));
+      verdict = attempt2Allowed({
+        set: args.set,
+        first: await read(args.first),
+        a2: await Promise.all(args.a2.map(read)),
+      });
+    } catch (error) {
+      console.error(String(error.message));
+      return 3;
+    }
+    console.log(JSON.stringify(verdict));
+    return verdict.allowed ? 0 : 2;
   }
   let send;
   try {
@@ -566,6 +747,8 @@ export async function main(argv, { env = process.env, http, token = adcToken, sl
     journal,
   });
   const pause = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const clock = now ?? Date.now;
+  const startedAt = new Date(clock()).toISOString();
   let result;
   try {
     if (args.command === "status")
@@ -584,7 +767,15 @@ export async function main(argv, { env = process.env, http, token = adcToken, sl
   } catch (error) {
     result = { ok: false, error: String(error.message), sent: session.sent };
   }
-  const summary = { command: args.command, set: args.set, cap, ...result, sent: session.sent };
+  const summary = {
+    command: args.command,
+    set: args.set,
+    cap,
+    startedAt,
+    ...result,
+    sent: session.sent,
+    finishedAt: new Date(clock()).toISOString(),
+  };
   await journal({ result: summary });
   await writeFile(join(args.out, "result.json"), `${JSON.stringify(summary, null, 2)}\n`, {
     mode: 0o600,

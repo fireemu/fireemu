@@ -24,6 +24,7 @@ import {
   estimatedUsd,
   indexKey,
   MAX_LIST_PAGES,
+  databaseDocuments,
   productionIndexes,
   programDigest,
   selectPrograms,
@@ -333,4 +334,16 @@ test("the preflight's index lists stop after MAX_LIST_PAGES pages each", async (
     fieldPages.slice(1).every((u) => u.includes("&pageToken=n") && u.split("?").length === 2),
   );
   assert.ok(urls.filter((u) => u.includes("/indexes"))[1].includes("/indexes?pageToken=n"));
+});
+
+test("the preflight's reads never follow a redirect", async () => {
+  const inits = [];
+  const fetchImpl = async (url, init) => {
+    inits.push(init);
+    return { ok: true, status: 200, json: async () => (url.includes("runQuery") ? [] : {}) };
+  };
+  await productionIndexes("t", fetchImpl);
+  await databaseDocuments("t", "(default)", fetchImpl);
+  assert.equal(inits.length, 3);
+  for (const init of inits) assert.equal(init.redirect, "error");
 });
