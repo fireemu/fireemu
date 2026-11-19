@@ -856,8 +856,10 @@ enum Cover {
 /// nothing but `__name__` ordered, the automatic single-field indexes qualify too, provided the
 /// one in the requested `__name__` direction is enabled. The rules production was recorded
 /// adding to that (fs-query-index-merge, 2026-11-19) apply only where the merge was refused
-/// without them and only at collection scope, so every answer the planner gave before keeps
-/// its members and their order. Returns the members chosen.
+/// without them and only at collection scope, so they never change the members or the order
+/// of a merge the other members already make (coverage by filter kind, `Cover`, does change
+/// one earlier answer on purpose: an array-contains member no longer covers an equality on
+/// the same field). Returns the members chosen.
 fn merged_indexes_for(
     req: &Requirement,
     set: &IndexSet,
