@@ -1045,9 +1045,9 @@ fn automatic_index_name_direction_for_equality_and_array_queries() {
         ),
         other => panic!("{other:?}"),
     }
-    // An equality prefix serves either direction, so the only enabled mode is used (see
-    // `equality_only_automatic_indexes_accept_either_enabled_order_direction`), but the
-    // decision names that index.
+    // With only the ascending mode enabled, production refuses equality plus `__name__ DESC`
+    // and asks for `(owner ASC, __name__ DESC)` (fs-query-index-merge
+    // ascending-only#a-alone-name-desc, recorded 2026-11-19).
     let mut ascending_only = IndexSet::default();
     ascending_only.set_single_field_indexes(
         &collection,
@@ -1061,8 +1061,8 @@ fn automatic_index_name_direction_for_equality_and_array_queries() {
         &ascending_only,
         standard(),
     ) {
-        IndexDecision::UseIndex { index } => assert_eq!(
-            index_modes(&index),
+        IndexDecision::MissingRequired { requirement } => assert_eq!(
+            index_modes(&requirement),
             vec![
                 ("owner".to_owned(), IndexFieldMode::Ascending),
                 ("__name__".to_owned(), IndexFieldMode::Descending),

@@ -4,7 +4,8 @@ import IndexMerge.Lemmas
 # Properties of the merge decision
 
 - `merged_sound`: a merge's members are members in the sense of `Member` (configured
-  composites serving some equality fields with the same order, or enabled automatic indexes)
+  composites serving some equality fields, possibly followed by the array field, with the same
+  order, or enabled automatic indexes)
   and together cover every wanted field.
 - `merged_iff_spec`: the algorithm (maximal equality prefixes, largest first, greedy cover)
   merges exactly when the declarative `MergeSpec` holds; `merged_none_iff` restates the refusal
@@ -29,10 +30,30 @@ theorem mem_of_mem_servedPrefix {r : Req} {idx : Index} {x : Field}
   simp only [Bool.and_eq_true, List.contains_iff_mem] at hall
   exact hall.1
 
+theorem carriedContains_cases (r : Req) (idx : Index) (served : List Field) :
+    carriedContains r idx served = none ∨
+      (carriedContains r idx served = r.contains ∧ carryOk r = true) := by
+  unfold carriedContains
+  split
+  · rename_i hok
+    split
+    · rename_i c hc
+      split
+      · split
+        · exact Or.inr ⟨hc.symm, hok⟩
+        · exact Or.inl rfl
+      · exact Or.inl rfl
+    · exact Or.inl rfl
+  · exact Or.inl rfl
+
 theorem compositeCandidates_mem {r : Req} {s : ISet} {coll : Nat} {group : Bool}
     {p : List Field × Index} (h : p ∈ compositeCandidates r s coll group) :
-    p.2 ∈ s.composites ∧ p.1 = (servedPrefix r p.2).eraseDups ∧ servedPrefix r p.2 ≠ [] ∧
-      compositeServes p.2 (subReq r (servedPrefix r p.2)) coll group = true := by
+    p.2 ∈ s.composites ∧
+      p.1 = (servedPrefix r p.2 ++ (carriedContains r p.2 (servedPrefix r p.2)).toList).eraseDups ∧
+      servedPrefix r p.2 ≠ [] ∧
+      compositeServes p.2
+        (subReqC r (servedPrefix r p.2) (carriedContains r p.2 (servedPrefix r p.2))) coll group
+        = true := by
   unfold compositeCandidates at h
   obtain ⟨idx, hidx, hp⟩ := List.mem_filterMap.mp h
   simp only at hp
@@ -51,9 +72,8 @@ theorem autoCandidates_mem {r : Req} {s : ISet} {coll : Nat} {group : Bool}
       ((∃ f, f ∈ r.eq ∧ hasMode s coll f group (modeFor (nameDirOf r.order)) = true ∧
           p = ([f], singleFieldIndex coll group f (modeFor (nameDirOf r.order))
             (modeFor (nameDirOf r.order)))) ∨
-        (∃ c, r.contains = some c ∧ nameDirOf r.order = .asc ∧
-          hasMode s coll c group .contains = true ∧
-          p = ([c], singleFieldIndex coll group c .contains .asc))) := by
+        (∃ c, r.contains = some c ∧ hasMode s coll c group .contains = true ∧
+          p = ([c], singleFieldIndex coll group c .contains (modeFor (nameDirOf r.order))))) := by
   unfold autoCandidates at h
   split at h
   · rename_i hall
@@ -62,6 +82,17 @@ theorem autoCandidates_mem {r : Req} {s : ISet} {coll : Nat} {group : Bool}
       simpa using (List.all_eq_true.mp hall) o ho
     refine ⟨hall', ?_⟩
     rcases List.mem_append.mp h with h | h
+    · right
+      split at h
+      · rename_i c hc
+        split at h
+        · rename_i hcond
+          simp only [Bool.and_eq_true] at hcond
+          simp only [List.mem_singleton] at h
+          subst h
+          exact ⟨c, hc, hcond.2, rfl⟩
+        · simp at h
+      · simp at h
     · left
       obtain ⟨f, hf, hp⟩ := List.mem_filterMap.mp h
       split at hp
@@ -70,22 +101,6 @@ theorem autoCandidates_mem {r : Req} {s : ISet} {coll : Nat} {group : Bool}
         cases hp
         exact ⟨f, mem_sortFields.mp hf, hc.2, rfl⟩
       · contradiction
-    · right
-      split at h
-      · rename_i c hc
-        split at h
-        · rename_i hcond
-          simp only [Bool.and_eq_true, beq_iff_eq] at hcond
-          have hdir : nameDirOf r.order = .asc := by
-            have := hcond.1.1
-            revert this
-            cases nameDirOf r.order <;> simp [modeFor]
-          simp only [List.mem_singleton] at h
-          subst h
-          refine ⟨c, hc, hdir, hcond.2, ?_⟩
-          rw [hcond.1.1]
-        · simp at h
-      · simp at h
   · simp at h
 
 /-- Every candidate is a member covering the candidate's fields. -/
@@ -95,24 +110,32 @@ theorem member_of_candidate {r : Req} {s : ISet} {coll : Nat} {group : Bool}
   unfold candidates at h
   rcases List.mem_append.mp h with h | h
   · obtain ⟨hidx, hfields, hne, hserves⟩ := compositeCandidates_mem (mem_sortDesc.mp h)
-    refine ⟨servedPrefix r p.2, .composite _ _ hidx hne (fun _ hx => mem_of_mem_servedPrefix hx)
-      hserves, fun x => ?_⟩
+    refine ⟨servedPrefix r p.2 ++ (carriedContains r p.2 (servedPrefix r p.2)).toList,
+      .composite _ _ _ hidx hne (fun _ hx => mem_of_mem_servedPrefix hx)
+        (carriedContains_cases _ _ _) hserves, fun x => ?_⟩
     rw [hfields, List.mem_eraseDups]
-  · obtain ⟨hall, (⟨f, hf, hm, rfl⟩ | ⟨c, hc, hdir, hm, rfl⟩)⟩ := autoCandidates_mem h
+  · obtain ⟨hall, (⟨f, hf, hm, rfl⟩ | ⟨c, hc, hm, rfl⟩)⟩ := autoCandidates_mem h
     · exact ⟨[f], .automatic f hf hall hm, fun _ => Iff.rfl⟩
-    · exact ⟨[c], .arrayContains c hc hall hdir hm, fun _ => Iff.rfl⟩
+    · exact ⟨[c], .arrayContains c hc hall hm, fun _ => Iff.rfl⟩
 
 theorem wanted_of_member {r : Req} {s : ISet} {coll : Nat} {group : Bool} {m : Index}
     {S : List Field} (h : Member r s coll group m S) : ∀ x ∈ S, Wanted r x := by
   cases h with
-  | composite _ _ _ _ hS _ => exact fun x hx => Or.inl (hS x hx)
+  | composite _ S c _ _ hS hc _ =>
+    intro x hx
+    rcases List.mem_append.mp hx with hx | hx
+    · exact Or.inl (hS x hx)
+    · rcases hc with rfl | ⟨rfl, _⟩
+      · simp at hx
+      · exact Or.inr (Option.mem_toList.mp hx)
   | automatic f hf _ _ => intro x hx; simp at hx; subst hx; exact Or.inl hf
-  | arrayContains c hc _ _ _ => intro x hx; simp at hx; subst hx; exact Or.inr hc
+  | arrayContains c hc _ _ => intro x hx; simp at hx; subst hx; exact Or.inr hc
 
 /-! ## A member's equality fields are exactly the composite's maximal equality prefix -/
 
 theorem matchOrder_cons {f : IField} {fs : List IField} {os : List OrderC}
-    (h : matchOrder (f :: fs) os ≠ none) : ∃ o os', os = o :: os' ∧ f.path = o.path := by
+    (h : matchOrder (f :: fs) os ≠ none) :
+    ∃ o os', os = o :: os' ∧ f.path = o.path ∧ f.mode = modeFor o.dir := by
   cases os with
   | nil => simp [matchOrder] at h
   | cons o os' =>
@@ -121,7 +144,7 @@ theorem matchOrder_cons {f : IField} {fs : List IField} {os : List OrderC}
     split at h
     · rename_i hc
       simp only [Bool.and_eq_true, beq_iff_eq] at hc
-      exact hc.1
+      exact hc
     · simp at h
 
 theorem matchOrder_of_suffixServes {rest : List IField} {order : List OrderC}
@@ -134,13 +157,38 @@ theorem matchOrder_of_suffixServes {rest : List IField} {order : List OrderC}
     rw [heq]
     simp
 
+theorem modeFor_ne_contains (d : Dir) : modeFor d ≠ .contains := by
+  cases d <;> simp [modeFor]
+
+/-- An index suffix that serves an order never starts with a contains field. -/
+theorem suffixServes_head_not_contains {f : IField} {t : List IField} {order : List OrderC}
+    (h : suffixServes (f :: t) order = true) : f.mode ≠ .contains := by
+  intro hm
+  have hm' := matchOrder_of_suffixServes h
+  by_cases hf : f.path = NAME
+  · unfold suffixServes at h
+    have hfind : (f :: t).find? (·.path == NAME) = some f := by simp [hf]
+    split at h
+    · simp at h
+    · rw [hfind] at h
+      simp only [beq_iff_eq, hm] at h
+      exact modeFor_ne_contains _ h.symm
+  · have hfilter : (f :: t).filter (·.path != NAME) = f :: t.filter (·.path != NAME) := by
+      simp [hf]
+    rw [hfilter] at hm'
+    obtain ⟨o, _, _, _, hmode⟩ := matchOrder_cons hm'
+    rw [hm] at hmode
+    exact modeFor_ne_contains _ hmode.symm
+
 theorem servedPrefix_of_serves {r : Req} (hwf : WF r) {idx : Index} {S : List Field}
-    {coll : Nat} {group : Bool} (hS : ∀ x ∈ S, x ∈ r.eq)
-    (h : compositeServes idx (subReq r S) coll group = true) :
+    {c : Option Field} {coll : Nat} {group : Bool} (hS : ∀ x ∈ S, x ∈ r.eq)
+    (hc : c = none ∨ (c = r.contains ∧ carryOk r = true))
+    (h : compositeServes idx (subReqC r S c) coll group = true) :
     servedPrefix r idx = (idx.fields.take S.length).map (·.path) ∧ S.length ≤ idx.fields.length ∧
-      ∀ x, x ∈ (idx.fields.take S.length).map (·.path) ↔ x ∈ S := by
+      (∀ x, x ∈ (idx.fields.take S.length).map (·.path) ↔ x ∈ S) ∧
+      carriedContains r idx (servedPrefix r idx) = c := by
   unfold compositeServes at h
-  simp only [subReq, Bool.or_eq_true, bne_iff_ne, ne_eq, beq_iff_eq, Bool.and_eq_true] at h
+  simp only [subReqC, Bool.or_eq_true, bne_iff_ne, ne_eq, beq_iff_eq, Bool.and_eq_true] at h
   split at h
   · simp at h
   · rename_i hcoll
@@ -166,7 +214,7 @@ theorem servedPrefix_of_serves {r : Req} (hwf : WF r) {idx : Index} {S : List Fi
             simpa using this
           simp [hS _ h1, h2]
         -- No field after it is one: it would be the first ordered field, and orders name no
-        -- equality field.
+        -- equality field; or it is the array field, which is not ordered.
         have hstop : (idx.fields.drop S.length).takeWhile
             (fun f : IField => r.eq.contains f.path && f.mode.ordered) = [] := by
           cases hd : idx.fields.drop S.length with
@@ -177,26 +225,36 @@ theorem servedPrefix_of_serves {r : Req} (hwf : WF r) {idx : Index} {S : List Fi
             · rename_i hPf
               exfalso
               simp only [Bool.and_eq_true, List.contains_iff_mem] at hPf
-              have hfn : f.path ≠ NAME := fun e => hwf.name_not_eq (e ▸ hPf.1)
               rw [hd] at h
-              have hm := matchOrder_of_suffixServes h
-              have hfilter : (f :: t).filter (·.path != NAME) = f :: t.filter (·.path != NAME) := by
-                simp [hfn]
-              rw [hfilter] at hm
-              obtain ⟨o, os', hos, hpath⟩ := matchOrder_cons hm
-              have ho : o ∈ r.order := by
-                have : o ∈ r.order.filter (·.path != NAME) := by rw [hos]; exact List.mem_cons_self
-                exact (List.mem_filter.mp this).1
-              exact hwf.order_not_eq o ho (hpath ▸ hPf.1)
+              cases c with
+              | none =>
+                simp only at h
+                have hfn : f.path ≠ NAME := fun e => hwf.name_not_eq (e ▸ hPf.1)
+                have hm := matchOrder_of_suffixServes h
+                have hfilter : (f :: t).filter (·.path != NAME) =
+                    f :: t.filter (·.path != NAME) := by
+                  simp [hfn]
+                rw [hfilter] at hm
+                obtain ⟨o, os', hos, hpath, _⟩ := matchOrder_cons hm
+                have ho : o ∈ r.order := by
+                  have : o ∈ r.order.filter (·.path != NAME) := by
+                    rw [hos]; exact List.mem_cons_self
+                  exact (List.mem_filter.mp this).1
+                exact hwf.order_not_eq o ho (hpath ▸ hPf.1)
+              | some c' =>
+                simp only [Bool.and_eq_true, beq_iff_eq] at h
+                rw [h.1.2] at hPf
+                simp [Mode.ordered] at hPf
             · rfl
-        refine ⟨?_, hlen', ?_⟩
-        · have htw : idx.fields.takeWhile
+        have hsp : servedPrefix r idx = (idx.fields.take S.length).map (·.path) := by
+          have htw : idx.fields.takeWhile
               (fun f : IField => r.eq.contains f.path && f.mode.ordered) =
                 idx.fields.take S.length := by
             conv => lhs; rw [← List.take_append_drop S.length idx.fields]
             rw [List.takeWhile_append_of_pos hP, hstop, List.append_nil]
           unfold servedPrefix
           rw [htw]
+        refine ⟨hsp, hlen', ?_, ?_⟩
         · intro x
           constructor
           · intro hx
@@ -205,15 +263,40 @@ theorem servedPrefix_of_serves {r : Req} (hwf : WF r) {idx : Index} {S : List Fi
           · intro hx
             obtain ⟨f, hf, hfx⟩ := hcover x hx
             exact List.mem_map.mpr ⟨f, hf, by simpa using hfx⟩
+        · rw [hsp]
+          have hl : ((idx.fields.take S.length).map (·.path)).length = S.length := by
+            simp [hlen']
+          unfold carriedContains
+          rw [hl, ← List.head?_drop]
+          cases hd : idx.fields.drop S.length with
+          | nil =>
+            rw [hd] at h
+            cases c with
+            | none => cases r.contains <;> simp
+            | some c' => simp at h
+          | cons f t =>
+            rw [hd] at h
+            cases c with
+            | none =>
+              simp only at h
+              have hnc := suffixServes_head_not_contains h
+              cases r.contains <;> simp [hnc]
+            | some c' =>
+              simp only [Bool.and_eq_true, beq_iff_eq] at h
+              rcases hc with hc | ⟨hc, hok⟩
+              · cases hc
+              · rw [← hc]
+                simp [hok, h.1.1, h.1.2]
 
 /-- Every member's fields are covered by one candidate. -/
 theorem candidate_of_member {r : Req} (hwf : WF r) {s : ISet} {coll : Nat} {group : Bool}
     {m : Index} {S : List Field} (h : Member r s coll group m S) :
     ∃ q ∈ candidates r s coll group, ∀ x ∈ S, x ∈ q.1 := by
   cases h with
-  | composite _ S hm hne hS hserves =>
-    obtain ⟨hsp, hlen, hmem⟩ := servedPrefix_of_serves hwf hS hserves
-    refine ⟨((servedPrefix r m).eraseDups, m), ?_, fun x hx => ?_⟩
+  | composite _ S c hm hne hS hc hserves =>
+    obtain ⟨hsp, hlen, hmem, hcar⟩ := servedPrefix_of_serves hwf hS hc hserves
+    refine ⟨((servedPrefix r m ++ (carriedContains r m (servedPrefix r m)).toList).eraseDups, m),
+      ?_, fun x hx => ?_⟩
     · unfold candidates
       apply List.mem_append_left
       apply mem_sortDesc.mpr
@@ -228,17 +311,22 @@ theorem candidate_of_member {r : Req} (hwf : WF r) {s : ISet} {coll : Nat} {grou
           cases hf : m.fields with
           | nil => rw [hf] at hlen; simp at hlen
           | cons g gs => simp
-      have hserves' : compositeServes m (subReq r (servedPrefix r m)) coll group = true := by
-        rw [← hserves]
+      have hserves' : compositeServes m
+          (subReqC r (servedPrefix r m) (carriedContains r m (servedPrefix r m))) coll group
+            = true := by
+        rw [← hserves, hcar]
         apply compositeServes_congr
-        · simp [subReq, hsp, List.length_take, Nat.min_eq_left hlen]
-        · intro x; simp only [subReq]; rw [hsp]; exact hmem x
+        · simp [subReqC, hsp, List.length_take, Nat.min_eq_left hlen]
+        · intro x; simp only [subReqC]; rw [hsp]; exact hmem x
         · rfl
         · rfl
-      simp only [hspne, hserves', ite_true]
-      rfl
-    · rw [List.mem_eraseDups, hsp]
-      exact (hmem x).2 hx
+      simp only [hspne, hserves', ite_true, Bool.false_eq_true, ite_false]
+    · rw [List.mem_eraseDups, hcar, List.mem_append]
+      rcases List.mem_append.mp hx with hx | hx
+      · left
+        rw [hsp]
+        exact (hmem x).2 hx
+      · exact Or.inr hx
   | automatic f hf hall hm =>
     refine ⟨([f], singleFieldIndex coll group f (modeFor (nameDirOf r.order))
       (modeFor (nameDirOf r.order))), ?_, fun x hx => hx⟩
@@ -248,20 +336,21 @@ theorem candidate_of_member {r : Req} (hwf : WF r) {s : ISet} {coll : Nat} {grou
     have hall' : r.order.all (·.path == NAME) = true :=
       List.all_eq_true.mpr fun o ho => by simp [hall o ho]
     rw [ite_eq_left hall']
-    apply List.mem_append_left
+    apply List.mem_append_right
     apply List.mem_filterMap.mpr
     refine ⟨f, mem_sortFields.mpr hf, ?_⟩
     simp [not_exempt_of_hasMode hm, hm]
-  | arrayContains c hc hall hdir hm =>
-    refine ⟨([c], singleFieldIndex coll group c .contains .asc), ?_, fun x hx => hx⟩
+  | arrayContains c hc hall hm =>
+    refine ⟨([c], singleFieldIndex coll group c .contains (modeFor (nameDirOf r.order))), ?_,
+      fun x hx => hx⟩
     unfold candidates
     apply List.mem_append_right
     unfold autoCandidates
     have hall' : r.order.all (·.path == NAME) = true :=
       List.all_eq_true.mpr fun o ho => by simp [hall o ho]
     rw [ite_eq_left hall']
-    apply List.mem_append_right
-    simp [hc, hdir, modeFor, not_exempt_of_hasMode hm, hm]
+    apply List.mem_append_left
+    simp [hc, not_exempt_of_hasMode hm, hm]
 
 /-! ## Soundness and the specification -/
 
@@ -381,9 +470,10 @@ theorem merged_none_iff {r : Req} (hwf : WF r) (s : ISet) (coll : Nat) (group : 
 theorem member_mono {r : Req} {s s' : ISet} (hle : s.le s') {coll : Nat} {group : Bool}
     {m : Index} {S : List Field} (h : Member r s coll group m S) : Member r s' coll group m S := by
   cases h with
-  | composite _ S hidx hne hS hserves => exact .composite _ S (hle.1 _ hidx) hne hS hserves
+  | composite _ S c hidx hne hS hc hserves =>
+    exact .composite _ S c (hle.1 _ hidx) hne hS hc hserves
   | automatic f hf hall hm => exact .automatic f hf hall (hasMode_mono hle hm)
-  | arrayContains c hc hall hdir hm => exact .arrayContains c hc hall hdir (hasMode_mono hle hm)
+  | arrayContains c hc hall hm => exact .arrayContains c hc hall (hasMode_mono hle hm)
 
 theorem merged_mono {r : Req} (hwf : WF r) {s s' : ISet} (hle : s.le s') (coll : Nat)
     (group : Bool) (h : (mergedIndexesFor r s coll group).isSome = true) :
@@ -396,12 +486,12 @@ theorem merged_mono {r : Req} (hwf : WF r) {s s' : ISet} (hle : s.le s') (coll :
 
 /-- If the first index set picks an enabled mode, the larger one picks an enabled mode too. -/
 theorem autoMode_mono {r : Req} {s s' : ISet} (hle : s.le s') {coll : Nat} {group : Bool}
-    {f : Field}
-    (h : (match autoMode r s coll group f with
+    {prod : Bool} {f : Field}
+    (h : (match autoMode r s coll group prod f with
       | none => none
       | some m => if hasMode s coll f group m = true then some (singleFieldIndex coll group f m
           (modeFor (nameDirOf r.order))) else none).isSome = true) :
-    ∃ m, autoMode r s' coll group f = some m ∧ hasMode s' coll f group m = true := by
+    ∃ m, autoMode r s' coll group prod f = some m ∧ hasMode s' coll f group m = true := by
   split at h
   · simp at h
   · rename_i m hm
@@ -421,17 +511,24 @@ theorem autoMode_mono {r : Req} {s s' : ISet} (hle : s.le s') {coll : Nat} {grou
           exact ⟨m, hm, hasMode_mono hle hen⟩
         · rename_i ho
           rw [ho] at hm
-          obtain ⟨x, hx, hpx⟩ := List.find?_isSome.mp (Option.isSome_iff_exists.mpr ⟨m, hm⟩)
-          have hs' : (List.find? (fun m => hasMode s' coll f group m)
-              [modeFor (nameDirOf r.order), .asc, .desc]).isSome = true :=
-            List.find?_isSome.mpr ⟨x, hx, hasMode_mono hle hpx⟩
-          obtain ⟨m', hm'⟩ := Option.isSome_iff_exists.mp hs'
-          exact ⟨m', hm', List.find?_some hm'⟩
+          simp only at hm ⊢
+          split
+          · rename_i hpd
+            rw [ite_eq_left hpd] at hm
+            exact ⟨m, hm, hasMode_mono hle hen⟩
+          · rename_i hpd
+            rw [ite_eq_right hpd] at hm
+            obtain ⟨x, hx, hpx⟩ := List.find?_isSome.mp (Option.isSome_iff_exists.mpr ⟨m, hm⟩)
+            have hs' : (List.find? (fun m => hasMode s' coll f group m)
+                [modeFor (nameDirOf r.order), .asc, .desc]).isSome = true :=
+              List.find?_isSome.mpr ⟨x, hx, hasMode_mono hle hpx⟩
+            obtain ⟨m', hm'⟩ := Option.isSome_iff_exists.mp hs'
+            exact ⟨m', hm', List.find?_some hm'⟩
     · simp at h
 
 theorem automatic_mono {r : Req} {s s' : ISet} (hle : s.le s') (coll : Nat) (group : Bool)
-    (h : (automaticIndexFor r s coll group).isSome = true) :
-    (automaticIndexFor r s' coll group).isSome = true := by
+    (prod : Bool) (h : (automaticIndexFor r s coll group prod).isSome = true) :
+    (automaticIndexFor r s' coll group prod).isSome = true := by
   unfold automaticIndexFor at *
   simp only at *
   split at h
@@ -456,11 +553,11 @@ theorem automatic_mono {r : Req} {s s' : ISet} (hle : s.le s') (coll : Nat) (gro
 /-- When `decideReq` serves a requirement. -/
 theorem served_iff (r : Req) (s : ISet) (coll : Nat) (group : Bool) (p : Policy) (e : Edition) :
     (decideReq r s coll group p e).served = true ↔
-      ((automaticIndexFor r s coll group).isSome = true ∨
+      ((automaticIndexFor r s coll group p.productionRules).isSome = true ∨
         (s.composites.find? fun i => compositeServes i r coll group).isSome = true ∨
         (p.productionRules = true ∧ (mergedIndexesFor r s coll group).isSome = true)) := by
   unfold decideReq
-  cases ha : automaticIndexFor r s coll group with
+  cases ha : automaticIndexFor r s coll group p.productionRules with
   | some a => simp [Decision.served]
   | none =>
     cases hf : s.composites.find? (fun i => compositeServes i r coll group) with
@@ -483,7 +580,7 @@ theorem decide_mono {r : Req} (hwf : WF r) {s s' : ISet} (hle : s.le s') (coll :
     (decideReq r s' coll group p e).served = true := by
   rw [served_iff] at *
   rcases h with h | h | ⟨hp, h⟩
-  · exact Or.inl (automatic_mono hle coll group h)
+  · exact Or.inl (automatic_mono hle coll group p.productionRules h)
   · exact Or.inr (Or.inl (find_mono hle coll group h))
   · exact Or.inr (Or.inr ⟨hp, merged_mono hwf hle coll group h⟩)
 

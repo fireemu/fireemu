@@ -66,19 +66,29 @@ info: 'IM.merged_refuses_eq_ordered' depends on axioms: [propext, Classical.choi
 #guard_msgs in #print axioms IM.spec_implies_broad
 
 /--
-info: 'IM.broad_composite_with_array_field' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.merge_composite_with_array_field' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.broad_composite_with_array_field
+#guard_msgs in #print axioms IM.merge_composite_with_array_field
 
 /--
-info: 'IM.broad_opposite_direction_automatic' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.composite_with_array_field_descending_name_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.broad_opposite_direction_automatic
+#guard_msgs in #print axioms IM.composite_with_array_field_descending_name_refused
 
 /--
-info: 'IM.broad_contains_with_descending_name' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.opposite_direction_automatic_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.broad_contains_with_descending_name
+#guard_msgs in #print axioms IM.opposite_direction_automatic_refused
+
+/--
+info: 'IM.merge_contains_with_descending_name' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.merge_contains_with_descending_name
+
+/--
+info: 'IM.broad_mirror_direction_automatic' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.broad_mirror_direction_automatic
 
 /-- info: 'IM.broad_not_complete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.broad_not_complete

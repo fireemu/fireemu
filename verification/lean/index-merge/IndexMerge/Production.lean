@@ -18,6 +18,11 @@ Sources:
   FS-QUERY-INDEX-comparison.json`, decision S4), so members compare as a set.
 - `tools/sdk-smoke/index-merge-oracle.mjs`, whose expected outcomes were asserted against
   production (2026-09-08) with the indexes in `conformance/firestore.indexes.json`.
+- `conformance/fs-query-index-merge-production.json` (the index-merge observation, recorded
+  2026-11-19, identical in both recordings) with the indexes in
+  `conformance/fs-query-index-merge.indexes.json`; the queries are in
+  `conformance/src/fs-query-index-merge/corpus.mjs`. Every query row and every plan row is
+  listed; a served plan row also names the members.
 
 Rows outside the model and therefore not listed: OR queries and other DNF expansions with
 different disjuncts (`or-of-single-fields`, `or-needing-composite`), aggregations
@@ -227,7 +232,74 @@ def oracleRows : List Case := [
     (query (cid "ord") [gtF "__name__"] [desc "__name__"]),
   oracle "pk-name-equality-and-exempt-field" false (query pk [eqF "__name__", eqF "n"])]
 
-def productionRows : List Case := fsqiRows ++ oracleRows
+/-! ## `conformance/fs-query-index-merge.indexes.json`
+
+Only the entries of the observation's collection groups: `imb` built-in, `ima` with `a`
+ascending only (collection scope), `imx` with the composite `(a ASC, tags CONTAINS)` and `a`
+and `tags` exempt, `imc` with the same composite and nothing exempt. The other entries of the
+file concern other collection groups and do not change these decisions. -/
+
+def imb := cid "imb"
+def ima := cid "ima"
+def imx := cid "imx"
+def imc := cid "imc"
+
+def mergeObsConfig : Config :=
+  { composites := [
+      ix imx [("a", .asc), ("tags", .contains)],
+      ix imc [("a", .asc), ("tags", .contains)]]
+    overrides := [
+      (ima, fid "a", [(.collection, .asc)]),
+      (imx, fid "a", []),
+      (imx, fid "tags", [])] }
+
+def mergeObs (program row : String) (served : Bool) (q : Query)
+    (plan : Option (List (List IField)) := none) : Case :=
+  let label := s!"fs-query-index-merge/shapes/{program}#{row}"
+  { label, query := q, config := mergeObsConfig, production := some (served, label),
+    productionPlan := plan }
+
+def mergeObsRows : List Case := [
+  -- shapes/builtin (imb)
+  mergeObs "builtin" "f3-contains-name-desc" true (query imb [eqF "a", hasF "tags"] [desc "__name__"]),
+  mergeObs "builtin" "f3-contains-name-asc" true (query imb [eqF "a", hasF "tags"] [asc "__name__"]),
+  mergeObs "builtin" "contains-alone-name-desc" true (query imb [hasF "tags"] [desc "__name__"]),
+  mergeObs "builtin" "a-alone-name-desc" true (query imb [eqF "a"] [desc "__name__"]),
+  mergeObs "builtin" "f2-equalities-name-desc" true (query imb [eqF "a", eqF "b"] [desc "__name__"]),
+  mergeObs "builtin" "f1-equalities-and-contains" true
+    (query imb [eqF "a", eqF "b", hasF "tags"]),
+  mergeObs "builtin" "f3-contains-name-desc-plan" true
+    (query imb [eqF "a", hasF "tags"] [desc "__name__"])
+    (some [[⟨fid "tags", .contains⟩], [⟨fid "a", .desc⟩]]),
+  -- shapes/ascending-only (ima)
+  mergeObs "ascending-only" "f2-equalities-name-desc" false
+    (query ima [eqF "a", eqF "b"] [desc "__name__"]),
+  mergeObs "ascending-only" "f2-equalities-name-asc" true
+    (query ima [eqF "a", eqF "b"] [asc "__name__"]),
+  mergeObs "ascending-only" "a-alone-name-desc" false (query ima [eqF "a"] [desc "__name__"]),
+  mergeObs "ascending-only" "a-alone-name-asc" true (query ima [eqF "a"] [asc "__name__"]),
+  mergeObs "ascending-only" "b-alone-name-desc" true (query ima [eqF "b"] [desc "__name__"]),
+  mergeObs "ascending-only" "order-a-desc" false (query ima [] [desc "a"]),
+  mergeObs "ascending-only" "order-a-asc" true (query ima [] [asc "a"]),
+  mergeObs "ascending-only" "f2-equalities-name-desc-plan" false
+    (query ima [eqF "a", eqF "b"] [desc "__name__"]),
+  -- shapes/exempt-with-composite (imx)
+  mergeObs "exempt-with-composite" "f1-equalities-and-contains" true
+    (query imx [eqF "a", eqF "b", hasF "tags"]),
+  mergeObs "exempt-with-composite" "a-and-contains" true (query imx [eqF "a", hasF "tags"]),
+  mergeObs "exempt-with-composite" "b-alone" true (query imx [eqF "b"]),
+  mergeObs "exempt-with-composite" "a-and-b" false (query imx [eqF "a", eqF "b"]),
+  mergeObs "exempt-with-composite" "order-a-desc" false (query imx [] [desc "a"]),
+  mergeObs "exempt-with-composite" "contains-alone" false (query imx [hasF "tags"]),
+  mergeObs "exempt-with-composite" "f1-equalities-and-contains-plan" true
+    (query imx [eqF "a", eqF "b", hasF "tags"])
+    (some [[⟨fid "a", .asc⟩, ⟨fid "tags", .contains⟩], [⟨fid "b", .asc⟩]]),
+  -- shapes/composite-not-exempt (imc)
+  mergeObs "composite-not-exempt" "f1-equalities-and-contains" true
+    (query imc [eqF "a", eqF "b", hasF "tags"]),
+  mergeObs "composite-not-exempt" "a-and-contains" true (query imc [eqF "a", hasF "tags"])]
+
+def productionRows : List Case := fsqiRows ++ oracleRows ++ mergeObsRows
 
 /-- The members a decision plans, without `__name__` fields. -/
 def Decision.planFields : Decision → List (List IField)
@@ -251,6 +323,7 @@ def productionDisagreements : List String :=
   (productionRows.filter (!·.agreesWithProduction)).map (·.label)
 
 #guard productionDisagreements == []
-#guard productionRows.length == 77
+#guard mergeObsRows.length == 24
+#guard productionRows.length == 101
 
 end IM

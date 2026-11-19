@@ -4,20 +4,30 @@ import IndexMerge.Theorems
 # The broader reading of the specification, and what the algorithm does not do
 
 `spec_implies_broad`: every merge the algorithm makes is also a merge under `BroadSpec`, where a
-member is any index the planner's own single-index rules accept for some equality fields and,
-optionally, the array field. The converse is false; the counterexamples below are findings,
-and none of them has a recorded production verdict:
+member is any index the planner's own single-index rules (under production's rules) accept for
+some equality fields and, optionally, the array field. The converse is false:
 
-- `broad_composite_with_array_field`: a composite that carries the array field never joins a
-  merge, although it serves its equality fields and the array field on its own.
-- `broad_opposite_direction_automatic`: the single-index rule serves `a == x ORDER BY __name__
-  DESC` with `a`'s ascending automatic index (an equality prefix serves either direction), but
-  a merge takes an automatic index only in the requested `__name__` direction.
-- `broad_contains_with_descending_name`: the single-index rule serves `tags array-contains x
-  ORDER BY __name__ DESC` with the contains index, but a merge takes the contains index only for
-  an ascending `__name__`.
+- `broad_mirror_direction_automatic`, `broad_not_complete`: the single-index rule serves
+  `a == x ORDER BY __name__ ASC` with `a`'s descending automatic index (an equality prefix
+  serves either direction), but a merge takes an automatic index only in the requested
+  `__name__` direction. This shape has no recorded production verdict.
 
-The other two findings concern how the result depends on the configuration:
+Three shapes that were counterexamples before the index-merge observation
+(`conformance/fs-query-index-merge-production.json`, recorded 2026-11-19) now follow
+production:
+
+- `merge_composite_with_array_field` (F1): a composite that carries the array field after its
+  equality prefix joins a merge as the member for those fields and the array field, when
+  nothing but `__name__` is ordered, ascending (the recorded shape);
+  `composite_with_array_field_descending_name_refused` (unrecorded): with `__name__`
+  descending it does not.
+- `opposite_direction_automatic_refused` (F2): production refuses `a == x ORDER BY __name__
+  DESC` when only `a`'s ascending index is enabled, so the single-index rule does too, nothing
+  serves `a` in `a == x AND b == y ORDER BY __name__ DESC`, and `BroadSpec` fails with the merge.
+- `merge_contains_with_descending_name` (F3): the contains index joins a merge in either
+  `__name__` direction.
+
+The other findings concern how the result depends on the configuration:
 
 - `members_depend_on_order`: the members chosen depend on the order composites were added in
   (whether a merge exists does not: `merged_perm`).
@@ -52,7 +62,7 @@ theorem eraseDups_single (f : Field) : [f].eraseDups = [f] := by
 theorem auto_of_automatic_member {r : Req} {s : ISet} {coll : Nat} {group : Bool} {f : Field}
     (hf : f ≠ NAME) (hall : ∀ o ∈ r.order, o.path = NAME)
     (hm : hasMode s coll f group (modeFor (nameDirOf r.order)) = true) :
-    automaticIndexFor (subReqC r [f] none) s coll group =
+    automaticIndexFor (subReqC r [f] none) s coll group true =
       some (singleFieldIndex coll group f (modeFor (nameDirOf r.order))
         (modeFor (nameDirOf r.order))) := by
   have ht : touched (subReqC r [f] none) = [f] := by
@@ -60,44 +70,50 @@ theorem auto_of_automatic_member {r : Req} {s : ISet} {coll : Nat} {group : Bool
   unfold automaticIndexFor
   simp only [ht, List.length_singleton, gt_iff_lt, Nat.lt_irrefl, ite_false]
   simp only [subReqC, not_exempt_of_hasMode hm, Bool.false_eq_true, ite_false]
-  have hmode : autoMode (subReqC r [f] none) s coll group f = some (modeFor (nameDirOf r.order)) := by
+  have hmode : autoMode (subReqC r [f] none) s coll group true f =
+      some (modeFor (nameDirOf r.order)) := by
     unfold autoMode
-    simp [subReqC, find_path_none hall hf, hm]
+    cases hd : nameDirOf r.order <;>
+      simp [subReqC, find_path_none hall hf, hd, modeFor] <;> simp [hd, modeFor] at hm <;>
+      simp [hm]
   simp only [subReqC] at hmode
   rw [hmode]
   simp [hm]
 
 theorem auto_of_contains_member {r : Req} {s : ISet} {coll : Nat} {group : Bool} {c : Field}
-    (hc : c ≠ NAME) (hall : ∀ o ∈ r.order, o.path = NAME) (hdir : nameDirOf r.order = .asc)
+    (hc : c ≠ NAME) (hall : ∀ o ∈ r.order, o.path = NAME)
     (hm : hasMode s coll c group .contains = true) :
-    automaticIndexFor (subReqC r [] (some c)) s coll group =
-      some (singleFieldIndex coll group c .contains .asc) := by
+    automaticIndexFor (subReqC r [] (some c)) s coll group true =
+      some (singleFieldIndex coll group c .contains (modeFor (nameDirOf r.order))) := by
   have ht : touched (subReqC r [] (some c)) = [c] := by
     simp [touched, subReqC, filter_name_nil hall, eraseDups_single]
   unfold automaticIndexFor
   simp only [ht, List.length_singleton, gt_iff_lt, Nat.lt_irrefl, ite_false]
   simp only [subReqC, not_exempt_of_hasMode hm, Bool.false_eq_true, ite_false]
-  have hmode : autoMode (subReqC r [] (some c)) s coll group c = some .contains := by
+  have hmode : autoMode (subReqC r [] (some c)) s coll group true c = some .contains := by
     unfold autoMode
     simp [subReqC, find_path_none hall hc]
   simp only [subReqC] at hmode
   rw [hmode]
-  simp [hm, hdir, modeFor]
+  simp [hm]
 
 theorem single_of_member {r : Req} (hwf : WF r) (hc : r.contains ≠ some NAME) {s : ISet}
     {coll : Nat} {group : Bool} {m : Index} {S : List Field} (h : Member r s coll group m S) :
     ∃ S' c, SingleServes r s coll group m S' c ∧ ∀ x ∈ S, x ∈ S' ∨ c = some x := by
   cases h with
-  | composite _ S hidx hne hS hserves =>
-    exact ⟨S, none, ⟨Or.inl hne, hS, Or.inl rfl, Or.inr ⟨hidx, hserves⟩⟩, fun x hx => Or.inl hx⟩
+  | composite _ S c hidx hne hS hcc hserves =>
+    refine ⟨S, c, ⟨Or.inl hne, hS, hcc.imp_right (·.1), Or.inr ⟨hidx, hserves⟩⟩, fun x hx => ?_⟩
+    rcases List.mem_append.mp hx with hx | hx
+    · exact Or.inl hx
+    · exact Or.inr (Option.mem_toList.mp hx)
   | automatic f hf hall hm =>
     have hfn : f ≠ NAME := fun e => hwf.name_not_eq (e ▸ hf)
     refine ⟨[f], none, ⟨Or.inl (by simp), by simpa using hf, Or.inl rfl,
       Or.inl (auto_of_automatic_member hfn hall hm)⟩, fun x hx => Or.inl hx⟩
-  | arrayContains c hcon hall hdir hm =>
+  | arrayContains c hcon hall hm =>
     have hcn : c ≠ NAME := fun e => hc (e ▸ hcon)
     refine ⟨[], some c, ⟨Or.inr rfl, by simp, Or.inr hcon.symm,
-      Or.inl (auto_of_contains_member hcn hall hdir hm)⟩, fun x hx => ?_⟩
+      Or.inl (auto_of_contains_member hcn hall hm)⟩, fun x hx => ?_⟩
     simp at hx
     exact Or.inr (by rw [hx])
 
@@ -124,62 +140,136 @@ def f1Composite : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨3, .contains⟩
 def f1Set : ISet :=
   ⟨[f1Composite], fun _ f => if f == 1 || f == 3 then [] else stdModes⟩
 
-theorem broad_composite_with_array_field :
-    BroadSpec f1Req f1Set 0 false ∧ mergedIndexesFor f1Req f1Set 0 false = none ∧
+/-- F1, recorded (`fs-query-index-merge/shapes/exempt-with-composite#f1-equalities-and-contains`
+and its plan): the composite that carries the array field after `a` joins the merge as the
+member for `a` and `tags`, with `b`'s automatic index; the members are what production's plan
+names. -/
+theorem merge_composite_with_array_field :
+    BroadSpec f1Req f1Set 0 false ∧ MergeSpec f1Req f1Set 0 false ∧
+      mergedIndexesFor f1Req f1Set 0 false =
+        some [f1Composite, singleFieldIndex 0 false 2 .asc .asc] ∧
       decideReq f1Req f1Set 0 false .production .standard =
-        .missing (requiredIndex f1Req 0 false) := by
-  refine ⟨⟨by decide, rfl, fun x hx => ?_⟩, by decide, by decide⟩
-  simp only [Wanted, f1Req, List.mem_cons, List.not_mem_nil, or_false,
-    Option.some.injEq] at hx
-  rcases hx with (rfl | rfl) | rfl
-  · exact ⟨f1Composite, [1], some 3, by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
-  · exact ⟨singleFieldIndex 0 false 2 .asc .asc, [2], none,
-      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
-  · exact ⟨f1Composite, [1], some 3, by unfold SingleServes subReqC; decide, Or.inr rfl⟩
+        .merge [f1Composite, singleFieldIndex 0 false 2 .asc .asc] := by
+  have hm : (mergedIndexesFor f1Req f1Set 0 false).isSome = true := by decide
+  have hspec := (merged_iff_spec ⟨by decide, by decide⟩ f1Set 0 false).mp hm
+  exact ⟨spec_implies_broad ⟨by decide, by decide⟩ (by decide) hspec, hspec, by decide,
+    by decide⟩
+
+/-- F1 with `__name__` descending, unrecorded: the composite carries the array field only in
+the recorded shape (nothing but `__name__` ordered, ascending), so with `ORDER BY __name__
+DESC` it is no candidate, nothing else serves the exempt `a`, and the query is refused. No
+production verdict exists for this shape. -/
+theorem composite_with_array_field_descending_name_refused :
+    let r : Req := { f1Req with order := nameDesc }
+    mergedIndexesFor r f1Set 0 false = none ∧
+      decideReq r f1Set 0 false .production .standard = .missing (requiredIndex r 0 false) := by
+  constructor <;> decide
 
 /-- `a == 1 AND b == 1 ORDER BY __name__ DESC` with only `a`'s ascending index enabled. -/
 def f2Req : Req := ⟨[1, 2], none, nameDesc, false⟩
 def f2Set : ISet := ⟨[], fun _ f => if f == 1 then [(.collection, .asc)] else stdModes⟩
 
-theorem broad_opposite_direction_automatic :
-    BroadSpec f2Req f2Set 0 false ∧ mergedIndexesFor f2Req f2Set 0 false = none ∧
+theorem touched_subReqC_none {r : Req} (hall : ∀ o ∈ r.order, o.path = NAME) (S : List Field) :
+    touched (subReqC r S none) = S.eraseDups := by
+  simp [touched, subReqC, filter_name_nil hall]
+
+/-- F2, recorded (`fs-query-index-merge/shapes/ascending-only#f2-equalities-name-desc` and
+`#a-alone-name-desc`): production refuses `a == 1 ORDER BY __name__ DESC` when only `a`'s
+ascending index is enabled, and the single-index rule under production's rules does too, so
+nothing serves `a` and F2 is no longer a counterexample to completeness: `BroadSpec` fails, and
+the merge refuses as production does. -/
+theorem opposite_direction_automatic_refused :
+    ¬ BroadSpec f2Req f2Set 0 false ∧ mergedIndexesFor f2Req f2Set 0 false = none ∧
       decideReq f2Req f2Set 0 false .production .standard =
         .missing (requiredIndex f2Req 0 false) := by
-  refine ⟨⟨by decide, rfl, fun x hx => ?_⟩, by decide, by decide⟩
-  simp only [Wanted, f2Req, List.mem_cons, List.not_mem_nil, or_false,
-    reduceCtorEq] at hx
-  rcases hx with (rfl | rfl)
-  · exact ⟨singleFieldIndex 0 false 1 .asc .desc, [1], none,
-      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
-  · exact ⟨singleFieldIndex 0 false 2 .desc .desc, [2], none,
-      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
+  refine ⟨?_, by decide, by decide⟩
+  rintro ⟨_, _, hcov⟩
+  obtain ⟨m, S, c, ⟨_, hS, hc, hserves⟩, hx⟩ := hcov 1 (Or.inl (by simp [f2Req]))
+  have hc' : c = none := by rcases hc with hc | hc <;> simpa [f2Req] using hc
+  subst hc'
+  have h1 : 1 ∈ S := by simpa using hx
+  rcases hserves with hauto | ⟨hmem, _⟩
+  · have hall : ∀ o ∈ f2Req.order, o.path = NAME := by decide
+    unfold automaticIndexFor at hauto
+    rw [touched_subReqC_none hall] at hauto
+    simp only at hauto
+    split at hauto
+    · simp at hauto
+    · rename_i hlen
+      split at hauto
+      · rename_i ht
+        have : 1 ∈ S.eraseDups := List.mem_eraseDups.mpr h1
+        rw [ht] at this
+        simp at this
+      · rename_i f rest ht
+        have hrest : rest = [] := by
+          cases rest with
+          | nil => rfl
+          | cons _ _ => rw [ht] at hlen; simp at hlen
+        subst hrest
+        have hf1 : f = 1 := by
+          have : 1 ∈ S.eraseDups := List.mem_eraseDups.mpr h1
+          rw [ht] at this
+          simp at this
+          exact this.symm
+        subst hf1
+        have hmode : autoMode (subReqC f2Req S none) f2Set 0 false true 1 = some .desc := by
+          simp [autoMode, subReqC, f2Req, nameDesc, nameDirOf, NAME]
+        have hdis : hasMode f2Set 0 1 false .desc = false := by decide
+        rw [hmode] at hauto
+        simp [hdis] at hauto
+  · simp [f2Set] at hmem
 
 /-- `a == 1 AND tags array-contains 1 ORDER BY __name__ DESC` with the built-in single-field
 indexes. -/
 def f3Req : Req := ⟨[1], some 3, nameDesc, false⟩
 def f3Set : ISet := ⟨[], fun _ _ => stdModes⟩
 
-theorem broad_contains_with_descending_name :
-    BroadSpec f3Req f3Set 0 false ∧ mergedIndexesFor f3Req f3Set 0 false = none ∧
+/-- F3, recorded (`fs-query-index-merge/shapes/builtin#f3-contains-name-desc` and its plan): the
+contains index joins a merge in the requested `__name__` direction, listed first; the members
+are what production's plan names. -/
+theorem merge_contains_with_descending_name :
+    BroadSpec f3Req f3Set 0 false ∧ MergeSpec f3Req f3Set 0 false ∧
+      mergedIndexesFor f3Req f3Set 0 false =
+        some [singleFieldIndex 0 false 3 .contains .desc, singleFieldIndex 0 false 1 .desc .desc] ∧
       decideReq f3Req f3Set 0 false .production .standard =
-        .missing (requiredIndex f3Req 0 false) := by
-  refine ⟨⟨by decide, rfl, fun x hx => ?_⟩, by decide, by decide⟩
-  simp only [Wanted, f3Req, List.mem_cons, List.not_mem_nil, or_false,
-    Option.some.injEq] at hx
-  rcases hx with rfl | rfl
-  · exact ⟨singleFieldIndex 0 false 1 .desc .desc, [1], none,
-      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
-  · exact ⟨singleFieldIndex 0 false 3 .contains .desc, [], some 3,
-      by unfold SingleServes subReqC; decide, Or.inr rfl⟩
+        .merge [singleFieldIndex 0 false 3 .contains .desc,
+          singleFieldIndex 0 false 1 .desc .desc] := by
+  have hm : (mergedIndexesFor f3Req f3Set 0 false).isSome = true := by decide
+  have hspec := (merged_iff_spec ⟨by decide, by decide⟩ f3Set 0 false).mp hm
+  exact ⟨spec_implies_broad ⟨by decide, by decide⟩ (by decide) hspec, hspec, by decide,
+    by decide⟩
 
-/-- The completeness of the algorithm against `BroadSpec` fails. -/
+/-- The mirror of F2, unrecorded: `a == 1 AND b == 1 ORDER BY __name__ ASC` with only `a`'s
+descending index enabled. The single-index rule serves `a == 1 ORDER BY __name__ ASC` from
+`(a DESC, __name__ ASC)` (an equality prefix serves either direction, and production's rules
+change only the descending request), but a merge takes an automatic index only in the
+requested `__name__` direction. No production verdict exists for this shape. -/
+def mirrorReq : Req := ⟨[1, 2], none, nameAsc, false⟩
+def mirrorSet : ISet := ⟨[], fun _ f => if f == 1 then [(.collection, .desc)] else stdModes⟩
+
+theorem broad_mirror_direction_automatic :
+    BroadSpec mirrorReq mirrorSet 0 false ∧ mergedIndexesFor mirrorReq mirrorSet 0 false = none ∧
+      decideReq mirrorReq mirrorSet 0 false .production .standard =
+        .missing (requiredIndex mirrorReq 0 false) := by
+  refine ⟨⟨by decide, rfl, fun x hx => ?_⟩, by decide, by decide⟩
+  simp only [Wanted, mirrorReq, List.mem_cons, List.not_mem_nil, or_false,
+    reduceCtorEq] at hx
+  rcases hx with (rfl | rfl)
+  · exact ⟨singleFieldIndex 0 false 1 .desc .asc, [1], none,
+      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
+  · exact ⟨singleFieldIndex 0 false 2 .asc .asc, [2], none,
+      by unfold SingleServes subReqC; decide, Or.inl (by simp)⟩
+
+/-- The completeness of the algorithm against `BroadSpec` fails, on the unrecorded mirror of
+F2. -/
 theorem broad_not_complete :
     ¬ ∀ (r : Req) (s : ISet) (coll : Nat) (group : Bool), WF r → r.contains ≠ some NAME →
       BroadSpec r s coll group → (mergedIndexesFor r s coll group).isSome = true := by
   intro h
-  have := h f3Req f3Set 0 false ⟨by decide, by decide⟩ (by decide)
-    broad_contains_with_descending_name.1
-  rw [broad_contains_with_descending_name.2.1] at this
+  have := h mirrorReq mirrorSet 0 false ⟨by decide, by decide⟩ (by decide)
+    broad_mirror_direction_automatic.1
+  rw [broad_mirror_direction_automatic.2.1] at this
   exact absurd this (by decide)
 
 /-- `a == 1 AND b == 1 ORDER BY e`: two composites serve `a` with the same order; the first one

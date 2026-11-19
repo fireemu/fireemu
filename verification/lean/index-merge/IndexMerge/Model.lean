@@ -161,17 +161,23 @@ def touched (r : Req) : List Field :=
   (r.eq ++ r.contains.toList ++ (r.order.filter (·.path != NAME)).map (·.path)).eraseDups
 
 /-- The mode `automatic_index_for` picks for the one touched field `f`, before checking that
-it is enabled. -/
-def autoMode (r : Req) (s : ISet) (coll : Nat) (group : Bool) (f : Field) : Option Mode :=
+it is enabled. `prod` is `production_rules`: under production's rules an equality ordered by
+`__name__` descending is served only by the field's descending mode; otherwise any enabled
+ordered mode serves an equality, preferring the requested `__name__` direction. -/
+def autoMode (r : Req) (s : ISet) (coll : Nat) (group : Bool) (prod : Bool) (f : Field) :
+    Option Mode :=
   let nd := nameDirOf r.order
   let ordered := r.order.find? (·.path == f)
   if r.contains.isSome then (if ordered.isSome then none else some .contains)
   else
     match ordered with
     | some o => if o.dir != nd then none else some (modeFor o.dir)
-    | none => [modeFor nd, .asc, .desc].find? (fun m => hasMode s coll f group m)
+    | none =>
+      if prod && nd == .desc then some .desc
+      else [modeFor nd, .asc, .desc].find? (fun m => hasMode s coll f group m)
 
-def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option Index :=
+def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) (prod : Bool) :
+    Option Index :=
   let t := touched r
   if t.length > 1 then none
   else
@@ -182,7 +188,7 @@ def automaticIndexFor (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option 
     | f :: _ =>
       if isExempt s coll f group then none
       else
-        match autoMode r s coll group f with
+        match autoMode r s coll group prod f with
         | none => none
         | some m => if hasMode s coll f group m then some (singleFieldIndex coll group f m nm) else none
 
@@ -193,17 +199,41 @@ that are equality fields. -/
 def servedPrefix (r : Req) (idx : Index) : List Field :=
   (idx.fields.takeWhile (fun f => r.eq.contains f.path && f.mode.ordered)).map (·.path)
 
-/-- The sub-requirement a member must serve: some equality fields and the same order. -/
-def subReq (r : Req) (eqs : List Field) : Req := ⟨eqs, none, r.order, false⟩
+/-- The sub-requirement a member must serve: some equality fields, optionally the array
+field, and the same order. -/
+def subReqC (r : Req) (eqs : List Field) (c : Option Field) : Req := ⟨eqs, c, r.order, false⟩
 
-/-- Candidate members from the composites, in list order. The field set is a `BTreeSet`
-in Rust; `eraseDups` keeps its size. -/
+/-- The sub-requirement of equality fields only. -/
+def subReq (r : Req) (eqs : List Field) : Req := subReqC r eqs none
+
+/-- Whether a composite may carry the array field after its served prefix: nothing but
+`__name__` is ordered, ascending (the shape production recorded). -/
+def carryOk (r : Req) : Bool := r.order.all (·.path == NAME) && nameDirOf r.order == .asc
+
+/-- The array field, when the shape allows it (`carryOk`) and the composite's field right after
+the served prefix is the query's array field in contains mode (`carries_contains`). -/
+def carriedContains (r : Req) (idx : Index) (served : List Field) : Option Field :=
+  if carryOk r then
+    match r.contains with
+    | some c =>
+      match idx.fields[served.length]? with
+      | some f => if f.path == c && f.mode == .contains then some c else none
+      | none => none
+    | none => none
+  else none
+
+/-- Candidate members from the composites, in list order: the served prefix, followed by the
+array field when the composite carries it there and nothing but `__name__` is ordered,
+ascending. The field set is a `BTreeSet` in Rust;
+`eraseDups` keeps its size. -/
 def compositeCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) :
     List (List Field × Index) :=
   s.composites.filterMap fun idx =>
     let served := servedPrefix r idx
+    let c := carriedContains r idx served
     if served.isEmpty then none
-    else if compositeServes idx (subReq r served) coll group then some (served.eraseDups, idx)
+    else if compositeServes idx (subReqC r served c) coll group then
+      some ((served ++ c.toList).eraseDups, idx)
     else none
 
 /-- One step of a stable sort by decreasing field count (`sort_by_key` with `Reverse`). -/
@@ -224,9 +254,9 @@ def sortFields : List Field → List Field
   | [] => []
   | x :: xs => insertField x (sortFields xs)
 
-/-- The automatic single-field candidates, only when nothing but `__name__` is ordered: each
-equality field whose index in the requested `__name__` direction is enabled, then the array
-field through its contains index when `__name__` runs ascending. -/
+/-- The automatic single-field candidates, only when nothing but `__name__` is ordered: the
+array field through its contains index (whose `__name__` runs in the requested direction),
+then each equality field whose index in the requested `__name__` direction is enabled. -/
 def autoCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) : List (List Field × Index) :=
   if r.order.all (·.path == NAME) then
     let nm := modeFor (nameDirOf r.order)
@@ -236,11 +266,11 @@ def autoCandidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) : List (List
       else none
     let cs := match r.contains with
       | some c =>
-        if nm == .asc && !isExempt s coll c group && hasMode s coll c group .contains then
+        if !isExempt s coll c group && hasMode s coll c group .contains then
           [([c], singleFieldIndex coll group c .contains nm)]
         else []
       | none => []
-    eqs ++ cs
+    cs ++ eqs
   else []
 
 def candidates (r : Req) (s : ISet) (coll : Nat) (group : Bool) : List (List Field × Index) :=
@@ -306,7 +336,7 @@ def requiredIndex (r : Req) (coll : Nat) (group : Bool) : Index :=
 
 def decideReq (r : Req) (s : ISet) (coll : Nat) (group : Bool) (p : Policy) (e : Edition) :
     Decision :=
-  match automaticIndexFor r s coll group with
+  match automaticIndexFor r s coll group p.productionRules with
   | some a => .use a
   | none =>
     match s.composites.find? (fun i => compositeServes i r coll group) with

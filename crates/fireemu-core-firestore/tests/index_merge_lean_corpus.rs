@@ -379,7 +379,7 @@ fn every_recorded_production_verdict_matches_the_planner() {
         .iter()
         .filter(|c| c.production.is_some())
         .collect();
-    assert_eq!(rows.len(), 77, "production rows in the corpus");
+    assert_eq!(rows.len(), 101, "production rows in the corpus");
     for c in rows {
         let (verdict, row) = c.production.as_ref().expect("production row");
         assert_eq!(
@@ -604,12 +604,17 @@ fn only_name_ordered(q: &Query) -> bool {
 /// Whether `member`, alone in an index set where every automatic index is disabled, serves the
 /// query of `eq` (plus the array filter when `contains`) and the shape's order and ranges:
 /// the single-index rule, used as the per-member condition of the declarative specification.
-fn composite_serves_alone(s: &Shape, member: &IndexDefinition, eq: &[&str]) -> bool {
+fn composite_serves_alone(
+    s: &Shape,
+    member: &IndexDefinition,
+    eq: &[&str],
+    contains: bool,
+) -> bool {
     let mut alone = IndexSet::default();
     alone.set_default_single_field_indexes(&coll("qx"), Vec::new());
     alone.add_composite(member.clone());
     matches!(
-        decide(&shape_query(s, eq, false), &alone, &standard()),
+        decide(&shape_query(s, eq, contains), &alone, &standard()),
         IndexDecision::UseIndex { index } if &index == member
     )
 }
@@ -617,9 +622,10 @@ fn composite_serves_alone(s: &Shape, member: &IndexDefinition, eq: &[&str]) -> b
 /// The declarative merge condition (`IM.MergeSpec`): at least two wanted fields, no explicit
 /// order on an equality field, and members covering every wanted field, where a member is a
 /// configured composite that on its own serves some of the equality filters with the same
-/// order, the enabled automatic index of an equality field in the requested `__name__`
+/// order (and, when it carries the array field after them and nothing but `__name__` is
+/// ordered, ascending, the array filter too: production F1), the enabled automatic index of an equality field in the requested `__name__`
 /// direction (nothing but `__name__` ordered), or the array field's enabled contains index
-/// (nothing but `__name__` ordered, ascending).
+/// (nothing but `__name__` ordered, either direction: production F3).
 fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     let q = shape_query(s, &s.eq, s.contains);
     let wanted = s.eq.len() + usize::from(s.contains);
@@ -640,8 +646,16 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
                     .filter(|(i, _)| mask & (1 << i) != 0)
                     .map(|(_, f)| *f)
                     .collect();
-            if composite_serves_alone(s, member, &subset) {
+            if composite_serves_alone(s, member, &subset, false) {
+                covered.extend(subset.iter().copied());
+            }
+            if s.contains
+                && only_name_ordered(&q)
+                && name_direction(&q) == Direction::Ascending
+                && composite_serves_alone(s, member, &subset, true)
+            {
                 covered.extend(subset);
+                covered.insert("tags");
             }
         }
     }
@@ -656,7 +670,6 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
             }
         }
         if s.contains
-            && nm == IndexFieldMode::Ascending
             && set
                 .single_field_modes(&coll("qx"), &fp("tags"))
                 .contains(&(group_scope, IndexFieldMode::Contains))
@@ -700,13 +713,25 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
         })
         .collect();
     // A configured composite that leads with equality fields is a composite member (a
-    // composite can also equal an automatic index, which then counts as either).
+    // composite can also equal an automatic index, which then counts as either); when the
+    // array field follows them it serves the array filter too.
     if set.composites().contains(member) && !leading.is_empty() {
+        let carries = s.contains
+            && only_name_ordered(&q)
+            && name_direction(&q) == Direction::Ascending
+            && member
+                .fields
+                .get(leading.len())
+                .is_some_and(|f| f.path == fp("tags") && f.mode == IndexFieldMode::Contains);
         assert!(
-            composite_serves_alone(s, member, &leading),
+            composite_serves_alone(s, member, &leading, carries),
             "member {member:?} does not serve {leading:?}"
         );
-        return leading.into_iter().map(str::to_owned).collect();
+        let mut cover: BTreeSet<String> = leading.into_iter().map(str::to_owned).collect();
+        if carries {
+            cover.insert("tags".to_owned());
+        }
+        return cover;
     }
     // An automatic member: (field mode, __name__ nm) with that mode enabled in the scope.
     assert!(
@@ -728,7 +753,7 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
     );
     let name = field.path.canonical();
     if field.mode == IndexFieldMode::Contains {
-        assert!(s.contains && name == "tags" && nm == IndexFieldMode::Ascending);
+        assert!(s.contains && name == "tags");
     } else {
         assert_eq!(field.mode, nm, "{member:?}");
         assert!(s.eq.contains(&name.as_str()), "{member:?}");
@@ -897,14 +922,18 @@ fn merge_members_follow_composite_insertion_order() {
     );
 }
 
-/// The Lean counterexamples to completeness against the broader per-member rule (the planner's
-/// own single-index rule, `IM.BroadSpec`), pinned as the planner decides them today. Each is a
-/// finding with no recorded production verdict; see the README.
+/// The production verdicts of the index-merge observation (conformance/fs-query-index-merge-production.json,
+/// recorded 2026-11-19 in fireemu-oracle-query `(default)`, identical in both recordings): the
+/// Lean model's former counterexamples F1 and F3 to completeness against the single-index rule
+/// are served by production, F2 is refused, and a single equality ordered by `__name__`
+/// descending is refused when only the field's ascending mode is enabled.
 #[test]
-fn findings_against_the_single_index_rule_are_refused_today() {
+fn the_index_merge_observation_verdicts() {
     let ctx = standard();
     let qx = coll("qx");
-    // F1: a composite that carries the array field never joins a merge.
+    // F1 (exempt-with-composite#f1-equalities-and-contains): the composite carrying the array
+    // field joins the merge as the member for `a` and `tags`; plan
+    // `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`, `(b ASC, __name__ ASC)`.
     let mut f1 = IndexSet::default();
     f1.set_single_field_indexes(&qx, &fp("a"), Vec::new());
     f1.set_single_field_indexes(&qx, &fp("tags"), Vec::new());
@@ -920,9 +949,15 @@ fn findings_against_the_single_index_rule_are_refused_today() {
         ],
         &[],
     );
+    assert_eq!(
+        decide(&f1_query, &f1, &ctx),
+        IndexDecision::MergeIndexes {
+            indexes: vec![a_tags.clone(), parse_index("qx C b:asc,__name__:asc")]
+        }
+    );
+    // The composite alone serves `a == 1 AND tags array-contains 1` (a-and-contains).
     let mut a_tags_only = f1.clone();
     a_tags_only.set_single_field_indexes(&qx, &fp("b"), Vec::new());
-    // The composite serves `a == 1 AND tags array-contains 1` on its own.
     let alone = build_query(
         "qx",
         false,
@@ -933,13 +968,10 @@ fn findings_against_the_single_index_rule_are_refused_today() {
         decide(&alone, &a_tags_only, &ctx),
         IndexDecision::UseIndex { index: a_tags }
     );
-    assert!(matches!(
-        decide(&f1_query, &f1, &ctx),
-        IndexDecision::MissingRequired { .. }
-    ));
 
-    // F2: the single-index rule serves `a == 1 ORDER BY __name__ DESC` with `a`'s ascending
-    // index, but a merge needs `a`'s descending one.
+    // F2 (ascending-only): with only `a ASC` enabled, both `a == 1 ORDER BY __name__ DESC`
+    // (a-alone-name-desc) and `a == 1 AND b == 1 ORDER BY __name__ DESC` are refused, with the
+    // index `(a ASC, __name__ DESC)` suggested for the first.
     let mut f2 = IndexSet::default();
     f2.set_single_field_indexes(
         &qx,
@@ -948,10 +980,12 @@ fn findings_against_the_single_index_rule_are_refused_today() {
     );
     let name_desc = [(FieldPath::document_name(), Direction::Descending)];
     let one = build_query("qx", false, vec![filter("eq", "a", "qx")], &name_desc);
-    assert!(matches!(
+    assert_eq!(
         decide(&one, &f2, &ctx),
-        IndexDecision::UseIndex { .. }
-    ));
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,__name__:desc")
+        }
+    );
     let two = build_query(
         "qx",
         false,
@@ -962,9 +996,18 @@ fn findings_against_the_single_index_rule_are_refused_today() {
         decide(&two, &f2, &ctx),
         IndexDecision::MissingRequired { .. }
     ));
+    // a-alone-name-asc is served by `a ASC` (recorded).
+    let name_asc = [(FieldPath::document_name(), Direction::Ascending)];
+    let asc = build_query("qx", false, vec![filter("eq", "a", "qx")], &name_asc);
+    assert_eq!(
+        decide(&asc, &f2, &ctx),
+        IndexDecision::UseIndex {
+            index: parse_index("qx C a:asc,__name__:asc")
+        }
+    );
 
-    // F3: the single-index rule serves `tags array-contains 1 ORDER BY __name__ DESC` with the
-    // contains index, but a merge takes the contains index only for an ascending name.
+    // F3 (builtin): `a == 1 AND tags array-contains 1 ORDER BY __name__ DESC` is a merge of
+    // `(tags ARRAY_CONTAINS, __name__ DESC)` and `(a DESC, __name__ DESC)`, in that order.
     let f3 = IndexSet::default();
     let contains_desc = build_query(
         "qx",
@@ -982,9 +1025,94 @@ fn findings_against_the_single_index_rule_are_refused_today() {
         vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")],
         &name_desc,
     );
-    assert!(matches!(
+    assert_eq!(
         decide(&joined, &f3, &ctx),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C tags:contains,__name__:desc"),
+                parse_index("qx C a:desc,__name__:desc"),
+            ]
+        }
+    );
+}
+
+/// A composite carrying the array field joins a merge only in the recorded shape: nothing but
+/// `__name__` ordered, ascending (F1). With `__name__` descending, or with an explicit order on
+/// another field, production's answer is not recorded and the merge stays refused, as before.
+#[test]
+fn a_composite_carrying_the_array_field_joins_only_in_the_recorded_shape() {
+    let qx = coll("qx");
+    let mut set = IndexSet::default();
+    set.set_single_field_indexes(&qx, &fp("a"), Vec::new());
+    set.set_single_field_indexes(&qx, &fp("tags"), Vec::new());
+    set.add_composite(parse_index("qx C a:asc,tags:contains"));
+    let filters = || {
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ]
+    };
+    let desc = build_query(
+        "qx",
+        false,
+        filters(),
+        &[(FieldPath::document_name(), Direction::Descending)],
+    );
+    assert!(matches!(
+        decide(&desc, &set, &standard()),
         IndexDecision::MissingRequired { .. }
+    ));
+    // An explicit order on another field: the composite carries the array field and the order.
+    let mut ordered = IndexSet::default();
+    ordered.set_single_field_indexes(&qx, &fp("a"), Vec::new());
+    ordered.set_single_field_indexes(&qx, &fp("tags"), Vec::new());
+    ordered.add_composite(parse_index("qx C a:asc,tags:contains,e:asc"));
+    ordered.add_composite(parse_index("qx C b:asc,e:asc"));
+    let by_e = build_query("qx", false, filters(), &[(fp("e"), Direction::Ascending)]);
+    assert!(matches!(
+        decide(&by_e, &ordered, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+}
+
+/// The refusal of a single equality ordered by `__name__` in the direction of a disabled mode
+/// is production's: the report policy serves it as an assumed index, the emulator policy
+/// serves it by the enabled mode as before. The opposite direction (ascending requested, only
+/// the descending mode enabled) has no recorded verdict and is served as before.
+#[test]
+fn the_disabled_name_direction_refusal_is_production_only() {
+    let qx = coll("qx");
+    let mut asc_only = IndexSet::default();
+    asc_only.set_single_field_indexes(
+        &qx,
+        &fp("a"),
+        vec![(IndexQueryScope::Collection, IndexFieldMode::Ascending)],
+    );
+    let name_desc = [(FieldPath::document_name(), Direction::Descending)];
+    let one = build_query("qx", false, vec![filter("eq", "a", "qx")], &name_desc);
+    assert!(matches!(
+        decide(&one, &asc_only, &context("report", "standard")),
+        IndexDecision::AssumedIndex { .. }
+    ));
+    assert_eq!(
+        decide(&one, &asc_only, &context("emulator", "standard")),
+        IndexDecision::UseIndex {
+            index: parse_index("qx C a:asc,__name__:desc")
+        }
+    );
+    // Unrecorded neighbour: ascending requested with only the descending mode enabled.
+    let mut desc_only = IndexSet::default();
+    desc_only.set_single_field_indexes(
+        &qx,
+        &fp("a"),
+        vec![(IndexQueryScope::Collection, IndexFieldMode::Descending)],
+    );
+    let name_asc = [(FieldPath::document_name(), Direction::Ascending)];
+    let neighbour = build_query("qx", false, vec![filter("eq", "a", "qx")], &name_asc);
+    assert!(matches!(
+        decide(&neighbour, &desc_only, &context("production", "standard")),
+        IndexDecision::UseIndex { .. }
     ));
 }
 

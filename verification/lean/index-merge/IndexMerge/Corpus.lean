@@ -68,7 +68,7 @@ def fid (name : String) : Field := fieldNames.idxOf name
 def fname (f : Field) : String := fieldNames.getD f s!"unknown{f}"
 
 def collNames : List String :=
-  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql"]
+  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql", "imb", "ima", "imx", "imc"]
 
 def cid (name : String) : Nat := collNames.idxOf name
 

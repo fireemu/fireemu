@@ -32,14 +32,18 @@ comparison already accepts that divergence, decision S4).
   `merged_none_iff`, `merged_refuses_few`, `merged_refuses_eq_ordered`, `merged_mono`,
   `decide_mono`, `automatic_mono`, `merged_perm`, `decide_served_perm`, `reqOf_wf`,
   `not_exempt_of_hasMode` and the greedy-cover lemmas.
-- `IndexMerge/Counterexamples.lean`: `spec_implies_broad` and the counterexamples
-  `broad_composite_with_array_field`, `broad_opposite_direction_automatic`,
-  `broad_contains_with_descending_name`, `broad_not_complete`, `members_depend_on_order`,
-  `one_member_merge`.
-- `IndexMerge/Production.lean`: 77 recorded production verdicts (59 rows of
+- `IndexMerge/Counterexamples.lean`: `spec_implies_broad`, the recorded shapes
+  `merge_composite_with_array_field` (F1), `opposite_direction_automatic_refused` (F2) and
+  `merge_contains_with_descending_name` (F3), the unrecorded refusal
+  `composite_with_array_field_descending_name_refused`, the counterexample
+  `broad_mirror_direction_automatic` with `broad_not_complete`, `members_depend_on_order`,
+  `one_member_merge` and `repeated_single_equality_refused`.
+- `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
   `conformance/fs-query-index-production.json`, 18 expectations of
-  `tools/sdk-smoke/index-merge-oracle.mjs`); a `#guard` fails the build if the model contradicts
-  any of them, including the member sets of the 16 plan rows.
+  `tools/sdk-smoke/index-merge-oracle.mjs`, 24 rows of
+  `conformance/fs-query-index-merge-production.json`: 21 queries and 3 plans); a `#guard` fails
+  the build if the model contradicts any of them, including the member sets of the 18 served
+  plan rows.
 - `IndexMerge/Corpus.lean`, `Main.lean`: configurations, names, the corpus format and the
   generator (production rows, the coverage ledger's pairwise rows, a product of query shapes with
   six configurations, and 3000 deterministic random cases).
@@ -48,31 +52,51 @@ comparison already accepts that divergence, decision S4).
 
 ## What the proofs say
 
-The algorithm collects candidates (each composite's maximal ordered equality prefix, when the
-composite serves those fields with the query's order; then the enabled automatic indexes when
-nothing but `__name__` is ordered), sorts them by size and takes them greedily. `merged_iff_spec`
+The algorithm collects candidates (each composite's maximal ordered equality prefix, followed by
+the array field when the composite carries it right after the prefix and nothing but `__name__`
+is ordered, ascending, when the composite serves
+those fields with the query's order; then, when nothing but `__name__` is ordered, the array
+field's contains index and the enabled automatic indexes of the equality fields, all in the
+requested `__name__` direction), sorts the composites by size and takes the candidates greedily. `merged_iff_spec`
 proves that this merges exactly when `MergeSpec` holds: the maximal prefix is the only prefix a
 serving composite can have (an order never names an equality field), and the greedy loop covers
 the union of all candidates whatever their order. The members it returns are members in the
 sense of the specification (`merged_sound`), and more indexes never refuse a served query
-(`decide_mono`).
+(`decide_mono`, `automatic_mono`, including production's rule that an equality ordered by
+`__name__` descending needs the field's descending index).
 
 ## Findings
 
-None of these has a recorded production verdict; each is pinned by a Rust test.
+The index-merge observation (`conformance/fs-query-index-merge-production.json`, recorded
+2026-11-19) settled the three shapes that were counterexamples to completeness against the
+single-index rule; the model now follows production on each:
 
-1. A composite that carries the array field, such as `(a ASC, tags CONTAINS)`, never joins a
-   merge, although it serves `a == x AND tags array-contains y` on its own
-   (`broad_composite_with_array_field`).
-2. The single-index rule serves `a == x ORDER BY __name__ DESC` from `a`'s ascending automatic
-   index, but a merge takes an automatic index only in the requested `__name__` direction
-   (`broad_opposite_direction_automatic`).
-3. The single-index rule serves `tags array-contains x ORDER BY __name__ DESC` from the contains
-   index, but a merge takes it only for an ascending `__name__`
-   (`broad_contains_with_descending_name`).
-4. The members chosen depend on the order composites were added in; whether a query is served
+1. F1: a composite that carries the array field after its equality prefix, such as
+   `(a ASC, tags CONTAINS)`, joins a merge as the member for `a` and `tags`; production's plan is
+   `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`, `(b ASC, __name__ ASC)`
+   (`merge_composite_with_array_field`). The model carries the array field only in that shape
+   (nothing but `__name__` ordered, ascending); with `__name__` descending or another ordered
+   field there is no recorded verdict and the composite is a candidate only for its equality
+   prefix, so the same index set refuses F1 ordered by `__name__` descending
+   (`composite_with_array_field_descending_name_refused`, unrecorded).
+2. F2: with only `a`'s ascending index enabled, production refuses `a == x ORDER BY __name__
+   DESC` and `a == x AND b == y ORDER BY __name__ DESC`; under production's rules the
+   single-index rule refuses the first too, so the second is no longer a counterexample
+   (`opposite_direction_automatic_refused`). The emulator policy keeps serving the first from
+   the ascending index.
+3. F3: the contains index joins a merge in either `__name__` direction, listed before the
+   equality members; production's plan is `(tags ARRAY_CONTAINS, __name__ DESC)`,
+   `(a DESC, __name__ DESC)` (`merge_contains_with_descending_name`).
+
+Open findings, without a recorded production verdict, each pinned by a Rust test:
+
+4. The mirror of F2: with only `a`'s descending index enabled, the single-index rule serves
+   `a == x ORDER BY __name__ ASC` from `(a DESC, __name__ ASC)`, but a merge takes an automatic
+   index only in the requested `__name__` direction, so `a == x AND b == y ORDER BY __name__ ASC`
+   is refused (`broad_mirror_direction_automatic`, `broad_not_complete`).
+5. The members chosen depend on the order composites were added in; whether a query is served
    does not (`members_depend_on_order`, `decide_served_perm`).
-5. A composite that repeats a field, such as `(a, a, b)`, makes a merge of one member that serves
+6. A composite that repeats a field, such as `(a, a, b)`, makes a merge of one member that serves
    no duplicate-free set of the equalities on its own (`one_member_merge`); with a single
    equality, `(a, a)` is refused instead (`repeated_single_equality_refused`). `IndexSet` accepts
    such composites; whether production does is not recorded.

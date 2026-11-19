@@ -8,6 +8,11 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Firestore, strict profile: two index merges production performs are no longer refused for a missing index (recorded 2026-11-19 in a production project). `a == x AND tags array-contains y ORDER BY __name__ DESC` is served by merging the automatic indexes `(tags ARRAY_CONTAINS, __name__ DESC)` and `(a DESC, __name__ DESC)`; the array field's automatic index used to join a merge only for an ascending `__name__`. A composite whose equality fields are followed by the query's array field, such as `(a ASC, tags CONTAINS)`, now joins a merge as the member for both, so `a == x AND b == y AND tags array-contains z` is served with that composite and `b`'s automatic index even when `a` and `tags` are exempt from automatic indexing. Explain lists the members in production's order for these merges. The emulator profile already served these queries.
+- Firestore, strict profile: `a == x ORDER BY __name__ DESC` is refused for a missing index `(a ASC, __name__ DESC)` when only the ascending single-field index of `a` is enabled, as production does (recorded 2026-11-19); it used to be served by the ascending index. With `firestore.missingIndexes: "report"` it is served and reported. The emulator profile is unchanged. The opposite case, `__name__` ascending with only the descending index enabled, has no recorded production answer and is still served.
+
 ## [0.61.0] - 2026-11-19
 
 ### Added
