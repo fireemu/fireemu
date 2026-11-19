@@ -21,7 +21,7 @@ run-name: ${{ github.event_name == 'schedule' && format('heavy-verification sche
 #   repository's workflow runs, unauthenticated, to find the last successful nightly.
 # - Inputs are never interpolated into a script. They reach `run:` only through `env:` and are
 #   validated there first (the `plan` job). A validated value is the only thing the other jobs use.
-# - Every action is pinned by its full commit SHA, and every job has a timeout.
+# - Every action runs at the commit the workflow lockfile fixes, and every job has a timeout.
 # - A dispatch refuses to run from the default branch or a tag: the Actions cache is scoped by the ref
 #   the run belongs to, and the code under test must never share a cache scope with ci.yml or
 #   release.yml. A scheduled run belongs to the default branch and tests only its own head, which is

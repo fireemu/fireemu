@@ -1,4 +1,5 @@
 import json
+import re
 import math
 import os
 import sys
@@ -200,10 +201,18 @@ class BenchmarkWorkflowTests(unittest.TestCase):
                 if selected:self.assertEqual(argv[argv.index('--baseline-fireemu')+1],str(cwd.resolve()/'bench-baseline/fireemu'))
                 self.assertIn('--mixed-services',argv);self.assertEqual(argv[argv.index('--fixture-shape')+1],'wide-map')
             workflow=(Path(__file__).resolve().parents[2]/'.github/workflows/benchmark.yml').read_text();self.assertIn('fetch-depth: 0',workflow);self.assertIn('name: benchmark-baseline-binary',workflow);self.assertIn("${{ matrix.role == 'baseline'",workflow);self.assertIn('sha256sum fireemu commit.txt toolchain.txt build.txt',workflow)
-            for line in workflow.splitlines():
-                if 'uses:' in line:self.assertRegex(line,r'@[0-9a-f]{40}(?:\s|$)')
+            # The workflow names each action by tag; the workflow lockfile lists that reference for benchmark.yml and fixes its commit.
+            lock=(Path(__file__).resolve().parents[2]/'.github/workflows/actions.lock').read_text()
+            listed=set(re.findall(r"^        - '([^']+)'$",re.search(r"^    '\.github/workflows/benchmark\.yml':\n((?:        - '[^']+'\n)+)",lock,re.M).group(0),re.M))
+            locked=set(re.findall(r"^    '([^']+)':\n        ref: '[^']+'\n        commit: 'sha1-[0-9a-f]{40}'$",lock,re.M))
+            uses=re.findall(r'^\s*(?:- )?uses: (\S+)$',workflow,re.M);self.assertGreaterEqual(len(uses),8)
+            for use in uses:
+                name,ref=use.split('@');key=name.lower()+'@'+ref
+                self.assertIn(key,listed,use);self.assertIn(key,locked,use)
+            self.assertNotIn('actions/checkout@v4','\n'.join(sorted(listed-locked)))
             self.assertNotIn('persist-credentials: true',workflow)
-            self.assertIn("RUSTUP_TOOLCHAIN: '1.94.0'",workflow)
+            channel=re.search(r'^channel = "([^"]+)"$',(Path(__file__).resolve().parents[2]/'rust-toolchain.toml').read_text(),re.M).group(1)
+            self.assertIn(f"RUSTUP_TOOLCHAIN: '{channel}'",workflow)
             self.assertIn("role: ${{ fromJSON(inputs.baseline_commit != '' && '[\"candidate\",\"baseline\"]' || '[\"candidate\"]') }}",workflow)
             for step in ['Validate baseline source pin','Verify source-bound benchmark binaries','Build release-equivalent UI assets and optimized daemon (not timed)','Paired measurements, sequential on this single runner']:
                 self.assertNotIn('${{',self.step(step))
