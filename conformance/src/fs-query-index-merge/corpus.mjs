@@ -16,6 +16,12 @@
 // FS-QUERY-INDEX or FS-DATA-WRITE-LIST lanes recorded changes meaning. Every program uses its
 // own collection group, which no other corpus or index file names; the indexes are in
 // conformance/fs-query-index-merge.indexes.json.
+//
+// The sandbox `(default)` database carries those added indexes only during a send of this lane:
+// the send deploys them, records, then removes exactly the two composites and three field
+// overrides again, so `(default)` equals fs-query-index.indexes.json between sends and the
+// FS-QUERY-INDEX and FS-DATA-WRITE-LIST preflights stay clean. A later re-recording of this
+// lane redeploys them first.
 
 import { and, arr, asc, desc, f, field, from, int, query } from "../fs-query-index/values.mjs";
 
