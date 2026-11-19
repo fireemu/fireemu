@@ -1,0 +1,9 @@
+name = "index-merge"
+defaultTargets = ["IndexMerge", "corpus"]
+
+[[lean_lib]]
+name = "IndexMerge"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
