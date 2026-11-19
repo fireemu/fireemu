@@ -392,6 +392,9 @@ def shapeCases : List Case :=
       (f1Config [aTagsC, ix qx [("a", .asc), ("b", .asc), ("tags", .contains)]]),
     shapeCase "b/two-carrying-disjoint" f1q
       (f1Config [aTagsC, ix qx [("b", .asc), ("tags", .contains)]]),
+    -- (b) needs the array field's automatic contains index to be unavailable.
+    shapeCase "b/automatic-contains-available" f1q
+      { composites := [aTagsC], overrides := [(qx, fid "a", [])] },
     -- A carrier must be collection-scoped.
     shapeCase "b/group-carrier" f1q
       (f1Config [ix qx [("a", .asc), ("tags", .contains)] .group]),

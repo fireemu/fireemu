@@ -921,11 +921,12 @@ fn merged_indexes_for(
 /// plain queries (fs-query-index-merge, 2026-11-19) whose filter is a conjunction of plain
 /// equalities on distinct fields other than `__name__`, with ordinary values, and at most one
 /// plain array-contains on another field. The rules apply only to that shape, judged on the
-/// whole canonical query and not on a DNF arm: an OR, an IN, array-contains-any, IS NULL / IS
-/// NAN, an equality with null or NaN, a repeated path, a filter on `__name__`, an aggregation or
-/// a nearest-neighbour stage keeps the pre-stage-B answer. Canonicalization has already removed
-/// an identical repeated equality and unwrapped a singleton `and` / `or`, and an explicit
-/// `ORDER BY __name__ ASC` is the implicit order: those forms are the recorded query itself
+/// whole query after canonicalization (wrappers of one child and identical repeated filters
+/// removed), not on a DNF arm: an OR of two or more different filters, an IN, array-contains-any,
+/// IS NULL / IS NAN, an equality with null or NaN, a path repeated with another filter, a filter on
+/// `__name__`, an aggregation or a nearest-neighbour stage keeps the pre-stage-B answer. The forms
+/// canonicalization collapses (`a == 1 AND a == 1`, `or(a == 1)`, `and(and(a == 1))`) and an
+/// explicit `ORDER BY __name__ ASC` in place of the implicit order are the recorded query itself
 /// (coordinator ruling 12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RecordedShape {
@@ -1043,8 +1044,8 @@ enum Cover {
 /// (`CONTAINS`), then the automatic `(field ASC, __name__ ASC)` of each remaining equality
 /// field (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags CONTAINS)`, `(b ASC,
 /// __name__ ASC)`). The carrier is collection-scoped, as recorded, and the only configured
-/// composite that qualifies; with two or more the pre-stage-B answer stays (coordinator
-/// ruling 12).
+/// composite that qualifies, and the array field has no automatic contains index at collection
+/// scope (F1 exempts it); otherwise the pre-stage-B answer stays (coordinator ruling 12).
 fn recorded_merge(
     req: &Requirement,
     set: &IndexSet,
@@ -1084,6 +1085,10 @@ fn recorded_merge(
     if name_direction == Direction::Descending {
         let member = automatic(contains, IndexFieldMode::Contains)?;
         return complete(member, BTreeSet::from([(Cover::Contains, contains)]));
+    }
+    // As recorded, the array field has no automatic contains index of its own (F1 exempts it).
+    if automatic(contains, IndexFieldMode::Contains).is_some() {
+        return None;
     }
     let equalities: BTreeSet<&FieldPath> = req.equality.iter().collect();
     let mut carrying: Vec<(Vec<&FieldPath>, &IndexDefinition)> = Vec::new();

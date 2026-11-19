@@ -18,8 +18,9 @@ plain conjunction (`Query.conjunction`). Everywhere else the head answer is the 
 - (b) The same ordered ascending: a refused base answer becomes the merge of the one
   collection-scoped composite that carries the array field after its equality prefix and the
   ascending indexes of the remaining equality fields
-  (exempt-with-composite#f1-equalities-and-contains); with no carrier or with several, the
-  base answer stays.
+  (exempt-with-composite#f1-equalities-and-contains), when the array field's automatic contains
+  index is not available at collection scope; with that index available, with no carrier or
+  with several, the base answer stays.
 
 Coverage in (a) and (b) is by filter kind; the gate's distinct paths make it coincide with the
 base's coverage by path.
@@ -100,8 +101,11 @@ def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (Lis
             singleFieldIndex coll group t .contains .desc :: ms
         else none
       else
-        -- (b): exactly one carrying composite, completed by the ascending indexes of the
-        -- remaining equality fields.
+        -- (b): only when the array field's automatic contains index is not available at
+        -- collection scope (the recorded configuration exempts it); then exactly one carrying
+        -- composite, completed by the ascending indexes of the remaining equality fields.
+        if !isExempt s coll t false && hasMode s coll t false .contains then none
+        else
         match carryingComposites r s coll group t with
         | [idx] =>
           let sp := servedPrefix r idx

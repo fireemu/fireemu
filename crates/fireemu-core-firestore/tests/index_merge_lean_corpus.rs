@@ -1896,6 +1896,91 @@ fn the_canonical_forms_of_the_recorded_queries_reach_the_overrides() {
     );
 }
 
+/// The forms the Opus round-3 review probed collapse to the recorded queries under
+/// canonicalization (wrappers of one child and identical repeated filters removed) and reach the
+/// overrides like them (coordinator ruling 12 addition).
+#[test]
+fn the_probed_canonical_forms_reach_the_overrides() {
+    let a = || filter("eq", "a", "qx");
+    let t = || filter("contains", "tags", "qx");
+    let b = || filter("eq", "b", "qx");
+    for (label, f) in [
+        ("a == 1 AND a == 1", FilterExpr::And(vec![a(), a()])),
+        ("or(a == 1)", FilterExpr::Or(vec![a()])),
+        ("or(a == 1, a == 1)", FilterExpr::Or(vec![a(), a()])),
+        (
+            "and(and(a == 1))",
+            FilterExpr::And(vec![FilterExpr::And(vec![a()])]),
+        ),
+        (
+            "and(a == 1, and())",
+            FilterExpr::And(vec![a(), FilterExpr::And(vec![])]),
+        ),
+    ] {
+        let q = qx_query(vec![f], &name_desc(), false);
+        assert!(
+            matches!(
+                decide(&q, &f2_set(), &standard()),
+                IndexDecision::MissingRequired { .. }
+            ),
+            "{label}"
+        );
+    }
+    let f3 = IndexDecision::MergeIndexes {
+        indexes: vec![
+            parse_index("qx C tags:contains,__name__:desc"),
+            parse_index("qx C a:desc,__name__:desc"),
+        ],
+    };
+    for (label, f) in [
+        (
+            "or(and(a, tags))",
+            FilterExpr::Or(vec![FilterExpr::And(vec![a(), t()])]),
+        ),
+        ("a AND a AND tags", FilterExpr::And(vec![a(), a(), t()])),
+    ] {
+        let q = qx_query(vec![f], &name_desc(), false);
+        assert_eq!(decide(&q, &IndexSet::default(), &standard()), f3, "{label}");
+    }
+    let q = qx_query(
+        vec![FilterExpr::Or(vec![FilterExpr::And(vec![a(), b(), t()])])],
+        &[],
+        false,
+    );
+    assert_eq!(
+        decide(&q, &f1_set(), &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C a:asc,tags:contains"),
+                parse_index("qx C b:asc,__name__:asc"),
+            ]
+        }
+    );
+}
+
+/// Merge (b) applies only where the array field has no automatic contains index at collection
+/// scope, as in the recorded F1 set (`tags` exempt). With only `a` exempt the base refusal stays
+/// (Opus round 3, Should 1; unrecorded).
+#[test]
+fn merge_b_needs_the_array_field_without_its_automatic_index() {
+    let mut set = IndexSet::default();
+    modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+    set.add_composite(parse_index("qx C a:asc,tags:contains"));
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &[],
+        false,
+    );
+    assert!(matches!(
+        decide(&q, &set, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+}
+
 /// Merge (b) takes its carrier only as recorded: a collection-scoped composite, and only when
 /// exactly one configured composite qualifies (coordinator ruling 12). A collection-group
 /// carrier, or two carriers, keep the pre-stage-B refusal (unrecorded).

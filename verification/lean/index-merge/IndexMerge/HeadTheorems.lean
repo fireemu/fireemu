@@ -212,6 +212,8 @@ theorem recorded_kinds {r : Req} {s : ISet} {coll : Nat} {group : Bool} {ms : Li
         · contradiction
       · -- (b)
         split at h
+        · contradiction
+        split at h
         · rename_i idx hcar
           obtain ⟨ms0, hms0, rfl⟩ := Option.map_eq_some_iff.mp h
           rw [automaticMembers_spec hms0]

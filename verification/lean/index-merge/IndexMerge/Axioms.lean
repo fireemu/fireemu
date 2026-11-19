@@ -182,3 +182,8 @@ info: 'IM.carried_array_field_with_equality_refused' depends on axioms: [propext
 
 /-- info: 'IM.head_group_carrier_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.head_group_carrier_base
+
+/--
+info: 'IM.head_b_automatic_contains_base' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.head_b_automatic_contains_base

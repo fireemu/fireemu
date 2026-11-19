@@ -52,7 +52,7 @@ where one of three recorded rules fires.
   `head_f1`, `head_f3`, `head_f2_refused`, `head_single_equality_refused`, and their
   unrecorded neighbours `head_single_equality_neighbours_served`, `head_f1_descending_refused`,
   `head_group_refused`, `head_contains_any_refused`, `head_enterprise_base`,
-  `head_two_carriers_base`, `head_group_carrier_base`,
+  `head_two_carriers_base`, `head_group_carrier_base`, `head_b_automatic_contains_base`,
   `first_attempt_conflation` and `carried_array_field_with_equality_refused`.
 - `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
   `conformance/fs-query-index-production.json`, 18 expectations of
@@ -73,10 +73,11 @@ where one of three recorded rules fires.
 
 The theorems are about the model's query language: a `Query` is one flat conjunction of
 filters without values (`==`, `IS NULL`, `array-contains`, `array-contains-any`, `>`) and
-explicit orders. The gate judges the canonical query, the query after canonicalization:
-identical repeated equalities are deduplicated, a singleton AND or OR is unwrapped, and an
-explicit `ORDER BY __name__ ASC` equals the implicit order (coordinator ruling 12 treats these as
-the recorded query); the Lean `Query` is already in that form. OR, IN, filter values (null,
+explicit orders. The gate judges the canonical conjunction, the query after canonicalization:
+wrappers of one child and identical repeated filters are removed, and an explicit `ORDER BY
+__name__ ASC` equals the implicit order, so `or(a == 1)`, `and(and(a == 1))` and `a == 1 AND
+a == 1` are the recorded query `a == 1` (coordinator ruling 12, pinned in Rust); the Lean
+`Query` is already in that form. OR, IN, filter values (null,
 NaN), aggregation, nearest-neighbour stages and wire canonicalization are outside the model;
 the Rust proptest `stage_b_layer_tests` and the pinned Rust tests cover them.
 
@@ -106,9 +107,11 @@ overrides exactly those:
 1. (b), F1: the one collection-scoped composite that carries the array field after its
    equality prefix, such as `(a ASC, tags CONTAINS)`, is merged with the remaining equality
    fields' ascending indexes; production's plan is `(a ASC, tags ARRAY_CONTAINS, __name__ ASC)`,
-   `(b ASC, __name__ ASC)` (`head_f1`). With two carriers, or a carrier scoped to the collection
-   group, the base answer stays (`head_two_carriers_base`, `head_group_carrier_base`,
-   unrecorded). The base never takes such a composite (`broad_composite_with_array_field`).
+   `(b ASC, __name__ ASC)` (`head_f1`). The recorded configuration exempts `tags`, and (b)
+   applies only when the array field's automatic contains index is unavailable at collection
+   scope. With that index available, two carriers, or a carrier scoped to the collection
+   group, the base answer stays (`head_b_automatic_contains_base`, `head_two_carriers_base`,
+   `head_group_carrier_base`, unrecorded). The base never takes such a composite (`broad_composite_with_array_field`).
 2. (c): with only `a`'s ascending index enabled, production refuses `a == x ORDER BY __name__
    DESC`; the base serves it from `(a ASC, __name__ DESC)` (`broad_opposite_direction_automatic`
    is about the base), the head refuses it (`head_single_equality_refused`). Its unrecorded

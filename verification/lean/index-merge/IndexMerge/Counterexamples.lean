@@ -381,4 +381,20 @@ theorem head_group_carrier_base :
       guardOf qF1 f1GroupCarrierSet .production .standard = .none := by
   refine ⟨by decide, by decide, by decide⟩
 
+/-- (b) with the array field's automatic contains index available, unrecorded: the F1 query
+with only `a` exempt and the carrier `(a ASC, tags CONTAINS)`. The recorded configuration
+exempts `tags`; here its contains index is enabled, so (b) does not apply. The base refuses
+too: the composite covers no equality prefix on its own (the contains field follows `a`), and
+`a` has no automatic index. -/
+def bAutoContainsSet : ISet :=
+  ⟨[f1Composite], fun _ f => if f == 1 then [] else stdModes⟩
+
+theorem head_b_automatic_contains_base :
+    decideHead qF1 bAutoContainsSet .production .standard =
+        decideBase qF1 bAutoContainsSet .production .standard ∧
+      decideBase qF1 bAutoContainsSet .production .standard =
+        .missing (requiredIndex (reqOf qF1) 0 false) ∧
+      guardOf qF1 bAutoContainsSet .production .standard = .none := by
+  refine ⟨by decide, by decide, by decide⟩
+
 end IM
