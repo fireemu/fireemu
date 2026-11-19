@@ -1,0 +1,9 @@
+name = "firestore-value-order"
+defaultTargets = ["FirestoreValueOrder", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreValueOrder"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
