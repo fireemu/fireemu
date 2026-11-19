@@ -1,0 +1,9 @@
+name = "document-size"
+defaultTargets = ["DocumentSize", "corpus"]
+
+[[lean_lib]]
+name = "DocumentSize"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
