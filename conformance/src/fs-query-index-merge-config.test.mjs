@@ -181,8 +181,8 @@ function fakeFirestore({
       const token = new URL(request.url).searchParams.get("pageToken");
       const start = token === null ? 0 : Number(token.slice(1));
       const page = all.slice(start, start + pageSize);
-      const next = start + pageSize < all.length ? { nextPageToken: `t${start + pageSize}` } : {};
-      return { status: 200, json: { ...(page.length ? { indexes: page } : {}), ...next } };
+      const more = start + pageSize < all.length ? { nextPageToken: `t${start + pageSize}` } : {};
+      return { status: 200, json: { ...(page.length ? { indexes: page } : {}), ...more } };
     }
     if (kind === "indexes" && !id && request.method === "POST") {
       const index = listedIndex(group, { state: "READY" });
