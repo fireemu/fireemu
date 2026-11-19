@@ -92,6 +92,13 @@ class ActionsLockContractTest < Minitest::Test
     refute_nil ActionsLockContract.problem(lock({ WORKFLOW => [] }, {}), WORKFLOW, uses)
   end
 
+  def test_the_action_a_reference_names
+    assert_equal "owner/action", ActionsLockContract.action("Owner/Action@v1")
+    assert_equal "owner/repo/Path", ActionsLockContract.action("Owner/Repo/Path@#{SHA}")
+    assert_nil ActionsLockContract.action("./local")
+    assert_nil ActionsLockContract.action("docker://alpine@v1")
+  end
+
   def test_only_the_owner_and_repository_fold_case
     entry = { "commit" => "sha1-#{LOCKED}" }
     # The ref and an action's path inside its repository are case-sensitive.
@@ -119,6 +126,11 @@ class ActionsLockContractTest < Minitest::Test
       head + format(entry, LOCKED) + "---\n" + head + format(entry, SHA),
       "--- !ruby/object:Object {}\n",
       head + "  ? [owner, action]\n  : { commit: 'sha1-#{LOCKED}' }\n",
+      # A tagged key decodes to `commit` only after a comparison of the written keys.
+      head + "  'owner/action@v1':\n    commit: 'sha1-#{SHA}'\n    !!binary Y29tbWl0: 'sha1-#{LOCKED}'\n",
+      head + "  'owner/action@v1':\n    commit: !!binary c2hhMS1iYmJi\n",
+      head + "  'owner/action@v1': !!map\n    commit: 'sha1-#{LOCKED}'\n",
+      "workflows:\n  '#{WORKFLOW}': !!seq\n    - 'owner/action@v1'\ndependencies: {}\n",
     ].each do |source|
       assert_raises(ActionsLockContract::Malformed, source) { ActionsLockContract.parse(source) }
     end

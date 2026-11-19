@@ -43,12 +43,14 @@ module ActionsLockContract
     raise Malformed, "the lockfile is not plain YAML: #{error.message}"
   end
 
-  # A repeated key, a merge key or an alias would let two readers of the same file see different commits.
+  # A repeated key, a merge key, an alias or a tag would let two readers of the same file see different commits.
   def unambiguous!(node)
+    # gh actions-lock writes no tags, and a tag can change what a scalar decodes to (`!!binary`).
+    raise Malformed, "the lockfile must not use YAML tags" if node.respond_to?(:tag) && node.tag
     case node
     when Psych::Nodes::Mapping
       keys = node.children.each_slice(2).map(&:first)
-      raise Malformed, "lockfile keys must be plain strings" unless keys.all? { |key| key.is_a?(Psych::Nodes::Scalar) }
+      raise Malformed, "lockfile keys must be plain strings" unless keys.all? { |key| key.is_a?(Psych::Nodes::Scalar) && key.tag.nil? }
       names = keys.map(&:value)
       raise Malformed, "the lockfile repeats a key" unless names.uniq.length == names.length
       raise Malformed, "the lockfile must not use YAML merge keys" if names.include?("<<")
@@ -70,6 +72,12 @@ module ActionsLockContract
   def key(uses)
     match = REFERENCE.match(uses.to_s)
     match && "#{match[1].downcase}#{match[2]}@#{match[3]}"
+  end
+
+  # The action a reference names, without its ref: lower-case owner/repo and the path as written.
+  def action(uses)
+    name = key(uses)
+    name && name.split("@", 2).first
   end
 
   def onboarded?(lock, workflow)

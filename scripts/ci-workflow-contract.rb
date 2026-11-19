@@ -276,7 +276,7 @@ assert(
 )
 assert(release["env"].keys.sort == %w[CARGO_TERM_COLOR RUSTFLAGS SOURCE_DATE_EPOCH], "the release workflow's env is exactly the reproducibility inputs")
 every_use = release.fetch("jobs").values.flat_map { |definition| definition.fetch("steps", []).map { |step| step["uses"] }.compact }
-assert(every_use.group_by { |use| use.split("@").first.downcase }.values.all? { |uses| uses.uniq.length == 1 }, "an action is pinned to one commit across the release workflow")
+assert(every_use.group_by { |use| ActionsLockContract.action(use) }.all? { |action, uses| action && uses.map { |use| use.split("@", 2).last }.uniq.length == 1 }, "an action is used at one version across the release workflow")
 release.fetch("jobs").each do |job, definition|
   allowed = %w[needs if runs-on outputs steps strategy timeout-minutes permissions environment]
   allowed << "name" if job == "strict-production" && definition["name"] == 'strict-production (${{ matrix.group }})'
