@@ -1,0 +1,9 @@
+name = "totp-window"
+defaultTargets = ["TotpWindow", "corpus"]
+
+[[lean_lib]]
+name = "TotpWindow"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
