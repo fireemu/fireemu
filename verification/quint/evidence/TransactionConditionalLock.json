@@ -104,7 +104,7 @@
   "digests": {
     ".github/workflows/quint.yml": {
       "kind": "sha256",
-      "value": "7d6b0a4d8020259a9546f0be49b0775033a7e31f1806886886580207497de705"
+      "value": "1958e7c37d055a3a6658cd12475f8560b43bb2b459a921e0b7bb3d194a3eb845"
     },
     "conformance/fixtures/firestore/transaction-read-set-abort.json": {
       "kind": "json-semantic",
