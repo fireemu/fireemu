@@ -1,0 +1,7 @@
+name = "rtdb-server-value"
+defaultTargets = ["RtdbServerValue", "corpus"]
+[[lean_lib]]
+name = "RtdbServerValue"
+[[lean_exe]]
+name = "corpus"
+root = "Main"

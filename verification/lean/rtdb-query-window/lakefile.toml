@@ -1,0 +1,7 @@
+name = "rtdb-query-window"
+defaultTargets = ["RtdbQueryWindow", "corpus"]
+[[lean_lib]]
+name = "RtdbQueryWindow"
+[[lean_exe]]
+name = "corpus"
+root = "Main"

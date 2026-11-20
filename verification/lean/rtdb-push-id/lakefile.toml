@@ -1,0 +1,7 @@
+name = "rtdb-push-id"
+defaultTargets = ["RtdbPushId", "corpus"]
+[[lean_lib]]
+name = "RtdbPushId"
+[[lean_exe]]
+name = "corpus"
+root = "Main"

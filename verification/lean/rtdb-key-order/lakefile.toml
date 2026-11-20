@@ -1,0 +1,7 @@
+name = "rtdb-key-order"
+defaultTargets = ["RtdbKeyOrder", "corpus"]
+[[lean_lib]]
+name = "RtdbKeyOrder"
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,850 @@
+integer	plain	bare	zero	48	0
+integer	plain	bare	one	49	1
+integer	plain	bare	max	50,49,52,55,52,56,51,54,52,55	2147483647
+integer	plain	bare	pastMax	50,49,52,55,52,56,51,54,52,56	-
+integer	plain	bare	pastMin	50,49,52,55,52,56,51,54,52,57	-
+integer	plain	bare	wide	49,50,51,52,53,54,55,56,57,48,49	-
+integer	plain	bare	text	97	-
+integer	plain	bare	empty		-
+integer	plain	padded	zero	48,48,48	0
+integer	plain	padded	one	48,48,49	1
+integer	plain	padded	max	48,48,50,49,52,55,52,56,51,54,52,55	2147483647
+integer	plain	padded	pastMax	48,48,50,49,52,55,52,56,51,54,52,56	-
+integer	plain	padded	pastMin	48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	plain	padded	wide	48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	plain	padded	text	48,48,97	-
+integer	plain	padded	empty	48,48	0
+integer	plain	long	zero	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	0
+integer	plain	long	one	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49	1
+integer	plain	long	max	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,55	2147483647
+integer	plain	long	pastMax	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,56	-
+integer	plain	long	pastMin	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	plain	long	wide	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	plain	long	text	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,97	-
+integer	plain	long	empty	48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	0
+integer	negative	bare	zero	45,48	0
+integer	negative	bare	one	45,49	-1
+integer	negative	bare	max	45,50,49,52,55,52,56,51,54,52,55	-2147483647
+integer	negative	bare	pastMax	45,50,49,52,55,52,56,51,54,52,56	-2147483648
+integer	negative	bare	pastMin	45,50,49,52,55,52,56,51,54,52,57	-
+integer	negative	bare	wide	45,49,50,51,52,53,54,55,56,57,48,49	-
+integer	negative	bare	text	45,97	-
+integer	negative	bare	empty	45	-
+integer	negative	padded	zero	45,48,48,48	0
+integer	negative	padded	one	45,48,48,49	-1
+integer	negative	padded	max	45,48,48,50,49,52,55,52,56,51,54,52,55	-2147483647
+integer	negative	padded	pastMax	45,48,48,50,49,52,55,52,56,51,54,52,56	-2147483648
+integer	negative	padded	pastMin	45,48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	negative	padded	wide	45,48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	negative	padded	text	45,48,48,97	-
+integer	negative	padded	empty	45,48,48	0
+integer	negative	long	zero	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	0
+integer	negative	long	one	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49	-1
+integer	negative	long	max	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,55	-2147483647
+integer	negative	long	pastMax	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,56	-2147483648
+integer	negative	long	pastMin	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	negative	long	wide	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	negative	long	text	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,97	-
+integer	negative	long	empty	45,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	0
+integer	positive	bare	zero	43,48	-
+integer	positive	bare	one	43,49	-
+integer	positive	bare	max	43,50,49,52,55,52,56,51,54,52,55	-
+integer	positive	bare	pastMax	43,50,49,52,55,52,56,51,54,52,56	-
+integer	positive	bare	pastMin	43,50,49,52,55,52,56,51,54,52,57	-
+integer	positive	bare	wide	43,49,50,51,52,53,54,55,56,57,48,49	-
+integer	positive	bare	text	43,97	-
+integer	positive	bare	empty	43	-
+integer	positive	padded	zero	43,48,48,48	-
+integer	positive	padded	one	43,48,48,49	-
+integer	positive	padded	max	43,48,48,50,49,52,55,52,56,51,54,52,55	-
+integer	positive	padded	pastMax	43,48,48,50,49,52,55,52,56,51,54,52,56	-
+integer	positive	padded	pastMin	43,48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	positive	padded	wide	43,48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	positive	padded	text	43,48,48,97	-
+integer	positive	padded	empty	43,48,48	-
+integer	positive	long	zero	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	-
+integer	positive	long	one	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49	-
+integer	positive	long	max	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,55	-
+integer	positive	long	pastMax	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,56	-
+integer	positive	long	pastMin	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,50,49,52,55,52,56,51,54,52,57	-
+integer	positive	long	wide	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,49,50,51,52,53,54,55,56,57,48,49	-
+integer	positive	long	text	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,97	-
+integer	positive	long	empty	43,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48,48	-
+compare			eq	eq
+compare		45	lt	lt
+compare		48	gt	lt
+compare		45,48	gt	lt
+compare		48,48	gt	lt
+compare		48,48,49	gt	lt
+compare		49	gt	lt
+compare		57	gt	lt
+compare		49,48	gt	lt
+compare		50	gt	lt
+compare		50,49,52,55,52,56,51,54,52,55	gt	lt
+compare		50,49,52,55,52,56,51,54,52,56	lt	lt
+compare		45,50,49,52,55,52,56,51,54,52,56	gt	lt
+compare		45,50,49,52,55,52,56,51,54,52,57	lt	lt
+compare		43,49	lt	lt
+compare		49,97	lt	lt
+compare		97	lt	lt
+compare		233	lt	lt
+compare		65297	lt	lt
+compare		65536	lt	lt
+compare		57344	lt	lt
+compare		128512	lt	lt
+compare		120	lt	lt
+compare		120,65536	lt	lt
+compare		120,57344	lt	lt
+compare	45		gt	gt
+compare	45	45	eq	eq
+compare	45	48	gt	lt
+compare	45	45,48	gt	lt
+compare	45	48,48	gt	lt
+compare	45	48,48,49	gt	lt
+compare	45	49	gt	lt
+compare	45	57	gt	lt
+compare	45	49,48	gt	lt
+compare	45	50	gt	lt
+compare	45	50,49,52,55,52,56,51,54,52,55	gt	lt
+compare	45	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	45	45,50,49,52,55,52,56,51,54,52,56	gt	lt
+compare	45	45,50,49,52,55,52,56,51,54,52,57	lt	lt
+compare	45	43,49	gt	gt
+compare	45	49,97	lt	lt
+compare	45	97	lt	lt
+compare	45	233	lt	lt
+compare	45	65297	lt	lt
+compare	45	65536	lt	lt
+compare	45	57344	lt	lt
+compare	45	128512	lt	lt
+compare	45	120	lt	lt
+compare	45	120,65536	lt	lt
+compare	45	120,57344	lt	lt
+compare	48		lt	gt
+compare	48	45	lt	gt
+compare	48	48	eq	eq
+compare	48	45,48	lt	gt
+compare	48	48,48	lt	lt
+compare	48	48,48,49	lt	lt
+compare	48	49	lt	lt
+compare	48	57	lt	lt
+compare	48	49,48	lt	lt
+compare	48	50	lt	lt
+compare	48	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	48	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	48	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	48	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	48	43,49	lt	gt
+compare	48	49,97	lt	lt
+compare	48	97	lt	lt
+compare	48	233	lt	lt
+compare	48	65297	lt	lt
+compare	48	65536	lt	lt
+compare	48	57344	lt	lt
+compare	48	128512	lt	lt
+compare	48	120	lt	lt
+compare	48	120,65536	lt	lt
+compare	48	120,57344	lt	lt
+compare	45,48		lt	gt
+compare	45,48	45	lt	gt
+compare	45,48	48	gt	lt
+compare	45,48	45,48	eq	eq
+compare	45,48	48,48	lt	lt
+compare	45,48	48,48,49	lt	lt
+compare	45,48	49	lt	lt
+compare	45,48	57	lt	lt
+compare	45,48	49,48	lt	lt
+compare	45,48	50	lt	lt
+compare	45,48	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	45,48	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	45,48	45,50,49,52,55,52,56,51,54,52,56	gt	lt
+compare	45,48	45,50,49,52,55,52,56,51,54,52,57	lt	lt
+compare	45,48	43,49	lt	gt
+compare	45,48	49,97	lt	lt
+compare	45,48	97	lt	lt
+compare	45,48	233	lt	lt
+compare	45,48	65297	lt	lt
+compare	45,48	65536	lt	lt
+compare	45,48	57344	lt	lt
+compare	45,48	128512	lt	lt
+compare	45,48	120	lt	lt
+compare	45,48	120,65536	lt	lt
+compare	45,48	120,57344	lt	lt
+compare	48,48		lt	gt
+compare	48,48	45	lt	gt
+compare	48,48	48	gt	gt
+compare	48,48	45,48	gt	gt
+compare	48,48	48,48	eq	eq
+compare	48,48	48,48,49	lt	lt
+compare	48,48	49	lt	lt
+compare	48,48	57	lt	lt
+compare	48,48	49,48	lt	lt
+compare	48,48	50	lt	lt
+compare	48,48	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	48,48	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	48,48	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	48,48	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	48,48	43,49	lt	gt
+compare	48,48	49,97	lt	lt
+compare	48,48	97	lt	lt
+compare	48,48	233	lt	lt
+compare	48,48	65297	lt	lt
+compare	48,48	65536	lt	lt
+compare	48,48	57344	lt	lt
+compare	48,48	128512	lt	lt
+compare	48,48	120	lt	lt
+compare	48,48	120,65536	lt	lt
+compare	48,48	120,57344	lt	lt
+compare	48,48,49		lt	gt
+compare	48,48,49	45	lt	gt
+compare	48,48,49	48	gt	gt
+compare	48,48,49	45,48	gt	gt
+compare	48,48,49	48,48	gt	gt
+compare	48,48,49	48,48,49	eq	eq
+compare	48,48,49	49	gt	lt
+compare	48,48,49	57	lt	lt
+compare	48,48,49	49,48	lt	lt
+compare	48,48,49	50	lt	lt
+compare	48,48,49	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	48,48,49	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	48,48,49	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	48,48,49	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	48,48,49	43,49	lt	gt
+compare	48,48,49	49,97	lt	lt
+compare	48,48,49	97	lt	lt
+compare	48,48,49	233	lt	lt
+compare	48,48,49	65297	lt	lt
+compare	48,48,49	65536	lt	lt
+compare	48,48,49	57344	lt	lt
+compare	48,48,49	128512	lt	lt
+compare	48,48,49	120	lt	lt
+compare	48,48,49	120,65536	lt	lt
+compare	48,48,49	120,57344	lt	lt
+compare	49		lt	gt
+compare	49	45	lt	gt
+compare	49	48	gt	gt
+compare	49	45,48	gt	gt
+compare	49	48,48	gt	gt
+compare	49	48,48,49	lt	gt
+compare	49	49	eq	eq
+compare	49	57	lt	lt
+compare	49	49,48	lt	lt
+compare	49	50	lt	lt
+compare	49	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	49	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	49	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	49	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	49	43,49	lt	gt
+compare	49	49,97	lt	lt
+compare	49	97	lt	lt
+compare	49	233	lt	lt
+compare	49	65297	lt	lt
+compare	49	65536	lt	lt
+compare	49	57344	lt	lt
+compare	49	128512	lt	lt
+compare	49	120	lt	lt
+compare	49	120,65536	lt	lt
+compare	49	120,57344	lt	lt
+compare	57		lt	gt
+compare	57	45	lt	gt
+compare	57	48	gt	gt
+compare	57	45,48	gt	gt
+compare	57	48,48	gt	gt
+compare	57	48,48,49	gt	gt
+compare	57	49	gt	gt
+compare	57	57	eq	eq
+compare	57	49,48	lt	gt
+compare	57	50	gt	gt
+compare	57	50,49,52,55,52,56,51,54,52,55	lt	gt
+compare	57	50,49,52,55,52,56,51,54,52,56	lt	gt
+compare	57	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	57	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	57	43,49	lt	gt
+compare	57	49,97	lt	gt
+compare	57	97	lt	lt
+compare	57	233	lt	lt
+compare	57	65297	lt	lt
+compare	57	65536	lt	lt
+compare	57	57344	lt	lt
+compare	57	128512	lt	lt
+compare	57	120	lt	lt
+compare	57	120,65536	lt	lt
+compare	57	120,57344	lt	lt
+compare	49,48		lt	gt
+compare	49,48	45	lt	gt
+compare	49,48	48	gt	gt
+compare	49,48	45,48	gt	gt
+compare	49,48	48,48	gt	gt
+compare	49,48	48,48,49	gt	gt
+compare	49,48	49	gt	gt
+compare	49,48	57	gt	lt
+compare	49,48	49,48	eq	eq
+compare	49,48	50	gt	lt
+compare	49,48	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	49,48	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	49,48	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	49,48	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	49,48	43,49	lt	gt
+compare	49,48	49,97	lt	lt
+compare	49,48	97	lt	lt
+compare	49,48	233	lt	lt
+compare	49,48	65297	lt	lt
+compare	49,48	65536	lt	lt
+compare	49,48	57344	lt	lt
+compare	49,48	128512	lt	lt
+compare	49,48	120	lt	lt
+compare	49,48	120,65536	lt	lt
+compare	49,48	120,57344	lt	lt
+compare	50		lt	gt
+compare	50	45	lt	gt
+compare	50	48	gt	gt
+compare	50	45,48	gt	gt
+compare	50	48,48	gt	gt
+compare	50	48,48,49	gt	gt
+compare	50	49	gt	gt
+compare	50	57	lt	lt
+compare	50	49,48	lt	gt
+compare	50	50	eq	eq
+compare	50	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	50	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	50	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	50	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	50	43,49	lt	gt
+compare	50	49,97	lt	gt
+compare	50	97	lt	lt
+compare	50	233	lt	lt
+compare	50	65297	lt	lt
+compare	50	65536	lt	lt
+compare	50	57344	lt	lt
+compare	50	128512	lt	lt
+compare	50	120	lt	lt
+compare	50	120,65536	lt	lt
+compare	50	120,57344	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55		lt	gt
+compare	50,49,52,55,52,56,51,54,52,55	45	lt	gt
+compare	50,49,52,55,52,56,51,54,52,55	48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	45,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	48,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	48,48,49	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	49	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	57	gt	lt
+compare	50,49,52,55,52,56,51,54,52,55	49,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	50	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	50,49,52,55,52,56,51,54,52,55	eq	eq
+compare	50,49,52,55,52,56,51,54,52,55	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	50,49,52,55,52,56,51,54,52,55	45,50,49,52,55,52,56,51,54,52,57	lt	gt
+compare	50,49,52,55,52,56,51,54,52,55	43,49	lt	gt
+compare	50,49,52,55,52,56,51,54,52,55	49,97	lt	gt
+compare	50,49,52,55,52,56,51,54,52,55	97	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	233	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	65297	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	65536	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	57344	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	128512	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	120	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	120,65536	lt	lt
+compare	50,49,52,55,52,56,51,54,52,55	120,57344	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56		gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	45	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	45,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	48,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	48,48,49	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	49	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	57	gt	lt
+compare	50,49,52,55,52,56,51,54,52,56	49,48	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	50	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	50,49,52,55,52,56,51,54,52,56	eq	eq
+compare	50,49,52,55,52,56,51,54,52,56	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	43,49	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	49,97	gt	gt
+compare	50,49,52,55,52,56,51,54,52,56	97	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	233	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	65297	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	65536	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	57344	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	128512	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	120	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	120,65536	lt	lt
+compare	50,49,52,55,52,56,51,54,52,56	120,57344	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56		lt	gt
+compare	45,50,49,52,55,52,56,51,54,52,56	45	lt	gt
+compare	45,50,49,52,55,52,56,51,54,52,56	48	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	45,48	lt	gt
+compare	45,50,49,52,55,52,56,51,54,52,56	48,48	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	48,48,49	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	49	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	57	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	49,48	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	50	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	50,49,52,55,52,56,51,54,52,55	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	45,50,49,52,55,52,56,51,54,52,56	eq	eq
+compare	45,50,49,52,55,52,56,51,54,52,56	45,50,49,52,55,52,56,51,54,52,57	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	43,49	lt	gt
+compare	45,50,49,52,55,52,56,51,54,52,56	49,97	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	97	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	233	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	65297	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	65536	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	57344	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	128512	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	120	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	120,65536	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,56	120,57344	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57		gt	gt
+compare	45,50,49,52,55,52,56,51,54,52,57	45	gt	gt
+compare	45,50,49,52,55,52,56,51,54,52,57	48	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	45,48	gt	gt
+compare	45,50,49,52,55,52,56,51,54,52,57	48,48	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	48,48,49	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	49	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	57	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	49,48	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	50	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	50,49,52,55,52,56,51,54,52,55	gt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	45,50,49,52,55,52,56,51,54,52,57	45,50,49,52,55,52,56,51,54,52,57	eq	eq
+compare	45,50,49,52,55,52,56,51,54,52,57	43,49	gt	gt
+compare	45,50,49,52,55,52,56,51,54,52,57	49,97	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	97	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	233	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	65297	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	65536	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	57344	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	128512	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	120	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	120,65536	lt	lt
+compare	45,50,49,52,55,52,56,51,54,52,57	120,57344	lt	lt
+compare	43,49		gt	gt
+compare	43,49	45	lt	lt
+compare	43,49	48	gt	lt
+compare	43,49	45,48	gt	lt
+compare	43,49	48,48	gt	lt
+compare	43,49	48,48,49	gt	lt
+compare	43,49	49	gt	lt
+compare	43,49	57	gt	lt
+compare	43,49	49,48	gt	lt
+compare	43,49	50	gt	lt
+compare	43,49	50,49,52,55,52,56,51,54,52,55	gt	lt
+compare	43,49	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	43,49	45,50,49,52,55,52,56,51,54,52,56	gt	lt
+compare	43,49	45,50,49,52,55,52,56,51,54,52,57	lt	lt
+compare	43,49	43,49	eq	eq
+compare	43,49	49,97	lt	lt
+compare	43,49	97	lt	lt
+compare	43,49	233	lt	lt
+compare	43,49	65297	lt	lt
+compare	43,49	65536	lt	lt
+compare	43,49	57344	lt	lt
+compare	43,49	128512	lt	lt
+compare	43,49	120	lt	lt
+compare	43,49	120,65536	lt	lt
+compare	43,49	120,57344	lt	lt
+compare	49,97		gt	gt
+compare	49,97	45	gt	gt
+compare	49,97	48	gt	gt
+compare	49,97	45,48	gt	gt
+compare	49,97	48,48	gt	gt
+compare	49,97	48,48,49	gt	gt
+compare	49,97	49	gt	gt
+compare	49,97	57	gt	lt
+compare	49,97	49,48	gt	gt
+compare	49,97	50	gt	lt
+compare	49,97	50,49,52,55,52,56,51,54,52,55	gt	lt
+compare	49,97	50,49,52,55,52,56,51,54,52,56	lt	lt
+compare	49,97	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	49,97	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	49,97	43,49	gt	gt
+compare	49,97	49,97	eq	eq
+compare	49,97	97	lt	lt
+compare	49,97	233	lt	lt
+compare	49,97	65297	lt	lt
+compare	49,97	65536	lt	lt
+compare	49,97	57344	lt	lt
+compare	49,97	128512	lt	lt
+compare	49,97	120	lt	lt
+compare	49,97	120,65536	lt	lt
+compare	49,97	120,57344	lt	lt
+compare	97		gt	gt
+compare	97	45	gt	gt
+compare	97	48	gt	gt
+compare	97	45,48	gt	gt
+compare	97	48,48	gt	gt
+compare	97	48,48,49	gt	gt
+compare	97	49	gt	gt
+compare	97	57	gt	gt
+compare	97	49,48	gt	gt
+compare	97	50	gt	gt
+compare	97	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	97	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	97	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	97	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	97	43,49	gt	gt
+compare	97	49,97	gt	gt
+compare	97	97	eq	eq
+compare	97	233	lt	lt
+compare	97	65297	lt	lt
+compare	97	65536	lt	lt
+compare	97	57344	lt	lt
+compare	97	128512	lt	lt
+compare	97	120	lt	lt
+compare	97	120,65536	lt	lt
+compare	97	120,57344	lt	lt
+compare	233		gt	gt
+compare	233	45	gt	gt
+compare	233	48	gt	gt
+compare	233	45,48	gt	gt
+compare	233	48,48	gt	gt
+compare	233	48,48,49	gt	gt
+compare	233	49	gt	gt
+compare	233	57	gt	gt
+compare	233	49,48	gt	gt
+compare	233	50	gt	gt
+compare	233	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	233	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	233	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	233	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	233	43,49	gt	gt
+compare	233	49,97	gt	gt
+compare	233	97	gt	gt
+compare	233	233	eq	eq
+compare	233	65297	lt	lt
+compare	233	65536	lt	lt
+compare	233	57344	lt	lt
+compare	233	128512	lt	lt
+compare	233	120	gt	gt
+compare	233	120,65536	gt	gt
+compare	233	120,57344	gt	gt
+compare	65297		gt	gt
+compare	65297	45	gt	gt
+compare	65297	48	gt	gt
+compare	65297	45,48	gt	gt
+compare	65297	48,48	gt	gt
+compare	65297	48,48,49	gt	gt
+compare	65297	49	gt	gt
+compare	65297	57	gt	gt
+compare	65297	49,48	gt	gt
+compare	65297	50	gt	gt
+compare	65297	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	65297	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	65297	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	65297	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	65297	43,49	gt	gt
+compare	65297	49,97	gt	gt
+compare	65297	97	gt	gt
+compare	65297	233	gt	gt
+compare	65297	65297	eq	eq
+compare	65297	65536	gt	gt
+compare	65297	57344	gt	gt
+compare	65297	128512	gt	gt
+compare	65297	120	gt	gt
+compare	65297	120,65536	gt	gt
+compare	65297	120,57344	gt	gt
+compare	65536		gt	gt
+compare	65536	45	gt	gt
+compare	65536	48	gt	gt
+compare	65536	45,48	gt	gt
+compare	65536	48,48	gt	gt
+compare	65536	48,48,49	gt	gt
+compare	65536	49	gt	gt
+compare	65536	57	gt	gt
+compare	65536	49,48	gt	gt
+compare	65536	50	gt	gt
+compare	65536	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	65536	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	65536	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	65536	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	65536	43,49	gt	gt
+compare	65536	49,97	gt	gt
+compare	65536	97	gt	gt
+compare	65536	233	gt	gt
+compare	65536	65297	lt	lt
+compare	65536	65536	eq	eq
+compare	65536	57344	lt	lt
+compare	65536	128512	lt	lt
+compare	65536	120	gt	gt
+compare	65536	120,65536	gt	gt
+compare	65536	120,57344	gt	gt
+compare	57344		gt	gt
+compare	57344	45	gt	gt
+compare	57344	48	gt	gt
+compare	57344	45,48	gt	gt
+compare	57344	48,48	gt	gt
+compare	57344	48,48,49	gt	gt
+compare	57344	49	gt	gt
+compare	57344	57	gt	gt
+compare	57344	49,48	gt	gt
+compare	57344	50	gt	gt
+compare	57344	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	57344	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	57344	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	57344	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	57344	43,49	gt	gt
+compare	57344	49,97	gt	gt
+compare	57344	97	gt	gt
+compare	57344	233	gt	gt
+compare	57344	65297	lt	lt
+compare	57344	65536	gt	gt
+compare	57344	57344	eq	eq
+compare	57344	128512	gt	gt
+compare	57344	120	gt	gt
+compare	57344	120,65536	gt	gt
+compare	57344	120,57344	gt	gt
+compare	128512		gt	gt
+compare	128512	45	gt	gt
+compare	128512	48	gt	gt
+compare	128512	45,48	gt	gt
+compare	128512	48,48	gt	gt
+compare	128512	48,48,49	gt	gt
+compare	128512	49	gt	gt
+compare	128512	57	gt	gt
+compare	128512	49,48	gt	gt
+compare	128512	50	gt	gt
+compare	128512	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	128512	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	128512	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	128512	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	128512	43,49	gt	gt
+compare	128512	49,97	gt	gt
+compare	128512	97	gt	gt
+compare	128512	233	gt	gt
+compare	128512	65297	lt	lt
+compare	128512	65536	gt	gt
+compare	128512	57344	lt	lt
+compare	128512	128512	eq	eq
+compare	128512	120	gt	gt
+compare	128512	120,65536	gt	gt
+compare	128512	120,57344	gt	gt
+compare	120		gt	gt
+compare	120	45	gt	gt
+compare	120	48	gt	gt
+compare	120	45,48	gt	gt
+compare	120	48,48	gt	gt
+compare	120	48,48,49	gt	gt
+compare	120	49	gt	gt
+compare	120	57	gt	gt
+compare	120	49,48	gt	gt
+compare	120	50	gt	gt
+compare	120	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	120	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	120	43,49	gt	gt
+compare	120	49,97	gt	gt
+compare	120	97	gt	gt
+compare	120	233	lt	lt
+compare	120	65297	lt	lt
+compare	120	65536	lt	lt
+compare	120	57344	lt	lt
+compare	120	128512	lt	lt
+compare	120	120	eq	eq
+compare	120	120,65536	lt	lt
+compare	120	120,57344	lt	lt
+compare	120,65536		gt	gt
+compare	120,65536	45	gt	gt
+compare	120,65536	48	gt	gt
+compare	120,65536	45,48	gt	gt
+compare	120,65536	48,48	gt	gt
+compare	120,65536	48,48,49	gt	gt
+compare	120,65536	49	gt	gt
+compare	120,65536	57	gt	gt
+compare	120,65536	49,48	gt	gt
+compare	120,65536	50	gt	gt
+compare	120,65536	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	120,65536	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120,65536	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120,65536	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	120,65536	43,49	gt	gt
+compare	120,65536	49,97	gt	gt
+compare	120,65536	97	gt	gt
+compare	120,65536	233	lt	lt
+compare	120,65536	65297	lt	lt
+compare	120,65536	65536	lt	lt
+compare	120,65536	57344	lt	lt
+compare	120,65536	128512	lt	lt
+compare	120,65536	120	gt	gt
+compare	120,65536	120,65536	eq	eq
+compare	120,65536	120,57344	lt	lt
+compare	120,57344		gt	gt
+compare	120,57344	45	gt	gt
+compare	120,57344	48	gt	gt
+compare	120,57344	45,48	gt	gt
+compare	120,57344	48,48	gt	gt
+compare	120,57344	48,48,49	gt	gt
+compare	120,57344	49	gt	gt
+compare	120,57344	57	gt	gt
+compare	120,57344	49,48	gt	gt
+compare	120,57344	50	gt	gt
+compare	120,57344	50,49,52,55,52,56,51,54,52,55	gt	gt
+compare	120,57344	50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120,57344	45,50,49,52,55,52,56,51,54,52,56	gt	gt
+compare	120,57344	45,50,49,52,55,52,56,51,54,52,57	gt	gt
+compare	120,57344	43,49	gt	gt
+compare	120,57344	49,97	gt	gt
+compare	120,57344	97	gt	gt
+compare	120,57344	233	lt	lt
+compare	120,57344	65297	lt	lt
+compare	120,57344	65536	lt	lt
+compare	120,57344	57344	lt	lt
+compare	120,57344	128512	lt	lt
+compare	120,57344	120	gt	gt
+compare	120,57344	120,65536	gt	gt
+compare	120,57344	120,57344	eq	eq
+validate		invalid
+validate	45	ok
+validate	48	ok
+validate	45,48	ok
+validate	48,48	ok
+validate	48,48,49	ok
+validate	49	ok
+validate	57	ok
+validate	49,48	ok
+validate	50	ok
+validate	50,49,52,55,52,56,51,54,52,55	ok
+validate	50,49,52,55,52,56,51,54,52,56	ok
+validate	45,50,49,52,55,52,56,51,54,52,56	ok
+validate	45,50,49,52,55,52,56,51,54,52,57	ok
+validate	43,49	ok
+validate	49,97	ok
+validate	97	ok
+validate	233	ok
+validate	65297	ok
+validate	65536	ok
+validate	57344	ok
+validate	128512	ok
+validate	120	ok
+validate	120,65536	ok
+validate	120,57344	ok
+validate	120,0,122	invalid
+validate	120,1,122	invalid
+validate	120,2,122	invalid
+validate	120,3,122	invalid
+validate	120,4,122	invalid
+validate	120,5,122	invalid
+validate	120,6,122	invalid
+validate	120,7,122	invalid
+validate	120,8,122	invalid
+validate	120,9,122	invalid
+validate	120,10,122	invalid
+validate	120,11,122	invalid
+validate	120,12,122	invalid
+validate	120,13,122	invalid
+validate	120,14,122	invalid
+validate	120,15,122	invalid
+validate	120,16,122	invalid
+validate	120,17,122	invalid
+validate	120,18,122	invalid
+validate	120,19,122	invalid
+validate	120,20,122	invalid
+validate	120,21,122	invalid
+validate	120,22,122	invalid
+validate	120,23,122	invalid
+validate	120,24,122	invalid
+validate	120,25,122	invalid
+validate	120,26,122	invalid
+validate	120,27,122	invalid
+validate	120,28,122	invalid
+validate	120,29,122	invalid
+validate	120,30,122	invalid
+validate	120,31,122	invalid
+validate	120,32,122	ok
+validate	120,33,122	ok
+validate	120,34,122	ok
+validate	120,35,122	invalid
+validate	120,36,122	invalid
+validate	120,37,122	ok
+validate	120,38,122	ok
+validate	120,39,122	ok
+validate	120,40,122	ok
+validate	120,41,122	ok
+validate	120,42,122	ok
+validate	120,43,122	ok
+validate	120,44,122	ok
+validate	120,45,122	ok
+validate	120,46,122	invalid
+validate	120,47,122	invalid
+validate	120,48,122	ok
+validate	120,49,122	ok
+validate	120,50,122	ok
+validate	120,51,122	ok
+validate	120,52,122	ok
+validate	120,53,122	ok
+validate	120,54,122	ok
+validate	120,55,122	ok
+validate	120,56,122	ok
+validate	120,57,122	ok
+validate	120,58,122	ok
+validate	120,59,122	ok
+validate	120,60,122	ok
+validate	120,61,122	ok
+validate	120,62,122	ok
+validate	120,63,122	ok
+validate	120,64,122	ok
+validate	120,65,122	ok
+validate	120,66,122	ok
+validate	120,67,122	ok
+validate	120,68,122	ok
+validate	120,69,122	ok
+validate	120,70,122	ok
+validate	120,71,122	ok
+validate	120,72,122	ok
+validate	120,73,122	ok
+validate	120,74,122	ok
+validate	120,75,122	ok
+validate	120,76,122	ok
+validate	120,77,122	ok
+validate	120,78,122	ok
+validate	120,79,122	ok
+validate	120,80,122	ok
+validate	120,81,122	ok
+validate	120,82,122	ok
+validate	120,83,122	ok
+validate	120,84,122	ok
+validate	120,85,122	ok
+validate	120,86,122	ok
+validate	120,87,122	ok
+validate	120,88,122	ok
+validate	120,89,122	ok
+validate	120,90,122	ok
+validate	120,91,122	invalid
+validate	120,92,122	ok
+validate	120,93,122	invalid
+validate	120,94,122	ok
+validate	120,95,122	ok
+validate	120,96,122	ok
+validate	120,97,122	ok
+validate	120,98,122	ok
+validate	120,99,122	ok
+validate	120,100,122	ok
+validate	120,101,122	ok
+validate	120,102,122	ok
+validate	120,103,122	ok
+validate	120,104,122	ok
+validate	120,105,122	ok
+validate	120,106,122	ok
+validate	120,107,122	ok
+validate	120,108,122	ok
+validate	120,109,122	ok
+validate	120,110,122	ok
+validate	120,111,122	ok
+validate	120,112,122	ok
+validate	120,113,122	ok
+validate	120,114,122	ok
+validate	120,115,122	ok
+validate	120,116,122	ok
+validate	120,117,122	ok
+validate	120,118,122	ok
+validate	120,119,122	ok
+validate	120,120,122	ok
+validate	120,121,122	ok
+validate	120,122,122	ok
+validate	120,123,122	ok
+validate	120,124,122	ok
+validate	120,125,122	ok
+validate	120,126,122	ok
+validate	120,127,122	invalid
