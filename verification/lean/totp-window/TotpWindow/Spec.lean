@@ -15,6 +15,12 @@ def timeStep (period : Nat) (nanos : Int) : Nat :=
   if seconds ≤ 0 ∨ period = 0 then 0
   else min maxStep (seconds / (period : Int)).toNat
 
+/-- Whole seconds remaining until the next counter boundary, at least one.
+A local display with an invalid zero period uses one second for the countdown. -/
+def remainingValidity (period : Nat) (nanos : Int) : Nat :=
+  let effective := max period 1
+  effective - ((nanos / nanosPerSecond).toNat % effective)
+
 abbrev Digest := Vector UInt8 20
 
 /-- The key is fixed by the caller. The abstract HMAC takes the counter's eight bytes. -/

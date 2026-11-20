@@ -18,7 +18,7 @@ A Lean 4 specification of `match_code` and `match_step_window` in `crates/fireem
 
 ## Open
 
-Rust's public `hotp` always computes its own HMAC, so the Rust tests exercise truncation with recorded and generated real HMAC digests. Lean proves the truncation bound for every 20-byte digest. The remaining-validity value from `current_code` is outside this specification.
+Rust's public `hotp` always computes its own HMAC, so the Rust tests exercise truncation with recorded and generated real HMAC digests. Lean proves the truncation bound for every 20-byte digest. The remaining-validity value from `current_code` is specified by the clamped whole-second remainder. The proof establishes the inclusive countdown bound, before-epoch clamp and zero-period display fallback.
 
 ## Commands
 

@@ -66,6 +66,18 @@ fn totp_matches_the_lean_specification_on_the_golden_corpus() {
                     "{line}"
                 );
             }
+            ["validity", period, nanos, remaining] => {
+                let params = TotpParams {
+                    period_seconds: period.parse().unwrap(),
+                    digits: 6,
+                };
+                let at = LogicalInstant::from_nanos(nanos.parse().unwrap());
+                assert_eq!(
+                    current_code(RFC_INPUT, &params, at).1,
+                    remaining.parse::<u32>().unwrap(),
+                    "{line}",
+                );
+            }
             ["mac", input, step, hex] => {
                 let counter: u64 = step.parse().unwrap();
                 assert_eq!(hex.len(), 40, "digest length at counter {counter}");

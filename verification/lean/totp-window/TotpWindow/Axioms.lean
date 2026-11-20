@@ -64,3 +64,15 @@ import TotpWindow.Theorems
 
 /-- info: 'TW.outside_code_can_collide' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms TW.outside_code_can_collide
+
+/-- info: 'TW.remaining_validity_bounds' depends on axioms: [propext] -/
+#guard_msgs in #print axioms TW.remaining_validity_bounds
+
+/-- info: 'TW.before_epoch_gets_full_period' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms TW.before_epoch_gets_full_period
+
+/-- info: 'TW.zero_period_gets_one_second' depends on axioms: [propext] -/
+#guard_msgs in #print axioms TW.zero_period_gets_one_second
+
+/-- info: 'TW.next_boundary_uses_new_full_period' does not depend on any axioms -/
+#guard_msgs in #print axioms TW.next_boundary_uses_new_full_period

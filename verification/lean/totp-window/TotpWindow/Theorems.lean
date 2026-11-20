@@ -247,4 +247,26 @@ theorem outside_code_can_collide (hmac : Hmac) :
   simp only [hotp_zero_digits]
   simp [matchCode, current, matchStepWindow, steps, fresh, hotp_zero_digits]
 
+theorem remaining_validity_bounds (period : Nat) (nanos : Int) :
+    1 ≤ remainingValidity period nanos ∧ remainingValidity period nanos ≤ max period 1 := by
+  let p := max period 1
+  let r := (nanos / nanosPerSecond).toNat % p
+  have hp : 0 < p := Nat.lt_of_lt_of_le (by decide : 0 < 1) (Nat.le_max_right _ _)
+  have hr : r < p := Nat.mod_lt _ hp
+  change 1 ≤ p - r ∧ p - r ≤ p
+  exact ⟨Nat.le_sub_of_add_le (by simpa [Nat.add_comm] using Nat.succ_le_of_lt hr), Nat.sub_le _ _⟩
+
+theorem before_epoch_gets_full_period (period : Nat) (nanos : Int) (h : nanos ≤ 0) :
+    remainingValidity period nanos = max period 1 := by
+  unfold remainingValidity nanosPerSecond
+  have nonpositive : nanos / 1000000000 ≤ 0 := by omega
+  have toZero : (nanos / 1000000000).toNat = 0 := by omega
+  simp [toZero]
+
+theorem zero_period_gets_one_second (nanos : Int) :
+    remainingValidity 0 nanos = 1 := by simp [remainingValidity, Nat.mod_one]
+
+theorem next_boundary_uses_new_full_period :
+    remainingValidity 30 29999999999 = 1 ∧ remainingValidity 30 30000000000 = 30 := by decide
+
 end TW
