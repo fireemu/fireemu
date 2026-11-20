@@ -11,7 +11,8 @@
 //     a count) and of (a) (array-contains-any);
 //   - the shared path `tags == [1, 2] AND tags array-contains 1`, alone and with `a == 1`;
 //   - plan-only Explain rows that show the members of ascending merges;
-//   - a collection-scoped composite asked for by a collection-group query with an array-contains.
+//   - a collection-scoped composite asked for by a collection-group query with an array-contains;
+//   - last, the read-only shapes of the Lean findings triage (read-only.mjs, coordinator ruling 1).
 //
 // The rows are the coverage ledger's PICT table (axes Config, Scope, Filter, Form, Name; every
 // valid combination). Four configurations are the first observation's, on the same collection
@@ -30,6 +31,7 @@
 // program, conformance/src/fs-query-index-merge/config.mjs, set `obs2a`).
 
 import { seedFor } from "../fs-query-index-merge/corpus.mjs";
+import { READ_ONLY_PROGRAM } from "./read-only.mjs";
 import {
   aggregate,
   and,
@@ -211,52 +213,5 @@ export const TABLE_PROGRAMS = Object.entries(PROGRAM_NAMES).map(([config, name])
   steps: ROWS.filter(([c]) => c === config).map(stepOf),
 }));
 
-// The Lean findings triage's shapes that need a configuration (coordinator ruling 1; the
-// read-only ones are in read-only.mjs, a lane of their own):
-//   I1  ig1: a collection query ORDER BY a ASC, __name__ DESC where only the collection-group
-//       composite (a ASC, __name__ DESC) has `a` (its single-field indexes exempt); the group
-//       query is the readiness row of the composite, ORDER BY a ASC of the exemption
-//   I4  iic: tags == [1] AND tags array-contains 1 where `tags` has only its contains index;
-//       two documents whose arrays differ, so the returned documents are compared too
-const ORDER_A_NAME_DESC = [asc("a"), desc("__name__")];
-const SELECT_C = { select: { fields: [field("c")] } };
-const SHARED = and(f("tags", "EQUAL", arr(int(1))), CONTAINS);
-export const TRIAGE_PROGRAMS = [
-  {
-    id: `${LANE_PREFIX}triage/group-composite`,
-    seed: seedFor("ig1"),
-    steps: [
-      query("i1-order-a-name-desc", { from: from("ig1"), orderBy: ORDER_A_NAME_DESC, ...SELECT_C }),
-      query(
-        "i1-order-a-name-desc-plan",
-        { from: from("ig1"), orderBy: ORDER_A_NAME_DESC, ...SELECT_C },
-        { body: { explainOptions: {} } },
-      ),
-      query("group-order-a-name-desc", {
-        from: from("ig1", true),
-        orderBy: ORDER_A_NAME_DESC,
-        ...SELECT_C,
-      }),
-      query("order-a-asc", { from: from("ig1"), orderBy: [asc("a")], ...SELECT_C }),
-    ],
-  },
-  {
-    id: `${LANE_PREFIX}triage/contains-only`,
-    seed: [
-      ["iic/x0", { tags: arr(int(1)) }],
-      ["iic/x1", { tags: arr(int(1), int(2)) }],
-    ],
-    steps: [
-      query("i4-shared-path", { from: from("iic"), where: SHARED }),
-      query(
-        "i4-shared-path-plan",
-        { from: from("iic"), where: SHARED },
-        { body: { explainOptions: {} } },
-      ),
-      query("order-tags-asc", { from: from("iic"), orderBy: [asc("tags")] }),
-      query("contains", { from: from("iic"), where: CONTAINS }),
-    ],
-  },
-];
-
-export const PROGRAMS = [...TABLE_PROGRAMS, ...TRIAGE_PROGRAMS];
+/** The Lean findings triage's read-only shapes (coordinator ruling 1): last, on its own groups. */
+export const PROGRAMS = [...TABLE_PROGRAMS, READ_ONLY_PROGRAM];

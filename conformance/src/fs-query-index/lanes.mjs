@@ -71,20 +71,6 @@ export const LANES = {
     harness: "src/fs-query-index",
     sources: ["src/fs-query-index", "src/fs-query-index-merge", "src/fs-query-index-merge2"],
   },
-  // The read-only shapes of the second observation (coordinator ruling 1: timestamp values,
-  // a repeated `__name__` order, an equality and a contains on one array path), on the base
-  // index file: recorded before any configuration change of the send, so a configuration step
-  // that stops cannot cost them.
-  "fs-query-index-merge2-ro": {
-    id: "fs-query-index-merge2-ro",
-    taskId: "FS-QUERY-INDEX-MERGE-2-RO",
-    corpus: "../fs-query-index-merge2/read-only.mjs",
-    fixture: "fs-query-index-merge2-ro-production.json",
-    indexes: "fs-query-index.indexes.json",
-    localConfig: "fs-query-index.fireemu.json",
-    harness: "src/fs-query-index",
-    sources: ["src/fs-query-index", "src/fs-query-index-merge2"],
-  },
   // FS-ENT-ORACLE O-1 (owner ledger 1468 Q1): pipeline semantics in the named Enterprise
   // database `entpipe1`, which this campaign creates and deletes in its own packet steps. No
   // index file: Enterprise runs pipelines without indexes, and the lane never deploys any. The
