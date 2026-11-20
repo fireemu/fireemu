@@ -1,0 +1,247 @@
+# cases 246
+issue minimum min first -170141183460469231731687303715884105728 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum min second -170141183460469231731687303715884105728 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum negative first -170141183460469231731687303715884105728 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum negative second -170141183460469231731687303715884105728 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum zero first -170141183460469231731687303715884105728 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum zero second -170141183460469231731687303715884105728 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum one first -170141183460469231731687303715884105728 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum one second -170141183460469231731687303715884105728 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum configured_min first -170141183460469231731687303715884105728 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum configured_min second -170141183460469231731687303715884105728 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum default first -170141183460469231731687303715884105728 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum default second -170141183460469231731687303715884105728 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum configured_max first -170141183460469231731687303715884105728 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum configured_max second -170141183460469231731687303715884105728 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue minimum max first -170141183460469231731687303715884105728 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue minimum max second -170141183460469231731687303715884105728 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below min first -9223372036854775808000000001 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below min second -9223372036854775808000000001 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below negative first -9223372036854775808000000001 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below negative second -9223372036854775808000000001 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below zero first -9223372036854775808000000001 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below zero second -9223372036854775808000000001 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below one first -9223372036854775808000000001 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below one second -9223372036854775808000000001 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below configured_min first -9223372036854775808000000001 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below configured_min second -9223372036854775808000000001 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below default first -9223372036854775808000000001 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below default second -9223372036854775808000000001 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below configured_max first -9223372036854775808000000001 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below configured_max second -9223372036854775808000000001 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue below max first -9223372036854775808000000001 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue below max second -9223372036854775808000000001 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first min first -9223372036854775808000000000 -9223372036854775808 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first min second -9223372036854775808000000000 -9223372036854775808 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first negative first -9223372036854775808000000000 -10 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first negative second -9223372036854775808000000000 -10 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first zero first -9223372036854775808000000000 0 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first zero second -9223372036854775808000000000 0 -9223372036854775808 -9223372036854775808 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first one first -9223372036854775808000000000 1 -9223372036854775808 -9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first one second -9223372036854775808000000000 1 -9223372036854775808 -9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first configured_min first -9223372036854775808000000000 1800 -9223372036854775808 -9223372036854774008 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first configured_min second -9223372036854775808000000000 1800 -9223372036854775808 -9223372036854774008 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first default first -9223372036854775808000000000 3600 -9223372036854775808 -9223372036854772208 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first default second -9223372036854775808000000000 3600 -9223372036854775808 -9223372036854772208 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first configured_max first -9223372036854775808000000000 604800 -9223372036854775808 -9223372036854171008 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first configured_max second -9223372036854775808000000000 604800 -9223372036854775808 -9223372036854171008 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue first max first -9223372036854775808000000000 9223372036854775807 -9223372036854775808 -1 9223372036854775807 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue first max second -9223372036854775808000000000 9223372036854775807 -9223372036854775808 -1 9223372036854775807 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch min first -1 -9223372036854775808 -1 -9223372036854775808 -9223372036854775807 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch min second -1 -9223372036854775808 -1 -9223372036854775808 -9223372036854775807 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch negative first -1 -10 -1 -11 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch negative second -1 -10 -1 -11 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch zero first -1 0 -1 -1 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch zero second -1 0 -1 -1 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch one first -1 1 -1 0 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch one second -1 1 -1 0 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch configured_min first -1 1800 -1 1799 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch configured_min second -1 1800 -1 1799 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch default first -1 3600 -1 3599 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch default second -1 3600 -1 3599 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch configured_max first -1 604800 -1 604799 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch configured_max second -1 604800 -1 604799 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue before_epoch max first -1 9223372036854775807 -1 9223372036854775806 9223372036854775807 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue before_epoch max second -1 9223372036854775807 -1 9223372036854775806 9223372036854775807 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch min first 0 -9223372036854775808 0 -9223372036854775808 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch min second 0 -9223372036854775808 0 -9223372036854775808 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch negative first 0 -10 0 -10 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch negative second 0 -10 0 -10 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch zero first 0 0 0 0 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch zero second 0 0 0 0 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch one first 0 1 0 1 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch one second 0 1 0 1 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch configured_min first 0 1800 0 1800 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch configured_min second 0 1800 0 1800 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch default first 0 3600 0 3600 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch default second 0 3600 0 3600 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch configured_max first 0 604800 0 604800 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch configured_max second 0 604800 0 604800 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue epoch max first 0 9223372036854775807 0 9223372036854775807 9223372036854775807 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue epoch max second 0 9223372036854775807 0 9223372036854775807 9223372036854775807 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge min first 999999999 -9223372036854775808 0 -9223372036854775808 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge min second 999999999 -9223372036854775808 0 -9223372036854775808 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge negative first 999999999 -10 0 -10 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge negative second 999999999 -10 0 -10 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge zero first 999999999 0 0 0 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge zero second 999999999 0 0 0 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge one first 999999999 1 0 1 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge one second 999999999 1 0 1 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge configured_min first 999999999 1800 0 1800 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge configured_min second 999999999 1800 0 1800 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge default first 999999999 3600 0 3600 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge default second 999999999 3600 0 3600 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge configured_max first 999999999 604800 0 604800 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge configured_max second 999999999 604800 0 604800 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second_edge max first 999999999 9223372036854775807 0 9223372036854775807 9223372036854775807 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second_edge max second 999999999 9223372036854775807 0 9223372036854775807 9223372036854775807 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second min first 1000000000 -9223372036854775808 1 -9223372036854775807 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second min second 1000000000 -9223372036854775808 1 -9223372036854775807 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second negative first 1000000000 -10 1 -9 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second negative second 1000000000 -10 1 -9 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second zero first 1000000000 0 1 1 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second zero second 1000000000 0 1 1 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second one first 1000000000 1 1 2 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second one second 1000000000 1 1 2 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second configured_min first 1000000000 1800 1 1801 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second configured_min second 1000000000 1800 1 1801 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second default first 1000000000 3600 1 3601 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second default second 1000000000 3600 1 3601 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second configured_max first 1000000000 604800 1 604801 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second configured_max second 1000000000 604800 1 604801 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue second max first 1000000000 9223372036854775807 1 9223372036854775807 9223372036854775806 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue second max second 1000000000 9223372036854775807 1 9223372036854775807 9223372036854775806 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary min first 1788004860123456789 -9223372036854775808 1788004860 -9223372035066770948 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary min second 1788004860123456789 -9223372036854775808 1788004860 -9223372035066770948 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary negative first 1788004860123456789 -10 1788004860 1788004850 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary negative second 1788004860123456789 -10 1788004860 1788004850 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary zero first 1788004860123456789 0 1788004860 1788004860 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary zero second 1788004860123456789 0 1788004860 1788004860 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary one first 1788004860123456789 1 1788004860 1788004861 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary one second 1788004860123456789 1 1788004860 1788004861 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary configured_min first 1788004860123456789 1800 1788004860 1788006660 1800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary configured_min second 1788004860123456789 1800 1788004860 1788006660 1800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary default first 1788004860123456789 3600 1788004860 1788008460 3600 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary default second 1788004860123456789 3600 1788004860 1788008460 3600 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary configured_max first 1788004860123456789 604800 1788004860 1788609660 604800 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary configured_max second 1788004860123456789 604800 1788004860 1788609660 604800 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue ordinary max first 1788004860123456789 9223372036854775807 1788004860 9223372036854775807 9223372035066770947 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue ordinary max second 1788004860123456789 9223372036854775807 1788004860 9223372036854775807 9223372035066770947 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus min first 9223372036854775806000000123 -9223372036854775808 9223372036854775806 -2 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus min second 9223372036854775806000000123 -9223372036854775808 9223372036854775806 -2 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus negative first 9223372036854775806000000123 -10 9223372036854775806 9223372036854775796 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus negative second 9223372036854775806000000123 -10 9223372036854775806 9223372036854775796 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus zero first 9223372036854775806000000123 0 9223372036854775806 9223372036854775806 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus zero second 9223372036854775806000000123 0 9223372036854775806 9223372036854775806 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus one first 9223372036854775806000000123 1 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus one second 9223372036854775806000000123 1 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus configured_min first 9223372036854775806000000123 1800 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus configured_min second 9223372036854775806000000123 1800 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus default first 9223372036854775806000000123 3600 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus default second 9223372036854775806000000123 3600 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus configured_max first 9223372036854775806000000123 604800 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus configured_max second 9223372036854775806000000123 604800 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue max_minus max first 9223372036854775806000000123 9223372036854775807 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue max_minus max second 9223372036854775806000000123 9223372036854775807 9223372036854775806 9223372036854775807 1 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last min first 9223372036854775807999999999 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last min second 9223372036854775807999999999 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last negative first 9223372036854775807999999999 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last negative second 9223372036854775807999999999 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last zero first 9223372036854775807999999999 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last zero second 9223372036854775807999999999 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last one first 9223372036854775807999999999 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last one second 9223372036854775807999999999 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last configured_min first 9223372036854775807999999999 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last configured_min second 9223372036854775807999999999 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last default first 9223372036854775807999999999 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last default second 9223372036854775807999999999 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last configured_max first 9223372036854775807999999999 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last configured_max second 9223372036854775807999999999 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue last max first 9223372036854775807999999999 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue last max second 9223372036854775807999999999 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above min first 9223372036854775808000000000 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above min second 9223372036854775808000000000 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above negative first 9223372036854775808000000000 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above negative second 9223372036854775808000000000 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above zero first 9223372036854775808000000000 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above zero second 9223372036854775808000000000 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above one first 9223372036854775808000000000 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above one second 9223372036854775808000000000 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above configured_min first 9223372036854775808000000000 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above configured_min second 9223372036854775808000000000 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above default first 9223372036854775808000000000 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above default second 9223372036854775808000000000 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above configured_max first 9223372036854775808000000000 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above configured_max second 9223372036854775808000000000 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue above max first 9223372036854775808000000000 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue above max second 9223372036854775808000000000 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum min first 170141183460469231731687303715884105727 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum min second 170141183460469231731687303715884105727 -9223372036854775808 9223372036854775807 -1 -9223372036854775808 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum negative first 170141183460469231731687303715884105727 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum negative second 170141183460469231731687303715884105727 -10 9223372036854775807 9223372036854775797 -10 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum zero first 170141183460469231731687303715884105727 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum zero second 170141183460469231731687303715884105727 0 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum one first 170141183460469231731687303715884105727 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum one second 170141183460469231731687303715884105727 1 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum configured_min first 170141183460469231731687303715884105727 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum configured_min second 170141183460469231731687303715884105727 1800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum default first 170141183460469231731687303715884105727 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum default second 170141183460469231731687303715884105727 3600 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum configured_max first 170141183460469231731687303715884105727 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum configured_max second 170141183460469231731687303715884105727 604800 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+issue maximum max first 170141183460469231731687303715884105727 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/42 projects/42 projects/demo-first app-alpha 00000000000000000000000000000010
+issue maximum max second 170141183460469231731687303715884105727 9223372036854775807 9223372036854775807 9223372036854775807 0 https://firebaseappcheck.googleapis.com/123456789 projects/123456789 projects/demo-second app-beta ffffffffffffffffffffffffffffffff
+admission off bypass none yes - no
+admission off missing none yes - no
+admission off valid none yes - yes
+admission off invalid malformed yes - no
+admission off invalid algorithm yes - no
+admission off invalid key yes - no
+admission off invalid signature yes - no
+admission off invalid future yes - no
+admission off invalid expired yes - no
+admission off invalid issuer yes - no
+admission off invalid audience yes - no
+admission off invalid unknown_app yes - no
+admission off invalid disabled yes - no
+admission off invalid project yes - no
+admission off invalid epoch yes - no
+admission unenforced bypass none yes - no
+admission unenforced missing none yes - no
+admission unenforced valid none yes - yes
+admission unenforced invalid malformed yes - no
+admission unenforced invalid algorithm yes - no
+admission unenforced invalid key yes - no
+admission unenforced invalid signature yes - no
+admission unenforced invalid future yes - no
+admission unenforced invalid expired yes - no
+admission unenforced invalid issuer yes - no
+admission unenforced invalid audience yes - no
+admission unenforced invalid unknown_app yes - no
+admission unenforced invalid disabled yes - no
+admission unenforced invalid project yes - no
+admission unenforced invalid epoch yes - no
+admission enforced bypass none yes - no
+admission enforced missing none no APP_CHECK_REQUIRED no
+admission enforced valid none yes - yes
+admission enforced invalid malformed no APP_CHECK_INVALID no
+admission enforced invalid algorithm no APP_CHECK_INVALID no
+admission enforced invalid key no APP_CHECK_INVALID no
+admission enforced invalid signature no APP_CHECK_INVALID no
+admission enforced invalid future no APP_CHECK_INVALID no
+admission enforced invalid expired no APP_CHECK_INVALID no
+admission enforced invalid issuer no APP_CHECK_INVALID no
+admission enforced invalid audience no APP_CHECK_INVALID no
+admission enforced invalid unknown_app no APP_CHECK_INVALID no
+admission enforced invalid disabled no APP_CHECK_INVALID no
+admission enforced invalid project no APP_CHECK_INVALID no
+admission enforced invalid epoch no APP_CHECK_INVALID no
+config -9223372036854775808 invalid
+config 0 invalid
+config 1799 invalid
+config 1800 accepted
+config 3600 accepted
+config 604799 accepted
+config 604800 accepted
+config 604801 invalid
+config 9223372036854775807 invalid

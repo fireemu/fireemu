@@ -1,0 +1,9 @@
+name = "app-check-claims"
+defaultTargets = ["AppCheckClaims", "corpus"]
+
+[[lean_lib]]
+name = "AppCheckClaims"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

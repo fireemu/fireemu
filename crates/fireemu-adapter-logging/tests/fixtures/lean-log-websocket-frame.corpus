@@ -1,0 +1,255 @@
+# cases 254
+frame 0 1 zero 8100
+frame 0 1 pattern 8100
+frame 0 1 ff 8100
+frame 0 2 zero 8200
+frame 0 2 pattern 8200
+frame 0 2 ff 8200
+frame 0 8 zero 8800
+frame 0 8 pattern 8800
+frame 0 8 ff 8800
+frame 0 10 zero 8a00
+frame 0 10 pattern 8a00
+frame 0 10 ff 8a00
+frame 0 242 zero 8200
+frame 0 242 pattern 8200
+frame 0 242 ff 8200
+frame 1 1 zero 8101
+frame 1 1 pattern 8101
+frame 1 1 ff 8101
+frame 1 2 zero 8201
+frame 1 2 pattern 8201
+frame 1 2 ff 8201
+frame 1 8 zero 8801
+frame 1 8 pattern 8801
+frame 1 8 ff 8801
+frame 1 10 zero 8a01
+frame 1 10 pattern 8a01
+frame 1 10 ff 8a01
+frame 1 242 zero 8201
+frame 1 242 pattern 8201
+frame 1 242 ff 8201
+frame 125 1 zero 817d
+frame 125 1 pattern 817d
+frame 125 1 ff 817d
+frame 125 2 zero 827d
+frame 125 2 pattern 827d
+frame 125 2 ff 827d
+frame 125 8 zero 887d
+frame 125 8 pattern 887d
+frame 125 8 ff 887d
+frame 125 10 zero 8a7d
+frame 125 10 pattern 8a7d
+frame 125 10 ff 8a7d
+frame 125 242 zero 827d
+frame 125 242 pattern 827d
+frame 125 242 ff 827d
+frame 126 1 zero 817e007e
+frame 126 1 pattern 817e007e
+frame 126 1 ff 817e007e
+frame 126 2 zero 827e007e
+frame 126 2 pattern 827e007e
+frame 126 2 ff 827e007e
+frame 126 8 zero 887e007e
+frame 126 8 pattern 887e007e
+frame 126 8 ff 887e007e
+frame 126 10 zero 8a7e007e
+frame 126 10 pattern 8a7e007e
+frame 126 10 ff 8a7e007e
+frame 126 242 zero 827e007e
+frame 126 242 pattern 827e007e
+frame 126 242 ff 827e007e
+frame 127 1 zero 817e007f
+frame 127 1 pattern 817e007f
+frame 127 1 ff 817e007f
+frame 127 2 zero 827e007f
+frame 127 2 pattern 827e007f
+frame 127 2 ff 827e007f
+frame 127 8 zero 887e007f
+frame 127 8 pattern 887e007f
+frame 127 8 ff 887e007f
+frame 127 10 zero 8a7e007f
+frame 127 10 pattern 8a7e007f
+frame 127 10 ff 8a7e007f
+frame 127 242 zero 827e007f
+frame 127 242 pattern 827e007f
+frame 127 242 ff 827e007f
+frame 255 1 zero 817e00ff
+frame 255 1 pattern 817e00ff
+frame 255 1 ff 817e00ff
+frame 255 2 zero 827e00ff
+frame 255 2 pattern 827e00ff
+frame 255 2 ff 827e00ff
+frame 255 8 zero 887e00ff
+frame 255 8 pattern 887e00ff
+frame 255 8 ff 887e00ff
+frame 255 10 zero 8a7e00ff
+frame 255 10 pattern 8a7e00ff
+frame 255 10 ff 8a7e00ff
+frame 255 242 zero 827e00ff
+frame 255 242 pattern 827e00ff
+frame 255 242 ff 827e00ff
+frame 256 1 zero 817e0100
+frame 256 1 pattern 817e0100
+frame 256 1 ff 817e0100
+frame 256 2 zero 827e0100
+frame 256 2 pattern 827e0100
+frame 256 2 ff 827e0100
+frame 256 8 zero 887e0100
+frame 256 8 pattern 887e0100
+frame 256 8 ff 887e0100
+frame 256 10 zero 8a7e0100
+frame 256 10 pattern 8a7e0100
+frame 256 10 ff 8a7e0100
+frame 256 242 zero 827e0100
+frame 256 242 pattern 827e0100
+frame 256 242 ff 827e0100
+frame 65534 1 zero 817efffe
+frame 65534 1 pattern 817efffe
+frame 65534 1 ff 817efffe
+frame 65534 2 zero 827efffe
+frame 65534 2 pattern 827efffe
+frame 65534 2 ff 827efffe
+frame 65534 8 zero 887efffe
+frame 65534 8 pattern 887efffe
+frame 65534 8 ff 887efffe
+frame 65534 10 zero 8a7efffe
+frame 65534 10 pattern 8a7efffe
+frame 65534 10 ff 8a7efffe
+frame 65534 242 zero 827efffe
+frame 65534 242 pattern 827efffe
+frame 65534 242 ff 827efffe
+frame 65535 1 zero 817effff
+frame 65535 1 pattern 817effff
+frame 65535 1 ff 817effff
+frame 65535 2 zero 827effff
+frame 65535 2 pattern 827effff
+frame 65535 2 ff 827effff
+frame 65535 8 zero 887effff
+frame 65535 8 pattern 887effff
+frame 65535 8 ff 887effff
+frame 65535 10 zero 8a7effff
+frame 65535 10 pattern 8a7effff
+frame 65535 10 ff 8a7effff
+frame 65535 242 zero 827effff
+frame 65535 242 pattern 827effff
+frame 65535 242 ff 827effff
+frame 65536 1 zero 817f0000000000010000
+frame 65536 1 pattern 817f0000000000010000
+frame 65536 1 ff 817f0000000000010000
+frame 65536 2 zero 827f0000000000010000
+frame 65536 2 pattern 827f0000000000010000
+frame 65536 2 ff 827f0000000000010000
+frame 65536 8 zero 887f0000000000010000
+frame 65536 8 pattern 887f0000000000010000
+frame 65536 8 ff 887f0000000000010000
+frame 65536 10 zero 8a7f0000000000010000
+frame 65536 10 pattern 8a7f0000000000010000
+frame 65536 10 ff 8a7f0000000000010000
+frame 65536 242 zero 827f0000000000010000
+frame 65536 242 pattern 827f0000000000010000
+frame 65536 242 ff 827f0000000000010000
+frame 65537 1 zero 817f0000000000010001
+frame 65537 1 pattern 817f0000000000010001
+frame 65537 1 ff 817f0000000000010001
+frame 65537 2 zero 827f0000000000010001
+frame 65537 2 pattern 827f0000000000010001
+frame 65537 2 ff 827f0000000000010001
+frame 65537 8 zero 887f0000000000010001
+frame 65537 8 pattern 887f0000000000010001
+frame 65537 8 ff 887f0000000000010001
+frame 65537 10 zero 8a7f0000000000010001
+frame 65537 10 pattern 8a7f0000000000010001
+frame 65537 10 ff 8a7f0000000000010001
+frame 65537 242 zero 827f0000000000010001
+frame 65537 242 pattern 827f0000000000010001
+frame 65537 242 ff 827f0000000000010001
+text - 8100
+text 68656c6c6f 8105
+text e383ade382b0 8106
+text 61f09f9880 8105
+close 03e8 8802
+mask 0 zero zero 00000000 -
+mask 0 zero uniform ffffffff -
+mask 0 zero alternating 55aa55aa -
+mask 0 zero distinct 010a80fe -
+mask 0 pattern zero 00000000 -
+mask 0 pattern uniform ffffffff -
+mask 0 pattern alternating 55aa55aa -
+mask 0 pattern distinct 010a80fe -
+mask 0 ff zero 00000000 -
+mask 0 ff uniform ffffffff -
+mask 0 ff alternating 55aa55aa -
+mask 0 ff distinct 010a80fe -
+mask 1 zero zero 00000000 00
+mask 1 zero uniform ffffffff ff
+mask 1 zero alternating 55aa55aa 55
+mask 1 zero distinct 010a80fe 01
+mask 1 pattern zero 00000000 11
+mask 1 pattern uniform ffffffff ee
+mask 1 pattern alternating 55aa55aa 44
+mask 1 pattern distinct 010a80fe 10
+mask 1 ff zero 00000000 ff
+mask 1 ff uniform ffffffff 00
+mask 1 ff alternating 55aa55aa aa
+mask 1 ff distinct 010a80fe fe
+mask 3 zero zero 00000000 000000
+mask 3 zero uniform ffffffff ffffff
+mask 3 zero alternating 55aa55aa 55aa55
+mask 3 zero distinct 010a80fe 010a80
+mask 3 pattern zero 00000000 11304f
+mask 3 pattern uniform ffffffff eecfb0
+mask 3 pattern alternating 55aa55aa 449a1a
+mask 3 pattern distinct 010a80fe 103acf
+mask 3 ff zero 00000000 ffffff
+mask 3 ff uniform ffffffff 000000
+mask 3 ff alternating 55aa55aa aa55aa
+mask 3 ff distinct 010a80fe fef57f
+mask 4 zero zero 00000000 00000000
+mask 4 zero uniform ffffffff ffffffff
+mask 4 zero alternating 55aa55aa 55aa55aa
+mask 4 zero distinct 010a80fe 010a80fe
+mask 4 pattern zero 00000000 11304f6e
+mask 4 pattern uniform ffffffff eecfb091
+mask 4 pattern alternating 55aa55aa 449a1ac4
+mask 4 pattern distinct 010a80fe 103acf90
+mask 4 ff zero 00000000 ffffffff
+mask 4 ff uniform ffffffff 00000000
+mask 4 ff alternating 55aa55aa aa55aa55
+mask 4 ff distinct 010a80fe fef57f01
+mask 5 zero zero 00000000 0000000000
+mask 5 zero uniform ffffffff ffffffffff
+mask 5 zero alternating 55aa55aa 55aa55aa55
+mask 5 zero distinct 010a80fe 010a80fe01
+mask 5 pattern zero 00000000 11304f6e8d
+mask 5 pattern uniform ffffffff eecfb09172
+mask 5 pattern alternating 55aa55aa 449a1ac4d8
+mask 5 pattern distinct 010a80fe 103acf908c
+mask 5 ff zero 00000000 ffffffffff
+mask 5 ff uniform ffffffff 0000000000
+mask 5 ff alternating 55aa55aa aa55aa55aa
+mask 5 ff distinct 010a80fe fef57f01fe
+mask 9 zero zero 00000000 000000000000000000
+mask 9 zero uniform ffffffff ffffffffffffffffff
+mask 9 zero alternating 55aa55aa 55aa55aa55aa55aa55
+mask 9 zero distinct 010a80fe 010a80fe010a80fe01
+mask 9 pattern zero 00000000 11304f6e8daccbea09
+mask 9 pattern uniform ffffffff eecfb09172533415f6
+mask 9 pattern alternating 55aa55aa 449a1ac4d8069e405c
+mask 9 pattern distinct 010a80fe 103acf908ca64b1408
+mask 9 ff zero 00000000 ffffffffffffffffff
+mask 9 ff uniform ffffffff 000000000000000000
+mask 9 ff alternating 55aa55aa aa55aa55aa55aa55aa
+mask 9 ff distinct 010a80fe fef57f01fef57f01fe
+mask 17 zero zero 00000000 0000000000000000000000000000000000
+mask 17 zero uniform ffffffff ffffffffffffffffffffffffffffffffff
+mask 17 zero alternating 55aa55aa 55aa55aa55aa55aa55aa55aa55aa55aa55
+mask 17 zero distinct 010a80fe 010a80fe010a80fe010a80fe010a80fe01
+mask 17 pattern zero 00000000 11304f6e8daccbea0928476685a4c3e201
+mask 17 pattern uniform ffffffff eecfb09172533415f6d7b8997a5b3c1dfe
+mask 17 pattern alternating 55aa55aa 449a1ac4d8069e405c8212ccd00e964854
+mask 17 pattern distinct 010a80fe 103acf908ca64b140822c79884ae431c00
+mask 17 ff zero 00000000 ffffffffffffffffffffffffffffffffff
+mask 17 ff uniform ffffffff 0000000000000000000000000000000000
+mask 17 ff alternating 55aa55aa aa55aa55aa55aa55aa55aa55aa55aa55aa
+mask 17 ff distinct 010a80fe fef57f01fef57f01fef57f01fef57f01fe

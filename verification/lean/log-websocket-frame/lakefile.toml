@@ -1,0 +1,9 @@
+name = "log-websocket-frame"
+defaultTargets = ["LogWebsocketFrame", "corpus"]
+
+[[lean_lib]]
+name = "LogWebsocketFrame"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
