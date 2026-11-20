@@ -1,0 +1,9 @@
+name = "rtdb-path-merge"
+defaultTargets = ["RtdbPathMerge", "corpus"]
+
+[[lean_lib]]
+name = "RtdbPathMerge"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

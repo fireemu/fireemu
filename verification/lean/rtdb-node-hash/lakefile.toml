@@ -1,0 +1,9 @@
+name = "rtdb-node-hash"
+defaultTargets = ["RtdbNodeHash", "corpus"]
+
+[[lean_lib]]
+name = "RtdbNodeHash"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

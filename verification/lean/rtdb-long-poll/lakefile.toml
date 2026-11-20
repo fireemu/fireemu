@@ -1,0 +1,9 @@
+name = "rtdb-long-poll"
+defaultTargets = ["RtdbLongPoll", "corpus"]
+
+[[lean_lib]]
+name = "RtdbLongPoll"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
