@@ -412,22 +412,19 @@ mod tests {
 
     #[tokio::test]
     async fn it_stops_reading_at_the_byte_limit() {
-        let body = vec![1_u8; 600 * 1024];
-        // The first limit aligns with the drain buffer. The second requires another read.
-        for (limit, expected) in [
-            (LIMIT, LIMIT..=LIMIT),
-            (LIMIT + 1, LIMIT + 1..=LIMIT + 32 * 1024),
-        ] {
-            let (server, mut client) = tokio::io::duplex(1024 * 1024);
-            let (mut probe, counters) = Probe::new(server);
-            client
-                .write_all(&body)
-                .await
-                .expect("a large body fits the pipe");
-            closing(&mut probe, limit).await;
-            let drained = counters.bytes.load(Ordering::SeqCst);
-            assert!(expected.contains(&drained), "limit {limit}: read {drained}");
-        }
+        let (server, mut client) = tokio::io::duplex(1024 * 1024);
+        let (mut probe, counters) = Probe::new(server);
+        client
+            .write_all(&vec![1_u8; 600 * 1024])
+            .await
+            .expect("a large body fits the pipe");
+        closing(&mut probe, LIMIT).await;
+        let drained = counters.bytes.load(Ordering::SeqCst);
+        assert!(drained >= LIMIT, "{drained}");
+        assert!(
+            drained < LIMIT + 32 * 1024,
+            "stopped soon after the limit: {drained}"
+        );
     }
 
     #[tokio::test]

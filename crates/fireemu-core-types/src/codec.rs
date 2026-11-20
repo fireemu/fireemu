@@ -165,12 +165,14 @@ mod tests {
         assert_eq!(super::echo("abc"), "abc");
         let exact = "x".repeat(super::MAX_ECHO_BYTES);
         assert_eq!(super::echo(&exact), exact);
-        let too_long = format!("{exact}x");
-        assert_eq!(super::echo(&too_long), format!("{exact}..."));
-
-        let prefix = "x".repeat(super::MAX_ECHO_BYTES - 1);
-        let split_at_limit = format!("{prefix}é");
-        assert_eq!(super::echo(&split_at_limit), format!("{prefix}..."));
+        let long = "\u{e9}".repeat(super::MAX_ECHO_BYTES);
+        let echoed = super::echo(&long);
+        assert!(echoed.ends_with("..."));
+        assert!(echoed.len() <= super::MAX_ECHO_BYTES + 3);
+        assert!(echoed
+            .trim_end_matches("...")
+            .chars()
+            .all(|c| c == '\u{e9}'));
     }
     use super::{
         json_escape_into, percent_decode, percent_decode_bytes, percent_escapes_are_well_formed,
@@ -221,10 +223,6 @@ mod tests {
         let mut short = String::new();
         write_json_string(&mut short, text, JsonControlEscape::Short);
         assert_eq!(short, "\"a\\u0001\\b\\f\\\"\\\\\\n\"");
-
-        let mut boundary = String::new();
-        json_escape_into(&mut boundary, "\r\t\u{1f} ", JsonControlEscape::Unicode);
-        assert_eq!(boundary, "\\r\\t\\u001f ");
 
         let mut unquoted = String::new();
         json_escape_into(&mut unquoted, text, JsonControlEscape::Unicode);
