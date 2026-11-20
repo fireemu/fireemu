@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 
 use fireemu_adapter_grpc::gateway::Gateway;
 use fireemu_adapter_grpc::local::LocalBackend;
-use fireemu_adapter_grpc::rest::{json_syntax::KeyOrder, RestRequest, RestState};
+use fireemu_adapter_grpc::rest::{json_syntax::KeyOrder, RestRequest, RestResponse, RestState};
+use fireemu_proto_firestore::google::firestore::v1::structured_query::field_filter::Operator;
 
 fn state(edition: FirestoreEdition, policy: IndexValidationPolicy) -> RestState {
     let gateway = Gateway {
@@ -35,8 +36,8 @@ fn state(edition: FirestoreEdition, policy: IndexValidationPolicy) -> RestState 
     }
 }
 
-fn post(state: &RestState, action: &str, body: Value) -> Value {
-    let response = state.handle(&RestRequest {
+fn request(state: &RestState, action: &str, body: Value) -> RestResponse {
+    state.handle(&RestRequest {
         method: "POST".to_owned(),
         path: format!("/v1/projects/demo-app/databases/(default)/documents:{action}"),
         query: String::new(),
@@ -48,7 +49,11 @@ fn post(state: &RestState, action: &str, body: Value) -> Value {
         body,
         batch_field_order: Vec::new(),
         key_order: KeyOrder::default(),
-    });
+    })
+}
+
+fn post(state: &RestState, action: &str, body: Value) -> Value {
+    let response = request(state, action, body);
     assert_eq!(response.status, 400, "{action}: {}", response.body);
     response.body
 }
@@ -56,6 +61,7 @@ fn post(state: &RestState, action: &str, body: Value) -> Value {
 #[test]
 fn recorded_diagnostics_keep_other_actions_editions_and_profiles() {
     let table = include_str!("fixtures/index-merge-obs2-diagnostics.tsv");
+    assert_eq!(table.lines().count(), 19);
     let across_range = "9999-12-31T23:59:59-00:01";
     for row in table.lines().skip(1) {
         let fields: Vec<_> = row.split('\t').collect();
@@ -79,13 +85,26 @@ fn recorded_diagnostics_keep_other_actions_editions_and_profiles() {
         let mut query = json!({"from": [{"collectionId": "observations"}]});
         let order = |direction| json!({"field": {"fieldPath": "__name__"}, "direction": direction});
         match *shape {
-            "filterOffset" => {
+            "filterOffset" | "numericFilterOffset" => {
+                let operator = if *shape == "numericFilterOffset" {
+                    json!(Operator::Equal as i32)
+                } else {
+                    json!("EQUAL")
+                };
                 query["where"] = json!({"fieldFilter": {
-                    "field": {"fieldPath": "t"}, "op": "EQUAL", "value": {"timestampValue": across_range},
+                    "field": {"fieldPath": "t"}, "op": operator, "value": {"timestampValue": across_range},
                 }});
             }
             "duplicateKey" => query["orderBy"] = json!([order("DESCENDING"), order("ASCENDING")]),
             "reverseKey" => query["orderBy"] = json!([order("ASCENDING"), order("DESCENDING")]),
+            "filterAndReadTimeOffset" | "filteredDuplicateKey" => {
+                query["where"] = json!({"fieldFilter": {
+                    "field": {"fieldPath": "t"}, "op": "EQUAL", "value": {"integerValue": "1"},
+                }});
+                if *shape == "filteredDuplicateKey" {
+                    query["orderBy"] = json!([order("DESCENDING"), order("ASCENDING")]);
+                }
+            }
             "readTimeOffset" => {}
             _ => panic!("bad shape: {row}"),
         }
@@ -95,7 +114,7 @@ fn recorded_diagnostics_keep_other_actions_editions_and_profiles() {
         } else {
             json!({"structuredAggregationQuery": {"structuredQuery": query, "aggregations": [{"count":{}, "alias":"n"}]}})
         };
-        if *shape == "readTimeOffset" {
+        if matches!(*shape, "readTimeOffset" | "filterAndReadTimeOffset") {
             body["readTime"] = json!(across_range);
         }
         let response = post(&state, action, body);
@@ -103,7 +122,10 @@ fn recorded_diagnostics_keep_other_actions_editions_and_profiles() {
             .as_str()
             .or_else(|| response["error"]["message"].as_str())
             .unwrap();
-        if matches!(*shape, "duplicateKey" | "reverseKey") {
+        if matches!(
+            *shape,
+            "duplicateKey" | "reverseKey" | "filteredDuplicateKey"
+        ) {
             let key_order_message = (regular && standard && *shape == "duplicateKey") || !strict;
             let expected = if key_order_message {
                 "more fields after the key"
@@ -114,11 +136,34 @@ fn recorded_diagnostics_keep_other_actions_editions_and_profiles() {
         } else {
             assert_eq!(
                 message.contains("Timestamp value exceeds limits"),
-                regular && standard && strict && *shape == "filterOffset",
+                regular
+                    && standard
+                    && strict
+                    && matches!(*shape, "filterOffset" | "numericFilterOffset"),
                 "{row}: {message}",
             );
         }
     }
+}
+
+#[test]
+fn standard_strict_equality_accepts_an_offset_in_the_last_timestamp_second() {
+    let state = state(
+        FirestoreEdition::Standard,
+        IndexValidationPolicy::Production,
+    );
+    let response = request(
+        &state,
+        "runQuery",
+        json!({"structuredQuery": {
+            "from": [{"collectionId": "observations"}],
+            "where": {"fieldFilter": {
+                "field": {"fieldPath": "t"}, "op": "EQUAL",
+                "value": {"timestampValue": "9999-12-31T22:59:59.999999999-01:00"},
+            }},
+        }}),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
 }
 
 #[test]

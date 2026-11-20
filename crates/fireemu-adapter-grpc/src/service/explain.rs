@@ -675,11 +675,7 @@ mod tests {
         assert_eq!(indexes_used(&huge, &[scan()]).len(), MAX_PLAN_ENTRIES);
     }
 
-    /// A merge member's entries are the documents its atoms select, `IS_NULL` included, and the
-    /// disjunct's range stays on every member (core review should-fix 1).
-    #[test]
-    fn merge_members_read_the_entries_their_atoms_select() {
-        use fireemu_core_firestore::path::DocumentPath;
+    fn merge_entries_fixture() -> FirestoreState {
         use fireemu_core_firestore::store::{Write, WriteOp};
         use fireemu_core_types::ids::{DatabaseId, ProjectId};
         let mut db = FirestoreState::new();
@@ -727,6 +723,14 @@ mod tests {
             fireemu_core_types::time::LogicalInstant::from_unix_seconds(1_788_000_000),
         )
         .unwrap();
+        db
+    }
+
+    /// A merge member's entries are the documents its atoms select, `IS_NULL` included, and the
+    /// disjunct's range stays on every member (core review should-fix 1).
+    #[test]
+    fn merge_members_read_the_entries_their_atoms_select() {
+        let db = merge_entries_fixture();
         let auto = |path: &str| {
             index(
                 IndexQueryScope::Collection,
@@ -775,6 +779,64 @@ mod tests {
     }
 
     #[test]
+    fn implicit_name_merge_members_keep_the_shared_key_filter() {
+        use fireemu_core_firestore::index::{
+            plan_scans, IndexSet, IndexValidationPolicy, PlanningContext,
+        };
+        use fireemu_core_firestore::query::OrderClause;
+        use fireemu_core_types::edition::{FirestoreApiMode, FirestoreEdition};
+
+        let db = merge_entries_fixture();
+        let collection = CollectionId::try_new("qx").unwrap();
+        let keyed = Query::new(QueryScope::collection(None, collection.clone()))
+            .with_filter(FilterExpr::And(vec![
+                FilterExpr::Field {
+                    field: FieldPath::parse("a").unwrap(),
+                    op: FieldOp::Equal,
+                    value: FsValue::Integer(1),
+                },
+                FilterExpr::Unary {
+                    field: FieldPath::parse("b").unwrap(),
+                    op: UnaryOp::IsNull,
+                },
+                FilterExpr::Field {
+                    field: FieldPath::document_name(),
+                    op: FieldOp::Equal,
+                    value: FsValue::Reference(
+                        "projects/p/databases/(default)/documents/qx/x1".into(),
+                    ),
+                },
+            ]))
+            .with_order(OrderClause {
+                field: FieldPath::parse("c").unwrap(),
+                direction: Direction::Ascending,
+            })
+            .canonicalize()
+            .unwrap();
+        let mut catalog = IndexSet::default();
+        for prefix in ["a", "b"] {
+            let mut member = index(
+                IndexQueryScope::Collection,
+                &[
+                    (prefix, IndexFieldMode::Ascending),
+                    ("c", IndexFieldMode::Ascending),
+                ],
+            );
+            member.collection_group = collection.clone();
+            catalog.add_composite(member);
+        }
+        let context = PlanningContext {
+            edition: FirestoreEdition::Standard,
+            api_mode: FirestoreApiMode::Native,
+            policy: IndexValidationPolicy::Production,
+        };
+        let planned = plan_scans(&keyed, &[], &catalog, &context).unwrap();
+        assert!(matches!(planned.as_slice(), [PlannedScan::Merge(members)] if members.len() == 2));
+        // Both composites have an implicit key. The shared key filter selects x1 on each.
+        assert_eq!(index_entries(&db, None, &keyed, None, &planned).unwrap(), 2);
+    }
+
+    #[test]
     fn split_array_members_on_one_path_count_their_own_predicates() {
         use fireemu_core_firestore::store::{Write, WriteOp};
         use fireemu_core_types::ids::{DatabaseId, ProjectId};
@@ -799,6 +861,7 @@ mod tests {
         db.commit(
             &[
                 write("qn/x0", vec![one.clone(), FsValue::Integer(2)]),
+                write("qn/x0a", vec![FsValue::Integer(2)]),
                 write("qn/x1", vec![one.clone()]),
             ],
             None,
@@ -810,17 +873,20 @@ mod tests {
             op,
             value,
         };
-        let query = Query::new(QueryScope::collection(
-            None,
-            CollectionId::try_new("qn").unwrap(),
-        ))
-        .with_filter(FilterExpr::And(vec![
+        let query = |filters| {
+            Query::new(QueryScope::collection(
+                None,
+                CollectionId::try_new("qn").unwrap(),
+            ))
+            .with_filter(FilterExpr::And(filters))
+            .canonicalize()
+            .unwrap()
+        };
+        let shared_path = query(vec![
             atom("a", FieldOp::Equal, one.clone()),
             atom("tags", FieldOp::Equal, FsValue::Array(vec![one.clone()])),
-            atom("tags", FieldOp::ArrayContains, one),
-        ]))
-        .canonicalize()
-        .unwrap();
+            atom("tags", FieldOp::ArrayContains, one.clone()),
+        ]);
         let automatic = |field, mode| {
             index(
                 IndexQueryScope::Collection,
@@ -833,8 +899,25 @@ mod tests {
             automatic("tags", Ascending),
         ])];
 
-        // Contains and a == 1 each match both docs. The ordered tags member matches x1 only.
-        assert_eq!(index_entries(&db, None, &query, None, &merge).unwrap(), 5);
+        // The ordered tags member matches x1 only.
+        assert_eq!(
+            index_entries(&db, None, &shared_path, None, &merge).unwrap(),
+            5
+        );
+
+        let separate_paths = query(vec![
+            atom("a", FieldOp::Equal, one.clone()),
+            atom("tags", FieldOp::ArrayContains, one),
+        ]);
+        let merge = [PlannedScan::Merge(vec![
+            automatic("tags", Contains),
+            automatic("a", Ascending),
+        ])];
+        // The equality member advances through x0a between the two matching documents.
+        assert_eq!(
+            index_entries(&db, None, &separate_paths, None, &merge).unwrap(),
+            5
+        );
     }
 
     /// Production's index entry counts for the merges of FS-QUERY-INDEX explain (entries as

@@ -13,3 +13,11 @@ group	descEquality	desc	ascendingOnly
 group	count	asc	both
 group	ascEquality	desc	both
 collection	any	asc	both
+group	nullContains	asc	both
+collection	orderedContains	desc	both
+collection	vectorEquality	desc	ascendingOnly
+group	orderedContains	asc	both
+collection	nullContains	desc	both
+collection	vectorEquality	desc	both
+collection	keyContains	desc	both
+collection	countAny	desc	both

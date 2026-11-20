@@ -480,15 +480,28 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn observation_2a_link_shapes_keep_the_configuration_requirement() {
-        use fireemu_core_firestore::index::IndexSet;
+        use crate::gateway::Gateway;
+        use fireemu_core_firestore::index::{IndexSet, IndexValidationPolicy, PlanningContext};
         use fireemu_core_firestore::query::{
-            Direction, FieldOp, FilterExpr, OrderClause, Query, QueryScope,
+            Direction, DistanceMeasure, FieldOp, FilterExpr, FindNearest, OrderClause, Query,
+            QueryScope,
         };
         use fireemu_core_firestore::store::Aggregation;
         use fireemu_core_firestore::value::Value;
+        use fireemu_core_types::edition::{FirestoreApiMode, FirestoreEdition};
         use IndexFieldMode::{Ascending, Contains, Descending};
 
         let table = include_str!("../tests/fixtures/index-merge-obs2-p9.tsv");
+        assert_eq!(table.lines().count(), 23);
+        let gateway = Gateway {
+            ctx: PlanningContext {
+                edition: FirestoreEdition::Standard,
+                api_mode: FirestoreApiMode::Native,
+                policy: IndexValidationPolicy::Production,
+            },
+            enforce_limits: true,
+            indexes: IndexSet::default(),
+        };
         let atom = |path, op, value| FilterExpr::Field {
             field: FieldPath::parse(path).unwrap(),
             op,
@@ -513,29 +526,38 @@ mod tests {
             };
             let mut indexes = IndexSet::default();
             let count = [Aggregation::Count { up_to: None }];
-            let aggregations = if *shape == "count" {
+            let aggregations = if matches!(*shape, "count" | "countAny") {
                 count.as_slice()
             } else {
                 &[]
             };
             let mut query = Query::new(query_scope);
-            let equality_ordered = matches!(*shape, "descEquality" | "ascEquality");
-            let key_mode = if *name_direction == "asc" {
+            let vector = *shape == "vectorEquality";
+            let equality_ordered = matches!(*shape, "descEquality" | "ascEquality") || vector;
+            let key_mode = if vector {
+                IndexFieldMode::Vector { dimension: 1 }
+            } else if *name_direction == "asc" {
                 Ascending
             } else {
                 Descending
             };
             let mut columns = vec![field("a", Ascending)];
             if equality_ordered {
-                let direction = if *shape == "descEquality" {
-                    Direction::Descending
-                } else {
+                let direction = if *shape == "ascEquality" {
                     Direction::Ascending
+                } else {
+                    Direction::Descending
                 };
                 let field = FieldPath::parse("a").unwrap();
                 let mut effective = vec![(scope, Ascending)];
                 if *modes == "both" {
                     effective.push((scope, Descending));
+                }
+                if group {
+                    effective.push((IndexQueryScope::Collection, Ascending));
+                    if *modes == "both" {
+                        effective.push((IndexQueryScope::Collection, Descending));
+                    }
                 }
                 indexes.set_single_field_indexes(&id, &field, effective);
                 query = query
@@ -547,32 +569,50 @@ mod tests {
                         direction: Direction::Descending,
                     });
                 }
+                if vector {
+                    query = query.with_find_nearest(FindNearest {
+                        vector_field: FieldPath::document_name(),
+                        query_vector: vec![1.0],
+                        distance_measure: DistanceMeasure::Euclidean,
+                        limit: 1,
+                        distance_result_field: None,
+                        distance_threshold: None,
+                    });
+                }
             } else {
                 let op = if *shape == "range" {
                     FieldOp::LessThan
                 } else {
                     FieldOp::Equal
                 };
-                let membership = if *shape == "any" {
-                    atom(
+                let membership = match *shape {
+                    "any" | "countAny" => atom(
                         "tags",
                         FieldOp::ArrayContainsAny,
                         Value::Array(vec![Value::Integer(1)]),
-                    )
-                } else {
-                    atom("tags", FieldOp::ArrayContains, Value::Integer(1))
+                    ),
+                    "nullContains" => atom("tags", FieldOp::ArrayContains, Value::Null),
+                    _ => atom("tags", FieldOp::ArrayContains, Value::Integer(1)),
                 };
                 let direction = if key_mode == Ascending {
                     Direction::Ascending
                 } else {
                     Direction::Descending
                 };
-                query = query.with_filter(FilterExpr::And(vec![
+                let mut filters = vec![
                     atom("a", op, Value::Integer(1)),
                     atom("b", FieldOp::Equal, Value::Integer(2)),
                     membership,
-                ]));
-                if *shape == "range" {
+                ];
+                if *shape == "keyContains" {
+                    filters.push(atom(
+                        "__name__",
+                        FieldOp::Equal,
+                        Value::Reference(format!("{DATABASE}/documents/shapes/x")),
+                    ));
+                }
+                query = query.with_filter(FilterExpr::And(filters));
+                if matches!(*shape, "range" | "orderedContains") {
                     query = query.with_order(OrderClause {
                         field: FieldPath::parse("a").unwrap(),
                         direction,
@@ -608,14 +648,22 @@ mod tests {
             } else {
                 None
             };
-            let actual = observation_2a_suggestion(
-                &query.canonicalize().unwrap(),
-                aggregations,
-                &indexes,
-                &original,
-            );
+            let query = query.canonicalize().unwrap();
+            let actual = observation_2a_suggestion(&query, aggregations, &indexes, &original);
             assert_eq!(actual.map(|link| link.fields), expected, "{row}");
             assert_eq!(original.indexes_json_fragment(), before);
+            if vector {
+                let status = gateway
+                    .validate_query_with_indexes(&query, &indexes)
+                    .expect_err("the required vector index is absent")
+                    .to_status_in(DATABASE);
+                assert_eq!(status.code(), tonic::Code::FailedPrecondition, "{row}");
+                assert_eq!(
+                    status.message(),
+                    missing_index_message(DATABASE, &original, false),
+                    "{row}"
+                );
+            }
         }
     }
 

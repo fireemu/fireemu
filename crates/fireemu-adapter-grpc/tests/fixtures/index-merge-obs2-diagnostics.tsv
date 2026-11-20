@@ -11,3 +11,9 @@ standard	emulator	runQuery	filterOffset
 standard	emulator	runQuery	duplicateKey
 enterprise	emulator	runAggregationQuery	reverseKey
 enterprise	emulator	runAggregationQuery	readTimeOffset
+standard	strict	runQuery	numericFilterOffset
+standard	strict	runQuery	filterAndReadTimeOffset
+standard	strict	runQuery	filteredDuplicateKey
+enterprise	emulator	runAggregationQuery	filteredDuplicateKey
+enterprise	emulator	runAggregationQuery	filterAndReadTimeOffset
+enterprise	emulator	runAggregationQuery	numericFilterOffset
