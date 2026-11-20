@@ -205,8 +205,58 @@ function stepOf(row) {
     : query(id, projected);
 }
 
-export const PROGRAMS = Object.entries(PROGRAM_NAMES).map(([config, name]) => ({
+export const TABLE_PROGRAMS = Object.entries(PROGRAM_NAMES).map(([config, name]) => ({
   id: `${LANE_PREFIX}shapes/${name}`,
   seed: seedFor(CONFIGS[config]),
   steps: ROWS.filter(([c]) => c === config).map(stepOf),
 }));
+
+// The Lean findings triage's shapes that need a configuration (coordinator ruling 1; the
+// read-only ones are in read-only.mjs, a lane of their own):
+//   I1  ig1: a collection query ORDER BY a ASC, __name__ DESC where only the collection-group
+//       composite (a ASC, __name__ DESC) has `a` (its single-field indexes exempt); the group
+//       query is the readiness row of the composite, ORDER BY a ASC of the exemption
+//   I4  iic: tags == [1] AND tags array-contains 1 where `tags` has only its contains index;
+//       two documents whose arrays differ, so the returned documents are compared too
+const ORDER_A_NAME_DESC = [asc("a"), desc("__name__")];
+const SELECT_C = { select: { fields: [field("c")] } };
+const SHARED = and(f("tags", "EQUAL", arr(int(1))), CONTAINS);
+export const TRIAGE_PROGRAMS = [
+  {
+    id: `${LANE_PREFIX}triage/group-composite`,
+    seed: seedFor("ig1"),
+    steps: [
+      query("i1-order-a-name-desc", { from: from("ig1"), orderBy: ORDER_A_NAME_DESC, ...SELECT_C }),
+      query(
+        "i1-order-a-name-desc-plan",
+        { from: from("ig1"), orderBy: ORDER_A_NAME_DESC, ...SELECT_C },
+        { body: { explainOptions: {} } },
+      ),
+      query("group-order-a-name-desc", {
+        from: from("ig1", true),
+        orderBy: ORDER_A_NAME_DESC,
+        ...SELECT_C,
+      }),
+      query("order-a-asc", { from: from("ig1"), orderBy: [asc("a")], ...SELECT_C }),
+    ],
+  },
+  {
+    id: `${LANE_PREFIX}triage/contains-only`,
+    seed: [
+      ["iic/x0", { tags: arr(int(1)) }],
+      ["iic/x1", { tags: arr(int(1), int(2)) }],
+    ],
+    steps: [
+      query("i4-shared-path", { from: from("iic"), where: SHARED }),
+      query(
+        "i4-shared-path-plan",
+        { from: from("iic"), where: SHARED },
+        { body: { explainOptions: {} } },
+      ),
+      query("order-tags-asc", { from: from("iic"), orderBy: [asc("tags")] }),
+      query("contains", { from: from("iic"), where: CONTAINS }),
+    ],
+  },
+];
+
+export const PROGRAMS = [...TABLE_PROGRAMS, ...TRIAGE_PROGRAMS];

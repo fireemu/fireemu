@@ -433,6 +433,20 @@
           "arrayConfig": "CONTAINS"
         }
       ]
+    },
+    {
+      "collectionGroup": "ig1",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "a",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -524,6 +538,21 @@
       "indexes": [
         {
           "queryScope": "COLLECTION_GROUP",
+          "arrayConfig": "CONTAINS"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "ig1",
+      "fieldPath": "a",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "iic",
+      "fieldPath": "tags",
+      "indexes": [
+        {
+          "queryScope": "COLLECTION",
           "arrayConfig": "CONTAINS"
         }
       ]

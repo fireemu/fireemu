@@ -1,7 +1,7 @@
 // The configuration changes of an index-merge observation send: the five entries that
 // fs-query-index-merge.indexes.json adds to fs-query-index.indexes.json (the first observation),
-// and the three group-scope overrides fs-query-index-merge2.indexes.json adds to that file (the
-// second observation, set `obs2a`), created before the recording and removed after it, in the
+// and the six entries fs-query-index-merge2.indexes.json adds to that file (the second
+// observation, set `obs2a`), created before the recording and removed after it, in the
 // sandbox `(default)` database of fireemu-oracle-query.
 //
 //   node src/fs-query-index-merge/config.mjs status --set <set> --out <new dir> [--journal <file>]...
@@ -57,8 +57,10 @@ const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
 
 /**
  * The entries, as the lane index files state them (the test derives them from the files): E1 to
- * E5 are fs-query-index-merge.indexes.json's, E6 to E8 the overrides on collection groups igc and
- * iga that fs-query-index-merge2.indexes.json adds.
+ * E5 are fs-query-index-merge.indexes.json's; E6 to E11 what fs-query-index-merge2.indexes.json
+ * adds: the overrides on collection groups igc and iga, and for the Lean findings triage
+ * (coordinator ruling 1 of the second observation) the group composite `(a ASC, __name__ DESC)`
+ * with `a` exempt on ig1 (I1) and `tags` with only its contains index on iic (I4).
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -89,18 +91,33 @@ export const ENTRIES = {
     field: "tags",
     indexes: [{ queryScope: "COLLECTION_GROUP", arrayConfig: "CONTAINS" }],
   },
+  E9: {
+    kind: "composite",
+    group: "ig1",
+    queryScope: "COLLECTION_GROUP",
+    fields: [ASC, { fieldPath: "__name__", order: "DESCENDING" }],
+  },
+  E10: { kind: "override", group: "ig1", field: "a", indexes: [] },
+  E11: {
+    kind: "override",
+    group: "iic",
+    field: "tags",
+    indexes: [{ queryScope: "COLLECTION", arrayConfig: "CONTAINS" }],
+  },
 };
 
 /**
  * F2 alone needs E3; F1 needs the composites and the exemptions; `all` is the first observation.
- * `g` is the group-scope overrides alone; `obs2a` the second observation: all of the first and `g`.
+ * `g` is the group-scope overrides alone, `t` the triage entries (the composite last: a refused
+ * create stops the writes after it); `obs2a` the second observation: `all`, `g` and `t`.
  */
 export const SETS = {
   f2: ["E3"],
   f1: ["E1", "E2", "E4", "E5"],
   all: ["E3", "E1", "E2", "E4", "E5"],
   g: ["E6", "E7", "E8"],
-  obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
+  t: ["E10", "E11", "E9"],
+  obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8", "E10", "E11", "E9"],
 };
 
 export const POLL_ROUNDS = 40;
@@ -261,9 +278,16 @@ const METADATA_KEYS = {
   ],
 };
 
-/** A composite as listed matches its entry exactly: scope, and the fields then `__name__` ASC. */
+/**
+ * A composite as listed matches its entry exactly: scope, and the fields, then `__name__` ASC
+ * unless the entry's fields already end with `__name__` (recorded: (a ASC, tags CONTAINS) is
+ * listed with `__name__` ASC appended, the base composite (n ASC, __name__ DESC) as it is).
+ */
 export function compositeMatches(index, entry) {
-  const expected = [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }];
+  const expected =
+    entry.fields.at(-1)?.fieldPath === "__name__"
+      ? entry.fields
+      : [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }];
   return (
     index?.queryScope === entry.queryScope &&
     Array.isArray(index.fields) &&

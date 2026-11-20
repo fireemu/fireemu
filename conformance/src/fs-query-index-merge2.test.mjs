@@ -17,8 +17,15 @@ import {
   LANE_PREFIX,
   PROGRAMS,
   ROWS,
+  TABLE_PROGRAMS,
+  TRIAGE_PROGRAMS,
   stepId,
 } from "./fs-query-index-merge2/corpus.mjs";
+import {
+  PROGRAMS as READ_ONLY_PROGRAMS,
+  READ_ONLY_LANE,
+  READ_ONLY_PREFIX,
+} from "./fs-query-index-merge2/read-only.mjs";
 import { buildRestRequest, createContext, validateCorpus } from "./fs-query-index/harness.mjs";
 import { LANES, selectLane } from "./fs-query-index/lanes.mjs";
 import {
@@ -145,6 +152,25 @@ const ADDED_OVERRIDES = [
     fieldPath: "tags",
     indexes: [{ queryScope: "COLLECTION_GROUP", arrayConfig: "CONTAINS" }],
   },
+  // Coordinator ruling 1: I1 (only a collection-group composite serves `a`) and I4 (only the
+  // contains index on `tags`).
+  { collectionGroup: "ig1", fieldPath: "a", indexes: [] },
+  {
+    collectionGroup: "iic",
+    fieldPath: "tags",
+    indexes: [{ queryScope: "COLLECTION", arrayConfig: "CONTAINS" }],
+  },
+];
+/** The composite this lane's file adds (ruling 1, I1): `__name__` explicit and descending. */
+const ADDED_INDEXES = [
+  {
+    collectionGroup: "ig1",
+    queryScope: "COLLECTION_GROUP",
+    fields: [
+      { fieldPath: "a", order: "ASCENDING" },
+      { fieldPath: "__name__", order: "DESCENDING" },
+    ],
+  },
 ];
 
 const GROUP_OF = { imb: "imb", ima: "ima", imx: "imx", imc: "imc", igc: "igc", iga: "iga" };
@@ -252,8 +278,9 @@ test("the rows are the coverage table, and each step is the query its axes descr
     assert.equal(step.transport, undefined, "REST");
     assert.equal(step.parent, undefined, "the documents root");
   }
-  // Every step is a row: nothing else is recorded.
-  assert.equal(stepsOf(PROGRAMS).length, ROWS.length);
+  // Every step of the table programs is a row; the triage programs come after them.
+  assert.equal(stepsOf(TABLE_PROGRAMS).length, ROWS.length);
+  assert.deepEqual(PROGRAMS, [...TABLE_PROGRAMS, ...TRIAGE_PROGRAMS]);
 });
 
 test("step ids name the row's axes and are unique in their program", () => {
@@ -319,7 +346,7 @@ test("the second merge lane is its own entry and leaves the other lanes alone", 
 });
 
 test("programs validate only under the lane prefix and have their own digests", () => {
-  assert.equal(validateCorpus(PROGRAMS, LANE_ID), 53);
+  assert.equal(validateCorpus(PROGRAMS, LANE_ID), 61);
   assert.throws(() => validateCorpus(PROGRAMS, "fs-query-index-merge"), /program id must be/);
   assert.deepEqual(selectPrograms(PROGRAMS, LANE_PREFIX), PROGRAMS);
   // The first merge lane's prefix selects none of these programs.
@@ -335,14 +362,18 @@ test("programs validate only under the lane prefix and have their own digests", 
       ["fs-query-index-merge2/shapes/composite-not-exempt", 4],
       ["fs-query-index-merge2/shapes/group-ascending", 7],
       ["fs-query-index-merge2/shapes/group-descending-contains", 12],
+      ["fs-query-index-merge2/triage/group-composite", 4],
+      ["fs-query-index-merge2/triage/contains-only", 4],
     ],
   );
 });
 
 test("the request bound and the cost estimate of two recordings", () => {
-  // Per recording: 53 recorded steps, and 20 + 6 x (8 + 2) = 80 harness requests at most.
-  assert.deepEqual(ceilings(PROGRAMS), { maxRequests: 53, maxHarnessRequests: 80 });
-  assert.equal(estimatedUsd(PROGRAMS, 2), 0.0033);
+  // Per recording: 61 recorded steps, and 20 + 8 x (8 + 2) = 100 harness requests at most.
+  assert.deepEqual(ceilings(PROGRAMS), { maxRequests: 61, maxHarnessRequests: 100 });
+  assert.equal(estimatedUsd(PROGRAMS, 2), 0.0038);
+  // The read-only lane: 8 steps, 20 + 8 + 2 = 30 harness requests.
+  assert.deepEqual(ceilings(READ_ONLY_PROGRAMS), { maxRequests: 8, maxHarnessRequests: 30 });
 });
 
 test("each program seeds and reads only its own group", () => {
@@ -360,7 +391,7 @@ test("each program seeds and reads only its own group", () => {
   }
   // The new groups are named by no other corpus or index file.
   const otherText = text([QUERY_PROGRAMS, LIST_PROGRAMS, MERGE_PROGRAMS]);
-  for (const group of ["igc", "iga"]) {
+  for (const group of ["igc", "iga", "ig1", "iic", "irt", "irb"]) {
     assert.ok(!otherText.includes(`"${group}/`), `${group} is seeded elsewhere`);
     assert.ok(!otherText.includes(`"collectionId":"${group}"`), `${group} is queried elsewhere`);
     for (const file of [
@@ -381,7 +412,7 @@ test("the index file is the merge lane file plus the group-scope overrides, exac
   const merge = readJson("fs-query-index-merge.indexes.json");
   const lane = readJson("fs-query-index-merge2.indexes.json");
   assert.deepEqual(Object.keys(lane), Object.keys(merge));
-  assert.deepEqual(lane.indexes, merge.indexes);
+  assert.deepEqual(lane.indexes, [...merge.indexes, ...ADDED_INDEXES]);
   assert.deepEqual(lane.fieldOverrides, [...merge.fieldOverrides, ...ADDED_OVERRIDES]);
   const key = (i) => indexKey(i.collectionGroup, i.queryScope, i.fields);
   const shared = readJson("firestore.indexes.json");
@@ -411,5 +442,140 @@ test("a production request addresses only the sandbox (default) database", () =>
     );
     assert.equal(init.method, "POST");
     assert.equal(init.headers["x-goog-user-project"], "fireemu-oracle-query");
+  }
+});
+
+// ---- Coordinator ruling 1: the Lean findings triage's read-only query shapes ----------------
+
+const ts = (value) => ({ timestampValue: value });
+const nameOrder = (direction) => ({ field: { fieldPath: "__name__" }, direction });
+
+test("the triage programs of the configured lane are I1 and I4 with their readiness rows", () => {
+  const [i1, i4] = TRIAGE_PROGRAMS;
+  assert.equal(i1.id, `${LANE_PREFIX}triage/group-composite`);
+  assert.deepEqual(i1.seed, seedFor("ig1"));
+  const orderAName = [order("a", "asc"), nameOrder("DESCENDING")];
+  const coll = [{ collectionId: "ig1" }];
+  const group = [{ collectionId: "ig1", allDescendants: true }];
+  const select = { fields: [{ fieldPath: "c" }] };
+  assert.deepEqual(i1.steps, [
+    {
+      id: "i1-order-a-name-desc",
+      rpc: "runQuery",
+      body: { structuredQuery: { from: coll, orderBy: orderAName, select } },
+    },
+    {
+      id: "i1-order-a-name-desc-plan",
+      rpc: "runQuery",
+      body: { structuredQuery: { from: coll, orderBy: orderAName, select }, explainOptions: {} },
+    },
+    {
+      id: "group-order-a-name-desc",
+      rpc: "runQuery",
+      body: { structuredQuery: { from: group, orderBy: orderAName, select } },
+    },
+    {
+      id: "order-a-asc",
+      rpc: "runQuery",
+      body: { structuredQuery: { from: coll, orderBy: [order("a", "asc")], select } },
+    },
+  ]);
+  assert.equal(i4.id, `${LANE_PREFIX}triage/contains-only`);
+  // Two documents whose arrays differ: [1] matches `tags == [1]`, [1, 2] only the contains.
+  assert.deepEqual(i4.seed, [
+    ["iic/x0", { tags: { arrayValue: { values: [int(1)] } } }],
+    ["iic/x1", { tags: { arrayValue: { values: [int(1), int(2)] } } }],
+  ]);
+  const shared = all(eq("tags", { arrayValue: { values: [int(1)] } }), CONTAINS);
+  const from = [{ collectionId: "iic" }];
+  assert.deepEqual(i4.steps, [
+    { id: "i4-shared-path", rpc: "runQuery", body: { structuredQuery: { from, where: shared } } },
+    {
+      id: "i4-shared-path-plan",
+      rpc: "runQuery",
+      body: { structuredQuery: { from, where: shared }, explainOptions: {} },
+    },
+    {
+      id: "order-tags-asc",
+      rpc: "runQuery",
+      body: { structuredQuery: { from, orderBy: [order("tags", "asc")] } },
+    },
+    { id: "contains", rpc: "runQuery", body: { structuredQuery: { from, where: CONTAINS } } },
+  ]);
+});
+
+test("the read-only lane is its own entry on the base index file", () => {
+  const lane = LANES[READ_ONLY_LANE];
+  assert.equal(READ_ONLY_LANE, "fs-query-index-merge2-ro");
+  assert.deepEqual(lane, {
+    id: "fs-query-index-merge2-ro",
+    taskId: "FS-QUERY-INDEX-MERGE-2-RO",
+    corpus: "../fs-query-index-merge2/read-only.mjs",
+    fixture: "fs-query-index-merge2-ro-production.json",
+    indexes: "fs-query-index.indexes.json",
+    localConfig: "fs-query-index.fireemu.json",
+    harness: "src/fs-query-index",
+    sources: ["src/fs-query-index", "src/fs-query-index-merge2"],
+  });
+  const others = Object.values(LANES).filter((l) => l !== lane);
+  for (const key of ["fixture", "taskId", "corpus"])
+    assert.ok(!others.some((l) => l[key] === lane[key]), `${key} is the lane's own`);
+  assert.equal(validateCorpus(READ_ONLY_PROGRAMS, READ_ONLY_LANE), 8);
+  assert.deepEqual(selectPrograms(READ_ONLY_PROGRAMS, READ_ONLY_PREFIX), READ_ONLY_PROGRAMS);
+  assert.throws(() => selectPrograms(PROGRAMS, READ_ONLY_PREFIX), /no program matches/);
+});
+
+test("the read-only program holds T2, T1, C3 and I4 on built-in indexes, nothing else", () => {
+  assert.equal(READ_ONLY_PROGRAMS.length, 1);
+  const [program] = READ_ONLY_PROGRAMS;
+  assert.equal(program.id, `${READ_ONLY_PREFIX}shapes/read-only`);
+  assert.deepEqual(program.seed, [
+    ["irt/x0", { t: ts("2026-01-01T00:00:00Z") }],
+    ["irt/x1", { t: ts("2016-12-31T23:59:59Z") }],
+    ["irb/x0", { tags: { arrayValue: { values: [int(1)] } } }],
+    ["irb/x1", { tags: { arrayValue: { values: [int(1), int(2)] } } }],
+  ]);
+  const irt = [{ collectionId: "irt" }];
+  const tEq = (value) => ({
+    id: undefined,
+    rpc: "runQuery",
+    body: { structuredQuery: { from: irt, where: eq("t", ts(value)) } },
+  });
+  const shared = all(eq("tags", { arrayValue: { values: [int(1)] } }), CONTAINS);
+  const irb = [{ collectionId: "irb" }];
+  const expected = [
+    ["t2-leap-second", tEq("2016-12-31T23:59:60Z")],
+    ["t2-second-60", tEq("2026-01-01T00:00:60Z")],
+    ["t1-year-9999-minus-offset", tEq("9999-12-31T23:59:59-00:01")],
+    ["t1-year-0001-plus-offset", tEq("0001-01-01T00:00:00+00:01")],
+    ["t1-year-0000-plus-offset", tEq("0000-01-01T00:00:00+00:01")],
+    [
+      "c3-name-desc-name-asc",
+      {
+        rpc: "runQuery",
+        body: {
+          structuredQuery: {
+            from: irt,
+            orderBy: [nameOrder("DESCENDING"), nameOrder("ASCENDING")],
+          },
+        },
+      },
+    ],
+    [
+      "i4-shared-path",
+      { rpc: "runQuery", body: { structuredQuery: { from: irb, where: shared } } },
+    ],
+    [
+      "i4-shared-path-plan",
+      {
+        rpc: "runQuery",
+        body: { structuredQuery: { from: irb, where: shared }, explainOptions: {} },
+      },
+    ],
+  ].map(([id, step]) => Object.assign(step, { id }));
+  assert.deepEqual(program.steps, expected);
+  for (const step of program.steps) {
+    assert.equal(step.transport, undefined, "REST");
+    assert.equal(step.parent, undefined, "the documents root");
   }
 });
