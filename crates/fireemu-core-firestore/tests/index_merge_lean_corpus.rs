@@ -772,6 +772,10 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     if nm == IndexFieldMode::Descending {
         return enabled("tags", IndexFieldMode::Contains) && s.eq.iter().all(|f| enabled(f, nm));
     }
+    // The generated composites never repeat a field path (`composite_strategy`), so the
+    // prefix below has no repeated entry; index.rs passes a repeated prefix such as
+    // `(b ASC, b ASC, tags CONTAINS)` to the serving check as it stands, which this helper
+    // would canonicalize away.
     // (b), as recorded: the array field has no automatic contains index, and exactly one
     // configured composite is a carrier (collection scope, a non-empty ascending prefix of
     // equality fields followed by the array field, serving that prefix and the array filter on
@@ -976,7 +980,16 @@ proptest! {
         let through_carrier = matches!(
             &before,
             IndexDecision::MergeIndexes { indexes } if indexes.iter().any(|member| {
+                // A carrier leads with an ordered equality field and then holds the array
+                // field; a configured copy of the automatic `(tags CONTAINS, __name__)` index
+                // is an ordinary member of the pre-stage-B merge and stays in the property.
                 set.composites().contains(member)
+                    && member.fields.first().is_some_and(|f| {
+                        matches!(
+                            f.mode,
+                            IndexFieldMode::Ascending | IndexFieldMode::Descending
+                        )
+                    })
                     && member.fields.iter().any(|f| f.mode == IndexFieldMode::Contains)
             })
         );
