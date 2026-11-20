@@ -31,10 +31,27 @@ METADATA = {
     ],
 }
 OUTCOMES = {
-    "clean": (0, {"sites": 4, "findings": [], "unstable": []}, "no-gaps"),
-    "findings": (2, {"sites": 4, "findings": [{}], "unstable": []}, "gaps"),
+    "clean": (0, {"sites": 4, "mutants_run": 5, "findings": [], "unstable": []}, "no-gaps"),
+    "findings": (2, {"sites": 4, "mutants_run": 5, "findings": [{}], "unstable": []}, "gaps"),
     "failure": (1, None, "error"),
-    "empty": (0, {"sites": 0, "findings": [], "unstable": []}, "no-sites"),
+    "empty": (
+        0, {"sites": 0, "mutants_run": 0, "evaluation": "no_sites", "findings": [], "unstable": []},
+        "no-sites",
+    ),
+    "unexecuted": (
+        3, {"sites": 4, "mutants_run": 0, "evaluation": "no_mutants_executed", "findings": [], "unstable": []},
+        "no-mutants-executed",
+    ),
+    "skipped": (
+        3,
+        {
+            "sites": 0, "mutants_run": 0, "evaluation": "no_mutants_executed",
+            "skipped": [{}], "findings": [], "unstable": [],
+        },
+        "no-mutants-executed",
+    ),
+    "unstable": (2, {"sites": 4, "mutants_run": 5, "findings": [], "unstable": [{}]}, "gaps"),
+    "invalid-unexecuted": (3, {"sites": 4, "mutants_run": 0, "findings": [], "unstable": []}, "error"),
     "invalid": (2, None, "error"),
     "launch-error": (None, None, "error"),
 }
@@ -42,6 +59,7 @@ DEFAULT_ROWS = [
     {"Selection": "workspace", "Source": "full", "Result": "failure", "Position": "first"},
     {"Selection": "packages", "Source": "diff", "Result": "findings", "Position": "last"},
     {"Selection": "workspace", "Source": "diff", "Result": "empty", "Position": "last"},
+    {"Selection": "packages", "Source": "full", "Result": "unexecuted", "Position": "last"},
 ]
 
 
@@ -62,19 +80,18 @@ class CampaignTest(unittest.TestCase):
             if args[1] == "metadata":
                 return subprocess.CompletedProcess(args, 0, json.dumps(METADATA))
             if args == ["cargo", "tmt", "--version"]:
-                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.1.0\n")
+                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.2.1\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
             self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
             self.assertIn("--locked", args)
             self.assertIn("--json", args)
             self.assertEqual(Path(args[args.index("--work-dir") + 1]), output / "work")
-            self.assertEqual(kwargs["env"]["CARGO_BUILD_BUILD_DIR"], str(output / "work" / "build"))
+            self.assertEqual(kwargs["env"]["CARGO_BUILD_BUILD_DIR"], "/normal/build")
             if scope:
                 self.assertEqual(args[-2:], scope)
                 self.assertEqual(kwargs["env"]["GIT_CONFIG_VALUE_0"], "true")
-                self.assertEqual(kwargs["env"]["GIT_CONFIG_VALUE_1"], "false")
-                self.assertEqual(kwargs["env"]["GIT_CONFIG_VALUE_4"], "b/")
+                self.assertEqual(kwargs["env"]["GIT_CONFIG_COUNT"], "1")
             else:
                 self.assertNotIn("--since", args)
             code, report, _ = OUTCOMES[outcomes[package]]
@@ -117,7 +134,12 @@ class CampaignTest(unittest.TestCase):
                 self.assertEqual(code, expected_code)
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
+                self.assertEqual(summary["tool_version"], "0.2.1")
                 self.assertEqual(summary["since"], "review-base" if scope else None)
+                for result in summary["packages"]:
+                    report = OUTCOMES[outcomes[result["package"]]][1]
+                    if report is not None:
+                        self.assertEqual(result["mutants_run"], report["mutants_run"])
                 self.assertEqual(
                     [result["status"] for result in summary["packages"]],
                     [OUTCOMES[outcomes[package]][2] for package in PACKAGES],
@@ -147,6 +169,25 @@ class CampaignTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(launched, PACKAGES)
 
+    def test_no_mutants_outcome_precedence_and_report_validation(self):
+        cases = [
+            ("empty", 3),
+            ("findings", 2),
+            ("unstable", 2),
+            ("failure", 1),
+            ("invalid-unexecuted", 1),
+        ]
+        for second, expected in cases:
+            with self.subTest(second=second), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "results"
+                code, launched = self.run_campaign(
+                    output, ["--workspace"], [], {"core": "skipped", "adapter": second},
+                )
+                self.assertEqual(code, expected)
+                self.assertEqual(launched, PACKAGES)
+                summary = json.loads((output / "summary.json").read_text())
+                self.assertEqual(summary["packages"][0]["status"], "no-mutants-executed")
+
     def test_launch_error_preserves_later_package_results(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "results"
@@ -174,7 +215,7 @@ class CampaignTest(unittest.TestCase):
     def test_mutation_output_cannot_share_normal_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory).resolve() / "results"
-            with patch.dict(METADATA, {"build_directory": str(output / "work" / "build")}):
+            with patch.dict(METADATA, {"build_directory": str(output / "work" / "target")}):
                 self.assertEqual(self.run_campaign(output, ["--workspace"], [], {}), (1, []))
             self.assertFalse(output.exists())
 

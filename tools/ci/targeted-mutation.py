@@ -8,13 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-VERSION = "0.1.0"
-DIFF_CONFIG = {
-    "diff.noprefix": "false",
-    "diff.mnemonicPrefix": "false",
-    "diff.srcPrefix": "a/",
-    "diff.dstPrefix": "b/",
-}
+VERSION = "0.2.1"
 
 
 def run_package(package, output, scope, env):
@@ -33,18 +27,35 @@ def run_package(package, output, scope, env):
             return result
 
     result["exit_code"] = code
-    if code not in (0, 2):
+    if code not in (0, 2, 3):
         return result
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         sites = report["sites"]
+        mutants_run = report["mutants_run"]
         gaps = bool(report["findings"] or report["unstable"])
-        if report["package"] != package or gaps != (code == 2) or type(sites) is not int or sites < 0:
+        if (
+            report["package"] != package
+            or type(sites) is not int or sites < 0
+            or type(mutants_run) is not int or mutants_run < 0
+        ):
             return result
     except (KeyError, TypeError, ValueError):
         return result
-    result["status"] = "gaps" if gaps else "no-gaps" if sites else "no-sites"
-    result["sites"] = sites
+
+    evaluation = report.get("evaluation")
+    if gaps:
+        expected_code, status = 2, "gaps"
+    elif evaluation == "no_sites" and sites == mutants_run == 0:
+        expected_code, status = 0, "no-sites"
+    elif evaluation == "no_mutants_executed" and mutants_run == 0:
+        expected_code, status = 3, "no-mutants-executed"
+    elif evaluation is None and mutants_run > 0:
+        expected_code, status = 0, "no-gaps"
+    else:
+        return result
+    if code == expected_code:
+        result.update(status=status, sites=sites, mutants_run=mutants_run)
     return result
 
 
@@ -84,23 +95,9 @@ def main(argv=None):
         parser.error("there are no Cargo workspace packages to scan")
 
     output = options.output_dir.resolve()
-    env = {**os.environ, "CARGO_BUILD_BUILD_DIR": str(output / "work" / "build")}
-    seed = env.get("PROPTEST_RNG_SEED") or "0"
-    env["PROPTEST_RNG_SEED"] = seed
-    scope = []
-    if options.since is not None:
-        scope = ["--since", options.since]
-        # The 0.1.0 scope parser recognizes only the standard destination prefix.
-        try:
-            offset = int(env.get("GIT_CONFIG_COUNT") or "0")
-            if offset < 0:
-                raise ValueError
-        except ValueError:
-            return fail("GIT_CONFIG_COUNT must be a nonnegative integer")
-        for index, (key, value) in enumerate(DIFF_CONFIG.items(), start=offset):
-            env[f"GIT_CONFIG_KEY_{index}"] = key
-            env[f"GIT_CONFIG_VALUE_{index}"] = value
-        env["GIT_CONFIG_COUNT"] = str(offset + len(DIFF_CONFIG))
+    seed = os.environ.get("PROPTEST_RNG_SEED") or "0"
+    env = {**os.environ, "PROPTEST_RNG_SEED": seed}
+    scope = ["--since", options.since] if options.since is not None else []
 
     try:
         for key in ("workspace_root", "target_directory", "build_directory"):
@@ -129,9 +126,10 @@ def main(argv=None):
     }
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     statuses = {result["status"] for result in results}
-    if "error" in statuses:
-        return 1
-    return 2 if "gaps" in statuses else 0
+    for status, code in (("error", 1), ("gaps", 2), ("no-mutants-executed", 3)):
+        if status in statuses:
+            return code
+    return 0
 
 
 if __name__ == "__main__":
