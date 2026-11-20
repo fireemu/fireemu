@@ -7,8 +7,8 @@ use fireemu_core_storage::store::{
 use fireemu_core_types::time::LogicalInstant;
 
 const WRITES: &[&str] = &[
-    "z", "a/z", "a/a", "a/", "a/a", "a//y", "a--b", "a----c", "A", "a/é", "a/🌸", "aa", "é", "é",
-    "a--",
+    "z", "a/z", "a/a", "a/", "a/a", "a//y", "a--b", "a----c", "A", "a/é", "a/🌸", "aa", "é",
+    "e\u{301}", "a--",
 ];
 
 fn object_text(object: &ObjectMetadata, live: bool) -> String {

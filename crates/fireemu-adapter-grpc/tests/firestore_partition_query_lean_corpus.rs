@@ -67,7 +67,8 @@ fn partition_samples_and_cursors_match_lean_corpus() {
 
     for row in rows {
         let columns: Vec<_> = row.split('\t').collect();
-        let [group, shape, input, limit, size, requested, samples, cursors] = columns.as_slice()
+        let [group, shape, input, limit, size, requested, expected_keys, cursors] =
+            columns.as_slice()
         else {
             panic!("invalid partition fixture row");
         };
@@ -82,7 +83,7 @@ fn partition_samples_and_cursors_match_lean_corpus() {
             .cloned()
             .collect();
         sampled.sort();
-        assert_eq!(sampled, fixture_keys(samples), "{label} samples");
+        assert_eq!(sampled, fixture_keys(expected_keys), "{label} samples");
         assert_eq!(
             partition_cursors(&paths, requested.parse().expect("fixture cursor count")),
             fixture_keys(cursors),

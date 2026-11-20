@@ -115,7 +115,7 @@ fn auth_custom_claims_match_the_lean_corpus() {
         match fields.as_slice() {
             ["trace", fields @ ..] => check_trace(fields.try_into().unwrap(), line),
             ["literal", input, canonical, action, text] => {
-                check_literal(input, canonical, action, text, line)
+                check_literal(input, canonical, action, text, line);
             }
             _ => panic!("malformed case {line}"),
         }

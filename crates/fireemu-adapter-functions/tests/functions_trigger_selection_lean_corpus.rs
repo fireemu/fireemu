@@ -109,7 +109,7 @@ fn blocking(manifest: &mut FunctionManifest, index: usize) -> String {
         5 => named("zBlock", Some("us-east1")),
         6 => {
             let mut duplicate = manifest.get("xBlock").unwrap().clone();
-            duplicate.name = "zBlock".to_owned();
+            "zBlock".clone_into(&mut duplicate.name);
             manifest.functions.insert(0, duplicate);
             named("zBlock", Some("us-east1"))
         }

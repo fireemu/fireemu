@@ -20,7 +20,11 @@ fn manifest_signature(manifest: &ExportMetadata) -> String {
         .iter()
         .map(|(product, item)| format!("{}:{}", product.key(), section(item)))
         .collect();
-    let deferred: Vec<_> = manifest.deferred().into_iter().map(|p| p.key()).collect();
+    let deferred: Vec<_> = manifest
+        .deferred()
+        .into_iter()
+        .map(fireemu_core_export::metadata::Product::key)
+        .collect();
     let extension = manifest.extension.as_ref().map_or_else(
         || "-".to_owned(),
         |value| {

@@ -25,9 +25,9 @@ fn attributes(preset: &str) -> BTreeMap<String, String> {
         "unicode-key-over" => pair(format!("{}k", "é".repeat(128)), String::new()),
         "unicode-value-max" => pair("a".into(), "é".repeat(512)),
         "unicode-value-over" => pair("a".into(), format!("{}v", "é".repeat(512))),
-        "reserved" => pair("goog-x".into(), "".into()),
-        "mixed-prefix" => pair("Goog-x".into(), "".into()),
-        "nul-key" => pair("a\0".into(), "".into()),
+        "reserved" => pair("goog-x".into(), String::new()),
+        "mixed-prefix" => pair("Goog-x".into(), String::new()),
+        "nul-key" => pair("a\0".into(), String::new()),
         "nul-value" => pair("a".into(), "v\0".into()),
         "long-both" => pair("k".repeat(257), "v".repeat(1025)),
         "first-error" => [("z".into(), "v".repeat(1025)), ("a".into(), "\0".into())].into(),
@@ -37,7 +37,7 @@ fn attributes(preset: &str) -> BTreeMap<String, String> {
 
 fn ordering(preset: &str) -> String {
     match preset {
-        "none" => "".into(),
+        "none" => String::new(),
         "one" => "o".into(),
         "max" => "é".repeat(512),
         "over" => format!("{}o", "é".repeat(512)),

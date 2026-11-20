@@ -78,6 +78,18 @@ fn fields(initial: &str) -> BTreeMap<String, Value> {
     fields
 }
 
+fn transform_kind(operation: &str, operand: &str) -> TransformKind {
+    let operand = value(operand);
+    match operation {
+        "increment" => TransformKind::Increment(operand),
+        "maximum" => TransformKind::Maximum(operand),
+        "minimum" => TransformKind::Minimum(operand),
+        "union" => TransformKind::AppendMissingElements(array(operand)),
+        "remove" => TransformKind::RemoveAllFromArray(array(operand)),
+        _ => panic!("unknown transform operation"),
+    }
+}
+
 #[test]
 fn commit_transforms_match_lean_corpus() {
     let mut rows = include_str!("fixtures/lean-firestore-transforms.corpus").lines();
@@ -101,14 +113,7 @@ fn commit_transforms_match_lean_corpus() {
         let [family, operation, _, _, origin, start, operand, expected] = columns.as_slice() else {
             panic!("invalid transform fixture row");
         };
-        let kind = match *operation {
-            "increment" => TransformKind::Increment(value(operand)),
-            "maximum" => TransformKind::Maximum(value(operand)),
-            "minimum" => TransformKind::Minimum(value(operand)),
-            "union" => TransformKind::AppendMissingElements(array(value(operand))),
-            "remove" => TransformKind::RemoveAllFromArray(array(value(operand))),
-            _ => panic!("unknown transform operation"),
-        };
+        let kind = transform_kind(operation, operand);
         let prior = *origin == "prior";
         let mut state = FirestoreState::new();
         state
