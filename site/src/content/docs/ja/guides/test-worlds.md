@@ -70,6 +70,20 @@ await withTestWorld(
 - 1つのテスト内で共存させる必要があるワールドは、`Promise.allSettled`で作成し、`finally`で破棄します。
 - `Promise.all([createTestWorld(), ...])`の後に`try/finally`を置くと、1つの作成が失敗したとき、すでに起動していたワールドがリークします([テストワールドのガイド](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)を参照)。
 
+## 暦の単位でクロックを動かす
+
+`world.clock.advance`にはISO 8601形式の期間や暦の単位も指定できます。`world.clock.to`は日、月、年の先頭や末尾にクロックを合わせます。暦の単位や区切りの計算には`timeZone`を使います。省略するとワールドの`scheduler.defaultTimeZone`を使い、それも未設定ならUTCを使います。詳しい規則は[時刻とスケジュール関数](../time/#期間を指定してクロックを動かすか暦の区切りに合わせる)を参照してください。
+
+```js
+await world.clock.advance({ months: 1 });                      // 1月31日は2月28日または29日になる
+await world.clock.advance('PT36H');                            // 正確な経過時間
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 現地時刻の23:59:59.999999
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+数値は従来どおりミリ秒を表し、`{ seconds }`や`{ millis }`のオブジェクトは指定した経過時間だけクロックを動かします。暦の単位は`millis`と併用できず、すべて同じ符号にそろえる必要があります。`world.clock.to`は`clock:set`を使うため、現在より前の時刻に合わせるには`allowBackwards: true`が必要です。`advanceAndSettle`にも同じ期間を指定でき、オプションには`timeZone`と`allowBackwards`があります。
+
 ## クロックを進めて処理を待つ
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })`は、クロックを進め、期限になった仮想タイマーを実行し、デーモンがアイドルになるのを待ちます。この順序で行います。デフォルトのscopeは`runnable`で、移動した先より後にスケジュールされた処理は待ちません。移動が失敗した場合や待機がタイムアウトした場合はrejectされます。

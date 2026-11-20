@@ -289,6 +289,7 @@ fn control_over(clock: Arc<Mutex<VirtualClock>>) -> ControlState {
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        calendar_zones: None,
         barrier: None,
         snapshot_hooks: Vec::new(),
         snapshots: Mutex::new(std::collections::BTreeMap::new()),

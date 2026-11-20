@@ -4496,6 +4496,14 @@ fn control_state(
         // Exposed listeners can sit behind a forwarder that connects from loopback, so the peer
         // address alone does not prove a local caller: every control request needs the token.
         require_control_token: cfg.allow_non_loopback_hosts,
+        // Calendar moves of the clock read zones as schedules do, from the bundled database.
+        calendar_zones: Some(fireemu_adapter_http::control::CalendarZones {
+            default_time_zone: cfg.scheduler_default_time_zone.clone(),
+            resolve: Arc::new(|name: &str| {
+                fireemu_adapter_functions::zone::calendar_zone(name)
+                    .map(|zone| zone as fireemu_adapter_http::control::SharedCalendarZone)
+            }),
+        }),
         firestore_listen_expiry: listen_expiry.map(|expiry| {
             Arc::new(move || expiry.expire()) as Arc<dyn Fn() -> usize + Send + Sync>
         }),

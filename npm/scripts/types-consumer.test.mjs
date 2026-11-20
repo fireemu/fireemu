@@ -69,6 +69,14 @@ await world.clock.advance({ seconds: 1 });
 await world.clock.advance({ millis: 1 });
 await world.clock.advance({ seconds: 1, millis: 2 });
 await world.clock.advanceTo('2026-01-01T00:00:00Z');
+await world.clock.advance('P1M');
+await world.clock.advance({ months: 1, days: 2 }, { timeZone: 'Asia/Tokyo' });
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+const anchored: string = (await world.clock.to('endOfMonth')).clock;
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Europe/Paris' });
+await world.clock.advanceAndSettle('PT1H', { scope: 'all', timeZone: 'UTC' });
+// @ts-expect-error an anchor outside the closed set
+await world.clock.to('endOfWeek');
 const due = await world.clock.runDue(100);
 if (due.codebases[0]) {
   const codebase: string = due.codebases[0].codebase;

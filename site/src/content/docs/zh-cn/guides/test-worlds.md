@@ -70,6 +70,20 @@ await withTestWorld(
 - 必须在一个测试中共存的世界，用 `Promise.allSettled` 创建，并在 `finally` 中释放。
 - `Promise.all([createTestWorld(), ...])` 后接 `try/finally`，会在某次创建失败时泄漏已启动的世界（见[测试世界指南](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)）。
 
+## 按日历单位移动时钟
+
+`world.clock.advance` 也接受 ISO 8601 时长或日历单位，`world.clock.to` 可将时钟移至某一天、某个月或某一年的起点或终点。计算日历单位和这些边界时使用 `timeZone`，省略时使用世界的 `scheduler.defaultTimeZone`，若也未设置则使用 UTC。具体规则见[时间与定时函数](../time/#按时长移动时钟或将时钟移至日历边界)。
+
+```js
+await world.clock.advance({ months: 1 });                      // 1 月 31 日变为 2 月 28 日或 29 日
+await world.clock.advance('PT36H');                            // 实际经过的时间
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 当地时间 23:59:59.999999
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+数值仍表示毫秒，`{ seconds }` 或 `{ millis }` 对象仍按指定的实际时长移动时钟。日历单位不能与 `millis` 混用，各分量的正负号必须一致。`world.clock.to` 使用 `clock:set`，因此移至早于当前时间的时刻需要 `allowBackwards: true`。`advanceAndSettle` 接受相同的时长，其选项包括 `timeZone` 和 `allowBackwards`。
+
 ## 推进时钟并等待工作完成
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })` 依次推进时钟、运行到期的虚拟计时器，并等待守护进程空闲。默认 scope 为 `runnable`，它不会等待调度在本次推进之后的工作。推进失败或等待超时时，它会 reject。

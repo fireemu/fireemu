@@ -5,6 +5,7 @@
 //! the Quint models `SessionEpoch.qnt` and `AwaitIdle.qnt` can cover it completely.
 
 pub mod barrier;
+pub mod calendar;
 pub mod clock;
 pub mod fault;
 pub mod host_guard;

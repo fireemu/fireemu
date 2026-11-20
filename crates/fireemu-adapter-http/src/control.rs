@@ -37,6 +37,9 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use fireemu_core_rules::runtime::{LoadedRules, RulesetSlot};
+use fireemu_core_session::calendar::{
+    decide, move_instant, Anchor, CalendarDuration, CalendarZone, FixedZone, MoveDecision, MoveKind,
+};
 use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_session::loopback::PrivilegedAdmission;
 use fireemu_core_session::tenancy::Scope;
@@ -469,6 +472,25 @@ pub struct ControlState {
     /// listener's network namespace (`kubectl port-forward`, a sidecar proxy) delivers another
     /// host's client as a loopback peer.
     pub require_control_token: bool,
+    /// Time zones for calendar moves of the clock (`duration`, `to`, `timeZone`). `None`
+    /// knows only `UTC` and has no configured default.
+    pub calendar_zones: Option<CalendarZones>,
+}
+
+/// Zone rules for one calendar move of the clock.
+pub type SharedCalendarZone = Arc<dyn CalendarZone + Send + Sync>;
+
+/// Resolves a zone name; the error is the message the request is refused with.
+pub type CalendarZoneResolver =
+    Arc<dyn Fn(&str) -> Result<SharedCalendarZone, String> + Send + Sync>;
+
+/// How the control API finds the zone of a calendar move: the request's `timeZone`, else
+/// `default_time_zone` (`scheduler.defaultTimeZone`), else UTC.
+pub struct CalendarZones {
+    /// The configured default zone name.
+    pub default_time_zone: Option<String>,
+    /// Resolves a zone name; the error is the message the request is refused with.
+    pub resolve: CalendarZoneResolver,
 }
 
 /// `POST /v1/firestore/listen:expire`: ends every end user's native `Listen` stream now.
@@ -3251,6 +3273,11 @@ fn clock_route(
             }
             ok(json!({}))
         }
+        ("POST", "clock:advance" | "clock:set" | "clock:advanceTo")
+            if is_calendar_move(action, body) =>
+        {
+            calendar_move_route(state, &mut clock, action, body)
+        }
         ("POST", "clock:advance") => {
             let duration = if let Some(s) = body.get("seconds").and_then(Value::as_i64) {
                 LogicalDuration::from_seconds(s)
@@ -3305,6 +3332,168 @@ fn clock_route(
         },
         ("POST", "clock:resume") => resume_route(state, &mut clock, body),
         _ => error(404, "NOT_FOUND"),
+    }
+}
+
+/// The fields a request may name for a move, before and since calendar moves.
+fn move_fields(action: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    if action == "clock:advance" {
+        (&["seconds", "millis"], &["duration"])
+    } else {
+        (&["instant"], &["to", "duration"])
+    }
+}
+
+/// Whether the request uses the calendar fields; any other request keeps its earlier answer.
+fn is_calendar_move(action: &str, body: &Value) -> bool {
+    move_fields(action)
+        .1
+        .iter()
+        .any(|field| body.get(field).is_some())
+}
+
+/// The longest zone name a request may send (IANA names are far shorter).
+const MAX_TIME_ZONE_NAME: usize = 64;
+
+/// One parsed calendar move: what to apply, in which zone.
+struct CalendarMove {
+    duration: Option<CalendarDuration>,
+    anchor: Option<Anchor>,
+    zone: SharedCalendarZone,
+    allow_backwards: bool,
+}
+
+fn parse_calendar_move(
+    state: &ControlState,
+    action: &str,
+    body: &Value,
+) -> Result<CalendarMove, String> {
+    let (old, new) = move_fields(action);
+    let present = |fields: &[&'static str]| -> Vec<&'static str> {
+        fields
+            .iter()
+            .copied()
+            .filter(|field| body.get(field).is_some())
+            .collect()
+    };
+    let (old_present, new_present) = (present(old), present(new));
+    if !old_present.is_empty() {
+        return Err(format!(
+            "INVALID_ARGUMENT : {} cannot be combined with {}",
+            old_present.join(" and "),
+            new_present.join(" and ")
+        ));
+    }
+    let duration = match body.get("duration") {
+        None => None,
+        Some(Value::String(text)) => Some(
+            CalendarDuration::parse(text).map_err(|e| format!("INVALID_ARGUMENT : {e}"))?,
+        ),
+        Some(_) => {
+            return Err("INVALID_ARGUMENT : duration must be a string ISO 8601 duration such as P1M, PT36H or -P3D".to_owned())
+        }
+    };
+    let anchor = if action == "clock:advance" {
+        if body.get("to").is_some() {
+            return Err(
+                "INVALID_ARGUMENT : to is accepted by clock:set and clock:advanceTo".to_owned(),
+            );
+        }
+        None
+    } else {
+        let Some(to) = body.get("to") else {
+            return Err("INVALID_ARGUMENT : duration on clock:set and clock:advanceTo needs to; clock:advance moves by a duration alone".to_owned());
+        };
+        let anchor = to.as_str().and_then(Anchor::parse).ok_or_else(|| {
+            let names: Vec<&str> = Anchor::ALL.iter().map(|a| a.name()).collect();
+            format!("INVALID_ARGUMENT : to must be one of {}", names.join(", "))
+        })?;
+        Some(anchor)
+    };
+    let zone = calendar_zone(state, body.get("timeZone"))?;
+    let allow_backwards = body
+        .get("allowBackwards")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Ok(CalendarMove {
+        duration,
+        anchor,
+        zone,
+        allow_backwards,
+    })
+}
+
+/// The request's `timeZone`, else the configured default, else UTC.
+fn calendar_zone(
+    state: &ControlState,
+    requested: Option<&Value>,
+) -> Result<SharedCalendarZone, String> {
+    let name = match requested {
+        None => state
+            .calendar_zones
+            .as_ref()
+            .and_then(|zones| zones.default_time_zone.clone()),
+        Some(Value::String(name)) if name.len() <= MAX_TIME_ZONE_NAME => Some(name.clone()),
+        Some(_) => {
+            return Err(format!("INVALID_ARGUMENT : timeZone must be an IANA time zone name of at most {MAX_TIME_ZONE_NAME} bytes"))
+        }
+    };
+    let name = name.unwrap_or_else(|| "UTC".to_owned());
+    match &state.calendar_zones {
+        Some(zones) => (zones.resolve)(&name).map_err(|e| format!("INVALID_ARGUMENT : {e}")),
+        None if name == "UTC" => Ok(Arc::new(FixedZone(0))),
+        None => Err(format!("INVALID_ARGUMENT : unknown time zone {name:?}")),
+    }
+}
+
+/// `clock:advance {duration}` and `clock:set` / `clock:advanceTo {to, duration?}`.
+fn calendar_move_route(
+    state: &ControlState,
+    clock: &mut VirtualClock,
+    action: &str,
+    body: &Value,
+) -> JsonResponse {
+    let request = match parse_calendar_move(state, action, body) {
+        Ok(request) => request,
+        Err(message) => return error(400, &message),
+    };
+    let start = clock.now();
+    let target = match move_instant(
+        start,
+        &*request.zone,
+        request.duration.as_ref(),
+        request.anchor,
+    ) {
+        Ok(target) => target,
+        Err(e) => return error(400, &format!("INVALID_ARGUMENT : {e}")),
+    };
+    if let Some(functions) = &state.functions {
+        if let Err(message) = functions.validate_clock_target(target) {
+            return error(400, &message);
+        }
+    }
+    let kind = match action {
+        "clock:advance" => MoveKind::Advance,
+        "clock:set" => MoveKind::Set,
+        _ => MoveKind::AdvanceTo,
+    };
+    let result = match decide(kind, request.allow_backwards, start, target) {
+        MoveDecision::Rewind => clock.try_set_allow_backwards(target),
+        // A running clock moved on since `start`: a relative move keeps its distance.
+        MoveDecision::Forward if kind == MoveKind::Advance => {
+            match target.checked_duration_since(start) {
+                Some(delta) => clock.advance(delta).map(|_| ()),
+                None => Err(fireemu_core_session::clock::ClockError::Overflow),
+            }
+        }
+        // An absolute target, or a refused rewind: the clock's own backwards error.
+        MoveDecision::Forward | MoveDecision::RefuseBackwards => {
+            clock.advance_to(target).map(|_| ())
+        }
+    };
+    match result {
+        Ok(()) => ok(clock_json(clock)),
+        Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
     }
 }
 

@@ -28,6 +28,7 @@
     "testing.d.mts",
     "testing-snapshot.mjs",
     "testing-queue.mjs",
+    "testing-clock.mjs",
     "testing-process.mjs",
     "README.md",
     "LICENSE",

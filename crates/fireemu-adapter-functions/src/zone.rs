@@ -5,6 +5,7 @@
 use std::sync::{Arc, LazyLock};
 
 use fireemu_core_functions::cron::{fixed_offset_seconds, FixedOffset, ZoneRules};
+use fireemu_core_session::calendar::{CalendarZone, FixedZone, LocalOffsets};
 use jiff::tz::{AmbiguousOffset, TimeZone, TimeZoneDatabase};
 use jiff::Timestamp;
 
@@ -60,7 +61,10 @@ pub fn wall_offsets(zone: &TimeZone, local_secs: i64) -> WallOffsets {
         AmbiguousOffset::Fold { before, after } => {
             WallOffsets::Fold(i64::from(before.seconds()), i64::from(after.seconds()))
         }
-        AmbiguousOffset::Gap { .. } => WallOffsets::Gap,
+        AmbiguousOffset::Gap { before, after } => WallOffsets::Gap {
+            before: i64::from(before.seconds()),
+            after: i64::from(after.seconds()),
+        },
     }
 }
 
@@ -71,8 +75,13 @@ pub enum WallOffsets {
     One(i64),
     /// The wall time happens twice: the earlier instant's offset, then the later one's.
     Fold(i64, i64),
-    /// The wall time is skipped.
-    Gap,
+    /// The wall time is skipped: the offsets before and after the jump.
+    Gap {
+        /// Offset in force before the gap.
+        before: i64,
+        /// Offset in force after the gap.
+        after: i64,
+    },
 }
 
 /// A zone from the IANA database.
@@ -90,9 +99,37 @@ impl ZoneRules for IanaZone {
             WallOffsets::One(offset) | WallOffsets::Fold(offset, _) => {
                 local_secs.checked_sub(offset)
             }
-            WallOffsets::Gap => None,
+            WallOffsets::Gap { .. } => None,
         }
     }
+}
+
+impl CalendarZone for IanaZone {
+    fn offset_at(&self, utc_seconds: i64) -> i64 {
+        offset_at(&self.0, utc_seconds)
+    }
+
+    fn local_offsets(&self, local_seconds: i64) -> LocalOffsets {
+        match wall_offsets(&self.0, local_seconds) {
+            WallOffsets::One(offset) => LocalOffsets::Unique(offset),
+            WallOffsets::Fold(earlier, later) => LocalOffsets::Fold(earlier, later),
+            WallOffsets::Gap { before, after } => LocalOffsets::Gap { before, after },
+        }
+    }
+}
+
+/// Zone rules for calendar moves of the virtual clock.
+pub type SharedCalendarZone = Arc<dyn CalendarZone + Send + Sync>;
+
+/// Resolves a zone name for a calendar move with the same names schedules accept
+/// ([`resolve`]): an IANA name or one of the core's fixed-offset aliases.
+pub fn calendar_zone(name: &str) -> Result<SharedCalendarZone, String> {
+    if let Some(tz) = iana(name) {
+        return Ok(Arc::new(IanaZone(tz)));
+    }
+    fixed_offset_seconds(Some(name))
+        .map(|offset| Arc::new(FixedZone(offset)) as SharedCalendarZone)
+        .map_err(|_| format!("unknown time zone {name:?}"))
 }
 
 /// Shared zone rules.
@@ -138,6 +175,13 @@ mod tests {
         assert_eq!(zone.utc_of(1_730_597_400), Some(1_730_611_800));
         // 2024-03-10 02:30 local does not happen.
         assert_eq!(zone.utc_of(1_710_037_800), None);
+        assert_eq!(
+            wall_offsets(&zone.0, 1_710_037_800),
+            WallOffsets::Gap {
+                before: -18_000,
+                after: -14_400
+            }
+        );
         assert_eq!(zone.local_of(1_710_054_000), 1_710_039_600);
         // No silent zero offset at the far end: the last representable offset (EST) applies.
         assert_eq!(zone.local_of(i64::MAX), i64::MAX - 18_000);

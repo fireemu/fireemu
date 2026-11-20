@@ -70,6 +70,20 @@ El cliente `fireemu/control` también funciona en comandos `fireemu exec` y comp
 - Los mundos que deben coexistir dentro de una prueba se crean con `Promise.allSettled` y se liberan en `finally`.
 - `Promise.all([createTestWorld(), ...])` seguido de `try/finally` pierde los mundos que ya iniciaron cuando falla una creación (consulta la [guía de mundos de prueba](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
+## Mover el reloj por unidades de calendario
+
+`world.clock.advance` también acepta una duración ISO 8601 o unidades de calendario. `world.clock.to` mueve el reloj al inicio o al final de un día, mes o año. Tanto las unidades de calendario como esos puntos de referencia usan `timeZone`. Si se omite, se usa `scheduler.defaultTimeZone` del mundo y, si tampoco se ha configurado, UTC. Consulta las reglas en [Tiempo y funciones programadas](../time/#mover-el-reloj-una-duración-determinada-o-hasta-un-límite-del-calendario).
+
+```js
+await world.clock.advance({ months: 1 });                      // El 31 de enero pasa al 28 o 29 de febrero
+await world.clock.advance('PT36H');                            // Tiempo exacto transcurrido
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 23:59:59.999999 en hora local
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+Un número sigue indicando milisegundos, y los objetos `{ seconds }` o `{ millis }` siguen moviendo el reloj por el tiempo exacto indicado. Las unidades de calendario deben tener el mismo signo y no se pueden combinar con `millis`. Como `world.clock.to` usa `clock:set`, un destino anterior a la hora actual requiere `allowBackwards: true`. `advanceAndSettle` acepta las mismas duraciones e incluye `timeZone` y `allowBackwards` entre sus opciones.
+
 ## Avanzar el reloj y esperar el trabajo
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })` avanza el reloj, ejecuta los temporizadores virtuales vencidos y espera a que el daemon esté inactivo, en ese orden. El alcance predeterminado es `runnable`, que no espera el trabajo programado más allá del movimiento. Se rechaza cuando el movimiento falla o la espera agota su tiempo.

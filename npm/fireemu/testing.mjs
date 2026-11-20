@@ -10,6 +10,7 @@ import { resolveBinary, ensureExecutable } from './binary.mjs';
 import { snapshotInputs, prepareGeneration, removeSnapshotTree } from './testing-snapshot.mjs';
 import { createWorldQueue, waitRequestTimeoutMs } from './testing-queue.mjs';
 import { createControlClient } from './control.mjs';
+import { advanceBody, toBody } from './testing-clock.mjs';
 
 const endpointVariables = {firestore:'FIRESTORE_EMULATOR_HOST',auth:'FIREBASE_AUTH_EMULATOR_HOST',storage:'FIREBASE_STORAGE_EMULATOR_HOST',functions:'FIREEMU_FUNCTIONS_HOST',eventarc:'CLOUD_EVENTARC_EMULATOR_HOST',tasks:'CLOUD_TASKS_EMULATOR_HOST',pubsub:'PUBSUB_EMULATOR_HOST',database:'FIREBASE_DATABASE_EMULATOR_HOST',hub:'FIREBASE_EMULATOR_HUB',logging:'FIREBASE_LOGGING_EMULATOR_HOST'};
 const emulatorVariables = new Set([...Object.values(endpointVariables),'FIREBASE_CONFIG','NODE_PATH','FIREBASE_FIRESTORE_EMULATOR_ADDRESS','STORAGE_EMULATOR_HOST','FIREEMU_CONTROL_TOKEN','FIREEMU_CONTROL_URL','FIREEMU_APP_CHECK_EMULATOR_HOST','FIREEMU_APP_CHECK_JWKS_URL','FIREEMU_APP_CHECK_DEBUG_TOKEN_URL','FIREBASE_DATABASE_EMULATOR_HOST']);
@@ -182,10 +183,9 @@ export async function createTestWorld(options={}){
   const control=(method,path,body)=>waitsForIdle(method,path)
     ?queue.waiting(async signal=>{check();return requestFor(current,method,path,body,anySignal(idleSignal(body),signal));})
     :queue.ordered(async()=>{check();return requestFor(current,method,path,body);});
-  const advanceBody=duration=>typeof duration==='number'?{millis:duration}:duration;
   const advanceAndSettle=async(duration,settings={})=>{
     // Due timers exist only where Functions runs with virtual timers; elsewhere the daemon refuses runDue.
-    const {scope='runnable',timeoutSeconds=20,runTimers=services.some(name=>name==='functions'||name.startsWith('functions:'))&&snapshot.config.functions?.clock?.timers==='virtual'}=settings;
+    const {scope='runnable',timeoutSeconds=20,timeZone,allowBackwards,runTimers=services.some(name=>name==='functions'||name.startsWith('functions:'))&&snapshot.config.functions?.clock?.timers==='virtual'}=settings;
     if(scope!=='all'&&scope!=='runnable')throw TypeError('scope must be all or runnable');
     if(typeof timeoutSeconds!=='number'||!Number.isFinite(timeoutSeconds)||timeoutSeconds<0||timeoutSeconds>600)throw TypeError('timeoutSeconds must be a number from 0 through 600');
     if(typeof runTimers!=='boolean')throw TypeError('runTimers must be a boolean');
@@ -193,7 +193,7 @@ export async function createTestWorld(options={}){
     const moved=queue.ordered(async()=>{
       check();
       const active=current;
-      const clock=await requestFor(active,'POST','/v1/sessions/default/clock:advance',advanceBody(duration));
+      const clock=await requestFor(active,'POST','/v1/sessions/default/clock:advance',advanceBody(duration,{timeZone,allowBackwards}));
       let timers;
       if(runTimers)for(let round=0;round<100;round++){
         timers=await requestFor(active,'POST','/v1/sessions/default/clock:runDue',{budget:1000});
@@ -219,7 +219,8 @@ export async function createTestWorld(options={}){
     clock:Object.freeze({
       get:()=>control('GET','/v1/sessions/default'),
       set:(instant,{allowBackwards=false}={})=>control('POST','/v1/sessions/default/clock:set',{instant,allowBackwards}),
-      advance:duration=>control('POST','/v1/sessions/default/clock:advance',advanceBody(duration)),
+      advance:(duration,options)=>control('POST','/v1/sessions/default/clock:advance',advanceBody(duration,options)),
+      to:(anchor,options)=>control('POST','/v1/sessions/default/clock:set',toBody(anchor,options)),
       advanceTo:instant=>control('POST','/v1/sessions/default/clock:advanceTo',{instant}),
       runDue:(budget=1000)=>control('POST','/v1/sessions/default/clock:runDue',{budget}),
       advanceAndSettle,

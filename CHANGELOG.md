@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Clock: move the virtual clock by an ISO 8601 duration or to a calendar boundary. `clock:advance` accepts `{"duration": "P1M"}` (years, months, weeks and days move the local date in a time zone; hours, minutes and seconds are exact time; a leading minus goes back and needs `allowBackwards`), and `clock:set` / `clock:advanceTo` accept `{"to": "endOfMonth"}` (`startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear`), optionally after a `duration`. The zone is the request's `timeZone`, else `scheduler.defaultTimeZone`, else UTC. A month step from a day the target month lacks lands on its last day (January 31 plus `P1M` is February 28 or 29); an end is 23:59:59.999999 local time; a repeated local time takes the earlier instant and a skipped one the offset from before the change. Every request accepted before keeps its answer; a request that mixes `seconds`, `millis` or `instant` with the new fields is refused with a message naming them. `fireemu/testing`: `world.clock.advance({ months: 1 })`, `world.clock.advance('PT36H')` and `world.clock.to('endOfMonth')`.
+
 ### Fixed
 
 - Security Rules (Firestore, Storage, Realtime Database): a regular expression whose character class starts with a negation followed by a literal caret (`[^^...]`) is no longer misread by the nesting check, which could refuse a valid pattern for group depth when a later class held parentheses.

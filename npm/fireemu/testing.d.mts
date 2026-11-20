@@ -80,10 +80,43 @@ export interface RunDueResult {
   }>;
 }
 
+/** Calendar units for a clock move; every value an integer of one sign. */
+export interface CalendarUnits {
+  readonly years?: number;
+  readonly months?: number;
+  readonly weeks?: number;
+  readonly days?: number;
+  readonly hours?: number;
+  readonly minutes?: number;
+  readonly seconds?: number;
+}
+
+export type ClockDuration =
+  | number
+  | string
+  | { readonly seconds: number; readonly millis?: number }
+  | { readonly millis: number; readonly seconds?: number }
+  | CalendarUnits;
+
+export type ClockAnchor = 'startOfDay' | 'endOfDay' | 'startOfMonth' | 'endOfMonth' | 'startOfNextMonth' | 'startOfYear' | 'endOfYear';
+
+export interface ClockMoveOptions {
+  /** IANA zone for calendar units and anchors; ignored by the millisecond and `{ seconds }` forms. */
+  readonly timeZone?: string;
+  readonly allowBackwards?: boolean;
+}
+
 export interface TestWorldClock {
   readonly get: () => Promise<ClockSession>;
   readonly set: (instant: string, options?: { readonly allowBackwards?: boolean }) => Promise<ClockState>;
-  readonly advance: (duration: number | { readonly seconds: number; readonly millis?: number } | { readonly millis: number; readonly seconds?: number }) => Promise<ClockState>;
+  /**
+   * A number is milliseconds; `{ seconds }` / `{ millis }` move by exact time as before. An ISO 8601
+   * string (`'P1M'`, `'PT36H'`, `'-P3D'`) or calendar units (`{ months: 1 }`) move in a time zone:
+   * `options.timeZone`, else `scheduler.defaultTimeZone`, else UTC. A move earlier needs `allowBackwards`.
+   */
+  readonly advance: (duration: ClockDuration, options?: ClockMoveOptions) => Promise<ClockState>;
+  /** `clock:set` to an anchor, after `options.duration` if given; earlier needs `allowBackwards`. */
+  readonly to: (anchor: ClockAnchor, options?: ClockMoveOptions & { readonly duration?: string | CalendarUnits }) => Promise<ClockState>;
   readonly advanceTo: (instant: string) => Promise<ClockState>;
   /** The runtime requires an integer budget from 1 through 10000. */
   readonly runDue: (budget?: number) => Promise<RunDueResult>;
@@ -92,8 +125,8 @@ export interface TestWorldClock {
    * delays a later clock call. Rejects when the move fails or the wait times out.
    */
   readonly advanceAndSettle: (
-    duration: number | { readonly seconds: number; readonly millis?: number } | { readonly millis: number; readonly seconds?: number },
-    options?: AwaitIdleOptions,
+    duration: ClockDuration,
+    options?: AwaitIdleOptions & ClockMoveOptions,
   ) => Promise<AdvanceAndSettleResult>;
 }
 

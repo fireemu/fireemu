@@ -65,6 +65,42 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-
 
 시계를 돌려주는 모든 응답과 `GET /v1/sessions/default`에는 실제 시간을 따르는 동안 `"running": true`, 멈춘 동안 `false`가 들어 있습니다. 재개할 때 시계가 멈춰 있던 시간은 세지 않습니다. `syncToRealTime`은 set과 같아서, 시계를 뒤로 옮기는 이동(미래로 고정한 시작 시각 등)은 본문에 `"allowBackwards": true`가 없으면 거부합니다. 본문이 비어 있으면 일반 재개입니다. 본문을 보낼 때는 JSON 객체여야 합니다(`null` 자체는 거부합니다). 따를 실제 시간 소스가 없는 시계(`fireemu/testing`의 world)는 `400 FAILED_PRECONDITION`을 반환합니다. 데몬의 서비스는 공유 시계를 읽으므로 요청이 반환되면 전환이 보입니다. sync로 이동하는 동안 기한이 된 예약 함수는 `clock:advance` 이후와 같이 실행됩니다. 가상 `functions.clock`은 각 Functions runner에 메시지로 전달되며, 요청(API에서든 Runtime 페이지에서든)은 runner가 받을 때까지 기다립니다(10초 안에 응답하지 않는 runner가 있으면 `503 CLOCK_NOT_SETTLED`). 시계를 멈춰도 애플리케이션의 `Date.now()`는 뒤로 가지 않습니다. 시계가 따라잡을 때까지 마지막으로 보여 준 값에 머물며, 뒤로 가는 것은 되감기했을 때뿐입니다. 시계는 모든 세션이 공유하므로 전환도 모든 세션에 적용됩니다. 스냅샷 복원은 기록된 시각을 되돌리고 현재 모드는 그대로 둡니다. 시작 출력에 시작 모드와 전환 방법이 표시됩니다.
 
+## 지정한 기간만큼 또는 달력의 경계로 시계 이동
+
+`{"seconds": n}`, `{"millis": n}`, `{"instant": "<RFC 3339>"}` 외에도 ISO 8601 형식의 기간을 지정하거나 시계를 일, 월, 연도의 시작 또는 끝으로 옮길 수 있습니다.
+
+```sh
+# 차례로 30일 후, 달력 기준 한 달 후, 36시간 후.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P30D"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P1M"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "PT36H"}'
+# 3일 전으로 이동(되감기에는 allowBackwards가 필요).
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "-P3D", "allowBackwards": true}'
+# 이번 달의 마지막 마이크로초와 도쿄 현지 시각으로 다음 달 1일 00:00.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "endOfMonth"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "startOfNextMonth", "timeZone": "Asia/Tokyo"}'
+# 한 달 뒤로 간 다음 해당 월의 시작으로 이동.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"duration": "P1M", "to": "startOfMonth"}'
+```
+
+| 필드 | 엔드포인트 | 값 |
+|---|---|---|
+| `duration` | `clock:advance`에서 사용하며, `clock:set`과 `clock:advanceTo`에서는 `to`와 함께 사용 | `P[nY][nM][nW][nD][T[nH][nM][nS]]` 형식으로 하나 이상의 구성 요소를 정수로 지정합니다. 단위 기호는 대문자로 표시된 순서대로 씁니다. 맨 앞에 `-`를 붙이면 모든 구성 요소를 뺍니다. 소수는 허용하지 않습니다. 1초 미만에는 `millis`를 사용하십시오. |
+| `to` | `clock:set`, `clock:advanceTo` | `startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear` |
+| `timeZone` | `duration` 또는 `to`와 함께 사용 | 스케줄에서와 같은 IANA 시간대 이름입니다. 생략하면 `scheduler.defaultTimeZone`을 사용하고, 이 값도 없으면 UTC를 사용합니다. |
+
+이동할 시각은 다음 규칙에 따라 결정됩니다.
+
+- 연, 월, 주, 일은 해당 시간대에서 현지 시각을 유지하면서 날짜를 바꿉니다. 시, 분, 초는 정확한 경과 시간입니다. 일광 절약 시간 전환을 거치는 `P1D`는 23시간 또는 25시간이지만 `PT24H`는 항상 24시간입니다.
+- 먼저 연과 월을 개월 수로 환산해 한꺼번에 적용합니다. 대상 월에 해당 날짜가 없으면 그달의 마지막 날을 사용합니다. 1월 31일에 `P1M`을 더하면 2월 28일(윤년에는 29일)이 되고, 2월 29일에 `P1Y1M`을 더하면 3월 29일이 됩니다. 다음으로 주와 일을, 마지막으로 시, 분, 초를 적용합니다.
+- `duration`과 `to`를 함께 지정하면 기간을 먼저 적용합니다.
+- `endOfDay`, `endOfMonth`, `endOfYear`는 현지 시각으로 23:59:59.999999입니다. 이는 Firestore 타임스탬프가 표현할 수 있는 그날의 마지막 마이크로초이므로 `endOfMonth`에 1마이크로초를 더하면 `startOfNextMonth`가 됩니다.
+- 시계를 뒤로 돌려 같은 현지 시각이 두 번 나타나면 스케줄이 첫 번째 시각에 실행되듯이 둘 중 이른 시점을 선택합니다. 시계를 앞으로 돌려 현지 시각이 존재하지 않으면 전환 전의 UTC 오프셋을 적용합니다. 건너뛴 구간에서의 상대적 위치가 유지되므로 02:00에서 03:00으로 건너뛰는 날에는 02:30이 03:30이 됩니다. 스케줄은 이런 시각을 건너뜁니다. 시계 이동에는 도착 시점이 필요하므로 `java.time`, Temporal, jiff의 `compatible` 규칙을 따릅니다.
+- 결과 시각(UTC)은 0001년부터 9999년 사이여야 하며, 연, 월, 주, 일이나 경계 지정으로 계산하는 현지 날짜도 같은 범위여야 합니다. 시, 분, 초만으로 이동할 때는 현지 날짜를 계산하지 않습니다. 범위를 벗어나면 요청이 `400 INVALID_ARGUMENT`로 거부됩니다.
+- 도착 시각이 현재보다 이르면 `clock:advance`와 `clock:set`에는 `"allowBackwards": true`가 필요합니다. `clock:advanceTo`는 `instant`를 사용할 때와 마찬가지로 이런 이동을 거부합니다.
+- 요청 하나에는 한 종류의 이동만 지정합니다. `seconds` 또는 `millis`를 `duration`과 함께 쓰거나 `instant`를 `to` 또는 `duration`과 함께 쓰면 요청이 거부되며 메시지에 해당 필드가 표시됩니다.
+- 다른 이동과 마찬가지로 응답은 시계의 새 시각을 RFC 3339 형식으로 반환합니다. 예약 함수도 다른 이동과 동일하게 처리합니다(다음 절 참조).
+
 ## 예약 함수 실행
 
 스케줄은 시계가 발생 시점(occurrence)에 도달하면 실행됩니다.
