@@ -1,0 +1,9 @@
+name = "rules-path-pattern"
+defaultTargets = ["RulesPathPattern", "corpus"]
+
+[[lean_lib]]
+name = "RulesPathPattern"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

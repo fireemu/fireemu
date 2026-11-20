@@ -1,0 +1,73 @@
+# 72 cases
+one	single	base		miss	-	-	-
+one	single	direct	/items/a	match	a	-	-
+one	single	nested	/items/a/notes/b	miss	-	-	-
+one	single	prefix	/groups/g/items/b	miss	-	-	-
+one	single	repeated	/items/root/items/a	miss	-	-	-
+one	single	wrong	/other/a	miss	-	-	-
+one	single	nestedWrong	/items/a/siblings/b	miss	-	-	-
+one	single	deep	/items/a/notes/b/comments/c	miss	-	-	-
+one	single	emptySegments	/items//a/	match	a	-	-
+one	nested	base		miss	-	-	-
+one	nested	direct	/items/a	miss	-	-	-
+one	nested	nested	/items/a/notes/b	match	a	b	-
+one	nested	prefix	/groups/g/items/b	miss	-	-	-
+one	nested	repeated	/items/root/items/a	miss	-	-	-
+one	nested	wrong	/other/a	miss	-	-	-
+one	nested	nestedWrong	/items/a/siblings/b	miss	-	-	-
+one	nested	deep	/items/a/notes/b/comments/c	miss	-	-	-
+one	nested	emptySegments	/items//a/	miss	-	-	-
+one	trailing	base		miss	-	-	-
+one	trailing	direct	/items/a	miss	-	-	-
+one	trailing	nested	/items/a/notes/b	match	a	-	/notes/b
+one	trailing	prefix	/groups/g/items/b	miss	-	-	-
+one	trailing	repeated	/items/root/items/a	match	root	-	/items/a
+one	trailing	wrong	/other/a	miss	-	-	-
+one	trailing	nestedWrong	/items/a/siblings/b	match	a	-	/siblings/b
+one	trailing	deep	/items/a/notes/b/comments/c	match	a	-	/notes/b/comments/c
+one	trailing	emptySegments	/items//a/	miss	-	-	-
+one	leading	base		reject	-	-	-
+one	leading	direct	/items/a	reject	-	-	-
+one	leading	nested	/items/a/notes/b	reject	-	-	-
+one	leading	prefix	/groups/g/items/b	reject	-	-	-
+one	leading	repeated	/items/root/items/a	reject	-	-	-
+one	leading	wrong	/other/a	reject	-	-	-
+one	leading	nestedWrong	/items/a/siblings/b	reject	-	-	-
+one	leading	deep	/items/a/notes/b/comments/c	reject	-	-	-
+one	leading	emptySegments	/items//a/	reject	-	-	-
+two	single	base		miss	-	-	-
+two	single	direct	/items/a	match	a	-	-
+two	single	nested	/items/a/notes/b	miss	-	-	-
+two	single	prefix	/groups/g/items/b	miss	-	-	-
+two	single	repeated	/items/root/items/a	miss	-	-	-
+two	single	wrong	/other/a	miss	-	-	-
+two	single	nestedWrong	/items/a/siblings/b	miss	-	-	-
+two	single	deep	/items/a/notes/b/comments/c	miss	-	-	-
+two	single	emptySegments	/items//a/	match	a	-	-
+two	nested	base		miss	-	-	-
+two	nested	direct	/items/a	miss	-	-	-
+two	nested	nested	/items/a/notes/b	match	a	b	-
+two	nested	prefix	/groups/g/items/b	miss	-	-	-
+two	nested	repeated	/items/root/items/a	miss	-	-	-
+two	nested	wrong	/other/a	miss	-	-	-
+two	nested	nestedWrong	/items/a/siblings/b	miss	-	-	-
+two	nested	deep	/items/a/notes/b/comments/c	miss	-	-	-
+two	nested	emptySegments	/items//a/	miss	-	-	-
+two	trailing	base		miss	-	-	-
+two	trailing	direct	/items/a	match	a	-	/
+two	trailing	nested	/items/a/notes/b	match	a	-	/notes/b
+two	trailing	prefix	/groups/g/items/b	miss	-	-	-
+two	trailing	repeated	/items/root/items/a	match	root	-	/items/a
+two	trailing	wrong	/other/a	miss	-	-	-
+two	trailing	nestedWrong	/items/a/siblings/b	match	a	-	/siblings/b
+two	trailing	deep	/items/a/notes/b/comments/c	match	a	-	/notes/b/comments/c
+two	trailing	emptySegments	/items//a/	match	a	-	/
+two	leading	base		miss	-	-	-
+two	leading	direct	/items/a	match	a	-	/
+two	leading	nested	/items/a/notes/b	miss	-	-	-
+two	leading	prefix	/groups/g/items/b	match	b	-	/groups/g
+two	leading	repeated	/items/root/items/a	match	a	-	/items/root
+two	leading	wrong	/other/a	miss	-	-	-
+two	leading	nestedWrong	/items/a/siblings/b	miss	-	-	-
+two	leading	deep	/items/a/notes/b/comments/c	miss	-	-	-
+two	leading	emptySegments	/items//a/	match	a	-	/

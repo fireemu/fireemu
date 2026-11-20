@@ -1,0 +1,9 @@
+name = "rules-set-values"
+defaultTargets = ["RulesSetValues", "corpus"]
+
+[[lean_lib]]
+name = "RulesSetValues"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

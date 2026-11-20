@@ -1,0 +1,9 @@
+name = "rules-failure-algebra"
+defaultTargets = ["RulesFailureAlgebra", "corpus"]
+
+[[lean_lib]]
+name = "RulesFailureAlgebra"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
