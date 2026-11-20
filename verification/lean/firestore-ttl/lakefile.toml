@@ -1,0 +1,9 @@
+name = "firestore-ttl"
+defaultTargets = ["FirestoreTtl", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreTtl"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

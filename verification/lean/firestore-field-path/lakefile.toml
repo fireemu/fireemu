@@ -1,0 +1,9 @@
+name = "firestore-field-path"
+defaultTargets = ["FirestoreFieldPath", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreFieldPath"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

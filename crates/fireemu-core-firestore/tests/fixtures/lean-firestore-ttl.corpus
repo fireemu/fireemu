@@ -1,0 +1,634 @@
+# 633 cases.
+offset	unsigned	zero	none	0s	ok:0	0s
+offset	unsigned	zero	zero	0.0s	ok:0	0s
+offset	unsigned	zero	zero-nine	0.000000000s	ok:0	0s
+offset	unsigned	zero	nonzero	0.1s	precision	-
+offset	unsigned	zero	nonzero-nine	0.000000001s	precision	-
+offset	unsigned	zero	too-long	0.0000000000s	syntax	-
+offset	unsigned	zero	empty	0.s	syntax	-
+offset	unsigned	zero	junk	0.0qs	syntax	-
+offset	unsigned	small	none	42s	ok:42	42s
+offset	unsigned	small	zero	42.0s	ok:42	42s
+offset	unsigned	small	zero-nine	42.000000000s	ok:42	42s
+offset	unsigned	small	nonzero	42.1s	precision	-
+offset	unsigned	small	nonzero-nine	42.000000001s	precision	-
+offset	unsigned	small	too-long	42.0000000000s	syntax	-
+offset	unsigned	small	empty	42.s	syntax	-
+offset	unsigned	small	junk	42.0qs	syntax	-
+offset	unsigned	leading-zero	none	000042s	ok:42	42s
+offset	unsigned	leading-zero	zero	000042.0s	ok:42	42s
+offset	unsigned	leading-zero	zero-nine	000042.000000000s	ok:42	42s
+offset	unsigned	leading-zero	nonzero	000042.1s	precision	-
+offset	unsigned	leading-zero	nonzero-nine	000042.000000001s	precision	-
+offset	unsigned	leading-zero	too-long	000042.0000000000s	syntax	-
+offset	unsigned	leading-zero	empty	000042.s	syntax	-
+offset	unsigned	leading-zero	junk	000042.0qs	syntax	-
+offset	unsigned	boundary	none	2147483647s	ok:2147483647	2147483647s
+offset	unsigned	boundary	zero	2147483647.0s	ok:2147483647	2147483647s
+offset	unsigned	boundary	zero-nine	2147483647.000000000s	ok:2147483647	2147483647s
+offset	unsigned	boundary	nonzero	2147483647.1s	precision	-
+offset	unsigned	boundary	nonzero-nine	2147483647.000000001s	precision	-
+offset	unsigned	boundary	too-long	2147483647.0000000000s	syntax	-
+offset	unsigned	boundary	empty	2147483647.s	syntax	-
+offset	unsigned	boundary	junk	2147483647.0qs	syntax	-
+offset	unsigned	over	none	2147483648s	range	-
+offset	unsigned	over	zero	2147483648.0s	range	-
+offset	unsigned	over	zero-nine	2147483648.000000000s	range	-
+offset	unsigned	over	nonzero	2147483648.1s	precision	-
+offset	unsigned	over	nonzero-nine	2147483648.000000001s	precision	-
+offset	unsigned	over	too-long	2147483648.0000000000s	syntax	-
+offset	unsigned	over	empty	2147483648.s	syntax	-
+offset	unsigned	over	junk	2147483648.0qs	syntax	-
+offset	unsigned	overflow	none	9223372036854775808s	range	-
+offset	unsigned	overflow	zero	9223372036854775808.0s	range	-
+offset	unsigned	overflow	zero-nine	9223372036854775808.000000000s	range	-
+offset	unsigned	overflow	nonzero	9223372036854775808.1s	precision	-
+offset	unsigned	overflow	nonzero-nine	9223372036854775808.000000001s	precision	-
+offset	unsigned	overflow	too-long	9223372036854775808.0000000000s	syntax	-
+offset	unsigned	overflow	empty	9223372036854775808.s	syntax	-
+offset	unsigned	overflow	junk	9223372036854775808.0qs	syntax	-
+offset	unsigned	empty	none	s	syntax	-
+offset	unsigned	empty	zero	.0s	syntax	-
+offset	unsigned	empty	zero-nine	.000000000s	syntax	-
+offset	unsigned	empty	nonzero	.1s	syntax	-
+offset	unsigned	empty	nonzero-nine	.000000001s	syntax	-
+offset	unsigned	empty	too-long	.0000000000s	syntax	-
+offset	unsigned	empty	empty	.s	syntax	-
+offset	unsigned	empty	junk	.0qs	syntax	-
+offset	unsigned	unicode	none	１２s	syntax	-
+offset	unsigned	unicode	zero	１２.0s	syntax	-
+offset	unsigned	unicode	zero-nine	１２.000000000s	syntax	-
+offset	unsigned	unicode	nonzero	１２.1s	syntax	-
+offset	unsigned	unicode	nonzero-nine	１２.000000001s	syntax	-
+offset	unsigned	unicode	too-long	１２.0000000000s	syntax	-
+offset	unsigned	unicode	empty	１２.s	syntax	-
+offset	unsigned	unicode	junk	１２.0qs	syntax	-
+offset	minus	zero	none	-0s	ok:0	0s
+offset	minus	zero	zero	-0.0s	ok:0	0s
+offset	minus	zero	zero-nine	-0.000000000s	ok:0	0s
+offset	minus	zero	nonzero	-0.1s	precision	-
+offset	minus	zero	nonzero-nine	-0.000000001s	precision	-
+offset	minus	zero	too-long	-0.0000000000s	syntax	-
+offset	minus	zero	empty	-0.s	syntax	-
+offset	minus	zero	junk	-0.0qs	syntax	-
+offset	minus	small	none	-42s	range	-
+offset	minus	small	zero	-42.0s	range	-
+offset	minus	small	zero-nine	-42.000000000s	range	-
+offset	minus	small	nonzero	-42.1s	precision	-
+offset	minus	small	nonzero-nine	-42.000000001s	precision	-
+offset	minus	small	too-long	-42.0000000000s	syntax	-
+offset	minus	small	empty	-42.s	syntax	-
+offset	minus	small	junk	-42.0qs	syntax	-
+offset	minus	leading-zero	none	-000042s	range	-
+offset	minus	leading-zero	zero	-000042.0s	range	-
+offset	minus	leading-zero	zero-nine	-000042.000000000s	range	-
+offset	minus	leading-zero	nonzero	-000042.1s	precision	-
+offset	minus	leading-zero	nonzero-nine	-000042.000000001s	precision	-
+offset	minus	leading-zero	too-long	-000042.0000000000s	syntax	-
+offset	minus	leading-zero	empty	-000042.s	syntax	-
+offset	minus	leading-zero	junk	-000042.0qs	syntax	-
+offset	minus	boundary	none	-2147483647s	range	-
+offset	minus	boundary	zero	-2147483647.0s	range	-
+offset	minus	boundary	zero-nine	-2147483647.000000000s	range	-
+offset	minus	boundary	nonzero	-2147483647.1s	precision	-
+offset	minus	boundary	nonzero-nine	-2147483647.000000001s	precision	-
+offset	minus	boundary	too-long	-2147483647.0000000000s	syntax	-
+offset	minus	boundary	empty	-2147483647.s	syntax	-
+offset	minus	boundary	junk	-2147483647.0qs	syntax	-
+offset	minus	over	none	-2147483648s	range	-
+offset	minus	over	zero	-2147483648.0s	range	-
+offset	minus	over	zero-nine	-2147483648.000000000s	range	-
+offset	minus	over	nonzero	-2147483648.1s	precision	-
+offset	minus	over	nonzero-nine	-2147483648.000000001s	precision	-
+offset	minus	over	too-long	-2147483648.0000000000s	syntax	-
+offset	minus	over	empty	-2147483648.s	syntax	-
+offset	minus	over	junk	-2147483648.0qs	syntax	-
+offset	minus	overflow	none	-9223372036854775808s	range	-
+offset	minus	overflow	zero	-9223372036854775808.0s	range	-
+offset	minus	overflow	zero-nine	-9223372036854775808.000000000s	range	-
+offset	minus	overflow	nonzero	-9223372036854775808.1s	precision	-
+offset	minus	overflow	nonzero-nine	-9223372036854775808.000000001s	precision	-
+offset	minus	overflow	too-long	-9223372036854775808.0000000000s	syntax	-
+offset	minus	overflow	empty	-9223372036854775808.s	syntax	-
+offset	minus	overflow	junk	-9223372036854775808.0qs	syntax	-
+offset	minus	empty	none	-s	syntax	-
+offset	minus	empty	zero	-.0s	syntax	-
+offset	minus	empty	zero-nine	-.000000000s	syntax	-
+offset	minus	empty	nonzero	-.1s	syntax	-
+offset	minus	empty	nonzero-nine	-.000000001s	syntax	-
+offset	minus	empty	too-long	-.0000000000s	syntax	-
+offset	minus	empty	empty	-.s	syntax	-
+offset	minus	empty	junk	-.0qs	syntax	-
+offset	minus	unicode	none	-１２s	syntax	-
+offset	minus	unicode	zero	-１２.0s	syntax	-
+offset	minus	unicode	zero-nine	-１２.000000000s	syntax	-
+offset	minus	unicode	nonzero	-１２.1s	syntax	-
+offset	minus	unicode	nonzero-nine	-１２.000000001s	syntax	-
+offset	minus	unicode	too-long	-１２.0000000000s	syntax	-
+offset	minus	unicode	empty	-１２.s	syntax	-
+offset	minus	unicode	junk	-１２.0qs	syntax	-
+offset	plus	zero	none	+0s	syntax	-
+offset	plus	zero	zero	+0.0s	syntax	-
+offset	plus	zero	zero-nine	+0.000000000s	syntax	-
+offset	plus	zero	nonzero	+0.1s	syntax	-
+offset	plus	zero	nonzero-nine	+0.000000001s	syntax	-
+offset	plus	zero	too-long	+0.0000000000s	syntax	-
+offset	plus	zero	empty	+0.s	syntax	-
+offset	plus	zero	junk	+0.0qs	syntax	-
+offset	plus	small	none	+42s	syntax	-
+offset	plus	small	zero	+42.0s	syntax	-
+offset	plus	small	zero-nine	+42.000000000s	syntax	-
+offset	plus	small	nonzero	+42.1s	syntax	-
+offset	plus	small	nonzero-nine	+42.000000001s	syntax	-
+offset	plus	small	too-long	+42.0000000000s	syntax	-
+offset	plus	small	empty	+42.s	syntax	-
+offset	plus	small	junk	+42.0qs	syntax	-
+offset	plus	leading-zero	none	+000042s	syntax	-
+offset	plus	leading-zero	zero	+000042.0s	syntax	-
+offset	plus	leading-zero	zero-nine	+000042.000000000s	syntax	-
+offset	plus	leading-zero	nonzero	+000042.1s	syntax	-
+offset	plus	leading-zero	nonzero-nine	+000042.000000001s	syntax	-
+offset	plus	leading-zero	too-long	+000042.0000000000s	syntax	-
+offset	plus	leading-zero	empty	+000042.s	syntax	-
+offset	plus	leading-zero	junk	+000042.0qs	syntax	-
+offset	plus	boundary	none	+2147483647s	syntax	-
+offset	plus	boundary	zero	+2147483647.0s	syntax	-
+offset	plus	boundary	zero-nine	+2147483647.000000000s	syntax	-
+offset	plus	boundary	nonzero	+2147483647.1s	syntax	-
+offset	plus	boundary	nonzero-nine	+2147483647.000000001s	syntax	-
+offset	plus	boundary	too-long	+2147483647.0000000000s	syntax	-
+offset	plus	boundary	empty	+2147483647.s	syntax	-
+offset	plus	boundary	junk	+2147483647.0qs	syntax	-
+offset	plus	over	none	+2147483648s	syntax	-
+offset	plus	over	zero	+2147483648.0s	syntax	-
+offset	plus	over	zero-nine	+2147483648.000000000s	syntax	-
+offset	plus	over	nonzero	+2147483648.1s	syntax	-
+offset	plus	over	nonzero-nine	+2147483648.000000001s	syntax	-
+offset	plus	over	too-long	+2147483648.0000000000s	syntax	-
+offset	plus	over	empty	+2147483648.s	syntax	-
+offset	plus	over	junk	+2147483648.0qs	syntax	-
+offset	plus	overflow	none	+9223372036854775808s	syntax	-
+offset	plus	overflow	zero	+9223372036854775808.0s	syntax	-
+offset	plus	overflow	zero-nine	+9223372036854775808.000000000s	syntax	-
+offset	plus	overflow	nonzero	+9223372036854775808.1s	syntax	-
+offset	plus	overflow	nonzero-nine	+9223372036854775808.000000001s	syntax	-
+offset	plus	overflow	too-long	+9223372036854775808.0000000000s	syntax	-
+offset	plus	overflow	empty	+9223372036854775808.s	syntax	-
+offset	plus	overflow	junk	+9223372036854775808.0qs	syntax	-
+offset	plus	empty	none	+s	syntax	-
+offset	plus	empty	zero	+.0s	syntax	-
+offset	plus	empty	zero-nine	+.000000000s	syntax	-
+offset	plus	empty	nonzero	+.1s	syntax	-
+offset	plus	empty	nonzero-nine	+.000000001s	syntax	-
+offset	plus	empty	too-long	+.0000000000s	syntax	-
+offset	plus	empty	empty	+.s	syntax	-
+offset	plus	empty	junk	+.0qs	syntax	-
+offset	plus	unicode	none	+１２s	syntax	-
+offset	plus	unicode	zero	+１２.0s	syntax	-
+offset	plus	unicode	zero-nine	+１２.000000000s	syntax	-
+offset	plus	unicode	nonzero	+１２.1s	syntax	-
+offset	plus	unicode	nonzero-nine	+１２.000000001s	syntax	-
+offset	plus	unicode	too-long	+１２.0000000000s	syntax	-
+offset	plus	unicode	empty	+１２.s	syntax	-
+offset	plus	unicode	junk	+１２.0qs	syntax	-
+offset	extra	empty	syntax		syntax	-
+offset	extra	missing-suffix	syntax	42	syntax	-
+offset	extra	upper-suffix	syntax	42S	syntax	-
+offset	extra	trailing-space	syntax	42s 	syntax	-
+offset	extra	leading-space	syntax	 42s	syntax	-
+offset	extra	multiple-dots	syntax	42.0.0s	syntax	-
+offset	extra	negative-zero-padded	syntax	-000s	ok:0	0s
+offset	extra	negative-fraction	syntax	-0.000000001s	precision	-
+offset	extra	nanoseconds-before-overflow	syntax	9223372036854775808.001s	precision	-
+offset	extra	overflow-before-zero-fraction	syntax	9223372036854775808.000s	range	-
+expiry	direct	epoch	unset	before	0	-1	-	false
+expiry	direct	epoch	unset	equal	0	0	-	false
+expiry	direct	epoch	unset	after	0	1	-	true
+expiry	direct	epoch	zero	before	0	-1	0	false
+expiry	direct	epoch	zero	equal	0	0	0	false
+expiry	direct	epoch	zero	after	0	1	0	true
+expiry	direct	epoch	one-second	before	0	999999999	1000000000	false
+expiry	direct	epoch	one-second	equal	0	1000000000	1000000000	false
+expiry	direct	epoch	one-second	after	0	1000000001	1000000000	true
+expiry	direct	epoch	max-seconds	before	0	2147483646999999999	2147483647000000000	false
+expiry	direct	epoch	max-seconds	equal	0	2147483647000000000	2147483647000000000	false
+expiry	direct	epoch	max-seconds	after	0	2147483647000000001	2147483647000000000	true
+expiry	direct	epoch	negative	before	0	-2	-1	false
+expiry	direct	epoch	negative	equal	0	-1	-1	false
+expiry	direct	epoch	negative	after	0	0	-1	true
+expiry	direct	epoch	max-nanos	before	0	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	direct	epoch	max-nanos	equal	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	epoch	max-nanos	after	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	epoch	min-nanos	before	0	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	epoch	min-nanos	equal	0	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	epoch	min-nanos	after	0	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	direct	second-boundary	unset	before	999999999	999999998	-	false
+expiry	direct	second-boundary	unset	equal	999999999	999999999	-	false
+expiry	direct	second-boundary	unset	after	999999999	1000000000	-	true
+expiry	direct	second-boundary	zero	before	999999999	999999998	0	false
+expiry	direct	second-boundary	zero	equal	999999999	999999999	0	false
+expiry	direct	second-boundary	zero	after	999999999	1000000000	0	true
+expiry	direct	second-boundary	one-second	before	999999999	1999999998	1000000000	false
+expiry	direct	second-boundary	one-second	equal	999999999	1999999999	1000000000	false
+expiry	direct	second-boundary	one-second	after	999999999	2000000000	1000000000	true
+expiry	direct	second-boundary	max-seconds	before	999999999	2147483647999999998	2147483647000000000	false
+expiry	direct	second-boundary	max-seconds	equal	999999999	2147483647999999999	2147483647000000000	false
+expiry	direct	second-boundary	max-seconds	after	999999999	2147483648000000000	2147483647000000000	true
+expiry	direct	second-boundary	negative	before	999999999	999999997	-1	false
+expiry	direct	second-boundary	negative	equal	999999999	999999998	-1	false
+expiry	direct	second-boundary	negative	after	999999999	999999999	-1	true
+expiry	direct	second-boundary	max-nanos	before	999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	direct	second-boundary	max-nanos	equal	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	second-boundary	max-nanos	after	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	second-boundary	min-nanos	before	999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	second-boundary	min-nanos	equal	999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	second-boundary	min-nanos	after	999999999	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	direct	minimum	unset	before	-62135596800000000000	-62135596800000000000	-	false
+expiry	direct	minimum	unset	equal	-62135596800000000000	-62135596800000000000	-	false
+expiry	direct	minimum	unset	after	-62135596800000000000	-62135596799999999999	-	true
+expiry	direct	minimum	zero	before	-62135596800000000000	-62135596800000000000	0	false
+expiry	direct	minimum	zero	equal	-62135596800000000000	-62135596800000000000	0	false
+expiry	direct	minimum	zero	after	-62135596800000000000	-62135596799999999999	0	true
+expiry	direct	minimum	one-second	before	-62135596800000000000	-62135596799000000001	1000000000	false
+expiry	direct	minimum	one-second	equal	-62135596800000000000	-62135596799000000000	1000000000	false
+expiry	direct	minimum	one-second	after	-62135596800000000000	-62135596798999999999	1000000000	true
+expiry	direct	minimum	max-seconds	before	-62135596800000000000	-59988113153000000001	2147483647000000000	false
+expiry	direct	minimum	max-seconds	equal	-62135596800000000000	-59988113153000000000	2147483647000000000	false
+expiry	direct	minimum	max-seconds	after	-62135596800000000000	-59988113152999999999	2147483647000000000	true
+expiry	direct	minimum	negative	before	-62135596800000000000	-62135596800000000000	-1	true
+expiry	direct	minimum	negative	equal	-62135596800000000000	-62135596800000000000	-1	true
+expiry	direct	minimum	negative	after	-62135596800000000000	-62135596799999999999	-1	true
+expiry	direct	minimum	max-nanos	before	-62135596800000000000	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	direct	minimum	max-nanos	equal	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	minimum	max-nanos	after	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	minimum	min-nanos	before	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	minimum	min-nanos	equal	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	minimum	min-nanos	after	-62135596800000000000	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	direct	maximum	unset	before	253402300799999999999	253402300799999999998	-	false
+expiry	direct	maximum	unset	equal	253402300799999999999	253402300799999999999	-	false
+expiry	direct	maximum	unset	after	253402300799999999999	253402300799999999999	-	false
+expiry	direct	maximum	zero	before	253402300799999999999	253402300799999999998	0	false
+expiry	direct	maximum	zero	equal	253402300799999999999	253402300799999999999	0	false
+expiry	direct	maximum	zero	after	253402300799999999999	253402300799999999999	0	false
+expiry	direct	maximum	one-second	before	253402300799999999999	253402300799999999998	1000000000	false
+expiry	direct	maximum	one-second	equal	253402300799999999999	253402300799999999999	1000000000	false
+expiry	direct	maximum	one-second	after	253402300799999999999	253402300799999999999	1000000000	false
+expiry	direct	maximum	max-seconds	before	253402300799999999999	253402300799999999998	2147483647000000000	false
+expiry	direct	maximum	max-seconds	equal	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	direct	maximum	max-seconds	after	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	direct	maximum	negative	before	253402300799999999999	253402300799999999997	-1	false
+expiry	direct	maximum	negative	equal	253402300799999999999	253402300799999999998	-1	false
+expiry	direct	maximum	negative	after	253402300799999999999	253402300799999999999	-1	true
+expiry	direct	maximum	max-nanos	before	253402300799999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	direct	maximum	max-nanos	equal	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	maximum	max-nanos	after	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	direct	maximum	min-nanos	before	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	maximum	min-nanos	equal	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	direct	maximum	min-nanos	after	253402300799999999999	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	nested	epoch	unset	before	0	-1	-	false
+expiry	nested	epoch	unset	equal	0	0	-	false
+expiry	nested	epoch	unset	after	0	1	-	true
+expiry	nested	epoch	zero	before	0	-1	0	false
+expiry	nested	epoch	zero	equal	0	0	0	false
+expiry	nested	epoch	zero	after	0	1	0	true
+expiry	nested	epoch	one-second	before	0	999999999	1000000000	false
+expiry	nested	epoch	one-second	equal	0	1000000000	1000000000	false
+expiry	nested	epoch	one-second	after	0	1000000001	1000000000	true
+expiry	nested	epoch	max-seconds	before	0	2147483646999999999	2147483647000000000	false
+expiry	nested	epoch	max-seconds	equal	0	2147483647000000000	2147483647000000000	false
+expiry	nested	epoch	max-seconds	after	0	2147483647000000001	2147483647000000000	true
+expiry	nested	epoch	negative	before	0	-2	-1	false
+expiry	nested	epoch	negative	equal	0	-1	-1	false
+expiry	nested	epoch	negative	after	0	0	-1	true
+expiry	nested	epoch	max-nanos	before	0	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	nested	epoch	max-nanos	equal	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	epoch	max-nanos	after	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	epoch	min-nanos	before	0	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	epoch	min-nanos	equal	0	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	epoch	min-nanos	after	0	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	nested	second-boundary	unset	before	999999999	999999998	-	false
+expiry	nested	second-boundary	unset	equal	999999999	999999999	-	false
+expiry	nested	second-boundary	unset	after	999999999	1000000000	-	true
+expiry	nested	second-boundary	zero	before	999999999	999999998	0	false
+expiry	nested	second-boundary	zero	equal	999999999	999999999	0	false
+expiry	nested	second-boundary	zero	after	999999999	1000000000	0	true
+expiry	nested	second-boundary	one-second	before	999999999	1999999998	1000000000	false
+expiry	nested	second-boundary	one-second	equal	999999999	1999999999	1000000000	false
+expiry	nested	second-boundary	one-second	after	999999999	2000000000	1000000000	true
+expiry	nested	second-boundary	max-seconds	before	999999999	2147483647999999998	2147483647000000000	false
+expiry	nested	second-boundary	max-seconds	equal	999999999	2147483647999999999	2147483647000000000	false
+expiry	nested	second-boundary	max-seconds	after	999999999	2147483648000000000	2147483647000000000	true
+expiry	nested	second-boundary	negative	before	999999999	999999997	-1	false
+expiry	nested	second-boundary	negative	equal	999999999	999999998	-1	false
+expiry	nested	second-boundary	negative	after	999999999	999999999	-1	true
+expiry	nested	second-boundary	max-nanos	before	999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	nested	second-boundary	max-nanos	equal	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	second-boundary	max-nanos	after	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	second-boundary	min-nanos	before	999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	second-boundary	min-nanos	equal	999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	second-boundary	min-nanos	after	999999999	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	nested	minimum	unset	before	-62135596800000000000	-62135596800000000000	-	false
+expiry	nested	minimum	unset	equal	-62135596800000000000	-62135596800000000000	-	false
+expiry	nested	minimum	unset	after	-62135596800000000000	-62135596799999999999	-	true
+expiry	nested	minimum	zero	before	-62135596800000000000	-62135596800000000000	0	false
+expiry	nested	minimum	zero	equal	-62135596800000000000	-62135596800000000000	0	false
+expiry	nested	minimum	zero	after	-62135596800000000000	-62135596799999999999	0	true
+expiry	nested	minimum	one-second	before	-62135596800000000000	-62135596799000000001	1000000000	false
+expiry	nested	minimum	one-second	equal	-62135596800000000000	-62135596799000000000	1000000000	false
+expiry	nested	minimum	one-second	after	-62135596800000000000	-62135596798999999999	1000000000	true
+expiry	nested	minimum	max-seconds	before	-62135596800000000000	-59988113153000000001	2147483647000000000	false
+expiry	nested	minimum	max-seconds	equal	-62135596800000000000	-59988113153000000000	2147483647000000000	false
+expiry	nested	minimum	max-seconds	after	-62135596800000000000	-59988113152999999999	2147483647000000000	true
+expiry	nested	minimum	negative	before	-62135596800000000000	-62135596800000000000	-1	true
+expiry	nested	minimum	negative	equal	-62135596800000000000	-62135596800000000000	-1	true
+expiry	nested	minimum	negative	after	-62135596800000000000	-62135596799999999999	-1	true
+expiry	nested	minimum	max-nanos	before	-62135596800000000000	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	nested	minimum	max-nanos	equal	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	minimum	max-nanos	after	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	minimum	min-nanos	before	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	minimum	min-nanos	equal	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	minimum	min-nanos	after	-62135596800000000000	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	nested	maximum	unset	before	253402300799999999999	253402300799999999998	-	false
+expiry	nested	maximum	unset	equal	253402300799999999999	253402300799999999999	-	false
+expiry	nested	maximum	unset	after	253402300799999999999	253402300799999999999	-	false
+expiry	nested	maximum	zero	before	253402300799999999999	253402300799999999998	0	false
+expiry	nested	maximum	zero	equal	253402300799999999999	253402300799999999999	0	false
+expiry	nested	maximum	zero	after	253402300799999999999	253402300799999999999	0	false
+expiry	nested	maximum	one-second	before	253402300799999999999	253402300799999999998	1000000000	false
+expiry	nested	maximum	one-second	equal	253402300799999999999	253402300799999999999	1000000000	false
+expiry	nested	maximum	one-second	after	253402300799999999999	253402300799999999999	1000000000	false
+expiry	nested	maximum	max-seconds	before	253402300799999999999	253402300799999999998	2147483647000000000	false
+expiry	nested	maximum	max-seconds	equal	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	nested	maximum	max-seconds	after	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	nested	maximum	negative	before	253402300799999999999	253402300799999999997	-1	false
+expiry	nested	maximum	negative	equal	253402300799999999999	253402300799999999998	-1	false
+expiry	nested	maximum	negative	after	253402300799999999999	253402300799999999999	-1	true
+expiry	nested	maximum	max-nanos	before	253402300799999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	nested	maximum	max-nanos	equal	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	maximum	max-nanos	after	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	nested	maximum	min-nanos	before	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	maximum	min-nanos	equal	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	true
+expiry	nested	maximum	min-nanos	after	253402300799999999999	-62135596799999999999	-170141183460469231731687303715884105728	true
+expiry	missing	epoch	unset	before	0	-1	-	false
+expiry	missing	epoch	unset	equal	0	0	-	false
+expiry	missing	epoch	unset	after	0	1	-	false
+expiry	missing	epoch	zero	before	0	-1	0	false
+expiry	missing	epoch	zero	equal	0	0	0	false
+expiry	missing	epoch	zero	after	0	1	0	false
+expiry	missing	epoch	one-second	before	0	999999999	1000000000	false
+expiry	missing	epoch	one-second	equal	0	1000000000	1000000000	false
+expiry	missing	epoch	one-second	after	0	1000000001	1000000000	false
+expiry	missing	epoch	max-seconds	before	0	2147483646999999999	2147483647000000000	false
+expiry	missing	epoch	max-seconds	equal	0	2147483647000000000	2147483647000000000	false
+expiry	missing	epoch	max-seconds	after	0	2147483647000000001	2147483647000000000	false
+expiry	missing	epoch	negative	before	0	-2	-1	false
+expiry	missing	epoch	negative	equal	0	-1	-1	false
+expiry	missing	epoch	negative	after	0	0	-1	false
+expiry	missing	epoch	max-nanos	before	0	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	missing	epoch	max-nanos	equal	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	epoch	max-nanos	after	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	epoch	min-nanos	before	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	epoch	min-nanos	equal	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	epoch	min-nanos	after	0	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	missing	second-boundary	unset	before	999999999	999999998	-	false
+expiry	missing	second-boundary	unset	equal	999999999	999999999	-	false
+expiry	missing	second-boundary	unset	after	999999999	1000000000	-	false
+expiry	missing	second-boundary	zero	before	999999999	999999998	0	false
+expiry	missing	second-boundary	zero	equal	999999999	999999999	0	false
+expiry	missing	second-boundary	zero	after	999999999	1000000000	0	false
+expiry	missing	second-boundary	one-second	before	999999999	1999999998	1000000000	false
+expiry	missing	second-boundary	one-second	equal	999999999	1999999999	1000000000	false
+expiry	missing	second-boundary	one-second	after	999999999	2000000000	1000000000	false
+expiry	missing	second-boundary	max-seconds	before	999999999	2147483647999999998	2147483647000000000	false
+expiry	missing	second-boundary	max-seconds	equal	999999999	2147483647999999999	2147483647000000000	false
+expiry	missing	second-boundary	max-seconds	after	999999999	2147483648000000000	2147483647000000000	false
+expiry	missing	second-boundary	negative	before	999999999	999999997	-1	false
+expiry	missing	second-boundary	negative	equal	999999999	999999998	-1	false
+expiry	missing	second-boundary	negative	after	999999999	999999999	-1	false
+expiry	missing	second-boundary	max-nanos	before	999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	missing	second-boundary	max-nanos	equal	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	second-boundary	max-nanos	after	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	second-boundary	min-nanos	before	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	second-boundary	min-nanos	equal	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	second-boundary	min-nanos	after	999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	missing	minimum	unset	before	-62135596800000000000	-62135596800000000000	-	false
+expiry	missing	minimum	unset	equal	-62135596800000000000	-62135596800000000000	-	false
+expiry	missing	minimum	unset	after	-62135596800000000000	-62135596799999999999	-	false
+expiry	missing	minimum	zero	before	-62135596800000000000	-62135596800000000000	0	false
+expiry	missing	minimum	zero	equal	-62135596800000000000	-62135596800000000000	0	false
+expiry	missing	minimum	zero	after	-62135596800000000000	-62135596799999999999	0	false
+expiry	missing	minimum	one-second	before	-62135596800000000000	-62135596799000000001	1000000000	false
+expiry	missing	minimum	one-second	equal	-62135596800000000000	-62135596799000000000	1000000000	false
+expiry	missing	minimum	one-second	after	-62135596800000000000	-62135596798999999999	1000000000	false
+expiry	missing	minimum	max-seconds	before	-62135596800000000000	-59988113153000000001	2147483647000000000	false
+expiry	missing	minimum	max-seconds	equal	-62135596800000000000	-59988113153000000000	2147483647000000000	false
+expiry	missing	minimum	max-seconds	after	-62135596800000000000	-59988113152999999999	2147483647000000000	false
+expiry	missing	minimum	negative	before	-62135596800000000000	-62135596800000000000	-1	false
+expiry	missing	minimum	negative	equal	-62135596800000000000	-62135596800000000000	-1	false
+expiry	missing	minimum	negative	after	-62135596800000000000	-62135596799999999999	-1	false
+expiry	missing	minimum	max-nanos	before	-62135596800000000000	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	missing	minimum	max-nanos	equal	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	minimum	max-nanos	after	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	minimum	min-nanos	before	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	minimum	min-nanos	equal	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	minimum	min-nanos	after	-62135596800000000000	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	missing	maximum	unset	before	253402300799999999999	253402300799999999998	-	false
+expiry	missing	maximum	unset	equal	253402300799999999999	253402300799999999999	-	false
+expiry	missing	maximum	unset	after	253402300799999999999	253402300799999999999	-	false
+expiry	missing	maximum	zero	before	253402300799999999999	253402300799999999998	0	false
+expiry	missing	maximum	zero	equal	253402300799999999999	253402300799999999999	0	false
+expiry	missing	maximum	zero	after	253402300799999999999	253402300799999999999	0	false
+expiry	missing	maximum	one-second	before	253402300799999999999	253402300799999999998	1000000000	false
+expiry	missing	maximum	one-second	equal	253402300799999999999	253402300799999999999	1000000000	false
+expiry	missing	maximum	one-second	after	253402300799999999999	253402300799999999999	1000000000	false
+expiry	missing	maximum	max-seconds	before	253402300799999999999	253402300799999999998	2147483647000000000	false
+expiry	missing	maximum	max-seconds	equal	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	missing	maximum	max-seconds	after	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	missing	maximum	negative	before	253402300799999999999	253402300799999999997	-1	false
+expiry	missing	maximum	negative	equal	253402300799999999999	253402300799999999998	-1	false
+expiry	missing	maximum	negative	after	253402300799999999999	253402300799999999999	-1	false
+expiry	missing	maximum	max-nanos	before	253402300799999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	missing	maximum	max-nanos	equal	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	maximum	max-nanos	after	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	missing	maximum	min-nanos	before	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	maximum	min-nanos	equal	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	missing	maximum	min-nanos	after	253402300799999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	wrong-type	epoch	unset	before	0	-1	-	false
+expiry	wrong-type	epoch	unset	equal	0	0	-	false
+expiry	wrong-type	epoch	unset	after	0	1	-	false
+expiry	wrong-type	epoch	zero	before	0	-1	0	false
+expiry	wrong-type	epoch	zero	equal	0	0	0	false
+expiry	wrong-type	epoch	zero	after	0	1	0	false
+expiry	wrong-type	epoch	one-second	before	0	999999999	1000000000	false
+expiry	wrong-type	epoch	one-second	equal	0	1000000000	1000000000	false
+expiry	wrong-type	epoch	one-second	after	0	1000000001	1000000000	false
+expiry	wrong-type	epoch	max-seconds	before	0	2147483646999999999	2147483647000000000	false
+expiry	wrong-type	epoch	max-seconds	equal	0	2147483647000000000	2147483647000000000	false
+expiry	wrong-type	epoch	max-seconds	after	0	2147483647000000001	2147483647000000000	false
+expiry	wrong-type	epoch	negative	before	0	-2	-1	false
+expiry	wrong-type	epoch	negative	equal	0	-1	-1	false
+expiry	wrong-type	epoch	negative	after	0	0	-1	false
+expiry	wrong-type	epoch	max-nanos	before	0	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	wrong-type	epoch	max-nanos	equal	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	epoch	max-nanos	after	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	epoch	min-nanos	before	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	epoch	min-nanos	equal	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	epoch	min-nanos	after	0	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	wrong-type	second-boundary	unset	before	999999999	999999998	-	false
+expiry	wrong-type	second-boundary	unset	equal	999999999	999999999	-	false
+expiry	wrong-type	second-boundary	unset	after	999999999	1000000000	-	false
+expiry	wrong-type	second-boundary	zero	before	999999999	999999998	0	false
+expiry	wrong-type	second-boundary	zero	equal	999999999	999999999	0	false
+expiry	wrong-type	second-boundary	zero	after	999999999	1000000000	0	false
+expiry	wrong-type	second-boundary	one-second	before	999999999	1999999998	1000000000	false
+expiry	wrong-type	second-boundary	one-second	equal	999999999	1999999999	1000000000	false
+expiry	wrong-type	second-boundary	one-second	after	999999999	2000000000	1000000000	false
+expiry	wrong-type	second-boundary	max-seconds	before	999999999	2147483647999999998	2147483647000000000	false
+expiry	wrong-type	second-boundary	max-seconds	equal	999999999	2147483647999999999	2147483647000000000	false
+expiry	wrong-type	second-boundary	max-seconds	after	999999999	2147483648000000000	2147483647000000000	false
+expiry	wrong-type	second-boundary	negative	before	999999999	999999997	-1	false
+expiry	wrong-type	second-boundary	negative	equal	999999999	999999998	-1	false
+expiry	wrong-type	second-boundary	negative	after	999999999	999999999	-1	false
+expiry	wrong-type	second-boundary	max-nanos	before	999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	wrong-type	second-boundary	max-nanos	equal	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	second-boundary	max-nanos	after	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	second-boundary	min-nanos	before	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	second-boundary	min-nanos	equal	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	second-boundary	min-nanos	after	999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	wrong-type	minimum	unset	before	-62135596800000000000	-62135596800000000000	-	false
+expiry	wrong-type	minimum	unset	equal	-62135596800000000000	-62135596800000000000	-	false
+expiry	wrong-type	minimum	unset	after	-62135596800000000000	-62135596799999999999	-	false
+expiry	wrong-type	minimum	zero	before	-62135596800000000000	-62135596800000000000	0	false
+expiry	wrong-type	minimum	zero	equal	-62135596800000000000	-62135596800000000000	0	false
+expiry	wrong-type	minimum	zero	after	-62135596800000000000	-62135596799999999999	0	false
+expiry	wrong-type	minimum	one-second	before	-62135596800000000000	-62135596799000000001	1000000000	false
+expiry	wrong-type	minimum	one-second	equal	-62135596800000000000	-62135596799000000000	1000000000	false
+expiry	wrong-type	minimum	one-second	after	-62135596800000000000	-62135596798999999999	1000000000	false
+expiry	wrong-type	minimum	max-seconds	before	-62135596800000000000	-59988113153000000001	2147483647000000000	false
+expiry	wrong-type	minimum	max-seconds	equal	-62135596800000000000	-59988113153000000000	2147483647000000000	false
+expiry	wrong-type	minimum	max-seconds	after	-62135596800000000000	-59988113152999999999	2147483647000000000	false
+expiry	wrong-type	minimum	negative	before	-62135596800000000000	-62135596800000000000	-1	false
+expiry	wrong-type	minimum	negative	equal	-62135596800000000000	-62135596800000000000	-1	false
+expiry	wrong-type	minimum	negative	after	-62135596800000000000	-62135596799999999999	-1	false
+expiry	wrong-type	minimum	max-nanos	before	-62135596800000000000	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	wrong-type	minimum	max-nanos	equal	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	minimum	max-nanos	after	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	minimum	min-nanos	before	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	minimum	min-nanos	equal	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	minimum	min-nanos	after	-62135596800000000000	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	wrong-type	maximum	unset	before	253402300799999999999	253402300799999999998	-	false
+expiry	wrong-type	maximum	unset	equal	253402300799999999999	253402300799999999999	-	false
+expiry	wrong-type	maximum	unset	after	253402300799999999999	253402300799999999999	-	false
+expiry	wrong-type	maximum	zero	before	253402300799999999999	253402300799999999998	0	false
+expiry	wrong-type	maximum	zero	equal	253402300799999999999	253402300799999999999	0	false
+expiry	wrong-type	maximum	zero	after	253402300799999999999	253402300799999999999	0	false
+expiry	wrong-type	maximum	one-second	before	253402300799999999999	253402300799999999998	1000000000	false
+expiry	wrong-type	maximum	one-second	equal	253402300799999999999	253402300799999999999	1000000000	false
+expiry	wrong-type	maximum	one-second	after	253402300799999999999	253402300799999999999	1000000000	false
+expiry	wrong-type	maximum	max-seconds	before	253402300799999999999	253402300799999999998	2147483647000000000	false
+expiry	wrong-type	maximum	max-seconds	equal	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	wrong-type	maximum	max-seconds	after	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	wrong-type	maximum	negative	before	253402300799999999999	253402300799999999997	-1	false
+expiry	wrong-type	maximum	negative	equal	253402300799999999999	253402300799999999998	-1	false
+expiry	wrong-type	maximum	negative	after	253402300799999999999	253402300799999999999	-1	false
+expiry	wrong-type	maximum	max-nanos	before	253402300799999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	wrong-type	maximum	max-nanos	equal	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	maximum	max-nanos	after	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	wrong-type	maximum	min-nanos	before	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	maximum	min-nanos	equal	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	wrong-type	maximum	min-nanos	after	253402300799999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	blocked	epoch	unset	before	0	-1	-	false
+expiry	blocked	epoch	unset	equal	0	0	-	false
+expiry	blocked	epoch	unset	after	0	1	-	false
+expiry	blocked	epoch	zero	before	0	-1	0	false
+expiry	blocked	epoch	zero	equal	0	0	0	false
+expiry	blocked	epoch	zero	after	0	1	0	false
+expiry	blocked	epoch	one-second	before	0	999999999	1000000000	false
+expiry	blocked	epoch	one-second	equal	0	1000000000	1000000000	false
+expiry	blocked	epoch	one-second	after	0	1000000001	1000000000	false
+expiry	blocked	epoch	max-seconds	before	0	2147483646999999999	2147483647000000000	false
+expiry	blocked	epoch	max-seconds	equal	0	2147483647000000000	2147483647000000000	false
+expiry	blocked	epoch	max-seconds	after	0	2147483647000000001	2147483647000000000	false
+expiry	blocked	epoch	negative	before	0	-2	-1	false
+expiry	blocked	epoch	negative	equal	0	-1	-1	false
+expiry	blocked	epoch	negative	after	0	0	-1	false
+expiry	blocked	epoch	max-nanos	before	0	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	blocked	epoch	max-nanos	equal	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	epoch	max-nanos	after	0	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	epoch	min-nanos	before	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	epoch	min-nanos	equal	0	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	epoch	min-nanos	after	0	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	blocked	second-boundary	unset	before	999999999	999999998	-	false
+expiry	blocked	second-boundary	unset	equal	999999999	999999999	-	false
+expiry	blocked	second-boundary	unset	after	999999999	1000000000	-	false
+expiry	blocked	second-boundary	zero	before	999999999	999999998	0	false
+expiry	blocked	second-boundary	zero	equal	999999999	999999999	0	false
+expiry	blocked	second-boundary	zero	after	999999999	1000000000	0	false
+expiry	blocked	second-boundary	one-second	before	999999999	1999999998	1000000000	false
+expiry	blocked	second-boundary	one-second	equal	999999999	1999999999	1000000000	false
+expiry	blocked	second-boundary	one-second	after	999999999	2000000000	1000000000	false
+expiry	blocked	second-boundary	max-seconds	before	999999999	2147483647999999998	2147483647000000000	false
+expiry	blocked	second-boundary	max-seconds	equal	999999999	2147483647999999999	2147483647000000000	false
+expiry	blocked	second-boundary	max-seconds	after	999999999	2147483648000000000	2147483647000000000	false
+expiry	blocked	second-boundary	negative	before	999999999	999999997	-1	false
+expiry	blocked	second-boundary	negative	equal	999999999	999999998	-1	false
+expiry	blocked	second-boundary	negative	after	999999999	999999999	-1	false
+expiry	blocked	second-boundary	max-nanos	before	999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	blocked	second-boundary	max-nanos	equal	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	second-boundary	max-nanos	after	999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	second-boundary	min-nanos	before	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	second-boundary	min-nanos	equal	999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	second-boundary	min-nanos	after	999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	blocked	minimum	unset	before	-62135596800000000000	-62135596800000000000	-	false
+expiry	blocked	minimum	unset	equal	-62135596800000000000	-62135596800000000000	-	false
+expiry	blocked	minimum	unset	after	-62135596800000000000	-62135596799999999999	-	false
+expiry	blocked	minimum	zero	before	-62135596800000000000	-62135596800000000000	0	false
+expiry	blocked	minimum	zero	equal	-62135596800000000000	-62135596800000000000	0	false
+expiry	blocked	minimum	zero	after	-62135596800000000000	-62135596799999999999	0	false
+expiry	blocked	minimum	one-second	before	-62135596800000000000	-62135596799000000001	1000000000	false
+expiry	blocked	minimum	one-second	equal	-62135596800000000000	-62135596799000000000	1000000000	false
+expiry	blocked	minimum	one-second	after	-62135596800000000000	-62135596798999999999	1000000000	false
+expiry	blocked	minimum	max-seconds	before	-62135596800000000000	-59988113153000000001	2147483647000000000	false
+expiry	blocked	minimum	max-seconds	equal	-62135596800000000000	-59988113153000000000	2147483647000000000	false
+expiry	blocked	minimum	max-seconds	after	-62135596800000000000	-59988113152999999999	2147483647000000000	false
+expiry	blocked	minimum	negative	before	-62135596800000000000	-62135596800000000000	-1	false
+expiry	blocked	minimum	negative	equal	-62135596800000000000	-62135596800000000000	-1	false
+expiry	blocked	minimum	negative	after	-62135596800000000000	-62135596799999999999	-1	false
+expiry	blocked	minimum	max-nanos	before	-62135596800000000000	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	blocked	minimum	max-nanos	equal	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	minimum	max-nanos	after	-62135596800000000000	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	minimum	min-nanos	before	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	minimum	min-nanos	equal	-62135596800000000000	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	minimum	min-nanos	after	-62135596800000000000	-62135596799999999999	-170141183460469231731687303715884105728	false
+expiry	blocked	maximum	unset	before	253402300799999999999	253402300799999999998	-	false
+expiry	blocked	maximum	unset	equal	253402300799999999999	253402300799999999999	-	false
+expiry	blocked	maximum	unset	after	253402300799999999999	253402300799999999999	-	false
+expiry	blocked	maximum	zero	before	253402300799999999999	253402300799999999998	0	false
+expiry	blocked	maximum	zero	equal	253402300799999999999	253402300799999999999	0	false
+expiry	blocked	maximum	zero	after	253402300799999999999	253402300799999999999	0	false
+expiry	blocked	maximum	one-second	before	253402300799999999999	253402300799999999998	1000000000	false
+expiry	blocked	maximum	one-second	equal	253402300799999999999	253402300799999999999	1000000000	false
+expiry	blocked	maximum	one-second	after	253402300799999999999	253402300799999999999	1000000000	false
+expiry	blocked	maximum	max-seconds	before	253402300799999999999	253402300799999999998	2147483647000000000	false
+expiry	blocked	maximum	max-seconds	equal	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	blocked	maximum	max-seconds	after	253402300799999999999	253402300799999999999	2147483647000000000	false
+expiry	blocked	maximum	negative	before	253402300799999999999	253402300799999999997	-1	false
+expiry	blocked	maximum	negative	equal	253402300799999999999	253402300799999999998	-1	false
+expiry	blocked	maximum	negative	after	253402300799999999999	253402300799999999999	-1	false
+expiry	blocked	maximum	max-nanos	before	253402300799999999999	253402300799999999998	170141183460469231731687303715884105727	false
+expiry	blocked	maximum	max-nanos	equal	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	maximum	max-nanos	after	253402300799999999999	253402300799999999999	170141183460469231731687303715884105727	false
+expiry	blocked	maximum	min-nanos	before	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	maximum	min-nanos	equal	253402300799999999999	-62135596800000000000	-170141183460469231731687303715884105728	false
+expiry	blocked	maximum	min-nanos	after	253402300799999999999	-62135596799999999999	-170141183460469231731687303715884105728	false
+clock	-170141183460469231731687303715884105728	-62135596800000000000
+clock	-62135596800000000001	-62135596800000000000
+clock	-62135596800000000000	-62135596800000000000
+clock	-62135596799999999999	-62135596799999999999
+clock	-1	-1
+clock	0	0
+clock	1	1
+clock	253402300799999999998	253402300799999999998
+clock	253402300799999999999	253402300799999999999
+clock	253402300800000000000	253402300799999999999
+clock	170141183460469231731687303715884105727	253402300799999999999

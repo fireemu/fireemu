@@ -1,0 +1,9 @@
+name = "firestore-query-scope"
+defaultTargets = ["FirestoreQueryScope", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreQueryScope"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
