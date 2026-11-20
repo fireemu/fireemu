@@ -87,4 +87,16 @@ def step (s : Record) (a : Action) (p : Probe) : Except String (Record × String
 def after (s : Record) (a : Action) (p : Probe) : Record :=
   ((step s a p).toOption.map Prod.fst).getD s
 
+/-- The public phases reached by failing a first attempt and leasing its due retry. -/
+def leasedRetry : Record :=
+  let first : Probe := ⟨10, false, 2, none⟩
+  let ready := { first with now := 11 }
+  let leased := after {} .lease first
+  let running := after leased .start first
+  let waiting := after running .fail first
+  after (after waiting .retry ready) .lease ready
+
+def runningRetry : Record :=
+  after leasedRetry .start ⟨11, false, 2, none⟩
+
 end EventTransition

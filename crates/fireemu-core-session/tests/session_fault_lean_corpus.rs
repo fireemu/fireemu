@@ -23,6 +23,7 @@ fn plan(which: &str) -> Option<FaultPlan> {
         "global" => vec![rule(None, None, Some(2), 2)],
         "function" => vec![rule(Some("f1"), None, Some(1), 3)],
         "event" => vec![rule(None, Some("created"), None, 4)],
+        "event-occurrence" => vec![rule(Some("f2"), Some("created"), Some(2), 6)],
         "overlap" => vec![
             rule(Some("f2"), None, Some(2), 5),
             rule(None, None, None, 1),
@@ -72,8 +73,8 @@ fn assert_clear(state: &FaultState) {
 #[test]
 fn session_fault_selection_matches_lean() {
     let mut lines = include_str!("fixtures/lean-session-fault.corpus").lines();
-    assert_eq!(lines.next(), Some("# 113 cases."));
-    assert_eq!(lines.clone().count(), 113);
+    assert_eq!(lines.next(), Some("# 131 cases."));
+    assert_eq!(lines.clone().count(), 131);
     for line in lines {
         let columns: Vec<_> = line.split('\t').collect();
         let mut state = FaultState::default();

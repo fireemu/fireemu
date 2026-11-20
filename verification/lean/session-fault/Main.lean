@@ -8,6 +8,7 @@ def choices : List (String × Option (List Rule)) :=
    ("global", some [⟨"invoke", none, none, some 2, 2⟩]),
    ("function", some [⟨"invoke", some "f1", none, some 1, 3⟩]),
    ("event", some [⟨"invoke", none, some "created", none, 4⟩]),
+   ("event-occurrence", some [⟨"invoke", some "f2", some "created", some 2, 6⟩]),
    ("overlap", some [⟨"invoke", some "f2", none, some 2, 5⟩, ⟨"invoke", none, none, none, 1⟩,
      ⟨"invoke", none, some "created", none, 4⟩, ⟨"invoke", none, none, none, 1⟩])]
 

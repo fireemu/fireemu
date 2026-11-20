@@ -1,4 +1,4 @@
-# 113 cases.
+# 131 cases.
 none	invoke	-	-	-	-	0,0,0,0,0,0
 none	invoke	-	created	-	-	0,0,0,0,0,0
 none	invoke	-	deleted	-	-	0,0,0,0,0,0
@@ -89,6 +89,24 @@ event	read	f1	deleted	-	-	1,0,1,1,1,0
 event	read	f2	-	-	-	1,0,1,1,0,1
 event	read	f2	created	-	-	1,0,1,1,0,1
 event	read	f2	deleted	-	-	1,0,1,1,0,1
+event-occurrence	invoke	-	-	-	-	2,0,1,0,0,0
+event-occurrence	invoke	-	created	-	-	2,0,1,0,0,0
+event-occurrence	invoke	-	deleted	-	-	2,0,1,0,0,0
+event-occurrence	invoke	f1	-	-	-	2,1,1,0,0,0
+event-occurrence	invoke	f1	created	-	-	2,1,1,0,0,0
+event-occurrence	invoke	f1	deleted	-	-	2,1,1,0,0,0
+event-occurrence	invoke	f2	-	-	-	2,0,2,0,0,0
+event-occurrence	invoke	f2	created	6	invoke:f2:2:2:6	2,0,2,0,0,0
+event-occurrence	invoke	f2	deleted	-	-	2,0,2,0,0,0
+event-occurrence	read	-	-	-	-	1,0,1,1,0,0
+event-occurrence	read	-	created	-	-	1,0,1,1,0,0
+event-occurrence	read	-	deleted	-	-	1,0,1,1,0,0
+event-occurrence	read	f1	-	-	-	1,0,1,1,1,0
+event-occurrence	read	f1	created	-	-	1,0,1,1,1,0
+event-occurrence	read	f1	deleted	-	-	1,0,1,1,1,0
+event-occurrence	read	f2	-	-	-	1,0,1,1,0,1
+event-occurrence	read	f2	created	-	-	1,0,1,1,0,1
+event-occurrence	read	f2	deleted	-	-	1,0,1,1,0,1
 overlap	invoke	-	-	1,1	invoke:f2:1:1:1,invoke:f2:1:1:1,invoke:-:2:-:1,invoke:-:2:-:1	2,0,1,0,0,0
 overlap	invoke	-	created	1,4,1	invoke:f2:1:1:1,invoke:f2:1:1:1,invoke:-:2:-:1,invoke:-:2:-:4,invoke:-:2:-:1	2,0,1,0,0,0
 overlap	invoke	-	deleted	1,1	invoke:f2:1:1:1,invoke:f2:1:1:1,invoke:-:2:-:1,invoke:-:2:-:1	2,0,1,0,0,0

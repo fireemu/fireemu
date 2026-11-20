@@ -4,7 +4,7 @@ This model specifies rule selection and retained history from `crates/fireemu-co
 
 The model treats actions as opaque identifiers and uses distinct operation and function names without the separator used in the Rust counter key. It does not drive adapter effects, shared registries, or counter overflow. `SessionFault/Theorems.lean` proves ordered selection, overlap retention, absence of observations without a plan, history length and conservation, and occurrence counting across different event types.
 
-`Main.lean` emits tab-separated rows for all plan, operation, function and event shape combinations after a fixed first call. Rows record returned actions, fired records, and counters. Additional rows drive the 1,000-record boundary and two-action eviction through the public state. The Rust run compares the entire retained deque and checks that installing or clearing a plan resets it.
+`Main.lean` emits tab-separated rows for all plan, operation, function and event shape combinations after a fixed first call. Rows record returned actions, fired records, and counters. A function-scoped second occurrence with an event filter checks that an earlier call with a different event type still advances the counter. Additional rows drive the 1,000-record boundary and two-action eviction through the public state. The Rust run compares the entire retained deque and checks that installing or clearing a plan resets it.
 
 From this directory:
 

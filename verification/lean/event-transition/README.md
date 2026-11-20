@@ -4,7 +4,7 @@ This model specifies the single-record transition API in `crates/fireemu-core-ev
 
 `EventTransition/Theorems.lean` proves terminal stability, refusal preserving the record, attempt accounting for start and interrupt, and the early and inclusive-due retry boundaries. Attempt counter overflow is modeled at the phase level. The Rust corpus constructs records only through the public API, so it does not attempt to reach the counter's maximum by billions of deliveries.
 
-`Main.lean` emits a tab-separated matrix of reachable record phases, actions and probe parameters. Each row includes the outcome, next phase and attempt count, and the due time or dead-letter attempt count when present. The Rust replay checks exact transition errors, outcomes, and state. The matrix exercises stale detection and retry-time overflow. It complements the existing Quint EventDelivery model of the larger scheduling system.
+`Main.lean` emits a tab-separated matrix of reachable record phases, actions and probe parameters. Each row includes the outcome, next phase and attempt count, and the due time or dead-letter attempt count when present. The Rust replay checks exact transition errors, outcomes, and state. The matrix exercises stale detection and retry-time overflow. It reaches the leased and running phases of the second attempt through a first failure and the retry timer, so starting charges the second attempt and interrupting refunds just that attempt. It complements the existing Quint EventDelivery model of the larger scheduling system.
 
 From this directory:
 

@@ -31,4 +31,14 @@ theorem successful_start_charges_attempt (s : Record) (p : Probe) (h : s.phase =
     step s .start p = .ok ({ s with phase := .running, attempt := s.attempt + 1 }, "ok") := by
   simp [step, h, Phase.terminal, Action.requires, Nat.not_le.mpr fits]
 
+theorem retry_preamble_accounts_for_both_attempts :
+    leasedRetry.phase = .leased ∧ leasedRetry.attempt = 1 ∧
+      runningRetry.phase = .running ∧ runningRetry.attempt = 2 := by
+  decide
+
+theorem interrupting_running_retry_refunds_only_current_attempt :
+    let result := after runningRetry .interrupt ⟨11, false, 2, none⟩
+    result.phase = .pending ∧ result.attempt = 1 := by
+  decide
+
 end EventTransition

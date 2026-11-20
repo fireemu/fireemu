@@ -75,17 +75,34 @@ fn prepare(source: &str) -> EventRecord {
                 _ => {}
             }
         }
+        "retry-leased" | "retry-running" => {
+            record.lease().unwrap();
+            record.start().unwrap();
+            record
+                .fail(&policy(2, None), LogicalInstant::from_nanos(10))
+                .unwrap();
+            record.retry_due(LogicalInstant::from_nanos(11)).unwrap();
+            record.lease().unwrap();
+            assert_eq!(record.attempt(), 1);
+            if source == "retry-running" {
+                record.start().unwrap();
+                assert_eq!(record.attempt(), 2);
+            }
+        }
         _ => panic!("unknown source phase: {source}"),
     }
-    assert_eq!(state(&record).0, source);
+    assert_eq!(
+        state(&record).0,
+        source.strip_prefix("retry-").unwrap_or(source)
+    );
     record
 }
 
 #[test]
 fn event_phase_transitions_match_lean() {
     let mut lines = include_str!("fixtures/lean-event-transition.corpus").lines();
-    assert_eq!(lines.next(), Some("# 384 cases."));
-    assert_eq!(lines.clone().count(), 384);
+    assert_eq!(lines.next(), Some("# 480 cases."));
+    assert_eq!(lines.clone().count(), 480);
     for line in lines {
         let columns: Vec<_> = line.split('\t').collect();
         let [source, action, _, now, newer, limit, max_age, outcome, phase, attempt, payload] =

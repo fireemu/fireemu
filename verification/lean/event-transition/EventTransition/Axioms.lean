@@ -22,3 +22,9 @@ import EventTransition.Theorems
 
 /-- info: 'EventTransition.successful_start_charges_attempt' depends on axioms: [propext, Quot.sound] -/
 #guard_msgs in #print axioms EventTransition.successful_start_charges_attempt
+
+/-- info: 'EventTransition.retry_preamble_accounts_for_both_attempts' depends on axioms: [propext] -/
+#guard_msgs in #print axioms EventTransition.retry_preamble_accounts_for_both_attempts
+
+/-- info: 'EventTransition.interrupting_running_retry_refunds_only_current_attempt' depends on axioms: [propext] -/
+#guard_msgs in #print axioms EventTransition.interrupting_running_retry_refunds_only_current_attempt

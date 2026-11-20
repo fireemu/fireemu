@@ -29,8 +29,8 @@ theorem retention_conserves_history (cap : Nat) (xs : List α) :
 
 /-- A different event type still increments the function-specific occurrence counter. -/
 theorem event_filter_does_not_scope_the_counter :
-    let plan := [⟨"invoke", some "f", some "created", some 2, 7⟩]
-    fired (some plan) [⟨"invoke", some "f", some "deleted"⟩, ⟨"invoke", some "f", some "created"⟩]
-      = [⟨"invoke", some "f", 2, some 2, 7⟩] := by decide
+    let plan := [⟨"invoke", some "f2", some "created", some 2, 6⟩]
+    fired (some plan) [⟨"invoke", some "f2", some "deleted"⟩, ⟨"invoke", some "f2", some "created"⟩]
+      = [⟨"invoke", some "f2", 2, some 2, 6⟩] := by decide
 
 end SessionFault
