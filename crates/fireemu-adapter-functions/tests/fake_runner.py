@@ -238,6 +238,12 @@ while True:
         clock.update(msg)
         if delay := os.environ.get("FIREEMU_FAKE_CLOCK_ACK_DELAY_MS"):
             time.sleep(int(delay) / 1000)
+        # A test holds the acknowledgement until it creates this file (bounded, so a failed
+        # test never leaves the runner waiting).
+        if gate := os.environ.get("FIREEMU_FAKE_CLOCK_ACK_GATE"):
+            deadline = time.monotonic() + 30
+            while not os.path.exists(gate) and time.monotonic() < deadline:
+                time.sleep(0.01)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
         continue
     if msg.get("type") != "invoke":

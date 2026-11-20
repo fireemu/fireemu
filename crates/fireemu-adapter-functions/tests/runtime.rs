@@ -5069,6 +5069,126 @@ async fn settling_a_clock_move_is_bounded() {
     assert!(fireemu_adapter_functions::runtime::CLOCK_SETTLE_BOUND <= Duration::from_secs(30));
 }
 
+/// The fake runner, logging its clock frames to `log` and holding each `clock:set` answer until
+/// `gate` exists.
+fn gated_fake_runner_spec(probe: &Path, log: &Path, gate: &Path) -> SpawnSpec {
+    SpawnSpec {
+        command: vec![
+            "python3".to_owned(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_runner.py").to_owned(),
+        ],
+        cwd: None,
+        env: [
+            ("FIREEMU_FAKE_TASK_PROBE", probe),
+            ("FIREEMU_FAKE_CLOCK_LOG", log),
+            ("FIREEMU_FAKE_CLOCK_ACK_GATE", gate),
+        ]
+        .into_iter()
+        .map(|(key, path)| (key.to_owned(), path.display().to_string()))
+        .collect(),
+        hello_timeout: Duration::from_secs(60),
+    }
+}
+
+/// A runner swapped in while a clock move is being sent does not let the old runner's answer
+/// settle the move: the replacement started with the clock sampled before the move, so
+/// settlement answers only once the replacement acknowledged it too (the generation re-check
+/// in `sync_clock_to`; model: verification/tla/clock-settle, `SettledReachesCurrent`).
+#[tokio::test]
+async fn settling_a_clock_move_reaches_a_runner_swapped_in_during_the_send() {
+    let dir = std::env::temp_dir().join(format!("fireemu-clock-swap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probe = dir.join("entries");
+    let (old_log, old_gate) = (dir.join("old.jsonl"), dir.join("old.gate"));
+    let (new_log, new_gate) = (dir.join("new.jsonl"), dir.join("new.gate"));
+    let clock = Arc::new(Mutex::new(VirtualClock::new(START)));
+    std::fs::write(&old_gate, "open").unwrap();
+    let runtime = start_task_runtime_using_clock(
+        &probe,
+        1,
+        |_| (TaskRetryConfig::default(), TaskRateLimits::default()),
+        gated_fake_runner_spec(&probe, &old_log, &old_gate)
+            .env
+            .split_off(1),
+        clock.clone(),
+        fireemu_adapter_functions::application_clock::ApplicationClockPolicy {
+            date_virtual: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    // The replacement starts before the move, as a recovery that sampled the clock first does.
+    let spec = gated_fake_runner_spec(&probe, &new_log, &new_gate);
+    let replacement = Arc::new(Runner::spawn_spec(&spec).await.unwrap());
+    let clock_sets = |log: &Path| -> usize {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains("\"clock:set\""))
+            .count()
+    };
+    // The old runner answers the start-up clock frame; its gate closes before the move.
+    runtime.sync_clock().await.unwrap();
+    std::fs::remove_file(&old_gate).unwrap();
+    let before_move = clock_sets(&old_log);
+    advance(&clock, 1);
+    let settling = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move { runtime.sync_clock().await })
+    };
+    // Gate 1: the old runner has the move's frame and holds its answer.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while clock_sets(&old_log) == before_move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the old runner received the move");
+    runtime
+        .reload_codebase(CodebaseSpec {
+            function: None,
+            name: "default".to_owned(),
+            manifest: runtime.manifest().clone(),
+            runner: replacement.clone(),
+            spawn: Some(spec),
+            cleanup_dir: None,
+        })
+        .unwrap();
+    // The swap stopped the old runner, which ends its send without an error. Gate 2: the
+    // replacement now has the move's frame and holds its answer; settlement must still wait.
+    let reached = tokio::time::timeout(Duration::from_secs(10), async {
+        while clock_sets(&new_log) == 0 && !settling.is_finished() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let answered_early = settling.is_finished();
+    let sent_to_replacement = clock_sets(&new_log);
+    std::fs::write(&new_gate, "open").unwrap();
+    let settled = tokio::time::timeout(Duration::from_secs(10), settling).await;
+    runtime.shutdown().await;
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        reached.is_ok(),
+        "settlement neither answered nor reached the replacement"
+    );
+    assert!(
+        !answered_early,
+        "settlement answered before the replacement acknowledged the move \
+         ({sent_to_replacement} frames sent to it)"
+    );
+    assert!(
+        sent_to_replacement > 0,
+        "the replacement was never sent the move"
+    );
+    assert!(
+        matches!(settled, Ok(Ok(Ok(())))),
+        "the move did not settle once the replacement answered: {settled:?}"
+    );
+}
+
 /// The runtime's clock updates tell the runner whether the daemon clock follows real time.
 #[tokio::test]
 async fn runtime_clock_sync_sends_the_clock_follow_flag() {
