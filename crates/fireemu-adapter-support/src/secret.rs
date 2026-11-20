@@ -21,6 +21,8 @@ mod tests {
     #[test]
     fn secret_comparison_exposes_only_a_boolean_result() {
         let sentinel = "private-control-token-sentinel";
+        assert!(optional_str_matches(Some(sentinel), sentinel));
+        assert!(!optional_str_matches(None, sentinel));
         let result = optional_str_matches(Some("wrong"), sentinel);
         assert!(!result);
         assert!(!format!("{result:?}").contains(sentinel));
