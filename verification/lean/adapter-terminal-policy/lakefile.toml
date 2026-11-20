@@ -1,0 +1,9 @@
+name = "adapter-terminal-policy"
+defaultTargets = ["AdapterTerminalPolicy", "corpus"]
+
+[[lean_lib]]
+name = "AdapterTerminalPolicy"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

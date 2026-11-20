@@ -1,0 +1,9 @@
+name = "adapter-accept-backoff"
+defaultTargets = ["AdapterAcceptBackoff", "corpus"]
+
+[[lean_lib]]
+name = "AdapterAcceptBackoff"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

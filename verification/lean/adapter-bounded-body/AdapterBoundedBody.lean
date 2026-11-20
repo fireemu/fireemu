@@ -1,0 +1,3 @@
+import AdapterBoundedBody.Spec
+import AdapterBoundedBody.Theorems
+import AdapterBoundedBody.Axioms

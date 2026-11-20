@@ -1,0 +1,9 @@
+name = "adapter-notice-limit"
+defaultTargets = ["AdapterNoticeLimit", "corpus"]
+
+[[lean_lib]]
+name = "AdapterNoticeLimit"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,9 @@
+name = "adapter-bounded-body"
+defaultTargets = ["AdapterBoundedBody", "corpus"]
+
+[[lean_lib]]
+name = "AdapterBoundedBody"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

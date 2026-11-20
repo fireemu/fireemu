@@ -1,0 +1,3 @@
+import AdapterTerminalPolicy.Spec
+import AdapterTerminalPolicy.Theorems
+import AdapterTerminalPolicy.Axioms
