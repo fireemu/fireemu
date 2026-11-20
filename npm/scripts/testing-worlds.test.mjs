@@ -21,6 +21,20 @@ function copyFileByFile(t) {
 }
 const options = { binaryPath: binary, env:{...process.env,NODE_PATH:''}, projectId: 'demo-test-worlds', clockStart: '2026-01-31T23:59:00Z', services: ['auth','firestore'], config: { schemaVersion:1, firestore:{edition:'standard'} } };
 
+test('invalid calendar clock arguments reject promises and leave the world clock unchanged', native, async () => {
+  const world = await createTestWorld(options);
+  try {
+    await assert.rejects(world.clock.advance({}), /seconds, millis or calendar units/);
+    await assert.rejects(world.clock.advance({ days: 1, hours: -1 }), /same sign/);
+    await assert.rejects(world.clock.advanceAndSettle(1000, { allowBackwards: false }), /require.*ISO 8601/);
+    await assert.rejects(world.clock.to('startOfMonth', { duration: {} }), /at least one unit/);
+    await assert.rejects(world.clock.advance('P'), /duration/);
+    assert.equal((await world.clock.get()).clock.clock, options.clockStart);
+  } finally {
+    await world.dispose();
+  }
+});
+
 function signedReadUrl({ privateKey, host, bucket, object }) {
   const method = 'GET';
   const date = '20260131T235900Z';

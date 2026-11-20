@@ -96,6 +96,20 @@ A clock command admits eligible scheduled/task work; it does not establish that 
 
 An entry point that awaits a virtual timer during top-level module initialization cannot finish startup before a clock actor exists. Use native timers during initialization, or move that wait into a handler. Timer virtualization supports the global, CommonJS and ESM `node:timers` callback APIs and `node:timers/promises` timeout/interval APIs, including cancellation, refresh, ref/unref and AbortSignal.
 
+## Move the clock by calendar units
+
+`world.clock.advance` also takes an ISO 8601 duration or calendar units, and `world.clock.to` moves to the start or end of a day, month or year. Calendar units and anchors use `timeZone`, else the world's `scheduler.defaultTimeZone`, else UTC; the rules are in [Time and scheduled functions](https://fireemu.github.io/fireemu/guides/time/#move-the-clock-by-a-duration-or-to-a-calendar-boundary).
+
+```js
+await world.clock.advance({ months: 1 });                      // January 31 becomes February 28 or 29
+await world.clock.advance('PT36H');                            // exact elapsed time
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 23:59:59.999999 local time
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+A number is still milliseconds, and `{ seconds }` / `{ millis }` objects move by exact time as before. Calendar units cannot be combined with `millis`, and all of them must have the same sign. `world.clock.to` uses `clock:set`, so a target earlier than the current time needs `allowBackwards: true`. `advanceAndSettle` takes the same durations, with `timeZone` and `allowBackwards` among its options. The `timeZone` and `allowBackwards` options on `advance` and `advanceAndSettle` apply to ISO 8601 strings and calendar-unit objects. Numbers and the `{ seconds }` and `{ millis }` forms reject those options.
+
 ## Advance the clock and wait for work
 
 `awaitIdle` waits for work that may need a clock move. Calls on one world are admitted in call order, but `world.control()` calls for `sessions/default:awaitIdle` do not hold up later clock calls, so the obvious concurrent form works:

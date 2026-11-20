@@ -70,6 +70,20 @@ The `fireemu/control` client also works in `fireemu exec` commands and shares UR
 - Worlds that must coexist inside one test are created with `Promise.allSettled` and disposed in `finally`.
 - `Promise.all([createTestWorld(), ...])` followed by `try/finally` leaks the worlds that started when one creation fails (see the [test worlds guide](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
+## Move the clock by calendar units
+
+`world.clock.advance` also takes an ISO 8601 duration or calendar units, and `world.clock.to` moves to the start or end of a day, month or year. Calendar units and anchors use `timeZone`, else the world's `scheduler.defaultTimeZone`, else UTC; the rules are in [Time and scheduled functions](../time/#move-the-clock-by-a-duration-or-to-a-calendar-boundary).
+
+```js
+await world.clock.advance({ months: 1 });                      // January 31 becomes February 28 or 29
+await world.clock.advance('PT36H');                            // exact elapsed time
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 23:59:59.999999 local time
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+A number is still milliseconds, and `{ seconds }` / `{ millis }` objects move by exact time as before. Calendar units cannot be combined with `millis`, and all of them must have the same sign. `world.clock.to` uses `clock:set`, so a target earlier than the current time needs `allowBackwards: true`. `advanceAndSettle` takes the same durations, with `timeZone` and `allowBackwards` among its options. The `timeZone` and `allowBackwards` options on `advance` and `advanceAndSettle` apply to ISO 8601 strings and calendar-unit objects. Numbers and the `{ seconds }` and `{ millis }` forms reject those options.
+
 ## Advance the clock and wait for work
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })` advances the clock, runs due virtual timers and waits for the daemon to be idle, in that order. The default scope is `runnable`, which does not wait for work scheduled beyond the move. It rejects when the move fails or the wait times out.

@@ -65,6 +65,44 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-
 
 Every clock answer, and `GET /v1/sessions/default`, carries `"running": true` while the clock follows real time and `false` while it is frozen. A resume never counts the time the clock stood still. `syncToRealTime` is a set: it refuses to move the clock backwards (a pinned start in the future) unless the body also has `"allowBackwards": true`. An empty body is a plain resume; a body that is sent must be a JSON object (a literal `null` is refused). A clock with no real-time source to follow (the worlds of `fireemu/testing`) answers `400 FAILED_PRECONDITION`. The daemon's services read the shared clock, so they see the switch when the request returns; scheduled functions that came due during a sync jump run as after `clock:advance`. A virtual `functions.clock` reaches each Functions runner as a message, and the request (from the API or the Runtime page) waits until the runners have it (`503 CLOCK_NOT_SETTLED` if one does not answer within 10 seconds). Application code never sees `Date.now()` go back on a freeze: it holds at what it last showed until the clock passes it, and only a rewind moves it back. The clock is shared by every session, so the switch applies to all of them. A snapshot restore puts back the captured instant and keeps the current mode. The startup output says which mode the clock started in and how to switch it.
 
+## Move the clock by a duration or to a calendar boundary
+
+On the Runtime page, choose a preset or enter an amount and unit. You can also enter an RFC 3339 instant or use the UTC date and time picker. Check the preview, then select **Move clock**. The daemon calculates the target again on confirmation. The result can change if the clock is running or if another client moves it after the preview.
+
+Besides `{"seconds": n}`, `{"millis": n}` and `{"instant": "<RFC 3339>"}`, the clock moves by an ISO 8601 duration or to the start or end of a day, month or year:
+
+```sh
+# 30 days later; one calendar month later; 36 hours later.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P30D"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P1M"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "PT36H"}'
+# Three days back (a rewind needs allowBackwards).
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "-P3D", "allowBackwards": true}'
+# The last microsecond of this month; the first of next month at 00:00 in Tokyo.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "endOfMonth"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "startOfNextMonth", "timeZone": "Asia/Tokyo"}'
+# One month later, then the start of that month.
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"duration": "P1M", "to": "startOfMonth"}'
+```
+
+| Field | Endpoints | Value |
+|---|---|---|
+| `duration` | `clock:advance`; `clock:set` and `clock:advanceTo` together with `to` | `P[nY][nM][nW][nD][T[nH][nM][nS]]` with whole numbers, uppercase designators in this order, at least one component; a leading `-` counts every component backwards. Fractions are not accepted: use `millis` for less than a second. |
+| `to` | `clock:set`, `clock:advanceTo` | `startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear` |
+| `timeZone` | with `duration` or `to` | An IANA zone name, as in a schedule. Without it, `scheduler.defaultTimeZone`, else UTC. |
+
+The rules:
+
+- Years, months, weeks and days move the local date and keep the local time of day in that time zone; hours, minutes and seconds are exact elapsed time. `P1D` follows the local calendar, so its elapsed time depends on the dates and the zone. `PT24H` always adds 24 elapsed hours.
+- Years and months apply first, as a number of months, and a day that the target month does not have becomes its last day: January 31 plus `P1M` is February 28 (29 in a leap year), and February 29 plus `P1Y1M` is March 29. Weeks and days apply next, then hours, minutes and seconds.
+- With `duration` and `to` together, the duration applies first.
+- `endOfDay`, `endOfMonth` and `endOfYear` are 23:59:59.999999 local time, the last microsecond a Firestore timestamp can hold. When the next month starts at a representable instant and the boundary has no offset transition, `endOfMonth` plus one microsecond is `startOfNextMonth`.
+- A local time that happens twice (the hour after clocks go back) takes the earlier instant, as a schedule runs at the first occurrence. A local time that does not happen (the hour skipped when clocks go forward) takes the offset from before the change, which lands as far after the gap's start as the requested time was: 02:30 on a day that skips from 02:00 to 03:00 becomes 03:30. Schedules skip such a time instead; a clock move must land somewhere, and this is the `compatible` rule of `java.time`, Temporal and jiff.
+- The result must be in years 0001 through 9999 (UTC), and so must every local date that the years, months, weeks, days or the anchor compute; hours, minutes and seconds alone compute no local date. Otherwise the request is refused with `400 INVALID_ARGUMENT`.
+- A move that ends earlier than the current time needs `"allowBackwards": true` on `clock:advance` and `clock:set`, and is refused on `clock:advanceTo`, as for `instant`.
+- On all three move endpoints, combining any of `seconds`, `millis` or `instant` with a non-null `duration`, `to` or `timeZone` returns 400 and identifies the fields. A new field set to JSON `null` is treated as absent. A non-null calendar field used on a move endpoint that does not accept it also returns 400.
+- The answer is the same as for the other moves: the clock's new time in RFC 3339. Scheduled functions treat the move like any other (see below).
+
 ## Run scheduled functions
 
 A schedule runs when the clock reaches an occurrence.

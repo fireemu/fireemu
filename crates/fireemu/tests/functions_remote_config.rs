@@ -74,6 +74,7 @@ fn control(runtime: Arc<FunctionsRuntime>, clock: Arc<Mutex<VirtualClock>>) -> C
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        calendar_zones: None,
         barrier: None,
         snapshot_hooks: vec![],
         snapshots: Mutex::new(std::collections::BTreeMap::new()),

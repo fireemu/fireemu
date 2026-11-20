@@ -70,6 +70,20 @@ await withTestWorld(
 - 하나의 테스트 안에서 함께 존재해야 하는 월드는 `Promise.allSettled`로 만들고 `finally`에서 dispose합니다.
 - `Promise.all([createTestWorld(), ...])` 뒤에 `try/finally`를 두면, 하나의 생성이 실패할 때 이미 시작된 월드가 누수됩니다([테스트 월드 가이드](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds) 참조).
 
+## 달력 단위로 시계 이동
+
+`world.clock.advance`에는 ISO 8601 형식의 기간이나 달력 단위도 지정할 수 있습니다. `world.clock.to`는 시계를 일, 월, 연도의 시작 또는 끝으로 옮깁니다. 달력 단위와 경계 시각을 계산할 때는 `timeZone`을 사용합니다. 생략하면 월드의 `scheduler.defaultTimeZone`을 사용하고, 이 값도 없으면 UTC를 사용합니다. 자세한 규칙은 [시간과 예약 함수](../time/#지정한-기간만큼-또는-달력의-경계로-시계-이동)를 참조하십시오.
+
+```js
+await world.clock.advance({ months: 1 });                      // 1월 31일이 2월 28일 또는 29일이 됨
+await world.clock.advance('PT36H');                            // 정확한 경과 시간
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 현지 시각 23:59:59.999999
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+숫자는 여전히 밀리초를 뜻하며 `{ seconds }` 또는 `{ millis }` 객체는 이전처럼 지정한 경과 시간만큼 시계를 옮깁니다. 달력 단위는 `millis`와 함께 사용할 수 없으며 모두 같은 부호여야 합니다. `world.clock.to`는 `clock:set`을 사용하므로 현재보다 이른 시각으로 이동하려면 `allowBackwards: true`가 필요합니다. `advanceAndSettle`에도 같은 기간을 지정할 수 있으며 옵션에는 `timeZone`과 `allowBackwards`가 있습니다. `advance`와 `advanceAndSettle`의 `timeZone` 및 `allowBackwards` 옵션은 ISO 8601 문자열과 달력 단위 객체에 적용됩니다. 숫자와 `{ seconds }`, `{ millis }` 형식에서는 이 옵션을 사용할 수 없습니다.
+
 ## 시계를 진행하고 작업 대기
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })`는 시계를 진행하고, 실행 시점이 된 가상 타이머를 실행하고, 데몬이 유휴 상태가 될 때까지 기다립니다. 이 순서로 수행합니다. 기본 범위는 `runnable`이며, 이동 이후로 예약된 작업은 기다리지 않습니다. 이동이 실패하거나 대기가 시간 초과되면 reject됩니다.

@@ -11,6 +11,17 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 ### Fixed
 
 - Firestore, strict profile: match the additional Standard index rules recorded on 2026-11-20. A single-field equality index must agree with the requested document-name direction for the recorded equality, IN, OR, IS NULL, and count queries. The recorded array-membership shapes now merge the matching indexes at collection and collection-group scope, including single-value array-contains-any and count in the recorded collection cases. Explain lists the members in the recorded order. Missing-index links and query diagnostics use the recorded field order and messages.
+
+## [0.63.0] - 2026-11-20
+
+### Added
+
+- Clock: move the virtual clock by an ISO 8601 duration or to a calendar boundary. `clock:advance` accepts `{"duration": "P1M"}` (years, months, weeks and days move the local date in a time zone; hours, minutes and seconds are exact time; a leading minus goes back and needs `allowBackwards`), and `clock:set` / `clock:advanceTo` accept `{"to": "endOfMonth"}` (`startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear`), optionally after a `duration`. The zone is the request's `timeZone`, else `scheduler.defaultTimeZone`, else UTC. A month step from a day the target month lacks lands on its last day (January 31 plus `P1M` is February 28 or 29); an end is 23:59:59.999999 local time; a repeated local time takes the earlier instant and a skipped one the offset from before the change. A non-null `duration`, `to` or `timeZone` mixed with a legacy move field (`seconds`, `millis` or `instant`) now returns 400 and names the fields. Those extra keys were previously ignored. A new field with a JSON value of `null` counts as omitted. `fireemu/testing`: `world.clock.advance({ months: 1 })`, `world.clock.advance('PT36H')` and `world.clock.to('endOfMonth')`.
+
+- Emulator UI: the Runtime page offers calendar move presets, a unit selector, a UTC date and time picker, and a preview before confirming the move. The daemon calculates the preview using the same time zone rules as the move.
+
+### Fixed
+
 - Security Rules (Firestore, Storage, Realtime Database): a regular expression whose character class starts with a negation followed by a literal caret (`[^^...]`) is no longer misread by the nesting check, which could refuse a valid pattern for group depth when a later class held parentheses.
 - Firestore: after importing documents whose update times are later than the session clock, a later write to such a document now gets a strictly later update time; it could reuse the imported time, so an `updateTime` precondition taken before the write still matched afterwards.
 - Emulator UI, Runtime page: a snapshot's Restore button, and its confirmation once asked, are disabled while a Freeze, Resume, Sync to real time or another clock change is waiting for its answer. Confirming a Restore at that moment used to close the question without restoring.
@@ -1499,7 +1510,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.62.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.63.0...HEAD
+[0.63.0]: https://github.com/fireemu/fireemu/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/fireemu/fireemu/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/fireemu/fireemu/compare/v0.60.0...v0.61.0
 [0.60.0]: https://github.com/fireemu/fireemu/compare/v0.59.0...v0.60.0

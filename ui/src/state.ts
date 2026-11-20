@@ -7,13 +7,20 @@ import { createSubmitGuard } from "./lib/submitGuard";
 const store = createRoot(() => {
   const [config, setConfig] = createSignal<RuntimeConfig>(initialConfig());
   const [clock, setClock] = createSignal<string>("");
+  const [clockMutationEpoch, setClockMutationEpoch] = createSignal(0);
   // The mode the daemon last reported; until it does (or on an older daemon), the configured one.
   const [liveClockMode, setLiveClockMode] = createSignal<"frozen" | "realtime" | null>(null);
   const clockMode = (): "frozen" | "realtime" => liveClockMode() ?? config().clockMode;
   /** Takes a clock answer: its instant, and its mode when the daemon reports one. */
   const setClockInfo = (info: ClockInfo) => {
+    const previousMode = clockMode();
+    const mode =
+      typeof info.running === "boolean" ? (info.running ? "realtime" : "frozen") : previousMode;
+    if (clock() && (mode !== previousMode || (mode === "frozen" && info.clock !== clock()))) {
+      setClockMutationEpoch((epoch) => epoch + 1);
+    }
     setClock(info.clock);
-    if (typeof info.running === "boolean") setLiveClockMode(info.running ? "realtime" : "frozen");
+    if (typeof info.running === "boolean") setLiveClockMode(mode);
   };
   /**
    * Takes the answer of a clock mutation (advance, set, freeze, resume): a poll that started
@@ -25,12 +32,13 @@ const store = createRoot(() => {
    */
   const clockGuard = createSubmitGuard();
   const applyClockMutation = (info: ClockInfo) => {
-    completedEpoch = ++pollEpoch;
+    invalidatePolls();
     setClockInfo(info);
   };
-  /** A mutation without a clock answer (a snapshot restore): polls started before it are stale. */
+  /** Invalidates clock proposals and polls when a clock mutation or session change starts. */
   const invalidatePolls = () => {
     completedEpoch = ++pollEpoch;
+    setClockMutationEpoch((epoch) => epoch + 1);
   };
   const [sessions, setSessionSnapshot] = createSignal<Session[]>(initialConfig().sessions);
   // Keep row-local forms for unchanged targets, but discard them for a replacement project.
@@ -54,7 +62,7 @@ const store = createRoot(() => {
     resetPoll();
   };
   const resetPoll = () => {
-    completedEpoch = ++pollEpoch;
+    invalidatePolls();
     setConnected(null);
     setLastConnectedAt(null);
     setClock("");
@@ -95,6 +103,7 @@ const store = createRoot(() => {
     applyClockMutation,
     invalidatePolls,
     clockGuard,
+    clockMutationEpoch,
     sessions,
     setSessions,
     session,

@@ -971,7 +971,7 @@
       "additionalProperties": false,
       "properties": {
         "clock": { "enum": ["virtual", "wall"] },
-        "defaultTimeZone": { "type": "string" },
+        "defaultTimeZone": { "type": "string", "description": "IANA time zone of schedules that name none, and of calendar clock moves (clock:advance with duration, clock:set and clock:advanceTo with to) that send no timeZone. Unset, UTC." },
         "catchUp": { "enum": ["all", "latest", "none"] },
         "maxCatchUpRuns": { "type": "integer", "minimum": 1, "maximum": 100000 },
         "overlap": { "enum": ["allow", "skip", "queue", "reject", "skip-in-flight"] }

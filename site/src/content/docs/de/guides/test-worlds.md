@@ -70,6 +70,20 @@ Der Client `fireemu/control` funktioniert auch in `fireemu exec`-Befehlen und te
 - Welten, die innerhalb eines Tests nebeneinander bestehen müssen, werden mit `Promise.allSettled` erstellt und in `finally` freigegeben.
 - `Promise.all([createTestWorld(), ...])` gefolgt von `try/finally` lässt die Welten, die gestartet wurden, auslaufen (leaken), wenn eine Erstellung fehlschlägt (siehe die [Anleitung zu Testwelten](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
+## Die Uhr in Kalendereinheiten verstellen
+
+`world.clock.advance` akzeptiert auch eine Zeitspanne nach ISO 8601 oder Kalendereinheiten. `world.clock.to` stellt die Uhr auf den Anfang oder das Ende eines Tages, Monats oder Jahres. Für Kalendereinheiten und solche Zielpunkte gilt `timeZone`, ohne diese Angabe die Einstellung `scheduler.defaultTimeZone` der Welt und sonst UTC. Die Regeln stehen unter [Zeit und geplante Funktionen](../time/#die-uhr-um-eine-zeitspanne-oder-auf-eine-kalendergrenze-stellen).
+
+```js
+await world.clock.advance({ months: 1 });                      // Aus dem 31. Januar wird der 28. oder 29. Februar
+await world.clock.advance('PT36H');                            // Tatsächlich verstrichene Zeit
+await world.clock.advance({ days: -3 }, { allowBackwards: true });
+await world.clock.to('endOfMonth');                            // 23:59:59.999999 Uhr Ortszeit
+await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
+```
+
+Eine Zahl steht weiterhin für Millisekunden. Objekte der Form `{ seconds }` oder `{ millis }` verstellen die Uhr wie bisher um die exakte Zeitspanne. Kalendereinheiten lassen sich nicht mit `millis` kombinieren und müssen alle dasselbe Vorzeichen haben. `world.clock.to` verwendet `clock:set`. Für ein Ziel vor der aktuellen Zeit ist daher `allowBackwards: true` erforderlich. `advanceAndSettle` akzeptiert dieselben Zeitspannen und unterstützt unter anderem die Optionen `timeZone` und `allowBackwards`. Die Optionen `timeZone` und `allowBackwards` gelten bei `advance` und `advanceAndSettle` für ISO-8601-Zeichenketten und Objekte mit Kalendereinheiten. Zahlen und die Formen `{ seconds }` und `{ millis }` weisen diese Optionen zurück.
+
 ## Die Uhr vorstellen und auf Arbeit warten
 
 `world.clock.advanceAndSettle(duration, { scope, timeoutSeconds, runTimers })` stellt die Uhr vor, führt fällige virtuelle Timer aus und wartet darauf, dass der Daemon im Leerlauf ist, in dieser Reihenfolge. Der Standard-Scope ist `runnable`, der nicht auf Arbeit wartet, die über die Bewegung hinaus geplant ist. Es wird abgelehnt (Promise-Rejection), wenn die Bewegung fehlschlägt oder das Warten das Zeitlimit überschreitet.

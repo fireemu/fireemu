@@ -65,6 +65,44 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-
 
 每个返回时钟的应答以及 `GET /v1/sessions/default` 中，时钟跟随真实时间时带有 `"running": true`，冻结时为 `false`。恢复时不会计入时钟停止期间的时间。`syncToRealTime` 等同于 set：除非请求体同时包含 `"allowBackwards": true`，否则拒绝把时钟向后移动（例如固定在未来的起始时间）。请求体为空时为普通恢复；发送的请求体必须是 JSON 对象（字面量 `null` 会被拒绝）。没有可跟随的真实时间源的时钟（`fireemu/testing` 的 world）会返回 `400 FAILED_PRECONDITION`。守护进程的各个服务读取共享时钟，因此请求返回时即可看到切换；同步跳转期间到期的定时函数会像 `clock:advance` 之后一样执行。虚拟的 `functions.clock` 以消息形式送达每个 Functions runner，请求（无论来自 API 还是 Runtime 页面）会等到 runner 收到为止（若有 runner 在 10 秒内未响应则返回 `503 CLOCK_NOT_SETTLED`）。冻结时应用代码看到的 `Date.now()` 不会后退：它停在最后显示的值，直到时钟超过它；只有回拨才会让它后退。时钟由所有会话共享，因此切换对所有会话生效。恢复快照会还原捕获时的时刻，并保持当前模式。启动输出会说明时钟以哪种模式启动以及如何切换。
 
+## 按时长移动时钟或将时钟移至日历边界
+
+在 Runtime 页面上选择预设，或输入移动量和单位。也可以直接输入 RFC 3339 时间，或使用 UTC 日期时间选择器。检查预览后，选择 **Move clock**。守护进程会在确认时重新计算目标时间。如果时钟正在运行，或另一个客户端在预览后移动了时钟，结果可能会改变。
+
+除了使用 `{"seconds": n}`、`{"millis": n}` 和 `{"instant": "<RFC 3339>"}`，还可以按 ISO 8601 时长移动时钟，或将时钟移至某一天、某个月或某一年的起点或终点。
+
+```sh
+# 依次移至 30 天后、一个自然月后、36 小时后。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P30D"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P1M"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "PT36H"}'
+# 回拨三天（回拨需要 allowBackwards）。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "-P3D", "allowBackwards": true}'
+# 分别移至本月的最后一微秒和东京当地时间下月 1 日 00:00。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "endOfMonth"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "startOfNextMonth", "timeZone": "Asia/Tokyo"}'
+# 先推进一个月，再移至该月的起点。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"duration": "P1M", "to": "startOfMonth"}'
+```
+
+| 字段 | 端点 | 值 |
+|---|---|---|
+| `duration` | 可用于 `clock:advance`，在 `clock:set` 和 `clock:advanceTo` 中与 `to` 一起使用 | 格式为 `P[nY][nM][nW][nD][T[nH][nM][nS]]`，至少包含一个分量。数值必须是整数，单位符号须大写并按此顺序排列。开头的 `-` 表示减去所有分量。不接受小数，不足一秒时使用 `millis`。 |
+| `to` | `clock:set`, `clock:advanceTo` | `startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear` |
+| `timeZone` | 与 `duration` 或 `to` 一起使用 | IANA 时区名称，与日程使用的名称相同。省略时使用 `scheduler.defaultTimeZone`，若也未设置则使用 UTC。 |
+
+目标时间按以下规则计算。
+
+- 年、月、周和日改变指定时区的本地日期，并保持当地钟表上的时刻。时、分和秒按实际经过的时间计算。`P1D` 遵循当地日历，因此实际经过的时间取决于日期和时区。`PT24H` 始终增加整整 24 小时。
+- 先将年和月合计为月数，再一次性应用。如果目标月份没有对应的日期，就取该月的最后一天。1 月 31 日加上 `P1M` 是 2 月 28 日（闰年为 29 日），2 月 29 日加上 `P1Y1M` 是 3 月 29 日。接着应用周和日，最后应用时、分和秒。
+- 同时指定 `duration` 和 `to` 时，先应用时长。
+- `endOfDay`、`endOfMonth` 和 `endOfYear` 对应当地时间 23:59:59.999999，即 Firestore 时间戳能表示的当天最后一微秒。如果下个月的起点可以表示，且月界处的 UTC 偏移量不变，那么 `endOfMonth` 加一微秒就是 `startOfNextMonth`。
+- 如果时钟拨慢导致同一个本地时刻出现两次，则取较早的一次，与日程在第一次出现时运行的规则一致。如果时钟拨快导致某个本地时刻不存在，则使用切换前的 UTC 偏移量，将该时刻按跳过的时长向后顺延。例如，当地时间从 02:00 跳至 03:00 的那一天，02:30 会变成 03:30。日程会跳过这种不存在的时刻。移动时钟时必须确定一个目标时刻，因此采用 `java.time`、Temporal 和 jiff 的 `compatible` 规则。
+- 结果时间（UTC）必须在 0001 年至 9999 年之间，年、月、周、日或边界计算出的每个本地日期也必须在此范围内；仅按时、分、秒移动时不计算本地日期。否则请求会被拒绝并返回 `400 INVALID_ARGUMENT`。
+- 如果目标时刻早于当前时刻，`clock:advance` 和 `clock:set` 需要 `"allowBackwards": true`。与使用 `instant` 时一样，`clock:advanceTo` 会拒绝这种移动。
+- 三个移动端点均会在 `seconds`、`millis` 或 `instant` 与非 `null` 的 `duration`、`to` 或 `timeZone` 混用时返回 400，并指出相关字段。新字段的值为 JSON `null` 时视为省略。如果端点不接受某个日历字段，那么该字段的值不是 `null` 时也会返回 400。
+- 应答与其他移动操作相同，返回时钟的新时间，格式为 RFC 3339。定时函数处理这类移动的方式也与其他移动相同（见下节）。
+
 ## 运行定时函数
 
 当时钟到达某次触发时间时，日程就会运行。

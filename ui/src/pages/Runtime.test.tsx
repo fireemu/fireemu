@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
-import { okAsync, ResultAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { ClockPanel, FaultPlanPanel, SnapshotsPanel } from "./Runtime";
 import { appState } from "../state";
 import { waitFor } from "@solidjs/testing-library";
@@ -9,6 +9,8 @@ import * as control from "../api/control";
 vi.mock("../api/control", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/control")>()),
   getFaultPlan: vi.fn(),
+  previewClock: vi.fn(),
+  moveClock: vi.fn(),
   freezeClock: vi.fn(),
   resumeClock: vi.fn(),
   listSnapshots: vi.fn(),
@@ -19,7 +21,10 @@ beforeEach(() => {
     okAsync({ session: "default", plan: null, fired: [], counters: {} }),
   );
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe("Fault plan recipes", () => {
   it("fills the draft with a retry plan", () => {
@@ -120,6 +125,146 @@ describe("Clock controls", () => {
       expect((ui.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(false),
     );
     expect(ui.getByTestId("runtime-clock-mode").textContent).toContain("Frozen");
+  });
+});
+
+describe("Calendar clock moves", () => {
+  const target = { clock: "2026-02-28T12:00:00Z", running: false };
+  beforeEach(() => {
+    vi.mocked(control.previewClock).mockReset().mockReturnValue(okAsync(target));
+    vi.mocked(control.moveClock)
+      .mockReset()
+      .mockReturnValue(okAsync({ ...target, backwardsSets: 0 }));
+  });
+
+  it.each([
+    ["hour", "advance", { duration: "PT1H" }],
+    ["day", "advance", { duration: "P1D" }],
+    ["week", "advance", { duration: "P1W" }],
+    ["month", "advance", { duration: "P1M" }],
+    ["startOfNextMonth", "set", { to: "startOfNextMonth", allowBackwards: false }],
+    ["endOfMonth", "set", { to: "endOfMonth", allowBackwards: false }],
+  ])("previews the %s preset before any mutation", async (id, action, move) => {
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId(`clock-preset-${id}`));
+    const confirm = await ui.findByTestId("confirm-clock-move");
+    expect(ui.getByTestId("clock-move-preview").textContent).toContain(target.clock);
+    expect(control.previewClock).toHaveBeenCalledWith("default", { action, move });
+    expect(control.moveClock).not.toHaveBeenCalled();
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(appState.clock()).toBe(target.clock));
+    expect(control.moveClock).toHaveBeenCalledExactlyOnceWith("default", { action, move });
+  });
+
+  it("previews the selected unit and clears the preview when the amount changes", async () => {
+    vi.mocked(control.previewClock).mockReturnValue(okAsync({ ...target, running: true }));
+    const ui = render(() => <ClockPanel />);
+    fireEvent.input(ui.getByTestId("advance-seconds"), { target: { value: "2" } });
+    fireEvent.change(ui.getByTestId("clock-advance-unit"), { target: { value: "week" } });
+    fireEvent.click(ui.getByTestId("advance-clock"));
+    const confirm = await ui.findByTestId("confirm-clock-move");
+    expect(ui.getByTestId("clock-move-preview").textContent).toMatch(/estimate/i);
+    expect(control.previewClock).toHaveBeenCalledWith("default", {
+      action: "advance",
+      move: { duration: "P2W" },
+    });
+    fireEvent.input(ui.getByTestId("advance-seconds"), { target: { value: "3" } });
+    fireEvent.click(confirm);
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
+  });
+
+  it("discards a preview when sync moved the clock but settlement returned an error", async () => {
+    vi.mocked(control.resumeClock).mockReturnValue(
+      errAsync({ status: 503, message: "CLOCK_NOT_SETTLED" }),
+    );
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId("clock-preset-day"));
+    const confirm = await ui.findByTestId("confirm-clock-move");
+    fireEvent.click(ui.getByTestId("sync-clock"));
+    await waitFor(() => expect(ui.getByRole("alert").textContent).toContain("CLOCK_NOT_SETTLED"));
+    fireEvent.click(confirm);
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
+  });
+
+  it("discards a preview when restore may already have changed the shared clock", async () => {
+    vi.mocked(control.listSnapshots).mockReturnValue(
+      okAsync({ snapshots: [{ name: "seed", clock: "2025-01-01T00:00:00Z", parts: 1 }] }),
+    );
+    vi.mocked(control.restoreSnapshot).mockReturnValue(
+      errAsync({ status: 503, message: "CLOCK_NOT_SETTLED" }),
+    );
+    const ui = render(() => <ClockPanel />);
+    const snapshots = render(() => <SnapshotsPanel />);
+    fireEvent.click(ui.getByTestId("clock-preset-day"));
+    const confirm = await ui.findByTestId("confirm-clock-move");
+    fireEvent.click(await snapshots.findByTestId("snapshot-restore-seed"));
+    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
+    await waitFor(() =>
+      expect(snapshots.getByRole("alert").textContent).toContain("CLOCK_NOT_SETTLED"),
+    );
+    fireEvent.click(confirm);
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending preview answer after a draft edit", async () => {
+    let reply!: (value: typeof target) => void;
+    vi.mocked(control.previewClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+      ),
+    );
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId("advance-clock"));
+    fireEvent.input(ui.getByTestId("advance-seconds"), { target: { value: "30" } });
+    reply(target);
+    await waitFor(() =>
+      expect((ui.getByTestId("advance-clock") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+  });
+
+  it("discards a preview when a poll observes an external change to the frozen clock", async () => {
+    appState.applyClockMutation({
+      clock: "2026-01-31T12:00:00Z",
+      running: false,
+      backwardsSets: 0,
+    });
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId("clock-preset-month"));
+    const confirm = await ui.findByTestId("confirm-clock-move");
+    appState.setClockInfo({ clock: "2026-02-01T12:00:00Z", running: false, backwardsSets: 0 });
+    fireEvent.click(confirm);
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the clock unchanged when a preview is cancelled", async () => {
+    const ui = render(() => <ClockPanel />);
+    fireEvent.click(ui.getByTestId("clock-preset-day"));
+    await ui.findByTestId("confirm-clock-move");
+    fireEvent.click(ui.getByRole("button", { name: "Cancel" }));
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
+  });
+
+  it("uses the picker value as UTC and invalidates the preview after a restore", async () => {
+    const ui = render(() => <ClockPanel />);
+    fireEvent.input(ui.getByTestId("clock-date-picker"), { target: { value: "2026-02-12T12:34" } });
+    fireEvent.click(ui.getByTestId("set-clock"));
+    await ui.findByTestId("confirm-clock-move");
+    expect(control.previewClock).toHaveBeenCalledWith("default", {
+      action: "set",
+      move: { instant: "2026-02-12T12:34:00Z", allowBackwards: false },
+    });
+    appState.invalidatePolls();
+    expect(ui.queryByTestId("confirm-clock-move")).toBeNull();
+    expect(control.moveClock).not.toHaveBeenCalled();
   });
 });
 

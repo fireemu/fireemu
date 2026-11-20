@@ -14,7 +14,7 @@ import {
   StatusBadge,
 } from "../components/common";
 import {
-  advanceClock,
+  type ClockMoveRequest,
   assertQuiescent,
   captureSnapshot,
   clearFaultPlan,
@@ -29,7 +29,8 @@ import {
   restoreSnapshot,
   resumeClock,
   sessionResources,
-  setClock,
+  moveClock,
+  previewClock,
 } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -55,47 +56,107 @@ import {
   type RecipeId,
 } from "../lib/faultRecipes";
 
+const clockUnits = [
+  ["second", "PT", "S", "runtime.seconds"],
+  ["minute", "PT", "M", "runtime.minutes"],
+  ["hour", "PT", "H", "runtime.hours"],
+  ["day", "P", "D", "runtime.days"],
+  ["week", "P", "W", "runtime.weeks"],
+  ["month", "P", "M", "runtime.months"],
+  ["year", "P", "Y", "runtime.years"],
+] as const;
+
+const durationPresets = [
+  ["hour", "PT1H", "runtime.plusHour"],
+  ["day", "P1D", "runtime.plusDay"],
+  ["week", "P1W", "runtime.plusWeek"],
+  ["month", "P1M", "runtime.plusMonth"],
+] as const;
+
+const anchorPresets = [
+  ["startOfNextMonth", "runtime.startOfNextMonth"],
+  ["endOfMonth", "runtime.endOfMonth"],
+] as const;
+
+type ClockMovePreview = {
+  request: ClockMoveRequest;
+  session: string;
+  epoch: number;
+  clock: string;
+  running?: boolean;
+};
+
 export const ClockPanel: Component = () => {
   // The app-wide clock guard: a freeze and a resume (or a move) never race, even across a
   // remount of this panel.
   const guard = appState.clockGuard;
-  const [seconds, setSeconds] = createSignal("60");
+  const [amount, setAmount] = createSignal("60");
+  const [unit, setUnit] = createSignal("second");
   const [instant, setInstant] = createSignal("");
   const [backwards, setBackwards] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [preview, setPreview] = createSignal<ClockMovePreview>();
   const session = appState.session;
-  const advance = () =>
+  let draftVersion = 0;
+  const clearPreview = () => {
+    draftVersion += 1;
+    setPreview(undefined);
+    setError(null);
+  };
+  const activePreview = () => {
+    const proposal = preview();
+    if (proposal?.session === session() && proposal.epoch === appState.clockMutationEpoch()) {
+      return proposal;
+    }
+  };
+  const prepare = (request: ClockMoveRequest) =>
     guard.run(async () => {
-      setError(null);
-      const n = Number(seconds());
-      if (!Number.isFinite(n)) {
-        setError(
-          t("firestore.invalidValue", {
-            field: t("runtime.seconds"),
-            message: t("firestore.hintNumber"),
-          }),
-        );
-        return;
-      }
-      const r = await advanceClock(session(), Math.trunc(n));
-      r.match(
-        (c) => appState.applyClockMutation(c),
+      clearPreview();
+      const selected = session();
+      const epoch = appState.clockMutationEpoch();
+      const draft = draftVersion;
+      const result = await previewClock(selected, request);
+      if (epoch !== appState.clockMutationEpoch() || draft !== draftVersion) return;
+      result.match(
+        (target) => setPreview({ request, session: selected, epoch, ...target }),
         (e) => setError(e.message),
       );
     });
+  const confirm = () =>
+    guard.run(async () => {
+      const proposal = activePreview();
+      if (!proposal) return;
+      clearPreview();
+      const result = await moveClock(proposal.session, proposal.request);
+      result.match(appState.applyClockMutation, (e) => setError(e.message));
+    });
+  const advance = async () => {
+    const n = Number(amount());
+    const spec = clockUnits.find(([key]) => key === unit());
+    if (!amount().trim() || !Number.isSafeInteger(n) || !spec) {
+      clearPreview();
+      setError(t("runtime.wholeClockAmount"));
+      return;
+    }
+    if (unit() === "second" && n >= 0) return prepare({ action: "advance", move: { seconds: n } });
+    const [, prefix, suffix] = spec;
+    const duration = `${n < 0 ? "-" : ""}${prefix}${Math.abs(n)}${suffix}`;
+    return prepare({
+      action: "advance",
+      move: n < 0 ? { duration, allowBackwards: backwards() } : { duration },
+    });
+  };
   const set = () =>
-    guard.run(async () => {
-      setError(null);
-      const r = await setClock(session(), instant(), backwards());
-      r.match(
-        (c) => appState.applyClockMutation(c),
-        (e) => setError(e.message),
-      );
-    });
+    prepare({ action: "set", move: { instant: instant(), allowBackwards: backwards() } });
+  const editInstant = (next: string) => {
+    clearPreview();
+    setInstant(next);
+  };
   const frozen = () => appState.clockMode() === "frozen";
   const toggle = () =>
     guard.run(async () => {
       setError(null);
+      appState.invalidatePolls();
       const r = await (frozen() ? resumeClock(session(), false, false) : freezeClock(session()));
       r.match(
         (c) => appState.applyClockMutation(c),
@@ -105,6 +166,7 @@ export const ClockPanel: Component = () => {
   const sync = () =>
     guard.run(async () => {
       setError(null);
+      appState.invalidatePolls();
       const r = await resumeClock(session(), true, backwards());
       r.match(
         (c) => appState.applyClockMutation(c),
@@ -137,24 +199,69 @@ export const ClockPanel: Component = () => {
         </AsyncButton>
         <span class="pb-1 text-sm">{t("runtime.syncHint")}</span>
       </div>
+      <div class="mb-3 flex flex-wrap gap-2" role="group" aria-label={t("runtime.clockPresets")}>
+        <For each={durationPresets}>
+          {([id, duration, label]) => (
+            <AsyncButton
+              class="btn"
+              disabled={guard.pending()}
+              testId={`clock-preset-${id}`}
+              onClick={() => prepare({ action: "advance", move: { duration } })}
+            >
+              {t(label)}
+            </AsyncButton>
+          )}
+        </For>
+        <For each={anchorPresets}>
+          {([to, label]) => (
+            <AsyncButton
+              class="btn"
+              disabled={guard.pending()}
+              testId={`clock-preset-${to}`}
+              onClick={() => prepare({ action: "set", move: { to, allowBackwards: backwards() } })}
+            >
+              {t(label)}
+            </AsyncButton>
+          )}
+        </For>
+      </div>
       <div class="mb-3 flex flex-wrap items-end gap-2">
         <label class="text-sm">
           <span class="label">{t("runtime.advanceBy")}</span>
           <input
             class="input w-32"
             data-testid="advance-seconds"
-            value={seconds()}
-            onInput={(e) => setSeconds(e.currentTarget.value)}
+            inputmode="numeric"
+            value={amount()}
+            onInput={(e) => {
+              clearPreview();
+              setAmount(e.currentTarget.value);
+            }}
           />
         </label>
-        <span class="pb-1 text-sm">{t("runtime.seconds")}</span>
+        <label class="text-sm">
+          <span class="label">{t("runtime.clockUnit")}</span>
+          <select
+            class="input"
+            data-testid="clock-advance-unit"
+            value={unit()}
+            onChange={(e) => {
+              clearPreview();
+              setUnit(e.currentTarget.value);
+            }}
+          >
+            <For each={clockUnits}>
+              {([key, , , label]) => <option value={key}>{t(label)}</option>}
+            </For>
+          </select>
+        </label>
         <AsyncButton
-          class="btn btn-primary"
+          class="btn"
           onClick={advance}
           disabled={guard.pending()}
           testId="advance-clock"
         >
-          {t("runtime.advance")}
+          {t("runtime.previewAdvance")}
         </AsyncButton>
       </div>
       <div class="flex flex-wrap items-end gap-2">
@@ -164,21 +271,62 @@ export const ClockPanel: Component = () => {
             class="input w-64"
             placeholder="2026-01-02T03:04:05Z"
             value={instant()}
-            onInput={(e) => setInstant(e.currentTarget.value)}
+            onInput={(e) => editInstant(e.currentTarget.value)}
+          />
+        </label>
+        <label class="text-sm">
+          <span class="label">{t("runtime.clockDatePicker")}</span>
+          <input
+            class="input"
+            type="datetime-local"
+            step="1"
+            min="0001-01-01T00:00"
+            max="9999-12-31T23:59:59"
+            data-testid="clock-date-picker"
+            value={instant().endsWith("Z") ? instant().slice(0, -1) : ""}
+            onInput={(e) => {
+              const picked = e.currentTarget.value;
+              editInstant(picked ? `${picked}${picked.length === 16 ? ":00" : ""}Z` : "");
+            }}
           />
         </label>
         <label class="flex items-center gap-1 pb-1 text-sm">
           <input
             type="checkbox"
             checked={backwards()}
-            onChange={(e) => setBackwards(e.currentTarget.checked)}
+            onChange={(e) => {
+              clearPreview();
+              setBackwards(e.currentTarget.checked);
+            }}
           />
           {t("runtime.allowBackwards")}
         </label>
-        <AsyncButton class="btn" onClick={set} disabled={guard.pending()}>
-          {t("runtime.set")}
+        <AsyncButton class="btn" onClick={set} disabled={guard.pending()} testId="set-clock">
+          {t("runtime.previewSet")}
         </AsyncButton>
       </div>
+      <Show when={activePreview()} keyed>
+        {(proposal) => (
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <output class="text-sm" data-testid="clock-move-preview">
+              {t(proposal.running ? "runtime.clockEstimate" : "runtime.clockPreview", {
+                time: proposal.clock,
+              })}
+            </output>
+            <AsyncButton
+              class="btn btn-primary"
+              onClick={confirm}
+              disabled={guard.pending()}
+              testId="confirm-clock-move"
+            >
+              {t("runtime.confirmClockMove")}
+            </AsyncButton>
+            <button class="btn" type="button" onClick={clearPreview}>
+              {t("runtime.cancelClockMove")}
+            </button>
+          </div>
+        )}
+      </Show>
     </Section>
   );
 };
@@ -275,6 +423,7 @@ export const SnapshotsPanel: Component = () => {
                         disabled={appState.clockGuard.pending()}
                         onConfirm={() =>
                           appState.clockGuard.run(async () => {
+                            appState.invalidatePolls();
                             const r = await restoreSnapshot(session(), s.name);
                             r.match(
                               () => {

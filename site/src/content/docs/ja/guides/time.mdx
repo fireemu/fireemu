@@ -65,6 +65,44 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:resume -H 'content-
 
 クロックを返す応答と`GET /v1/sessions/default`には、実時間に追従している間は`"running": true`、固定している間は`false`が入ります。再開しても、止まっていた間の時間は数えません。`syncToRealTime`はsetと同じ扱いで、クロックを戻す移動（未来に固定した開始時刻など）は、本文に`"allowBackwards": true`がない限り拒否します。本文が空なら通常の再開です。本文を送る場合はJSONオブジェクトにします（`null`そのものは拒否します）。追従する実時間の時刻源がないクロック（`fireemu/testing`のworld）は`400 FAILED_PRECONDITION`を返します。daemonの各サービスは共有のクロックを読むので、要求が返った時点で切り替えが見えます。syncで移動する間に期限が来たスケジュール関数は、`clock:advance`の後と同じように実行されます。仮想の`functions.clock`は各Functions runnerにメッセージで届き、要求（APIからでもRuntimeページからでも）はrunnerが受け取るまで待ちます（10秒以内に応答しないrunnerがあれば`503 CLOCK_NOT_SETTLED`）。固定してもアプリケーションの`Date.now()`は戻りません。クロックが追い越すまで最後に見せた値にとどまり、戻るのは巻き戻したときだけです。クロックはすべてのセッションで共有なので、切り替えも全セッションに効きます。snapshotのrestoreは記録した時刻を戻し、モードは今のまま保ちます。起動時の出力に、開始時のモードと切り替え方を表示します。
 
+## 期間を指定してクロックを動かすか暦の区切りに合わせる
+
+Runtimeページでプリセットを選ぶか、移動量と単位を入力します。RFC 3339の時刻を直接入力したり、UTCの日時ピッカーを使ったりすることもできます。プレビューを確認し、**Move clock**を選ぶと時計が移動します。確定時にデーモンが移動先を再計算します。時計が実時間で進んでいる場合や、プレビュー後に別のクライアントが時計を動かした場合、移動先は変わることがあります。
+
+`{"seconds": n}`、`{"millis": n}`、`{"instant": "<RFC 3339>"}`のほかに、ISO 8601形式の期間を指定してクロックを動かしたり、日、月、年の先頭や末尾に合わせたりできます。
+
+```sh
+# 順に30日後、暦で1か月後、36時間後。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P30D"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "P1M"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "PT36H"}'
+# 3日前に戻す（巻き戻しにはallowBackwardsが必要）。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advance -H 'content-type: application/json' -d '{"duration": "-P3D", "allowBackwards": true}'
+# 今月の最後のマイクロ秒と、東京の現地時刻で翌月1日の00:00。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "endOfMonth"}'
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"to": "startOfNextMonth", "timeZone": "Asia/Tokyo"}'
+# 1か月進めてから、その月の先頭に合わせる。
+curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'content-type: application/json' -d '{"duration": "P1M", "to": "startOfMonth"}'
+```
+
+| フィールド | エンドポイント | 値 |
+|---|---|---|
+| `duration` | `clock:advance`で指定でき、`clock:set`と`clock:advanceTo`では`to`と併用 | `P[nY][nM][nW][nD][T[nH][nM][nS]]`の形式で、少なくとも1つの成分を整数で指定します。単位は大文字で、表記の順に並べます。先頭に`-`を付けると、すべての成分を引きます。小数は指定できません。1秒未満には`millis`を使います。 |
+| `to` | `clock:set`, `clock:advanceTo` | `startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth`, `startOfNextMonth`, `startOfYear`, `endOfYear` |
+| `timeZone` | `duration`または`to`と併用 | スケジュールと同じIANAタイムゾーン名。省略すると`scheduler.defaultTimeZone`を使い、それも未設定ならUTCを使います。 |
+
+移動先は次の規則で決まります。
+
+- 年、月、週、日は、指定したタイムゾーンで現地の時刻を保ったまま日付を変えます。時、分、秒は正確な経過時間として扱います。`P1D`は現地の暦に従うため、経過時間は日付とタイムゾーンによって変わります。`PT24H`は常に正確に24時間進めます。
+- まず年と月を合計月数に換算して適用します。移動先の月に同じ日がなければ、その月の最終日になります。1月31日に`P1M`を足すと2月28日（うるう年は29日）になり、2月29日に`P1Y1M`を足すと3月29日になります。次に週と日、最後に時、分、秒を適用します。
+- `duration`と`to`を併用すると、先に期間を適用します。
+- `endOfDay`、`endOfMonth`、`endOfYear`は現地時刻の23:59:59.999999を指します。これはFirestoreのタイムスタンプで表せるその日の最後のマイクロ秒です。翌月の開始時刻が表現可能で、月の境界でUTCオフセットが変わらない場合、`endOfMonth`の1マイクロ秒後が`startOfNextMonth`になります。
+- 時計を戻すときに同じ現地時刻が2回現れた場合、スケジュールが1回目に実行されるのと同じく、早い方を選びます。時計を進めるときに飛ばされる現地時刻には、切り替え前のUTCオフセットを使います。飛ばされた時間帯の中で何分経過していたかを保つので、02:00から03:00に進む日の02:30は03:30になります。スケジュールはその時刻の実行をスキップします。クロックの移動には到達時刻が必要なので、`java.time`、Temporal、jiffの`compatible`規則に従います。
+- 移動先の時刻（UTC）は0001年から9999年の範囲に収まる必要があります。年、月、週、日や区切りの指定で計算する現地の日付も同じ範囲に収まる必要があります。時、分、秒だけの移動では現地の日付を計算しません。範囲外なら要求は`400 INVALID_ARGUMENT`で拒否されます。
+- 移動先が現在より前なら、`clock:advance`と`clock:set`には`"allowBackwards": true`が必要です。`clock:advanceTo`は`instant`の場合と同じく、この移動を拒否します。
+- いずれの移動エンドポイントでも、`seconds`、`millis`、`instant`のいずれかと、`null`以外の値を持つ`duration`、`to`、`timeZone`のいずれかを併用すると、400を返して該当するフィールド名を表示します。新しいフィールドの値がJSONの`null`なら省略扱いです。エンドポイントが受け付けない暦フィールドも、値が`null`以外なら400になります。
+- 応答は他の移動と同じで、移動後のクロックの時刻をRFC 3339形式で返します。スケジュール関数の扱いも他の移動と同じです（次の節を参照）。
+
 ## スケジュール関数を実行する
 
 スケジュールは、クロックが実行時刻に達したときに実行されます。
