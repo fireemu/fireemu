@@ -63,7 +63,7 @@ fn concrete_path_matching_and_captures_match_the_lean_model() {
             abstract_path: false,
             request_query: None,
         };
-        let matches = match *verdict {
+        let expected = match *verdict {
             "match" => true,
             "miss" => false,
             other => panic!("invalid verdict {other}"),
@@ -71,10 +71,10 @@ fn concrete_path_matching_and_captures_match_the_lean_model() {
         let matched = match decision(&loaded, &context) {
             Decision::Allow => true,
             Decision::Deny(DenyReason::NoMatchingRule | DenyReason::NoMatchingAllow) => false,
-            other => panic!("unexpected match decision for {row}: {other:?}"),
+            other @ Decision::Deny(_) => panic!("unexpected match decision for {row}: {other:?}"),
         };
-        assert_eq!(matched, matches, "{row}");
-        if matches {
+        assert_eq!(matched, expected, "{row}");
+        if expected {
             let mut conditions = vec![format!("id == '{id}'")];
             if *note != "-" {
                 conditions.push(format!("note == '{note}'"));

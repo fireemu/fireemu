@@ -71,7 +71,7 @@ fn ordered_boolean_chains_match_the_lean_model() {
                     );
                     "unsupported"
                 }
-                other => panic!("unexpected decision for {row}: {other:?}"),
+                other @ Decision::Deny(_) => panic!("unexpected decision for {row}: {other:?}"),
             };
             assert_eq!(actual, *expected, "{expression}; {row}");
             assert_eq!(

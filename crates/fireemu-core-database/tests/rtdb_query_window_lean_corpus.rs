@@ -1,3 +1,5 @@
+//! Replays Lean's RTDB query boundary and limit reference.
+
 use fireemu_core_database::{
     Content, Json, Leaf, Limits, Node, Number, OrderBy, Path, Priority, QueryParams,
 };

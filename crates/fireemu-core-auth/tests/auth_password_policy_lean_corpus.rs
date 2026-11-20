@@ -64,7 +64,7 @@ fn check_policy(fields: [&str; 7], line: &str) {
     let actual = policy
         .violations(&password)
         .into_iter()
-        .map(|code| code.as_str())
+        .map(fireemu_core_auth::password_policy::ViolationCode::as_str)
         .collect::<Vec<_>>()
         .join(",");
     assert_eq!(

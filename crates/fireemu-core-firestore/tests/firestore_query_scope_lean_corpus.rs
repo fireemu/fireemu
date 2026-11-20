@@ -1,3 +1,5 @@
+//! Replays Lean's Firestore query scope membership reference.
+
 use fireemu_core_firestore::{path::DocumentPath, query::QueryScope};
 use fireemu_core_types::ids::{CollectionId, DatabaseId, ProjectId};
 

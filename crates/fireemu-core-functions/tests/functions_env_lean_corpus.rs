@@ -1,3 +1,5 @@
+//! Replays Lean's dotenv grammar and environment file order reference.
+
 use fireemu_core_functions::env::{env_file_order, parse_strict, validate_key};
 use fireemu_core_types::codec::hex_decode;
 use std::collections::{BTreeMap, BTreeSet};

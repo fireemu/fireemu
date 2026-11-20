@@ -1,3 +1,5 @@
+//! Replays Lean's Firestore expiration and offset reference.
+
 use std::collections::BTreeMap;
 
 use fireemu_core_firestore::{

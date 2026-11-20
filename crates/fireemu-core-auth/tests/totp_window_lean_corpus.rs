@@ -37,6 +37,19 @@ fn expected_result(token: &str) -> CodeMatch {
     }
 }
 
+fn check_remaining_validity(period: &str, nanos: &str, remaining: &str, line: &str) {
+    let params = TotpParams {
+        period_seconds: period.parse().unwrap(),
+        digits: 6,
+    };
+    let at = LogicalInstant::from_nanos(nanos.parse().unwrap());
+    assert_eq!(
+        current_code(RFC_INPUT, &params, at).1,
+        remaining.parse::<u32>().unwrap(),
+        "{line}",
+    );
+}
+
 #[test]
 fn totp_matches_the_lean_specification_on_the_golden_corpus() {
     let mut lines = CORPUS.lines();
@@ -67,16 +80,7 @@ fn totp_matches_the_lean_specification_on_the_golden_corpus() {
                 );
             }
             ["validity", period, nanos, remaining] => {
-                let params = TotpParams {
-                    period_seconds: period.parse().unwrap(),
-                    digits: 6,
-                };
-                let at = LogicalInstant::from_nanos(nanos.parse().unwrap());
-                assert_eq!(
-                    current_code(RFC_INPUT, &params, at).1,
-                    remaining.parse::<u32>().unwrap(),
-                    "{line}",
-                );
+                check_remaining_validity(period, nanos, remaining, line);
             }
             ["mac", input, step, hex] => {
                 let counter: u64 = step.parse().unwrap();

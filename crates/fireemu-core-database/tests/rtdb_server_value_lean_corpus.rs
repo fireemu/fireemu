@@ -1,3 +1,5 @@
+//! Replays Lean's RTDB timestamp and increment reference.
+
 use fireemu_core_database::server_value::{has_server_value, resolve};
 use fireemu_core_database::{ErrorKind, Json, Limits, Node, Number, Path, ServerValueContext};
 

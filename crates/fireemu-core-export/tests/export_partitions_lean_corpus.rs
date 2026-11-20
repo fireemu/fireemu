@@ -64,6 +64,57 @@ fn parse_partition(text: &str) -> Partition {
     }
 }
 
+fn check_outputs(
+    export: &fireemu_core_export::managed::ManagedExport,
+    expected_parts: &[Partition],
+    expected_selection: &[&str],
+    overall: Option<&[fireemu_core_export::managed::OverallEntry]>,
+    row: &str,
+) {
+    let mut totals = (0, 0);
+    for (ordinal, files) in export.files[1..].chunks_exact(2).enumerate() {
+        let (metadata_path, metadata) = &files[0];
+        let (output_path, output) = &files[1];
+        let output_name = output_path.rsplit_once('/').unwrap().1;
+        assert_eq!(read_partition_outputs(metadata).unwrap(), [output_name]);
+
+        let actual = read_managed_output(output).expect(row);
+        let expected_paths = expected_selection[ordinal]
+            .split(',')
+            .filter(|path| *path != "-")
+            .collect::<Vec<_>>();
+        assert!(
+            actual.iter().all(|entity| entity.database == "named"),
+            "{row}"
+        );
+        assert_eq!(
+            actual
+                .iter()
+                .map(|entity| entity.document.relative_path())
+                .collect::<Vec<_>>(),
+            expected_paths,
+            "{row}"
+        );
+        assert_eq!(output.is_empty(), expected_paths.is_empty(), "{row}");
+        let payload_bytes = read_log(output)
+            .unwrap()
+            .iter()
+            .map(|record| u64::try_from(record.len()).unwrap())
+            .sum::<u64>();
+        let document_count = u64::try_from(expected_paths.len()).unwrap();
+        if let Some(entries) = overall {
+            let entry = &entries[ordinal];
+            assert_eq!(entry.partition, expected_parts[ordinal], "{row}");
+            assert_eq!(&entry.metadata_file, metadata_path, "{row}");
+            assert_eq!(entry.documents, document_count, "{row}");
+            assert_eq!(entry.bytes, payload_bytes, "{row}");
+        }
+        totals.0 += document_count;
+        totals.1 += payload_bytes;
+    }
+    assert_eq!((export.documents, export.bytes), totals, "{row}");
+}
+
 #[test]
 fn replay_ordered_partition_and_output_inventories() {
     let mut cases = CASES.lines();
@@ -127,48 +178,13 @@ fn replay_ordered_partition_and_output_inventories() {
             assert_eq!(entries.len(), expected_parts.len(), "{row}");
         }
 
-        let mut totals = (0, 0);
-        for (ordinal, files) in export.files[1..].chunks_exact(2).enumerate() {
-            let (metadata_path, metadata) = &files[0];
-            let (output_path, output) = &files[1];
-            let output_name = output_path.rsplit_once('/').unwrap().1;
-            assert_eq!(read_partition_outputs(metadata).unwrap(), [output_name]);
-
-            let actual = read_managed_output(output).expect(row);
-            let expected_paths = expected_selection[ordinal]
-                .split(',')
-                .filter(|path| *path != "-")
-                .collect::<Vec<_>>();
-            assert!(
-                actual.iter().all(|entity| entity.database == "named"),
-                "{row}"
-            );
-            assert_eq!(
-                actual
-                    .iter()
-                    .map(|entity| entity.document.relative_path())
-                    .collect::<Vec<_>>(),
-                expected_paths,
-                "{row}"
-            );
-            assert_eq!(output.is_empty(), expected_paths.is_empty(), "{row}");
-            let payload_bytes = read_log(output)
-                .unwrap()
-                .iter()
-                .map(|record| u64::try_from(record.len()).unwrap())
-                .sum::<u64>();
-            let document_count = u64::try_from(expected_paths.len()).unwrap();
-            if let Some(entries) = &overall {
-                let entry = &entries[ordinal];
-                assert_eq!(entry.partition, expected_parts[ordinal], "{row}");
-                assert_eq!(&entry.metadata_file, metadata_path, "{row}");
-                assert_eq!(entry.documents, document_count, "{row}");
-                assert_eq!(entry.bytes, payload_bytes, "{row}");
-            }
-            totals.0 += document_count;
-            totals.1 += payload_bytes;
-        }
-        assert_eq!((export.documents, export.bytes), totals, "{row}");
+        check_outputs(
+            &export,
+            &expected_parts,
+            &expected_selection,
+            overall.as_deref(),
+            row,
+        );
         count += 1;
     }
     assert_eq!(count, 40);

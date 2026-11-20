@@ -1,3 +1,5 @@
+//! Replays Lean's Firestore edition and capability matrix.
+
 use fireemu_core_types::edition::{
     DatabaseCapabilities, EditionError, FeatureCapability, FirestoreApiMode, FirestoreEdition,
 };

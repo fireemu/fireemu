@@ -1,3 +1,5 @@
+//! Replays Lean's Firestore field path grammar and byte bounds.
+
 use fireemu_core_firestore::field_path::{FieldPath, FieldPathError};
 use fireemu_core_types::codec::hex_decode;
 

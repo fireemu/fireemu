@@ -1,3 +1,5 @@
+//! Replays Lean's shared identifier grammar and refusal order.
+
 use fireemu_core_types::ids::{
     CollectionId, DatabaseId, DocumentId, IdSyntaxError, LimitCatalogId, ProjectId,
 };

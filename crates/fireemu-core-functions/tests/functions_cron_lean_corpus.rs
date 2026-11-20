@@ -1,3 +1,5 @@
+//! Replays Lean's fixed-offset cron occurrence and window reference.
+
 use fireemu_core_functions::cron::{RunCount, Schedule};
 use fireemu_core_types::time::LogicalInstant;
 use std::collections::BTreeSet;

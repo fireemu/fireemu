@@ -1,3 +1,5 @@
+//! Replays Lean's RTDB push ID encoding and carry reference.
+
 use fireemu_core_database::push_id::{PushIdGenerator, PUSH_CHARS};
 
 const CORPUS: &str = include_str!("fixtures/lean-rtdb-push-id.corpus");

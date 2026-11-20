@@ -1,3 +1,5 @@
+//! Replays Lean's RTDB key validation and ordering reference.
+
 use std::cmp::Ordering;
 
 use fireemu_core_database::key::{key_as_int, name_compare, utf16_cmp, validate_key};

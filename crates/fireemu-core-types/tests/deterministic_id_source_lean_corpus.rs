@@ -1,4 +1,4 @@
-//! Differential replay of the Lean model for seeded ID streams and SplitMix64.
+//! Differential replay of the Lean model for seeded ID streams and `SplitMix64`.
 
 use fireemu_core_types::determinism::{
     DeterministicIdSource, DeterministicRng, IdSource, SplitMix64,

@@ -1,3 +1,5 @@
+//! Replays Lean's Functions event pattern and captures.
+
 use fireemu_core_functions::pattern::{PathPattern, PatternError, Segment};
 use std::collections::BTreeSet;
 
