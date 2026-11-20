@@ -1,0 +1,9 @@
+name = "functions-protocol-frame"
+defaultTargets = ["FunctionsProtocolFrame", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsProtocolFrame"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

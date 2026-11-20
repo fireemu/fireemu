@@ -1,0 +1,9 @@
+name = "event-outbox"
+defaultTargets = ["EventOutbox", "corpus"]
+
+[[lean_lib]]
+name = "EventOutbox"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
