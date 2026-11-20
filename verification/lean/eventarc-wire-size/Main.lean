@@ -28,5 +28,5 @@ def main : IO Unit := do
   let above ← payloadAt (eventLimit + 1)
   for (data, representation) in [("ascii", Representation.ascii), ("unicode", .unicode), ("binary", .binary)] do
     for (edge, payload) in [("small", 18), ("below", below), ("exact", exact), ("above", above)] do
-      for (label, peers) in [("none", 0), ("one", 1), ("full", 100)] do
+      for (label, peers) in [("none", 0), ("one", 1), ("at-limit", 99), ("full", 100)] do
         IO.println s!"p|{data}|{edge}|{label}|{payload}|{outcomeName (verdict representation payload peers)}|{requestSize payload peers}"

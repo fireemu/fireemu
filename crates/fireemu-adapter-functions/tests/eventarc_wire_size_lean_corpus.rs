@@ -37,6 +37,7 @@ fn replay_publish(fields: &[&str], line: &str) {
     let peers = match *peers {
         "none" => 0,
         "one" => 1,
+        "at-limit" => 99,
         "full" => 100,
         _ => panic!("invalid peer case {peers}"),
     };
@@ -147,5 +148,5 @@ fn eventarc_wire_size_agrees_with_the_lean_reference() {
             _ => panic!("invalid corpus row {line}"),
         }
     }
-    assert_eq!(counts, [30, 10, 36]);
+    assert_eq!(counts, [30, 10, 48]);
 }
