@@ -91,15 +91,13 @@ def parse : Nat → Word → Frame → List Frame → Option RE
     let (q, rest) ← quantify r rest
     parse fuel rest { frame with branch := cat frame.branch q } parents
 
-/-- The separate nesting scan keeps its first-member flag across each leading caret.
-Its unmatched closing-parenthesis decrement saturates at zero. -/
+/-- The nesting scan consumes one optional negation caret when opening a class. Its unmatched closing-parenthesis decrement saturates at zero. -/
 def nestingOK : Word → Nat → Bool → Bool → Bool
   | [], _, _, _ => true
   | '\\' :: _ :: rest, depth, inside, _ => nestingOK rest depth inside false
+  | '[' :: '^' :: rest, depth, false, _ => nestingOK rest depth true true
   | c :: cs, depth, inside, first =>
-    if inside then
-      if first && c == '^' then nestingOK cs depth true true
-      else nestingOK cs depth (first || c != ']') false
+    if inside then nestingOK cs depth (first || c != ']') false
     else if c == '(' then depth < 8 && nestingOK cs (depth + 1) false false
     else if c == ')' then nestingOK cs (depth - 1) false false
     else nestingOK cs depth (c == '[') (c == '[')
@@ -113,11 +111,19 @@ theorem compile_of_guards (s : String) (size : s.utf8ByteSize ≤ 2048)
     (depth : nestingOK s.toList 0 false false = true) :
     compile s = parse (s.length + 1) s.toList {} [] := by simp [compile, size, depth]
 
-/-- A repeated caret can put the preflight scan and class parser at different brackets. -/
-theorem class_preflight_refusal :
-    let cs := ['[', '^', '^', ']', '[', ']'] ++ List.replicate 9 '(' ++ [']']
-    nestingOK cs 0 false false = false ∧ (parse (cs.length + 1) cs {} []).isSome = true := by
-  decide
+/-- For each class, the parser returns the suffix at which the nesting scan resumes. -/
+theorem class_preflight_agrees_on_class_end (tail : Word) :
+    let cases := [(true, ['^', ']']), (true, [']', ']']), (false, [']', '^', ']']),
+      (false, [']'] ++ List.replicate 9 '(' ++ [']'])]
+    cases.map (fun (negated, body) =>
+      let source := '[' :: (if negated then '^' :: body else body)
+      nestingOK (source ++ tail) 0 false false) =
+      List.replicate cases.length (nestingOK tail 0 false false) ∧
+    cases.map (fun (_, members) =>
+      let body := members ++ tail
+      (classRanges (body.length + 1) body []).map Prod.snd) =
+      List.replicate cases.length (some tail) := by
+  constructor <;> rfl
 
 /-- At the parser boundary an inverted range is refused before natural subtraction in expand. -/
 theorem inverted_bounds_refused :

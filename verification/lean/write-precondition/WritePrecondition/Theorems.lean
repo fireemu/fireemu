@@ -107,12 +107,26 @@ theorem update_time_exact (s : State) (t : Int) :
 
 theorem commit_time_aligned (last : State) (now : Int)
     (aligned : ∀ t, last = some t → t % 1000 = 0) :
-    nextCommitTime last now % 1000 = 0 := by
-  cases last with
-  | none => simp [nextCommitTime]
-  | some t =>
-    have ht := aligned t rfl
-    simp only [nextCommitTime]
+    nextCommitTime last now % 1000 = 0 ∧
+      ∀ doc next,
+        nextCommitTime (some (importClock (nextCommitTime last now) doc)) next % 1000 = 0 := by
+  have stamp_aligned (prior : State) (clock : Int)
+      (h : ∀ t, prior = some t → t % 1000 = 0) : nextCommitTime prior clock % 1000 = 0 := by
+    cases prior with
+    | none => simp [nextCommitTime]
+    | some t =>
+      have ht := h t rfl
+      simp only [nextCommitTime]
+      split <;> omega
+  have import_stamp := stamp_aligned last now aligned
+  refine ⟨import_stamp, ?_⟩
+  intro doc next
+  apply stamp_aligned
+  rintro _ ⟨rfl⟩
+  cases doc with
+  | none => exact import_stamp
+  | some doc =>
+    simp only [importClock, Int.max_def]
     split <;> omega
 
 theorem refused_write_changes_nothing (now : Int) (s : State) (p : Condition)

@@ -65,7 +65,7 @@ theorem decide_iff_spec (op : Op) (current : Current) (guards : List Guard) (d :
   classical
   by_cases fail : Has412 current guards <;> by_cases unchanged : Has304 current guards <;>
     cases op <;> cases current <;> cases d <;>
-    simp [decideOp, check_priority, Verdict, MissingBefore, MissingAfter, fail, unchanged]
+    simp [decideOp, check_priority, Verdict, MissingBefore, fail, unchanged]
 
 theorem verdict_exists_unique (op : Op) (current : Current) (guards : List Guard) :
     ∃ d, Verdict op current guards d ∧ ∀ other, Verdict op current guards other → other = d := by
@@ -111,9 +111,9 @@ theorem absent_read (guards : List Guard) : decideOp .read none guards = .notFou
 
 theorem absent_write_rules (op : Op) (guards : List Guard) (notRead : op ≠ .read) :
     decideOp op none guards =
-      if guards.all (· == .generationMatch 0) then
-        if op = .upload ∨ op = .finalize then .proceed else .notFound
-      else .failed := by
+      if op = .upload ∨ op = .finalize then
+        if guards.all (· == .generationMatch 0) then .proceed else .failed
+      else .notFound := by
   have h : (guards.all (· == .generationMatch 0) = true) ↔ ¬ Has412 none guards := by
     simp only [List.all_eq_true, Has412, not_exists, not_and]
     exact forall_congr' (fun guard => by cases guard <;> simp [Fails412])
@@ -124,10 +124,10 @@ theorem absent_write_rules (op : Op) (guards : List Guard) (notRead : op ≠ .re
   by_cases failed : Has412 none guards <;> cases op <;>
     simp [decideOp, check_priority, absent304, h, failed] at *
 
-theorem absent_read_differs_from_live_mutations :
-    decideOp .read none [.generationMatch 7] = .notFound ∧
-      decideOp .metadata none [.generationMatch 7] = .failed ∧
-      decideOp .delete none [.generationMatch 7] = .failed := by decide
+theorem absent_reads_and_live_mutations_return_not_found (guards : List Guard) :
+    decideOp .read none guards = .notFound ∧
+      decideOp .metadata none guards = .notFound ∧
+      decideOp .delete none guards = .notFound := ⟨rfl, rfl, rfl⟩
 
 theorem failed_match_takes_priority :
     decideOp .read (some ⟨7, 3⟩) [.generationNotMatch 7, .metagenerationMatch 4] = .failed := by

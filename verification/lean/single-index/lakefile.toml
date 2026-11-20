@@ -1,0 +1,9 @@
+name = "single-index"
+defaultTargets = ["SingleIndex", "corpus"]
+
+[[lean_lib]]
+name = "SingleIndex"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -23,12 +23,8 @@ def check (current : Current) (guards : List Guard) : Decision :=
 
 /-- The lookup/check sequence of the read, live metadata update, put and live delete paths. -/
 def decideOp (op : Op) (current : Current) (guards : List Guard) : Decision :=
-  if op = .read ∧ current = none then .notFound
-  else
-    match check current guards with
-    | .proceed =>
-      if op ≠ .upload ∧ op ≠ .finalize ∧ current = none then .notFound else .proceed
-    | answer => answer
+  if op ≠ .upload ∧ op ≠ .finalize ∧ current = none then .notFound
+  else check current guards
 
 def maxIdentity : Nat := 9223372036854775807
 
