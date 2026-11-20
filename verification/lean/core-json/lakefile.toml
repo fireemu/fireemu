@@ -1,0 +1,9 @@
+name = "core-json"
+defaultTargets = ["CoreJson", "corpus"]
+
+[[lean_lib]]
+name = "CoreJson"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

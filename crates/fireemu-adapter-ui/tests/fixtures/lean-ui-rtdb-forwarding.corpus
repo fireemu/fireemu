@@ -1,0 +1,705 @@
+# 704 cases
+route	instances	GET	empty	bare	session=default&project=demo-app	ok	default	demo-app	-		true
+route	instances	GET	empty	named	session=default&project=demo-app&namespace=named	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	foreign	session=default&project=demo-app&namespace=named-other	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	GET	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Only session/project are allowed for instance listing
+route	instances	GET	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	GET	present	bare	session=default&project=demo-app	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	named	session=default&project=demo-app&namespace=named	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	foreign	session=default&project=demo-app&namespace=named-other	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	GET	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Only session/project are allowed for instance listing
+route	instances	GET	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	GET	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	instances	GET	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	PUT	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	PUT	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	PUT	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	PUT	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	PUT	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	instances	PUT	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	PATCH	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	PATCH	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	PATCH	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	PATCH	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	PATCH	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	instances	PATCH	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	DELETE	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	DELETE	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	DELETE	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	DELETE	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	DELETE	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	instances	DELETE	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	POST	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	POST	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	instances	POST	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	instances	POST	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	instances	POST	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	instances	POST	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	GET	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	GET	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	GET	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	GET	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	GET	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	GET	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	GET	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	GET	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	GET	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	GET	present	named	session=default&project=demo-app&namespace=named	err	400	This method does not accept a body
+route	data	GET	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	This method does not accept a body
+route	data	GET	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	GET	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	GET	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	This method does not accept a body
+route	data	GET	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	GET	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	GET	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	GET	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	PUT	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	PUT	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	PUT	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	PUT	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	PUT	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	PUT	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	PUT	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	PUT	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	PUT	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	PUT	present	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	PUT	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	PUT	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	PUT	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	PUT	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	PUT	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	PUT	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	PUT	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	PUT	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	data	PUT	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	PATCH	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	PATCH	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	PATCH	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	PATCH	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	PATCH	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	PATCH	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	PATCH	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	PATCH	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	PATCH	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	PATCH	present	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	PATCH	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	PATCH	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	PATCH	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	PATCH	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	PATCH	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	PATCH	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	PATCH	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	PATCH	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	data	PATCH	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	DELETE	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	true
+route	data	DELETE	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	true
+route	data	DELETE	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	DELETE	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	DELETE	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	true
+route	data	DELETE	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	DELETE	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	DELETE	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	DELETE	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	data	DELETE	present	named	session=default&project=demo-app&namespace=named	err	400	This method does not accept a body
+route	data	DELETE	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	This method does not accept a body
+route	data	DELETE	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	data	DELETE	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	data	DELETE	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	This method does not accept a body
+route	data	DELETE	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	DELETE	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	data	DELETE	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	DELETE	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	data	DELETE	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	POST	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	data	POST	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	POST	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	data	POST	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	data	POST	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	data	POST	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	data	POST	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	rules	GET	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.settings/rules.json?ns=named	true
+route	rules	GET	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Rules target is fixed
+route	rules	GET	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	rules	GET	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Rules target is fixed
+route	rules	GET	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Rules target is fixed
+route	rules	GET	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	GET	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Rules target is fixed
+route	rules	GET	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	GET	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	rules	GET	present	named	session=default&project=demo-app&namespace=named	err	400	This method does not accept a body
+route	rules	GET	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Rules target is fixed
+route	rules	GET	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	rules	GET	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Rules target is fixed
+route	rules	GET	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Rules target is fixed
+route	rules	GET	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	GET	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Rules target is fixed
+route	rules	GET	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	GET	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	rules	GET	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	rules	PUT	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.settings/rules.json?ns=named	true
+route	rules	PUT	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Rules target is fixed
+route	rules	PUT	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	rules	PUT	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Rules target is fixed
+route	rules	PUT	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Rules target is fixed
+route	rules	PUT	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	PUT	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Rules target is fixed
+route	rules	PUT	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	PUT	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	rules	PUT	present	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.settings/rules.json?ns=named	true
+route	rules	PUT	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	Rules target is fixed
+route	rules	PUT	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	rules	PUT	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Rules target is fixed
+route	rules	PUT	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	Rules target is fixed
+route	rules	PUT	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	PUT	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Rules target is fixed
+route	rules	PUT	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	PUT	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	rules	PUT	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	PATCH	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	PATCH	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	PATCH	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	PATCH	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	PATCH	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	rules	PATCH	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	DELETE	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	DELETE	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	DELETE	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	DELETE	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	DELETE	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	rules	DELETE	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	POST	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	POST	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	rules	POST	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	rules	POST	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	rules	POST	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	rules	POST	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	GET	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	GET	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	GET	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	GET	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	GET	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	GET	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	GET	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	GET	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	GET	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	GET	present	named	session=default&project=demo-app&namespace=named	err	400	This method does not accept a body
+route	request	GET	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	This method does not accept a body
+route	request	GET	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	GET	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	GET	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	This method does not accept a body
+route	request	GET	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	GET	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	GET	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	GET	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	request	GET	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	PUT	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	PUT	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	PUT	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	PUT	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	PUT	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	PUT	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	PUT	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	PUT	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	PUT	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	PUT	present	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	PUT	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	PUT	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	PUT	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	PUT	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	PUT	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	PUT	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	PUT	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	PUT	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	request	PUT	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	PATCH	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	PATCH	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	PATCH	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	PATCH	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	PATCH	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	PATCH	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	PATCH	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	PATCH	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	PATCH	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	PATCH	present	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	PATCH	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	PATCH	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	PATCH	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	PATCH	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	PATCH	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	PATCH	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	PATCH	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	PATCH	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	request	PATCH	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	empty	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	DELETE	empty	named	session=default&project=demo-app&namespace=named	ok	default	demo-app	named	/.json?ns=named	false
+route	request	DELETE	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	ok	default	demo-app	named	/notes/%E6%97%A5%252F.json?ns=named&limitToFirst=2&orderBy=%22%24key%22	false
+route	request	DELETE	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	DELETE	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	DELETE	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	ok	default	demo-app	named	/notes.json?ns=named	false
+route	request	DELETE	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	DELETE	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	DELETE	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	DELETE	present	bare	session=default&project=demo-app	err	400	Invalid database instance
+route	request	DELETE	present	named	session=default&project=demo-app&namespace=named	err	400	This method does not accept a body
+route	request	DELETE	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	400	This method does not accept a body
+route	request	DELETE	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	Instance does not belong to the selected project
+route	request	DELETE	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	400	Invalid database path
+route	request	DELETE	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	400	This method does not accept a body
+route	request	DELETE	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	DELETE	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	400	Unsupported data query parameter
+route	request	DELETE	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	DELETE	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	request	DELETE	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	empty	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	POST	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	request	POST	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	POST	present	bare	session=default&project=demo-app	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	named	session=default&project=demo-app&namespace=named	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	foreign	session=default&project=demo-app&namespace=named-other	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	request	POST	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	405	METHOD_NOT_ALLOWED
+route	request	POST	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	request	POST	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	request	POST	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	empty	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	GET	empty	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	GET	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	GET	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	GET	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	GET	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	GET	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	GET	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	GET	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	GET	present	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	GET	present	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	GET	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	GET	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	GET	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	GET	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	GET	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	GET	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	GET	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	GET	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	unknown	GET	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	empty	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	PUT	empty	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	PUT	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	PUT	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	PUT	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	PUT	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	PUT	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	PUT	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	PUT	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	PUT	present	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	PUT	present	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	PUT	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	PUT	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	PUT	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	PUT	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	PUT	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	PUT	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	PUT	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	PUT	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PUT	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	empty	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	PATCH	empty	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	PATCH	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	PATCH	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	PATCH	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	PATCH	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	PATCH	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	PATCH	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	PATCH	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	PATCH	present	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	PATCH	present	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	PATCH	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	PATCH	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	PATCH	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	PATCH	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	PATCH	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	PATCH	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	PATCH	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	PATCH	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	unknown	PATCH	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	empty	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	DELETE	empty	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	DELETE	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	DELETE	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	DELETE	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	DELETE	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	DELETE	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	DELETE	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	DELETE	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	DELETE	present	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	DELETE	present	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	DELETE	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	DELETE	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	DELETE	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	DELETE	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	DELETE	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	DELETE	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	DELETE	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	DELETE	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	unknown	DELETE	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	empty	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	POST	empty	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	POST	empty	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	POST	empty	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	POST	empty	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	POST	empty	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	POST	empty	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	POST	empty	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	POST	empty	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	POST	present	bare	session=default&project=demo-app	err	404	NOT_FOUND
+route	unknown	POST	present	named	session=default&project=demo-app&namespace=named	err	404	NOT_FOUND
+route	unknown	POST	present	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	404	NOT_FOUND
+route	unknown	POST	present	foreign	session=default&project=demo-app&namespace=named-other	err	404	NOT_FOUND
+route	unknown	POST	present	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	404	NOT_FOUND
+route	unknown	POST	present	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	404	NOT_FOUND
+route	unknown	POST	present	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	400	Malformed query escape
+route	unknown	POST	present	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	404	NOT_FOUND
+route	unknown	POST	present	badSession	session=expired&project=demo-app&namespace=named	err	404	The session/project no longer exists
+route	unknown	POST	tooLarge	bare	session=default&project=demo-app	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	named	session=default&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	scoped	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%E6%97%A5%252F&query=orderBy%3D%2522%2524key%2522%26limitToFirst%3D2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	foreign	session=default&project=demo-app&namespace=named-other	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	badPath	session=default&project=demo-app&namespace=named&path=%2Fnotes%2F%2Ftoday	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	rulesPath	session=default&project=demo-app&namespace=named&path=%2Fnotes	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	malformedQuery	session=default&project=demo-app&namespace=named&query=%2	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	unsupportedQuery	session=default&project=demo-app&namespace=named&query=projection%3D1	err	413	PAYLOAD_TOO_LARGE
+route	unknown	POST	tooLarge	badSession	session=expired&project=demo-app&namespace=named	err	413	PAYLOAD_TOO_LARGE
+route	data	GET	empty	curated	project=demo-app	err	400	Session is required
+route	data	GET	empty	curated	session=default	err	400	Project is required
+route	data	GET	empty	curated	session=default&project=demo-app&extra=ok	err	400	Unsupported request parameter
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&path=%FF	err	400	Invalid UTF-8 in query
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&path=%00	err	400	Ambiguous or invalid query
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&p%61th=a&path=b	err	400	Ambiguous or invalid query
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&path=white%20space%2Bword	ok	default	demo-app	named	/white%20space%2Bword.json?ns=named	true
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&path=%2Fnotes%23todo	err	400	Invalid database path
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&query=orderBy%3D1%26orderBy%3D2	err	400	Ambiguous or invalid query
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&query=print%3Dpretty%26shallow%3Dtrue	ok	default	demo-app	named	/.json?ns=named&print=pretty&shallow=true	true
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&query=orderBy%3D%25FF	err	400	Invalid UTF-8 in query
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&query=orderBy%3D%252	err	400	Malformed query escape
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&query=print%3Da%2Bb	ok	default	demo-app	named	/.json?ns=named&print=a%2Bb	true
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=overridden-default-rtdb	ok	default	demo-app	overridden-default-rtdb	/.json?ns=overridden-default-rtdb	true
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=other-default-rtdb	err	404	Instance does not belong to the selected project
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=UPPER	err	400	Invalid database instance
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=7--	ok	default	demo-app	7--	/.json?ns=7--	true
+route	data	GET	empty	curated	session=default&project=demo-app&namespace=named&path=x%26y	ok	default	demo-app	named	/x%26y.json?ns=named	true
+loopback	0.0.0.0:19000	127.0.0.1:19000
+loopback	[::]:19000	[::1]:19000
+loopback	127.0.0.1:12345	127.0.0.1:12345
+loopback	[::1]:12345	[::1]:12345
+owner	named	demo-app
+owner	named-other	other
+owner	unknown	demo-app
+owner	demo-app-default-rtdb	demo-app
+owner	other-default-rtdb	other
+owner	overridden-default-rtdb	demo-app
+owner	-default-rtdb	demo-app

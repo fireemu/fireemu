@@ -1,0 +1,113 @@
+# 112 cases
+empty	root	simple	74727565	ok	t
+empty	root	unicode	22c3a9f09f988022	ok	sc3a9f09f9880
+empty	root	pair	225c75643830305c756463303022	ok	sf0908080
+empty	root	low	22c3a95c756463303022	err	9	a scalar value
+empty	root	badHex	225c752b31323322	err	3	4 hex digits
+empty	root	invalidEscape	225cc3a922	err	3	a valid escape
+empty	root	badLiteral	747275	err	0	a literal
+empty	root	negative	2d39323233333732303336383534373735383038	ok	i-9223372036854775808
+empty	root	leading	2d3031	err	1	no leading zero
+empty	root	fraction	322e	err	2	fraction digits
+empty	root	exponent	35452b	err	3	exponent digits
+empty	root	overflow	39323233333732303336383534373735383038	ok	d
+empty	array	simple	5b747275655d	ok	[t]
+empty	array	unicode	5b22c3a9f09f9880225d	ok	[sc3a9f09f9880]
+empty	array	pair	5b225c75643830305c7564633030225d	ok	[sf0908080]
+empty	array	low	5b22c3a95c7564633030225d	err	10	a scalar value
+empty	array	badHex	5b225c752b313233225d	err	4	4 hex digits
+empty	array	invalidEscape	5b225cc3a9225d	err	4	a valid escape
+empty	array	badLiteral	5b7472755d	err	1	a literal
+empty	array	negative	5b2d393232333337323033363835343737353830385d	ok	[i-9223372036854775808]
+empty	array	leading	5b2d30315d	err	2	no leading zero
+empty	array	fraction	5b322e5d	err	3	fraction digits
+empty	array	exponent	5b35452b5d	err	4	exponent digits
+empty	array	overflow	5b393232333337323033363835343737353830385d	ok	[d]
+empty	object	simple	7b2270223a747275657d	ok	{70:t}
+empty	object	unicode	7b2270223a22c3a9f09f9880227d	ok	{70:sc3a9f09f9880}
+empty	object	pair	7b2270223a225c75643830305c7564633030227d	ok	{70:sf0908080}
+empty	object	low	7b2270223a22c3a95c7564633030227d	err	14	a scalar value
+empty	object	badHex	7b2270223a225c752b313233227d	err	8	4 hex digits
+empty	object	invalidEscape	7b2270223a225cc3a9227d	err	8	a valid escape
+empty	object	badLiteral	7b2270223a7472757d	err	5	a literal
+empty	object	negative	7b2270223a2d393232333337323033363835343737353830387d	ok	{70:i-9223372036854775808}
+empty	object	leading	7b2270223a2d30317d	err	6	no leading zero
+empty	object	fraction	7b2270223a322e7d	err	7	fraction digits
+empty	object	exponent	7b2270223a35452b7d	err	8	exponent digits
+empty	object	overflow	7b2270223a393232333337323033363835343737353830387d	ok	{70:d}
+ws	root	simple	20090d0a74727565	ok	t
+ws	root	unicode	20090d0a22c3a9f09f988022	ok	sc3a9f09f9880
+ws	root	pair	20090d0a225c75643830305c756463303022	ok	sf0908080
+ws	root	low	20090d0a22c3a95c756463303022	err	13	a scalar value
+ws	root	badHex	20090d0a225c752b31323322	err	7	4 hex digits
+ws	root	invalidEscape	20090d0a225cc3a922	err	7	a valid escape
+ws	root	badLiteral	20090d0a747275	err	4	a literal
+ws	root	negative	20090d0a2d39323233333732303336383534373735383038	ok	i-9223372036854775808
+ws	root	leading	20090d0a2d3031	err	5	no leading zero
+ws	root	fraction	20090d0a322e	err	6	fraction digits
+ws	root	exponent	20090d0a35452b	err	7	exponent digits
+ws	root	overflow	20090d0a39323233333732303336383534373735383038	ok	d
+ws	array	simple	20090d0a5b747275655d	ok	[t]
+ws	array	unicode	20090d0a5b22c3a9f09f9880225d	ok	[sc3a9f09f9880]
+ws	array	pair	20090d0a5b225c75643830305c7564633030225d	ok	[sf0908080]
+ws	array	low	20090d0a5b22c3a95c7564633030225d	err	14	a scalar value
+ws	array	badHex	20090d0a5b225c752b313233225d	err	8	4 hex digits
+ws	array	invalidEscape	20090d0a5b225cc3a9225d	err	8	a valid escape
+ws	array	badLiteral	20090d0a5b7472755d	err	5	a literal
+ws	array	negative	20090d0a5b2d393232333337323033363835343737353830385d	ok	[i-9223372036854775808]
+ws	array	leading	20090d0a5b2d30315d	err	6	no leading zero
+ws	array	fraction	20090d0a5b322e5d	err	7	fraction digits
+ws	array	exponent	20090d0a5b35452b5d	err	8	exponent digits
+ws	array	overflow	20090d0a5b393232333337323033363835343737353830385d	ok	[d]
+ws	object	simple	20090d0a7b2270223a747275657d	ok	{70:t}
+ws	object	unicode	20090d0a7b2270223a22c3a9f09f9880227d	ok	{70:sc3a9f09f9880}
+ws	object	pair	20090d0a7b2270223a225c75643830305c7564633030227d	ok	{70:sf0908080}
+ws	object	low	20090d0a7b2270223a22c3a95c7564633030227d	err	18	a scalar value
+ws	object	badHex	20090d0a7b2270223a225c752b313233227d	err	12	4 hex digits
+ws	object	invalidEscape	20090d0a7b2270223a225cc3a9227d	err	12	a valid escape
+ws	object	badLiteral	20090d0a7b2270223a7472757d	err	9	a literal
+ws	object	negative	20090d0a7b2270223a2d393232333337323033363835343737353830387d	ok	{70:i-9223372036854775808}
+ws	object	leading	20090d0a7b2270223a2d30317d	err	10	no leading zero
+ws	object	fraction	20090d0a7b2270223a322e7d	err	11	fraction digits
+ws	object	exponent	20090d0a7b2270223a35452b7d	err	12	exponent digits
+ws	object	overflow	20090d0a7b2270223a393232333337323033363835343737353830387d	ok	{70:d}
+curated	curated	curated	-	err	0	a value
+curated	curated	curated	20	err	1	a value
+curated	curated	curated	6e756c6c2066616c7365	err	5	end of input
+curated	curated	curated	2b31	err	0	a value
+curated	curated	curated	2d	err	1	a digit
+curated	curated	curated	30	ok	i0
+curated	curated	curated	2d30	ok	i0
+curated	curated	curated	302e35	ok	d
+curated	curated	curated	31652d39	ok	d
+curated	curated	curated	314539303030	ok	d
+curated	curated	curated	2d39323233333732303336383534373735383039	ok	d
+curated	curated	curated	39323233333732303336383534373735383037	ok	i9223372036854775807
+curated	curated	curated	66616c7365	ok	f
+curated	curated	curated	22	err	1	closing '"'
+curated	curated	curated	225c	err	2	escape
+curated	curated	curated	225c225c5c5c2f5c625c665c6e5c725c7422	ok	s225c2f080c0a0d09
+curated	curated	curated	220a22	err	1	no control characters in strings
+curated	curated	curated	225c75646266665c756466666622	ok	sf48fbfbf
+curated	curated	curated	225c756438303022	err	7	low surrogate
+curated	curated	curated	225c75643830305c753030363122	err	13	low surrogate
+curated	curated	curated	225c75643830305c753030787822	err	9	4 hex digits
+curated	curated	curated	225c75643766665c756530303022	ok	sed9fbfee8080
+curated	curated	curated	225c75303030305c753030314622	ok	s001f
+curated	curated	curated	22c3a9223f	err	4	end of input
+curated	curated	curated	7b2278223a312c225c7530303738223a322c2261223a337d	ok	{61:i3,78:i2}
+curated	curated	curated	7b2262223a312c2261223a322c2262223a5b335d7d	ok	{61:i2,62:[i3]}
+curated	curated	curated	7b22c3a9223a372c2261223a387d	ok	{61:i8,c3a9:i7}
+curated	curated	curated	7b22612220747275657d	err	5	':'
+curated	curated	curated	7b2261223a747275652c7d	err	10	'"'
+curated	curated	curated	7b2261223a7472756520207d	ok	{61:t}
+curated	curated	curated	5b312c5d	err	3	a value
+curated	curated	curated	5b22f09f98802220315d	err	8	',' or ']'
+curated	curated	curated	5b31	err	2	',' or ']'
+curated	curated	curated	7b	err	1	'"'
+curated	curated	curated	5b	err	1	a value
+curated	curated	curated	7b7d	ok	{}
+curated	curated	curated	5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b6e756c6c5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d	ok	[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[n]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+curated	curated	curated	5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b6e756c6c5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d	err	65	nesting within the depth budget
+curated	curated	curated	5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d	ok	[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]
+curated	curated	curated	5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d	err	65	nesting within the depth budget

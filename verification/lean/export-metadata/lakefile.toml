@@ -1,0 +1,9 @@
+name = "export-metadata"
+defaultTargets = ["ExportMetadata", "corpus"]
+
+[[lean_lib]]
+name = "ExportMetadata"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
