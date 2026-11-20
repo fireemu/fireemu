@@ -1016,6 +1016,12 @@ test("arguments: the set is required and closed, --out is required, apply takes 
     ["status", "--set", "all", "--out", "o", "--force", "x"],
   ])
     assert.throws(() => parseArgs(argv), JSON.stringify(argv));
+  // The second observation's sets are accepted too, and an unknown set names every set.
+  assert.equal(parseArgs(["remove", "--set", "obs2a", "--out", "o"]).set, "obs2a");
+  assert.equal(parseArgs(["status", "--set", "g", "--out", "o"]).set, "g");
+  assert.throws(() => parseArgs(["apply", "--set", "obs2", "--out", "o"]), {
+    message: "--set must be one of f2, f1, all, g, obs2a",
+  });
 });
 
 test("main writes a fresh journal and result, refuses an existing directory and the missing flag", async () => {
