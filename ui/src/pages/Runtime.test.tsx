@@ -198,8 +198,11 @@ describe("Snapshot restore", () => {
     );
     const clock = render(() => <ClockPanel />);
     const snapshots = render(() => <SnapshotsPanel />);
-    // The question is open before the freeze starts.
+    // The question is open before the freeze starts; it is named by its question.
     fireEvent.click(await snapshots.findByTestId("snapshot-restore-seed"));
+    expect(
+      snapshots.getByRole("alertdialog", { name: /seed/ }).getAttribute("aria-labelledby"),
+    ).toBeTruthy();
     fireEvent.click(clock.getByTestId("toggle-clock-mode"));
     const confirm = snapshots.getByTestId("snapshot-restore-seed-confirm") as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
