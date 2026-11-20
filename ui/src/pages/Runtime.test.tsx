@@ -151,7 +151,7 @@ describe("Clock controls across navigation", () => {
 });
 
 describe("Snapshot restore", () => {
-  it("waits for a clock mutation in flight and blocks the next one", async () => {
+  it("is disabled until a clock mutation in flight has answered", async () => {
     appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
     vi.mocked(control.listSnapshots).mockReturnValue(
       okAsync({ snapshots: [{ name: "seed", clock: "2025-01-01T00:00:00Z", parts: 1 }] }),
@@ -168,10 +168,10 @@ describe("Snapshot restore", () => {
     const clock = render(() => <ClockPanel />);
     const snapshots = render(() => <SnapshotsPanel />);
     fireEvent.click(clock.getByTestId("toggle-clock-mode"));
-    const restore = await snapshots.findByTestId("snapshot-restore-seed");
+    const restore = (await snapshots.findByTestId("snapshot-restore-seed")) as HTMLButtonElement;
+    expect(restore.disabled).toBe(true);
     fireEvent.click(restore);
-    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
-    await Promise.resolve();
+    expect(snapshots.queryByTestId("snapshot-restore-seed-confirm")).toBeNull();
     expect(control.restoreSnapshot).not.toHaveBeenCalled();
     finish();
     await waitFor(() =>
@@ -180,5 +180,91 @@ describe("Snapshot restore", () => {
     fireEvent.click(snapshots.getByTestId("snapshot-restore-seed"));
     fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
     await waitFor(() => expect(control.restoreSnapshot).toHaveBeenCalledWith("default", "seed"));
+  });
+  it("keeps an open question but disables its confirmation while a clock mutation is in flight", async () => {
+    appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
+    vi.mocked(control.listSnapshots).mockReturnValue(
+      okAsync({ snapshots: [{ name: "seed", clock: "2025-01-01T00:00:00Z", parts: 1 }] }),
+    );
+    vi.mocked(control.restoreSnapshot).mockClear();
+    vi.mocked(control.restoreSnapshot).mockReturnValue(okAsync({ restored: true }));
+    let finish!: () => void;
+    vi.mocked(control.freezeClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<control.ClockInfo>((r) => {
+          finish = () => r({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false });
+        }),
+      ),
+    );
+    const clock = render(() => <ClockPanel />);
+    const snapshots = render(() => <SnapshotsPanel />);
+    // The question is open before the freeze starts.
+    fireEvent.click(await snapshots.findByTestId("snapshot-restore-seed"));
+    fireEvent.click(clock.getByTestId("toggle-clock-mode"));
+    const confirm = snapshots.getByTestId("snapshot-restore-seed-confirm") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    await Promise.resolve();
+    expect(control.restoreSnapshot).not.toHaveBeenCalled();
+    // The question stays open, so the restore is one click away once the freeze answered.
+    finish();
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    fireEvent.click(confirm);
+    await waitFor(() => expect(control.restoreSnapshot).toHaveBeenCalledWith("default", "seed"));
+    // With the question closed, the restore button itself is disabled while the guard is busy.
+    let finishAgain!: () => void;
+    vi.mocked(control.resumeClock).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<control.ClockInfo>((r) => {
+          finishAgain = () => r({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: true });
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect((clock.getByTestId("toggle-clock-mode") as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(clock.getByTestId("toggle-clock-mode"));
+    const restore = snapshots.getByTestId("snapshot-restore-seed") as HTMLButtonElement;
+    expect(restore.disabled).toBe(true);
+    // The shared guard is free again for the next test.
+    finishAgain();
+    await waitFor(() => expect(restore.disabled).toBe(false));
+  });
+  it("blocks the next clock mutation while its response is open", async () => {
+    appState.applyClockMutation({ clock: "2026-01-01T00:00:00Z", backwardsSets: 0, running: true });
+    vi.mocked(control.listSnapshots).mockReturnValue(
+      okAsync({ snapshots: [{ name: "seed", clock: "2025-01-01T00:00:00Z", parts: 1 }] }),
+    );
+    let finish!: () => void;
+    vi.mocked(control.restoreSnapshot).mockReturnValue(
+      ResultAsync.fromSafePromise(
+        new Promise<{ restored: boolean }>((r) => {
+          finish = () => r({ restored: true });
+        }),
+      ),
+    );
+    vi.mocked(control.freezeClock).mockClear();
+    vi.mocked(control.resumeClock).mockClear();
+    vi.mocked(control.freezeClock).mockReturnValue(
+      okAsync({ clock: "2026-01-01T00:00:05Z", backwardsSets: 0, running: false }),
+    );
+    const clock = render(() => <ClockPanel />);
+    const snapshots = render(() => <SnapshotsPanel />);
+    fireEvent.click(await snapshots.findByTestId("snapshot-restore-seed"));
+    fireEvent.click(snapshots.getByTestId("snapshot-restore-seed-confirm"));
+    await waitFor(() => expect(control.restoreSnapshot).toHaveBeenCalledWith("default", "seed"));
+    expect((clock.getByTestId("toggle-clock-mode") as HTMLButtonElement).disabled).toBe(true);
+    expect((clock.getByTestId("sync-clock") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(clock.getByTestId("toggle-clock-mode"));
+    fireEvent.click(clock.getByTestId("sync-clock"));
+    await Promise.resolve();
+    expect(control.freezeClock).not.toHaveBeenCalled();
+    expect(control.resumeClock).not.toHaveBeenCalled();
+    finish();
+    await waitFor(() =>
+      expect((clock.getByTestId("toggle-clock-mode") as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(clock.getByTestId("toggle-clock-mode"));
+    await waitFor(() => expect(control.freezeClock).toHaveBeenCalledWith("default"));
   });
 });

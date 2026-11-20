@@ -130,6 +130,11 @@ export const ConfirmButton: Component<{
   /** What the action reaches (project, session, path, recursion, undo), for heavy actions. */
   details?: string | undefined;
   onConfirm: () => Promise<unknown>;
+  /**
+   * While true, neither the action nor its confirmation can be clicked; an open question stays
+   * open. The action itself still refuses re-entry synchronously (a shared submit guard).
+   */
+  disabled?: boolean | undefined;
   class?: string | undefined;
   testId?: string | undefined;
 }> = (props) => {
@@ -142,6 +147,7 @@ export const ConfirmButton: Component<{
           type="button"
           class={props.class ?? "btn btn-danger"}
           data-testid={props.testId}
+          disabled={props.disabled}
           onClick={() => setAsking(true)}
         >
           {props.label}
@@ -160,6 +166,7 @@ export const ConfirmButton: Component<{
         </span>
         <AsyncButton
           class="btn btn-danger"
+          disabled={props.disabled}
           testId={props.testId ? `${props.testId}-confirm` : undefined}
           onClick={async () => {
             await props.onConfirm();
