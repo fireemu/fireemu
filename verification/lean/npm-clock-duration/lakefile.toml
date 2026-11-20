@@ -1,0 +1,9 @@
+name = "npm-clock-duration"
+defaultTargets = ["NpmClockDuration", "corpus"]
+
+[[lean_lib]]
+name = "NpmClockDuration"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

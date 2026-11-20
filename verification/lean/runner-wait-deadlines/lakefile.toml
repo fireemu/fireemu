@@ -1,0 +1,9 @@
+name = "runner-wait-deadlines"
+defaultTargets = ["RunnerWaitDeadlines", "corpus"]
+
+[[lean_lib]]
+name = "RunnerWaitDeadlines"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
