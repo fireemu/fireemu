@@ -1,3 +1,5 @@
+//! Compares native CRC-32C with the Lean polynomial and streaming reference.
+
 use fireemu_core_types::hash::{crc32c, Crc32c};
 
 #[test]

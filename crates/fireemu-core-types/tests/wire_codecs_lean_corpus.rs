@@ -1,3 +1,5 @@
+//! Replays Lean's shared byte and string codec reference.
+
 use fireemu_core_types::codec::{
     hex_decode, json_escape_into, percent_decode_bytes, percent_escapes_are_well_formed,
     write_json_string, JsonControlEscape, PlusMode,
