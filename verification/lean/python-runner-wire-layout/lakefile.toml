@@ -1,0 +1,9 @@
+name = "python-runner-wire-layout"
+defaultTargets = ["PythonRunnerWireLayout", "corpus"]
+
+[[lean_lib]]
+name = "PythonRunnerWireLayout"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

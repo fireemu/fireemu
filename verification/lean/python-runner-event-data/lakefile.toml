@@ -1,0 +1,9 @@
+name = "python-runner-event-data"
+defaultTargets = ["PythonRunnerEventData", "corpus"]
+
+[[lean_lib]]
+name = "PythonRunnerEventData"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
