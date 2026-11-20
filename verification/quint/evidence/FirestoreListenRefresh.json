@@ -810,7 +810,7 @@
     },
     "crates/fireemu-core-session/src/clock.rs": {
       "kind": "sha256",
-      "value": "bd4f085439ed53e1c7ba7b17cd23ae25fb56b39d4ec5ac009f82f7f0eb487a71"
+      "value": "7995580d16cc671be2a515523ff3e2624e7862b0c8e19066abe10ff92b49a75d"
     },
     "crates/fireemu-core-session/src/fault.rs": {
       "kind": "sha256",

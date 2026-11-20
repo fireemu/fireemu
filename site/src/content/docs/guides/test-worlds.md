@@ -82,7 +82,7 @@ await world.clock.to('endOfMonth');                            // 23:59:59.99999
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
 ```
 
-A number is still milliseconds, and `{ seconds }` / `{ millis }` objects move by exact time as before. Calendar units cannot be combined with `millis`, and all of them must have the same sign. `world.clock.to` uses `clock:set`, so a target earlier than the current time needs `allowBackwards: true`. `advanceAndSettle` takes the same durations, with `timeZone` and `allowBackwards` among its options.
+A number is still milliseconds, and `{ seconds }` / `{ millis }` objects move by exact time as before. Calendar units cannot be combined with `millis`, and all of them must have the same sign. `world.clock.to` uses `clock:set`, so a target earlier than the current time needs `allowBackwards: true`. `advanceAndSettle` takes the same durations, with `timeZone` and `allowBackwards` among its options. The `timeZone` and `allowBackwards` options on `advance` and `advanceAndSettle` apply to ISO 8601 strings and calendar-unit objects. Numbers and the `{ seconds }` and `{ millis }` forms reject those options.
 
 ## Advance the clock and wait for work
 

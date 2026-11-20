@@ -445,6 +445,26 @@ impl VirtualClock {
         &mut self,
         plan: impl FnOnce(LogicalInstant) -> Result<(LogicalInstant, bool), E>,
     ) -> Result<LogicalInstant, MoveFromSampleError<E>> {
+        let (sample, target, rewinds) = self.plan_from_sample(plan)?;
+        if rewinds {
+            self.backwards_sets = self.backwards_sets.saturating_add(1);
+        }
+        self.publish(target, &sample, false);
+        Ok(target)
+    }
+
+    /// Validates a move against one sample and returns the target without publishing it.
+    pub fn preview_move_from_sample<E>(
+        &self,
+        plan: impl FnOnce(LogicalInstant) -> Result<(LogicalInstant, bool), E>,
+    ) -> Result<LogicalInstant, MoveFromSampleError<E>> {
+        self.plan_from_sample(plan).map(|(_, target, _)| target)
+    }
+
+    fn plan_from_sample<E>(
+        &self,
+        plan: impl FnOnce(LogicalInstant) -> Result<(LogicalInstant, bool), E>,
+    ) -> Result<(Sample, LogicalInstant, bool), MoveFromSampleError<E>> {
         let peak = self.follow.as_ref().map(|follow| follow.peak.get());
         let sample = self.sample();
         // Sampling normally remembers elapsed drift. Keep the original peak until publication.
@@ -461,11 +481,7 @@ impl VirtualClock {
         }
         self.check(target, &sample)
             .map_err(MoveFromSampleError::Clock)?;
-        if rewinds {
-            self.backwards_sets = self.backwards_sets.saturating_add(1);
-        }
-        self.publish(target, &sample, false);
-        Ok(target)
+        Ok((sample, target, rewinds))
     }
 
     /// Sets the clock. Equivalent to `advance_to`: the default policy forbids going backwards.

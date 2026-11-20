@@ -82,7 +82,7 @@ await world.clock.to('endOfMonth');                            // 当地时间 2
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
 ```
 
-数值仍表示毫秒，`{ seconds }` 或 `{ millis }` 对象仍按指定的实际时长移动时钟。日历单位不能与 `millis` 混用，各分量的正负号必须一致。`world.clock.to` 使用 `clock:set`，因此移至早于当前时间的时刻需要 `allowBackwards: true`。`advanceAndSettle` 接受相同的时长，其选项包括 `timeZone` 和 `allowBackwards`。
+数值仍表示毫秒，`{ seconds }` 或 `{ millis }` 对象仍按指定的实际时长移动时钟。日历单位不能与 `millis` 混用，各分量的正负号必须一致。`world.clock.to` 使用 `clock:set`，因此移至早于当前时间的时刻需要 `allowBackwards: true`。`advanceAndSettle` 接受相同的时长，其选项包括 `timeZone` 和 `allowBackwards`。 `advance` 和 `advanceAndSettle` 的 `timeZone` 与 `allowBackwards` 选项适用于 ISO 8601 字符串与日历单位对象。数字、`{ seconds }` 和 `{ millis }` 形式会拒绝这些选项。
 
 ## 推进时钟并等待工作完成
 

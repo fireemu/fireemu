@@ -82,7 +82,7 @@ await world.clock.to('endOfMonth');                            // 현지 시각 
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
 ```
 
-숫자는 여전히 밀리초를 뜻하며 `{ seconds }` 또는 `{ millis }` 객체는 이전처럼 지정한 경과 시간만큼 시계를 옮깁니다. 달력 단위는 `millis`와 함께 사용할 수 없으며 모두 같은 부호여야 합니다. `world.clock.to`는 `clock:set`을 사용하므로 현재보다 이른 시각으로 이동하려면 `allowBackwards: true`가 필요합니다. `advanceAndSettle`에도 같은 기간을 지정할 수 있으며 옵션에는 `timeZone`과 `allowBackwards`가 있습니다.
+숫자는 여전히 밀리초를 뜻하며 `{ seconds }` 또는 `{ millis }` 객체는 이전처럼 지정한 경과 시간만큼 시계를 옮깁니다. 달력 단위는 `millis`와 함께 사용할 수 없으며 모두 같은 부호여야 합니다. `world.clock.to`는 `clock:set`을 사용하므로 현재보다 이른 시각으로 이동하려면 `allowBackwards: true`가 필요합니다. `advanceAndSettle`에도 같은 기간을 지정할 수 있으며 옵션에는 `timeZone`과 `allowBackwards`가 있습니다. `advance`와 `advanceAndSettle`의 `timeZone` 및 `allowBackwards` 옵션은 ISO 8601 문자열과 달력 단위 객체에 적용됩니다. 숫자와 `{ seconds }`, `{ millis }` 형식에서는 이 옵션을 사용할 수 없습니다.
 
 ## 시계를 진행하고 작업 대기
 

@@ -26,6 +26,9 @@ test.describe("Runtime controls", () => {
     const before = await page.getByTestId("runtime-clock").textContent();
     await page.getByTestId("advance-seconds").fill("3600");
     await page.getByTestId("advance-clock").click();
+    await expect(page.getByTestId("clock-move-preview")).toBeVisible();
+    await expect(page.getByTestId("runtime-clock")).toHaveText(before ?? "");
+    await page.getByTestId("confirm-clock-move").click();
     await expect(page.getByTestId("runtime-clock")).not.toHaveText(before ?? "");
     const after = await page.getByTestId("runtime-clock").textContent();
     expect(Date.parse(after ?? "") - Date.parse(before ?? "")).toBe(3600 * 1000);

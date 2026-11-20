@@ -8,6 +8,7 @@
 //! POST /v1/sessions/{session}/clock:set       { "instant": "<rfc3339>", "allowBackwards": bool? }
 //! POST /v1/sessions/{session}/clock:advance   { "seconds": n } | { "millis": n }
 //! POST /v1/sessions/{session}/clock:advanceTo { "instant": "<rfc3339>" }
+//! POST /v1/sessions/{session}/clock:preview  { "action": "advance" | "set" | "advanceTo", "move": { ... } }
 //! POST /v1/sessions/{session}/clock:freeze    {}
 //! POST /v1/sessions/{session}/clock:resume    { "syncToRealTime": bool?, "allowBackwards": bool? }
 //! POST /v1/sessions/{session}:awaitIdle       { "timeoutSeconds": n }
@@ -40,7 +41,7 @@ use fireemu_core_rules::runtime::{LoadedRules, RulesetSlot};
 use fireemu_core_session::calendar::{
     decide, move_instant, Anchor, CalendarDuration, CalendarZone, FixedZone, MoveDecision, MoveKind,
 };
-use fireemu_core_session::clock::{MoveFromSampleError, VirtualClock};
+use fireemu_core_session::clock::{ClockError, MoveFromSampleError, VirtualClock};
 use fireemu_core_session::loopback::PrivilegedAdmission;
 use fireemu_core_session::tenancy::Scope;
 use fireemu_core_types::determinism::Clock;
@@ -799,6 +800,9 @@ pub async fn handle_async(
         return response;
     }
     let path = path.split('?').next().unwrap_or(path);
+    if path.ends_with("/clock:preview") {
+        return response;
+    }
     let Some(functions) = &state.functions else {
         return response;
     };
@@ -1475,6 +1479,9 @@ fn session_route(state: &ControlState, method: &str, path: &str, body: &Value) -
     }
     if let Some(rest) = action.strip_prefix("firestore/text-indexes") {
         return text_index_route(state, session, &project, method, rest, body);
+    }
+    if action == "clock:preview" {
+        return preview_clock_route(state, method, body);
     }
     if action.starts_with("clock:") {
         // Moving the shared clock and compacting every Firestore database is one admission
@@ -3278,12 +3285,9 @@ fn clock_route(
             calendar_move_route(state, &mut clock, action, body)
         }
         ("POST", "clock:advance") => {
-            let duration = if let Some(s) = body.get("seconds").and_then(Value::as_i64) {
-                LogicalDuration::from_seconds(s)
-            } else if let Some(ms) = body.get("millis").and_then(Value::as_i64) {
-                LogicalDuration::from_millis(ms)
-            } else {
-                return error(400, "INVALID_ARGUMENT : seconds or millis required");
+            let duration = match legacy_advance_duration(body) {
+                Ok(duration) => duration,
+                Err(message) => return error(400, message),
             };
             let Some(target) = clock.now().checked_add(duration) else {
                 return error(400, "INVALID_ARGUMENT : clock overflow");
@@ -3299,11 +3303,9 @@ fn clock_route(
             }
         }
         ("POST", "clock:set" | "clock:advanceTo") => {
-            let Some(instant) = body.get("instant").and_then(Value::as_str) else {
-                return error(400, "INVALID_ARGUMENT : instant required");
-            };
-            let Ok(target) = LogicalInstant::parse_rfc3339(instant) else {
-                return error(400, "INVALID_ARGUMENT : instant must be RFC 3339");
+            let target = match absolute_move_target(body) {
+                Ok(target) => target,
+                Err(message) => return error(400, message),
             };
             if let Some(functions) = &state.functions {
                 if let Err(message) = functions.validate_clock_target(target) {
@@ -3332,6 +3334,25 @@ fn clock_route(
         ("POST", "clock:resume") => resume_route(state, &mut clock, body),
         _ => error(404, "NOT_FOUND"),
     }
+}
+
+fn legacy_advance_duration(body: &Value) -> Result<LogicalDuration, &'static str> {
+    if let Some(seconds) = body.get("seconds").and_then(Value::as_i64) {
+        return Ok(LogicalDuration::from_seconds(seconds));
+    }
+    body.get("millis")
+        .and_then(Value::as_i64)
+        .map(LogicalDuration::from_millis)
+        .ok_or("INVALID_ARGUMENT : seconds or millis required")
+}
+
+fn absolute_move_target(body: &Value) -> Result<LogicalInstant, &'static str> {
+    let instant = body
+        .get("instant")
+        .and_then(Value::as_str)
+        .ok_or("INVALID_ARGUMENT : instant required")?;
+    LogicalInstant::parse_rfc3339(instant)
+        .map_err(|_| "INVALID_ARGUMENT : instant must be RFC 3339")
 }
 
 const CALENDAR_MOVE_FIELDS: [&str; 3] = ["to", "duration", "timeZone"];
@@ -3459,21 +3480,100 @@ fn calendar_move_route(
         "clock:set" => MoveKind::Set,
         _ => MoveKind::AdvanceTo,
     };
-    let result = clock.move_from_sample(|start| -> Result<_, String> {
-        let target = move_instant(
-            start,
-            &*request.zone,
-            request.duration.as_ref(),
-            request.anchor,
-        )
-        .map_err(|e| format!("INVALID_ARGUMENT : {e}"))?;
-        if let Some(functions) = &state.functions {
-            functions.validate_clock_target(target)?;
+    let result = clock.move_from_sample(|start| calendar_move_plan(state, &request, kind, start));
+    clock_move_response(clock, result)
+}
+
+fn calendar_move_plan(
+    state: &ControlState,
+    request: &CalendarMove,
+    kind: MoveKind,
+    start: LogicalInstant,
+) -> Result<(LogicalInstant, bool), String> {
+    let target = move_instant(
+        start,
+        &*request.zone,
+        request.duration.as_ref(),
+        request.anchor,
+    )
+    .map_err(|e| format!("INVALID_ARGUMENT : {e}"))?;
+    if let Some(functions) = &state.functions {
+        functions.validate_clock_target(target)?;
+    }
+    let rewinds = decide(kind, request.allow_backwards, start, target) == MoveDecision::Rewind;
+    Ok((target, rewinds))
+}
+
+/// Computes the proposed target without entering the clock mutation or Functions settlement paths.
+fn preview_clock_route(state: &ControlState, method: &str, body: &Value) -> JsonResponse {
+    if method != "POST" {
+        return error(404, "NOT_FOUND");
+    }
+    let (action, kind) = match body.get("action").and_then(Value::as_str) {
+        Some("advance") => ("clock:advance", MoveKind::Advance),
+        Some("set") => ("clock:set", MoveKind::Set),
+        Some("advanceTo") => ("clock:advanceTo", MoveKind::AdvanceTo),
+        _ => {
+            return error(
+                400,
+                "INVALID_ARGUMENT : action must be advance, set or advanceTo",
+            )
         }
-        let allow_backwards =
-            decide(kind, request.allow_backwards, start, target) == MoveDecision::Rewind;
-        Ok((target, allow_backwards))
-    });
+    };
+    let Some(request) = body.get("move").filter(|value| value.is_object()) else {
+        return error(400, "INVALID_ARGUMENT : move must be a JSON object");
+    };
+    let Ok(clock) = state.clock.lock() else {
+        return error(500, "INTERNAL");
+    };
+    let result = if is_calendar_move(request) {
+        let request = match parse_calendar_move(state, action, request) {
+            Ok(request) => request,
+            Err(message) => return error(400, &message),
+        };
+        clock.preview_move_from_sample(|start| calendar_move_plan(state, &request, kind, start))
+    } else {
+        clock.preview_move_from_sample(|start| legacy_move_plan(state, request, kind, start))
+    };
+    clock_move_response(&clock, result)
+}
+
+fn legacy_move_plan(
+    state: &ControlState,
+    body: &Value,
+    kind: MoveKind,
+    start: LogicalInstant,
+) -> Result<(LogicalInstant, bool), String> {
+    let (target, negative_advance) = if kind == MoveKind::Advance {
+        let duration = legacy_advance_duration(body)?;
+        let target = start
+            .checked_add(duration)
+            .ok_or("INVALID_ARGUMENT : clock overflow")?;
+        (target, duration.as_nanos() < 0)
+    } else {
+        (absolute_move_target(body)?, false)
+    };
+    if let Some(functions) = &state.functions {
+        functions.validate_clock_target(target)?;
+    }
+    if negative_advance {
+        return Err(format!(
+            "INVALID_ARGUMENT : {}",
+            ClockError::NegativeDuration
+        ));
+    }
+    let allow_backwards = kind == MoveKind::Set
+        && body
+            .get("allowBackwards")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    Ok((target, allow_backwards))
+}
+
+fn clock_move_response(
+    clock: &VirtualClock,
+    result: Result<LogicalInstant, MoveFromSampleError<String>>,
+) -> JsonResponse {
     match result {
         Ok(target) => ok(clock_json(clock, Some(target))),
         Err(MoveFromSampleError::Plan(message)) => error(400, &message),

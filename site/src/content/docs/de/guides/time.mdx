@@ -67,6 +67,8 @@ Jede Antwort mit der Uhr und `GET /v1/sessions/default` enthalten `"running": tr
 
 ## Die Uhr um eine Zeitspanne oder auf eine Kalendergrenze stellen
 
+Wähle auf der Runtime-Seite eine Vorgabe oder gib einen Betrag und eine Einheit ein. Dort kannst du auch einen RFC-3339-Zeitpunkt eingeben oder Datum und Uhrzeit in UTC auswählen. Prüfe die Vorschau und wähle dann **Move clock**. Der Daemon berechnet das Ziel beim Bestätigen erneut. Das Ergebnis kann sich ändern, wenn die Uhr läuft oder ein anderer Client sie nach der Vorschau verstellt.
+
 Neben `{"seconds": n}`, `{"millis": n}` und `{"instant": "<RFC 3339>"}` können Sie eine Zeitspanne nach ISO 8601 angeben oder die Uhr auf den Anfang oder das Ende eines Tages, Monats oder Jahres stellen.
 
 ```sh

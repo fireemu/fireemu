@@ -4,10 +4,10 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, RwLock};
 
 use fireemu_adapter_http::control::{
-    handle, CalendarZones, ControlState, FunctionsHook, PublishMessagesError, RunScheduleError,
-    SharedCalendarZone,
+    handle, handle_async, CalendarZones, ControlState, FunctionsHook, PublishMessagesError,
+    RunScheduleError, SharedCalendarZone,
 };
-use fireemu_adapter_http::identity_toolkit::JsonResponse;
+use fireemu_adapter_http::identity_toolkit::{JsonResponse, RequestHeaders};
 use fireemu_core_rules::runtime::RulesetSlot;
 use fireemu_core_session::calendar::{CalendarZone, FixedZone, LocalOffsets};
 use fireemu_core_session::clock::VirtualClock;
@@ -547,6 +547,7 @@ fn only_calendar_null_fields_are_absent_with_a_calendar_move() {
 struct ClockCounting {
     limit: LogicalInstant,
     moves: AtomicUsize,
+    syncs: AtomicUsize,
 }
 
 impl FunctionsHook for ClockCounting {
@@ -555,6 +556,13 @@ impl FunctionsHook for ClockCounting {
             return Err("INVALID_ARGUMENT : Functions clock limit exceeded".to_owned());
         }
         Ok(())
+    }
+
+    fn sync_clock(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        self.syncs.fetch_add(1, SeqCst);
+        Box::pin(async { Ok(()) })
     }
 
     fn on_clock_changed(&self) {
@@ -595,6 +603,7 @@ fn calendar_moves_validate_the_functions_limit_and_notify_only_on_success() {
     let functions = Arc::new(ClockCounting {
         limit: LogicalInstant::from_unix_seconds(START + 86_400),
         moves: AtomicUsize::new(0),
+        syncs: AtomicUsize::new(0),
     });
     let mut s = state(None);
     s.functions = Some(functions.clone());
@@ -739,4 +748,217 @@ fn a_running_anchored_set_honours_allow_backwards_at_the_commit_sample() {
     let clock = s.clock.lock().unwrap();
     assert_eq!(clock.snapshot().revision, before.revision);
     assert_eq!(clock.backwards_sets(), 0);
+}
+
+#[test]
+fn previews_match_frozen_moves_without_publishing() {
+    for (action, body, expected) in [
+        (
+            "advance",
+            json!({"duration": "P1M"}),
+            "2026-02-28T10:00:00Z",
+        ),
+        ("advance", json!({"seconds": 59}), "2026-01-31T10:00:59Z"),
+        (
+            "set",
+            json!({"to": "startOfNextMonth"}),
+            "2026-01-31T15:00:00Z",
+        ),
+        (
+            "advanceTo",
+            json!({"to": "endOfMonth"}),
+            "2026-01-31T14:59:59.999999000Z",
+        ),
+        (
+            "set",
+            json!({"instant": "2026-01-30T10:00:00Z", "allowBackwards": true}),
+            "2026-01-30T10:00:00Z",
+        ),
+    ] {
+        let s = state(Some(zones(Some("Test/Tokyo"))));
+        let before = s.clock.lock().unwrap().snapshot();
+        let response = post(
+            &s,
+            "clock:preview",
+            &json!({"action": action, "move": body}),
+        );
+        assert_eq!(clock_of(&response), expected);
+        assert_eq!(response.body["running"], false);
+        assert_eq!(s.clock.lock().unwrap().snapshot(), before);
+        assert_eq!(s.clock.lock().unwrap().backwards_sets(), 0);
+        let confirmed = post(&s, &format!("clock:{action}"), &body);
+        assert_eq!(clock_of(&confirmed), expected);
+    }
+}
+
+#[tokio::test]
+async fn preview_checks_functions_limits_without_notifying_or_settling_runners() {
+    let functions = Arc::new(ClockCounting {
+        limit: LogicalInstant::from_unix_seconds(START + 86_400),
+        moves: AtomicUsize::new(0),
+        syncs: AtomicUsize::new(0),
+    });
+    let mut s = state(None);
+    s.functions = Some(functions.clone());
+    let before = s.clock.lock().unwrap().snapshot();
+    let preview = "/v1/sessions/default/clock:preview";
+    let headers = RequestHeaders::default();
+    let response = handle_async(
+        &s,
+        "POST",
+        preview,
+        &headers,
+        &json!({
+            "action": "advance", "move": {"duration": "P1D"}
+        }),
+    )
+    .await;
+    assert_eq!(clock_of(&response), "2026-02-01T10:00:00Z");
+    let response = handle_async(
+        &s,
+        "POST",
+        preview,
+        &headers,
+        &json!({
+            "action": "advance", "move": {"duration": "P2D"}
+        }),
+    )
+    .await;
+    refused(&response, "Functions clock limit exceeded");
+    assert_eq!(s.clock.lock().unwrap().snapshot(), before);
+    assert_eq!(functions.moves.load(SeqCst), 0);
+    assert_eq!(functions.syncs.load(SeqCst), 0);
+}
+
+#[test]
+fn preview_observes_running_clock_without_exposing_unvalidated_targets() {
+    let s = state_at(
+        ticking_clock(LogicalInstant::from_unix_seconds(START), 1_000_000),
+        None,
+    );
+    let before = s.clock.lock().unwrap().snapshot();
+    let body = json!({"action": "advance", "move": {"duration": "PT1H"}});
+    let reply = post(&s, "clock:preview", &body);
+    assert_eq!(clock_of(&reply), "2026-01-31T11:00:00.001000000Z");
+    assert_eq!(reply.body["running"], true);
+    assert_eq!(s.clock.lock().unwrap().snapshot().revision, before.revision);
+
+    let s = state(None);
+    for (body, diagnostic) in [
+        (json!({"action": "resume", "move": {}}), "action"),
+        (json!({"action": "set", "move": null}), "move"),
+        (
+            json!({"action": "advance", "move": {"seconds": -1}}),
+            "negative duration",
+        ),
+        (
+            json!({"action": "advance", "move": {"duration": "P"}}),
+            "duration",
+        ),
+        (
+            json!({"action": "set", "move": {"instant": "2026-01-01T00:00:00Z"}}),
+            "would move backwards",
+        ),
+        (
+            json!({"action": "advanceTo", "move": {"to": "startOfDay", "allowBackwards": true}}),
+            "would move backwards",
+        ),
+    ] {
+        refused(&post(&s, "clock:preview", &body), diagnostic);
+    }
+    assert_eq!(now(&s), "2026-01-31T10:00:00Z");
+}
+
+#[test]
+fn preview_matches_the_pict_move_mode_and_validation_rows() {
+    let rows = include_str!("fixtures/clock-preview-pict.tsv");
+    for row in rows.lines().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        let [kind, mode, input] = fields.as_slice() else {
+            panic!("bad row: {row}")
+        };
+        let moving_backwards = matches!(*input, "rewind" | "allowRewind");
+        let allow = *input == "allowRewind";
+        let start = LogicalInstant::from_unix_seconds(START);
+        let clock = if *mode == "running" {
+            ticking_clock(start, 0)
+        } else {
+            VirtualClock::new(start)
+        };
+        let s = state_at(clock, None);
+        let (action, request, expected) = match *kind {
+            "seconds" => ("advance", json!({"seconds": 59}), "2026-01-31T10:00:59Z"),
+            "hour" => (
+                "advance",
+                json!({"duration": "PT1H"}),
+                "2026-01-31T11:00:00Z",
+            ),
+            "day" if moving_backwards => (
+                "advance",
+                json!({"duration": "-P1D", "allowBackwards": allow}),
+                "2026-01-30T10:00:00Z",
+            ),
+            "day" => (
+                "advance",
+                json!({"duration": "P1D"}),
+                "2026-02-01T10:00:00Z",
+            ),
+            "week" => (
+                "advance",
+                json!({"duration": "P1W"}),
+                "2026-02-07T10:00:00Z",
+            ),
+            "month" => (
+                "advance",
+                json!({"duration": "P1M"}),
+                "2026-02-28T10:00:00Z",
+            ),
+            "startOfNextMonth" => ("set", json!({"to": *kind}), "2026-02-01T00:00:00Z"),
+            "endOfMonth" => (
+                "set",
+                json!({"to": *kind}),
+                "2026-01-31T23:59:59.999999000Z",
+            ),
+            "instant" if moving_backwards => (
+                "set",
+                json!({"instant": "2026-01-29T00:00:00Z", "allowBackwards": allow}),
+                "2026-01-29T00:00:00Z",
+            ),
+            "instant" => (
+                "set",
+                json!({"instant": "2026-02-02T00:00:00Z"}),
+                "2026-02-02T00:00:00Z",
+            ),
+            _ => panic!("bad move: {row}"),
+        };
+        let before = s.clock.lock().unwrap().snapshot();
+        let request = if *input == "invalid" {
+            let mut request = request;
+            let value = ["seconds", "instant", "duration", "to"]
+                .into_iter()
+                .find_map(|name| request.get(name).map(|_| name))
+                .unwrap();
+            request[value] = json!("not a clock move");
+            request
+        } else {
+            request
+        };
+        let preview = post(
+            &s,
+            "clock:preview",
+            &json!({"action": action, "move": request}),
+        );
+        assert_eq!(s.clock.lock().unwrap().snapshot(), before, "{row}");
+        if matches!(*input, "invalid" | "rewind") {
+            assert_eq!(preview.status, 400, "{row}: {}", preview.body);
+        } else {
+            assert_eq!(clock_of(&preview), expected, "{row}");
+            assert_eq!(preview.body["running"], *mode == "running", "{row}");
+            assert_eq!(
+                clock_of(&post(&s, &format!("clock:{action}"), &request)),
+                expected,
+                "{row}"
+            );
+        }
+    }
 }

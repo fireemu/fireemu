@@ -82,7 +82,7 @@ await world.clock.to('endOfMonth');                            // 23:59:59.99999
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
 ```
 
-Eine Zahl steht weiterhin für Millisekunden. Objekte der Form `{ seconds }` oder `{ millis }` verstellen die Uhr wie bisher um die exakte Zeitspanne. Kalendereinheiten lassen sich nicht mit `millis` kombinieren und müssen alle dasselbe Vorzeichen haben. `world.clock.to` verwendet `clock:set`. Für ein Ziel vor der aktuellen Zeit ist daher `allowBackwards: true` erforderlich. `advanceAndSettle` akzeptiert dieselben Zeitspannen und unterstützt unter anderem die Optionen `timeZone` und `allowBackwards`.
+Eine Zahl steht weiterhin für Millisekunden. Objekte der Form `{ seconds }` oder `{ millis }` verstellen die Uhr wie bisher um die exakte Zeitspanne. Kalendereinheiten lassen sich nicht mit `millis` kombinieren und müssen alle dasselbe Vorzeichen haben. `world.clock.to` verwendet `clock:set`. Für ein Ziel vor der aktuellen Zeit ist daher `allowBackwards: true` erforderlich. `advanceAndSettle` akzeptiert dieselben Zeitspannen und unterstützt unter anderem die Optionen `timeZone` und `allowBackwards`. Die Optionen `timeZone` und `allowBackwards` gelten bei `advance` und `advanceAndSettle` für ISO-8601-Zeichenketten und Objekte mit Kalendereinheiten. Zahlen und die Formen `{ seconds }` und `{ millis }` weisen diese Optionen zurück.
 
 ## Die Uhr vorstellen und auf Arbeit warten
 

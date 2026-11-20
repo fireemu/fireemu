@@ -67,6 +67,8 @@ Cada respuesta con el reloj, y `GET /v1/sessions/default`, lleva `"running": tru
 
 ## Mover el reloj una duración determinada o hasta un límite del calendario
 
+En la página Runtime, elige un ajuste predefinido o indica una cantidad y una unidad. También puedes escribir un instante RFC 3339 o usar el selector de fecha y hora UTC. Revisa la vista previa y pulsa **Move clock**. El daemon vuelve a calcular el destino al confirmar. El resultado puede cambiar si el reloj está activo o si otro cliente lo mueve después de la vista previa.
+
 Además de `{"seconds": n}`, `{"millis": n}` y `{"instant": "<RFC 3339>"}`, puedes indicar una duración ISO 8601 o mover el reloj al inicio o al final de un día, mes o año.
 
 ```sh

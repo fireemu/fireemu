@@ -67,6 +67,8 @@ Every clock answer, and `GET /v1/sessions/default`, carries `"running": true` wh
 
 ## Move the clock by a duration or to a calendar boundary
 
+On the Runtime page, choose a preset or enter an amount and unit. You can also enter an RFC 3339 instant or use the UTC date and time picker. Check the preview, then select **Move clock**. The daemon calculates the target again on confirmation. The result can change if the clock is running or if another client moves it after the preview.
+
 Besides `{"seconds": n}`, `{"millis": n}` and `{"instant": "<RFC 3339>"}`, the clock moves by an ISO 8601 duration or to the start or end of a day, month or year:
 
 ```sh

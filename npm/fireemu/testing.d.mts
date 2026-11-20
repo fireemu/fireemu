@@ -126,7 +126,8 @@ export interface TestWorldClock {
   /** The runtime requires an integer budget from 1 through 10000. */
   readonly runDue: (budget?: number) => Promise<RunDueResult>;
   /**
-   * Advance the clock, run due virtual timers and wait for idle, in that order. The wait never
+   * Advance the clock, run due virtual timers and wait for idle, in that order. The exact-time
+   * number, `{ seconds }` and `{ millis }` forms reject calendar move options. The wait never
    * delays a later clock call. Rejects when the move fails or the wait times out.
    */
   readonly advanceAndSettle: (

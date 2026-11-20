@@ -72,15 +72,34 @@ export const resetSession = (session: string): ResultAsync<Json, ApiError> =>
 export const deleteSession = (session: string): ResultAsync<Json, ApiError> =>
   request("DELETE", base(session));
 
-export const advanceClock = (session: string, seconds: number): ResultAsync<ClockInfo, ApiError> =>
-  request<ClockInfo>("POST", `${base(session)}/clock:advance`, { seconds });
+export type ClockMoveRequest =
+  | {
+      action: "advance";
+      move: { seconds: number } | { duration: string; allowBackwards?: boolean };
+    }
+  | {
+      action: "set";
+      move: { instant: string; allowBackwards: boolean } | { to: string; allowBackwards: boolean };
+    };
+
+type ClockPreview = Pick<ClockInfo, "clock" | "running">;
+
+export const previewClock = (
+  session: string,
+  move: ClockMoveRequest,
+): ResultAsync<ClockPreview, ApiError> => request("POST", `${base(session)}/clock:preview`, move);
+
+export const moveClock = (
+  session: string,
+  { action, move }: ClockMoveRequest,
+): ResultAsync<ClockInfo, ApiError> => request("POST", `${base(session)}/clock:${action}`, move);
 
 export const setClock = (
   session: string,
   instant: string,
   allowBackwards: boolean,
 ): ResultAsync<ClockInfo, ApiError> =>
-  request<ClockInfo>("POST", `${base(session)}/clock:set`, { instant, allowBackwards });
+  moveClock(session, { action: "set", move: { instant, allowBackwards } });
 
 export const freezeClock = (session: string): ResultAsync<ClockInfo, ApiError> =>
   request<ClockInfo>("POST", `${base(session)}/clock:freeze`, {});

@@ -82,7 +82,7 @@ await world.clock.to('endOfMonth');                            // 現地時刻�
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' });
 ```
 
-数値は従来どおりミリ秒を表し、`{ seconds }`や`{ millis }`のオブジェクトは指定した経過時間だけクロックを動かします。暦の単位は`millis`と併用できず、すべて同じ符号にそろえる必要があります。`world.clock.to`は`clock:set`を使うため、現在より前の時刻に合わせるには`allowBackwards: true`が必要です。`advanceAndSettle`にも同じ期間を指定でき、オプションには`timeZone`と`allowBackwards`があります。
+数値は従来どおりミリ秒を表し、`{ seconds }`や`{ millis }`のオブジェクトは指定した経過時間だけクロックを動かします。暦の単位は`millis`と併用できず、すべて同じ符号にそろえる必要があります。`world.clock.to`は`clock:set`を使うため、現在より前の時刻に合わせるには`allowBackwards: true`が必要です。`advanceAndSettle`にも同じ期間を指定でき、オプションには`timeZone`と`allowBackwards`があります。 `advance`と`advanceAndSettle`の`timeZone`と`allowBackwards`は、ISO 8601文字列または暦の単位を指定したオブジェクトで使えます。数値や`{ seconds }`、`{ millis }`に付けると拒否されます。
 
 ## クロックを進めて処理を待つ
 
