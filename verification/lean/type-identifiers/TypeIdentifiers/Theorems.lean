@@ -15,7 +15,7 @@ theorem document_collection_same (text : String) :
     refusal .collection text = refusal .document text := by
   rfl
 
-theorem default_only_for_database :
+theorem default_database_but_not_project :
     refusal .database "(default)" = none ∧ refusal .project "(default)" = some (.invalidCharacter 0) :=
   by decide
 

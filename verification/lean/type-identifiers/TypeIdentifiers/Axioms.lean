@@ -8,8 +8,8 @@ import TypeIdentifiers.Theorems
 /-- info: 'TI.document_collection_same' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms TI.document_collection_same
 
-/-- info: 'TI.default_only_for_database' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms TI.default_only_for_database
+/-- info: 'TI.default_database_but_not_project' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms TI.default_database_but_not_project
 
 /-- info: 'TI.slash_precedes_control_on_path_segments' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms TI.slash_precedes_control_on_path_segments
