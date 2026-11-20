@@ -46,9 +46,17 @@ DEFAULT_ROWS = [
 
 
 class CampaignTest(unittest.TestCase):
-    def run_campaign(self, output, selection, scope, outcomes):
+    def run_campaign(self, output, selection, scope, outcomes, *, seed=None):
         output = output.resolve()
         launched = []
+        environment = {
+            "CARGO_BUILD_BUILD_DIR": "/normal/build",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "diff.noprefix",
+            "GIT_CONFIG_VALUE_0": "true",
+        }
+        if seed is not None:
+            environment["PROPTEST_RNG_SEED"] = seed
 
         def cargo(args, **kwargs):
             if args[1] == "metadata":
@@ -57,6 +65,7 @@ class CampaignTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.1.0\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
+            self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
             self.assertIn("--locked", args)
             self.assertIn("--json", args)
             self.assertEqual(Path(args[args.index("--work-dir") + 1]), output / "work")
@@ -81,12 +90,7 @@ class CampaignTest(unittest.TestCase):
             redirect_stdout(io.StringIO()),
             redirect_stderr(io.StringIO()),
             patch.object(campaign.subprocess, "run", side_effect=cargo),
-            patch.dict(os.environ, {
-                "CARGO_BUILD_BUILD_DIR": "/normal/build",
-                "GIT_CONFIG_COUNT": "1",
-                "GIT_CONFIG_KEY_0": "diff.noprefix",
-                "GIT_CONFIG_VALUE_0": "true",
-            }),
+            patch.dict(os.environ, environment, clear=True),
         ):
             code = campaign.main([*selection, *scope, "--output-dir", str(output)])
         return code, launched
@@ -122,6 +126,17 @@ class CampaignTest(unittest.TestCase):
                     self.assertTrue((output / f"{package}.json").is_file())
                     self.assertTrue((output / f"{package}.log").is_file())
                 self.assertTrue((output / ".fireemu-mutation-output").is_file())
+
+    def test_explicit_property_test_seed_is_preserved_and_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "results"
+            code, launched = self.run_campaign(
+                output, ["--package", "core"], [], {"core": "clean"}, seed="1234"
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(launched, ["core"])
+            summary = json.loads((output / "summary.json").read_text())
+            self.assertEqual(summary["proptest_rng_seed"], "1234")
 
     def test_execution_failure_takes_precedence_over_findings(self):
         with tempfile.TemporaryDirectory() as directory:

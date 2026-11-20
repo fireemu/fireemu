@@ -22,11 +22,14 @@ For example, in the sandboxed checkout:
 
 ```bash
 export CARGO_BUILD_BUILD_DIR="$MUTATION_OUTPUT/limits/build"
+export PROPTEST_RNG_SEED=0
 cargo tmt --locked --work-dir "$MUTATION_OUTPUT/limits" -p fireemu-core-limits --lines src/evaluate.rs --json
 python3 tools/ci/targeted-mutation.py --workspace --since "$(git merge-base origin/main HEAD)" --output-dir "$MUTATION_OUTPUT/change"
 ```
 
 The campaign runner processes packages sequentially and reuses its own build directory. It keeps `<package>.json` and `<package>.log` for every attempt and writes `summary.json` at the end. For a completed campaign, exit `1` signals an analysis error, `2` signals findings or unstable predictions, and `0` means neither occurred. Setup errors are written to stderr and command-line usage errors emit no report. A `no-sites` result can be expected for an unchanged package in a diff or generated code. Inspect the reports for unreached, skipped, unevaluated and unbuilt mutants before drawing coverage conclusions. The batch run skips propagation tracing and selects ordinary tests for each package. It attempts every requested package even when an incompatible test prevents a report. Rerun a focused selection without `--no-effects` for that diagnosis. Reproduce changes against the ordinary test suite and add assertions for observable behavior before rerunning the selection.
+
+Tracing and mutant replay need the same test inputs. The campaign uses `PROPTEST_RNG_SEED=0` by default and records the effective seed. Rerun with a different explicit seed to sample more inputs. For a direct run, set the seed in the sandbox before calling `cargo tmt`. Use `--audit` on a focused selection to check for trace drift.
 
 Version 0.1.0 runs Rust test binaries directly. For a focused package, add `--doc` for its doctests or `--rebuild` for mutants that need individual compilation. Use separate runs for feature sets and supported operating systems. The tool excludes `.git` and `node_modules` from its working copy. Its libtest execution does not apply nextest's temporary-directory wrappers, test groups or process-leak checks. A child process that clears its environment cannot receive runtime probes through that environment. Some Fireemu packages therefore fail the whole targeted-mutation baseline. For example, the Functions adapter checks the Git index, and the Quint verification crate checks source-file digests. Use their standard verification routes for those suites.
 

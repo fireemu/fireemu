@@ -85,6 +85,8 @@ def main(argv=None):
 
     output = options.output_dir.resolve()
     env = {**os.environ, "CARGO_BUILD_BUILD_DIR": str(output / "work" / "build")}
+    seed = env.get("PROPTEST_RNG_SEED") or "0"
+    env["PROPTEST_RNG_SEED"] = seed
     scope = []
     if options.since is not None:
         scope = ["--since", options.since]
@@ -119,7 +121,12 @@ def main(argv=None):
         result = run_package(package, output, scope, env)
         results.append(result)
         print(f"targeted-mutation: {package}: {result['status']}", flush=True)
-    summary = {"tool_version": VERSION, "since": options.since, "packages": results}
+    summary = {
+        "tool_version": VERSION,
+        "since": options.since,
+        "proptest_rng_seed": seed,
+        "packages": results,
+    }
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     statuses = {result["status"] for result in results}
     if "error" in statuses:
