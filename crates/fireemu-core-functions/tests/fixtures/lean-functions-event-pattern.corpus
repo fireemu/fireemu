@@ -1,0 +1,100 @@
+# 99 cases.
+literal/empty/plain	users/alice		ok	users/alice	literal=users,literal=alice	document:miss
+literal/empty/wrapped	//users/alice/	///	ok	users/alice	literal=users,literal=alice	document:miss
+literal/prefix/plain	users/alice	users	ok	users/alice	literal=users,literal=alice	document:miss
+literal/prefix/wrapped	//users/alice/	//users/	ok	users/alice	literal=users,literal=alice	document:miss
+literal/exact/plain	users/alice	users/alice	ok	users/alice	literal=users,literal=alice	document:match:
+literal/exact/wrapped	//users/alice/	//users/alice/	ok	users/alice	literal=users,literal=alice	document:match:
+literal/deep/plain	users/alice	users/alice/posts/日	ok	users/alice	literal=users,literal=alice	document:miss
+literal/deep/wrapped	//users/alice/	//users/alice/posts/日/	ok	users/alice	literal=users,literal=alice	document:miss
+literal/hole/plain	users/alice	users//id	ok	users/alice	literal=users,literal=alice	document:miss
+literal/hole/wrapped	//users/alice/	//users//id/	ok	users/alice	literal=users,literal=alice	document:miss
+literal/miss/plain	users/alice	posts/alice	ok	users/alice	literal=users,literal=alice	document:miss
+literal/miss/wrapped	//users/alice/	//posts/alice/	ok	users/alice	literal=users,literal=alice	document:miss
+single/empty/plain	users/{id}		ok	users/{id}	literal=users,capture=id	document:miss
+single/empty/wrapped	//users/{id}/	///	ok	users/{id}	literal=users,capture=id	document:miss
+single/prefix/plain	users/{id}	users	ok	users/{id}	literal=users,capture=id	document:miss
+single/prefix/wrapped	//users/{id}/	//users/	ok	users/{id}	literal=users,capture=id	document:miss
+single/exact/plain	users/{id}	users/alice	ok	users/{id}	literal=users,capture=id	document:match:id=alice
+single/exact/wrapped	//users/{id}/	//users/alice/	ok	users/{id}	literal=users,capture=id	document:match:id=alice
+single/deep/plain	users/{id}	users/alice/posts/日	ok	users/{id}	literal=users,capture=id	document:miss
+single/deep/wrapped	//users/{id}/	//users/alice/posts/日/	ok	users/{id}	literal=users,capture=id	document:miss
+single/hole/plain	users/{id}	users//id	ok	users/{id}	literal=users,capture=id	document:miss
+single/hole/wrapped	//users/{id}/	//users//id/	ok	users/{id}	literal=users,capture=id	document:miss
+single/miss/plain	users/{id}	posts/alice	ok	users/{id}	literal=users,capture=id	document:miss
+single/miss/wrapped	//users/{id}/	//posts/alice/	ok	users/{id}	literal=users,capture=id	document:miss
+wild/empty/plain	users/*		ok	users/*	literal=users,single	document:miss
+wild/empty/wrapped	//users/*/	///	ok	users/*	literal=users,single	document:miss
+wild/prefix/plain	users/*	users	ok	users/*	literal=users,single	document:miss
+wild/prefix/wrapped	//users/*/	//users/	ok	users/*	literal=users,single	document:miss
+wild/exact/plain	users/*	users/alice	ok	users/*	literal=users,single	document:match:
+wild/exact/wrapped	//users/*/	//users/alice/	ok	users/*	literal=users,single	document:match:
+wild/deep/plain	users/*	users/alice/posts/日	ok	users/*	literal=users,single	document:miss
+wild/deep/wrapped	//users/*/	//users/alice/posts/日/	ok	users/*	literal=users,single	document:miss
+wild/hole/plain	users/*	users//id	ok	users/*	literal=users,single	document:miss
+wild/hole/wrapped	//users/*/	//users//id/	ok	users/*	literal=users,single	document:miss
+wild/miss/plain	users/*	posts/alice	ok	users/*	literal=users,single	document:miss
+wild/miss/wrapped	//users/*/	//posts/alice/	ok	users/*	literal=users,single	document:miss
+multi/empty/plain	users/{path=**}		ok	users/{path=**}	literal=users,capture-many=path	document:miss
+multi/empty/wrapped	//users/{path=**}/	///	ok	users/{path=**}	literal=users,capture-many=path	document:miss
+multi/prefix/plain	users/{path=**}	users	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=
+multi/prefix/wrapped	//users/{path=**}/	//users/	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=
+multi/exact/plain	users/{path=**}	users/alice	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=alice
+multi/exact/wrapped	//users/{path=**}/	//users/alice/	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=alice
+multi/deep/plain	users/{path=**}	users/alice/posts/日	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=alice/posts/日
+multi/deep/wrapped	//users/{path=**}/	//users/alice/posts/日/	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=alice/posts/日
+multi/hole/plain	users/{path=**}	users//id	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=/id
+multi/hole/wrapped	//users/{path=**}/	//users//id/	ok	users/{path=**}	literal=users,capture-many=path	document:match:path=/id
+multi/miss/plain	users/{path=**}	posts/alice	ok	users/{path=**}	literal=users,capture-many=path	document:miss
+multi/miss/wrapped	//users/{path=**}/	//posts/alice/	ok	users/{path=**}	literal=users,capture-many=path	document:miss
+starstar/empty/plain	users/**		ok	users/**	literal=users,multi	document:miss
+starstar/empty/wrapped	//users/**/	///	ok	users/**	literal=users,multi	document:miss
+starstar/prefix/plain	users/**	users	ok	users/**	literal=users,multi	document:match:
+starstar/prefix/wrapped	//users/**/	//users/	ok	users/**	literal=users,multi	document:match:
+starstar/exact/plain	users/**	users/alice	ok	users/**	literal=users,multi	document:match:
+starstar/exact/wrapped	//users/**/	//users/alice/	ok	users/**	literal=users,multi	document:match:
+starstar/deep/plain	users/**	users/alice/posts/日	ok	users/**	literal=users,multi	document:match:
+starstar/deep/wrapped	//users/**/	//users/alice/posts/日/	ok	users/**	literal=users,multi	document:match:
+starstar/hole/plain	users/**	users//id	ok	users/**	literal=users,multi	document:match:
+starstar/hole/wrapped	//users/**/	//users//id/	ok	users/**	literal=users,multi	document:match:
+starstar/miss/plain	users/**	posts/alice	ok	users/**	literal=users,multi	document:miss
+starstar/miss/wrapped	//users/**/	//posts/alice/	ok	users/**	literal=users,multi	document:miss
+sorted/empty/plain	{z}/{a}		ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/empty/wrapped	//{z}/{a}/	///	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/prefix/plain	{z}/{a}	users	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/prefix/wrapped	//{z}/{a}/	//users/	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/exact/plain	{z}/{a}	users/alice	ok	{z}/{a}	capture=z,capture=a	document:match:a=alice,z=users
+sorted/exact/wrapped	//{z}/{a}/	//users/alice/	ok	{z}/{a}	capture=z,capture=a	document:match:a=alice,z=users
+sorted/deep/plain	{z}/{a}	users/alice/posts/日	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/deep/wrapped	//{z}/{a}/	//users/alice/posts/日/	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/hole/plain	{z}/{a}	users//id	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/hole/wrapped	//{z}/{a}/	//users//id/	ok	{z}/{a}	capture=z,capture=a	document:miss
+sorted/miss/plain	{z}/{a}	posts/alice	ok	{z}/{a}	capture=z,capture=a	document:match:a=alice,z=posts
+sorted/miss/wrapped	//{z}/{a}/	//posts/alice/	ok	{z}/{a}	capture=z,capture=a	document:match:a=alice,z=posts
+collection/empty/plain	users		ok	users	literal=users	collection:miss
+collection/empty/wrapped	//users/	///	ok	users	literal=users	collection:miss
+collection/prefix/plain	users	users	ok	users	literal=users	collection:match:
+collection/prefix/wrapped	//users/	//users/	ok	users	literal=users	collection:match:
+collection/exact/plain	users	users/alice	ok	users	literal=users	collection:miss
+collection/exact/wrapped	//users/	//users/alice/	ok	users	literal=users	collection:miss
+collection/deep/plain	users	users/alice/posts/日	ok	users	literal=users	collection:miss
+collection/deep/wrapped	//users/	//users/alice/posts/日/	ok	users	literal=users	collection:miss
+collection/hole/plain	users	users//id	ok	users	literal=users	collection:miss
+collection/hole/wrapped	//users/	//users//id/	ok	users	literal=users	collection:miss
+collection/miss/plain	users	posts/alice	ok	users	literal=users	collection:miss
+collection/miss/wrapped	//users/	//posts/alice/	ok	users	literal=users	collection:miss
+empty			empty	-	-	-
+slashes	///		empty	-	-	-
+interior	users//{id}		empty	-	-	-
+open	users/{id		malformed={id	-	-	-
+blank-name	users/{}		malformed={}	-	-	-
+bad-flag	users/{id=x}		malformed={id=x}	-	-	-
+non-ascii	users/{日}		malformed={日}	-	-	-
+nonfinal-wild	users/**/id		nonfinal	-	-	-
+nonfinal-capture	{x=**}/id		nonfinal	-	-	-
+repeated	{x}/{x}		duplicate=x	-	-	-
+duplicate-before-nonfinal	{x}/{x=**}/id		duplicate=x	-	-	-
+malformed-before-duplicate	{x}/{x=}/id		malformed={x=}	-	-	-
+literal-and-ascii-name	a}/{_2}		ok	a}/{_2}	literal=a},capture=_2	document:miss
+empty-path-as-component	{id}		ok	{id}	capture=id	collection:match:id=
+empty-tail-at-root	{all=**}		ok	{all=**}	capture-many=all	document:match:all=

@@ -1,0 +1,9 @@
+name = "functions-env"
+defaultTargets = ["FunctionsEnv", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsEnv"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

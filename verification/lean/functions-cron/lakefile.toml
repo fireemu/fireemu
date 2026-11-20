@@ -1,0 +1,9 @@
+name = "functions-cron"
+defaultTargets = ["FunctionsCron", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsCron"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

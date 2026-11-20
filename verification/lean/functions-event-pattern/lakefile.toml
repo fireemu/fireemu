@@ -1,0 +1,9 @@
+name = "functions-event-pattern"
+defaultTargets = ["FunctionsEventPattern", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsEventPattern"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
