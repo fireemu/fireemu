@@ -29,10 +29,14 @@ fn setup() -> AppCheckRegistry {
 }
 
 fn check_issued(registry: &AppCheckRegistry, fields: [&str; 13], line: &str) {
-    let [_, _, app, time, requested, issued, expired, reported, issuer, number_aud, id_aud, subject, epoch] =
+    let [_, _, app, time, requested, start_seconds, expiry_seconds, reported, issuer, number_aud, id_aud, subject, epoch] =
         fields;
     let now = LogicalInstant::from_nanos(time.parse().unwrap());
-    assert_eq!(unix_seconds(now), issued.parse::<i64>().unwrap(), "{line}");
+    assert_eq!(
+        unix_seconds(now),
+        start_seconds.parse::<i64>().unwrap(),
+        "{line}"
+    );
     let (project, id, epoch_value, jti) = match app {
         "first" => ("demo-first", "app-alpha", 0x10_u128, "fixed-one"),
         "second" => ("demo-second", "app-beta", u128::MAX, "fixed-two"),
@@ -46,8 +50,8 @@ fn check_issued(registry: &AppCheckRegistry, fields: [&str; 13], line: &str) {
         now,
         requested.parse().unwrap(),
     );
-    assert_eq!(claims.iat, issued.parse::<i64>().unwrap(), "{line}");
-    assert_eq!(claims.exp, expired.parse::<i64>().unwrap(), "{line}");
+    assert_eq!(claims.iat, start_seconds.parse::<i64>().unwrap(), "{line}");
+    assert_eq!(claims.exp, expiry_seconds.parse::<i64>().unwrap(), "{line}");
     assert_eq!(
         claims.ttl_seconds(),
         reported.parse::<i64>().unwrap(),
