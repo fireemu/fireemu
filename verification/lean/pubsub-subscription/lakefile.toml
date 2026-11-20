@@ -1,0 +1,9 @@
+name = "pubsub-subscription"
+defaultTargets = ["PubSubSubscription", "corpus"]
+
+[[lean_lib]]
+name = "PubSubSubscription"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

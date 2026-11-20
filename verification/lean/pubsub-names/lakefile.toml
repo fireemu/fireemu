@@ -1,0 +1,9 @@
+name = "pubsub-names"
+defaultTargets = ["PubSubNames", "corpus"]
+
+[[lean_lib]]
+name = "PubSubNames"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

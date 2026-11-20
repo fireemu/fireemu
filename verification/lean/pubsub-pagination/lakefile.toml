@@ -1,0 +1,9 @@
+name = "pubsub-pagination"
+defaultTargets = ["PubSubPagination", "corpus"]
+
+[[lean_lib]]
+name = "PubSubPagination"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

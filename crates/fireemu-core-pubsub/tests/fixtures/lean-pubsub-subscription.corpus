@@ -1,0 +1,2479 @@
+# 2478
+core	zero	omitted	omitted	omitted	0	-	-	-	-	coreAck
+core	zero	omitted	omitted	zero	0	-	-	0	0	coreAck
+core	zero	omitted	omitted	max	0	-	-	600000000000	600000000000	coreAck
+core	zero	omitted	omitted	min-negative	0	-	-	-1	0	coreAck
+core	zero	omitted	omitted	min-over	0	-	-	600000000001	600000000000	coreAck
+core	zero	omitted	omitted	max-negative	0	-	-	0	-1	coreAck
+core	zero	omitted	omitted	max-over	0	-	-	0	600000000001	coreAck
+core	zero	omitted	omitted	reversed	0	-	-	20000000000	19999999999	coreAck
+core	zero	omitted	omitted	fractional	0	-	-	1	10000000001	coreAck
+core	zero	omitted	below	omitted	0	-	4	-	-	coreAck
+core	zero	omitted	below	zero	0	-	4	0	0	coreAck
+core	zero	omitted	below	max	0	-	4	600000000000	600000000000	coreAck
+core	zero	omitted	below	min-negative	0	-	4	-1	0	coreAck
+core	zero	omitted	below	min-over	0	-	4	600000000001	600000000000	coreAck
+core	zero	omitted	below	max-negative	0	-	4	0	-1	coreAck
+core	zero	omitted	below	max-over	0	-	4	0	600000000001	coreAck
+core	zero	omitted	below	reversed	0	-	4	20000000000	19999999999	coreAck
+core	zero	omitted	below	fractional	0	-	4	1	10000000001	coreAck
+core	zero	omitted	min	omitted	0	-	5	-	-	coreAck
+core	zero	omitted	min	zero	0	-	5	0	0	coreAck
+core	zero	omitted	min	max	0	-	5	600000000000	600000000000	coreAck
+core	zero	omitted	min	min-negative	0	-	5	-1	0	coreAck
+core	zero	omitted	min	min-over	0	-	5	600000000001	600000000000	coreAck
+core	zero	omitted	min	max-negative	0	-	5	0	-1	coreAck
+core	zero	omitted	min	max-over	0	-	5	0	600000000001	coreAck
+core	zero	omitted	min	reversed	0	-	5	20000000000	19999999999	coreAck
+core	zero	omitted	min	fractional	0	-	5	1	10000000001	coreAck
+core	zero	omitted	max	omitted	0	-	100	-	-	coreAck
+core	zero	omitted	max	zero	0	-	100	0	0	coreAck
+core	zero	omitted	max	max	0	-	100	600000000000	600000000000	coreAck
+core	zero	omitted	max	min-negative	0	-	100	-1	0	coreAck
+core	zero	omitted	max	min-over	0	-	100	600000000001	600000000000	coreAck
+core	zero	omitted	max	max-negative	0	-	100	0	-1	coreAck
+core	zero	omitted	max	max-over	0	-	100	0	600000000001	coreAck
+core	zero	omitted	max	reversed	0	-	100	20000000000	19999999999	coreAck
+core	zero	omitted	max	fractional	0	-	100	1	10000000001	coreAck
+core	zero	omitted	over	omitted	0	-	101	-	-	coreAck
+core	zero	omitted	over	zero	0	-	101	0	0	coreAck
+core	zero	omitted	over	max	0	-	101	600000000000	600000000000	coreAck
+core	zero	omitted	over	min-negative	0	-	101	-1	0	coreAck
+core	zero	omitted	over	min-over	0	-	101	600000000001	600000000000	coreAck
+core	zero	omitted	over	max-negative	0	-	101	0	-1	coreAck
+core	zero	omitted	over	max-over	0	-	101	0	600000000001	coreAck
+core	zero	omitted	over	reversed	0	-	101	20000000000	19999999999	coreAck
+core	zero	omitted	over	fractional	0	-	101	1	10000000001	coreAck
+production	zero	omitted	default	valid	0	-	default	productionAck	604800000000000
+production	zero	omitted	default	invalid	0	-	default	productionAck	604800000000000
+production	zero	omitted	never	valid	0	-	never	productionAck	604800000000000
+production	zero	omitted	never	invalid	0	-	never	productionAck	604800000000000
+production	zero	omitted	below	valid	0	-	86399999999999	productionAck	604800000000000
+production	zero	omitted	below	invalid	0	-	86399999999999	productionAck	604800000000000
+production	zero	omitted	day	valid	0	-	86400000000000	productionAck	604800000000000
+production	zero	omitted	day	invalid	0	-	86400000000000	productionAck	604800000000000
+production	zero	omitted	week-below	valid	0	-	604799999999999	productionAck	604800000000000
+production	zero	omitted	week-below	invalid	0	-	604799999999999	productionAck	604800000000000
+production	zero	omitted	week	valid	0	-	604800000000000	productionAck	604800000000000
+production	zero	omitted	week	invalid	0	-	604800000000000	productionAck	604800000000000
+production	zero	omitted	long	valid	0	-	2678400000000001	productionAck	604800000000000
+production	zero	omitted	long	invalid	0	-	2678400000000001	productionAck	604800000000000
+core	zero	zero	omitted	omitted	0	0	-	-	-	coreAck
+core	zero	zero	omitted	zero	0	0	-	0	0	coreAck
+core	zero	zero	omitted	max	0	0	-	600000000000	600000000000	coreAck
+core	zero	zero	omitted	min-negative	0	0	-	-1	0	coreAck
+core	zero	zero	omitted	min-over	0	0	-	600000000001	600000000000	coreAck
+core	zero	zero	omitted	max-negative	0	0	-	0	-1	coreAck
+core	zero	zero	omitted	max-over	0	0	-	0	600000000001	coreAck
+core	zero	zero	omitted	reversed	0	0	-	20000000000	19999999999	coreAck
+core	zero	zero	omitted	fractional	0	0	-	1	10000000001	coreAck
+core	zero	zero	below	omitted	0	0	4	-	-	coreAck
+core	zero	zero	below	zero	0	0	4	0	0	coreAck
+core	zero	zero	below	max	0	0	4	600000000000	600000000000	coreAck
+core	zero	zero	below	min-negative	0	0	4	-1	0	coreAck
+core	zero	zero	below	min-over	0	0	4	600000000001	600000000000	coreAck
+core	zero	zero	below	max-negative	0	0	4	0	-1	coreAck
+core	zero	zero	below	max-over	0	0	4	0	600000000001	coreAck
+core	zero	zero	below	reversed	0	0	4	20000000000	19999999999	coreAck
+core	zero	zero	below	fractional	0	0	4	1	10000000001	coreAck
+core	zero	zero	min	omitted	0	0	5	-	-	coreAck
+core	zero	zero	min	zero	0	0	5	0	0	coreAck
+core	zero	zero	min	max	0	0	5	600000000000	600000000000	coreAck
+core	zero	zero	min	min-negative	0	0	5	-1	0	coreAck
+core	zero	zero	min	min-over	0	0	5	600000000001	600000000000	coreAck
+core	zero	zero	min	max-negative	0	0	5	0	-1	coreAck
+core	zero	zero	min	max-over	0	0	5	0	600000000001	coreAck
+core	zero	zero	min	reversed	0	0	5	20000000000	19999999999	coreAck
+core	zero	zero	min	fractional	0	0	5	1	10000000001	coreAck
+core	zero	zero	max	omitted	0	0	100	-	-	coreAck
+core	zero	zero	max	zero	0	0	100	0	0	coreAck
+core	zero	zero	max	max	0	0	100	600000000000	600000000000	coreAck
+core	zero	zero	max	min-negative	0	0	100	-1	0	coreAck
+core	zero	zero	max	min-over	0	0	100	600000000001	600000000000	coreAck
+core	zero	zero	max	max-negative	0	0	100	0	-1	coreAck
+core	zero	zero	max	max-over	0	0	100	0	600000000001	coreAck
+core	zero	zero	max	reversed	0	0	100	20000000000	19999999999	coreAck
+core	zero	zero	max	fractional	0	0	100	1	10000000001	coreAck
+core	zero	zero	over	omitted	0	0	101	-	-	coreAck
+core	zero	zero	over	zero	0	0	101	0	0	coreAck
+core	zero	zero	over	max	0	0	101	600000000000	600000000000	coreAck
+core	zero	zero	over	min-negative	0	0	101	-1	0	coreAck
+core	zero	zero	over	min-over	0	0	101	600000000001	600000000000	coreAck
+core	zero	zero	over	max-negative	0	0	101	0	-1	coreAck
+core	zero	zero	over	max-over	0	0	101	0	600000000001	coreAck
+core	zero	zero	over	reversed	0	0	101	20000000000	19999999999	coreAck
+core	zero	zero	over	fractional	0	0	101	1	10000000001	coreAck
+production	zero	zero	default	valid	0	0	default	productionAck	0
+production	zero	zero	default	invalid	0	0	default	productionAck	0
+production	zero	zero	never	valid	0	0	never	productionAck	0
+production	zero	zero	never	invalid	0	0	never	productionAck	0
+production	zero	zero	below	valid	0	0	86399999999999	productionAck	0
+production	zero	zero	below	invalid	0	0	86399999999999	productionAck	0
+production	zero	zero	day	valid	0	0	86400000000000	productionAck	0
+production	zero	zero	day	invalid	0	0	86400000000000	productionAck	0
+production	zero	zero	week-below	valid	0	0	604799999999999	productionAck	0
+production	zero	zero	week-below	invalid	0	0	604799999999999	productionAck	0
+production	zero	zero	week	valid	0	0	604800000000000	productionAck	0
+production	zero	zero	week	invalid	0	0	604800000000000	productionAck	0
+production	zero	zero	long	valid	0	0	2678400000000001	productionAck	0
+production	zero	zero	long	invalid	0	0	2678400000000001	productionAck	0
+core	zero	below	omitted	omitted	0	599999999999	-	-	-	coreAck
+core	zero	below	omitted	zero	0	599999999999	-	0	0	coreAck
+core	zero	below	omitted	max	0	599999999999	-	600000000000	600000000000	coreAck
+core	zero	below	omitted	min-negative	0	599999999999	-	-1	0	coreAck
+core	zero	below	omitted	min-over	0	599999999999	-	600000000001	600000000000	coreAck
+core	zero	below	omitted	max-negative	0	599999999999	-	0	-1	coreAck
+core	zero	below	omitted	max-over	0	599999999999	-	0	600000000001	coreAck
+core	zero	below	omitted	reversed	0	599999999999	-	20000000000	19999999999	coreAck
+core	zero	below	omitted	fractional	0	599999999999	-	1	10000000001	coreAck
+core	zero	below	below	omitted	0	599999999999	4	-	-	coreAck
+core	zero	below	below	zero	0	599999999999	4	0	0	coreAck
+core	zero	below	below	max	0	599999999999	4	600000000000	600000000000	coreAck
+core	zero	below	below	min-negative	0	599999999999	4	-1	0	coreAck
+core	zero	below	below	min-over	0	599999999999	4	600000000001	600000000000	coreAck
+core	zero	below	below	max-negative	0	599999999999	4	0	-1	coreAck
+core	zero	below	below	max-over	0	599999999999	4	0	600000000001	coreAck
+core	zero	below	below	reversed	0	599999999999	4	20000000000	19999999999	coreAck
+core	zero	below	below	fractional	0	599999999999	4	1	10000000001	coreAck
+core	zero	below	min	omitted	0	599999999999	5	-	-	coreAck
+core	zero	below	min	zero	0	599999999999	5	0	0	coreAck
+core	zero	below	min	max	0	599999999999	5	600000000000	600000000000	coreAck
+core	zero	below	min	min-negative	0	599999999999	5	-1	0	coreAck
+core	zero	below	min	min-over	0	599999999999	5	600000000001	600000000000	coreAck
+core	zero	below	min	max-negative	0	599999999999	5	0	-1	coreAck
+core	zero	below	min	max-over	0	599999999999	5	0	600000000001	coreAck
+core	zero	below	min	reversed	0	599999999999	5	20000000000	19999999999	coreAck
+core	zero	below	min	fractional	0	599999999999	5	1	10000000001	coreAck
+core	zero	below	max	omitted	0	599999999999	100	-	-	coreAck
+core	zero	below	max	zero	0	599999999999	100	0	0	coreAck
+core	zero	below	max	max	0	599999999999	100	600000000000	600000000000	coreAck
+core	zero	below	max	min-negative	0	599999999999	100	-1	0	coreAck
+core	zero	below	max	min-over	0	599999999999	100	600000000001	600000000000	coreAck
+core	zero	below	max	max-negative	0	599999999999	100	0	-1	coreAck
+core	zero	below	max	max-over	0	599999999999	100	0	600000000001	coreAck
+core	zero	below	max	reversed	0	599999999999	100	20000000000	19999999999	coreAck
+core	zero	below	max	fractional	0	599999999999	100	1	10000000001	coreAck
+core	zero	below	over	omitted	0	599999999999	101	-	-	coreAck
+core	zero	below	over	zero	0	599999999999	101	0	0	coreAck
+core	zero	below	over	max	0	599999999999	101	600000000000	600000000000	coreAck
+core	zero	below	over	min-negative	0	599999999999	101	-1	0	coreAck
+core	zero	below	over	min-over	0	599999999999	101	600000000001	600000000000	coreAck
+core	zero	below	over	max-negative	0	599999999999	101	0	-1	coreAck
+core	zero	below	over	max-over	0	599999999999	101	0	600000000001	coreAck
+core	zero	below	over	reversed	0	599999999999	101	20000000000	19999999999	coreAck
+core	zero	below	over	fractional	0	599999999999	101	1	10000000001	coreAck
+production	zero	below	default	valid	0	599999999999	default	productionAck	599999999999
+production	zero	below	default	invalid	0	599999999999	default	productionAck	599999999999
+production	zero	below	never	valid	0	599999999999	never	productionAck	599999999999
+production	zero	below	never	invalid	0	599999999999	never	productionAck	599999999999
+production	zero	below	below	valid	0	599999999999	86399999999999	productionAck	599999999999
+production	zero	below	below	invalid	0	599999999999	86399999999999	productionAck	599999999999
+production	zero	below	day	valid	0	599999999999	86400000000000	productionAck	599999999999
+production	zero	below	day	invalid	0	599999999999	86400000000000	productionAck	599999999999
+production	zero	below	week-below	valid	0	599999999999	604799999999999	productionAck	599999999999
+production	zero	below	week-below	invalid	0	599999999999	604799999999999	productionAck	599999999999
+production	zero	below	week	valid	0	599999999999	604800000000000	productionAck	599999999999
+production	zero	below	week	invalid	0	599999999999	604800000000000	productionAck	599999999999
+production	zero	below	long	valid	0	599999999999	2678400000000001	productionAck	599999999999
+production	zero	below	long	invalid	0	599999999999	2678400000000001	productionAck	599999999999
+core	zero	min	omitted	omitted	0	600000000000	-	-	-	coreAck
+core	zero	min	omitted	zero	0	600000000000	-	0	0	coreAck
+core	zero	min	omitted	max	0	600000000000	-	600000000000	600000000000	coreAck
+core	zero	min	omitted	min-negative	0	600000000000	-	-1	0	coreAck
+core	zero	min	omitted	min-over	0	600000000000	-	600000000001	600000000000	coreAck
+core	zero	min	omitted	max-negative	0	600000000000	-	0	-1	coreAck
+core	zero	min	omitted	max-over	0	600000000000	-	0	600000000001	coreAck
+core	zero	min	omitted	reversed	0	600000000000	-	20000000000	19999999999	coreAck
+core	zero	min	omitted	fractional	0	600000000000	-	1	10000000001	coreAck
+core	zero	min	below	omitted	0	600000000000	4	-	-	coreAck
+core	zero	min	below	zero	0	600000000000	4	0	0	coreAck
+core	zero	min	below	max	0	600000000000	4	600000000000	600000000000	coreAck
+core	zero	min	below	min-negative	0	600000000000	4	-1	0	coreAck
+core	zero	min	below	min-over	0	600000000000	4	600000000001	600000000000	coreAck
+core	zero	min	below	max-negative	0	600000000000	4	0	-1	coreAck
+core	zero	min	below	max-over	0	600000000000	4	0	600000000001	coreAck
+core	zero	min	below	reversed	0	600000000000	4	20000000000	19999999999	coreAck
+core	zero	min	below	fractional	0	600000000000	4	1	10000000001	coreAck
+core	zero	min	min	omitted	0	600000000000	5	-	-	coreAck
+core	zero	min	min	zero	0	600000000000	5	0	0	coreAck
+core	zero	min	min	max	0	600000000000	5	600000000000	600000000000	coreAck
+core	zero	min	min	min-negative	0	600000000000	5	-1	0	coreAck
+core	zero	min	min	min-over	0	600000000000	5	600000000001	600000000000	coreAck
+core	zero	min	min	max-negative	0	600000000000	5	0	-1	coreAck
+core	zero	min	min	max-over	0	600000000000	5	0	600000000001	coreAck
+core	zero	min	min	reversed	0	600000000000	5	20000000000	19999999999	coreAck
+core	zero	min	min	fractional	0	600000000000	5	1	10000000001	coreAck
+core	zero	min	max	omitted	0	600000000000	100	-	-	coreAck
+core	zero	min	max	zero	0	600000000000	100	0	0	coreAck
+core	zero	min	max	max	0	600000000000	100	600000000000	600000000000	coreAck
+core	zero	min	max	min-negative	0	600000000000	100	-1	0	coreAck
+core	zero	min	max	min-over	0	600000000000	100	600000000001	600000000000	coreAck
+core	zero	min	max	max-negative	0	600000000000	100	0	-1	coreAck
+core	zero	min	max	max-over	0	600000000000	100	0	600000000001	coreAck
+core	zero	min	max	reversed	0	600000000000	100	20000000000	19999999999	coreAck
+core	zero	min	max	fractional	0	600000000000	100	1	10000000001	coreAck
+core	zero	min	over	omitted	0	600000000000	101	-	-	coreAck
+core	zero	min	over	zero	0	600000000000	101	0	0	coreAck
+core	zero	min	over	max	0	600000000000	101	600000000000	600000000000	coreAck
+core	zero	min	over	min-negative	0	600000000000	101	-1	0	coreAck
+core	zero	min	over	min-over	0	600000000000	101	600000000001	600000000000	coreAck
+core	zero	min	over	max-negative	0	600000000000	101	0	-1	coreAck
+core	zero	min	over	max-over	0	600000000000	101	0	600000000001	coreAck
+core	zero	min	over	reversed	0	600000000000	101	20000000000	19999999999	coreAck
+core	zero	min	over	fractional	0	600000000000	101	1	10000000001	coreAck
+production	zero	min	default	valid	0	600000000000	default	productionAck	600000000000
+production	zero	min	default	invalid	0	600000000000	default	productionAck	600000000000
+production	zero	min	never	valid	0	600000000000	never	productionAck	600000000000
+production	zero	min	never	invalid	0	600000000000	never	productionAck	600000000000
+production	zero	min	below	valid	0	600000000000	86399999999999	productionAck	600000000000
+production	zero	min	below	invalid	0	600000000000	86399999999999	productionAck	600000000000
+production	zero	min	day	valid	0	600000000000	86400000000000	productionAck	600000000000
+production	zero	min	day	invalid	0	600000000000	86400000000000	productionAck	600000000000
+production	zero	min	week-below	valid	0	600000000000	604799999999999	productionAck	600000000000
+production	zero	min	week-below	invalid	0	600000000000	604799999999999	productionAck	600000000000
+production	zero	min	week	valid	0	600000000000	604800000000000	productionAck	600000000000
+production	zero	min	week	invalid	0	600000000000	604800000000000	productionAck	600000000000
+production	zero	min	long	valid	0	600000000000	2678400000000001	productionAck	600000000000
+production	zero	min	long	invalid	0	600000000000	2678400000000001	productionAck	600000000000
+core	zero	week	omitted	omitted	0	604800000000000	-	-	-	coreAck
+core	zero	week	omitted	zero	0	604800000000000	-	0	0	coreAck
+core	zero	week	omitted	max	0	604800000000000	-	600000000000	600000000000	coreAck
+core	zero	week	omitted	min-negative	0	604800000000000	-	-1	0	coreAck
+core	zero	week	omitted	min-over	0	604800000000000	-	600000000001	600000000000	coreAck
+core	zero	week	omitted	max-negative	0	604800000000000	-	0	-1	coreAck
+core	zero	week	omitted	max-over	0	604800000000000	-	0	600000000001	coreAck
+core	zero	week	omitted	reversed	0	604800000000000	-	20000000000	19999999999	coreAck
+core	zero	week	omitted	fractional	0	604800000000000	-	1	10000000001	coreAck
+core	zero	week	below	omitted	0	604800000000000	4	-	-	coreAck
+core	zero	week	below	zero	0	604800000000000	4	0	0	coreAck
+core	zero	week	below	max	0	604800000000000	4	600000000000	600000000000	coreAck
+core	zero	week	below	min-negative	0	604800000000000	4	-1	0	coreAck
+core	zero	week	below	min-over	0	604800000000000	4	600000000001	600000000000	coreAck
+core	zero	week	below	max-negative	0	604800000000000	4	0	-1	coreAck
+core	zero	week	below	max-over	0	604800000000000	4	0	600000000001	coreAck
+core	zero	week	below	reversed	0	604800000000000	4	20000000000	19999999999	coreAck
+core	zero	week	below	fractional	0	604800000000000	4	1	10000000001	coreAck
+core	zero	week	min	omitted	0	604800000000000	5	-	-	coreAck
+core	zero	week	min	zero	0	604800000000000	5	0	0	coreAck
+core	zero	week	min	max	0	604800000000000	5	600000000000	600000000000	coreAck
+core	zero	week	min	min-negative	0	604800000000000	5	-1	0	coreAck
+core	zero	week	min	min-over	0	604800000000000	5	600000000001	600000000000	coreAck
+core	zero	week	min	max-negative	0	604800000000000	5	0	-1	coreAck
+core	zero	week	min	max-over	0	604800000000000	5	0	600000000001	coreAck
+core	zero	week	min	reversed	0	604800000000000	5	20000000000	19999999999	coreAck
+core	zero	week	min	fractional	0	604800000000000	5	1	10000000001	coreAck
+core	zero	week	max	omitted	0	604800000000000	100	-	-	coreAck
+core	zero	week	max	zero	0	604800000000000	100	0	0	coreAck
+core	zero	week	max	max	0	604800000000000	100	600000000000	600000000000	coreAck
+core	zero	week	max	min-negative	0	604800000000000	100	-1	0	coreAck
+core	zero	week	max	min-over	0	604800000000000	100	600000000001	600000000000	coreAck
+core	zero	week	max	max-negative	0	604800000000000	100	0	-1	coreAck
+core	zero	week	max	max-over	0	604800000000000	100	0	600000000001	coreAck
+core	zero	week	max	reversed	0	604800000000000	100	20000000000	19999999999	coreAck
+core	zero	week	max	fractional	0	604800000000000	100	1	10000000001	coreAck
+core	zero	week	over	omitted	0	604800000000000	101	-	-	coreAck
+core	zero	week	over	zero	0	604800000000000	101	0	0	coreAck
+core	zero	week	over	max	0	604800000000000	101	600000000000	600000000000	coreAck
+core	zero	week	over	min-negative	0	604800000000000	101	-1	0	coreAck
+core	zero	week	over	min-over	0	604800000000000	101	600000000001	600000000000	coreAck
+core	zero	week	over	max-negative	0	604800000000000	101	0	-1	coreAck
+core	zero	week	over	max-over	0	604800000000000	101	0	600000000001	coreAck
+core	zero	week	over	reversed	0	604800000000000	101	20000000000	19999999999	coreAck
+core	zero	week	over	fractional	0	604800000000000	101	1	10000000001	coreAck
+production	zero	week	default	valid	0	604800000000000	default	productionAck	604800000000000
+production	zero	week	default	invalid	0	604800000000000	default	productionAck	604800000000000
+production	zero	week	never	valid	0	604800000000000	never	productionAck	604800000000000
+production	zero	week	never	invalid	0	604800000000000	never	productionAck	604800000000000
+production	zero	week	below	valid	0	604800000000000	86399999999999	productionAck	604800000000000
+production	zero	week	below	invalid	0	604800000000000	86399999999999	productionAck	604800000000000
+production	zero	week	day	valid	0	604800000000000	86400000000000	productionAck	604800000000000
+production	zero	week	day	invalid	0	604800000000000	86400000000000	productionAck	604800000000000
+production	zero	week	week-below	valid	0	604800000000000	604799999999999	productionAck	604800000000000
+production	zero	week	week-below	invalid	0	604800000000000	604799999999999	productionAck	604800000000000
+production	zero	week	week	valid	0	604800000000000	604800000000000	productionAck	604800000000000
+production	zero	week	week	invalid	0	604800000000000	604800000000000	productionAck	604800000000000
+production	zero	week	long	valid	0	604800000000000	2678400000000001	productionAck	604800000000000
+production	zero	week	long	invalid	0	604800000000000	2678400000000001	productionAck	604800000000000
+core	zero	max	omitted	omitted	0	2678400000000000	-	-	-	coreAck
+core	zero	max	omitted	zero	0	2678400000000000	-	0	0	coreAck
+core	zero	max	omitted	max	0	2678400000000000	-	600000000000	600000000000	coreAck
+core	zero	max	omitted	min-negative	0	2678400000000000	-	-1	0	coreAck
+core	zero	max	omitted	min-over	0	2678400000000000	-	600000000001	600000000000	coreAck
+core	zero	max	omitted	max-negative	0	2678400000000000	-	0	-1	coreAck
+core	zero	max	omitted	max-over	0	2678400000000000	-	0	600000000001	coreAck
+core	zero	max	omitted	reversed	0	2678400000000000	-	20000000000	19999999999	coreAck
+core	zero	max	omitted	fractional	0	2678400000000000	-	1	10000000001	coreAck
+core	zero	max	below	omitted	0	2678400000000000	4	-	-	coreAck
+core	zero	max	below	zero	0	2678400000000000	4	0	0	coreAck
+core	zero	max	below	max	0	2678400000000000	4	600000000000	600000000000	coreAck
+core	zero	max	below	min-negative	0	2678400000000000	4	-1	0	coreAck
+core	zero	max	below	min-over	0	2678400000000000	4	600000000001	600000000000	coreAck
+core	zero	max	below	max-negative	0	2678400000000000	4	0	-1	coreAck
+core	zero	max	below	max-over	0	2678400000000000	4	0	600000000001	coreAck
+core	zero	max	below	reversed	0	2678400000000000	4	20000000000	19999999999	coreAck
+core	zero	max	below	fractional	0	2678400000000000	4	1	10000000001	coreAck
+core	zero	max	min	omitted	0	2678400000000000	5	-	-	coreAck
+core	zero	max	min	zero	0	2678400000000000	5	0	0	coreAck
+core	zero	max	min	max	0	2678400000000000	5	600000000000	600000000000	coreAck
+core	zero	max	min	min-negative	0	2678400000000000	5	-1	0	coreAck
+core	zero	max	min	min-over	0	2678400000000000	5	600000000001	600000000000	coreAck
+core	zero	max	min	max-negative	0	2678400000000000	5	0	-1	coreAck
+core	zero	max	min	max-over	0	2678400000000000	5	0	600000000001	coreAck
+core	zero	max	min	reversed	0	2678400000000000	5	20000000000	19999999999	coreAck
+core	zero	max	min	fractional	0	2678400000000000	5	1	10000000001	coreAck
+core	zero	max	max	omitted	0	2678400000000000	100	-	-	coreAck
+core	zero	max	max	zero	0	2678400000000000	100	0	0	coreAck
+core	zero	max	max	max	0	2678400000000000	100	600000000000	600000000000	coreAck
+core	zero	max	max	min-negative	0	2678400000000000	100	-1	0	coreAck
+core	zero	max	max	min-over	0	2678400000000000	100	600000000001	600000000000	coreAck
+core	zero	max	max	max-negative	0	2678400000000000	100	0	-1	coreAck
+core	zero	max	max	max-over	0	2678400000000000	100	0	600000000001	coreAck
+core	zero	max	max	reversed	0	2678400000000000	100	20000000000	19999999999	coreAck
+core	zero	max	max	fractional	0	2678400000000000	100	1	10000000001	coreAck
+core	zero	max	over	omitted	0	2678400000000000	101	-	-	coreAck
+core	zero	max	over	zero	0	2678400000000000	101	0	0	coreAck
+core	zero	max	over	max	0	2678400000000000	101	600000000000	600000000000	coreAck
+core	zero	max	over	min-negative	0	2678400000000000	101	-1	0	coreAck
+core	zero	max	over	min-over	0	2678400000000000	101	600000000001	600000000000	coreAck
+core	zero	max	over	max-negative	0	2678400000000000	101	0	-1	coreAck
+core	zero	max	over	max-over	0	2678400000000000	101	0	600000000001	coreAck
+core	zero	max	over	reversed	0	2678400000000000	101	20000000000	19999999999	coreAck
+core	zero	max	over	fractional	0	2678400000000000	101	1	10000000001	coreAck
+production	zero	max	default	valid	0	2678400000000000	default	productionAck	2678400000000000
+production	zero	max	default	invalid	0	2678400000000000	default	productionAck	2678400000000000
+production	zero	max	never	valid	0	2678400000000000	never	productionAck	2678400000000000
+production	zero	max	never	invalid	0	2678400000000000	never	productionAck	2678400000000000
+production	zero	max	below	valid	0	2678400000000000	86399999999999	productionAck	2678400000000000
+production	zero	max	below	invalid	0	2678400000000000	86399999999999	productionAck	2678400000000000
+production	zero	max	day	valid	0	2678400000000000	86400000000000	productionAck	2678400000000000
+production	zero	max	day	invalid	0	2678400000000000	86400000000000	productionAck	2678400000000000
+production	zero	max	week-below	valid	0	2678400000000000	604799999999999	productionAck	2678400000000000
+production	zero	max	week-below	invalid	0	2678400000000000	604799999999999	productionAck	2678400000000000
+production	zero	max	week	valid	0	2678400000000000	604800000000000	productionAck	2678400000000000
+production	zero	max	week	invalid	0	2678400000000000	604800000000000	productionAck	2678400000000000
+production	zero	max	long	valid	0	2678400000000000	2678400000000001	productionAck	2678400000000000
+production	zero	max	long	invalid	0	2678400000000000	2678400000000001	productionAck	2678400000000000
+core	zero	over	omitted	omitted	0	2678400000000001	-	-	-	coreAck
+core	zero	over	omitted	zero	0	2678400000000001	-	0	0	coreAck
+core	zero	over	omitted	max	0	2678400000000001	-	600000000000	600000000000	coreAck
+core	zero	over	omitted	min-negative	0	2678400000000001	-	-1	0	coreAck
+core	zero	over	omitted	min-over	0	2678400000000001	-	600000000001	600000000000	coreAck
+core	zero	over	omitted	max-negative	0	2678400000000001	-	0	-1	coreAck
+core	zero	over	omitted	max-over	0	2678400000000001	-	0	600000000001	coreAck
+core	zero	over	omitted	reversed	0	2678400000000001	-	20000000000	19999999999	coreAck
+core	zero	over	omitted	fractional	0	2678400000000001	-	1	10000000001	coreAck
+core	zero	over	below	omitted	0	2678400000000001	4	-	-	coreAck
+core	zero	over	below	zero	0	2678400000000001	4	0	0	coreAck
+core	zero	over	below	max	0	2678400000000001	4	600000000000	600000000000	coreAck
+core	zero	over	below	min-negative	0	2678400000000001	4	-1	0	coreAck
+core	zero	over	below	min-over	0	2678400000000001	4	600000000001	600000000000	coreAck
+core	zero	over	below	max-negative	0	2678400000000001	4	0	-1	coreAck
+core	zero	over	below	max-over	0	2678400000000001	4	0	600000000001	coreAck
+core	zero	over	below	reversed	0	2678400000000001	4	20000000000	19999999999	coreAck
+core	zero	over	below	fractional	0	2678400000000001	4	1	10000000001	coreAck
+core	zero	over	min	omitted	0	2678400000000001	5	-	-	coreAck
+core	zero	over	min	zero	0	2678400000000001	5	0	0	coreAck
+core	zero	over	min	max	0	2678400000000001	5	600000000000	600000000000	coreAck
+core	zero	over	min	min-negative	0	2678400000000001	5	-1	0	coreAck
+core	zero	over	min	min-over	0	2678400000000001	5	600000000001	600000000000	coreAck
+core	zero	over	min	max-negative	0	2678400000000001	5	0	-1	coreAck
+core	zero	over	min	max-over	0	2678400000000001	5	0	600000000001	coreAck
+core	zero	over	min	reversed	0	2678400000000001	5	20000000000	19999999999	coreAck
+core	zero	over	min	fractional	0	2678400000000001	5	1	10000000001	coreAck
+core	zero	over	max	omitted	0	2678400000000001	100	-	-	coreAck
+core	zero	over	max	zero	0	2678400000000001	100	0	0	coreAck
+core	zero	over	max	max	0	2678400000000001	100	600000000000	600000000000	coreAck
+core	zero	over	max	min-negative	0	2678400000000001	100	-1	0	coreAck
+core	zero	over	max	min-over	0	2678400000000001	100	600000000001	600000000000	coreAck
+core	zero	over	max	max-negative	0	2678400000000001	100	0	-1	coreAck
+core	zero	over	max	max-over	0	2678400000000001	100	0	600000000001	coreAck
+core	zero	over	max	reversed	0	2678400000000001	100	20000000000	19999999999	coreAck
+core	zero	over	max	fractional	0	2678400000000001	100	1	10000000001	coreAck
+core	zero	over	over	omitted	0	2678400000000001	101	-	-	coreAck
+core	zero	over	over	zero	0	2678400000000001	101	0	0	coreAck
+core	zero	over	over	max	0	2678400000000001	101	600000000000	600000000000	coreAck
+core	zero	over	over	min-negative	0	2678400000000001	101	-1	0	coreAck
+core	zero	over	over	min-over	0	2678400000000001	101	600000000001	600000000000	coreAck
+core	zero	over	over	max-negative	0	2678400000000001	101	0	-1	coreAck
+core	zero	over	over	max-over	0	2678400000000001	101	0	600000000001	coreAck
+core	zero	over	over	reversed	0	2678400000000001	101	20000000000	19999999999	coreAck
+core	zero	over	over	fractional	0	2678400000000001	101	1	10000000001	coreAck
+production	zero	over	default	valid	0	2678400000000001	default	productionAck	2678400000000001
+production	zero	over	default	invalid	0	2678400000000001	default	productionAck	2678400000000001
+production	zero	over	never	valid	0	2678400000000001	never	productionAck	2678400000000001
+production	zero	over	never	invalid	0	2678400000000001	never	productionAck	2678400000000001
+production	zero	over	below	valid	0	2678400000000001	86399999999999	productionAck	2678400000000001
+production	zero	over	below	invalid	0	2678400000000001	86399999999999	productionAck	2678400000000001
+production	zero	over	day	valid	0	2678400000000001	86400000000000	productionAck	2678400000000001
+production	zero	over	day	invalid	0	2678400000000001	86400000000000	productionAck	2678400000000001
+production	zero	over	week-below	valid	0	2678400000000001	604799999999999	productionAck	2678400000000001
+production	zero	over	week-below	invalid	0	2678400000000001	604799999999999	productionAck	2678400000000001
+production	zero	over	week	valid	0	2678400000000001	604800000000000	productionAck	2678400000000001
+production	zero	over	week	invalid	0	2678400000000001	604800000000000	productionAck	2678400000000001
+production	zero	over	long	valid	0	2678400000000001	2678400000000001	productionAck	2678400000000001
+production	zero	over	long	invalid	0	2678400000000001	2678400000000001	productionAck	2678400000000001
+core	core-min	omitted	omitted	omitted	1	-	-	-	-	ok
+core	core-min	omitted	omitted	zero	1	-	-	0	0	ok
+core	core-min	omitted	omitted	max	1	-	-	600000000000	600000000000	ok
+core	core-min	omitted	omitted	min-negative	1	-	-	-1	0	retryMin
+core	core-min	omitted	omitted	min-over	1	-	-	600000000001	600000000000	retryMin
+core	core-min	omitted	omitted	max-negative	1	-	-	0	-1	retryMax
+core	core-min	omitted	omitted	max-over	1	-	-	0	600000000001	retryMax
+core	core-min	omitted	omitted	reversed	1	-	-	20000000000	19999999999	retryOrder
+core	core-min	omitted	omitted	fractional	1	-	-	1	10000000001	ok
+core	core-min	omitted	below	omitted	1	-	4	-	-	deadLow
+core	core-min	omitted	below	zero	1	-	4	0	0	deadLow
+core	core-min	omitted	below	max	1	-	4	600000000000	600000000000	deadLow
+core	core-min	omitted	below	min-negative	1	-	4	-1	0	deadLow
+core	core-min	omitted	below	min-over	1	-	4	600000000001	600000000000	deadLow
+core	core-min	omitted	below	max-negative	1	-	4	0	-1	deadLow
+core	core-min	omitted	below	max-over	1	-	4	0	600000000001	deadLow
+core	core-min	omitted	below	reversed	1	-	4	20000000000	19999999999	deadLow
+core	core-min	omitted	below	fractional	1	-	4	1	10000000001	deadLow
+core	core-min	omitted	min	omitted	1	-	5	-	-	ok
+core	core-min	omitted	min	zero	1	-	5	0	0	ok
+core	core-min	omitted	min	max	1	-	5	600000000000	600000000000	ok
+core	core-min	omitted	min	min-negative	1	-	5	-1	0	retryMin
+core	core-min	omitted	min	min-over	1	-	5	600000000001	600000000000	retryMin
+core	core-min	omitted	min	max-negative	1	-	5	0	-1	retryMax
+core	core-min	omitted	min	max-over	1	-	5	0	600000000001	retryMax
+core	core-min	omitted	min	reversed	1	-	5	20000000000	19999999999	retryOrder
+core	core-min	omitted	min	fractional	1	-	5	1	10000000001	ok
+core	core-min	omitted	max	omitted	1	-	100	-	-	ok
+core	core-min	omitted	max	zero	1	-	100	0	0	ok
+core	core-min	omitted	max	max	1	-	100	600000000000	600000000000	ok
+core	core-min	omitted	max	min-negative	1	-	100	-1	0	retryMin
+core	core-min	omitted	max	min-over	1	-	100	600000000001	600000000000	retryMin
+core	core-min	omitted	max	max-negative	1	-	100	0	-1	retryMax
+core	core-min	omitted	max	max-over	1	-	100	0	600000000001	retryMax
+core	core-min	omitted	max	reversed	1	-	100	20000000000	19999999999	retryOrder
+core	core-min	omitted	max	fractional	1	-	100	1	10000000001	ok
+core	core-min	omitted	over	omitted	1	-	101	-	-	deadHigh
+core	core-min	omitted	over	zero	1	-	101	0	0	deadHigh
+core	core-min	omitted	over	max	1	-	101	600000000000	600000000000	deadHigh
+core	core-min	omitted	over	min-negative	1	-	101	-1	0	deadHigh
+core	core-min	omitted	over	min-over	1	-	101	600000000001	600000000000	deadHigh
+core	core-min	omitted	over	max-negative	1	-	101	0	-1	deadHigh
+core	core-min	omitted	over	max-over	1	-	101	0	600000000001	deadHigh
+core	core-min	omitted	over	reversed	1	-	101	20000000000	19999999999	deadHigh
+core	core-min	omitted	over	fractional	1	-	101	1	10000000001	deadHigh
+production	core-min	omitted	default	valid	1	-	default	productionAck	604800000000000
+production	core-min	omitted	default	invalid	1	-	default	productionAck	604800000000000
+production	core-min	omitted	never	valid	1	-	never	productionAck	604800000000000
+production	core-min	omitted	never	invalid	1	-	never	productionAck	604800000000000
+production	core-min	omitted	below	valid	1	-	86399999999999	productionAck	604800000000000
+production	core-min	omitted	below	invalid	1	-	86399999999999	productionAck	604800000000000
+production	core-min	omitted	day	valid	1	-	86400000000000	productionAck	604800000000000
+production	core-min	omitted	day	invalid	1	-	86400000000000	productionAck	604800000000000
+production	core-min	omitted	week-below	valid	1	-	604799999999999	productionAck	604800000000000
+production	core-min	omitted	week-below	invalid	1	-	604799999999999	productionAck	604800000000000
+production	core-min	omitted	week	valid	1	-	604800000000000	productionAck	604800000000000
+production	core-min	omitted	week	invalid	1	-	604800000000000	productionAck	604800000000000
+production	core-min	omitted	long	valid	1	-	2678400000000001	productionAck	604800000000000
+production	core-min	omitted	long	invalid	1	-	2678400000000001	productionAck	604800000000000
+core	core-min	zero	omitted	omitted	1	0	-	-	-	retention
+core	core-min	zero	omitted	zero	1	0	-	0	0	retention
+core	core-min	zero	omitted	max	1	0	-	600000000000	600000000000	retention
+core	core-min	zero	omitted	min-negative	1	0	-	-1	0	retention
+core	core-min	zero	omitted	min-over	1	0	-	600000000001	600000000000	retention
+core	core-min	zero	omitted	max-negative	1	0	-	0	-1	retention
+core	core-min	zero	omitted	max-over	1	0	-	0	600000000001	retention
+core	core-min	zero	omitted	reversed	1	0	-	20000000000	19999999999	retention
+core	core-min	zero	omitted	fractional	1	0	-	1	10000000001	retention
+core	core-min	zero	below	omitted	1	0	4	-	-	retention
+core	core-min	zero	below	zero	1	0	4	0	0	retention
+core	core-min	zero	below	max	1	0	4	600000000000	600000000000	retention
+core	core-min	zero	below	min-negative	1	0	4	-1	0	retention
+core	core-min	zero	below	min-over	1	0	4	600000000001	600000000000	retention
+core	core-min	zero	below	max-negative	1	0	4	0	-1	retention
+core	core-min	zero	below	max-over	1	0	4	0	600000000001	retention
+core	core-min	zero	below	reversed	1	0	4	20000000000	19999999999	retention
+core	core-min	zero	below	fractional	1	0	4	1	10000000001	retention
+core	core-min	zero	min	omitted	1	0	5	-	-	retention
+core	core-min	zero	min	zero	1	0	5	0	0	retention
+core	core-min	zero	min	max	1	0	5	600000000000	600000000000	retention
+core	core-min	zero	min	min-negative	1	0	5	-1	0	retention
+core	core-min	zero	min	min-over	1	0	5	600000000001	600000000000	retention
+core	core-min	zero	min	max-negative	1	0	5	0	-1	retention
+core	core-min	zero	min	max-over	1	0	5	0	600000000001	retention
+core	core-min	zero	min	reversed	1	0	5	20000000000	19999999999	retention
+core	core-min	zero	min	fractional	1	0	5	1	10000000001	retention
+core	core-min	zero	max	omitted	1	0	100	-	-	retention
+core	core-min	zero	max	zero	1	0	100	0	0	retention
+core	core-min	zero	max	max	1	0	100	600000000000	600000000000	retention
+core	core-min	zero	max	min-negative	1	0	100	-1	0	retention
+core	core-min	zero	max	min-over	1	0	100	600000000001	600000000000	retention
+core	core-min	zero	max	max-negative	1	0	100	0	-1	retention
+core	core-min	zero	max	max-over	1	0	100	0	600000000001	retention
+core	core-min	zero	max	reversed	1	0	100	20000000000	19999999999	retention
+core	core-min	zero	max	fractional	1	0	100	1	10000000001	retention
+core	core-min	zero	over	omitted	1	0	101	-	-	retention
+core	core-min	zero	over	zero	1	0	101	0	0	retention
+core	core-min	zero	over	max	1	0	101	600000000000	600000000000	retention
+core	core-min	zero	over	min-negative	1	0	101	-1	0	retention
+core	core-min	zero	over	min-over	1	0	101	600000000001	600000000000	retention
+core	core-min	zero	over	max-negative	1	0	101	0	-1	retention
+core	core-min	zero	over	max-over	1	0	101	0	600000000001	retention
+core	core-min	zero	over	reversed	1	0	101	20000000000	19999999999	retention
+core	core-min	zero	over	fractional	1	0	101	1	10000000001	retention
+production	core-min	zero	default	valid	1	0	default	productionAck	0
+production	core-min	zero	default	invalid	1	0	default	productionAck	0
+production	core-min	zero	never	valid	1	0	never	productionAck	0
+production	core-min	zero	never	invalid	1	0	never	productionAck	0
+production	core-min	zero	below	valid	1	0	86399999999999	productionAck	0
+production	core-min	zero	below	invalid	1	0	86399999999999	productionAck	0
+production	core-min	zero	day	valid	1	0	86400000000000	productionAck	0
+production	core-min	zero	day	invalid	1	0	86400000000000	productionAck	0
+production	core-min	zero	week-below	valid	1	0	604799999999999	productionAck	0
+production	core-min	zero	week-below	invalid	1	0	604799999999999	productionAck	0
+production	core-min	zero	week	valid	1	0	604800000000000	productionAck	0
+production	core-min	zero	week	invalid	1	0	604800000000000	productionAck	0
+production	core-min	zero	long	valid	1	0	2678400000000001	productionAck	0
+production	core-min	zero	long	invalid	1	0	2678400000000001	productionAck	0
+core	core-min	below	omitted	omitted	1	599999999999	-	-	-	retention
+core	core-min	below	omitted	zero	1	599999999999	-	0	0	retention
+core	core-min	below	omitted	max	1	599999999999	-	600000000000	600000000000	retention
+core	core-min	below	omitted	min-negative	1	599999999999	-	-1	0	retention
+core	core-min	below	omitted	min-over	1	599999999999	-	600000000001	600000000000	retention
+core	core-min	below	omitted	max-negative	1	599999999999	-	0	-1	retention
+core	core-min	below	omitted	max-over	1	599999999999	-	0	600000000001	retention
+core	core-min	below	omitted	reversed	1	599999999999	-	20000000000	19999999999	retention
+core	core-min	below	omitted	fractional	1	599999999999	-	1	10000000001	retention
+core	core-min	below	below	omitted	1	599999999999	4	-	-	retention
+core	core-min	below	below	zero	1	599999999999	4	0	0	retention
+core	core-min	below	below	max	1	599999999999	4	600000000000	600000000000	retention
+core	core-min	below	below	min-negative	1	599999999999	4	-1	0	retention
+core	core-min	below	below	min-over	1	599999999999	4	600000000001	600000000000	retention
+core	core-min	below	below	max-negative	1	599999999999	4	0	-1	retention
+core	core-min	below	below	max-over	1	599999999999	4	0	600000000001	retention
+core	core-min	below	below	reversed	1	599999999999	4	20000000000	19999999999	retention
+core	core-min	below	below	fractional	1	599999999999	4	1	10000000001	retention
+core	core-min	below	min	omitted	1	599999999999	5	-	-	retention
+core	core-min	below	min	zero	1	599999999999	5	0	0	retention
+core	core-min	below	min	max	1	599999999999	5	600000000000	600000000000	retention
+core	core-min	below	min	min-negative	1	599999999999	5	-1	0	retention
+core	core-min	below	min	min-over	1	599999999999	5	600000000001	600000000000	retention
+core	core-min	below	min	max-negative	1	599999999999	5	0	-1	retention
+core	core-min	below	min	max-over	1	599999999999	5	0	600000000001	retention
+core	core-min	below	min	reversed	1	599999999999	5	20000000000	19999999999	retention
+core	core-min	below	min	fractional	1	599999999999	5	1	10000000001	retention
+core	core-min	below	max	omitted	1	599999999999	100	-	-	retention
+core	core-min	below	max	zero	1	599999999999	100	0	0	retention
+core	core-min	below	max	max	1	599999999999	100	600000000000	600000000000	retention
+core	core-min	below	max	min-negative	1	599999999999	100	-1	0	retention
+core	core-min	below	max	min-over	1	599999999999	100	600000000001	600000000000	retention
+core	core-min	below	max	max-negative	1	599999999999	100	0	-1	retention
+core	core-min	below	max	max-over	1	599999999999	100	0	600000000001	retention
+core	core-min	below	max	reversed	1	599999999999	100	20000000000	19999999999	retention
+core	core-min	below	max	fractional	1	599999999999	100	1	10000000001	retention
+core	core-min	below	over	omitted	1	599999999999	101	-	-	retention
+core	core-min	below	over	zero	1	599999999999	101	0	0	retention
+core	core-min	below	over	max	1	599999999999	101	600000000000	600000000000	retention
+core	core-min	below	over	min-negative	1	599999999999	101	-1	0	retention
+core	core-min	below	over	min-over	1	599999999999	101	600000000001	600000000000	retention
+core	core-min	below	over	max-negative	1	599999999999	101	0	-1	retention
+core	core-min	below	over	max-over	1	599999999999	101	0	600000000001	retention
+core	core-min	below	over	reversed	1	599999999999	101	20000000000	19999999999	retention
+core	core-min	below	over	fractional	1	599999999999	101	1	10000000001	retention
+production	core-min	below	default	valid	1	599999999999	default	productionAck	599999999999
+production	core-min	below	default	invalid	1	599999999999	default	productionAck	599999999999
+production	core-min	below	never	valid	1	599999999999	never	productionAck	599999999999
+production	core-min	below	never	invalid	1	599999999999	never	productionAck	599999999999
+production	core-min	below	below	valid	1	599999999999	86399999999999	productionAck	599999999999
+production	core-min	below	below	invalid	1	599999999999	86399999999999	productionAck	599999999999
+production	core-min	below	day	valid	1	599999999999	86400000000000	productionAck	599999999999
+production	core-min	below	day	invalid	1	599999999999	86400000000000	productionAck	599999999999
+production	core-min	below	week-below	valid	1	599999999999	604799999999999	productionAck	599999999999
+production	core-min	below	week-below	invalid	1	599999999999	604799999999999	productionAck	599999999999
+production	core-min	below	week	valid	1	599999999999	604800000000000	productionAck	599999999999
+production	core-min	below	week	invalid	1	599999999999	604800000000000	productionAck	599999999999
+production	core-min	below	long	valid	1	599999999999	2678400000000001	productionAck	599999999999
+production	core-min	below	long	invalid	1	599999999999	2678400000000001	productionAck	599999999999
+core	core-min	min	omitted	omitted	1	600000000000	-	-	-	ok
+core	core-min	min	omitted	zero	1	600000000000	-	0	0	ok
+core	core-min	min	omitted	max	1	600000000000	-	600000000000	600000000000	ok
+core	core-min	min	omitted	min-negative	1	600000000000	-	-1	0	retryMin
+core	core-min	min	omitted	min-over	1	600000000000	-	600000000001	600000000000	retryMin
+core	core-min	min	omitted	max-negative	1	600000000000	-	0	-1	retryMax
+core	core-min	min	omitted	max-over	1	600000000000	-	0	600000000001	retryMax
+core	core-min	min	omitted	reversed	1	600000000000	-	20000000000	19999999999	retryOrder
+core	core-min	min	omitted	fractional	1	600000000000	-	1	10000000001	ok
+core	core-min	min	below	omitted	1	600000000000	4	-	-	deadLow
+core	core-min	min	below	zero	1	600000000000	4	0	0	deadLow
+core	core-min	min	below	max	1	600000000000	4	600000000000	600000000000	deadLow
+core	core-min	min	below	min-negative	1	600000000000	4	-1	0	deadLow
+core	core-min	min	below	min-over	1	600000000000	4	600000000001	600000000000	deadLow
+core	core-min	min	below	max-negative	1	600000000000	4	0	-1	deadLow
+core	core-min	min	below	max-over	1	600000000000	4	0	600000000001	deadLow
+core	core-min	min	below	reversed	1	600000000000	4	20000000000	19999999999	deadLow
+core	core-min	min	below	fractional	1	600000000000	4	1	10000000001	deadLow
+core	core-min	min	min	omitted	1	600000000000	5	-	-	ok
+core	core-min	min	min	zero	1	600000000000	5	0	0	ok
+core	core-min	min	min	max	1	600000000000	5	600000000000	600000000000	ok
+core	core-min	min	min	min-negative	1	600000000000	5	-1	0	retryMin
+core	core-min	min	min	min-over	1	600000000000	5	600000000001	600000000000	retryMin
+core	core-min	min	min	max-negative	1	600000000000	5	0	-1	retryMax
+core	core-min	min	min	max-over	1	600000000000	5	0	600000000001	retryMax
+core	core-min	min	min	reversed	1	600000000000	5	20000000000	19999999999	retryOrder
+core	core-min	min	min	fractional	1	600000000000	5	1	10000000001	ok
+core	core-min	min	max	omitted	1	600000000000	100	-	-	ok
+core	core-min	min	max	zero	1	600000000000	100	0	0	ok
+core	core-min	min	max	max	1	600000000000	100	600000000000	600000000000	ok
+core	core-min	min	max	min-negative	1	600000000000	100	-1	0	retryMin
+core	core-min	min	max	min-over	1	600000000000	100	600000000001	600000000000	retryMin
+core	core-min	min	max	max-negative	1	600000000000	100	0	-1	retryMax
+core	core-min	min	max	max-over	1	600000000000	100	0	600000000001	retryMax
+core	core-min	min	max	reversed	1	600000000000	100	20000000000	19999999999	retryOrder
+core	core-min	min	max	fractional	1	600000000000	100	1	10000000001	ok
+core	core-min	min	over	omitted	1	600000000000	101	-	-	deadHigh
+core	core-min	min	over	zero	1	600000000000	101	0	0	deadHigh
+core	core-min	min	over	max	1	600000000000	101	600000000000	600000000000	deadHigh
+core	core-min	min	over	min-negative	1	600000000000	101	-1	0	deadHigh
+core	core-min	min	over	min-over	1	600000000000	101	600000000001	600000000000	deadHigh
+core	core-min	min	over	max-negative	1	600000000000	101	0	-1	deadHigh
+core	core-min	min	over	max-over	1	600000000000	101	0	600000000001	deadHigh
+core	core-min	min	over	reversed	1	600000000000	101	20000000000	19999999999	deadHigh
+core	core-min	min	over	fractional	1	600000000000	101	1	10000000001	deadHigh
+production	core-min	min	default	valid	1	600000000000	default	productionAck	600000000000
+production	core-min	min	default	invalid	1	600000000000	default	productionAck	600000000000
+production	core-min	min	never	valid	1	600000000000	never	productionAck	600000000000
+production	core-min	min	never	invalid	1	600000000000	never	productionAck	600000000000
+production	core-min	min	below	valid	1	600000000000	86399999999999	productionAck	600000000000
+production	core-min	min	below	invalid	1	600000000000	86399999999999	productionAck	600000000000
+production	core-min	min	day	valid	1	600000000000	86400000000000	productionAck	600000000000
+production	core-min	min	day	invalid	1	600000000000	86400000000000	productionAck	600000000000
+production	core-min	min	week-below	valid	1	600000000000	604799999999999	productionAck	600000000000
+production	core-min	min	week-below	invalid	1	600000000000	604799999999999	productionAck	600000000000
+production	core-min	min	week	valid	1	600000000000	604800000000000	productionAck	600000000000
+production	core-min	min	week	invalid	1	600000000000	604800000000000	productionAck	600000000000
+production	core-min	min	long	valid	1	600000000000	2678400000000001	productionAck	600000000000
+production	core-min	min	long	invalid	1	600000000000	2678400000000001	productionAck	600000000000
+core	core-min	week	omitted	omitted	1	604800000000000	-	-	-	ok
+core	core-min	week	omitted	zero	1	604800000000000	-	0	0	ok
+core	core-min	week	omitted	max	1	604800000000000	-	600000000000	600000000000	ok
+core	core-min	week	omitted	min-negative	1	604800000000000	-	-1	0	retryMin
+core	core-min	week	omitted	min-over	1	604800000000000	-	600000000001	600000000000	retryMin
+core	core-min	week	omitted	max-negative	1	604800000000000	-	0	-1	retryMax
+core	core-min	week	omitted	max-over	1	604800000000000	-	0	600000000001	retryMax
+core	core-min	week	omitted	reversed	1	604800000000000	-	20000000000	19999999999	retryOrder
+core	core-min	week	omitted	fractional	1	604800000000000	-	1	10000000001	ok
+core	core-min	week	below	omitted	1	604800000000000	4	-	-	deadLow
+core	core-min	week	below	zero	1	604800000000000	4	0	0	deadLow
+core	core-min	week	below	max	1	604800000000000	4	600000000000	600000000000	deadLow
+core	core-min	week	below	min-negative	1	604800000000000	4	-1	0	deadLow
+core	core-min	week	below	min-over	1	604800000000000	4	600000000001	600000000000	deadLow
+core	core-min	week	below	max-negative	1	604800000000000	4	0	-1	deadLow
+core	core-min	week	below	max-over	1	604800000000000	4	0	600000000001	deadLow
+core	core-min	week	below	reversed	1	604800000000000	4	20000000000	19999999999	deadLow
+core	core-min	week	below	fractional	1	604800000000000	4	1	10000000001	deadLow
+core	core-min	week	min	omitted	1	604800000000000	5	-	-	ok
+core	core-min	week	min	zero	1	604800000000000	5	0	0	ok
+core	core-min	week	min	max	1	604800000000000	5	600000000000	600000000000	ok
+core	core-min	week	min	min-negative	1	604800000000000	5	-1	0	retryMin
+core	core-min	week	min	min-over	1	604800000000000	5	600000000001	600000000000	retryMin
+core	core-min	week	min	max-negative	1	604800000000000	5	0	-1	retryMax
+core	core-min	week	min	max-over	1	604800000000000	5	0	600000000001	retryMax
+core	core-min	week	min	reversed	1	604800000000000	5	20000000000	19999999999	retryOrder
+core	core-min	week	min	fractional	1	604800000000000	5	1	10000000001	ok
+core	core-min	week	max	omitted	1	604800000000000	100	-	-	ok
+core	core-min	week	max	zero	1	604800000000000	100	0	0	ok
+core	core-min	week	max	max	1	604800000000000	100	600000000000	600000000000	ok
+core	core-min	week	max	min-negative	1	604800000000000	100	-1	0	retryMin
+core	core-min	week	max	min-over	1	604800000000000	100	600000000001	600000000000	retryMin
+core	core-min	week	max	max-negative	1	604800000000000	100	0	-1	retryMax
+core	core-min	week	max	max-over	1	604800000000000	100	0	600000000001	retryMax
+core	core-min	week	max	reversed	1	604800000000000	100	20000000000	19999999999	retryOrder
+core	core-min	week	max	fractional	1	604800000000000	100	1	10000000001	ok
+core	core-min	week	over	omitted	1	604800000000000	101	-	-	deadHigh
+core	core-min	week	over	zero	1	604800000000000	101	0	0	deadHigh
+core	core-min	week	over	max	1	604800000000000	101	600000000000	600000000000	deadHigh
+core	core-min	week	over	min-negative	1	604800000000000	101	-1	0	deadHigh
+core	core-min	week	over	min-over	1	604800000000000	101	600000000001	600000000000	deadHigh
+core	core-min	week	over	max-negative	1	604800000000000	101	0	-1	deadHigh
+core	core-min	week	over	max-over	1	604800000000000	101	0	600000000001	deadHigh
+core	core-min	week	over	reversed	1	604800000000000	101	20000000000	19999999999	deadHigh
+core	core-min	week	over	fractional	1	604800000000000	101	1	10000000001	deadHigh
+production	core-min	week	default	valid	1	604800000000000	default	productionAck	604800000000000
+production	core-min	week	default	invalid	1	604800000000000	default	productionAck	604800000000000
+production	core-min	week	never	valid	1	604800000000000	never	productionAck	604800000000000
+production	core-min	week	never	invalid	1	604800000000000	never	productionAck	604800000000000
+production	core-min	week	below	valid	1	604800000000000	86399999999999	productionAck	604800000000000
+production	core-min	week	below	invalid	1	604800000000000	86399999999999	productionAck	604800000000000
+production	core-min	week	day	valid	1	604800000000000	86400000000000	productionAck	604800000000000
+production	core-min	week	day	invalid	1	604800000000000	86400000000000	productionAck	604800000000000
+production	core-min	week	week-below	valid	1	604800000000000	604799999999999	productionAck	604800000000000
+production	core-min	week	week-below	invalid	1	604800000000000	604799999999999	productionAck	604800000000000
+production	core-min	week	week	valid	1	604800000000000	604800000000000	productionAck	604800000000000
+production	core-min	week	week	invalid	1	604800000000000	604800000000000	productionAck	604800000000000
+production	core-min	week	long	valid	1	604800000000000	2678400000000001	productionAck	604800000000000
+production	core-min	week	long	invalid	1	604800000000000	2678400000000001	productionAck	604800000000000
+core	core-min	max	omitted	omitted	1	2678400000000000	-	-	-	ok
+core	core-min	max	omitted	zero	1	2678400000000000	-	0	0	ok
+core	core-min	max	omitted	max	1	2678400000000000	-	600000000000	600000000000	ok
+core	core-min	max	omitted	min-negative	1	2678400000000000	-	-1	0	retryMin
+core	core-min	max	omitted	min-over	1	2678400000000000	-	600000000001	600000000000	retryMin
+core	core-min	max	omitted	max-negative	1	2678400000000000	-	0	-1	retryMax
+core	core-min	max	omitted	max-over	1	2678400000000000	-	0	600000000001	retryMax
+core	core-min	max	omitted	reversed	1	2678400000000000	-	20000000000	19999999999	retryOrder
+core	core-min	max	omitted	fractional	1	2678400000000000	-	1	10000000001	ok
+core	core-min	max	below	omitted	1	2678400000000000	4	-	-	deadLow
+core	core-min	max	below	zero	1	2678400000000000	4	0	0	deadLow
+core	core-min	max	below	max	1	2678400000000000	4	600000000000	600000000000	deadLow
+core	core-min	max	below	min-negative	1	2678400000000000	4	-1	0	deadLow
+core	core-min	max	below	min-over	1	2678400000000000	4	600000000001	600000000000	deadLow
+core	core-min	max	below	max-negative	1	2678400000000000	4	0	-1	deadLow
+core	core-min	max	below	max-over	1	2678400000000000	4	0	600000000001	deadLow
+core	core-min	max	below	reversed	1	2678400000000000	4	20000000000	19999999999	deadLow
+core	core-min	max	below	fractional	1	2678400000000000	4	1	10000000001	deadLow
+core	core-min	max	min	omitted	1	2678400000000000	5	-	-	ok
+core	core-min	max	min	zero	1	2678400000000000	5	0	0	ok
+core	core-min	max	min	max	1	2678400000000000	5	600000000000	600000000000	ok
+core	core-min	max	min	min-negative	1	2678400000000000	5	-1	0	retryMin
+core	core-min	max	min	min-over	1	2678400000000000	5	600000000001	600000000000	retryMin
+core	core-min	max	min	max-negative	1	2678400000000000	5	0	-1	retryMax
+core	core-min	max	min	max-over	1	2678400000000000	5	0	600000000001	retryMax
+core	core-min	max	min	reversed	1	2678400000000000	5	20000000000	19999999999	retryOrder
+core	core-min	max	min	fractional	1	2678400000000000	5	1	10000000001	ok
+core	core-min	max	max	omitted	1	2678400000000000	100	-	-	ok
+core	core-min	max	max	zero	1	2678400000000000	100	0	0	ok
+core	core-min	max	max	max	1	2678400000000000	100	600000000000	600000000000	ok
+core	core-min	max	max	min-negative	1	2678400000000000	100	-1	0	retryMin
+core	core-min	max	max	min-over	1	2678400000000000	100	600000000001	600000000000	retryMin
+core	core-min	max	max	max-negative	1	2678400000000000	100	0	-1	retryMax
+core	core-min	max	max	max-over	1	2678400000000000	100	0	600000000001	retryMax
+core	core-min	max	max	reversed	1	2678400000000000	100	20000000000	19999999999	retryOrder
+core	core-min	max	max	fractional	1	2678400000000000	100	1	10000000001	ok
+core	core-min	max	over	omitted	1	2678400000000000	101	-	-	deadHigh
+core	core-min	max	over	zero	1	2678400000000000	101	0	0	deadHigh
+core	core-min	max	over	max	1	2678400000000000	101	600000000000	600000000000	deadHigh
+core	core-min	max	over	min-negative	1	2678400000000000	101	-1	0	deadHigh
+core	core-min	max	over	min-over	1	2678400000000000	101	600000000001	600000000000	deadHigh
+core	core-min	max	over	max-negative	1	2678400000000000	101	0	-1	deadHigh
+core	core-min	max	over	max-over	1	2678400000000000	101	0	600000000001	deadHigh
+core	core-min	max	over	reversed	1	2678400000000000	101	20000000000	19999999999	deadHigh
+core	core-min	max	over	fractional	1	2678400000000000	101	1	10000000001	deadHigh
+production	core-min	max	default	valid	1	2678400000000000	default	productionAck	2678400000000000
+production	core-min	max	default	invalid	1	2678400000000000	default	productionAck	2678400000000000
+production	core-min	max	never	valid	1	2678400000000000	never	productionAck	2678400000000000
+production	core-min	max	never	invalid	1	2678400000000000	never	productionAck	2678400000000000
+production	core-min	max	below	valid	1	2678400000000000	86399999999999	productionAck	2678400000000000
+production	core-min	max	below	invalid	1	2678400000000000	86399999999999	productionAck	2678400000000000
+production	core-min	max	day	valid	1	2678400000000000	86400000000000	productionAck	2678400000000000
+production	core-min	max	day	invalid	1	2678400000000000	86400000000000	productionAck	2678400000000000
+production	core-min	max	week-below	valid	1	2678400000000000	604799999999999	productionAck	2678400000000000
+production	core-min	max	week-below	invalid	1	2678400000000000	604799999999999	productionAck	2678400000000000
+production	core-min	max	week	valid	1	2678400000000000	604800000000000	productionAck	2678400000000000
+production	core-min	max	week	invalid	1	2678400000000000	604800000000000	productionAck	2678400000000000
+production	core-min	max	long	valid	1	2678400000000000	2678400000000001	productionAck	2678400000000000
+production	core-min	max	long	invalid	1	2678400000000000	2678400000000001	productionAck	2678400000000000
+core	core-min	over	omitted	omitted	1	2678400000000001	-	-	-	retention
+core	core-min	over	omitted	zero	1	2678400000000001	-	0	0	retention
+core	core-min	over	omitted	max	1	2678400000000001	-	600000000000	600000000000	retention
+core	core-min	over	omitted	min-negative	1	2678400000000001	-	-1	0	retention
+core	core-min	over	omitted	min-over	1	2678400000000001	-	600000000001	600000000000	retention
+core	core-min	over	omitted	max-negative	1	2678400000000001	-	0	-1	retention
+core	core-min	over	omitted	max-over	1	2678400000000001	-	0	600000000001	retention
+core	core-min	over	omitted	reversed	1	2678400000000001	-	20000000000	19999999999	retention
+core	core-min	over	omitted	fractional	1	2678400000000001	-	1	10000000001	retention
+core	core-min	over	below	omitted	1	2678400000000001	4	-	-	retention
+core	core-min	over	below	zero	1	2678400000000001	4	0	0	retention
+core	core-min	over	below	max	1	2678400000000001	4	600000000000	600000000000	retention
+core	core-min	over	below	min-negative	1	2678400000000001	4	-1	0	retention
+core	core-min	over	below	min-over	1	2678400000000001	4	600000000001	600000000000	retention
+core	core-min	over	below	max-negative	1	2678400000000001	4	0	-1	retention
+core	core-min	over	below	max-over	1	2678400000000001	4	0	600000000001	retention
+core	core-min	over	below	reversed	1	2678400000000001	4	20000000000	19999999999	retention
+core	core-min	over	below	fractional	1	2678400000000001	4	1	10000000001	retention
+core	core-min	over	min	omitted	1	2678400000000001	5	-	-	retention
+core	core-min	over	min	zero	1	2678400000000001	5	0	0	retention
+core	core-min	over	min	max	1	2678400000000001	5	600000000000	600000000000	retention
+core	core-min	over	min	min-negative	1	2678400000000001	5	-1	0	retention
+core	core-min	over	min	min-over	1	2678400000000001	5	600000000001	600000000000	retention
+core	core-min	over	min	max-negative	1	2678400000000001	5	0	-1	retention
+core	core-min	over	min	max-over	1	2678400000000001	5	0	600000000001	retention
+core	core-min	over	min	reversed	1	2678400000000001	5	20000000000	19999999999	retention
+core	core-min	over	min	fractional	1	2678400000000001	5	1	10000000001	retention
+core	core-min	over	max	omitted	1	2678400000000001	100	-	-	retention
+core	core-min	over	max	zero	1	2678400000000001	100	0	0	retention
+core	core-min	over	max	max	1	2678400000000001	100	600000000000	600000000000	retention
+core	core-min	over	max	min-negative	1	2678400000000001	100	-1	0	retention
+core	core-min	over	max	min-over	1	2678400000000001	100	600000000001	600000000000	retention
+core	core-min	over	max	max-negative	1	2678400000000001	100	0	-1	retention
+core	core-min	over	max	max-over	1	2678400000000001	100	0	600000000001	retention
+core	core-min	over	max	reversed	1	2678400000000001	100	20000000000	19999999999	retention
+core	core-min	over	max	fractional	1	2678400000000001	100	1	10000000001	retention
+core	core-min	over	over	omitted	1	2678400000000001	101	-	-	retention
+core	core-min	over	over	zero	1	2678400000000001	101	0	0	retention
+core	core-min	over	over	max	1	2678400000000001	101	600000000000	600000000000	retention
+core	core-min	over	over	min-negative	1	2678400000000001	101	-1	0	retention
+core	core-min	over	over	min-over	1	2678400000000001	101	600000000001	600000000000	retention
+core	core-min	over	over	max-negative	1	2678400000000001	101	0	-1	retention
+core	core-min	over	over	max-over	1	2678400000000001	101	0	600000000001	retention
+core	core-min	over	over	reversed	1	2678400000000001	101	20000000000	19999999999	retention
+core	core-min	over	over	fractional	1	2678400000000001	101	1	10000000001	retention
+production	core-min	over	default	valid	1	2678400000000001	default	productionAck	2678400000000001
+production	core-min	over	default	invalid	1	2678400000000001	default	productionAck	2678400000000001
+production	core-min	over	never	valid	1	2678400000000001	never	productionAck	2678400000000001
+production	core-min	over	never	invalid	1	2678400000000001	never	productionAck	2678400000000001
+production	core-min	over	below	valid	1	2678400000000001	86399999999999	productionAck	2678400000000001
+production	core-min	over	below	invalid	1	2678400000000001	86399999999999	productionAck	2678400000000001
+production	core-min	over	day	valid	1	2678400000000001	86400000000000	productionAck	2678400000000001
+production	core-min	over	day	invalid	1	2678400000000001	86400000000000	productionAck	2678400000000001
+production	core-min	over	week-below	valid	1	2678400000000001	604799999999999	productionAck	2678400000000001
+production	core-min	over	week-below	invalid	1	2678400000000001	604799999999999	productionAck	2678400000000001
+production	core-min	over	week	valid	1	2678400000000001	604800000000000	productionAck	2678400000000001
+production	core-min	over	week	invalid	1	2678400000000001	604800000000000	productionAck	2678400000000001
+production	core-min	over	long	valid	1	2678400000000001	2678400000000001	productionAck	2678400000000001
+production	core-min	over	long	invalid	1	2678400000000001	2678400000000001	productionAck	2678400000000001
+core	below-strict	omitted	omitted	omitted	9	-	-	-	-	ok
+core	below-strict	omitted	omitted	zero	9	-	-	0	0	ok
+core	below-strict	omitted	omitted	max	9	-	-	600000000000	600000000000	ok
+core	below-strict	omitted	omitted	min-negative	9	-	-	-1	0	retryMin
+core	below-strict	omitted	omitted	min-over	9	-	-	600000000001	600000000000	retryMin
+core	below-strict	omitted	omitted	max-negative	9	-	-	0	-1	retryMax
+core	below-strict	omitted	omitted	max-over	9	-	-	0	600000000001	retryMax
+core	below-strict	omitted	omitted	reversed	9	-	-	20000000000	19999999999	retryOrder
+core	below-strict	omitted	omitted	fractional	9	-	-	1	10000000001	ok
+core	below-strict	omitted	below	omitted	9	-	4	-	-	deadLow
+core	below-strict	omitted	below	zero	9	-	4	0	0	deadLow
+core	below-strict	omitted	below	max	9	-	4	600000000000	600000000000	deadLow
+core	below-strict	omitted	below	min-negative	9	-	4	-1	0	deadLow
+core	below-strict	omitted	below	min-over	9	-	4	600000000001	600000000000	deadLow
+core	below-strict	omitted	below	max-negative	9	-	4	0	-1	deadLow
+core	below-strict	omitted	below	max-over	9	-	4	0	600000000001	deadLow
+core	below-strict	omitted	below	reversed	9	-	4	20000000000	19999999999	deadLow
+core	below-strict	omitted	below	fractional	9	-	4	1	10000000001	deadLow
+core	below-strict	omitted	min	omitted	9	-	5	-	-	ok
+core	below-strict	omitted	min	zero	9	-	5	0	0	ok
+core	below-strict	omitted	min	max	9	-	5	600000000000	600000000000	ok
+core	below-strict	omitted	min	min-negative	9	-	5	-1	0	retryMin
+core	below-strict	omitted	min	min-over	9	-	5	600000000001	600000000000	retryMin
+core	below-strict	omitted	min	max-negative	9	-	5	0	-1	retryMax
+core	below-strict	omitted	min	max-over	9	-	5	0	600000000001	retryMax
+core	below-strict	omitted	min	reversed	9	-	5	20000000000	19999999999	retryOrder
+core	below-strict	omitted	min	fractional	9	-	5	1	10000000001	ok
+core	below-strict	omitted	max	omitted	9	-	100	-	-	ok
+core	below-strict	omitted	max	zero	9	-	100	0	0	ok
+core	below-strict	omitted	max	max	9	-	100	600000000000	600000000000	ok
+core	below-strict	omitted	max	min-negative	9	-	100	-1	0	retryMin
+core	below-strict	omitted	max	min-over	9	-	100	600000000001	600000000000	retryMin
+core	below-strict	omitted	max	max-negative	9	-	100	0	-1	retryMax
+core	below-strict	omitted	max	max-over	9	-	100	0	600000000001	retryMax
+core	below-strict	omitted	max	reversed	9	-	100	20000000000	19999999999	retryOrder
+core	below-strict	omitted	max	fractional	9	-	100	1	10000000001	ok
+core	below-strict	omitted	over	omitted	9	-	101	-	-	deadHigh
+core	below-strict	omitted	over	zero	9	-	101	0	0	deadHigh
+core	below-strict	omitted	over	max	9	-	101	600000000000	600000000000	deadHigh
+core	below-strict	omitted	over	min-negative	9	-	101	-1	0	deadHigh
+core	below-strict	omitted	over	min-over	9	-	101	600000000001	600000000000	deadHigh
+core	below-strict	omitted	over	max-negative	9	-	101	0	-1	deadHigh
+core	below-strict	omitted	over	max-over	9	-	101	0	600000000001	deadHigh
+core	below-strict	omitted	over	reversed	9	-	101	20000000000	19999999999	deadHigh
+core	below-strict	omitted	over	fractional	9	-	101	1	10000000001	deadHigh
+production	below-strict	omitted	default	valid	9	-	default	productionAck	604800000000000
+production	below-strict	omitted	default	invalid	9	-	default	productionAck	604800000000000
+production	below-strict	omitted	never	valid	9	-	never	productionAck	604800000000000
+production	below-strict	omitted	never	invalid	9	-	never	productionAck	604800000000000
+production	below-strict	omitted	below	valid	9	-	86399999999999	productionAck	604800000000000
+production	below-strict	omitted	below	invalid	9	-	86399999999999	productionAck	604800000000000
+production	below-strict	omitted	day	valid	9	-	86400000000000	productionAck	604800000000000
+production	below-strict	omitted	day	invalid	9	-	86400000000000	productionAck	604800000000000
+production	below-strict	omitted	week-below	valid	9	-	604799999999999	productionAck	604800000000000
+production	below-strict	omitted	week-below	invalid	9	-	604799999999999	productionAck	604800000000000
+production	below-strict	omitted	week	valid	9	-	604800000000000	productionAck	604800000000000
+production	below-strict	omitted	week	invalid	9	-	604800000000000	productionAck	604800000000000
+production	below-strict	omitted	long	valid	9	-	2678400000000001	productionAck	604800000000000
+production	below-strict	omitted	long	invalid	9	-	2678400000000001	productionAck	604800000000000
+core	below-strict	zero	omitted	omitted	9	0	-	-	-	retention
+core	below-strict	zero	omitted	zero	9	0	-	0	0	retention
+core	below-strict	zero	omitted	max	9	0	-	600000000000	600000000000	retention
+core	below-strict	zero	omitted	min-negative	9	0	-	-1	0	retention
+core	below-strict	zero	omitted	min-over	9	0	-	600000000001	600000000000	retention
+core	below-strict	zero	omitted	max-negative	9	0	-	0	-1	retention
+core	below-strict	zero	omitted	max-over	9	0	-	0	600000000001	retention
+core	below-strict	zero	omitted	reversed	9	0	-	20000000000	19999999999	retention
+core	below-strict	zero	omitted	fractional	9	0	-	1	10000000001	retention
+core	below-strict	zero	below	omitted	9	0	4	-	-	retention
+core	below-strict	zero	below	zero	9	0	4	0	0	retention
+core	below-strict	zero	below	max	9	0	4	600000000000	600000000000	retention
+core	below-strict	zero	below	min-negative	9	0	4	-1	0	retention
+core	below-strict	zero	below	min-over	9	0	4	600000000001	600000000000	retention
+core	below-strict	zero	below	max-negative	9	0	4	0	-1	retention
+core	below-strict	zero	below	max-over	9	0	4	0	600000000001	retention
+core	below-strict	zero	below	reversed	9	0	4	20000000000	19999999999	retention
+core	below-strict	zero	below	fractional	9	0	4	1	10000000001	retention
+core	below-strict	zero	min	omitted	9	0	5	-	-	retention
+core	below-strict	zero	min	zero	9	0	5	0	0	retention
+core	below-strict	zero	min	max	9	0	5	600000000000	600000000000	retention
+core	below-strict	zero	min	min-negative	9	0	5	-1	0	retention
+core	below-strict	zero	min	min-over	9	0	5	600000000001	600000000000	retention
+core	below-strict	zero	min	max-negative	9	0	5	0	-1	retention
+core	below-strict	zero	min	max-over	9	0	5	0	600000000001	retention
+core	below-strict	zero	min	reversed	9	0	5	20000000000	19999999999	retention
+core	below-strict	zero	min	fractional	9	0	5	1	10000000001	retention
+core	below-strict	zero	max	omitted	9	0	100	-	-	retention
+core	below-strict	zero	max	zero	9	0	100	0	0	retention
+core	below-strict	zero	max	max	9	0	100	600000000000	600000000000	retention
+core	below-strict	zero	max	min-negative	9	0	100	-1	0	retention
+core	below-strict	zero	max	min-over	9	0	100	600000000001	600000000000	retention
+core	below-strict	zero	max	max-negative	9	0	100	0	-1	retention
+core	below-strict	zero	max	max-over	9	0	100	0	600000000001	retention
+core	below-strict	zero	max	reversed	9	0	100	20000000000	19999999999	retention
+core	below-strict	zero	max	fractional	9	0	100	1	10000000001	retention
+core	below-strict	zero	over	omitted	9	0	101	-	-	retention
+core	below-strict	zero	over	zero	9	0	101	0	0	retention
+core	below-strict	zero	over	max	9	0	101	600000000000	600000000000	retention
+core	below-strict	zero	over	min-negative	9	0	101	-1	0	retention
+core	below-strict	zero	over	min-over	9	0	101	600000000001	600000000000	retention
+core	below-strict	zero	over	max-negative	9	0	101	0	-1	retention
+core	below-strict	zero	over	max-over	9	0	101	0	600000000001	retention
+core	below-strict	zero	over	reversed	9	0	101	20000000000	19999999999	retention
+core	below-strict	zero	over	fractional	9	0	101	1	10000000001	retention
+production	below-strict	zero	default	valid	9	0	default	productionAck	0
+production	below-strict	zero	default	invalid	9	0	default	productionAck	0
+production	below-strict	zero	never	valid	9	0	never	productionAck	0
+production	below-strict	zero	never	invalid	9	0	never	productionAck	0
+production	below-strict	zero	below	valid	9	0	86399999999999	productionAck	0
+production	below-strict	zero	below	invalid	9	0	86399999999999	productionAck	0
+production	below-strict	zero	day	valid	9	0	86400000000000	productionAck	0
+production	below-strict	zero	day	invalid	9	0	86400000000000	productionAck	0
+production	below-strict	zero	week-below	valid	9	0	604799999999999	productionAck	0
+production	below-strict	zero	week-below	invalid	9	0	604799999999999	productionAck	0
+production	below-strict	zero	week	valid	9	0	604800000000000	productionAck	0
+production	below-strict	zero	week	invalid	9	0	604800000000000	productionAck	0
+production	below-strict	zero	long	valid	9	0	2678400000000001	productionAck	0
+production	below-strict	zero	long	invalid	9	0	2678400000000001	productionAck	0
+core	below-strict	below	omitted	omitted	9	599999999999	-	-	-	retention
+core	below-strict	below	omitted	zero	9	599999999999	-	0	0	retention
+core	below-strict	below	omitted	max	9	599999999999	-	600000000000	600000000000	retention
+core	below-strict	below	omitted	min-negative	9	599999999999	-	-1	0	retention
+core	below-strict	below	omitted	min-over	9	599999999999	-	600000000001	600000000000	retention
+core	below-strict	below	omitted	max-negative	9	599999999999	-	0	-1	retention
+core	below-strict	below	omitted	max-over	9	599999999999	-	0	600000000001	retention
+core	below-strict	below	omitted	reversed	9	599999999999	-	20000000000	19999999999	retention
+core	below-strict	below	omitted	fractional	9	599999999999	-	1	10000000001	retention
+core	below-strict	below	below	omitted	9	599999999999	4	-	-	retention
+core	below-strict	below	below	zero	9	599999999999	4	0	0	retention
+core	below-strict	below	below	max	9	599999999999	4	600000000000	600000000000	retention
+core	below-strict	below	below	min-negative	9	599999999999	4	-1	0	retention
+core	below-strict	below	below	min-over	9	599999999999	4	600000000001	600000000000	retention
+core	below-strict	below	below	max-negative	9	599999999999	4	0	-1	retention
+core	below-strict	below	below	max-over	9	599999999999	4	0	600000000001	retention
+core	below-strict	below	below	reversed	9	599999999999	4	20000000000	19999999999	retention
+core	below-strict	below	below	fractional	9	599999999999	4	1	10000000001	retention
+core	below-strict	below	min	omitted	9	599999999999	5	-	-	retention
+core	below-strict	below	min	zero	9	599999999999	5	0	0	retention
+core	below-strict	below	min	max	9	599999999999	5	600000000000	600000000000	retention
+core	below-strict	below	min	min-negative	9	599999999999	5	-1	0	retention
+core	below-strict	below	min	min-over	9	599999999999	5	600000000001	600000000000	retention
+core	below-strict	below	min	max-negative	9	599999999999	5	0	-1	retention
+core	below-strict	below	min	max-over	9	599999999999	5	0	600000000001	retention
+core	below-strict	below	min	reversed	9	599999999999	5	20000000000	19999999999	retention
+core	below-strict	below	min	fractional	9	599999999999	5	1	10000000001	retention
+core	below-strict	below	max	omitted	9	599999999999	100	-	-	retention
+core	below-strict	below	max	zero	9	599999999999	100	0	0	retention
+core	below-strict	below	max	max	9	599999999999	100	600000000000	600000000000	retention
+core	below-strict	below	max	min-negative	9	599999999999	100	-1	0	retention
+core	below-strict	below	max	min-over	9	599999999999	100	600000000001	600000000000	retention
+core	below-strict	below	max	max-negative	9	599999999999	100	0	-1	retention
+core	below-strict	below	max	max-over	9	599999999999	100	0	600000000001	retention
+core	below-strict	below	max	reversed	9	599999999999	100	20000000000	19999999999	retention
+core	below-strict	below	max	fractional	9	599999999999	100	1	10000000001	retention
+core	below-strict	below	over	omitted	9	599999999999	101	-	-	retention
+core	below-strict	below	over	zero	9	599999999999	101	0	0	retention
+core	below-strict	below	over	max	9	599999999999	101	600000000000	600000000000	retention
+core	below-strict	below	over	min-negative	9	599999999999	101	-1	0	retention
+core	below-strict	below	over	min-over	9	599999999999	101	600000000001	600000000000	retention
+core	below-strict	below	over	max-negative	9	599999999999	101	0	-1	retention
+core	below-strict	below	over	max-over	9	599999999999	101	0	600000000001	retention
+core	below-strict	below	over	reversed	9	599999999999	101	20000000000	19999999999	retention
+core	below-strict	below	over	fractional	9	599999999999	101	1	10000000001	retention
+production	below-strict	below	default	valid	9	599999999999	default	productionAck	599999999999
+production	below-strict	below	default	invalid	9	599999999999	default	productionAck	599999999999
+production	below-strict	below	never	valid	9	599999999999	never	productionAck	599999999999
+production	below-strict	below	never	invalid	9	599999999999	never	productionAck	599999999999
+production	below-strict	below	below	valid	9	599999999999	86399999999999	productionAck	599999999999
+production	below-strict	below	below	invalid	9	599999999999	86399999999999	productionAck	599999999999
+production	below-strict	below	day	valid	9	599999999999	86400000000000	productionAck	599999999999
+production	below-strict	below	day	invalid	9	599999999999	86400000000000	productionAck	599999999999
+production	below-strict	below	week-below	valid	9	599999999999	604799999999999	productionAck	599999999999
+production	below-strict	below	week-below	invalid	9	599999999999	604799999999999	productionAck	599999999999
+production	below-strict	below	week	valid	9	599999999999	604800000000000	productionAck	599999999999
+production	below-strict	below	week	invalid	9	599999999999	604800000000000	productionAck	599999999999
+production	below-strict	below	long	valid	9	599999999999	2678400000000001	productionAck	599999999999
+production	below-strict	below	long	invalid	9	599999999999	2678400000000001	productionAck	599999999999
+core	below-strict	min	omitted	omitted	9	600000000000	-	-	-	ok
+core	below-strict	min	omitted	zero	9	600000000000	-	0	0	ok
+core	below-strict	min	omitted	max	9	600000000000	-	600000000000	600000000000	ok
+core	below-strict	min	omitted	min-negative	9	600000000000	-	-1	0	retryMin
+core	below-strict	min	omitted	min-over	9	600000000000	-	600000000001	600000000000	retryMin
+core	below-strict	min	omitted	max-negative	9	600000000000	-	0	-1	retryMax
+core	below-strict	min	omitted	max-over	9	600000000000	-	0	600000000001	retryMax
+core	below-strict	min	omitted	reversed	9	600000000000	-	20000000000	19999999999	retryOrder
+core	below-strict	min	omitted	fractional	9	600000000000	-	1	10000000001	ok
+core	below-strict	min	below	omitted	9	600000000000	4	-	-	deadLow
+core	below-strict	min	below	zero	9	600000000000	4	0	0	deadLow
+core	below-strict	min	below	max	9	600000000000	4	600000000000	600000000000	deadLow
+core	below-strict	min	below	min-negative	9	600000000000	4	-1	0	deadLow
+core	below-strict	min	below	min-over	9	600000000000	4	600000000001	600000000000	deadLow
+core	below-strict	min	below	max-negative	9	600000000000	4	0	-1	deadLow
+core	below-strict	min	below	max-over	9	600000000000	4	0	600000000001	deadLow
+core	below-strict	min	below	reversed	9	600000000000	4	20000000000	19999999999	deadLow
+core	below-strict	min	below	fractional	9	600000000000	4	1	10000000001	deadLow
+core	below-strict	min	min	omitted	9	600000000000	5	-	-	ok
+core	below-strict	min	min	zero	9	600000000000	5	0	0	ok
+core	below-strict	min	min	max	9	600000000000	5	600000000000	600000000000	ok
+core	below-strict	min	min	min-negative	9	600000000000	5	-1	0	retryMin
+core	below-strict	min	min	min-over	9	600000000000	5	600000000001	600000000000	retryMin
+core	below-strict	min	min	max-negative	9	600000000000	5	0	-1	retryMax
+core	below-strict	min	min	max-over	9	600000000000	5	0	600000000001	retryMax
+core	below-strict	min	min	reversed	9	600000000000	5	20000000000	19999999999	retryOrder
+core	below-strict	min	min	fractional	9	600000000000	5	1	10000000001	ok
+core	below-strict	min	max	omitted	9	600000000000	100	-	-	ok
+core	below-strict	min	max	zero	9	600000000000	100	0	0	ok
+core	below-strict	min	max	max	9	600000000000	100	600000000000	600000000000	ok
+core	below-strict	min	max	min-negative	9	600000000000	100	-1	0	retryMin
+core	below-strict	min	max	min-over	9	600000000000	100	600000000001	600000000000	retryMin
+core	below-strict	min	max	max-negative	9	600000000000	100	0	-1	retryMax
+core	below-strict	min	max	max-over	9	600000000000	100	0	600000000001	retryMax
+core	below-strict	min	max	reversed	9	600000000000	100	20000000000	19999999999	retryOrder
+core	below-strict	min	max	fractional	9	600000000000	100	1	10000000001	ok
+core	below-strict	min	over	omitted	9	600000000000	101	-	-	deadHigh
+core	below-strict	min	over	zero	9	600000000000	101	0	0	deadHigh
+core	below-strict	min	over	max	9	600000000000	101	600000000000	600000000000	deadHigh
+core	below-strict	min	over	min-negative	9	600000000000	101	-1	0	deadHigh
+core	below-strict	min	over	min-over	9	600000000000	101	600000000001	600000000000	deadHigh
+core	below-strict	min	over	max-negative	9	600000000000	101	0	-1	deadHigh
+core	below-strict	min	over	max-over	9	600000000000	101	0	600000000001	deadHigh
+core	below-strict	min	over	reversed	9	600000000000	101	20000000000	19999999999	deadHigh
+core	below-strict	min	over	fractional	9	600000000000	101	1	10000000001	deadHigh
+production	below-strict	min	default	valid	9	600000000000	default	productionAck	600000000000
+production	below-strict	min	default	invalid	9	600000000000	default	productionAck	600000000000
+production	below-strict	min	never	valid	9	600000000000	never	productionAck	600000000000
+production	below-strict	min	never	invalid	9	600000000000	never	productionAck	600000000000
+production	below-strict	min	below	valid	9	600000000000	86399999999999	productionAck	600000000000
+production	below-strict	min	below	invalid	9	600000000000	86399999999999	productionAck	600000000000
+production	below-strict	min	day	valid	9	600000000000	86400000000000	productionAck	600000000000
+production	below-strict	min	day	invalid	9	600000000000	86400000000000	productionAck	600000000000
+production	below-strict	min	week-below	valid	9	600000000000	604799999999999	productionAck	600000000000
+production	below-strict	min	week-below	invalid	9	600000000000	604799999999999	productionAck	600000000000
+production	below-strict	min	week	valid	9	600000000000	604800000000000	productionAck	600000000000
+production	below-strict	min	week	invalid	9	600000000000	604800000000000	productionAck	600000000000
+production	below-strict	min	long	valid	9	600000000000	2678400000000001	productionAck	600000000000
+production	below-strict	min	long	invalid	9	600000000000	2678400000000001	productionAck	600000000000
+core	below-strict	week	omitted	omitted	9	604800000000000	-	-	-	ok
+core	below-strict	week	omitted	zero	9	604800000000000	-	0	0	ok
+core	below-strict	week	omitted	max	9	604800000000000	-	600000000000	600000000000	ok
+core	below-strict	week	omitted	min-negative	9	604800000000000	-	-1	0	retryMin
+core	below-strict	week	omitted	min-over	9	604800000000000	-	600000000001	600000000000	retryMin
+core	below-strict	week	omitted	max-negative	9	604800000000000	-	0	-1	retryMax
+core	below-strict	week	omitted	max-over	9	604800000000000	-	0	600000000001	retryMax
+core	below-strict	week	omitted	reversed	9	604800000000000	-	20000000000	19999999999	retryOrder
+core	below-strict	week	omitted	fractional	9	604800000000000	-	1	10000000001	ok
+core	below-strict	week	below	omitted	9	604800000000000	4	-	-	deadLow
+core	below-strict	week	below	zero	9	604800000000000	4	0	0	deadLow
+core	below-strict	week	below	max	9	604800000000000	4	600000000000	600000000000	deadLow
+core	below-strict	week	below	min-negative	9	604800000000000	4	-1	0	deadLow
+core	below-strict	week	below	min-over	9	604800000000000	4	600000000001	600000000000	deadLow
+core	below-strict	week	below	max-negative	9	604800000000000	4	0	-1	deadLow
+core	below-strict	week	below	max-over	9	604800000000000	4	0	600000000001	deadLow
+core	below-strict	week	below	reversed	9	604800000000000	4	20000000000	19999999999	deadLow
+core	below-strict	week	below	fractional	9	604800000000000	4	1	10000000001	deadLow
+core	below-strict	week	min	omitted	9	604800000000000	5	-	-	ok
+core	below-strict	week	min	zero	9	604800000000000	5	0	0	ok
+core	below-strict	week	min	max	9	604800000000000	5	600000000000	600000000000	ok
+core	below-strict	week	min	min-negative	9	604800000000000	5	-1	0	retryMin
+core	below-strict	week	min	min-over	9	604800000000000	5	600000000001	600000000000	retryMin
+core	below-strict	week	min	max-negative	9	604800000000000	5	0	-1	retryMax
+core	below-strict	week	min	max-over	9	604800000000000	5	0	600000000001	retryMax
+core	below-strict	week	min	reversed	9	604800000000000	5	20000000000	19999999999	retryOrder
+core	below-strict	week	min	fractional	9	604800000000000	5	1	10000000001	ok
+core	below-strict	week	max	omitted	9	604800000000000	100	-	-	ok
+core	below-strict	week	max	zero	9	604800000000000	100	0	0	ok
+core	below-strict	week	max	max	9	604800000000000	100	600000000000	600000000000	ok
+core	below-strict	week	max	min-negative	9	604800000000000	100	-1	0	retryMin
+core	below-strict	week	max	min-over	9	604800000000000	100	600000000001	600000000000	retryMin
+core	below-strict	week	max	max-negative	9	604800000000000	100	0	-1	retryMax
+core	below-strict	week	max	max-over	9	604800000000000	100	0	600000000001	retryMax
+core	below-strict	week	max	reversed	9	604800000000000	100	20000000000	19999999999	retryOrder
+core	below-strict	week	max	fractional	9	604800000000000	100	1	10000000001	ok
+core	below-strict	week	over	omitted	9	604800000000000	101	-	-	deadHigh
+core	below-strict	week	over	zero	9	604800000000000	101	0	0	deadHigh
+core	below-strict	week	over	max	9	604800000000000	101	600000000000	600000000000	deadHigh
+core	below-strict	week	over	min-negative	9	604800000000000	101	-1	0	deadHigh
+core	below-strict	week	over	min-over	9	604800000000000	101	600000000001	600000000000	deadHigh
+core	below-strict	week	over	max-negative	9	604800000000000	101	0	-1	deadHigh
+core	below-strict	week	over	max-over	9	604800000000000	101	0	600000000001	deadHigh
+core	below-strict	week	over	reversed	9	604800000000000	101	20000000000	19999999999	deadHigh
+core	below-strict	week	over	fractional	9	604800000000000	101	1	10000000001	deadHigh
+production	below-strict	week	default	valid	9	604800000000000	default	productionAck	604800000000000
+production	below-strict	week	default	invalid	9	604800000000000	default	productionAck	604800000000000
+production	below-strict	week	never	valid	9	604800000000000	never	productionAck	604800000000000
+production	below-strict	week	never	invalid	9	604800000000000	never	productionAck	604800000000000
+production	below-strict	week	below	valid	9	604800000000000	86399999999999	productionAck	604800000000000
+production	below-strict	week	below	invalid	9	604800000000000	86399999999999	productionAck	604800000000000
+production	below-strict	week	day	valid	9	604800000000000	86400000000000	productionAck	604800000000000
+production	below-strict	week	day	invalid	9	604800000000000	86400000000000	productionAck	604800000000000
+production	below-strict	week	week-below	valid	9	604800000000000	604799999999999	productionAck	604800000000000
+production	below-strict	week	week-below	invalid	9	604800000000000	604799999999999	productionAck	604800000000000
+production	below-strict	week	week	valid	9	604800000000000	604800000000000	productionAck	604800000000000
+production	below-strict	week	week	invalid	9	604800000000000	604800000000000	productionAck	604800000000000
+production	below-strict	week	long	valid	9	604800000000000	2678400000000001	productionAck	604800000000000
+production	below-strict	week	long	invalid	9	604800000000000	2678400000000001	productionAck	604800000000000
+core	below-strict	max	omitted	omitted	9	2678400000000000	-	-	-	ok
+core	below-strict	max	omitted	zero	9	2678400000000000	-	0	0	ok
+core	below-strict	max	omitted	max	9	2678400000000000	-	600000000000	600000000000	ok
+core	below-strict	max	omitted	min-negative	9	2678400000000000	-	-1	0	retryMin
+core	below-strict	max	omitted	min-over	9	2678400000000000	-	600000000001	600000000000	retryMin
+core	below-strict	max	omitted	max-negative	9	2678400000000000	-	0	-1	retryMax
+core	below-strict	max	omitted	max-over	9	2678400000000000	-	0	600000000001	retryMax
+core	below-strict	max	omitted	reversed	9	2678400000000000	-	20000000000	19999999999	retryOrder
+core	below-strict	max	omitted	fractional	9	2678400000000000	-	1	10000000001	ok
+core	below-strict	max	below	omitted	9	2678400000000000	4	-	-	deadLow
+core	below-strict	max	below	zero	9	2678400000000000	4	0	0	deadLow
+core	below-strict	max	below	max	9	2678400000000000	4	600000000000	600000000000	deadLow
+core	below-strict	max	below	min-negative	9	2678400000000000	4	-1	0	deadLow
+core	below-strict	max	below	min-over	9	2678400000000000	4	600000000001	600000000000	deadLow
+core	below-strict	max	below	max-negative	9	2678400000000000	4	0	-1	deadLow
+core	below-strict	max	below	max-over	9	2678400000000000	4	0	600000000001	deadLow
+core	below-strict	max	below	reversed	9	2678400000000000	4	20000000000	19999999999	deadLow
+core	below-strict	max	below	fractional	9	2678400000000000	4	1	10000000001	deadLow
+core	below-strict	max	min	omitted	9	2678400000000000	5	-	-	ok
+core	below-strict	max	min	zero	9	2678400000000000	5	0	0	ok
+core	below-strict	max	min	max	9	2678400000000000	5	600000000000	600000000000	ok
+core	below-strict	max	min	min-negative	9	2678400000000000	5	-1	0	retryMin
+core	below-strict	max	min	min-over	9	2678400000000000	5	600000000001	600000000000	retryMin
+core	below-strict	max	min	max-negative	9	2678400000000000	5	0	-1	retryMax
+core	below-strict	max	min	max-over	9	2678400000000000	5	0	600000000001	retryMax
+core	below-strict	max	min	reversed	9	2678400000000000	5	20000000000	19999999999	retryOrder
+core	below-strict	max	min	fractional	9	2678400000000000	5	1	10000000001	ok
+core	below-strict	max	max	omitted	9	2678400000000000	100	-	-	ok
+core	below-strict	max	max	zero	9	2678400000000000	100	0	0	ok
+core	below-strict	max	max	max	9	2678400000000000	100	600000000000	600000000000	ok
+core	below-strict	max	max	min-negative	9	2678400000000000	100	-1	0	retryMin
+core	below-strict	max	max	min-over	9	2678400000000000	100	600000000001	600000000000	retryMin
+core	below-strict	max	max	max-negative	9	2678400000000000	100	0	-1	retryMax
+core	below-strict	max	max	max-over	9	2678400000000000	100	0	600000000001	retryMax
+core	below-strict	max	max	reversed	9	2678400000000000	100	20000000000	19999999999	retryOrder
+core	below-strict	max	max	fractional	9	2678400000000000	100	1	10000000001	ok
+core	below-strict	max	over	omitted	9	2678400000000000	101	-	-	deadHigh
+core	below-strict	max	over	zero	9	2678400000000000	101	0	0	deadHigh
+core	below-strict	max	over	max	9	2678400000000000	101	600000000000	600000000000	deadHigh
+core	below-strict	max	over	min-negative	9	2678400000000000	101	-1	0	deadHigh
+core	below-strict	max	over	min-over	9	2678400000000000	101	600000000001	600000000000	deadHigh
+core	below-strict	max	over	max-negative	9	2678400000000000	101	0	-1	deadHigh
+core	below-strict	max	over	max-over	9	2678400000000000	101	0	600000000001	deadHigh
+core	below-strict	max	over	reversed	9	2678400000000000	101	20000000000	19999999999	deadHigh
+core	below-strict	max	over	fractional	9	2678400000000000	101	1	10000000001	deadHigh
+production	below-strict	max	default	valid	9	2678400000000000	default	productionAck	2678400000000000
+production	below-strict	max	default	invalid	9	2678400000000000	default	productionAck	2678400000000000
+production	below-strict	max	never	valid	9	2678400000000000	never	productionAck	2678400000000000
+production	below-strict	max	never	invalid	9	2678400000000000	never	productionAck	2678400000000000
+production	below-strict	max	below	valid	9	2678400000000000	86399999999999	productionAck	2678400000000000
+production	below-strict	max	below	invalid	9	2678400000000000	86399999999999	productionAck	2678400000000000
+production	below-strict	max	day	valid	9	2678400000000000	86400000000000	productionAck	2678400000000000
+production	below-strict	max	day	invalid	9	2678400000000000	86400000000000	productionAck	2678400000000000
+production	below-strict	max	week-below	valid	9	2678400000000000	604799999999999	productionAck	2678400000000000
+production	below-strict	max	week-below	invalid	9	2678400000000000	604799999999999	productionAck	2678400000000000
+production	below-strict	max	week	valid	9	2678400000000000	604800000000000	productionAck	2678400000000000
+production	below-strict	max	week	invalid	9	2678400000000000	604800000000000	productionAck	2678400000000000
+production	below-strict	max	long	valid	9	2678400000000000	2678400000000001	productionAck	2678400000000000
+production	below-strict	max	long	invalid	9	2678400000000000	2678400000000001	productionAck	2678400000000000
+core	below-strict	over	omitted	omitted	9	2678400000000001	-	-	-	retention
+core	below-strict	over	omitted	zero	9	2678400000000001	-	0	0	retention
+core	below-strict	over	omitted	max	9	2678400000000001	-	600000000000	600000000000	retention
+core	below-strict	over	omitted	min-negative	9	2678400000000001	-	-1	0	retention
+core	below-strict	over	omitted	min-over	9	2678400000000001	-	600000000001	600000000000	retention
+core	below-strict	over	omitted	max-negative	9	2678400000000001	-	0	-1	retention
+core	below-strict	over	omitted	max-over	9	2678400000000001	-	0	600000000001	retention
+core	below-strict	over	omitted	reversed	9	2678400000000001	-	20000000000	19999999999	retention
+core	below-strict	over	omitted	fractional	9	2678400000000001	-	1	10000000001	retention
+core	below-strict	over	below	omitted	9	2678400000000001	4	-	-	retention
+core	below-strict	over	below	zero	9	2678400000000001	4	0	0	retention
+core	below-strict	over	below	max	9	2678400000000001	4	600000000000	600000000000	retention
+core	below-strict	over	below	min-negative	9	2678400000000001	4	-1	0	retention
+core	below-strict	over	below	min-over	9	2678400000000001	4	600000000001	600000000000	retention
+core	below-strict	over	below	max-negative	9	2678400000000001	4	0	-1	retention
+core	below-strict	over	below	max-over	9	2678400000000001	4	0	600000000001	retention
+core	below-strict	over	below	reversed	9	2678400000000001	4	20000000000	19999999999	retention
+core	below-strict	over	below	fractional	9	2678400000000001	4	1	10000000001	retention
+core	below-strict	over	min	omitted	9	2678400000000001	5	-	-	retention
+core	below-strict	over	min	zero	9	2678400000000001	5	0	0	retention
+core	below-strict	over	min	max	9	2678400000000001	5	600000000000	600000000000	retention
+core	below-strict	over	min	min-negative	9	2678400000000001	5	-1	0	retention
+core	below-strict	over	min	min-over	9	2678400000000001	5	600000000001	600000000000	retention
+core	below-strict	over	min	max-negative	9	2678400000000001	5	0	-1	retention
+core	below-strict	over	min	max-over	9	2678400000000001	5	0	600000000001	retention
+core	below-strict	over	min	reversed	9	2678400000000001	5	20000000000	19999999999	retention
+core	below-strict	over	min	fractional	9	2678400000000001	5	1	10000000001	retention
+core	below-strict	over	max	omitted	9	2678400000000001	100	-	-	retention
+core	below-strict	over	max	zero	9	2678400000000001	100	0	0	retention
+core	below-strict	over	max	max	9	2678400000000001	100	600000000000	600000000000	retention
+core	below-strict	over	max	min-negative	9	2678400000000001	100	-1	0	retention
+core	below-strict	over	max	min-over	9	2678400000000001	100	600000000001	600000000000	retention
+core	below-strict	over	max	max-negative	9	2678400000000001	100	0	-1	retention
+core	below-strict	over	max	max-over	9	2678400000000001	100	0	600000000001	retention
+core	below-strict	over	max	reversed	9	2678400000000001	100	20000000000	19999999999	retention
+core	below-strict	over	max	fractional	9	2678400000000001	100	1	10000000001	retention
+core	below-strict	over	over	omitted	9	2678400000000001	101	-	-	retention
+core	below-strict	over	over	zero	9	2678400000000001	101	0	0	retention
+core	below-strict	over	over	max	9	2678400000000001	101	600000000000	600000000000	retention
+core	below-strict	over	over	min-negative	9	2678400000000001	101	-1	0	retention
+core	below-strict	over	over	min-over	9	2678400000000001	101	600000000001	600000000000	retention
+core	below-strict	over	over	max-negative	9	2678400000000001	101	0	-1	retention
+core	below-strict	over	over	max-over	9	2678400000000001	101	0	600000000001	retention
+core	below-strict	over	over	reversed	9	2678400000000001	101	20000000000	19999999999	retention
+core	below-strict	over	over	fractional	9	2678400000000001	101	1	10000000001	retention
+production	below-strict	over	default	valid	9	2678400000000001	default	productionAck	2678400000000001
+production	below-strict	over	default	invalid	9	2678400000000001	default	productionAck	2678400000000001
+production	below-strict	over	never	valid	9	2678400000000001	never	productionAck	2678400000000001
+production	below-strict	over	never	invalid	9	2678400000000001	never	productionAck	2678400000000001
+production	below-strict	over	below	valid	9	2678400000000001	86399999999999	productionAck	2678400000000001
+production	below-strict	over	below	invalid	9	2678400000000001	86399999999999	productionAck	2678400000000001
+production	below-strict	over	day	valid	9	2678400000000001	86400000000000	productionAck	2678400000000001
+production	below-strict	over	day	invalid	9	2678400000000001	86400000000000	productionAck	2678400000000001
+production	below-strict	over	week-below	valid	9	2678400000000001	604799999999999	productionAck	2678400000000001
+production	below-strict	over	week-below	invalid	9	2678400000000001	604799999999999	productionAck	2678400000000001
+production	below-strict	over	week	valid	9	2678400000000001	604800000000000	productionAck	2678400000000001
+production	below-strict	over	week	invalid	9	2678400000000001	604800000000000	productionAck	2678400000000001
+production	below-strict	over	long	valid	9	2678400000000001	2678400000000001	productionAck	2678400000000001
+production	below-strict	over	long	invalid	9	2678400000000001	2678400000000001	productionAck	2678400000000001
+core	min	omitted	omitted	omitted	10	-	-	-	-	ok
+core	min	omitted	omitted	zero	10	-	-	0	0	ok
+core	min	omitted	omitted	max	10	-	-	600000000000	600000000000	ok
+core	min	omitted	omitted	min-negative	10	-	-	-1	0	retryMin
+core	min	omitted	omitted	min-over	10	-	-	600000000001	600000000000	retryMin
+core	min	omitted	omitted	max-negative	10	-	-	0	-1	retryMax
+core	min	omitted	omitted	max-over	10	-	-	0	600000000001	retryMax
+core	min	omitted	omitted	reversed	10	-	-	20000000000	19999999999	retryOrder
+core	min	omitted	omitted	fractional	10	-	-	1	10000000001	ok
+core	min	omitted	below	omitted	10	-	4	-	-	deadLow
+core	min	omitted	below	zero	10	-	4	0	0	deadLow
+core	min	omitted	below	max	10	-	4	600000000000	600000000000	deadLow
+core	min	omitted	below	min-negative	10	-	4	-1	0	deadLow
+core	min	omitted	below	min-over	10	-	4	600000000001	600000000000	deadLow
+core	min	omitted	below	max-negative	10	-	4	0	-1	deadLow
+core	min	omitted	below	max-over	10	-	4	0	600000000001	deadLow
+core	min	omitted	below	reversed	10	-	4	20000000000	19999999999	deadLow
+core	min	omitted	below	fractional	10	-	4	1	10000000001	deadLow
+core	min	omitted	min	omitted	10	-	5	-	-	ok
+core	min	omitted	min	zero	10	-	5	0	0	ok
+core	min	omitted	min	max	10	-	5	600000000000	600000000000	ok
+core	min	omitted	min	min-negative	10	-	5	-1	0	retryMin
+core	min	omitted	min	min-over	10	-	5	600000000001	600000000000	retryMin
+core	min	omitted	min	max-negative	10	-	5	0	-1	retryMax
+core	min	omitted	min	max-over	10	-	5	0	600000000001	retryMax
+core	min	omitted	min	reversed	10	-	5	20000000000	19999999999	retryOrder
+core	min	omitted	min	fractional	10	-	5	1	10000000001	ok
+core	min	omitted	max	omitted	10	-	100	-	-	ok
+core	min	omitted	max	zero	10	-	100	0	0	ok
+core	min	omitted	max	max	10	-	100	600000000000	600000000000	ok
+core	min	omitted	max	min-negative	10	-	100	-1	0	retryMin
+core	min	omitted	max	min-over	10	-	100	600000000001	600000000000	retryMin
+core	min	omitted	max	max-negative	10	-	100	0	-1	retryMax
+core	min	omitted	max	max-over	10	-	100	0	600000000001	retryMax
+core	min	omitted	max	reversed	10	-	100	20000000000	19999999999	retryOrder
+core	min	omitted	max	fractional	10	-	100	1	10000000001	ok
+core	min	omitted	over	omitted	10	-	101	-	-	deadHigh
+core	min	omitted	over	zero	10	-	101	0	0	deadHigh
+core	min	omitted	over	max	10	-	101	600000000000	600000000000	deadHigh
+core	min	omitted	over	min-negative	10	-	101	-1	0	deadHigh
+core	min	omitted	over	min-over	10	-	101	600000000001	600000000000	deadHigh
+core	min	omitted	over	max-negative	10	-	101	0	-1	deadHigh
+core	min	omitted	over	max-over	10	-	101	0	600000000001	deadHigh
+core	min	omitted	over	reversed	10	-	101	20000000000	19999999999	deadHigh
+core	min	omitted	over	fractional	10	-	101	1	10000000001	deadHigh
+production	min	omitted	default	valid	10	-	default	ok	604800000000000
+production	min	omitted	default	invalid	10	-	default	labels	604800000000000
+production	min	omitted	never	valid	10	-	never	ok	604800000000000
+production	min	omitted	never	invalid	10	-	never	labels	604800000000000
+production	min	omitted	below	valid	10	-	86399999999999	expiryMinimum	604800000000000
+production	min	omitted	below	invalid	10	-	86399999999999	labels	604800000000000
+production	min	omitted	day	valid	10	-	86400000000000	retentionAfterExpiry	604800000000000
+production	min	omitted	day	invalid	10	-	86400000000000	labels	604800000000000
+production	min	omitted	week-below	valid	10	-	604799999999999	retentionAfterExpiry	604800000000000
+production	min	omitted	week-below	invalid	10	-	604799999999999	labels	604800000000000
+production	min	omitted	week	valid	10	-	604800000000000	ok	604800000000000
+production	min	omitted	week	invalid	10	-	604800000000000	labels	604800000000000
+production	min	omitted	long	valid	10	-	2678400000000001	ok	604800000000000
+production	min	omitted	long	invalid	10	-	2678400000000001	labels	604800000000000
+core	min	zero	omitted	omitted	10	0	-	-	-	retention
+core	min	zero	omitted	zero	10	0	-	0	0	retention
+core	min	zero	omitted	max	10	0	-	600000000000	600000000000	retention
+core	min	zero	omitted	min-negative	10	0	-	-1	0	retention
+core	min	zero	omitted	min-over	10	0	-	600000000001	600000000000	retention
+core	min	zero	omitted	max-negative	10	0	-	0	-1	retention
+core	min	zero	omitted	max-over	10	0	-	0	600000000001	retention
+core	min	zero	omitted	reversed	10	0	-	20000000000	19999999999	retention
+core	min	zero	omitted	fractional	10	0	-	1	10000000001	retention
+core	min	zero	below	omitted	10	0	4	-	-	retention
+core	min	zero	below	zero	10	0	4	0	0	retention
+core	min	zero	below	max	10	0	4	600000000000	600000000000	retention
+core	min	zero	below	min-negative	10	0	4	-1	0	retention
+core	min	zero	below	min-over	10	0	4	600000000001	600000000000	retention
+core	min	zero	below	max-negative	10	0	4	0	-1	retention
+core	min	zero	below	max-over	10	0	4	0	600000000001	retention
+core	min	zero	below	reversed	10	0	4	20000000000	19999999999	retention
+core	min	zero	below	fractional	10	0	4	1	10000000001	retention
+core	min	zero	min	omitted	10	0	5	-	-	retention
+core	min	zero	min	zero	10	0	5	0	0	retention
+core	min	zero	min	max	10	0	5	600000000000	600000000000	retention
+core	min	zero	min	min-negative	10	0	5	-1	0	retention
+core	min	zero	min	min-over	10	0	5	600000000001	600000000000	retention
+core	min	zero	min	max-negative	10	0	5	0	-1	retention
+core	min	zero	min	max-over	10	0	5	0	600000000001	retention
+core	min	zero	min	reversed	10	0	5	20000000000	19999999999	retention
+core	min	zero	min	fractional	10	0	5	1	10000000001	retention
+core	min	zero	max	omitted	10	0	100	-	-	retention
+core	min	zero	max	zero	10	0	100	0	0	retention
+core	min	zero	max	max	10	0	100	600000000000	600000000000	retention
+core	min	zero	max	min-negative	10	0	100	-1	0	retention
+core	min	zero	max	min-over	10	0	100	600000000001	600000000000	retention
+core	min	zero	max	max-negative	10	0	100	0	-1	retention
+core	min	zero	max	max-over	10	0	100	0	600000000001	retention
+core	min	zero	max	reversed	10	0	100	20000000000	19999999999	retention
+core	min	zero	max	fractional	10	0	100	1	10000000001	retention
+core	min	zero	over	omitted	10	0	101	-	-	retention
+core	min	zero	over	zero	10	0	101	0	0	retention
+core	min	zero	over	max	10	0	101	600000000000	600000000000	retention
+core	min	zero	over	min-negative	10	0	101	-1	0	retention
+core	min	zero	over	min-over	10	0	101	600000000001	600000000000	retention
+core	min	zero	over	max-negative	10	0	101	0	-1	retention
+core	min	zero	over	max-over	10	0	101	0	600000000001	retention
+core	min	zero	over	reversed	10	0	101	20000000000	19999999999	retention
+core	min	zero	over	fractional	10	0	101	1	10000000001	retention
+production	min	zero	default	valid	10	0	default	ok	0
+production	min	zero	default	invalid	10	0	default	labels	0
+production	min	zero	never	valid	10	0	never	ok	0
+production	min	zero	never	invalid	10	0	never	labels	0
+production	min	zero	below	valid	10	0	86399999999999	expiryMinimum	0
+production	min	zero	below	invalid	10	0	86399999999999	labels	0
+production	min	zero	day	valid	10	0	86400000000000	ok	0
+production	min	zero	day	invalid	10	0	86400000000000	labels	0
+production	min	zero	week-below	valid	10	0	604799999999999	ok	0
+production	min	zero	week-below	invalid	10	0	604799999999999	labels	0
+production	min	zero	week	valid	10	0	604800000000000	ok	0
+production	min	zero	week	invalid	10	0	604800000000000	labels	0
+production	min	zero	long	valid	10	0	2678400000000001	ok	0
+production	min	zero	long	invalid	10	0	2678400000000001	labels	0
+core	min	below	omitted	omitted	10	599999999999	-	-	-	retention
+core	min	below	omitted	zero	10	599999999999	-	0	0	retention
+core	min	below	omitted	max	10	599999999999	-	600000000000	600000000000	retention
+core	min	below	omitted	min-negative	10	599999999999	-	-1	0	retention
+core	min	below	omitted	min-over	10	599999999999	-	600000000001	600000000000	retention
+core	min	below	omitted	max-negative	10	599999999999	-	0	-1	retention
+core	min	below	omitted	max-over	10	599999999999	-	0	600000000001	retention
+core	min	below	omitted	reversed	10	599999999999	-	20000000000	19999999999	retention
+core	min	below	omitted	fractional	10	599999999999	-	1	10000000001	retention
+core	min	below	below	omitted	10	599999999999	4	-	-	retention
+core	min	below	below	zero	10	599999999999	4	0	0	retention
+core	min	below	below	max	10	599999999999	4	600000000000	600000000000	retention
+core	min	below	below	min-negative	10	599999999999	4	-1	0	retention
+core	min	below	below	min-over	10	599999999999	4	600000000001	600000000000	retention
+core	min	below	below	max-negative	10	599999999999	4	0	-1	retention
+core	min	below	below	max-over	10	599999999999	4	0	600000000001	retention
+core	min	below	below	reversed	10	599999999999	4	20000000000	19999999999	retention
+core	min	below	below	fractional	10	599999999999	4	1	10000000001	retention
+core	min	below	min	omitted	10	599999999999	5	-	-	retention
+core	min	below	min	zero	10	599999999999	5	0	0	retention
+core	min	below	min	max	10	599999999999	5	600000000000	600000000000	retention
+core	min	below	min	min-negative	10	599999999999	5	-1	0	retention
+core	min	below	min	min-over	10	599999999999	5	600000000001	600000000000	retention
+core	min	below	min	max-negative	10	599999999999	5	0	-1	retention
+core	min	below	min	max-over	10	599999999999	5	0	600000000001	retention
+core	min	below	min	reversed	10	599999999999	5	20000000000	19999999999	retention
+core	min	below	min	fractional	10	599999999999	5	1	10000000001	retention
+core	min	below	max	omitted	10	599999999999	100	-	-	retention
+core	min	below	max	zero	10	599999999999	100	0	0	retention
+core	min	below	max	max	10	599999999999	100	600000000000	600000000000	retention
+core	min	below	max	min-negative	10	599999999999	100	-1	0	retention
+core	min	below	max	min-over	10	599999999999	100	600000000001	600000000000	retention
+core	min	below	max	max-negative	10	599999999999	100	0	-1	retention
+core	min	below	max	max-over	10	599999999999	100	0	600000000001	retention
+core	min	below	max	reversed	10	599999999999	100	20000000000	19999999999	retention
+core	min	below	max	fractional	10	599999999999	100	1	10000000001	retention
+core	min	below	over	omitted	10	599999999999	101	-	-	retention
+core	min	below	over	zero	10	599999999999	101	0	0	retention
+core	min	below	over	max	10	599999999999	101	600000000000	600000000000	retention
+core	min	below	over	min-negative	10	599999999999	101	-1	0	retention
+core	min	below	over	min-over	10	599999999999	101	600000000001	600000000000	retention
+core	min	below	over	max-negative	10	599999999999	101	0	-1	retention
+core	min	below	over	max-over	10	599999999999	101	0	600000000001	retention
+core	min	below	over	reversed	10	599999999999	101	20000000000	19999999999	retention
+core	min	below	over	fractional	10	599999999999	101	1	10000000001	retention
+production	min	below	default	valid	10	599999999999	default	ok	599999999999
+production	min	below	default	invalid	10	599999999999	default	labels	599999999999
+production	min	below	never	valid	10	599999999999	never	ok	599999999999
+production	min	below	never	invalid	10	599999999999	never	labels	599999999999
+production	min	below	below	valid	10	599999999999	86399999999999	expiryMinimum	599999999999
+production	min	below	below	invalid	10	599999999999	86399999999999	labels	599999999999
+production	min	below	day	valid	10	599999999999	86400000000000	ok	599999999999
+production	min	below	day	invalid	10	599999999999	86400000000000	labels	599999999999
+production	min	below	week-below	valid	10	599999999999	604799999999999	ok	599999999999
+production	min	below	week-below	invalid	10	599999999999	604799999999999	labels	599999999999
+production	min	below	week	valid	10	599999999999	604800000000000	ok	599999999999
+production	min	below	week	invalid	10	599999999999	604800000000000	labels	599999999999
+production	min	below	long	valid	10	599999999999	2678400000000001	ok	599999999999
+production	min	below	long	invalid	10	599999999999	2678400000000001	labels	599999999999
+core	min	min	omitted	omitted	10	600000000000	-	-	-	ok
+core	min	min	omitted	zero	10	600000000000	-	0	0	ok
+core	min	min	omitted	max	10	600000000000	-	600000000000	600000000000	ok
+core	min	min	omitted	min-negative	10	600000000000	-	-1	0	retryMin
+core	min	min	omitted	min-over	10	600000000000	-	600000000001	600000000000	retryMin
+core	min	min	omitted	max-negative	10	600000000000	-	0	-1	retryMax
+core	min	min	omitted	max-over	10	600000000000	-	0	600000000001	retryMax
+core	min	min	omitted	reversed	10	600000000000	-	20000000000	19999999999	retryOrder
+core	min	min	omitted	fractional	10	600000000000	-	1	10000000001	ok
+core	min	min	below	omitted	10	600000000000	4	-	-	deadLow
+core	min	min	below	zero	10	600000000000	4	0	0	deadLow
+core	min	min	below	max	10	600000000000	4	600000000000	600000000000	deadLow
+core	min	min	below	min-negative	10	600000000000	4	-1	0	deadLow
+core	min	min	below	min-over	10	600000000000	4	600000000001	600000000000	deadLow
+core	min	min	below	max-negative	10	600000000000	4	0	-1	deadLow
+core	min	min	below	max-over	10	600000000000	4	0	600000000001	deadLow
+core	min	min	below	reversed	10	600000000000	4	20000000000	19999999999	deadLow
+core	min	min	below	fractional	10	600000000000	4	1	10000000001	deadLow
+core	min	min	min	omitted	10	600000000000	5	-	-	ok
+core	min	min	min	zero	10	600000000000	5	0	0	ok
+core	min	min	min	max	10	600000000000	5	600000000000	600000000000	ok
+core	min	min	min	min-negative	10	600000000000	5	-1	0	retryMin
+core	min	min	min	min-over	10	600000000000	5	600000000001	600000000000	retryMin
+core	min	min	min	max-negative	10	600000000000	5	0	-1	retryMax
+core	min	min	min	max-over	10	600000000000	5	0	600000000001	retryMax
+core	min	min	min	reversed	10	600000000000	5	20000000000	19999999999	retryOrder
+core	min	min	min	fractional	10	600000000000	5	1	10000000001	ok
+core	min	min	max	omitted	10	600000000000	100	-	-	ok
+core	min	min	max	zero	10	600000000000	100	0	0	ok
+core	min	min	max	max	10	600000000000	100	600000000000	600000000000	ok
+core	min	min	max	min-negative	10	600000000000	100	-1	0	retryMin
+core	min	min	max	min-over	10	600000000000	100	600000000001	600000000000	retryMin
+core	min	min	max	max-negative	10	600000000000	100	0	-1	retryMax
+core	min	min	max	max-over	10	600000000000	100	0	600000000001	retryMax
+core	min	min	max	reversed	10	600000000000	100	20000000000	19999999999	retryOrder
+core	min	min	max	fractional	10	600000000000	100	1	10000000001	ok
+core	min	min	over	omitted	10	600000000000	101	-	-	deadHigh
+core	min	min	over	zero	10	600000000000	101	0	0	deadHigh
+core	min	min	over	max	10	600000000000	101	600000000000	600000000000	deadHigh
+core	min	min	over	min-negative	10	600000000000	101	-1	0	deadHigh
+core	min	min	over	min-over	10	600000000000	101	600000000001	600000000000	deadHigh
+core	min	min	over	max-negative	10	600000000000	101	0	-1	deadHigh
+core	min	min	over	max-over	10	600000000000	101	0	600000000001	deadHigh
+core	min	min	over	reversed	10	600000000000	101	20000000000	19999999999	deadHigh
+core	min	min	over	fractional	10	600000000000	101	1	10000000001	deadHigh
+production	min	min	default	valid	10	600000000000	default	ok	600000000000
+production	min	min	default	invalid	10	600000000000	default	labels	600000000000
+production	min	min	never	valid	10	600000000000	never	ok	600000000000
+production	min	min	never	invalid	10	600000000000	never	labels	600000000000
+production	min	min	below	valid	10	600000000000	86399999999999	expiryMinimum	600000000000
+production	min	min	below	invalid	10	600000000000	86399999999999	labels	600000000000
+production	min	min	day	valid	10	600000000000	86400000000000	ok	600000000000
+production	min	min	day	invalid	10	600000000000	86400000000000	labels	600000000000
+production	min	min	week-below	valid	10	600000000000	604799999999999	ok	600000000000
+production	min	min	week-below	invalid	10	600000000000	604799999999999	labels	600000000000
+production	min	min	week	valid	10	600000000000	604800000000000	ok	600000000000
+production	min	min	week	invalid	10	600000000000	604800000000000	labels	600000000000
+production	min	min	long	valid	10	600000000000	2678400000000001	ok	600000000000
+production	min	min	long	invalid	10	600000000000	2678400000000001	labels	600000000000
+core	min	week	omitted	omitted	10	604800000000000	-	-	-	ok
+core	min	week	omitted	zero	10	604800000000000	-	0	0	ok
+core	min	week	omitted	max	10	604800000000000	-	600000000000	600000000000	ok
+core	min	week	omitted	min-negative	10	604800000000000	-	-1	0	retryMin
+core	min	week	omitted	min-over	10	604800000000000	-	600000000001	600000000000	retryMin
+core	min	week	omitted	max-negative	10	604800000000000	-	0	-1	retryMax
+core	min	week	omitted	max-over	10	604800000000000	-	0	600000000001	retryMax
+core	min	week	omitted	reversed	10	604800000000000	-	20000000000	19999999999	retryOrder
+core	min	week	omitted	fractional	10	604800000000000	-	1	10000000001	ok
+core	min	week	below	omitted	10	604800000000000	4	-	-	deadLow
+core	min	week	below	zero	10	604800000000000	4	0	0	deadLow
+core	min	week	below	max	10	604800000000000	4	600000000000	600000000000	deadLow
+core	min	week	below	min-negative	10	604800000000000	4	-1	0	deadLow
+core	min	week	below	min-over	10	604800000000000	4	600000000001	600000000000	deadLow
+core	min	week	below	max-negative	10	604800000000000	4	0	-1	deadLow
+core	min	week	below	max-over	10	604800000000000	4	0	600000000001	deadLow
+core	min	week	below	reversed	10	604800000000000	4	20000000000	19999999999	deadLow
+core	min	week	below	fractional	10	604800000000000	4	1	10000000001	deadLow
+core	min	week	min	omitted	10	604800000000000	5	-	-	ok
+core	min	week	min	zero	10	604800000000000	5	0	0	ok
+core	min	week	min	max	10	604800000000000	5	600000000000	600000000000	ok
+core	min	week	min	min-negative	10	604800000000000	5	-1	0	retryMin
+core	min	week	min	min-over	10	604800000000000	5	600000000001	600000000000	retryMin
+core	min	week	min	max-negative	10	604800000000000	5	0	-1	retryMax
+core	min	week	min	max-over	10	604800000000000	5	0	600000000001	retryMax
+core	min	week	min	reversed	10	604800000000000	5	20000000000	19999999999	retryOrder
+core	min	week	min	fractional	10	604800000000000	5	1	10000000001	ok
+core	min	week	max	omitted	10	604800000000000	100	-	-	ok
+core	min	week	max	zero	10	604800000000000	100	0	0	ok
+core	min	week	max	max	10	604800000000000	100	600000000000	600000000000	ok
+core	min	week	max	min-negative	10	604800000000000	100	-1	0	retryMin
+core	min	week	max	min-over	10	604800000000000	100	600000000001	600000000000	retryMin
+core	min	week	max	max-negative	10	604800000000000	100	0	-1	retryMax
+core	min	week	max	max-over	10	604800000000000	100	0	600000000001	retryMax
+core	min	week	max	reversed	10	604800000000000	100	20000000000	19999999999	retryOrder
+core	min	week	max	fractional	10	604800000000000	100	1	10000000001	ok
+core	min	week	over	omitted	10	604800000000000	101	-	-	deadHigh
+core	min	week	over	zero	10	604800000000000	101	0	0	deadHigh
+core	min	week	over	max	10	604800000000000	101	600000000000	600000000000	deadHigh
+core	min	week	over	min-negative	10	604800000000000	101	-1	0	deadHigh
+core	min	week	over	min-over	10	604800000000000	101	600000000001	600000000000	deadHigh
+core	min	week	over	max-negative	10	604800000000000	101	0	-1	deadHigh
+core	min	week	over	max-over	10	604800000000000	101	0	600000000001	deadHigh
+core	min	week	over	reversed	10	604800000000000	101	20000000000	19999999999	deadHigh
+core	min	week	over	fractional	10	604800000000000	101	1	10000000001	deadHigh
+production	min	week	default	valid	10	604800000000000	default	ok	604800000000000
+production	min	week	default	invalid	10	604800000000000	default	labels	604800000000000
+production	min	week	never	valid	10	604800000000000	never	ok	604800000000000
+production	min	week	never	invalid	10	604800000000000	never	labels	604800000000000
+production	min	week	below	valid	10	604800000000000	86399999999999	expiryMinimum	604800000000000
+production	min	week	below	invalid	10	604800000000000	86399999999999	labels	604800000000000
+production	min	week	day	valid	10	604800000000000	86400000000000	retentionAfterExpiry	604800000000000
+production	min	week	day	invalid	10	604800000000000	86400000000000	labels	604800000000000
+production	min	week	week-below	valid	10	604800000000000	604799999999999	retentionAfterExpiry	604800000000000
+production	min	week	week-below	invalid	10	604800000000000	604799999999999	labels	604800000000000
+production	min	week	week	valid	10	604800000000000	604800000000000	ok	604800000000000
+production	min	week	week	invalid	10	604800000000000	604800000000000	labels	604800000000000
+production	min	week	long	valid	10	604800000000000	2678400000000001	ok	604800000000000
+production	min	week	long	invalid	10	604800000000000	2678400000000001	labels	604800000000000
+core	min	max	omitted	omitted	10	2678400000000000	-	-	-	ok
+core	min	max	omitted	zero	10	2678400000000000	-	0	0	ok
+core	min	max	omitted	max	10	2678400000000000	-	600000000000	600000000000	ok
+core	min	max	omitted	min-negative	10	2678400000000000	-	-1	0	retryMin
+core	min	max	omitted	min-over	10	2678400000000000	-	600000000001	600000000000	retryMin
+core	min	max	omitted	max-negative	10	2678400000000000	-	0	-1	retryMax
+core	min	max	omitted	max-over	10	2678400000000000	-	0	600000000001	retryMax
+core	min	max	omitted	reversed	10	2678400000000000	-	20000000000	19999999999	retryOrder
+core	min	max	omitted	fractional	10	2678400000000000	-	1	10000000001	ok
+core	min	max	below	omitted	10	2678400000000000	4	-	-	deadLow
+core	min	max	below	zero	10	2678400000000000	4	0	0	deadLow
+core	min	max	below	max	10	2678400000000000	4	600000000000	600000000000	deadLow
+core	min	max	below	min-negative	10	2678400000000000	4	-1	0	deadLow
+core	min	max	below	min-over	10	2678400000000000	4	600000000001	600000000000	deadLow
+core	min	max	below	max-negative	10	2678400000000000	4	0	-1	deadLow
+core	min	max	below	max-over	10	2678400000000000	4	0	600000000001	deadLow
+core	min	max	below	reversed	10	2678400000000000	4	20000000000	19999999999	deadLow
+core	min	max	below	fractional	10	2678400000000000	4	1	10000000001	deadLow
+core	min	max	min	omitted	10	2678400000000000	5	-	-	ok
+core	min	max	min	zero	10	2678400000000000	5	0	0	ok
+core	min	max	min	max	10	2678400000000000	5	600000000000	600000000000	ok
+core	min	max	min	min-negative	10	2678400000000000	5	-1	0	retryMin
+core	min	max	min	min-over	10	2678400000000000	5	600000000001	600000000000	retryMin
+core	min	max	min	max-negative	10	2678400000000000	5	0	-1	retryMax
+core	min	max	min	max-over	10	2678400000000000	5	0	600000000001	retryMax
+core	min	max	min	reversed	10	2678400000000000	5	20000000000	19999999999	retryOrder
+core	min	max	min	fractional	10	2678400000000000	5	1	10000000001	ok
+core	min	max	max	omitted	10	2678400000000000	100	-	-	ok
+core	min	max	max	zero	10	2678400000000000	100	0	0	ok
+core	min	max	max	max	10	2678400000000000	100	600000000000	600000000000	ok
+core	min	max	max	min-negative	10	2678400000000000	100	-1	0	retryMin
+core	min	max	max	min-over	10	2678400000000000	100	600000000001	600000000000	retryMin
+core	min	max	max	max-negative	10	2678400000000000	100	0	-1	retryMax
+core	min	max	max	max-over	10	2678400000000000	100	0	600000000001	retryMax
+core	min	max	max	reversed	10	2678400000000000	100	20000000000	19999999999	retryOrder
+core	min	max	max	fractional	10	2678400000000000	100	1	10000000001	ok
+core	min	max	over	omitted	10	2678400000000000	101	-	-	deadHigh
+core	min	max	over	zero	10	2678400000000000	101	0	0	deadHigh
+core	min	max	over	max	10	2678400000000000	101	600000000000	600000000000	deadHigh
+core	min	max	over	min-negative	10	2678400000000000	101	-1	0	deadHigh
+core	min	max	over	min-over	10	2678400000000000	101	600000000001	600000000000	deadHigh
+core	min	max	over	max-negative	10	2678400000000000	101	0	-1	deadHigh
+core	min	max	over	max-over	10	2678400000000000	101	0	600000000001	deadHigh
+core	min	max	over	reversed	10	2678400000000000	101	20000000000	19999999999	deadHigh
+core	min	max	over	fractional	10	2678400000000000	101	1	10000000001	deadHigh
+production	min	max	default	valid	10	2678400000000000	default	ok	2678400000000000
+production	min	max	default	invalid	10	2678400000000000	default	labels	2678400000000000
+production	min	max	never	valid	10	2678400000000000	never	ok	2678400000000000
+production	min	max	never	invalid	10	2678400000000000	never	labels	2678400000000000
+production	min	max	below	valid	10	2678400000000000	86399999999999	expiryMinimum	2678400000000000
+production	min	max	below	invalid	10	2678400000000000	86399999999999	labels	2678400000000000
+production	min	max	day	valid	10	2678400000000000	86400000000000	retentionAfterExpiry	2678400000000000
+production	min	max	day	invalid	10	2678400000000000	86400000000000	labels	2678400000000000
+production	min	max	week-below	valid	10	2678400000000000	604799999999999	retentionAfterExpiry	2678400000000000
+production	min	max	week-below	invalid	10	2678400000000000	604799999999999	labels	2678400000000000
+production	min	max	week	valid	10	2678400000000000	604800000000000	retentionAfterExpiry	2678400000000000
+production	min	max	week	invalid	10	2678400000000000	604800000000000	labels	2678400000000000
+production	min	max	long	valid	10	2678400000000000	2678400000000001	ok	2678400000000000
+production	min	max	long	invalid	10	2678400000000000	2678400000000001	labels	2678400000000000
+core	min	over	omitted	omitted	10	2678400000000001	-	-	-	retention
+core	min	over	omitted	zero	10	2678400000000001	-	0	0	retention
+core	min	over	omitted	max	10	2678400000000001	-	600000000000	600000000000	retention
+core	min	over	omitted	min-negative	10	2678400000000001	-	-1	0	retention
+core	min	over	omitted	min-over	10	2678400000000001	-	600000000001	600000000000	retention
+core	min	over	omitted	max-negative	10	2678400000000001	-	0	-1	retention
+core	min	over	omitted	max-over	10	2678400000000001	-	0	600000000001	retention
+core	min	over	omitted	reversed	10	2678400000000001	-	20000000000	19999999999	retention
+core	min	over	omitted	fractional	10	2678400000000001	-	1	10000000001	retention
+core	min	over	below	omitted	10	2678400000000001	4	-	-	retention
+core	min	over	below	zero	10	2678400000000001	4	0	0	retention
+core	min	over	below	max	10	2678400000000001	4	600000000000	600000000000	retention
+core	min	over	below	min-negative	10	2678400000000001	4	-1	0	retention
+core	min	over	below	min-over	10	2678400000000001	4	600000000001	600000000000	retention
+core	min	over	below	max-negative	10	2678400000000001	4	0	-1	retention
+core	min	over	below	max-over	10	2678400000000001	4	0	600000000001	retention
+core	min	over	below	reversed	10	2678400000000001	4	20000000000	19999999999	retention
+core	min	over	below	fractional	10	2678400000000001	4	1	10000000001	retention
+core	min	over	min	omitted	10	2678400000000001	5	-	-	retention
+core	min	over	min	zero	10	2678400000000001	5	0	0	retention
+core	min	over	min	max	10	2678400000000001	5	600000000000	600000000000	retention
+core	min	over	min	min-negative	10	2678400000000001	5	-1	0	retention
+core	min	over	min	min-over	10	2678400000000001	5	600000000001	600000000000	retention
+core	min	over	min	max-negative	10	2678400000000001	5	0	-1	retention
+core	min	over	min	max-over	10	2678400000000001	5	0	600000000001	retention
+core	min	over	min	reversed	10	2678400000000001	5	20000000000	19999999999	retention
+core	min	over	min	fractional	10	2678400000000001	5	1	10000000001	retention
+core	min	over	max	omitted	10	2678400000000001	100	-	-	retention
+core	min	over	max	zero	10	2678400000000001	100	0	0	retention
+core	min	over	max	max	10	2678400000000001	100	600000000000	600000000000	retention
+core	min	over	max	min-negative	10	2678400000000001	100	-1	0	retention
+core	min	over	max	min-over	10	2678400000000001	100	600000000001	600000000000	retention
+core	min	over	max	max-negative	10	2678400000000001	100	0	-1	retention
+core	min	over	max	max-over	10	2678400000000001	100	0	600000000001	retention
+core	min	over	max	reversed	10	2678400000000001	100	20000000000	19999999999	retention
+core	min	over	max	fractional	10	2678400000000001	100	1	10000000001	retention
+core	min	over	over	omitted	10	2678400000000001	101	-	-	retention
+core	min	over	over	zero	10	2678400000000001	101	0	0	retention
+core	min	over	over	max	10	2678400000000001	101	600000000000	600000000000	retention
+core	min	over	over	min-negative	10	2678400000000001	101	-1	0	retention
+core	min	over	over	min-over	10	2678400000000001	101	600000000001	600000000000	retention
+core	min	over	over	max-negative	10	2678400000000001	101	0	-1	retention
+core	min	over	over	max-over	10	2678400000000001	101	0	600000000001	retention
+core	min	over	over	reversed	10	2678400000000001	101	20000000000	19999999999	retention
+core	min	over	over	fractional	10	2678400000000001	101	1	10000000001	retention
+production	min	over	default	valid	10	2678400000000001	default	retentionAfterExpiry	2678400000000001
+production	min	over	default	invalid	10	2678400000000001	default	labels	2678400000000001
+production	min	over	never	valid	10	2678400000000001	never	ok	2678400000000001
+production	min	over	never	invalid	10	2678400000000001	never	labels	2678400000000001
+production	min	over	below	valid	10	2678400000000001	86399999999999	expiryMinimum	2678400000000001
+production	min	over	below	invalid	10	2678400000000001	86399999999999	labels	2678400000000001
+production	min	over	day	valid	10	2678400000000001	86400000000000	retentionAfterExpiry	2678400000000001
+production	min	over	day	invalid	10	2678400000000001	86400000000000	labels	2678400000000001
+production	min	over	week-below	valid	10	2678400000000001	604799999999999	retentionAfterExpiry	2678400000000001
+production	min	over	week-below	invalid	10	2678400000000001	604799999999999	labels	2678400000000001
+production	min	over	week	valid	10	2678400000000001	604800000000000	retentionAfterExpiry	2678400000000001
+production	min	over	week	invalid	10	2678400000000001	604800000000000	labels	2678400000000001
+production	min	over	long	valid	10	2678400000000001	2678400000000001	ok	2678400000000001
+production	min	over	long	invalid	10	2678400000000001	2678400000000001	labels	2678400000000001
+core	max	omitted	omitted	omitted	600	-	-	-	-	ok
+core	max	omitted	omitted	zero	600	-	-	0	0	ok
+core	max	omitted	omitted	max	600	-	-	600000000000	600000000000	ok
+core	max	omitted	omitted	min-negative	600	-	-	-1	0	retryMin
+core	max	omitted	omitted	min-over	600	-	-	600000000001	600000000000	retryMin
+core	max	omitted	omitted	max-negative	600	-	-	0	-1	retryMax
+core	max	omitted	omitted	max-over	600	-	-	0	600000000001	retryMax
+core	max	omitted	omitted	reversed	600	-	-	20000000000	19999999999	retryOrder
+core	max	omitted	omitted	fractional	600	-	-	1	10000000001	ok
+core	max	omitted	below	omitted	600	-	4	-	-	deadLow
+core	max	omitted	below	zero	600	-	4	0	0	deadLow
+core	max	omitted	below	max	600	-	4	600000000000	600000000000	deadLow
+core	max	omitted	below	min-negative	600	-	4	-1	0	deadLow
+core	max	omitted	below	min-over	600	-	4	600000000001	600000000000	deadLow
+core	max	omitted	below	max-negative	600	-	4	0	-1	deadLow
+core	max	omitted	below	max-over	600	-	4	0	600000000001	deadLow
+core	max	omitted	below	reversed	600	-	4	20000000000	19999999999	deadLow
+core	max	omitted	below	fractional	600	-	4	1	10000000001	deadLow
+core	max	omitted	min	omitted	600	-	5	-	-	ok
+core	max	omitted	min	zero	600	-	5	0	0	ok
+core	max	omitted	min	max	600	-	5	600000000000	600000000000	ok
+core	max	omitted	min	min-negative	600	-	5	-1	0	retryMin
+core	max	omitted	min	min-over	600	-	5	600000000001	600000000000	retryMin
+core	max	omitted	min	max-negative	600	-	5	0	-1	retryMax
+core	max	omitted	min	max-over	600	-	5	0	600000000001	retryMax
+core	max	omitted	min	reversed	600	-	5	20000000000	19999999999	retryOrder
+core	max	omitted	min	fractional	600	-	5	1	10000000001	ok
+core	max	omitted	max	omitted	600	-	100	-	-	ok
+core	max	omitted	max	zero	600	-	100	0	0	ok
+core	max	omitted	max	max	600	-	100	600000000000	600000000000	ok
+core	max	omitted	max	min-negative	600	-	100	-1	0	retryMin
+core	max	omitted	max	min-over	600	-	100	600000000001	600000000000	retryMin
+core	max	omitted	max	max-negative	600	-	100	0	-1	retryMax
+core	max	omitted	max	max-over	600	-	100	0	600000000001	retryMax
+core	max	omitted	max	reversed	600	-	100	20000000000	19999999999	retryOrder
+core	max	omitted	max	fractional	600	-	100	1	10000000001	ok
+core	max	omitted	over	omitted	600	-	101	-	-	deadHigh
+core	max	omitted	over	zero	600	-	101	0	0	deadHigh
+core	max	omitted	over	max	600	-	101	600000000000	600000000000	deadHigh
+core	max	omitted	over	min-negative	600	-	101	-1	0	deadHigh
+core	max	omitted	over	min-over	600	-	101	600000000001	600000000000	deadHigh
+core	max	omitted	over	max-negative	600	-	101	0	-1	deadHigh
+core	max	omitted	over	max-over	600	-	101	0	600000000001	deadHigh
+core	max	omitted	over	reversed	600	-	101	20000000000	19999999999	deadHigh
+core	max	omitted	over	fractional	600	-	101	1	10000000001	deadHigh
+production	max	omitted	default	valid	600	-	default	ok	604800000000000
+production	max	omitted	default	invalid	600	-	default	labels	604800000000000
+production	max	omitted	never	valid	600	-	never	ok	604800000000000
+production	max	omitted	never	invalid	600	-	never	labels	604800000000000
+production	max	omitted	below	valid	600	-	86399999999999	expiryMinimum	604800000000000
+production	max	omitted	below	invalid	600	-	86399999999999	labels	604800000000000
+production	max	omitted	day	valid	600	-	86400000000000	retentionAfterExpiry	604800000000000
+production	max	omitted	day	invalid	600	-	86400000000000	labels	604800000000000
+production	max	omitted	week-below	valid	600	-	604799999999999	retentionAfterExpiry	604800000000000
+production	max	omitted	week-below	invalid	600	-	604799999999999	labels	604800000000000
+production	max	omitted	week	valid	600	-	604800000000000	ok	604800000000000
+production	max	omitted	week	invalid	600	-	604800000000000	labels	604800000000000
+production	max	omitted	long	valid	600	-	2678400000000001	ok	604800000000000
+production	max	omitted	long	invalid	600	-	2678400000000001	labels	604800000000000
+core	max	zero	omitted	omitted	600	0	-	-	-	retention
+core	max	zero	omitted	zero	600	0	-	0	0	retention
+core	max	zero	omitted	max	600	0	-	600000000000	600000000000	retention
+core	max	zero	omitted	min-negative	600	0	-	-1	0	retention
+core	max	zero	omitted	min-over	600	0	-	600000000001	600000000000	retention
+core	max	zero	omitted	max-negative	600	0	-	0	-1	retention
+core	max	zero	omitted	max-over	600	0	-	0	600000000001	retention
+core	max	zero	omitted	reversed	600	0	-	20000000000	19999999999	retention
+core	max	zero	omitted	fractional	600	0	-	1	10000000001	retention
+core	max	zero	below	omitted	600	0	4	-	-	retention
+core	max	zero	below	zero	600	0	4	0	0	retention
+core	max	zero	below	max	600	0	4	600000000000	600000000000	retention
+core	max	zero	below	min-negative	600	0	4	-1	0	retention
+core	max	zero	below	min-over	600	0	4	600000000001	600000000000	retention
+core	max	zero	below	max-negative	600	0	4	0	-1	retention
+core	max	zero	below	max-over	600	0	4	0	600000000001	retention
+core	max	zero	below	reversed	600	0	4	20000000000	19999999999	retention
+core	max	zero	below	fractional	600	0	4	1	10000000001	retention
+core	max	zero	min	omitted	600	0	5	-	-	retention
+core	max	zero	min	zero	600	0	5	0	0	retention
+core	max	zero	min	max	600	0	5	600000000000	600000000000	retention
+core	max	zero	min	min-negative	600	0	5	-1	0	retention
+core	max	zero	min	min-over	600	0	5	600000000001	600000000000	retention
+core	max	zero	min	max-negative	600	0	5	0	-1	retention
+core	max	zero	min	max-over	600	0	5	0	600000000001	retention
+core	max	zero	min	reversed	600	0	5	20000000000	19999999999	retention
+core	max	zero	min	fractional	600	0	5	1	10000000001	retention
+core	max	zero	max	omitted	600	0	100	-	-	retention
+core	max	zero	max	zero	600	0	100	0	0	retention
+core	max	zero	max	max	600	0	100	600000000000	600000000000	retention
+core	max	zero	max	min-negative	600	0	100	-1	0	retention
+core	max	zero	max	min-over	600	0	100	600000000001	600000000000	retention
+core	max	zero	max	max-negative	600	0	100	0	-1	retention
+core	max	zero	max	max-over	600	0	100	0	600000000001	retention
+core	max	zero	max	reversed	600	0	100	20000000000	19999999999	retention
+core	max	zero	max	fractional	600	0	100	1	10000000001	retention
+core	max	zero	over	omitted	600	0	101	-	-	retention
+core	max	zero	over	zero	600	0	101	0	0	retention
+core	max	zero	over	max	600	0	101	600000000000	600000000000	retention
+core	max	zero	over	min-negative	600	0	101	-1	0	retention
+core	max	zero	over	min-over	600	0	101	600000000001	600000000000	retention
+core	max	zero	over	max-negative	600	0	101	0	-1	retention
+core	max	zero	over	max-over	600	0	101	0	600000000001	retention
+core	max	zero	over	reversed	600	0	101	20000000000	19999999999	retention
+core	max	zero	over	fractional	600	0	101	1	10000000001	retention
+production	max	zero	default	valid	600	0	default	ok	0
+production	max	zero	default	invalid	600	0	default	labels	0
+production	max	zero	never	valid	600	0	never	ok	0
+production	max	zero	never	invalid	600	0	never	labels	0
+production	max	zero	below	valid	600	0	86399999999999	expiryMinimum	0
+production	max	zero	below	invalid	600	0	86399999999999	labels	0
+production	max	zero	day	valid	600	0	86400000000000	ok	0
+production	max	zero	day	invalid	600	0	86400000000000	labels	0
+production	max	zero	week-below	valid	600	0	604799999999999	ok	0
+production	max	zero	week-below	invalid	600	0	604799999999999	labels	0
+production	max	zero	week	valid	600	0	604800000000000	ok	0
+production	max	zero	week	invalid	600	0	604800000000000	labels	0
+production	max	zero	long	valid	600	0	2678400000000001	ok	0
+production	max	zero	long	invalid	600	0	2678400000000001	labels	0
+core	max	below	omitted	omitted	600	599999999999	-	-	-	retention
+core	max	below	omitted	zero	600	599999999999	-	0	0	retention
+core	max	below	omitted	max	600	599999999999	-	600000000000	600000000000	retention
+core	max	below	omitted	min-negative	600	599999999999	-	-1	0	retention
+core	max	below	omitted	min-over	600	599999999999	-	600000000001	600000000000	retention
+core	max	below	omitted	max-negative	600	599999999999	-	0	-1	retention
+core	max	below	omitted	max-over	600	599999999999	-	0	600000000001	retention
+core	max	below	omitted	reversed	600	599999999999	-	20000000000	19999999999	retention
+core	max	below	omitted	fractional	600	599999999999	-	1	10000000001	retention
+core	max	below	below	omitted	600	599999999999	4	-	-	retention
+core	max	below	below	zero	600	599999999999	4	0	0	retention
+core	max	below	below	max	600	599999999999	4	600000000000	600000000000	retention
+core	max	below	below	min-negative	600	599999999999	4	-1	0	retention
+core	max	below	below	min-over	600	599999999999	4	600000000001	600000000000	retention
+core	max	below	below	max-negative	600	599999999999	4	0	-1	retention
+core	max	below	below	max-over	600	599999999999	4	0	600000000001	retention
+core	max	below	below	reversed	600	599999999999	4	20000000000	19999999999	retention
+core	max	below	below	fractional	600	599999999999	4	1	10000000001	retention
+core	max	below	min	omitted	600	599999999999	5	-	-	retention
+core	max	below	min	zero	600	599999999999	5	0	0	retention
+core	max	below	min	max	600	599999999999	5	600000000000	600000000000	retention
+core	max	below	min	min-negative	600	599999999999	5	-1	0	retention
+core	max	below	min	min-over	600	599999999999	5	600000000001	600000000000	retention
+core	max	below	min	max-negative	600	599999999999	5	0	-1	retention
+core	max	below	min	max-over	600	599999999999	5	0	600000000001	retention
+core	max	below	min	reversed	600	599999999999	5	20000000000	19999999999	retention
+core	max	below	min	fractional	600	599999999999	5	1	10000000001	retention
+core	max	below	max	omitted	600	599999999999	100	-	-	retention
+core	max	below	max	zero	600	599999999999	100	0	0	retention
+core	max	below	max	max	600	599999999999	100	600000000000	600000000000	retention
+core	max	below	max	min-negative	600	599999999999	100	-1	0	retention
+core	max	below	max	min-over	600	599999999999	100	600000000001	600000000000	retention
+core	max	below	max	max-negative	600	599999999999	100	0	-1	retention
+core	max	below	max	max-over	600	599999999999	100	0	600000000001	retention
+core	max	below	max	reversed	600	599999999999	100	20000000000	19999999999	retention
+core	max	below	max	fractional	600	599999999999	100	1	10000000001	retention
+core	max	below	over	omitted	600	599999999999	101	-	-	retention
+core	max	below	over	zero	600	599999999999	101	0	0	retention
+core	max	below	over	max	600	599999999999	101	600000000000	600000000000	retention
+core	max	below	over	min-negative	600	599999999999	101	-1	0	retention
+core	max	below	over	min-over	600	599999999999	101	600000000001	600000000000	retention
+core	max	below	over	max-negative	600	599999999999	101	0	-1	retention
+core	max	below	over	max-over	600	599999999999	101	0	600000000001	retention
+core	max	below	over	reversed	600	599999999999	101	20000000000	19999999999	retention
+core	max	below	over	fractional	600	599999999999	101	1	10000000001	retention
+production	max	below	default	valid	600	599999999999	default	ok	599999999999
+production	max	below	default	invalid	600	599999999999	default	labels	599999999999
+production	max	below	never	valid	600	599999999999	never	ok	599999999999
+production	max	below	never	invalid	600	599999999999	never	labels	599999999999
+production	max	below	below	valid	600	599999999999	86399999999999	expiryMinimum	599999999999
+production	max	below	below	invalid	600	599999999999	86399999999999	labels	599999999999
+production	max	below	day	valid	600	599999999999	86400000000000	ok	599999999999
+production	max	below	day	invalid	600	599999999999	86400000000000	labels	599999999999
+production	max	below	week-below	valid	600	599999999999	604799999999999	ok	599999999999
+production	max	below	week-below	invalid	600	599999999999	604799999999999	labels	599999999999
+production	max	below	week	valid	600	599999999999	604800000000000	ok	599999999999
+production	max	below	week	invalid	600	599999999999	604800000000000	labels	599999999999
+production	max	below	long	valid	600	599999999999	2678400000000001	ok	599999999999
+production	max	below	long	invalid	600	599999999999	2678400000000001	labels	599999999999
+core	max	min	omitted	omitted	600	600000000000	-	-	-	ok
+core	max	min	omitted	zero	600	600000000000	-	0	0	ok
+core	max	min	omitted	max	600	600000000000	-	600000000000	600000000000	ok
+core	max	min	omitted	min-negative	600	600000000000	-	-1	0	retryMin
+core	max	min	omitted	min-over	600	600000000000	-	600000000001	600000000000	retryMin
+core	max	min	omitted	max-negative	600	600000000000	-	0	-1	retryMax
+core	max	min	omitted	max-over	600	600000000000	-	0	600000000001	retryMax
+core	max	min	omitted	reversed	600	600000000000	-	20000000000	19999999999	retryOrder
+core	max	min	omitted	fractional	600	600000000000	-	1	10000000001	ok
+core	max	min	below	omitted	600	600000000000	4	-	-	deadLow
+core	max	min	below	zero	600	600000000000	4	0	0	deadLow
+core	max	min	below	max	600	600000000000	4	600000000000	600000000000	deadLow
+core	max	min	below	min-negative	600	600000000000	4	-1	0	deadLow
+core	max	min	below	min-over	600	600000000000	4	600000000001	600000000000	deadLow
+core	max	min	below	max-negative	600	600000000000	4	0	-1	deadLow
+core	max	min	below	max-over	600	600000000000	4	0	600000000001	deadLow
+core	max	min	below	reversed	600	600000000000	4	20000000000	19999999999	deadLow
+core	max	min	below	fractional	600	600000000000	4	1	10000000001	deadLow
+core	max	min	min	omitted	600	600000000000	5	-	-	ok
+core	max	min	min	zero	600	600000000000	5	0	0	ok
+core	max	min	min	max	600	600000000000	5	600000000000	600000000000	ok
+core	max	min	min	min-negative	600	600000000000	5	-1	0	retryMin
+core	max	min	min	min-over	600	600000000000	5	600000000001	600000000000	retryMin
+core	max	min	min	max-negative	600	600000000000	5	0	-1	retryMax
+core	max	min	min	max-over	600	600000000000	5	0	600000000001	retryMax
+core	max	min	min	reversed	600	600000000000	5	20000000000	19999999999	retryOrder
+core	max	min	min	fractional	600	600000000000	5	1	10000000001	ok
+core	max	min	max	omitted	600	600000000000	100	-	-	ok
+core	max	min	max	zero	600	600000000000	100	0	0	ok
+core	max	min	max	max	600	600000000000	100	600000000000	600000000000	ok
+core	max	min	max	min-negative	600	600000000000	100	-1	0	retryMin
+core	max	min	max	min-over	600	600000000000	100	600000000001	600000000000	retryMin
+core	max	min	max	max-negative	600	600000000000	100	0	-1	retryMax
+core	max	min	max	max-over	600	600000000000	100	0	600000000001	retryMax
+core	max	min	max	reversed	600	600000000000	100	20000000000	19999999999	retryOrder
+core	max	min	max	fractional	600	600000000000	100	1	10000000001	ok
+core	max	min	over	omitted	600	600000000000	101	-	-	deadHigh
+core	max	min	over	zero	600	600000000000	101	0	0	deadHigh
+core	max	min	over	max	600	600000000000	101	600000000000	600000000000	deadHigh
+core	max	min	over	min-negative	600	600000000000	101	-1	0	deadHigh
+core	max	min	over	min-over	600	600000000000	101	600000000001	600000000000	deadHigh
+core	max	min	over	max-negative	600	600000000000	101	0	-1	deadHigh
+core	max	min	over	max-over	600	600000000000	101	0	600000000001	deadHigh
+core	max	min	over	reversed	600	600000000000	101	20000000000	19999999999	deadHigh
+core	max	min	over	fractional	600	600000000000	101	1	10000000001	deadHigh
+production	max	min	default	valid	600	600000000000	default	ok	600000000000
+production	max	min	default	invalid	600	600000000000	default	labels	600000000000
+production	max	min	never	valid	600	600000000000	never	ok	600000000000
+production	max	min	never	invalid	600	600000000000	never	labels	600000000000
+production	max	min	below	valid	600	600000000000	86399999999999	expiryMinimum	600000000000
+production	max	min	below	invalid	600	600000000000	86399999999999	labels	600000000000
+production	max	min	day	valid	600	600000000000	86400000000000	ok	600000000000
+production	max	min	day	invalid	600	600000000000	86400000000000	labels	600000000000
+production	max	min	week-below	valid	600	600000000000	604799999999999	ok	600000000000
+production	max	min	week-below	invalid	600	600000000000	604799999999999	labels	600000000000
+production	max	min	week	valid	600	600000000000	604800000000000	ok	600000000000
+production	max	min	week	invalid	600	600000000000	604800000000000	labels	600000000000
+production	max	min	long	valid	600	600000000000	2678400000000001	ok	600000000000
+production	max	min	long	invalid	600	600000000000	2678400000000001	labels	600000000000
+core	max	week	omitted	omitted	600	604800000000000	-	-	-	ok
+core	max	week	omitted	zero	600	604800000000000	-	0	0	ok
+core	max	week	omitted	max	600	604800000000000	-	600000000000	600000000000	ok
+core	max	week	omitted	min-negative	600	604800000000000	-	-1	0	retryMin
+core	max	week	omitted	min-over	600	604800000000000	-	600000000001	600000000000	retryMin
+core	max	week	omitted	max-negative	600	604800000000000	-	0	-1	retryMax
+core	max	week	omitted	max-over	600	604800000000000	-	0	600000000001	retryMax
+core	max	week	omitted	reversed	600	604800000000000	-	20000000000	19999999999	retryOrder
+core	max	week	omitted	fractional	600	604800000000000	-	1	10000000001	ok
+core	max	week	below	omitted	600	604800000000000	4	-	-	deadLow
+core	max	week	below	zero	600	604800000000000	4	0	0	deadLow
+core	max	week	below	max	600	604800000000000	4	600000000000	600000000000	deadLow
+core	max	week	below	min-negative	600	604800000000000	4	-1	0	deadLow
+core	max	week	below	min-over	600	604800000000000	4	600000000001	600000000000	deadLow
+core	max	week	below	max-negative	600	604800000000000	4	0	-1	deadLow
+core	max	week	below	max-over	600	604800000000000	4	0	600000000001	deadLow
+core	max	week	below	reversed	600	604800000000000	4	20000000000	19999999999	deadLow
+core	max	week	below	fractional	600	604800000000000	4	1	10000000001	deadLow
+core	max	week	min	omitted	600	604800000000000	5	-	-	ok
+core	max	week	min	zero	600	604800000000000	5	0	0	ok
+core	max	week	min	max	600	604800000000000	5	600000000000	600000000000	ok
+core	max	week	min	min-negative	600	604800000000000	5	-1	0	retryMin
+core	max	week	min	min-over	600	604800000000000	5	600000000001	600000000000	retryMin
+core	max	week	min	max-negative	600	604800000000000	5	0	-1	retryMax
+core	max	week	min	max-over	600	604800000000000	5	0	600000000001	retryMax
+core	max	week	min	reversed	600	604800000000000	5	20000000000	19999999999	retryOrder
+core	max	week	min	fractional	600	604800000000000	5	1	10000000001	ok
+core	max	week	max	omitted	600	604800000000000	100	-	-	ok
+core	max	week	max	zero	600	604800000000000	100	0	0	ok
+core	max	week	max	max	600	604800000000000	100	600000000000	600000000000	ok
+core	max	week	max	min-negative	600	604800000000000	100	-1	0	retryMin
+core	max	week	max	min-over	600	604800000000000	100	600000000001	600000000000	retryMin
+core	max	week	max	max-negative	600	604800000000000	100	0	-1	retryMax
+core	max	week	max	max-over	600	604800000000000	100	0	600000000001	retryMax
+core	max	week	max	reversed	600	604800000000000	100	20000000000	19999999999	retryOrder
+core	max	week	max	fractional	600	604800000000000	100	1	10000000001	ok
+core	max	week	over	omitted	600	604800000000000	101	-	-	deadHigh
+core	max	week	over	zero	600	604800000000000	101	0	0	deadHigh
+core	max	week	over	max	600	604800000000000	101	600000000000	600000000000	deadHigh
+core	max	week	over	min-negative	600	604800000000000	101	-1	0	deadHigh
+core	max	week	over	min-over	600	604800000000000	101	600000000001	600000000000	deadHigh
+core	max	week	over	max-negative	600	604800000000000	101	0	-1	deadHigh
+core	max	week	over	max-over	600	604800000000000	101	0	600000000001	deadHigh
+core	max	week	over	reversed	600	604800000000000	101	20000000000	19999999999	deadHigh
+core	max	week	over	fractional	600	604800000000000	101	1	10000000001	deadHigh
+production	max	week	default	valid	600	604800000000000	default	ok	604800000000000
+production	max	week	default	invalid	600	604800000000000	default	labels	604800000000000
+production	max	week	never	valid	600	604800000000000	never	ok	604800000000000
+production	max	week	never	invalid	600	604800000000000	never	labels	604800000000000
+production	max	week	below	valid	600	604800000000000	86399999999999	expiryMinimum	604800000000000
+production	max	week	below	invalid	600	604800000000000	86399999999999	labels	604800000000000
+production	max	week	day	valid	600	604800000000000	86400000000000	retentionAfterExpiry	604800000000000
+production	max	week	day	invalid	600	604800000000000	86400000000000	labels	604800000000000
+production	max	week	week-below	valid	600	604800000000000	604799999999999	retentionAfterExpiry	604800000000000
+production	max	week	week-below	invalid	600	604800000000000	604799999999999	labels	604800000000000
+production	max	week	week	valid	600	604800000000000	604800000000000	ok	604800000000000
+production	max	week	week	invalid	600	604800000000000	604800000000000	labels	604800000000000
+production	max	week	long	valid	600	604800000000000	2678400000000001	ok	604800000000000
+production	max	week	long	invalid	600	604800000000000	2678400000000001	labels	604800000000000
+core	max	max	omitted	omitted	600	2678400000000000	-	-	-	ok
+core	max	max	omitted	zero	600	2678400000000000	-	0	0	ok
+core	max	max	omitted	max	600	2678400000000000	-	600000000000	600000000000	ok
+core	max	max	omitted	min-negative	600	2678400000000000	-	-1	0	retryMin
+core	max	max	omitted	min-over	600	2678400000000000	-	600000000001	600000000000	retryMin
+core	max	max	omitted	max-negative	600	2678400000000000	-	0	-1	retryMax
+core	max	max	omitted	max-over	600	2678400000000000	-	0	600000000001	retryMax
+core	max	max	omitted	reversed	600	2678400000000000	-	20000000000	19999999999	retryOrder
+core	max	max	omitted	fractional	600	2678400000000000	-	1	10000000001	ok
+core	max	max	below	omitted	600	2678400000000000	4	-	-	deadLow
+core	max	max	below	zero	600	2678400000000000	4	0	0	deadLow
+core	max	max	below	max	600	2678400000000000	4	600000000000	600000000000	deadLow
+core	max	max	below	min-negative	600	2678400000000000	4	-1	0	deadLow
+core	max	max	below	min-over	600	2678400000000000	4	600000000001	600000000000	deadLow
+core	max	max	below	max-negative	600	2678400000000000	4	0	-1	deadLow
+core	max	max	below	max-over	600	2678400000000000	4	0	600000000001	deadLow
+core	max	max	below	reversed	600	2678400000000000	4	20000000000	19999999999	deadLow
+core	max	max	below	fractional	600	2678400000000000	4	1	10000000001	deadLow
+core	max	max	min	omitted	600	2678400000000000	5	-	-	ok
+core	max	max	min	zero	600	2678400000000000	5	0	0	ok
+core	max	max	min	max	600	2678400000000000	5	600000000000	600000000000	ok
+core	max	max	min	min-negative	600	2678400000000000	5	-1	0	retryMin
+core	max	max	min	min-over	600	2678400000000000	5	600000000001	600000000000	retryMin
+core	max	max	min	max-negative	600	2678400000000000	5	0	-1	retryMax
+core	max	max	min	max-over	600	2678400000000000	5	0	600000000001	retryMax
+core	max	max	min	reversed	600	2678400000000000	5	20000000000	19999999999	retryOrder
+core	max	max	min	fractional	600	2678400000000000	5	1	10000000001	ok
+core	max	max	max	omitted	600	2678400000000000	100	-	-	ok
+core	max	max	max	zero	600	2678400000000000	100	0	0	ok
+core	max	max	max	max	600	2678400000000000	100	600000000000	600000000000	ok
+core	max	max	max	min-negative	600	2678400000000000	100	-1	0	retryMin
+core	max	max	max	min-over	600	2678400000000000	100	600000000001	600000000000	retryMin
+core	max	max	max	max-negative	600	2678400000000000	100	0	-1	retryMax
+core	max	max	max	max-over	600	2678400000000000	100	0	600000000001	retryMax
+core	max	max	max	reversed	600	2678400000000000	100	20000000000	19999999999	retryOrder
+core	max	max	max	fractional	600	2678400000000000	100	1	10000000001	ok
+core	max	max	over	omitted	600	2678400000000000	101	-	-	deadHigh
+core	max	max	over	zero	600	2678400000000000	101	0	0	deadHigh
+core	max	max	over	max	600	2678400000000000	101	600000000000	600000000000	deadHigh
+core	max	max	over	min-negative	600	2678400000000000	101	-1	0	deadHigh
+core	max	max	over	min-over	600	2678400000000000	101	600000000001	600000000000	deadHigh
+core	max	max	over	max-negative	600	2678400000000000	101	0	-1	deadHigh
+core	max	max	over	max-over	600	2678400000000000	101	0	600000000001	deadHigh
+core	max	max	over	reversed	600	2678400000000000	101	20000000000	19999999999	deadHigh
+core	max	max	over	fractional	600	2678400000000000	101	1	10000000001	deadHigh
+production	max	max	default	valid	600	2678400000000000	default	ok	2678400000000000
+production	max	max	default	invalid	600	2678400000000000	default	labels	2678400000000000
+production	max	max	never	valid	600	2678400000000000	never	ok	2678400000000000
+production	max	max	never	invalid	600	2678400000000000	never	labels	2678400000000000
+production	max	max	below	valid	600	2678400000000000	86399999999999	expiryMinimum	2678400000000000
+production	max	max	below	invalid	600	2678400000000000	86399999999999	labels	2678400000000000
+production	max	max	day	valid	600	2678400000000000	86400000000000	retentionAfterExpiry	2678400000000000
+production	max	max	day	invalid	600	2678400000000000	86400000000000	labels	2678400000000000
+production	max	max	week-below	valid	600	2678400000000000	604799999999999	retentionAfterExpiry	2678400000000000
+production	max	max	week-below	invalid	600	2678400000000000	604799999999999	labels	2678400000000000
+production	max	max	week	valid	600	2678400000000000	604800000000000	retentionAfterExpiry	2678400000000000
+production	max	max	week	invalid	600	2678400000000000	604800000000000	labels	2678400000000000
+production	max	max	long	valid	600	2678400000000000	2678400000000001	ok	2678400000000000
+production	max	max	long	invalid	600	2678400000000000	2678400000000001	labels	2678400000000000
+core	max	over	omitted	omitted	600	2678400000000001	-	-	-	retention
+core	max	over	omitted	zero	600	2678400000000001	-	0	0	retention
+core	max	over	omitted	max	600	2678400000000001	-	600000000000	600000000000	retention
+core	max	over	omitted	min-negative	600	2678400000000001	-	-1	0	retention
+core	max	over	omitted	min-over	600	2678400000000001	-	600000000001	600000000000	retention
+core	max	over	omitted	max-negative	600	2678400000000001	-	0	-1	retention
+core	max	over	omitted	max-over	600	2678400000000001	-	0	600000000001	retention
+core	max	over	omitted	reversed	600	2678400000000001	-	20000000000	19999999999	retention
+core	max	over	omitted	fractional	600	2678400000000001	-	1	10000000001	retention
+core	max	over	below	omitted	600	2678400000000001	4	-	-	retention
+core	max	over	below	zero	600	2678400000000001	4	0	0	retention
+core	max	over	below	max	600	2678400000000001	4	600000000000	600000000000	retention
+core	max	over	below	min-negative	600	2678400000000001	4	-1	0	retention
+core	max	over	below	min-over	600	2678400000000001	4	600000000001	600000000000	retention
+core	max	over	below	max-negative	600	2678400000000001	4	0	-1	retention
+core	max	over	below	max-over	600	2678400000000001	4	0	600000000001	retention
+core	max	over	below	reversed	600	2678400000000001	4	20000000000	19999999999	retention
+core	max	over	below	fractional	600	2678400000000001	4	1	10000000001	retention
+core	max	over	min	omitted	600	2678400000000001	5	-	-	retention
+core	max	over	min	zero	600	2678400000000001	5	0	0	retention
+core	max	over	min	max	600	2678400000000001	5	600000000000	600000000000	retention
+core	max	over	min	min-negative	600	2678400000000001	5	-1	0	retention
+core	max	over	min	min-over	600	2678400000000001	5	600000000001	600000000000	retention
+core	max	over	min	max-negative	600	2678400000000001	5	0	-1	retention
+core	max	over	min	max-over	600	2678400000000001	5	0	600000000001	retention
+core	max	over	min	reversed	600	2678400000000001	5	20000000000	19999999999	retention
+core	max	over	min	fractional	600	2678400000000001	5	1	10000000001	retention
+core	max	over	max	omitted	600	2678400000000001	100	-	-	retention
+core	max	over	max	zero	600	2678400000000001	100	0	0	retention
+core	max	over	max	max	600	2678400000000001	100	600000000000	600000000000	retention
+core	max	over	max	min-negative	600	2678400000000001	100	-1	0	retention
+core	max	over	max	min-over	600	2678400000000001	100	600000000001	600000000000	retention
+core	max	over	max	max-negative	600	2678400000000001	100	0	-1	retention
+core	max	over	max	max-over	600	2678400000000001	100	0	600000000001	retention
+core	max	over	max	reversed	600	2678400000000001	100	20000000000	19999999999	retention
+core	max	over	max	fractional	600	2678400000000001	100	1	10000000001	retention
+core	max	over	over	omitted	600	2678400000000001	101	-	-	retention
+core	max	over	over	zero	600	2678400000000001	101	0	0	retention
+core	max	over	over	max	600	2678400000000001	101	600000000000	600000000000	retention
+core	max	over	over	min-negative	600	2678400000000001	101	-1	0	retention
+core	max	over	over	min-over	600	2678400000000001	101	600000000001	600000000000	retention
+core	max	over	over	max-negative	600	2678400000000001	101	0	-1	retention
+core	max	over	over	max-over	600	2678400000000001	101	0	600000000001	retention
+core	max	over	over	reversed	600	2678400000000001	101	20000000000	19999999999	retention
+core	max	over	over	fractional	600	2678400000000001	101	1	10000000001	retention
+production	max	over	default	valid	600	2678400000000001	default	retentionAfterExpiry	2678400000000001
+production	max	over	default	invalid	600	2678400000000001	default	labels	2678400000000001
+production	max	over	never	valid	600	2678400000000001	never	ok	2678400000000001
+production	max	over	never	invalid	600	2678400000000001	never	labels	2678400000000001
+production	max	over	below	valid	600	2678400000000001	86399999999999	expiryMinimum	2678400000000001
+production	max	over	below	invalid	600	2678400000000001	86399999999999	labels	2678400000000001
+production	max	over	day	valid	600	2678400000000001	86400000000000	retentionAfterExpiry	2678400000000001
+production	max	over	day	invalid	600	2678400000000001	86400000000000	labels	2678400000000001
+production	max	over	week-below	valid	600	2678400000000001	604799999999999	retentionAfterExpiry	2678400000000001
+production	max	over	week-below	invalid	600	2678400000000001	604799999999999	labels	2678400000000001
+production	max	over	week	valid	600	2678400000000001	604800000000000	retentionAfterExpiry	2678400000000001
+production	max	over	week	invalid	600	2678400000000001	604800000000000	labels	2678400000000001
+production	max	over	long	valid	600	2678400000000001	2678400000000001	ok	2678400000000001
+production	max	over	long	invalid	600	2678400000000001	2678400000000001	labels	2678400000000001
+core	over	omitted	omitted	omitted	601	-	-	-	-	coreAck
+core	over	omitted	omitted	zero	601	-	-	0	0	coreAck
+core	over	omitted	omitted	max	601	-	-	600000000000	600000000000	coreAck
+core	over	omitted	omitted	min-negative	601	-	-	-1	0	coreAck
+core	over	omitted	omitted	min-over	601	-	-	600000000001	600000000000	coreAck
+core	over	omitted	omitted	max-negative	601	-	-	0	-1	coreAck
+core	over	omitted	omitted	max-over	601	-	-	0	600000000001	coreAck
+core	over	omitted	omitted	reversed	601	-	-	20000000000	19999999999	coreAck
+core	over	omitted	omitted	fractional	601	-	-	1	10000000001	coreAck
+core	over	omitted	below	omitted	601	-	4	-	-	coreAck
+core	over	omitted	below	zero	601	-	4	0	0	coreAck
+core	over	omitted	below	max	601	-	4	600000000000	600000000000	coreAck
+core	over	omitted	below	min-negative	601	-	4	-1	0	coreAck
+core	over	omitted	below	min-over	601	-	4	600000000001	600000000000	coreAck
+core	over	omitted	below	max-negative	601	-	4	0	-1	coreAck
+core	over	omitted	below	max-over	601	-	4	0	600000000001	coreAck
+core	over	omitted	below	reversed	601	-	4	20000000000	19999999999	coreAck
+core	over	omitted	below	fractional	601	-	4	1	10000000001	coreAck
+core	over	omitted	min	omitted	601	-	5	-	-	coreAck
+core	over	omitted	min	zero	601	-	5	0	0	coreAck
+core	over	omitted	min	max	601	-	5	600000000000	600000000000	coreAck
+core	over	omitted	min	min-negative	601	-	5	-1	0	coreAck
+core	over	omitted	min	min-over	601	-	5	600000000001	600000000000	coreAck
+core	over	omitted	min	max-negative	601	-	5	0	-1	coreAck
+core	over	omitted	min	max-over	601	-	5	0	600000000001	coreAck
+core	over	omitted	min	reversed	601	-	5	20000000000	19999999999	coreAck
+core	over	omitted	min	fractional	601	-	5	1	10000000001	coreAck
+core	over	omitted	max	omitted	601	-	100	-	-	coreAck
+core	over	omitted	max	zero	601	-	100	0	0	coreAck
+core	over	omitted	max	max	601	-	100	600000000000	600000000000	coreAck
+core	over	omitted	max	min-negative	601	-	100	-1	0	coreAck
+core	over	omitted	max	min-over	601	-	100	600000000001	600000000000	coreAck
+core	over	omitted	max	max-negative	601	-	100	0	-1	coreAck
+core	over	omitted	max	max-over	601	-	100	0	600000000001	coreAck
+core	over	omitted	max	reversed	601	-	100	20000000000	19999999999	coreAck
+core	over	omitted	max	fractional	601	-	100	1	10000000001	coreAck
+core	over	omitted	over	omitted	601	-	101	-	-	coreAck
+core	over	omitted	over	zero	601	-	101	0	0	coreAck
+core	over	omitted	over	max	601	-	101	600000000000	600000000000	coreAck
+core	over	omitted	over	min-negative	601	-	101	-1	0	coreAck
+core	over	omitted	over	min-over	601	-	101	600000000001	600000000000	coreAck
+core	over	omitted	over	max-negative	601	-	101	0	-1	coreAck
+core	over	omitted	over	max-over	601	-	101	0	600000000001	coreAck
+core	over	omitted	over	reversed	601	-	101	20000000000	19999999999	coreAck
+core	over	omitted	over	fractional	601	-	101	1	10000000001	coreAck
+production	over	omitted	default	valid	601	-	default	productionAck	604800000000000
+production	over	omitted	default	invalid	601	-	default	productionAck	604800000000000
+production	over	omitted	never	valid	601	-	never	productionAck	604800000000000
+production	over	omitted	never	invalid	601	-	never	productionAck	604800000000000
+production	over	omitted	below	valid	601	-	86399999999999	productionAck	604800000000000
+production	over	omitted	below	invalid	601	-	86399999999999	productionAck	604800000000000
+production	over	omitted	day	valid	601	-	86400000000000	productionAck	604800000000000
+production	over	omitted	day	invalid	601	-	86400000000000	productionAck	604800000000000
+production	over	omitted	week-below	valid	601	-	604799999999999	productionAck	604800000000000
+production	over	omitted	week-below	invalid	601	-	604799999999999	productionAck	604800000000000
+production	over	omitted	week	valid	601	-	604800000000000	productionAck	604800000000000
+production	over	omitted	week	invalid	601	-	604800000000000	productionAck	604800000000000
+production	over	omitted	long	valid	601	-	2678400000000001	productionAck	604800000000000
+production	over	omitted	long	invalid	601	-	2678400000000001	productionAck	604800000000000
+core	over	zero	omitted	omitted	601	0	-	-	-	coreAck
+core	over	zero	omitted	zero	601	0	-	0	0	coreAck
+core	over	zero	omitted	max	601	0	-	600000000000	600000000000	coreAck
+core	over	zero	omitted	min-negative	601	0	-	-1	0	coreAck
+core	over	zero	omitted	min-over	601	0	-	600000000001	600000000000	coreAck
+core	over	zero	omitted	max-negative	601	0	-	0	-1	coreAck
+core	over	zero	omitted	max-over	601	0	-	0	600000000001	coreAck
+core	over	zero	omitted	reversed	601	0	-	20000000000	19999999999	coreAck
+core	over	zero	omitted	fractional	601	0	-	1	10000000001	coreAck
+core	over	zero	below	omitted	601	0	4	-	-	coreAck
+core	over	zero	below	zero	601	0	4	0	0	coreAck
+core	over	zero	below	max	601	0	4	600000000000	600000000000	coreAck
+core	over	zero	below	min-negative	601	0	4	-1	0	coreAck
+core	over	zero	below	min-over	601	0	4	600000000001	600000000000	coreAck
+core	over	zero	below	max-negative	601	0	4	0	-1	coreAck
+core	over	zero	below	max-over	601	0	4	0	600000000001	coreAck
+core	over	zero	below	reversed	601	0	4	20000000000	19999999999	coreAck
+core	over	zero	below	fractional	601	0	4	1	10000000001	coreAck
+core	over	zero	min	omitted	601	0	5	-	-	coreAck
+core	over	zero	min	zero	601	0	5	0	0	coreAck
+core	over	zero	min	max	601	0	5	600000000000	600000000000	coreAck
+core	over	zero	min	min-negative	601	0	5	-1	0	coreAck
+core	over	zero	min	min-over	601	0	5	600000000001	600000000000	coreAck
+core	over	zero	min	max-negative	601	0	5	0	-1	coreAck
+core	over	zero	min	max-over	601	0	5	0	600000000001	coreAck
+core	over	zero	min	reversed	601	0	5	20000000000	19999999999	coreAck
+core	over	zero	min	fractional	601	0	5	1	10000000001	coreAck
+core	over	zero	max	omitted	601	0	100	-	-	coreAck
+core	over	zero	max	zero	601	0	100	0	0	coreAck
+core	over	zero	max	max	601	0	100	600000000000	600000000000	coreAck
+core	over	zero	max	min-negative	601	0	100	-1	0	coreAck
+core	over	zero	max	min-over	601	0	100	600000000001	600000000000	coreAck
+core	over	zero	max	max-negative	601	0	100	0	-1	coreAck
+core	over	zero	max	max-over	601	0	100	0	600000000001	coreAck
+core	over	zero	max	reversed	601	0	100	20000000000	19999999999	coreAck
+core	over	zero	max	fractional	601	0	100	1	10000000001	coreAck
+core	over	zero	over	omitted	601	0	101	-	-	coreAck
+core	over	zero	over	zero	601	0	101	0	0	coreAck
+core	over	zero	over	max	601	0	101	600000000000	600000000000	coreAck
+core	over	zero	over	min-negative	601	0	101	-1	0	coreAck
+core	over	zero	over	min-over	601	0	101	600000000001	600000000000	coreAck
+core	over	zero	over	max-negative	601	0	101	0	-1	coreAck
+core	over	zero	over	max-over	601	0	101	0	600000000001	coreAck
+core	over	zero	over	reversed	601	0	101	20000000000	19999999999	coreAck
+core	over	zero	over	fractional	601	0	101	1	10000000001	coreAck
+production	over	zero	default	valid	601	0	default	productionAck	0
+production	over	zero	default	invalid	601	0	default	productionAck	0
+production	over	zero	never	valid	601	0	never	productionAck	0
+production	over	zero	never	invalid	601	0	never	productionAck	0
+production	over	zero	below	valid	601	0	86399999999999	productionAck	0
+production	over	zero	below	invalid	601	0	86399999999999	productionAck	0
+production	over	zero	day	valid	601	0	86400000000000	productionAck	0
+production	over	zero	day	invalid	601	0	86400000000000	productionAck	0
+production	over	zero	week-below	valid	601	0	604799999999999	productionAck	0
+production	over	zero	week-below	invalid	601	0	604799999999999	productionAck	0
+production	over	zero	week	valid	601	0	604800000000000	productionAck	0
+production	over	zero	week	invalid	601	0	604800000000000	productionAck	0
+production	over	zero	long	valid	601	0	2678400000000001	productionAck	0
+production	over	zero	long	invalid	601	0	2678400000000001	productionAck	0
+core	over	below	omitted	omitted	601	599999999999	-	-	-	coreAck
+core	over	below	omitted	zero	601	599999999999	-	0	0	coreAck
+core	over	below	omitted	max	601	599999999999	-	600000000000	600000000000	coreAck
+core	over	below	omitted	min-negative	601	599999999999	-	-1	0	coreAck
+core	over	below	omitted	min-over	601	599999999999	-	600000000001	600000000000	coreAck
+core	over	below	omitted	max-negative	601	599999999999	-	0	-1	coreAck
+core	over	below	omitted	max-over	601	599999999999	-	0	600000000001	coreAck
+core	over	below	omitted	reversed	601	599999999999	-	20000000000	19999999999	coreAck
+core	over	below	omitted	fractional	601	599999999999	-	1	10000000001	coreAck
+core	over	below	below	omitted	601	599999999999	4	-	-	coreAck
+core	over	below	below	zero	601	599999999999	4	0	0	coreAck
+core	over	below	below	max	601	599999999999	4	600000000000	600000000000	coreAck
+core	over	below	below	min-negative	601	599999999999	4	-1	0	coreAck
+core	over	below	below	min-over	601	599999999999	4	600000000001	600000000000	coreAck
+core	over	below	below	max-negative	601	599999999999	4	0	-1	coreAck
+core	over	below	below	max-over	601	599999999999	4	0	600000000001	coreAck
+core	over	below	below	reversed	601	599999999999	4	20000000000	19999999999	coreAck
+core	over	below	below	fractional	601	599999999999	4	1	10000000001	coreAck
+core	over	below	min	omitted	601	599999999999	5	-	-	coreAck
+core	over	below	min	zero	601	599999999999	5	0	0	coreAck
+core	over	below	min	max	601	599999999999	5	600000000000	600000000000	coreAck
+core	over	below	min	min-negative	601	599999999999	5	-1	0	coreAck
+core	over	below	min	min-over	601	599999999999	5	600000000001	600000000000	coreAck
+core	over	below	min	max-negative	601	599999999999	5	0	-1	coreAck
+core	over	below	min	max-over	601	599999999999	5	0	600000000001	coreAck
+core	over	below	min	reversed	601	599999999999	5	20000000000	19999999999	coreAck
+core	over	below	min	fractional	601	599999999999	5	1	10000000001	coreAck
+core	over	below	max	omitted	601	599999999999	100	-	-	coreAck
+core	over	below	max	zero	601	599999999999	100	0	0	coreAck
+core	over	below	max	max	601	599999999999	100	600000000000	600000000000	coreAck
+core	over	below	max	min-negative	601	599999999999	100	-1	0	coreAck
+core	over	below	max	min-over	601	599999999999	100	600000000001	600000000000	coreAck
+core	over	below	max	max-negative	601	599999999999	100	0	-1	coreAck
+core	over	below	max	max-over	601	599999999999	100	0	600000000001	coreAck
+core	over	below	max	reversed	601	599999999999	100	20000000000	19999999999	coreAck
+core	over	below	max	fractional	601	599999999999	100	1	10000000001	coreAck
+core	over	below	over	omitted	601	599999999999	101	-	-	coreAck
+core	over	below	over	zero	601	599999999999	101	0	0	coreAck
+core	over	below	over	max	601	599999999999	101	600000000000	600000000000	coreAck
+core	over	below	over	min-negative	601	599999999999	101	-1	0	coreAck
+core	over	below	over	min-over	601	599999999999	101	600000000001	600000000000	coreAck
+core	over	below	over	max-negative	601	599999999999	101	0	-1	coreAck
+core	over	below	over	max-over	601	599999999999	101	0	600000000001	coreAck
+core	over	below	over	reversed	601	599999999999	101	20000000000	19999999999	coreAck
+core	over	below	over	fractional	601	599999999999	101	1	10000000001	coreAck
+production	over	below	default	valid	601	599999999999	default	productionAck	599999999999
+production	over	below	default	invalid	601	599999999999	default	productionAck	599999999999
+production	over	below	never	valid	601	599999999999	never	productionAck	599999999999
+production	over	below	never	invalid	601	599999999999	never	productionAck	599999999999
+production	over	below	below	valid	601	599999999999	86399999999999	productionAck	599999999999
+production	over	below	below	invalid	601	599999999999	86399999999999	productionAck	599999999999
+production	over	below	day	valid	601	599999999999	86400000000000	productionAck	599999999999
+production	over	below	day	invalid	601	599999999999	86400000000000	productionAck	599999999999
+production	over	below	week-below	valid	601	599999999999	604799999999999	productionAck	599999999999
+production	over	below	week-below	invalid	601	599999999999	604799999999999	productionAck	599999999999
+production	over	below	week	valid	601	599999999999	604800000000000	productionAck	599999999999
+production	over	below	week	invalid	601	599999999999	604800000000000	productionAck	599999999999
+production	over	below	long	valid	601	599999999999	2678400000000001	productionAck	599999999999
+production	over	below	long	invalid	601	599999999999	2678400000000001	productionAck	599999999999
+core	over	min	omitted	omitted	601	600000000000	-	-	-	coreAck
+core	over	min	omitted	zero	601	600000000000	-	0	0	coreAck
+core	over	min	omitted	max	601	600000000000	-	600000000000	600000000000	coreAck
+core	over	min	omitted	min-negative	601	600000000000	-	-1	0	coreAck
+core	over	min	omitted	min-over	601	600000000000	-	600000000001	600000000000	coreAck
+core	over	min	omitted	max-negative	601	600000000000	-	0	-1	coreAck
+core	over	min	omitted	max-over	601	600000000000	-	0	600000000001	coreAck
+core	over	min	omitted	reversed	601	600000000000	-	20000000000	19999999999	coreAck
+core	over	min	omitted	fractional	601	600000000000	-	1	10000000001	coreAck
+core	over	min	below	omitted	601	600000000000	4	-	-	coreAck
+core	over	min	below	zero	601	600000000000	4	0	0	coreAck
+core	over	min	below	max	601	600000000000	4	600000000000	600000000000	coreAck
+core	over	min	below	min-negative	601	600000000000	4	-1	0	coreAck
+core	over	min	below	min-over	601	600000000000	4	600000000001	600000000000	coreAck
+core	over	min	below	max-negative	601	600000000000	4	0	-1	coreAck
+core	over	min	below	max-over	601	600000000000	4	0	600000000001	coreAck
+core	over	min	below	reversed	601	600000000000	4	20000000000	19999999999	coreAck
+core	over	min	below	fractional	601	600000000000	4	1	10000000001	coreAck
+core	over	min	min	omitted	601	600000000000	5	-	-	coreAck
+core	over	min	min	zero	601	600000000000	5	0	0	coreAck
+core	over	min	min	max	601	600000000000	5	600000000000	600000000000	coreAck
+core	over	min	min	min-negative	601	600000000000	5	-1	0	coreAck
+core	over	min	min	min-over	601	600000000000	5	600000000001	600000000000	coreAck
+core	over	min	min	max-negative	601	600000000000	5	0	-1	coreAck
+core	over	min	min	max-over	601	600000000000	5	0	600000000001	coreAck
+core	over	min	min	reversed	601	600000000000	5	20000000000	19999999999	coreAck
+core	over	min	min	fractional	601	600000000000	5	1	10000000001	coreAck
+core	over	min	max	omitted	601	600000000000	100	-	-	coreAck
+core	over	min	max	zero	601	600000000000	100	0	0	coreAck
+core	over	min	max	max	601	600000000000	100	600000000000	600000000000	coreAck
+core	over	min	max	min-negative	601	600000000000	100	-1	0	coreAck
+core	over	min	max	min-over	601	600000000000	100	600000000001	600000000000	coreAck
+core	over	min	max	max-negative	601	600000000000	100	0	-1	coreAck
+core	over	min	max	max-over	601	600000000000	100	0	600000000001	coreAck
+core	over	min	max	reversed	601	600000000000	100	20000000000	19999999999	coreAck
+core	over	min	max	fractional	601	600000000000	100	1	10000000001	coreAck
+core	over	min	over	omitted	601	600000000000	101	-	-	coreAck
+core	over	min	over	zero	601	600000000000	101	0	0	coreAck
+core	over	min	over	max	601	600000000000	101	600000000000	600000000000	coreAck
+core	over	min	over	min-negative	601	600000000000	101	-1	0	coreAck
+core	over	min	over	min-over	601	600000000000	101	600000000001	600000000000	coreAck
+core	over	min	over	max-negative	601	600000000000	101	0	-1	coreAck
+core	over	min	over	max-over	601	600000000000	101	0	600000000001	coreAck
+core	over	min	over	reversed	601	600000000000	101	20000000000	19999999999	coreAck
+core	over	min	over	fractional	601	600000000000	101	1	10000000001	coreAck
+production	over	min	default	valid	601	600000000000	default	productionAck	600000000000
+production	over	min	default	invalid	601	600000000000	default	productionAck	600000000000
+production	over	min	never	valid	601	600000000000	never	productionAck	600000000000
+production	over	min	never	invalid	601	600000000000	never	productionAck	600000000000
+production	over	min	below	valid	601	600000000000	86399999999999	productionAck	600000000000
+production	over	min	below	invalid	601	600000000000	86399999999999	productionAck	600000000000
+production	over	min	day	valid	601	600000000000	86400000000000	productionAck	600000000000
+production	over	min	day	invalid	601	600000000000	86400000000000	productionAck	600000000000
+production	over	min	week-below	valid	601	600000000000	604799999999999	productionAck	600000000000
+production	over	min	week-below	invalid	601	600000000000	604799999999999	productionAck	600000000000
+production	over	min	week	valid	601	600000000000	604800000000000	productionAck	600000000000
+production	over	min	week	invalid	601	600000000000	604800000000000	productionAck	600000000000
+production	over	min	long	valid	601	600000000000	2678400000000001	productionAck	600000000000
+production	over	min	long	invalid	601	600000000000	2678400000000001	productionAck	600000000000
+core	over	week	omitted	omitted	601	604800000000000	-	-	-	coreAck
+core	over	week	omitted	zero	601	604800000000000	-	0	0	coreAck
+core	over	week	omitted	max	601	604800000000000	-	600000000000	600000000000	coreAck
+core	over	week	omitted	min-negative	601	604800000000000	-	-1	0	coreAck
+core	over	week	omitted	min-over	601	604800000000000	-	600000000001	600000000000	coreAck
+core	over	week	omitted	max-negative	601	604800000000000	-	0	-1	coreAck
+core	over	week	omitted	max-over	601	604800000000000	-	0	600000000001	coreAck
+core	over	week	omitted	reversed	601	604800000000000	-	20000000000	19999999999	coreAck
+core	over	week	omitted	fractional	601	604800000000000	-	1	10000000001	coreAck
+core	over	week	below	omitted	601	604800000000000	4	-	-	coreAck
+core	over	week	below	zero	601	604800000000000	4	0	0	coreAck
+core	over	week	below	max	601	604800000000000	4	600000000000	600000000000	coreAck
+core	over	week	below	min-negative	601	604800000000000	4	-1	0	coreAck
+core	over	week	below	min-over	601	604800000000000	4	600000000001	600000000000	coreAck
+core	over	week	below	max-negative	601	604800000000000	4	0	-1	coreAck
+core	over	week	below	max-over	601	604800000000000	4	0	600000000001	coreAck
+core	over	week	below	reversed	601	604800000000000	4	20000000000	19999999999	coreAck
+core	over	week	below	fractional	601	604800000000000	4	1	10000000001	coreAck
+core	over	week	min	omitted	601	604800000000000	5	-	-	coreAck
+core	over	week	min	zero	601	604800000000000	5	0	0	coreAck
+core	over	week	min	max	601	604800000000000	5	600000000000	600000000000	coreAck
+core	over	week	min	min-negative	601	604800000000000	5	-1	0	coreAck
+core	over	week	min	min-over	601	604800000000000	5	600000000001	600000000000	coreAck
+core	over	week	min	max-negative	601	604800000000000	5	0	-1	coreAck
+core	over	week	min	max-over	601	604800000000000	5	0	600000000001	coreAck
+core	over	week	min	reversed	601	604800000000000	5	20000000000	19999999999	coreAck
+core	over	week	min	fractional	601	604800000000000	5	1	10000000001	coreAck
+core	over	week	max	omitted	601	604800000000000	100	-	-	coreAck
+core	over	week	max	zero	601	604800000000000	100	0	0	coreAck
+core	over	week	max	max	601	604800000000000	100	600000000000	600000000000	coreAck
+core	over	week	max	min-negative	601	604800000000000	100	-1	0	coreAck
+core	over	week	max	min-over	601	604800000000000	100	600000000001	600000000000	coreAck
+core	over	week	max	max-negative	601	604800000000000	100	0	-1	coreAck
+core	over	week	max	max-over	601	604800000000000	100	0	600000000001	coreAck
+core	over	week	max	reversed	601	604800000000000	100	20000000000	19999999999	coreAck
+core	over	week	max	fractional	601	604800000000000	100	1	10000000001	coreAck
+core	over	week	over	omitted	601	604800000000000	101	-	-	coreAck
+core	over	week	over	zero	601	604800000000000	101	0	0	coreAck
+core	over	week	over	max	601	604800000000000	101	600000000000	600000000000	coreAck
+core	over	week	over	min-negative	601	604800000000000	101	-1	0	coreAck
+core	over	week	over	min-over	601	604800000000000	101	600000000001	600000000000	coreAck
+core	over	week	over	max-negative	601	604800000000000	101	0	-1	coreAck
+core	over	week	over	max-over	601	604800000000000	101	0	600000000001	coreAck
+core	over	week	over	reversed	601	604800000000000	101	20000000000	19999999999	coreAck
+core	over	week	over	fractional	601	604800000000000	101	1	10000000001	coreAck
+production	over	week	default	valid	601	604800000000000	default	productionAck	604800000000000
+production	over	week	default	invalid	601	604800000000000	default	productionAck	604800000000000
+production	over	week	never	valid	601	604800000000000	never	productionAck	604800000000000
+production	over	week	never	invalid	601	604800000000000	never	productionAck	604800000000000
+production	over	week	below	valid	601	604800000000000	86399999999999	productionAck	604800000000000
+production	over	week	below	invalid	601	604800000000000	86399999999999	productionAck	604800000000000
+production	over	week	day	valid	601	604800000000000	86400000000000	productionAck	604800000000000
+production	over	week	day	invalid	601	604800000000000	86400000000000	productionAck	604800000000000
+production	over	week	week-below	valid	601	604800000000000	604799999999999	productionAck	604800000000000
+production	over	week	week-below	invalid	601	604800000000000	604799999999999	productionAck	604800000000000
+production	over	week	week	valid	601	604800000000000	604800000000000	productionAck	604800000000000
+production	over	week	week	invalid	601	604800000000000	604800000000000	productionAck	604800000000000
+production	over	week	long	valid	601	604800000000000	2678400000000001	productionAck	604800000000000
+production	over	week	long	invalid	601	604800000000000	2678400000000001	productionAck	604800000000000
+core	over	max	omitted	omitted	601	2678400000000000	-	-	-	coreAck
+core	over	max	omitted	zero	601	2678400000000000	-	0	0	coreAck
+core	over	max	omitted	max	601	2678400000000000	-	600000000000	600000000000	coreAck
+core	over	max	omitted	min-negative	601	2678400000000000	-	-1	0	coreAck
+core	over	max	omitted	min-over	601	2678400000000000	-	600000000001	600000000000	coreAck
+core	over	max	omitted	max-negative	601	2678400000000000	-	0	-1	coreAck
+core	over	max	omitted	max-over	601	2678400000000000	-	0	600000000001	coreAck
+core	over	max	omitted	reversed	601	2678400000000000	-	20000000000	19999999999	coreAck
+core	over	max	omitted	fractional	601	2678400000000000	-	1	10000000001	coreAck
+core	over	max	below	omitted	601	2678400000000000	4	-	-	coreAck
+core	over	max	below	zero	601	2678400000000000	4	0	0	coreAck
+core	over	max	below	max	601	2678400000000000	4	600000000000	600000000000	coreAck
+core	over	max	below	min-negative	601	2678400000000000	4	-1	0	coreAck
+core	over	max	below	min-over	601	2678400000000000	4	600000000001	600000000000	coreAck
+core	over	max	below	max-negative	601	2678400000000000	4	0	-1	coreAck
+core	over	max	below	max-over	601	2678400000000000	4	0	600000000001	coreAck
+core	over	max	below	reversed	601	2678400000000000	4	20000000000	19999999999	coreAck
+core	over	max	below	fractional	601	2678400000000000	4	1	10000000001	coreAck
+core	over	max	min	omitted	601	2678400000000000	5	-	-	coreAck
+core	over	max	min	zero	601	2678400000000000	5	0	0	coreAck
+core	over	max	min	max	601	2678400000000000	5	600000000000	600000000000	coreAck
+core	over	max	min	min-negative	601	2678400000000000	5	-1	0	coreAck
+core	over	max	min	min-over	601	2678400000000000	5	600000000001	600000000000	coreAck
+core	over	max	min	max-negative	601	2678400000000000	5	0	-1	coreAck
+core	over	max	min	max-over	601	2678400000000000	5	0	600000000001	coreAck
+core	over	max	min	reversed	601	2678400000000000	5	20000000000	19999999999	coreAck
+core	over	max	min	fractional	601	2678400000000000	5	1	10000000001	coreAck
+core	over	max	max	omitted	601	2678400000000000	100	-	-	coreAck
+core	over	max	max	zero	601	2678400000000000	100	0	0	coreAck
+core	over	max	max	max	601	2678400000000000	100	600000000000	600000000000	coreAck
+core	over	max	max	min-negative	601	2678400000000000	100	-1	0	coreAck
+core	over	max	max	min-over	601	2678400000000000	100	600000000001	600000000000	coreAck
+core	over	max	max	max-negative	601	2678400000000000	100	0	-1	coreAck
+core	over	max	max	max-over	601	2678400000000000	100	0	600000000001	coreAck
+core	over	max	max	reversed	601	2678400000000000	100	20000000000	19999999999	coreAck
+core	over	max	max	fractional	601	2678400000000000	100	1	10000000001	coreAck
+core	over	max	over	omitted	601	2678400000000000	101	-	-	coreAck
+core	over	max	over	zero	601	2678400000000000	101	0	0	coreAck
+core	over	max	over	max	601	2678400000000000	101	600000000000	600000000000	coreAck
+core	over	max	over	min-negative	601	2678400000000000	101	-1	0	coreAck
+core	over	max	over	min-over	601	2678400000000000	101	600000000001	600000000000	coreAck
+core	over	max	over	max-negative	601	2678400000000000	101	0	-1	coreAck
+core	over	max	over	max-over	601	2678400000000000	101	0	600000000001	coreAck
+core	over	max	over	reversed	601	2678400000000000	101	20000000000	19999999999	coreAck
+core	over	max	over	fractional	601	2678400000000000	101	1	10000000001	coreAck
+production	over	max	default	valid	601	2678400000000000	default	productionAck	2678400000000000
+production	over	max	default	invalid	601	2678400000000000	default	productionAck	2678400000000000
+production	over	max	never	valid	601	2678400000000000	never	productionAck	2678400000000000
+production	over	max	never	invalid	601	2678400000000000	never	productionAck	2678400000000000
+production	over	max	below	valid	601	2678400000000000	86399999999999	productionAck	2678400000000000
+production	over	max	below	invalid	601	2678400000000000	86399999999999	productionAck	2678400000000000
+production	over	max	day	valid	601	2678400000000000	86400000000000	productionAck	2678400000000000
+production	over	max	day	invalid	601	2678400000000000	86400000000000	productionAck	2678400000000000
+production	over	max	week-below	valid	601	2678400000000000	604799999999999	productionAck	2678400000000000
+production	over	max	week-below	invalid	601	2678400000000000	604799999999999	productionAck	2678400000000000
+production	over	max	week	valid	601	2678400000000000	604800000000000	productionAck	2678400000000000
+production	over	max	week	invalid	601	2678400000000000	604800000000000	productionAck	2678400000000000
+production	over	max	long	valid	601	2678400000000000	2678400000000001	productionAck	2678400000000000
+production	over	max	long	invalid	601	2678400000000000	2678400000000001	productionAck	2678400000000000
+core	over	over	omitted	omitted	601	2678400000000001	-	-	-	coreAck
+core	over	over	omitted	zero	601	2678400000000001	-	0	0	coreAck
+core	over	over	omitted	max	601	2678400000000001	-	600000000000	600000000000	coreAck
+core	over	over	omitted	min-negative	601	2678400000000001	-	-1	0	coreAck
+core	over	over	omitted	min-over	601	2678400000000001	-	600000000001	600000000000	coreAck
+core	over	over	omitted	max-negative	601	2678400000000001	-	0	-1	coreAck
+core	over	over	omitted	max-over	601	2678400000000001	-	0	600000000001	coreAck
+core	over	over	omitted	reversed	601	2678400000000001	-	20000000000	19999999999	coreAck
+core	over	over	omitted	fractional	601	2678400000000001	-	1	10000000001	coreAck
+core	over	over	below	omitted	601	2678400000000001	4	-	-	coreAck
+core	over	over	below	zero	601	2678400000000001	4	0	0	coreAck
+core	over	over	below	max	601	2678400000000001	4	600000000000	600000000000	coreAck
+core	over	over	below	min-negative	601	2678400000000001	4	-1	0	coreAck
+core	over	over	below	min-over	601	2678400000000001	4	600000000001	600000000000	coreAck
+core	over	over	below	max-negative	601	2678400000000001	4	0	-1	coreAck
+core	over	over	below	max-over	601	2678400000000001	4	0	600000000001	coreAck
+core	over	over	below	reversed	601	2678400000000001	4	20000000000	19999999999	coreAck
+core	over	over	below	fractional	601	2678400000000001	4	1	10000000001	coreAck
+core	over	over	min	omitted	601	2678400000000001	5	-	-	coreAck
+core	over	over	min	zero	601	2678400000000001	5	0	0	coreAck
+core	over	over	min	max	601	2678400000000001	5	600000000000	600000000000	coreAck
+core	over	over	min	min-negative	601	2678400000000001	5	-1	0	coreAck
+core	over	over	min	min-over	601	2678400000000001	5	600000000001	600000000000	coreAck
+core	over	over	min	max-negative	601	2678400000000001	5	0	-1	coreAck
+core	over	over	min	max-over	601	2678400000000001	5	0	600000000001	coreAck
+core	over	over	min	reversed	601	2678400000000001	5	20000000000	19999999999	coreAck
+core	over	over	min	fractional	601	2678400000000001	5	1	10000000001	coreAck
+core	over	over	max	omitted	601	2678400000000001	100	-	-	coreAck
+core	over	over	max	zero	601	2678400000000001	100	0	0	coreAck
+core	over	over	max	max	601	2678400000000001	100	600000000000	600000000000	coreAck
+core	over	over	max	min-negative	601	2678400000000001	100	-1	0	coreAck
+core	over	over	max	min-over	601	2678400000000001	100	600000000001	600000000000	coreAck
+core	over	over	max	max-negative	601	2678400000000001	100	0	-1	coreAck
+core	over	over	max	max-over	601	2678400000000001	100	0	600000000001	coreAck
+core	over	over	max	reversed	601	2678400000000001	100	20000000000	19999999999	coreAck
+core	over	over	max	fractional	601	2678400000000001	100	1	10000000001	coreAck
+core	over	over	over	omitted	601	2678400000000001	101	-	-	coreAck
+core	over	over	over	zero	601	2678400000000001	101	0	0	coreAck
+core	over	over	over	max	601	2678400000000001	101	600000000000	600000000000	coreAck
+core	over	over	over	min-negative	601	2678400000000001	101	-1	0	coreAck
+core	over	over	over	min-over	601	2678400000000001	101	600000000001	600000000000	coreAck
+core	over	over	over	max-negative	601	2678400000000001	101	0	-1	coreAck
+core	over	over	over	max-over	601	2678400000000001	101	0	600000000001	coreAck
+core	over	over	over	reversed	601	2678400000000001	101	20000000000	19999999999	coreAck
+core	over	over	over	fractional	601	2678400000000001	101	1	10000000001	coreAck
+production	over	over	default	valid	601	2678400000000001	default	productionAck	2678400000000001
+production	over	over	default	invalid	601	2678400000000001	default	productionAck	2678400000000001
+production	over	over	never	valid	601	2678400000000001	never	productionAck	2678400000000001
+production	over	over	never	invalid	601	2678400000000001	never	productionAck	2678400000000001
+production	over	over	below	valid	601	2678400000000001	86399999999999	productionAck	2678400000000001
+production	over	over	below	invalid	601	2678400000000001	86399999999999	productionAck	2678400000000001
+production	over	over	day	valid	601	2678400000000001	86400000000000	productionAck	2678400000000001
+production	over	over	day	invalid	601	2678400000000001	86400000000000	productionAck	2678400000000001
+production	over	over	week-below	valid	601	2678400000000001	604799999999999	productionAck	2678400000000001
+production	over	over	week-below	invalid	601	2678400000000001	604799999999999	productionAck	2678400000000001
+production	over	over	week	valid	601	2678400000000001	604800000000000	productionAck	2678400000000001
+production	over	over	week	invalid	601	2678400000000001	604800000000000	productionAck	2678400000000001
+production	over	over	long	valid	601	2678400000000001	2678400000000001	productionAck	2678400000000001
+production	over	over	long	invalid	601	2678400000000001	2678400000000001	productionAck	2678400000000001
