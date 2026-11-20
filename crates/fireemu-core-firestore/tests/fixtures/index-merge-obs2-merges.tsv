@@ -51,3 +51,6 @@ sharedDesc	collection	builtIn	report
 twoEqContains	collection	groupCarrier	report
 oneEqNameAsc	collection	builtIn	emulator
 twoEqContains	collection	carrierExempt	production
+sharedAsc	collection	sharedCarrier	production
+sharedAsc	collection	sharedCarrier	report
+sharedAsc	collection	sharedCarrier	emulator

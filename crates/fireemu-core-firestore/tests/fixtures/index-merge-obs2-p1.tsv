@@ -64,3 +64,15 @@ isNan	collection	both	desc	emulator	absent
 or2	group	both	asc	enterprise	absent
 in1	collection	descOnly	desc	emulator	absent
 count	group	ascOnly	desc	report	serves
+orderAscField	group	descOnly	asc	production	absent
+countOrderField	collection	ascOnly	desc	production	absent
+countNull	collection	ascOnly	desc	production	absent
+orderAscField	collection	both	asc	enterprise	serves
+countOrderField	group	descOnly	asc	report	serves
+countNull	group	both	asc	emulator	serves
+orderAscField	group	ascOnly	asc	report	absent
+orderAscField	collection	both	asc	emulator	absent
+countNull	collection	descOnly	desc	enterprise	absent
+countOrderField	group	both	desc	enterprise	serves
+countOrderField	group	descOnly	desc	emulator	serves
+countNull	group	ascOnly	desc	report	absent

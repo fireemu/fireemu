@@ -1471,7 +1471,7 @@ fn observation_2a_p5_uses_separate_shared_path_members_when_available() {
 #[test]
 fn observation_2a_p1_pict_matches_automatic_name_direction() {
     let generated = include_str!("fixtures/index-merge-obs2-p1.tsv");
-    assert_eq!(generated.lines().count(), 66);
+    assert_eq!(generated.lines().count(), 78);
     for row in generated.lines().skip(1) {
         let [shape, scope_tag, enabled, name, profile, composite]: [&str; 6] =
             row.split('\t').collect::<Vec<_>>().try_into().unwrap();
@@ -1501,6 +1501,7 @@ fn observation_2a_p1_pict_matches_automatic_name_direction() {
             "count" if name == "asc" => Vec::new(),
             "orderDesc" => vec![(fp("a"), Direction::Descending)],
             "orderAscName" => vec![(fp("a"), Direction::Ascending), name_order],
+            "orderAscField" | "countOrderField" => vec![(fp("a"), order)],
             _ => vec![name_order],
         };
         let filters = obs2_equality_filters(shape);
@@ -1516,14 +1517,16 @@ fn observation_2a_p1_pict_matches_automatic_name_direction() {
             context(profile, "standard")
         };
         let decision = match shape {
-            "count" | "cappedCount" => validate_aggregation_query(
-                &q,
-                &[Aggregation::Count {
-                    up_to: (shape == "cappedCount").then_some(1),
-                }],
-                &set,
-                &ctx,
-            ),
+            "count" | "cappedCount" | "countOrderField" | "countNull" => {
+                validate_aggregation_query(
+                    &q,
+                    &[Aggregation::Count {
+                        up_to: (shape == "cappedCount").then_some(1),
+                    }],
+                    &set,
+                    &ctx,
+                )
+            }
             _ => decide(&q, &set, &ctx),
         };
         let prohibited_asc_fallback = enabled == "ascOnly"
@@ -1578,12 +1581,13 @@ fn obs2_equality_filters(shape: &str) -> Vec<FilterExpr> {
         "or2" => vec![FilterExpr::Or(vec![exact_a(0), exact_a(1)])],
         "or3" => vec![FilterExpr::Or(vec![exact_a(0), exact_a(1), exact_a(2)])],
         "crossFieldOr" => vec![FilterExpr::Or(vec![exact_a(1), filter("eq", "b", "qx")])],
-        "isNull" => vec![filter("isnull", "a", "qx")],
+        "isNull" | "countNull" => vec![filter("isnull", "a", "qx")],
         "isNan" => vec![FilterExpr::Unary {
             field: fp("a"),
             op: UnaryOp::IsNan,
         }],
-        "eq" | "orderDesc" | "orderAscName" | "count" | "cappedCount" => vec![exact_a(1)],
+        "eq" | "orderDesc" | "orderAscName" | "count" | "cappedCount" | "orderAscField"
+        | "countOrderField" => vec![exact_a(1)],
         _ => panic!("unknown shape: {shape}"),
     }
 }
@@ -1592,7 +1596,7 @@ fn obs2_equality_filters(shape: &str) -> Vec<FilterExpr> {
 #[test]
 fn observation_2a_p2_to_p6_pict_matches_recorded_merge_members() {
     let rows = include_str!("fixtures/index-merge-obs2-merges.tsv");
-    assert_eq!(rows.lines().count(), 53);
+    assert_eq!(rows.lines().count(), 56);
     for row in rows.lines().skip(1) {
         let [shape, scope, catalog, policy]: [&str; 4] =
             row.split('\t').collect::<Vec<_>>().try_into().unwrap();
@@ -1611,7 +1615,7 @@ fn observation_2a_p2_to_p6_pict_matches_recorded_merge_members() {
             validate_aggregation_query(&q, aggs, &set, &ctx)
         };
         let expected = obs2_merge_members(shape, scope, catalog);
-        if policy == "emulator" || (shape == "descAny" && group && policy == "report") {
+        if policy == "emulator" || (policy == "report" && expected.is_none()) {
             assert!(
                 matches!(result, IndexDecision::AssumedIndex { .. }),
                 "{row:?}"
@@ -1636,7 +1640,7 @@ fn obs2_merge_catalog(catalog: &str, group: bool) -> IndexSet {
     let asc = "qx C a:asc,tags:contains";
     let desc = "qx C a:desc,tags:contains,__name__:asc";
     let extra: &[_] = match catalog {
-        "carrierEnabled" => &[asc],
+        "carrierEnabled" | "sharedCarrier" => &[asc],
         "twoCarriers" => &[asc, "qx C b:asc,tags:contains"],
         "descendingCarrier" | "mixedExempt" => &[desc],
         "groupCarrier" => &["qx G a:asc,tags:contains"],
@@ -1647,6 +1651,9 @@ fn obs2_merge_catalog(catalog: &str, group: bool) -> IndexSet {
     };
     for index in extra {
         set.add_composite(parse_index(index));
+    }
+    if catalog == "sharedCarrier" {
+        modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
     }
     if group {
         modes_only(
@@ -1709,7 +1716,7 @@ fn obs2_merge_members(shape: &str, scope: &str, catalog: &str) -> Option<Vec<Ind
     } else {
         "asc"
     };
-    if shape == "descAny" && scope == "group" {
+    if (shape == "descAny" && scope == "group") || catalog == "sharedCarrier" {
         return None;
     }
     if matches!(catalog, "carrierExempt" | "carrierEnabled" | "mixedExempt") {
