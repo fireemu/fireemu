@@ -1,5 +1,43 @@
 # Local mutation testing
 
+## Rust: targeted-mutation
+
+Install the version used by the workspace campaign runner:
+
+```bash
+cargo install targeted-mutation --version '=0.1.0' --locked
+```
+
+Run mutation tests from an independent, credential-free checkout in a loopback-only sandbox. On a Fireemu development machine, use the local mutation sandbox and run its guard before executing mutants. Give direct invocations their own work directory and point Cargo's intermediate build directory there too. Keep the paths outside the source checkout so reports and caches stay out of later scans.
+
+| Scope | Command or option | When to use it |
+| --- | --- | --- |
+| Line, range or file | `cargo tmt -p <package> --lines src/file.rs:20-35` | Investigate a boundary or a reported survivor. Repeat `--lines` to include several locations. Use just the path for a whole file. Paths are relative to the package. |
+| Change | `python3 tools/ci/targeted-mutation.py --package <package> --since <base> --output-dir <new-directory>` | Check a reviewed diff against its merge base. The runner uses standard Git diff prefixes even if the checkout configures a different prefix. Untracked sources can also enter the selection. |
+| Package | `cargo tmt -p <package>` | Review all supported sites in a package. Use `--also-test <package>` for relevant adapter or property tests in another member. Check the fixture requirements before using the transitive `--dependents` option. |
+| Several packages | `python3 tools/ci/targeted-mutation.py --package <package> --package <package> --output-dir <new-directory>` | Repeat a campaign over a group. Add `--since <base>` to apply a shared diff. |
+| Workspace | `python3 tools/ci/targeted-mutation.py --workspace --output-dir <new-directory>` | Inventory every Cargo workspace member with its default features on the current platform. Add `--since <base>` for a workspace-wide diff. |
+
+For example, in the sandboxed checkout:
+
+```bash
+export CARGO_BUILD_BUILD_DIR="$MUTATION_OUTPUT/limits/build"
+cargo tmt --locked --work-dir "$MUTATION_OUTPUT/limits" -p fireemu-core-limits --lines src/evaluate.rs --json
+python3 tools/ci/targeted-mutation.py --workspace --since "$(git merge-base origin/main HEAD)" --output-dir "$MUTATION_OUTPUT/change"
+```
+
+The campaign runner processes packages sequentially and reuses its own build directory. It keeps `<package>.json` and `<package>.log` for every attempt and writes `summary.json` at the end. For a completed campaign, exit `1` signals an analysis error, `2` signals findings or unstable predictions, and `0` means neither occurred. Setup errors are written to stderr and command-line usage errors emit no report. A `no-sites` result can be expected for an unchanged package in a diff or generated code. Inspect the reports for unreached, skipped, unevaluated and unbuilt mutants before drawing coverage conclusions. The batch run skips propagation tracing and selects ordinary tests for each package. It attempts every requested package even when an incompatible test prevents a report. Rerun a focused selection without `--no-effects` for that diagnosis. Reproduce changes against the ordinary test suite and add assertions for observable behavior before rerunning the selection.
+
+Version 0.1.0 runs Rust test binaries directly. For a focused package, add `--doc` for its doctests or `--rebuild` for mutants that need individual compilation. Use separate runs for feature sets and supported operating systems. The tool excludes `.git` and `node_modules` from its working copy. Its libtest execution does not apply nextest's temporary-directory wrappers, test groups or process-leak checks. A child process that clears its environment cannot receive runtime probes through that environment. Some Fireemu packages therefore fail the whole targeted-mutation baseline. For example, the Functions adapter checks the Git index, and the Quint verification crate checks source-file digests. Use their standard verification routes for those suites.
+
+| Test suite | Mutation and verification route |
+| --- | --- |
+| Default unit and integration tests with tracked fixtures | Package or workspace targeted-mutation. Use explicit cross-package tests when the assertions live in a dependent crate. |
+| Git- or SDK-dependent tests, process isolation, or fixed-port tests | Use the existing cargo-mutants/nextest workflow with its Git and SDK setup. Run the relevant ignored SDK and Python Functions tests using their existing CI commands. |
+| Platform-specific or feature-specific Rust tests | Run on the corresponding platform or with the corresponding Cargo features. |
+| Loom, Kani and Quint | Use their dedicated configurations and workflows. |
+| UI, Python runner and external SDK conformance | Use the existing Stryker, mutmut and language-specific CI and conformance commands. |
+
 ## Rust: bounded campaigns
 
 The repository enables `gitignore = true` in `.cargo/mutants.toml` so mutation sandboxes do not copy ignored worktrees, dependencies, or local evidence. Keep `--gitignore true` explicit when using `--no-config` or an alternate configuration. Do not use `--in-place` in a shared checkout.
