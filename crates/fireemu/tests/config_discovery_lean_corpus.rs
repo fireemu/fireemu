@@ -9,7 +9,7 @@ use std::rc::Rc;
 #[allow(dead_code)] // The replay supplies the metadata and open callbacks in memory.
 mod config_discovery;
 
-use config_discovery::{Discovered, Opened, Stat, Trust, discover};
+use config_discovery::{discover, Discovered, Opened, Stat, Trust};
 
 const CORPUS: &str = include_str!("fixtures/lean-config-discovery.corpus");
 const CWD: &str = "/suite/near/work";
@@ -97,19 +97,8 @@ fn configuration_precedence_matches_the_lean_corpus() {
     let mut seen = BTreeSet::new();
     for line in rows {
         let fields: Vec<_> = line.split('\t').collect();
-        let [
-            id,
-            toml,
-            json,
-            local,
-            near,
-            far,
-            working_dir,
-            nearer_dir,
-            kind,
-            expected,
-            state,
-        ] = fields.as_slice()
+        let [id, toml, json, local, near, far, working_dir, nearer_dir, kind, expected, state] =
+            fields.as_slice()
         else {
             panic!("invalid row: {line}");
         };

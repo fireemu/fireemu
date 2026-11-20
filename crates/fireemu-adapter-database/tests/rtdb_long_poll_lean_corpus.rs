@@ -1,3 +1,5 @@
+//! Replay the Lean contract for ordered long-poll segment reassembly.
+
 use fireemu_adapter_database::long_poll::{BadSegments, Reassembler, Segment};
 
 const CORPUS: &str = include_str!("fixtures/lean-rtdb-long-poll.corpus");

@@ -1,3 +1,5 @@
+//! Replay the Lean contract for Realtime Database node hash preimages.
+
 use std::collections::BTreeMap;
 
 use fireemu_core_database::hash::{children_hash_without_priority, etag, node_hash};

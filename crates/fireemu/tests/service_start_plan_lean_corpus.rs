@@ -3,7 +3,7 @@
 mod scratch;
 
 use scratch::Scratch;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};

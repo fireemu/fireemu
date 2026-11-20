@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use fireemu_adapter_http::storage::{
-    StorageRequest, StorageResponse, StorageRulesRegistry, StorageState, handle,
+    handle, StorageRequest, StorageResponse, StorageRulesRegistry, StorageState,
 };
 use fireemu_core_auth::jwt::TokenAcceptance;
 use fireemu_core_auth::mfa::TotpPolicy;

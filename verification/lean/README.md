@@ -1,6 +1,6 @@
 # Fireemu specifications in Lean 4
 
-Each package defines a reference contract, checks its theorems, and generates the golden corpus replayed by Rust. The package README records its scope, case format and Rust entry point. Rust tests consume the checked-in fixtures, so the ordinary build has no Lean toolchain dependency.
+Each package defines a reference contract, checks its theorems, and generates the golden corpus replayed against Fireemu. The package README records its scope, case format, and test entry point. Rust, Node.js, and Python tests consume the checked-in fixtures, so the ordinary build has no Lean toolchain dependency.
 
 ## Package index
 
@@ -20,8 +20,28 @@ Each package defines a reference contract, checks its theorems, and generates th
 | Export and logging wire formats | [export-wire](export-wire/README.md), [export-partitions](export-partitions/README.md), [export-leveldb](export-leveldb/README.md), [log-websocket-frame](log-websocket-frame/README.md) |
 | Limits and sessions | [limit-evaluation](limit-evaluation/README.md), [clock-calendar](clock-calendar/README.md), [virtual-clock](virtual-clock/README.md), [session-fault](session-fault/README.md) |
 
+## Additional contracts
+
+| Area | Reference packages |
+| --- | --- |
+| Shared JSON and export metadata | [core-json](core-json/README.md), [export-metadata](export-metadata/README.md) |
+| Firestore writes and aggregates | [firestore-transforms](firestore-transforms/README.md), [firestore-aggregates](firestore-aggregates/README.md), [firestore-partition-query](firestore-partition-query/README.md) |
+| Firestore query inputs | [firestore-pipeline-values](firestore-pipeline-values/README.md), [firestore-text-query](firestore-text-query/README.md), [firestore-proto-values](firestore-proto-values/README.md), [firestore-index-config](firestore-index-config/README.md) |
+| Security Rules | [rules-utf16-slices](rules-utf16-slices/README.md), [rules-coverage-merge](rules-coverage-merge/README.md) |
+| Realtime Database and UI | [rtdb-path-merge](rtdb-path-merge/README.md), [rtdb-node-hash](rtdb-node-hash/README.md), [rtdb-long-poll](rtdb-long-poll/README.md), [ui-rtdb-forwarding](ui-rtdb-forwarding/README.md) |
+| Cloud Storage | [storage-list-pages](storage-list-pages/README.md), [storage-http-range](storage-http-range/README.md) |
+| Pub/Sub | [pubsub-publish](pubsub-publish/README.md), [pubsub-rest-negative-cache](pubsub-rest-negative-cache/README.md), [pubsub-ack-lease](pubsub-ack-lease/README.md) |
+| Auth and App Check | [auth-user-pagination](auth-user-pagination/README.md), [auth-custom-claims](auth-custom-claims/README.md), [app-check-registry](app-check-registry/README.md) |
+| Functions and Eventarc | [functions-trigger-selection](functions-trigger-selection/README.md), [functions-ordered-json](functions-ordered-json/README.md), [eventarc-channel-lifecycle](eventarc-channel-lifecycle/README.md) |
+| Sessions and Cloud Tasks | [session-tenancy](session-tenancy/README.md), [cloud-tasks-queue](cloud-tasks-queue/README.md) |
+| Outbox and Functions transport | [event-outbox](event-outbox/README.md), [functions-protocol-frame](functions-protocol-frame/README.md) |
+| Adapter limits and retry | [adapter-bounded-body](adapter-bounded-body/README.md), [adapter-terminal-policy](adapter-terminal-policy/README.md), [adapter-notice-limit](adapter-notice-limit/README.md), [adapter-accept-backoff](adapter-accept-backoff/README.md) |
+| Hosting and CLI | [hosting-match](hosting-match/README.md), [config-discovery](config-discovery/README.md), [service-start-plan](service-start-plan/README.md) |
+| Node.js runner and npm | [runner-log-bounds](runner-log-bounds/README.md), [runner-invocation-budget](runner-invocation-budget/README.md), [runner-parameter-defaults](runner-parameter-defaults/README.md), [npm-clock-duration](npm-clock-duration/README.md), [runner-wait-deadlines](runner-wait-deadlines/README.md) |
+| Python runner | [python-runner-wire-layout](python-runner-wire-layout/README.md), [python-runner-event-data](python-runner-event-data/README.md) |
+
 ## Reproduce a package
 
-Run the commands in the package README from that package directory. Use its pinned Lean toolchain. A clean check builds the guarded theorems, compares fresh corpus output byte-for-byte with the tracked fixture, and runs the corresponding Rust integration test.
+Run the commands in the package README from that package directory. Use its pinned Lean toolchain. A clean check builds the guarded theorems, compares fresh corpus output byte-for-byte with the tracked fixture, and runs the corresponding integration test.
 
-Theorems describe the reference model and its stated assumptions. The Rust replayers compare public API observations, including error order and exact byte representations where the model specifies them. Use the package scope when drawing conclusions about Rust behavior.
+Theorems describe the reference model and its stated assumptions. The replayers compare selected implementation behavior, including error order and exact byte representations where the model specifies them. Use the package scope when drawing conclusions about Rust behavior.

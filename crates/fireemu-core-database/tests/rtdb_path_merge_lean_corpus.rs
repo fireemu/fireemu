@@ -1,3 +1,5 @@
+//! Replay the Lean contract for atomic Realtime Database path merges.
+
 use fireemu_core_database::{ErrorKind, Format, Json, Path, ServerValueContext, Tree};
 
 const CORPUS: &str = include_str!("fixtures/lean-rtdb-path-merge.corpus");
