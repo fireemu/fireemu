@@ -1,0 +1,9 @@
+name = "eventarc-channel-lifecycle"
+defaultTargets = ["EventarcChannelLifecycle", "corpus"]
+
+[[lean_lib]]
+name = "EventarcChannelLifecycle"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

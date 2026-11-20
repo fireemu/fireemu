@@ -1,0 +1,9 @@
+name = "functions-ordered-json"
+defaultTargets = ["FunctionsOrderedJson", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsOrderedJson"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

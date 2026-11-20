@@ -1,0 +1,9 @@
+name = "functions-trigger-selection"
+defaultTargets = ["FunctionsTriggerSelection", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsTriggerSelection"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
