@@ -1,0 +1,193 @@
+# cases 192
+header canonical none good missing
+header canonical none empty missing
+header canonical none limit missing
+header canonical none oversized missing
+header canonical none unicode missing
+header canonical none comma missing
+header canonical none space missing
+header canonical none control missing
+header canonical one good present
+header canonical one empty malformed
+header canonical one limit present
+header canonical one oversized malformed
+header canonical one unicode malformed
+header canonical one comma malformed
+header canonical one space malformed
+header canonical one control malformed
+header canonical two good malformed
+header canonical two empty malformed
+header canonical two limit malformed
+header canonical two oversized malformed
+header canonical two unicode malformed
+header canonical two comma malformed
+header canonical two space malformed
+header canonical two control malformed
+header mixed none good missing
+header mixed none empty missing
+header mixed none limit missing
+header mixed none oversized missing
+header mixed none unicode missing
+header mixed none comma missing
+header mixed none space missing
+header mixed none control missing
+header mixed one good present
+header mixed one empty malformed
+header mixed one limit present
+header mixed one oversized malformed
+header mixed one unicode malformed
+header mixed one comma malformed
+header mixed one space malformed
+header mixed one control malformed
+header mixed two good malformed
+header mixed two empty malformed
+header mixed two limit malformed
+header mixed two oversized malformed
+header mixed two unicode malformed
+header mixed two comma malformed
+header mixed two space malformed
+header mixed two control malformed
+header other none good missing
+header other none empty missing
+header other none limit missing
+header other none oversized missing
+header other none unicode missing
+header other none comma missing
+header other none space missing
+header other none control missing
+header other one good missing
+header other one empty missing
+header other one limit missing
+header other one oversized missing
+header other one unicode missing
+header other one comma missing
+header other one space missing
+header other one control missing
+header other two good missing
+header other two empty missing
+header other two limit missing
+header other two oversized missing
+header other two unicode missing
+header other two comma missing
+header other two space missing
+header other two control missing
+uuid lower 4 7 canonical abcdef01-1234-4abc-7def-0123456789ab -
+uuid lower 4 7 compact abcdef0112344abc7def0123456789ab -
+uuid lower 4 7 shifted bcdef01-1234-4abc-7def-00123456789ab -
+uuid lower 4 7 invalid gbcdef01-1234-4abc-7def-0123456789ab -
+uuid lower 4 7 unicode ébcdef01-1234-4abc-7def-0123456789ab -
+uuid lower 4 8 canonical abcdef01-1234-4abc-8def-0123456789ab abcdef01-1234-4abc-8def-0123456789ab
+uuid lower 4 8 compact abcdef0112344abc8def0123456789ab -
+uuid lower 4 8 shifted bcdef01-1234-4abc-8def-00123456789ab -
+uuid lower 4 8 invalid gbcdef01-1234-4abc-8def-0123456789ab -
+uuid lower 4 8 unicode ébcdef01-1234-4abc-8def-0123456789ab -
+uuid lower 4 9 canonical abcdef01-1234-4abc-9def-0123456789ab abcdef01-1234-4abc-9def-0123456789ab
+uuid lower 4 9 compact abcdef0112344abc9def0123456789ab -
+uuid lower 4 9 shifted bcdef01-1234-4abc-9def-00123456789ab -
+uuid lower 4 9 invalid gbcdef01-1234-4abc-9def-0123456789ab -
+uuid lower 4 9 unicode ébcdef01-1234-4abc-9def-0123456789ab -
+uuid lower 4 a canonical abcdef01-1234-4abc-adef-0123456789ab abcdef01-1234-4abc-adef-0123456789ab
+uuid lower 4 a compact abcdef0112344abcadef0123456789ab -
+uuid lower 4 a shifted bcdef01-1234-4abc-adef-00123456789ab -
+uuid lower 4 a invalid gbcdef01-1234-4abc-adef-0123456789ab -
+uuid lower 4 a unicode ébcdef01-1234-4abc-adef-0123456789ab -
+uuid lower 4 b canonical abcdef01-1234-4abc-bdef-0123456789ab abcdef01-1234-4abc-bdef-0123456789ab
+uuid lower 4 b compact abcdef0112344abcbdef0123456789ab -
+uuid lower 4 b shifted bcdef01-1234-4abc-bdef-00123456789ab -
+uuid lower 4 b invalid gbcdef01-1234-4abc-bdef-0123456789ab -
+uuid lower 4 b unicode ébcdef01-1234-4abc-bdef-0123456789ab -
+uuid lower 4 c canonical abcdef01-1234-4abc-cdef-0123456789ab -
+uuid lower 4 c compact abcdef0112344abccdef0123456789ab -
+uuid lower 4 c shifted bcdef01-1234-4abc-cdef-00123456789ab -
+uuid lower 4 c invalid gbcdef01-1234-4abc-cdef-0123456789ab -
+uuid lower 4 c unicode ébcdef01-1234-4abc-cdef-0123456789ab -
+uuid lower 5 7 canonical abcdef01-1234-5abc-7def-0123456789ab -
+uuid lower 5 7 compact abcdef0112345abc7def0123456789ab -
+uuid lower 5 7 shifted bcdef01-1234-5abc-7def-00123456789ab -
+uuid lower 5 7 invalid gbcdef01-1234-5abc-7def-0123456789ab -
+uuid lower 5 7 unicode ébcdef01-1234-5abc-7def-0123456789ab -
+uuid lower 5 8 canonical abcdef01-1234-5abc-8def-0123456789ab -
+uuid lower 5 8 compact abcdef0112345abc8def0123456789ab -
+uuid lower 5 8 shifted bcdef01-1234-5abc-8def-00123456789ab -
+uuid lower 5 8 invalid gbcdef01-1234-5abc-8def-0123456789ab -
+uuid lower 5 8 unicode ébcdef01-1234-5abc-8def-0123456789ab -
+uuid lower 5 9 canonical abcdef01-1234-5abc-9def-0123456789ab -
+uuid lower 5 9 compact abcdef0112345abc9def0123456789ab -
+uuid lower 5 9 shifted bcdef01-1234-5abc-9def-00123456789ab -
+uuid lower 5 9 invalid gbcdef01-1234-5abc-9def-0123456789ab -
+uuid lower 5 9 unicode ébcdef01-1234-5abc-9def-0123456789ab -
+uuid lower 5 a canonical abcdef01-1234-5abc-adef-0123456789ab -
+uuid lower 5 a compact abcdef0112345abcadef0123456789ab -
+uuid lower 5 a shifted bcdef01-1234-5abc-adef-00123456789ab -
+uuid lower 5 a invalid gbcdef01-1234-5abc-adef-0123456789ab -
+uuid lower 5 a unicode ébcdef01-1234-5abc-adef-0123456789ab -
+uuid lower 5 b canonical abcdef01-1234-5abc-bdef-0123456789ab -
+uuid lower 5 b compact abcdef0112345abcbdef0123456789ab -
+uuid lower 5 b shifted bcdef01-1234-5abc-bdef-00123456789ab -
+uuid lower 5 b invalid gbcdef01-1234-5abc-bdef-0123456789ab -
+uuid lower 5 b unicode ébcdef01-1234-5abc-bdef-0123456789ab -
+uuid lower 5 c canonical abcdef01-1234-5abc-cdef-0123456789ab -
+uuid lower 5 c compact abcdef0112345abccdef0123456789ab -
+uuid lower 5 c shifted bcdef01-1234-5abc-cdef-00123456789ab -
+uuid lower 5 c invalid gbcdef01-1234-5abc-cdef-0123456789ab -
+uuid lower 5 c unicode ébcdef01-1234-5abc-cdef-0123456789ab -
+uuid upper 4 7 canonical ABCDEF01-1234-4ABC-7DEF-0123456789AB -
+uuid upper 4 7 compact ABCDEF0112344ABC7DEF0123456789AB -
+uuid upper 4 7 shifted BCDEF01-1234-4ABC-7DEF-00123456789AB -
+uuid upper 4 7 invalid GBCDEF01-1234-4ABC-7DEF-0123456789AB -
+uuid upper 4 7 unicode éBCDEF01-1234-4ABC-7DEF-0123456789AB -
+uuid upper 4 8 canonical ABCDEF01-1234-4ABC-8DEF-0123456789AB abcdef01-1234-4abc-8def-0123456789ab
+uuid upper 4 8 compact ABCDEF0112344ABC8DEF0123456789AB -
+uuid upper 4 8 shifted BCDEF01-1234-4ABC-8DEF-00123456789AB -
+uuid upper 4 8 invalid GBCDEF01-1234-4ABC-8DEF-0123456789AB -
+uuid upper 4 8 unicode éBCDEF01-1234-4ABC-8DEF-0123456789AB -
+uuid upper 4 9 canonical ABCDEF01-1234-4ABC-9DEF-0123456789AB abcdef01-1234-4abc-9def-0123456789ab
+uuid upper 4 9 compact ABCDEF0112344ABC9DEF0123456789AB -
+uuid upper 4 9 shifted BCDEF01-1234-4ABC-9DEF-00123456789AB -
+uuid upper 4 9 invalid GBCDEF01-1234-4ABC-9DEF-0123456789AB -
+uuid upper 4 9 unicode éBCDEF01-1234-4ABC-9DEF-0123456789AB -
+uuid upper 4 a canonical ABCDEF01-1234-4ABC-ADEF-0123456789AB abcdef01-1234-4abc-adef-0123456789ab
+uuid upper 4 a compact ABCDEF0112344ABCADEF0123456789AB -
+uuid upper 4 a shifted BCDEF01-1234-4ABC-ADEF-00123456789AB -
+uuid upper 4 a invalid GBCDEF01-1234-4ABC-ADEF-0123456789AB -
+uuid upper 4 a unicode éBCDEF01-1234-4ABC-ADEF-0123456789AB -
+uuid upper 4 b canonical ABCDEF01-1234-4ABC-BDEF-0123456789AB abcdef01-1234-4abc-bdef-0123456789ab
+uuid upper 4 b compact ABCDEF0112344ABCBDEF0123456789AB -
+uuid upper 4 b shifted BCDEF01-1234-4ABC-BDEF-00123456789AB -
+uuid upper 4 b invalid GBCDEF01-1234-4ABC-BDEF-0123456789AB -
+uuid upper 4 b unicode éBCDEF01-1234-4ABC-BDEF-0123456789AB -
+uuid upper 4 c canonical ABCDEF01-1234-4ABC-CDEF-0123456789AB -
+uuid upper 4 c compact ABCDEF0112344ABCCDEF0123456789AB -
+uuid upper 4 c shifted BCDEF01-1234-4ABC-CDEF-00123456789AB -
+uuid upper 4 c invalid GBCDEF01-1234-4ABC-CDEF-0123456789AB -
+uuid upper 4 c unicode éBCDEF01-1234-4ABC-CDEF-0123456789AB -
+uuid upper 5 7 canonical ABCDEF01-1234-5ABC-7DEF-0123456789AB -
+uuid upper 5 7 compact ABCDEF0112345ABC7DEF0123456789AB -
+uuid upper 5 7 shifted BCDEF01-1234-5ABC-7DEF-00123456789AB -
+uuid upper 5 7 invalid GBCDEF01-1234-5ABC-7DEF-0123456789AB -
+uuid upper 5 7 unicode éBCDEF01-1234-5ABC-7DEF-0123456789AB -
+uuid upper 5 8 canonical ABCDEF01-1234-5ABC-8DEF-0123456789AB -
+uuid upper 5 8 compact ABCDEF0112345ABC8DEF0123456789AB -
+uuid upper 5 8 shifted BCDEF01-1234-5ABC-8DEF-00123456789AB -
+uuid upper 5 8 invalid GBCDEF01-1234-5ABC-8DEF-0123456789AB -
+uuid upper 5 8 unicode éBCDEF01-1234-5ABC-8DEF-0123456789AB -
+uuid upper 5 9 canonical ABCDEF01-1234-5ABC-9DEF-0123456789AB -
+uuid upper 5 9 compact ABCDEF0112345ABC9DEF0123456789AB -
+uuid upper 5 9 shifted BCDEF01-1234-5ABC-9DEF-00123456789AB -
+uuid upper 5 9 invalid GBCDEF01-1234-5ABC-9DEF-0123456789AB -
+uuid upper 5 9 unicode éBCDEF01-1234-5ABC-9DEF-0123456789AB -
+uuid upper 5 a canonical ABCDEF01-1234-5ABC-ADEF-0123456789AB -
+uuid upper 5 a compact ABCDEF0112345ABCADEF0123456789AB -
+uuid upper 5 a shifted BCDEF01-1234-5ABC-ADEF-00123456789AB -
+uuid upper 5 a invalid GBCDEF01-1234-5ABC-ADEF-0123456789AB -
+uuid upper 5 a unicode éBCDEF01-1234-5ABC-ADEF-0123456789AB -
+uuid upper 5 b canonical ABCDEF01-1234-5ABC-BDEF-0123456789AB -
+uuid upper 5 b compact ABCDEF0112345ABCBDEF0123456789AB -
+uuid upper 5 b shifted BCDEF01-1234-5ABC-BDEF-00123456789AB -
+uuid upper 5 b invalid GBCDEF01-1234-5ABC-BDEF-0123456789AB -
+uuid upper 5 b unicode éBCDEF01-1234-5ABC-BDEF-0123456789AB -
+uuid upper 5 c canonical ABCDEF01-1234-5ABC-CDEF-0123456789AB -
+uuid upper 5 c compact ABCDEF0112345ABCCDEF0123456789AB -
+uuid upper 5 c shifted BCDEF01-1234-5ABC-CDEF-00123456789AB -
+uuid upper 5 c invalid GBCDEF01-1234-5ABC-CDEF-0123456789AB -
+uuid upper 5 c unicode éBCDEF01-1234-5ABC-CDEF-0123456789AB -

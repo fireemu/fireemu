@@ -1,0 +1,271 @@
+# cases 270
+config 0 0 buckets
+config 0 1 ok
+config 0 2 ok
+config 0 65535 ok
+config 0 65536 ok
+config 0 65537 buckets
+config 999999 0 buckets
+config 999999 1 ok
+config 999999 2 ok
+config 999999 65535 ok
+config 999999 65536 ok
+config 999999 65537 buckets
+config 1000000 0 buckets
+config 1000000 1 ok
+config 1000000 2 ok
+config 1000000 65535 ok
+config 1000000 65536 ok
+config 1000000 65537 buckets
+config 1000001 0 default
+config 1000001 1 default
+config 1000001 2 default
+config 1000001 65535 default
+config 1000001 65536 default
+config 1000001 65537 default
+config 18446744073709551615 0 default
+config 18446744073709551615 1 default
+config 18446744073709551615 2 default
+config 18446744073709551615 65535 default
+config 18446744073709551615 65536 default
+config 18446744073709551615 65537 default
+temporary 0 -1 -1 duration
+temporary 0 -1 0 duration
+temporary 0 -1 1 ok
+temporary 0 -1 2 ok
+temporary 0 0 -1 duration
+temporary 0 0 0 duration
+temporary 0 0 1 ok
+temporary 0 0 2 ok
+temporary 0 1 -1 duration
+temporary 0 1 0 duration
+temporary 0 1 1 ok
+temporary 0 1 2 ok
+temporary 0 170141183460469231731687303715884105726 -1 duration
+temporary 0 170141183460469231731687303715884105726 0 duration
+temporary 0 170141183460469231731687303715884105726 1 ok
+temporary 0 170141183460469231731687303715884105726 2 overflow
+temporary 0 170141183460469231731687303715884105727 -1 duration
+temporary 0 170141183460469231731687303715884105727 0 duration
+temporary 0 170141183460469231731687303715884105727 1 overflow
+temporary 0 170141183460469231731687303715884105727 2 overflow
+temporary 1 -1 -1 duration
+temporary 1 -1 0 duration
+temporary 1 -1 1 ok
+temporary 1 -1 2 ok
+temporary 1 0 -1 duration
+temporary 1 0 0 duration
+temporary 1 0 1 ok
+temporary 1 0 2 ok
+temporary 1 1 -1 duration
+temporary 1 1 0 duration
+temporary 1 1 1 ok
+temporary 1 1 2 ok
+temporary 1 170141183460469231731687303715884105726 -1 duration
+temporary 1 170141183460469231731687303715884105726 0 duration
+temporary 1 170141183460469231731687303715884105726 1 ok
+temporary 1 170141183460469231731687303715884105726 2 overflow
+temporary 1 170141183460469231731687303715884105727 -1 duration
+temporary 1 170141183460469231731687303715884105727 0 duration
+temporary 1 170141183460469231731687303715884105727 1 overflow
+temporary 1 170141183460469231731687303715884105727 2 overflow
+temporary 9223372036854775807 -1 -1 duration
+temporary 9223372036854775807 -1 0 duration
+temporary 9223372036854775807 -1 1 ok
+temporary 9223372036854775807 -1 2 ok
+temporary 9223372036854775807 0 -1 duration
+temporary 9223372036854775807 0 0 duration
+temporary 9223372036854775807 0 1 ok
+temporary 9223372036854775807 0 2 ok
+temporary 9223372036854775807 1 -1 duration
+temporary 9223372036854775807 1 0 duration
+temporary 9223372036854775807 1 1 ok
+temporary 9223372036854775807 1 2 ok
+temporary 9223372036854775807 170141183460469231731687303715884105726 -1 duration
+temporary 9223372036854775807 170141183460469231731687303715884105726 0 duration
+temporary 9223372036854775807 170141183460469231731687303715884105726 1 ok
+temporary 9223372036854775807 170141183460469231731687303715884105726 2 overflow
+temporary 9223372036854775807 170141183460469231731687303715884105727 -1 duration
+temporary 9223372036854775807 170141183460469231731687303715884105727 0 duration
+temporary 9223372036854775807 170141183460469231731687303715884105727 1 overflow
+temporary 9223372036854775807 170141183460469231731687303715884105727 2 overflow
+temporary 9223372036854775808 -1 -1 quota
+temporary 9223372036854775808 -1 0 quota
+temporary 9223372036854775808 -1 1 quota
+temporary 9223372036854775808 -1 2 quota
+temporary 9223372036854775808 0 -1 quota
+temporary 9223372036854775808 0 0 quota
+temporary 9223372036854775808 0 1 quota
+temporary 9223372036854775808 0 2 quota
+temporary 9223372036854775808 1 -1 quota
+temporary 9223372036854775808 1 0 quota
+temporary 9223372036854775808 1 1 quota
+temporary 9223372036854775808 1 2 quota
+temporary 9223372036854775808 170141183460469231731687303715884105726 -1 quota
+temporary 9223372036854775808 170141183460469231731687303715884105726 0 quota
+temporary 9223372036854775808 170141183460469231731687303715884105726 1 quota
+temporary 9223372036854775808 170141183460469231731687303715884105726 2 quota
+temporary 9223372036854775808 170141183460469231731687303715884105727 -1 quota
+temporary 9223372036854775808 170141183460469231731687303715884105727 0 quota
+temporary 9223372036854775808 170141183460469231731687303715884105727 1 quota
+temporary 9223372036854775808 170141183460469231731687303715884105727 2 quota
+temporary 18446744073709551615 -1 -1 quota
+temporary 18446744073709551615 -1 0 quota
+temporary 18446744073709551615 -1 1 quota
+temporary 18446744073709551615 -1 2 quota
+temporary 18446744073709551615 0 -1 quota
+temporary 18446744073709551615 0 0 quota
+temporary 18446744073709551615 0 1 quota
+temporary 18446744073709551615 0 2 quota
+temporary 18446744073709551615 1 -1 quota
+temporary 18446744073709551615 1 0 quota
+temporary 18446744073709551615 1 1 quota
+temporary 18446744073709551615 1 2 quota
+temporary 18446744073709551615 170141183460469231731687303715884105726 -1 quota
+temporary 18446744073709551615 170141183460469231731687303715884105726 0 quota
+temporary 18446744073709551615 170141183460469231731687303715884105726 1 quota
+temporary 18446744073709551615 170141183460469231731687303715884105726 2 quota
+temporary 18446744073709551615 170141183460469231731687303715884105727 -1 quota
+temporary 18446744073709551615 170141183460469231731687303715884105727 0 quota
+temporary 18446744073709551615 170141183460469231731687303715884105727 1 quota
+temporary 18446744073709551615 170141183460469231731687303715884105727 2 quota
+window -3600000000001 -3600000000001 ok
+window -3600000000001 -3600000000000 stale
+window -3600000000001 -3599999999999 stale
+window -3600000000001 -1 stale
+window -3600000000001 0 stale
+window -3600000000001 1 stale
+window -3600000000001 3599999999999 stale
+window -3600000000001 3600000000000 stale
+window -3600000000001 3600000000001 stale
+window -3600000000000 -3600000000001 stale
+window -3600000000000 -3600000000000 ok
+window -3600000000000 -3599999999999 ok
+window -3600000000000 -1 ok
+window -3600000000000 0 stale
+window -3600000000000 1 stale
+window -3600000000000 3599999999999 stale
+window -3600000000000 3600000000000 stale
+window -3600000000000 3600000000001 stale
+window -3599999999999 -3600000000001 stale
+window -3599999999999 -3600000000000 ok
+window -3599999999999 -3599999999999 ok
+window -3599999999999 -1 ok
+window -3599999999999 0 stale
+window -3599999999999 1 stale
+window -3599999999999 3599999999999 stale
+window -3599999999999 3600000000000 stale
+window -3599999999999 3600000000001 stale
+window -1 -3600000000001 stale
+window -1 -3600000000000 ok
+window -1 -3599999999999 ok
+window -1 -1 ok
+window -1 0 stale
+window -1 1 stale
+window -1 3599999999999 stale
+window -1 3600000000000 stale
+window -1 3600000000001 stale
+window 0 -3600000000001 stale
+window 0 -3600000000000 stale
+window 0 -3599999999999 stale
+window 0 -1 stale
+window 0 0 ok
+window 0 1 ok
+window 0 3599999999999 ok
+window 0 3600000000000 stale
+window 0 3600000000001 stale
+window 1 -3600000000001 stale
+window 1 -3600000000000 stale
+window 1 -3599999999999 stale
+window 1 -1 stale
+window 1 0 ok
+window 1 1 ok
+window 1 3599999999999 ok
+window 1 3600000000000 stale
+window 1 3600000000001 stale
+window 3599999999999 -3600000000001 stale
+window 3599999999999 -3600000000000 stale
+window 3599999999999 -3599999999999 stale
+window 3599999999999 -1 stale
+window 3599999999999 0 ok
+window 3599999999999 1 ok
+window 3599999999999 3599999999999 ok
+window 3599999999999 3600000000000 stale
+window 3599999999999 3600000000001 stale
+window 3600000000000 -3600000000001 stale
+window 3600000000000 -3600000000000 stale
+window 3600000000000 -3599999999999 stale
+window 3600000000000 -1 stale
+window 3600000000000 0 stale
+window 3600000000000 1 stale
+window 3600000000000 3599999999999 stale
+window 3600000000000 3600000000000 ok
+window 3600000000000 3600000000001 ok
+window 3600000000001 -3600000000001 stale
+window 3600000000001 -3600000000000 stale
+window 3600000000001 -3599999999999 stale
+window 3600000000001 -1 stale
+window 3600000000001 0 stale
+window 3600000000001 1 stale
+window 3600000000001 3599999999999 stale
+window 3600000000001 3600000000000 ok
+window 3600000000001 3600000000001 ok
+override -2 exceeded
+override -1 ok
+override 0 ok
+override 1 exceeded
+override 2 exceeded
+peer off empty invalid-peer
+peer off control invalid-peer
+peer off valid ok
+trace off 0 commit ok ok ok ok 0 0 ok
+trace off 0 release ok ok ok ok 0 0 ok
+trace off 0 late ok ok ok ok 0 0 ok
+trace off 0 changed ok ok stale stale 0 0 ok
+trace off 0 override ok ok ok ok 0 0 ok
+trace off 1 commit ok ok ok ok 0 0 ok
+trace off 1 release ok ok ok ok 0 0 ok
+trace off 1 late ok ok ok ok 0 0 ok
+trace off 1 changed ok ok stale stale 0 0 ok
+trace off 1 override ok ok ok ok 0 0 ok
+trace off 2 commit ok ok ok ok 0 0 ok
+trace off 2 release ok ok ok ok 0 0 ok
+trace off 2 late ok ok ok ok 0 0 ok
+trace off 2 changed ok ok stale stale 0 0 ok
+trace off 2 override ok ok ok ok 0 0 ok
+peer observe empty invalid-peer
+peer observe control invalid-peer
+peer observe valid ok
+trace observe 0 commit over over ok invalid 1 0 over
+trace observe 0 release over over ok invalid 0 0 over
+trace observe 0 late over over stale invalid 0 0 over
+trace observe 0 changed over over stale invalid 0 0 over
+trace observe 0 override over over stale invalid 0 0 ok
+trace observe 1 commit ok over ok invalid 1 0 over
+trace observe 1 release ok over ok invalid 0 0 ok
+trace observe 1 late ok over stale invalid 0 0 ok
+trace observe 1 changed ok over stale invalid 0 0 ok
+trace observe 1 override ok over stale invalid 0 0 ok
+trace observe 2 commit ok ok ok invalid 1 0 ok
+trace observe 2 release ok ok ok invalid 0 0 ok
+trace observe 2 late ok ok stale invalid 0 0 ok
+trace observe 2 changed ok ok stale invalid 0 0 ok
+trace observe 2 override ok ok stale invalid 0 0 ok
+peer enforce empty invalid-peer
+peer enforce control invalid-peer
+peer enforce valid ok
+trace enforce 0 commit exceeded exceeded skipped skipped 0 0 exceeded
+trace enforce 0 release exceeded exceeded skipped skipped 0 0 exceeded
+trace enforce 0 late exceeded exceeded skipped skipped 0 0 exceeded
+trace enforce 0 changed exceeded exceeded skipped skipped 0 0 exceeded
+trace enforce 0 override exceeded exceeded skipped skipped 0 0 exceeded
+trace enforce 1 commit ok exceeded ok invalid 1 0 exceeded
+trace enforce 1 release ok exceeded ok invalid 0 0 ok
+trace enforce 1 late ok exceeded stale invalid 0 0 ok
+trace enforce 1 changed ok exceeded stale invalid 0 0 ok
+trace enforce 1 override ok exceeded stale invalid 0 0 ok
+trace enforce 2 commit ok ok ok invalid 1 0 ok
+trace enforce 2 release ok ok ok invalid 0 0 ok
+trace enforce 2 late ok ok stale invalid 0 0 ok
+trace enforce 2 changed ok ok stale invalid 0 0 ok
+trace enforce 2 override ok ok stale invalid 0 0 ok

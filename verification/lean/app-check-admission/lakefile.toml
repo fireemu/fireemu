@@ -1,0 +1,9 @@
+name = "app-check-admission"
+defaultTargets = ["AppCheckAdmission", "corpus"]
+
+[[lean_lib]]
+name = "AppCheckAdmission"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

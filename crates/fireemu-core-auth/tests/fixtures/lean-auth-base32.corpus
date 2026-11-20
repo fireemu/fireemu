@@ -1,0 +1,381 @@
+# cases 380
+encode 00 AA======
+encode 01 AE======
+encode 02 AI======
+encode 03 AM======
+encode 04 AQ======
+encode 05 AU======
+encode 06 AY======
+encode 07 A4======
+encode 08 BA======
+encode 09 BE======
+encode 0a BI======
+encode 0b BM======
+encode 0c BQ======
+encode 0d BU======
+encode 0e BY======
+encode 0f B4======
+encode 10 CA======
+encode 11 CE======
+encode 12 CI======
+encode 13 CM======
+encode 14 CQ======
+encode 15 CU======
+encode 16 CY======
+encode 17 C4======
+encode 18 DA======
+encode 19 DE======
+encode 1a DI======
+encode 1b DM======
+encode 1c DQ======
+encode 1d DU======
+encode 1e DY======
+encode 1f D4======
+encode 20 EA======
+encode 21 EE======
+encode 22 EI======
+encode 23 EM======
+encode 24 EQ======
+encode 25 EU======
+encode 26 EY======
+encode 27 E4======
+encode 28 FA======
+encode 29 FE======
+encode 2a FI======
+encode 2b FM======
+encode 2c FQ======
+encode 2d FU======
+encode 2e FY======
+encode 2f F4======
+encode 30 GA======
+encode 31 GE======
+encode 32 GI======
+encode 33 GM======
+encode 34 GQ======
+encode 35 GU======
+encode 36 GY======
+encode 37 G4======
+encode 38 HA======
+encode 39 HE======
+encode 3a HI======
+encode 3b HM======
+encode 3c HQ======
+encode 3d HU======
+encode 3e HY======
+encode 3f H4======
+encode 40 IA======
+encode 41 IE======
+encode 42 II======
+encode 43 IM======
+encode 44 IQ======
+encode 45 IU======
+encode 46 IY======
+encode 47 I4======
+encode 48 JA======
+encode 49 JE======
+encode 4a JI======
+encode 4b JM======
+encode 4c JQ======
+encode 4d JU======
+encode 4e JY======
+encode 4f J4======
+encode 50 KA======
+encode 51 KE======
+encode 52 KI======
+encode 53 KM======
+encode 54 KQ======
+encode 55 KU======
+encode 56 KY======
+encode 57 K4======
+encode 58 LA======
+encode 59 LE======
+encode 5a LI======
+encode 5b LM======
+encode 5c LQ======
+encode 5d LU======
+encode 5e LY======
+encode 5f L4======
+encode 60 MA======
+encode 61 ME======
+encode 62 MI======
+encode 63 MM======
+encode 64 MQ======
+encode 65 MU======
+encode 66 MY======
+encode 67 M4======
+encode 68 NA======
+encode 69 NE======
+encode 6a NI======
+encode 6b NM======
+encode 6c NQ======
+encode 6d NU======
+encode 6e NY======
+encode 6f N4======
+encode 70 OA======
+encode 71 OE======
+encode 72 OI======
+encode 73 OM======
+encode 74 OQ======
+encode 75 OU======
+encode 76 OY======
+encode 77 O4======
+encode 78 PA======
+encode 79 PE======
+encode 7a PI======
+encode 7b PM======
+encode 7c PQ======
+encode 7d PU======
+encode 7e PY======
+encode 7f P4======
+encode 80 QA======
+encode 81 QE======
+encode 82 QI======
+encode 83 QM======
+encode 84 QQ======
+encode 85 QU======
+encode 86 QY======
+encode 87 Q4======
+encode 88 RA======
+encode 89 RE======
+encode 8a RI======
+encode 8b RM======
+encode 8c RQ======
+encode 8d RU======
+encode 8e RY======
+encode 8f R4======
+encode 90 SA======
+encode 91 SE======
+encode 92 SI======
+encode 93 SM======
+encode 94 SQ======
+encode 95 SU======
+encode 96 SY======
+encode 97 S4======
+encode 98 TA======
+encode 99 TE======
+encode 9a TI======
+encode 9b TM======
+encode 9c TQ======
+encode 9d TU======
+encode 9e TY======
+encode 9f T4======
+encode a0 UA======
+encode a1 UE======
+encode a2 UI======
+encode a3 UM======
+encode a4 UQ======
+encode a5 UU======
+encode a6 UY======
+encode a7 U4======
+encode a8 VA======
+encode a9 VE======
+encode aa VI======
+encode ab VM======
+encode ac VQ======
+encode ad VU======
+encode ae VY======
+encode af V4======
+encode b0 WA======
+encode b1 WE======
+encode b2 WI======
+encode b3 WM======
+encode b4 WQ======
+encode b5 WU======
+encode b6 WY======
+encode b7 W4======
+encode b8 XA======
+encode b9 XE======
+encode ba XI======
+encode bb XM======
+encode bc XQ======
+encode bd XU======
+encode be XY======
+encode bf X4======
+encode c0 YA======
+encode c1 YE======
+encode c2 YI======
+encode c3 YM======
+encode c4 YQ======
+encode c5 YU======
+encode c6 YY======
+encode c7 Y4======
+encode c8 ZA======
+encode c9 ZE======
+encode ca ZI======
+encode cb ZM======
+encode cc ZQ======
+encode cd ZU======
+encode ce ZY======
+encode cf Z4======
+encode d0 2A======
+encode d1 2E======
+encode d2 2I======
+encode d3 2M======
+encode d4 2Q======
+encode d5 2U======
+encode d6 2Y======
+encode d7 24======
+encode d8 3A======
+encode d9 3E======
+encode da 3I======
+encode db 3M======
+encode dc 3Q======
+encode dd 3U======
+encode de 3Y======
+encode df 34======
+encode e0 4A======
+encode e1 4E======
+encode e2 4I======
+encode e3 4M======
+encode e4 4Q======
+encode e5 4U======
+encode e6 4Y======
+encode e7 44======
+encode e8 5A======
+encode e9 5E======
+encode ea 5I======
+encode eb 5M======
+encode ec 5Q======
+encode ed 5U======
+encode ee 5Y======
+encode ef 54======
+encode f0 6A======
+encode f1 6E======
+encode f2 6I======
+encode f3 6M======
+encode f4 6Q======
+encode f5 6U======
+encode f6 6Y======
+encode f7 64======
+encode f8 7A======
+encode f9 7E======
+encode fa 7I======
+encode fb 7M======
+encode fc 7Q======
+encode fd 7U======
+encode fe 7Y======
+encode ff 74======
+encode - -
+encode 66 MY======
+encode 666f MZXQ====
+encode 666f6f MZXW6===
+encode 666f6f62 MZXW6YQ=
+encode 666f6f6261 MZXW6YTB
+encode 666f6f626172 MZXW6YTBOI======
+encode 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff AAAQEAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSAIJCEMSCKJRHFAUSUKZMFUXC6MBRGIZTINJWG44DSOR3HQ6T4P2AIFBEGRCFIZDUQSKKJNGE2TSPKBIVEU2UKVLFOWCZLJNVYXK6L5QGCYTDMRSWMZ3INFVGW3DNNZXXA4LSON2HK5TXPB4XU634PV7H7AEBQKBYJBMGQ6EITCULRSGY5D4QSGJJHFEVS2LZRGM2TOOJ3HU7UCQ2FI5EUWTKPKFJVKV2ZLNOV6YLDMVTWS23NN5YXG5LXPF5X274BQOCYPCMLRWHZDE4VS6MZXHM7UGR2LJ5JVOW27MNTWW33TO55X7A4HROHZHF43T6R2PK5PWO33XP6DY7F47U6X3PP6HZ7L57Z7P674======
+decode 0 upper padded - ok -
+decode 0 upper unpadded - ok -
+decode 0 upper ignored =!é ok -
+decode 0 upper invalid !=A error 0
+decode 0 upper residual Z ok -
+decode 0 lower padded - ok -
+decode 0 lower unpadded - ok -
+decode 0 lower ignored =!é ok -
+decode 0 lower invalid !=A error 0
+decode 0 lower residual Z ok -
+decode 0 mixed padded - ok -
+decode 0 mixed unpadded - ok -
+decode 0 mixed ignored =!é ok -
+decode 0 mixed invalid !=A error 0
+decode 0 mixed residual Z ok -
+decode 1 upper padded MY====== ok 66
+decode 1 upper unpadded MY ok 66
+decode 1 upper ignored MY=!é ok 66
+decode 1 upper invalid MY!=A error 2
+decode 1 upper residual MYZ ok 66
+decode 1 lower padded my====== ok 66
+decode 1 lower unpadded my ok 66
+decode 1 lower ignored my=!é ok 66
+decode 1 lower invalid my!=A error 2
+decode 1 lower residual myZ ok 66
+decode 1 mixed padded mY====== ok 66
+decode 1 mixed unpadded mY ok 66
+decode 1 mixed ignored mY=!é ok 66
+decode 1 mixed invalid mY!=A error 2
+decode 1 mixed residual mYZ ok 66
+decode 2 upper padded MZXQ==== ok 666f
+decode 2 upper unpadded MZXQ ok 666f
+decode 2 upper ignored MZXQ=!é ok 666f
+decode 2 upper invalid MZXQ!=A error 4
+decode 2 upper residual MZXQZ ok 666f0c
+decode 2 lower padded mzxq==== ok 666f
+decode 2 lower unpadded mzxq ok 666f
+decode 2 lower ignored mzxq=!é ok 666f
+decode 2 lower invalid mzxq!=A error 4
+decode 2 lower residual mzxqZ ok 666f0c
+decode 2 mixed padded mZxQ==== ok 666f
+decode 2 mixed unpadded mZxQ ok 666f
+decode 2 mixed ignored mZxQ=!é ok 666f
+decode 2 mixed invalid mZxQ!=A error 4
+decode 2 mixed residual mZxQZ ok 666f0c
+decode 3 upper padded MZXW6=== ok 666f6f
+decode 3 upper unpadded MZXW6 ok 666f6f
+decode 3 upper ignored MZXW6=!é ok 666f6f
+decode 3 upper invalid MZXW6!=A error 5
+decode 3 upper residual MZXW6Z ok 666f6f
+decode 3 lower padded mzxw6=== ok 666f6f
+decode 3 lower unpadded mzxw6 ok 666f6f
+decode 3 lower ignored mzxw6=!é ok 666f6f
+decode 3 lower invalid mzxw6!=A error 5
+decode 3 lower residual mzxw6Z ok 666f6f
+decode 3 mixed padded mZxW6=== ok 666f6f
+decode 3 mixed unpadded mZxW6 ok 666f6f
+decode 3 mixed ignored mZxW6=!é ok 666f6f
+decode 3 mixed invalid mZxW6!=A error 5
+decode 3 mixed residual mZxW6Z ok 666f6f
+decode 4 upper padded MZXW6YQ= ok 666f6f62
+decode 4 upper unpadded MZXW6YQ ok 666f6f62
+decode 4 upper ignored MZXW6YQ=!é ok 666f6f62
+decode 4 upper invalid MZXW6YQ!=A error 7
+decode 4 upper residual MZXW6YQZ ok 666f6f6219
+decode 4 lower padded mzxw6yq= ok 666f6f62
+decode 4 lower unpadded mzxw6yq ok 666f6f62
+decode 4 lower ignored mzxw6yq=!é ok 666f6f62
+decode 4 lower invalid mzxw6yq!=A error 7
+decode 4 lower residual mzxw6yqZ ok 666f6f6219
+decode 4 mixed padded mZxW6Yq= ok 666f6f62
+decode 4 mixed unpadded mZxW6Yq ok 666f6f62
+decode 4 mixed ignored mZxW6Yq=!é ok 666f6f62
+decode 4 mixed invalid mZxW6Yq!=A error 7
+decode 4 mixed residual mZxW6YqZ ok 666f6f6219
+decode 5 upper padded MZXW6YTB ok 666f6f6261
+decode 5 upper unpadded MZXW6YTB ok 666f6f6261
+decode 5 upper ignored MZXW6YTB=!é ok 666f6f6261
+decode 5 upper invalid MZXW6YTB!=A error 8
+decode 5 upper residual MZXW6YTBZ ok 666f6f6261
+decode 5 lower padded mzxw6ytb ok 666f6f6261
+decode 5 lower unpadded mzxw6ytb ok 666f6f6261
+decode 5 lower ignored mzxw6ytb=!é ok 666f6f6261
+decode 5 lower invalid mzxw6ytb!=A error 8
+decode 5 lower residual mzxw6ytbZ ok 666f6f6261
+decode 5 mixed padded mZxW6YtB ok 666f6f6261
+decode 5 mixed unpadded mZxW6YtB ok 666f6f6261
+decode 5 mixed ignored mZxW6YtB=!é ok 666f6f6261
+decode 5 mixed invalid mZxW6YtB!=A error 8
+decode 5 mixed residual mZxW6YtBZ ok 666f6f6261
+decode 6 upper padded MZXW6YTBOI====== ok 666f6f626172
+decode 6 upper unpadded MZXW6YTBOI ok 666f6f626172
+decode 6 upper ignored MZXW6YTBOI=!é ok 666f6f626172
+decode 6 upper invalid MZXW6YTBOI!=A error 10
+decode 6 upper residual MZXW6YTBOIZ ok 666f6f626172
+decode 6 lower padded mzxw6ytboi====== ok 666f6f626172
+decode 6 lower unpadded mzxw6ytboi ok 666f6f626172
+decode 6 lower ignored mzxw6ytboi=!é ok 666f6f626172
+decode 6 lower invalid mzxw6ytboi!=A error 10
+decode 6 lower residual mzxw6ytboiZ ok 666f6f626172
+decode 6 mixed padded mZxW6YtBoI====== ok 666f6f626172
+decode 6 mixed unpadded mZxW6YtBoI ok 666f6f626172
+decode 6 mixed ignored mZxW6YtBoI=!é ok 666f6f626172
+decode 6 mixed invalid mZxW6YtBoI!=A error 10
+decode 6 mixed residual mZxW6YtBoIZ ok 666f6f626172
+decode literal literal literal A ok -
+decode literal literal literal MZ ok 66
+decode literal literal literal é error 0
+decode literal literal literal ABCé error 3
+decode literal literal literal A0 error 1
+decode literal literal literal = ok -
+decode literal literal literal ===! ok -
+decode literal literal literal MY=ignored ok 66
+decode literal literal literal MZ=ignored ok 66
+decode literal literal literal MY======= ok 66
+decode literal literal literal abcdefghijklmnopqrstuvwxyz234567 ok 00443214c74254b635cf84653a56d7c675be77df

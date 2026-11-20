@@ -1,0 +1,9 @@
+name = "auth-password-policy"
+defaultTargets = ["AuthPasswordPolicy", "corpus"]
+
+[[lean_lib]]
+name = "AuthPasswordPolicy"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

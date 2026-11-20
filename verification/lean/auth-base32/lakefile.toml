@@ -1,0 +1,9 @@
+name = "auth-base32"
+defaultTargets = ["AuthBase32", "corpus"]
+
+[[lean_lib]]
+name = "AuthBase32"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

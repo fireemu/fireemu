@@ -1,0 +1,9 @@
+name = "auth-signup-quota"
+defaultTargets = ["AuthSignupQuota", "corpus"]
+
+[[lean_lib]]
+name = "AuthSignupQuota"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
