@@ -1,0 +1,9 @@
+name = "event-transition"
+defaultTargets = ["EventTransition", "corpus"]
+
+[[lean_lib]]
+name = "EventTransition"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

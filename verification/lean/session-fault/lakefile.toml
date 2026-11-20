@@ -1,0 +1,9 @@
+name = "session-fault"
+defaultTargets = ["SessionFault", "corpus"]
+
+[[lean_lib]]
+name = "SessionFault"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,9 @@
+name = "limit-evaluation"
+defaultTargets = ["LimitEvaluation", "corpus"]
+
+[[lean_lib]]
+name = "LimitEvaluation"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

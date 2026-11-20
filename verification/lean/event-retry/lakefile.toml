@@ -1,0 +1,9 @@
+name = "event-retry"
+defaultTargets = ["EventRetry", "corpus"]
+
+[[lean_lib]]
+name = "EventRetry"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
