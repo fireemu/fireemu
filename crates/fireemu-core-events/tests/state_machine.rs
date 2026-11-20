@@ -271,6 +271,29 @@ fn extreme_clock_rewind_saturates_instead_of_dead_lettering() {
 }
 
 #[test]
+fn an_interrupted_delivery_releases_its_attempt_for_redelivery() {
+    let mut r = EventRecord::new(event(Epoch::initial()));
+    assert!(matches!(
+        r.interrupt(),
+        Err(EventTransitionError::InvalidTransition { .. })
+    ));
+    assert_eq!(r.state(), &EventState::Pending);
+    assert_eq!(r.attempt(), 0);
+
+    r.lease().unwrap();
+    r.start().unwrap();
+    assert_eq!(r.attempt(), 1);
+    r.interrupt().unwrap();
+    assert_eq!(r.state(), &EventState::Pending);
+    assert_eq!(r.attempt(), 0);
+
+    r.lease().unwrap();
+    r.start().unwrap();
+    assert_eq!(r.state(), &EventState::Running);
+    assert_eq!(r.attempt(), 1);
+}
+
+#[test]
 fn terminal_states_never_regress() {
     for terminal in [
         |r: &mut EventRecord| {
@@ -303,6 +326,14 @@ fn terminal_states_never_regress() {
         ));
         assert!(matches!(
             r.fail(&policy(), LogicalInstant::UNIX_EPOCH),
+            Err(EventTransitionError::Terminal { .. })
+        ));
+        assert!(matches!(
+            r.interrupt(),
+            Err(EventTransitionError::Terminal { .. })
+        ));
+        assert!(matches!(
+            r.discard_stale(Epoch::new(6)),
             Err(EventTransitionError::Terminal { .. })
         ));
         assert!(matches!(
@@ -353,7 +384,9 @@ fn event_type_rejects_empty_and_control_characters() {
     assert!(EventType::try_new("").is_err());
     assert!(EventType::try_new("a\u{0}b").is_err());
     assert!(EventType::try_new("a b").is_err());
-    assert!(EventType::try_new("google.cloud.storage.object.v1.finalized").is_ok());
+    for valid in ["google.cloud.storage.object.v1.finalized", "a_b", "a-b"] {
+        assert_eq!(EventType::try_new(valid).unwrap().as_str(), valid);
+    }
 }
 
 #[test]

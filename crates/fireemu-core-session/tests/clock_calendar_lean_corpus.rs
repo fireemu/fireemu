@@ -253,3 +253,9 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_second_time_separator_is_rejected_after_a_clock_component() {
+    assert!(CalendarDuration::parse("PT1H2M").is_ok());
+    assert!(CalendarDuration::parse("PT1HT2M").is_err());
+}
