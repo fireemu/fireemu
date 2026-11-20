@@ -17,17 +17,20 @@ The five outcomes cover the precondition check and write body. The model assumes
 - `WritePrecondition/Spec.lean` defines the declarative rules for satisfaction, refusal, and the accepted effect.
 - `WritePrecondition/Model.lean` models the core precondition check, commit stamp, effect selection, staging, and publication.
 - `WritePrecondition/Theorems.lean` proves the model agrees with the rules, and states the create, update, delete, timestamp, refusal, and replay laws.
-- `WritePrecondition/Counterexamples.lean` proves the concrete cases listed under Findings.
+- `WritePrecondition/Counterexamples.lean` proves the cases listed under Findings and Fixed.
 - `WritePrecondition/Axioms.lean` checks every theorem's axiom dependencies as part of the build.
-- `Main.lean` documents and generates the 310-case corpus. It includes the condition matrix, clock and saturation boundaries, and batches of two and three writes.
+- `Main.lean` documents and generates the 311-case corpus. It includes the condition matrix, clock and saturation boundaries, and batches of two and three writes.
 
 ## Findings
 
 1. An update on an absent document with field `n = 7` and no precondition creates it, with or without a mask. An empty mask creates an empty document. All three return `NOT_FOUND` under `exists: true`. The decisions agree when the document is present (`missing_updates_without_precondition_upsert`, `update_stage_without_precondition_iff_present`).
 2. A set of the already stored `n = 7` at update time 10000 ns reports that same time, even when its commit stamp is 11000 ns. The same set at the next commit with `updateTime = 10000 ns` succeeds. Repeating a successful storing write at its reported time succeeds if the second body is valid. The proposed equivalence with an update-time change holds when the first write stamps the document and the stamp is fresh for that document (`no_op_can_retry_with_unchanged_time`, `retry_with_reported_update_time`, `retry_iff_changed_for_fresh_stamp`).
-3. A write can change fields while retaining the same time if that time was imported. Import `n = 7` at commit time 10000 ns with update time 11000 ns, then set `n = 8` at clock time 10001 ns. The next stamp is 11000 ns and the changed document reports 11000 ns (`changed_fields_can_reuse_imported_time`).
-4. Deleting a present document at update time 10000 ns removes it and reports no update time. Repeating the delete with `updateTime = 10000 ns` returns `FAILED_PRECONDITION` (`delete_can_change_existence_without_a_retry_time`).
-5. The store compares the supplied update time at exact nanosecond precision. A condition of 10001 ns against 10000 ns returns `FAILED_PRECONDITION`; it succeeds against an imported 10001 ns document. The adapter's `decode_precondition` rejects sub-microsecond wire times before they reach the store. The Rust fixture exercises the core path (`submicrosecond_precondition_is_not_truncated`, `update_time_exact`).
+3. Deleting a present document at update time 10000 ns removes it and reports no update time. Repeating the delete with `updateTime = 10000 ns` returns `FAILED_PRECONDITION` (`delete_can_change_existence_without_a_retry_time`).
+4. The store compares the supplied update time at exact nanosecond precision. A condition of 10001 ns against 10000 ns returns `FAILED_PRECONDITION`; it succeeds against an imported 10001 ns document. The adapter's `decode_precondition` rejects sub-microsecond wire times before they reach the store. The Rust fixture exercises the core path (`submicrosecond_precondition_is_not_truncated`, `update_time_exact`).
+
+## Fixed
+
+- 2026-11-20: Import advances the store clock to the larger of the import commit time and the largest imported update time rounded up to a whole microsecond. Imported update times are preserved. A subsequent write that changes fields receives a strictly later, microsecond-aligned update time (`changed_fields_advance_past_imported_time`, `commit_time_aligned`). In the regression case, importing a document with update time 10001 ns at clock 10000 ns makes the next changed write at clock 10001 ns produce 12000 ns. A retry using 10001 ns fails.
 
 ## Open
 

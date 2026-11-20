@@ -41,8 +41,8 @@ proof changes the printed list and fails the build.
 /-- info: 'SP.absent_write_rules' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms SP.absent_write_rules
 
-/-- info: 'SP.absent_read_differs_from_live_mutations' depends on axioms: [propext] -/
-#guard_msgs in #print axioms SP.absent_read_differs_from_live_mutations
+/-- info: 'SP.absent_reads_and_live_mutations_return_not_found' depends on axioms: [propext] -/
+#guard_msgs in #print axioms SP.absent_reads_and_live_mutations_return_not_found
 
 /-- info: 'SP.failed_match_takes_priority' depends on axioms: [propext] -/
 #guard_msgs in #print axioms SP.failed_match_takes_priority

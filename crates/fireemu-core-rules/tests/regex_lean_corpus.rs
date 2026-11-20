@@ -49,6 +49,28 @@ fn full_matches_agree_with_the_lean_corpus() {
     assert!(count >= 200);
 }
 
+#[test]
+fn nesting_preflight_respects_class_boundaries() {
+    for (pattern, matching, missing) in [
+        ("[^^]", "a", "^"),
+        ("[^]]", "a", "]"),
+        ("[]^]", "^", "a"),
+        ("[^^][](((((((((]", "a(", "^("),
+    ] {
+        let regex = Regex::new(pattern).unwrap_or_else(|e| panic!("{pattern:?}: {e}"));
+        assert_eq!(regex.is_full_match(matching), Ok(true), "{pattern:?}");
+        assert_eq!(regex.is_full_match(missing), Ok(false), "{pattern:?}");
+    }
+
+    for (pattern, error) in [
+        ("[^^](", "unterminated group"),
+        ("(((((((((a)))))))))", "pattern nesting too deep"),
+        ("[^^](((((((((a)))))))))", "pattern nesting too deep"),
+    ] {
+        assert_eq!(Regex::new(pattern).unwrap_err().0, error, "{pattern:?}");
+    }
+}
+
 proptest! {
     /// RR.matches_iff and RR.nullable_iff for a concatenation of Unicode literal factors.
     #[test]

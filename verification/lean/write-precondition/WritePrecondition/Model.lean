@@ -40,6 +40,11 @@ structure Document where
 
 def documentTime (doc : Option Document) : State := doc.map (·.time)
 
+def importClock (commitTime : Int) (doc : Option Document) : Int :=
+  match doc with
+  | none => commitTime
+  | some doc => max commitTime (doc.time + (1000 - doc.time % 1000) % 1000)
+
 inductive Operation where
   | replace (value : Option Int)
   | patch (value : Option Int)

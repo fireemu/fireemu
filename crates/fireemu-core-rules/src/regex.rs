@@ -1044,10 +1044,6 @@ fn check_pattern_nesting(pattern: &str) -> Result<(), RegexError> {
             continue;
         }
         if in_class {
-            if class_first && character == '^' {
-                index = index.saturating_add(1);
-                continue;
-            }
             if let Some(member_width) = posix_class_width(&characters, index) {
                 class_first = false;
                 index = index.saturating_add(member_width.get());
@@ -1064,6 +1060,9 @@ fn check_pattern_nesting(pattern: &str) -> Result<(), RegexError> {
             '[' => {
                 in_class = true;
                 class_first = true;
+                if characters.get(index.saturating_add(1)) == Some(&'^') {
+                    index = index.saturating_add(1);
+                }
             }
             '(' => {
                 depth = depth.saturating_add(1);

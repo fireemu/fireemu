@@ -2277,8 +2277,8 @@ impl StorageState {
         admit: impl FnOnce(&[StorageEvent]) -> Result<R, StorageError>,
     ) -> Result<(ObjectMetadata, R), StorageError> {
         let key = (bucket.clone(), name.clone());
-        Self::check(self.objects.get(&key), pre)?;
         let meta = self.objects.get(&key).ok_or(StorageError::NotFound)?;
+        Self::check(Some(meta), pre)?;
         let next = Self::patched(meta, patch, now)?;
         let event = StorageEvent::MetadataUpdated(next.clone());
         let reservation = admit(std::slice::from_ref(&event))?;
@@ -2550,12 +2550,9 @@ impl StorageState {
         admit: impl FnOnce(&[StorageEvent]) -> Result<R, StorageError>,
     ) -> Result<(ObjectMetadata, R), StorageError> {
         let key = (bucket.clone(), name.clone());
-        Self::check(self.objects.get(&key), pre)?;
-        let meta = self
-            .objects
-            .get(&key)
-            .cloned()
-            .ok_or(StorageError::NotFound)?;
+        let meta = self.objects.get(&key).ok_or(StorageError::NotFound)?;
+        Self::check(Some(meta), pre)?;
+        let meta = meta.clone();
         if self.versioning(bucket) {
             // A versioned bucket keeps the generation: it becomes noncurrent and is announced as
             // Archived, with no Deleted event (not exercised by the FE v5 recording: UNRECORDED,

@@ -18,9 +18,12 @@ Compilation checks the 2,048-byte UTF-8 limit before the separate nesting scan. 
 
 ## Findings
 
-- The pattern `[^^][](((((((((]` is refused. Both classes parse, but the nesting scan keeps its first-member flag through both carets. It subsequently leaves the second class early and counts nine literal opening parentheses as group openings. With eight parentheses the pattern compiles and matches `a(`. The theorem `class_preflight_refusal` proves the counterexample, and `compile_of_guards` gives parser equivalence when the byte and nesting checks pass.
 - `a{2,1}` is refused even on `aa`. Unchecked expansion would accept that subject because natural subtraction saturates at zero. `inverted_bounds_refused` pins the distinction, and `bounded_expansion` requires ordered bounds.
 - Dot matches a singleton exactly when its scalar differs from LF (`dot_singleton`). The input consisting of a single LF is a counterexample to unconditional singleton matching (`dot_refuses_lf`). CR and non-BMP scalars are positive corpus cases.
+
+### Fixed
+
+- 2026-11-20. The nesting scan consumes a single negation caret at the start of a class. `[^^][](((((((((]` compiles and matches `a(`. `class_preflight_agrees_on_class_end` proves that the scan resumes at the suffix returned by the class parser for the regression cases. `compile_of_guards` gives parser equivalence when the byte and nesting checks pass.
 
 ## Commands
 
