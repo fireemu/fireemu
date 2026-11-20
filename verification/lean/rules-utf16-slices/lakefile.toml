@@ -1,0 +1,9 @@
+name = "rules-utf16-slices"
+defaultTargets = ["RulesUtf16Slices", "corpus"]
+
+[[lean_lib]]
+name = "RulesUtf16Slices"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

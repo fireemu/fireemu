@@ -1,0 +1,9 @@
+name = "rules-coverage-merge"
+defaultTargets = ["RulesCoverageMerge", "corpus"]
+
+[[lean_lib]]
+name = "RulesCoverageMerge"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

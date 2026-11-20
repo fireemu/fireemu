@@ -1,0 +1,385 @@
+# 384 cases
+production	empty	index	full	0	0		invalidIndex
+production	empty	index	first	0	1		invalidIndex
+production	empty	index	last	-1	0		invalidIndex
+production	empty	index	middle	1	2		invalidIndex
+production	empty	index	emptyFirst	0	0		invalidIndex
+production	empty	index	emptyInner	1	1		invalidIndex
+production	empty	index	emptyEnd	0	0		invalidIndex
+production	empty	index	negative	-1	1		invalidIndex
+production	empty	index	past	0	1		invalidIndex
+production	empty	index	reversed	2	1		invalidIndex
+production	empty	index	cutPrefix	0	2		invalidIndex
+production	empty	index	cutSuffix	1	0		invalidIndex
+production	empty	slice	full	0	0		invalidRange
+production	empty	slice	first	0	1		invalidRange
+production	empty	slice	last	-1	0		invalidRange
+production	empty	slice	middle	1	2		invalidRange
+production	empty	slice	emptyFirst	0	0		invalidRange
+production	empty	slice	emptyInner	1	1		invalidRange
+production	empty	slice	emptyEnd	0	0		invalidRange
+production	empty	slice	negative	-1	1		invalidRange
+production	empty	slice	past	0	1		invalidRange
+production	empty	slice	reversed	2	1		invalidRange
+production	empty	slice	cutPrefix	0	2		invalidRange
+production	empty	slice	cutSuffix	1	0		invalidRange
+production	ascii	index	full	0	3	97,98,99	text:97
+production	ascii	index	first	0	1	97,98,99	text:97
+production	ascii	index	last	2	3	97,98,99	text:99
+production	ascii	index	middle	1	2	97,98,99	text:98
+production	ascii	index	emptyFirst	0	0	97,98,99	text:97
+production	ascii	index	emptyInner	1	1	97,98,99	text:98
+production	ascii	index	emptyEnd	3	3	97,98,99	invalidIndex
+production	ascii	index	negative	-1	1	97,98,99	invalidIndex
+production	ascii	index	past	3	4	97,98,99	invalidIndex
+production	ascii	index	reversed	2	1	97,98,99	text:99
+production	ascii	index	cutPrefix	0	2	97,98,99	text:97
+production	ascii	index	cutSuffix	1	3	97,98,99	text:98
+production	ascii	slice	full	0	3	97,98,99	text:97,98,99
+production	ascii	slice	first	0	1	97,98,99	text:97
+production	ascii	slice	last	2	3	97,98,99	text:99
+production	ascii	slice	middle	1	2	97,98,99	text:98
+production	ascii	slice	emptyFirst	0	0	97,98,99	invalidRange
+production	ascii	slice	emptyInner	1	1	97,98,99	text:
+production	ascii	slice	emptyEnd	3	3	97,98,99	invalidRange
+production	ascii	slice	negative	-1	1	97,98,99	invalidRange
+production	ascii	slice	past	3	4	97,98,99	invalidRange
+production	ascii	slice	reversed	2	1	97,98,99	invalidRange
+production	ascii	slice	cutPrefix	0	2	97,98,99	text:97,98
+production	ascii	slice	cutSuffix	1	3	97,98,99	text:98,99
+production	bmp	index	full	0	3	233,32768,65533	text:233
+production	bmp	index	first	0	1	233,32768,65533	text:233
+production	bmp	index	last	2	3	233,32768,65533	text:65533
+production	bmp	index	middle	1	2	233,32768,65533	text:32768
+production	bmp	index	emptyFirst	0	0	233,32768,65533	text:233
+production	bmp	index	emptyInner	1	1	233,32768,65533	text:32768
+production	bmp	index	emptyEnd	3	3	233,32768,65533	invalidIndex
+production	bmp	index	negative	-1	1	233,32768,65533	invalidIndex
+production	bmp	index	past	3	4	233,32768,65533	invalidIndex
+production	bmp	index	reversed	2	1	233,32768,65533	text:65533
+production	bmp	index	cutPrefix	0	2	233,32768,65533	text:233
+production	bmp	index	cutSuffix	1	3	233,32768,65533	text:32768
+production	bmp	slice	full	0	3	233,32768,65533	text:233,32768,65533
+production	bmp	slice	first	0	1	233,32768,65533	text:233
+production	bmp	slice	last	2	3	233,32768,65533	text:65533
+production	bmp	slice	middle	1	2	233,32768,65533	text:32768
+production	bmp	slice	emptyFirst	0	0	233,32768,65533	invalidRange
+production	bmp	slice	emptyInner	1	1	233,32768,65533	text:
+production	bmp	slice	emptyEnd	3	3	233,32768,65533	invalidRange
+production	bmp	slice	negative	-1	1	233,32768,65533	invalidRange
+production	bmp	slice	past	3	4	233,32768,65533	invalidRange
+production	bmp	slice	reversed	2	1	233,32768,65533	invalidRange
+production	bmp	slice	cutPrefix	0	2	233,32768,65533	text:233,32768
+production	bmp	slice	cutSuffix	1	3	233,32768,65533	text:32768,65533
+production	pair	index	full	0	2	55357,56832	fragment:55357
+production	pair	index	first	0	1	55357,56832	fragment:55357
+production	pair	index	last	1	2	55357,56832	fragment:56832
+production	pair	index	middle	1	2	55357,56832	fragment:56832
+production	pair	index	emptyFirst	0	0	55357,56832	fragment:55357
+production	pair	index	emptyInner	1	1	55357,56832	fragment:56832
+production	pair	index	emptyEnd	2	2	55357,56832	invalidIndex
+production	pair	index	negative	-1	1	55357,56832	invalidIndex
+production	pair	index	past	2	3	55357,56832	invalidIndex
+production	pair	index	reversed	2	1	55357,56832	invalidIndex
+production	pair	index	cutPrefix	0	2	55357,56832	fragment:55357
+production	pair	index	cutSuffix	1	2	55357,56832	fragment:56832
+production	pair	slice	full	0	2	55357,56832	text:55357,56832
+production	pair	slice	first	0	1	55357,56832	fragment:55357
+production	pair	slice	last	1	2	55357,56832	fragment:56832
+production	pair	slice	middle	1	2	55357,56832	fragment:56832
+production	pair	slice	emptyFirst	0	0	55357,56832	invalidRange
+production	pair	slice	emptyInner	1	1	55357,56832	text:
+production	pair	slice	emptyEnd	2	2	55357,56832	invalidRange
+production	pair	slice	negative	-1	1	55357,56832	invalidRange
+production	pair	slice	past	2	3	55357,56832	invalidRange
+production	pair	slice	reversed	2	1	55357,56832	invalidRange
+production	pair	slice	cutPrefix	0	2	55357,56832	text:55357,56832
+production	pair	slice	cutSuffix	1	2	55357,56832	fragment:56832
+production	middlePair	index	full	0	4	233,55357,56613,120	text:233
+production	middlePair	index	first	0	1	233,55357,56613,120	text:233
+production	middlePair	index	last	3	4	233,55357,56613,120	text:120
+production	middlePair	index	middle	1	2	233,55357,56613,120	fragment:55357
+production	middlePair	index	emptyFirst	0	0	233,55357,56613,120	text:233
+production	middlePair	index	emptyInner	1	1	233,55357,56613,120	fragment:55357
+production	middlePair	index	emptyEnd	4	4	233,55357,56613,120	invalidIndex
+production	middlePair	index	negative	-1	1	233,55357,56613,120	invalidIndex
+production	middlePair	index	past	4	5	233,55357,56613,120	invalidIndex
+production	middlePair	index	reversed	2	1	233,55357,56613,120	fragment:56613
+production	middlePair	index	cutPrefix	0	2	233,55357,56613,120	text:233
+production	middlePair	index	cutSuffix	1	4	233,55357,56613,120	fragment:55357
+production	middlePair	slice	full	0	4	233,55357,56613,120	text:233,55357,56613,120
+production	middlePair	slice	first	0	1	233,55357,56613,120	text:233
+production	middlePair	slice	last	3	4	233,55357,56613,120	text:120
+production	middlePair	slice	middle	1	2	233,55357,56613,120	fragment:55357
+production	middlePair	slice	emptyFirst	0	0	233,55357,56613,120	invalidRange
+production	middlePair	slice	emptyInner	1	1	233,55357,56613,120	text:
+production	middlePair	slice	emptyEnd	4	4	233,55357,56613,120	invalidRange
+production	middlePair	slice	negative	-1	1	233,55357,56613,120	invalidRange
+production	middlePair	slice	past	4	5	233,55357,56613,120	invalidRange
+production	middlePair	slice	reversed	2	1	233,55357,56613,120	invalidRange
+production	middlePair	slice	cutPrefix	0	2	233,55357,56613,120	cutPair
+production	middlePair	slice	cutSuffix	1	4	233,55357,56613,120	text:55357,56613,120
+production	lone	index	full	0	3	55357,120,56832	text:55357
+production	lone	index	first	0	1	55357,120,56832	text:55357
+production	lone	index	last	2	3	55357,120,56832	text:56832
+production	lone	index	middle	1	2	55357,120,56832	text:120
+production	lone	index	emptyFirst	0	0	55357,120,56832	text:55357
+production	lone	index	emptyInner	1	1	55357,120,56832	text:120
+production	lone	index	emptyEnd	3	3	55357,120,56832	invalidIndex
+production	lone	index	negative	-1	1	55357,120,56832	invalidIndex
+production	lone	index	past	3	4	55357,120,56832	invalidIndex
+production	lone	index	reversed	2	1	55357,120,56832	text:56832
+production	lone	index	cutPrefix	0	2	55357,120,56832	text:55357
+production	lone	index	cutSuffix	1	3	55357,120,56832	text:120
+production	lone	slice	full	0	3	55357,120,56832	text:55357,120,56832
+production	lone	slice	first	0	1	55357,120,56832	text:55357
+production	lone	slice	last	2	3	55357,120,56832	text:56832
+production	lone	slice	middle	1	2	55357,120,56832	text:120
+production	lone	slice	emptyFirst	0	0	55357,120,56832	invalidRange
+production	lone	slice	emptyInner	1	1	55357,120,56832	text:
+production	lone	slice	emptyEnd	3	3	55357,120,56832	invalidRange
+production	lone	slice	negative	-1	1	55357,120,56832	invalidRange
+production	lone	slice	past	3	4	55357,120,56832	invalidRange
+production	lone	slice	reversed	2	1	55357,120,56832	invalidRange
+production	lone	slice	cutPrefix	0	2	55357,120,56832	text:55357,120
+production	lone	slice	cutSuffix	1	3	55357,120,56832	text:120,56832
+production	reversedPair	index	full	0	2	56832,55357	text:56832
+production	reversedPair	index	first	0	1	56832,55357	text:56832
+production	reversedPair	index	last	1	2	56832,55357	text:55357
+production	reversedPair	index	middle	1	2	56832,55357	text:55357
+production	reversedPair	index	emptyFirst	0	0	56832,55357	text:56832
+production	reversedPair	index	emptyInner	1	1	56832,55357	text:55357
+production	reversedPair	index	emptyEnd	2	2	56832,55357	invalidIndex
+production	reversedPair	index	negative	-1	1	56832,55357	invalidIndex
+production	reversedPair	index	past	2	3	56832,55357	invalidIndex
+production	reversedPair	index	reversed	2	1	56832,55357	invalidIndex
+production	reversedPair	index	cutPrefix	0	2	56832,55357	text:56832
+production	reversedPair	index	cutSuffix	1	2	56832,55357	text:55357
+production	reversedPair	slice	full	0	2	56832,55357	text:56832,55357
+production	reversedPair	slice	first	0	1	56832,55357	text:56832
+production	reversedPair	slice	last	1	2	56832,55357	text:55357
+production	reversedPair	slice	middle	1	2	56832,55357	text:55357
+production	reversedPair	slice	emptyFirst	0	0	56832,55357	invalidRange
+production	reversedPair	slice	emptyInner	1	1	56832,55357	text:
+production	reversedPair	slice	emptyEnd	2	2	56832,55357	invalidRange
+production	reversedPair	slice	negative	-1	1	56832,55357	invalidRange
+production	reversedPair	slice	past	2	3	56832,55357	invalidRange
+production	reversedPair	slice	reversed	2	1	56832,55357	invalidRange
+production	reversedPair	slice	cutPrefix	0	2	56832,55357	text:56832,55357
+production	reversedPair	slice	cutSuffix	1	2	56832,55357	text:55357
+production	twoPairs	index	full	0	4	55296,56320,55296,56320	fragment:55296
+production	twoPairs	index	first	0	1	55296,56320,55296,56320	fragment:55296
+production	twoPairs	index	last	3	4	55296,56320,55296,56320	fragment:56320
+production	twoPairs	index	middle	1	2	55296,56320,55296,56320	fragment:56320
+production	twoPairs	index	emptyFirst	0	0	55296,56320,55296,56320	fragment:55296
+production	twoPairs	index	emptyInner	1	1	55296,56320,55296,56320	fragment:56320
+production	twoPairs	index	emptyEnd	4	4	55296,56320,55296,56320	invalidIndex
+production	twoPairs	index	negative	-1	1	55296,56320,55296,56320	invalidIndex
+production	twoPairs	index	past	4	5	55296,56320,55296,56320	invalidIndex
+production	twoPairs	index	reversed	2	1	55296,56320,55296,56320	fragment:55296
+production	twoPairs	index	cutPrefix	0	2	55296,56320,55296,56320	fragment:55296
+production	twoPairs	index	cutSuffix	1	4	55296,56320,55296,56320	fragment:56320
+production	twoPairs	slice	full	0	4	55296,56320,55296,56320	text:55296,56320,55296,56320
+production	twoPairs	slice	first	0	1	55296,56320,55296,56320	fragment:55296
+production	twoPairs	slice	last	3	4	55296,56320,55296,56320	fragment:56320
+production	twoPairs	slice	middle	1	2	55296,56320,55296,56320	fragment:56320
+production	twoPairs	slice	emptyFirst	0	0	55296,56320,55296,56320	invalidRange
+production	twoPairs	slice	emptyInner	1	1	55296,56320,55296,56320	text:
+production	twoPairs	slice	emptyEnd	4	4	55296,56320,55296,56320	invalidRange
+production	twoPairs	slice	negative	-1	1	55296,56320,55296,56320	invalidRange
+production	twoPairs	slice	past	4	5	55296,56320,55296,56320	invalidRange
+production	twoPairs	slice	reversed	2	1	55296,56320,55296,56320	invalidRange
+production	twoPairs	slice	cutPrefix	0	2	55296,56320,55296,56320	text:55296,56320
+production	twoPairs	slice	cutSuffix	1	4	55296,56320,55296,56320	cutPair
+official	empty	index	full	0	0		invalidIndex
+official	empty	index	first	0	1		invalidIndex
+official	empty	index	last	-1	0		invalidIndex
+official	empty	index	middle	1	2		invalidIndex
+official	empty	index	emptyFirst	0	0		invalidIndex
+official	empty	index	emptyInner	1	1		invalidIndex
+official	empty	index	emptyEnd	0	0		invalidIndex
+official	empty	index	negative	-1	1		invalidIndex
+official	empty	index	past	0	1		invalidIndex
+official	empty	index	reversed	2	1		invalidIndex
+official	empty	index	cutPrefix	0	2		invalidIndex
+official	empty	index	cutSuffix	1	0		invalidIndex
+official	empty	slice	full	0	0		invalidRange
+official	empty	slice	first	0	1		invalidRange
+official	empty	slice	last	-1	0		invalidRange
+official	empty	slice	middle	1	2		invalidRange
+official	empty	slice	emptyFirst	0	0		invalidRange
+official	empty	slice	emptyInner	1	1		invalidRange
+official	empty	slice	emptyEnd	0	0		invalidRange
+official	empty	slice	negative	-1	1		invalidRange
+official	empty	slice	past	0	1		invalidRange
+official	empty	slice	reversed	2	1		invalidRange
+official	empty	slice	cutPrefix	0	2		invalidRange
+official	empty	slice	cutSuffix	1	0		invalidRange
+official	ascii	index	full	0	3	97,98,99	text:97
+official	ascii	index	first	0	1	97,98,99	text:97
+official	ascii	index	last	2	3	97,98,99	text:99
+official	ascii	index	middle	1	2	97,98,99	text:98
+official	ascii	index	emptyFirst	0	0	97,98,99	text:97
+official	ascii	index	emptyInner	1	1	97,98,99	text:98
+official	ascii	index	emptyEnd	3	3	97,98,99	invalidIndex
+official	ascii	index	negative	-1	1	97,98,99	invalidIndex
+official	ascii	index	past	3	4	97,98,99	invalidIndex
+official	ascii	index	reversed	2	1	97,98,99	text:99
+official	ascii	index	cutPrefix	0	2	97,98,99	text:97
+official	ascii	index	cutSuffix	1	3	97,98,99	text:98
+official	ascii	slice	full	0	3	97,98,99	text:97,98,99
+official	ascii	slice	first	0	1	97,98,99	text:97
+official	ascii	slice	last	2	3	97,98,99	text:99
+official	ascii	slice	middle	1	2	97,98,99	text:98
+official	ascii	slice	emptyFirst	0	0	97,98,99	invalidRange
+official	ascii	slice	emptyInner	1	1	97,98,99	text:
+official	ascii	slice	emptyEnd	3	3	97,98,99	invalidRange
+official	ascii	slice	negative	-1	1	97,98,99	invalidRange
+official	ascii	slice	past	3	4	97,98,99	invalidRange
+official	ascii	slice	reversed	2	1	97,98,99	invalidRange
+official	ascii	slice	cutPrefix	0	2	97,98,99	text:97,98
+official	ascii	slice	cutSuffix	1	3	97,98,99	text:98,99
+official	bmp	index	full	0	3	233,32768,65533	text:233
+official	bmp	index	first	0	1	233,32768,65533	text:233
+official	bmp	index	last	2	3	233,32768,65533	text:65533
+official	bmp	index	middle	1	2	233,32768,65533	text:32768
+official	bmp	index	emptyFirst	0	0	233,32768,65533	text:233
+official	bmp	index	emptyInner	1	1	233,32768,65533	text:32768
+official	bmp	index	emptyEnd	3	3	233,32768,65533	invalidIndex
+official	bmp	index	negative	-1	1	233,32768,65533	invalidIndex
+official	bmp	index	past	3	4	233,32768,65533	invalidIndex
+official	bmp	index	reversed	2	1	233,32768,65533	text:65533
+official	bmp	index	cutPrefix	0	2	233,32768,65533	text:233
+official	bmp	index	cutSuffix	1	3	233,32768,65533	text:32768
+official	bmp	slice	full	0	3	233,32768,65533	text:233,32768,65533
+official	bmp	slice	first	0	1	233,32768,65533	text:233
+official	bmp	slice	last	2	3	233,32768,65533	text:65533
+official	bmp	slice	middle	1	2	233,32768,65533	text:32768
+official	bmp	slice	emptyFirst	0	0	233,32768,65533	invalidRange
+official	bmp	slice	emptyInner	1	1	233,32768,65533	text:
+official	bmp	slice	emptyEnd	3	3	233,32768,65533	invalidRange
+official	bmp	slice	negative	-1	1	233,32768,65533	invalidRange
+official	bmp	slice	past	3	4	233,32768,65533	invalidRange
+official	bmp	slice	reversed	2	1	233,32768,65533	invalidRange
+official	bmp	slice	cutPrefix	0	2	233,32768,65533	text:233,32768
+official	bmp	slice	cutSuffix	1	3	233,32768,65533	text:32768,65533
+official	pair	index	full	0	2	55357,56832	text:55357
+official	pair	index	first	0	1	55357,56832	text:55357
+official	pair	index	last	1	2	55357,56832	text:56832
+official	pair	index	middle	1	2	55357,56832	text:56832
+official	pair	index	emptyFirst	0	0	55357,56832	text:55357
+official	pair	index	emptyInner	1	1	55357,56832	text:56832
+official	pair	index	emptyEnd	2	2	55357,56832	invalidIndex
+official	pair	index	negative	-1	1	55357,56832	invalidIndex
+official	pair	index	past	2	3	55357,56832	invalidIndex
+official	pair	index	reversed	2	1	55357,56832	invalidIndex
+official	pair	index	cutPrefix	0	2	55357,56832	text:55357
+official	pair	index	cutSuffix	1	2	55357,56832	text:56832
+official	pair	slice	full	0	2	55357,56832	text:55357,56832
+official	pair	slice	first	0	1	55357,56832	text:55357
+official	pair	slice	last	1	2	55357,56832	text:56832
+official	pair	slice	middle	1	2	55357,56832	text:56832
+official	pair	slice	emptyFirst	0	0	55357,56832	invalidRange
+official	pair	slice	emptyInner	1	1	55357,56832	text:
+official	pair	slice	emptyEnd	2	2	55357,56832	invalidRange
+official	pair	slice	negative	-1	1	55357,56832	invalidRange
+official	pair	slice	past	2	3	55357,56832	invalidRange
+official	pair	slice	reversed	2	1	55357,56832	invalidRange
+official	pair	slice	cutPrefix	0	2	55357,56832	text:55357,56832
+official	pair	slice	cutSuffix	1	2	55357,56832	text:56832
+official	middlePair	index	full	0	4	233,55357,56613,120	text:233
+official	middlePair	index	first	0	1	233,55357,56613,120	text:233
+official	middlePair	index	last	3	4	233,55357,56613,120	text:120
+official	middlePair	index	middle	1	2	233,55357,56613,120	text:55357
+official	middlePair	index	emptyFirst	0	0	233,55357,56613,120	text:233
+official	middlePair	index	emptyInner	1	1	233,55357,56613,120	text:55357
+official	middlePair	index	emptyEnd	4	4	233,55357,56613,120	invalidIndex
+official	middlePair	index	negative	-1	1	233,55357,56613,120	invalidIndex
+official	middlePair	index	past	4	5	233,55357,56613,120	invalidIndex
+official	middlePair	index	reversed	2	1	233,55357,56613,120	text:56613
+official	middlePair	index	cutPrefix	0	2	233,55357,56613,120	text:233
+official	middlePair	index	cutSuffix	1	4	233,55357,56613,120	text:55357
+official	middlePair	slice	full	0	4	233,55357,56613,120	text:233,55357,56613,120
+official	middlePair	slice	first	0	1	233,55357,56613,120	text:233
+official	middlePair	slice	last	3	4	233,55357,56613,120	text:120
+official	middlePair	slice	middle	1	2	233,55357,56613,120	text:55357
+official	middlePair	slice	emptyFirst	0	0	233,55357,56613,120	invalidRange
+official	middlePair	slice	emptyInner	1	1	233,55357,56613,120	text:
+official	middlePair	slice	emptyEnd	4	4	233,55357,56613,120	invalidRange
+official	middlePair	slice	negative	-1	1	233,55357,56613,120	invalidRange
+official	middlePair	slice	past	4	5	233,55357,56613,120	invalidRange
+official	middlePair	slice	reversed	2	1	233,55357,56613,120	invalidRange
+official	middlePair	slice	cutPrefix	0	2	233,55357,56613,120	text:233,55357
+official	middlePair	slice	cutSuffix	1	4	233,55357,56613,120	text:55357,56613,120
+official	lone	index	full	0	3	55357,120,56832	text:55357
+official	lone	index	first	0	1	55357,120,56832	text:55357
+official	lone	index	last	2	3	55357,120,56832	text:56832
+official	lone	index	middle	1	2	55357,120,56832	text:120
+official	lone	index	emptyFirst	0	0	55357,120,56832	text:55357
+official	lone	index	emptyInner	1	1	55357,120,56832	text:120
+official	lone	index	emptyEnd	3	3	55357,120,56832	invalidIndex
+official	lone	index	negative	-1	1	55357,120,56832	invalidIndex
+official	lone	index	past	3	4	55357,120,56832	invalidIndex
+official	lone	index	reversed	2	1	55357,120,56832	text:56832
+official	lone	index	cutPrefix	0	2	55357,120,56832	text:55357
+official	lone	index	cutSuffix	1	3	55357,120,56832	text:120
+official	lone	slice	full	0	3	55357,120,56832	text:55357,120,56832
+official	lone	slice	first	0	1	55357,120,56832	text:55357
+official	lone	slice	last	2	3	55357,120,56832	text:56832
+official	lone	slice	middle	1	2	55357,120,56832	text:120
+official	lone	slice	emptyFirst	0	0	55357,120,56832	invalidRange
+official	lone	slice	emptyInner	1	1	55357,120,56832	text:
+official	lone	slice	emptyEnd	3	3	55357,120,56832	invalidRange
+official	lone	slice	negative	-1	1	55357,120,56832	invalidRange
+official	lone	slice	past	3	4	55357,120,56832	invalidRange
+official	lone	slice	reversed	2	1	55357,120,56832	invalidRange
+official	lone	slice	cutPrefix	0	2	55357,120,56832	text:55357,120
+official	lone	slice	cutSuffix	1	3	55357,120,56832	text:120,56832
+official	reversedPair	index	full	0	2	56832,55357	text:56832
+official	reversedPair	index	first	0	1	56832,55357	text:56832
+official	reversedPair	index	last	1	2	56832,55357	text:55357
+official	reversedPair	index	middle	1	2	56832,55357	text:55357
+official	reversedPair	index	emptyFirst	0	0	56832,55357	text:56832
+official	reversedPair	index	emptyInner	1	1	56832,55357	text:55357
+official	reversedPair	index	emptyEnd	2	2	56832,55357	invalidIndex
+official	reversedPair	index	negative	-1	1	56832,55357	invalidIndex
+official	reversedPair	index	past	2	3	56832,55357	invalidIndex
+official	reversedPair	index	reversed	2	1	56832,55357	invalidIndex
+official	reversedPair	index	cutPrefix	0	2	56832,55357	text:56832
+official	reversedPair	index	cutSuffix	1	2	56832,55357	text:55357
+official	reversedPair	slice	full	0	2	56832,55357	text:56832,55357
+official	reversedPair	slice	first	0	1	56832,55357	text:56832
+official	reversedPair	slice	last	1	2	56832,55357	text:55357
+official	reversedPair	slice	middle	1	2	56832,55357	text:55357
+official	reversedPair	slice	emptyFirst	0	0	56832,55357	invalidRange
+official	reversedPair	slice	emptyInner	1	1	56832,55357	text:
+official	reversedPair	slice	emptyEnd	2	2	56832,55357	invalidRange
+official	reversedPair	slice	negative	-1	1	56832,55357	invalidRange
+official	reversedPair	slice	past	2	3	56832,55357	invalidRange
+official	reversedPair	slice	reversed	2	1	56832,55357	invalidRange
+official	reversedPair	slice	cutPrefix	0	2	56832,55357	text:56832,55357
+official	reversedPair	slice	cutSuffix	1	2	56832,55357	text:55357
+official	twoPairs	index	full	0	4	55296,56320,55296,56320	text:55296
+official	twoPairs	index	first	0	1	55296,56320,55296,56320	text:55296
+official	twoPairs	index	last	3	4	55296,56320,55296,56320	text:56320
+official	twoPairs	index	middle	1	2	55296,56320,55296,56320	text:56320
+official	twoPairs	index	emptyFirst	0	0	55296,56320,55296,56320	text:55296
+official	twoPairs	index	emptyInner	1	1	55296,56320,55296,56320	text:56320
+official	twoPairs	index	emptyEnd	4	4	55296,56320,55296,56320	invalidIndex
+official	twoPairs	index	negative	-1	1	55296,56320,55296,56320	invalidIndex
+official	twoPairs	index	past	4	5	55296,56320,55296,56320	invalidIndex
+official	twoPairs	index	reversed	2	1	55296,56320,55296,56320	text:55296
+official	twoPairs	index	cutPrefix	0	2	55296,56320,55296,56320	text:55296
+official	twoPairs	index	cutSuffix	1	4	55296,56320,55296,56320	text:56320
+official	twoPairs	slice	full	0	4	55296,56320,55296,56320	text:55296,56320,55296,56320
+official	twoPairs	slice	first	0	1	55296,56320,55296,56320	text:55296
+official	twoPairs	slice	last	3	4	55296,56320,55296,56320	text:56320
+official	twoPairs	slice	middle	1	2	55296,56320,55296,56320	text:56320
+official	twoPairs	slice	emptyFirst	0	0	55296,56320,55296,56320	invalidRange
+official	twoPairs	slice	emptyInner	1	1	55296,56320,55296,56320	text:
+official	twoPairs	slice	emptyEnd	4	4	55296,56320,55296,56320	invalidRange
+official	twoPairs	slice	negative	-1	1	55296,56320,55296,56320	invalidRange
+official	twoPairs	slice	past	4	5	55296,56320,55296,56320	invalidRange
+official	twoPairs	slice	reversed	2	1	55296,56320,55296,56320	invalidRange
+official	twoPairs	slice	cutPrefix	0	2	55296,56320,55296,56320	text:55296,56320
+official	twoPairs	slice	cutSuffix	1	4	55296,56320,55296,56320	text:56320,55296,56320
