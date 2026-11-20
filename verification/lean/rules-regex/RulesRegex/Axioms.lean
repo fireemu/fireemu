@@ -51,5 +51,5 @@ import RulesRegex.Parser
 /-- info: 'RR.compile_of_guards' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms RR.compile_of_guards
 
-/-- info: 'RR.class_preflight_refusal' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms RR.class_preflight_refusal
+/-- info: 'RR.class_preflight_agrees_on_class_end' depends on axioms: [propext] -/
+#guard_msgs in #print axioms RR.class_preflight_agrees_on_class_end

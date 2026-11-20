@@ -177,7 +177,7 @@
     },
     "crates/fireemu-core-rules/src/regex.rs": {
       "kind": "sha256",
-      "value": "4af47b26ff0fbdb0d023f31cb749b0a8226ef59fbbaab62af8cc9ac5a1296e1c"
+      "value": "d5d6f1675be5ab0f6789500cc02bd20aa77d1dbbe130c12d3beb354452e0938d"
     },
     "crates/fireemu-core-rules/src/runtime.rs": {
       "kind": "sha256",

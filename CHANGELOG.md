@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Security Rules (Firestore, Storage, Realtime Database): a regular expression whose character class starts with a negation followed by a literal caret (`[^^...]`) is no longer misread by the nesting check, which could refuse a valid pattern for group depth when a later class held parentheses.
+
 ## [0.62.0] - 2026-11-20
 
 ### Fixed
