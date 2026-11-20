@@ -1939,6 +1939,18 @@ impl FunctionsRuntime {
     /// them. A running clock publishes on every tick, so the loop does not wait for the revision
     /// to stand still (it would chase the ticks of a slow runner forever); it repeats only when a
     /// runner generation changed under it. The whole wait is bounded by [`CLOCK_SETTLE_BOUND`].
+    ///
+    /// What an `Ok` guarantees: every runner generation the final scan checked was, at the moment
+    /// it was checked, the one the pass had sent to, and it had acknowledged the move's revision
+    /// (or a later one). The scan checks the codebases one after another, not atomically. A runner
+    /// installed after its codebase was checked (a reload or a recovery, which may have sampled
+    /// the clock before the move) is not covered: it relies on the clock sync before every
+    /// dispatch (`sync_runner_clock`, and `run_due` settling first), so no handler runs on a clock
+    /// older than the last settled move. Model: verification/tla/clock-settle.
+    ///
+    /// Known limit: a runner replaced while the pass is sending to it, and kept running to drain
+    /// its admitted work, still owes this pass an answer within its 5 s frame deadline; if it
+    /// does not give one, the settlement fails with that error before the re-check could skip it.
     pub async fn sync_clock(&self) -> Result<(), String> {
         if !self.config.clock_policy.date_virtual {
             return Ok(());

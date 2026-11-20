@@ -11,7 +11,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 ### Fixed
 
 - Emulator UI, Runtime page: a snapshot's Restore button, and its confirmation once asked, are disabled while a Freeze, Resume, Sync to real time or another clock change is waiting for its answer. Confirming a Restore at that moment used to close the question without restoring.
-- Functions, virtual clock: a clock move whose settlement runs out of time (503 `CLOCK_NOT_SETTLED`) while it is writing a clock frame to a runner now retires that runner, which is started again for the next call, instead of keeping a runner whose input holds half a frame.
+- Functions, virtual clock: a clock move whose settlement runs out of time (503 `CLOCK_NOT_SETTLED`) while it is writing a clock frame to a runner now retires that runner instead of keeping a runner whose input holds half a frame. Until function work starts it again (on demand, under the restart policy), a later clock change answers 503 `CLOCK_NOT_SETTLED` at once; once it is running again, clock changes settle as before. A clock frame that a paused runner (for example one stopped at a debugger breakpoint) does not answer within its 5 s deadline no longer leaves its pending answer registered until the runner answers or exits, one more per attempt.
 
 ## [0.62.0] - 2026-11-20
 

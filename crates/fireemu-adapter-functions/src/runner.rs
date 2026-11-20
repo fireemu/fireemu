@@ -1152,21 +1152,26 @@ impl Runner {
     /// runner retired rather than left with a half frame. A timed-out invocation keeps its
     /// waiter: the late result (or the runner's death) arrives on [`Invocation::late`].
     pub async fn invoke(&self, request: impl std::fmt::Display, timeout: Duration) -> Invocation {
-        self.invoke_inner(request, Some(timeout), "invoke").await
+        self.invoke_inner(request, Some(timeout), "invoke", true)
+            .await
     }
 
     /// Sends an `invoke` without a handler deadline. The debugger uses this path so time
     /// stopped at a breakpoint does not expire the invocation. Shutdown still closes the
     /// runner and resolves the waiter as `RunnerGone`.
     pub async fn invoke_unbounded(&self, request: impl std::fmt::Display) -> Invocation {
-        self.invoke_inner(request, None, "invoke").await
+        self.invoke_inner(request, None, "invoke", true).await
     }
 
+    /// `hand_on_late` says whether a send that runs past its deadline hands the late answer on
+    /// ([`Invocation::late`], awaited by a handler invocation to release its slot) or gives up on
+    /// it (a clock frame) and removes its waiter.
     async fn invoke_inner(
         &self,
         request: impl std::fmt::Display,
         timeout: Option<Duration>,
         kind: &str,
+        hand_on_late: bool,
     ) -> Invocation {
         let done = |outcome| Invocation {
             outcome,
@@ -1189,7 +1194,7 @@ impl Runner {
             w.insert(id.clone(), tx);
         }
         // Removed on every way out, including a caller that drops this send (the outer clock
-        // settlement timeout), except a timeout that hands the late answer on.
+        // settlement timeout), except a timeout that hands the late answer on to its caller.
         let mut registration = WaiterRegistration {
             waiters: &self.waiters,
             id: &id,
@@ -1247,13 +1252,14 @@ impl Runner {
             match tokio::time::timeout_at(deadline, &mut rx).await {
                 Ok(Ok(outcome)) => done(outcome),
                 Ok(Err(_)) => done(InvokeOutcome::RunnerGone("runner exited".into())),
-                Err(_) => {
+                Err(_) if hand_on_late => {
                     registration.keep = true;
                     Invocation {
                         outcome: InvokeOutcome::TimedOut,
                         late: Some(rx),
                     }
                 }
+                Err(_) => done(InvokeOutcome::TimedOut),
             }
         } else {
             let outcome = rx
@@ -1296,6 +1302,7 @@ impl Runner {
             "following":following}),
                 Some(Duration::from_secs(5)),
                 "clock:set",
+                false,
             )
             .await;
         match result.outcome {
@@ -1328,6 +1335,7 @@ impl Runner {
                 json!({"invocationId":id,"budget":budget}),
                 Some(Duration::from_secs(5)),
                 "clock:runDue",
+                false,
             )
             .await;
         match result.outcome {
@@ -2657,6 +2665,7 @@ sys.stdin.readline()
                 clock_frame("waiting", 0),
                 Some(std::time::Duration::from_secs(10)),
                 "clock:set",
+                true,
             ),
         )
         .await;
@@ -2681,6 +2690,7 @@ sys.stdin.readline()
                 clock_frame("held", 0),
                 Some(std::time::Duration::from_millis(100)),
                 "clock:set",
+                true,
             )
             .await;
         assert!(matches!(held.outcome, super::InvokeOutcome::TimedOut));
@@ -2691,6 +2701,7 @@ sys.stdin.readline()
                 clock_frame("half", 8 << 20),
                 Some(std::time::Duration::from_secs(10)),
                 "clock:set",
+                true,
             ),
         )
         .await;
@@ -2719,6 +2730,7 @@ sys.stdin.readline()
                 clock_frame("answer", 0),
                 Some(std::time::Duration::from_secs(10)),
                 "clock:set",
+                true,
             ),
         )
         .await;
@@ -2728,6 +2740,7 @@ sys.stdin.readline()
                 clock_frame("late", 0),
                 Some(std::time::Duration::from_millis(100)),
                 "clock:set",
+                true,
             )
             .await;
         let after_timeout = registered_waiters(&runner);
@@ -2746,5 +2759,46 @@ sys.stdin.readline()
             "a timed-out send lost its late answer"
         );
         assert_eq!(after_timeout, vec!["late".to_owned()]);
+    }
+
+    /// A clock frame that runs past its own deadline gives up on its answer, so it removes its
+    /// waiter: a runner that stopped reading (paused at a breakpoint, here holding the answer)
+    /// does not collect one waiter per attempt. The answers that arrive later are ignored, and
+    /// the runner stays usable. Each attempt waits out the 5 s clock frame deadline.
+    #[tokio::test]
+    async fn a_clock_frame_past_its_deadline_leaves_no_waiter() {
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
+        let (runner, dir) = gated_runner("clock-deadline").await;
+        let mut clock = VirtualClock::new(LogicalInstant::from_nanos(1_000_000_000));
+        let mut after_each = Vec::new();
+        for _ in 0..2 {
+            clock.advance(LogicalDuration::from_millis(1)).unwrap();
+            let synced = runner.sync_clock(clock.snapshot(), false).await;
+            after_each.push((synced.is_err(), registered_waiters(&runner)));
+        }
+        // A timer batch the fake runner never answers.
+        let due = runner.run_due(1).await;
+        let after_due = registered_waiters(&runner);
+        std::fs::write(dir.join("gate"), "open").unwrap();
+        clock.advance(LogicalDuration::from_millis(1)).unwrap();
+        let resumed = runner.sync_clock(clock.snapshot(), false).await;
+        let alive = runner.is_alive();
+        let after_resume = registered_waiters(&runner);
+        runner.kill_now();
+        let _ = std::fs::remove_dir_all(dir);
+        for (failed, left) in &after_each {
+            assert!(*failed, "a held clock frame answered");
+            assert!(left.is_empty(), "waiters left behind: {left:?}");
+        }
+        assert!(due.is_err(), "an unanswered timer batch answered");
+        assert!(after_due.is_empty(), "waiters left behind: {after_due:?}");
+        assert_eq!(
+            resumed,
+            Ok(()),
+            "the runner is unusable after the late answers"
+        );
+        assert!(alive);
+        assert!(after_resume.is_empty(), "{after_resume:?}");
     }
 }

@@ -1,139 +1,223 @@
 ---------------------------- MODULE ClockSettle ----------------------------
-(* Settling one clock move across a runner swap and an outer cancellation.
+(* Settling one clock move (FunctionsRuntime::sync_clock) while runners are swapped, crash and
+   are recovered, while the outer settlement timeout (settle_within, CLOCK_SETTLE_BOUND) drops a
+   send, while a clock frame runs past its own deadline, and with handlers dispatched before and
+   after settlement answered.
 
-   FunctionsRuntime::sync_clock captures the move's revision (Target), then repeats a pass:
-   read the current runner generation, send it the clock (Runner::sync_clock, which registers
-   a stdin waiter, takes the stdin lock, writes the frame and waits for the acknowledgement),
-   and finish only if the generation it sent to is still current. A reload or a recovery can
-   install a replacement runner at any time; the replacement sampled the clock before it
-   started, so it may still hold the revision before the move. The old runner is stopped on
-   purpose, so its pending send ends without an error.
+   One codebase. The Rust scan checks the codebases one after another, each with the same check
+   as here (is the runner the pass sent to still the current one, and did it acknowledge?), and
+   the guarantee is per codebase at the moment it was checked; nothing in the check depends on
+   another codebase, so one codebase is the whole check. Swaps and recoveries may also happen
+   after settlement answered, which is why the settlement property is about the moment of the
+   check and the dispatch property carries the rest.
 
-   The whole wait runs under an outer timeout (settle_within, CLOCK_SETTLE_BOUND) that can drop
-   the send at any of its await points: waiting for the stdin lock, in the middle of a frame
-   write, or waiting for the acknowledgement.
+   Runners have identities (a reload installs a new runner with a new revision, a recovery
+   replaces the runner of the same revision; the Rust re-check compares the revision and the
+   runner, so identity is what it sees). A replacement starts with a clock sampled before or
+   after the move. A replaced runner is stopped on purpose (its pending send ends without an
+   error) or kept running to drain its admitted work.
+
+   Runner::sync_clock registers a waiter, takes the stdin lock, writes the frame and waits for
+   the answer. A fully written frame is applied by a live runner whether or not anyone still
+   waits; the reader then removes the waiter if one is left.
 
    Constants whose TRUE value is the implementation:
-   - GenRecheck: a pass finishes only if the generation it sent to is still current
-     (FALSE: the mutant that removes the re-check, review r4 Should 1).
-   - CancelGuard: dropping a send removes its waiter and retires a pipe holding a half frame
-     (FALSE: the code before the follow-up, review r4 Should 2). *)
+   - GenRecheck: a pass finishes only if the runner it sent to is still current (FALSE: the
+     mutant that removes the re-check, review r4).
+   - CancelGuard: dropping a send removes its waiter and closes a pipe holding a half frame,
+     retiring the runner (FALSE: the code before the follow-up).
+   - ClockTimeoutCleanup: a clock frame past its own 5 s deadline gives up on its answer and
+     removes its waiter (FALSE: it kept the waiter for a late answer nobody awaits).
+   - DispatchSync: every dispatch syncs the runner's clock first (sync_runner_clock; run_due
+     settles first). Without it a runner installed after settlement answered, with a clock
+     sampled before the move, would run a handler on the old clock. *)
 EXTENDS Integers
 
-CONSTANTS GenRecheck, CancelGuard
+CONSTANTS GenRecheck, CancelGuard, ClockTimeoutCleanup, DispatchSync
 
-Gens == {1, 2}
+Runners == 1..3
 Target == 2
+Before == 1
 
-VARIABLES gen, swapped, rrev, alive, waiter, pipe, frameSent, pc, seen
+VARIABLES cur, nextR, alive, onPurpose, rrev, inbox, pipe, waiter,
+          pc, seen, answered, cancelledIn, witness, settled, staleRun
 
-vars == <<gen, swapped, rrev, alive, waiter, pipe, frameSent, pc, seen>>
+vars == <<cur, nextR, alive, onPurpose, rrev, inbox, pipe, waiter,
+          pc, seen, answered, cancelledIn, witness, settled, staleRun>>
 
 Init ==
-    /\ gen = 1
-    /\ swapped = FALSE
-    \* Runner 1 has not seen the move yet; runner 2 does not exist until the swap.
-    /\ rrev = [g \in Gens |-> 1]
-    /\ alive = [g \in Gens |-> g = 1]
-    /\ waiter = [g \in Gens |-> FALSE]
-    /\ pipe = [g \in Gens |-> "clean"]
-    /\ frameSent = [g \in Gens |-> FALSE]
+    /\ cur = 1
+    /\ nextR = 2
+    /\ alive = [r \in Runners |-> r = 1]
+    /\ onPurpose = [r \in Runners |-> FALSE]
+    \* Runner 1 has not seen the move yet.
+    /\ rrev = [r \in Runners |-> Before]
+    /\ inbox = [r \in Runners |-> FALSE]
+    /\ pipe = [r \in Runners |-> "clean"]
+    /\ waiter = [r \in Runners |-> FALSE]
     /\ pc = "snap"
     /\ seen = 1
+    /\ answered = FALSE
+    /\ cancelledIn = "none"
+    /\ witness = FALSE
+    /\ settled = FALSE
+    /\ staleRun = FALSE
 
 Sending == pc \in {"lock", "writing", "await"}
+Done == pc \in {"ok", "err", "cancelled", "timedout"}
 
-\* A pass reads the current generation and registers the waiter of its frame.
+runnerState == <<alive, onPurpose, rrev, inbox, pipe>>
+
+\* A pass reads the current runner and registers the waiter of its frame.
 Snap ==
     /\ pc = "snap"
-    /\ seen' = gen
-    /\ waiter' = [waiter EXCEPT ![gen] = TRUE]
-    /\ frameSent' = [frameSent EXCEPT ![gen] = FALSE]
+    /\ seen' = cur
+    /\ waiter' = [waiter EXCEPT ![cur] = TRUE]
+    /\ answered' = FALSE
     /\ pc' = "lock"
-    /\ UNCHANGED <<gen, swapped, rrev, alive, pipe>>
+    /\ UNCHANGED <<cur, nextR, runnerState, cancelledIn, witness, settled, staleRun>>
 
 Lock ==
-    /\ pc = "lock" /\ alive[seen]
+    /\ pc = "lock" /\ alive[seen] /\ pipe[seen] = "clean"
     /\ pc' = "writing"
     /\ pipe' = [pipe EXCEPT ![seen] = "half"]
-    /\ UNCHANGED <<gen, swapped, rrev, alive, waiter, frameSent, seen>>
+    /\ UNCHANGED <<cur, nextR, alive, onPurpose, rrev, inbox, waiter,
+                   seen, answered, cancelledIn, witness, settled, staleRun>>
 
 Written ==
     /\ pc = "writing" /\ alive[seen]
     /\ pc' = "await"
     /\ pipe' = [pipe EXCEPT ![seen] = "clean"]
-    /\ frameSent' = [frameSent EXCEPT ![seen] = TRUE]
-    /\ UNCHANGED <<gen, swapped, rrev, alive, waiter, seen>>
+    /\ inbox' = [inbox EXCEPT ![seen] = TRUE]
+    /\ UNCHANGED <<cur, nextR, alive, onPurpose, rrev, waiter,
+                   seen, answered, cancelledIn, witness, settled, staleRun>>
 
-Ack ==
-    /\ pc = "await" /\ alive[seen]
-    /\ rrev' = [rrev EXCEPT ![seen] = Target]
-    /\ waiter' = [waiter EXCEPT ![seen] = FALSE]
+\* A live runner applies a fully written frame; the reader hands the answer to a waiter left.
+Apply(r) ==
+    /\ inbox[r] /\ alive[r]
+    /\ rrev' = [rrev EXCEPT ![r] = Target]
+    /\ inbox' = [inbox EXCEPT ![r] = FALSE]
+    /\ waiter' = [waiter EXCEPT ![r] = FALSE]
+    /\ answered' = (answered \/ (waiter[r] /\ r = seen /\ pc = "await"))
+    /\ UNCHANGED <<cur, nextR, alive, onPurpose, pipe, pc, seen, cancelledIn,
+                   witness, settled, staleRun>>
+
+Answered ==
+    /\ pc = "await" /\ answered
     /\ pc' = "check"
-    /\ UNCHANGED <<gen, swapped, alive, pipe, frameSent, seen>>
+    /\ UNCHANGED <<cur, nextR, runnerState, waiter, seen, answered, cancelledIn,
+                   witness, settled, staleRun>>
 
-\* The runner was stopped on purpose: its waiter is drained and the send ends without error.
+\* The runner is gone: the reader drained its waiters; a failed write closed the pipe. A runner
+\* stopped on purpose ends the send without an error, any other exit is an error.
 Gone ==
-    /\ Sending /\ ~alive[seen]
+    /\ Sending /\ ~alive[seen] /\ ~answered
     /\ waiter' = [waiter EXCEPT ![seen] = FALSE]
-    /\ pc' = "check"
-    /\ UNCHANGED <<gen, swapped, rrev, alive, pipe, frameSent, seen>>
+    /\ pipe' = IF pc = "writing" THEN [pipe EXCEPT ![seen] = "closed"] ELSE pipe
+    /\ pc' = IF onPurpose[seen] THEN "check" ELSE "err"
+    /\ UNCHANGED <<cur, nextR, alive, onPurpose, rrev, inbox, seen, answered,
+                   cancelledIn, witness, settled, staleRun>>
 
+\* The frame's own 5 s deadline passes without an answer: the clock call fails.
+FrameTimeout ==
+    /\ pc = "await" /\ ~answered
+    /\ pc' = "timedout"
+    /\ waiter' = IF ClockTimeoutCleanup THEN [waiter EXCEPT ![seen] = FALSE] ELSE waiter
+    /\ UNCHANGED <<cur, nextR, runnerState, seen, answered, cancelledIn, witness,
+                   settled, staleRun>>
+
+\* The check of this codebase: one read of its current runner, after the send.
 Check ==
     /\ pc = "check"
-    /\ pc' = IF ~GenRecheck \/ seen = gen THEN "ok" ELSE "snap"
-    /\ UNCHANGED <<gen, swapped, rrev, alive, waiter, pipe, frameSent, seen>>
+    /\ witness' = (seen = cur /\ rrev[cur] >= Target)
+    /\ pc' = IF ~GenRecheck \/ seen = cur THEN "ok" ELSE "snap"
+    /\ settled' = (settled \/ ~GenRecheck \/ seen = cur)
+    /\ UNCHANGED <<cur, nextR, runnerState, waiter, seen, answered, cancelledIn, staleRun>>
 
-\* A reload or recovery installs runner 2, started with a clock sampled before or after the
-\* move, and stops runner 1 on purpose (its reader drains runner 1's waiters).
+\* A reload installs a new runner, started with the clock sampled before or after the move; the
+\* replaced runner is stopped on purpose or kept running to drain.
 Swap ==
-    /\ ~swapped /\ pc \notin {"ok", "cancelled"}
-    /\ \E start \in {1, Target}:
-        rrev' = [rrev EXCEPT ![2] = start]
-    /\ gen' = 2
-    /\ swapped' = TRUE
-    /\ alive' = [alive EXCEPT ![1] = FALSE, ![2] = TRUE]
-    /\ waiter' = [waiter EXCEPT ![1] = FALSE]
-    /\ UNCHANGED <<pipe, frameSent, pc, seen>>
+    /\ nextR \in Runners
+    /\ \E start \in {Before, Target}, drain \in BOOLEAN:
+        /\ rrev' = [rrev EXCEPT ![nextR] = start]
+        /\ alive' = [alive EXCEPT ![nextR] = TRUE, ![cur] = alive[cur] /\ drain]
+        /\ onPurpose' = [onPurpose EXCEPT ![cur] = ~drain]
+        /\ waiter' = IF drain THEN waiter ELSE [waiter EXCEPT ![cur] = FALSE]
+    /\ cur' = nextR
+    /\ nextR' = nextR + 1
+    /\ UNCHANGED <<inbox, pipe, pc, seen, answered, cancelledIn, witness, settled, staleRun>>
+
+\* A runner exits on its own; the reader drains its waiters.
+Crash ==
+    /\ alive[cur]
+    /\ alive' = [alive EXCEPT ![cur] = FALSE]
+    /\ waiter' = [waiter EXCEPT ![cur] = FALSE]
+    /\ UNCHANGED <<cur, nextR, onPurpose, rrev, inbox, pipe, pc, seen, answered,
+                   cancelledIn, witness, settled, staleRun>>
+
+\* Recovery of a dead current runner (same generation revision, a new runner).
+Recover ==
+    /\ ~alive[cur] /\ nextR \in Runners
+    /\ \E start \in {Before, Target}:
+        /\ rrev' = [rrev EXCEPT ![nextR] = start]
+    /\ alive' = [alive EXCEPT ![nextR] = TRUE]
+    /\ cur' = nextR
+    /\ nextR' = nextR + 1
+    /\ UNCHANGED <<onPurpose, inbox, pipe, waiter, pc, seen, answered, cancelledIn,
+                   witness, settled, staleRun>>
 
 \* The outer timeout drops the send at one of its await points.
 Cancel ==
     /\ Sending
     /\ pc' = "cancelled"
+    /\ cancelledIn' = pc
     /\ IF CancelGuard
          THEN /\ waiter' = [waiter EXCEPT ![seen] = FALSE]
-              /\ IF pipe[seen] = "half"
-                   THEN /\ pipe' = [pipe EXCEPT ![seen] = "retired"]
+              /\ IF pc = "writing"
+                   THEN /\ pipe' = [pipe EXCEPT ![seen] = "closed"]
                         /\ alive' = [alive EXCEPT ![seen] = FALSE]
                    ELSE UNCHANGED <<pipe, alive>>
          ELSE UNCHANGED <<waiter, pipe, alive>>
-    /\ UNCHANGED <<gen, swapped, rrev, frameSent, seen>>
+    /\ UNCHANGED <<cur, nextR, onPurpose, rrev, inbox, seen, answered, witness,
+                   settled, staleRun>>
 
-\* After a cancellation a frame that was written in full is still answered; the reader removes
-\* its waiter. A frame that never reached the runner gets no answer.
-LateAck ==
-    /\ pc = "cancelled" /\ alive[seen] /\ frameSent[seen] /\ waiter[seen]
-    /\ waiter' = [waiter EXCEPT ![seen] = FALSE]
-    /\ UNCHANGED <<gen, swapped, rrev, alive, pipe, frameSent, pc, seen>>
+\* A handler runs on the current runner, after a clock sync when DispatchSync holds.
+Dispatch ==
+    /\ alive[cur]
+    /\ LET used == IF DispatchSync THEN Target ELSE rrev[cur]
+       IN /\ rrev' = [rrev EXCEPT ![cur] = used]
+          /\ staleRun' = (staleRun \/ (settled /\ used < Target))
+    /\ UNCHANGED <<cur, nextR, alive, onPurpose, inbox, pipe, waiter, pc, seen, answered,
+                   cancelledIn, witness, settled>>
 
-Next == Snap \/ Lock \/ Written \/ Ack \/ Gone \/ Check \/ Swap \/ Cancel \/ LateAck
+Next ==
+    \/ Snap \/ Lock \/ Written \/ Answered \/ Gone \/ FrameTimeout \/ Check \/ Cancel
+    \/ \E r \in Runners: Apply(r)
+    \/ Swap \/ Crash \/ Recover \/ Dispatch
 
 Spec == Init /\ [][Next]_vars
 
-\* A settled move has reached the runner that is current when settlement answers.
-SettledReachesCurrent == pc = "ok" => rrev[gen] >= Target
+\* When settlement answers, the runner its check read was the one the pass sent to, and it had
+\* acknowledged the move at that moment (later swaps are not this property's business).
+SettledChecksCurrent == pc = "ok" => witness
 
-\* Once the send was dropped and no step can still answer it, no waiter is left registered on a
-\* live runner (only a fully written frame is still answered, by LateAck).
-NoStrandedWaiter ==
-    pc = "cancelled" => \A g \in Gens: ~(alive[g] /\ waiter[g] /\ ~frameSent[g])
+\* A caller that gave up on its frame (dropped by the outer timeout, or past its own deadline)
+\* leaves no waiter behind, also when the frame was written in full.
+NoOrphanWaiter == pc \in {"cancelled", "timedout"} => ~waiter[seen]
 
-\* A live runner never keeps a pipe with a half-written frame once its writer is gone.
+\* A write dropped in the middle closes the pipe itself.
+CancelledWriteClosesPipe == (pc = "cancelled" /\ cancelledIn = "writing") => pipe[seen] = "closed"
+
+\* No live runner holds a half frame, except the one being written to right now.
 NoHalfFrameOnLiveRunner ==
-    pc = "cancelled" => \A g \in Gens: ~(alive[g] /\ pipe[g] = "half")
+    \A r \in Runners: (alive[r] /\ pipe[r] = "half") => (pc = "writing" /\ seen = r)
+
+\* No handler runs with a clock older than the last settled move.
+DispatchSeesSettled == ~staleRun
 
 TypeOK ==
-    /\ gen \in Gens /\ seen \in Gens
-    /\ pc \in {"snap", "lock", "writing", "await", "check", "ok", "cancelled"}
-    /\ \A g \in Gens: pipe[g] \in {"clean", "half", "retired"} /\ rrev[g] \in {1, Target}
+    /\ cur \in Runners /\ seen \in Runners /\ nextR \in 2..4
+    /\ pc \in {"snap", "lock", "writing", "await", "check", "ok", "err", "cancelled", "timedout"}
+    /\ cancelledIn \in {"none", "lock", "writing", "await"}
+    /\ \A r \in Runners: pipe[r] \in {"clean", "half", "closed"} /\ rrev[r] \in {Before, Target}
 =============================================================================
