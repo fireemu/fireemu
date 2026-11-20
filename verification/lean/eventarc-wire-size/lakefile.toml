@@ -1,0 +1,9 @@
+name = "eventarc-wire-size"
+defaultTargets = ["EventarcWireSize", "corpus"]
+
+[[lean_lib]]
+name = "EventarcWireSize"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

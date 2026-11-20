@@ -1,0 +1,9 @@
+name = "scheduler-retry-policy"
+defaultTargets = ["SchedulerRetryPolicy", "corpus"]
+
+[[lean_lib]]
+name = "SchedulerRetryPolicy"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
