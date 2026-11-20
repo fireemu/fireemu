@@ -1,0 +1,9 @@
+name = "pubsub-ack-lease"
+defaultTargets = ["PubSubAckLease", "corpus"]
+
+[[lean_lib]]
+name = "PubSubAckLease"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

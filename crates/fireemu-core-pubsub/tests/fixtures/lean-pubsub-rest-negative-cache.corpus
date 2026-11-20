@@ -1,0 +1,369 @@
+# 368
+trace	on	get	edge	10350000000
+observe	0	get	0	missing	1
+probe	0	get	0	hit	1
+probe	0	delete	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	on	get	scope	10350000000
+observe	0	get	0	missing	1
+probe	10000	get	1	miss	1
+probe	4999	get	1	miss	1
+probe	1	get	1	miss	1
+probe	0	get	1	hit	1
+forget	1	1
+probe	0	get	1	hit	1
+forget	0	0
+probe	0	get	1	miss	0
+trace	on	get	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	get	1	missing	0
+probe	0	get	1	miss	0
+observe	0	get	10350000000	missing	1
+probe	0	get	10350000000	hit	1
+trace	on	get	hits	10350000000
+observe	0	get	0	missing	1
+probe	0	other	1	miss	1
+probe	0	get	2	hit	1
+observe	0	other	3	ok	1
+observe	0	get	4	missing	1
+probe	0	patch	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+trace	on	get	rewind	10350000000
+observe	0	get	3	missing	1
+probe	0	get	2	miss	1
+observe	0	get	1	missing	1
+probe	0	patch	3	hit	1
+probe	0	get	10350000002	hit	1
+probe	0	get	10350000003	miss	0
+trace	on	get	prune	10350000000
+observe	0	get	0	missing	1
+observe	1	patch	1	missing	2
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	on	patch	edge	10350000000
+observe	0	patch	0	missing	1
+probe	0	get	0	hit	1
+probe	0	delete	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	on	patch	scope	10350000000
+observe	0	patch	0	missing	1
+probe	10000	get	1	miss	1
+probe	4999	get	1	miss	1
+probe	1	get	1	miss	1
+probe	0	get	1	hit	1
+forget	1	1
+probe	0	get	1	hit	1
+forget	0	0
+probe	0	get	1	miss	0
+trace	on	patch	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	patch	1	missing	0
+probe	0	get	1	miss	0
+observe	0	patch	10350000000	missing	1
+probe	0	get	10350000000	hit	1
+trace	on	patch	hits	10350000000
+observe	0	patch	0	missing	1
+probe	0	other	1	miss	1
+probe	0	get	2	hit	1
+observe	0	other	3	ok	1
+observe	0	patch	4	missing	1
+probe	0	patch	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+trace	on	patch	rewind	10350000000
+observe	0	patch	3	missing	1
+probe	0	get	2	miss	1
+observe	0	patch	1	missing	1
+probe	0	patch	3	hit	1
+probe	0	get	10350000002	hit	1
+probe	0	get	10350000003	miss	0
+trace	on	patch	prune	10350000000
+observe	0	patch	0	missing	1
+observe	1	patch	1	missing	2
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	on	delete	edge	10350000000
+observe	0	delete	0	missing	0
+probe	0	get	0	miss	0
+probe	0	delete	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	on	delete	scope	10350000000
+observe	0	delete	0	missing	0
+probe	10000	get	1	miss	0
+probe	4999	get	1	miss	0
+probe	1	get	1	miss	0
+probe	0	get	1	miss	0
+forget	1	0
+probe	0	get	1	miss	0
+forget	0	0
+probe	0	get	1	miss	0
+trace	on	delete	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	delete	1	missing	0
+probe	0	get	1	miss	0
+observe	0	delete	10350000000	missing	0
+probe	0	get	10350000000	miss	0
+trace	on	delete	hits	10350000000
+observe	0	delete	0	missing	0
+probe	0	other	1	miss	0
+probe	0	get	2	miss	0
+observe	0	other	3	ok	0
+observe	0	delete	4	missing	0
+probe	0	patch	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+trace	on	delete	rewind	10350000000
+observe	0	delete	3	missing	0
+probe	0	get	2	miss	0
+observe	0	delete	1	missing	0
+probe	0	patch	3	miss	0
+probe	0	get	10350000002	miss	0
+probe	0	get	10350000003	miss	0
+trace	on	delete	prune	10350000000
+observe	0	delete	0	missing	0
+observe	1	patch	1	missing	1
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	on	other	edge	10350000000
+observe	0	other	0	missing	0
+probe	0	get	0	miss	0
+probe	0	delete	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	on	other	scope	10350000000
+observe	0	other	0	missing	0
+probe	10000	get	1	miss	0
+probe	4999	get	1	miss	0
+probe	1	get	1	miss	0
+probe	0	get	1	miss	0
+forget	1	0
+probe	0	get	1	miss	0
+forget	0	0
+probe	0	get	1	miss	0
+trace	on	other	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	other	1	missing	0
+probe	0	get	1	miss	0
+observe	0	other	10350000000	missing	0
+probe	0	get	10350000000	miss	0
+trace	on	other	hits	10350000000
+observe	0	other	0	missing	0
+probe	0	other	1	miss	0
+probe	0	get	2	miss	0
+observe	0	other	3	ok	0
+observe	0	other	4	missing	0
+probe	0	patch	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+trace	on	other	rewind	10350000000
+observe	0	other	3	missing	0
+probe	0	get	2	miss	0
+observe	0	other	1	missing	0
+probe	0	patch	3	miss	0
+probe	0	get	10350000002	miss	0
+probe	0	get	10350000003	miss	0
+trace	on	other	prune	10350000000
+observe	0	other	0	missing	0
+observe	1	patch	1	missing	1
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	off	get	edge	10350000000
+observe	0	get	0	missing	1
+probe	0	get	0	hit	1
+probe	0	delete	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	off	get	scope	10350000000
+observe	0	get	0	missing	1
+probe	10000	get	1	miss	1
+probe	4999	get	1	miss	1
+probe	1	get	1	miss	1
+probe	0	get	1	hit	1
+forget	1	1
+probe	0	get	1	hit	1
+forget	0	0
+probe	0	get	1	miss	0
+trace	off	get	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	get	1	missing	1
+probe	0	get	1	hit	1
+observe	0	get	10350000000	missing	1
+probe	0	get	10350000000	hit	1
+trace	off	get	hits	10350000000
+observe	0	get	0	missing	1
+probe	0	other	1	miss	1
+probe	0	get	2	hit	1
+observe	0	other	3	ok	1
+observe	0	get	4	missing	1
+probe	0	patch	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+trace	off	get	rewind	10350000000
+observe	0	get	3	missing	1
+probe	0	get	2	miss	1
+observe	0	get	1	missing	1
+probe	0	patch	3	hit	1
+probe	0	get	10350000002	hit	1
+probe	0	get	10350000003	miss	0
+trace	off	get	prune	10350000000
+observe	0	get	0	missing	1
+observe	1	patch	1	missing	2
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	off	patch	edge	10350000000
+observe	0	patch	0	missing	1
+probe	0	get	0	hit	1
+probe	0	delete	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	off	patch	scope	10350000000
+observe	0	patch	0	missing	1
+probe	10000	get	1	miss	1
+probe	4999	get	1	miss	1
+probe	1	get	1	miss	1
+probe	0	get	1	hit	1
+forget	1	1
+probe	0	get	1	hit	1
+forget	0	0
+probe	0	get	1	miss	0
+trace	off	patch	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	patch	1	missing	1
+probe	0	get	1	hit	1
+observe	0	patch	10350000000	missing	1
+probe	0	get	10350000000	hit	1
+trace	off	patch	hits	10350000000
+observe	0	patch	0	missing	1
+probe	0	other	1	miss	1
+probe	0	get	2	hit	1
+observe	0	other	3	ok	1
+observe	0	patch	4	missing	1
+probe	0	patch	10349999999	hit	1
+probe	0	get	10350000000	miss	0
+trace	off	patch	rewind	10350000000
+observe	0	patch	3	missing	1
+probe	0	get	2	miss	1
+observe	0	patch	1	missing	1
+probe	0	patch	3	hit	1
+probe	0	get	10350000002	hit	1
+probe	0	get	10350000003	miss	0
+trace	off	patch	prune	10350000000
+observe	0	patch	0	missing	1
+observe	1	patch	1	missing	2
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	off	delete	edge	10350000000
+observe	0	delete	0	missing	0
+probe	0	get	0	miss	0
+probe	0	delete	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	off	delete	scope	10350000000
+observe	0	delete	0	missing	0
+probe	10000	get	1	miss	0
+probe	4999	get	1	miss	0
+probe	1	get	1	miss	0
+probe	0	get	1	miss	0
+forget	1	0
+probe	0	get	1	miss	0
+forget	0	0
+probe	0	get	1	miss	0
+trace	off	delete	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	delete	1	missing	0
+probe	0	get	1	miss	0
+observe	0	delete	10350000000	missing	0
+probe	0	get	10350000000	miss	0
+trace	off	delete	hits	10350000000
+observe	0	delete	0	missing	0
+probe	0	other	1	miss	0
+probe	0	get	2	miss	0
+observe	0	other	3	ok	0
+observe	0	delete	4	missing	0
+probe	0	patch	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+trace	off	delete	rewind	10350000000
+observe	0	delete	3	missing	0
+probe	0	get	2	miss	0
+observe	0	delete	1	missing	0
+probe	0	patch	3	miss	0
+probe	0	get	10350000002	miss	0
+probe	0	get	10350000003	miss	0
+trace	off	delete	prune	10350000000
+observe	0	delete	0	missing	0
+observe	1	patch	1	missing	1
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	off	other	edge	10350000000
+observe	0	other	0	missing	0
+probe	0	get	0	miss	0
+probe	0	delete	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+probe	0	patch	0	miss	0
+trace	off	other	scope	10350000000
+observe	0	other	0	missing	0
+probe	10000	get	1	miss	0
+probe	4999	get	1	miss	0
+probe	1	get	1	miss	0
+probe	0	get	1	miss	0
+forget	1	0
+probe	0	get	1	miss	0
+forget	0	0
+probe	0	get	1	miss	0
+trace	off	other	debounce	10350000000
+observe	0	get	0	ok	0
+observe	0	other	1	missing	0
+probe	0	get	1	miss	0
+observe	0	other	10350000000	missing	0
+probe	0	get	10350000000	miss	0
+trace	off	other	hits	10350000000
+observe	0	other	0	missing	0
+probe	0	other	1	miss	0
+probe	0	get	2	miss	0
+observe	0	other	3	ok	0
+observe	0	other	4	missing	0
+probe	0	patch	10349999999	miss	0
+probe	0	get	10350000000	miss	0
+trace	off	other	rewind	10350000000
+observe	0	other	3	missing	0
+probe	0	get	2	miss	0
+observe	0	other	1	missing	0
+probe	0	patch	3	miss	0
+probe	0	get	10350000002	miss	0
+probe	0	get	10350000003	miss	0
+trace	off	other	prune	10350000000
+observe	0	other	0	missing	0
+observe	1	patch	1	missing	1
+observe	2	other	10350000000	other	1
+probe	0	get	10350000000	miss	1
+probe	1	get	10350000000	hit	1
+probe	1	get	10350000001	miss	0
+trace	on	get	capacity-tie	10350000000
+fill	4096
+observe	4096	get	0	missing	4096
+probe	0	get	0	hit	4096
+probe	4096	get	0	miss	4096
+trace	on	get	capacity-newer	10350000000
+fill	4096
+observe	4096	get	1	missing	4096
+probe	0	get	1	miss	4096
+probe	1	get	1	hit	4096
+probe	4096	get	1	hit	4096
+trace	on	get	capacity-prune	10350000000
+fill	4096
+observe	4096	get	10350000000	missing	1
+probe	0	get	10350000000	miss	1
+probe	4096	get	10350000000	hit	1

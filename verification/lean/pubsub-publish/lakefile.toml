@@ -1,0 +1,9 @@
+name = "pubsub-publish"
+defaultTargets = ["PubSubPublish", "corpus"]
+
+[[lean_lib]]
+name = "PubSubPublish"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

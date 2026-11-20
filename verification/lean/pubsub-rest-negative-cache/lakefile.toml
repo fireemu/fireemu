@@ -1,0 +1,9 @@
+name = "pubsub-rest-negative-cache"
+defaultTargets = ["PubSubRestNegativeCache", "corpus"]
+
+[[lean_lib]]
+name = "PubSubRestNegativeCache"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
