@@ -1,0 +1,9 @@
+name = "firestore-pipeline-values"
+defaultTargets = ["FirestorePipelineValues", "corpus"]
+
+[[lean_lib]]
+name = "FirestorePipelineValues"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

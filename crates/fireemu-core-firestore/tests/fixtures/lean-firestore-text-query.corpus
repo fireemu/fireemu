@@ -1,0 +1,169 @@
+# QUERY CORPUS PAGE TEXT RESULT PATHS, tab separated
+plain	english	all	red fox	ok	docs/adj,docs/both,docs/joined,docs/reverse,docs/sep,docs/split
+plain	english	window	red fox	ok	docs/both,docs/joined
+plain	english	depth	red fox	ok	docs/both
+plain	english	empty	red fox	ok	-
+plain	latin	all	red fox	ok	-
+plain	latin	window	red fox	ok	-
+plain	latin	depth	red fox	ok	-
+plain	latin	empty	red fox	ok	-
+plain	mixed	all	red fox	ok	docs/adj,docs/both,docs/joined,docs/reverse,docs/sep,docs/split
+plain	mixed	window	red fox	ok	docs/both,docs/joined
+plain	mixed	depth	red fox	ok	docs/both
+plain	mixed	empty	red fox	ok	-
+reverse	english	all	fox red	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+reverse	english	window	fox red	ok	docs/both,docs/reverse
+reverse	english	depth	fox red	ok	docs/both
+reverse	english	empty	fox red	ok	-
+reverse	latin	all	fox red	ok	-
+reverse	latin	window	fox red	ok	-
+reverse	latin	depth	fox red	ok	-
+reverse	latin	empty	fox red	ok	-
+reverse	mixed	all	fox red	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+reverse	mixed	window	fox red	ok	docs/both,docs/reverse
+reverse	mixed	depth	fox red	ok	docs/both
+reverse	mixed	empty	fox red	ok	-
+phrase	english	all	"red fox"	ok	docs/adj,docs/both
+phrase	english	window	"red fox"	ok	docs/both
+phrase	english	depth	"red fox"	ok	docs/both
+phrase	english	empty	"red fox"	ok	-
+phrase	latin	all	"red fox"	ok	-
+phrase	latin	window	"red fox"	ok	-
+phrase	latin	depth	"red fox"	ok	-
+phrase	latin	empty	"red fox"	ok	-
+phrase	mixed	all	"red fox"	ok	docs/adj,docs/both
+phrase	mixed	window	"red fox"	ok	docs/both
+phrase	mixed	depth	"red fox"	ok	docs/both
+phrase	mixed	empty	"red fox"	ok	-
+quotedReverse	english	all	"fox red"	ok	docs/reverse
+quotedReverse	english	window	"fox red"	ok	-
+quotedReverse	english	depth	"fox red"	ok	-
+quotedReverse	english	empty	"fox red"	ok	-
+quotedReverse	latin	all	"fox red"	ok	-
+quotedReverse	latin	window	"fox red"	ok	-
+quotedReverse	latin	depth	"fox red"	ok	-
+quotedReverse	latin	empty	"fox red"	ok	-
+quotedReverse	mixed	all	"fox red"	ok	docs/reverse
+quotedReverse	mixed	window	"fox red"	ok	-
+quotedReverse	mixed	depth	"fox red"	ok	-
+quotedReverse	mixed	empty	"fox red"	ok	-
+restricted	english	all	title:"red fox"	ok	docs/both
+restricted	english	window	title:"red fox"	ok	-
+restricted	english	depth	title:"red fox"	ok	-
+restricted	english	empty	title:"red fox"	ok	-
+restricted	latin	all	title:"red fox"	ok	-
+restricted	latin	window	title:"red fox"	ok	-
+restricted	latin	depth	title:"red fox"	ok	-
+restricted	latin	empty	title:"red fox"	ok	-
+restricted	mixed	all	title:"red fox"	ok	docs/both
+restricted	mixed	window	title:"red fox"	ok	-
+restricted	mixed	depth	title:"red fox"	ok	-
+restricted	mixed	empty	title:"red fox"	ok	-
+excluded	english	all	red -fox	ok	docs/only
+excluded	english	window	red -fox	ok	-
+excluded	english	depth	red -fox	ok	-
+excluded	english	empty	red -fox	ok	-
+excluded	latin	all	red -fox	ok	-
+excluded	latin	window	red -fox	ok	-
+excluded	latin	depth	red -fox	ok	-
+excluded	latin	empty	red -fox	ok	-
+excluded	mixed	all	red -fox	ok	docs/only
+excluded	mixed	window	red -fox	ok	-
+excluded	mixed	depth	red -fox	ok	-
+excluded	mixed	empty	red -fox	ok	-
+connector	english	all	red OR fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+connector	english	window	red OR fox	ok	docs/both,docs/reverse
+connector	english	depth	red OR fox	ok	docs/both
+connector	english	empty	red OR fox	ok	-
+connector	latin	all	red OR fox	ok	-
+connector	latin	window	red OR fox	ok	-
+connector	latin	depth	red OR fox	ok	-
+connector	latin	empty	red OR fox	ok	-
+connector	mixed	all	red OR fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+connector	mixed	window	red OR fox	ok	docs/both,docs/reverse
+connector	mixed	depth	red OR fox	ok	docs/both
+connector	mixed	empty	red OR fox	ok	-
+colon	english	all	red:fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+colon	english	window	red:fox	ok	docs/both,docs/reverse
+colon	english	depth	red:fox	ok	docs/both
+colon	english	empty	red:fox	ok	-
+colon	latin	all	red:fox	ok	-
+colon	latin	window	red:fox	ok	-
+colon	latin	depth	red:fox	ok	-
+colon	latin	empty	red:fox	ok	-
+colon	mixed	all	red:fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+colon	mixed	window	red:fox	ok	docs/both,docs/reverse
+colon	mixed	depth	red:fox	ok	docs/both
+colon	mixed	empty	red:fox	ok	-
+unmatched	english	all	"red fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+unmatched	english	window	"red fox	ok	docs/both,docs/reverse
+unmatched	english	depth	"red fox	ok	docs/both
+unmatched	english	empty	"red fox	ok	-
+unmatched	latin	all	"red fox	ok	-
+unmatched	latin	window	"red fox	ok	-
+unmatched	latin	depth	"red fox	ok	-
+unmatched	latin	empty	"red fox	ok	-
+unmatched	mixed	all	"red fox	ok	docs/adj,docs/both,docs/reverse,docs/sep,docs/split
+unmatched	mixed	window	"red fox	ok	docs/both,docs/reverse
+unmatched	mixed	depth	"red fox	ok	docs/both
+unmatched	mixed	empty	"red fox	ok	-
+negative	english	all	-red	ok	-
+negative	english	window	-red	ok	-
+negative	english	depth	-red	ok	-
+negative	english	empty	-red	ok	-
+negative	latin	all	-red	ok	-
+negative	latin	window	-red	ok	-
+negative	latin	depth	-red	ok	-
+negative	latin	empty	-red	ok	-
+negative	mixed	all	-red	ok	-
+negative	mixed	window	-red	ok	-
+negative	mixed	depth	-red	ok	-
+negative	mixed	empty	-red	ok	-
+unknown	english	all	unindexed:"red"	unknown	-
+unknown	english	window	unindexed:"red"	unknown	-
+unknown	english	depth	unindexed:"red"	unknown	-
+unknown	english	empty	unindexed:"red"	unknown	-
+unknown	latin	all	unindexed:"red"	unknown	-
+unknown	latin	window	unindexed:"red"	unknown	-
+unknown	latin	depth	unindexed:"red"	unknown	-
+unknown	latin	empty	unindexed:"red"	unknown	-
+unknown	mixed	all	unindexed:"red"	unknown	-
+unknown	mixed	window	unindexed:"red"	unknown	-
+unknown	mixed	depth	unindexed:"red"	unknown	-
+unknown	mixed	empty	unindexed:"red"	unknown	-
+invalid	english	all	red OR -fox	invalid	-
+invalid	english	window	red OR -fox	invalid	-
+invalid	english	depth	red OR -fox	invalid	-
+invalid	english	empty	red OR -fox	invalid	-
+invalid	latin	all	red OR -fox	invalid	-
+invalid	latin	window	red OR -fox	invalid	-
+invalid	latin	depth	red OR -fox	invalid	-
+invalid	latin	empty	red OR -fox	invalid	-
+invalid	mixed	all	red OR -fox	invalid	-
+invalid	mixed	window	red OR -fox	invalid	-
+invalid	mixed	depth	red OR -fox	invalid	-
+invalid	mixed	empty	red OR -fox	invalid	-
+latin	english	all	CAFÉ Straße	ok	-
+latin	english	window	CAFÉ Straße	ok	-
+latin	english	depth	CAFÉ Straße	ok	-
+latin	english	empty	CAFÉ Straße	ok	-
+latin	latin	all	CAFÉ Straße	ok	docs/accent,docs/folded
+latin	latin	window	CAFÉ Straße	ok	docs/folded
+latin	latin	depth	CAFÉ Straße	ok	docs/folded
+latin	latin	empty	CAFÉ Straße	ok	-
+latin	mixed	all	CAFÉ Straße	ok	docs/accent,docs/folded
+latin	mixed	window	CAFÉ Straße	ok	docs/folded
+latin	mixed	depth	CAFÉ Straße	ok	docs/folded
+latin	mixed	empty	CAFÉ Straße	ok	-
+dotted	english	all	İzmir	ok	-
+dotted	english	window	İzmir	ok	-
+dotted	english	depth	İzmir	ok	-
+dotted	english	empty	İzmir	ok	-
+dotted	latin	all	İzmir	ok	-
+dotted	latin	window	İzmir	ok	-
+dotted	latin	depth	İzmir	ok	-
+dotted	latin	empty	İzmir	ok	-
+dotted	mixed	all	İzmir	ok	-
+dotted	mixed	window	İzmir	ok	-
+dotted	mixed	depth	İzmir	ok	-
+dotted	mixed	empty	İzmir	ok	-

@@ -1,0 +1,9 @@
+name = "firestore-text-query"
+defaultTargets = ["FirestoreTextQuery", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreTextQuery"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

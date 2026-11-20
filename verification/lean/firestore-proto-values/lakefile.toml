@@ -1,0 +1,9 @@
+name = "firestore-proto-values"
+defaultTargets = ["FirestoreProtoValues", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreProtoValues"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

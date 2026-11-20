@@ -1,0 +1,163 @@
+# KIND INPUTS EXPECTED, tab separated
+scalar	missing	missing
+scalar	reference_expression	unsupported
+scalar	null	null
+scalar	unknown_null	null
+scalar	boolean	same
+scalar	integer	same
+scalar	minus_zero	same
+scalar	nan_payload	same
+scalar	string	same
+scalar	bytes	same
+scalar	reference	same
+vector	absent	empty	absent	map	-
+vector	absent	empty	ordinary	map	-
+vector	absent	empty	name	reserved_name	-
+vector	absent	doubles	absent	map	-
+vector	absent	doubles	ordinary	map	-
+vector	absent	doubles	name	reserved_name	-
+vector	absent	mixed	absent	map	-
+vector	absent	mixed	ordinary	map	-
+vector	absent	mixed	name	reserved_name	-
+vector	absent	bad	absent	map	-
+vector	absent	bad	ordinary	map	-
+vector	absent	bad	name	reserved_name	-
+vector	absent	scalar	absent	map	-
+vector	absent	scalar	ordinary	map	-
+vector	absent	scalar	name	reserved_name	-
+vector	exact	empty	absent	vector	-
+vector	exact	empty	ordinary	reserved_type	-
+vector	exact	empty	name	reserved_name	-
+vector	exact	doubles	absent	vector	9223372036854775808,4602678819172646912
+vector	exact	doubles	ordinary	reserved_type	-
+vector	exact	doubles	name	reserved_name	-
+vector	exact	mixed	absent	vector	4845873199050653696,9223372036854775808
+vector	exact	mixed	ordinary	reserved_type	-
+vector	exact	mixed	name	reserved_name	-
+vector	exact	bad	absent	bad_vector	-
+vector	exact	bad	ordinary	reserved_type	-
+vector	exact	bad	name	reserved_name	-
+vector	exact	scalar	absent	reserved_type	-
+vector	exact	scalar	ordinary	reserved_type	-
+vector	exact	scalar	name	reserved_name	-
+vector	other	empty	absent	reserved_type	-
+vector	other	empty	ordinary	reserved_type	-
+vector	other	empty	name	reserved_name	-
+vector	other	doubles	absent	reserved_type	-
+vector	other	doubles	ordinary	reserved_type	-
+vector	other	doubles	name	reserved_name	-
+vector	other	mixed	absent	reserved_type	-
+vector	other	mixed	ordinary	reserved_type	-
+vector	other	mixed	name	reserved_name	-
+vector	other	bad	absent	reserved_type	-
+vector	other	bad	ordinary	reserved_type	-
+vector	other	bad	name	reserved_name	-
+vector	other	scalar	absent	reserved_type	-
+vector	other	scalar	ordinary	reserved_type	-
+vector	other	scalar	name	reserved_name	-
+vector	integer	empty	absent	integer_type	-
+vector	integer	empty	ordinary	integer_type	-
+vector	integer	empty	name	reserved_name	-
+vector	integer	doubles	absent	integer_type	-
+vector	integer	doubles	ordinary	integer_type	-
+vector	integer	doubles	name	reserved_name	-
+vector	integer	mixed	absent	integer_type	-
+vector	integer	mixed	ordinary	integer_type	-
+vector	integer	mixed	name	reserved_name	-
+vector	integer	bad	absent	integer_type	-
+vector	integer	bad	ordinary	integer_type	-
+vector	integer	bad	name	reserved_name	-
+vector	integer	scalar	absent	integer_type	-
+vector	integer	scalar	ordinary	integer_type	-
+vector	integer	scalar	name	reserved_name	-
+timestamp	-62135596801	-1	negative_nanos
+timestamp	-62135596801	0	range_seconds
+timestamp	-62135596801	1	range_seconds
+timestamp	-62135596801	999999999	range_seconds
+timestamp	-62135596801	1000000000	range_nanos
+timestamp	-62135596800	-1	negative_nanos
+timestamp	-62135596800	0	same
+timestamp	-62135596800	1	same
+timestamp	-62135596800	999999999	same
+timestamp	-62135596800	1000000000	range_nanos
+timestamp	0	-1	negative_nanos
+timestamp	0	0	same
+timestamp	0	1	same
+timestamp	0	999999999	same
+timestamp	0	1000000000	range_nanos
+timestamp	253402300799	-1	negative_nanos
+timestamp	253402300799	0	same
+timestamp	253402300799	1	same
+timestamp	253402300799	999999999	same
+timestamp	253402300799	1000000000	range_nanos
+timestamp	253402300800	-1	negative_nanos
+timestamp	253402300800	0	range_seconds
+timestamp	253402300800	1	range_seconds
+timestamp	253402300800	999999999	range_seconds
+timestamp	253402300800	1000000000	range_nanos
+geo	-181	-181	bad_geo
+geo	-181	-90	bad_geo
+geo	-181	0	bad_geo
+geo	-181	90	bad_geo
+geo	-181	180	bad_geo
+geo	-181	NaN	bad_geo
+geo	-90	-181	bad_geo
+geo	-90	-90	same
+geo	-90	0	same
+geo	-90	90	same
+geo	-90	180	same
+geo	-90	NaN	bad_geo
+geo	0	-181	bad_geo
+geo	0	-90	same
+geo	0	0	same
+geo	0	90	same
+geo	0	180	same
+geo	0	NaN	bad_geo
+geo	90	-181	bad_geo
+geo	90	-90	same
+geo	90	0	same
+geo	90	90	same
+geo	90	180	same
+geo	90	NaN	bad_geo
+geo	180	-181	bad_geo
+geo	180	-90	bad_geo
+geo	180	0	bad_geo
+geo	180	90	bad_geo
+geo	180	180	bad_geo
+geo	180	NaN	bad_geo
+geo	NaN	-181	bad_geo
+geo	NaN	-90	bad_geo
+geo	NaN	0	bad_geo
+geo	NaN	90	bad_geo
+geo	NaN	180	bad_geo
+geo	NaN	NaN	bad_geo
+container	array	null	0	same
+container	array	null	1	same
+container	array	null	19	same
+container	array	null	20	same
+container	array	null	21	depth
+container	array	vector	0	same
+container	array	vector	1	same
+container	array	vector	19	same
+container	array	vector	20	same
+container	array	vector	21	depth
+container	map	null	0	same
+container	map	null	1	same
+container	map	null	19	same
+container	map	null	20	same
+container	map	null	21	depth
+container	map	vector	0	same
+container	map	vector	1	same
+container	map	vector	19	same
+container	map	vector	20	same
+container	map	vector	21	depth
+container	alternating	null	0	same
+container	alternating	null	1	same
+container	alternating	null	19	same
+container	alternating	null	20	same
+container	alternating	null	21	depth
+container	alternating	vector	0	same
+container	alternating	vector	1	same
+container	alternating	vector	19	same
+container	alternating	vector	20	same
+container	alternating	vector	21	depth
