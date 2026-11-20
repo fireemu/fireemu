@@ -1,0 +1,9 @@
+name = "export-wire"
+defaultTargets = ["ExportWire", "corpus"]
+
+[[lean_lib]]
+name = "ExportWire"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

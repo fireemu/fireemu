@@ -1,0 +1,9 @@
+name = "export-leveldb"
+defaultTargets = ["ExportLevelDb", "corpus"]
+
+[[lean_lib]]
+name = "ExportLevelDb"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

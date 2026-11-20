@@ -1,0 +1,9 @@
+name = "export-partitions"
+defaultTargets = ["ExportPartitions", "corpus"]
+
+[[lean_lib]]
+name = "ExportPartitions"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
