@@ -1,0 +1,9 @@
+name = "storage-http-range"
+defaultTargets = ["StorageHttpRange", "corpus"]
+
+[[lean_lib]]
+name = "StorageHttpRange"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

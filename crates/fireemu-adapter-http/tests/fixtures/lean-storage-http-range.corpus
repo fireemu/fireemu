@@ -1,0 +1,95 @@
+# 94
+strict/empty/none	strict	get	|-	200|-|
+strict/empty/partial	strict	get	|bytes=0-1	416|bytes */0|Request range not satisfiable
+strict/empty/clipped	strict	get	|bytes=0-18446744073709551615	416|bytes */0|Request range not satisfiable
+strict/empty/open	strict	get	|bytes=1-	416|bytes */0|Request range not satisfiable
+strict/empty/suffix	strict	get	|bytes=-1	206|bytes 0-0/0|
+strict/empty/suffixzero	strict	get	|bytes=-0	416|bytes */0|Request range not satisfiable
+strict/empty/past	strict	get	|bytes=9-	416|bytes */0|Request range not satisfiable
+strict/empty/reversed	strict	get	|bytes=5-2	200|-|
+strict/empty/otherunit	strict	get	|items=0-1	200|-|
+strict/empty/multiple	strict	get	|bytes=0-0,2-2	200|-|
+strict/empty/huge	strict	get	|bytes=18446744073709551616-	200|-|
+strict/one/none	strict	get	0|-	200|-|0
+strict/one/partial	strict	get	0|bytes=0-1	206|bytes 0-0/1|0
+strict/one/clipped	strict	get	0|bytes=0-18446744073709551615	206|bytes 0-0/1|0
+strict/one/open	strict	get	0|bytes=1-	416|bytes */1|Request range not satisfiable
+strict/one/suffix	strict	get	0|bytes=-1	206|bytes 0-0/1|0
+strict/one/suffixzero	strict	get	0|bytes=-0	416|bytes */1|Request range not satisfiable
+strict/one/past	strict	get	0|bytes=9-	416|bytes */1|Request range not satisfiable
+strict/one/reversed	strict	get	0|bytes=5-2	200|-|0
+strict/one/otherunit	strict	get	0|items=0-1	200|-|0
+strict/one/multiple	strict	get	0|bytes=0-0,2-2	200|-|0
+strict/one/huge	strict	get	0|bytes=18446744073709551616-	200|-|0
+strict/many/none	strict	get	01234|-	200|-|01234
+strict/many/partial	strict	get	01234|bytes=0-1	206|bytes 0-1/5|01
+strict/many/clipped	strict	get	01234|bytes=0-18446744073709551615	206|bytes 0-4/5|01234
+strict/many/open	strict	get	01234|bytes=1-	206|bytes 1-4/5|1234
+strict/many/suffix	strict	get	01234|bytes=-1	206|bytes 4-4/5|4
+strict/many/suffixzero	strict	get	01234|bytes=-0	416|bytes */5|Request range not satisfiable
+strict/many/past	strict	get	01234|bytes=9-	416|bytes */5|Request range not satisfiable
+strict/many/reversed	strict	get	01234|bytes=5-2	200|-|01234
+strict/many/otherunit	strict	get	01234|items=0-1	200|-|01234
+strict/many/multiple	strict	get	01234|bytes=0-0,2-2	200|-|01234
+strict/many/huge	strict	get	01234|bytes=18446744073709551616-	200|-|01234
+emulator/empty/none	emulator	get	|-	200|-|
+emulator/empty/partial	emulator	get	|bytes=0-1	200|-|
+emulator/empty/clipped	emulator	get	|bytes=0-18446744073709551615	200|-|
+emulator/empty/open	emulator	get	|bytes=1-	200|-|
+emulator/empty/suffix	emulator	get	|bytes=-1	200|-|
+emulator/empty/suffixzero	emulator	get	|bytes=-0	200|-|
+emulator/empty/past	emulator	get	|bytes=9-	200|-|
+emulator/empty/reversed	emulator	get	|bytes=5-2	200|-|
+emulator/empty/otherunit	emulator	get	|items=0-1	200|-|
+emulator/empty/multiple	emulator	get	|bytes=0-0,2-2	200|-|
+emulator/empty/huge	emulator	get	|bytes=18446744073709551616-	200|-|
+emulator/one/none	emulator	get	0|-	200|-|0
+emulator/one/partial	emulator	get	0|bytes=0-1	206|bytes 0-0/1|0
+emulator/one/clipped	emulator	get	0|bytes=0-18446744073709551615	206|bytes 0-0/1|0
+emulator/one/open	emulator	get	0|bytes=1-	200|-|0
+emulator/one/suffix	emulator	get	0|bytes=-1	206|bytes 0-0/1|0
+emulator/one/suffixzero	emulator	get	0|bytes=-0	200|-|0
+emulator/one/past	emulator	get	0|bytes=9-	200|-|0
+emulator/one/reversed	emulator	get	0|bytes=5-2	200|-|0
+emulator/one/otherunit	emulator	get	0|items=0-1	200|-|0
+emulator/one/multiple	emulator	get	0|bytes=0-0,2-2	200|-|0
+emulator/one/huge	emulator	get	0|bytes=18446744073709551616-	200|-|0
+emulator/many/none	emulator	get	01234|-	200|-|01234
+emulator/many/partial	emulator	get	01234|bytes=0-1	206|bytes 0-1/5|01
+emulator/many/clipped	emulator	get	01234|bytes=0-18446744073709551615	206|bytes 0-4/5|01234
+emulator/many/open	emulator	get	01234|bytes=1-	206|bytes 1-4/5|1234
+emulator/many/suffix	emulator	get	01234|bytes=-1	206|bytes 4-4/5|4
+emulator/many/suffixzero	emulator	get	01234|bytes=-0	200|-|01234
+emulator/many/past	emulator	get	01234|bytes=9-	200|-|01234
+emulator/many/reversed	emulator	get	01234|bytes=5-2	200|-|01234
+emulator/many/otherunit	emulator	get	01234|items=0-1	200|-|01234
+emulator/many/multiple	emulator	get	01234|bytes=0-0,2-2	200|-|01234
+emulator/many/huge	emulator	get	01234|bytes=18446744073709551616-	200|-|01234
+strict/one/known	strict	upload	bytes */4|;bytes 0-3/4|abcd;bytes */4|	308|-|-;200|-|abcd;200|-|abcd
+strict/one/unknown	strict	upload	bytes */*|;bytes 0-*/*|abcd;bytes */*|	308|-|-;200|-|abcd;200|-|abcd
+strict/two/known	strict	upload	bytes */4|;bytes 0-1/4|ab;bytes 2-3/4|cd;bytes */4|	308|-|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd
+strict/two/unknown	strict	upload	bytes */*|;bytes 0-1/*|ab;bytes 2-*/*|cd;bytes */*|	308|-|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd
+strict/retries	strict	upload	bytes 0-1/4|ab;bytes 0-1/4|AB;bytes 1-3/4|Xcd;bytes */4|;bytes 0-3/4|abcd	308|bytes=0-1|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd;400|-|-
+strict/gap	strict	upload	bytes 1-2/4|bc;bytes */*|;bytes 0-3/4|abcd	400|-|upload offset mismatch, expected 0;308|-|-;200|-|abcd
+strict/body-mismatch	strict	upload	bytes 0-3/4|xy;bytes */*|;bytes 0-3/4|abcd	400|-|Content-Range spans 4 bytes but the body has 2;308|-|-;200|-|abcd
+strict/beyond-total	strict	upload	bytes 0-3/3|abcd;bytes */*|	400|-|Content-Range exceeds the declared total;308|-|-
+strict/invalid	strict	upload	bytes 3-2/*|;bytes 0-18446744073709551615/*|;items 0-1/2|ab;bytes */*|	400|-|invalid Content-Range "bytes 3-2/*";400|-|invalid Content-Range "bytes 0-18446744073709551615/*";400|-|invalid Content-Range "items 0-1/2";308|-|-
+strict/changed-total	strict	upload	bytes 0-1/4|ab;bytes 2-3/5|cd;bytes */*|	308|bytes=0-1|-;400|-|upload size mismatch;308|bytes=0-1|-
+strict/absent-header	strict	upload	-|abcd;bytes */*|	200|-|abcd;200|-|abcd
+strict/short-final	strict	upload	bytes 0-1/4|ab;bytes 2-*/4|c;bytes */*|	308|bytes=0-1|-;400|-|upload size mismatch;499|-|-
+strict/long-final	strict	upload	bytes 0-*/2|abc;bytes */*|	400|-|upload size mismatch;499|-|-
+strict/empty	strict	upload	bytes 0-*/*|;bytes */*|	200|-|;200|-|
+emulator/one/known	emulator	upload	bytes */4|;bytes 0-3/4|abcd;bytes */4|	308|-|-;200|-|abcd;200|-|abcd
+emulator/one/unknown	emulator	upload	bytes */*|;bytes 0-*/*|abcd;bytes */*|	308|-|-;200|-|abcd;200|-|abcd
+emulator/two/known	emulator	upload	bytes */4|;bytes 0-1/4|ab;bytes 2-3/4|cd;bytes */4|	308|-|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd
+emulator/two/unknown	emulator	upload	bytes */*|;bytes 0-1/*|ab;bytes 2-*/*|cd;bytes */*|	308|-|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd
+emulator/retries	emulator	upload	bytes 0-1/4|ab;bytes 0-1/4|AB;bytes 1-3/4|Xcd;bytes */4|;bytes 0-3/4|abcd	308|bytes=0-1|-;308|bytes=0-1|-;200|-|abcd;200|-|abcd;400|-|-
+emulator/gap	emulator	upload	bytes 1-2/4|bc;bytes */*|;bytes 0-3/4|abcd	400|-|upload offset mismatch, expected 0;308|-|-;200|-|abcd
+emulator/body-mismatch	emulator	upload	bytes 0-3/4|xy;bytes */*|;bytes 0-3/4|abcd	400|-|Content-Range spans 4 bytes but the body has 2;308|-|-;200|-|abcd
+emulator/beyond-total	emulator	upload	bytes 0-3/3|abcd;bytes */*|	400|-|Content-Range exceeds the declared total;308|-|-
+emulator/invalid	emulator	upload	bytes 3-2/*|;bytes 0-18446744073709551615/*|;items 0-1/2|ab;bytes */*|	400|-|invalid Content-Range "bytes 3-2/*";400|-|invalid Content-Range "bytes 0-18446744073709551615/*";400|-|invalid Content-Range "items 0-1/2";308|-|-
+emulator/changed-total	emulator	upload	bytes 0-1/4|ab;bytes 2-3/5|cd;bytes */*|	308|bytes=0-1|-;400|-|upload size mismatch;308|bytes=0-1|-
+emulator/absent-header	emulator	upload	-|abcd;bytes */*|	200|-|abcd;200|-|abcd
+emulator/short-final	emulator	upload	bytes 0-1/4|ab;bytes 2-*/4|c;bytes */*|	308|bytes=0-1|-;400|-|upload size mismatch;499|-|-
+emulator/long-final	emulator	upload	bytes 0-*/2|abc;bytes */*|	400|-|upload size mismatch;499|-|-
+emulator/empty	emulator	upload	bytes 0-*/*|;bytes */*|	200|-|;200|-|
