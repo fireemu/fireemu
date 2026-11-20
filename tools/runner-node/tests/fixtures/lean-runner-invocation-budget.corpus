@@ -1,0 +1,29 @@
+# count|bytes|trace|operations|snapshots
+1|3|count|reserve,p,a,1;reserve,q,b,1;reserve,r,c,1;release,p|ok:1:1:false;active invocation count:1:1:true;closed:1:1:true;ok:0:0:true
+1|3|bytes|reserve,p,a,3;reserve,q,b,3;reserve,r,c,1;release,p;release,q|ok:1:3:false;active invocation count:1:3:true;closed:1:3:true;ok:0:0:true;ok:0:0:true
+1|3|duplicate|reserve,p,a,3;reserve,q,a,12;reserve,r,c,1;release,p|ok:1:3:false;duplicate active invocation:1:3:true;closed:1:3:true;ok:0:0:true
+1|3|reuse|reserve,p,a,3;release,p;reserve,q,a,2;release,p;release,q;release,q|ok:1:3:false;ok:0:0:false;ok:1:2:false;ok:1:2:false;ok:0:0:false;ok:0:0:false
+1|3|zero|reserve,p,a,0;reserve,q,b,1;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+1|3|empty|reserve,p,-,1;reserve,q,a,2;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+1|3|oversize|reserve,p,a,1;reserve,q,a,16777217;reserve,r,b,0;release,p|ok:1:1:false;invocation accounting:1:1:true;closed:1:1:true;ok:0:0:true
+1|8|count|reserve,p,a,1;reserve,q,b,1;reserve,r,c,1;release,p|ok:1:1:false;active invocation count:1:1:true;closed:1:1:true;ok:0:0:true
+1|8|bytes|reserve,p,a,3;reserve,q,b,3;reserve,r,c,1;release,p;release,q|ok:1:3:false;active invocation count:1:3:true;closed:1:3:true;ok:0:0:true;ok:0:0:true
+1|8|duplicate|reserve,p,a,3;reserve,q,a,12;reserve,r,c,1;release,p|ok:1:3:false;duplicate active invocation:1:3:true;closed:1:3:true;ok:0:0:true
+1|8|reuse|reserve,p,a,3;release,p;reserve,q,a,2;release,p;release,q;release,q|ok:1:3:false;ok:0:0:false;ok:1:2:false;ok:1:2:false;ok:0:0:false;ok:0:0:false
+1|8|zero|reserve,p,a,0;reserve,q,b,1;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+1|8|empty|reserve,p,-,1;reserve,q,a,2;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+1|8|oversize|reserve,p,a,1;reserve,q,a,16777217;reserve,r,b,0;release,p|ok:1:1:false;invocation accounting:1:1:true;closed:1:1:true;ok:0:0:true
+2|3|count|reserve,p,a,1;reserve,q,b,1;reserve,r,c,1;release,p|ok:1:1:false;ok:2:2:false;active invocation count:2:2:true;ok:1:1:true
+2|3|bytes|reserve,p,a,3;reserve,q,b,3;reserve,r,c,1;release,p;release,q|ok:1:3:false;active invocation bytes:1:3:true;closed:1:3:true;ok:0:0:true;ok:0:0:true
+2|3|duplicate|reserve,p,a,3;reserve,q,a,12;reserve,r,c,1;release,p|ok:1:3:false;duplicate active invocation:1:3:true;closed:1:3:true;ok:0:0:true
+2|3|reuse|reserve,p,a,3;release,p;reserve,q,a,2;release,p;release,q;release,q|ok:1:3:false;ok:0:0:false;ok:1:2:false;ok:1:2:false;ok:0:0:false;ok:0:0:false
+2|3|zero|reserve,p,a,0;reserve,q,b,1;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+2|3|empty|reserve,p,-,1;reserve,q,a,2;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+2|3|oversize|reserve,p,a,1;reserve,q,a,16777217;reserve,r,b,0;release,p|ok:1:1:false;invocation accounting:1:1:true;closed:1:1:true;ok:0:0:true
+2|8|count|reserve,p,a,1;reserve,q,b,1;reserve,r,c,1;release,p|ok:1:1:false;ok:2:2:false;active invocation count:2:2:true;ok:1:1:true
+2|8|bytes|reserve,p,a,3;reserve,q,b,3;reserve,r,c,1;release,p;release,q|ok:1:3:false;ok:2:6:false;active invocation count:2:6:true;ok:1:3:true;ok:0:0:true
+2|8|duplicate|reserve,p,a,3;reserve,q,a,12;reserve,r,c,1;release,p|ok:1:3:false;duplicate active invocation:1:3:true;closed:1:3:true;ok:0:0:true
+2|8|reuse|reserve,p,a,3;release,p;reserve,q,a,2;release,p;release,q;release,q|ok:1:3:false;ok:0:0:false;ok:1:2:false;ok:1:2:false;ok:0:0:false;ok:0:0:false
+2|8|zero|reserve,p,a,0;reserve,q,b,1;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+2|8|empty|reserve,p,-,1;reserve,q,a,2;release,p|invocation accounting:0:0:true;closed:0:0:true;ok:0:0:true
+2|8|oversize|reserve,p,a,1;reserve,q,a,16777217;reserve,r,b,0;release,p|ok:1:1:false;invocation accounting:1:1:true;closed:1:1:true;ok:0:0:true

@@ -1,0 +1,9 @@
+name = "runner-log-bounds"
+defaultTargets = ["RunnerLogBounds", "corpus"]
+
+[[lean_lib]]
+name = "RunnerLogBounds"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

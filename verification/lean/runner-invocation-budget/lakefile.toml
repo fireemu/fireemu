@@ -1,0 +1,9 @@
+name = "runner-invocation-budget"
+defaultTargets = ["RunnerInvocationBudget", "corpus"]
+
+[[lean_lib]]
+name = "RunnerInvocationBudget"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

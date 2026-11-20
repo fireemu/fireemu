@@ -1,0 +1,9 @@
+name = "runner-parameter-defaults"
+defaultTargets = ["RunnerParameterDefaults", "corpus"]
+
+[[lean_lib]]
+name = "RunnerParameterDefaults"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
