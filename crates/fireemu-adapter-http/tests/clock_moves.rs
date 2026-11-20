@@ -962,3 +962,18 @@ fn preview_matches_the_pict_move_mode_and_validation_rows() {
         }
     }
 }
+
+#[test]
+fn previewing_zero_legacy_duration_leaves_the_clock_at_its_current_instant() {
+    let s = state(None);
+    let before = s.clock.lock().unwrap().snapshot();
+    for body in [json!({"seconds": 0}), json!({"millis": 0})] {
+        let preview = post(
+            &s,
+            "clock:preview",
+            &json!({"action": "advance", "move": body}),
+        );
+        assert_eq!(clock_of(&preview), "2026-01-31T10:00:00Z");
+        assert_eq!(s.clock.lock().unwrap().snapshot(), before);
+    }
+}
