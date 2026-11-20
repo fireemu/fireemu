@@ -1,0 +1,9 @@
+name = "app-check-registry"
+defaultTargets = ["AppCheckRegistryModel", "corpus"]
+
+[[lean_lib]]
+name = "AppCheckRegistryModel"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

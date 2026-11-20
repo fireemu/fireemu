@@ -1,0 +1,9 @@
+name = "auth-user-pagination"
+defaultTargets = ["AuthUserPagination", "corpus"]
+
+[[lean_lib]]
+name = "AuthUserPagination"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
