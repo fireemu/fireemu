@@ -3335,22 +3335,27 @@ fn distinct_rows(
     unrecorded: Unrecorded,
     runtime: &RuntimeContext,
 ) -> Result<Vec<Row>, EvalError> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
+    let mut seen = BTreeMap::new();
     for row in rows {
         let key = GroupKey(key_values(row, aliases, unrecorded, "distinct", runtime)?);
-        if seen.contains(&key) {
-            continue;
-        }
-        let fields = aliases
-            .iter()
-            .map(|(name, _)| name.clone())
-            .zip(key.0.iter().cloned())
-            .collect();
-        seen.insert(key);
-        out.push(Row::derived(fields));
+        let next = seen.len();
+        seen.entry(key).or_insert(next);
     }
-    Ok(out)
+    let mut keys = vec![Vec::new(); seen.len()];
+    for (GroupKey(key), position) in seen {
+        keys[position] = key;
+    }
+    Ok(keys
+        .into_iter()
+        .map(|key| {
+            let fields = aliases
+                .iter()
+                .map(|(name, _)| name.clone())
+                .zip(key)
+                .collect();
+            Row::derived(fields)
+        })
+        .collect())
 }
 
 /// The state of one accumulator over one group.
@@ -3609,12 +3614,12 @@ fn aggregate_rows(
         order.push((Vec::new(), start()));
     }
     for row in rows {
-        let key = key_values(row, groups, unrecorded, "aggregate", runtime)?;
         let at = if groups.is_empty() {
             0
         } else {
-            *index.entry(GroupKey(key.clone())).or_insert_with(|| {
-                order.push((key, start()));
+            let key = GroupKey(key_values(row, groups, unrecorded, "aggregate", runtime)?);
+            *index.entry(key).or_insert_with(|| {
+                order.push((Vec::new(), start()));
                 order.len() - 1
             })
         };
@@ -3628,6 +3633,9 @@ fn aggregate_rows(
                 recorded_nested_sum_wrong_type,
             )?;
         }
+    }
+    for (GroupKey(key), position) in index {
+        order[position].0 = key;
     }
     order
         .into_iter()

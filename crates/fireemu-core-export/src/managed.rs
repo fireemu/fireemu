@@ -18,6 +18,7 @@
 //! stores them by name, so an export fireemu writes is production's layout with its fields in
 //! name order. Both are read the same way.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use fireemu_core_firestore::value::Value;
@@ -26,7 +27,7 @@ use crate::firestore::{
     read_entity, read_entity_database, write_managed_entity, ExportDocument, FirestoreExportError,
     PartitionMetadata,
 };
-use crate::leveldb::{read_log, write_log};
+use crate::leveldb::{read_log, write_log, LogWriter};
 use crate::wire::{Reader, WireType, Writer};
 
 /// Which documents one partition holds.
@@ -279,30 +280,52 @@ pub fn write_managed_export(
     let mut files = Vec::new();
     let mut overall = vec![vec![0x33_u8]];
     let (mut total_documents, mut total_bytes) = (0_u64, 0_u64);
+    // Keep references only for requested kinds. Rows remain in document order within each
+    // kind, and repeated filters still produce their own partitions in request order. For
+    // small inputs or a few filters, a linear scan costs less than building a lookup table.
+    let use_groups =
+        namespace_ids.is_empty() && collection_ids.len() >= 16 && documents.len() >= 512;
+    let grouped = use_groups.then(|| {
+        let mut grouped: BTreeMap<&str, Vec<&ExportDocument>> = collection_ids
+            .iter()
+            .map(|kind| (kind.as_str(), Vec::new()))
+            .collect();
+        for document in documents {
+            if let Some(selected) = grouped.get_mut(collection_group(document)) {
+                selected.push(document);
+            }
+        }
+        grouped
+    });
     // Production numbers the output files across the partitions of one export.
     for (ordinal, partition) in partitions(collection_ids, namespace_ids)
         .into_iter()
         .enumerate()
     {
         let output_name = format!("output-{ordinal}");
-        let selected: Vec<&ExportDocument> = documents
-            .iter()
-            .filter(|d| match &partition {
-                Partition::AllKinds => true,
-                Partition::Kind(kind) => collection_group(d) == kind,
-                Partition::Namespace(_) => false,
-            })
-            .collect();
-        let records: Vec<Vec<u8>> = selected
-            .iter()
-            .map(|d| write_managed_entity(d, database))
-            .collect::<Result<_, _>>()?;
-        let bytes: u64 = records.iter().map(|r| r.len() as u64).sum();
-        let output = if records.is_empty() {
-            Vec::new()
-        } else {
-            write_log(&records)
+        let selected = match (&partition, &grouped) {
+            (Partition::Kind(kind), Some(grouped)) => {
+                Cow::Borrowed(grouped[kind.as_str()].as_slice())
+            }
+            _ => Cow::Owned(
+                documents
+                    .iter()
+                    .filter(|document| match &partition {
+                        Partition::AllKinds => true,
+                        Partition::Kind(kind) => collection_group(document) == kind,
+                        Partition::Namespace(_) => false,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
         };
+        let mut output = LogWriter::new(Vec::new());
+        let mut bytes = 0;
+        for document in selected.iter() {
+            let record = write_managed_entity(document, database)?;
+            bytes += record.len() as u64;
+            output.push(&record).expect("writing to a Vec cannot fail");
+        }
+        let (output, _) = output.finish();
         let count = selected.len() as u64;
         files.push((
             partition.metadata_file(),

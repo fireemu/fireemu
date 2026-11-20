@@ -189,8 +189,32 @@ impl hyper::body::Body for ProxyBody {
     }
 }
 
+struct Rule {
+    data: Value,
+    matcher: matcher::RuleMatcher,
+}
+
+impl Rule {
+    fn take(data: &mut Value, name: &str) -> Vec<Self> {
+        let Some(Value::Array(rules)) = data.as_object_mut().and_then(|data| data.remove(name))
+        else {
+            return Vec::new();
+        };
+        rules
+            .into_iter()
+            .map(|data| Self {
+                matcher: matcher::RuleMatcher::prepare(&data),
+                data,
+            })
+            .collect()
+    }
+}
+
 struct Site {
     data: Value,
+    redirects: Vec<Rule>,
+    rewrites: Vec<Rule>,
+    headers: Vec<Rule>,
     /// `None` when the public directory does not exist: every asset lookup misses.
     root: Option<Arc<cap_std::fs::Dir>>,
     public_root: String,
@@ -365,23 +389,18 @@ impl Site {
             .and_then(Value::as_array)
             .map_or(&[], Vec::as_slice)
     }
-    fn matches(&self, rule: &Value, path: &str) -> bool {
-        if self.strict {
-            matcher::matches_production(rule, path)
-        } else {
-            matcher::matches(rule, path)
-        }
-    }
     fn custom_headers(&self, path: &str, response: &mut Response<Body>) {
         self.custom_headers_with(path, response, HeaderPolicy::All);
     }
     fn custom_headers_with(&self, path: &str, response: &mut Response<Body>, policy: HeaderPolicy) {
+        let path = matcher::MatchPath::new(path);
         for rule in self
-            .rules("headers")
+            .headers
             .iter()
-            .filter(|rule| self.matches(rule, path))
+            .filter(|rule| rule.matcher.matches(&path, self.strict))
         {
             for header in rule
+                .data
                 .get("headers")
                 .and_then(Value::as_array)
                 .into_iter()
@@ -888,12 +907,16 @@ impl Site {
         } else {
             path == "/__/firebase/init.json" || path == "/__/firebase/init.js" || sdk
         };
-        for rule in self.rules("redirects").iter().filter(|_| !reserved) {
-            match configured_redirect(rule, &decoded, &path, &query, self.strict) {
+        let redirect_path = matcher::MatchPath::new(&decoded);
+        for rule in self.redirects.iter().filter(|_| !reserved) {
+            match configured_redirect_with(&rule.data, &decoded, &path, &query, self.strict, || {
+                rule.matcher.matches(&redirect_path, self.strict)
+            }) {
                 None => {}
                 Some(Err(())) => return self.bad_request(),
                 Some(Ok(location)) => {
                     let status = rule
+                        .data
                         .get("type")
                         .and_then(Value::as_u64)
                         .and_then(|v| u16::try_from(v).ok())
@@ -1177,10 +1200,12 @@ impl Site {
         if let Some(answer) = self.association_response(path, head) {
             return answer;
         }
+        let rewrite_path = matcher::MatchPath::new(path);
         if let Some(rule) = self
-            .rules("rewrites")
+            .rewrites
             .iter()
-            .find(|rule| self.matches(rule, path))
+            .find(|rule| rule.matcher.matches(&rewrite_path, self.strict))
+            .map(|rule| &rule.data)
         {
             if let Some(destination) = rule["destination"].as_str() {
                 if let Some((file, asset)) = self.asset(destination, &hyper::HeaderMap::new()).await
@@ -1404,14 +1429,15 @@ fn encode_redirect_uri(value: &str) -> String {
 }
 
 /// The `Location` of a matching configured redirect, `Err` for a malformed query.
-fn configured_redirect(
+fn configured_redirect_with(
     rule: &Value,
     decoded: &str,
     raw: &str,
     query: &str,
     strict: bool,
+    matches: impl FnOnce() -> bool,
 ) -> Option<Result<String, ()>> {
-    let (authority, mut destination) = redirect_destination(rule, decoded, raw, strict)?;
+    let (authority, mut destination) = redirect_destination(rule, decoded, raw, strict, matches)?;
     if strict {
         // Production appends the query as sent (`v01.edge-1-11`: `x=%5c` stays lowercase) and
         // folds the runs of slashes a decoded capture can leave (`v01.edge-1-03`: `%2f` -> `/`).
@@ -1551,6 +1577,7 @@ fn redirect_destination(
     path: &str,
     raw: &str,
     strict: bool,
+    matches: impl FnOnce() -> bool,
 ) -> Option<(String, String)> {
     let destination = rule.get("destination")?.as_str()?;
     if strict
@@ -1613,12 +1640,7 @@ fn redirect_destination(
             ));
         }
     }
-    let matched = if strict {
-        matcher::matches_production(rule, path)
-    } else {
-        matcher::matches(rule, path)
-    };
-    matched.then(|| (authority.to_owned(), destination.to_owned()))
+    matches().then(|| (authority.to_owned(), destination.to_owned()))
 }
 
 /// A site whose configured root has been acquired before readiness publication.
@@ -1663,9 +1685,16 @@ pub fn prepare(
             public_root.push(component.as_os_str());
         }
     }
+    let mut data = config.data;
+    let redirects = Rule::take(&mut data, "redirects");
+    let rewrites = Rule::take(&mut data, "rewrites");
+    let headers = Rule::take(&mut data, "headers");
     Ok(PreparedSite(Arc::new(Site {
         public_root: public_root.to_string_lossy().replace('\\', "/"),
-        data: config.data,
+        data,
+        redirects,
+        rewrites,
+        headers,
         root,
         project,
         upstream,
@@ -1709,6 +1738,19 @@ mod redirect_tests {
             Config::parse_many(&json!([]), Path::new("/project")),
             Err("hosting must contain at least one site".to_owned())
         );
+    }
+
+    fn configured_redirect(
+        rule: &Value,
+        decoded: &str,
+        path: &str,
+        query: &str,
+        strict: bool,
+    ) -> Option<Result<String, ()>> {
+        let matcher = matcher::RuleMatcher::prepare(rule);
+        configured_redirect_with(rule, decoded, path, query, strict, || {
+            matcher.matches(&matcher::MatchPath::new(decoded), strict)
+        })
     }
 
     fn location(destination: &str, raw_path: &str, raw_query: &str) -> Option<Result<String, ()>> {
@@ -1981,6 +2023,9 @@ mod i18n_path_tests {
     fn site(root: &str) -> Site {
         Site {
             data: json!({"i18n": {"root": root}}),
+            redirects: Vec::new(),
+            rewrites: Vec::new(),
+            headers: Vec::new(),
             root: None,
             public_root: "/public".to_owned(),
             project: "demo".to_owned(),

@@ -16,3 +16,6 @@ import CoreJson.Theorems
 
 /-- info: 'CoreJson.deep_values_fail_before_dispatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms CoreJson.deep_values_fail_before_dispatch
+
+/-- info: 'CoreJson.literal_run_fusion' depends on axioms: [propext] -/
+#guard_msgs in #print axioms CoreJson.literal_run_fusion

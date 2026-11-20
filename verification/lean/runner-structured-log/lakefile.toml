@@ -1,0 +1,9 @@
+name = "runner-structured-log"
+defaultTargets = ["RunnerStructuredLog", "corpus"]
+
+[[lean_lib]]
+name = "RunnerStructuredLog"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

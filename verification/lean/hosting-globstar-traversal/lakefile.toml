@@ -1,0 +1,10 @@
+name = "hosting_globstar_traversal"
+version = "0.1.0"
+defaultTargets = ["HostingGlobstarTraversal"]
+
+[[lean_lib]]
+name = "HostingGlobstarTraversal"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

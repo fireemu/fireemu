@@ -283,17 +283,27 @@ impl Parser<'_> {
                 }
                 0x00..=0x1F => return Err(self.err("no control characters in strings")),
                 _ => {
-                    // `parse` receives a valid &str, so there is no need to validate
-                    // the entire remaining input for every scalar (quadratic work).
-                    // `get` still checks that the cursor is on a UTF-8 boundary;
-                    // no unchecked conversion or loss replacement is needed.
-                    let rest = self
+                    // A UTF-8 continuation byte cannot be one of these ASCII delimiters.
+                    // Starting on a boundary, the next delimiter or EOF is also a boundary.
+                    let start = self.pos;
+                    let run = &self.src[start..];
+                    let delimiter = |byte| byte < 0x20 || matches!(byte, b'"' | b'\\');
+                    if b.is_ascii() && run.get(1).is_none_or(|&next| delimiter(next)) {
+                        out.push(char::from(b));
+                        self.pos += 1;
+                        continue;
+                    }
+                    let len = run[1..]
+                        .iter()
+                        .position(|&byte| delimiter(byte))
+                        .map_or(run.len(), |end| end + 1);
+                    let end = start + len;
+                    let text = self
                         .text
-                        .get(self.pos..)
+                        .get(start..end)
                         .ok_or_else(|| self.err("valid UTF-8"))?;
-                    let c = rest.chars().next().ok_or_else(|| self.err("a character"))?;
-                    out.push(c);
-                    self.pos += c.len_utf8();
+                    out.push_str(text);
+                    self.pos = end;
                 }
             }
         }

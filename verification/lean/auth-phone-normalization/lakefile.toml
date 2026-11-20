@@ -1,0 +1,9 @@
+name = "auth-phone-normalization"
+defaultTargets = ["AuthPhoneNormalization", "corpus"]
+
+[[lean_lib]]
+name = "AuthPhoneNormalization"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

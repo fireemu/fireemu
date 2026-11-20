@@ -34,7 +34,17 @@ def fnv (bytes : List UInt8) : UInt64 :=
   bytes.foldl fnvStep 0xcbf29ce484222325
 
 def keyHash (salt : String) (key : Key) : UInt64 :=
-  fnv (salt.toUTF8.toList ++ (relative key).toUTF8.toList)
+  fnv (salt.toUTF8.data.toList ++ (relative key).toUTF8.data.toList)
+
+def hashRelative (state : UInt64) : List String → UInt64
+  | [] => state
+  | [part] => part.toUTF8.data.toList.foldl fnvStep state
+  | part :: next :: rest =>
+    let state := part.toUTF8.data.toList.foldl fnvStep state
+    hashRelative (fnvStep state 47) (next :: rest)
+
+def streamingKeyHash (salt : String) (key : Key) : UInt64 :=
+  hashRelative (fnv salt.toUTF8.data.toList) key.parts
 
 def sampled (key : Key) : Bool := keyHash "sample" key % 141 == 0
 

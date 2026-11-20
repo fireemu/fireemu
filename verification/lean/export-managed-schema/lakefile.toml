@@ -1,0 +1,9 @@
+name = "export-managed-schema"
+defaultTargets = ["ExportManagedSchema", "corpus"]
+
+[[lean_lib]]
+name = "ExportManagedSchema"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

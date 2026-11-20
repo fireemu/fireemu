@@ -1,0 +1,9 @@
+name = "pubsub-snapshot-lifetime"
+defaultTargets = ["PubsubSnapshotLifetime", "corpus"]
+
+[[lean_lib]]
+name = "PubsubSnapshotLifetime"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

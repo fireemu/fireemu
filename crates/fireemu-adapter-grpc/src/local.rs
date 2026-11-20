@@ -5368,8 +5368,19 @@ impl LocalBackend {
                 version,
             ))
         })?;
-        let cursors: Vec<pb::Cursor> = paths
+        let len = paths.len();
+        if start > len {
+            return Err(Status::invalid_argument("invalid page_token"));
+        }
+        let page = usize::try_from(req.page_size)
+            .ok()
+            .filter(|n| *n > 0)
+            .unwrap_or(len.max(1));
+        let end = (start + page).min(len);
+        let partitions = paths
             .into_iter()
+            .skip(start)
+            .take(end - start)
             .map(|path| pb::Cursor {
                 values: vec![pb::Value {
                     value_type: Some(pb::value::ValueType::ReferenceValue(path.resource_name())),
@@ -5377,17 +5388,9 @@ impl LocalBackend {
                 before: false,
             })
             .collect();
-        if start > cursors.len() {
-            return Err(Status::invalid_argument("invalid page_token"));
-        }
-        let page = usize::try_from(req.page_size)
-            .ok()
-            .filter(|n| *n > 0)
-            .unwrap_or(cursors.len().max(1));
-        let end = (start + page).min(cursors.len());
         Ok(pb::PartitionQueryResponse {
-            partitions: cursors[start..end].to_vec(),
-            next_page_token: if end < cursors.len() {
+            partitions,
+            next_page_token: if end < len {
                 format!("{}:{}:{end}", version.value(), bound(version.value()))
             } else {
                 String::new()

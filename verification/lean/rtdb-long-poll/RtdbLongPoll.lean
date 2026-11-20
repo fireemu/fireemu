@@ -162,6 +162,14 @@ theorem drainDoesNotRewind (fuel : Nat) (s final : State) (messages : List Strin
           rw [← h.1]
           omega
 
+theorem readySuffixAgrees (present : Nat → Bool) (checkedPrefix suffix : List Nat)
+    (checked : checkedPrefix.all present = true) :
+    (checkedPrefix ++ suffix).all present = suffix.all present := by
+  simp [List.all_append, checked]
+
+/-- info: 'RtdbLongPoll.readySuffixAgrees' depends on axioms: [propext] -/
+#guard_msgs in #print axioms readySuffixAgrees
+
 /-- info: 'RtdbLongPoll.duplicatesKeepState' depends on axioms: [propext] -/
 #guard_msgs in #print axioms duplicatesKeepState
 /-- info: 'RtdbLongPoll.saveWithinLimits' depends on axioms: [propext] -/

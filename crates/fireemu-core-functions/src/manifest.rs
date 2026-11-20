@@ -1,6 +1,6 @@
 //! The canonical function manifest (spec 12.3) and trigger matching.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use crate::cron::Schedule;
@@ -1100,6 +1100,88 @@ pub struct FirestoreMatch<'a> {
     pub params: BTreeMap<String, String>,
 }
 
+/// An immutable runtime manifest with a Firestore trigger index for larger codebases.
+///
+/// Owning the manifest keeps positions valid. The runtime can reuse this view for reloads
+/// with equal manifests and construct a new view when it builds a new runtime.
+#[derive(Debug)]
+pub struct FirestoreDispatchManifest {
+    manifest: FunctionManifest,
+    positions_by_database: Option<HashMap<String, Vec<usize>>>,
+}
+
+impl FirestoreDispatchManifest {
+    /// Prepares the dispatch view. Small manifests keep the direct scan.
+    #[must_use]
+    pub fn new(manifest: FunctionManifest) -> Self {
+        const SCAN_LIMIT: usize = 64;
+        let positions_by_database = (manifest.functions.len() > SCAN_LIMIT).then(|| {
+            let mut positions = HashMap::<String, Vec<usize>>::new();
+            for (index, function) in manifest.functions.iter().enumerate() {
+                if let Trigger::Firestore { database, .. } = &function.trigger {
+                    positions.entry(database.clone()).or_default().push(index);
+                }
+            }
+            positions
+        });
+        Self {
+            manifest,
+            positions_by_database,
+        }
+    }
+
+    /// Returns the matching Firestore functions in source order with their path parameters.
+    #[must_use]
+    pub fn firestore_matches(
+        &self,
+        database: &str,
+        path: &str,
+        actual: DocumentEvent,
+    ) -> Vec<FirestoreMatch<'_>> {
+        let Some(positions) = &self.positions_by_database else {
+            return self.manifest.firestore_matches(database, path, actual);
+        };
+        let Some(candidates) = positions.get(database) else {
+            return Vec::new();
+        };
+        candidates
+            .iter()
+            .filter_map(|index| {
+                firestore_match(&self.manifest.functions[*index], None, path, actual)
+            })
+            .collect()
+    }
+}
+
+impl std::ops::Deref for FirestoreDispatchManifest {
+    type Target = FunctionManifest;
+
+    fn deref(&self) -> &Self::Target {
+        &self.manifest
+    }
+}
+
+fn firestore_match<'a>(
+    function: &'a FunctionSpec,
+    database: Option<&str>,
+    path: &str,
+    actual: DocumentEvent,
+) -> Option<FirestoreMatch<'a>> {
+    match &function.trigger {
+        Trigger::Firestore {
+            event,
+            database: declared,
+            document,
+            ..
+        } if database.is_none_or(|database| declared == database) && event.accepts(actual) => {
+            document
+                .matches(path)
+                .map(|params| FirestoreMatch { function, params })
+        }
+        _ => None,
+    }
+}
+
 impl FunctionManifest {
     /// Validates names, uniqueness and limits.
     pub fn validate(&self) -> Result<(), ManifestError> {
@@ -1145,20 +1227,7 @@ impl FunctionManifest {
     ) -> Vec<FirestoreMatch<'_>> {
         self.functions
             .iter()
-            .filter_map(|f| match &f.trigger {
-                Trigger::Firestore {
-                    event,
-                    database: db,
-                    document,
-                    ..
-                } if db == database && event.accepts(actual) => {
-                    document.matches(path).map(|params| FirestoreMatch {
-                        function: f,
-                        params,
-                    })
-                }
-                _ => None,
-            })
+            .filter_map(|f| firestore_match(f, Some(database), path, actual))
             .collect()
     }
 

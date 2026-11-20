@@ -1,0 +1,9 @@
+name = "auth-query-index"
+defaultTargets = ["AuthQueryIndex", "corpus"]
+
+[[lean_lib]]
+name = "AuthQueryIndex"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

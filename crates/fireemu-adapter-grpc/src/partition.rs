@@ -16,13 +16,24 @@ use fireemu_core_firestore::query::{Query, QueryScope};
 /// One key in this many is a partition sample.
 const SAMPLE_ONE_IN: u64 = 141;
 
-/// FNV-1a over `salt` then the document's relative path.
+fn hash_byte(hash: u64, byte: u8) -> u64 {
+    (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+}
+
+/// FNV-1a over `salt` then the UTF-8 bytes of the slash-joined relative path.
 fn key_hash(path: &DocumentPath, salt: &[u8]) -> u64 {
-    salt.iter()
-        .chain(path.relative().as_bytes())
-        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-        })
+    let mut hash = salt.iter().copied().fold(0xcbf2_9ce4_8422_2325, hash_byte);
+    for (index, (collection, document)) in path.pairs().iter().enumerate() {
+        if index > 0 {
+            hash = hash_byte(hash, b'/');
+        }
+        hash = collection.as_str().bytes().fold(hash, hash_byte);
+        hash = document
+            .as_str()
+            .bytes()
+            .fold(hash_byte(hash, b'/'), hash_byte);
+    }
+    hash
 }
 
 /// Whether the sampler picks `path` as a partition point (a test builds a group that splits

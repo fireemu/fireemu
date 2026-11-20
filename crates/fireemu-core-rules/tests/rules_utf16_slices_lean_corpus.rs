@@ -128,3 +128,46 @@ fn concrete_utf16_selections_match_the_lean_model() {
         check_row(row, &context);
     }
 }
+
+#[test]
+fn long_text_preserves_cut_errors_and_empty_interior_slices() {
+    let mut input = vec![u16::from(b'a'); 4096];
+    input.extend([0xd800, 0xdc20, 0xdc21, u16::from(b'z'), 0xd801, 0xdc00]);
+    let input = input
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    let context = RequestContext {
+        service: RulesService::Firestore,
+        method: Method::Get,
+        path: "/databases/(default)/documents/items/example".into(),
+        auth: None,
+        resource: None,
+        request_resource: None,
+        request_query: None,
+        time_unix_nanos: 0,
+        abstract_path: false,
+    };
+    let rows = [
+        ("production", "index", 4096, 0, "fragment:55296"),
+        ("production", "slice", 4097, 4097, "text:"),
+        ("production", "slice", 4097, 4099, "cutPair"),
+        ("production", "slice", 4097, 4103, "invalidRange"),
+        ("production", "slice", 4098, 4100, "text:56353,122"),
+        (
+            "official",
+            "slice",
+            4097,
+            4101,
+            "text:56352,56353,122,55297",
+        ),
+        ("official", "slice", 4102, 4102, "invalidRange"),
+    ];
+    for (profile, operation, lo, hi, expected) in rows {
+        check_row(
+            &format!("{profile}\tlong\t{operation}\tlong\t{lo}\t{hi}\t{input}\t{expected}"),
+            &context,
+        );
+    }
+}

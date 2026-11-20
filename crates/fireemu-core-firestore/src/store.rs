@@ -35,7 +35,9 @@ use crate::query::{
 #[cfg(test)]
 use crate::size::document_size;
 use crate::size::{document_size_bytes, field_value_size};
-use crate::value::{normalize_fields_for_storage, stored_fields_eq, Timestamp, Value, ValueKind};
+use crate::value::{
+    normalize_fields_for_storage, stored_fields_eq, IndexValue, Timestamp, Value, ValueKind,
+};
 
 mod path_indexes;
 #[cfg(test)]
@@ -7205,30 +7207,16 @@ fn apply_transform(
                 Some(Value::Array(a)) => a,
                 _ => Vec::new(),
             };
-            for item in items {
-                let mut item = item.clone();
-                item.normalize_for_storage();
-                if !arr
-                    .iter()
-                    .any(|x| x.canonical_cmp(&item) == Ordering::Equal)
-                {
-                    arr.push(item);
-                }
-            }
+            append_missing_values(&mut arr, items);
             Value::Array(arr)
         }
         TransformKind::RemoveAllFromArray(items) => {
-            let mut items = items.clone();
-            items.iter_mut().for_each(Value::normalize_for_storage);
-            let arr = match current {
+            let mut arr = match current {
                 Some(Value::Array(a)) => a,
                 _ => Vec::new(),
             };
-            Value::Array(
-                arr.into_iter()
-                    .filter(|x| !items.iter().any(|i| i.canonical_cmp(x) == Ordering::Equal))
-                    .collect(),
-            )
+            remove_array_values(&mut arr, items);
+            Value::Array(arr)
         }
     };
     let reported = match t.kind {
@@ -7240,6 +7228,56 @@ fn apply_transform(
     };
     set_field(fields, &t.field, produced);
     Ok(reported)
+}
+
+// Linear membership avoids building a temporary tree for small operands. Budget the
+// repeat comparisons using the initial length plus potential additions for union.
+const ARRAY_INDEX_MIN_COMPARISONS: usize = 4_096;
+
+fn append_missing_values(arr: &mut Vec<Value>, items: &[Value]) {
+    if items.len() > 8
+        && arr
+            .len()
+            .saturating_add(items.len())
+            .saturating_mul(items.len())
+            >= ARRAY_INDEX_MIN_COMPARISONS
+    {
+        let mut items = items.to_vec();
+        items.iter_mut().for_each(Value::normalize_for_storage);
+        // Borrow the exact values while choosing which new representations to keep.
+        let keep: Vec<_> = {
+            let mut seen: BTreeSet<_> = arr.iter().map(IndexValue).collect();
+            items
+                .iter()
+                .map(|item| seen.insert(IndexValue(item)))
+                .collect()
+        };
+        arr.extend(
+            items
+                .into_iter()
+                .zip(keep)
+                .filter_map(|(item, keep)| keep.then_some(item)),
+        );
+    } else {
+        for item in items {
+            let mut item = item.clone();
+            item.normalize_for_storage();
+            if !arr.iter().any(|x| x.canonical_cmp(&item).is_eq()) {
+                arr.push(item);
+            }
+        }
+    }
+}
+
+fn remove_array_values(arr: &mut Vec<Value>, items: &[Value]) {
+    let mut items = items.to_vec();
+    items.iter_mut().for_each(Value::normalize_for_storage);
+    if items.len() > 8 && arr.len().saturating_mul(items.len()) >= ARRAY_INDEX_MIN_COMPARISONS {
+        let remove: BTreeSet<_> = items.iter().map(IndexValue).collect();
+        arr.retain(|value| !remove.contains(&IndexValue(value)));
+    } else {
+        arr.retain(|value| !items.iter().any(|item| item.canonical_cmp(value).is_eq()));
+    }
 }
 
 /// A queried field as execution sees it: borrowed from the stored document, or the

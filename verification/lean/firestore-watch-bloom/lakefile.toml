@@ -1,0 +1,9 @@
+name = "firestore-watch-bloom"
+defaultTargets = ["FirestoreWatchBloom", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreWatchBloom"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

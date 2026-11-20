@@ -1845,20 +1845,14 @@ impl StorageState {
                     continue;
                 }
             }
-            let rest = &name[prefix.len()..];
-            let folded = (!delimiter.is_empty())
-                .then(|| rest.find(delimiter))
-                .flatten()
-                .map(|at| format!("{prefix}{}{delimiter}", &rest[..at]));
-            if folded
-                .as_ref()
-                .is_some_and(|folded| page.prefixes.last() == Some(folded))
+            let folded = Self::folded_list_name(name, prefix, Some(delimiter));
+            if folded.is_some_and(|folded| page.prefixes.last().map(String::as_str) == Some(folded))
             {
                 continue;
             }
             if page.items.len() + page.prefixes.len() == max {
                 page.next = Some(match folded {
-                    Some(folded) => VersionsCursor::Prefix(folded),
+                    Some(folded) => VersionsCursor::Prefix(folded.to_owned()),
                     None => VersionsCursor::Item {
                         name: name.to_owned(),
                         generation: entry.object.generation,
@@ -1867,7 +1861,7 @@ impl StorageState {
                 break;
             }
             match folded {
-                Some(folded) => page.prefixes.push(folded),
+                Some(folded) => page.prefixes.push(folded.to_owned()),
                 None => page.items.push(entry),
             }
         }
@@ -2802,6 +2796,16 @@ impl StorageState {
             .collect()
     }
 
+    fn folded_list_name<'a>(
+        name: &'a str,
+        prefix: &str,
+        delimiter: Option<&str>,
+    ) -> Option<&'a str> {
+        let delimiter = delimiter.filter(|delimiter| !delimiter.is_empty())?;
+        let offset = name[prefix.len()..].find(delimiter)?;
+        Some(&name[..prefix.len() + offset + delimiter.len()])
+    }
+
     /// The page [`Self::list`] answers for `max_results == 0` (the official emulator's empty page:
     /// every folded prefix and a token naming the first object at or after the supplied token),
     /// over the entries `accept(entry, is_prefix)` takes. An entry it refuses is treated exactly as
@@ -2817,19 +2821,7 @@ impl StorageState {
         accept: &dyn Fn(&str, bool) -> bool,
     ) -> ListPage {
         let delimiter = delimiter.filter(|delimiter| !delimiter.is_empty());
-        let fold = |name: &str| {
-            let rest = &name[prefix.len()..];
-            delimiter.and_then(|d| rest.find(d).map(|i| format!("{prefix}{}{d}", &rest[..i])))
-        };
-        self.empty_list_page(
-            bucket,
-            prefix,
-            delimiter,
-            page_token,
-            &|_| true,
-            &fold,
-            accept,
-        )
+        self.empty_list_page(bucket, prefix, delimiter, page_token, &|_| true, accept)
     }
 
     /// [`Self::list`] over the objects whose names `matches` accepts (the JSON API's
@@ -2903,10 +2895,6 @@ impl StorageState {
             .unwrap_or(DEFAULT_LIST_PAGE_SIZE)
             .min(DEFAULT_LIST_PAGE_SIZE);
         let delimiter = delimiter.filter(|delimiter| !delimiter.is_empty());
-        let fold = |name: &str| {
-            let rest = &name[prefix.len()..];
-            delimiter.and_then(|d| rest.find(d).map(|i| format!("{prefix}{}{d}", &rest[..i])))
-        };
         if max == 0 {
             return self.empty_list_page(
                 bucket,
@@ -2914,7 +2902,6 @@ impl StorageState {
                 delimiter,
                 page_token,
                 matches,
-                &fold,
                 &|_, _| true,
             );
         }
@@ -2927,14 +2914,15 @@ impl StorageState {
                 .objects
                 .get(&(bucket.clone(), ObjectName::range_start(token)))
                 .is_some_and(|meta| {
-                    fold(meta.name.as_str()).is_none() && matches(meta.name.as_str())
+                    Self::folded_list_name(meta.name.as_str(), prefix, delimiter).is_none()
+                        && matches(meta.name.as_str())
                 })
             {
                 return true;
             }
             // Every name that starts with a token folding to itself folds to that token, and no
             // name folds to any other token, so only such a token needs the names under it.
-            if fold(token).as_deref() != Some(token) {
+            if Self::folded_list_name(token, prefix, delimiter) != Some(token) {
                 return false;
             }
             self.objects
@@ -2962,9 +2950,11 @@ impl StorageState {
             if !matches(name.as_str()) {
                 continue;
             }
-            let folded = fold(name.as_str());
-            let entry_name = folded.as_deref().unwrap_or(name.as_str());
-            if entry_name < start || folded.as_ref().is_some_and(|p| prefixes.last() == Some(p)) {
+            let folded = Self::folded_list_name(name.as_str(), prefix, delimiter);
+            let entry_name = folded.unwrap_or(name.as_str());
+            if entry_name < start
+                || folded.is_some_and(|p| prefixes.last().map(String::as_str) == Some(p))
+            {
                 continue;
             }
             if entries == max {
@@ -2974,7 +2964,7 @@ impl StorageState {
             entries += 1;
             if let Some(p) = folded {
                 let placeholder = mode.trailing_item && name.as_str() == p;
-                prefixes.push(p);
+                prefixes.push(p.to_owned());
                 if placeholder {
                     items.push(meta.clone());
                 }
@@ -2992,7 +2982,6 @@ impl StorageState {
     /// The page for `max_results == 0`: the official emulator's empty page, with every folded
     /// prefix and a token naming the first accepted object at or after a token that names an
     /// object (else the first accepted object).
-    #[allow(clippy::too_many_arguments)]
     fn empty_list_page(
         &self,
         bucket: &BucketName,
@@ -3000,7 +2989,6 @@ impl StorageState {
         delimiter: Option<&str>,
         page_token: Option<&str>,
         matches: &dyn Fn(&str) -> bool,
-        fold: &dyn Fn(&str) -> Option<String>,
         accept: &dyn Fn(&str, bool) -> bool,
     ) -> ListPage {
         let token_is_item = page_token.is_some_and(|token| {
@@ -3010,7 +2998,7 @@ impl StorageState {
                     let name = metadata.name.as_str();
                     name.starts_with(prefix)
                         && matches(name)
-                        && fold(name).is_none()
+                        && Self::folded_list_name(name, prefix, delimiter).is_none()
                         && accept(name, false)
                 })
         });
@@ -3032,9 +3020,9 @@ impl StorageState {
             if !matches(name.as_str()) {
                 continue;
             }
-            if let Some(folded) = fold(name.as_str()) {
-                if prefixes.last() != Some(&folded) && accept(&folded, true) {
-                    prefixes.push(folded);
+            if let Some(folded) = Self::folded_list_name(name.as_str(), prefix, delimiter) {
+                if prefixes.last().map(String::as_str) != Some(folded) && accept(folded, true) {
+                    prefixes.push(folded.to_owned());
                 }
             } else if name.as_str() >= item_start
                 && next_page_token.is_none()
@@ -3863,22 +3851,18 @@ impl StorageState {
         let lower = (bucket.clone(), ObjectName::range_start(start));
         let mut items = Vec::new();
         let mut prefixes: Vec<String> = Vec::new();
-        let mut last: Option<String> = None;
+        let mut last = None;
         let mut more = false;
         for ((candidate_bucket, name), meta) in self.objects.range(lower..) {
             if candidate_bucket != bucket || !name.as_str().starts_with(prefix) {
                 break;
             }
-            let rest = &name.as_str()[prefix.len()..];
-            let folded =
-                delimiter.and_then(|d| rest.find(d).map(|i| format!("{prefix}{}{d}", &rest[..i])));
-            let entry = folded.clone().unwrap_or_else(|| name.as_str().to_owned());
-            if after.is_some_and(|after| entry.as_str() <= after)
-                || last.as_deref() == Some(entry.as_str())
-            {
+            let folded = Self::folded_list_name(name.as_str(), prefix, delimiter);
+            let entry = folded.unwrap_or(name.as_str());
+            if after.is_some_and(|after| entry <= after) || last == Some(entry) {
                 continue;
             }
-            if !accept(&entry, folded.is_some()) {
+            if !accept(entry, folded.is_some()) {
                 continue;
             }
             if items.len() + prefixes.len() == max {
@@ -3886,7 +3870,7 @@ impl StorageState {
                 break;
             }
             match folded {
-                Some(prefix_entry) => prefixes.push(prefix_entry),
+                Some(prefix_entry) => prefixes.push(prefix_entry.to_owned()),
                 None => items.push(meta.clone()),
             }
             last = Some(entry);
@@ -3894,7 +3878,7 @@ impl StorageState {
         ListPage {
             items,
             prefixes,
-            next_page_token: if more { last } else { None },
+            next_page_token: if more { last.map(str::to_owned) } else { None },
         }
     }
 

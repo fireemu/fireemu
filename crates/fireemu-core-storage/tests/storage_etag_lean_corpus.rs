@@ -16,11 +16,11 @@ fn calculated_etags_follow_the_lean_reference() {
     assert!(count >= 350);
     assert_eq!(rows.clone().count(), count);
     for row in rows {
-        let [kind, generation, metageneration, expected]: [&str; 4] = row
+        let [kind, generation, metageneration, octets]: [&str; 4] = row
             .split('\t')
             .collect::<Vec<_>>()
             .try_into()
-            .expect("kind, generation, metageneration, etag");
+            .expect("kind, generation, metageneration, expected ETag octets");
         let metageneration = metageneration.parse::<u64>().unwrap();
         let actual = match kind {
             "object" => production_etag(generation.parse::<u64>().unwrap(), metageneration),
@@ -30,6 +30,10 @@ fn calculated_etags_follow_the_lean_reference() {
             }
             _ => panic!("unknown etag kind {kind}"),
         };
-        assert_eq!(actual, expected, "fixture {row}");
+        let expected = octets
+            .split('.')
+            .map(|octet| octet.parse::<u8>().expect("expected an ASCII octet"))
+            .collect::<Vec<_>>();
+        assert_eq!(actual.as_bytes(), expected, "fixture {row}");
     }
 }

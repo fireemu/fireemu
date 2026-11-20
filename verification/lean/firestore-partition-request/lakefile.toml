@@ -1,0 +1,9 @@
+name = "firestore-partition-request"
+defaultTargets = ["FirestorePartitionRequest", "corpus"]
+
+[[lean_lib]]
+name = "FirestorePartitionRequest"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -21,7 +21,9 @@ use fireemu_core_events::outbox::Outbox;
 use fireemu_core_events::retry::RetryPolicy;
 use fireemu_core_events::state::{EventState, FailureOutcome};
 use fireemu_core_functions::cron::{RunCount, Schedule};
-use fireemu_core_functions::manifest::{AuthEvent, FunctionManifest, FunctionSpec, Trigger};
+use fireemu_core_functions::manifest::{
+    AuthEvent, FirestoreDispatchManifest, FunctionManifest, FunctionSpec, Trigger,
+};
 use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_storage::store::StorageEvent;
 use fireemu_core_types::determinism::Clock;
@@ -1418,8 +1420,8 @@ pub struct FunctionsRuntime {
     /// Where a first-generation schedule's message goes, when the profile materialises it (see
     /// [`ScheduleTopicPublisher`]).
     schedule_publisher: std::sync::RwLock<Option<Arc<dyn ScheduleTopicPublisher>>>,
-    /// The union of every codebase's manifest.
-    manifest: FunctionManifest,
+    /// The union of every codebase's manifest, prepared for repeated Firestore dispatch.
+    manifest: FirestoreDispatchManifest,
     pub(crate) config: FunctionsConfig,
     profile: FunctionsHttpProfile,
     clock: Arc<Mutex<VirtualClock>>,
@@ -1711,7 +1713,7 @@ impl FunctionsRuntime {
         let runtime = Arc::new(Self {
             _clock_observer: observer,
             task_clock_wake: Notify::new(),
-            manifest,
+            manifest: FirestoreDispatchManifest::new(manifest),
             config,
             profile,
             clock,

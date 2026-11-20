@@ -16622,6 +16622,89 @@ fn strict_admin_query_descending_ties_stay_in_user_id_order() {
 }
 
 #[test]
+fn strict_admin_query_observes_create_and_update_metadata_and_selectors() {
+    let state = strict_state();
+    let create = format!("{ADMIN}/accounts");
+    let update = format!("{ADMIN}/accounts:update");
+    let query = format!("{ADMIN}/accounts:query");
+    for number in 0..24 {
+        let id = format!("query-{number:02}");
+        let (status, body) = admin(
+            &state,
+            "POST",
+            &create,
+            &json!({
+                "localId": id,
+                "email": format!("{id}@example.com"),
+                "displayName": "Created",
+                "phoneNumber": format!("+1202555{number:04}"),
+            }),
+        );
+        assert_eq!(status, 200, "{body}");
+    }
+    for (stage, name, email, phone) in [
+        ("created", "Created", "query-12@example.com", "+12025550012"),
+        ("renamed", "Renamed", "query-12@example.com", "+12025550012"),
+        ("moved", "Renamed", "updated@example.com", "+12025550112"),
+    ] {
+        let patch = match stage {
+            "renamed" => Some(json!({"localId": "query-12", "displayName": name})),
+            "moved" => Some(json!({"localId": "query-12", "email": email, "phoneNumber": phone})),
+            _ => None,
+        };
+        if let Some(patch) = patch {
+            let (status, response) = admin(&state, "POST", &update, &patch);
+            assert_eq!(status, 200, "{response}");
+        }
+
+        for (selector, hit) in [
+            (json!({"email": email.to_ascii_uppercase()}), true),
+            (json!({"phoneNumber": phone}), true),
+            (json!({"userId": "query-12"}), true),
+            (
+                json!({"email": "never@example.com", "userId": "query-12"}),
+                false,
+            ),
+        ] {
+            for (sort, direction) in [("NAME", "DESC"), ("USER_ID", "ASC")] {
+                for return_user_info in [true, false] {
+                    let request = json!({
+                        "expression": [selector, {"userId": "query-00"}],
+                        "sortBy": sort, "order": direction, "returnUserInfo": return_user_info,
+                    });
+                    let (status, response) = admin(&state, "POST", &query, &request);
+                    assert_eq!(status, 200, "{stage}: {request}: {response}");
+                    assert_eq!(
+                        response["recordsCount"],
+                        if hit { "1" } else { "0" },
+                        "{stage}: {request}"
+                    );
+                    if hit && return_user_info {
+                        let user = &response["userInfo"][0];
+                        assert_eq!(user["localId"], "query-12");
+                        assert_eq!(user["displayName"], name);
+                        assert_eq!(user["email"], email);
+                        assert_eq!(user["phoneNumber"], phone);
+                    } else {
+                        assert!(response.get("userInfo").is_none(), "{response}");
+                    }
+                }
+            }
+        }
+    }
+    let (status, response) = admin(
+        &state,
+        "POST",
+        &query,
+        &json!({
+            "expression": [{"email": "query-12@example.com"}],
+        }),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(response, json!({"recordsCount": "0"}));
+}
+
+#[test]
 fn strict_admin_query_all_documented_sorts_apply_before_paging_on_both_routes() {
     let s = query_sort_fixture();
     let before = admin(&s, "POST", &format!("{ADMIN}/accounts:query"), &json!({})).1;

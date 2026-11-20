@@ -30,8 +30,7 @@ export function boundLogMessage(value, maxBytes = MAX_LOG_MESSAGE_BYTES) {
   const bytes = Buffer.from(String(value), "utf8");
   // A UTF-8 round trip replaces lone UTF-16 surrogates while preserving valid pairs. Without
   // this, JSON.stringify emits an escape that serde_json correctly refuses on the protocol side.
-  const message = bytes.toString("utf8");
-  if (bytes.length <= maxBytes) return message;
+  if (bytes.length <= maxBytes) return bytes.toString("utf8");
   const marker = Buffer.from(TRUNCATION_MARKER, "utf8");
   if (maxBytes <= marker.length) return marker.subarray(0, maxBytes).toString("utf8");
   let end = maxBytes - marker.length;
@@ -70,6 +69,9 @@ function isSafeStructuredValue(root) {
 }
 
 function structuredEntry(message, fallbackLevel) {
+  if (message[0] !== "{" && !/^[ \t\r\n]*\{/.test(message)) {
+    return { level: fallbackLevel, message };
+  }
   try {
     const parsed = JSON.parse(message);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {

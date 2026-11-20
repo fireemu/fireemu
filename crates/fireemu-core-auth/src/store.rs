@@ -423,6 +423,30 @@ pub struct UserRecord {
     password: Option<PasswordDigest>,
 }
 
+/// Borrowed account metadata. Exact-query selectors remain in the store's indexed setters.
+pub struct UserMetadataMut<'a> {
+    /// Display name.
+    pub display_name: &'a mut Option<String>,
+    /// Photo URL.
+    pub photo_url: &'a mut Option<String>,
+    /// Account disabled flag.
+    pub disabled: &'a mut bool,
+    /// Email verification flag.
+    pub email_verified: &'a mut bool,
+    /// Current sign-in provider.
+    pub provider: &'a mut Provider,
+    /// Creation or import through the administrator API.
+    pub admin_created: &'a mut bool,
+    /// An account that has signed in with a custom token.
+    pub custom_auth: &'a mut bool,
+    /// An account that has signed in through an email link.
+    pub email_link_signin: &'a mut bool,
+    /// Creation through email-link sign-in.
+    pub email_link_created: &'a mut bool,
+    /// Original address retained by the first applied email change.
+    pub initial_email: &'a mut Option<String>,
+}
+
 /// Field used by the bounded administrator account query.
 ///
 /// The adapter selects the namespace and validates wire enums before using this API.
@@ -461,10 +485,13 @@ pub enum UserQueryExpression {
 impl UserQueryExpression {
     fn matches(&self, user: &UserRecord) -> bool {
         match self {
-            Self::Email(email) => user
-                .email
-                .as_deref()
-                .is_some_and(|value| value.to_lowercase() == email.to_lowercase()),
+            Self::Email(email) => user.email.as_deref().is_some_and(|value| {
+                if value.is_ascii() && email.is_ascii() {
+                    value.eq_ignore_ascii_case(email)
+                } else {
+                    value.to_lowercase() == email.to_lowercase()
+                }
+            }),
             Self::PhoneNumber(phone) => user.phone_number.as_ref() == Some(phone),
             Self::UserId(id) => user.local_id.as_str() == id.as_str(),
         }
@@ -1293,6 +1320,9 @@ pub struct AuthStore {
     /// Phone owners in canonical local-ID order. Imported artifacts may contain duplicates,
     /// so the first owner preserves the previous `BTreeMap` scan result.
     local_ids_for_phone: BTreeMap<String, BTreeSet<LocalId>>,
+    /// Unrestricted mutable records can change a selector without updating its ownership index.
+    /// Only exact administrator queries consult this guard; sign-in ownership is unchanged.
+    query_ownership_indexes_dirty: bool,
     /// Federated identity owners in canonical local-ID order, with the same import-safe
     /// duplicate handling as phone numbers.
     local_ids_for_federated: BTreeMap<(String, String), BTreeSet<LocalId>>,
@@ -1815,6 +1845,7 @@ impl AuthStore {
             local_id_for_email: BTreeMap::new(),
             local_ids_for_email: BTreeMap::new(),
             local_ids_for_phone: BTreeMap::new(),
+            query_ownership_indexes_dirty: false,
             local_ids_for_federated: BTreeMap::new(),
             by_sequence: BTreeMap::new(),
             counter: 0,
@@ -2173,6 +2204,7 @@ impl AuthStore {
         self.local_id_for_email.clear();
         self.local_ids_for_email.clear();
         self.local_ids_for_phone.clear();
+        self.query_ownership_indexes_dirty = false;
         self.local_ids_for_federated.clear();
         self.by_sequence.clear();
         self.refresh_tokens = Arc::new(BTreeMap::new());
@@ -3205,10 +3237,51 @@ impl AuthStore {
         if expressions.is_empty() {
             return self.users.len();
         }
+        if let Some(indexed) = self.indexed_query_ids(expressions) {
+            return indexed.len();
+        }
         self.users
             .values()
             .filter(|user| Self::matches_user_query(user, expressions))
             .count()
+    }
+
+    /// Collect a sparse candidate union in canonical map-key order. Exact predicates can
+    /// use the existing ownership maps while every record's selector fields are indexed.
+    fn indexed_query_ids(&self, expressions: &[UserQueryExpression]) -> Option<BTreeSet<&LocalId>> {
+        let candidate_budget = self.users.len() / 4;
+        if self.query_ownership_indexes_dirty
+            || self.users.len() < 16
+            || expressions.is_empty()
+            || expressions.len() > candidate_budget
+        {
+            return None;
+        }
+
+        let mut candidates = BTreeSet::new();
+        let mut unmerged = expressions.len();
+        for expression in expressions {
+            let owners = match expression {
+                UserQueryExpression::Email(email) => self
+                    .local_ids_for_email
+                    .get(&Self::canonicalize_email(email)),
+                UserQueryExpression::PhoneNumber(phone) => self.local_ids_for_phone.get(phone),
+                UserQueryExpression::UserId(id) => {
+                    candidates.extend(self.users.get_key_value(id.as_str()).map(|(key, _)| key));
+                    continue;
+                }
+            };
+            if let Some(owners) = owners {
+                // Cap the work even if many predicates overlap, or a trusted import contains a
+                // very large number of owners for one selector. The scan handles dense queries.
+                if owners.len() > candidate_budget - unmerged {
+                    return None;
+                }
+                unmerged += owners.len();
+                candidates.extend(owners);
+            }
+        }
+        Some(candidates)
     }
 
     fn matches_user_query(user: &UserRecord, expressions: &[UserQueryExpression]) -> bool {
@@ -3235,26 +3308,10 @@ impl AuthStore {
         if limit == 0 || offset >= self.users.len() {
             return Vec::new();
         }
-        if field == UserSortField::LocalId {
-            if descending {
-                return self
-                    .users
-                    .values()
-                    .rev()
-                    .map(Arc::as_ref)
-                    .filter(|user| Self::matches_user_query(user, expressions))
-                    .skip(offset)
-                    .take(limit)
-                    .collect();
-            }
-            return self
-                .users
-                .values()
-                .map(Arc::as_ref)
-                .filter(|user| Self::matches_user_query(user, expressions))
-                .skip(offset)
-                .take(limit)
-                .collect();
+        if let Some(indexed) = self.indexed_query_ids(expressions) {
+            let keep = offset.saturating_add(limit).min(indexed.len());
+            let matching = indexed.into_iter().map(|key| self.users[key].as_ref());
+            return Self::matching_page(matching, field, offset, limit, descending, keep);
         }
         let keep = offset.saturating_add(limit).min(self.users.len());
         let matching = self
@@ -3262,6 +3319,27 @@ impl AuthStore {
             .values()
             .map(Arc::as_ref)
             .filter(|user| Self::matches_user_query(user, expressions));
+        Self::matching_page(matching, field, offset, limit, descending, keep)
+    }
+
+    fn matching_page<'a>(
+        matching: impl DoubleEndedIterator<Item = &'a UserRecord>,
+        field: UserSortField,
+        offset: usize,
+        limit: usize,
+        descending: bool,
+        keep: usize,
+    ) -> Vec<&'a UserRecord> {
+        if keep == 0 {
+            return Vec::new();
+        }
+        if field == UserSortField::LocalId {
+            return if descending {
+                matching.rev().skip(offset).take(limit).collect()
+            } else {
+                matching.skip(offset).take(limit).collect()
+            };
+        }
         // Ties keep ascending user-id order in both directions: production reverses only the
         // sort field (sandbox recording 2026-09-23, `auth-account/admin/query#sort-name-desc`).
         if descending {
@@ -5395,7 +5473,29 @@ impl AuthStore {
     /// shares it is left untouched (`SNAP-MEM-03`).
     pub fn user_mut(&mut self, uid: &LocalId) -> Option<&mut UserRecord> {
         self.activate_email_owner(uid);
-        self.users.get_mut(uid).map(Arc::make_mut)
+        let user = self.users.get_mut(uid)?;
+        self.query_ownership_indexes_dirty = true;
+        Some(Arc::make_mut(user))
+    }
+
+    /// Borrows metadata without exposing the exact-query selectors. Like the unrestricted
+    /// accessor, this reactivates the account's email ownership before it returns the view
+    /// and leaves any snapshot sharing the record untouched.
+    pub fn user_metadata_mut(&mut self, uid: &LocalId) -> Option<UserMetadataMut<'_>> {
+        self.activate_email_owner(uid);
+        let user = Arc::make_mut(self.users.get_mut(uid)?);
+        Some(UserMetadataMut {
+            display_name: &mut user.display_name,
+            photo_url: &mut user.photo_url,
+            disabled: &mut user.disabled,
+            email_verified: &mut user.email_verified,
+            provider: &mut user.provider,
+            admin_created: &mut user.admin_created,
+            custom_auth: &mut user.custom_auth,
+            email_link_signin: &mut user.email_link_signin,
+            email_link_created: &mut user.email_link_created,
+            initial_email: &mut user.initial_email,
+        })
     }
 
     /// Sets custom claims after the size check.
@@ -12266,6 +12366,44 @@ mod broad_project_number_tests {
         let missing = LocalId("missing".to_owned());
         store.record_refused_sign_up_issuance(&missing, late);
         assert!(store.user(&missing).is_none());
+    }
+
+    #[test]
+    fn restricted_metadata_edits_keep_query_indexes_and_reactivate_email_ownership() {
+        let mut store = AuthStore::new("demo-query", SplitMix64::new(1), TotpPolicy::default());
+        let at = LogicalInstant::UNIX_EPOCH;
+        for number in 0..16 {
+            store
+                .create_user_with_id(NewUser::anonymous(), Some(&format!("user-{number}")), at)
+                .unwrap();
+        }
+        let email = "owner@example.com";
+        let first = store
+            .create_user_with_id(NewUser::email(email), Some("first"), at)
+            .unwrap();
+        let active = store
+            .create_user_with_email_policy(NewUser::email(email), at, false)
+            .unwrap();
+        let before = store.clone();
+
+        *store.user_metadata_mut(&first).unwrap().display_name = Some("renamed".to_owned());
+
+        let selector = [super::UserQueryExpression::Email(email.to_owned())];
+        assert!(store
+            .indexed_query_ids(&selector)
+            .is_some_and(|ids| ids.len() == 2));
+        assert_eq!(store.user_by_email(email).unwrap().local_id, first);
+        assert_eq!(before.user_by_email(email).unwrap().local_id, active);
+        assert_eq!(
+            store.user(&first).unwrap().display_name.as_deref(),
+            Some("renamed")
+        );
+        assert_eq!(before.user(&first).unwrap().display_name, None);
+        assert_eq!(store.matching_user_count(&selector), 2);
+
+        let _ = store.user_mut(&active);
+        let _ = store.user_metadata_mut(&first);
+        assert!(store.indexed_query_ids(&selector).is_none());
     }
 
     #[test]

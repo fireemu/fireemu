@@ -1,0 +1,513 @@
+# scope|strict|limit|offset|projection|start|finish|ordered|result
+collection|off|off|off|off|off|off|off|Query must select all descendant collections.
+collection|off|off|off|off|off|off|on|Query must select all descendant collections.
+collection|off|off|off|off|off|on|off|Query must select all descendant collections.
+collection|off|off|off|off|off|on|on|Query must select all descendant collections.
+collection|off|off|off|off|on|off|off|Query must select all descendant collections.
+collection|off|off|off|off|on|off|on|Query must select all descendant collections.
+collection|off|off|off|off|on|on|off|Query must select all descendant collections.
+collection|off|off|off|off|on|on|on|Query must select all descendant collections.
+collection|off|off|off|on|off|off|off|Query must select all descendant collections.
+collection|off|off|off|on|off|off|on|Query must select all descendant collections.
+collection|off|off|off|on|off|on|off|Query must select all descendant collections.
+collection|off|off|off|on|off|on|on|Query must select all descendant collections.
+collection|off|off|off|on|on|off|off|Query must select all descendant collections.
+collection|off|off|off|on|on|off|on|Query must select all descendant collections.
+collection|off|off|off|on|on|on|off|Query must select all descendant collections.
+collection|off|off|off|on|on|on|on|Query must select all descendant collections.
+collection|off|off|on|off|off|off|off|Query must select all descendant collections.
+collection|off|off|on|off|off|off|on|Query must select all descendant collections.
+collection|off|off|on|off|off|on|off|Query must select all descendant collections.
+collection|off|off|on|off|off|on|on|Query must select all descendant collections.
+collection|off|off|on|off|on|off|off|Query must select all descendant collections.
+collection|off|off|on|off|on|off|on|Query must select all descendant collections.
+collection|off|off|on|off|on|on|off|Query must select all descendant collections.
+collection|off|off|on|off|on|on|on|Query must select all descendant collections.
+collection|off|off|on|on|off|off|off|Query must select all descendant collections.
+collection|off|off|on|on|off|off|on|Query must select all descendant collections.
+collection|off|off|on|on|off|on|off|Query must select all descendant collections.
+collection|off|off|on|on|off|on|on|Query must select all descendant collections.
+collection|off|off|on|on|on|off|off|Query must select all descendant collections.
+collection|off|off|on|on|on|off|on|Query must select all descendant collections.
+collection|off|off|on|on|on|on|off|Query must select all descendant collections.
+collection|off|off|on|on|on|on|on|Query must select all descendant collections.
+collection|off|on|off|off|off|off|off|Query must select all descendant collections.
+collection|off|on|off|off|off|off|on|Query must select all descendant collections.
+collection|off|on|off|off|off|on|off|Query must select all descendant collections.
+collection|off|on|off|off|off|on|on|Query must select all descendant collections.
+collection|off|on|off|off|on|off|off|Query must select all descendant collections.
+collection|off|on|off|off|on|off|on|Query must select all descendant collections.
+collection|off|on|off|off|on|on|off|Query must select all descendant collections.
+collection|off|on|off|off|on|on|on|Query must select all descendant collections.
+collection|off|on|off|on|off|off|off|Query must select all descendant collections.
+collection|off|on|off|on|off|off|on|Query must select all descendant collections.
+collection|off|on|off|on|off|on|off|Query must select all descendant collections.
+collection|off|on|off|on|off|on|on|Query must select all descendant collections.
+collection|off|on|off|on|on|off|off|Query must select all descendant collections.
+collection|off|on|off|on|on|off|on|Query must select all descendant collections.
+collection|off|on|off|on|on|on|off|Query must select all descendant collections.
+collection|off|on|off|on|on|on|on|Query must select all descendant collections.
+collection|off|on|on|off|off|off|off|Query must select all descendant collections.
+collection|off|on|on|off|off|off|on|Query must select all descendant collections.
+collection|off|on|on|off|off|on|off|Query must select all descendant collections.
+collection|off|on|on|off|off|on|on|Query must select all descendant collections.
+collection|off|on|on|off|on|off|off|Query must select all descendant collections.
+collection|off|on|on|off|on|off|on|Query must select all descendant collections.
+collection|off|on|on|off|on|on|off|Query must select all descendant collections.
+collection|off|on|on|off|on|on|on|Query must select all descendant collections.
+collection|off|on|on|on|off|off|off|Query must select all descendant collections.
+collection|off|on|on|on|off|off|on|Query must select all descendant collections.
+collection|off|on|on|on|off|on|off|Query must select all descendant collections.
+collection|off|on|on|on|off|on|on|Query must select all descendant collections.
+collection|off|on|on|on|on|off|off|Query must select all descendant collections.
+collection|off|on|on|on|on|off|on|Query must select all descendant collections.
+collection|off|on|on|on|on|on|off|Query must select all descendant collections.
+collection|off|on|on|on|on|on|on|Query must select all descendant collections.
+collection|on|off|off|off|off|off|off|Query must select all descendant collections.
+collection|on|off|off|off|off|off|on|Query must select all descendant collections.
+collection|on|off|off|off|off|on|off|Query must select all descendant collections.
+collection|on|off|off|off|off|on|on|Query must select all descendant collections.
+collection|on|off|off|off|on|off|off|Query must select all descendant collections.
+collection|on|off|off|off|on|off|on|Query must select all descendant collections.
+collection|on|off|off|off|on|on|off|Query must select all descendant collections.
+collection|on|off|off|off|on|on|on|Query must select all descendant collections.
+collection|on|off|off|on|off|off|off|Query must select all descendant collections.
+collection|on|off|off|on|off|off|on|Query must select all descendant collections.
+collection|on|off|off|on|off|on|off|Query must select all descendant collections.
+collection|on|off|off|on|off|on|on|Query must select all descendant collections.
+collection|on|off|off|on|on|off|off|Query must select all descendant collections.
+collection|on|off|off|on|on|off|on|Query must select all descendant collections.
+collection|on|off|off|on|on|on|off|Query must select all descendant collections.
+collection|on|off|off|on|on|on|on|Query must select all descendant collections.
+collection|on|off|on|off|off|off|off|Query must select all descendant collections.
+collection|on|off|on|off|off|off|on|Query must select all descendant collections.
+collection|on|off|on|off|off|on|off|Query must select all descendant collections.
+collection|on|off|on|off|off|on|on|Query must select all descendant collections.
+collection|on|off|on|off|on|off|off|Query must select all descendant collections.
+collection|on|off|on|off|on|off|on|Query must select all descendant collections.
+collection|on|off|on|off|on|on|off|Query must select all descendant collections.
+collection|on|off|on|off|on|on|on|Query must select all descendant collections.
+collection|on|off|on|on|off|off|off|Query must select all descendant collections.
+collection|on|off|on|on|off|off|on|Query must select all descendant collections.
+collection|on|off|on|on|off|on|off|Query must select all descendant collections.
+collection|on|off|on|on|off|on|on|Query must select all descendant collections.
+collection|on|off|on|on|on|off|off|Query must select all descendant collections.
+collection|on|off|on|on|on|off|on|Query must select all descendant collections.
+collection|on|off|on|on|on|on|off|Query must select all descendant collections.
+collection|on|off|on|on|on|on|on|Query must select all descendant collections.
+collection|on|on|off|off|off|off|off|Query must select all descendant collections.
+collection|on|on|off|off|off|off|on|Query must select all descendant collections.
+collection|on|on|off|off|off|on|off|Query must select all descendant collections.
+collection|on|on|off|off|off|on|on|Query must select all descendant collections.
+collection|on|on|off|off|on|off|off|Query must select all descendant collections.
+collection|on|on|off|off|on|off|on|Query must select all descendant collections.
+collection|on|on|off|off|on|on|off|Query must select all descendant collections.
+collection|on|on|off|off|on|on|on|Query must select all descendant collections.
+collection|on|on|off|on|off|off|off|Query must select all descendant collections.
+collection|on|on|off|on|off|off|on|Query must select all descendant collections.
+collection|on|on|off|on|off|on|off|Query must select all descendant collections.
+collection|on|on|off|on|off|on|on|Query must select all descendant collections.
+collection|on|on|off|on|on|off|off|Query must select all descendant collections.
+collection|on|on|off|on|on|off|on|Query must select all descendant collections.
+collection|on|on|off|on|on|on|off|Query must select all descendant collections.
+collection|on|on|off|on|on|on|on|Query must select all descendant collections.
+collection|on|on|on|off|off|off|off|Query must select all descendant collections.
+collection|on|on|on|off|off|off|on|Query must select all descendant collections.
+collection|on|on|on|off|off|on|off|Query must select all descendant collections.
+collection|on|on|on|off|off|on|on|Query must select all descendant collections.
+collection|on|on|on|off|on|off|off|Query must select all descendant collections.
+collection|on|on|on|off|on|off|on|Query must select all descendant collections.
+collection|on|on|on|off|on|on|off|Query must select all descendant collections.
+collection|on|on|on|off|on|on|on|Query must select all descendant collections.
+collection|on|on|on|on|off|off|off|Query must select all descendant collections.
+collection|on|on|on|on|off|off|on|Query must select all descendant collections.
+collection|on|on|on|on|off|on|off|Query must select all descendant collections.
+collection|on|on|on|on|off|on|on|Query must select all descendant collections.
+collection|on|on|on|on|on|off|off|Query must select all descendant collections.
+collection|on|on|on|on|on|off|on|Query must select all descendant collections.
+collection|on|on|on|on|on|on|off|Query must select all descendant collections.
+collection|on|on|on|on|on|on|on|Query must select all descendant collections.
+group|off|off|off|off|off|off|off|no-split
+group|off|off|off|off|off|off|on|split
+group|off|off|off|off|off|on|off|Query end cursors are not supported.
+group|off|off|off|off|off|on|on|Query end cursors are not supported.
+group|off|off|off|off|on|off|off|Query start cursors are not supported.
+group|off|off|off|off|on|off|on|Query start cursors are not supported.
+group|off|off|off|off|on|on|off|Query start cursors are not supported.
+group|off|off|off|off|on|on|on|Query start cursors are not supported.
+group|off|off|off|on|off|off|off|no-split
+group|off|off|off|on|off|off|on|split
+group|off|off|off|on|off|on|off|Query end cursors are not supported.
+group|off|off|off|on|off|on|on|Query end cursors are not supported.
+group|off|off|off|on|on|off|off|Query start cursors are not supported.
+group|off|off|off|on|on|off|on|Query start cursors are not supported.
+group|off|off|off|on|on|on|off|Query start cursors are not supported.
+group|off|off|off|on|on|on|on|Query start cursors are not supported.
+group|off|off|on|off|off|off|off|Query offset is not supported.
+group|off|off|on|off|off|off|on|Query offset is not supported.
+group|off|off|on|off|off|on|off|Query offset is not supported.
+group|off|off|on|off|off|on|on|Query offset is not supported.
+group|off|off|on|off|on|off|off|Query offset is not supported.
+group|off|off|on|off|on|off|on|Query offset is not supported.
+group|off|off|on|off|on|on|off|Query offset is not supported.
+group|off|off|on|off|on|on|on|Query offset is not supported.
+group|off|off|on|on|off|off|off|Query offset is not supported.
+group|off|off|on|on|off|off|on|Query offset is not supported.
+group|off|off|on|on|off|on|off|Query offset is not supported.
+group|off|off|on|on|off|on|on|Query offset is not supported.
+group|off|off|on|on|on|off|off|Query offset is not supported.
+group|off|off|on|on|on|off|on|Query offset is not supported.
+group|off|off|on|on|on|on|off|Query offset is not supported.
+group|off|off|on|on|on|on|on|Query offset is not supported.
+group|off|on|off|off|off|off|off|Query limit is not supported.
+group|off|on|off|off|off|off|on|Query limit is not supported.
+group|off|on|off|off|off|on|off|Query limit is not supported.
+group|off|on|off|off|off|on|on|Query limit is not supported.
+group|off|on|off|off|on|off|off|Query limit is not supported.
+group|off|on|off|off|on|off|on|Query limit is not supported.
+group|off|on|off|off|on|on|off|Query limit is not supported.
+group|off|on|off|off|on|on|on|Query limit is not supported.
+group|off|on|off|on|off|off|off|Query limit is not supported.
+group|off|on|off|on|off|off|on|Query limit is not supported.
+group|off|on|off|on|off|on|off|Query limit is not supported.
+group|off|on|off|on|off|on|on|Query limit is not supported.
+group|off|on|off|on|on|off|off|Query limit is not supported.
+group|off|on|off|on|on|off|on|Query limit is not supported.
+group|off|on|off|on|on|on|off|Query limit is not supported.
+group|off|on|off|on|on|on|on|Query limit is not supported.
+group|off|on|on|off|off|off|off|Query limit is not supported.
+group|off|on|on|off|off|off|on|Query limit is not supported.
+group|off|on|on|off|off|on|off|Query limit is not supported.
+group|off|on|on|off|off|on|on|Query limit is not supported.
+group|off|on|on|off|on|off|off|Query limit is not supported.
+group|off|on|on|off|on|off|on|Query limit is not supported.
+group|off|on|on|off|on|on|off|Query limit is not supported.
+group|off|on|on|off|on|on|on|Query limit is not supported.
+group|off|on|on|on|off|off|off|Query limit is not supported.
+group|off|on|on|on|off|off|on|Query limit is not supported.
+group|off|on|on|on|off|on|off|Query limit is not supported.
+group|off|on|on|on|off|on|on|Query limit is not supported.
+group|off|on|on|on|on|off|off|Query limit is not supported.
+group|off|on|on|on|on|off|on|Query limit is not supported.
+group|off|on|on|on|on|on|off|Query limit is not supported.
+group|off|on|on|on|on|on|on|Query limit is not supported.
+group|on|off|off|off|off|off|off|no-split
+group|on|off|off|off|off|off|on|split
+group|on|off|off|off|off|on|off|Query end cursors are not supported.
+group|on|off|off|off|off|on|on|Query end cursors are not supported.
+group|on|off|off|off|on|off|off|Query start cursors are not supported.
+group|on|off|off|off|on|off|on|Query start cursors are not supported.
+group|on|off|off|off|on|on|off|Query start cursors are not supported.
+group|on|off|off|off|on|on|on|Query start cursors are not supported.
+group|on|off|off|on|off|off|off|Property masks are not supported.
+group|on|off|off|on|off|off|on|Property masks are not supported.
+group|on|off|off|on|off|on|off|Property masks are not supported.
+group|on|off|off|on|off|on|on|Property masks are not supported.
+group|on|off|off|on|on|off|off|Property masks are not supported.
+group|on|off|off|on|on|off|on|Property masks are not supported.
+group|on|off|off|on|on|on|off|Property masks are not supported.
+group|on|off|off|on|on|on|on|Property masks are not supported.
+group|on|off|on|off|off|off|off|Query offset is not supported.
+group|on|off|on|off|off|off|on|Query offset is not supported.
+group|on|off|on|off|off|on|off|Query offset is not supported.
+group|on|off|on|off|off|on|on|Query offset is not supported.
+group|on|off|on|off|on|off|off|Query offset is not supported.
+group|on|off|on|off|on|off|on|Query offset is not supported.
+group|on|off|on|off|on|on|off|Query offset is not supported.
+group|on|off|on|off|on|on|on|Query offset is not supported.
+group|on|off|on|on|off|off|off|Query offset is not supported.
+group|on|off|on|on|off|off|on|Query offset is not supported.
+group|on|off|on|on|off|on|off|Query offset is not supported.
+group|on|off|on|on|off|on|on|Query offset is not supported.
+group|on|off|on|on|on|off|off|Query offset is not supported.
+group|on|off|on|on|on|off|on|Query offset is not supported.
+group|on|off|on|on|on|on|off|Query offset is not supported.
+group|on|off|on|on|on|on|on|Query offset is not supported.
+group|on|on|off|off|off|off|off|Query limit is not supported.
+group|on|on|off|off|off|off|on|Query limit is not supported.
+group|on|on|off|off|off|on|off|Query limit is not supported.
+group|on|on|off|off|off|on|on|Query limit is not supported.
+group|on|on|off|off|on|off|off|Query limit is not supported.
+group|on|on|off|off|on|off|on|Query limit is not supported.
+group|on|on|off|off|on|on|off|Query limit is not supported.
+group|on|on|off|off|on|on|on|Query limit is not supported.
+group|on|on|off|on|off|off|off|Query limit is not supported.
+group|on|on|off|on|off|off|on|Query limit is not supported.
+group|on|on|off|on|off|on|off|Query limit is not supported.
+group|on|on|off|on|off|on|on|Query limit is not supported.
+group|on|on|off|on|on|off|off|Query limit is not supported.
+group|on|on|off|on|on|off|on|Query limit is not supported.
+group|on|on|off|on|on|on|off|Query limit is not supported.
+group|on|on|off|on|on|on|on|Query limit is not supported.
+group|on|on|on|off|off|off|off|Query limit is not supported.
+group|on|on|on|off|off|off|on|Query limit is not supported.
+group|on|on|on|off|off|on|off|Query limit is not supported.
+group|on|on|on|off|off|on|on|Query limit is not supported.
+group|on|on|on|off|on|off|off|Query limit is not supported.
+group|on|on|on|off|on|off|on|Query limit is not supported.
+group|on|on|on|off|on|on|off|Query limit is not supported.
+group|on|on|on|off|on|on|on|Query limit is not supported.
+group|on|on|on|on|off|off|off|Query limit is not supported.
+group|on|on|on|on|off|off|on|Query limit is not supported.
+group|on|on|on|on|off|on|off|Query limit is not supported.
+group|on|on|on|on|off|on|on|Query limit is not supported.
+group|on|on|on|on|on|off|off|Query limit is not supported.
+group|on|on|on|on|on|off|on|Query limit is not supported.
+group|on|on|on|on|on|on|off|Query limit is not supported.
+group|on|on|on|on|on|on|on|Query limit is not supported.
+kindless|off|off|off|off|off|off|off|no-split
+kindless|off|off|off|off|off|off|on|no-split
+kindless|off|off|off|off|off|on|off|no-split
+kindless|off|off|off|off|off|on|on|no-split
+kindless|off|off|off|off|on|off|off|no-split
+kindless|off|off|off|off|on|off|on|no-split
+kindless|off|off|off|off|on|on|off|no-split
+kindless|off|off|off|off|on|on|on|no-split
+kindless|off|off|off|on|off|off|off|no-split
+kindless|off|off|off|on|off|off|on|no-split
+kindless|off|off|off|on|off|on|off|no-split
+kindless|off|off|off|on|off|on|on|no-split
+kindless|off|off|off|on|on|off|off|no-split
+kindless|off|off|off|on|on|off|on|no-split
+kindless|off|off|off|on|on|on|off|no-split
+kindless|off|off|off|on|on|on|on|no-split
+kindless|off|off|on|off|off|off|off|no-split
+kindless|off|off|on|off|off|off|on|no-split
+kindless|off|off|on|off|off|on|off|no-split
+kindless|off|off|on|off|off|on|on|no-split
+kindless|off|off|on|off|on|off|off|no-split
+kindless|off|off|on|off|on|off|on|no-split
+kindless|off|off|on|off|on|on|off|no-split
+kindless|off|off|on|off|on|on|on|no-split
+kindless|off|off|on|on|off|off|off|no-split
+kindless|off|off|on|on|off|off|on|no-split
+kindless|off|off|on|on|off|on|off|no-split
+kindless|off|off|on|on|off|on|on|no-split
+kindless|off|off|on|on|on|off|off|no-split
+kindless|off|off|on|on|on|off|on|no-split
+kindless|off|off|on|on|on|on|off|no-split
+kindless|off|off|on|on|on|on|on|no-split
+kindless|off|on|off|off|off|off|off|no-split
+kindless|off|on|off|off|off|off|on|no-split
+kindless|off|on|off|off|off|on|off|no-split
+kindless|off|on|off|off|off|on|on|no-split
+kindless|off|on|off|off|on|off|off|no-split
+kindless|off|on|off|off|on|off|on|no-split
+kindless|off|on|off|off|on|on|off|no-split
+kindless|off|on|off|off|on|on|on|no-split
+kindless|off|on|off|on|off|off|off|no-split
+kindless|off|on|off|on|off|off|on|no-split
+kindless|off|on|off|on|off|on|off|no-split
+kindless|off|on|off|on|off|on|on|no-split
+kindless|off|on|off|on|on|off|off|no-split
+kindless|off|on|off|on|on|off|on|no-split
+kindless|off|on|off|on|on|on|off|no-split
+kindless|off|on|off|on|on|on|on|no-split
+kindless|off|on|on|off|off|off|off|no-split
+kindless|off|on|on|off|off|off|on|no-split
+kindless|off|on|on|off|off|on|off|no-split
+kindless|off|on|on|off|off|on|on|no-split
+kindless|off|on|on|off|on|off|off|no-split
+kindless|off|on|on|off|on|off|on|no-split
+kindless|off|on|on|off|on|on|off|no-split
+kindless|off|on|on|off|on|on|on|no-split
+kindless|off|on|on|on|off|off|off|no-split
+kindless|off|on|on|on|off|off|on|no-split
+kindless|off|on|on|on|off|on|off|no-split
+kindless|off|on|on|on|off|on|on|no-split
+kindless|off|on|on|on|on|off|off|no-split
+kindless|off|on|on|on|on|off|on|no-split
+kindless|off|on|on|on|on|on|off|no-split
+kindless|off|on|on|on|on|on|on|no-split
+kindless|on|off|off|off|off|off|off|no-split
+kindless|on|off|off|off|off|off|on|no-split
+kindless|on|off|off|off|off|on|off|no-split
+kindless|on|off|off|off|off|on|on|no-split
+kindless|on|off|off|off|on|off|off|no-split
+kindless|on|off|off|off|on|off|on|no-split
+kindless|on|off|off|off|on|on|off|no-split
+kindless|on|off|off|off|on|on|on|no-split
+kindless|on|off|off|on|off|off|off|no-split
+kindless|on|off|off|on|off|off|on|no-split
+kindless|on|off|off|on|off|on|off|no-split
+kindless|on|off|off|on|off|on|on|no-split
+kindless|on|off|off|on|on|off|off|no-split
+kindless|on|off|off|on|on|off|on|no-split
+kindless|on|off|off|on|on|on|off|no-split
+kindless|on|off|off|on|on|on|on|no-split
+kindless|on|off|on|off|off|off|off|no-split
+kindless|on|off|on|off|off|off|on|no-split
+kindless|on|off|on|off|off|on|off|no-split
+kindless|on|off|on|off|off|on|on|no-split
+kindless|on|off|on|off|on|off|off|no-split
+kindless|on|off|on|off|on|off|on|no-split
+kindless|on|off|on|off|on|on|off|no-split
+kindless|on|off|on|off|on|on|on|no-split
+kindless|on|off|on|on|off|off|off|no-split
+kindless|on|off|on|on|off|off|on|no-split
+kindless|on|off|on|on|off|on|off|no-split
+kindless|on|off|on|on|off|on|on|no-split
+kindless|on|off|on|on|on|off|off|no-split
+kindless|on|off|on|on|on|off|on|no-split
+kindless|on|off|on|on|on|on|off|no-split
+kindless|on|off|on|on|on|on|on|no-split
+kindless|on|on|off|off|off|off|off|no-split
+kindless|on|on|off|off|off|off|on|no-split
+kindless|on|on|off|off|off|on|off|no-split
+kindless|on|on|off|off|off|on|on|no-split
+kindless|on|on|off|off|on|off|off|no-split
+kindless|on|on|off|off|on|off|on|no-split
+kindless|on|on|off|off|on|on|off|no-split
+kindless|on|on|off|off|on|on|on|no-split
+kindless|on|on|off|on|off|off|off|no-split
+kindless|on|on|off|on|off|off|on|no-split
+kindless|on|on|off|on|off|on|off|no-split
+kindless|on|on|off|on|off|on|on|no-split
+kindless|on|on|off|on|on|off|off|no-split
+kindless|on|on|off|on|on|off|on|no-split
+kindless|on|on|off|on|on|on|off|no-split
+kindless|on|on|off|on|on|on|on|no-split
+kindless|on|on|on|off|off|off|off|no-split
+kindless|on|on|on|off|off|off|on|no-split
+kindless|on|on|on|off|off|on|off|no-split
+kindless|on|on|on|off|off|on|on|no-split
+kindless|on|on|on|off|on|off|off|no-split
+kindless|on|on|on|off|on|off|on|no-split
+kindless|on|on|on|off|on|on|off|no-split
+kindless|on|on|on|off|on|on|on|no-split
+kindless|on|on|on|on|off|off|off|no-split
+kindless|on|on|on|on|off|off|on|no-split
+kindless|on|on|on|on|off|on|off|no-split
+kindless|on|on|on|on|off|on|on|no-split
+kindless|on|on|on|on|on|off|off|no-split
+kindless|on|on|on|on|on|off|on|no-split
+kindless|on|on|on|on|on|on|off|no-split
+kindless|on|on|on|on|on|on|on|no-split
+children|off|off|off|off|off|off|off|Query must select all descendant collections.
+children|off|off|off|off|off|off|on|Query must select all descendant collections.
+children|off|off|off|off|off|on|off|Query must select all descendant collections.
+children|off|off|off|off|off|on|on|Query must select all descendant collections.
+children|off|off|off|off|on|off|off|Query must select all descendant collections.
+children|off|off|off|off|on|off|on|Query must select all descendant collections.
+children|off|off|off|off|on|on|off|Query must select all descendant collections.
+children|off|off|off|off|on|on|on|Query must select all descendant collections.
+children|off|off|off|on|off|off|off|Query must select all descendant collections.
+children|off|off|off|on|off|off|on|Query must select all descendant collections.
+children|off|off|off|on|off|on|off|Query must select all descendant collections.
+children|off|off|off|on|off|on|on|Query must select all descendant collections.
+children|off|off|off|on|on|off|off|Query must select all descendant collections.
+children|off|off|off|on|on|off|on|Query must select all descendant collections.
+children|off|off|off|on|on|on|off|Query must select all descendant collections.
+children|off|off|off|on|on|on|on|Query must select all descendant collections.
+children|off|off|on|off|off|off|off|Query must select all descendant collections.
+children|off|off|on|off|off|off|on|Query must select all descendant collections.
+children|off|off|on|off|off|on|off|Query must select all descendant collections.
+children|off|off|on|off|off|on|on|Query must select all descendant collections.
+children|off|off|on|off|on|off|off|Query must select all descendant collections.
+children|off|off|on|off|on|off|on|Query must select all descendant collections.
+children|off|off|on|off|on|on|off|Query must select all descendant collections.
+children|off|off|on|off|on|on|on|Query must select all descendant collections.
+children|off|off|on|on|off|off|off|Query must select all descendant collections.
+children|off|off|on|on|off|off|on|Query must select all descendant collections.
+children|off|off|on|on|off|on|off|Query must select all descendant collections.
+children|off|off|on|on|off|on|on|Query must select all descendant collections.
+children|off|off|on|on|on|off|off|Query must select all descendant collections.
+children|off|off|on|on|on|off|on|Query must select all descendant collections.
+children|off|off|on|on|on|on|off|Query must select all descendant collections.
+children|off|off|on|on|on|on|on|Query must select all descendant collections.
+children|off|on|off|off|off|off|off|Query must select all descendant collections.
+children|off|on|off|off|off|off|on|Query must select all descendant collections.
+children|off|on|off|off|off|on|off|Query must select all descendant collections.
+children|off|on|off|off|off|on|on|Query must select all descendant collections.
+children|off|on|off|off|on|off|off|Query must select all descendant collections.
+children|off|on|off|off|on|off|on|Query must select all descendant collections.
+children|off|on|off|off|on|on|off|Query must select all descendant collections.
+children|off|on|off|off|on|on|on|Query must select all descendant collections.
+children|off|on|off|on|off|off|off|Query must select all descendant collections.
+children|off|on|off|on|off|off|on|Query must select all descendant collections.
+children|off|on|off|on|off|on|off|Query must select all descendant collections.
+children|off|on|off|on|off|on|on|Query must select all descendant collections.
+children|off|on|off|on|on|off|off|Query must select all descendant collections.
+children|off|on|off|on|on|off|on|Query must select all descendant collections.
+children|off|on|off|on|on|on|off|Query must select all descendant collections.
+children|off|on|off|on|on|on|on|Query must select all descendant collections.
+children|off|on|on|off|off|off|off|Query must select all descendant collections.
+children|off|on|on|off|off|off|on|Query must select all descendant collections.
+children|off|on|on|off|off|on|off|Query must select all descendant collections.
+children|off|on|on|off|off|on|on|Query must select all descendant collections.
+children|off|on|on|off|on|off|off|Query must select all descendant collections.
+children|off|on|on|off|on|off|on|Query must select all descendant collections.
+children|off|on|on|off|on|on|off|Query must select all descendant collections.
+children|off|on|on|off|on|on|on|Query must select all descendant collections.
+children|off|on|on|on|off|off|off|Query must select all descendant collections.
+children|off|on|on|on|off|off|on|Query must select all descendant collections.
+children|off|on|on|on|off|on|off|Query must select all descendant collections.
+children|off|on|on|on|off|on|on|Query must select all descendant collections.
+children|off|on|on|on|on|off|off|Query must select all descendant collections.
+children|off|on|on|on|on|off|on|Query must select all descendant collections.
+children|off|on|on|on|on|on|off|Query must select all descendant collections.
+children|off|on|on|on|on|on|on|Query must select all descendant collections.
+children|on|off|off|off|off|off|off|Query must select all descendant collections.
+children|on|off|off|off|off|off|on|Query must select all descendant collections.
+children|on|off|off|off|off|on|off|Query must select all descendant collections.
+children|on|off|off|off|off|on|on|Query must select all descendant collections.
+children|on|off|off|off|on|off|off|Query must select all descendant collections.
+children|on|off|off|off|on|off|on|Query must select all descendant collections.
+children|on|off|off|off|on|on|off|Query must select all descendant collections.
+children|on|off|off|off|on|on|on|Query must select all descendant collections.
+children|on|off|off|on|off|off|off|Query must select all descendant collections.
+children|on|off|off|on|off|off|on|Query must select all descendant collections.
+children|on|off|off|on|off|on|off|Query must select all descendant collections.
+children|on|off|off|on|off|on|on|Query must select all descendant collections.
+children|on|off|off|on|on|off|off|Query must select all descendant collections.
+children|on|off|off|on|on|off|on|Query must select all descendant collections.
+children|on|off|off|on|on|on|off|Query must select all descendant collections.
+children|on|off|off|on|on|on|on|Query must select all descendant collections.
+children|on|off|on|off|off|off|off|Query must select all descendant collections.
+children|on|off|on|off|off|off|on|Query must select all descendant collections.
+children|on|off|on|off|off|on|off|Query must select all descendant collections.
+children|on|off|on|off|off|on|on|Query must select all descendant collections.
+children|on|off|on|off|on|off|off|Query must select all descendant collections.
+children|on|off|on|off|on|off|on|Query must select all descendant collections.
+children|on|off|on|off|on|on|off|Query must select all descendant collections.
+children|on|off|on|off|on|on|on|Query must select all descendant collections.
+children|on|off|on|on|off|off|off|Query must select all descendant collections.
+children|on|off|on|on|off|off|on|Query must select all descendant collections.
+children|on|off|on|on|off|on|off|Query must select all descendant collections.
+children|on|off|on|on|off|on|on|Query must select all descendant collections.
+children|on|off|on|on|on|off|off|Query must select all descendant collections.
+children|on|off|on|on|on|off|on|Query must select all descendant collections.
+children|on|off|on|on|on|on|off|Query must select all descendant collections.
+children|on|off|on|on|on|on|on|Query must select all descendant collections.
+children|on|on|off|off|off|off|off|Query must select all descendant collections.
+children|on|on|off|off|off|off|on|Query must select all descendant collections.
+children|on|on|off|off|off|on|off|Query must select all descendant collections.
+children|on|on|off|off|off|on|on|Query must select all descendant collections.
+children|on|on|off|off|on|off|off|Query must select all descendant collections.
+children|on|on|off|off|on|off|on|Query must select all descendant collections.
+children|on|on|off|off|on|on|off|Query must select all descendant collections.
+children|on|on|off|off|on|on|on|Query must select all descendant collections.
+children|on|on|off|on|off|off|off|Query must select all descendant collections.
+children|on|on|off|on|off|off|on|Query must select all descendant collections.
+children|on|on|off|on|off|on|off|Query must select all descendant collections.
+children|on|on|off|on|off|on|on|Query must select all descendant collections.
+children|on|on|off|on|on|off|off|Query must select all descendant collections.
+children|on|on|off|on|on|off|on|Query must select all descendant collections.
+children|on|on|off|on|on|on|off|Query must select all descendant collections.
+children|on|on|off|on|on|on|on|Query must select all descendant collections.
+children|on|on|on|off|off|off|off|Query must select all descendant collections.
+children|on|on|on|off|off|off|on|Query must select all descendant collections.
+children|on|on|on|off|off|on|off|Query must select all descendant collections.
+children|on|on|on|off|off|on|on|Query must select all descendant collections.
+children|on|on|on|off|on|off|off|Query must select all descendant collections.
+children|on|on|on|off|on|off|on|Query must select all descendant collections.
+children|on|on|on|off|on|on|off|Query must select all descendant collections.
+children|on|on|on|off|on|on|on|Query must select all descendant collections.
+children|on|on|on|on|off|off|off|Query must select all descendant collections.
+children|on|on|on|on|off|off|on|Query must select all descendant collections.
+children|on|on|on|on|off|on|off|Query must select all descendant collections.
+children|on|on|on|on|off|on|on|Query must select all descendant collections.
+children|on|on|on|on|on|off|off|Query must select all descendant collections.
+children|on|on|on|on|on|off|on|Query must select all descendant collections.
+children|on|on|on|on|on|on|off|Query must select all descendant collections.
+children|on|on|on|on|on|on|on|Query must select all descendant collections.

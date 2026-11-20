@@ -159,3 +159,39 @@ fn stable_list_pages_follow_the_lean_reference() {
         }
     }
 }
+
+#[test]
+fn folded_resume_keeps_filter_calls_and_multibyte_delimiters() {
+    let bucket = BucketName::try_new("test-bucket").unwrap();
+    let mut store = StorageState::new(1);
+    let names = ["root-α💾", "root-α💾no", "root-α💾yes", "root-β💾yes"];
+    for name in names {
+        store
+            .put(
+                &bucket,
+                &ObjectName::try_new(name).unwrap(),
+                Vec::new(),
+                NewMetadata::default(),
+                Precondition::default(),
+                LogicalInstant::UNIX_EPOCH,
+            )
+            .unwrap();
+    }
+
+    let calls = std::cell::RefCell::new(Vec::new());
+    let page = store.list_matching(
+        &bucket,
+        "root-",
+        Some("💾"),
+        Some("root-α💾"),
+        Some(1),
+        &|name| {
+            calls.borrow_mut().push(name.to_owned());
+            name.ends_with("yes")
+        },
+    );
+    assert_eq!(page.prefixes, ["root-α💾"]);
+    assert_eq!(page.next_page_token.as_deref(), Some("root-β💾"));
+    assert!(page.items.is_empty());
+    assert_eq!(calls.into_inner(), [&names[..3], &names[..]].concat());
+}

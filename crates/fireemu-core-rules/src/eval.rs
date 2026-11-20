@@ -4409,14 +4409,12 @@ impl<'a> Evaluator<'a> {
                     (
                         text @ (RulesValue::String(_) | RulesValue::IllFormed(_)),
                         RulesValue::Int(i),
-                    ) => {
-                        let units = text.utf16_units().unwrap_or_default();
-                        usize::try_from(i)
-                            .ok()
-                            .filter(|i| *i < units.len())
-                            .ok_or_else(|| soft("string index out of range"))
-                            .and_then(|i| select_units(&text, i, i + 1, self.lone_surrogates))
-                    }
+                    ) => usize::try_from(i)
+                        .ok()
+                        .and_then(|i| {
+                            select_units(&text, i, i.checked_add(1)?, self.lone_surrogates)
+                        })
+                        .ok_or_else(|| soft("string index out of range"))?,
                     (o, i) => Err(soft(format!(
                         "cannot index {} with {}",
                         o.type_name(),
@@ -6314,29 +6312,32 @@ fn slice(
             end.type_name()
         )));
     };
-    let len = match receiver {
-        V::List(items) => items.len(),
-        V::String(_) | V::IllFormed(_) => utf16_len(receiver),
-        other => {
-            return Err(soft(format!(
-                "{} cannot be range indexed",
-                other.type_name()
-            )))
+    let invalid = || soft(format!("range index [{lo}:{hi}] is out of range"));
+    let endpoints = || {
+        let lo = usize::try_from(*lo).map_err(|_| invalid())?;
+        let hi = usize::try_from(*hi).map_err(|_| invalid())?;
+        if hi == 0 || lo > hi {
+            return Err(invalid());
         }
+        Ok((lo, hi))
     };
-    let len = i64::try_from(len).unwrap_or(i64::MAX);
-    if *lo < 0 || *lo >= len || *hi <= 0 || *hi > len || lo > hi {
-        return Err(soft(format!("range index [{lo}:{hi}] is out of range")));
+    match receiver {
+        V::List(items) => {
+            let (lo, hi) = endpoints()?;
+            if lo >= items.len() || hi > items.len() {
+                return Err(invalid());
+            }
+            Ok(V::List(items[lo..hi].to_vec()))
+        }
+        V::String(_) | V::IllFormed(_) => {
+            let (lo, hi) = endpoints()?;
+            select_units(receiver, lo, hi, mode).ok_or_else(invalid)?
+        }
+        other => Err(soft(format!(
+            "{} cannot be range indexed",
+            other.type_name()
+        ))),
     }
-    let (lo, hi) = (
-        usize::try_from(*lo).unwrap_or(0),
-        usize::try_from(*hi).unwrap_or(0),
-    );
-    Ok(match receiver {
-        V::List(items) => V::List(items[lo..hi].to_vec()),
-        V::String(_) | V::IllFormed(_) => select_units(receiver, lo, hi, mode)?,
-        _ => unreachable!("the length arm already rejected every other receiver"),
-    })
 }
 
 /// The length of a string value in UTF-16 code units, which is what the Rules runtime counts
@@ -6350,57 +6351,80 @@ fn utf16_len(text: &RulesValue) -> usize {
     }
 }
 
-/// The units `lo..hi` of a string value (the caller checked the bounds), the way the Rules
-/// runtime reads a string: by UTF-16 unit (`string-index#idx0` to `idx4-*`,
-/// `strings#rng-*`).
-///
-/// A unit that was one half of a pair in `receiver` is what the profile says. The official
-/// emulator keeps the lone unit (`"é🔥x"[1] == "\ud83d"` is true); production recorded
-/// `false` there (`string-escape#esc-high`) and `true` for the size of `[1:2]` and for
-/// `"a\ud83dz"[1:2] == "\ud83d"`, so it holds the half of a pair as U+FFFD while a lone unit
-/// the string held already stays what it was.
+/// Selects UTF-16 units with a valid start index and a valid end position.
+/// Returns `None` when either endpoint falls outside the text.
 fn select_units(
     receiver: &RulesValue,
     lo: usize,
     hi: usize,
     mode: crate::ast::LoneSurrogates,
-) -> Result<RulesValue, EvalError> {
-    use crate::value::Piece;
-    let units = receiver.utf16_units().unwrap_or_default();
-    let mut original_lone = vec![false; units.len()];
-    let mut at = 0;
-    for piece in crate::value::pieces(&units) {
-        match piece {
-            Piece::Char(c) => at += c.len_utf16(),
-            Piece::Lone(_) => {
-                original_lone[at] = true;
-                at += 1;
+) -> Option<Result<RulesValue, EvalError>> {
+    match receiver {
+        RulesValue::String(text) => {
+            let prefix = text.as_bytes().get(..hi)?;
+            if lo >= text.len() {
+                return None;
             }
+            // An ASCII prefix uses one byte per UTF-16 unit. The suffix can be arbitrary UTF-8.
+            if prefix.is_ascii() {
+                return Some(Ok(RulesValue::String(text[lo..hi].to_owned())));
+            }
+            let mut units = text.encode_utf16().peekable();
+            let before = if lo == 0 {
+                None
+            } else {
+                Some(units.nth(lo - 1)?)
+            };
+            units.peek()?;
+            let selected: Vec<_> = units.by_ref().take(hi - lo).collect();
+            if selected.len() != hi - lo {
+                return None;
+            }
+            Some(selected_units(&selected, before, units.next(), mode))
         }
+        RulesValue::IllFormed(units) => {
+            units.get(lo)?;
+            let selected = units.get(lo..hi)?;
+            let before = lo.checked_sub(1).map(|index| units[index]);
+            Some(selected_units(
+                selected,
+                before,
+                units.get(hi).copied(),
+                mode,
+            ))
+        }
+        _ => unreachable!("only string values can select UTF-16 units"),
     }
-    let mut offset = lo;
-    let mut cut_halves = Vec::new();
-    let selected: Vec<Piece> = crate::value::pieces(&units[lo..hi])
-        .into_iter()
-        .inspect(|piece| match piece {
-            Piece::Char(c) => offset += c.len_utf16(),
-            Piece::Lone(unit) => {
-                if !original_lone[offset] {
-                    cut_halves.push(*unit);
-                }
-                offset += 1;
-            }
-        })
-        .collect();
-    if mode == crate::ast::LoneSurrogates::Production && !cut_halves.is_empty() {
-        // Not recorded beyond a half on its own: its size is one and it is not the lone unit
-        // an escape writes. A range that cuts a pair among other text fails the rule.
-        return match (selected.as_slice(), cut_halves.as_slice()) {
-            ([Piece::Lone(unit)], [_]) => Ok(RulesValue::Fragment(*unit)),
+}
+
+/// Slicing can split a pair only at an endpoint. A lone unit that was already unpaired
+/// keeps its value in both profiles. Production distinguishes a cut half from a lone escape.
+fn selected_units(
+    selected: &[u16],
+    before: Option<u16>,
+    after: Option<u16>,
+    mode: crate::ast::LoneSurrogates,
+) -> Result<RulesValue, EvalError> {
+    let is_pair = |high, low| (0xD800..0xDC00).contains(&high) && (0xDC00..0xE000).contains(&low);
+    if mode == crate::ast::LoneSurrogates::Production
+        && (before
+            .zip(selected.first().copied())
+            .is_some_and(|(high, low)| is_pair(high, low))
+            || selected
+                .last()
+                .copied()
+                .zip(after)
+                .is_some_and(|(high, low)| is_pair(high, low)))
+    {
+        return match selected {
+            [unit] => Ok(RulesValue::Fragment(*unit)),
             _ => Err(soft("a range cuts a surrogate pair")),
         };
     }
-    Ok(crate::value::string_from_pieces(&selected))
+    Ok(match String::from_utf16(selected) {
+        Ok(text) => RulesValue::String(text),
+        Err(_) => RulesValue::IllFormed(selected.to_vec()),
+    })
 }
 
 /// `lower()` or `upper()` of a string that holds a lone surrogate: ASCII letters change, every

@@ -1,0 +1,9 @@
+name = "python-runner-duplicate-members"
+defaultTargets = ["PythonRunnerDuplicateMembers", "corpus"]
+
+[[lean_lib]]
+name = "PythonRunnerDuplicateMembers"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

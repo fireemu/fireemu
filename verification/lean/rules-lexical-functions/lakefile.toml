@@ -1,0 +1,9 @@
+name = "rules-lexical-functions"
+defaultTargets = ["RulesLexicalFunctions", "corpus"]
+
+[[lean_lib]]
+name = "RulesLexicalFunctions"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

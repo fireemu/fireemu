@@ -1,0 +1,9 @@
+name = "firestore-pipeline-group-order"
+defaultTargets = ["FirestorePipelineGroupOrder", "corpus"]
+
+[[lean_lib]]
+name = "FirestorePipelineGroupOrder"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

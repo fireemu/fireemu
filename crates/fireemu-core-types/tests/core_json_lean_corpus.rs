@@ -1,6 +1,7 @@
 //! Differential replay of the Lean reference for core JSON.
 
 use fireemu_core_types::json::{parse, JsonValue};
+use proptest::strategy::Strategy as _;
 
 const CORPUS: &str = include_str!("fixtures/lean-core-json.corpus");
 
@@ -80,5 +81,27 @@ fn lexical_and_structural_results_match_lean() {
             }
             _ => panic!("invalid case: {line}"),
         }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn literal_runs_preserve_decoded_text_and_the_first_byte_error(
+        text in proptest::collection::vec(
+            proptest::sample::select(vec!['a', 'é', '漢', '🔥', ' ']), 0..240
+        ).prop_map(|chars| chars.into_iter().collect::<String>()),
+    ) {
+        let source = format!("[\"{text}\\n{text}\"]");
+        proptest::prop_assert_eq!(parse(&source), Ok(JsonValue::Array(vec![
+            JsonValue::String(format!("{text}\n{text}"))
+        ])));
+        let source = format!("  {{\"{text}\u{1f}\\wrong\": null}}");
+        let error = parse(&source).expect_err("control byte before escape");
+        proptest::prop_assert_eq!(error.offset, 4 + text.len());
+        proptest::prop_assert_eq!(error.expected, "no control characters in strings");
+        let source = format!(" [\"{text}\\g\u{1f}\"]");
+        let error = parse(&source).expect_err("escape before control byte");
+        proptest::prop_assert_eq!(error.offset, 5 + text.len());
+        proptest::prop_assert_eq!(error.expected, "a valid escape");
     }
 }

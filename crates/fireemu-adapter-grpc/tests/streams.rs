@@ -2103,6 +2103,55 @@ fn cursor_name(cursor: &pb::Cursor) -> String {
     }
 }
 
+async fn assert_partition_page_boundaries(
+    client: &mut FirestoreClient<tonic::transport::Channel>,
+    complete: &pb::PartitionQueryResponse,
+) {
+    let mut page_token = String::new();
+    let mut token_prefix = None;
+    for (index, cursor) in complete.partitions.iter().enumerate() {
+        let page = client
+            .partition_query(partition_request("items", 4, 1, &page_token))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(page.partitions, std::slice::from_ref(cursor));
+        assert_eq!(
+            page.next_page_token.is_empty(),
+            index + 1 == complete.partitions.len()
+        );
+        if let Some((prefix, _)) = page.next_page_token.rsplit_once(':') {
+            token_prefix = Some(prefix.to_owned());
+        }
+        page_token = page.next_page_token;
+    }
+
+    // Keep the issued version and request binding, and exercise the end-index boundary.
+    let prefix = token_prefix.unwrap();
+    let last = complete.partitions.len();
+    let end = client
+        .partition_query(partition_request(
+            "items",
+            4,
+            1,
+            &format!("{prefix}:{last}"),
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(end.partitions.is_empty());
+    assert!(end.next_page_token.is_empty());
+    let past_end = format!("{prefix}:{}", last + 1);
+    let refused = client
+        .partition_query(partition_request("items", 4, 1, &past_end))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (refused.code(), refused.message()),
+        (tonic::Code::InvalidArgument, "invalid page_token")
+    );
+}
+
 /// Production splits a collection group at sampled keys: `partition_count` cursors (all the
 /// samples when there are fewer), nested across counts, in key order, without `before`
 /// (FS-QUERY-INDEX partition-query/large-group).
@@ -2177,6 +2226,7 @@ async fn partition_query_splits_a_collection_group_at_sampled_keys() {
         .into_inner();
     assert_eq!([names(&first), names(&second)].concat(), names(&four));
     assert_eq!(second.next_page_token, "");
+    assert_partition_page_boundaries(&mut client, &four).await;
     // Without an explicit order production does not split at all.
     let mut unordered = partition_request("items", 4, 0, "");
     if let Some(pb::partition_query_request::QueryType::StructuredQuery(sq)) =

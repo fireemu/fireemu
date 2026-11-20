@@ -5,8 +5,9 @@ open StorageEtag
 /-!
 # Golden corpus
 
-The count header is followed by TSV rows `kind generation metageneration etag`; bucket rows
+The count header is followed by TSV rows `kind generation metageneration etagOctets`; bucket rows
 use a hyphen for the absent generation. The two object values cross every base-128 boundary.
+The expected Base64 text is written as dot-separated decimal ASCII octets.
 -/
 
 def boundaryValues : List Nat :=
@@ -15,11 +16,14 @@ def boundaryValues : List Nat :=
     let n := 128 ^ (i + 1)
     [n - 1, n, n + 1]
 
+def asciiOctets (value : String) : String :=
+  String.intercalate "." (value.toList.map fun c => toString c.toNat)
+
 def objectRow (g m : Nat) : String :=
-  String.intercalate "\t" ["object", toString g, toString m, objectEtag g m]
+  String.intercalate "\t" ["object", toString g, toString m, asciiOctets (objectEtag g m)]
 
 def bucketRow (m : Nat) : String :=
-  String.intercalate "\t" ["bucket", "-", toString m, bucketEtag m]
+  String.intercalate "\t" ["bucket", "-", toString m, asciiOctets (bucketEtag m)]
 
 def main : IO Unit := do
   let rows := boundaryValues.map bucketRow ++

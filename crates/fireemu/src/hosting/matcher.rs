@@ -242,21 +242,32 @@ fn path_match_with(
         return path.is_empty() || path == [""];
     };
     if *first == "**" {
-        for take in 0..=path.len() {
-            if !dot && path[..take].iter().any(|part| part.starts_with('.')) {
-                break;
-            }
-            if path_match_with(&pattern[1..], &path[take..], dot, nocase, empty_matches) {
-                return true;
-            }
-        }
-        false
+        globstar_suffixes(path, dot, |suffix| {
+            path_match_with(&pattern[1..], suffix, dot, nocase, empty_matches)
+        })
     } else {
         path.first().is_some_and(|part| {
             segment_with(first, part, dot, nocase, empty_matches)
                 && path_match_with(&pattern[1..], &path[1..], dot, nocase, empty_matches)
         })
     }
+}
+
+/// Check each suffix a globstar can leave, preserving a hidden part for the next pattern segment.
+pub(super) fn globstar_suffixes(
+    path: &[&str],
+    dot: bool,
+    accepts: impl Fn(&[&str]) -> bool,
+) -> bool {
+    for (index, part) in path.iter().enumerate() {
+        if accepts(&path[index..]) {
+            return true;
+        }
+        if !dot && part.starts_with('.') {
+            return false;
+        }
+    }
+    accepts(&[])
 }
 
 fn comma_alternatives(content: &str) -> Vec<String> {
@@ -433,16 +444,19 @@ fn alternatives(pattern: &str, deploy_ignore: bool) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 pub(super) fn glob(pattern: &str, path: &str) -> bool {
     glob_with_dot(pattern, path, false)
 }
 
+#[cfg(test)]
 pub(super) fn glob_with_dot(pattern: &str, path: &str, dot: bool) -> bool {
     glob_flavored(pattern, path, dot, false)
 }
 
 /// Hosting production's matching: dot files match `*` and `**`, and the empty part after a
 /// trailing slash matches whatever can match nothing.
+#[cfg(test)]
 pub(super) fn glob_production(pattern: &str, path: &str) -> bool {
     glob_flavored(pattern, path, true, true)
 }
@@ -507,22 +521,160 @@ pub(super) fn deploy_ignore(pattern: &str, path: &str, public_root: &str) -> boo
     })
 }
 
+/// Request path shared by the rules of one routing stage. Regexes use the original spelling.
+pub(super) struct MatchPath<'a> {
+    text: &'a str,
+    parts: OnceLock<Vec<&'a str>>,
+}
+
+impl<'a> MatchPath<'a> {
+    pub(super) fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            parts: OnceLock::new(),
+        }
+    }
+
+    fn parts(&self) -> &[&str] {
+        self.parts.get_or_init(|| slash_split(self.text))
+    }
+}
+
+enum MatchKind {
+    Never,
+    Regex(regex::Regex),
+    UnpreparedGlob(String),
+    Glob { parts: Vec<GlobPart>, negate: bool },
+}
+
+enum GlobPart {
+    Recursive,
+    Literal(String),
+    Pattern {
+        tokens: Vec<Token>,
+        explicit_dot: bool,
+    },
+}
+
+impl GlobPart {
+    fn prepare(part: &str) -> Self {
+        if part == "**" {
+            return Self::Recursive;
+        }
+        let chars: Vec<_> = part.chars().collect();
+        let parsed = tokens(&chars, &mut 0, false);
+        if let Some(literal) = parsed
+            .iter()
+            .map(|token| match token {
+                Token::Literal(ch) => Some(*ch),
+                _ => None,
+            })
+            .collect::<Option<String>>()
+        {
+            return Self::Literal(literal);
+        }
+        Self::Pattern {
+            tokens: parsed,
+            explicit_dot: part.starts_with('.') || part.starts_with(r"\."),
+        }
+    }
+}
+
+fn prepared_path_matches(pattern: &[GlobPart], path: &[&str], strict: bool) -> bool {
+    let Some((first, remaining)) = pattern.split_first() else {
+        return path.is_empty() || path == [""];
+    };
+    if matches!(first, GlobPart::Recursive) {
+        return globstar_suffixes(path, strict, |suffix| {
+            prepared_path_matches(remaining, suffix, strict)
+        });
+    }
+    let Some((part, tail)) = path.split_first() else {
+        return false;
+    };
+    let matches = match first {
+        GlobPart::Recursive => unreachable!(),
+        GlobPart::Literal(literal) => literal == part,
+        GlobPart::Pattern {
+            tokens,
+            explicit_dot,
+        } => {
+            if !strict && (part.is_empty() || (part.starts_with('.') && !explicit_dot)) {
+                return false;
+            }
+            let chars: Vec<_> = part.chars().collect();
+            ends(tokens, &chars, 0, false).contains(&chars.len())
+        }
+    };
+    matches && prepared_path_matches(remaining, tail, strict)
+}
+
+/// A rule's matcher, prepared for repeated evaluation against requests for the same site.
+pub(super) struct RuleMatcher(MatchKind);
+
+impl RuleMatcher {
+    pub(super) fn prepare(rule: &serde_json::Value) -> Self {
+        let Some(pattern) = rule_glob(rule) else {
+            return Self(
+                rule.get("regex")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|text| regex::Regex::new(text).ok())
+                    .map_or(MatchKind::Never, MatchKind::Regex),
+            );
+        };
+        if pattern.starts_with('#') {
+            return Self(MatchKind::Never);
+        }
+        // Do not expand braces at startup or hold their potentially large expansion for the site's
+        // lifetime. Leave unusually large patterns on the original matching path as well.
+        if pattern.contains('{') || pattern.len() > 512 {
+            return Self(MatchKind::UnpreparedGlob(pattern.to_owned()));
+        }
+        let bangs = pattern.bytes().take_while(|&ch| ch == b'!').count();
+        let parts = slash_split(&pattern[bangs..])
+            .into_iter()
+            .map(GlobPart::prepare)
+            .collect();
+        Self(MatchKind::Glob {
+            parts,
+            negate: bangs % 2 == 1,
+        })
+    }
+
+    pub(super) fn matches(&self, path: &MatchPath<'_>, strict: bool) -> bool {
+        match &self.0 {
+            MatchKind::Never => false,
+            MatchKind::Regex(regex) => regex.is_match(path.text),
+            MatchKind::UnpreparedGlob(glob) => glob_flavored(glob, path.text, strict, strict),
+            MatchKind::Glob { parts, negate } => {
+                prepared_path_matches(parts, path.parts(), strict) != *negate
+            }
+        }
+    }
+}
+
+fn rule_glob(rule: &serde_json::Value) -> Option<&str> {
+    ["glob", "source"]
+        .iter()
+        .filter_map(|key| rule.get(*key).and_then(serde_json::Value::as_str))
+        .find(|pattern| !pattern.is_empty())
+}
+
+#[cfg(test)]
 pub(super) fn matches(rule: &serde_json::Value, path: &str) -> bool {
     matches_flavored(rule, path, false)
 }
 
 /// `matches` with Hosting production's glob (see `glob_production`).
+#[cfg(test)]
 pub(super) fn matches_production(rule: &serde_json::Value, path: &str) -> bool {
     matches_flavored(rule, path, true)
 }
 
+#[cfg(test)]
 fn matches_flavored(rule: &serde_json::Value, path: &str, production: bool) -> bool {
     // The first non-empty of `glob` and `source`, as in `config.glob || config.source`.
-    if let Some(pattern) = ["glob", "source"]
-        .iter()
-        .filter_map(|key| rule.get(*key).and_then(serde_json::Value::as_str))
-        .find(|pattern| !pattern.is_empty())
-    {
+    if let Some(pattern) = rule_glob(rule) {
         if production {
             glob_production(pattern, path)
         } else {

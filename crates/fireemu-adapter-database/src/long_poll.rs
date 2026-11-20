@@ -207,6 +207,8 @@ pub fn decode_base64(text: &str) -> Option<Vec<u8>> {
 pub struct Reassembler {
     /// The number of the next segment to use.
     next: u64,
+    /// First segment of the current packet whose presence has not been checked.
+    contiguous_end: u64,
     /// Segments that arrived ahead of it.
     waiting: BTreeMap<u64, Segment>,
     /// The base64 bytes waiting, and the most that may wait.
@@ -241,6 +243,7 @@ impl Reassembler {
     pub fn with_bounds(byte_limit: usize, segment_limit: usize) -> Self {
         Self {
             next: 0,
+            contiguous_end: 0,
             waiting: BTreeMap::new(),
             waiting_bytes: 0,
             byte_limit,
@@ -267,7 +270,19 @@ impl Reassembler {
             let Some(end) = self.next.checked_add(total) else {
                 return Err(BadSegments);
             };
-            if !(self.next..end).all(|n| self.waiting.contains_key(&n)) {
+            // The first segment is already present. A one-segment packet needs no range walk.
+            if self.contiguous_end == self.next {
+                self.contiguous_end += 1;
+            }
+            if self.contiguous_end < end {
+                for (&number, _) in self.waiting.range(self.contiguous_end..end) {
+                    if number != self.contiguous_end {
+                        break;
+                    }
+                    self.contiguous_end += 1;
+                }
+            }
+            if self.contiguous_end < end {
                 break;
             }
             let mut text = String::new();

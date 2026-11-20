@@ -4,7 +4,7 @@
 
 The proofs recover every unsigned 64-bit value from its varint while preserving arbitrary following bytes. They also establish uniqueness of encoded varints, exact field boundaries, the base64 quartet length, and the recorded object and bucket examples. Separate roles for the payload decoder and the string renderer keep the byte-level claim explicit.
 
-The corpus crosses the 36 selected generation and metageneration boundary values, including both sides of all nine base-128 transitions and the largest unsigned 64-bit value. The Rust replayer compares the complete base64 string from each public encoder.
+The corpus crosses the 36 selected generation and metageneration boundary values, including both sides of all nine base-128 transitions and the largest unsigned 64-bit value. The fixture writes the expected base64 string as dot-separated decimal ASCII octets. The Rust replayer compares the exact bytes, including padding, against each public encoder.
 
 ## Commands
 

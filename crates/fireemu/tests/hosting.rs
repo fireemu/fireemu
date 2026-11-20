@@ -964,3 +964,57 @@ fn the_ui_names_the_runtime_a_codebase_declares_or_the_loader_picked() {
         serde_json::json!({"language": "node", "declared": null})
     );
 }
+
+#[test]
+fn prepared_dispatch_preserves_first_redirect_first_rewrite_and_last_matching_header() {
+    for profile in PROFILES {
+        let dir = Scratch::new("hosting", "prepared-dispatch");
+        std::fs::create_dir(dir.join("public")).unwrap();
+        std::fs::write(dir.join("public/first.html"), "first rewrite").unwrap();
+        std::fs::write(dir.join("public/second.html"), "second rewrite").unwrap();
+        let firebase = serde_json::json!({
+            "hosting": {
+                "public": dir.join("public"),
+                "redirects": [
+                    {"regex": "^/go/.*$", "destination": "/first-redirect", "type": 302},
+                    {"source": "/go/**", "destination": "/later-redirect", "type": 301},
+                ],
+                "rewrites": [
+                    {"glob": "/page/*", "destination": "/first.html"},
+                    {"regex": "^/page/.*$", "destination": "/second.html"},
+                ],
+                "headers": [
+                    {"source": "/page/**", "headers": [
+                        {"key": "X-First", "value": "present"},
+                        {"key": "X-Order", "value": "first"},
+                    ]},
+                    {"regex": "^/page/.*$", "headers": [{"key": "X-Order", "value": "last"}]},
+                ],
+            },
+            "emulators": emulators(),
+        });
+        let (_child, address) = start_under(profile, &dir, &firebase, "hosting");
+        let redirect = request(&address, "/go/caf%C3%A9");
+        assert!(redirect.starts_with("HTTP/1.1 302"), "{redirect}");
+        assert!(
+            redirect
+                .to_ascii_lowercase()
+                .contains("location: /first-redirect\r\n"),
+            "{redirect}"
+        );
+
+        let rewrite = request(&address, "/page/caf%C3%A9");
+        assert!(rewrite.starts_with("HTTP/1.1 200"), "{rewrite}");
+        assert!(rewrite.ends_with("first rewrite"), "{rewrite}");
+        assert!(
+            rewrite
+                .to_ascii_lowercase()
+                .contains("x-first: present\r\n"),
+            "{rewrite}"
+        );
+        assert!(
+            rewrite.to_ascii_lowercase().contains("x-order: last\r\n"),
+            "{rewrite}"
+        );
+    }
+}

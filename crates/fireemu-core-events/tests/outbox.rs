@@ -364,3 +364,22 @@ proptest::proptest! {
         }
     }
 }
+
+#[test]
+fn a_successful_update_restores_dispatch_index_after_a_caught_callback_panic() {
+    let mut outbox = Outbox::new();
+    let id = EventId::new(1);
+    outbox.enqueue_in_queue(event(1, 0), "queue").unwrap();
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = outbox.update(id, |record| {
+            record.lease().unwrap();
+            panic!("caller aborts after leasing");
+        });
+    }));
+    assert!(caught.is_err());
+    outbox.update(id, |_| ()).unwrap();
+    assert_eq!(outbox.record(id).unwrap().state(), &EventState::Leased);
+    assert!(outbox.dispatchable().next().is_none());
+    assert!(outbox.dispatchable_queue_heads().next().is_none());
+    assert!(outbox.has_active());
+}

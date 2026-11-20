@@ -178,8 +178,8 @@ impl Outbox {
         let key = (record.event().logical_time, id);
         let state = record.state().clone();
         self.pending.remove(&key);
-        let queue = self.queue_by_id.get(&id).cloned();
-        if let Some(queue) = &queue {
+        let queue = self.queue_by_id.get(&id);
+        if let Some(queue) = queue {
             if let Some(pending) = self.pending_by_queue.get_mut(queue) {
                 pending.remove(&key);
                 if pending.is_empty() {
@@ -194,7 +194,7 @@ impl Outbox {
             EventState::Pending => {
                 self.pending.insert(key);
                 self.pending_by_queue
-                    .entry(queue.expect("active records have a dispatch queue"))
+                    .entry(queue.expect("active records have a dispatch queue").clone())
                     .or_default()
                     .insert(key);
                 self.active.insert(id);

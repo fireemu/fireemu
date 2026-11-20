@@ -2160,23 +2160,23 @@ fn apply_blocking_response(
     for field in mask.split(',').map(str::trim) {
         match field {
             "displayName" => {
-                if let Some(user) = store.user_mut(uid) {
-                    user.display_name = blocking_string(record.get(field));
+                if let Some(user) = store.user_metadata_mut(uid) {
+                    *user.display_name = blocking_string(record.get(field));
                 }
             }
             "photoUrl" => {
-                if let Some(user) = store.user_mut(uid) {
-                    user.photo_url = blocking_string(record.get(field));
+                if let Some(user) = store.user_metadata_mut(uid) {
+                    *user.photo_url = blocking_string(record.get(field));
                 }
             }
             "disabled" => {
-                if let Some(user) = store.user_mut(uid) {
-                    user.disabled = blocking_truthy(record.get(field));
+                if let Some(user) = store.user_metadata_mut(uid) {
+                    *user.disabled = blocking_truthy(record.get(field));
                 }
             }
             "emailVerified" => {
-                if let Some(user) = store.user_mut(uid) {
-                    user.email_verified = blocking_truthy(record.get(field));
+                if let Some(user) = store.user_metadata_mut(uid) {
+                    *user.email_verified = blocking_truthy(record.get(field));
                 }
             }
             "customClaims" => custom_claims = Some(blocking_claims(record.get(field), field)?),
@@ -10223,9 +10223,9 @@ fn sign_up(
         if let Err(e) = store.set_email(&uid, email) {
             return auth_error(&e);
         }
-        if let Some(u) = store.user_mut(&uid) {
-            u.email_verified = false;
-            u.provider = fireemu_core_auth::store::Provider::Password;
+        if let Some(u) = store.user_metadata_mut(&uid) {
+            *u.email_verified = false;
+            *u.provider = fireemu_core_auth::store::Provider::Password;
         }
         (uid, false)
     } else {
@@ -10257,8 +10257,8 @@ fn sign_up(
         }
     }
     if let Some(name) = str_field(body, "displayName") {
-        if let Some(u) = store.user_mut(&uid) {
-            u.display_name = Some(name.to_owned());
+        if let Some(u) = store.user_metadata_mut(&uid) {
+            *u.display_name = Some(name.to_owned());
         }
     }
     // `photoUrl` is listed on the sign-up request but production does not persist it
@@ -10455,8 +10455,8 @@ fn sign_in_with_custom_token(
     }
     // Any custom-token sign-in marks the account (sandbox recording 2026-09-24,
     // id-token/methods#admin-lookup-after-custom-sign-in).
-    if let Some(user) = store.user_mut(&uid) {
-        user.custom_auth = true;
+    if let Some(user) = store.user_metadata_mut(&uid) {
+        *user.custom_auth = true;
     }
     store.record_sign_in(&uid, at);
     if legacy_tokens && wants_legacy_token(store, body) {
@@ -11966,8 +11966,8 @@ fn update(
         // Production keeps emailVerified through an Admin email change (sandbox recording
         // 2026-09-23); an end-user change still starts unverified.
         if email_changed && self_service {
-            if let Some(u) = store.user_mut(&uid) {
-                u.email_verified = false;
+            if let Some(u) = store.user_metadata_mut(&uid) {
+                *u.email_verified = false;
             }
         }
     }
@@ -11979,8 +11979,8 @@ fn update(
         // An Admin email removal keeps emailVerified in production (sandbox recording
         // 2026-09-23, auth-account/admin/update#delete-email).
         if !self_service && verified {
-            if let Some(u) = store.user_mut(&uid) {
-                u.email_verified = true;
+            if let Some(u) = store.user_metadata_mut(&uid) {
+                *u.email_verified = true;
             }
         }
     }
@@ -12024,14 +12024,14 @@ fn update(
             session_provider = Some(fireemu_core_auth::store::Provider::Password);
         }
     }
-    if let Some(u) = store.user_mut(&uid) {
-        plan.display_name.apply(&mut u.display_name);
-        plan.photo_url.apply(&mut u.photo_url);
+    if let Some(u) = store.user_metadata_mut(&uid) {
+        plan.display_name.apply(u.display_name);
+        plan.photo_url.apply(u.photo_url);
         if let Some(verified) = plan.email_verified {
-            u.email_verified = verified;
+            *u.email_verified = verified;
         }
         if let Some(disable) = plan.disable {
-            u.disabled = disable;
+            *u.disabled = disable;
         }
     }
     // Disable-only strict updates suspend use without destroying existing credentials,
@@ -12296,11 +12296,11 @@ fn admin_create(store: &mut AuthStore, body: &Value, at: LogicalInstant) -> Json
         let _ = store.delete_user_by_id(uid.as_str());
         return auth_error(&e);
     }
-    if let Some(u) = store.user_mut(&uid) {
-        u.display_name = display_name;
-        u.photo_url = photo_url;
-        u.disabled = disabled;
-        u.admin_created = true;
+    if let Some(u) = store.user_metadata_mut(&uid) {
+        *u.display_name = display_name;
+        *u.photo_url = photo_url;
+        *u.disabled = disabled;
+        *u.admin_created = true;
     }
     if let Err(e) = store.set_phone_factors(&uid, factors, at) {
         let _ = store.delete_user_by_id(uid.as_str());
@@ -14329,8 +14329,8 @@ fn reset_password(
     // a refresh answers so too (sandbox recording 2026-09-24), and the emulator profile keeps
     // the official emulator's stateless refresh credentials.
     let _ = store.revoke_tokens(&uid, at);
-    if let Some(u) = store.user_mut(&uid) {
-        u.email_verified = true;
+    if let Some(u) = store.user_metadata_mut(&uid) {
+        *u.email_verified = true;
     }
     JsonResponse {
         status: 200,
@@ -14407,8 +14407,8 @@ fn apply_oob_code(
             if let Err(e) = store.consume_oob_code(code, None, at) {
                 return auth_error(&e);
             }
-            if let Some(u) = store.user_mut(&uid) {
-                u.email_verified = true;
+            if let Some(u) = store.user_metadata_mut(&uid) {
+                *u.email_verified = true;
             }
         }
         OobRequestType::VerifyAndChangeEmail => {
@@ -14427,8 +14427,8 @@ fn apply_oob_code(
             if let Err(e) = store.set_email(&uid, &new_email) {
                 return auth_error(&e);
             }
-            if let Some(u) = store.user_mut(&uid) {
-                u.email_verified = true;
+            if let Some(u) = store.user_metadata_mut(&uid) {
+                *u.email_verified = true;
                 // Strict: the address the first applied change replaced, as production
                 // records it (the official emulator records it only on a direct update).
                 if strict && u.initial_email.is_none() {
@@ -14880,14 +14880,14 @@ fn sign_in_with_email_link(
         if let Err(e) = store.set_email(&uid, &email) {
             return auth_error(&e);
         }
-        if let Some(u) = store.user_mut(&uid) {
-            u.email_verified = true;
-            u.email_link_signin = true;
+        if let Some(u) = store.user_metadata_mut(&uid) {
+            *u.email_verified = true;
+            *u.email_link_signin = true;
             // A linked anonymous account becomes an email-link account: its session is a
             // `password` session and it lists the password provider, as in production and
             // the official emulator.
-            if u.provider == fireemu_core_auth::store::Provider::Anonymous {
-                u.provider = fireemu_core_auth::store::Provider::EmailLink;
+            if *u.provider == fireemu_core_auth::store::Provider::Anonymous {
+                *u.provider = fireemu_core_auth::store::Provider::EmailLink;
             }
         }
         return finish_sign_in(
@@ -14924,14 +14924,14 @@ fn sign_in_with_email_link(
             Err(e) => return auth_error(&e),
         }
     }
-    if let Some(u) = store.user_mut(&uid) {
-        u.email_link_signin = true;
-        u.email_link_created |= is_new;
+    if let Some(u) = store.user_metadata_mut(&uid) {
+        *u.email_link_signin = true;
+        *u.email_link_created |= is_new;
         // Removing the password leaves an account without a provider; the link makes it an
         // email-link account, whose sessions carry no anonymous `provider_id` (sandbox
         // recording 2026-09-24, email-link/session#sign-in-p).
-        if u.provider == fireemu_core_auth::store::Provider::Anonymous {
-            u.provider = fireemu_core_auth::store::Provider::EmailLink;
+        if *u.provider == fireemu_core_auth::store::Provider::Anonymous {
+            *u.provider = fireemu_core_auth::store::Provider::EmailLink;
         }
     }
     // The account and the pending credential keep `Provider::EmailLink`, which drives

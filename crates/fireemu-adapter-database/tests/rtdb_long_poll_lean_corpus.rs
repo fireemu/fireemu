@@ -71,3 +71,20 @@ fn replay_lean_long_poll() {
         }
     }
 }
+
+#[test]
+fn a_late_gap_blocks_a_buffered_following_packet() {
+    let mut reassembler = Reassembler::with_bounds(8, 5);
+    assert!(reassembler
+        .add(segments("0,4,Q|1,999,Q|3,0,|4,1,Qg"))
+        .unwrap()
+        .is_empty());
+    assert!(reassembler
+        .add(segments("1,4,ignored duplicate"))
+        .unwrap()
+        .is_empty());
+    assert!(reassembler.add(Vec::new()).unwrap().is_empty());
+    assert_eq!(reassembler.add(segments("2,0,")).unwrap(), ["A", "B"]);
+    assert!(reassembler.add(segments("3,1,stale")).unwrap().is_empty());
+    assert_eq!(reassembler.add(segments("5,1,Qw")).unwrap(), ["C"]);
+}

@@ -359,6 +359,77 @@ async fn http_immediately_after_reset_uses_one_replacement() {
 }
 
 #[tokio::test]
+async fn indexed_firestore_dispatch_preserves_delivery_order_across_reload() {
+    use fireemu_adapter_functions::runtime::{CatchUpPolicy, OverlapPolicy};
+
+    let (runtime, _) = start_with_runtime_options(
+        OverlapPolicy::Allow,
+        CatchUpPolicy::All,
+        1,
+        false,
+        |manifest| {
+            let reference = manifest.get("ok").unwrap().clone();
+            manifest.functions = (0..64)
+                .map(|index| fireemu_core_functions::manifest::FunctionSpec {
+                    name: format!("unrelated-{index}"),
+                    trigger: Trigger::RemoteConfig,
+                    ..reference.clone()
+                })
+                .collect();
+            for name in ["z-firestore", "a-firestore"] {
+                manifest
+                    .functions
+                    .push(fireemu_core_functions::manifest::FunctionSpec {
+                        name: name.to_owned(),
+                        ..reference.clone()
+                    });
+            }
+        },
+    )
+    .await;
+    assert_eq!(runtime.manifest().functions.len(), 66);
+    let deliver = |path: &str| {
+        let document = doc(path, 1);
+        runtime.on_commit(&commit(vec![DocumentChange {
+            path: document.path.clone(),
+            before: None,
+            after: Some(document.into()),
+        }]));
+    };
+    deliver("items/before-reload");
+    let before = runtime.await_idle(Duration::from_secs(3)).await;
+
+    let spawn = fake_spawn_spec();
+    let replacement = Arc::new(Runner::spawn_spec(&spawn).await.unwrap());
+    let reload = runtime.reload_codebase(CodebaseSpec {
+        function: None,
+        name: "default".to_owned(),
+        manifest: runtime.manifest().clone(),
+        runner: replacement.clone(),
+        spawn: None,
+        cleanup_dir: None,
+    });
+    let installed = Arc::ptr_eq(&runtime.runner(), &replacement);
+    deliver("items/after-reload");
+    let after = runtime.await_idle(Duration::from_secs(3)).await;
+    let history = runtime.history();
+    runtime.shutdown().await;
+
+    before.unwrap();
+    reload.unwrap();
+    after.unwrap();
+    assert!(installed);
+    assert!(!replacement.is_alive());
+    assert_eq!(
+        history
+            .iter()
+            .map(|item| item.function.as_str())
+            .collect::<Vec<_>>(),
+        ["z-firestore", "a-firestore", "z-firestore", "a-firestore"]
+    );
+}
+
+#[tokio::test]
 async fn fixed_inspector_reload_holds_recovery_until_the_new_runner_is_published() {
     let dir = std::env::temp_dir().join(format!("fireemu-inspector-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

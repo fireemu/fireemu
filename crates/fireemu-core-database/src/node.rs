@@ -625,5 +625,5 @@ pub fn array_length(children: &BTreeMap<String, Node>) -> Option<usize> {
         }
         max = max.max(key.parse().ok()?);
     }
-    (max < 2 * children.len()).then_some(max + 1)
+    (max < 2 * children.len()).then(|| max + 1)
 }

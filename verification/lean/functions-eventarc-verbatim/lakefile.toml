@@ -1,0 +1,9 @@
+name = "functions-eventarc-verbatim"
+defaultTargets = ["FunctionsEventarcVerbatim", "corpus"]
+
+[[lean_lib]]
+name = "FunctionsEventarcVerbatim"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

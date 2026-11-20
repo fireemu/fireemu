@@ -1,0 +1,9 @@
+name = "rules-coverage-previews"
+defaultTargets = ["RulesCoveragePreviews", "corpus"]
+
+[[lean_lib]]
+name = "RulesCoveragePreviews"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

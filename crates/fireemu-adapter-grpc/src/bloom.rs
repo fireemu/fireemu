@@ -135,6 +135,54 @@ mod tests {
     }
 
     #[test]
+    fn the_bloom_builder_matches_lean() {
+        let mut lines = include_str!("../tests/fixtures/lean-firestore-watch-bloom.corpus").lines();
+        assert_eq!(
+            lines.next(),
+            Some("# mode|hashes|bytes|padding|shape|names|bitmap")
+        );
+        assert_eq!(lines.clone().count(), 987);
+        for line in lines {
+            let [mode, hashes, bytes, padding, _, labels, bitmap]: [&str; 7] =
+                line.split('|').collect::<Vec<_>>().try_into().unwrap();
+            let names: Vec<_> = labels
+                .split(',')
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let actual = if mode == "recorded" {
+                Bloom::for_documents(&names)
+            } else {
+                assert_eq!(mode, "direct");
+                let mut filter = Bloom::with_size(
+                    hashes.parse().unwrap(),
+                    bytes.parse().unwrap(),
+                    padding.parse().unwrap(),
+                );
+                for name in &names {
+                    filter.insert(name);
+                }
+                Some(filter)
+            };
+            if hashes == "-" {
+                assert_eq!(actual, None, "{line}");
+                continue;
+            }
+            let expected: Vec<u8> = bitmap
+                .split(',')
+                .filter(|byte| !byte.is_empty())
+                .map(|byte| byte.parse().unwrap())
+                .collect();
+            let proto = actual.expect("admitted shape").into_proto();
+            assert_eq!(proto.hash_count, hashes.parse::<i32>().unwrap(), "{line}");
+            let bits = proto.bits.expect("filter encodes bits");
+            assert_eq!(bits.padding, padding.parse::<i32>().unwrap(), "{line}");
+            assert_eq!(bits.bitmap.len(), bytes.parse::<usize>().unwrap(), "{line}");
+            assert_eq!(bits.bitmap, expected, "{line}");
+        }
+    }
+
+    #[test]
     fn it_builds_the_bitmaps_and_gives_the_answers_of_the_sdks_own_bloom_filter() {
         let vectors = vectors();
         let all = vectors["vectors"].as_array().unwrap();

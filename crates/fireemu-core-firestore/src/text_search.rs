@@ -323,12 +323,14 @@ pub fn occurrence_weight(occurrences: usize) -> f64 {
 pub fn adjacency_weight(adjacencies: usize) -> f64 {
     ADJACENCY_SCALE * (adjacencies as f64).powf(0.75)
 }
+type DocumentPostings = BTreeMap<usize, BTreeMap<usize, Vec<usize>>>;
+
 /// Immutable corpus with positional postings keyed by term, document, then indexed field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchIndex {
     fields: Vec<FieldPath>,
     documents: Vec<IndexedDocument>,
-    postings: BTreeMap<String, BTreeMap<usize, BTreeMap<usize, Vec<usize>>>>,
+    postings: BTreeMap<String, DocumentPostings>,
 }
 impl SearchIndex {
     /// Extend with a validated disjoint corpus batch atomically.
@@ -515,6 +517,44 @@ impl SearchIndex {
                 .all(|clause| self.matches(id, clause) != clause.excluded)
         }
     }
+    /// Every conjunctive match appears in each required term's postings. Concatenated
+    /// matches take a separate path even when one required term has no postings.
+    fn candidate_ids(
+        &self,
+        query: &SearchQuery,
+        concatenated: Option<&str>,
+    ) -> Option<impl Iterator<Item = usize> + '_> {
+        let primary = query
+            .clauses
+            .iter()
+            .filter(|clause| !clause.excluded)
+            .flat_map(|clause| &clause.tokens)
+            .map(|term| self.postings.get(term))
+            .min_by_key(|postings| postings.map_or(0, BTreeMap::len))
+            .flatten();
+        let alternative = concatenated.and_then(|term| self.postings.get(term));
+        let possible = primary
+            .map_or(0, BTreeMap::len)
+            .saturating_add(alternative.map_or(0, BTreeMap::len));
+        if possible >= self.documents.len() / 2 {
+            return None;
+        }
+        Some(
+            primary
+                .into_iter()
+                .flat_map(BTreeMap::keys)
+                .chain(
+                    alternative
+                        .into_iter()
+                        .flat_map(BTreeMap::keys)
+                        .filter(move |id| {
+                            primary.is_none_or(|postings| !postings.contains_key(id))
+                        }),
+                )
+                .copied(),
+        )
+    }
+
     /// Positions of `term` in `field` of document `id`.
     fn positions(&self, term: &str, id: usize, field: usize) -> Option<&Vec<usize>> {
         self.postings.get(term)?.get(&id)?.get(&field)
@@ -585,7 +625,9 @@ impl SearchIndex {
                 }
             }
         }
-        if !query.clauses.iter().any(|clause| !clause.excluded) {
+        if options.retrieval_depth == Some(0)
+            || !query.clauses.iter().any(|clause| !clause.excluded)
+        {
             return Ok(Vec::new());
         }
         let concatenated = query
@@ -593,10 +635,18 @@ impl SearchIndex {
             .as_ref()
             .filter(|terms| terms.len() >= 2)
             .map(|terms| terms.concat());
-        let mut candidates: Vec<usize> = (0..self.documents.len())
-            .filter(|id| self.matches_query(*id, query, concatenated.as_deref()))
-            .collect();
-        candidates.sort_by(|a, b| {
+        let matches = |id: &usize| self.matches_query(*id, query, concatenated.as_deref());
+        // Walking posting lists pays off for selective queries. A direct scan avoids
+        // their setup and overlap checks for small corpora or dense posting lists.
+        let indexed = (self.documents.len() > 64)
+            .then(|| self.candidate_ids(query, concatenated.as_deref()))
+            .flatten();
+        let mut candidates: Vec<_> = if let Some(ids) = indexed {
+            ids.filter(matches).collect()
+        } else {
+            (0..self.documents.len()).filter(matches).collect()
+        };
+        let newest_then_path = |a: &usize, b: &usize| {
             self.documents[*b]
                 .created_at
                 .cmp(&self.documents[*a].created_at)
@@ -605,10 +655,16 @@ impl SearchIndex {
                         .path
                         .cmp_resource_name(&self.documents[*b].path)
                 })
-        });
-        if let Some(depth) = options.retrieval_depth {
+                .then_with(|| a.cmp(b))
+        };
+        if let Some(depth) = options
+            .retrieval_depth
+            .filter(|depth| *depth < candidates.len())
+        {
+            candidates.select_nth_unstable_by(depth, newest_then_path);
             candidates.truncate(depth);
         }
+        candidates.sort_by(newest_then_path);
         let mut hits: Vec<SearchHit> = candidates
             .into_iter()
             .map(|id| SearchHit {

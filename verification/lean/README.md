@@ -24,21 +24,21 @@ Each package defines a reference contract, checks its theorems, and generates th
 
 | Area | Reference packages |
 | --- | --- |
-| Shared JSON and export metadata | [core-json](core-json/README.md), [export-metadata](export-metadata/README.md) |
-| Firestore writes and aggregates | [firestore-transforms](firestore-transforms/README.md), [firestore-aggregates](firestore-aggregates/README.md), [firestore-partition-query](firestore-partition-query/README.md) |
-| Firestore query inputs | [firestore-pipeline-values](firestore-pipeline-values/README.md), [firestore-text-query](firestore-text-query/README.md), [firestore-proto-values](firestore-proto-values/README.md), [firestore-index-config](firestore-index-config/README.md) |
-| Security Rules | [rules-utf16-slices](rules-utf16-slices/README.md), [rules-coverage-merge](rules-coverage-merge/README.md) |
-| Realtime Database and UI | [rtdb-path-merge](rtdb-path-merge/README.md), [rtdb-node-hash](rtdb-node-hash/README.md), [rtdb-long-poll](rtdb-long-poll/README.md), [ui-rtdb-forwarding](ui-rtdb-forwarding/README.md) |
+| Shared JSON and export metadata | [core-json](core-json/README.md), [export-metadata](export-metadata/README.md), [export-managed-schema](export-managed-schema/README.md) |
+| Firestore writes and aggregates | [firestore-transforms](firestore-transforms/README.md), [firestore-aggregates](firestore-aggregates/README.md), [firestore-partition-query](firestore-partition-query/README.md), [firestore-pipeline-group-order](firestore-pipeline-group-order/README.md) |
+| Firestore query inputs | [firestore-pipeline-values](firestore-pipeline-values/README.md), [firestore-text-query](firestore-text-query/README.md), [firestore-proto-values](firestore-proto-values/README.md), [firestore-index-config](firestore-index-config/README.md), [firestore-partition-request](firestore-partition-request/README.md), [firestore-search-ranking](firestore-search-ranking/README.md), [firestore-watch-bloom](firestore-watch-bloom/README.md) |
+| Security Rules | [rules-utf16-slices](rules-utf16-slices/README.md), [rules-coverage-merge](rules-coverage-merge/README.md), [rules-coverage-previews](rules-coverage-previews/README.md), [rules-lexical-functions](rules-lexical-functions/README.md) |
+| Realtime Database and UI | [rtdb-path-merge](rtdb-path-merge/README.md), [rtdb-node-hash](rtdb-node-hash/README.md), [rtdb-long-poll](rtdb-long-poll/README.md), [ui-rtdb-forwarding](ui-rtdb-forwarding/README.md), [rtdb-node-json-shape](rtdb-node-json-shape/README.md) |
 | Cloud Storage | [storage-list-pages](storage-list-pages/README.md), [storage-http-range](storage-http-range/README.md) |
-| Pub/Sub | [pubsub-publish](pubsub-publish/README.md), [pubsub-rest-negative-cache](pubsub-rest-negative-cache/README.md), [pubsub-ack-lease](pubsub-ack-lease/README.md) |
-| Auth and App Check | [auth-user-pagination](auth-user-pagination/README.md), [auth-custom-claims](auth-custom-claims/README.md), [app-check-registry](app-check-registry/README.md) |
-| Functions and Eventarc | [functions-trigger-selection](functions-trigger-selection/README.md), [functions-ordered-json](functions-ordered-json/README.md), [eventarc-channel-lifecycle](eventarc-channel-lifecycle/README.md) |
+| Pub/Sub | [pubsub-publish](pubsub-publish/README.md), [pubsub-rest-negative-cache](pubsub-rest-negative-cache/README.md), [pubsub-ack-lease](pubsub-ack-lease/README.md), [pubsub-snapshot-lifetime](pubsub-snapshot-lifetime/README.md), [pubsub-snapshot-seek](pubsub-snapshot-seek/README.md) |
+| Auth and App Check | [auth-user-pagination](auth-user-pagination/README.md), [auth-custom-claims](auth-custom-claims/README.md), [app-check-registry](app-check-registry/README.md), [auth-query-index](auth-query-index/README.md), [auth-phone-normalization](auth-phone-normalization/README.md) |
+| Functions and Eventarc | [functions-trigger-selection](functions-trigger-selection/README.md), [functions-ordered-json](functions-ordered-json/README.md), [eventarc-channel-lifecycle](eventarc-channel-lifecycle/README.md), [functions-eventarc-verbatim](functions-eventarc-verbatim/README.md), [functions-firestore-index](functions-firestore-index/README.md) |
 | Sessions and Cloud Tasks | [session-tenancy](session-tenancy/README.md), [cloud-tasks-queue](cloud-tasks-queue/README.md) |
 | Outbox and Functions transport | [event-outbox](event-outbox/README.md), [functions-protocol-frame](functions-protocol-frame/README.md) |
 | Adapter limits and retry | [adapter-bounded-body](adapter-bounded-body/README.md), [adapter-terminal-policy](adapter-terminal-policy/README.md), [adapter-notice-limit](adapter-notice-limit/README.md), [adapter-accept-backoff](adapter-accept-backoff/README.md) |
-| Hosting and CLI | [hosting-match](hosting-match/README.md), [config-discovery](config-discovery/README.md), [service-start-plan](service-start-plan/README.md) |
-| Node.js runner and npm | [runner-log-bounds](runner-log-bounds/README.md), [runner-invocation-budget](runner-invocation-budget/README.md), [runner-parameter-defaults](runner-parameter-defaults/README.md), [npm-clock-duration](npm-clock-duration/README.md), [runner-wait-deadlines](runner-wait-deadlines/README.md) |
-| Python runner | [python-runner-wire-layout](python-runner-wire-layout/README.md), [python-runner-event-data](python-runner-event-data/README.md) |
+| Hosting and CLI | [hosting-match](hosting-match/README.md), [config-discovery](config-discovery/README.md), [service-start-plan](service-start-plan/README.md), [hosting-globstar-traversal](hosting-globstar-traversal/README.md) |
+| Node.js runner and npm | [runner-log-bounds](runner-log-bounds/README.md), [runner-invocation-budget](runner-invocation-budget/README.md), [runner-parameter-defaults](runner-parameter-defaults/README.md), [npm-clock-duration](npm-clock-duration/README.md), [runner-wait-deadlines](runner-wait-deadlines/README.md), [runner-structured-log](runner-structured-log/README.md) |
+| Python runner | [python-runner-wire-layout](python-runner-wire-layout/README.md), [python-runner-event-data](python-runner-event-data/README.md), [python-runner-duplicate-members](python-runner-duplicate-members/README.md) |
 
 ## Reproduce a package
 

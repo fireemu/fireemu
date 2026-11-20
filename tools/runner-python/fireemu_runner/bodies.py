@@ -79,18 +79,19 @@ _GCS_OBJECT_ORDER = (
 )
 
 
-def _sorted_deep(value):
-    if isinstance(value, dict):
-        return {k: _sorted_deep(v) for k, v in sorted(value.items())}
-    if isinstance(value, list):
-        return [_sorted_deep(v) for v in value]
-    return value
-
-
 def storage_layout(value) -> str:
     """The object resource in the API's member order, indented by two spaces, and a newline (recorded for the known members)."""
-    if isinstance(value, dict):
-        known = [(k, _sorted_deep(value[k])) for k in _GCS_OBJECT_ORDER if k in value]
-        rest = [(k, _sorted_deep(v)) for k, v in sorted(value.items()) if k not in _GCS_OBJECT_ORDER]
-        value = dict(known + rest)
-    return write(value, indent=2) + "\n"
+    if not isinstance(value, dict):
+        return write(value, indent=2) + "\n"
+    known = [(key, value[key]) for key in _GCS_OBJECT_ORDER if key in value]
+    rest = [(key, item) for key, item in sorted(value.items()) if key not in _GCS_OBJECT_ORDER]
+    members = known + rest
+    if not members:
+        return "{}\n"
+    # The root has a resource-specific order. The normal writer sorts its descendants
+    # during serialization, so no reordered copy of the tree is needed.
+    parts = [
+        json.dumps(str(key), ensure_ascii=False) + ": " + write(item, sort_keys=True, indent=2, level=1)
+        for key, item in members
+    ]
+    return _join("{", parts, "}", 2, 0) + "\n"

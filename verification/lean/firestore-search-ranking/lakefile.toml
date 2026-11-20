@@ -1,0 +1,9 @@
+name = "firestore-search-ranking"
+defaultTargets = ["FirestoreSearchRanking", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreSearchRanking"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

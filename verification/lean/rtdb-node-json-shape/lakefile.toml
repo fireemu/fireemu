@@ -1,0 +1,9 @@
+name = "rtdb-node-json-shape"
+defaultTargets = ["RtdbNodeJsonShape", "corpus"]
+
+[[lean_lib]]
+name = "RtdbNodeJsonShape"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
