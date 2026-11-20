@@ -1,0 +1,9 @@
+name = "crc32c"
+defaultTargets = ["Crc32c", "corpus"]
+
+[[lean_lib]]
+name = "Crc32c"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

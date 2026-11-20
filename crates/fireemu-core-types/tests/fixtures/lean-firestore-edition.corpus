@@ -1,0 +1,17 @@
+# edition|api|catalog|result
+standard|native|firestore-standard-v1|ok:true:false:unsupported:unsupported
+standard|native|firestore-enterprise-v1|catalog-mismatch
+standard|native|unrelated|catalog-mismatch
+standard|native|firestore-standardx-enterprise-v1|catalog-mismatch
+standard|mongodb-compatible|firestore-standard-v1|invalid-combination
+standard|mongodb-compatible|firestore-enterprise-v1|invalid-combination
+standard|mongodb-compatible|unrelated|invalid-combination
+standard|mongodb-compatible|firestore-standardx-enterprise-v1|invalid-combination
+enterprise|native|firestore-standard-v1|catalog-mismatch
+enterprise|native|firestore-enterprise-v1|ok:true:true:preview:preview
+enterprise|native|unrelated|catalog-mismatch
+enterprise|native|firestore-standardx-enterprise-v1|catalog-mismatch
+enterprise|mongodb-compatible|firestore-standard-v1|catalog-mismatch
+enterprise|mongodb-compatible|firestore-enterprise-v1|ok:false:false:unsupported:unsupported
+enterprise|mongodb-compatible|unrelated|catalog-mismatch
+enterprise|mongodb-compatible|firestore-standardx-enterprise-v1|catalog-mismatch

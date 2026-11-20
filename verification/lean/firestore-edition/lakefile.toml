@@ -1,0 +1,9 @@
+name = "firestore-edition"
+defaultTargets = ["FirestoreEdition", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreEdition"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
