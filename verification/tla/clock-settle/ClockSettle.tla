@@ -37,9 +37,11 @@
 
    A runner stopped on purpose and left installed (a fixed-inspector restart; an unstarted
    placeholder behaves the same) answers a send without error and runs nothing until it is
-   replaced; the check counts it as settled. Work admitted before the move and run later keeps
-   the clock it was admitted with: AdmittedSeesSettled states that non-goal, and only the
-   ClockSettleAdmittedWork configuration checks it, to show that it does not hold. *)
+   replaced; the check counts it as settled. Work admitted before the move is pinned to its
+   runner, not to a clock: it runs with whatever revision that runner holds when it is forwarded
+   (older or newer), and only if that runner is still alive. AdmittedSeesSettled states that it
+   would see the settled clock, a non-goal; only the ClockSettleAdmittedWork configuration checks
+   it, to show that it does not hold. *)
 EXTENDS Integers
 
 CONSTANTS GenRecheck, WaiterGuard, PipeGuard, ClockTimeoutCleanup, DispatchSync
@@ -73,8 +75,8 @@ Init ==
     /\ witness = FALSE
     /\ settled = FALSE
     /\ staleRun = FALSE
-    \* Work admitted to runner 1 before the move, carrying the pre-move clock (0 once it ran).
-    /\ admitted = Before
+    \* Work admitted to runner 1 before the move and not run yet.
+    /\ admitted = TRUE
     /\ staleAdmitted = FALSE
 
 Sending == pc \in {"lock", "writing", "await"}
@@ -213,11 +215,12 @@ Dispatch ==
     /\ UNCHANGED <<cur, nextR, alive, onPurpose, inbox, pipe, waiter, pc, seen, answered,
                    cancelledIn, witness, settled>>
 
-\* Admitted work runs later with the clock it was admitted with (a draining runner).
+\* Admitted work runs later on its pinned runner, with the clock that runner holds then (it may
+\* be draining, and another request's sync may have moved it); a stopped runner runs nothing.
 RunAdmitted ==
-    /\ admitted # 0
-    /\ staleAdmitted' = (staleAdmitted \/ (settled /\ admitted < Target))
-    /\ admitted' = 0
+    /\ admitted /\ alive[1]
+    /\ staleAdmitted' = (staleAdmitted \/ (settled /\ rrev[1] < Target))
+    /\ admitted' = FALSE
 
 Core ==
     \/ Snap \/ Lock \/ Written \/ Answered \/ Gone \/ FrameTimeout \/ Check \/ Cancel
@@ -231,8 +234,10 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 
-\* When settlement answers, the runner its check read was the one the pass sent to, and it had
-\* acknowledged the move at that moment (later swaps are not this property's business).
+\* When settlement answers, the runner its check read was the one the pass sent to, and at that
+\* moment it had acknowledged the move or it runs nothing (stopped on purpose or not started yet,
+\* which counts as settled without an acknowledgement); later swaps are not this property's
+\* business.
 SettledChecksCurrent == pc = "ok" => witness
 
 \* A caller that gave up on its frame (dropped by the outer timeout, or past its own deadline)
@@ -249,7 +254,8 @@ NoHalfFrameOnLiveRunner ==
 \* No handler dispatched after the move runs with a clock older than the last settled move.
 DispatchSeesSettled == ~staleRun
 
-\* Non-goal: work admitted before the move and run after it was settled sees the settled clock.
+\* Non-goal: work admitted before the move and run on its live pinned runner after the move was
+\* settled sees the settled clock.
 AdmittedSeesSettled == ~staleAdmitted
 
 TypeOK ==

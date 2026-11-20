@@ -1956,8 +1956,11 @@ impl FunctionsRuntime {
     /// first (`sync_runner_clock` before each dispatch; `run_due` syncs the runner it selected
     /// for the batch), so it runs on that clock even on a runner installed after its codebase
     /// was checked (a reload or a recovery that sampled the clock before the move). Work already
-    /// admitted to a runner before the move, including a request that synced a runner that is
-    /// now draining, keeps the clock it was admitted with. Model: verification/tla/clock-settle.
+    /// admitted to a runner before the move (a request that synced a runner which is now
+    /// draining) is pinned to that runner, not to its clock: it may run with the older revision
+    /// or with a newer one, whichever the runner holds when the work is forwarded (another
+    /// request's sync can move it), with no guarantee either way (a non-goal). Model:
+    /// verification/tla/clock-settle.
     ///
     /// Known limit: a runner replaced while the pass is sending to it, and kept running to drain
     /// its admitted work, still owes this pass an answer within its 5 s frame deadline; if it
@@ -2002,6 +2005,11 @@ impl FunctionsRuntime {
     }
 
     /// Drain a bounded timer batch separately from daemon event idleness.
+    ///
+    /// Time bound: the settlement scan has the [`CLOCK_SETTLE_BOUND`] cap (10 s); then, per
+    /// codebase, the sync of the runner selected for the batch has its own 5 s frame deadline,
+    /// which starts after it waited for that runner's clock lock, and the batch has its own 5 s
+    /// deadline, so one call can approach 20 s.
     pub async fn run_due(&self, budget: usize) -> Result<Value, String> {
         if !self.config.clock_policy.timers_virtual {
             return Err("virtual application timers are disabled".into());
