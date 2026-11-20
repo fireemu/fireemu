@@ -59,6 +59,16 @@ fn reserved_dunder_names_are_rejected_except_name() {
         FieldPath::document_name()
     );
     assert!(FieldPath::document_name().is_document_name());
+    assert!(!FieldPath::parse("__name__.child")
+        .unwrap()
+        .is_document_name());
+    for valid in ["__", "___", "__prefix", "suffix__"] {
+        assert_eq!(FieldPath::parse(valid).unwrap().segments(), [valid]);
+    }
+    assert_eq!(
+        FieldPath::parse("____"),
+        Err(FieldPathError::ReservedSegment { index: 0 })
+    );
     assert_eq!(
         FieldPath::parse("__foo__"),
         Err(FieldPathError::ReservedSegment { index: 0 })
@@ -95,6 +105,15 @@ fn reserved_dunder_names_are_rejected_except_name() {
 fn byte_limits_are_utf8_bytes() {
     let long_segment = "あ".repeat(500); // 1,500 bytes
     assert!(FieldPath::from_segments([long_segment.as_str()]).is_ok());
+    let one_byte_over = format!("{long_segment}a");
+    assert_eq!(
+        FieldPath::from_segments([one_byte_over.as_str()]),
+        Err(FieldPathError::SegmentTooLong {
+            index: 0,
+            bytes: 1501,
+            maximum: 1500,
+        })
+    );
     let over = "あ".repeat(501);
     assert!(matches!(
         FieldPath::from_segments([over.as_str()]),
