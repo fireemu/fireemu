@@ -1,0 +1,9 @@
+name = "storage-names"
+defaultTargets = ["StorageNames", "corpus"]
+
+[[lean_lib]]
+name = "StorageNames"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

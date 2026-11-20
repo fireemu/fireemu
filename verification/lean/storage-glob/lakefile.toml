@@ -1,0 +1,9 @@
+name = "storage-glob"
+defaultTargets = ["StorageGlob", "corpus"]
+
+[[lean_lib]]
+name = "StorageGlob"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

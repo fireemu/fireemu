@@ -1,0 +1,9 @@
+name = "storage-etag"
+defaultTargets = ["StorageEtag", "corpus"]
+
+[[lean_lib]]
+name = "StorageEtag"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,168 @@
+# 167
+literal/bare/empty	match	x		false
+literal/bare/one	match	x	x	true
+literal/bare/two	match	x	xx	false
+literal/bare/slash	match	x	/	false
+literal/bare/nested	match	x	x/y/	false
+literal/bare/unicode	match	x	🌸	false
+literal/bare/inrange	match	x	b	false
+literal/bare/asterisk	match	x	*	false
+literal/rooted/empty	match	prefix/x	prefix/	false
+literal/rooted/one	match	prefix/x	prefix/x	true
+literal/rooted/two	match	prefix/x	prefix/xx	false
+literal/rooted/slash	match	prefix/x	prefix//	false
+literal/rooted/nested	match	prefix/x	prefix/x/y/	false
+literal/rooted/unicode	match	prefix/x	prefix/🌸	false
+literal/rooted/inrange	match	prefix/x	prefix/b	false
+literal/rooted/asterisk	match	prefix/x	prefix/*	false
+question/bare/empty	match	?		false
+question/bare/one	match	?	x	true
+question/bare/two	match	?	xx	false
+question/bare/slash	match	?	/	false
+question/bare/nested	match	?	x/y/	false
+question/bare/unicode	match	?	🌸	true
+question/bare/inrange	match	?	b	true
+question/bare/asterisk	match	?	*	true
+question/rooted/empty	match	prefix/?	prefix/	false
+question/rooted/one	match	prefix/?	prefix/x	true
+question/rooted/two	match	prefix/?	prefix/xx	false
+question/rooted/slash	match	prefix/?	prefix//	false
+question/rooted/nested	match	prefix/?	prefix/x/y/	false
+question/rooted/unicode	match	prefix/?	prefix/🌸	true
+question/rooted/inrange	match	prefix/?	prefix/b	true
+question/rooted/asterisk	match	prefix/?	prefix/*	true
+segment/bare/empty	match	*		true
+segment/bare/one	match	*	x	true
+segment/bare/two	match	*	xx	true
+segment/bare/slash	match	*	/	false
+segment/bare/nested	match	*	x/y/	false
+segment/bare/unicode	match	*	🌸	true
+segment/bare/inrange	match	*	b	true
+segment/bare/asterisk	match	*	*	true
+segment/rooted/empty	match	prefix/*	prefix/	true
+segment/rooted/one	match	prefix/*	prefix/x	true
+segment/rooted/two	match	prefix/*	prefix/xx	true
+segment/rooted/slash	match	prefix/*	prefix//	false
+segment/rooted/nested	match	prefix/*	prefix/x/y/	false
+segment/rooted/unicode	match	prefix/*	prefix/🌸	true
+segment/rooted/inrange	match	prefix/*	prefix/b	true
+segment/rooted/asterisk	match	prefix/*	prefix/*	true
+recursive/bare/empty	match	**		true
+recursive/bare/one	match	**	x	true
+recursive/bare/two	match	**	xx	true
+recursive/bare/slash	match	**	/	true
+recursive/bare/nested	match	**	x/y/	true
+recursive/bare/unicode	match	**	🌸	true
+recursive/bare/inrange	match	**	b	true
+recursive/bare/asterisk	match	**	*	true
+recursive/rooted/empty	match	prefix/**	prefix/	true
+recursive/rooted/one	match	prefix/**	prefix/x	true
+recursive/rooted/two	match	prefix/**	prefix/xx	true
+recursive/rooted/slash	match	prefix/**	prefix//	true
+recursive/rooted/nested	match	prefix/**	prefix/x/y/	true
+recursive/rooted/unicode	match	prefix/**	prefix/🌸	true
+recursive/rooted/inrange	match	prefix/**	prefix/b	true
+recursive/rooted/asterisk	match	prefix/**	prefix/*	true
+dirs/bare/empty	match	**/		true
+dirs/bare/one	match	**/	x	false
+dirs/bare/two	match	**/	xx	false
+dirs/bare/slash	match	**/	/	true
+dirs/bare/nested	match	**/	x/y/	true
+dirs/bare/unicode	match	**/	🌸	false
+dirs/bare/inrange	match	**/	b	false
+dirs/bare/asterisk	match	**/	*	false
+dirs/rooted/empty	match	prefix/**/	prefix/	true
+dirs/rooted/one	match	prefix/**/	prefix/x	false
+dirs/rooted/two	match	prefix/**/	prefix/xx	false
+dirs/rooted/slash	match	prefix/**/	prefix//	true
+dirs/rooted/nested	match	prefix/**/	prefix/x/y/	true
+dirs/rooted/unicode	match	prefix/**/	prefix/🌸	false
+dirs/rooted/inrange	match	prefix/**/	prefix/b	false
+dirs/rooted/asterisk	match	prefix/**/	prefix/*	false
+range/bare/empty	match	[a-c🌸]		false
+range/bare/one	match	[a-c🌸]	x	false
+range/bare/two	match	[a-c🌸]	xx	false
+range/bare/slash	match	[a-c🌸]	/	false
+range/bare/nested	match	[a-c🌸]	x/y/	false
+range/bare/unicode	match	[a-c🌸]	🌸	true
+range/bare/inrange	match	[a-c🌸]	b	true
+range/bare/asterisk	match	[a-c🌸]	*	false
+range/rooted/empty	match	prefix/[a-c🌸]	prefix/	false
+range/rooted/one	match	prefix/[a-c🌸]	prefix/x	false
+range/rooted/two	match	prefix/[a-c🌸]	prefix/xx	false
+range/rooted/slash	match	prefix/[a-c🌸]	prefix//	false
+range/rooted/nested	match	prefix/[a-c🌸]	prefix/x/y/	false
+range/rooted/unicode	match	prefix/[a-c🌸]	prefix/🌸	true
+range/rooted/inrange	match	prefix/[a-c🌸]	prefix/b	true
+range/rooted/asterisk	match	prefix/[a-c🌸]	prefix/*	false
+negated/bare/empty	match	[!a-c🌸]		false
+negated/bare/one	match	[!a-c🌸]	x	true
+negated/bare/two	match	[!a-c🌸]	xx	false
+negated/bare/slash	match	[!a-c🌸]	/	false
+negated/bare/nested	match	[!a-c🌸]	x/y/	false
+negated/bare/unicode	match	[!a-c🌸]	🌸	false
+negated/bare/inrange	match	[!a-c🌸]	b	false
+negated/bare/asterisk	match	[!a-c🌸]	*	true
+negated/rooted/empty	match	prefix/[!a-c🌸]	prefix/	false
+negated/rooted/one	match	prefix/[!a-c🌸]	prefix/x	true
+negated/rooted/two	match	prefix/[!a-c🌸]	prefix/xx	false
+negated/rooted/slash	match	prefix/[!a-c🌸]	prefix//	false
+negated/rooted/nested	match	prefix/[!a-c🌸]	prefix/x/y/	false
+negated/rooted/unicode	match	prefix/[!a-c🌸]	prefix/🌸	false
+negated/rooted/inrange	match	prefix/[!a-c🌸]	prefix/b	false
+negated/rooted/asterisk	match	prefix/[!a-c🌸]	prefix/*	true
+choice/bare/empty	match	{x,**/b,}		true
+choice/bare/one	match	{x,**/b,}	x	true
+choice/bare/two	match	{x,**/b,}	xx	false
+choice/bare/slash	match	{x,**/b,}	/	false
+choice/bare/nested	match	{x,**/b,}	x/y/	false
+choice/bare/unicode	match	{x,**/b,}	🌸	false
+choice/bare/inrange	match	{x,**/b,}	b	true
+choice/bare/asterisk	match	{x,**/b,}	*	false
+choice/rooted/empty	match	prefix/{x,**/b,}	prefix/	true
+choice/rooted/one	match	prefix/{x,**/b,}	prefix/x	true
+choice/rooted/two	match	prefix/{x,**/b,}	prefix/xx	false
+choice/rooted/slash	match	prefix/{x,**/b,}	prefix//	false
+choice/rooted/nested	match	prefix/{x,**/b,}	prefix/x/y/	false
+choice/rooted/unicode	match	prefix/{x,**/b,}	prefix/🌸	false
+choice/rooted/inrange	match	prefix/{x,**/b,}	prefix/b	true
+choice/rooted/asterisk	match	prefix/{x,**/b,}	prefix/*	false
+escaped/bare/empty	match	\*		false
+escaped/bare/one	match	\*	x	false
+escaped/bare/two	match	\*	xx	false
+escaped/bare/slash	match	\*	/	false
+escaped/bare/nested	match	\*	x/y/	false
+escaped/bare/unicode	match	\*	🌸	false
+escaped/bare/inrange	match	\*	b	false
+escaped/bare/asterisk	match	\*	*	true
+escaped/rooted/empty	match	prefix/\*	prefix/	false
+escaped/rooted/one	match	prefix/\*	prefix/x	false
+escaped/rooted/two	match	prefix/\*	prefix/xx	false
+escaped/rooted/slash	match	prefix/\*	prefix//	false
+escaped/rooted/nested	match	prefix/\*	prefix/x/y/	false
+escaped/rooted/unicode	match	prefix/\*	prefix/🌸	false
+escaped/rooted/inrange	match	prefix/\*	prefix/b	false
+escaped/rooted/asterisk	match	prefix/\*	prefix/*	true
+slash-hidden	match	*x	a/x	false
+globstar-with-slash	match	**x	a/x	true
+skip-directory	match	**/x	x	true
+directory-literal-tail	match	**/x	a/x	true
+directory-nonmatching-tail	match	**/x	ax	false
+literal-trailing	match	x	xx	false
+literal-leading	match	x	ax	false
+combining-mark	match	?	é	false
+decomposed-vs-nfc	match	é	é	false
+two-scalars	match	??	é	true
+bracket-class-slash	match	[/]	/	false
+colon-range-slash	match	[.-:]	/	false
+bracket-class-negated	match	[!x]	/	false
+escaped-braces	match	\{\,\}	{,}	true
+brace-prefix-mismatch	match	x{y,}	y	false
+brace-one-step	match	x{y,}	xy	true
+empty-pattern	validate			ok
+class-index	validate	🌸/é[a		Glob pattern character class has no closing ']' for opening '[' at index 3. Either add a closing ']' or use '\[' to match a literal '['.
+brace-index	validate	🌸/é{a,b		Glob pattern brace expansion opening '{' at index 3 has no closing '}'. Use '\{' to match a literal '{'.
+max-pattern	validate	🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸		ok
+over-pattern	validate	🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸a		Maximum length of the glob pattern is 1024 bytes in UTF-8 encoding, but glob was 1025 bytes long.
+length-precedes-class	validate	🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸[a		Maximum length of the glob pattern is 1024 bytes in UTF-8 encoding, but glob was 1026 bytes long.
+length-precedes-brace	validate	🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸🌸{a,b		Maximum length of the glob pattern is 1024 bytes in UTF-8 encoding, but glob was 1028 bytes long.
