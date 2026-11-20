@@ -709,7 +709,9 @@ fn recorded_shape(s: &Shape) -> bool {
 /// the recorded shape with nothing but `__name__` ordered, one of the stage-B merges: (a)
 /// descending, the contains index and the descending automatic index of every equality field
 /// (production F3); (b) ascending, one composite serving some equalities and the array filter
-/// on its own and the ascending automatic index of every other equality field (production F1).
+/// on its own and the ascending automatic index of every other equality field (production F1),
+/// only when that composite is the single collection-scoped carrier with an ascending prefix
+/// and the array field has no automatic contains index.
 fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     let q = shape_query(s, &s.eq, s.contains);
     let wanted = s.eq.len() + usize::from(s.contains);
@@ -770,14 +772,51 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     if nm == IndexFieldMode::Descending {
         return enabled("tags", IndexFieldMode::Contains) && s.eq.iter().all(|f| enabled(f, nm));
     }
-    set.composites().iter().any(|member| {
-        subsets().any(|subset| {
-            composite_serves_alone(s, member, &subset, true)
-                && s.eq
-                    .iter()
-                    .all(|f| subset.contains(f) || enabled(f, IndexFieldMode::Ascending))
+    // (b), as recorded: the array field has no automatic contains index, and exactly one
+    // configured composite is a carrier (collection scope, a non-empty ascending prefix of
+    // equality fields followed by the array field, serving that prefix and the array filter on
+    // its own). With no carrier or several, the pre-stage-B answer stays.
+    if enabled("tags", IndexFieldMode::Contains) {
+        return false;
+    }
+    let carriers: Vec<Vec<&str>> = set
+        .composites()
+        .iter()
+        .filter_map(|member| {
+            let prefix: Vec<&str> = member
+                .fields
+                .iter()
+                .map_while(|f| {
+                    let ordered = matches!(
+                        f.mode,
+                        IndexFieldMode::Ascending | IndexFieldMode::Descending
+                    );
+                    s.eq.iter()
+                        .find(|e| ordered && fp(e) == f.path)
+                        .map(|e| (*e, f.mode))
+                })
+                .map(|(e, _)| e)
+                .collect();
+            let ascending = member.fields[..prefix.len()]
+                .iter()
+                .all(|f| f.mode == IndexFieldMode::Ascending);
+            let carries = member
+                .fields
+                .get(prefix.len())
+                .is_some_and(|f| f.path == fp("tags") && f.mode == IndexFieldMode::Contains);
+            (member.query_scope == IndexQueryScope::Collection
+                && !prefix.is_empty()
+                && ascending
+                && carries
+                && composite_serves_alone(s, member, &prefix, true))
+            .then_some(prefix)
         })
-    })
+        .collect();
+    let [prefix] = carriers.as_slice() else {
+        return false;
+    };
+    s.eq.iter()
+        .all(|f| prefix.contains(f) || enabled(f, IndexFieldMode::Ascending))
 }
 
 /// Checks one merge member against `IM.merged_sound`: a configured composite that serves its
@@ -927,7 +966,21 @@ proptest! {
     ) {
         let set = index_set(&composites, &overrides);
         let q = shape_query(&s, &s.eq, s.contains);
-        if served(&decide(&q, &set, &standard())) {
+        let before = decide(&q, &set, &standard());
+        // The recorded merge (b) is deliberately narrow: it needs exactly one carrier and no
+        // automatic contains index on the array field, so one more carrier or that index puts
+        // the query back on the pre-stage-B refusal (pinned by
+        // `merge_b_needs_exactly_one_collection_scoped_carrier` and the automatic-contains
+        // pin). Production has no recorded answer for those neighbours yet, so the property is
+        // stated for every other served query.
+        let through_carrier = matches!(
+            &before,
+            IndexDecision::MergeIndexes { indexes } if indexes.iter().any(|member| {
+                set.composites().contains(member)
+                    && member.fields.iter().any(|f| f.mode == IndexFieldMode::Contains)
+            })
+        );
+        if served(&before) && !through_carrier {
             let mut more = composites.clone();
             more.insert(position.min(more.len()), extra);
             prop_assert!(served(&decide(&q, &index_set(&more, &overrides), &standard())));
