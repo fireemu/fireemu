@@ -28,19 +28,8 @@ fn fixed_offset_cron_and_epoch_intervals_agree_with_lean() {
     let mut seen = BTreeSet::new();
     for line in lines {
         let fields: Vec<_> = line.split('\t').collect();
-        let [
-            id,
-            source,
-            offset,
-            from,
-            to,
-            cap,
-            next,
-            latest,
-            kind,
-            count,
-            prefix,
-        ] = fields.as_slice()
+        let [id, source, offset, from, to, cap, next, latest, kind, count, prefix] =
+            fields.as_slice()
         else {
             panic!("invalid row: {line}");
         };
