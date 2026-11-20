@@ -1,0 +1,9 @@
+name = "cloud-tasks-clock-rebase"
+defaultTargets = ["CloudTasksClockRebase", "corpus"]
+
+[[lean_lib]]
+name = "CloudTasksClockRebase"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

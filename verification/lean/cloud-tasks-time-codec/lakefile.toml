@@ -1,0 +1,9 @@
+name = "cloud-tasks-time-codec"
+defaultTargets = ["CloudTasksTimeCodec", "corpus"]
+
+[[lean_lib]]
+name = "CloudTasksTimeCodec"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,9 @@
+name = "cloud-tasks-retry"
+defaultTargets = ["CloudTasksRetry", "corpus"]
+
+[[lean_lib]]
+name = "CloudTasksRetry"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

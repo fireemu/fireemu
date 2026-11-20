@@ -1,0 +1,9 @@
+name = "cloud-tasks-admission"
+defaultTargets = ["CloudTasksAdmission", "corpus"]
+
+[[lean_lib]]
+name = "CloudTasksAdmission"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
