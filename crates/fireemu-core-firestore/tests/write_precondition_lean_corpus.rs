@@ -7,7 +7,7 @@ use fireemu_core_firestore::field_path::FieldPath;
 use fireemu_core_firestore::path::DocumentPath;
 use fireemu_core_firestore::store::{
     CommitResult, FieldTransform, FirestoreError, FirestoreState, ImportedDocument, Precondition,
-    TransformKind, Write, WriteOp,
+    TransformKind, Write, WriteOp, READ_TIME_RETENTION_SECONDS,
 };
 use fireemu_core_firestore::value::Value;
 use fireemu_core_types::ids::{DatabaseId, ProjectId};
@@ -276,19 +276,92 @@ fn replaying_a_noop_set_with_its_reported_update_time_succeeds() {
 #[test]
 fn a_changed_write_advances_past_the_imported_update_time() {
     let path = path();
-    let mut store = seeded(&path, Some(10_000), Some((11_000, Some(7))));
-    let mut write = parse_write("set:none:8", &path);
-    let first = store
-        .commit(std::slice::from_ref(&write), None, at(10_001))
-        .unwrap();
-    assert_eq!(first.changes.len(), 1);
-    assert_eq!(first.write_results[0].update_time, Some(at(12_000)));
-    write.precondition = Some(Precondition::UpdateTime(at(11_000)));
-    assert_eq!(
-        status(&store.commit(&[write], None, at(10_001))),
-        Status::FailedPrecondition
+    for imported_time in [10_001, 11_000] {
+        let mut store = seeded(&path, Some(10_000), Some((imported_time, Some(7))));
+        assert_eq!(observe(&store, &path), Some((imported_time, Some(7))));
+        let mut write = parse_write("set:none:8", &path);
+        let first = store
+            .commit(std::slice::from_ref(&write), None, at(10_001))
+            .unwrap();
+        assert_eq!(first.changes.len(), 1);
+        assert_eq!(first.write_results[0].update_time, Some(at(12_000)));
+        write.precondition = Some(Precondition::UpdateTime(at(imported_time)));
+        assert_eq!(
+            status(&store.commit(&[write], None, at(10_001))),
+            Status::FailedPrecondition
+        );
+        assert_eq!(observe(&store, &path), Some((12_000, Some(8))));
+    }
+}
+
+#[test]
+fn a_refused_import_preserves_the_floor_and_an_empty_import_advances_it() {
+    let path = path();
+    let now = at(10_000);
+    let mut store = seeded(&path, Some(now.as_nanos()), Some((50_001, Some(7))));
+    let version = store.current_version();
+    let refused = store.import_documents(
+        vec![
+            ImportedDocument {
+                path: path.clone(),
+                fields: fields(Some(8)),
+                create_time: None,
+                update_time: Some(at(100_001)),
+            },
+            ImportedDocument {
+                path: path.clone(),
+                fields: BTreeMap::from([(String::new(), Value::Integer(1))]),
+                create_time: None,
+                update_time: None,
+            },
+        ],
+        now,
     );
-    assert_eq!(observe(&store, &path), Some((12_000, Some(8))));
+    assert_eq!(status(&refused), Status::InvalidArgument);
+    assert_eq!(store.read_time(now), at(51_000));
+    assert_eq!(store.current_version(), version);
+    assert_eq!(observe(&store, &path), Some((50_001, Some(7))));
+
+    let empty = store.import_documents(vec![], now).unwrap();
+    assert_eq!(empty.commit_time, at(52_000));
+    assert_eq!(empty.version, version);
+    assert!(empty.changes.is_empty());
+    assert_eq!(store.read_time(now), empty.commit_time);
+}
+
+#[test]
+fn rounding_the_import_floor_saturates_at_the_largest_instant() {
+    let path = path();
+    let now = at(10_000);
+    let imported_time = i128::MAX - 1;
+    let store = seeded(&path, Some(now.as_nanos()), Some((imported_time, Some(7))));
+    assert_eq!(observe(&store, &path), Some((imported_time, Some(7))));
+    assert_eq!(store.read_time(now), LogicalInstant::MAX);
+}
+
+#[test]
+fn a_future_import_floor_delays_age_based_history_reclamation() {
+    let path = path();
+    let now = at(10_000);
+    let window = LogicalInstant::from_unix_seconds(READ_TIME_RETENTION_SECONDS).as_nanos();
+    let mut store = seeded(&path, Some(now.as_nanos()), Some((2 * window + 1, Some(7))));
+    let imported_version = store.current_version();
+    let changed = store
+        .commit(&[parse_write("set:none:8", &path)], None, now)
+        .unwrap();
+    assert_eq!(changed.commit_time, at(2 * window + 2_000));
+
+    assert_eq!(store.compact(at(now.as_nanos() + window)), imported_version);
+    assert_eq!(
+        store.get_at(&path, imported_version).unwrap().fields,
+        fields(Some(7))
+    );
+    assert_eq!(
+        store.compact(at(changed.commit_time.as_nanos() + window)),
+        changed.version
+    );
+    assert_eq!(store.oldest_retained_version(), Some(changed.version));
+    assert_eq!(observe(&store, &path), Some((2 * window + 2_000, Some(8))));
 }
 
 #[test]
@@ -320,7 +393,7 @@ fn the_core_compares_submicrosecond_update_times_exactly() {
     );
     let mut store = seeded(&path, Some(10_000), Some((10_001, Some(7))));
     let committed = store.commit(&[write], None, at(10_001)).unwrap();
-    assert_eq!(committed.write_results[0].update_time, Some(at(11_001)));
+    assert_eq!(committed.write_results[0].update_time, Some(at(12_000)));
 }
 
 proptest! {
@@ -353,6 +426,7 @@ proptest! {
         }).collect();
         let imported = store.import_documents(docs, at(clock)).unwrap();
         prop_assert!(imported.commit_time > prior.commit_time);
+        prop_assert_eq!(imported.commit_time.as_nanos() % 1_000, 0);
         let mut latest = imported.commit_time;
         for (offset, path) in offsets.iter().zip(&paths) {
             let expected = offset.map_or(imported.commit_time, |offset| at(clock + offset));
@@ -369,6 +443,7 @@ proptest! {
                 continue;
             };
             prop_assert!(commit.commit_time > latest);
+            prop_assert_eq!(commit.commit_time.as_nanos() % 1_000, 0);
             if let Some((time, value)) = after {
                 if before.map(|(_, old)| old) != Some(value) {
                     prop_assert!(before.is_none_or(|(old_time, _)| time > old_time));

@@ -106,6 +106,8 @@ def scenarios : List Case :=
      [inc (some 1) .none, inc (some 1) (.updateTime 10000)],
    mk "changed-fields-reject-stale-imported-time" (some ⟨11000, some 7⟩)
      [set 8 .none, set 8 (.updateTime 11000)],
+   mk "changed-fields-match-rounded-import-stamp" (some ⟨10001, some 7⟩)
+     [set 8 .none, set 9 (.updateTime 12000)],
    ⟨"negative-clock-floors", none, none, -1, [set 7 .none]⟩,
    ⟨"clock-skips-microseconds", last, old, 12543, [set 8 .none]⟩]
 

@@ -19,7 +19,7 @@ The five outcomes cover the precondition check and write body. The model assumes
 - `WritePrecondition/Theorems.lean` proves the model agrees with the rules, and states the create, update, delete, timestamp, refusal, and replay laws.
 - `WritePrecondition/Counterexamples.lean` proves the cases listed under Findings and Fixed.
 - `WritePrecondition/Axioms.lean` checks every theorem's axiom dependencies as part of the build.
-- `Main.lean` documents and generates the 310-case corpus. It includes the condition matrix, clock and saturation boundaries, and batches of two and three writes.
+- `Main.lean` documents and generates the 311-case corpus. It includes the condition matrix, clock and saturation boundaries, and batches of two and three writes.
 
 ## Findings
 
@@ -30,7 +30,7 @@ The five outcomes cover the precondition check and write body. The model assumes
 
 ## Fixed
 
-- 2026-11-20: Import advances the store clock to the maximum of the import commit time and all imported update times. A subsequent write that changes fields receives a strictly later update time (`changed_fields_advance_past_imported_time`). In the regression case, changing the imported document at 11000 ns produces 12000 ns, and a retry using 11000 ns fails.
+- 2026-11-20: Import advances the store clock to the larger of the import commit time and the largest imported update time rounded up to a whole microsecond. Imported update times are preserved. A subsequent write that changes fields receives a strictly later, microsecond-aligned update time (`changed_fields_advance_past_imported_time`, `commit_time_aligned`). In the regression case, importing a document with update time 10001 ns at clock 10000 ns makes the next changed write at clock 10001 ns produce 12000 ns. A retry using 10001 ns fails.
 
 ## Open
 

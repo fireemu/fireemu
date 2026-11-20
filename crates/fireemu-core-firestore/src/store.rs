@@ -2781,7 +2781,11 @@ impl FirestoreState {
                 &document.fields,
                 self.limit_scope,
             )?;
-            latest_time = latest_time.max(document.update_time);
+            let update_nanos = document.update_time.as_nanos();
+            let round_up = (1_000 - update_nanos.rem_euclid(1_000)) % 1_000;
+            latest_time = latest_time.max(LogicalInstant::from_nanos(
+                update_nanos.saturating_add(round_up),
+            ));
             staged.insert(imported.path, (document, logical_bytes));
         }
         self.last_commit_time = Some(latest_time);

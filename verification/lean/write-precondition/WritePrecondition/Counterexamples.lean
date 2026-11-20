@@ -24,8 +24,12 @@ theorem changed_fields_advance_past_imported_time (commitTime now : Int) (doc : 
       stage (nextCommitTime (some (importClock commitTime (some doc))) now) (some doc) write =
         .ok (some ⟨t, value⟩) := by
   refine ⟨nextCommitTime (some (importClock commitTime (some doc))) now, ?_, ?_⟩
-  · simp only [nextCommitTime, importClock, documentTime, Option.map_some, Option.getD_some]
-    by_cases h : now - now % 1000 ≤ max commitTime doc.time <;> simp [h] <;> omega
+  · have time_le : doc.time ≤ importClock commitTime (some doc) := by
+      have rounded_le := Int.le_max_right commitTime (doc.time + (1000 - doc.time % 1000) % 1000)
+      simp only [importClock]
+      omega
+    simp only [nextCommitTime]
+    by_cases h : now - now % 1000 ≤ importClock commitTime (some doc) <;> simp [h] <;> omega
   · simp [stage, changed, documentTime, step, accepted, Except.map]
 
 theorem delete_can_change_existence_without_a_retry_time :
