@@ -337,9 +337,13 @@ fn replay(line: &str) {
             edition: FirestoreEdition::Enterprise,
             ..ctx
         };
-        assert!(aggregations.is_empty(), "{line}");
+        let actual_base = if aggregations.is_empty() {
+            decide(&query, &set, &before_refusal)
+        } else {
+            validate_aggregation_query(&query, &aggregations, &set, &before_refusal)
+        };
         assert_eq!(
-            decide(&query, &set, &before_refusal),
+            actual_base,
             IndexDecision::UseIndex { index: expected },
             "{line}"
         );

@@ -168,27 +168,31 @@ def decideBase (r : Requirement) (lookup : Overrides) (coll : String) (scope : S
     | some members => .merge members
     | none => unserved r coll scope p e
 
-def refusesSingleEquality (r : Requirement) (lookup : Overrides) (coll : String)
-    (composites : List Index) (singleEquality : Bool) (base : Index) : Bool :=
-  singleEquality && r.equality.length == 1 && r.array.isNone && !r.equalityOrdered &&
-    (r.order.all (·.1 == name)) && requestedName r == .desc &&
-    base.fields.head?.any (·.2 == ascending) &&
-    automaticIndexFor r lookup coll .collection == some base &&
-    (firstComposite r coll .collection composites).isNone
+def refusesSingleEquality (r : Requirement) (lookup : Overrides) (coll : String) (scope : Scope)
+    (composites : List Index) (plainConjunction recordedEquality : Bool) (base : Index) : Bool :=
+  let direction := requestedName r
+  recordedEquality && r.equality.length == 1 && r.array.isNone &&
+    (r.order.all (·.1 == name)) &&
+    (direction == .desc || (scope == .group && plainConjunction && !r.equalityOrdered)) &&
+    base.fields.head?.any (fun field => field.2 != .ordered direction) &&
+    automaticIndexFor r lookup coll scope == some base &&
+    (firstComposite r coll scope composites).isNone
 
-def stageB (p : Policy) (e : Edition) (scope : Scope) (conjunction : Bool) : Bool :=
-  p != .emulator && e == .standard && scope == .collection && conjunction
+def stageB (p : Policy) (e : Edition) : Bool :=
+  p != .emulator && e == .standard
 
 def decideHead (r : Requirement) (lookup : Overrides) (coll : String) (scope : Scope)
-    (composites : List Index) (p : Policy) (e : Edition) (conjunction singleEquality : Bool)
+    (composites : List Index) (p : Policy) (e : Edition) (conjunction recordedEquality : Bool)
     (baseMerge recordedMerge : Option (List Index)) : Decision :=
   let base := decideBase r lookup coll scope composites p e baseMerge
-  if stageB p e scope conjunction then
+  if stageB p e then
     match base with
     | .useIndex i =>
-      if refusesSingleEquality r lookup coll composites singleEquality i
+      if refusesSingleEquality r lookup coll scope composites conjunction recordedEquality i
       then unserved r coll scope p e else base
-    | .missing _ | .assumed _ => (recordedMerge.map Decision.merge).getD base
+    | .missing _ | .assumed _ =>
+      if scope == .collection && conjunction then (recordedMerge.map Decision.merge).getD base
+      else base
     | _ => base
   else base
 

@@ -917,58 +917,194 @@ fn merged_indexes_for(
     (covered == wanted).then_some(members)
 }
 
-/// The canonical query as far as the stage-B rules need it. Production was recorded answering
-/// plain queries (fs-query-index-merge, 2026-11-19) whose filter is a conjunction of plain
-/// equalities on distinct fields other than `__name__`, with ordinary values, and at most one
-/// plain array-contains on another field. The rules apply only to that shape, judged on the
-/// whole query after canonicalization (wrappers of one child and identical repeated filters
-/// removed), not on a DNF arm: an OR of two or more different filters, an IN, array-contains-any,
-/// IS NULL / IS NAN, an equality with null or NaN, a path repeated with another filter, a filter on
-/// `__name__`, an aggregation or a nearest-neighbour stage keeps the pre-stage-B answer. The forms
-/// canonicalization collapses (`a == 1 AND a == 1`, `or(a == 1)`, `and(and(a == 1))`) and an
-/// explicit `ORDER BY __name__ ASC` in place of the implicit order are the recorded query itself
-/// (coordinator ruling 12).
+/// The canonical query's eligibility for the recorded stage-B rules. DNF expansion loses
+/// distinctions such as one-element IN and the source of an equality arm.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct RecordedShape {
-    /// The filter is such a conjunction (or absent).
-    conjunction: bool,
-    /// The filter is exactly one such equality.
-    single_equality: bool,
+    merge: Option<RecordedMerge>,
+    equality_refusal: Option<EqualityRefusal>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EqualityRefusal {
+    DescendingName,
+    EitherName,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RecordedMerge {
+    Descending,
+    Carrier,
+    CarrierOrReverseAutomatic,
+    ReverseAutomatic,
+    SharedArrayPath,
 }
 
 impl RecordedShape {
     fn of(query: &Query, aggregations: &[Aggregation]) -> Self {
-        if !aggregations.is_empty() || query.find_nearest.is_some() {
-            return Self::default();
-        }
-        let mut atoms = Vec::new();
-        if let Some(filter) = &query.filter {
-            if !conjunction_atoms(filter, &mut atoms) {
-                return Self::default();
-            }
-        }
-        let mut paths = BTreeSet::new();
-        let mut contains = 0;
-        for (field, op, value) in &atoms {
-            let ordinary =
-                !matches!(value, Value::Null) && !matches!(value, Value::Double(d) if d.is_nan());
-            if field.is_document_name() || !ordinary || !paths.insert(*field) {
-                return Self::default();
-            }
-            match op {
-                FieldOp::Equal => {}
-                FieldOp::ArrayContains => contains += 1,
-                _ => return Self::default(),
-            }
-        }
-        if contains > 1 {
+        if query.find_nearest.is_some() {
             return Self::default();
         }
         Self {
-            conjunction: true,
-            single_equality: atoms.len() == 1 && atoms[0].1 == FieldOp::Equal,
+            merge: recorded_merge_shape(query, aggregations),
+            equality_refusal: recorded_equality_refusal(query, aggregations),
         }
     }
+}
+
+/// The recorded cases distinguish the canonical query's membership operator, query scope
+/// and explicit ordering. An arbitrary disjunction arm with the same index requirement
+/// does not inherit an override.
+fn recorded_merge_shape(query: &Query, aggregations: &[Aggregation]) -> Option<RecordedMerge> {
+    let count = match aggregations {
+        [] => false,
+        [Aggregation::Count { up_to: None }] => true,
+        _ => return None,
+    };
+    let mut atoms = Vec::new();
+    if !conjunction_atoms(query.filter.as_ref()?, &mut atoms) {
+        return None;
+    }
+    let mut equalities = BTreeMap::new();
+    let mut membership = None;
+    for (field, op, value) in atoms {
+        if field.is_document_name() || !ordinary_index_value(value) {
+            return None;
+        }
+        match op {
+            FieldOp::Equal => {
+                if equalities
+                    .insert(field, matches!(value, Value::Array(_)))
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            FieldOp::ArrayContains => {
+                if membership.replace((field, false)).is_some() {
+                    return None;
+                }
+            }
+            FieldOp::ArrayContainsAny
+                if matches!(value, Value::Array(values)
+                if matches!(values.as_slice(), [value] if ordinary_index_value(value))) =>
+            {
+                if membership.replace((field, true)).is_some() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    let explicit_name = match query.order_by.as_slice() {
+        [] => None,
+        [order] if order.field.is_document_name() => Some(order.direction),
+        _ => return None,
+    };
+    let group = query.scope.all_descendants();
+    let equalities_count = equalities.len();
+    let Some((field, any)) = membership else {
+        return (!group
+            && !count
+            && equalities_count == 2
+            && explicit_name == Some(Direction::Ascending))
+        .then_some(RecordedMerge::ReverseAutomatic);
+    };
+    if equalities_count == 0 {
+        return None;
+    }
+    if let Some(is_array) = equalities.get(field) {
+        return (*is_array
+            && !group
+            && !count
+            && !any
+            && equalities_count == 2
+            && explicit_name.is_some())
+        .then_some(RecordedMerge::SharedArrayPath);
+    }
+    match explicit_name {
+        Some(Direction::Descending) => {
+            (!count && (!group || !any) && ((!group && !any) || equalities_count == 1))
+                .then_some(RecordedMerge::Descending)
+        }
+        _ if group => None,
+        None if (count || any) && !(count && any) && equalities_count == 2 => {
+            Some(RecordedMerge::Carrier)
+        }
+        _ if count || any => None,
+        None if equalities_count == 2 => Some(RecordedMerge::CarrierOrReverseAutomatic),
+        Some(Direction::Ascending) if equalities_count == 1 => {
+            Some(RecordedMerge::ReverseAutomatic)
+        }
+        _ => Some(RecordedMerge::Carrier),
+    }
+}
+
+fn ordinary_index_value(value: &Value) -> bool {
+    !matches!(value, Value::Null) && !matches!(value, Value::Double(d) if d.is_nan())
+}
+
+fn ordinary_equality_field(filter: &FilterExpr) -> Option<&FieldPath> {
+    match filter {
+        FilterExpr::Field {
+            field,
+            op: FieldOp::Equal,
+            value,
+        } if !field.is_document_name() && ordinary_index_value(value) => Some(field),
+        _ => None,
+    }
+}
+
+/// The query shapes from observation 2a. The plain equality admits the mirrored case at
+/// group scope. The other shapes only admit the descending-name case.
+fn recorded_equality_refusal(
+    query: &Query,
+    aggregations: &[Aggregation],
+) -> Option<EqualityRefusal> {
+    let filter = query.filter.as_ref()?;
+    let name_only = query
+        .order_by
+        .iter()
+        .all(|order| order.field.is_document_name());
+    if let Some(field) = ordinary_equality_field(filter) {
+        return match (aggregations, query.order_by.as_slice()) {
+            ([], _) if name_only => Some(EqualityRefusal::EitherName),
+            ([Aggregation::Count { up_to: None }], _) if name_only => {
+                Some(EqualityRefusal::DescendingName)
+            }
+            ([], [order]) if order.field == *field && order.direction == Direction::Descending => {
+                Some(EqualityRefusal::DescendingName)
+            }
+            ([], [order, name]) if order.field == *field && name.field.is_document_name() => {
+                Some(EqualityRefusal::DescendingName)
+            }
+            _ => None,
+        };
+    }
+    if !name_only || !aggregations.is_empty() {
+        return None;
+    }
+    let recorded = match filter {
+        FilterExpr::Field {
+            field,
+            op: FieldOp::In,
+            value: Value::Array(values),
+        } => {
+            !field.is_document_name()
+                && matches!(values.as_slice(), [value] if ordinary_index_value(value))
+        }
+        FilterExpr::Unary {
+            field,
+            op: UnaryOp::IsNull,
+        } => !field.is_document_name(),
+        FilterExpr::Or(children) => matches!(
+            children.as_slice(),
+            [left, right] if ordinary_equality_field(left)
+                .is_some_and(|field| ordinary_equality_field(right) == Some(field))
+        ),
+        _ => false,
+    };
+    recorded.then_some(EqualityRefusal::DescendingName)
 }
 
 /// Collects the field filters of a conjunction (nested `and`s included); false for anything
@@ -987,41 +1123,35 @@ fn conjunction_atoms<'a>(
     }
 }
 
-/// Whether the stage-B rules may change the pre-stage-B answer: the production rules, on
-/// Standard, at collection scope, for the recorded shape. Elsewhere (the emulator profile,
-/// Enterprise, collection-group scope, any other query) the answer is the pre-stage-B one.
-fn stage_b_applies(ctx: PlanningContext, group: bool, shape: RecordedShape) -> bool {
-    ctx.policy.production_rules()
-        && ctx.edition == FirestoreEdition::Standard
-        && !group
-        && shape.conjunction
-}
-
-/// Refusal (c): one equality ordered by nothing but `__name__` descending is served by the
-/// field's descending mode only. With only the ascending one enabled the pre-stage-B planner
-/// took the automatic `(field ASC, __name__ DESC)`; production asks for that index
-/// (fs-query-index-merge ascending-only#a-alone-name-desc, recorded 2026-11-19). `base` is the
-/// pre-stage-B index; the refusal applies only when it is that automatic index and no
-/// composite serves the query (with one, the reported index stays as it was).
+/// Refusal (c) overrides only a mismatched automatic mode when no composite serves the
+/// equality-only requirement. The base prefers the requested mode when it is available.
 fn refuses_single_equality(
     req: &Requirement,
     set: &IndexSet,
     collection: &CollectionId,
+    group: bool,
     shape: RecordedShape,
     base: &IndexDefinition,
 ) -> bool {
-    shape.single_equality
+    let requested = requested_name_direction(req);
+    let recorded = match (requested, shape.equality_refusal) {
+        (Direction::Descending, Some(_)) => true,
+        (Direction::Ascending, Some(EqualityRefusal::EitherName)) => group,
+        _ => false,
+    };
+    recorded
         && req.equality.len() == 1
         && req.contains.is_none()
-        && !req.equality_ordered
         && req.order.iter().all(|o| o.field.is_document_name())
-        && requested_name_direction(req) == Direction::Descending
-        && base.fields.first().map(|f| f.mode) == Some(IndexFieldMode::Ascending)
-        && automatic_index_for(req, set, collection, false).as_ref() == Some(base)
+        && base
+            .fields
+            .first()
+            .is_some_and(|f| f.mode != mode_for_direction(requested))
+        && automatic_index_for(req, set, collection, group).as_ref() == Some(base)
         && !set
             .composites()
             .iter()
-            .any(|i| composite_serves(i, req, collection, false))
+            .any(|i| composite_serves(i, req, collection, group))
 }
 
 /// What a member of a stage-B merge covers: an equality filter on a field (by an ordered index
@@ -1033,38 +1163,48 @@ enum Cover {
     Contains,
 }
 
-/// The merges production was recorded making where the pre-stage-B planner refused
-/// (fs-query-index-merge, 2026-11-19; collection scope, Standard, the recorded shape), for
-/// equalities and a plain array-contains with nothing but `__name__` ordered:
-/// (a) `__name__` descending: the array field's automatic contains index first, then the
-/// automatic `(field DESC, __name__ DESC)` of each equality field, automatic members only
-/// (builtin#f3-contains-name-desc: `(tags ARRAY_CONTAINS, __name__ DESC)`, `(a DESC, __name__
-/// DESC)`);
-/// (b) `__name__` ascending: the composite whose equality prefix is followed by the array field
-/// (`CONTAINS`), then the automatic `(field ASC, __name__ ASC)` of each remaining equality
-/// field (exempt-with-composite#f1-equalities-and-contains: `(a ASC, tags CONTAINS)`, `(b ASC,
-/// __name__ ASC)`). The carrier is collection-scoped with ascending prefix fields, as recorded
-/// (its `__name__`, implicit or explicit, runs ascending like the query's), and the only
-/// configured composite that qualifies, and the array field has no automatic contains index at collection
-/// scope (F1 exempts it); otherwise the pre-stage-B answer stays (coordinator ruling 12).
+enum RecordedMergeOutcome {
+    NoCarrier,
+    Unavailable,
+    Members(Vec<IndexDefinition>),
+    MembersForUnserved(Vec<IndexDefinition>),
+}
+
+/// Build the recorded merge from the automatic members (a) or the unique ascending
+/// collection carrier and the remaining automatic members (b). The caller gates the
+/// canonical query form and scope; the coverage here is by filter kind.
 fn recorded_merge(
     req: &Requirement,
     set: &IndexSet,
     collection: &CollectionId,
+    group: bool,
 ) -> Option<Vec<IndexDefinition>> {
-    let contains = req.contains.as_ref()?;
-    if req.equality.is_empty()
-        || req.equality_ordered
-        || !req.order.iter().all(|o| o.field.is_document_name())
-    {
-        return None;
+    match recorded_merge_outcome(req, set, collection, group) {
+        RecordedMergeOutcome::Members(members)
+        | RecordedMergeOutcome::MembersForUnserved(members) => Some(members),
+        RecordedMergeOutcome::NoCarrier | RecordedMergeOutcome::Unavailable => None,
     }
+}
+
+fn recorded_merge_outcome(
+    req: &Requirement,
+    set: &IndexSet,
+    collection: &CollectionId,
+    group: bool,
+) -> RecordedMergeOutcome {
+    let Some(contains) = req.contains.as_ref().filter(|_| {
+        !req.equality.is_empty()
+            && !req.equality_ordered
+            && req.order.iter().all(|o| o.field.is_document_name())
+    }) else {
+        return RecordedMergeOutcome::Unavailable;
+    };
     let name_direction = requested_name_direction(req);
     let name_mode = mode_for_direction(name_direction);
     let automatic = |field: &FieldPath, mode: IndexFieldMode| {
-        (!set.is_exempt(collection, field, false)
-            && has_single_field_mode(set, collection, field, false, mode))
-        .then(|| single_field_index(collection, false, field, mode, name_mode))
+        (!set.is_exempt(collection, field, group)
+            && has_single_field_mode(set, collection, field, group, mode))
+        .then(|| single_field_index(collection, group, field, mode, name_mode))
     };
     let mut fields: Vec<&FieldPath> = req.equality.iter().collect();
     fields.sort();
@@ -1084,23 +1224,35 @@ fn recorded_merge(
         (covered == wanted).then_some(members)
     };
     if name_direction == Direction::Descending {
-        let member = automatic(contains, IndexFieldMode::Contains)?;
-        return complete(member, BTreeSet::from([(Cover::Contains, contains)]));
-    }
-    // As recorded, the array field has no automatic contains index of its own (F1 exempts it).
-    if automatic(contains, IndexFieldMode::Contains).is_some() {
-        return None;
+        return automatic(contains, IndexFieldMode::Contains)
+            .and_then(|member| complete(member, BTreeSet::from([(Cover::Contains, contains)])))
+            .map_or(
+                RecordedMergeOutcome::Unavailable,
+                RecordedMergeOutcome::Members,
+            );
     }
     let equalities: BTreeSet<&FieldPath> = req.equality.iter().collect();
-    let mut carrying: Vec<(Vec<&FieldPath>, &IndexDefinition)> = Vec::new();
-    for index in set.composites() {
+    let mut carrier = None;
+    let mut has_unqualified_carrier = false;
+    for index in set
+        .composites()
+        .iter()
+        .filter(|index| index.collection_group == *collection)
+    {
         let served: Vec<&FieldPath> = index
             .fields
             .iter()
             .take_while(|f| equalities.contains(&f.path) && f.mode.is_ordered())
             .map(|f| &f.path)
             .collect();
-        let next = index.fields.get(served.len());
+        if served.is_empty()
+            || !index
+                .fields
+                .get(served.len())
+                .is_some_and(|f| &f.path == contains && f.mode == IndexFieldMode::Contains)
+        {
+            continue;
+        }
         let sub = Requirement {
             equality: served.iter().map(|f| (*f).clone()).collect(),
             contains: Some(contains.clone()),
@@ -1108,26 +1260,97 @@ fn recorded_merge(
             equality_ordered: false,
         };
         // As recorded (`(a ASC, tags CONTAINS)`): collection scope and ascending prefix fields.
-        let ascending = index.fields[..served.len()]
-            .iter()
-            .all(|f| f.mode == IndexFieldMode::Ascending);
-        if index.query_scope == IndexQueryScope::Collection
-            && ascending
-            && !served.is_empty()
-            && next.is_some_and(|f| &f.path == contains && f.mode == IndexFieldMode::Contains)
-            && composite_serves(index, &sub, collection, false)
+        if index.query_scope != IndexQueryScope::Collection
+            || index.fields[..served.len()]
+                .iter()
+                .any(|f| f.mode != IndexFieldMode::Ascending)
+            || !composite_serves(index, &sub, collection, false)
         {
-            carrying.push((served, index));
+            has_unqualified_carrier = true;
+            continue;
+        }
+        // The recorded row shows one carrier. Several are outside the plan guards.
+        if carrier.replace((served, index)).is_some() {
+            return RecordedMergeOutcome::Unavailable;
         }
     }
-    // The recorded row shows one carrier; which of several production takes is not recorded.
-    let [(served, index)] = <[_; 1]>::try_from(carrying).ok()?;
+    let Some((served, index)) = carrier else {
+        return if has_unqualified_carrier {
+            RecordedMergeOutcome::Unavailable
+        } else {
+            RecordedMergeOutcome::NoCarrier
+        };
+    };
     let covered = served
         .into_iter()
         .map(|f| (Cover::Equality, f))
         .chain([(Cover::Contains, contains)])
         .collect();
-    complete(index.clone(), covered)
+    complete(index.clone(), covered).map_or(RecordedMergeOutcome::Unavailable, |members| {
+        // A unique recorded carrier may remove a refusal in this catalog. Only the
+        // recorded one-carrier shape may also replace a plan that already served.
+        if has_unqualified_carrier {
+            RecordedMergeOutcome::MembersForUnserved(members)
+        } else {
+            RecordedMergeOutcome::Members(members)
+        }
+    })
+}
+
+/// The baseline automatic plan lists the ordered members in field order and the optional
+/// contains member last. Compare exact definitions before replacing its members or order.
+fn recorded_plan(
+    req: &Requirement,
+    set: &IndexSet,
+    collection: &CollectionId,
+    case: RecordedMerge,
+    base: &[IndexDefinition],
+) -> Option<Vec<IndexDefinition>> {
+    let name_mode = mode_for_direction(requested_name_direction(req));
+    let automatic = |field, mode| single_field_index(collection, false, field, mode, name_mode);
+    let mut fields: Vec<_> = req.equality.iter().collect();
+    fields.sort();
+    let mut ordered: Vec<_> = fields
+        .into_iter()
+        .map(|field| automatic(field, name_mode))
+        .collect();
+    match case {
+        RecordedMerge::SharedArrayPath => {
+            let contains = req.contains.as_ref()?;
+            if ordered != base
+                || !has_single_field_mode(
+                    set,
+                    collection,
+                    contains,
+                    false,
+                    IndexFieldMode::Contains,
+                )
+            {
+                return None;
+            }
+            ordered.sort_by_key(|index| index.fields[0].path == *contains);
+            ordered.insert(0, automatic(contains, IndexFieldMode::Contains));
+        }
+        RecordedMerge::ReverseAutomatic | RecordedMerge::CarrierOrReverseAutomatic => {
+            if let Some(contains) = &req.contains {
+                ordered.push(automatic(contains, IndexFieldMode::Contains));
+            }
+            if ordered != base {
+                return None;
+            }
+            if case == RecordedMerge::CarrierOrReverseAutomatic {
+                match recorded_merge_outcome(req, set, collection, false) {
+                    RecordedMergeOutcome::NoCarrier => {}
+                    RecordedMergeOutcome::Unavailable
+                    | RecordedMergeOutcome::MembersForUnserved(_) => return None,
+                    RecordedMergeOutcome::Members(members) => return Some(members),
+                }
+            }
+            ordered.reverse();
+        }
+        _ => return None,
+    }
+    Some(ordered)
 }
 
 /// Whether composite `index` serves `req`: equality fields (any order) as a prefix, then the
@@ -1268,10 +1491,8 @@ enum DisjunctDecision {
     Missing(IndexDefinition),
 }
 
-/// The planner's answer for one DNF disjunct: the pre-stage-B answer, changed by the stage-B
-/// rules only where they apply (`stage_b_applies`) and only by refusal (c) of a single
-/// equality or by a recorded merge (a) or (b) of a disjunct refused before. Every other answer
-/// (verdict, members and their order) is the pre-stage-B one.
+/// Apply the recorded overrides to the pre-stage-B decision. Refusal (c) affects only
+/// automatic single-field scans; the merge rules preserve single-index priority.
 fn decide_disjunct(
     req: &Requirement,
     indexes: &IndexSet,
@@ -1281,22 +1502,36 @@ fn decide_disjunct(
     shape: RecordedShape,
 ) -> DisjunctDecision {
     let base = decide_disjunct_base(req, indexes, collection, group, ctx);
-    if !stage_b_applies(ctx, group, shape) {
+    if !ctx.policy.production_rules() || ctx.edition != FirestoreEdition::Standard {
         return base;
     }
-    match base {
-        DisjunctDecision::Scan(PlannedScan::Index(index))
-            if refuses_single_equality(req, indexes, collection, shape, &index) =>
+    if let DisjunctDecision::Scan(PlannedScan::Index(index)) = &base {
+        if refuses_single_equality(req, indexes, collection, group, shape, index) {
+            return unserved(req, collection, group, ctx);
+        }
+    }
+    let Some(case) = shape.merge else {
+        return base;
+    };
+    let members = match &base {
+        DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_)
+            if matches!(
+                case,
+                RecordedMerge::Descending
+                    | RecordedMerge::Carrier
+                    | RecordedMerge::CarrierOrReverseAutomatic
+            ) =>
         {
-            unserved(req, collection, group, ctx)
+            recorded_merge(req, indexes, collection, group)
         }
-        DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_) => {
-            match recorded_merge(req, indexes, collection) {
-                Some(members) => DisjunctDecision::Scan(PlannedScan::Merge(members)),
-                None => base,
-            }
+        DisjunctDecision::Scan(PlannedScan::Merge(members)) => {
+            recorded_plan(req, indexes, collection, case, members)
         }
-        base @ DisjunctDecision::Scan(_) => base,
+        _ => None,
+    };
+    match members {
+        Some(members) => DisjunctDecision::Scan(PlannedScan::Merge(members)),
+        None => base,
     }
 }
 
@@ -1805,7 +2040,7 @@ mod stage_b_layer_tests {
         let value = if field.is_document_name() {
             Value::Reference("projects/p/databases/(default)/documents/qx/d".to_owned())
         } else {
-            Value::Integer(1)
+            Value::Integer(if kind == 2 { 2 } else { 1 })
         };
         let array = Value::Array(vec![Value::Integer(1), Value::Integer(2)]);
         match kind {
@@ -1829,6 +2064,11 @@ mod stage_b_layer_tests {
                 op: FieldOp::In,
                 value: array,
             },
+            9 => FilterExpr::Field {
+                field,
+                op: FieldOp::In,
+                value: Value::Array(vec![value]),
+            },
             6 => FilterExpr::Unary {
                 field,
                 op: UnaryOp::IsNull,
@@ -1848,7 +2088,7 @@ mod stage_b_layer_tests {
 
     fn query_strategy() -> impl Strategy<Value = Query> {
         (
-            proptest::collection::vec((0u8..9, 0usize..5), 0..4),
+            proptest::collection::vec((0u8..10, 0usize..5), 0..4),
             proptest::bool::weighted(0.15),
             0usize..5,
             proptest::bool::weighted(0.2),
@@ -1973,28 +2213,46 @@ mod stage_b_layer_tests {
                 let req = requirement_for(&disjunction, &order);
                 let head = decide_disjunct(&req, &set, collection, group, ctx, shape);
                 let base = decide_disjunct_base(&req, &set, collection, group, ctx);
+                // Related but unrecorded carrier configurations keep their baseline
+                // plan even when one qualifying carrier could have removed a refusal.
+                if shape.merge == Some(RecordedMerge::CarrierOrReverseAutomatic)
+                    && matches!(&base, DisjunctDecision::Scan(PlannedScan::Merge(_)))
+                    && matches!(
+                        recorded_merge_outcome(&req, &set, collection, group),
+                        RecordedMergeOutcome::Unavailable | RecordedMergeOutcome::MembersForUnserved(_)
+                    )
+                {
+                    prop_assert_eq!(&head, &base);
+                }
                 if head == base {
                     continue;
                 }
-                // Only under the gate: production rules, Standard, collection scope, the
-                // recorded shape (so never under the emulator profile).
                 prop_assert!(ctx.policy.production_rules());
                 prop_assert_eq!(ctx.edition, FirestoreEdition::Standard);
-                prop_assert!(!group);
-                prop_assert!(shape.conjunction && !aggregate);
-                prop_assert_eq!(query.dnf().len(), 1);
                 match (&base, &head) {
-                    // (c): a single plain equality loses the automatic index.
+                    // (c): the base used an automatic index with the opposite name direction.
                     (DisjunctDecision::Scan(PlannedScan::Index(index)), _) => {
-                        prop_assert!(shape.single_equality);
+                        prop_assert!(refuses_single_equality(&req, &set, collection, group, shape, index));
+                        prop_assert_eq!(req.equality.len(), 1);
+                        let asc = requested_name_direction(&req) == Direction::Ascending;
+                        prop_assert!(!asc || group);
+                        let opposite = if asc { IndexFieldMode::Descending } else { IndexFieldMode::Ascending };
+                        prop_assert_eq!(index.fields.first().map(|f| f.mode), Some(opposite));
                         prop_assert_eq!(head, unserved(&req, collection, group, ctx));
-                        prop_assert_eq!(index.fields.first().map(|f| f.mode), Some(IndexFieldMode::Ascending));
                     }
-                    // (a) or (b): a refused disjunct becomes a recorded merge.
+                    // (a) or (b): a refused collection disjunct becomes a recorded merge.
                     (DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_), DisjunctDecision::Scan(PlannedScan::Merge(members))) => {
-                        prop_assert_eq!(Some(members.clone()), recorded_merge(&req, &set, collection));
+                        prop_assert!(matches!(shape.merge, Some(RecordedMerge::Descending
+                            | RecordedMerge::Carrier | RecordedMerge::CarrierOrReverseAutomatic)));
+                        prop_assert_eq!(query.dnf().len(), 1);
+                        prop_assert_eq!(Some(members.clone()), recorded_merge(&req, &set, collection, group));
                     }
-                    // A served merge of the first attempt is never changed.
+                    (DisjunctDecision::Scan(PlannedScan::Merge(before)), DisjunctDecision::Scan(PlannedScan::Merge(after))) => {
+                        prop_assert!(!group && !aggregate);
+                        prop_assert_eq!(query.dnf().len(), 1);
+                        let recorded = shape.merge.and_then(|case| recorded_plan(&req, &set, collection, case, before));
+                        prop_assert_eq!(recorded.as_ref(), Some(after));
+                    }
                     _ => prop_assert!(false, "{base:?} became {head:?}"),
                 }
             }

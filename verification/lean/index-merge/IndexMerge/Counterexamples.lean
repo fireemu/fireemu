@@ -265,20 +265,18 @@ theorem head_single_equality_refused :
       guardOf qOneDesc f2Set .production .standard = .c := by
   refine ⟨by decide, by decide, by decide⟩
 
-/-- The neighbours of (c), unrecorded, keep the base answer `(a ASC, __name__ DESC)`: a
-composite `(a DESC, __name__ DESC)` that serves the query, an order naming the equality field
-(`ORDER BY a DESC`), Enterprise, and collection-group scope with the group-scoped ascending
-index. -/
-theorem head_single_equality_neighbours_served :
+/-- A serving composite and Enterprise preserve the base automatic scan. The equality
+order and group-scope cases now refuse based on observation 2a rows 16 and 38. -/
+theorem head_single_equality_neighbours :
     decideHead qOneDesc ⟨[⟨0, .collection, [⟨1, .desc⟩, ⟨NAME, .desc⟩]⟩], f2Set.modes⟩
         .production .standard = .use (singleFieldIndex 0 false 1 .asc .desc) ∧
       decideHead ⟨0, false, [.eq 1], [⟨1, .desc⟩]⟩ f2Set .production .standard =
-        .use (singleFieldIndex 0 false 1 .asc .desc) ∧
+        .missing (singleFieldIndex 0 false 1 .asc .desc) ∧
       decideHead qOneDesc f2Set .production .enterprise =
         .use (singleFieldIndex 0 false 1 .asc .desc) ∧
       decideHead { qOneDesc with group := true }
           ⟨[], fun _ f => if f == 1 then [(.group, .asc)] else stdModes⟩ .production .standard =
-        .use (singleFieldIndex 0 true 1 .asc .desc) := by
+        .missing (singleFieldIndex 0 true 1 .asc .desc) := by
   refine ⟨by decide, by decide, by decide, by decide⟩
 
 /-- F1 ordered by `__name__` descending, unrecorded: (a) needs `tags`' contains index, which is
@@ -288,8 +286,7 @@ theorem head_f1_descending_refused :
     decideHead q f1Set .production .standard = .missing (requiredIndex (reqOf q) 0 false) := by
   decide
 
-/-- F1 and F3 at collection-group scope, unrecorded: outside the gate the head is the base,
-which refuses both. -/
+/-- Scope-specific catalogs for the group boundary of (b) and the recorded group (a). -/
 def f1GroupSet : ISet :=
   ⟨[⟨0, .group, [⟨1, .asc⟩, ⟨3, .contains⟩]⟩],
     fun _ f => if f == 1 || f == 3 then [] else [(.group, .asc)]⟩
@@ -297,20 +294,20 @@ def f3GroupSet : ISet :=
   ⟨[], fun _ f => if f == 1 then [(.group, .desc)] else if f == 3 then [(.group, .contains)]
     else []⟩
 
-theorem head_group_refused :
+theorem head_group_merges_a_and_refuses_b :
     let q1 : Query := { qF1 with group := true }
     let q3 : Query := { qF3 with group := true }
     decideHead q1 f1GroupSet .production .standard = .missing (requiredIndex (reqOf q1) 0 true) ∧
       decideHead q3 f3GroupSet .production .standard =
-        .missing (requiredIndex (reqOf q3) 0 true) := by
+        .merge [singleFieldIndex 0 true 3 .contains .desc, singleFieldIndex 0 true 1 .desc .desc] := by
   constructor <;> decide
 
-/-- F3 with `array-contains-any`, unrecorded: the filter fails the gate's shape, and the base
-refuses. -/
-theorem head_contains_any_refused :
+/-- Observation 2a row 5 adds singleton `array-contains-any` to (a). -/
+theorem head_contains_any_merges :
     let q : Query := ⟨0, false, [.eq 1, .containsAny 3], nameDesc⟩
-    decideHead q f3Set .production .standard = .missing (requiredIndex (reqOf q) 0 false) ∧
-      guardOf q f3Set .production .standard = .none := by
+    decideHead q f3Set .production .standard =
+        .merge [singleFieldIndex 0 false 3 .contains .desc, singleFieldIndex 0 false 1 .desc .desc] ∧
+      guardOf q f3Set .production .standard = .a := by
   constructor <;> decide
 
 /-- F1 and F3 on Enterprise, unrecorded: the head is the base, a full scan. -/
@@ -381,20 +378,16 @@ theorem head_group_carrier_base :
       guardOf qF1 f1GroupCarrierSet .production .standard = .none := by
   refine ⟨by decide, by decide, by decide⟩
 
-/-- (b) with the array field's automatic contains index available, unrecorded: the F1 query
-with only `a` exempt and the carrier `(a ASC, tags CONTAINS)`. The recorded configuration
-exempts `tags`; here its contains index is enabled, so (b) does not apply. The base refuses
-too: the composite covers no equality prefix on its own (the contains field follows `a`), and
-`a` has no automatic index. -/
+/-- An enabled automatic contains index does not disable (b). -/
 def bAutoContainsSet : ISet :=
   ⟨[f1Composite], fun _ f => if f == 1 then [] else stdModes⟩
 
-theorem head_b_automatic_contains_base :
+theorem head_b_with_automatic_contains :
     decideHead qF1 bAutoContainsSet .production .standard =
-        decideBase qF1 bAutoContainsSet .production .standard ∧
+        .merge [f1Composite, singleFieldIndex 0 false 2 .asc .asc] ∧
       decideBase qF1 bAutoContainsSet .production .standard =
         .missing (requiredIndex (reqOf qF1) 0 false) ∧
-      guardOf qF1 bAutoContainsSet .production .standard = .none := by
+      guardOf qF1 bAutoContainsSet .production .standard = .b := by
   refine ⟨by decide, by decide, by decide⟩
 
 /-- A carrier's prefix must be ascending, unrecorded: with `a` and `tags` exempt and only the

@@ -1559,11 +1559,18 @@ impl RestState {
     /// A custom method's body after production's transcoder: checked and normalized under the
     /// strict profile, as sent under the emulator profile (which may add no rejection).
     fn transcoded(&self, action: &str, body: &Value) -> Result<Value, Status> {
-        if self.gateway.production_refusals() {
+        if action == "runQuery" && self.observes_standard_query_diagnostics() {
+            transcode::check_standard_query_body(body)
+        } else if self.gateway.production_refusals() {
             transcode::check_body(action, body)
         } else {
             Ok(body.clone())
         }
+    }
+
+    fn observes_standard_query_diagnostics(&self) -> bool {
+        self.gateway.production_refusals()
+            && self.gateway.ctx.edition == fireemu_core_types::edition::FirestoreEdition::Standard
     }
 
     /// `:executePipeline`: a Standard-edition database refuses every pipeline as production does.
@@ -2088,6 +2095,55 @@ impl RestState {
         Ok(ok(Value::Array(out)))
     }
 
+    /// The recorded Standard query with key DESC then key ASC uses the after-key message.
+    fn run_query_status(&self, request: &pb::RunQueryRequest, status: Status) -> Status {
+        use fireemu_core_firestore::field_path::FieldPath as QueryField;
+        use fireemu_core_firestore::query::QueryError;
+        use pb::structured_query::Direction;
+
+        if !self.observes_standard_query_diagnostics() || status.code() != Code::InvalidArgument {
+            return status;
+        }
+        let Some(pb::run_query_request::QueryType::StructuredQuery(query)) = &request.query_type
+        else {
+            return status;
+        };
+        let [first, second] = query.order_by.as_slice() else {
+            return status;
+        };
+        let is_key_order = |order: &pb::structured_query::Order, direction: Direction| {
+            order.direction == direction as i32
+                && order
+                    .field
+                    .as_ref()
+                    .is_some_and(|field| field.field_path == "__name__")
+        };
+        if query.r#where.is_none()
+            && query.select.is_none()
+            && query.start_at.is_none()
+            && query.end_at.is_none()
+            && query.limit.is_none()
+            && query.offset == 0
+            && query.find_nearest.is_none()
+            && matches!(&query.from[..], [collection] if !collection.all_descendants)
+            && is_key_order(first, Direction::Descending)
+            && is_key_order(second, Direction::Ascending)
+            && status.message()
+                == (QueryError::DuplicateOrderField {
+                    field: QueryField::document_name(),
+                })
+                .to_string()
+        {
+            return Status::with_details_and_metadata(
+                status.code(),
+                QueryError::OrderAfterDocumentName.to_string(),
+                status.details().to_vec().into(),
+                status.metadata().clone(),
+            );
+        }
+        status
+    }
+
     fn run_query(
         &self,
         principal: &Caller,
@@ -2155,7 +2211,10 @@ impl RestState {
             self.check_new_transaction(principal, Some(options))?;
         }
         let guard = self.read_guard(principal);
-        let (responses, _warnings) = self.local.run_query(&req, &*guard)?;
+        let (responses, _warnings) = self
+            .local
+            .run_query(&req, &*guard)
+            .map_err(|status| self.run_query_status(&req, status))?;
         let out: Vec<Value> = responses
             .iter()
             .map(|r| {

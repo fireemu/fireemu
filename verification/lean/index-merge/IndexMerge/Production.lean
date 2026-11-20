@@ -302,6 +302,81 @@ def mergeObsRows : List Case := [
 
 def productionRows : List Case := fsqiRows ++ oracleRows ++ mergeObsRows
 
+/-- Observation 2a P1. IN and OR have projected equality arms and the same requirement
+as one ordinary equality. The corpus replayer reconstructs each source query. -/
+def obs2P1Rows : List Case :=
+  let ima := cid "ima"
+  let igc := cid "igc"
+  let iga := cid "iga"
+  let a := fid "a"
+  let make (id : Nat) (name : String) (q : Query) (scope : Scope) (mode : Mode)
+      (served : Bool := false) (source : QuerySource := .plain) : Case :=
+    let label := s!"fs-query-index-merge2/{id}/{name}"
+    { label, query := q, config := { overrides := [(q.coll, a, [(scope, mode)])] },
+      production := some (served, label), source }
+  let collection := fun order => query ima [eqF "a"] order
+  let byName := fun coll order => query coll [eqF "a"] [order] true
+  [
+    make 12 "count-a-name-desc" (collection [desc "__name__"]) .collection .asc false .count,
+    make 13 "count-a" (collection []) .collection .asc true .count,
+    make 14 "a-in-one-name-desc" (collection [desc "__name__"]) .collection .asc false .inOne,
+    make 15 "a-or-two-name-desc" (collection [desc "__name__"]) .collection .asc false .orTwo,
+    make 16 "a-order-a-desc" (collection [desc "a"]) .collection .asc,
+    make 17 "a-order-a-asc-name-desc" (collection [asc "a", desc "__name__"]) .collection .asc,
+    make 18 "a-is-null-name-desc" (query ima [.isNull a] [desc "__name__"]) .collection .asc,
+    make 37 "group-a-name-asc" (byName igc (asc "__name__")) .group .asc true,
+    make 38 "group-a-name-desc" (byName igc (desc "__name__")) .group .asc,
+    make 39 "group-a-name-desc-plan" (byName igc (desc "__name__")) .group .asc,
+    make 47 "group-a-name-asc" (byName iga (asc "__name__")) .group .desc,
+    make 48 "group-a-name-desc" (byName iga (desc "__name__")) .group .desc true,
+    make 49 "group-a-name-asc-plan" (byName iga (asc "__name__")) .group .desc
+  ]
+
+/-- Observation 2a P2–P6, including the previously served, reordered plans. -/
+def obs2MergeRows : List Case :=
+  let iga := cid "iga"
+  let config : Config := { mergeObsConfig with overrides :=
+    mergeObsConfig.overrides ++ [(iga, fid "a", [(.group, .desc)]),
+      (iga, fid "tags", [(.group, .contains)])] }
+  let make (id : Nat) (name : String) (q : Query) (served : Bool := true)
+      (plan : Option (List (List IField)) := none) (source : QuerySource := .plain) : Case :=
+    let label := s!"fs-query-index-merge2/{id}/{name}"
+    { label, query := q, config, production := some (served, label), productionPlan := plan, source }
+  let member := fun name mode => [IField.mk (fid name) mode]
+  let a := eqF "a"
+  let b := eqF "b"
+  let t := hasF "tags"
+  let any := Filter.containsAny (fid "tags")
+  let shared := [a, eqF "tags", t]
+  let ascName := [asc "__name__"]
+  let descName := [desc "__name__"]
+  [
+    make 1 "a-and-b-name-asc-plan" (query imb [a, b] ascName) true
+      (some [member "b" .asc, member "a" .asc]),
+    make 2 "a-b-and-contains-plan" (query imb [a, b, t]) true
+      (some [member "tags" .contains, member "b" .asc, member "a" .asc]),
+    make 3 "a-and-contains-name-asc-plan" (query imb [a, t] ascName) true
+      (some [member "tags" .contains, member "a" .asc]),
+    make 5 "a-and-contains-any-name-desc" (query imb [a, any] descName),
+    make 8 "a-and-shared-path-name-asc-plan" (query imb shared ascName) true
+      (some [member "tags" .contains, member "a" .asc, member "tags" .asc]) .sharedArray,
+    make 9 "a-and-shared-path-name-desc-plan" (query imb shared descName) true
+      (some [member "tags" .contains, member "a" .desc, member "tags" .desc]) .sharedArray,
+    make 20 "count-a-b-and-contains-name-desc" (query imx [a, b, t] descName) false none .count,
+    make 21 "count-a-b-and-contains" (query imx [a, b, t]) true none .count,
+    make 22 "a-b-and-contains-name-desc" (query imx [a, b, t] descName) false,
+    make 23 "a-b-and-contains-name-desc-plan" (query imx [a, b, t] descName) false,
+    make 24 "a-b-and-contains-any-name-desc" (query imx [a, b, any] descName) false,
+    make 25 "a-b-and-contains-any" (query imx [a, b, any]),
+    make 31 "a-b-and-contains-name-desc" (query imc [a, b, t] descName),
+    make 32 "a-b-and-contains-plan" (query imc [a, b, t]) true
+      (some [member "a" .asc ++ member "tags" .contains, member "b" .asc]),
+    make 44 "group-a-and-contains-name-asc" (query iga [a, t] ascName true) false,
+    make 45 "group-a-and-contains-name-desc" (query iga [a, t] descName true),
+    make 46 "group-a-and-contains-name-desc-plan" (query iga [a, t] descName true) true
+      (some [member "tags" .contains, member "a" .desc])
+  ]
+
 /-- The members a decision plans, without `__name__` fields. -/
 def Decision.planFields : Decision → List (List IField)
   | .use i => [i.fields.filter (·.path != NAME)]
@@ -324,6 +399,12 @@ def productionDisagreements : List String :=
   (productionRows.filter (!·.agreesWithProduction)).map (·.label)
 
 #guard productionDisagreements == []
+#guard obs2P1Rows.length == 13
+#guard obs2P1Rows.all Case.agreesWithProduction
+#guard obs2MergeRows.length == 17
+#guard obs2MergeRows.all fun c =>
+  c.agreesWithProduction &&
+    c.productionPlan.all (fun plan => c.decision.planFields == plan)
 
 /-- The rows the base planner alone contradicts: exactly the three recorded shapes the head's
 overrides exist for, (c), (a) and (b), and their plans. -/

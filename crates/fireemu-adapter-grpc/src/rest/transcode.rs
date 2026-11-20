@@ -11,6 +11,8 @@
 
 use core::fmt::Write as _;
 
+use fireemu_core_firestore::value::Timestamp;
+use fireemu_core_types::time::LogicalInstant;
 use serde_json::{Map, Value};
 use tonic::Status;
 
@@ -656,6 +658,36 @@ pub fn check_document_keys(body: &Value, at: &str) -> Result<(), Status> {
 /// Checks and normalizes the body of a REST custom `method`. Bodies of methods this module has
 /// no schema for are returned unchanged.
 pub fn check_body(method: &str, body: &Value) -> Result<Value, Status> {
+    check_body_with_query_offsets(method, body, false)
+}
+
+/// A Standard strict `RunQuery` equality filter reports an offset crossing a Timestamp bound as
+/// a value error at the filter's field (index-merge observation 2a, T1).
+pub(crate) fn check_standard_query_body(body: &Value) -> Result<Value, Status> {
+    use fireemu_proto_firestore::google::firestore::v1::structured_query::field_filter::Operator;
+
+    let query = body
+        .get("structuredQuery")
+        .or_else(|| body.get("structured_query"));
+    let where_clause = query.and_then(|query| query.get("where"));
+    let filter = where_clause.and_then(|value| {
+        value
+            .get("fieldFilter")
+            .or_else(|| value.get("field_filter"))
+    });
+    let equality = filter.and_then(|value| value.get("op")).is_some_and(|op| {
+        op.as_str()
+            .is_some_and(|op| op.eq_ignore_ascii_case("EQUAL"))
+            || op.as_i64() == Some(i64::from(Operator::Equal as i32))
+    });
+    check_body_with_query_offsets("runQuery", body, equality)
+}
+
+fn check_body_with_query_offsets(
+    method: &str,
+    body: &Value,
+    observe_timestamp_offset: bool,
+) -> Result<Value, Status> {
     let Some(schema) = request_schema(method) else {
         return Ok(body.clone());
     };
@@ -666,7 +698,10 @@ pub fn check_body(method: &str, body: &Value) -> Result<Value, Status> {
                 .to_owned(),
         )]));
     };
-    let mut checker = Checker::default();
+    let mut checker = Checker {
+        observe_timestamp_offset,
+        ..Checker::default()
+    };
     let normalized = checker.message(schema, object);
     if checker.violations.is_empty() {
         Ok(Value::Object(normalized))
@@ -737,11 +772,36 @@ enum Segment<'a> {
 struct Checker<'a> {
     path: Vec<Segment<'a>>,
     violations: Vec<(String, String)>,
+    observe_timestamp_offset: bool,
 }
 
 impl<'a> Checker<'a> {
     fn full(&self) -> bool {
         self.violations.len() >= MAX_VIOLATIONS
+    }
+
+    fn query_offset_problem(&self, text: &str) -> Option<&'static str> {
+        use Segment::Field;
+        if !self.observe_timestamp_offset
+            || !matches!(
+                &self.path[..],
+                [
+                    Field("structured_query"),
+                    Field("where"),
+                    Field("field_filter"),
+                    Field("value"),
+                    Field("timestamp_value")
+                ]
+            )
+            || text.ends_with('Z')
+            || !(text.starts_with("0001-01-01") || text.starts_with("9999-12-31"))
+        {
+            return None;
+        }
+        let instant = LogicalInstant::parse_rfc3339(text).ok()?;
+        let first = LogicalInstant::from_unix_seconds(Timestamp::MIN_SECONDS);
+        let end = LogicalInstant::from_unix_seconds(Timestamp::MAX_SECONDS + 1);
+        (!(first..end).contains(&instant)).then_some("Timestamp value exceeds limits")
     }
 
     fn rendered_path(&self) -> String {
@@ -897,7 +957,9 @@ impl<'a> Checker<'a> {
             }
             Kind::Timestamp => {
                 if let Value::String(text) = value {
-                    if let Some(problem) = timestamp_problem(text) {
+                    let problem =
+                        timestamp_problem(text).or_else(|| self.query_offset_problem(text));
+                    if let Some(problem) = problem {
                         let path = self.rendered_path();
                         self.refuse(format!(
                             "Invalid value at '{path}' (type.googleapis.com/google.protobuf.Timestamp), Field '{}', {problem}",

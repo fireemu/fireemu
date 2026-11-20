@@ -353,14 +353,14 @@ theorem head_refusal_iff (r : Requirement) (lookup : Overrides) (coll : String) 
     (h : (decideBase r lookup coll s cs p e baseMerge).isIndexed = true) :
     (decideHead r lookup coll s cs p e conjunction single baseMerge recordedMerge).isIndexed =
         false ↔
-      stageB p e s conjunction = true ∧
+      stageB p e = true ∧
       ∃ i, decideBase r lookup coll s cs p e baseMerge = .useIndex i ∧
-        refusesSingleEquality r lookup coll cs single i = true := by
+        refusesSingleEquality r lookup coll s cs conjunction single i = true := by
   cases hb : decideBase r lookup coll s cs p e baseMerge with
   | useIndex i =>
-    cases hg : stageB p e s conjunction <;>
+    cases hg : stageB p e <;>
       simp [decideHead, hb, hg, Decision.isIndexed]
-    cases hr : refusesSingleEquality r lookup coll cs single i
+    cases hr : refusesSingleEquality r lookup coll s cs conjunction single i
     · simp
     · exact unserved_unindexed r coll s p e
   | merge indexes => simp [decideHead, hb, Decision.isIndexed]
@@ -536,9 +536,9 @@ theorem head_after_base_indexed_extension (r : Requirement) (old new : Overrides
     (extendsComposites : cs ⊆ ds) (mergePersists : m.isSome = true → n.isSome = true)
     (indexed : (decideBase r old coll s cs p e m).isIndexed = true) :
     (decideHead r new coll s ds p e conjunction single n rm).isIndexed = false ↔
-      stageB p e s conjunction = true ∧
+      stageB p e = true ∧
       ∃ i, decideBase r new coll s ds p e n = .useIndex i ∧
-        refusesSingleEquality r new coll ds single i = true :=
+        refusesSingleEquality r new coll s ds conjunction single i = true :=
   head_refusal_iff r new coll s ds p e conjunction single n rm
     (base_monotone r old new coll s cs ds p e m n extendsModes extendsComposites mergePersists indexed)
 

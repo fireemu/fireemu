@@ -114,8 +114,13 @@ info: 'IM.head_eq_base_enterprise' depends on axioms: [propext, Classical.choice
 -/
 #guard_msgs in #print axioms IM.head_eq_base_enterprise
 
-/-- info: 'IM.head_eq_base_group' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.head_eq_base_group
+/-- info: 'IM.head_eq_base_group_outside_guards' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_base_group_outside_guards
+
+/--
+info: 'IM.recorded_refusal_iff_not_automatic_equality_serves' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.recorded_refusal_iff_not_automatic_equality_serves
 
 /-- info: 'IM.head_override' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.head_override
@@ -125,6 +130,16 @@ info: 'IM.head_eq_base_enterprise' depends on axioms: [propext, Classical.choice
 
 /-- info: 'IM.base_merge_kept' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.base_merge_kept
+
+/--
+info: 'IM.multiple_related_carriers_keep_implicit_plan' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.multiple_related_carriers_keep_implicit_plan
+
+/--
+info: 'IM.unqualified_carrier_keeps_implicit_plan' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms IM.unqualified_carrier_keeps_implicit_plan
 
 /-- info: 'IM.recorded_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.recorded_kinds
@@ -147,22 +162,22 @@ info: 'IM.head_single_equality_refused' depends on axioms: [propext, Classical.c
 #guard_msgs in #print axioms IM.head_single_equality_refused
 
 /--
-info: 'IM.head_single_equality_neighbours_served' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_single_equality_neighbours' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.head_single_equality_neighbours_served
+#guard_msgs in #print axioms IM.head_single_equality_neighbours
 
 /--
 info: 'IM.head_f1_descending_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms IM.head_f1_descending_refused
 
-/-- info: 'IM.head_group_refused' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.head_group_refused
+/-- info: 'IM.head_group_merges_a_and_refuses_b' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_group_merges_a_and_refuses_b
 
 /--
-info: 'IM.head_contains_any_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_contains_any_merges' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.head_contains_any_refused
+#guard_msgs in #print axioms IM.head_contains_any_merges
 
 /-- info: 'IM.head_enterprise_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.head_enterprise_base
@@ -184,9 +199,9 @@ info: 'IM.carried_array_field_with_equality_refused' depends on axioms: [propext
 #guard_msgs in #print axioms IM.head_group_carrier_base
 
 /--
-info: 'IM.head_b_automatic_contains_base' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_b_with_automatic_contains' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.head_b_automatic_contains_base
+#guard_msgs in #print axioms IM.head_b_with_automatic_contains
 
 /--
 info: 'IM.head_b_descending_carrier_base' depends on axioms: [propext, Classical.choice, Quot.sound]

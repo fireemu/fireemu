@@ -4,26 +4,15 @@ import IndexMerge.Model
 # The head planner: the base decision with the recorded rules on top
 
 `crates/fireemu-core-firestore/src/index.rs` decides a query as the base planner did
-(`decideBase`, `IndexMerge/Model.lean`), then overrides that answer in three recorded shapes
-(`conformance/fs-query-index-merge-production.json`, recorded 2026-11-19), and only under one
-gate (`gate`): production's rules, Standard, collection scope, and a query whose filter is a
-plain conjunction (`Query.conjunction`). Everywhere else the head answer is the base answer.
+(`decideBase`, `IndexMerge/Model.lean`), then overrides it under Standard's production rules.
 
-- (c) `a == x ORDER BY __name__ DESC` with only `a`'s ascending index enabled and no composite
-  serving it: the base answer `(a ASC, __name__ DESC)` becomes unserved
-  (ascending-only#a-alone-name-desc).
-- (a) A plain array-contains with equalities, ordered by nothing but `__name__` descending: a
-  refused base answer becomes the merge of the array field's contains index and the equality
-  fields' descending indexes (builtin#f3-contains-name-desc).
-- (b) The same ordered ascending: a refused base answer becomes the merge of the one
-  collection-scoped composite that carries the array field after its equality prefix and the
-  ascending indexes of the remaining equality fields
-  (exempt-with-composite#f1-equalities-and-contains), when the array field's automatic contains
-  index is not available at collection scope; with that index available, with no carrier or
-  with several, the base answer stays.
-
-Coverage in (a) and (b) is by filter kind; the gate's distinct paths make it coincide with the
-base's coverage by path.
+- (c) Observation 2a refuses a mismatched automatic name direction for the recorded equality
+  shapes, unless a composite serves. These include the original plain equality, orders on
+  its equality field, one-element IN, two equalities on the same field joined by OR, IS NULL,
+  and one count. The ascending-name mirror only covers a plain collection-group equality.
+- (a) A recorded descending-name array membership query uses the contains index and the automatic descending equality members, in that order.
+- (b) A recorded ascending-name query can use the unique collection-scoped carrier followed by the remaining ascending automatic members.
+- Recorded automatic plans can be reordered or replaced, including the three-member shared path and the carrier preference in observation 2a.
 -/
 
 namespace IM
@@ -63,9 +52,32 @@ def Query.singleEquality (q : Query) : Bool :=
     | [.eq _] => true
     | _ => false
 
-/-- When the recorded rules may apply. -/
-def gate (q : Query) (p : Policy) (e : Edition) : Bool :=
-  p.productionRules && e == .standard && !q.group && q.conjunction
+/-- Provenance of the projected equality arm. IN and OR have equality arms, and COUNT
+adds no required field. The source carries the distinction the baseline model does not need. -/
+inductive QuerySource where
+  | plain | inOne | orTwo | count | sharedArray
+  deriving DecidableEq, Repr
+
+def gate (p : Policy) (e : Edition) : Bool :=
+  p.productionRules && e == .standard
+
+/-- The unserved cases eligible for (a) or (b). The modeled contains-any atom has one
+operand. Normalizing it here checks the distinct paths of its conjunction. -/
+def mergeGate (q : Query) (source : QuerySource) : Bool :=
+  let r := reqOf q
+  let any := q.filters.any (fun f => match f with | .containsAny _ => true | _ => false)
+  let normalized := { q with filters := q.filters.map fun (f : Filter) =>
+    match f with | .containsAny p => .contains p | other => other }
+  let nameOnly := q.orderBy.length ≤ 1 && q.orderBy.all (·.path == NAME)
+  normalized.conjunction && r.contains.isSome && !r.eq.isEmpty && nameOnly &&
+    if nameDirOf r.order == .desc then
+      source == .plain && ((!(q.group || any)) || (r.eq.length == 1 && !(q.group && any)))
+    else
+      !q.group &&
+        if source == .count || any then
+          (source == .plain || (source == .count && !any)) && q.orderBy.isEmpty && r.eq.length == 2
+        else
+          source == .plain && (q.orderBy.isEmpty || r.eq.length != 1)
 
 /-! ## The recorded merge (a) and (b) -/
 
@@ -76,17 +88,23 @@ def automaticMembers (s : ISet) (coll : Nat) (group : Bool) (m : Mode) (fs : Lis
     some (fs.map fun f => singleFieldIndex coll group f m m)
   else none
 
-/-- The composites that carry the array field `t`: collection-scoped, with a non-empty served
-equality prefix of ascending fields followed by `(t CONTAINS)` (the recorded carrier is `(a ASC,
-tags CONTAINS)`), serving that prefix followed by `t` with the query's order, in
-`composites()` order. -/
+/-- A composite is related to this carrier shape if it uses the same collection, a
+nonempty prefix of the query's equalities, and then the query's contains field. -/
+def relatedCarrier (r : Req) (coll : Nat) (t : Field) (idx : Index) : Bool :=
+  let sp := servedPrefix r idx
+  idx.coll == coll && !sp.isEmpty && idx.fields[sp.length]? == some ⟨t, .contains⟩
+
+def relatedCarriers (r : Req) (s : ISet) (coll : Nat) (t : Field) : List Index :=
+  s.composites.filter (relatedCarrier r coll t)
+
+/-- A qualifying carrier also has collection scope, an ascending equality prefix and
+serves that prefix and the contains field with the query's order. -/
 def carryingComposites (r : Req) (s : ISet) (coll : Nat) (group : Bool) (t : Field) :
     List Index :=
   s.composites.filter fun idx =>
     let sp := servedPrefix r idx
-    idx.scope == .collection && !sp.isEmpty &&
-      (idx.fields.take sp.length).all (·.mode == .asc) &&
-      idx.fields[sp.length]? == some ⟨t, .contains⟩ &&
+    idx.scope == .collection && (idx.fields.take sp.length).all (·.mode == .asc) &&
+      relatedCarrier r coll t idx &&
       compositeServes idx ⟨sp, some t, r.order, false⟩ coll group
 
 /-- The members of the recorded merge, when it applies. -/
@@ -104,11 +122,7 @@ def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (Lis
             singleFieldIndex coll group t .contains .desc :: ms
         else none
       else
-        -- (b): only when the array field's automatic contains index is not available at
-        -- collection scope (the recorded configuration exempts it); then exactly one carrying
-        -- composite, completed by the ascending indexes of the remaining equality fields.
-        if !isExempt s coll t false && hasMode s coll t false .contains then none
-        else
+        -- (b): the unique carrier, then the remaining ascending automatic members.
         match carryingComposites r s coll group t with
         | [idx] =>
           let sp := servedPrefix r idx
@@ -128,14 +142,39 @@ def unservedDecision (r : Req) (coll : Nat) (group : Bool) (p : Policy) (e : Edi
     | .standard => .missing q
     | .enterprise => .fullScan q
 
-/-- (c): the base served `i` by `a`'s automatic index with its ascending mode for one equality
-ordered by nothing but `__name__` descending, and no composite serves the requirement. -/
-def refusesSingleEquality (q : Query) (s : ISet) (i : Index) : Bool :=
+/-- On the recorded axes, an ordered automatic mode can serve an equality requirement
+only when its mode agrees with the effective document-name direction. -/
+def AutomaticEqualityServes (m : Mode) (d : Dir) : Prop := m = modeFor d
+
+/-- The canonical order forms around the projected equality. A single explicit descending
+equality order supplies the implicit descending name; an explicit name order may follow it. -/
+def Query.equalityOrder (q : Query) : Bool :=
+  match q.filters, q.orderBy with
+  | [.eq f], [o] => o.path == f && o.dir == .desc
+  | [.eq f], [o, n] => o.path == f && n.path == NAME
+  | _, _ => false
+
+def Query.equalityRefusal (q : Query) (source : QuerySource) : Bool :=
+  let nameOnly := q.orderBy.all (·.path == NAME)
+  if nameDirOf (reqOf q).order == .asc then
+    q.group && source == .plain && nameOnly && q.singleEquality
+  else
+    match source with
+    | .plain =>
+      (q.singleEquality && (nameOnly || q.equalityOrder)) ||
+        (nameOnly && match q.filters with | [.isNull f] => f != NAME | _ => false)
+    | .inOne | .orTwo | .count => nameOnly && q.singleEquality
+    | .sharedArray => false
+
+/-- (c) changes a base automatic scan only on the recorded axes, if its ordered mode
+disagrees with the effective document-name direction and no composite serves. -/
+def refusesSingleEquality (q : Query) (s : ISet) (i : Index)
+    (source : QuerySource := .plain) : Bool :=
   let r := reqOf q
-  q.singleEquality && r.eq.length == 1 && r.contains.isNone && r.order.all (·.path == NAME) &&
-    !r.eqOrdered && nameDirOf r.order == .desc &&
+  q.equalityRefusal source && r.eq.length == 1 && r.contains.isNone &&
+    r.order.all (·.path == NAME) &&
+    i.fields.head?.any (fun f => f.mode != modeFor (nameDirOf r.order)) &&
     automaticIndexFor r s q.coll q.group == some i &&
-    (i.fields.head?.map (·.mode)) == some .asc &&
     (s.composites.find? (fun c => compositeServes c r q.coll q.group)).isNone
 
 /-! ## The head decision -/
@@ -145,33 +184,95 @@ inductive Guard where
   | a
   | b
   | c
+  | reverse
+  | shared
+  | carrier
   deriving DecidableEq, Repr
 
+inductive PlanChange where
+  | reverse (members : List Index)
+  | shared (members : List Index)
+  | carrier (members : List Index)
+
+def PlanChange.guard : PlanChange → Guard
+  | .reverse _ => .reverse
+  | .shared _ => .shared
+  | .carrier _ => .carrier
+
+def PlanChange.members : PlanChange → List Index
+  | .reverse ms | .shared ms | .carrier ms => ms
+
+/-- The recorded ascending member orders and shared-array plans. Each requires the exact
+baseline automatic members. A carrier wins over those members only for row 32's shape. -/
+def recordedPlan (q : Query) (s : ISet) (source : QuerySource) (base : List Index) :
+    Option PlanChange :=
+  let r := reqOf q
+  let nm := modeFor (nameDirOf r.order)
+  let automatic := fun f m => singleFieldIndex q.coll false f m nm
+  let eqs := sortFields r.eq
+  let ordered := eqs.map (automatic · nm)
+  let explicitName := q.orderBy.length == 1 && q.orderBy.all (·.path == NAME)
+  let implicitCarrierShape := q.orderBy.isEmpty && eqs.length == 2 && r.contains.isSome
+  let explicitReverseShape := explicitName && nm == .asc &&
+    ((eqs.length == 1 && r.contains.isSome) || (eqs.length == 2 && r.contains.isNone))
+  if q.group then none
+  else if source == .sharedArray && explicitName && eqs.length == 2 &&
+      q.filters.length == 3 && q.filters.all Filter.plainAtom && ordered == base then
+    match r.contains with
+    | some t =>
+      if eqs.contains t && hasMode s q.coll t false .contains then
+        let others := eqs.filter (· != t)
+        some (.shared (automatic t .contains :: others.map (automatic · nm) ++ [automatic t nm]))
+      else none
+    | none => none
+  else if source == .plain && q.conjunction && (implicitCarrierShape || explicitReverseShape) then
+    let members := ordered ++ (r.contains.toList.map (automatic · .contains))
+    if members != base then none
+    else if implicitCarrierShape then
+      match r.contains with
+      | none => none
+      | some t =>
+        match relatedCarriers r s q.coll t with
+        | [] => some (.reverse members.reverse)
+        | [_] => (recordedMerge r s q.coll false).map PlanChange.carrier
+        | _ => none
+    else some (.reverse members.reverse)
+  else none
+
 /-- Which override fires for a query, if any. -/
-def guardOf (q : Query) (s : ISet) (p : Policy) (e : Edition) : Guard :=
-  if !gate q p e then .none
+def guardOf (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource := .plain) : Guard :=
+  if !gate p e then .none
   else
     let r := reqOf q
     match decideBase q s p e with
-    | .use i => if refusesSingleEquality q s i then .c else .none
+    | .use i => if refusesSingleEquality q s i source then .c else .none
+    | .merge ms => ((recordedPlan q s source ms).map PlanChange.guard).getD .none
     | .missing _ | .assumed _ =>
-      match recordedMerge r s q.coll q.group with
-      | some _ => if nameDirOf r.order == .desc then .a else .b
-      | none => .none
+      if mergeGate q source then
+        match recordedMerge r s q.coll q.group with
+        | some _ => if nameDirOf r.order == .desc then .a else .b
+        | none => .none
+      else .none
     | _ => .none
 
 /-- The head decision: the base answer, overridden where a recorded rule applies. -/
-def decideHead (q : Query) (s : ISet) (p : Policy) (e : Edition) : Decision :=
+def decideHead (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource := .plain) : Decision :=
   let base := decideBase q s p e
-  if !gate q p e then base
+  if !gate p e then base
   else
     let r := reqOf q
     match base with
-    | .use i => if refusesSingleEquality q s i then unservedDecision r q.coll q.group p e else base
+    | .use i =>
+      if refusesSingleEquality q s i source then unservedDecision r q.coll q.group p e else base
+    | .merge ms => ((recordedPlan q s source ms).map (Decision.merge ∘ PlanChange.members)).getD base
     | .missing _ | .assumed _ =>
-      match recordedMerge r s q.coll q.group with
-      | some ms => .merge ms
-      | none => base
+      if mergeGate q source then
+        match recordedMerge r s q.coll q.group with
+        | some ms => .merge ms
+        | none => base
+      else base
     | _ => base
 
 end IM

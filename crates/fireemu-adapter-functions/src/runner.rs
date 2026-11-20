@@ -514,6 +514,49 @@ pub struct Runner {
     clock_status: Arc<Mutex<Value>>,
 }
 
+/// The waiter of one sent frame. Dropping it removes the waiter unless `keep` hands it on: a
+/// send that ends, fails or is dropped by its caller never leaves a waiter that no answer will
+/// remove.
+struct WaiterRegistration<'a> {
+    waiters: &'a Mutex<HashMap<String, oneshot::Sender<InvokeOutcome>>>,
+    id: &'a str,
+    keep: bool,
+}
+
+impl Drop for WaiterRegistration<'_> {
+    fn drop(&mut self) {
+        if !self.keep {
+            if let Ok(mut waiters) = self.waiters.lock() {
+                waiters.remove(self.id);
+            }
+        }
+    }
+}
+
+/// A frame write under the stdin lock. Dropped before it is `complete` (a stalled or failed
+/// write, or a caller that dropped the send), the pipe may hold a half frame that the runner
+/// can never parse past, so the pipe is closed and the runner retired.
+struct FrameWrite<'a> {
+    stdin: tokio::sync::MutexGuard<'a, Option<ChildStdin>>,
+    alive: &'a AtomicBool,
+    label: &'a str,
+    complete: bool,
+}
+
+impl Drop for FrameWrite<'_> {
+    fn drop(&mut self) {
+        if !self.complete {
+            *self.stdin = None;
+            self.alive.store(false, Ordering::SeqCst);
+            eprintln_at!(
+                Level::Warn,
+                "{} runner stopped reading its stdin",
+                self.label
+            );
+        }
+    }
+}
+
 #[cfg(not(windows))]
 type RunnerChild = Child;
 
@@ -1109,21 +1152,26 @@ impl Runner {
     /// runner retired rather than left with a half frame. A timed-out invocation keeps its
     /// waiter: the late result (or the runner's death) arrives on [`Invocation::late`].
     pub async fn invoke(&self, request: impl std::fmt::Display, timeout: Duration) -> Invocation {
-        self.invoke_inner(request, Some(timeout), "invoke").await
+        self.invoke_inner(request, Some(timeout), "invoke", true)
+            .await
     }
 
     /// Sends an `invoke` without a handler deadline. The debugger uses this path so time
     /// stopped at a breakpoint does not expire the invocation. Shutdown still closes the
     /// runner and resolves the waiter as `RunnerGone`.
     pub async fn invoke_unbounded(&self, request: impl std::fmt::Display) -> Invocation {
-        self.invoke_inner(request, None, "invoke").await
+        self.invoke_inner(request, None, "invoke", true).await
     }
 
+    /// `hand_on_late` says whether a send that runs past its deadline hands the late answer on
+    /// ([`Invocation::late`], awaited by a handler invocation to release its slot) or gives up on
+    /// it (a clock frame) and removes its waiter.
     async fn invoke_inner(
         &self,
         request: impl std::fmt::Display,
         timeout: Option<Duration>,
         kind: &str,
+        hand_on_late: bool,
     ) -> Invocation {
         let done = |outcome| Invocation {
             outcome,
@@ -1145,35 +1193,45 @@ impl Runner {
         if let Ok(mut w) = self.waiters.lock() {
             w.insert(id.clone(), tx);
         }
-        let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
-        let forget = |waiters: &Mutex<HashMap<String, oneshot::Sender<InvokeOutcome>>>| {
-            if let Ok(mut w) = waiters.lock() {
-                w.remove(&id);
-            }
+        // Removed on every way out, including a caller that drops this send (the outer clock
+        // settlement timeout), except a timeout that hands the late answer on to its caller.
+        let mut registration = WaiterRegistration {
+            waiters: &self.waiters,
+            id: &id,
+            keep: false,
         };
+        let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
         // 1. The stdin lock (waiting here is harmless: nothing was written yet).
-        let mut stdin = match deadline {
+        let stdin = match deadline {
             Some(deadline) => {
                 let Ok(stdin) = tokio::time::timeout_at(deadline, self.stdin.lock()).await else {
-                    forget(&self.waiters);
                     return done(InvokeOutcome::TimedOut);
                 };
                 stdin
             }
             None => self.stdin.lock().await,
         };
-        let Some(pipe) = stdin.as_mut() else {
-            forget(&self.waiters);
+        if stdin.is_none() {
             return done(InvokeOutcome::RunnerGone("runner stdin closed".into()));
-        };
-        // 2. The frame: a partial write would desynchronize the protocol, so a stalled or
-        //    failed write retires the runner.
+        }
+        // 2. The frame: a partial write would desynchronize the protocol, so a stalled, failed
+        //    or dropped write retires the runner.
         let mut frame = request;
         frame.insert(
             "type".to_owned(),
             serde_json::value::to_raw_value(kind).expect("JSON string serializes"),
         );
         let frame = serde_json::value::to_raw_value(&frame).expect("raw invocation serializes");
+        let mut write = FrameWrite {
+            stdin,
+            alive: &self.alive,
+            label: &self.label,
+            complete: false,
+        };
+        let pipe = write
+            .stdin
+            .as_mut()
+            .expect("the pipe was checked under this lock");
         let written = match deadline {
             Some(deadline) => matches!(
                 tokio::time::timeout_at(deadline, write_frame(pipe, &frame)).await,
@@ -1182,40 +1240,31 @@ impl Runner {
             None => write_frame(pipe, &frame).await.is_ok(),
         };
         if !written {
-            *stdin = None;
-            self.alive.store(false, Ordering::SeqCst);
-            eprintln_at!(
-                Level::Warn,
-                "{} runner stopped reading its stdin",
-                self.label
-            );
-            forget(&self.waiters);
+            drop(write);
             return done(InvokeOutcome::RunnerGone(
                 "runner stopped reading its stdin".into(),
             ));
         }
-        drop(stdin);
+        write.complete = true;
+        drop(write);
         // 3. The result.
         if let Some(deadline) = deadline {
             match tokio::time::timeout_at(deadline, &mut rx).await {
-                Ok(Ok(outcome)) => {
-                    forget(&self.waiters);
-                    done(outcome)
+                Ok(Ok(outcome)) => done(outcome),
+                Ok(Err(_)) => done(InvokeOutcome::RunnerGone("runner exited".into())),
+                Err(_) if hand_on_late => {
+                    registration.keep = true;
+                    Invocation {
+                        outcome: InvokeOutcome::TimedOut,
+                        late: Some(rx),
+                    }
                 }
-                Ok(Err(_)) => {
-                    forget(&self.waiters);
-                    done(InvokeOutcome::RunnerGone("runner exited".into()))
-                }
-                Err(_) => Invocation {
-                    outcome: InvokeOutcome::TimedOut,
-                    late: Some(rx),
-                },
+                Err(_) => done(InvokeOutcome::TimedOut),
             }
         } else {
             let outcome = rx
                 .await
                 .unwrap_or_else(|_| InvokeOutcome::RunnerGone("runner exited".into()));
-            forget(&self.waiters);
             done(outcome)
         }
     }
@@ -1253,6 +1302,7 @@ impl Runner {
             "following":following}),
                 Some(Duration::from_secs(5)),
                 "clock:set",
+                false,
             )
             .await;
         match result.outcome {
@@ -1285,6 +1335,7 @@ impl Runner {
                 json!({"invocationId":id,"budget":budget}),
                 Some(Duration::from_secs(5)),
                 "clock:runDue",
+                false,
             )
             .await;
         match result.outcome {
@@ -2566,5 +2617,188 @@ sys.stdin.readline()
             Err(r#"runner clock synchronization failed: RunnerGone("runner exited")"#.to_owned())
         );
         runner.shutdown().await;
+    }
+
+    /// A fake runner (`tests/fake_runner.py`) that holds the answer to every `clock:set` frame,
+    /// and so stops reading its stdin, until `gate` exists.
+    async fn gated_runner(name: &str) -> (super::Runner, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("fireemu-runner-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let gate = dir.join("gate");
+        let runner = super::Runner::spawn(
+            &[
+                "python3".to_owned(),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake_runner.py").to_owned(),
+            ],
+            None,
+            &[(
+                "FIREEMU_FAKE_CLOCK_ACK_GATE".to_owned(),
+                gate.display().to_string(),
+            )],
+            std::time::Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+        (runner, dir)
+    }
+
+    fn registered_waiters(runner: &super::Runner) -> Vec<String> {
+        runner.waiters.lock().unwrap().keys().cloned().collect()
+    }
+
+    fn clock_frame(id: &str, padding: usize) -> serde_json::Value {
+        serde_json::json!({"invocationId": id, "instantNanos": "0", "elapsedNanos": "0",
+            "revision": "1", "following": false, "padding": "x".repeat(padding)})
+    }
+
+    /// A send dropped while it waits for the stdin lock (the outer settlement timeout) leaves
+    /// no waiter behind: nothing was written, so no answer would ever remove it.
+    #[tokio::test]
+    async fn a_send_dropped_while_waiting_for_stdin_leaves_no_waiter() {
+        let (runner, dir) = gated_runner("drop-stdin").await;
+        let held = runner.stdin.lock().await;
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            runner.invoke_inner(
+                clock_frame("waiting", 0),
+                Some(std::time::Duration::from_secs(10)),
+                "clock:set",
+                true,
+            ),
+        )
+        .await;
+        drop(held);
+        let left = registered_waiters(&runner);
+        let alive = runner.is_alive();
+        runner.kill_now();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(dropped.is_err(), "the send was not dropped");
+        assert!(left.is_empty(), "waiters left behind: {left:?}");
+        assert!(alive, "nothing was written, so the runner stays usable");
+    }
+
+    /// A send dropped in the middle of a frame write retires the pipe: the runner holds a half
+    /// frame and can never parse the next one.
+    #[tokio::test]
+    async fn a_send_dropped_in_the_middle_of_a_frame_retires_the_pipe() {
+        let (runner, dir) = gated_runner("drop-write").await;
+        // The runner holds this frame's answer and stops reading its stdin.
+        let held = runner
+            .invoke_inner(
+                clock_frame("held", 0),
+                Some(std::time::Duration::from_millis(100)),
+                "clock:set",
+                true,
+            )
+            .await;
+        assert!(matches!(held.outcome, super::InvokeOutcome::TimedOut));
+        // Far larger than any pipe buffer, so the write cannot finish.
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            runner.invoke_inner(
+                clock_frame("half", 8 << 20),
+                Some(std::time::Duration::from_secs(10)),
+                "clock:set",
+                true,
+            ),
+        )
+        .await;
+        let pipe_open = runner.stdin.lock().await.is_some();
+        let alive = runner.is_alive();
+        let left = registered_waiters(&runner);
+        runner.kill_now();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(dropped.is_err(), "the send was not dropped");
+        assert!(!pipe_open, "the pipe with a half frame was kept");
+        assert!(!alive, "a runner with a half frame stays in use");
+        assert!(
+            !left.contains(&"half".to_owned()),
+            "waiters left behind: {left:?}"
+        );
+    }
+
+    /// A send dropped while it waits for the answer leaves no waiter behind, while a send that
+    /// times out on its own deadline keeps its waiter for the late answer.
+    #[tokio::test]
+    async fn a_send_dropped_while_waiting_for_its_answer_leaves_no_waiter() {
+        let (runner, dir) = gated_runner("drop-answer").await;
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            runner.invoke_inner(
+                clock_frame("answer", 0),
+                Some(std::time::Duration::from_secs(10)),
+                "clock:set",
+                true,
+            ),
+        )
+        .await;
+        let after_drop = registered_waiters(&runner);
+        let timed_out = runner
+            .invoke_inner(
+                clock_frame("late", 0),
+                Some(std::time::Duration::from_millis(100)),
+                "clock:set",
+                true,
+            )
+            .await;
+        let after_timeout = registered_waiters(&runner);
+        let alive = runner.is_alive();
+        runner.kill_now();
+        let _ = std::fs::remove_dir_all(dir);
+        assert!(dropped.is_err(), "the send was not dropped");
+        assert!(after_drop.is_empty(), "waiters left behind: {after_drop:?}");
+        assert!(
+            alive,
+            "the frame was written in full, so the runner stays usable"
+        );
+        assert!(matches!(timed_out.outcome, super::InvokeOutcome::TimedOut));
+        assert!(
+            timed_out.late.is_some(),
+            "a timed-out send lost its late answer"
+        );
+        assert_eq!(after_timeout, vec!["late".to_owned()]);
+    }
+
+    /// A clock frame that runs past its own deadline gives up on its answer, so it removes its
+    /// waiter: a runner that stopped reading (paused at a breakpoint, here holding the answer)
+    /// does not collect one waiter per attempt. The answers that arrive later are ignored, and
+    /// the runner stays usable. Each attempt waits out the 5 s clock frame deadline.
+    #[tokio::test]
+    async fn a_clock_frame_past_its_deadline_leaves_no_waiter() {
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
+        let (runner, dir) = gated_runner("clock-deadline").await;
+        let mut clock = VirtualClock::new(LogicalInstant::from_nanos(1_000_000_000));
+        let mut after_each = Vec::new();
+        for _ in 0..2 {
+            clock.advance(LogicalDuration::from_millis(1)).unwrap();
+            let synced = runner.sync_clock(clock.snapshot(), false).await;
+            after_each.push((synced.is_err(), registered_waiters(&runner)));
+        }
+        // A timer batch the fake runner never answers.
+        let due = runner.run_due(1).await;
+        let after_due = registered_waiters(&runner);
+        std::fs::write(dir.join("gate"), "open").unwrap();
+        clock.advance(LogicalDuration::from_millis(1)).unwrap();
+        let resumed = runner.sync_clock(clock.snapshot(), false).await;
+        let alive = runner.is_alive();
+        let after_resume = registered_waiters(&runner);
+        runner.kill_now();
+        let _ = std::fs::remove_dir_all(dir);
+        for (failed, left) in &after_each {
+            assert!(*failed, "a held clock frame answered");
+            assert!(left.is_empty(), "waiters left behind: {left:?}");
+        }
+        assert!(due.is_err(), "an unanswered timer batch answered");
+        assert!(after_due.is_empty(), "waiters left behind: {after_due:?}");
+        assert_eq!(
+            resumed,
+            Ok(()),
+            "the runner is unusable after the late answers"
+        );
+        assert!(alive);
+        assert!(after_resume.is_empty(), "{after_resume:?}");
     }
 }

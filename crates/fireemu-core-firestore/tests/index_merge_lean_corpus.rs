@@ -238,6 +238,7 @@ struct CorpusCase {
     config: usize,
     collection: String,
     group: bool,
+    source: String,
     ctx: (String, String),
     filters: Vec<(String, String)>,
     orders: Vec<(FieldPath, Direction)>,
@@ -304,6 +305,7 @@ fn parse_corpus() -> Corpus {
                 name.clone_into(&mut c.collection);
                 c.group = g == "G";
             }
+            "source" => rest.clone_into(&mut c.source),
             "ctx" => {
                 let (p, e) = rest.split_once(' ').expect("ctx");
                 c.ctx = (p.to_owned(), e.to_owned());
@@ -342,13 +344,46 @@ fn parse_corpus() -> Corpus {
 }
 
 fn corpus_decision(corpus: &Corpus, c: &CorpusCase) -> IndexDecision {
-    let filters = c
-        .filters
-        .iter()
-        .map(|(k, f)| filter(k, f, &c.collection))
-        .collect();
+    let filters = match c.source.as_str() {
+        "" | "count" | "sharedArray" => c
+            .filters
+            .iter()
+            .map(|(k, f)| {
+                if c.source == "sharedArray" && k == "eq" && f == "tags" {
+                    eq_tags_array()
+                } else {
+                    filter(k, f, &c.collection)
+                }
+            })
+            .collect(),
+        "in1" | "or2" => {
+            let [(kind, field)] = c.filters.as_slice() else {
+                panic!("non-plain source must project to a single equality");
+            };
+            assert_eq!(kind, "eq", "{}", c.label);
+            if c.source == "in1" {
+                vec![field_filter(
+                    field,
+                    FieldOp::In,
+                    Value::Array(vec![Value::Integer(1)]),
+                )]
+            } else {
+                vec![FilterExpr::Or(vec![
+                    field_filter(field, FieldOp::Equal, Value::Integer(0)),
+                    field_filter(field, FieldOp::Equal, Value::Integer(1)),
+                ])]
+            }
+        }
+        other => panic!("unrecognized equality source {other}"),
+    };
     let q = build_query(&c.collection, c.group, filters, &c.orders);
-    decide(&q, &corpus.configs[c.config], &context(&c.ctx.0, &c.ctx.1))
+    let set = &corpus.configs[c.config];
+    let ctx = context(&c.ctx.0, &c.ctx.1);
+    if c.source == "count" {
+        validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], set, &ctx)
+    } else {
+        decide(&q, set, &ctx)
+    }
 }
 
 #[test]
@@ -384,8 +419,8 @@ fn every_corpus_case_matches_the_lean_model() {
 }
 
 /// `IM.head_eq_base_outside_guards` replayed on Rust: wherever no stage-B guard fires, the
-/// planner's answer is the Lean base model's (the 4fcd8a7a3 decision), and the guards fire
-/// only on Standard, at collection scope, under the production rules.
+/// planner's answer is the Lean base model's (the 4fcd8a7a3 decision). The guards fire
+/// only on Standard under the production rules.
 #[test]
 fn every_corpus_case_without_a_guard_matches_the_base_model() {
     let corpus = parse_corpus();
@@ -410,9 +445,11 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
                     ));
                 }
             }
-            "a" | "b" | "c" => {
+            "a" | "b" | "c" | "reverse" | "shared" | "carrier" => {
                 assert!(
-                    !c.group && c.ctx.1 == "standard" && c.ctx.0 != "emulator",
+                    (!c.group || matches!(c.guard.as_str(), "a" | "c"))
+                        && c.ctx.1 == "standard"
+                        && c.ctx.0 != "emulator",
                     "case {} {}: guard {} off the gate",
                     c.number,
                     c.label,
@@ -438,7 +475,7 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    for guard in ["a", "b", "c"] {
+    for guard in ["a", "b", "c", "reverse", "shared", "carrier"] {
         assert!(
             counts.get(guard).is_some_and(|n| *n > 0),
             "no case for guard {guard}"
@@ -454,7 +491,7 @@ fn every_recorded_production_verdict_matches_the_planner() {
         .iter()
         .filter(|c| c.production.is_some())
         .collect();
-    assert_eq!(rows.len(), 101, "production rows in the corpus");
+    assert_eq!(rows.len(), 131, "production rows in the corpus");
     for c in rows {
         let (verdict, row) = c.production.as_ref().expect("production row");
         assert_eq!(
@@ -694,10 +731,10 @@ fn composite_serves_alone(
     )
 }
 
-/// Whether the stage-B rules may apply to the shape's query: collection scope and a filter that
-/// is a conjunction of plain equalities and the plain array-contains (no range).
-fn recorded_shape(s: &Shape) -> bool {
-    !s.group && order_shapes()[s.order].0.is_empty()
+/// The recorded merge shapes within this generator's plain equality and contains language.
+fn recorded_shape(s: &Shape, q: &Query) -> bool {
+    order_shapes()[s.order].0.is_empty()
+        && (!s.group || (s.eq.len() == 1 && name_direction(q) == Direction::Descending))
 }
 
 /// The declarative merge condition (`IM.MergeSpec`): at least two wanted fields, no explicit
@@ -710,8 +747,7 @@ fn recorded_shape(s: &Shape) -> bool {
 /// descending, the contains index and the descending automatic index of every equality field
 /// (production F3); (b) ascending, one composite serving some equalities and the array filter
 /// on its own and the ascending automatic index of every other equality field (production F1),
-/// only when that composite is the single collection-scoped carrier with an ascending prefix
-/// and the array field has no automatic contains index.
+/// only when that composite is the single collection-scoped carrier with an ascending prefix.
 fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     let q = shape_query(s, &s.eq, s.contains);
     let wanted = s.eq.len() + usize::from(s.contains);
@@ -766,25 +802,24 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     if covered == wanted_fields {
         return true;
     }
-    if !(recorded_shape(s) && s.contains && name_only) {
+    if !(recorded_shape(s, &q) && s.contains && name_only) {
         return false;
     }
     if nm == IndexFieldMode::Descending {
         return enabled("tags", IndexFieldMode::Contains) && s.eq.iter().all(|f| enabled(f, nm));
     }
-    // The generated composites never repeat a field path (`composite_strategy`), so the
-    // prefix below has no repeated entry; index.rs passes a repeated prefix such as
-    // `(b ASC, b ASC, tags CONTAINS)` to the serving check as it stands, which this helper
-    // would canonicalize away.
-    // (b), as recorded: the array field has no automatic contains index, and exactly one
-    // configured composite is a carrier (collection scope, a non-empty ascending prefix of
-    // equality fields followed by the array field, serving that prefix and the array filter on
-    // its own). With no carrier or several, the pre-stage-B answer stays.
-    if enabled("tags", IndexFieldMode::Contains) {
+    let carriers = carrier_prefixes(s, set);
+    let [prefix] = carriers.as_slice() else {
         return false;
-    }
-    let carriers: Vec<Vec<&str>> = set
-        .composites()
+    };
+    s.eq.iter()
+        .all(|f| prefix.contains(f) || enabled(f, IndexFieldMode::Ascending))
+}
+
+// The generated composites use distinct fields, so their ordered prefixes can be
+// replayed as canonical query filters.
+fn carrier_prefixes(s: &Shape, set: &IndexSet) -> Vec<Vec<&'static str>> {
+    set.composites()
         .iter()
         .filter_map(|member| {
             let prefix: Vec<&str> = member
@@ -815,12 +850,7 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
                 && composite_serves_alone(s, member, &prefix, true))
             .then_some(prefix)
         })
-        .collect();
-    let [prefix] = carriers.as_slice() else {
-        return false;
-    };
-    s.eq.iter()
-        .all(|f| prefix.contains(f) || enabled(f, IndexFieldMode::Ascending))
+        .collect()
 }
 
 /// Checks one merge member against `IM.merged_sound`: a configured composite that serves its
@@ -863,7 +893,7 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
         if carries {
             assert!(
                 s.contains
-                    && recorded_shape(s)
+                    && recorded_shape(s, &q)
                     && only_name_ordered(&q)
                     && name_direction(&q) == Direction::Ascending,
                 "carrying member outside (b): {member:?}"
@@ -901,7 +931,7 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
     if field.mode == IndexFieldMode::Contains {
         assert!(s.contains && name == "tags");
         assert!(
-            nm == IndexFieldMode::Ascending || recorded_shape(s),
+            nm == IndexFieldMode::Ascending || recorded_shape(s, &q),
             "{member:?}"
         );
     } else {
@@ -971,32 +1001,20 @@ proptest! {
         let set = index_set(&composites, &overrides);
         let q = shape_query(&s, &s.eq, s.contains);
         let before = decide(&q, &set, &standard());
-        // The recorded merge (b) is deliberately narrow: it needs exactly one carrier and no
-        // automatic contains index on the array field, so one more carrier or that index puts
-        // the query back on the pre-stage-B refusal (pinned by
-        // `merge_b_needs_exactly_one_collection_scoped_carrier` and the automatic-contains
-        // pin). Production has no recorded answer for those neighbours yet, so the property is
-        // stated for every other served query.
-        let through_carrier = matches!(
-            &before,
-            IndexDecision::MergeIndexes { indexes } if indexes.iter().any(|member| {
-                // A carrier leads with an ordered equality field and then holds the array
-                // field; a configured copy of the automatic `(tags CONTAINS, __name__)` index
-                // is an ordinary member of the pre-stage-B merge and stays in the property.
-                set.composites().contains(member)
-                    && member.fields.first().is_some_and(|f| {
-                        matches!(
-                            f.mode,
-                            IndexFieldMode::Ascending | IndexFieldMode::Descending
-                        )
-                    })
-                    && member.fields.iter().any(|f| f.mode == IndexFieldMode::Contains)
-            })
-        );
-        if served(&before) && !through_carrier {
+        if served(&before) {
             let mut more = composites.clone();
             more.insert(position.min(more.len()), extra);
-            prop_assert!(served(&decide(&q, &index_set(&more, &overrides), &standard())));
+            let extended = index_set(&more, &overrides);
+            // A second qualifying carrier can disable (b). Mode additions never do.
+            let adding_second_carrier =
+                matches!(before, IndexDecision::MergeIndexes { .. })
+                && s.contains && !s.group && recorded_shape(&s, &q)
+                && name_direction(&q) == Direction::Ascending
+                && carrier_prefixes(&s, &set).len() == 1
+                && carrier_prefixes(&s, &extended).len() == 2;
+            if !adding_second_carrier {
+                prop_assert!(served(&decide(&q, &extended, &standard())));
+            }
             let mut enabled = overrides.clone();
             let name = ["a", "b", "c", "tags", "e"][field];
             let mut modes = set.single_field_modes(&coll("qx"), &fp(name));
@@ -1365,12 +1383,10 @@ fn modes_only(set: &mut IndexSet, field: &str, modes: &[IndexFieldMode], scope: 
     );
 }
 
-/// The first merge attempt keeps its pre-stage-B (4fcd8a7a3) answer on a shared path (ruling
-/// 11): `a == 1 AND tags == [1] AND tags array-contains 1` covers `tags` by path, so one member
-/// on `tags` serves both filters there. Coverage by filter kind applies only inside the
-/// stage-B merges, which need distinct paths. The shape is unrecorded (no production verdict).
+/// Rows 8 and 9 separate the shared path's filter kinds when all three modes exist. Sparse
+/// configurations keep the base decision.
 #[test]
-fn the_first_merge_attempt_keeps_its_answer_on_a_shared_path() {
+fn observation_2a_p5_uses_separate_shared_path_members_when_available() {
     let c = IndexQueryScope::Collection;
     let filters = || {
         vec![
@@ -1405,25 +1421,26 @@ fn the_first_merge_attempt_keeps_its_answer_on_a_shared_path() {
         decide(&q, &desc, &standard()),
         IndexDecision::MissingRequired { .. }
     ));
-    // (ii) and (iii) Built-in modes: the ordered member on `tags` covers the path, in either
-    // direction, and the contains member does not join.
-    for (orders, a, tags) in [
+    // The contains member comes first, followed by the ordinary equality and the array equality.
+    for (orders, a, tags, membership) in [
         (
             &name_asc,
             "qx C a:asc,__name__:asc",
             "qx C tags:asc,__name__:asc",
+            "qx C tags:contains,__name__:asc",
         ),
         (
             &name_desc,
             "qx C a:desc,__name__:desc",
             "qx C tags:desc,__name__:desc",
+            "qx C tags:contains,__name__:desc",
         ),
     ] {
         let q = qx_query(filters(), orders, false);
         assert_eq!(
             decide(&q, &IndexSet::default(), &standard()),
             IndexDecision::MergeIndexes {
-                indexes: vec![parse_index(a), parse_index(tags)]
+                indexes: vec![parse_index(membership), parse_index(a), parse_index(tags)]
             },
             "{orders:?}"
         );
@@ -1450,11 +1467,288 @@ fn the_first_merge_attempt_keeps_its_answer_on_a_shared_path() {
     ));
 }
 
-/// The single-equality refusal (c) is exactly the recorded shape. Every neighbour keeps its
-/// pre-stage-B answer and has no production verdict (unrecorded): collection-group scope, an
-/// order naming the equality field, and Enterprise.
+/// Replay the observation 2a refusal shapes and their near misses through the public planner.
 #[test]
-fn the_single_equality_refusal_keeps_every_unrecorded_neighbour() {
+fn observation_2a_p1_pict_matches_automatic_name_direction() {
+    let generated = include_str!("fixtures/index-merge-obs2-p1.tsv");
+    assert_eq!(generated.lines().count(), 66);
+    for row in generated.lines().skip(1) {
+        let [shape, scope_tag, enabled, name, profile, composite]: [&str; 6] =
+            row.split('\t').collect::<Vec<_>>().try_into().unwrap();
+        let group = scope_tag == "group";
+        let index_scope = if group { "G" } else { "C" };
+        let mut set = IndexSet::default();
+        let enabled_modes = match enabled {
+            "ascOnly" => modes(&format!("{index_scope}:asc")),
+            "descOnly" => modes(&format!("{index_scope}:desc")),
+            "both" => modes(&format!("{index_scope}:asc,{index_scope}:desc")),
+            _ => panic!("unknown mode: {enabled}"),
+        };
+        // The other OR arm has a matching automatic mode, to isolate the P1 gate.
+        set.set_single_field_indexes(
+            &coll("qx"),
+            &fp("b"),
+            modes(&format!("{index_scope}:{name}")),
+        );
+        set.set_single_field_indexes(&coll("qx"), &fp("a"), enabled_modes);
+        let order = if name == "asc" {
+            Direction::Ascending
+        } else {
+            Direction::Descending
+        };
+        let name_order = (FieldPath::document_name(), order);
+        let orders = match shape {
+            "count" if name == "asc" => Vec::new(),
+            "orderDesc" => vec![(fp("a"), Direction::Descending)],
+            "orderAscName" => vec![(fp("a"), Direction::Ascending), name_order],
+            _ => vec![name_order],
+        };
+        let filters = obs2_equality_filters(shape);
+        if composite == "serves" {
+            set.add_composite(parse_index(&format!(
+                "qx {index_scope} a:{name},__name__:{name}"
+            )));
+        }
+        let q = qx_query(filters, &orders, group);
+        let ctx = if profile == "enterprise" {
+            context("production", "enterprise")
+        } else {
+            context(profile, "standard")
+        };
+        let decision = match shape {
+            "count" | "cappedCount" => validate_aggregation_query(
+                &q,
+                &[Aggregation::Count {
+                    up_to: (shape == "cappedCount").then_some(1),
+                }],
+                &set,
+                &ctx,
+            ),
+            _ => decide(&q, &set, &ctx),
+        };
+        let prohibited_asc_fallback = enabled == "ascOnly"
+            && name == "desc"
+            && matches!(
+                shape,
+                "eq" | "orderDesc" | "orderAscName" | "in1" | "or2" | "isNull" | "count"
+            );
+        let prohibited_desc_fallback =
+            enabled == "descOnly" && name == "asc" && group && shape == "eq";
+        let refusal =
+            (prohibited_asc_fallback || prohibited_desc_fallback) && composite == "absent";
+        let suggestion = parse_index(&format!("qx {index_scope} a:asc,__name__:{name}"));
+        if refusal && profile == "production" {
+            assert_eq!(
+                decision,
+                IndexDecision::MissingRequired {
+                    requirement: suggestion
+                },
+                "{row:?}"
+            );
+        } else if refusal && profile == "report" {
+            assert_eq!(
+                decision,
+                IndexDecision::AssumedIndex {
+                    requirement: suggestion
+                },
+                "{row:?}"
+            );
+        } else {
+            assert!(
+                matches!(decision, IndexDecision::UseIndex { .. }),
+                "{row:?}: {decision:?}"
+            );
+        }
+    }
+}
+
+fn obs2_equality_filters(shape: &str) -> Vec<FilterExpr> {
+    let exact_a = |value| field_filter("a", FieldOp::Equal, Value::Integer(value));
+    match shape {
+        "in1" => vec![field_filter(
+            "a",
+            FieldOp::In,
+            Value::Array(vec![Value::Integer(1)]),
+        )],
+        "in2" => vec![field_filter(
+            "a",
+            FieldOp::In,
+            Value::Array(vec![Value::Integer(0), Value::Integer(1)]),
+        )],
+        "or2" => vec![FilterExpr::Or(vec![exact_a(0), exact_a(1)])],
+        "or3" => vec![FilterExpr::Or(vec![exact_a(0), exact_a(1), exact_a(2)])],
+        "crossFieldOr" => vec![FilterExpr::Or(vec![exact_a(1), filter("eq", "b", "qx")])],
+        "isNull" => vec![filter("isnull", "a", "qx")],
+        "isNan" => vec![FilterExpr::Unary {
+            field: fp("a"),
+            op: UnaryOp::IsNan,
+        }],
+        "eq" | "orderDesc" | "orderAscName" | "count" | "cappedCount" => vec![exact_a(1)],
+        _ => panic!("unknown shape: {shape}"),
+    }
+}
+
+/// Observation 2a: the added merge shapes and the exact members of each recorded plan.
+#[test]
+fn observation_2a_p2_to_p6_pict_matches_recorded_merge_members() {
+    let rows = include_str!("fixtures/index-merge-obs2-merges.tsv");
+    assert_eq!(rows.lines().count(), 53);
+    for row in rows.lines().skip(1) {
+        let [shape, scope, catalog, policy]: [&str; 4] =
+            row.split('\t').collect::<Vec<_>>().try_into().unwrap();
+        let group = scope == "group";
+        let ctx = context(policy, "standard");
+        let set = obs2_merge_catalog(catalog, group);
+        let q = obs2_merge_query(shape, group);
+        let aggs: &[Aggregation] = if shape == "count" {
+            &[Aggregation::Count { up_to: None }]
+        } else {
+            &[]
+        };
+        let result = if aggs.is_empty() {
+            decide(&q, &set, &ctx)
+        } else {
+            validate_aggregation_query(&q, aggs, &set, &ctx)
+        };
+        let expected = obs2_merge_members(shape, scope, catalog);
+        if policy == "emulator" || (shape == "descAny" && group && policy == "report") {
+            assert!(
+                matches!(result, IndexDecision::AssumedIndex { .. }),
+                "{row:?}"
+            );
+        } else if let Some(indexes) = expected {
+            assert_eq!(result, IndexDecision::MergeIndexes { indexes }, "{row:?}");
+        } else {
+            assert!(
+                matches!(result, IndexDecision::MissingRequired { .. }),
+                "{row:?}"
+            );
+        }
+    }
+}
+
+fn obs2_merge_catalog(catalog: &str, group: bool) -> IndexSet {
+    let mut set = if matches!(catalog, "carrierExempt" | "mixedExempt") {
+        f1_set()
+    } else {
+        IndexSet::default()
+    };
+    let asc = "qx C a:asc,tags:contains";
+    let desc = "qx C a:desc,tags:contains,__name__:asc";
+    let extra: &[_] = match catalog {
+        "carrierEnabled" => &[asc],
+        "twoCarriers" => &[asc, "qx C b:asc,tags:contains"],
+        "descendingCarrier" | "mixedExempt" => &[desc],
+        "groupCarrier" => &["qx G a:asc,tags:contains"],
+        "wrongNameCarrier" => &["qx C a:asc,tags:contains,__name__:desc"],
+        "mixedCarriers" => &[asc, desc],
+        "otherCollectionCarrier" => &["other C a:desc,tags:contains,__name__:asc"],
+        _ => &[],
+    };
+    for index in extra {
+        set.add_composite(parse_index(index));
+    }
+    if group {
+        modes_only(
+            &mut set,
+            "a",
+            &[IndexFieldMode::Descending],
+            IndexQueryScope::CollectionGroup,
+        );
+        modes_only(
+            &mut set,
+            "tags",
+            &[IndexFieldMode::Contains],
+            IndexQueryScope::CollectionGroup,
+        );
+    }
+    if catalog == "sparseShared" {
+        modes_only(
+            &mut set,
+            "tags",
+            &[IndexFieldMode::Contains],
+            IndexQueryScope::Collection,
+        );
+    }
+    set
+}
+
+fn obs2_merge_query(shape: &str, group: bool) -> Query {
+    let mut filters = vec![filter("eq", "a", "qx")];
+    if matches!(
+        shape,
+        "count" | "noOrderAny" | "twoEqNameAsc" | "twoEqContains"
+    ) {
+        filters.push(filter("eq", "b", "qx"));
+    }
+    if matches!(shape, "sharedAsc" | "sharedDesc") {
+        filters.push(eq_tags_array());
+    }
+    match shape {
+        "twoEqNameAsc" => {}
+        "descAny" | "noOrderAny" => filters.push(field_filter(
+            "tags",
+            FieldOp::ArrayContainsAny,
+            Value::Array(vec![Value::Integer(1)]),
+        )),
+        _ => filters.push(filter("contains", "tags", "qx")),
+    }
+    let name_asc = [(FieldPath::document_name(), Direction::Ascending)];
+    let name_desc = name_desc();
+    let orders: &[_] = match shape {
+        "descPlain" | "descAny" | "sharedDesc" => &name_desc,
+        "twoEqNameAsc" | "oneEqNameAsc" | "sharedAsc" => &name_asc,
+        _ => &[],
+    };
+    qx_query(filters, orders, group)
+}
+
+fn obs2_merge_members(shape: &str, scope: &str, catalog: &str) -> Option<Vec<IndexDefinition>> {
+    let dir = if matches!(shape, "descPlain" | "descAny" | "sharedDesc") {
+        "desc"
+    } else {
+        "asc"
+    };
+    if shape == "descAny" && scope == "group" {
+        return None;
+    }
+    if matches!(catalog, "carrierExempt" | "carrierEnabled" | "mixedExempt") {
+        return Some(vec![
+            parse_index("qx C a:asc,tags:contains"),
+            parse_index("qx C b:asc,__name__:asc"),
+        ]);
+    }
+    let scope = if scope == "group" { "G" } else { "C" };
+    let a = format!("qx {scope} a:{dir},__name__:{dir}");
+    let b = format!("qx {scope} b:{dir},__name__:{dir}");
+    let tags = format!("qx {scope} tags:contains,__name__:{dir}");
+    let ordered_tags = format!("qx {scope} tags:{dir},__name__:{dir}");
+    let order = match shape {
+        "twoEqNameAsc" => vec![&b, &a],
+        "twoEqContains"
+            if matches!(
+                catalog,
+                "twoCarriers"
+                    | "descendingCarrier"
+                    | "groupCarrier"
+                    | "wrongNameCarrier"
+                    | "mixedCarriers"
+            ) =>
+        {
+            vec![&a, &b, &tags]
+        }
+        "twoEqContains" => vec![&tags, &b, &a],
+        "sharedAsc" if catalog == "sparseShared" => vec![&a, &tags],
+        "sharedAsc" | "sharedDesc" => vec![&tags, &a, &ordered_tags],
+        _ => vec![&tags, &a],
+    };
+    Some(order.iter().map(|spec| parse_index(spec)).collect())
+}
+
+/// Rows 16–17 and 38–39: ordering the equality field and group scope do not make the
+/// ascending-only mode serve a descending name. Enterprise keeps the base scan.
+#[test]
+fn observation_2a_p1_refuses_group_and_equality_orders_under_production_rules() {
     let name_desc = [(FieldPath::document_name(), Direction::Descending)];
     // Collection-group scope with only the group-scoped ascending mode.
     let mut group = IndexSet::default();
@@ -1467,8 +1761,8 @@ fn the_single_equality_refusal_keeps_every_unrecorded_neighbour() {
     let q = qx_query(vec![filter("eq", "a", "qx")], &name_desc, true);
     assert_eq!(
         decide(&q, &group, &standard()),
-        IndexDecision::UseIndex {
-            index: parse_index("qx G a:asc,__name__:desc")
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx G a:asc,__name__:desc")
         }
     );
     let mut asc_only = IndexSet::default();
@@ -1489,8 +1783,8 @@ fn the_single_equality_refusal_keeps_every_unrecorded_neighbour() {
         let q = qx_query(vec![filter("eq", "a", "qx")], &orders, false);
         assert_eq!(
             decide(&q, &asc_only, &standard()),
-            IndexDecision::UseIndex {
-                index: parse_index("qx C a:asc,__name__:desc")
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,__name__:desc")
             },
             "{orders:?}"
         );
@@ -1505,27 +1799,12 @@ fn the_single_equality_refusal_keeps_every_unrecorded_neighbour() {
     );
 }
 
-/// The merges (a) and (b) are collection-scope rules: at collection-group scope both keep the
-/// pre-stage-B refusal. (a) is for a plain array-contains only. Any number of equalities may
-/// join. An ascending merge of automatic members keeps its pre-stage-B member order, and so
-/// does a merge the automatic members already served (the non-exempt composite, imc).
+/// Merge (b) keeps its collection-scope and carrier boundaries. Observation 2a adds
+/// the cases pinned by the PICT replay and leaves unrecorded member orders unchanged.
 #[test]
 fn the_merges_keep_their_recorded_boundaries_and_member_order() {
     let name_desc = [(FieldPath::document_name(), Direction::Descending)];
     let g = IndexQueryScope::CollectionGroup;
-    // (a) at collection-group scope: refused.
-    let mut group = IndexSet::default();
-    modes_only(&mut group, "a", &[IndexFieldMode::Descending], g);
-    modes_only(&mut group, "tags", &[IndexFieldMode::Contains], g);
-    let q = qx_query(
-        vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")],
-        &name_desc,
-        true,
-    );
-    assert!(matches!(
-        decide(&q, &group, &standard()),
-        IndexDecision::MissingRequired { .. }
-    ));
     // (b) at collection-group scope: refused.
     let mut group_f1 = IndexSet::default();
     modes_only(&mut group_f1, "a", &[], g);
@@ -1548,11 +1827,11 @@ fn the_merges_keep_their_recorded_boundaries_and_member_order() {
         decide(&q, &group_f1, &standard()),
         IndexDecision::MissingRequired { .. }
     ));
-    // (a) with array-contains-any: refused, as before.
+    // Multi-element array-contains-any was not recorded.
     let any = FilterExpr::Field {
         field: fp("tags"),
         op: FieldOp::ArrayContainsAny,
-        value: Value::Array(vec![Value::Integer(1)]),
+        value: Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
     };
     let q = qx_query(vec![filter("eq", "a", "qx"), any], &name_desc, false);
     assert!(matches!(
@@ -1592,28 +1871,6 @@ fn the_merges_keep_their_recorded_boundaries_and_member_order() {
         IndexDecision::MergeIndexes {
             indexes: vec![
                 parse_index("qx C a:asc,__name__:asc"),
-                parse_index("qx C tags:contains,__name__:asc"),
-            ]
-        }
-    );
-    // The non-exempt composite (imc): the automatic members serve, as before stage B.
-    let mut imc = IndexSet::default();
-    imc.add_composite(parse_index("qx C a:asc,tags:contains"));
-    let q = qx_query(
-        vec![
-            filter("eq", "a", "qx"),
-            filter("eq", "b", "qx"),
-            filter("contains", "tags", "qx"),
-        ],
-        &[],
-        false,
-    );
-    assert_eq!(
-        decide(&q, &imc, &standard()),
-        IndexDecision::MergeIndexes {
-            indexes: vec![
-                parse_index("qx C a:asc,__name__:asc"),
-                parse_index("qx C b:asc,__name__:asc"),
                 parse_index("qx C tags:contains,__name__:asc"),
             ]
         }
@@ -1662,22 +1919,14 @@ fn automatic_a_asc_name_desc() -> IndexDecision {
     }
 }
 
-/// Refusal (c) is for exactly one plain equality and nothing else (ruling 10 item 1, Codex
-/// round 2 Must 1). Each neighbour reaching the same normalized arm keeps its pre-stage-B
-/// answer and has no production verdict.
+/// Observation 2a extends (c) to rows 12, 14, 15 and 18. Unrecorded forms reaching the same
+/// normalized arm still keep the base answer.
 #[test]
 fn the_single_equality_refusal_tests_the_whole_query() {
     let set = f2_set();
     let ctx = standard();
     let name = || name_reference("qx");
     let neighbours: Vec<(&str, Vec<FilterExpr>)> = vec![
-        (
-            "is null",
-            vec![FilterExpr::Unary {
-                field: fp("a"),
-                op: UnaryOp::IsNull,
-            }],
-        ),
         (
             "is nan",
             vec![FilterExpr::Unary {
@@ -1692,14 +1941,6 @@ fn the_single_equality_refusal_tests_the_whole_query() {
         (
             "== NaN",
             vec![field_filter("a", FieldOp::Equal, Value::Double(f64::NAN))],
-        ),
-        (
-            "one-element in",
-            vec![field_filter(
-                "a",
-                FieldOp::In,
-                Value::Array(vec![Value::Integer(1)]),
-            )],
         ),
         (
             "repeated equality",
@@ -1735,11 +1976,13 @@ fn the_single_equality_refusal_tests_the_whole_query() {
     let or = FilterExpr::Or(vec![filter("eq", "a", "qx"), filter("eq", "b", "qx")]);
     let q = qx_query(vec![or], &name_desc(), false);
     assert!(served(&decide(&q, &set, &ctx)), "or");
-    // A count aggregation over the recorded query keeps its pre-stage-B answer too.
+    // Row 12: an unlimited count is subject to the same refusal.
     let q = qx_query(vec![filter("eq", "a", "qx")], &name_desc(), false);
     assert_eq!(
         validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], &set, &ctx),
-        automatic_a_asc_name_desc()
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,__name__:desc")
+        }
     );
     // The recorded query itself is refused.
     assert!(matches!(
@@ -1758,10 +2001,8 @@ fn the_single_equality_refusal_keeps_the_plan_when_a_composite_serves() {
     assert_eq!(decide(&q, &set, &standard()), automatic_a_asc_name_desc());
 }
 
-/// Merge (b) is for a plain array-contains in a conjunction of plain equalities (ruling 10
-/// item 2): array-contains-any on the F1 set, an OR arm and Enterprise keep their answers.
-/// Its only composite member is the one carrying the array field (ruling 10 item 3 applied
-/// to (b)).
+/// Beyond the recorded (b) forms, multi-element array-contains-any, an OR arm, Enterprise
+/// and a capped count keep their answers. The first merge member must carry the array field.
 #[test]
 fn merge_b_keeps_to_the_recorded_query() {
     let set = f1_set();
@@ -1800,9 +2041,39 @@ fn merge_b_keeps_to_the_recorded_query() {
         decide(&q, &set, &context("production", "enterprise")),
         IndexDecision::FullScanAllowed { .. }
     ));
-    // A count aggregation is not the recorded query either.
+    // Row 21 is an unlimited count. A capped count keeps the earlier refusal.
     assert!(matches!(
-        validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], &set, &standard()),
+        validate_aggregation_query(
+            &q,
+            &[Aggregation::Count { up_to: Some(1) }],
+            &set,
+            &standard()
+        ),
+        IndexDecision::MissingRequired { .. }
+    ));
+    // The count and singleton ANY extensions cover the recorded no-order forms.
+    let explicit_name = [(FieldPath::document_name(), Direction::Ascending)];
+    let explicit_count = qx_query(vec![f1_and()], &explicit_name, false);
+    assert!(matches!(
+        validate_aggregation_query(
+            &explicit_count,
+            &[Aggregation::Count { up_to: None }],
+            &set,
+            &standard()
+        ),
+        IndexDecision::MissingRequired { .. }
+    ));
+    let explicit_any = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("containsany", "tags", "qx"),
+        ],
+        &explicit_name,
+        false,
+    );
+    assert!(matches!(
+        decide(&explicit_any, &set, &standard()),
         IndexDecision::MissingRequired { .. }
     ));
     // `b` exempt with a configured `(b ASC, __name__ ASC)`: the second member would be a
@@ -2024,27 +2295,22 @@ fn the_probed_canonical_forms_reach_the_overrides() {
     );
 }
 
-/// Merge (b) applies only where the array field has no automatic contains index at collection
-/// scope, as in the recorded F1 set (`tags` exempt). With only `a` exempt the base refusal stays
-/// (Opus round 3, Should 1; unrecorded).
+/// Having an automatic contains index does not disable a serving carrier (row 32).
 #[test]
-fn merge_b_needs_the_array_field_without_its_automatic_index() {
-    let mut set = IndexSet::default();
-    modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
-    set.add_composite(parse_index("qx C a:asc,tags:contains"));
-    let q = qx_query(
-        vec![
-            filter("eq", "a", "qx"),
-            filter("eq", "b", "qx"),
-            filter("contains", "tags", "qx"),
-        ],
-        &[],
-        false,
+fn observation_2a_p6_enabling_contains_preserves_the_carrier_merge() {
+    let mut set = f1_set();
+    let q = obs2_merge_query("twoEqContains", false);
+    let expected = IndexDecision::MergeIndexes {
+        indexes: obs2_merge_members("twoEqContains", "collection", "carrierExempt").unwrap(),
+    };
+    assert_eq!(decide(&q, &set, &standard()), expected);
+    modes_only(
+        &mut set,
+        "tags",
+        &[IndexFieldMode::Contains],
+        IndexQueryScope::Collection,
     );
-    assert!(matches!(
-        decide(&q, &set, &standard()),
-        IndexDecision::MissingRequired { .. }
-    ));
+    assert_eq!(decide(&q, &set, &standard()), expected);
 }
 
 /// Merge (b) takes its carrier only as recorded: a collection-scoped composite, and only when

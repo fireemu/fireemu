@@ -44,9 +44,10 @@ structure Case where
   production : Option (Bool × String) := none
   /-- The members production's plan named, without `__name__` fields, when recorded. -/
   productionPlan : Option (List (List IField)) := none
+  source : QuerySource := .plain
 
 def Case.decision (c : Case) : Decision :=
-  decideHead c.query c.config.toISet c.policy c.edition
+  decideHead c.query c.config.toISet c.policy c.edition c.source
 
 /-- The base answer (the planner before the recorded rules). -/
 def Case.baseDecision (c : Case) : Decision :=
@@ -54,7 +55,7 @@ def Case.baseDecision (c : Case) : Decision :=
 
 /-- The override that fires, if any. -/
 def Case.guard (c : Case) : Guard :=
-  guardOf c.query c.config.toISet c.policy c.edition
+  guardOf c.query c.config.toISet c.policy c.edition c.source
 
 /-! ## Names -/
 
@@ -76,7 +77,7 @@ def fid (name : String) : Field := fieldNames.idxOf name
 def fname (f : Field) : String := fieldNames.getD f s!"unknown{f}"
 
 def collNames : List String :=
-  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql", "imb", "ima", "imx", "imc"]
+  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql", "imb", "ima", "imx", "imc", "igc", "iga"]
 
 def cid (name : String) : Nat := collNames.idxOf name
 
@@ -136,11 +137,20 @@ def Guard.tag : Guard → String
   | .a => "a"
   | .b => "b"
   | .c => "c"
+  | .reverse => "reverse"
+  | .shared => "shared"
+  | .carrier => "carrier"
 
 def Case.render (c : Case) (n : Nat) : List String :=
   [s!"case {n} {c.label}",
    s!"query {cname c.query.coll} {if c.query.group then "G" else "C"}",
    s!"ctx {c.policy.tag} {c.edition.tag}"]
+  ++ (match c.source with
+      | .plain => []
+      | .inOne => ["source in1"]
+      | .orTwo => ["source or2"]
+      | .count => ["source count"]
+      | .sharedArray => ["source sharedArray"])
   ++ c.query.filters.map Filter.render
   ++ c.query.orderBy.map (fun o => s!"order {fname o.path} {o.dir.tag}")
   ++ c.config.defaults.map (fun d => s!"default {cname d.1} {renderModes d.2}")

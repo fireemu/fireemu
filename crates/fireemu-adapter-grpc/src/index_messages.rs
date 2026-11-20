@@ -13,7 +13,12 @@
 //! The console links carry a `google.firestore.admin.v1.Index` message, base64url without
 //! padding, whose name ends in `/indexes/_` (composite) or `/fields/<field>` (exemption).
 
-use fireemu_core_firestore::index::{IndexDefinition, IndexFieldMode, IndexQueryScope};
+use fireemu_core_firestore::index::{
+    IndexDefinition, IndexField, IndexFieldMode, IndexQueryScope, IndexSet,
+};
+use fireemu_core_firestore::query::{Direction, FieldOp, FilterExpr, OrderClause, Query};
+use fireemu_core_firestore::store::Aggregation;
+use fireemu_core_firestore::value::Value;
 use prost::Message;
 
 /// `google.firestore.admin.v1.Index.IndexField`.
@@ -224,6 +229,143 @@ pub fn deleted_index_message(
     )
 }
 
+/// Display order from FS-QUERY-INDEX-MERGE observation 2a. Keep the planner's
+/// canonical index definition for matching Admin indexes and for the config fragment.
+pub(crate) fn observation_2a_suggestion(
+    query: &Query,
+    aggregations: &[Aggregation],
+    indexes: &IndexSet,
+    requirement: &IndexDefinition,
+) -> Option<IndexDefinition> {
+    let (name, fields) = requirement.fields.split_last()?;
+    if !name.path.is_document_name() {
+        return None;
+    }
+    if let [equality] = fields {
+        return descending_equality_suggestion(
+            query,
+            aggregations,
+            indexes,
+            requirement,
+            equality,
+            name,
+        );
+    }
+    let (contains, equalities) = fields.split_last()?;
+    if !recorded_array_suggestion(
+        query,
+        aggregations,
+        requirement.query_scope,
+        name.mode,
+        contains,
+        equalities,
+    ) {
+        return None;
+    }
+    let mut suggestion = requirement.clone();
+    suggestion.fields[..fields.len()].rotate_right(1);
+    Some(suggestion)
+}
+
+fn descending_equality_suggestion(
+    query: &Query,
+    aggregations: &[Aggregation],
+    indexes: &IndexSet,
+    requirement: &IndexDefinition,
+    equality: &IndexField,
+    name: &IndexField,
+) -> Option<IndexDefinition> {
+    // Row 16 has an explicit descending order on the equality field. Row 17 orders that
+    // field ascending, and production lists its ascending field just once.
+    let scope = IndexQueryScope::Collection;
+    if requirement.query_scope != scope
+        || !aggregations.is_empty()
+        || equality.mode != IndexFieldMode::Ascending
+        || name.mode != IndexFieldMode::Descending
+        || !matches!(
+            &query.order_by[..],
+            [OrderClause { field, direction: Direction::Descending }] if *field == equality.path
+        )
+        || !matches!(
+            &query.filter,
+            Some(FilterExpr::Field { field, op: FieldOp::Equal, value })
+                if *field == equality.path && ordinary_value(value)
+        )
+    {
+        return None;
+    }
+    let modes = indexes.single_field_modes(&requirement.collection_group, &equality.path);
+    if !modes.contains(&(scope, IndexFieldMode::Ascending))
+        || modes.contains(&(scope, IndexFieldMode::Descending))
+    {
+        return None;
+    }
+    let mut suggestion = requirement.clone();
+    suggestion.fields.insert(
+        1,
+        IndexField {
+            path: equality.path.clone(),
+            mode: IndexFieldMode::Descending,
+        },
+    );
+    Some(suggestion)
+}
+
+fn ordinary_value(value: &Value) -> bool {
+    !matches!(value, Value::Null) && !matches!(value, Value::Double(number) if number.is_nan())
+}
+
+fn recorded_array_suggestion(
+    query: &Query,
+    aggregations: &[Aggregation],
+    scope: IndexQueryScope,
+    name_mode: IndexFieldMode,
+    contains: &IndexField,
+    equalities: &[IndexField],
+) -> bool {
+    if contains.mode != IndexFieldMode::Contains
+        || !equalities
+            .iter()
+            .all(|field| field.mode == IndexFieldMode::Ascending)
+        || !query
+            .order_by
+            .iter()
+            .all(|order| order.field.is_document_name())
+    {
+        return false;
+    }
+    let count = matches!(aggregations, [Aggregation::Count { up_to: None }]);
+    let bounds = match (scope, name_mode, aggregations.is_empty(), count) {
+        (IndexQueryScope::Collection, IndexFieldMode::Descending, true, _)
+        | (IndexQueryScope::Collection, IndexFieldMode::Descending, _, true) => 2..=2,
+        (IndexQueryScope::CollectionGroup, IndexFieldMode::Ascending, true, _) => 1..=2,
+        _ => return false,
+    };
+    let Some(FilterExpr::And(children)) = &query.filter else {
+        return false;
+    };
+    if !bounds.contains(&equalities.len()) || children.len() != equalities.len() + 1 {
+        return false;
+    }
+    let array_matches = |child: &FilterExpr| match child {
+        FilterExpr::Field { field, op, value } if *field == contains.path => match op {
+            FieldOp::ArrayContains => ordinary_value(value),
+            FieldOp::ArrayContainsAny if !count && equalities.len() == 2 => {
+                matches!(value, Value::Array(values) if matches!(&values[..], [value] if ordinary_value(value)))
+            }
+            _ => false,
+        },
+        _ => false,
+    };
+    children.iter().any(array_matches)
+        && equalities.iter().all(|equality| {
+            children.iter().any(|child| {
+                matches!(child, FilterExpr::Field { field, op: FieldOp::Equal, value }
+                if *field == equality.path && ordinary_value(value))
+            })
+        })
+}
+
 fn named_index(database: &str, index_id: &str, requirement: &IndexDefinition) -> AdminIndex {
     let group = requirement.collection_group.as_str();
     AdminIndex {
@@ -312,7 +454,6 @@ mod tests {
         ));
     }
     use fireemu_core_firestore::field_path::FieldPath;
-    use fireemu_core_firestore::index::IndexField;
     use fireemu_core_types::ids::CollectionId;
 
     const DATABASE: &str = "projects/fireemu-oracle-query/databases/(default)";
@@ -333,6 +474,148 @@ mod tests {
             collection_group: CollectionId::try_new(group).unwrap(),
             query_scope: scope,
             fields,
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn observation_2a_link_shapes_keep_the_configuration_requirement() {
+        use fireemu_core_firestore::index::IndexSet;
+        use fireemu_core_firestore::query::{
+            Direction, FieldOp, FilterExpr, OrderClause, Query, QueryScope,
+        };
+        use fireemu_core_firestore::store::Aggregation;
+        use fireemu_core_firestore::value::Value;
+        use IndexFieldMode::{Ascending, Contains, Descending};
+
+        let table = include_str!("../tests/fixtures/index-merge-obs2-p9.tsv");
+        let atom = |path, op, value| FilterExpr::Field {
+            field: FieldPath::parse(path).unwrap(),
+            op,
+            value,
+        };
+        let id = CollectionId::try_new("shapes").unwrap();
+        for row in table.lines().skip(1) {
+            let columns: Vec<_> = row.split('\t').collect();
+            let [scope, shape, name_direction, modes] = columns.as_slice() else {
+                panic!("bad row: {row}");
+            };
+            let group = *scope == "group";
+            let scope = if group {
+                IndexQueryScope::CollectionGroup
+            } else {
+                IndexQueryScope::Collection
+            };
+            let query_scope = if group {
+                QueryScope::collection_group(id.clone())
+            } else {
+                QueryScope::collection(None, id.clone())
+            };
+            let mut indexes = IndexSet::default();
+            let count = [Aggregation::Count { up_to: None }];
+            let aggregations = if *shape == "count" {
+                count.as_slice()
+            } else {
+                &[]
+            };
+            let mut query = Query::new(query_scope);
+            let equality_ordered = matches!(*shape, "descEquality" | "ascEquality");
+            let key_mode = if *name_direction == "asc" {
+                Ascending
+            } else {
+                Descending
+            };
+            let mut columns = vec![field("a", Ascending)];
+            if equality_ordered {
+                let direction = if *shape == "descEquality" {
+                    Direction::Descending
+                } else {
+                    Direction::Ascending
+                };
+                let field = FieldPath::parse("a").unwrap();
+                let mut effective = vec![(scope, Ascending)];
+                if *modes == "both" {
+                    effective.push((scope, Descending));
+                }
+                indexes.set_single_field_indexes(&id, &field, effective);
+                query = query
+                    .with_filter(atom("a", FieldOp::Equal, Value::Integer(1)))
+                    .with_order(OrderClause { field, direction });
+                if *shape == "ascEquality" {
+                    query = query.with_order(OrderClause {
+                        field: FieldPath::parse("__name__").unwrap(),
+                        direction: Direction::Descending,
+                    });
+                }
+            } else {
+                let op = if *shape == "range" {
+                    FieldOp::LessThan
+                } else {
+                    FieldOp::Equal
+                };
+                let membership = if *shape == "any" {
+                    atom(
+                        "tags",
+                        FieldOp::ArrayContainsAny,
+                        Value::Array(vec![Value::Integer(1)]),
+                    )
+                } else {
+                    atom("tags", FieldOp::ArrayContains, Value::Integer(1))
+                };
+                let direction = if key_mode == Ascending {
+                    Direction::Ascending
+                } else {
+                    Direction::Descending
+                };
+                query = query.with_filter(FilterExpr::And(vec![
+                    atom("a", op, Value::Integer(1)),
+                    atom("b", FieldOp::Equal, Value::Integer(2)),
+                    membership,
+                ]));
+                if *shape == "range" {
+                    query = query.with_order(OrderClause {
+                        field: FieldPath::parse("a").unwrap(),
+                        direction,
+                    });
+                }
+                query = query.with_order(OrderClause {
+                    field: FieldPath::parse("__name__").unwrap(),
+                    direction,
+                });
+                columns.push(field("b", Ascending));
+                columns.push(field("tags", Contains));
+            }
+            columns.push(field("__name__", key_mode));
+            let original = requirement("shapes", scope, columns);
+            let before = original.indexes_json_fragment();
+            let expected = if *shape == "descEquality" && !group && *modes == "ascendingOnly" {
+                Some(vec![
+                    field("a", Ascending),
+                    field("a", Descending),
+                    field("__name__", Descending),
+                ])
+            } else if (!group
+                && key_mode == Descending
+                && matches!(*shape, "contains" | "any" | "count"))
+                || (group && key_mode == Ascending && matches!(*shape, "contains" | "any"))
+            {
+                Some(vec![
+                    field("tags", Contains),
+                    field("a", Ascending),
+                    field("b", Ascending),
+                    field("__name__", key_mode),
+                ])
+            } else {
+                None
+            };
+            let actual = observation_2a_suggestion(
+                &query.canonicalize().unwrap(),
+                aggregations,
+                &indexes,
+                &original,
+            );
+            assert_eq!(actual.map(|link| link.fields), expected, "{row}");
+            assert_eq!(original.indexes_json_fragment(), before);
         }
     }
 

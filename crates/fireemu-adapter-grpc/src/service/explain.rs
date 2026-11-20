@@ -1,7 +1,7 @@
 //! Explain: the plan summary (the index each DNF disjunct scans) and the execution statistics
 //! production reports for it (FS-QUERY-INDEX explain rows, recorded 2026-09-24).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use fireemu_core_firestore::field_path::FieldPath;
@@ -224,31 +224,60 @@ fn has_vector(fields: &BTreeMap<String, FsValue>, field: &FieldPath, dimension: 
 /// Whether `filter` is one a merge member serves with its prefix: an equality, `IS_NULL`,
 /// `IS_NAN`, `array-contains` or a one-value `array-contains-any` (the atoms the planner makes
 /// equality or contains fields of), on a field other than `__name__`.
-fn is_member_atom(filter: &FilterExpr) -> Option<&FieldPath> {
+fn member_atom(filter: &FilterExpr) -> Option<(&FieldPath, bool)> {
     match filter {
         FilterExpr::Field {
             field,
-            op: FieldOp::Equal | FieldOp::ArrayContains | FieldOp::ArrayContainsAny,
+            op: FieldOp::ArrayContains | FieldOp::ArrayContainsAny,
+            ..
+        } if !field.is_document_name() => Some((field, true)),
+        FilterExpr::Field {
+            field,
+            op: FieldOp::Equal,
             ..
         }
         | FilterExpr::Unary {
             field,
             op: UnaryOp::IsNull | UnaryOp::IsNan,
-        } if !field.is_document_name() => Some(field),
+        } if !field.is_document_name() => Some((field, false)),
         _ => None,
     }
+}
+
+/// Paths that the plan splits into a contains scan and a separate ordered scan. On
+/// these paths only, a member's mode decides which of the two atoms it serves.
+fn split_array_member_paths(members: &[IndexDefinition]) -> BTreeSet<&FieldPath> {
+    let mut contains = BTreeSet::new();
+    let mut ordered = BTreeSet::new();
+    for field in members.iter().flat_map(|member| &member.fields) {
+        match field.mode {
+            IndexFieldMode::Contains => contains.insert(&field.path),
+            IndexFieldMode::Ascending | IndexFieldMode::Descending => ordered.insert(&field.path),
+            IndexFieldMode::Vector { .. } => continue,
+        };
+    }
+    contains.retain(|path| ordered.contains(path));
+    contains
 }
 
 /// The filters a merge member's entries satisfy: the member atoms on the fields of its prefix,
 /// and every other filter of the disjunct (ranges and inequalities, which every member shares
 /// with the order suffix they imply). `member` `None` is the shared order alone.
-fn member_filters(member: Option<&IndexDefinition>, disjunct: &[FilterExpr]) -> Vec<FilterExpr> {
+fn member_filters(
+    member: Option<&IndexDefinition>,
+    disjunct: &[FilterExpr],
+    split: &BTreeSet<&FieldPath>,
+) -> Vec<FilterExpr> {
     disjunct
         .iter()
-        .filter(|filter| match is_member_atom(filter) {
-            Some(field) => {
-                member.is_some_and(|member| member.fields.iter().any(|f| &f.path == field))
-            }
+        .filter(|filter| match member_atom(filter) {
+            Some((path, array_contains)) => member.is_some_and(|member| {
+                member.fields.iter().any(|f| {
+                    &f.path == path
+                        && (!split.contains(path)
+                            || (f.mode == IndexFieldMode::Contains) == array_contains)
+                })
+            }),
             None => true,
         })
         .cloned()
@@ -282,7 +311,8 @@ fn disjunct_entries(
             }
         }
         PlannedScan::Merge(members) => {
-            let everything = disjunct_query(query, member_filters(None, disjunct));
+            let split = split_array_member_paths(members);
+            let everything = disjunct_query(query, member_filters(None, disjunct, &split));
             let (order, _) = db.run_query_paths_with_stats(&everything, version)?;
             let position: HashMap<&DocumentPath, usize> = order
                 .iter()
@@ -291,7 +321,7 @@ fn disjunct_entries(
                 .collect();
             let mut lists = Vec::with_capacity(members.len());
             for member in members {
-                let sub = disjunct_query(query, member_filters(Some(member), disjunct));
+                let sub = disjunct_query(query, member_filters(Some(member), disjunct, &split));
                 let (paths, _) = db.run_query_paths_with_stats(&sub, version)?;
                 lists.push(
                     paths
@@ -742,6 +772,69 @@ mod tests {
             },
         ]);
         assert_eq!(index_entries(&db, None, &ranged, None, &merge).unwrap(), 3);
+    }
+
+    #[test]
+    fn split_array_members_on_one_path_count_their_own_predicates() {
+        use fireemu_core_firestore::store::{Write, WriteOp};
+        use fireemu_core_types::ids::{DatabaseId, ProjectId};
+        use IndexFieldMode::{Ascending, Contains};
+
+        let project = ProjectId::try_new("p").unwrap();
+        let database = DatabaseId::default_database();
+        let write = |id: &str, tags| Write {
+            op: WriteOp::Set {
+                path: DocumentPath::parse(&project, &database, id).unwrap(),
+                fields: BTreeMap::from([
+                    ("a".to_owned(), FsValue::Integer(1)),
+                    ("tags".to_owned(), FsValue::Array(tags)),
+                ]),
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: vec![],
+        };
+        let one = FsValue::Integer(1);
+        let mut db = FirestoreState::new();
+        db.commit(
+            &[
+                write("qn/x0", vec![one.clone(), FsValue::Integer(2)]),
+                write("qn/x1", vec![one.clone()]),
+            ],
+            None,
+            fireemu_core_types::time::LogicalInstant::from_unix_seconds(1_788_000_000),
+        )
+        .unwrap();
+        let atom = |path, op, value| FilterExpr::Field {
+            field: FieldPath::parse(path).unwrap(),
+            op,
+            value,
+        };
+        let query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("qn").unwrap(),
+        ))
+        .with_filter(FilterExpr::And(vec![
+            atom("a", FieldOp::Equal, one.clone()),
+            atom("tags", FieldOp::Equal, FsValue::Array(vec![one.clone()])),
+            atom("tags", FieldOp::ArrayContains, one),
+        ]))
+        .canonicalize()
+        .unwrap();
+        let automatic = |field, mode| {
+            index(
+                IndexQueryScope::Collection,
+                &[(field, mode), ("__name__", Ascending)],
+            )
+        };
+        let merge = [PlannedScan::Merge(vec![
+            automatic("tags", Contains),
+            automatic("a", Ascending),
+            automatic("tags", Ascending),
+        ])];
+
+        // Contains and a == 1 each match both docs. The ordered tags member matches x1 only.
+        assert_eq!(index_entries(&db, None, &query, None, &merge).unwrap(), 5);
     }
 
     /// Production's index entry counts for the merges of FS-QUERY-INDEX explain (entries as

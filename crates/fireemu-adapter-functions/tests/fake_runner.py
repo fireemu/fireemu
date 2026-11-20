@@ -238,7 +238,28 @@ while True:
         clock.update(msg)
         if delay := os.environ.get("FIREEMU_FAKE_CLOCK_ACK_DELAY_MS"):
             time.sleep(int(delay) / 1000)
+        # A test holds the acknowledgement until it creates this file (bounded, so a failed
+        # test never leaves the runner waiting).
+        if gate := os.environ.get("FIREEMU_FAKE_CLOCK_ACK_GATE"):
+            deadline = time.monotonic() + 30
+            while not os.path.exists(gate) and time.monotonic() < deadline:
+                time.sleep(0.01)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
+        continue
+    # A timer batch is answered only on request, with the clock revision the runner holds and
+    # the timers it ran.
+    if msg.get("type") == "clock:runDue" and os.environ.get("FIREEMU_FAKE_RUN_DUE"):
+        clock_log = os.environ.get("FIREEMU_FAKE_CLOCK_LOG")
+        if clock_log:
+            with open(clock_log, "a", encoding="utf-8") as frames:
+                frames.write(json.dumps(msg) + "\n")
+        # One virtual timer, due at FIREEMU_FAKE_TIMER_DUE_REVISION, runs only on a clock that
+        # has reached that revision.
+        due = os.environ.get("FIREEMU_FAKE_TIMER_DUE_REVISION")
+        held = str(clock.get("revision", ""))
+        ran = ["timer"] if due and held.isdigit() and int(held) >= int(due) else []
+        send({"type": "result", "invocationId": msg["invocationId"], "ok": True,
+              "timers": {"revision": held, "ran": ran}})
         continue
     if msg.get("type") != "invoke":
         continue

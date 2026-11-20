@@ -30,6 +30,8 @@ pub enum Rejection {
         description: String,
         /// The index the query needs.
         requirement: IndexDefinition,
+        /// An observation-specific ordering for the console link.
+        link_suggestion: Option<Box<IndexDefinition>>,
         /// Whether the query has inequality filters on more than one field.
         multiple_inequalities: bool,
     },
@@ -38,6 +40,28 @@ pub enum Rejection {
 }
 
 impl Rejection {
+    fn missing_index(
+        decision: &IndexDecision,
+        requirement: &IndexDefinition,
+        query: &Query,
+        aggregations: &[Aggregation],
+        indexes: &IndexSet,
+    ) -> Self {
+        Self::MissingIndex {
+            fragment: requirement.indexes_json_fragment(),
+            description: decision.to_string(),
+            requirement: requirement.clone(),
+            link_suggestion: crate::index_messages::observation_2a_suggestion(
+                query,
+                aggregations,
+                indexes,
+                requirement,
+            )
+            .map(Box::new),
+            multiple_inequalities: query.inequality_fields().len() > 1,
+        }
+    }
+
     /// gRPC status for the rejection. Codes follow the wire mapping revision in
     /// `fireemu_core_limits::evaluate::WIRE_MAPPING_REVISION`.
     #[must_use]
@@ -87,6 +111,7 @@ impl Rejection {
     pub fn to_status_in(&self, database: &str) -> tonic::Status {
         let Self::MissingIndex {
             requirement,
+            link_suggestion,
             multiple_inequalities,
             ..
         } = self
@@ -96,7 +121,7 @@ impl Rejection {
         let mut status =
             tonic::Status::failed_precondition(crate::index_messages::missing_index_message(
                 database,
-                requirement,
+                link_suggestion.as_deref().unwrap_or(requirement),
                 *multiple_inequalities,
             ));
         if let Ok(v) = "FS_GW_MISSING_INDEX".parse() {
@@ -540,12 +565,13 @@ impl Gateway {
                 warnings.extend(plan.diagnostics.iter().map(|d| (*d).to_owned()));
             }
             IndexDecision::MissingRequired { requirement } => {
-                return Err(Rejection::MissingIndex {
-                    fragment: requirement.indexes_json_fragment(),
-                    description: decision.to_string(),
-                    requirement: requirement.clone(),
-                    multiple_inequalities: canonical.inequality_fields().len() > 1,
-                });
+                return Err(Rejection::missing_index(
+                    &decision,
+                    requirement,
+                    &canonical,
+                    aggregations.unwrap_or_default(),
+                    indexes,
+                ));
             }
             IndexDecision::Unsupported { feature } => {
                 return Err(Rejection::Unsupported((*feature).to_owned()));

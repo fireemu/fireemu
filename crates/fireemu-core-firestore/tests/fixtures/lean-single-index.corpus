@@ -1,4 +1,4 @@
-# lean-single-index 3727
+# lean-single-index 3731
 production/name-descending-alone|qx|C|production|standard|-|__name__:desc|-|nx=-|qx/C/a:asc,b:asc~0~ok~ok;qx/C/a:asc,c:asc~0~ok~ok;qx/C/b:asc,c:asc~0~ok~ok;qx/C/tags:contains,b:asc~0~ok~ok|-|-|__name__:desc|qx/C/__name__:desc~1~ok~ok|missing:qx/C/__name__:desc|missing:qx/C/__name__:desc
 production/name-descending-with-own-index|ord|C|production|standard|-|__name__:desc|-|-|ord/C/__name__:desc~1~ok~ok|-|-|__name__:desc|ord/C/__name__:desc~1~ok~ok|use:ord/C/__name__:desc|use:ord/C/__name__:desc
 production/contains-alone-name-desc|imb|C|production|standard|tags:array|__name__:desc|-|-|-|-|tags|__name__:desc|imb/C/tags:contains,__name__:desc~1~ok~ok|use:imb/C/tags:contains,__name__:desc|use:imb/C/tags:contains,__name__:desc
@@ -47,8 +47,12 @@ implicit-inequality|items|C|production|standard|b:gt,a:gt|-|-|-|-|-|-|a:asc,b:as
 explicit-desc-implicit-inequality|items|C|production|standard|b:gt,a:gt|n:desc|-|-|-|-|-|n:desc,a:desc,b:desc,__name__:desc|items/C/n:desc,a:desc,b:desc,__name__:desc~1~ok~ok|missing:items/C/n:desc,a:desc,b:desc,__name__:desc|missing:items/C/n:desc,a:desc,b:desc,__name__:desc
 name-equality|items|C|production|standard|__name__:eq|__name__:desc|-|-|-|-|-|__name__:desc|items/C/__name__:desc~1~ok~ok|missing:items/C/__name__:desc|missing:items/C/__name__:desc
 null-and-nan|items|C|production|standard|b:nan,a:null|-|-|*=-|-|b,a|-|__name__:asc|items/C/a:asc,b:asc,__name__:asc~1~ok~ok|missing:items/C/a:asc,b:asc,__name__:asc|missing:items/C/a:asc,b:asc,__name__:asc
-equality-ordered|items|C|production|standard|a:eq|a:desc|-|a=C:asc|-|a|-|__name__:desc|items/C/a:asc,__name__:desc~1~ok~ok|use:items/C/a:asc,__name__:desc|use:items/C/a:asc,__name__:desc
-aggregate-count|items|C|production|standard|a:eq|__name__:desc|count:|a=C:asc|-|a|-|__name__:desc|items/C/a:asc,__name__:desc~1~ok~ok|use:items/C/a:asc,__name__:desc|use:items/C/a:asc,__name__:desc
+equality-ordered|items|C|production|standard|a:eq|a:desc|-|a=C:asc|-|a|-|__name__:desc|items/C/a:asc,__name__:desc~1~ok~ok|use:items/C/a:asc,__name__:desc|missing:items/C/a:asc,__name__:desc
+aggregate-count|items|C|production|standard|a:eq|__name__:desc|count:|a=C:asc|-|a|-|__name__:desc|items/C/a:asc,__name__:desc~1~ok~ok|use:items/C/a:asc,__name__:desc|missing:items/C/a:asc,__name__:desc
+obs2/18-is-null|items|C|production|standard|a:null|__name__:desc|-|a=C:asc|-|a|-|__name__:desc|items/C/a:asc,__name__:desc~1~ok~ok|use:items/C/a:asc,__name__:desc|missing:items/C/a:asc,__name__:desc
+obs2/38-group-ascending-only|items|G|production|standard|a:eq|__name__:desc|-|a=G:asc|-|a|-|__name__:desc|items/G/a:asc,__name__:desc~1~ok~ok|use:items/G/a:asc,__name__:desc|missing:items/G/a:asc,__name__:desc
+obs2/47-group-descending-only|items|G|production|standard|a:eq|__name__:asc|-|a=G:desc|-|a|-|__name__:asc|items/G/a:asc,__name__:asc~1~ok~ok|use:items/G/a:desc,__name__:asc|missing:items/G/a:asc,__name__:asc
+obs2/collection-descending-only|items|C|production|standard|a:eq|__name__:asc|-|a=C:desc|-|a|-|__name__:asc|items/C/a:asc,__name__:asc~1~ok~ok|use:items/C/a:desc,__name__:asc|use:items/C/a:desc,__name__:asc
 aggregate-insert-and-dedup|items|C|production|standard|a:eq,tags:array|n:desc|avg:z,sum:a,avg:tags,sum:n,sum:m,avg:m|*=-|-|a|tags|n:desc,m:asc,z:asc,__name__:desc|items/C/a:asc,tags:contains,n:desc,m:asc,z:asc,__name__:desc~1~ok~ok|missing:items/C/a:asc,tags:contains,n:desc,m:asc,z:asc,__name__:desc|missing:items/C/a:asc,tags:contains,n:desc,m:asc,z:asc,__name__:desc
 aggregate-one-field|items|C|production|standard|-|-|sum:a|-|-|-|-|a:asc,__name__:asc|items/C/a:asc,__name__:asc~1~ok~ok|use:items/C/a:asc,__name__:asc|use:items/C/a:asc,__name__:asc
 override-ancestor|items|C|production|standard|-|map.child:asc|-|*=-;map=C:asc|-|-|-|map.child:asc,__name__:asc|items/C/map.child:asc,__name__:asc~1~ok~ok|use:items/C/map.child:asc,__name__:asc|use:items/C/map.child:asc,__name__:asc

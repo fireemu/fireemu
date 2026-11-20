@@ -56,8 +56,20 @@ def Case.conjunction (c : Case) : Bool :=
     c.atoms.all (fun (p, k) => p != name && [Kind.eq, .eqArray, .array].contains k) &&
     (c.atoms.filter (·.2 == .array)).length ≤ 1
 
-def Case.singleEquality (c : Case) : Bool :=
-  c.atoms.length == 1 && c.atoms.all (fun a => [Kind.eq, .eqArray].contains a.2)
+def Case.recordedEquality (c : Case) : Bool :=
+  match c.atoms, c.aggregations with
+  | [(p, k)], [] =>
+    p != name &&
+      if [Kind.eq, .eqArray].contains k then
+        match c.order with
+        | [] => true
+        | [(q, dir)] => q == name || (q == p && dir == .desc)
+        | [(q, _), (n, _)] => q == p && n == name
+        | _ => false
+      else k == .isNull && c.order.all (·.1 == name)
+  | [(p, k)], [("count", _)] =>
+    p != name && [Kind.eq, .eqArray].contains k && c.order.all (·.1 == name)
+  | _, _ => false
 
 def list (xs : List String) (separator : String := ",") : String :=
   if xs.isEmpty then "-" else String.intercalate separator xs
@@ -128,7 +140,7 @@ def Case.render (c : Case) : String :=
   let r := c.requirement
   let base := decideBase r c.lookup c.collection c.scope c.composites c.policy c.edition c.baseMerge
   let head := decideHead r c.lookup c.collection c.scope c.composites c.policy c.edition
-    c.conjunction c.singleEquality c.baseMerge none
+    c.conjunction c.recordedEquality c.baseMerge none
   String.intercalate "|" [c.label, c.collection, renderScope c.scope, renderPolicy c.policy, renderEdition c.edition,
     list (c.atoms.map fun (p, k) => s!"{path p}:{kind k}"), clauses c.order,
     list (c.aggregations.map fun (kind, p) => s!"{kind}:{path p}"),
@@ -286,7 +298,7 @@ def recorded : List (Case × Bool) :=
 
 #guard recorded.all fun (c, served) =>
   (decideHead c.requirement c.lookup c.collection c.scope c.composites c.policy c.edition
-    c.conjunction c.singleEquality c.baseMerge none).isIndexed == served
+    c.conjunction c.recordedEquality c.baseMerge none).isIndexed == served
 
 #guard (recorded.filter fun (c, served) =>
   (decideBase c.requirement c.lookup c.collection c.scope c.composites c.policy c.edition
@@ -371,6 +383,18 @@ def examples : List Case :=
     {
       label := "aggregate-count", atoms := plainEq, order := primaryDesc,
       aggregations := [("count", [])], overrides := [.set a [(.collection, ascending)]] },
+    {
+      label := "obs2/18-is-null", atoms := [(a, .isNull)], order := primaryDesc,
+      overrides := [.set a [(.collection, ascending)]] },
+    {
+      label := "obs2/38-group-ascending-only", atoms := plainEq, order := primaryDesc,
+      scope := .group, overrides := [.set a [(.group, ascending)]] },
+    {
+      label := "obs2/47-group-descending-only", atoms := plainEq, order := [(name, .asc)],
+      scope := .group, overrides := [.set a [(.group, descending)]] },
+    {
+      label := "obs2/collection-descending-only", atoms := plainEq, order := [(name, .asc)],
+      overrides := [.set a [(.collection, descending)]] },
     {
       label := "aggregate-insert-and-dedup", atoms := plainEq ++ tagsOnly, order := [(["n"], .desc)],
       aggregations := [("avg", ["z"]), ("sum", a), ("avg", tags), ("sum", ["n"]),
