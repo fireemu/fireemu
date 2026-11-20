@@ -306,7 +306,7 @@ fn zero_match_accepts_raw_zero_metadata_but_import_refuses_it() {
 
 proptest! {
     #[test]
-    fn decisions_follow_guard_priority_independent_of_written_order_and_generation_counter(
+    fn missing_targets_take_priority_and_decisions_ignore_guard_order_and_generation_counter(
         present in any::<bool>(), g in 1..1000u64, m in 1..1000u64, choices in any::<[u8; 4]>(),
     ) {
         let initial = present.then_some((g, m));
@@ -329,14 +329,12 @@ proptest! {
         let unmodified = present && (forwards.if_generation_not_match == Some(g)
             || forwards.if_metageneration_not_match == Some(m));
         for op in OPS {
-            let expected = if !present && matches!(op, Op::Read) {
+            let expected = if !present && matches!(op, Op::Read | Op::Metadata | Op::Delete) {
                 "404"
             } else if failed {
                 "412"
             } else if unmodified {
                 "304"
-            } else if !present && matches!(op, Op::Metadata | Op::Delete) {
-                "404"
             } else {
                 "ok"
             };

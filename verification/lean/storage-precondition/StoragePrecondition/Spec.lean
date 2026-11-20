@@ -48,25 +48,18 @@ def Has412 (current : Current) (guards : List Guard) : Prop :=
 def Has304 (current : Current) (guards : List Guard) : Prop :=
   ∃ guard ∈ guards, Fails304 current guard
 
-/-- Reads require a target before evaluating guards. Update and delete require a target
-after evaluating guards. Both forms of upload can create the object. -/
+/-- Reads, metadata updates, and deletes require a target before evaluating guards.
+Both forms of upload can create the object. -/
 def MissingBefore (op : Op) (current : Current) : Prop :=
-  op = .read ∧ current = none
-
-def MissingAfter (op : Op) (current : Current) : Prop :=
   op ≠ .upload ∧ op ≠ .finalize ∧ current = none
 
 /-- The side conditions on each outcome are disjoint. In particular a 412 takes priority
 over a 304, independent of where the guard is written. -/
 def Verdict (op : Op) (current : Current) (guards : List Guard) : Decision → Prop
-  | .proceed =>
-    ¬ MissingBefore op current ∧ ¬ Has412 current guards ∧ ¬ Has304 current guards ∧
-      ¬ MissingAfter op current
+  | .proceed => ¬ MissingBefore op current ∧ ¬ Has412 current guards ∧ ¬ Has304 current guards
   | .failed => ¬ MissingBefore op current ∧ Has412 current guards
   | .notModified =>
     ¬ MissingBefore op current ∧ ¬ Has412 current guards ∧ Has304 current guards
-  | .notFound =>
-    MissingBefore op current ∨
-      (¬ Has412 current guards ∧ ¬ Has304 current guards ∧ MissingAfter op current)
+  | .notFound => MissingBefore op current
 
 end SP
