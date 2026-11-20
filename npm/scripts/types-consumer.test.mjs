@@ -75,6 +75,10 @@ await world.clock.advance({ days: -3 }, { allowBackwards: true });
 const anchored: string = (await world.clock.to('endOfMonth')).clock;
 await world.clock.to('startOfMonth', { duration: { months: 1 }, timeZone: 'Europe/Paris' });
 await world.clock.advanceAndSettle('PT1H', { scope: 'all', timeZone: 'UTC' });
+// @ts-expect-error a clock move body must contain a unit
+await world.clock.advance({});
+// @ts-expect-error an anchor duration must contain a unit
+await world.clock.to('startOfMonth', { duration: {} });
 // @ts-expect-error an anchor outside the closed set
 await world.clock.to('endOfWeek');
 const due = await world.clock.runDue(100);

@@ -1,7 +1,7 @@
 //! Virtual clock: the default clock never reads wall-clock time and never moves backwards
 //! during normal operation (INV-TIME-001).
 
-use fireemu_core_session::clock::{ClockError, VirtualClock};
+use fireemu_core_session::clock::{ClockError, ClockObserver, MoveFromSampleError, VirtualClock};
 use fireemu_core_types::determinism::Clock;
 use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 use std::sync::{Arc, Mutex};
@@ -96,6 +96,92 @@ fn set_backwards_requires_explicit_permission() {
 }
 
 #[test]
+fn a_sampled_move_refusal_leaves_the_clock_unchanged() {
+    let start = LogicalInstant::from_nanos(100);
+    let (mut clock, reading) = manual_clock(start);
+    let publications = Arc::new(Mutex::new(Vec::new()));
+    let sink = publications.clone();
+    let observer: Arc<ClockObserver> =
+        Arc::new(move |snapshot| sink.lock().unwrap().push(snapshot));
+    clock.observe(&observer);
+    let before = clock.snapshot();
+    let requested = LogicalInstant::from_nanos(90);
+
+    run_for(&reading, 10);
+    assert_eq!(
+        clock.move_from_sample(|_| Err("refused by plan")),
+        Err(MoveFromSampleError::Plan("refused by plan"))
+    );
+    run_for(&reading, -10);
+    assert_eq!(clock.snapshot(), before);
+
+    run_for(&reading, 10);
+    assert_eq!(
+        clock.move_from_sample(|_| Ok::<_, ()>((requested, false))),
+        Err(MoveFromSampleError::Clock(ClockError::WouldMoveBackwards {
+            current: LogicalInstant::from_nanos(110),
+            requested,
+        }))
+    );
+    run_for(&reading, -10);
+    assert_eq!(clock.snapshot(), before);
+    assert_eq!(clock.backwards_sets(), 0);
+    assert_eq!(*publications.lock().unwrap(), [before]);
+}
+
+#[test]
+fn a_sampled_move_counts_an_allowed_rewind() {
+    let start = LogicalInstant::from_nanos(100);
+    let mut clock = VirtualClock::new(start);
+    let target = LogicalInstant::from_nanos(90);
+    assert_eq!(
+        clock.move_from_sample(|_| Ok::<_, ()>((target, true))),
+        Ok(target)
+    );
+    let after = clock.snapshot();
+    assert_eq!(after.instant, target);
+    assert_eq!(after.elapsed_nanos, 0);
+    assert_eq!(after.revision, 1);
+    assert_eq!(clock.backwards_sets(), 1);
+}
+
+#[test]
+fn a_sampled_move_checks_and_publishes_against_the_plans_only_reading() {
+    let start = LogicalInstant::from_nanos(100);
+    let calls = Arc::new(Mutex::new(0_i128));
+    let counted = calls.clone();
+    let mut clock = VirtualClock::following_with(
+        start,
+        Arc::new(move || {
+            let mut calls = counted.lock().unwrap();
+            *calls += 1;
+            *calls
+        }),
+        0,
+    );
+    let publications = Arc::new(Mutex::new(Vec::new()));
+    let sink = publications.clone();
+    let observer: Arc<ClockObserver> =
+        Arc::new(move |snapshot| sink.lock().unwrap().push(snapshot));
+    clock.observe(&observer);
+    let target = LogicalInstant::from_nanos(102);
+    assert_eq!(
+        clock.move_from_sample(|sample| {
+            assert_eq!(sample, target);
+            Ok::<_, ()>((sample, false))
+        }),
+        Ok(target)
+    );
+    assert_eq!(*calls.lock().unwrap(), 2);
+    let publications = publications.lock().unwrap();
+    assert_eq!(publications.len(), 2);
+    assert_eq!(publications[1].instant, target);
+    assert_eq!(publications[1].elapsed_nanos, 2);
+    assert_eq!(publications[1].revision, 1);
+    assert_eq!(clock.backwards_sets(), 0);
+}
+
+#[test]
 fn tick_is_one_nanosecond_for_fixture_ordering() {
     let mut clock = VirtualClock::new(LogicalInstant::UNIX_EPOCH);
     let a = clock.tick().unwrap();
@@ -173,6 +259,11 @@ fn configured_clock_range_rejects_every_writer_without_publishing_partial_state(
     assert!(clock.tick().is_err());
     assert!(clock.advance_to(LogicalInstant::MAX).is_err());
     assert!(clock.try_set_allow_backwards(LogicalInstant::MIN).is_err());
+    assert_eq!(
+        clock.move_from_sample(|_| Ok::<_, ()>((LogicalInstant::MIN, true))),
+        Err(MoveFromSampleError::Clock(ClockError::OutOfRange))
+    );
+    assert_eq!(clock.backwards_sets(), 0);
     assert_eq!(clock.snapshot(), before);
     clock.set_allow_backwards(LogicalInstant::MIN);
     assert_eq!(clock.snapshot(), before);

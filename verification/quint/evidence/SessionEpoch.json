@@ -86,7 +86,7 @@
     },
     "crates/fireemu-core-session/src/calendar.rs": {
       "kind": "sha256",
-      "value": "5d4c47c42438063e776e66f5b670c6444ad401a7d2e3d047b628e8d9d9e3c486"
+      "value": "a691f6bedd3a27218835304a125f516fa3b6ff50a4520c79e74b7d1685f689ab"
     },
     "crates/fireemu-core-session/src/calendar/tests.rs": {
       "kind": "sha256",
@@ -94,7 +94,7 @@
     },
     "crates/fireemu-core-session/src/clock.rs": {
       "kind": "sha256",
-      "value": "d3d4b462de3c34373fec48dfab19b95d9474c4d46ead462833287270f4eed2c2"
+      "value": "bd4f085439ed53e1c7ba7b17cd23ae25fb56b39d4ec5ac009f82f7f0eb487a71"
     },
     "crates/fireemu-core-session/src/fault.rs": {
       "kind": "sha256",

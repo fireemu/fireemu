@@ -40,7 +40,7 @@ use fireemu_core_rules::runtime::{LoadedRules, RulesetSlot};
 use fireemu_core_session::calendar::{
     decide, move_instant, Anchor, CalendarDuration, CalendarZone, FixedZone, MoveDecision, MoveKind,
 };
-use fireemu_core_session::clock::VirtualClock;
+use fireemu_core_session::clock::{MoveFromSampleError, VirtualClock};
 use fireemu_core_session::loopback::PrivilegedAdmission;
 use fireemu_core_session::tenancy::Scope;
 use fireemu_core_types::determinism::Clock;
@@ -769,8 +769,9 @@ fn with_session_books(
     Ok(())
 }
 
-fn clock_json(clock: &VirtualClock) -> Value {
-    json!({"clock": clock.now().to_rfc3339().unwrap_or_else(|_| clock.now().to_string()), "backwardsSets": clock.backwards_sets(), "running": clock.is_following()})
+fn clock_json(clock: &VirtualClock, published: Option<LogicalInstant>) -> Value {
+    let now = || published.unwrap_or_else(|| clock.now());
+    json!({"clock": now().to_rfc3339().unwrap_or_else(|_| now().to_string()), "backwardsSets": clock.backwards_sets(), "running": clock.is_following()})
 }
 
 /// Whether `path` belongs to the control API.
@@ -3260,7 +3261,7 @@ fn clock_route(
     };
     match (method, action) {
         ("GET", "") => ok(
-            json!({"session": session, "edition": state.edition.as_config_str(), "requireDemoPrefix": state.require_demo_prefix, "clock": clock_json(&clock)}),
+            json!({"session": session, "edition": state.edition.as_config_str(), "requireDemoPrefix": state.require_demo_prefix, "clock": clock_json(&clock, None)}),
         ),
         ("POST", "clock:runDue") => {
             if state.functions.is_none() {
@@ -3273,9 +3274,7 @@ fn clock_route(
             }
             ok(json!({}))
         }
-        ("POST", "clock:advance" | "clock:set" | "clock:advanceTo")
-            if is_calendar_move(action, body) =>
-        {
+        ("POST", "clock:advance" | "clock:set" | "clock:advanceTo") if is_calendar_move(body) => {
             calendar_move_route(state, &mut clock, action, body)
         }
         ("POST", "clock:advance") => {
@@ -3295,7 +3294,7 @@ fn clock_route(
                 }
             }
             match clock.advance(duration) {
-                Ok(_) => ok(clock_json(&clock)),
+                Ok(_) => ok(clock_json(&clock, None)),
                 Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
             }
         }
@@ -3317,17 +3316,17 @@ fn clock_route(
                 .unwrap_or(false);
             if action == "clock:set" && allow_backwards {
                 return match clock.try_set_allow_backwards(target) {
-                    Ok(()) => ok(clock_json(&clock)),
+                    Ok(()) => ok(clock_json(&clock, None)),
                     Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
                 };
             }
             match clock.advance_to(target) {
-                Ok(_) => ok(clock_json(&clock)),
+                Ok(_) => ok(clock_json(&clock, None)),
                 Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
             }
         }
         ("POST", "clock:freeze") => match clock.freeze() {
-            Ok(()) => ok(clock_json(&clock)),
+            Ok(()) => ok(clock_json(&clock, None)),
             Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
         },
         ("POST", "clock:resume") => resume_route(state, &mut clock, body),
@@ -3335,21 +3334,13 @@ fn clock_route(
     }
 }
 
-/// The fields a request may name for a move, before and since calendar moves.
-fn move_fields(action: &str) -> (&'static [&'static str], &'static [&'static str]) {
-    if action == "clock:advance" {
-        (&["seconds", "millis"], &["duration"])
-    } else {
-        (&["instant"], &["to", "duration"])
-    }
-}
+const CALENDAR_MOVE_FIELDS: [&str; 3] = ["to", "duration", "timeZone"];
 
 /// Whether the request uses the calendar fields; any other request keeps its earlier answer.
-fn is_calendar_move(action: &str, body: &Value) -> bool {
-    move_fields(action)
-        .1
+fn is_calendar_move(body: &Value) -> bool {
+    CALENDAR_MOVE_FIELDS
         .iter()
-        .any(|field| body.get(field).is_some())
+        .any(|field| body.get(field).is_some_and(|value| !value.is_null()))
 }
 
 /// The longest zone name a request may send (IANA names are far shorter).
@@ -3368,23 +3359,26 @@ fn parse_calendar_move(
     action: &str,
     body: &Value,
 ) -> Result<CalendarMove, String> {
-    let (old, new) = move_fields(action);
+    let field = |name: &str| body.get(name).filter(|value| !value.is_null());
     let present = |fields: &[&'static str]| -> Vec<&'static str> {
         fields
             .iter()
             .copied()
-            .filter(|field| body.get(field).is_some())
+            .filter(|name| field(name).is_some())
             .collect()
     };
-    let (old_present, new_present) = (present(old), present(new));
+    let old_present: Vec<&str> = ["seconds", "millis", "instant"]
+        .into_iter()
+        .filter(|name| body.get(name).is_some())
+        .collect();
     if !old_present.is_empty() {
         return Err(format!(
             "INVALID_ARGUMENT : {} cannot be combined with {}",
             old_present.join(" and "),
-            new_present.join(" and ")
+            present(&CALENDAR_MOVE_FIELDS).join(" and ")
         ));
     }
-    let duration = match body.get("duration") {
+    let duration = match field("duration") {
         None => None,
         Some(Value::String(text)) => Some(
             CalendarDuration::parse(text).map_err(|e| format!("INVALID_ARGUMENT : {e}"))?,
@@ -3394,14 +3388,17 @@ fn parse_calendar_move(
         }
     };
     let anchor = if action == "clock:advance" {
-        if body.get("to").is_some() {
+        if field("to").is_some() {
             return Err(
                 "INVALID_ARGUMENT : to is accepted by clock:set and clock:advanceTo".to_owned(),
             );
         }
+        if duration.is_none() {
+            return Err("INVALID_ARGUMENT : duration required".to_owned());
+        }
         None
     } else {
-        let Some(to) = body.get("to") else {
+        let Some(to) = field("to") else {
             return Err("INVALID_ARGUMENT : duration on clock:set and clock:advanceTo needs to; clock:advance moves by a duration alone".to_owned());
         };
         let anchor = to.as_str().and_then(Anchor::parse).ok_or_else(|| {
@@ -3410,7 +3407,7 @@ fn parse_calendar_move(
         })?;
         Some(anchor)
     };
-    let zone = calendar_zone(state, body.get("timeZone"))?;
+    let zone = calendar_zone(state, field("timeZone"))?;
     let allow_backwards = body
         .get("allowBackwards")
         .and_then(Value::as_bool)
@@ -3457,43 +3454,30 @@ fn calendar_move_route(
         Ok(request) => request,
         Err(message) => return error(400, &message),
     };
-    let start = clock.now();
-    let target = match move_instant(
-        start,
-        &*request.zone,
-        request.duration.as_ref(),
-        request.anchor,
-    ) {
-        Ok(target) => target,
-        Err(e) => return error(400, &format!("INVALID_ARGUMENT : {e}")),
-    };
-    if let Some(functions) = &state.functions {
-        if let Err(message) = functions.validate_clock_target(target) {
-            return error(400, &message);
-        }
-    }
     let kind = match action {
         "clock:advance" => MoveKind::Advance,
         "clock:set" => MoveKind::Set,
         _ => MoveKind::AdvanceTo,
     };
-    let result = match decide(kind, request.allow_backwards, start, target) {
-        MoveDecision::Rewind => clock.try_set_allow_backwards(target),
-        // A running clock moved on since `start`: a relative move keeps its distance.
-        MoveDecision::Forward if kind == MoveKind::Advance => {
-            match target.checked_duration_since(start) {
-                Some(delta) => clock.advance(delta).map(|_| ()),
-                None => Err(fireemu_core_session::clock::ClockError::Overflow),
-            }
+    let result = clock.move_from_sample(|start| -> Result<_, String> {
+        let target = move_instant(
+            start,
+            &*request.zone,
+            request.duration.as_ref(),
+            request.anchor,
+        )
+        .map_err(|e| format!("INVALID_ARGUMENT : {e}"))?;
+        if let Some(functions) = &state.functions {
+            functions.validate_clock_target(target)?;
         }
-        // An absolute target, or a refused rewind: the clock's own backwards error.
-        MoveDecision::Forward | MoveDecision::RefuseBackwards => {
-            clock.advance_to(target).map(|_| ())
-        }
-    };
+        let allow_backwards =
+            decide(kind, request.allow_backwards, start, target) == MoveDecision::Rewind;
+        Ok((target, allow_backwards))
+    });
     match result {
-        Ok(()) => ok(clock_json(clock)),
-        Err(e) => error(400, &format!("INVALID_ARGUMENT : {e}")),
+        Ok(target) => ok(clock_json(clock, Some(target))),
+        Err(MoveFromSampleError::Plan(message)) => error(400, &message),
+        Err(MoveFromSampleError::Clock(e)) => error(400, &format!("INVALID_ARGUMENT : {e}")),
     }
 }
 
@@ -3534,7 +3518,7 @@ fn resume_route(state: &ControlState, clock: &mut VirtualClock, body: &Value) ->
         clock.resume()
     };
     match result {
-        Ok(()) => ok(clock_json(clock)),
+        Ok(()) => ok(clock_json(clock, None)),
         Err(e @ fireemu_core_session::clock::ClockError::NoTimeSource) => {
             error(400, &format!("FAILED_PRECONDITION : {e}"))
         }

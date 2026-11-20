@@ -6,8 +6,8 @@ test('earlier advance forms keep their bodies', () => {
   assert.deepEqual(advanceBody(1500), { millis: 1500 });
   assert.deepEqual(advanceBody({ seconds: 60 }), { seconds: 60 });
   assert.deepEqual(advanceBody({ millis: 5, seconds: 1 }), { millis: 5, seconds: 1 });
-  // Options do not change the earlier forms.
-  assert.deepEqual(advanceBody({ seconds: 60 }, { timeZone: 'Asia/Tokyo' }), { seconds: 60 });
+  assert.throws(() => advanceBody({ seconds: 60 }, { timeZone: 'Asia/Tokyo' }), /require.*ISO 8601/);
+  assert.throws(() => advanceBody(1500, { allowBackwards: false }), /require.*ISO 8601/);
 });
 
 test('calendar units and strings become a duration', () => {
@@ -21,6 +21,7 @@ test('calendar units and strings become a duration', () => {
 });
 
 test('malformed calendar units are refused before a request', () => {
+  assert.throws(() => advanceBody({}), /seconds, millis or calendar units/);
   assert.throws(() => advanceBody({ days: 1, millis: 5 }), /millis cannot be combined/);
   assert.throws(() => advanceBody({ days: 1, hours: -1 }), /same sign/);
   assert.throws(() => advanceBody({ days: 1.5 }), /safe integers/);
@@ -33,5 +34,6 @@ test('anchors become a clock:set body', () => {
   assert.deepEqual(toBody('endOfMonth'), { to: 'endOfMonth' });
   assert.deepEqual(toBody('startOfMonth', { duration: { months: 1 }, timeZone: 'Asia/Tokyo' }), { to: 'startOfMonth', duration: 'P1M', timeZone: 'Asia/Tokyo' });
   assert.deepEqual(toBody('startOfYear', { allowBackwards: true }), { to: 'startOfYear', allowBackwards: true });
+  assert.throws(() => toBody('startOfYear', { duration: {} }), /at least one unit/);
   assert.throws(() => toBody(1), /anchor must be a string/);
 });

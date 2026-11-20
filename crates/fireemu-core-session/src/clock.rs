@@ -105,6 +105,15 @@ impl core::fmt::Display for ClockError {
 
 impl std::error::Error for ClockError {}
 
+/// A move refused by its plan or by the clock.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveFromSampleError<E> {
+    /// The plan could not produce a target.
+    Plan(E),
+    /// The clock could not publish the target.
+    Clock(ClockError),
+}
+
 /// A deterministic clock that only moves when told to, or that runs on from its last move at
 /// the pace of real time ([`VirtualClock::following`]).
 pub struct VirtualClock {
@@ -258,7 +267,7 @@ impl VirtualClock {
         self.check(sample.instant, &sample)?;
         // The mode changes before the observers are told, so that they see the new one.
         self.paused = self.follow.take().map(|follow| follow.source);
-        self.publish(sample.instant, &sample);
+        self.publish(sample.instant, &sample, true);
         Ok(())
     }
 
@@ -331,7 +340,7 @@ impl VirtualClock {
             // the observers get and the high-water mark it records hold for every later read.
             follow.at = reading - sample.drift;
         }
-        self.publish(instant, &sample);
+        self.publish(instant, &sample, true);
         Ok(())
     }
 
@@ -397,7 +406,7 @@ impl VirtualClock {
         if sample.instant <= self.now || self.check(sample.instant, &sample).is_err() {
             return false;
         }
-        self.publish(sample.instant, &sample);
+        self.publish(sample.instant, &sample, true);
         true
     }
 
@@ -412,7 +421,7 @@ impl VirtualClock {
             .checked_add(duration)
             .ok_or(ClockError::Overflow)?;
         self.check(next, &sample)?;
-        self.publish(next, &sample);
+        self.publish(next, &sample, true);
         Ok(next)
     }
 
@@ -426,8 +435,37 @@ impl VirtualClock {
             });
         }
         self.check(instant, &sample)?;
-        self.publish(instant, &sample);
+        self.publish(instant, &sample, true);
         Ok(instant)
+    }
+
+    /// Plans and publishes a move from one clock sample. The plan returns the target and
+    /// whether it permits a rewind. A refused move leaves the clock unchanged.
+    pub fn move_from_sample<E>(
+        &mut self,
+        plan: impl FnOnce(LogicalInstant) -> Result<(LogicalInstant, bool), E>,
+    ) -> Result<LogicalInstant, MoveFromSampleError<E>> {
+        let peak = self.follow.as_ref().map(|follow| follow.peak.get());
+        let sample = self.sample();
+        // Sampling normally remembers elapsed drift. Keep the original peak until publication.
+        if let (Some(follow), Some(peak)) = (&self.follow, peak) {
+            follow.peak.set(peak);
+        }
+        let (target, allow_backwards) = plan(sample.instant).map_err(MoveFromSampleError::Plan)?;
+        let rewinds = target < sample.instant;
+        if rewinds && !allow_backwards {
+            return Err(MoveFromSampleError::Clock(ClockError::WouldMoveBackwards {
+                current: sample.instant,
+                requested: target,
+            }));
+        }
+        self.check(target, &sample)
+            .map_err(MoveFromSampleError::Clock)?;
+        if rewinds {
+            self.backwards_sets = self.backwards_sets.saturating_add(1);
+        }
+        self.publish(target, &sample, false);
+        Ok(target)
     }
 
     /// Sets the clock. Equivalent to `advance_to`: the default policy forbids going backwards.
@@ -450,7 +488,7 @@ impl VirtualClock {
         if instant < sample.instant {
             self.backwards_sets = self.backwards_sets.saturating_add(1);
         }
-        self.publish(instant, &sample);
+        self.publish(instant, &sample, true);
         Ok(())
     }
 
@@ -516,9 +554,9 @@ impl VirtualClock {
         }
     }
 
-    /// Moves the clock to `instant`, folding in the time `sample` found passed since the last
-    /// move.
-    fn publish(&mut self, instant: LogicalInstant, sample: &Sample) {
+    /// Moves the clock to `instant`, folding in elapsed time from `sample`. Existing writers also
+    /// refresh the observer snapshot from the source after publication.
+    fn publish(&mut self, instant: LogicalInstant, sample: &Sample, resample_observers: bool) {
         self.elapsed_nanos = self
             .elapsed_nanos
             .saturating_add(sample.counted.unsigned_abs());
@@ -534,7 +572,15 @@ impl VirtualClock {
             follow.peak.set(0);
         }
         self.revision = self.revision.saturating_add(1);
-        let snapshot = self.snapshot();
+        let snapshot = if resample_observers {
+            self.snapshot()
+        } else {
+            ClockSnapshot {
+                instant,
+                elapsed_nanos: self.elapsed_nanos,
+                revision: self.revision,
+            }
+        };
         self.observers.retain(|weak| {
             let Some(observer) = weak.upgrade() else {
                 return false;

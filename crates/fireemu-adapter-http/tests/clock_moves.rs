@@ -1,9 +1,12 @@
-//! Control API: relative and calendar moves of the virtual clock (`duration`, `to`,
-//! `timeZone`), and that every request accepted before them keeps its answer.
+//! Control API tests for calendar and legacy moves of the virtual clock.
 
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, RwLock};
 
-use fireemu_adapter_http::control::{handle, CalendarZones, ControlState, SharedCalendarZone};
+use fireemu_adapter_http::control::{
+    handle, CalendarZones, ControlState, FunctionsHook, PublishMessagesError, RunScheduleError,
+    SharedCalendarZone,
+};
 use fireemu_adapter_http::identity_toolkit::JsonResponse;
 use fireemu_core_rules::runtime::RulesetSlot;
 use fireemu_core_session::calendar::{CalendarZone, FixedZone, LocalOffsets};
@@ -335,8 +338,10 @@ fn malformed_new_fields_are_refused_and_change_nothing() {
         ("clock:advance", json!({"duration": "P1X"}), "ISO 8601 duration"),
         ("clock:advance", json!({"duration": "p1d"}), "ISO 8601 duration"),
         ("clock:advance", json!({"duration": 1}), "duration must be a string"),
-        ("clock:advance", json!({"duration": null}), "duration must be a string"),
+        ("clock:advance", json!({"duration": null}), "seconds or millis required"),
+        ("clock:advance", json!({"to": "startOfDay"}), "to is accepted by clock:set and clock:advanceTo"),
         ("clock:advance", json!({"duration": "P1D", "to": "startOfDay"}), "to is accepted by clock:set and clock:advanceTo"),
+        ("clock:advance", json!({"timeZone": "UTC"}), "duration required"),
         ("clock:set", json!({"to": "startOfWeek"}), "to must be one of startOfDay, endOfDay, startOfMonth, endOfMonth, startOfNextMonth, startOfYear, endOfYear"),
         ("clock:set", json!({"to": 1}), "to must be one of"),
         ("clock:advanceTo", json!({"to": "StartOfMonth"}), "to must be one of"),
@@ -403,11 +408,39 @@ fn old_and_new_fields_cannot_be_mixed() {
         ),
         "instant cannot be combined with to and duration",
     );
+    for (action, body, message) in [
+        (
+            "clock:advance",
+            json!({"seconds": 1, "timeZone": "UTC"}),
+            "seconds cannot be combined with timeZone",
+        ),
+        (
+            "clock:advance",
+            json!({"duration": "P1D", "instant": "2027-01-01T00:00:00Z"}),
+            "instant cannot be combined with duration",
+        ),
+        (
+            "clock:set",
+            json!({"millis": 0, "instant": null, "to": "endOfMonth", "timeZone": "UTC"}),
+            "millis and instant cannot be combined with to and timeZone",
+        ),
+        (
+            "clock:advanceTo",
+            json!({"seconds": 0, "duration": null, "timeZone": "UTC"}),
+            "seconds cannot be combined with timeZone",
+        ),
+    ] {
+        let response = post(&s, action, &body);
+        assert_eq!(response.status, 400, "{}", response.body);
+        assert_eq!(
+            response.body["error"]["message"],
+            format!("INVALID_ARGUMENT : {message}")
+        );
+    }
     assert_eq!(now(&s), "2026-01-31T10:00:00Z");
 }
 
-/// Requests that were valid before calendar moves keep their exact answers, whatever extra
-/// fields they carry.
+/// Requests without a non-null calendar field keep their exact legacy answers.
 #[test]
 fn requests_accepted_before_keep_their_answers() {
     let s = state(None);
@@ -415,7 +448,7 @@ fn requests_accepted_before_keep_their_answers() {
         clock_of(&post(
             &s,
             "clock:advance",
-            &json!({"seconds": 60, "timeZone": "Nowhere/Else"})
+            &json!({"seconds": 60, "duration": null})
         )),
         "2026-01-31T10:01:00Z"
     );
@@ -432,7 +465,7 @@ fn requests_accepted_before_keep_their_answers() {
         clock_of(&post(
             &s,
             "clock:advance",
-            &json!({"millis": 500, "to": "endOfMonth"})
+            &json!({"millis": 500, "to": null})
         )),
         "2026-01-31T10:02:00.500000000Z"
     );
@@ -449,7 +482,7 @@ fn requests_accepted_before_keep_their_answers() {
         clock_of(&post(
             &s,
             "clock:set",
-            &json!({"instant": "2026-02-01T00:00:00Z", "timeZone": 3})
+            &json!({"instant": "2026-02-01T00:00:00Z", "timeZone": null, "duration": null, "to": null})
         )),
         "2026-02-01T00:00:00Z"
     );
@@ -457,10 +490,127 @@ fn requests_accepted_before_keep_their_answers() {
         clock_of(&post(
             &s,
             "clock:advanceTo",
-            &json!({"instant": "2026-02-02T00:00:00Z", "allowBackwards": "x"})
+            &json!({"instant": "2026-02-02T00:00:00Z", "allowBackwards": "x", "duration": null, "to": null, "timeZone": null})
         )),
         "2026-02-02T00:00:00Z"
     );
+}
+
+#[test]
+fn only_calendar_null_fields_are_absent_with_a_calendar_move() {
+    let s = state(Some(zones(Some("Test/Tokyo"))));
+    for (route, body, message) in [
+        (
+            "clock:advance",
+            json!({"seconds": null, "duration": "PT1H", "to": null}),
+            "seconds cannot be combined with duration",
+        ),
+        (
+            "clock:set",
+            json!({"instant": null, "to": "startOfNextMonth", "duration": null}),
+            "instant cannot be combined with to",
+        ),
+        (
+            "clock:advanceTo",
+            json!({"millis": null, "to": "endOfDay", "timeZone": null}),
+            "millis cannot be combined with to",
+        ),
+    ] {
+        refused(&post(&s, route, &body), message);
+    }
+    assert_eq!(
+        clock_of(&post(
+            &s,
+            "clock:advance",
+            &json!({"duration": "PT1H", "to": null})
+        )),
+        "2026-01-31T11:00:00Z"
+    );
+    assert_eq!(
+        clock_of(&post(
+            &s,
+            "clock:set",
+            &json!({"to": "startOfNextMonth", "duration": null})
+        )),
+        "2026-01-31T15:00:00Z"
+    );
+    assert_eq!(
+        clock_of(&post(
+            &s,
+            "clock:advanceTo",
+            &json!({"to": "endOfDay", "timeZone": null})
+        )),
+        "2026-02-01T14:59:59.999999000Z"
+    );
+}
+
+struct ClockCounting {
+    limit: LogicalInstant,
+    moves: AtomicUsize,
+}
+
+impl FunctionsHook for ClockCounting {
+    fn validate_clock_target(&self, instant: LogicalInstant) -> Result<(), String> {
+        if instant > self.limit {
+            return Err("INVALID_ARGUMENT : Functions clock limit exceeded".to_owned());
+        }
+        Ok(())
+    }
+
+    fn on_clock_changed(&self) {
+        self.moves.fetch_add(1, SeqCst);
+    }
+
+    fn run_schedule(&self, _function: &str) -> Result<(), RunScheduleError> {
+        Ok(())
+    }
+
+    fn is_idle(&self) -> bool {
+        true
+    }
+
+    fn idle_notify(&self) -> Arc<tokio::sync::Notify> {
+        Arc::new(tokio::sync::Notify::new())
+    }
+
+    fn status(&self) -> Value {
+        json!({})
+    }
+
+    fn publish(
+        &self,
+        _topic: &str,
+        _messages: &[Value],
+    ) -> Result<Vec<String>, PublishMessagesError> {
+        Err(PublishMessagesError::Invalid("not used".to_owned()))
+    }
+
+    fn project(&self) -> String {
+        "demo-app".to_owned()
+    }
+}
+
+#[test]
+fn calendar_moves_validate_the_functions_limit_and_notify_only_on_success() {
+    let functions = Arc::new(ClockCounting {
+        limit: LogicalInstant::from_unix_seconds(START + 86_400),
+        moves: AtomicUsize::new(0),
+    });
+    let mut s = state(None);
+    s.functions = Some(functions.clone());
+    let before = s.clock.lock().unwrap().snapshot();
+    let response = post(&s, "clock:advance", &json!({"duration": "P2D"}));
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        response.body["error"]["message"],
+        "INVALID_ARGUMENT : Functions clock limit exceeded"
+    );
+    assert_eq!(s.clock.lock().unwrap().snapshot(), before);
+    assert_eq!(functions.moves.load(SeqCst), 0);
+
+    let response = post(&s, "clock:advance", &json!({"duration": "P1D"}));
+    assert_eq!(clock_of(&response), "2026-02-01T10:00:00Z");
+    assert_eq!(functions.moves.load(SeqCst), 1);
 }
 
 #[test]
@@ -479,26 +629,23 @@ fn a_zero_duration_on_a_running_clock_is_not_backwards() {
     assert!(moved >= LogicalInstant::from_unix_seconds(START + 86_400));
 }
 
-/// A running clock whose time source moves 1 ms at every reading.
-fn ticking_clock() -> VirtualClock {
-    let ticks = Arc::new(std::sync::atomic::AtomicI64::new(0));
+/// A running clock whose first reading is at `start`, then advances by `step_nanos` per read.
+fn ticking_clock(start: LogicalInstant, step_nanos: i128) -> VirtualClock {
+    let ticks = AtomicI64::new(0);
     VirtualClock::following_with(
-        LogicalInstant::from_unix_seconds(START),
-        Arc::new(move || {
-            i128::from(ticks.fetch_add(1, std::sync::atomic::Ordering::SeqCst)) * 1_000_000
-        }),
+        start,
+        Arc::new(move || i128::from(ticks.fetch_add(1, SeqCst)) * step_nanos),
         0,
     )
 }
 
 /// A running clock whose source moves 1 ms at each of the next `ticks` readings, then stands.
-fn clock_ticking_for(ticks: &Arc<std::sync::atomic::AtomicI64>) -> VirtualClock {
-    let reading = Arc::new(std::sync::atomic::AtomicI64::new(0));
+fn clock_ticking_for(ticks: &Arc<AtomicI64>) -> VirtualClock {
+    let reading = AtomicI64::new(0);
     let ticks = ticks.clone();
     VirtualClock::following_with(
         LogicalInstant::from_unix_seconds(START),
         Arc::new(move || {
-            use std::sync::atomic::Ordering::SeqCst;
             let tick = ticks.fetch_sub(1, SeqCst) > 0;
             let now = if tick {
                 reading.fetch_add(1, SeqCst) + 1
@@ -512,19 +659,17 @@ fn clock_ticking_for(ticks: &Arc<std::sync::atomic::AtomicI64>) -> VirtualClock 
     )
 }
 
-/// An absolute target is published as computed even when the clock ran on since the move
-/// read it: the time that passed is not added to a boundary.
+/// The response reports the published boundary even when the clock has already run past it.
 #[test]
 fn an_anchor_on_a_running_clock_lands_exactly_on_the_boundary() {
-    use std::sync::atomic::Ordering::SeqCst;
-    let ticks = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let ticks = Arc::new(AtomicI64::new(0));
     let s = state_at(clock_ticking_for(&ticks), None);
     ticks.store(2, SeqCst);
     assert_eq!(
         clock_of(&post(&s, "clock:advanceTo", &json!({"to": "endOfYear"}))),
         "2026-12-31T23:59:59.999999000Z"
     );
-    // The clock ran 2 ms into 2027-01-01, so a day later starts 2027-01-02.
+    // The clock ran into 2027-01-01, so a day later starts 2027-01-02.
     ticks.store(2, SeqCst);
     assert_eq!(
         clock_of(&post(
@@ -537,15 +682,61 @@ fn an_anchor_on_a_running_clock_lands_exactly_on_the_boundary() {
 }
 
 #[test]
-fn a_duration_on_a_running_clock_keeps_its_distance_from_a_fresh_reading() {
-    let s = state_at(ticking_clock(), None);
-    let moved = LogicalInstant::parse_rfc3339(&clock_of(&post(
-        &s,
-        "clock:advance",
-        &json!({"duration": "P1D"}),
-    )))
-    .unwrap();
-    // The day is measured from the reading the move started from; the clock read on since.
-    assert!(moved > LogicalInstant::from_unix_seconds(START + 86_400));
-    assert!(moved < LogicalInstant::from_unix_seconds(START + 86_401));
+fn a_duration_on_a_running_clock_is_measured_from_the_commit_sample() {
+    let start = LogicalInstant::from_unix_seconds(START);
+    let s = state_at(ticking_clock(start, 1_000_000), None);
+    assert_eq!(s.clock.lock().unwrap().snapshot().instant, start);
+    let response = post(&s, "clock:advance", &json!({"duration": "P1D"}));
+    assert_eq!(clock_of(&response), "2026-02-01T10:00:00.001000000Z");
+}
+
+#[test]
+fn a_running_duration_checks_the_year_at_the_commit_sample() {
+    let start = LogicalInstant::parse_rfc3339("9999-12-31T23:59:58.9995Z").unwrap();
+    let body = json!({"duration": "PT1S"});
+    // At the first reading the move fits. A second reading would push it into year 10000.
+    let s = state_at(ticking_clock(start, 1_000_000), None);
+    assert_eq!(
+        clock_of(&post(&s, "clock:advance", &body)),
+        "9999-12-31T23:59:59.999500000Z"
+    );
+
+    // When the commit sample itself is 1 ms later, the move is refused.
+    let s = state_at(ticking_clock(start, 1_000_000), None);
+    let before = s.clock.lock().unwrap().snapshot();
+    refused(
+        &post(&s, "clock:advance", &body),
+        "outside years 0001 through 9999",
+    );
+    let after = s.clock.lock().unwrap().snapshot();
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.instant.as_nanos(), start.as_nanos() + 2_000_000);
+    assert_eq!(after.elapsed_nanos, 2_000_000);
+    assert_eq!(s.clock.lock().unwrap().backwards_sets(), 0);
+}
+
+#[test]
+fn a_running_anchored_set_honours_allow_backwards_at_the_commit_sample() {
+    let start = LogicalInstant::parse_rfc3339("2026-01-31T23:59:59.9999985Z").unwrap();
+    let body = json!({"to": "endOfDay", "allowBackwards": true});
+    let s = state_at(ticking_clock(start, 1_000), None);
+    let response = post(&s, "clock:set", &body);
+    assert_eq!(clock_of(&response), "2026-01-31T23:59:59.999999000Z");
+    assert_eq!(response.body["backwardsSets"], 0);
+
+    let s = state_at(ticking_clock(start, 1_000), None);
+    assert_eq!(s.clock.lock().unwrap().snapshot().instant, start);
+    let response = post(&s, "clock:set", &body);
+    assert_eq!(clock_of(&response), "2026-01-31T23:59:59.999999000Z");
+    assert_eq!(response.body["backwardsSets"], 1);
+
+    let s = state_at(ticking_clock(start, 1_000), None);
+    let before = s.clock.lock().unwrap().snapshot();
+    refused(
+        &post(&s, "clock:set", &json!({"to": "endOfDay"})),
+        "clock would move backwards",
+    );
+    let clock = s.clock.lock().unwrap();
+    assert_eq!(clock.snapshot().revision, before.revision);
+    assert_eq!(clock.backwards_sets(), 0);
 }

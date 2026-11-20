@@ -1,4 +1,12 @@
-import { createSignal, For, onCleanup, Show, type Component, type JSX } from "solid-js";
+import {
+  createSignal,
+  createUniqueId,
+  For,
+  onCleanup,
+  Show,
+  type Component,
+  type JSX,
+} from "solid-js";
 import { t } from "../i18n";
 import { relativeTime } from "../lib/relativeTime";
 import { createSubmitGuard } from "../lib/submitGuard";
@@ -130,10 +138,16 @@ export const ConfirmButton: Component<{
   /** What the action reaches (project, session, path, recursion, undo), for heavy actions. */
   details?: string | undefined;
   onConfirm: () => Promise<unknown>;
+  /**
+   * While true, neither the action nor its confirmation can be clicked; an open question stays
+   * open. The action itself still refuses re-entry synchronously (a shared submit guard).
+   */
+  disabled?: boolean | undefined;
   class?: string | undefined;
   testId?: string | undefined;
 }> = (props) => {
   const [asking, setAsking] = createSignal(false);
+  const questionId = createUniqueId();
   return (
     <Show
       when={asking()}
@@ -142,6 +156,7 @@ export const ConfirmButton: Component<{
           type="button"
           class={props.class ?? "btn btn-danger"}
           data-testid={props.testId}
+          disabled={props.disabled}
           onClick={() => setAsking(true)}
         >
           {props.label}
@@ -151,15 +166,19 @@ export const ConfirmButton: Component<{
       <span
         class="inline-flex flex-wrap items-center gap-2 rounded-control border border-danger-line bg-danger-subtle px-2 py-1 text-sm"
         role="alertdialog"
+        aria-labelledby={questionId}
       >
         <span>
-          <span class="font-semibold">{props.question}</span>
+          <span id={questionId} class="font-semibold">
+            {props.question}
+          </span>
           <Show when={props.details}>
             <span class="block text-xs text-secondary">{props.details}</span>
           </Show>
         </span>
         <AsyncButton
           class="btn btn-danger"
+          disabled={props.disabled}
           testId={props.testId ? `${props.testId}-confirm` : undefined}
           onClick={async () => {
             await props.onConfirm();

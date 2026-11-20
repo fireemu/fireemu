@@ -91,14 +91,14 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'conte
 
 Für die Berechnung gelten folgende Regeln.
 
-- Jahre, Monate, Wochen und Tage ändern das lokale Datum und behalten die Ortszeit in der gewählten Zeitzone bei. Stunden, Minuten und Sekunden zählen die tatsächlich verstrichene Zeit. Bei einer Zeitumstellung entspricht `P1D` 23 oder 25 Stunden, `PT24H` immer 24 Stunden.
+- Jahre, Monate, Wochen und Tage ändern das lokale Datum und behalten die Ortszeit in der gewählten Zeitzone bei. Stunden, Minuten und Sekunden zählen die tatsächlich verstrichene Zeit. `P1D` folgt dem lokalen Kalender. Die verstrichene Zeit hängt vom Datum und von der Zeitzone ab. `PT24H` addiert immer genau 24 Stunden.
 - Zuerst werden Jahre und Monate in Monate umgerechnet und zusammen angewendet. Fehlt der ursprüngliche Tag im Zielmonat, gilt dessen letzter Tag. Der 31. Januar plus `P1M` ergibt den 28. Februar (in einem Schaltjahr den 29.), der 29. Februar plus `P1Y1M` den 29. März. Danach folgen Wochen und Tage, zuletzt Stunden, Minuten und Sekunden.
 - Bei gemeinsamer Angabe von `duration` und `to` wird zuerst die Zeitspanne angewendet.
-- `endOfDay`, `endOfMonth` und `endOfYear` bezeichnen 23:59:59.999999 Uhr Ortszeit, die letzte Mikrosekunde des Tages, die ein Firestore-Zeitstempel darstellen kann. Eine Mikrosekunde nach `endOfMonth` ist daher `startOfNextMonth`.
+- `endOfDay`, `endOfMonth` und `endOfYear` bezeichnen 23:59:59.999999 Uhr Ortszeit, die letzte Mikrosekunde des Tages, die ein Firestore-Zeitstempel darstellen kann. Wenn der Beginn des Folgemonats darstellbar ist und sich der Offset am Monatswechsel nicht ändert, liegt `startOfNextMonth` eine Mikrosekunde nach `endOfMonth`.
 - Kommt eine Ortszeit beim Zurückstellen der Uhren zweimal vor, gilt der frühere Zeitpunkt. Auch ein Zeitplan läuft beim ersten Vorkommen. Entfällt eine Ortszeit beim Vorstellen der Uhren, gilt der UTC-Offset vor der Umstellung. Dadurch liegt der Zielzeitpunkt um die Dauer der übersprungenen Zeitspanne später. Bei einem Sprung von 02:00 auf 03:00 wird aus 02:30 also 03:30. Zeitpläne überspringen solche Zeiten. Eine Uhrbewegung braucht einen Zielzeitpunkt und folgt dafür der Regel `compatible` von `java.time`, Temporal und jiff.
 - Das Ergebnis muss in den Jahren 0001 bis 9999 (UTC) liegen, ebenso jedes lokale Datum, das Jahre, Monate, Wochen, Tage oder der Ankerpunkt berechnen; Stunden, Minuten und Sekunden allein berechnen kein lokales Datum. Andernfalls wird die Anfrage mit `400 INVALID_ARGUMENT` abgelehnt.
 - Liegt das Ziel vor der aktuellen Zeit, erfordern `clock:advance` und `clock:set` die Angabe `"allowBackwards": true`. `clock:advanceTo` lehnt die Bewegung wie bei `instant` ab.
-- Eine Anfrage gibt genau eine Art der Bewegung an. Wer `seconds` oder `millis` mit `duration` oder `instant` mit `to` oder `duration` kombiniert, erhält eine Fehlermeldung, die die betreffenden Felder nennt.
+- Alle drei Endpunkte geben 400 zurück und nennen die betroffenen Felder, wenn `seconds`, `millis` oder `instant` mit einem von `null` verschiedenen Wert für `duration`, `to` oder `timeZone` kombiniert wird. Ein neues Feld mit dem JSON-Wert `null` gilt als nicht angegeben. Ein Kalenderfeld, das der Endpunkt nicht unterstützt, führt ebenfalls zu 400, sofern sein Wert nicht `null` ist.
 - Wie bei anderen Bewegungen enthält die Antwort die neue Uhrzeit im Format RFC 3339. Geplante Funktionen behandeln die Bewegung wie jede andere (siehe unten).
 
 ## Geplante Funktionen ausführen

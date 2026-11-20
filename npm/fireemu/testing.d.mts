@@ -81,7 +81,7 @@ export interface RunDueResult {
 }
 
 /** Calendar units for a clock move; every value an integer of one sign. */
-export interface CalendarUnits {
+interface CalendarUnitFields {
   readonly years?: number;
   readonly months?: number;
   readonly weeks?: number;
@@ -90,6 +90,10 @@ export interface CalendarUnits {
   readonly minutes?: number;
   readonly seconds?: number;
 }
+
+export type CalendarUnits = {
+  [Unit in keyof CalendarUnitFields]-?: Required<Pick<CalendarUnitFields, Unit>> & CalendarUnitFields;
+}[keyof CalendarUnitFields];
 
 export type ClockDuration =
   | number
@@ -101,7 +105,7 @@ export type ClockDuration =
 export type ClockAnchor = 'startOfDay' | 'endOfDay' | 'startOfMonth' | 'endOfMonth' | 'startOfNextMonth' | 'startOfYear' | 'endOfYear';
 
 export interface ClockMoveOptions {
-  /** IANA zone for calendar units and anchors; ignored by the millisecond and `{ seconds }` forms. */
+  /** IANA zone for ISO 8601 durations, calendar units and anchors. */
   readonly timeZone?: string;
   readonly allowBackwards?: boolean;
 }
@@ -113,6 +117,7 @@ export interface TestWorldClock {
    * A number is milliseconds; `{ seconds }` / `{ millis }` move by exact time as before. An ISO 8601
    * string (`'P1M'`, `'PT36H'`, `'-P3D'`) or calendar units (`{ months: 1 }`) move in a time zone:
    * `options.timeZone`, else `scheduler.defaultTimeZone`, else UTC. A move earlier needs `allowBackwards`.
+   * The exact-time number, `{ seconds }` and `{ millis }` forms reject calendar move options.
    */
   readonly advance: (duration: ClockDuration, options?: ClockMoveOptions) => Promise<ClockState>;
   /** `clock:set` to an anchor, after `options.duration` if given; earlier needs `allowBackwards`. */

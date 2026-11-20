@@ -91,14 +91,14 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'conte
 
 Se aplican las siguientes reglas.
 
-- Los años, meses, semanas y días cambian la fecha local y conservan la hora local en esa zona horaria. Las horas, minutos y segundos miden el tiempo exacto transcurrido. Cuando hay un cambio de hora, `P1D` equivale a 23 o 25 horas, mientras que `PT24H` siempre equivale a 24.
+- Los años, meses, semanas y días cambian la fecha local y conservan la hora local en esa zona horaria. Las horas, minutos y segundos miden el tiempo exacto transcurrido. `P1D` sigue el calendario local, así que el tiempo transcurrido depende de las fechas y la zona. `PT24H` siempre suma 24 horas exactas.
 - Primero se aplican los años y meses como un único número de meses. Si el día no existe en el mes de destino, se toma el último día de ese mes. El 31 de enero más `P1M` da el 28 de febrero (el 29 en año bisiesto), y el 29 de febrero más `P1Y1M` da el 29 de marzo. Después se aplican las semanas y los días y, por último, las horas, minutos y segundos.
 - Si se indican `duration` y `to` juntos, la duración se aplica primero.
-- `endOfDay`, `endOfMonth` y `endOfYear` corresponden a las 23:59:59.999999 en hora local, el último microsegundo del día que puede representar una marca de tiempo de Firestore. Por tanto, `endOfMonth` más un microsegundo es `startOfNextMonth`.
+- `endOfDay`, `endOfMonth` y `endOfYear` corresponden a las 23:59:59.999999 en hora local, el último microsegundo del día que puede representar una marca de tiempo de Firestore. Si el inicio del mes siguiente es representable y no cambia el desfase en ese límite, `startOfNextMonth` está un microsegundo después de `endOfMonth`.
 - Si una hora local se repite al atrasar los relojes, se toma el primero de los dos instantes, igual que una programación se ejecuta en la primera ocurrencia. Si una hora local no existe porque se han adelantado los relojes, se usa el desfase anterior al cambio. Así se conserva la posición dentro de la hora omitida: si se salta de las 02:00 a las 03:00, las 02:30 pasan a ser las 03:30. Las programaciones omiten esas horas. El reloj necesita un instante de destino y sigue la regla `compatible` de `java.time`, Temporal y jiff.
 - El resultado debe estar entre los años 0001 y 9999 (UTC), ambos incluidos, y también cada fecha local que calculen los años, meses, semanas, días o el ancla; las horas, minutos y segundos por sí solos no calculan ninguna fecha local. De lo contrario, se rechaza la petición con `400 INVALID_ARGUMENT`.
 - Si el destino es anterior a la hora actual, `clock:advance` y `clock:set` requieren `"allowBackwards": true`. Como ocurre con `instant`, `clock:advanceTo` rechaza ese movimiento.
-- Cada petición especifica un solo tipo de movimiento. Si combinas `seconds` o `millis` con `duration`, o `instant` con `to` o `duration`, se rechaza la petición con un mensaje que indica los campos en conflicto.
+- Los tres endpoints devuelven 400 e indican los campos en conflicto si se combina `seconds`, `millis` o `instant` con un valor distinto de `null` en `duration`, `to` o `timeZone`. Un campo nuevo con el valor JSON `null` se considera omitido. Un campo de calendario no admitido por el endpoint también devuelve 400 si su valor no es `null`.
 - Como en los demás movimientos, la respuesta contiene la nueva hora del reloj en formato RFC 3339. Las funciones programadas tratan este movimiento como cualquier otro (véase más abajo).
 
 ## Ejecutar funciones programadas

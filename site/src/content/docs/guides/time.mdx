@@ -91,14 +91,14 @@ curl -X POST http://127.0.0.1:9099/v1/sessions/default/clock:advanceTo -H 'conte
 
 The rules:
 
-- Years, months, weeks and days move the local date and keep the local time of day in that time zone; hours, minutes and seconds are exact elapsed time. `P1D` across a daylight-saving change is 23 or 25 hours; `PT24H` is always 24.
+- Years, months, weeks and days move the local date and keep the local time of day in that time zone; hours, minutes and seconds are exact elapsed time. `P1D` follows the local calendar, so its elapsed time depends on the dates and the zone. `PT24H` always adds 24 elapsed hours.
 - Years and months apply first, as a number of months, and a day that the target month does not have becomes its last day: January 31 plus `P1M` is February 28 (29 in a leap year), and February 29 plus `P1Y1M` is March 29. Weeks and days apply next, then hours, minutes and seconds.
 - With `duration` and `to` together, the duration applies first.
-- `endOfDay`, `endOfMonth` and `endOfYear` are 23:59:59.999999 local time, the last microsecond a Firestore timestamp can hold, so `endOfMonth` plus one microsecond is `startOfNextMonth`.
+- `endOfDay`, `endOfMonth` and `endOfYear` are 23:59:59.999999 local time, the last microsecond a Firestore timestamp can hold. When the next month starts at a representable instant and the boundary has no offset transition, `endOfMonth` plus one microsecond is `startOfNextMonth`.
 - A local time that happens twice (the hour after clocks go back) takes the earlier instant, as a schedule runs at the first occurrence. A local time that does not happen (the hour skipped when clocks go forward) takes the offset from before the change, which lands as far after the gap's start as the requested time was: 02:30 on a day that skips from 02:00 to 03:00 becomes 03:30. Schedules skip such a time instead; a clock move must land somewhere, and this is the `compatible` rule of `java.time`, Temporal and jiff.
 - The result must be in years 0001 through 9999 (UTC), and so must every local date that the years, months, weeks, days or the anchor compute; hours, minutes and seconds alone compute no local date. Otherwise the request is refused with `400 INVALID_ARGUMENT`.
 - A move that ends earlier than the current time needs `"allowBackwards": true` on `clock:advance` and `clock:set`, and is refused on `clock:advanceTo`, as for `instant`.
-- A request names one kind of move: `seconds` or `millis` with `duration`, or `instant` with `to` or `duration`, is refused with a message naming the fields.
+- On all three move endpoints, combining any of `seconds`, `millis` or `instant` with a non-null `duration`, `to` or `timeZone` returns 400 and identifies the fields. A new field set to JSON `null` is treated as absent. A non-null calendar field used on a move endpoint that does not accept it also returns 400.
 - The answer is the same as for the other moves: the clock's new time in RFC 3339. Scheduled functions treat the move like any other (see below).
 
 ## Run scheduled functions

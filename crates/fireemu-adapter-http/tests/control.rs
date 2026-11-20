@@ -2746,6 +2746,76 @@ impl fireemu_adapter_http::control::FunctionsHook for ClockCounting {
     }
 }
 
+/// A functions hook whose runner was retired by a dropped half write: settling answers what
+/// `FunctionsRuntime::sync_clock` answers then (pinned in fireemu-adapter-functions tests/runtime.rs,
+/// `a_clock_call_after_a_retired_half_write_fails_until_a_dispatch_recovers_the_runner`).
+struct RetiredRunner;
+
+const RETIRED_RUNNER_ERROR: &str =
+    r#"runner clock synchronization failed: RunnerGone("runner exited")"#;
+
+impl fireemu_adapter_http::control::FunctionsHook for RetiredRunner {
+    fn on_clock_changed(&self) {}
+    fn sync_clock(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async { Err(RETIRED_RUNNER_ERROR.to_owned()) })
+    }
+    fn run_schedule(
+        &self,
+        _function: &str,
+    ) -> Result<(), fireemu_adapter_http::control::RunScheduleError> {
+        Ok(())
+    }
+    fn is_idle(&self) -> bool {
+        true
+    }
+    fn idle_notify(&self) -> Arc<tokio::sync::Notify> {
+        Arc::new(tokio::sync::Notify::new())
+    }
+    fn status(&self) -> Value {
+        json!({})
+    }
+    fn publish(
+        &self,
+        _topic: &str,
+        _messages: &[Value],
+    ) -> Result<Vec<String>, fireemu_adapter_http::control::PublishMessagesError> {
+        Err(fireemu_adapter_http::control::PublishMessagesError::Invalid("not used".to_owned()))
+    }
+    fn project(&self) -> String {
+        "demo-app".to_owned()
+    }
+}
+
+/// A clock change while the runner is retired answers 503 `CLOCK_NOT_SETTLED` with the runtime's
+/// reason, as the CHANGELOG says; the move itself was applied.
+#[tokio::test]
+async fn a_retired_runner_answers_clock_not_settled() {
+    let mut s = state(Arc::new(AtomicUsize::new(0)));
+    s.functions = Some(Arc::new(RetiredRunner));
+    for (action, body) in [
+        ("clock:advance", json!({"seconds": 1})),
+        ("clock:freeze", json!({})),
+    ] {
+        let response = fireemu_adapter_http::control::handle_async(
+            &s,
+            "POST",
+            &format!("/v1/sessions/default/{action}"),
+            &RequestHeaders::default(),
+            &body,
+        )
+        .await;
+        assert_eq!(response.status, 503, "{action}: {}", response.body);
+        assert_eq!(
+            response.body["error"]["message"],
+            json!(format!("CLOCK_NOT_SETTLED : {RETIRED_RUNNER_ERROR}")),
+            "{action}: {}",
+            response.body
+        );
+    }
+}
+
 /// Every clock route that moves the clock tells the functions runtime once, so schedules come
 /// due; a refused move changes nothing and tells nobody. Only `clock:set` can opt in to going
 /// backwards, and each opt-in rewind is counted in `backwardsSets`.

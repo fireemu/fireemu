@@ -20,11 +20,9 @@
 //! - The result must lie in years 0001 through 9999 (UTC), and so must every local civil
 //!   date the calendar part or an anchor computes. Clock units alone compute no local date.
 //!
-//! A local time that happens twice (a fall-back overlap) resolves to the earlier instant, as
-//! the scheduler runs a repeated civil minute at its first occurrence. A local time that does
-//! not happen (a spring-forward gap) resolves with the offset in force before the gap, which
-//! is the later instant; the scheduler skips such a minute, so it has no rule to follow here,
-//! and this is the "compatible" disambiguation of `java.time`, Temporal and jiff.
+//! The scheduler skips that day's occurrence when the local time falls in a spring-forward gap.
+//! A clock move cannot skip the occurrence, so it lands on the same wall time shifted by the gap (02:30 becomes 03:30).
+//! A repeated local time (a fall-back overlap) resolves to the earlier instant, as it does in the scheduler.
 
 use core::fmt;
 

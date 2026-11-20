@@ -12,7 +12,7 @@ use fireemu_core_session::calendar::{
 };
 use fireemu_core_types::time::LogicalInstant;
 use jiff::civil::DateTime;
-use jiff::tz::TimeZone;
+use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 use proptest::prelude::*;
 
@@ -186,13 +186,19 @@ fn row_zone(zone: &str) -> &'static str {
     }
 }
 
-/// Local start wall time: the day-of-month edge, or one day before a 2025 transition.
-fn row_start(tz: &TimeZone, day_edge: &str, dst_edge: &str, zone_name: &str) -> LogicalInstant {
+/// Starts on the day-of-month edge or before a 2025 transition. Positive week/day moves start far enough back to land in the transition.
+fn row_start(
+    tz: &TimeZone,
+    day_edge: &str,
+    dst_edge: &str,
+    zone_name: &str,
+    duration: Option<&CalendarDuration>,
+) -> LogicalInstant {
     let (y, m, d, h, mi) = match (dst_edge, zone_name) {
-        ("gap", "America/New_York") => (2025, 3, 8, 2, 30),
-        ("overlap", "America/New_York") => (2025, 11, 1, 1, 30),
-        ("gap", _) => (2025, 3, 29, 2, 30),
-        ("overlap", _) => (2025, 10, 25, 2, 30),
+        ("gap", "America/New_York") => (2025, 3, 9, 2, 30),
+        ("overlap", "America/New_York") => (2025, 11, 2, 1, 30),
+        ("gap", _) => (2025, 3, 30, 2, 30),
+        ("overlap", _) => (2025, 10, 26, 2, 30),
         _ => match day_edge {
             "d28" => (2025, 1, 28, 10, 30),
             "d29" => (2025, 1, 29, 10, 30),
@@ -203,7 +209,15 @@ fn row_start(tz: &TimeZone, day_edge: &str, dst_edge: &str, zone_name: &str) -> 
             other => panic!("unknown day edge {other}"),
         },
     };
-    let dt = DateTime::new(y, m, d, h, mi, 0, 250_000_000).unwrap();
+    let mut dt = DateTime::new(y, m, d, h, mi, 0, 250_000_000).unwrap();
+    if matches!(dst_edge, "gap" | "overlap") {
+        let days = duration
+            .filter(|d| !d.negative && d.years == 0 && d.months == 0)
+            .map_or(1, |d| (d.weeks * 7 + d.days).max(1));
+        dt = dt
+            .checked_add(Span::new().days(-i64::try_from(days).unwrap()))
+            .unwrap();
+    }
     LogicalInstant::from_nanos(
         dt.to_zoned_datetime(tz.clone())
             .unwrap()
@@ -244,8 +258,8 @@ fn pict_rows_match_the_jiff_oracle() {
         let zone_name = row_zone(zone);
         let tz = iana(zone_name).unwrap();
         let rules = calendar_zone(zone_name).unwrap();
-        let start = row_start(&tz, day_edge, dst_edge, zone_name);
         let duration = row_duration(units, sign);
+        let start = row_start(&tz, day_edge, dst_edge, zone_name, duration.as_ref());
         let anchor = (anchor != "none").then(|| Anchor::parse(anchor).unwrap());
         let got = move_instant(start, &*rules, duration.as_ref(), anchor).unwrap();
         let want = oracle(start, &tz, duration.as_ref(), anchor);
@@ -275,24 +289,64 @@ fn pict_rows_match_the_jiff_oracle() {
 }
 
 #[test]
-fn the_rows_reach_gaps_overlaps_and_rewinds() {
-    // The table is only useful if its concrete cases exercise the hard paths.
+fn pict_rows_exercise_gap_and_fold_resolution_and_rewinds() {
     let mut gaps = 0;
+    let mut folds = 0;
     let mut rewinds = 0;
     for row in ROWS {
         let f: Vec<&str> = row.split(' ').collect();
+        let dst_edge = f[6];
         let zone_name = row_zone(f[4]);
         let tz = iana(zone_name).unwrap();
-        let start = row_start(&tz, f[5], f[6], zone_name);
         let duration = row_duration(f[1], f[2]);
+        let start = row_start(&tz, f[5], dst_edge, zone_name, duration.as_ref());
         let anchor = (f[3] != "none").then(|| Anchor::parse(f[3]).unwrap());
-        let result = oracle(start, &tz, duration.as_ref(), anchor);
+        let rules = calendar_zone(zone_name).unwrap();
+        let result = move_instant(start, &*rules, duration.as_ref(), anchor).unwrap();
         rewinds += usize::from(result < start);
-        if f[6] == "gap" && f[1] == "weeksDays" && f[2] == "positive" {
-            gaps += 1;
+        if !matches!(dst_edge, "gap" | "overlap") {
+            continue;
         }
+        let Some(duration) = duration else { continue };
+        let calendar = CalendarDuration {
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            ..duration
+        };
+        let span = span_of(&calendar);
+        if span.is_zero() {
+            continue;
+        }
+        let start_local = Timestamp::from_nanosecond(start.as_nanos())
+            .unwrap()
+            .to_zoned_datetime(tz.clone())
+            .datetime();
+        let wall = start_local.checked_add(span).unwrap();
+        let (expected_wall, expected_offset) = match tz.to_ambiguous_timestamp(wall).offset() {
+            AmbiguousOffset::Gap { before, after } => {
+                assert_eq!(dst_edge, "gap", "{row}");
+                gaps += 1;
+                let shift = i64::from(after.seconds()) - i64::from(before.seconds());
+                (wall.checked_add(Span::new().seconds(shift)).unwrap(), after)
+            }
+            AmbiguousOffset::Fold { before, .. } => {
+                assert_eq!(dst_edge, "overlap", "{row}");
+                folds += 1;
+                (wall, before)
+            }
+            AmbiguousOffset::Unambiguous { .. } => continue,
+        };
+        // Check the calendar step before any elapsed units or anchor can change its result.
+        let resolved = move_instant(start, &*rules, Some(&calendar), None).unwrap();
+        let local = Timestamp::from_nanosecond(resolved.as_nanos())
+            .unwrap()
+            .to_zoned_datetime(tz);
+        assert_eq!(local.datetime(), expected_wall, "{row}");
+        assert_eq!(local.offset(), expected_offset, "{row}");
     }
     assert!(gaps >= 1, "a calendar step into a gap");
+    assert!(folds >= 1, "a calendar step into a fold");
     assert!(rewinds >= 10, "rewinds: {rewinds}");
 }
 

@@ -269,7 +269,10 @@ export const SnapshotsPanel: Component = () => {
                         })}
                         testId={`snapshot-restore-${s.name}`}
                         // A restore puts the captured instant back on the shared clock, so it
-                        // waits for and blocks the other clock mutations like they do each other.
+                        // waits for and blocks the other clock mutations like they do each other:
+                        // disabled while one is in flight (a confirmation refused by the guard
+                        // would otherwise close without restoring), and refused synchronously.
+                        disabled={appState.clockGuard.pending()}
                         onConfirm={() =>
                           appState.clockGuard.run(async () => {
                             const r = await restoreSnapshot(session(), s.name);

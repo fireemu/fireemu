@@ -219,8 +219,8 @@ export async function createTestWorld(options={}){
     clock:Object.freeze({
       get:()=>control('GET','/v1/sessions/default'),
       set:(instant,{allowBackwards=false}={})=>control('POST','/v1/sessions/default/clock:set',{instant,allowBackwards}),
-      advance:(duration,options)=>control('POST','/v1/sessions/default/clock:advance',advanceBody(duration,options)),
-      to:(anchor,options)=>control('POST','/v1/sessions/default/clock:set',toBody(anchor,options)),
+      advance:async(duration,options)=>control('POST','/v1/sessions/default/clock:advance',advanceBody(duration,options)),
+      to:async(anchor,options)=>control('POST','/v1/sessions/default/clock:set',toBody(anchor,options)),
       advanceTo:instant=>control('POST','/v1/sessions/default/clock:advanceTo',{instant}),
       runDue:(budget=1000)=>control('POST','/v1/sessions/default/clock:runDue',{budget}),
       advanceAndSettle,

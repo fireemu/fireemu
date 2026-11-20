@@ -1437,6 +1437,9 @@ pub struct FunctionsRuntime {
     inner: Mutex<Inner>,
     #[cfg(test)]
     dispatch_encoding_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Runs in `run_due` after its settlement, before a runner is selected for the batch.
+    #[cfg(test)]
+    run_due_selection_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Only active Cloud Tasks dispatches own Tokio tasks. Reset and shutdown replace this set,
     /// which aborts every old-generation attempt and its retry timer.
     task_attempts: Mutex<tokio::task::JoinSet<()>>,
@@ -1725,6 +1728,8 @@ impl FunctionsRuntime {
             schedule_sweep_rerun: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             dispatch_encoding_probe: Mutex::new(None),
+            #[cfg(test)]
+            run_due_selection_probe: Mutex::new(None),
             inner: Mutex::new(Inner {
                 task_scheduler,
                 emulator_task_names: BTreeSet::new(),
@@ -1939,6 +1944,27 @@ impl FunctionsRuntime {
     /// them. A running clock publishes on every tick, so the loop does not wait for the revision
     /// to stand still (it would chase the ticks of a slow runner forever); it repeats only when a
     /// runner generation changed under it. The whole wait is bounded by [`CLOCK_SETTLE_BOUND`].
+    ///
+    /// What an `Ok` guarantees: every runner generation the final scan checked was, at the moment
+    /// it was checked, the one the pass had sent to, and it had acknowledged the move's revision
+    /// (or a later one), or it runs nothing: a runner stopped on purpose (a reload, a reset, a
+    /// fixed-inspector restart) or not started yet counts as settled, because it handles no work
+    /// until it is replaced or started, and its replacement or its start gets the clock first.
+    /// The scan checks the codebases one after another, not atomically.
+    ///
+    /// Which work sees the settled clock: work dispatched after the move syncs its own runner
+    /// first (`sync_runner_clock` before each dispatch; `run_due` syncs the runner it selected
+    /// for the batch), so it runs on that clock even on a runner installed after its codebase
+    /// was checked (a reload or a recovery that sampled the clock before the move). Work already
+    /// admitted to a runner before the move (a request that synced a runner which is now
+    /// draining) is pinned to that runner, not to its clock: it may run with the older revision
+    /// or with a newer one, whichever the runner holds when the work is forwarded (another
+    /// request's sync can move it), with no guarantee either way (a non-goal). Model:
+    /// verification/tla/clock-settle.
+    ///
+    /// Known limit: a runner replaced while the pass is sending to it, and kept running to drain
+    /// its admitted work, still owes this pass an answer within its 5 s frame deadline; if it
+    /// does not give one, the settlement fails with that error before the re-check could skip it.
     pub async fn sync_clock(&self) -> Result<(), String> {
         if !self.config.clock_policy.date_virtual {
             return Ok(());
@@ -1979,14 +2005,30 @@ impl FunctionsRuntime {
     }
 
     /// Drain a bounded timer batch separately from daemon event idleness.
+    ///
+    /// Time bound: the settlement scan has the [`CLOCK_SETTLE_BOUND`] cap (10 s); then, per
+    /// codebase, the sync of the runner selected for the batch has its own 5 s frame deadline,
+    /// which starts after it waited for that runner's clock lock, and the batch has its own 5 s
+    /// deadline, so one call can approach 20 s.
     pub async fn run_due(&self, budget: usize) -> Result<Value, String> {
         if !self.config.clock_policy.timers_virtual {
             return Err("virtual application timers are disabled".into());
         }
         self.sync_clock().await?;
+        #[cfg(test)]
+        {
+            let probe = self.run_due_selection_probe.lock().unwrap().clone();
+            if let Some(probe) = probe {
+                probe();
+            }
+        }
         let mut reports = Vec::new();
         for codebase in &self.codebases {
             let runner = codebase.generation().runner.clone();
+            // The runner may have been installed after the settlement checked its codebase (a
+            // reload that sampled the clock before the move): the batch goes only to a runner
+            // that holds the settled clock.
+            self.sync_runner_clock(&runner).await?;
             let mut report =
                 json!({"codebase":codebase.name,"timers":runner.run_due(budget).await?});
             if let Some(function) = &codebase.function {
@@ -7937,6 +7979,10 @@ mod restart_budget_tests;
 
 #[cfg(test)]
 mod task_completion_tests;
+
+/// A timer batch goes only to a runner that holds the settled clock.
+#[cfg(test)]
+mod clock_run_due_tests;
 
 /// Schedule runs refused by event admission (`MAX_ACTIVE_EVENT_*`): a refused occurrence stays
 /// due, a manual refusal is visible, duplicate copies are admitted all or none, and freed
