@@ -1,0 +1,9 @@
+name = "pubsub-message-ids"
+defaultTargets = ["PubSubMessageIds", "corpus"]
+
+[[lean_lib]]
+name = "PubSubMessageIds"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

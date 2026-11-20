@@ -1,0 +1,9 @@
+name = "deterministic-id-source"
+defaultTargets = ["DeterministicIdSource", "corpus"]
+
+[[lean_lib]]
+name = "DeterministicIdSource"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
