@@ -96,8 +96,8 @@ plus	int	array	-1001	i:18
 plus	int	array	12345	i:18
 plus	int	value	-1001	i:18
 plus	int	value	12345	i:18
-plus	int	priority	-1001	i:18
-plus	int	priority	12345	i:18
+plus	int	priority	-1001	d:4625759767262920704
+plus	int	priority	12345	d:4625759767262920704
 plus	text	root	-1001	i:7
 plus	text	root	12345	i:7
 plus	text	object	-1001	i:7
@@ -126,8 +126,8 @@ plus	low	array	-1001	i:-9223372036854775801
 plus	low	array	12345	i:-9223372036854775801
 plus	low	value	-1001	i:-9223372036854775801
 plus	low	value	12345	i:-9223372036854775801
-plus	low	priority	-1001	i:-9223372036854775801
-plus	low	priority	12345	i:-9223372036854775801
+plus	low	priority	-1001	d:14114281232179134464
+plus	low	priority	12345	d:14114281232179134464
 plus	float	root	-1001	d:9218868437227405311
 plus	float	root	12345	d:9218868437227405311
 plus	float	object	-1001	d:9218868437227405311
@@ -176,8 +176,8 @@ minus	int	array	-1001	i:3
 minus	int	array	12345	i:3
 minus	int	value	-1001	i:3
 minus	int	value	12345	i:3
-minus	int	priority	-1001	i:3
-minus	int	priority	12345	i:3
+minus	int	priority	-1001	d:4613937818241073152
+minus	int	priority	12345	d:4613937818241073152
 minus	text	root	-1001	i:-8
 minus	text	root	12345	i:-8
 minus	text	object	-1001	i:-8
@@ -196,8 +196,8 @@ minus	high	array	-1001	i:9223372036854775799
 minus	high	array	12345	i:9223372036854775799
 minus	high	value	-1001	i:9223372036854775799
 minus	high	value	12345	i:9223372036854775799
-minus	high	priority	-1001	i:9223372036854775799
-minus	high	priority	12345	i:9223372036854775799
+minus	high	priority	-1001	d:4890909195324358656
+minus	high	priority	12345	d:4890909195324358656
 minus	low	root	-1001	d:14114281232179134464
 minus	low	root	12345	d:14114281232179134464
 minus	low	object	-1001	d:14114281232179134464

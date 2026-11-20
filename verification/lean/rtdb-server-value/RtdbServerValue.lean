@@ -18,6 +18,11 @@ def Number.asFloat : Number → Float.Model
   | .int n => .ofInt n
   | .double bits => .ofBits bits
 
+-- The node parser widens a number embedded in a stored JSON priority to binary64.
+def embeddedPriorityBase : Option Number → Option Number
+  | some (.int n) => some (.double (Float.Model.ofInt n).toBits)
+  | base => base
+
 def minI64 : Int := -9223372036854775808
 def maxI64 : Int := 9223372036854775807
 
@@ -58,6 +63,13 @@ theorem exactInteger (lhs rhs now : Int) (low : minI64 ≤ lhs + rhs)
     resolve (.increment (.int rhs)) (some (.int lhs)) now = some (.int (lhs + rhs)) := by
   simp [resolve, add, low, high]
 
+theorem incrementEmbeddedPriority (base : Int) (delta : Number) (now : Int) :
+    resolve (.increment delta) (embeddedPriorityBase (some (.int base))) now =
+      some (addFloat (.double (Float.Model.ofInt base).toBits) delta) := by rfl
+
+theorem embeddedPriorityKeepsAbsent :
+    embeddedPriorityBase none = none := by rfl
+
 theorem malformedHasNoResult (old : Option Number) (now : Int) :
     resolve .malformed old now = none := by rfl
 
@@ -73,5 +85,10 @@ theorem malformedHasNoResult (old : Option Number) (now : Int) :
 #guard_msgs in #print axioms exactInteger
 /-- info: 'RtdbServerValue.malformedHasNoResult' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms malformedHasNoResult
+
+/-- info: 'RtdbServerValue.incrementEmbeddedPriority' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms incrementEmbeddedPriority
+/-- info: 'RtdbServerValue.embeddedPriorityKeepsAbsent' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms embeddedPriorityKeepsAbsent
 
 end RtdbServerValue

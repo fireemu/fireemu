@@ -25,5 +25,6 @@ def main : IO Unit := do
   for (action, op) in operations do
     for (kind, x) in present do
       for slot in slots do
+        let base := if slot == "priority" then embeddedPriorityBase x else x
         for now in ([-1001, 12345] : List Int) do
-          IO.println <| "\t".intercalate [action, kind, slot, toString now, resultText (resolve op x now)]
+          IO.println <| "\t".intercalate [action, kind, slot, toString now, resultText (resolve op base now)]

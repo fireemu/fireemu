@@ -86,6 +86,7 @@ fn lean_server_values_agree_with_core() {
         };
         let now_millis = millis.parse().expect("i64");
         let request = at_slot(slot, operation(op), (".sv", Json::string("timestamp")));
+        // Build the stored node through the parser so that its embedded numeric priority is widened.
         let old_value = Node::from_json(&stored(slot, existing(before)), &root, &limits).unwrap();
         assert!(has_server_value(&request), "{line:?}");
         let actual = resolve(
