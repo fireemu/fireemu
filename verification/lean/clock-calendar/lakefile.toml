@@ -1,0 +1,9 @@
+name = "clock-calendar"
+defaultTargets = ["ClockCalendar", "corpus"]
+
+[[lean_lib]]
+name = "ClockCalendar"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
