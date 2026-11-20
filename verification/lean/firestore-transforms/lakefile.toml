@@ -1,0 +1,9 @@
+name = "firestore-transforms"
+defaultTargets = ["FirestoreTransforms", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreTransforms"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

@@ -1,0 +1,9 @@
+name = "firestore-partition-query"
+defaultTargets = ["FirestorePartitionQuery", "corpus"]
+
+[[lean_lib]]
+name = "FirestorePartitionQuery"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

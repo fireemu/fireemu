@@ -1,0 +1,3 @@
+import FirestorePartitionQuery.Spec
+import FirestorePartitionQuery.Theorems
+import FirestorePartitionQuery.Axioms

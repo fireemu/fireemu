@@ -1,0 +1,9 @@
+name = "firestore-aggregates"
+defaultTargets = ["FirestoreAggregates", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreAggregates"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
