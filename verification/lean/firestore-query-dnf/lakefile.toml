@@ -1,0 +1,9 @@
+name = "firestore-query-dnf"
+defaultTargets = ["FirestoreQueryDnf", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreQueryDnf"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
