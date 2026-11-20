@@ -1,0 +1,9 @@
+name = "hosting-match"
+defaultTargets = ["HostingMatch", "corpus"]
+
+[[lean_lib]]
+name = "HostingMatch"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

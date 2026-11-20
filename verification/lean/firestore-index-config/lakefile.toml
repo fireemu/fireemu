@@ -1,0 +1,9 @@
+name = "firestore-index-config"
+defaultTargets = ["FirestoreIndexConfig", "corpus"]
+
+[[lean_lib]]
+name = "FirestoreIndexConfig"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"

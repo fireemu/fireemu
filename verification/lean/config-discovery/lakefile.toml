@@ -1,0 +1,9 @@
+name = "config-discovery"
+defaultTargets = ["ConfigDiscovery", "corpus"]
+
+[[lean_lib]]
+name = "ConfigDiscovery"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
