@@ -246,6 +246,15 @@ while True:
                 time.sleep(0.01)
         send({"type": "result", "invocationId": msg["invocationId"], "ok": True})
         continue
+    # A timer batch is answered only on request, with the clock revision the runner holds.
+    if msg.get("type") == "clock:runDue" and os.environ.get("FIREEMU_FAKE_RUN_DUE"):
+        clock_log = os.environ.get("FIREEMU_FAKE_CLOCK_LOG")
+        if clock_log:
+            with open(clock_log, "a", encoding="utf-8") as frames:
+                frames.write(json.dumps(msg) + "\n")
+        send({"type": "result", "invocationId": msg["invocationId"], "ok": True,
+              "timers": {"revision": str(clock.get("revision", ""))}})
+        continue
     if msg.get("type") != "invoke":
         continue
     frame_log = os.environ.get("FIREEMU_FAKE_FRAME_LOG")

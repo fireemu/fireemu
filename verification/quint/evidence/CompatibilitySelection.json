@@ -61,6 +61,7 @@
     "crates/fireemu-adapter-functions/src/protocol.rs",
     "crates/fireemu-adapter-functions/src/runner.rs",
     "crates/fireemu-adapter-functions/src/runtime.rs",
+    "crates/fireemu-adapter-functions/src/runtime/clock_run_due_tests.rs",
     "crates/fireemu-adapter-functions/src/runtime/event_frame_member_tests.rs",
     "crates/fireemu-adapter-functions/src/runtime/restart_budget_tests.rs",
     "crates/fireemu-adapter-functions/src/runtime/schedule_capacity_tests.rs",
@@ -632,7 +633,11 @@
     },
     "crates/fireemu-adapter-functions/src/runtime.rs": {
       "kind": "sha256",
-      "value": "be3f8ba0c153f6a8f4669e4c981f38b5088b64a640abe8191acc0a635c9e26ae"
+      "value": "622d4eb27caefec16d65f8e09053440013a4b6455d8fe5bc8217f08adb3d10b1"
+    },
+    "crates/fireemu-adapter-functions/src/runtime/clock_run_due_tests.rs": {
+      "kind": "sha256",
+      "value": "71b583dcf5204d328ebb635d3db6ae3bcff33e79f805451120f35a379f0a6ee3"
     },
     "crates/fireemu-adapter-functions/src/runtime/event_frame_member_tests.rs": {
       "kind": "sha256",

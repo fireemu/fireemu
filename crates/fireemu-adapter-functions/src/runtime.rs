@@ -1437,6 +1437,9 @@ pub struct FunctionsRuntime {
     inner: Mutex<Inner>,
     #[cfg(test)]
     dispatch_encoding_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Runs in `run_due` after its settlement, before a runner is selected for the batch.
+    #[cfg(test)]
+    run_due_selection_probe: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Only active Cloud Tasks dispatches own Tokio tasks. Reset and shutdown replace this set,
     /// which aborts every old-generation attempt and its retry timer.
     task_attempts: Mutex<tokio::task::JoinSet<()>>,
@@ -1725,6 +1728,8 @@ impl FunctionsRuntime {
             schedule_sweep_rerun: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             dispatch_encoding_probe: Mutex::new(None),
+            #[cfg(test)]
+            run_due_selection_probe: Mutex::new(None),
             inner: Mutex::new(Inner {
                 task_scheduler,
                 emulator_task_names: BTreeSet::new(),
@@ -1942,11 +1947,17 @@ impl FunctionsRuntime {
     ///
     /// What an `Ok` guarantees: every runner generation the final scan checked was, at the moment
     /// it was checked, the one the pass had sent to, and it had acknowledged the move's revision
-    /// (or a later one). The scan checks the codebases one after another, not atomically. A runner
-    /// installed after its codebase was checked (a reload or a recovery, which may have sampled
-    /// the clock before the move) is not covered: it relies on the clock sync before every
-    /// dispatch (`sync_runner_clock`, and `run_due` settling first), so no handler runs on a clock
-    /// older than the last settled move. Model: verification/tla/clock-settle.
+    /// (or a later one), or it runs nothing: a runner stopped on purpose (a reload, a reset, a
+    /// fixed-inspector restart) or not started yet counts as settled, because it handles no work
+    /// until it is replaced or started, and its replacement or its start gets the clock first.
+    /// The scan checks the codebases one after another, not atomically.
+    ///
+    /// Which work sees the settled clock: work dispatched after the move syncs its own runner
+    /// first (`sync_runner_clock` before each dispatch; `run_due` syncs the runner it selected
+    /// for the batch), so it runs on that clock even on a runner installed after its codebase
+    /// was checked (a reload or a recovery that sampled the clock before the move). Work already
+    /// admitted to a runner before the move, including a request that synced a runner that is
+    /// now draining, keeps the clock it was admitted with. Model: verification/tla/clock-settle.
     ///
     /// Known limit: a runner replaced while the pass is sending to it, and kept running to drain
     /// its admitted work, still owes this pass an answer within its 5 s frame deadline; if it
@@ -1996,9 +2007,20 @@ impl FunctionsRuntime {
             return Err("virtual application timers are disabled".into());
         }
         self.sync_clock().await?;
+        #[cfg(test)]
+        {
+            let probe = self.run_due_selection_probe.lock().unwrap().clone();
+            if let Some(probe) = probe {
+                probe();
+            }
+        }
         let mut reports = Vec::new();
         for codebase in &self.codebases {
             let runner = codebase.generation().runner.clone();
+            // The runner may have been installed after the settlement checked its codebase (a
+            // reload that sampled the clock before the move): the batch goes only to a runner
+            // that holds the settled clock.
+            self.sync_runner_clock(&runner).await?;
             let mut report =
                 json!({"codebase":codebase.name,"timers":runner.run_due(budget).await?});
             if let Some(function) = &codebase.function {
@@ -7949,6 +7971,10 @@ mod restart_budget_tests;
 
 #[cfg(test)]
 mod task_completion_tests;
+
+/// A timer batch goes only to a runner that holds the settled clock.
+#[cfg(test)]
+mod clock_run_due_tests;
 
 /// Schedule runs refused by event admission (`MAX_ACTIVE_EVENT_*`): a refused occurrence stays
 /// due, a manual refusal is visible, duplicate copies are admitted all or none, and freed

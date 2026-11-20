@@ -5283,11 +5283,11 @@ async fn a_clock_call_after_a_retired_half_write_fails_until_a_dispatch_recovers
     assert!(dropped.is_err(), "the send was not dropped");
     assert!(retired, "the runner with a half frame was kept");
     let refused = refused.expect("the clock call answers at once");
-    assert!(
-        refused
-            .as_ref()
-            .is_err_and(|error| error.contains("runner clock synchronization failed")),
-        "{refused:?}"
+    // The same text the control adapter test turns into 503 `CLOCK_NOT_SETTLED`
+    // (fireemu-adapter-http tests/control.rs, `a_retired_runner_answers_clock_not_settled`).
+    assert_eq!(
+        refused,
+        Err(r#"runner clock synchronization failed: RunnerGone("runner exited")"#.to_owned())
     );
     assert!(
         recovered.is_ok(),
