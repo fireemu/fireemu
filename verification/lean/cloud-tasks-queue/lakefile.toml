@@ -1,0 +1,9 @@
+name = "cloud-tasks-queue"
+defaultTargets = ["CloudTasksQueue", "corpus"]
+
+[[lean_lib]]
+name = "CloudTasksQueue"
+
+[[lean_exe]]
+name = "corpus"
+root = "Main"
