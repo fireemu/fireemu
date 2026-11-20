@@ -53,8 +53,8 @@ import WritePrecondition.Counterexamples
 /-- info: 'WP.no_op_can_retry_with_unchanged_time' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms WP.no_op_can_retry_with_unchanged_time
 
-/-- info: 'WP.changed_fields_can_reuse_imported_time' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms WP.changed_fields_can_reuse_imported_time
+/-- info: 'WP.changed_fields_advance_past_imported_time' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms WP.changed_fields_advance_past_imported_time
 
 /-- info: 'WP.delete_can_change_existence_without_a_retry_time' depends on axioms: [propext] -/
 #guard_msgs in #print axioms WP.delete_can_change_existence_without_a_retry_time

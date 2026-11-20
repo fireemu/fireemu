@@ -274,7 +274,7 @@ fn replaying_a_noop_set_with_its_reported_update_time_succeeds() {
 }
 
 #[test]
-fn a_changed_write_can_reuse_an_imported_update_time() {
+fn a_changed_write_advances_past_the_imported_update_time() {
     let path = path();
     let mut store = seeded(&path, Some(10_000), Some((11_000, Some(7))));
     let mut write = parse_write("set:none:8", &path);
@@ -282,11 +282,13 @@ fn a_changed_write_can_reuse_an_imported_update_time() {
         .commit(std::slice::from_ref(&write), None, at(10_001))
         .unwrap();
     assert_eq!(first.changes.len(), 1);
-    assert_eq!(first.write_results[0].update_time, Some(at(11_000)));
+    assert_eq!(first.write_results[0].update_time, Some(at(12_000)));
     write.precondition = Some(Precondition::UpdateTime(at(11_000)));
-    let second = store.commit(&[write], None, at(10_001)).unwrap();
-    assert_eq!(second.write_results[0].update_time, Some(at(11_000)));
-    assert_eq!(observe(&store, &path), Some((11_000, Some(8))));
+    assert_eq!(
+        status(&store.commit(&[write], None, at(10_001))),
+        Status::FailedPrecondition
+    );
+    assert_eq!(observe(&store, &path), Some((12_000, Some(8))));
 }
 
 #[test]
@@ -318,10 +320,65 @@ fn the_core_compares_submicrosecond_update_times_exactly() {
     );
     let mut store = seeded(&path, Some(10_000), Some((10_001, Some(7))));
     let committed = store.commit(&[write], None, at(10_001)).unwrap();
-    assert_eq!(committed.write_results[0].update_time, Some(at(11_000)));
+    assert_eq!(committed.write_results[0].update_time, Some(at(11_001)));
 }
 
 proptest! {
+    #[test]
+    fn changed_documents_advance_past_imported_times_and_earlier_commits(
+        clock in -100_000_i128..100_000,
+        prior_offset in -5000_i128..=5000,
+        offsets in prop::collection::vec(prop::option::of(prop_oneof![
+            Just(0_i128), -5000_i128..0, 1_i128..=5000,
+        ]), 0..=4),
+        writes in prop::collection::vec((
+            0_usize..5,
+            prop::sample::select(vec!["set:none:7", "set:none:8", "empty-mask:none",
+                "masked:exists:-", "create:missing:7", "transform:none:1", "delete:none"]),
+            -5000_i128..=5000,
+        ), 1..=20),
+    ) {
+        let paths: Vec<_> = (0..=offsets.len()).map(|i| DocumentPath::parse(
+            &ProjectId::try_new("demo-write-precondition").unwrap(),
+            &DatabaseId::default_database(),
+            &format!("docs/{i}"),
+        ).unwrap()).collect();
+        let mut store = FirestoreState::new();
+        let prior = store.import_documents(vec![], at(clock + prior_offset)).unwrap();
+        let docs = offsets.iter().zip(&paths).map(|(offset, path)| ImportedDocument {
+            path: path.clone(),
+            fields: fields(Some(7)),
+            create_time: None,
+            update_time: offset.map(|offset| at(clock + offset)),
+        }).collect();
+        let imported = store.import_documents(docs, at(clock)).unwrap();
+        prop_assert!(imported.commit_time > prior.commit_time);
+        let mut latest = imported.commit_time;
+        for (offset, path) in offsets.iter().zip(&paths) {
+            let expected = offset.map_or(imported.commit_time, |offset| at(clock + offset));
+            prop_assert_eq!(store.get(path).unwrap().update_time, expected);
+            latest = latest.max(expected);
+        }
+        for (index, kind, offset) in writes {
+            let path = &paths[index % paths.len()];
+            let before = observe(&store, path);
+            let result = store.commit(&[parse_write(kind, path)], None, at(clock + offset));
+            let after = observe(&store, path);
+            let Ok(commit) = result else {
+                prop_assert_eq!(after, before);
+                continue;
+            };
+            prop_assert!(commit.commit_time > latest);
+            if let Some((time, value)) = after {
+                if before.map(|(_, old)| old) != Some(value) {
+                    prop_assert!(before.is_none_or(|(old_time, _)| time > old_time));
+                    prop_assert_eq!(at(time), commit.commit_time);
+                }
+            }
+            latest = commit.commit_time;
+        }
+    }
+
     #[test]
     fn each_write_follows_the_precondition_and_body_rules(
         kind in prop::sample::select(vec![

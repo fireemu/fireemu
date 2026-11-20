@@ -2764,6 +2764,7 @@ impl FirestoreState {
         let next_version = CommitVersion(self.version.0 + 1);
         // Stage and validate everything before anything is published.
         let mut staged: BTreeMap<DocumentPath, (Document, u64)> = BTreeMap::new();
+        let mut latest_time = commit_time;
         for imported in documents {
             let mut fields = imported.fields;
             normalize_fields_for_storage(&mut fields);
@@ -2780,9 +2781,10 @@ impl FirestoreState {
                 &document.fields,
                 self.limit_scope,
             )?;
+            latest_time = latest_time.max(document.update_time);
             staged.insert(imported.path, (document, logical_bytes));
         }
-        self.last_commit_time = Some(commit_time);
+        self.last_commit_time = Some(latest_time);
         self.compaction_forecast = None;
         if staged.is_empty() {
             return Ok(CommitResult {

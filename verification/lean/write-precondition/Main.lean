@@ -5,7 +5,7 @@ import WritePrecondition
 
 After the header, each case is one line:
 
-    <label> <last-commit> <initial-update-time> <initial-field> <now> <write>... => <status> <final-update-time> <final-field> <commit-time> <reported-update-time>...
+    <label> <import-clock> <initial-update-time> <initial-field> <now> <write>... => <status> <final-update-time> <final-field> <commit-time> <reported-update-time>...
 
 Times are signed decimal nanoseconds. Fields are decimal i64s. A dash means missing. Writes are
 `kind:condition[:operand[:delta]]`, with `none`, `exists`, `missing` or `at@<nanoseconds>` as the
@@ -45,7 +45,7 @@ structure Case where
   writes : List (String × Write)
 
 def encCase (c : Case) : String :=
-  let stamp := nextCommitTime c.last c.now
+  let stamp := nextCommitTime (c.last.map fun clock => importClock (nextCommitTime none clock) c.initial) c.now
   let result := batch stamp c.initial (c.writes.map Prod.snd)
   let final := publishedDocument c.initial result
   let input := [c.label, encOptional c.last, encOptional (documentTime c.initial),
@@ -104,7 +104,7 @@ def scenarios : List Case :=
    mk "saturates-below" (some ⟨10000, some (-9223372036854775807)⟩) [inc (some (-2)) .none],
    mk "saturation-is-a-noop" (some ⟨10000, some 9223372036854775807⟩)
      [inc (some 1) .none, inc (some 1) (.updateTime 10000)],
-   mk "changed-fields-same-imported-time" (some ⟨11000, some 7⟩)
+   mk "changed-fields-reject-stale-imported-time" (some ⟨11000, some 7⟩)
      [set 8 .none, set 8 (.updateTime 11000)],
    ⟨"negative-clock-floors", none, none, -1, [set 7 .none]⟩,
    ⟨"clock-skips-microseconds", last, old, 12543, [set 8 .none]⟩]

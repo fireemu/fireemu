@@ -11,6 +11,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 ### Fixed
 
 - Security Rules (Firestore, Storage, Realtime Database): a regular expression whose character class starts with a negation followed by a literal caret (`[^^...]`) is no longer misread by the nesting check, which could refuse a valid pattern for group depth when a later class held parentheses.
+- Firestore: after importing documents whose update times are later than the session clock, a later write to such a document now gets a strictly later update time; it could reuse the imported time, so an `updateTime` precondition taken before the write still matched afterwards.
 
 ## [0.62.0] - 2026-11-20
 
