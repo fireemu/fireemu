@@ -158,7 +158,9 @@ mod tests {
 
     #[test]
     fn check_requires_exact_generated_file_names_and_contents() {
-        let temp = std::env::temp_dir().join(format!("fireemu-proto-test-{}", std::process::id()));
+        let stamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+        let temp =
+            std::env::temp_dir().join(format!("fireemu-proto-test-{}-{stamp}", std::process::id()));
         fs::create_dir(&temp).unwrap();
         let fixture = Fixture(temp);
         let expected = fixture.0.join("from-vendored");

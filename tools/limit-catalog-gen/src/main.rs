@@ -557,8 +557,11 @@ mod tests {
 
     #[test]
     fn check_detects_changed_missing_and_orphaned_generated_rust_files() {
-        let temp =
-            std::env::temp_dir().join(format!("fireemu-catalog-test-{}", std::process::id()));
+        let stamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+        let temp = std::env::temp_dir().join(format!(
+            "fireemu-catalog-test-{}-{stamp}",
+            std::process::id()
+        ));
         fs::create_dir(&temp).unwrap();
         let fixture = Fixture(temp);
         let specs = fixture.0.join("spec");
