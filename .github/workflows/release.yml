@@ -52,7 +52,7 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - id: matrix
@@ -115,7 +115,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       # No pnpm cache: the assets built here are embedded in every published binary, and a pnpm
@@ -149,7 +149,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - name: the pinned real SDK for the Functions runtime tests
@@ -168,7 +168,7 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - uses: actions/download-artifact@v8.0.2
@@ -324,7 +324,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - uses: actions/download-artifact@v8.0.2
@@ -394,13 +394,13 @@ jobs:
           version: 10.32.1
       # The Functions runtime of the FUNCTIONS-HTTP fixture: the Node its production comparison
       # was recorded with (FUNCTIONS-HTTP-comparison.json nodeVersion).
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22.22.1
       - name: keep the Functions runtime Node
         run: echo "FIREEMU_NODE=$(command -v node)" >> "$GITHUB_ENV"
       # The harnesses' Node: the runtime the lanes recorded their local comparisons with.
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24.14.0
       # uv runs the FS-DATA-WRITE corpus exporter (standard library only) on the runner's Python.
@@ -493,7 +493,7 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -668,7 +668,7 @@ jobs:
           ref: 24122ce3e375323da91290de11d01b45d14aa9a5
           path: recovery-source
           persist-credentials: false
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org

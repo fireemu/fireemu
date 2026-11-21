@@ -83,7 +83,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
       - uses: dtolnay/rust-toolchain@v1
@@ -148,7 +148,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
