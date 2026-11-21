@@ -9,6 +9,7 @@ use fireemu_core_auth::jwt::{
 use fireemu_core_auth::mfa::TotpPolicy;
 use fireemu_core_auth::store::{AuthRegistry, AuthStore, NewUser};
 use fireemu_core_types::determinism::SplitMix64;
+use fireemu_core_types::json::{parse, JsonValue};
 use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 use std::sync::{Arc, Mutex};
 
@@ -92,6 +93,25 @@ fn unsigned_token_has_three_parts_and_round_trips() {
     );
     assert_eq!(decoded.sub(), Some(uid.as_str()));
     assert_eq!(decoded.exp(), Some(claims.exp));
+    assert_eq!(
+        decoded.payload.get("user_id").and_then(JsonValue::as_str),
+        Some(uid.as_str())
+    );
+    assert_eq!(
+        decoded.payload.get("email").and_then(JsonValue::as_str),
+        Some("a@example.com")
+    );
+    assert_eq!(
+        decoded
+            .payload
+            .get("email_verified")
+            .and_then(JsonValue::as_bool),
+        Some(false)
+    );
+    let expected_firebase =
+        parse(r#"{"identities":{"email":["a@example.com"]},"sign_in_provider":"password"}"#)
+            .unwrap();
+    assert_eq!(decoded.payload.get("firebase"), Some(&expected_firebase));
 }
 
 #[test]
