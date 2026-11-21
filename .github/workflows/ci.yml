@@ -47,7 +47,7 @@ jobs:
           workspaces: . -> target/normal
           cache-bin: "false"
           save-if: "false"
-      - uses: taiki-e/install-action@v2.87.30
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-deny
       - name: CI workflow topology and cache ownership
@@ -111,7 +111,7 @@ jobs:
           workspaces: . -> target/normal
           cache-bin: "false"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@v2.87.30
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-nextest@0.9.143
       # The Functions runtime tests load the pinned real firebase-functions SDK from the conformance
@@ -239,7 +239,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-      - uses: taiki-e/install-action@v2.87.30
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-nextest@0.9.143
       - uses: Swatinem/rust-cache@v2.9.3
@@ -574,7 +574,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-      - uses: taiki-e/install-action@v2.87.30
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-nextest@0.9.143
       - uses: Swatinem/rust-cache@v2.9.3
