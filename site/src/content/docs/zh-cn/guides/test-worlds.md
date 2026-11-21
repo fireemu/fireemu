@@ -70,6 +70,27 @@ await withTestWorld(
 - 必须在一个测试中共存的世界，用 `Promise.allSettled` 创建，并在 `finally` 中释放。
 - `Promise.all([createTestWorld(), ...])` 后接 `try/finally`，会在某次创建失败时泄漏已启动的世界（见[测试世界指南](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)）。
 
+## 测试 Hosting 网站
+
+选择 `hosting` 后，`firebase.json` 中的网站会通过分配给测试世界的端口提供服务。如果网站将请求重写到 Cloud Functions，请同时选择 `functions` 以及这些函数使用的服务。
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url);
+  },
+);
+```
+
+`world.hostingUrl` 是第一个网站的 URL。`world.endpoints.hosting` 描述该网站的端点。`world.hostingSites` 按配置顺序列出各网站的 `site` 和 `url`。没有显式名称或部署目标的网站使用测试世界的项目 ID。关闭 Hosting 时，主 URL 和端点都是 `undefined`，网站列表为空。
+
+并行的浏览器 worker 可以使用相同的项目 ID 和相对 API 路径。每个 worker 都应打开自己的测试世界 URL。重置时会恢复创建测试世界时保存的公开文件以及 Firestore 和 Realtime Database 规则。每次重置后请重新读取 Hosting URL。
+
 ## 按日历单位移动时钟
 
 `world.clock.advance` 也接受 ISO 8601 时长或日历单位，`world.clock.to` 可将时钟移至某一天、某个月或某一年的起点或终点。计算日历单位和这些边界时使用 `timeZone`，省略时使用世界的 `scheduler.defaultTimeZone`，若也未设置则使用 UTC。具体规则见[时间与定时函数](../time/#按时长移动时钟或将时钟移至日历边界)。

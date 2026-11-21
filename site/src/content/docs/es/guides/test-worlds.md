@@ -70,6 +70,27 @@ El cliente `fireemu/control` también funciona en comandos `fireemu exec` y comp
 - Los mundos que deben coexistir dentro de una prueba se crean con `Promise.allSettled` y se liberan en `finally`.
 - `Promise.all([createTestWorld(), ...])` seguido de `try/finally` pierde los mundos que ya iniciaron cuando falla una creación (consulta la [guía de mundos de prueba](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
+## Probar un sitio de Hosting
+
+Selecciona `hosting` para servir los sitios de `firebase.json` en puertos asignados a tu mundo. Si el sitio reescribe solicitudes a funciones, incluye `functions` y los servicios que usan esas funciones.
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url);
+  },
+);
+```
+
+`world.hostingUrl` es la URL del primer sitio. `world.endpoints.hosting` describe su punto de conexión. `world.hostingSites` enumera el `site` y la `url` de cada sitio en el orden de la configuración. Un sitio sin nombre ni destino explícitos usa el ID del proyecto del mundo. Cuando Hosting está desactivado, la URL principal y su punto de conexión son `undefined`, y la lista de sitios está vacía.
+
+Los workers del navegador pueden usar el mismo ID de proyecto y las mismas rutas relativas de API en paralelo. Cada worker abre la URL de su propio mundo. Al reiniciar, se restauran los archivos públicos y las reglas de Firestore y Realtime Database que se guardaron al crear el mundo. Vuelve a leer las URL de Hosting después de cada reinicio.
+
 ## Mover el reloj por unidades de calendario
 
 `world.clock.advance` también acepta una duración ISO 8601 o unidades de calendario. `world.clock.to` mueve el reloj al inicio o al final de un día, mes o año. Tanto las unidades de calendario como esos puntos de referencia usan `timeZone`. Si se omite, se usa `scheduler.defaultTimeZone` del mundo y, si tampoco se ha configurado, UTC. Consulta las reglas en [Tiempo y funciones programadas](../time/#mover-el-reloj-una-duración-determinada-o-hasta-un-límite-del-calendario).

@@ -70,6 +70,27 @@ await withTestWorld(
 - 하나의 테스트 안에서 함께 존재해야 하는 월드는 `Promise.allSettled`로 만들고 `finally`에서 dispose합니다.
 - `Promise.all([createTestWorld(), ...])` 뒤에 `try/finally`를 두면, 하나의 생성이 실패할 때 이미 시작된 월드가 누수됩니다([테스트 월드 가이드](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds) 참조).
 
+## Hosting 사이트 테스트
+
+`hosting`을 선택하면 `firebase.json`에 지정된 사이트를 월드에 할당된 포트로 제공할 수 있습니다. Functions로 요청을 재작성하는 경우 `functions`와 해당 함수에서 사용하는 서비스도 선택하세요.
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url);
+  },
+);
+```
+
+`world.hostingUrl`은 첫 번째 사이트의 URL입니다. `world.endpoints.hosting`은 해당 사이트의 엔드포인트를 나타내며, `world.hostingSites`는 구성 순서대로 각 사이트의 `site`와 `url`을 제공합니다. 이름이나 배포 대상이 없는 사이트에는 월드의 프로젝트 ID가 사용됩니다. Hosting을 끄면 기본 URL과 엔드포인트는 `undefined`이고 사이트 목록은 비어 있습니다.
+
+병렬 브라우저 워커는 같은 프로젝트 ID와 상대 API 경로를 사용할 수 있습니다. 각 워커는 자기 월드의 URL을 엽니다. 월드를 리셋하면 생성 시 저장한 공개 파일과 Firestore 및 Realtime Database 규칙이 복원됩니다. 리셋한 뒤에는 Hosting URL을 다시 읽으세요.
+
 ## 달력 단위로 시계 이동
 
 `world.clock.advance`에는 ISO 8601 형식의 기간이나 달력 단위도 지정할 수 있습니다. `world.clock.to`는 시계를 일, 월, 연도의 시작 또는 끝으로 옮깁니다. 달력 단위와 경계 시각을 계산할 때는 `timeZone`을 사용합니다. 생략하면 월드의 `scheduler.defaultTimeZone`을 사용하고, 이 값도 없으면 UTC를 사용합니다. 자세한 규칙은 [시간과 예약 함수](../time/#지정한-기간만큼-또는-달력의-경계로-시계-이동)를 참조하십시오.

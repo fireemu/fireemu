@@ -70,6 +70,27 @@ Der Client `fireemu/control` funktioniert auch in `fireemu exec`-Befehlen und te
 - Welten, die innerhalb eines Tests nebeneinander bestehen müssen, werden mit `Promise.allSettled` erstellt und in `finally` freigegeben.
 - `Promise.all([createTestWorld(), ...])` gefolgt von `try/finally` lässt die Welten, die gestartet wurden, auslaufen (leaken), wenn eine Erstellung fehlschlägt (siehe die [Anleitung zu Testwelten](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)).
 
+## Eine Hosting-Website testen
+
+Wählen Sie `hosting`, um die Websites aus `firebase.json` über Ports Ihrer Testwelt bereitzustellen. Wenn Hosting Anfragen an Functions umschreibt, wählen Sie auch `functions` und die von diesen Funktionen verwendeten Dienste aus.
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url);
+  },
+);
+```
+
+`world.hostingUrl` ist die URL der ersten Website. `world.endpoints.hosting` beschreibt deren Endpunkt. `world.hostingSites` enthält `site` und `url` für jede Website in der Reihenfolge der Konfiguration. Eine Website ohne Namen oder Bereitstellungsziel verwendet die Projekt-ID der Testwelt. Wenn Hosting deaktiviert ist, sind die primäre URL und der Endpunkt `undefined`. Die Liste der Websites ist leer.
+
+Parallele Browser-Worker können dieselbe Projekt-ID und dieselben relativen API-Pfade verwenden. Jeder Worker öffnet die URL seiner eigenen Testwelt. Ein Reset stellt die bei der Erstellung gespeicherten öffentlichen Dateien sowie die Regeln für Firestore und Realtime Database wieder her. Lesen Sie die Hosting-URLs nach jedem Reset erneut.
+
 ## Die Uhr in Kalendereinheiten verstellen
 
 `world.clock.advance` akzeptiert auch eine Zeitspanne nach ISO 8601 oder Kalendereinheiten. `world.clock.to` stellt die Uhr auf den Anfang oder das Ende eines Tages, Monats oder Jahres. Für Kalendereinheiten und solche Zielpunkte gilt `timeZone`, ohne diese Angabe die Einstellung `scheduler.defaultTimeZone` der Welt und sonst UTC. Die Regeln stehen unter [Zeit und geplante Funktionen](../time/#die-uhr-um-eine-zeitspanne-oder-auf-eine-kalendergrenze-stellen).
