@@ -918,7 +918,7 @@
     },
     "crates/fireemu-adapter-grpc/src/streams.rs": {
       "kind": "sha256",
-      "value": "295ae513585abcba329608004f8351665a2695108e87893094b7e2b454aa30f6"
+      "value": "e1c2f42a1f3f8914fd1c1c3f9c5ec2447680fecf6c7f698a4ae6009af5896a50"
     },
     "crates/fireemu-adapter-grpc/src/streams/frame_identity_tests.rs": {
       "kind": "sha256",
@@ -1614,7 +1614,7 @@
     },
     "crates/fireemu-core-firestore/src/store.rs": {
       "kind": "sha256",
-      "value": "bef7faa8222d422e715509078faf7e891a868215ad0bcd95552c510546409cdc"
+      "value": "9920f403a27b805c5c301294b2b1e06f4ecf949faf2eb21d81a23a2361f03d55"
     },
     "crates/fireemu-core-firestore/src/store/path-indexes.generated.tsv": {
       "kind": "sha256",
@@ -1930,7 +1930,7 @@
     },
     "crates/fireemu-core-types/src/hash.rs": {
       "kind": "sha256",
-      "value": "67eb5a8c0d08558ee7e3f98e298107e46482e09da14aa9a1bbba7727ca978a33"
+      "value": "59301147f97084b417d14c9cd274d8b6e891419224cfb78e6f588dde49ca4640"
     },
     "crates/fireemu-core-types/src/ids.rs": {
       "kind": "sha256",
@@ -1938,7 +1938,7 @@
     },
     "crates/fireemu-core-types/src/json.rs": {
       "kind": "sha256",
-      "value": "91133f2950cf120bb094b606deeb553f28dade49d26a59d04f8e937f812f5f04"
+      "value": "f11397c45cfa6ac622d5354146c16c660ea30ea37a6bd2c54be74d9c784bcefa"
     },
     "crates/fireemu-core-types/src/lib.rs": {
       "kind": "sha256",
@@ -2102,7 +2102,7 @@
     },
     "crates/fireemu/src/hosting.rs": {
       "kind": "sha256",
-      "value": "d039d40de49f34c58f0132bb52a18b76eed6bdf6c61ec2c7b4acee45d145b5e8"
+      "value": "87d998d4262e0e061b7e21c7d8658a47b8ab9c34da6baaab14ee3a00f82fdc13"
     },
     "crates/fireemu/src/hosting/content-type-samples.json": {
       "kind": "json-semantic",
@@ -2122,7 +2122,7 @@
     },
     "crates/fireemu/src/hosting/files.rs": {
       "kind": "sha256",
-      "value": "0fa6ff0530358eff41b8388c8a5d0f833fa114a965bc8db83d46add2bc167760"
+      "value": "b8ecd53e13e055468159dbbeb762d38928cfe361e9516263734ee64993d5ab98"
     },
     "crates/fireemu/src/hosting/generate-content-types.mjs": {
       "kind": "sha256",

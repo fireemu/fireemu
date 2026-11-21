@@ -87,6 +87,52 @@ impl fmt::Display for JsonError {
 
 impl std::error::Error for JsonError {}
 
+fn is_string_delimiter(byte: u8) -> bool {
+    byte < 0x20 || matches!(byte, b'"' | b'\\')
+}
+
+fn scalar_delimiter_offset(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .position(|&byte| is_string_delimiter(byte))
+        .unwrap_or(bytes.len())
+}
+
+fn has_zero_byte(word: u64) -> bool {
+    // A borrow can set extra bits after a zero byte but cannot signal a hit without one.
+    // The exact byte position is found by scanning the hit chunk.
+    (word.wrapping_sub(0x0101_0101_0101_0101) & !word & 0x8080_8080_8080_8080) != 0
+}
+
+fn string_delimiter_offset(bytes: &[u8]) -> usize {
+    const PREFIX: usize = 4;
+    if bytes.len() < 16 {
+        return scalar_delimiter_offset(bytes);
+    }
+    // Escape-heavy strings often hit a delimiter immediately, even in a large document.
+    let found = scalar_delimiter_offset(&bytes[..PREFIX]);
+    if found < PREFIX {
+        return found;
+    }
+    PREFIX + word_delimiter_offset(&bytes[PREFIX..])
+}
+
+fn word_delimiter_offset(bytes: &[u8]) -> usize {
+    let mut chunks = bytes.chunks_exact(8);
+    for (index, chunk) in chunks.by_ref().enumerate() {
+        let word = u64::from_ne_bytes(chunk.try_into().expect("an exact eight-byte chunk"));
+        // Equal bytes have zero XOR. Bytes below 0x20 have all three high bits clear.
+        if has_zero_byte(word ^ 0x2222_2222_2222_2222)
+            || has_zero_byte(word ^ 0x5c5c_5c5c_5c5c_5c5c)
+            || has_zero_byte(word & 0xe0e0_e0e0_e0e0_e0e0)
+        {
+            return index * 8 + scalar_delimiter_offset(chunk);
+        }
+    }
+    let tail = chunks.remainder();
+    bytes.len() - tail.len() + scalar_delimiter_offset(tail)
+}
+
 struct Parser<'a> {
     // Keep the original, already UTF-8-validated string for constant-time slicing.
     text: &'a str,
@@ -287,16 +333,12 @@ impl Parser<'_> {
                     // Starting on a boundary, the next delimiter or EOF is also a boundary.
                     let start = self.pos;
                     let run = &self.src[start..];
-                    let delimiter = |byte| byte < 0x20 || matches!(byte, b'"' | b'\\');
-                    if b.is_ascii() && run.get(1).is_none_or(|&next| delimiter(next)) {
+                    if b.is_ascii() && run.get(1).is_none_or(|&next| is_string_delimiter(next)) {
                         out.push(char::from(b));
                         self.pos += 1;
                         continue;
                     }
-                    let len = run[1..]
-                        .iter()
-                        .position(|&byte| delimiter(byte))
-                        .map_or(run.len(), |end| end + 1);
+                    let len = 1 + string_delimiter_offset(&run[1..]);
                     let end = start + len;
                     let text = self
                         .text
@@ -364,6 +406,47 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn string_delimiter_search_matches_the_byte_reference() {
+        let mut storage = [b'x'; 65];
+        for alignment in 0..8 {
+            for offset in [0, 3, 4, 7, 8, 11, 12, 15, 16, 23, 24, 31, 32] {
+                for byte in 0..=u8::MAX {
+                    storage[alignment + offset] = byte;
+                    for length in [8, 15, 16, 17, 31, 32, 33, 57] {
+                        let bytes = &storage[alignment..alignment + length];
+                        let expected = bytes
+                            .iter()
+                            .position(|byte| matches!(*byte, 0x00..=0x1f | b'"' | b'\\'))
+                            .unwrap_or(bytes.len());
+                        assert_eq!(string_delimiter_offset(bytes), expected);
+                    }
+                    storage[alignment + offset] = b'x';
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_json_strings_preserve_utf8_escapes_and_error_offsets() {
+        for tail in [0, 1, 7, 8, 15, 16, 23, 24, 31, 32] {
+            let literal = format!("{}{}", "x".repeat(64 + tail), "é🧯");
+            let valid = format!("\"{literal}\\ud83e\\uddef\\n\"");
+            assert_eq!(
+                parse(&valid),
+                Ok(JsonValue::String(format!("{literal}🧯\n")))
+            );
+            let invalid = format!("\"{literal}\u{1f}\"");
+            assert_eq!(
+                parse(&invalid),
+                Err(JsonError {
+                    offset: literal.len() + 1,
+                    expected: "no control characters in strings",
+                })
+            );
+        }
+    }
 
     #[test]
     fn parses_nested_documents_and_escapes() {

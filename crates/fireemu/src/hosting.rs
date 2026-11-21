@@ -521,6 +521,7 @@ impl Site {
                 )
                 .collect(),
             self.ignore_root.clone(),
+            self.strict,
         )
         .await
     }
@@ -563,7 +564,7 @@ impl Site {
         if !self.strict {
             return Self::file_response(path, asset, status, head);
         }
-        let etag = format!("\"{}\"", asset.sha256);
+        let etag = asset.etag;
         let header = |name: &str| request.get(name).and_then(|value| value.to_str().ok());
         if status == 200
             && production::not_modified(

@@ -512,6 +512,12 @@ impl KnownDocuments {
             .map(|(collection, document)| collection.as_str().len() + document.as_str().len() + 2)
             .sum::<usize>();
         let mut key = String::with_capacity(bytes);
+        Self::write_key(path, &mut key);
+        key
+    }
+
+    fn write_key(path: &DocumentPath, key: &mut String) {
+        key.clear();
         for (index, (collection, document)) in path.pairs().iter().enumerate() {
             if index > 0 {
                 key.push('\0');
@@ -520,7 +526,6 @@ impl KnownDocuments {
             key.push('\0');
             key.push_str(document.as_str());
         }
-        key
     }
 
     fn get(&self, path: &DocumentPath) -> Option<CommitVersion> {
@@ -558,8 +563,8 @@ impl KnownDocuments {
     /// and the paths that left the target, in path order, taken out of the map.
     ///
     /// The map is updated rather than rebuilt: a rebuilt map copies every path of the result
-    /// while the old map is still alive, on every full refresh of a large target. A key is made
-    /// only when a path enters the map, and the departed ones are found without copying
+    /// while the old map is still alive, on every full refresh of a large target. Lookups reuse
+    /// one key buffer, and only new paths need an owned map key. Departures are found without copying
     /// `current`: it holds each path once (a query's rows are distinct and a document target's
     /// names are deduplicated), so once every current path is in the map, an equal count means
     /// no path left, and otherwise the map's other keys are the departed ones.
@@ -571,8 +576,15 @@ impl KnownDocuments {
         out: &mut Vec<PendingListenResponse>,
     ) -> (usize, Vec<DocumentPath>) {
         let mut changed = 0_usize;
+        let mut key = String::new();
         for doc in current {
-            let key = Self::key(&doc.path);
+            #[cfg(test)]
+            let before = key.capacity();
+            Self::write_key(&doc.path, &mut key);
+            #[cfg(test)]
+            if key.capacity() > before {
+                KNOWN_LOOKUP_BUFFER_GROWTHS.with(|count| count.set(count.get() + 1));
+            }
             match self.versions.get_mut(key.as_str()) {
                 Some(version) if *version == doc.version => {}
                 Some(version) => {
@@ -583,7 +595,7 @@ impl KnownDocuments {
                 None => {
                     #[cfg(test)]
                     KNOWN_KEYS_INSERTED.with(|count| count.set(count.get() + 1));
-                    self.versions.insert(key.into_boxed_str(), doc.version);
+                    self.versions.insert(key.as_str().into(), doc.version);
                     changed += 1;
                     out_change(Arc::clone(doc), id, out);
                 }
@@ -668,6 +680,7 @@ thread_local! {
     static FULL_TARGET_REFRESHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Keys inserted into a target's known map.
     static KNOWN_KEYS_INSERTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static KNOWN_LOOKUP_BUFFER_GROWTHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static ENCODED_LISTEN_DOCUMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static LISTEN_DOCUMENT_HANDLES: std::cell::RefCell<Vec<std::sync::Weak<Document>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -3165,6 +3178,7 @@ mod refresh_tests {
             .unwrap();
         out.clear();
         KNOWN_KEYS_INSERTED.with(|count| count.set(0));
+        KNOWN_LOOKUP_BUFFER_GROWTHS.with(|count| count.set(0));
         refresh_all(
             &fixture.context,
             fixture.parent.as_ref(),
@@ -3185,6 +3199,11 @@ mod refresh_tests {
             "an unchanged target sends no document"
         );
         assert_eq!(KNOWN_KEYS_INSERTED.with(std::cell::Cell::get), 0);
+        assert_eq!(
+            KNOWN_LOOKUP_BUFFER_GROWTHS.with(std::cell::Cell::get),
+            fixture.targets.len(),
+            "each target reuses one lookup buffer for its fixed-length paths"
+        );
     }
 
     #[test]

@@ -57,6 +57,31 @@ fn incremental_digests_equal_one_shot_digests_across_chunk_boundaries() {
 }
 
 #[test]
+fn md5_prefix_snapshots_preserve_the_live_digest_across_padding_boundaries() {
+    let bytes = patterned_bytes(129);
+    let mut digest = Md5::new();
+    let mut offset = 0;
+    for (end, expected) in [
+        (55, "c9e512626618c9980ef21a96597af94c"),
+        (56, "ecde7caa08e9f5657c863df107cac60a"),
+        (63, "2f0301069e1c40af7f6c8f843b1b13f2"),
+        (64, "b6bf87c24b1bc334e2541387a92b981b"),
+        (65, "f168246f08b6134d66bd2a10343fa9f1"),
+        (119, "d5dc3d8264de3aa24dee105910ee27fe"),
+        (120, "bcc139b3848923904860d1eefd6e5923"),
+        (129, "e45ecac9930fe93de302f98ba673ba36"),
+    ] {
+        digest.update(&bytes[offset..end]);
+        assert_eq!(
+            hex_lower(&digest.clone().finalize()),
+            expected,
+            "prefix {end}"
+        );
+        offset = end;
+    }
+}
+
+#[test]
 fn incremental_sha256_matches_reference_at_padding_boundaries() {
     for (len, expected) in [
         (

@@ -133,12 +133,6 @@ mod crc32c_update_tests {
     }
 }
 
-const MD5_SHIFT: [u32; 64] = [
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
-    14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
-    21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-];
-
 const MD5_CONSTANT: [u32; 64] = [
     0xd76a_a478,
     0xe8c7_b756,
@@ -278,32 +272,46 @@ impl Md5 {
 
 #[allow(clippy::many_single_char_names)]
 fn md5_compress(state: &mut [u32; 4], block: &[u8]) {
-    let mut words = [0u32; 16];
-    for (word, bytes) in words.iter_mut().zip(block.chunks_exact(4)) {
+    let mut message = [0u32; 16];
+    for (word, bytes) in message.iter_mut().zip(block.chunks_exact(4)) {
         *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     }
     let (mut a, mut b, mut c, mut d) = (state[0], state[1], state[2], state[3]);
-    macro_rules! round {
-        ($range:expr, $index:ident, $function:expr, $word:expr) => {
-            for $index in $range {
-                let function = $function;
-                let word = $word;
-                let rotated = function
-                    .wrapping_add(a)
-                    .wrapping_add(MD5_CONSTANT[$index])
-                    .wrapping_add(words[word])
-                    .rotate_left(MD5_SHIFT[$index]);
-                a = d;
-                d = c;
-                c = b;
-                b = b.wrapping_add(rotated);
-            }
-        };
+    macro_rules! step {
+        ($index:expr, $shift:expr, $mix:expr, $word:expr) => {{
+            let i = $index;
+            let rotated = ($mix)(b, c, d)
+                .wrapping_add(a)
+                .wrapping_add(MD5_CONSTANT[i])
+                .wrapping_add(message[($word)(i)])
+                .rotate_left($shift);
+            (a, b, c, d) = (d, b.wrapping_add(rotated), b, c);
+        }};
     }
-    round!(0..16, i, (b & c) | (!b & d), i);
-    round!(16..32, i, (d & b) | (!d & c), (5 * i + 1) & 15);
-    round!(32..48, i, b ^ c ^ d, (3 * i + 5) & 15);
-    round!(48..64, i, c ^ (b | !d), (7 * i) & 15);
+    // Expand four groups per round with constant message indices and rotations.
+    macro_rules! round {
+        ($mix:ident, $word:ident, [$($base:literal),+], [$r0:literal, $r1:literal, $r2:literal, $r3:literal]) => {{
+            $(
+                step!($base, $r0, $mix, $word);
+                step!($base + 1, $r1, $mix, $word);
+                step!($base + 2, $r2, $mix, $word);
+                step!($base + 3, $r3, $mix, $word);
+            )+
+        }};
+    }
+    let f = |b: u32, c: u32, d: u32| (b & c) | (!b & d);
+    let g = |b: u32, c: u32, d: u32| (d & b) | (!d & c);
+    let h = |b: u32, c: u32, d: u32| b ^ c ^ d;
+    let i = |b: u32, c: u32, d: u32| c ^ (b | !d);
+    let word0 = |step: usize| step;
+    let word1 = |step: usize| (5 * step + 1) & 15;
+    let word2 = |step: usize| (3 * step + 5) & 15;
+    let word3 = |step: usize| (7 * step) & 15;
+
+    round!(f, word0, [0, 4, 8, 12], [7, 12, 17, 22]);
+    round!(g, word1, [16, 20, 24, 28], [5, 9, 14, 20]);
+    round!(h, word2, [32, 36, 40, 44], [4, 11, 16, 23]);
+    round!(i, word3, [48, 52, 56, 60], [6, 10, 15, 21]);
     state[0] = state[0].wrapping_add(a);
     state[1] = state[1].wrapping_add(b);
     state[2] = state[2].wrapping_add(c);

@@ -1105,6 +1105,7 @@ struct EqualityCandidateIndex {
     scope: QueryScope,
     field: FieldPath,
     by_value: HashMap<EqualityKey, Vec<Arc<DocumentPath>>>,
+    competing_demand: AtomicBool,
     estimated_bytes: usize,
 }
 
@@ -1150,6 +1151,7 @@ impl EqualityCandidateIndexBuilder {
                 scope: scope.clone(),
                 field: field.clone(),
                 by_value: HashMap::new(),
+                competing_demand: AtomicBool::new(false),
                 estimated_bytes: 256usize
                     .saturating_add(field.canonical().len())
                     .saturating_add(scope_bytes),
@@ -2083,6 +2085,35 @@ impl FirestoreState {
 
     fn invalidate_equality_candidate_index(&mut self) {
         if self.equality_candidate_index.get().is_some() {
+            self.equality_candidate_index = OnceLock::new();
+        }
+    }
+
+    fn note_competing_equality_lookup(&self, scope: &QueryScope, field: &FieldPath) {
+        // Replacement waits for a changed commit. That commit holds exclusive access
+        // to the state while readers only set this sticky bit on the published index.
+        if let Some(index) = self
+            .equality_candidate_index
+            .get()
+            .and_then(Option::as_ref)
+            .filter(|index| &index.scope != scope || &index.field != field)
+        {
+            index.competing_demand.store(true, AtomicOrdering::Relaxed);
+        }
+    }
+
+    fn invalidate_equality_candidate_index_for_commit(&mut self, changes: &[StagedChange]) {
+        // An overflowed build has no retained scope and may fit after the next commit.
+        // A positive index contains only paths in its scope, so disjoint commits can keep it.
+        let invalidate = self.equality_candidate_index.get().is_some_and(|slot| {
+            slot.as_ref().is_none_or(|index| {
+                index.competing_demand.load(AtomicOrdering::Relaxed)
+                    || changes
+                        .iter()
+                        .any(|(path, _, _)| path_in_scope(path, &index.scope))
+            })
+        });
+        if invalidate {
             self.equality_candidate_index = OnceLock::new();
         }
     }
@@ -4803,7 +4834,7 @@ impl FirestoreState {
         self.history_usage = uncompacted;
         self.history_accounting_exact = accounting_exact;
         if changed {
-            self.invalidate_equality_candidate_index();
+            self.invalidate_equality_candidate_index_for_commit(&staged_changes);
             self.invalidate_candidate_normalization_cache();
             self.version = next_version;
             self.commit_times.push_back((next_version, commit_time));
@@ -6154,16 +6185,14 @@ impl FirestoreState {
         // A no-limit scan consumes the full scope, so it can build the bounded cache alongside
         // the selection without a second cold pass. Limited reads remain ordinary scans until
         // an exhaustive equality query has populated this scope/field slot.
-        let mut index_builder = if equality_index.is_none()
-            && self.equality_candidate_index.get().is_none()
-            && query.limit.is_none()
-        {
-            equality
-                .as_ref()
-                .map(|(field, _)| EqualityCandidateIndexBuilder::new(scope, field))
+        let exhaustive_equality_field = if equality_index.is_none() && query.limit.is_none() {
+            equality.as_ref().map(|(field, _)| *field)
         } else {
             None
         };
+        let mut index_builder = exhaustive_equality_field
+            .filter(|_| self.equality_candidate_index.get().is_none())
+            .map(|field| EqualityCandidateIndexBuilder::new(scope, field));
         let equality_candidates = equality_index.as_ref().map(|index| {
             equality
                 .as_ref()
@@ -6235,6 +6264,11 @@ impl FirestoreState {
                 }
             });
             let _ = result;
+        }
+        // Inspect the published slot after a successful selection. A cold build can
+        // also lose publication to another reader and request a future turn.
+        if let Some(field) = exhaustive_equality_field {
+            self.note_competing_equality_lookup(scope, field);
         }
         stats.index_paths_visited = visited.get();
         Ok(stats)
@@ -7665,6 +7699,321 @@ mod equality_index_scope_tests {
             op: FieldOp::Equal,
             value: Value::String("wanted".to_owned()),
         })
+    }
+
+    fn replay_path(path: &str) -> DocumentPath {
+        DocumentPath::parse(
+            &fireemu_core_types::ids::ProjectId::try_new("demo-app").unwrap(),
+            &fireemu_core_types::ids::DatabaseId::default_database(),
+            path,
+        )
+        .unwrap()
+    }
+
+    fn replay_write(path: &str, value: &str) -> Write {
+        Write {
+            op: WriteOp::Set {
+                path: replay_path(path),
+                fields: BTreeMap::from([("group".to_owned(), Value::String(value.to_owned()))]),
+                update_mask: None,
+            },
+            precondition: None,
+            transforms: Vec::new(),
+        }
+    }
+
+    fn replay_case(scope: &str) -> (Query, [&'static str; 4]) {
+        let parent = Some(replay_path("parents/p"));
+        let items = CollectionId::try_new("items").unwrap();
+        let (scope, paths) = match scope {
+            "direct" => (
+                QueryScope::collection(None, items),
+                ["items/a", "items/b", "items/c", "items/a/items/d"],
+            ),
+            "group" => (
+                QueryScope::collection_group_under(parent, items),
+                [
+                    "parents/p/items/a",
+                    "parents/p/branch/b/items/b",
+                    "parents/p/items/c",
+                    "parents/q/items/d",
+                ],
+            ),
+            "children" => (
+                QueryScope::kindless_children(parent),
+                [
+                    "parents/p/items/a",
+                    "parents/p/other/b",
+                    "parents/p/items/c",
+                    "parents/p/items/a/items/d",
+                ],
+            ),
+            "descendants" => (
+                QueryScope::kindless_all_descendants(parent),
+                [
+                    "parents/p/items/a",
+                    "parents/p/branch/b/items/b",
+                    "parents/p/other/c",
+                    "parents/pp/items/d",
+                ],
+            ),
+            _ => unreachable!("unknown scope in the generated table"),
+        };
+        (
+            Query::new(scope).with_filter(FilterExpr::Field {
+                field: FieldPath::parse("group").unwrap(),
+                op: FieldOp::Equal,
+                value: Value::String("wanted".to_owned()),
+            }),
+            paths,
+        )
+    }
+
+    fn commit_replay_case(
+        db: &mut FirestoreState,
+        operation: &str,
+        [first, _, new, outside]: [&str; 4],
+    ) {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let writes = match operation {
+            "outside" => vec![replay_write(outside, "other")],
+            "create" | "denied" => vec![replay_write(new, "wanted")],
+            "delete" => vec![Write {
+                op: WriteOp::Delete {
+                    path: replay_path(first),
+                },
+                precondition: None,
+                transforms: Vec::new(),
+            }],
+            "mixed" => vec![replay_write(outside, "other"), replay_write(new, "wanted")],
+            "noop" => Vec::new(),
+            _ => unreachable!("unknown commit operation in the generated table"),
+        };
+        if operation == "denied" {
+            let refusal = FirestoreError::Aborted("test admission refusal".to_owned());
+            assert!(matches!(
+                db.commit_with_admission(&writes, None, now, |_| Err::<(), _>(refusal)),
+                Err(FirestoreError::Aborted(message)) if message == "test admission refusal"
+            ));
+        } else {
+            db.commit(&writes, None, now).unwrap();
+        }
+    }
+
+    #[test]
+    fn cache_transitions_follow_scope_cache_and_commit_outcome_matrix() {
+        // Generated by the three-factor PICT model for equality index retention.
+        const ROWS: [(&str, &str, &str); 26] = [
+            ("direct", "warm", "outside"),
+            ("group", "warm", "outside"),
+            ("group", "warm", "create"),
+            ("children", "warm", "delete"),
+            ("descendants", "warm", "mixed"),
+            ("direct", "warm", "denied"),
+            ("direct", "overflow", "outside"),
+            ("direct", "overflow", "noop"),
+            ("direct", "empty", "outside"),
+            ("group", "empty", "mixed"),
+            ("descendants", "overflow", "denied"),
+            ("descendants", "empty", "outside"),
+            ("descendants", "overflow", "create"),
+            ("children", "overflow", "outside"),
+            ("children", "empty", "create"),
+            ("direct", "overflow", "delete"),
+            ("children", "warm", "noop"),
+            ("direct", "empty", "create"),
+            ("group", "overflow", "delete"),
+            ("children", "overflow", "mixed"),
+            ("group", "empty", "denied"),
+            ("group", "empty", "noop"),
+            ("direct", "overflow", "mixed"),
+            ("descendants", "empty", "delete"),
+            ("descendants", "warm", "noop"),
+            ("children", "empty", "denied"),
+        ];
+        for (scope, cache, operation) in ROWS {
+            let (query, paths @ [first, second, _, outside]) = replay_case(scope);
+            let mut db = FirestoreState::new();
+            let now = LogicalInstant::UNIX_EPOCH;
+            db.commit(
+                &[
+                    replay_write(first, "wanted"),
+                    replay_write(second, "other"),
+                    replay_write(outside, "wanted"),
+                ],
+                None,
+                now,
+            )
+            .unwrap();
+            let version = db.current_version();
+            let original = match cache {
+                "warm" => {
+                    let original = db.run_query(&query, None).unwrap();
+                    assert_eq!(original.len(), 1);
+                    assert_eq!(original[0].path, replay_path(first));
+                    db.equality_candidate_index.get().unwrap().clone()
+                }
+                "overflow" => {
+                    // The builder's exact-limit and overflow behavior is covered separately.
+                    db.equality_candidate_index.set(None).unwrap();
+                    None
+                }
+                "empty" => None,
+                _ => unreachable!("unknown cache state in the generated table"),
+            };
+            commit_replay_case(&mut db, operation, paths);
+            let label = (scope, cache, operation);
+            let no_change = matches!(operation, "noop" | "denied");
+            assert_eq!(db.current_version() == version, no_change, "{label:?}");
+            match db.equality_candidate_index.get() {
+                Some(Some(retained)) => {
+                    assert_eq!(cache, "warm", "{label:?}");
+                    assert!(no_change || operation == "outside", "{label:?}");
+                    assert!(
+                        Arc::ptr_eq(retained, original.as_ref().unwrap()),
+                        "{label:?}"
+                    );
+                }
+                Some(None) => assert!(cache == "overflow" && no_change, "{label:?}"),
+                None => assert!(
+                    cache == "empty" || !(no_change || (cache == "warm" && operation == "outside")),
+                    "{label:?}"
+                ),
+            }
+            let (result, stats) = db.run_query_with_stats(&query, None).unwrap();
+            let (reference, scan_stats) = db
+                .run_query_with_stats(&query, Some(db.current_version()))
+                .unwrap();
+            assert_eq!(result, reference, "{label:?}");
+            if cache == "warm" && operation == "outside" {
+                assert_eq!(stats.index_paths_visited, 1, "{label:?}");
+                assert_eq!(scan_stats.index_paths_visited, 2, "{label:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_disjoint_import_still_clears_a_warm_index() {
+        let mut db = FirestoreState::new();
+        let now = LogicalInstant::UNIX_EPOCH;
+        db.commit(&[write("items", "a", "wanted")], None, now)
+            .unwrap();
+        let query = query("items");
+        let previous = db.run_query(&query, None).unwrap();
+        assert!(db
+            .equality_candidate_index
+            .get()
+            .is_some_and(Option::is_some));
+
+        db.import_documents(
+            vec![ImportedDocument {
+                path: replay_path("other/b"),
+                fields: BTreeMap::new(),
+                create_time: None,
+                update_time: None,
+            }],
+            now,
+        )
+        .unwrap();
+
+        assert!(db.equality_candidate_index.get().is_none());
+        assert_eq!(db.run_query(&query, None).unwrap(), previous);
+    }
+
+    #[test]
+    fn competing_exhaustive_equality_can_claim_the_slot_after_a_changed_commit() {
+        // Generated by PICT from lookup key, query mode and commit outcome.
+        const ROWS: [(&str, &str, &str); 11] = [
+            ("scope", "exhaustive", "changed"),
+            ("field", "exhaustive", "changed"),
+            ("same", "exhaustive", "changed"),
+            ("scope", "limited", "changed"),
+            ("scope", "historical", "changed"),
+            ("scope", "exhaustive", "noop"),
+            ("scope", "exhaustive", "refused"),
+            ("field", "historical", "noop"),
+            ("field", "limited", "refused"),
+            ("same", "limited", "noop"),
+            ("same", "historical", "refused"),
+        ];
+        let now = LogicalInstant::UNIX_EPOCH;
+        for (key, read, operation) in ROWS {
+            let mut db = FirestoreState::new();
+            let mut item = write("items", "a", "wanted");
+            let WriteOp::Set { fields, .. } = &mut item.op else {
+                unreachable!("write creates a set write");
+            };
+            fields.insert("role".to_owned(), Value::String("wanted".to_owned()));
+            db.commit(&[item, write("other", "a", "wanted")], None, now)
+                .unwrap();
+            let a = query("items");
+            db.run_query(&a, None).unwrap();
+            let before = db
+                .equality_candidate_index
+                .get()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .clone();
+
+            let mut b = if key == "scope" {
+                query("other")
+            } else {
+                a.clone()
+            };
+            if key == "field" {
+                b.filter = Some(FilterExpr::Field {
+                    field: FieldPath::parse("role").unwrap(),
+                    op: FieldOp::Equal,
+                    value: Value::String("wanted".to_owned()),
+                });
+            }
+            if read == "limited" {
+                b.limit = Some(1);
+            }
+            let version = (read == "historical").then(|| db.current_version());
+            assert_eq!(db.run_query(&b, version).unwrap().len(), 1);
+            let still_current = |db: &FirestoreState| {
+                db.equality_candidate_index
+                    .get()
+                    .and_then(Option::as_ref)
+                    .is_some_and(|index| Arc::ptr_eq(index, &before))
+            };
+            assert!(still_current(&db), "{key} {read} {operation}");
+            if operation == "noop" {
+                db.commit(&[], None, now).unwrap();
+                assert!(still_current(&db), "{key} {read} {operation}");
+            }
+            if operation == "refused" {
+                let refused = db.commit_with_admission(
+                    &[write("unrelated", "a", "written")],
+                    None,
+                    now,
+                    |_| Err::<(), _>(FirestoreError::Aborted("test refusal".to_owned())),
+                );
+                assert!(matches!(refused, Err(FirestoreError::Aborted(_))));
+                assert!(still_current(&db), "{key} {read} {operation}");
+            }
+            db.commit(&[write("unrelated", "a", "written")], None, now)
+                .unwrap();
+
+            let retirement_requested = key != "same" && read == "exhaustive";
+            assert_eq!(
+                db.equality_candidate_index.get().is_none(),
+                retirement_requested,
+                "{key} {read} {operation}"
+            );
+            if retirement_requested {
+                db.run_query(&b, None).unwrap();
+                let field = if key == "field" { "role" } else { "group" };
+                let published = db
+                    .equality_candidate_index(&b.scope, &FieldPath::parse(field).unwrap())
+                    .unwrap();
+                assert!(!Arc::ptr_eq(&published, &before));
+            } else {
+                assert!(still_current(&db), "{key} {read} {operation}");
+            }
+        }
     }
 
     #[test]

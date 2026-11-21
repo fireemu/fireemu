@@ -140,7 +140,7 @@ fn send(site: &Site, method: &str, target: &str, headers: &[(&str, &str)]) -> Re
 }
 
 /// [`send`] with the time the reply may take. Every request reads the whole file once to make its
-/// `ETag` (MD5 and SHA-256), so a request for a 16 or 32 MiB file takes seconds in a debug build and
+/// profile-specific `ETag`, so a request for a 16 or 32 MiB file can take seconds in a debug build and
 /// far more on a loaded machine: those tests wait for minutes, not for a guess of seconds.
 fn send_within(
     site: &Site,
