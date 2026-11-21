@@ -113,6 +113,24 @@ fn next_month_keeps_advancing_and_clock_reversal_can_leave_the_range() {
     );
 }
 
+#[test]
+fn a_calendar_step_rejects_an_out_of_range_local_start() {
+    let last = at(10_000, 1, 1) - 1;
+    for (start, offset, calendar, clock, end) in [
+        (LOW, -3600, "P1D", "PT24H", LOW + DAY),
+        (last, 3600, "-P1D", "-PT24H", last - DAY),
+    ] {
+        assert_eq!(
+            moved(start, offset, duration(calendar).as_ref(), None),
+            Err(CalendarError::YearOutOfRange)
+        );
+        assert_eq!(
+            moved(start, offset, duration(clock).as_ref(), None),
+            Ok(end)
+        );
+    }
+}
+
 fn unit_duration(unit: usize, component: i64) -> CalendarDuration {
     let mut d = CalendarDuration {
         negative: component < 0,

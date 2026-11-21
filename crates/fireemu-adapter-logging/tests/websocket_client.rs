@@ -15,6 +15,11 @@ use fireemu_adapter_logging::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+#[test]
+fn a_large_history_limit_does_not_allocate_the_full_history() {
+    assert!(LogBus::with_capacity(usize::MAX).is_empty());
+}
+
 /// Binds the emulator on an ephemeral loopback port and returns the bus and address.
 async fn start() -> (LogBus, std::net::SocketAddr) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
