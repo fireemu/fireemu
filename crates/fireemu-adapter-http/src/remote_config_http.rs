@@ -449,6 +449,7 @@ mod tests {
             ("", Some(vec!["3", "2", "1"])),
             ("pageSize=0", Some(vec!["3", "2", "1"])),
             ("pageSize=3001", Some(vec!["3", "2", "1"])),
+            ("pageSize=1", Some(vec!["3"])),
             ("pageSize=2", Some(vec!["3", "2"])),
             ("pageSize=-1", None),
             ("pageSize=2147483648", None),
@@ -466,7 +467,7 @@ mod tests {
                 assert_eq!(versions, expected, "{query}");
                 assert_eq!(
                     reply.body.get("nextPageToken").is_some(),
-                    expected.len() == 2
+                    expected.len() < 3
                 );
             } else {
                 assert_eq!(reply.status, 400, "{query}");

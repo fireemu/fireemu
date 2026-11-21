@@ -179,6 +179,7 @@ fn declared_types_apply_to_defaults_and_conditional_values_including_groups() {
     for (kind, good, bad) in [
         ("STRING", json!("literal"), json!(17)),
         ("BOOLEAN", json!("TRUE"), json!("maybe")),
+        ("BOOLEAN", json!("false"), json!("0")),
         ("NUMBER", json!("-2.3e2"), json!(" 2.3 ")),
         ("JSON", json!("null"), json!("{")),
         (
@@ -226,6 +227,33 @@ fn declared_types_apply_to_defaults_and_conditional_values_including_groups() {
         ));
     }
     assert_eq!(store.current().number(), 0);
+    assert!(store.history().is_empty());
+}
+
+#[test]
+fn malformed_draft_fields_are_rejected_before_the_write_precondition() {
+    let store = TemplateStore::default();
+    let original = store.current().etag();
+    let drafts = [
+        json!({"conditions": [{"name": "flag", "expression": "true", "tagColor": []}]}),
+        json!({"parameterGroups": {"group": {"description": false}}}),
+        json!({"parameters": {"flag": {"valueType": []}}}),
+        json!({"parameters": {"flag": {"valueType": "OTHER"}}}),
+    ];
+    for mode in [WriteMode::Validate, WriteMode::Publish] {
+        for tag in [None, Some("obsolete"), Some(original.as_str())] {
+            for draft in &drafts {
+                assert!(
+                    matches!(
+                        store.write(mode, tag, draft.clone(), NOW),
+                        Err(Error::InvalidTemplate(_))
+                    ),
+                    "{mode:?} {tag:?} {draft}"
+                );
+            }
+        }
+    }
+    assert_eq!(store.current().etag(), original);
     assert!(store.history().is_empty());
 }
 
