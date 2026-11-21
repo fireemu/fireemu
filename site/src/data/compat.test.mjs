@@ -136,6 +136,20 @@ test('the repository data maps completely', async () => {
 	assert.ok(capabilityRows(data.capabilities).length > 0);
 });
 
+test('Remote Config is registered as a production compatibility area', async () => {
+	const { closures } = await loadRepositoryData();
+	const record = closures.find((entry) => entry.parent === 'REMOTE-CONFIG');
+	assert.ok(record, 'missing Remote Config parent');
+	const [row] = productionAreaRows([record]);
+	assert.equal(row.product, 'Firebase Remote Config');
+	assert.ok(row.total > 0);
+	assert.ok(record.conditions.every((condition) =>
+		condition.conditionId.startsWith('REMOTE-CONFIG/')));
+	assert.equal(new Set(row.conditions.map((condition) => condition.id)).size, row.total);
+	const trigger = record.conditions.find((condition) => condition.conditionId === 'REMOTE-CONFIG/publish-trigger');
+	assert.ok(trigger?.localEvidence?.includes('crates/fireemu/tests/functions_remote_config.rs'));
+});
+
 test('the repository root is found from a nested directory and refused outside a checkout', async () => {
 	const { findRepoRoot } = await import('./compat.mjs');
 	const root = findRepoRoot();

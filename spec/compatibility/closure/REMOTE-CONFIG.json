@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "parent": "REMOTE-CONFIG",
+  "parentStatus": "IN_PROGRESS",
+  "inventoryStatus": "PROPOSED",
+  "oracleTrack": "not-recorded",
+  "sources": [
+    "https://firebase.google.com/docs/reference/remote-config/rest",
+    "https://firebase.google.com/docs/reference/remote-config/rest/v1/projects/updateRemoteConfig",
+    "https://firebase.google.com/docs/remote-config/templates/client",
+    "https://firebase.google.com/docs/remote-config/templates/server",
+    "https://firebase.google.com/docs/remote-config/web/get-started",
+    "https://firebase.google.com/docs/remote-config/web/real-time",
+    "https://firebase.google.com/docs/functions/rc-events"
+  ],
+  "scopeDecisions": [
+    {
+      "id": "RC-LOCAL-INJECTION",
+      "decision": "Fireemu's capability-protected control command delivers caller-supplied version data to local v1 and v2 handlers in both profiles. This is local trigger evidence. Template storage, SDK fetching and publishing remain unimplemented, and production event delivery remains unobserved.",
+      "status": "ANSWERED"
+    }
+  ],
+  "conditions": [
+    {
+      "conditionId": "REMOTE-CONFIG/template-read",
+      "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/template-validation",
+      "description": "Validate parameters, parameter groups and condition references. Compare errors and confirm that validation-only requests leave the current template, history and event stream unchanged.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/template-publish",
+      "description": "Publish templates with a matching, missing, stale or wildcard If-Match value. Compare response metadata, version creation and the stored template after concurrent accepted or refused updates.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/version-history-and-rollback",
+      "description": "List template versions and follow continuation tokens. Compare version-specific reads, rollback to an existing version, and refusal of an unavailable version without a state change.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/client-fetch-and-activate",
+      "description": "Exercise one pinned client SDK with defaults, supported condition matches, changed and unchanged fetches, and activation of fetched values. Capture the SDK requests and exact response shapes before defining the local endpoint contract.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/server-template-evaluation",
+      "description": "Retrieve the server template through a pinned Admin SDK and compare typed parameters, defaults and evaluation with condition signals in its supported scope.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/realtime-updates",
+      "description": "Observe notification and reconnect behavior when a newer client template is published, including when the fetched values are unchanged.",
+      "status": "PLANNED",
+      "productionEvidence": []
+    },
+    {
+      "conditionId": "REMOTE-CONFIG/publish-trigger",
+      "description": "Observe which accepted template operations invoke v1 and v2 Functions handlers, and compare version metadata, event envelopes and delivery. Existing injection tests exercise the caller-supplied local event path.",
+      "status": "PLANNED",
+      "localEvidence": [
+        "crates/fireemu/tests/functions_remote_config.rs"
+      ],
+      "productionEvidence": []
+    }
+  ]
+}

@@ -22,7 +22,7 @@ Non-trigger exports (`params`, `logger`, `config`, `app`, `onInit`, `runWith`, `
 | `auth` (`user().onCreate/onDelete`, `beforeCreate`, `beforeSignIn`) | served | `auth`, blocking `auth` | `crates/fireemu-adapter-functions/tests/runtime.rs` (`onUser`, `onGone`), `crates/fireemu/tests/functions_discovery.rs`, `crates/fireemu-adapter-http/tests/auth_flows.rs` | Blocking functions run synchronously inside the Identity Toolkit request; credential forwarding follows `auth.forwardInboundCredentials` |
 | `tasks` (`taskQueue().onDispatch`) | served | `tasks` | `crates/fireemu-adapter-functions/tests/runtime.rs` (task queue scenarios) | Rate limits and retry config are enforced on the virtual clock |
 | `database` (`ref().onCreate/onUpdate/onDelete/onWrite`, `instance().ref()`) | served | `database` (`google.firebase.database.ref.v1.*`) | `tools/runner-node/database.test.mjs`, `crates/fireemu-adapter-functions/tests/database_events.rs` | Scoped to the project, instance and reference pattern; finite administrator, unauthenticated and email/password-user writes, ancestor and multi-path writes, and failed-invocation redelivery were recorded in production. Broader delivery and timing are unverified; see [Realtime Database](https://fireemu.github.io/fireemu/products/realtime-database/#local-functions-triggers) |
-| `remoteConfig` (`onUpdate`) | deferred | none (`ignored.triggerType: remoteConfig`) | `tools/runner-node/index.mjs` `DEFERRED_TRIGGER_PRODUCTS` | Remote Config has no emulator in the active surface |
+| `remoteConfig` (`onUpdate`) | served | `remoteConfig` | `crates/fireemu/tests/functions_remote_config.rs` | Local injection accepts caller-supplied version metadata through the capability-protected control endpoint |
 | `analytics` (`event().onLog`) | not-planned | none (`ignored.triggerType: analytics`) | same | Google Analytics triggers have no local emulator |
 | `testLab` (`testMatrix().onComplete`) | not-planned | none (`ignored.triggerType: testLab`) | same | Test Lab triggers have no local emulator |
 
@@ -42,8 +42,10 @@ Non-trigger exports (`params`, `logger`, `config`, `app`, `onInit`, `runWith`, `
 | `database` (`onValueCreated/Updated/Deleted/Written`) | served | `database` | as v1 `database` | Local instances are in `us-central1`: a trigger in another region does not fire and is warned about at load |
 | `dataconnect` (`onMutationExecuted`) | deferred | none (`ignored.triggerType: dataconnect`) | `DEFERRED_TRIGGER_PRODUCTS` | The Data Connect emulator is not in the active supported surface |
 | `ai` (`beforeGenerateContent`, `afterGenerateContent`) | not-planned | none (`ignored.triggerType: ai`) | `DEFERRED_TRIGGER_PRODUCTS` | Firebase AI Logic blocking triggers have no local emulator; the official emulator does not serve them either |
-| `remoteConfig` (`onConfigUpdated`) | deferred | none | `DEFERRED_TRIGGER_PRODUCTS` | Remote Config is deferred |
+| `remoteConfig` (`onConfigUpdated`) | served | `remoteConfig` | as v1 `remoteConfig` | Local injection accepts caller-supplied CloudEvent metadata |
 | `testLab` (`onTestMatrixCompleted`) | not-planned | none | `DEFERRED_TRIGGER_PRODUCTS` | Test Lab has no local emulator |
+
+Template storage and publishing, SDK fetch behavior, and production trigger observations are tracked in the [Remote Config compatibility parent](../spec/compatibility/closure/REMOTE-CONFIG.json).
 
 ## Anything else
 

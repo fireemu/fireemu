@@ -17,6 +17,7 @@ const PRODUCT_ORDER = [
 	'Eventarc',
 	'App Check',
 	'Firebase Hosting',
+	'Firebase Remote Config',
 	'Tooling',
 ];
 
@@ -26,6 +27,11 @@ export const AREAS = {
 		product: 'Firebase Hosting',
 		title: 'Hosting',
 		covers: 'Static files, routing, headers, URL canonicalization, localization and local rewrites. Production observations are pending.',
+	},
+	'REMOTE-CONFIG': {
+		product: 'Firebase Remote Config',
+		title: 'Templates and delivery',
+		covers: 'Planned coverage for template reads and publishing, version history, client and server delivery, and publish-triggered functions. Fireemu currently offers local trigger injection with caller-supplied metadata.',
 	},
 	'FS-DATA-WRITE': {
 		product: 'Cloud Firestore',
