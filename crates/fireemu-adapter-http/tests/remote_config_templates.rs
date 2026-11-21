@@ -174,6 +174,116 @@ fn rejects_malformed_documents_and_duplicate_definitions() {
 }
 
 #[test]
+fn declared_types_apply_to_defaults_and_conditional_values_including_groups() {
+    let store = TemplateStore::default();
+    for (kind, good, bad) in [
+        ("STRING", json!("literal"), json!(17)),
+        ("BOOLEAN", json!("TRUE"), json!("maybe")),
+        ("NUMBER", json!("-2.3e2"), json!(" 2.3 ")),
+        ("JSON", json!("null"), json!("{")),
+        (
+            "PARAMETER_VALUE_TYPE_UNSPECIFIED",
+            json!("literal"),
+            json!(false),
+        ),
+        ("OTHER", json!("literal"), json!("literal")),
+    ] {
+        for (use_kind, value) in [
+            (true, json!({"value": good})),
+            (false, json!({"value": bad})),
+            (true, json!({"useInAppDefault": true})),
+        ] {
+            for field in ["defaultValue", "conditionalValues"] {
+                for grouped in [false, true] {
+                    let mut input = json!({
+                        "conditions": [{"name": "selected", "expression": "true"}],
+                    });
+                    let definition = if grouped {
+                        &mut input["parameterGroups"]["example"]["parameters"]["marker"]
+                    } else {
+                        &mut input["parameters"]["marker"]
+                    };
+                    *definition =
+                        json!({"valueType": kind, "defaultValue": {"useInAppDefault": true}});
+                    definition[field] = if field == "conditionalValues" {
+                        json!({"selected": value})
+                    } else {
+                        value.clone()
+                    };
+                    let result = store.write(WriteMode::Validate, Some("*"), input.clone(), NOW);
+                    assert_eq!(result.is_ok(), use_kind && kind != "OTHER", "{input}");
+                }
+            }
+        }
+    }
+    for (kind, value) in [("BOOLEAN", "0"), ("NUMBER", "Infinity")] {
+        let input = json!({"parameters": {"flag": {
+            "valueType": kind, "defaultValue": {"value": value},
+        }}});
+        assert!(matches!(
+            store.write(WriteMode::Publish, Some("*"), input, NOW),
+            Err(Error::InvalidTemplate(_))
+        ));
+    }
+    assert_eq!(store.current().number(), 0);
+    assert!(store.history().is_empty());
+}
+
+#[test]
+fn parameter_names_and_implicit_defaults_match_the_observed_storage_contract() {
+    let store = TemplateStore::default();
+    let long_valid = "a".repeat(256);
+    let long_invalid = "a".repeat(257);
+    for (name, valid) in [
+        ("_feature_1", true),
+        (long_valid.as_str(), true),
+        ("1feature", false),
+        ("試験", false),
+        ("feature-flag", false),
+        (long_invalid.as_str(), false),
+    ] {
+        let input = json!({"parameters": {(name): {}}});
+        let result = store.write(WriteMode::Validate, Some("*"), input, NOW);
+        assert_eq!(result.is_ok(), valid, "{name}");
+    }
+    assert!(matches!(
+        store.write(
+            WriteMode::Validate,
+            Some("*"),
+            json!({
+                "parameters": {"flag": {"valueType": "BOOLEAN"}}
+            }),
+            NOW
+        ),
+        Err(Error::InvalidTemplate(_))
+    ));
+    let input = json!({
+        "parameters": {"probe": {}},
+        "parameterGroups": {"other": {"parameters": {
+            "flag": {"defaultValue": {}, "valueType": "PARAMETER_VALUE_TYPE_UNSPECIFIED"}
+        }}},
+    });
+    let WriteResult::Published(version) = store
+        .write(WriteMode::Publish, Some("*"), input, NOW)
+        .unwrap()
+    else {
+        panic!("valid template was not published");
+    };
+    assert_eq!(
+        version.template().document()["parameters"]["probe"],
+        json!({
+            "defaultValue": {"value": ""}
+        })
+    );
+    assert_eq!(
+        version.template().document()["parameterGroups"]["other"]["parameters"]["flag"],
+        json!({
+            "defaultValue": {"value": ""}
+        })
+    );
+}
+
+#[test]
 fn two_writers_with_one_etag_commit_exactly_one_document() {
     let store = TemplateStore::default();
     let initial = store.current().etag();

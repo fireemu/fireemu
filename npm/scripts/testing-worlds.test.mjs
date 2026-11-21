@@ -1126,6 +1126,33 @@ test('Remote Config admin handles observed client template transitions', native,
       return { status: response.status, etag: response.headers.get('etag'), body: await response.json() };
     };
 
+    const checkReadSelectors = async (current, first) => {
+      for (const coding of ['identity', 'gzip']) {
+        for (const [query, target] of [
+          ['', current],
+          ['?versionNumber=0', current],
+          ['?versionNumber=-1', current],
+          ['?versionNumber=1', first],
+          ['?versionNumber=9223372036854775807', null],
+        ]) {
+          const reply = await request(query, { coding });
+          assert.equal(reply.status, 200);
+          assert.deepEqual(reply.body, target?.body ?? {});
+          if (current && !target && coding === 'gzip') {
+            assert.match(reply.etag, /^etag-/);
+            assert.notEqual(reply.etag, current.etag);
+          } else {
+            assert.equal(reply.etag, coding === 'gzip' ? target?.etag ?? null : null);
+          }
+        }
+        for (const query of ['?versionNumber=broken', '?versionNumber=9223372036854775808']) {
+          const reply = await request(query, { coding });
+          assert.equal(reply.status, 400);
+          assert.equal(reply.etag, null);
+        }
+      }
+    };
+
     for (const operation of ['read', 'validate', 'history']) {
       for (const coding of ['identity', 'gzip']) {
         for (const caller of ['valid', 'missing', 'wrong']) {
@@ -1142,7 +1169,7 @@ test('Remote Config admin handles observed client template transitions', native,
     }
 
     assert.equal((await request('', { project: 'demo-other' })).status, 404);
-    assert.deepEqual(await request('?versionNumber=9223372036854775807'), { status: 200, etag: null, body: {} });
+    await checkReadSelectors(null, null);
     const first = await request('', { method: 'PUT', match: '*', body: { version: { description: 'Empty' } } });
     assert.equal(first.status, 200);
     assert.match(first.etag, /^etag-/);
@@ -1206,10 +1233,18 @@ test('Remote Config admin handles observed client template transitions', native,
     const dry = await request('?validate_only=true', { method: 'PUT', match: first.etag, body: marker });
     assert.equal(dry.status, 200);
     assert.match(dry.etag, /-0$/);
-    assert.deepEqual(dry.body, marker);
+    assert.deepEqual(dry.body, { ...marker, version: {} });
     const stale = await request('?validateOnly=true', { method: 'PUT', match: 'etag-old', body: marker });
     assert.equal(stale.status, 412);
     assert.equal(stale.body.error.status, 'FAILED_PRECONDITION');
+    const missingPrecondition = await request('?validateOnly=true', { method: 'PUT', body: marker });
+    assert.equal(missingPrecondition.status, 400);
+    assert.equal(missingPrecondition.body.error.status, 'FAILED_PRECONDITION');
+    const malformedValue = await request('?validateOnly=true', { method: 'PUT', match: 'etag-old', body: {
+      parameters: { flag: { valueType: 'BOOLEAN', defaultValue: { value: 1 } } },
+    } });
+    assert.equal(malformedValue.status, 400);
+    assert.equal(malformedValue.body.error.status, 'INVALID_ARGUMENT');
     assert.deepEqual(await request(), first);
 
     const second = await request('', { method: 'PUT', match: first.etag, body: marker });
@@ -1223,6 +1258,7 @@ test('Remote Config admin handles observed client template transitions', native,
     assert.equal(restored.body.version.description, 'Rollback to version 1');
     assert.equal(restored.body.parameters, undefined);
     assert.deepEqual(await request(), restored);
+    await checkReadSelectors(restored, first);
     const historical = await request('?versionNumber=2');
     assert.deepEqual(historical, {
       ...second,

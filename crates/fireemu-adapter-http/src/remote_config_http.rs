@@ -163,7 +163,7 @@ fn read(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
         .get("versionNumber")
         .map(|value| {
             value
-                .parse::<u64>()
+                .parse::<i64>()
                 .map_err(|_| invalid("Invalid version number"))
         })
         .transpose()?;
@@ -171,24 +171,33 @@ fn read(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
     if current.change() == Change::Initial {
         return Ok(Reply::ok(json!({}), None));
     }
-    match requested {
-        Some(number) => store
-            .version(number)
-            .map_or_else(|| Err(missing()), |version| Ok(published(&version, true))),
-        None => Ok(published(&current, true)),
-    }
+    let requested = requested
+        .and_then(|number| u64::try_from(number).ok())
+        .filter(|number| *number > 0);
+    let reply = match requested {
+        Some(number) => store.version(number).map_or_else(
+            || Reply::ok(json!({}), Some(current.empty_etag())),
+            |version| published(&version, true),
+        ),
+        None => published(&current, true),
+    };
+    Ok(reply)
 }
 
 fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
     let params = parameters(query, &["pageSize", "pageToken"])?;
-    let limit = match params.get("pageSize") {
-        Some(raw) => raw
-            .parse::<usize>()
-            .ok()
-            .filter(|n| (1..=MAX_RETAINED_VERSIONS).contains(n))
-            .ok_or_else(|| invalid("Invalid page size"))?,
-        None => MAX_RETAINED_VERSIONS,
-    };
+    let limit = params
+        .get("pageSize")
+        .map(|raw| {
+            raw.parse::<i32>()
+                .ok()
+                .and_then(|size| usize::try_from(size).ok())
+                .ok_or_else(|| invalid("Invalid page size"))
+        })
+        .transpose()?
+        .filter(|size| *size > 0)
+        .unwrap_or(MAX_RETAINED_VERSIONS)
+        .min(MAX_RETAINED_VERSIONS);
     let versions = store.history();
     let start = if let Some(token) = params.get("pageToken") {
         versions
@@ -233,9 +242,11 @@ fn write(
             base_etag,
         } => {
             let mut body = visible_fields(&template);
-            if let Some(description) = template.description() {
-                body.insert("version".to_owned(), json!({"description": description}));
-            }
+            let version = template.description().map_or_else(
+                || json!({}),
+                |description| json!({"description": description}),
+            );
+            body.insert("version".to_owned(), version);
             Ok(Reply::ok(
                 Value::Object(body),
                 Some(format!("{base_etag}-0")),
@@ -282,7 +293,11 @@ fn rollback(
 
 fn store_error(error: Error) -> Reply {
     match error {
-        Error::MissingPrecondition => invalid("An If-Match header is required"),
+        Error::MissingPrecondition => Reply::error(
+            400,
+            "[VERSION_MISMATCH]: No If-Match header found in ConditionRequestContext or HTTP headers on UpdateRemoteConfig call",
+            "FAILED_PRECONDITION",
+        ),
         Error::PreconditionFailed => Reply::error(
             412,
             "The Remote Config ETag does not match",
@@ -313,4 +328,248 @@ pub(crate) fn dispatch(
         _ => return Reply::error(405, "Method not allowed", "METHOD_NOT_ALLOWED"),
     };
     result.unwrap_or_else(|reply| reply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(
+        store: &TemplateStore,
+        action: &str,
+        method: &str,
+        query: &str,
+        body: &[u8],
+        if_match: Option<&str>,
+    ) -> Reply {
+        dispatch(
+            store,
+            &Route {
+                project: "demo-config",
+                action,
+            },
+            method,
+            query,
+            body,
+            if_match,
+            LogicalInstant::from_unix_seconds(1_765_000_000),
+        )
+    }
+
+    #[test]
+    fn historical_reads_distinguish_missing_versions_from_unpublished_templates() {
+        let store = TemplateStore::default();
+        for (query, status, version, tagged) in [
+            ("", 200, None, false),
+            ("versionNumber=0", 200, None, false),
+            ("versionNumber=-1", 200, None, false),
+            ("versionNumber=1", 200, None, false),
+            ("versionNumber=9223372036854775807", 200, None, false),
+            ("versionNumber=broken", 400, None, false),
+            ("versionNumber=9223372036854775808", 400, None, false),
+        ] {
+            let reply = request(&store, "remoteConfig", "GET", query, b"", None);
+            assert_eq!(reply.status, status, "{query}");
+            assert_eq!(
+                reply.body["version"]["versionNumber"].as_str(),
+                version,
+                "{query}"
+            );
+            assert_eq!(reply.etag.is_some(), tagged, "{query}");
+            if status == 200 {
+                assert_eq!(reply.body, json!({}), "{query}");
+            }
+        }
+
+        let first = request(&store, "remoteConfig", "PUT", "", b"{}", Some("*"));
+        let second = request(
+            &store,
+            "remoteConfig",
+            "PUT",
+            "",
+            b"{}",
+            first.etag.as_deref(),
+        );
+        for (query, status, version, tag) in [
+            ("", 200, Some("2"), second.etag.as_deref()),
+            ("versionNumber=0", 200, Some("2"), second.etag.as_deref()),
+            ("versionNumber=-1", 200, Some("2"), second.etag.as_deref()),
+            ("versionNumber=1", 200, Some("1"), first.etag.as_deref()),
+            ("versionNumber=broken", 400, None, None),
+            ("versionNumber=9223372036854775808", 400, None, None),
+        ] {
+            let reply = request(&store, "remoteConfig", "GET", query, b"", None);
+            assert_eq!(reply.status, status, "{query}");
+            assert_eq!(
+                reply.body["version"]["versionNumber"].as_str(),
+                version,
+                "{query}"
+            );
+            assert_eq!(reply.etag.as_deref(), tag, "{query}");
+        }
+        let missing = request(
+            &store,
+            "remoteConfig",
+            "GET",
+            "versionNumber=9223372036854775807",
+            b"",
+            None,
+        );
+        assert_eq!(missing.status, 200);
+        assert_eq!(missing.body, json!({}));
+        let tag = missing.etag.as_deref().unwrap();
+        assert!(tag.starts_with("etag-"));
+        assert_ne!(missing.etag, second.etag);
+        assert_eq!(
+            request(&store, "remoteConfig", "PUT", "", b"{}", Some(tag)).status,
+            412
+        );
+        let rollback = request(
+            &store,
+            "remoteConfig:rollback",
+            "POST",
+            "",
+            br#"{"versionNumber":"9223372036854775807"}"#,
+            None,
+        );
+        assert_eq!(rollback.status, 404);
+        assert_eq!(store.current().number(), 2);
+    }
+
+    #[test]
+    fn history_defaults_and_caps_page_sizes_without_changing_order() {
+        let store = TemplateStore::default();
+        for _ in 0..3 {
+            assert_eq!(
+                request(&store, "remoteConfig", "PUT", "", b"{}", Some("*")).status,
+                200
+            );
+        }
+        for (query, expected) in [
+            ("", Some(vec!["3", "2", "1"])),
+            ("pageSize=0", Some(vec!["3", "2", "1"])),
+            ("pageSize=3001", Some(vec!["3", "2", "1"])),
+            ("pageSize=2", Some(vec!["3", "2"])),
+            ("pageSize=-1", None),
+            ("pageSize=2147483648", None),
+            ("pageSize=invalid", None),
+        ] {
+            let reply = request(&store, "remoteConfig:listVersions", "GET", query, b"", None);
+            if let Some(expected) = expected {
+                let versions: Vec<_> = reply.body["versions"]
+                    .as_array()
+                    .expect("successful history has three retained versions")
+                    .iter()
+                    .map(|version| version["versionNumber"].as_str().unwrap())
+                    .collect();
+                assert_eq!(reply.status, 200, "{query}");
+                assert_eq!(versions, expected, "{query}");
+                assert_eq!(
+                    reply.body.get("nextPageToken").is_some(),
+                    expected.len() == 2
+                );
+            } else {
+                assert_eq!(reply.status, 400, "{query}");
+            }
+        }
+    }
+
+    #[test]
+    fn validation_returns_version_metadata_and_distinguishes_precondition_failures() {
+        let store = TemplateStore::default();
+        let first = request(&store, "remoteConfig", "PUT", "", b"{}", Some("*"));
+        for (body, expected) in [
+            (b"{}".as_slice(), json!({"version":{}})),
+            (
+                br#"{"version":{"description":"Draft","versionNumber":"9"}}"#.as_slice(),
+                json!({"version":{"description":"Draft"}}),
+            ),
+        ] {
+            let reply = request(
+                &store,
+                "remoteConfig",
+                "PUT",
+                "validateOnly=true",
+                body,
+                first.etag.as_deref(),
+            );
+            assert_eq!(reply.status, 200);
+            assert_eq!(reply.body, expected);
+            assert!(reply.etag.unwrap().ends_with("-0"));
+        }
+        for (query, body, tag, status, error) in [
+            (
+                "validateOnly=true",
+                b"{}".as_slice(),
+                None,
+                400,
+                "FAILED_PRECONDITION",
+            ),
+            ("", b"{}".as_slice(), None, 400, "FAILED_PRECONDITION"),
+            (
+                "validateOnly=true",
+                b"{".as_slice(),
+                None,
+                400,
+                "INVALID_ARGUMENT",
+            ),
+            (
+                "validateOnly=true",
+                b"{}".as_slice(),
+                Some("old"),
+                412,
+                "FAILED_PRECONDITION",
+            ),
+        ] {
+            let reply = request(&store, "remoteConfig", "PUT", query, body, tag);
+            assert_eq!(reply.status, status);
+            assert_eq!(reply.body["error"]["status"], error);
+        }
+        assert_eq!(store.current().number(), 1);
+        assert_eq!(store.history().len(), 1);
+    }
+
+    #[test]
+    fn writes_check_wire_types_before_preconditions_and_semantics_after_them() {
+        let store = TemplateStore::default();
+        let first = request(&store, "remoteConfig", "PUT", "", b"{}", Some("*"));
+        let wire_error =
+            br#"{"parameters":{"flag":{"valueType":"BOOLEAN","defaultValue":{"value":1}}}}"#;
+        let semantic_error =
+            br#"{"parameters":{"flag":{"valueType":"BOOLEAN","defaultValue":{"value":"maybe"}}}}"#;
+        let missing_reference =
+            br#"{"parameters":{"flag":{"conditionalValues":{"unknown":{"value":"a"}}}}}"#;
+        for (tag, status) in [
+            (None, 400),
+            (Some("old"), 412),
+            (first.etag.as_deref(), 400),
+        ] {
+            for (body, wire) in [
+                (wire_error.as_slice(), true),
+                (semantic_error.as_slice(), false),
+                (missing_reference.as_slice(), false),
+            ] {
+                for query in ["validateOnly=true", ""] {
+                    let reply = request(&store, "remoteConfig", "PUT", query, body, tag);
+                    let invalid = wire || tag == first.etag.as_deref();
+                    assert_eq!(
+                        reply.status,
+                        if invalid { 400 } else { status },
+                        "{query}/{tag:?}"
+                    );
+                    assert_eq!(
+                        reply.body["error"]["status"],
+                        if invalid {
+                            "INVALID_ARGUMENT"
+                        } else {
+                            "FAILED_PRECONDITION"
+                        },
+                        "{query}/{tag:?}"
+                    );
+                    assert_eq!(Some(store.current().etag()), first.etag);
+                }
+            }
+        }
+        assert_eq!(store.history().len(), 1);
+    }
 }

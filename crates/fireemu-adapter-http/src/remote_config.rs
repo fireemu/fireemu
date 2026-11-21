@@ -35,14 +35,7 @@ struct DraftVersion {
     description: Option<String>,
 }
 
-/// Fields owned by the template author. Version metadata is tracked independently.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ClientTemplate {
-    document: Value,
-    description: Option<String>,
-}
-
-impl ClientTemplate {
+impl Draft {
     fn parse(input: Value) -> Result<Self, Error> {
         if !input.is_object() {
             return Err(invalid("template must be an object"));
@@ -53,18 +46,11 @@ impl ClientTemplate {
         {
             return Err(invalid("version must be an object"));
         }
-        let draft: Draft = serde_json::from_value(input)
+        let draft: Self = serde_json::from_value(input)
             .map_err(|error| Error::InvalidTemplate(error.to_string()))?;
-        let mut conditions = BTreeSet::new();
         for condition in &draft.conditions {
-            let name = required_string(condition, "name")?;
-            required_string(condition, "expression")?;
-            validate_text_fields("condition", condition, &["tagColor"])?;
-            if !conditions.insert(name) {
-                return Err(invalid(format!("duplicate condition {name:?}")));
-            }
+            validate_text_fields("condition", condition, &["name", "expression", "tagColor"])?;
         }
-
         for group in draft.parameter_groups.values() {
             validate_text_fields("parameter group", &group.metadata, &["description"])?;
         }
@@ -72,12 +58,72 @@ impl ClientTemplate {
             .parameter_groups
             .values()
             .map(|group| &group.parameters);
-        let parameters = std::iter::once(&draft.parameters).chain(groups).flatten();
+        for (name, parameter) in std::iter::once(&draft.parameters).chain(groups).flatten() {
+            validate_text_fields("parameter", parameter, &["description", "valueType"])?;
+            ValueType::parse(name, parameter)?;
+            let conditional = parameter
+                .get("conditionalValues")
+                .map(|value| {
+                    value.as_object().ok_or_else(|| {
+                        invalid(format!(
+                            "parameter {name:?} conditionalValues must be an object"
+                        ))
+                    })
+                })
+                .transpose()?;
+            let values = parameter
+                .get("defaultValue")
+                .into_iter()
+                .chain(conditional.into_iter().flat_map(Map::values));
+            for value in values {
+                let fields = value.as_object().ok_or_else(|| {
+                    invalid(format!("parameter {name:?} value must be an object"))
+                })?;
+                validate_text_fields("parameter", fields, &["value"])?;
+                if fields
+                    .get("useInAppDefault")
+                    .is_some_and(|value| !value.is_boolean())
+                {
+                    return Err(invalid(format!(
+                        "parameter {name:?} useInAppDefault must be a boolean"
+                    )));
+                }
+            }
+        }
+        Ok(draft)
+    }
+}
+
+/// Fields owned by the template author. Version metadata is tracked independently.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ClientTemplate {
+    document: Value,
+    description: Option<String>,
+}
+
+impl ClientTemplate {
+    fn validate(mut draft: Draft) -> Result<Self, Error> {
+        let mut conditions = BTreeSet::new();
+        for condition in &draft.conditions {
+            let name = required_string(condition, "name")?;
+            required_string(condition, "expression")?;
+            if !conditions.insert(name) {
+                return Err(invalid(format!("duplicate condition {name:?}")));
+            }
+        }
+
+        let groups = draft
+            .parameter_groups
+            .values_mut()
+            .map(|group| &mut group.parameters);
+        let parameters = std::iter::once(&mut draft.parameters)
+            .chain(groups)
+            .flatten();
         let mut names = BTreeSet::new();
         for (name, definition) in parameters {
-            if name.trim().is_empty() || !names.insert(name) {
+            if !valid_parameter_name(name) || !names.insert(name) {
                 return Err(invalid(format!(
-                    "empty or duplicate parameter name {name:?}"
+                    "invalid or duplicate parameter name {name:?}"
                 )));
             }
             validate_parameter(name, definition, &conditions)?;
@@ -130,28 +176,73 @@ fn validate_text_fields(
     Ok(())
 }
 
+fn valid_parameter_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    name.len() <= 256
+        && bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+enum ValueType {
+    String,
+    Boolean,
+    Number,
+    Json,
+}
+
+impl ValueType {
+    fn parse(name: &str, parameter: &Map<String, Value>) -> Result<Self, Error> {
+        match parameter.get("valueType").and_then(Value::as_str) {
+            None | Some("STRING" | "PARAMETER_VALUE_TYPE_UNSPECIFIED") => Ok(Self::String),
+            Some("BOOLEAN") => Ok(Self::Boolean),
+            Some("NUMBER") => Ok(Self::Number),
+            Some("JSON") => Ok(Self::Json),
+            Some(kind) => Err(invalid(format!(
+                "parameter {name:?} has an unknown valueType {kind:?}"
+            ))),
+        }
+    }
+
+    fn matches(&self, value: &str) -> bool {
+        match self {
+            Self::String => true,
+            Self::Boolean => {
+                value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false")
+            }
+            Self::Number => value.parse::<f64>().is_ok_and(f64::is_finite),
+            Self::Json => serde_json::from_str::<Value>(value).is_ok(),
+        }
+    }
+}
+
 fn validate_parameter(
     name: &str,
-    parameter: &Map<String, Value>,
+    parameter: &mut Map<String, Value>,
     conditions: &BTreeSet<&str>,
 ) -> Result<(), Error> {
-    validate_text_fields("parameter", parameter, &["description", "valueType"])?;
-    if parameter
-        .get("defaultValue")
-        .is_some_and(|value| !valid_value(value))
+    let value_type = ValueType::parse(name, parameter)?;
+    if parameter.get("valueType").and_then(Value::as_str)
+        == Some("PARAMETER_VALUE_TYPE_UNSPECIFIED")
     {
+        parameter.remove("valueType");
+    }
+    let default = parameter.entry("defaultValue").or_insert_with(|| json!({}));
+    if default.as_object().is_some_and(Map::is_empty) {
+        *default = json!({"value": ""});
+    }
+    if !valid_value(default, &value_type) {
         return Err(invalid(format!(
             "parameter {name:?} has an invalid defaultValue"
         )));
     }
-    if let Some(references) = parameter.get("conditionalValues") {
-        let references = references.as_object().ok_or_else(|| {
-            invalid(format!(
-                "parameter {name:?} conditionalValues must be an object"
-            ))
-        })?;
+    if let Some(references) = parameter
+        .get("conditionalValues")
+        .and_then(Value::as_object)
+    {
         for (condition, value) in references {
-            if !conditions.contains(condition.as_str()) || !valid_value(value) {
+            if !conditions.contains(condition.as_str()) || !valid_value(value, &value_type) {
                 return Err(invalid(format!(
                     "parameter {name:?} has an invalid value for condition {condition:?}"
                 )));
@@ -161,12 +252,14 @@ fn validate_parameter(
     Ok(())
 }
 
-fn valid_value(value: &Value) -> bool {
+fn valid_value(value: &Value, value_type: &ValueType) -> bool {
     let Some(value) = value.as_object() else {
         return false;
     };
     match (value.get("value"), value.get("useInAppDefault")) {
-        (Some(literal), None) => literal.is_string(),
+        (Some(literal), None) => literal
+            .as_str()
+            .is_some_and(|value| value_type.matches(value)),
         (None, Some(use_default)) => use_default.is_boolean(),
         (None, None) => true,
         (Some(_), Some(_)) => false,
@@ -248,7 +341,15 @@ impl Version {
     /// Opaque precondition token scoped to the owning store.
     #[must_use]
     pub fn etag(&self) -> String {
-        format!("etag-fireemu-{:032x}-{}", self.store_id, self.number)
+        self.etag_for(self.number)
+    }
+
+    pub(crate) fn empty_etag(&self) -> String {
+        self.etag_for(0)
+    }
+
+    fn etag_for(&self, number: u64) -> String {
+        format!("etag-fireemu-{:032x}-{number}", self.store_id)
     }
 
     /// Immutable contents associated with this version.
@@ -340,8 +441,9 @@ impl TemplateStore {
         input: Value,
         now: LogicalInstant,
     ) -> Result<WriteResult, Error> {
+        let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
-        let template = ClientTemplate::parse(input);
+        let template = ClientTemplate::validate(draft);
         let mut versions = self.versions.lock().expect("template store lock");
         let forced = if_match == "*";
         let base_etag = head(&versions).etag();
