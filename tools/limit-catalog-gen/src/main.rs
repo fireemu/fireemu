@@ -517,3 +517,95 @@ fn main() -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn catalog() -> Value {
+        json!({
+            "schemaVersion": 1,
+            "id": "test-product-2026-01-01",
+            "product": "Test Product",
+            "edition": "Standard",
+            "officialRevision": "spec-v1",
+            "officialLastUpdatedUtc": "2026-01-01",
+            "reviewedAtUtc": "2026-01-02",
+            "conformanceRevision": "fixture-v1",
+            "limits": [{
+                "id": "ITEM-COUNT",
+                "class": "hard-resource",
+                "boundary": "inclusive-maximum",
+                "unit": "count",
+                "maximum": 3,
+                "precision": "exact",
+                "enforcementStage": "request",
+                "implemented": "implemented",
+                "officialText": "At most three items.",
+            }],
+        })
+    }
+
+    struct Fixture(PathBuf);
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn check_detects_changed_missing_and_orphaned_generated_rust_files() {
+        let temp =
+            std::env::temp_dir().join(format!("fireemu-catalog-test-{}", std::process::id()));
+        fs::create_dir(&temp).unwrap();
+        let fixture = Fixture(temp);
+        let specs = fixture.0.join("spec");
+        let outputs = fixture.0.join("generated");
+        fs::create_dir(&specs).unwrap();
+        fs::write(
+            specs.join("test-product-2026-01-01.json"),
+            catalog().to_string(),
+        )
+        .unwrap();
+        let args = |mode: &str| {
+            [
+                mode.to_owned(),
+                "--spec-dir".to_owned(),
+                specs.to_str().unwrap().to_owned(),
+                "--out-dir".to_owned(),
+                outputs.to_str().unwrap().to_owned(),
+            ]
+        };
+        run(&args("generate")).unwrap();
+        let generated = outputs.join("test_product_2026_01_01.rs");
+        let content = fs::read_to_string(&generated).unwrap();
+        assert!(content.contains("LimitMaximum::Fixed(3)"));
+        fs::write(outputs.join("readme.txt"), "irrelevant").unwrap();
+        run(&args("check")).unwrap();
+
+        fs::write(&generated, content.replace("Fixed(3)", "Fixed(4)")).unwrap();
+        assert!(run(&args("check"))
+            .unwrap_err()
+            .contains("differs from spec"));
+        fs::remove_file(&generated).unwrap();
+        assert!(run(&args("check")).unwrap_err().contains("is missing"));
+        fs::write(&generated, content).unwrap();
+        fs::write(outputs.join("orphan.RS"), "// stale generated file").unwrap();
+        assert!(run(&args("check"))
+            .unwrap_err()
+            .contains("orphan.RS has no spec source"));
+    }
+
+    #[test]
+    fn rejects_an_exact_limit_without_a_maximum() {
+        let mut doc = catalog();
+        doc["limits"][0]["maximum"] = Value::Null;
+        let input = serde_json::from_value(doc).unwrap();
+        assert_eq!(
+            render(&input, "test-product.json").unwrap_err(),
+            "ITEM-COUNT: exact precision requires a maximum"
+        );
+    }
+}

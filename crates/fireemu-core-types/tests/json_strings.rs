@@ -196,3 +196,25 @@ fn non_string_contracts_are_unchanged() {
         assert!(parse(source).is_err(), "{source}");
     }
 }
+
+#[test]
+fn container_whitespace_preserves_empty_and_paired_entries() {
+    for (compact, spaced) in [
+        ("[]", "[ \t\n]"),
+        ("[1,2]", "[ \t1,\n 2 ]"),
+        ("{}", "{ \t\n}"),
+        (r#"{"a":1,"b":2}"#, "{ \t\"a\" : 1,\n \"b\" : 2 }"),
+    ] {
+        let expected = parse(compact).unwrap();
+        assert_eq!(parse(spaced), Ok(expected), "{spaced}");
+    }
+    expect_string(r#"" ""#, " ");
+    expect_string(r#""x y""#, "x y");
+}
+
+#[test]
+fn nested_objects_consume_the_same_depth_budget_as_arrays() {
+    let document = |depth| r#"{"a":"#.repeat(depth) + "null" + &"}".repeat(depth);
+    assert!(parse(&document(MAX_DEPTH)).is_ok());
+    assert!(parse(&document(MAX_DEPTH + 1)).is_err());
+}

@@ -1,6 +1,15 @@
 //! Boundary tests for the public wire codecs.
 
-use fireemu_core_types::codec::{echo, json_escape_into, JsonControlEscape, MAX_ECHO_BYTES};
+use fireemu_core_types::codec::{
+    echo, json_escape_into, percent_decode_bytes, JsonControlEscape, PlusMode, MAX_ECHO_BYTES,
+};
+
+#[test]
+fn hexadecimal_pairs_need_a_percent_introducer() {
+    assert_eq!(percent_decode_bytes("x2f", PlusMode::Literal), b"x2f");
+    assert_eq!(percent_decode_bytes("%2f", PlusMode::Literal), b"/");
+    assert_eq!(percent_decode_bytes("x%2", PlusMode::Literal), b"x%2");
+}
 
 #[test]
 fn json_control_escaping_stops_at_the_first_printable_ascii_byte() {

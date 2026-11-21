@@ -606,4 +606,49 @@ mod tests {
             assert_eq!(auth_tenant_problems(&cfg), [] as [std::string::String; 0]);
         }
     }
+
+    #[test]
+    fn tenant_policy_requires_opt_in_only_for_the_applicable_profiles() {
+        let required =
+            "auth.tenants needs auth.multiTenant.allowTenants: true (declared off, or productionExact)";
+        for (profile, exact, outcomes) in [
+            (None, None, [false, true, false]),
+            (None, Some(false), [false, true, false]),
+            (None, Some(true), [true, true, false]),
+            (Some("strict"), None, [false, true, false]),
+            (Some("strict"), Some(false), [false, true, false]),
+            (Some("strict"), Some(true), [true, true, false]),
+            (Some("emulator"), None, [false, false, false]),
+            (Some("emulator"), Some(false), [false, false, false]),
+            (Some("emulator"), Some(true), [false, false, false]),
+        ] {
+            for (switch, rejects_declared_tenants) in
+                [None, Some(false), Some(true)].into_iter().zip(outcomes)
+            {
+                for (tenants, expected) in [
+                    (json!([]), Vec::<&str>::new()),
+                    (
+                        json!([{"tenantId": "acme", "displayName": "Acme"}]),
+                        if rejects_declared_tenants {
+                            vec![required]
+                        } else {
+                            vec![]
+                        },
+                    ),
+                ] {
+                    let mut cfg = json!({"auth": {"tenants": tenants}});
+                    if let Some(profile) = profile {
+                        cfg["profile"] = json!(profile);
+                    }
+                    if let Some(exact) = exact {
+                        cfg["productionExact"] = json!(exact);
+                    }
+                    if let Some(switch) = switch {
+                        cfg["auth"]["multiTenant"] = json!({"allowTenants": switch});
+                    }
+                    assert_eq!(auth_tenant_problems(&cfg), expected, "{cfg}");
+                }
+            }
+        }
+    }
 }

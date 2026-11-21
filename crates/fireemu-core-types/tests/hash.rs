@@ -57,14 +57,64 @@ fn incremental_digests_equal_one_shot_digests_across_chunk_boundaries() {
 }
 
 #[test]
-fn incremental_sha256_matches_one_shot_at_padding_boundaries() {
-    for len in [0, 55, 56, 63, 64, 65] {
+fn incremental_sha256_matches_reference_at_padding_boundaries() {
+    for (len, expected) in [
+        (
+            0,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            55,
+            "8aa994584139d128848eeebc4e815639ba5ab6e6e39574195a63ac4f14f7c43b",
+        ),
+        (
+            56,
+            "ad574708f75c044c9b85de64cb568ee7711ff4f36448c6242f053ba8f6cc2b63",
+        ),
+        (
+            63,
+            "280ed3e8ff1df845b2e7dfe6ac6cee817bef20e783cc65abc41b818b4d2fe076",
+        ),
+        (
+            64,
+            "c6ab9724ade5b6a7a1edfffb12f3aa9181351355af8fd08c919952ad211339dd",
+        ),
+        (
+            65,
+            "788367c73c7ddf4c53f65e68cc0d943e6227ab55b0e78ba63ace822b1c6301c0",
+        ),
+    ] {
         let bytes = patterned_bytes(len);
         let mut digest = Sha256::new();
         for chunk in bytes.chunks(7) {
             digest.update(chunk);
         }
-        assert_eq!(digest.finalize(), sha256(&bytes), "SHA-256 length {len}");
+        assert_eq!(
+            hex_lower(&digest.finalize()),
+            expected,
+            "incremental SHA-256 length {len}"
+        );
+        assert_eq!(
+            hex_lower(&sha256(&bytes)),
+            expected,
+            "one-shot SHA-256 length {len}"
+        );
+    }
+}
+
+#[test]
+fn incremental_md5_keeps_an_incomplete_block_buffered() {
+    for (len, expected) in [
+        (61, "ed19a5fbe867a70cd5f587103c7109fe"),
+        (62, "aaea5cebb2697f566c44424804472f5b"),
+        (63, "2f0301069e1c40af7f6c8f843b1b13f2"),
+    ] {
+        let bytes = patterned_bytes(len);
+        let (first, last) = bytes.split_at(len - 1);
+        let mut digest = Md5::new();
+        digest.update(first);
+        digest.update(last);
+        assert_eq!(hex_lower(&digest.finalize()), expected, "MD5 length {len}");
     }
 }
 

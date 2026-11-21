@@ -89,6 +89,17 @@ fn generate_all() -> Result<(), String> {
     Ok(())
 }
 
+fn check_generated(expected: &Path, actual: &Path) -> Result<(), String> {
+    if read_dir_sorted(expected) == read_dir_sorted(actual) {
+        Ok(())
+    } else {
+        Err(format!(
+            "generated protobuf code in {} differs from the vendored protos; run `cargo run -p proto-gen -- generate`",
+            actual.display()
+        ))
+    }
+}
+
 fn check_all() -> Result<(), String> {
     for target in TARGETS {
         let tmp = std::env::temp_dir().join(format!(
@@ -96,18 +107,8 @@ fn check_all() -> Result<(), String> {
             std::process::id(),
             target.out_dir.replace('/', "_")
         ));
-        let outcome = generate_target(target, &tmp).and_then(|()| {
-            let expected = read_dir_sorted(&tmp);
-            let actual = read_dir_sorted(Path::new(target.out_dir));
-            if expected == actual {
-                Ok(())
-            } else {
-                Err(format!(
-                    "generated protobuf code in {} differs from the vendored protos; run `cargo run -p proto-gen -- generate`",
-                    target.out_dir
-                ))
-            }
-        });
+        let outcome = generate_target(target, &tmp)
+            .and_then(|()| check_generated(&tmp, Path::new(target.out_dir)));
         let _ = fs::remove_dir_all(&tmp);
         outcome?;
     }
@@ -140,5 +141,44 @@ fn main() -> ExitCode {
             eprintln!("error: unknown mode {other}; use generate or check");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture(PathBuf);
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn check_requires_exact_generated_file_names_and_contents() {
+        let temp = std::env::temp_dir().join(format!("fireemu-proto-test-{}", std::process::id()));
+        fs::create_dir(&temp).unwrap();
+        let fixture = Fixture(temp);
+        let expected = fixture.0.join("from-vendored");
+        let actual = fixture.0.join("checked-in");
+        fs::create_dir(&expected).unwrap();
+        fs::create_dir(&actual).unwrap();
+        for dir in [&expected, &actual] {
+            fs::write(dir.join("UPSTREAM_COMMIT"), "fixture-revision\n").unwrap();
+            fs::write(dir.join("wire.rs"), "pub struct Wire;\n").unwrap();
+        }
+        check_generated(&expected, &actual).unwrap();
+
+        let wire = actual.join("wire.rs");
+        fs::write(&wire, "pub struct Drift;\n").unwrap();
+        let error = check_generated(&expected, &actual).unwrap_err();
+        assert!(error.contains("checked-in") && error.contains("differs from the vendored protos"));
+        fs::remove_file(&wire).unwrap();
+        assert!(check_generated(&expected, &actual).is_err());
+        fs::write(&wire, "pub struct Wire;\n").unwrap();
+        fs::write(actual.join("orphan.rs"), "// additional file").unwrap();
+        assert!(check_generated(&expected, &actual).is_err());
     }
 }
