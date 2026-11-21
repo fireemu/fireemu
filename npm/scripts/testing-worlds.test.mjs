@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createSign, createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, rm, stat, mkdir, chmod, open } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, mkdir, chmod, open, symlink } from 'node:fs/promises';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -617,19 +618,20 @@ test('a command retirement failure still stops the daemon and permits cleanup re
   await assert.rejects(stat(world.directory),{code:'ENOENT'});
 });
 
+async function installFixtureExpress(source) {
+  // Support the bundled runner's HTTP app without an SDK installation.
+    await mkdir(join(source,'node_modules','express'),{recursive:true});
+    await writeFile(join(source,'node_modules','express','package.json'),JSON.stringify({name:'express',version:'5.0.0',main:'index.cjs'}));
+    await writeFile(join(source,'node_modules','express','index.cjs'),`module.exports=function(){let handler;const app=(req,res)=>{let body='';req.on('data',c=>body+=c);req.on('end',()=>{req.body=JSON.parse(body||'{}');const p=req.url.split('?')[0].split('/');req.params={project:p[1],region:p[2],name:p[3]};req.get=name=>req.headers[name.toLowerCase()];res.status=code=>{res.statusCode=code;return res;};res.send=value=>res.end(String(value));res.json=value=>res.end(JSON.stringify(value));handler(req,res,()=>{});});};app.use=()=>{};app.all=(_path,fn)=>handler=fn;return app;};for(const name of ['json','text','urlencoded','raw'])module.exports[name]=()=>()=>{};`);
+  }
+
 test('real Functions imports, trial boundaries, Rules and module globals belong to each world', {...native,timeout:process.env.FIREEMU_TEST_SDK_MODULES?180_000:30_000}, async(t)=>{
-  const {mkdir,symlink}=await import('node:fs/promises');
   const root=await mkdtemp(join(tmpdir(),'fireemu-functions-worlds-'));
   t.after(async()=>{await rm(root,{recursive:true,force:true});});
   const source=join(root,'functions');await mkdir(source);
   await writeFile(join(source,'package.json'),JSON.stringify({main:'index.cjs'}));
   if(process.env.FIREEMU_TEST_SDK_MODULES)await symlink(process.env.FIREEMU_TEST_SDK_MODULES,join(source,'node_modules'),process.platform==='win32'?'junction':'dir');
-  else{
-    // The default fixture isolates clock/lifecycle behavior from SDK installation.
-    await mkdir(join(source,'node_modules','express'),{recursive:true});
-    await writeFile(join(source,'node_modules','express','package.json'),JSON.stringify({name:'express',version:'5.0.0',main:'index.cjs'}));
-    await writeFile(join(source,'node_modules','express','index.cjs'),`module.exports=function(){let handler;const app=(req,res)=>{let body='';req.on('data',c=>body+=c);req.on('end',()=>{req.body=JSON.parse(body||'{}');const p=req.url.split('?')[0].split('/');req.params={project:p[1],region:p[2],name:p[3]};req.get=name=>req.headers[name.toLowerCase()];res.status=code=>{res.statusCode=code;return res;};res.send=value=>res.end(String(value));res.json=value=>res.end(JSON.stringify(value));handler(req,res,()=>{});});};app.use=()=>{};app.all=(_path,fn)=>handler=fn;return app;};for(const name of ['json','text','urlencoded','raw'])module.exports[name]=()=>()=>{};`);
-  }
+  else await installFixtureExpress(source);
   const expiry=Date.parse('2026-02-01T00:00:00Z');
   const code=marker=>`
     const imported=Date.now();let hits=0,scheduled=0,taskAttempts=0;
@@ -898,4 +900,210 @@ test('Hub export restores password authentication after import and reset', {...n
     const login=await auth(restored,'signInWithPassword',credentials);assert.equal(login.status,200,await login.clone().text());assert.equal((await login.json()).localId,uid);
     assert.notEqual((await auth(restored,'signInWithPassword',{...credentials,password:'wrong-password'})).status,200);
   }
+});
+
+test('a database world resets to the Rules captured from firebase.json', native, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fireemu-world-rtdb-rules-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const shape of ['object', 'target']) {
+    await t.test(shape, async () => {
+      const cwd = join(root, shape);
+      await mkdir(join(cwd, 'rules'), { recursive: true });
+      const database = join(cwd, 'rules', 'database.rules.json');
+      const firestore = join(cwd, 'rules', 'firestore.rules');
+      const rules = access => JSON.stringify({ rules: { example: { '.read': access } } });
+      const firestoreSource = "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{doc=**} { allow read: if true; } } }";
+      await writeFile(database, rules(true));
+      await writeFile(firestore, firestoreSource);
+      const ns = shape === 'object' ? `${options.projectId}-default-rtdb` : `${options.projectId}-other`;
+      const section = { rules: 'rules/database.rules.json' };
+      await writeFile(join(cwd, 'firebase.json'), JSON.stringify({
+        firestore: { rules: 'rules/firestore.rules' },
+        database: shape === 'object' ? section : [{ target: 'rtdb', ...section }],
+      }));
+      await writeFile(join(cwd, '.firebaserc'), JSON.stringify({ targets: { [options.projectId]: { database: { rtdb: [ns] } } } }));
+      const settings = {
+        ...options, cwd, firebaseJson: 'firebase.json', services: ['database', 'firestore'],
+        config: { schemaVersion: 1, profile: 'strict', database: { defaultAccess: 'locked' } },
+      };
+      const read = world => fetch(`${world.endpoints.database.url}/example.json?ns=${ns}`);
+      await withTestWorld(settings, async world => {
+        assert.equal((await read(world)).status, 200);
+        assert.ok(JSON.stringify(await world.control('GET', '/v1/rules')).includes('allow read: if true'));
+        await writeFile(database, rules(false));
+        await writeFile(firestore, firestoreSource.replace('if true', 'if false'));
+        await world.reset();
+        assert.equal((await read(world)).status, 200);
+        assert.ok(JSON.stringify(await world.control('GET', '/v1/rules')).includes('allow read: if true'));
+        await withTestWorld(settings, async fresh => {
+          assert.equal((await read(fresh)).status, 401);
+          assert.ok(JSON.stringify(await fresh.control('GET', '/v1/rules')).includes('allow read: if false'));
+        });
+      });
+    });
+  }
+});
+
+test('Hosting readiness follows service selection and the current generation', native, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-readiness-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const shape of ['single', 'multiple']) {
+    const cwd = join(root, shape);
+    const publicDir = 'public';
+    await mkdir(join(cwd, publicDir), { recursive: true });
+    await writeFile(join(cwd, publicDir, 'index.html'), shape);
+    const hosting = shape === 'single' ? { public: publicDir } : [
+      { site: 'first', public: publicDir }, { site: 'second', public: publicDir },
+    ];
+    await writeFile(join(cwd, 'firebase.json'), JSON.stringify({ hosting }));
+    for (const selection of ['selected', 'unselected']) {
+      const services = selection === 'selected' ? ['hosting'] : ['firestore'];
+      await withTestWorld({ ...options, cwd, firebaseJson: 'firebase.json', services }, async world => {
+        for (const [index, phase] of ['create', 'reset'].entries()) {
+          await t.test(`${shape}/${selection}/${phase}`, async () => {
+            if (phase === 'reset') await world.reset();
+            assert.equal(world.generation, index + 1);
+            assert.ok(Object.isFrozen(world.hostingSites));
+            if (selection === 'unselected') {
+              assert.equal(world.hostingUrl, undefined);
+              assert.equal(world.endpoints.hosting, undefined);
+              assert.deepEqual(world.hostingSites, []);
+              return;
+            }
+            assert.equal(world.hostingSites[0].url, world.hostingUrl);
+            assert.equal(world.endpoints.hosting.url, new URL(world.hostingUrl).origin);
+            assert.deepEqual(world.hostingSites.map(site => site.site), shape === 'single' ? [world.projectId] : ['first', 'second']);
+            for (const site of world.hostingSites) {
+              const response = await fetch(site.url);
+              assert.equal(response.status, 200);
+              assert.equal(await response.text(), shape);
+            }
+          });
+        }
+      });
+    }
+  }
+});
+
+test('parallel Hosting worlds route the same API through their own Functions and Firestore', {...native, timeout: 60_000}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const documentPath = project => `/v1/projects/${project}/databases/(default)/documents/items/shared`;
+  const headers = { authorization: 'Bearer owner', 'content-type': 'application/json' };
+  const page = marker => `<!doctype html><p id="asset">${marker}</p><p id="api"></p><script>
+    fetch('/api/shared').then(response => response.json()).then(result => document.querySelector('#api').textContent = result.data);
+  </script>`;
+  async function project(marker) {
+    const cwd = join(root, marker);
+    const source = join(cwd, 'functions');
+    await Promise.all(['public', 'secondary', 'functions'].map(name => mkdir(join(cwd, name), { recursive: true })));
+    await writeFile(join(cwd, 'public', 'index.html'), page(marker));
+    await writeFile(join(cwd, 'secondary', 'index.html'), page(`${marker}-secondary`));
+    if (process.platform !== 'win32') {
+      await writeFile(join(cwd, 'outside.txt'), 'outside-only');
+      await writeFile(join(cwd, 'public', 'ignored.txt'), 'relatively ignored');
+      await writeFile(join(cwd, 'public', 'absolute.txt'), 'absolutely ignored');
+      await mkdir(join(cwd, 'public', 'nested'));
+      await writeFile(join(cwd, 'public', 'nested', 'asset.txt'), 'linked directory asset');
+      await symlink('../outside.txt', join(cwd, 'public', 'outside-link.txt'));
+      await symlink('ignored.txt', join(cwd, 'public', 'ignored-link.txt'));
+      await symlink('absolute.txt', join(cwd, 'public', 'blocked-alias.txt'));
+      await symlink('index.html', join(cwd, 'public', 'inside-link.html'));
+      await symlink('nested', join(cwd, 'public', 'inside-directory'), 'dir');
+    }
+    await writeFile(join(source, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+    await installFixtureExpress(source);
+    await writeFile(join(source, 'index.cjs'), `
+      const run = async (req, res) => {
+        const response = await fetch('http://'+process.env.FIRESTORE_EMULATOR_HOST+${JSON.stringify(documentPath(options.projectId))},
+          {headers:{authorization:'Bearer owner'}});
+        const record = await response.json();
+        res.json({marker:${JSON.stringify(marker)},data:record.fields?.value?.stringValue ?? null,path:req.headers['x-original-url']});
+      };
+      run.__endpoint = {platform:'gcfv2',httpsTrigger:{}};
+      module.exports = { api: run };
+    `);
+    const rewrite = { source: '/api/**', function: { functionId: 'api', region: 'us-central1' } };
+    await writeFile(join(cwd, 'firebase.json'), JSON.stringify({
+      functions: { source: 'functions' },
+      hosting: [
+        { site: 'main-site', public: 'public', ignore: ['ignored.txt', `${root.replaceAll('\\', '/')}/**/public/absolute*.txt`], rewrites: [rewrite] },
+        { target: 'secondary', public: 'secondary', rewrites: [rewrite] },
+      ],
+      emulators: { hosting: { port: 5019 } },
+    }));
+    await writeFile(join(cwd, '.firebaserc'), JSON.stringify({ targets: { [options.projectId]: { hosting: { secondary: ['secondary-site'] } } } }));
+    return { ...options, cwd, services: ['hosting', 'functions', 'firestore'], firebaseJson: 'firebase.json',
+      env: { ...options.env, FIREEMU_RUNNER_NODE: new URL('../../tools/runner-node/index.mjs', import.meta.url).pathname } };
+  }
+  const write = async (world, value) => {
+    const response = await fetch(world.endpoints.firestore.url + documentPath(world.projectId), {
+      method: 'PATCH', headers, body: JSON.stringify({ fields: { value: { stringValue: value } } }),
+    });
+    assert.equal(response.status, 200, await response.text());
+  };
+  const read = async url => {
+    const response = await fetch(new URL('/api/shared', url));
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  const settings = await Promise.all(['left', 'right'].map(project));
+  await withTestWorld(settings[0], left => withTestWorld(settings[1], async right => {
+    const worlds = [left, right];
+    assert.ok(worlds.every(world => world.projectId === options.projectId));
+    for (const world of worlds) {
+      assert.deepEqual(world.hostingSites.map(site => site.site), ['main-site', 'secondary-site']);
+      assert.equal(world.hostingSites[0].url, world.hostingUrl);
+      assert.equal(world.endpoints.hosting.url, new URL(world.hostingUrl).origin);
+      assert.ok(Object.isFrozen(world.hostingSites) && Object.isFrozen(world.hostingSites[0]));
+    }
+    const urls = worlds.flatMap(world => world.hostingSites.map(site => site.url));
+    assert.equal(new Set(urls.map(url => new URL(url).port)).size, 4);
+    assert.ok(urls.every(url => new URL(url).hostname === '127.0.0.1' && new URL(url).port !== '5019'));
+    await Promise.all(worlds.map((world, index) => write(world, `database-${index}`)));
+    for (const [index, world] of worlds.entries()) {
+      const marker = index === 0 ? 'left' : 'right';
+      const pages = await Promise.all(world.hostingSites.map(site => fetch(site.url).then(response => response.text())));
+      assert.deepEqual(pages, [page(marker), page(`${marker}-secondary`)]);
+    }
+    const observed = await Promise.all(urls.map(read));
+    assert.deepEqual(observed.map(value => [value.marker, value.data, value.path]), [
+      ['left', 'database-0', '/api/shared'], ['left', 'database-0', '/api/shared'],
+      ['right', 'database-1', '/api/shared'], ['right', 'database-1', '/api/shared'],
+    ]);
+    if (process.platform !== 'win32') {
+      const requests = ['outside-link.txt', 'ignored-link.txt', 'absolute.txt', 'blocked-alias.txt', 'inside-link.html'].map(path => fetch(new URL(path, left.hostingUrl)));
+      const [outside, ignored, absolute, absoluteAlias, inside] = await Promise.all(requests);
+      assert.equal(outside.status, 404);
+      assert.equal(ignored.status, 404);
+      assert.equal(absolute.status, 404);
+      assert.equal(absoluteAlias.status, 404);
+      assert.equal(await inside.text(), page('left'));
+      const directory = await fetch(new URL('inside-directory/asset.txt', left.hostingUrl));
+      assert.equal(await directory.text(), 'linked directory asset');
+    }
+    if (process.env.FIREEMU_TEST_PLAYWRIGHT_MODULE) {
+      await t.test('Playwright uses independent origins and same-origin API requests', async () => {
+        const { chromium } = createRequire(import.meta.url)(process.env.FIREEMU_TEST_PLAYWRIGHT_MODULE);
+        const browser = await chromium.launch({ args: ['--disable-background-networking'] });
+        try {
+          await Promise.all(worlds.map(async (world, index) => {
+            const context = await browser.newContext();
+            try {
+              await context.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+              const browserPage = await context.newPage();
+              await browserPage.goto(world.hostingUrl);
+              await browserPage.waitForFunction(expected => document.querySelector('#api')?.textContent === expected, `database-${index}`);
+            } finally { await context.close(); }
+          }));
+        } finally { await browser.close(); }
+      });
+    }
+    await writeFile(join(settings[0].cwd, 'public', 'index.html'), page('edited'));
+    await left.reset();
+    assert.equal(left.generation, 2);
+    assert.equal(await fetch(left.hostingUrl).then(response => response.text()), page('left'));
+    assert.deepEqual(await read(left.hostingUrl), { marker: 'left', data: null, path: '/api/shared' });
+    assert.deepEqual(await read(right.hostingUrl), { marker: 'right', data: 'database-1', path: '/api/shared' });
+  }));
 });

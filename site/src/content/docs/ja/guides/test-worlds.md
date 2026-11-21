@@ -30,7 +30,7 @@ description: fireemu/testingヘルパーを使い、それぞれが独自のク�
 
 `world.reset()`はデーモンを停止し、ワールド作成時に取ったスナップショットから、新しいデーモン(新しい*世代*)を起動します。
 
-- 古い世代から読み取ったものはすべて古くなります。`world.endpoints`、`world.environment`、`world.uiUrl`、それらから作ったSDKインスタンスとクライアント、古いcontrol URLとトークンから作ったcontrolクライアントです。`reset()`が解決した後で、ゲッターを再度読み取り、再接続してください。
+- 古い世代から読み取ったものはすべて古くなります。`world.endpoints`、`world.environment`、`world.uiUrl`、HostingのURL、それらから作ったSDKインスタンスとクライアント、古いcontrol URLとトークンから作ったcontrolクライアントです。`reset()`が解決した後で、ゲッターを再度読み取り、再接続してください。
 - `world.control()`、`world.clock.*`、`world.run()`は常に現在の世代を使います。`createControlClient({ env: world.environment })`や、明示的なオリジンとトークンで作ったクライアントは、古い世代のエンドポイントと認証情報を保持します。`reset()`の後で作り直してください。
 - 古い世代で`world.run()`により起動したコマンドは終了されます。
 - `reset()`が戻るのは*作成時のスナップショット*であり、現在のソースではありません。ワールドの作成後に行ったFunctionsのコード、Rules、インデックス、設定への変更は反映されません。それらを使うには新しいワールドを作成してください。
@@ -69,6 +69,27 @@ await withTestWorld(
 - `Promise.all`を使う場合は、各ワールドに専用の`withTestWorld()`を使い、他のワールドが失敗してもすべてのワールドが破棄されるようにします。
 - 1つのテスト内で共存させる必要があるワールドは、`Promise.allSettled`で作成し、`finally`で破棄します。
 - `Promise.all([createTestWorld(), ...])`の後に`try/finally`を置くと、1つの作成が失敗したとき、すでに起動していたワールドがリークします([テストワールドのガイド](https://github.com/fireemu/fireemu/blob/main/docs/test-worlds.md#create-parallel-worlds)を参照)。
+
+## Hostingサイトをテストする
+
+`services`に`hosting`を指定すると、`firebase.json`のサイトをワールド固有のポートで配信します。Functionsへの書き換えを使う場合は、`functions`と、その関数が使うサービスも指定してください。
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url); // The page can call /api/items on the same origin.
+  },
+);
+```
+
+`world.hostingUrl`は最初のサイトのURLです。`world.endpoints.hosting`にはその接続先が入り、`world.hostingSites`には各サイトの`site`と`url`が設定順に入ります。名前やターゲットを指定していないサイトには、ワールドのプロジェクトIDが入ります。Hostingが無効なら、最初のURLと接続先は`undefined`になり、サイト一覧は空になります。
+
+ブラウザの並列ワーカーでプロジェクトIDと相対APIパスを共通にできます。各ワーカーは自分のワールドのURLを開いてください。リセットすると、ワールド作成時の公開ファイルとFirestore、Realtime DatabaseのRulesが復元されます。リセット後はHostingのURLを取得し直してください。
 
 ## 暦の単位でクロックを動かす
 

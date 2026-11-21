@@ -25,12 +25,33 @@ The full list of daemon-side effects is in [What a clock move changes](#what-a-c
 
 `world.reset()` stops the daemon and starts a new one, a new *generation*, from the snapshot taken when the world was created.
 
-- Everything you read from the old generation is stale: `world.endpoints`, `world.environment`, `world.uiUrl`, SDK instances and clients built from them, and control clients created from the old control URL and token. Read the getters again and reconnect after `reset()` resolves.
+- Everything you read from the old generation is stale: `world.endpoints`, `world.environment`, `world.uiUrl`, Hosting URLs, SDK instances and clients built from them, and control clients created from the old control URL and token. Read the getters again and reconnect after `reset()` resolves.
 - `world.control()`, `world.clock.*` and `world.run()` always use the current generation, so they need no reconnection. A client made with `createControlClient({ env: world.environment })` or with an explicit origin and token keeps the old generation's endpoint and credential: create it again after `reset()`.
 - Commands started with `world.run()` in the old generation are terminated.
 - `reset()` returns to the *creation snapshot*, not to your current sources. Edits made to Functions code, Rules, indexes or configuration after the world was created, and to an import directory, are not picked up. Create a new world to use them.
 
 For Vitest and Playwright fixtures that apply these rules, see [Fixtures for Vitest and Playwright](#fixtures-for-vitest-and-playwright).
+
+## Test a Hosting site
+
+Select `hosting` to serve the sites in `firebase.json` on ports assigned to your world. Include `functions` for Functions rewrites and select the services that those functions use.
+
+```js
+import { withTestWorld } from 'fireemu/testing';
+
+await withTestWorld(
+  { firebaseJson: 'firebase.json', services: ['hosting', 'functions', 'firestore'] },
+  async (world) => {
+    const url = world.hostingUrl;
+    if (!url) throw new Error('The world has no Hosting site');
+    await page.goto(url); // The page can call /api/items on the same origin.
+  },
+);
+```
+
+`world.hostingUrl` is the first site's URL. `world.endpoints.hosting` describes that site's endpoint, and `world.hostingSites` lists each site's `site` and `url` in configuration order. A site without an explicit name or target uses the world’s project ID. When Hosting is off, the primary URL and endpoint are undefined and the site list is empty.
+
+Concurrent browser workers can use the same project ID and relative API paths. Each worker should open the URL from its own world. A reset restores the site's public files and the Firestore and Realtime Database Rules captured at creation. Read the Hosting URLs again after each reset.
 
 ## TypeScript consumers
 

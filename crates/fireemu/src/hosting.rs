@@ -37,6 +37,7 @@ fn response(status: u16, body: impl Into<Bytes>, content_type: Option<&str>) -> 
 pub struct Config {
     data: Value,
     public: PathBuf,
+    ignore_root: Option<String>,
     site: Option<String>,
     target: Option<String>,
 }
@@ -151,9 +152,16 @@ impl Config {
                 }
             }
         }
+        let mut data = data.clone();
+        // Test World relocates the files, but absolute ignore globs still match the authored path.
+        let ignore_root = data
+            .as_object_mut()
+            .and_then(|object| object.remove("_fireemuTestWorldPublicRoot"))
+            .and_then(|value| value.as_str().map(|path| path.replace('\\', "/")));
         Ok(Self {
-            data: data.clone(),
+            data,
             public: base.join(public),
+            ignore_root,
             site,
             target,
         })
@@ -218,6 +226,7 @@ struct Site {
     /// `None` when the public directory does not exist: every asset lookup misses.
     root: Option<Arc<cap_std::fs::Dir>>,
     public_root: String,
+    ignore_root: String,
     project: String,
     upstream: Option<std::net::SocketAddr>,
     emulators: Value,
@@ -511,7 +520,7 @@ impl Site {
                         .map(str::to_owned),
                 )
                 .collect(),
-            self.public_root.clone(),
+            self.ignore_root.clone(),
         )
         .await
     }
@@ -1689,8 +1698,11 @@ pub fn prepare(
     let redirects = Rule::take(&mut data, "redirects");
     let rewrites = Rule::take(&mut data, "rewrites");
     let headers = Rule::take(&mut data, "headers");
+    let public_root = public_root.to_string_lossy().replace('\\', "/");
+    let ignore_root = config.ignore_root.unwrap_or_else(|| public_root.clone());
     Ok(PreparedSite(Arc::new(Site {
-        public_root: public_root.to_string_lossy().replace('\\', "/"),
+        public_root,
+        ignore_root,
         data,
         redirects,
         rewrites,
@@ -2028,6 +2040,7 @@ mod i18n_path_tests {
             headers: Vec::new(),
             root: None,
             public_root: "/public".to_owned(),
+            ignore_root: "/public".to_owned(),
             project: "demo".to_owned(),
             upstream: None,
             emulators: Value::Null,

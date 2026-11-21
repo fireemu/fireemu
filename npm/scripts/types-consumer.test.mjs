@@ -11,13 +11,13 @@ import { prepareLauncher } from './prepare-launcher.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const compiler = process.env.FIREEMU_TYPESCRIPT_PATH ?? join(root, 'ui/node_modules/.bin/tsc');
 const consumer = `
-import { createTestWorld, withTestWorld, type TestWorld, type TestWorldOptions } from 'fireemu/testing';
+import { createTestWorld, withTestWorld, type TestWorld, type TestWorldHostingSite, type TestWorldOptions } from 'fireemu/testing';
 import { createControlClient } from 'fireemu/control';
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Check<T extends true> = T;
 const env: Readonly<Record<string, string | undefined>> = { HOME: undefined };
 const options = {
-  services: ['auth', 'firestore', 'storage', 'functions', 'functions:worker', 'pubsub', 'database', 'appcheck'] as const,
+  services: ['auth', 'firestore', 'storage', 'functions', 'functions:worker', 'pubsub', 'database', 'appcheck', 'hosting'] as const,
   nodePathExcludes: ['firebase-admin'] as const, env: { ...env },
   binaryPath: '/binary', tempRoot: '/tmp', cwd: '/', firebaseJson: '/firebase.json',
   functionsSource: '/functions', import: '/export', projectId: 'demo-types', clockStart: '2026-01-01T00:00:00Z',
@@ -37,6 +37,15 @@ const generation: number = world.generation;
 const projectId: string = world.projectId;
 const directory: string = world.directory;
 const ui: string | undefined = world.uiUrl;
+const hostingUrl: string | undefined = world.hostingUrl;
+const hostingPort: number | undefined = world.endpoints.hosting?.port;
+const sites: readonly TestWorldHostingSite[] = world.hostingSites;
+for (const site of sites) {
+  const name: string = site.site;
+  const url: string = site.url;
+  // @ts-expect-error site URLs are readonly
+  site.url = 'http://127.0.0.1:8080';
+}
 const environment: string | undefined = world.environment.FIRESTORE_EMULATOR_HOST;
 const controlUrl: string = world.endpoints.control.apiBaseUrl;
 if (world.endpoints.firestore) {

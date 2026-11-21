@@ -2103,7 +2103,7 @@
     },
     "crates/fireemu/src/hosting.rs": {
       "kind": "sha256",
-      "value": "4a1ddec9f9ea86e724d04faf853feaa98554924407cee9e9e1d54a011aa36c73"
+      "value": "d039d40de49f34c58f0132bb52a18b76eed6bdf6c61ec2c7b4acee45d145b5e8"
     },
     "crates/fireemu/src/hosting/content-type-samples.json": {
       "kind": "json-semantic",

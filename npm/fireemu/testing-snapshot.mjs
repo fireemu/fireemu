@@ -187,12 +187,15 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
   };
   const visit=async(input,output,ancestors=new Set())=>{
     checkCopyState();
-    if(filter&&!await checked(signal,()=>filter(input)))return;
     let info=await checked(signal,()=>lstat(input));
+    if(filter&&!await checked(signal,()=>filter(input,info)))return;
     if(info.isSymbolicLink()){
       if(!dereference){
         const value=await checked(signal,()=>readlink(input));
-        const kind=process.platform==='win32'?(await checked(signal,()=>stat(input))).isDirectory()?'junction':'file':undefined;
+        let kind;
+        if(process.platform==='win32'){
+          kind=(await checked(signal,()=>stat(input))).isDirectory()?(isAbsolute(value)?'junction':'dir'):'file';
+        }
         await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
         await checked(signal,()=>symlink(value,output,kind));
         stats.symlinks++;
@@ -259,6 +262,8 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   // Functions sources and dependencies are copied only when a selected service loads them. The
   // daemon ignores configured Functions when `--only` omits them, so nothing else depends on them.
   const withFunctions=functionsSelected(options.services);
+  const withHosting=options.services?.includes('hosting');
+  const withDatabase=options.services?.includes('database');
   const cwd=resolve(options.cwd??process.cwd());
   const nodePathExcludes=options.nodePathExcludes===undefined?[]:options.nodePathExcludes;
   const packageName=value=>{
@@ -360,12 +365,43 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     }
     return destination;
   };
+  const firebaseInputPath=(value,base)=>isAbsolute(value)?value:`${base}${sep}${value}`;
+  const copyHostingPublic=async(sourcePath)=>{
+    const destination=join(baseline,`hosting-${sequence++}`);
+    let source;
+    try{source=await checked(signal,()=>realpath(sourcePath));}
+    catch(error){if(error.code==='ENOENT')return destination;throw error;}
+    if(inside(source,privateRoot))throw Error('world temporary directory must be outside the Hosting public directory');
+    if(!(await checked(signal,()=>stat(source))).isDirectory())throw Error(`hosting.public must be a directory: ${JSON.stringify(sourcePath)}`);
+    await copyInputTree(source,destination,{signal,dereference:false,directoryModes,stats,filter:async (path,info)=>{
+      if(!info.isSymbolicLink())return info.isDirectory()||info.isFile();
+      // Preserve internal links so Hosting can check its ignore list against the resolved asset.
+      if(isAbsolute(await checked(signal,()=>readlink(path))))return false;
+      try{return inside(source,await checked(signal,()=>realpath(path)));}
+      catch(error){if(['ENOENT','ELOOP','ENOTDIR'].includes(error.code))return false;throw error;}
+    }});
+    return destination;
+  };
   const snapshotFirebase=async(input,base)=>{
     checkSignal(signal);
     const value=structuredClone(input);
     for(const service of ['firestore','storage']){
       const sections=Array.isArray(value[service])?value[service]:[value[service]];
       for(const section of sections){if(!section)continue;for(const key of ['rules','indexes'])if(section[key])section[key]=await copyFile(section[key],base);}
+    }
+    if(withDatabase){
+      const databases=Array.isArray(value.database)?value.database:[value.database];
+      for(const entry of databases){
+        if(entry?.rules)entry.rules=await copyFile(await checked(signal,()=>realpath(firebaseInputPath(entry.rules,base))),base);
+      }
+    }
+    if(withHosting){
+      const sites=Array.isArray(value.hosting)?value.hosting:[value.hosting];
+      for(const site of sites){
+        if(typeof site?.public!=='string')continue;
+        site._fireemuTestWorldPublicRoot=resolve(base,site.public);
+        site.public=await copyHostingPublic(firebaseInputPath(site.public,base));
+      }
     }
     if(withFunctions){
       const codebases=Array.isArray(value.functions)?value.functions:[value.functions];
@@ -383,10 +419,13 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   let configBase=cwd;
   if(typeof input==='string'){const path=resolve(cwd,input);input=await readConfiguration(path,options,signal);configBase=dirname(path);}
   let config;
-  if(input.schemaVersion===undefined){config={schemaVersion:1,firebaseJson:await snapshotFirebase(input,configBase)};}
+  if(input.schemaVersion===undefined){
+    config={schemaVersion:1};
+    if(!options.firebaseJson)config.firebaseJson=await snapshotFirebase(input,configBase);
+  }
   else{
     config=structuredClone(input);
-    if(config.firebaseJson){const path=resolve(configBase,config.firebaseJson);config.firebaseJson=await snapshotFirebase(JSON.parse(await readRegularFile(path,signal)),dirname(path));}
+    if(!options.firebaseJson&&config.firebaseJson){const path=resolve(configBase,config.firebaseJson);config.firebaseJson=await snapshotFirebase(JSON.parse(await readRegularFile(path,signal)),dirname(path));}
     for(const [section,key] of [['rules','source'],['firestore','indexFile'],['firestore','textIndexDefinitionFile'],['storage','rules'],...(withFunctions?[['functions','manifest']]:[])]){
       if(config[section]?.[key])config[section][key]=await copyFile(config[section][key],cwd);
     }
@@ -426,7 +465,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     }
   }
   config.daemon={...config.daemon,clockStart:options.clockStart??config.daemon?.clockStart??'2026-01-01T00:00:00Z',seed:options.seed??config.daemon?.seed??1,authProject:options.projectId??config.daemon?.authProject??'demo-test-world'};
-  for(const service of ['firestore','http','storage','functions','eventarc','tasks','pubsub','database','hub','ui','logging'])config.daemon[`${service}Port`]=0;
+  for(const service of ['firestore','http','storage','functions','eventarc','tasks','pubsub','database','hub','ui','logging',...(withHosting?['hosting']:[])])config.daemon[`${service}Port`]=0;
   config.functions={...config.functions,clock:{date:'virtual',timers:'real',tasks:'virtual',...config.functions?.clock,...options.clock}};
   await writeTracked(join(baseline,'fireemu.json'),JSON.stringify(config));
   let seed;

@@ -1252,7 +1252,7 @@ test('cancelling a tree clone stops the tool and removes the generation director
   await assert.rejects(stat(join(f.world, 'generation-1')), { code: 'ENOENT' });
 });
 
-test('a Firebase file named by both the configuration and the option is counted once', async t => {
+test('snapshot statistics count only the selected Firebase file and its inputs', async t => {
   const f = await fixture(t);
   await writeFile(join(f.root, 'one.json'), JSON.stringify({ firestore: { rules: 'one.rules' } }));
   await writeFile(join(f.root, 'two.json'), JSON.stringify({ firestore: { rules: 'two.rules' } }));
@@ -1261,8 +1261,10 @@ test('a Firebase file named by both the configuration and the option is counted 
   const snapshot = await snapshotInputs({ cwd: f.root, services: ['firestore'], config: { schemaVersion: 1, firebaseJson: 'one.json' }, firebaseJson: 'two.json' }, f.world);
   const files = await regularFiles(snapshot.baseline);
   assert.equal(snapshot.stats.files, files.length);
-  assert.equal(snapshot.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0), 'the overwritten file counts once, at its final size');
-  assert.equal(files.length, 4, 'firebase.json, the copied rules of the second file, fireemu.json and the first rules copy');
+  assert.equal(snapshot.stats.bytes, files.reduce((sum, [, size]) => sum + size, 0));
+  assert.equal(files.length, 3, 'firebase.json, the selected Rules and fireemu.json');
+  const firebase = JSON.parse(await readFile(snapshot.config.firebaseJson, 'utf8'));
+  assert.equal(await readFile(firebase.firestore.rules, 'utf8'), 'twelve bytes');
 });
 
 for (const tree of [false, true]) {
@@ -1289,4 +1291,101 @@ test('the elapsed time covers the copy', async t => {
   assert.ok(snapshot.stats.elapsedMs >= 50, `snapshot includes the 60 ms leaves (${snapshot.stats.elapsedMs} ms)`);
   const generation = await prepareGeneration(snapshot, join(f.world, 'generation-1'));
   assert.ok(generation.stats.elapsedMs >= 50, `generation includes the 60 ms leaves (${generation.stats.elapsedMs} ms)`);
+});
+
+test('unselected RTDB does not open its Rules file', async t => {
+  const f = await fixture(t);
+  const settings = { cwd: f.root, config: { database: { rules: 'missing.rules.json' } } };
+  const snapshot = await snapshotInputs(settings, f.world);
+  const firebase = JSON.parse(await readFile(snapshot.config.firebaseJson, 'utf8'));
+  assert.equal(firebase.database.rules, 'missing.rules.json');
+});
+
+test('explicit Firebase configuration wins before the overridden Rules and Hosting inputs are read', async t => {
+  const f = await fixture(t);
+  const overridden = { database: { rules: 'missing.rules.json' }, hosting: { public: 'firebase.json' } };
+  await writeFile(join(f.root, 'ignored.json'), JSON.stringify(overridden));
+  await writeFile(join(f.root, 'firebase.json'), JSON.stringify({ database: {} }));
+  for (const [index, config] of [overridden, { schemaVersion: 1, firebaseJson: 'ignored.json' }].entries()) {
+    const root = join(f.world, String(index));
+    await mkdir(root);
+    const snapshot = await snapshotInputs({
+      cwd: f.root, config, firebaseJson: 'firebase.json', services: ['database', 'hosting'],
+    }, root);
+    assert.deepEqual(JSON.parse(await readFile(snapshot.config.firebaseJson, 'utf8')), { database: {} });
+  }
+});
+
+test('Firebase inputs snapshot RTDB Rules and selected Hosting across configuration forms', async t => {
+  for (const form of ['inline', 'file', 'option', 'wrapper']) {
+    for (const database of ['object', 'array']) {
+      for (const hosting of ['existing', 'missing', 'unselected']) {
+        await t.test(`${form}/${database}/${hosting}`, async subtest => {
+          const f = await fixture(subtest);
+          const base = form === 'inline' ? f.root : join(f.root, 'project');
+          await mkdir(join(base, 'rules'), { recursive: true });
+          await writeFile(join(base, 'rules', 'firestore.rules'), 'firestore rules');
+          await writeFile(join(base, 'rules', 'database.rules.json'), '{"rules":{".read":true}}');
+          await writeFile(join(base, 'rules', 'tenant.rules.json'), '{"rules":{".read":false}}');
+          const rc = { targets: { 'demo-world': { database: { tenant: ['demo-world-tenant'] } } } };
+          await writeFile(join(base, '.firebaserc'), JSON.stringify(rc));
+          if (hosting === 'existing') {
+            await mkdir(join(base, 'public'));
+            await writeFile(join(base, 'public', 'index.html'), 'snapshot marker');
+          }
+          const rules = { rules: 'rules/database.rules.json' };
+          const firebase = {
+            firestore: { rules: 'rules/firestore.rules' },
+            database: database === 'object' ? rules : [
+              { instance: 'demo-world-default-rtdb', ...rules },
+              { target: 'tenant', rules: 'rules/tenant.rules.json' },
+            ],
+            hosting: { public: 'public' },
+            emulators: { hosting: { host: 'localhost', port: 5019 } },
+          };
+          const settings = { cwd: f.root, services: hosting === 'unselected' ? ['database'] : ['database', 'hosting'] };
+          if (form === 'inline') settings.config = firebase;
+          else {
+            await writeFile(join(base, 'firebase.json'), JSON.stringify(firebase));
+            if (form === 'file') settings.config = 'project/firebase.json';
+            if (form === 'option') settings.firebaseJson = 'project/firebase.json';
+            if (form === 'wrapper') {
+              await writeFile(join(base, 'fireemu.json'), JSON.stringify({ schemaVersion: 1, firebaseJson: 'firebase.json' }));
+              settings.config = 'project/fireemu.json';
+            }
+          }
+          const snapshot = await snapshotInputs(settings, f.world);
+          await writeFile(join(base, 'rules', 'database.rules.json'), 'edited after capture');
+          const generation = await prepareGeneration(snapshot, join(f.world, 'generation'));
+          const config = JSON.parse(await readFile(generation.configPath, 'utf8'));
+          const captured = JSON.parse(await readFile(config.firebaseJson, 'utf8'));
+          const inside = path => assert.ok(!relative(generation.cwd, path).startsWith('..') && isAbsolute(path), path);
+          inside(captured.firestore.rules);
+          assert.equal(await readFile(captured.firestore.rules, 'utf8'), 'firestore rules');
+          const entries = Array.isArray(captured.database) ? captured.database : [captured.database];
+          inside(entries[0].rules);
+          assert.equal(await readFile(entries[0].rules, 'utf8'), '{"rules":{".read":true}}');
+          if (database === 'array') {
+            assert.equal(entries[0].instance, 'demo-world-default-rtdb');
+            assert.equal(entries[1].target, 'tenant');
+            inside(entries[1].rules);
+            assert.equal(await readFile(entries[1].rules, 'utf8'), '{"rules":{".read":false}}');
+          }
+          assert.deepEqual(JSON.parse(await readFile(join(generation.cwd, '.firebaserc'), 'utf8')), rc);
+          if (hosting === 'unselected') assert.equal(captured.hosting.public, 'public');
+          else if (hosting === 'missing') {
+            inside(captured.hosting.public);
+            await assert.rejects(stat(captured.hosting.public), { code: 'ENOENT' });
+          } else {
+            inside(captured.hosting.public);
+            assert.equal(await readFile(join(captured.hosting.public, 'index.html'), 'utf8'), 'snapshot marker');
+          }
+          if (hosting !== 'unselected') {
+            assert.equal(config.daemon.hostingPort, 0);
+            assert.deepEqual(captured.emulators.hosting, { host: '127.0.0.1', port: 0 });
+          }
+        });
+      }
+    }
+  }
 });

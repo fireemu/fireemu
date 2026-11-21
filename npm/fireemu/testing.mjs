@@ -51,6 +51,7 @@ function endpoints(descriptor,control){
   const decode=value=>{const url=new URL(value.includes('://')?value:`http://${value}`);return Object.freeze({host:url.hostname,port:Number(url.port),url:`${url.protocol}//${url.host}`});};
   result.control=Object.freeze({...decode(descriptor.controlUrl),origin:control.origin,apiBaseUrl:control.apiBaseUrl});
   for(const [service,name] of Object.entries(endpointVariables))if(descriptor.environment[name])result[service]=decode(descriptor.environment[name]);
+  if(descriptor.hostingUrl)result.hosting=decode(descriptor.hostingUrl);
   return Object.freeze(result);
 }
 
@@ -109,7 +110,7 @@ export async function createTestWorld(options={}){
   const snapshotTimeout=options.snapshotTimeoutMs??60_000;
   if(!Number.isSafeInteger(snapshotTimeout)||snapshotTimeout<=0||snapshotTimeout>2147483647)throw TypeError('snapshotTimeoutMs must be a positive integer no greater than 2147483647');
   let services=options.services;
-  if(services&&(!Array.isArray(services)||!services.length||services.some(name=>typeof name!=='string'||! /^(auth|firestore|storage|functions(?::[A-Za-z0-9_-]+)?|pubsub|database|appcheck)$/.test(name))))throw TypeError('services must name supported test-world services');
+  if(services&&(!Array.isArray(services)||!services.length||services.some(name=>typeof name!=='string'||! /^(auth|firestore|storage|functions(?::[A-Za-z0-9_-]+)?|pubsub|database|appcheck|hosting)$/.test(name))))throw TypeError('services must name supported test-world services');
   const id=randomUUID();
   const directory=await mkdtemp(join(resolve(options.tempRoot??tmpdir()),'fireemu-world-'));
   let snapshot,current,closing=false,disposed=false,generation=0;
@@ -148,6 +149,7 @@ export async function createTestWorld(options={}){
     const readyFile=join(generationDirectory,'ready.json');
     const args=['up','--config',prepared.configPath,'--project',snapshot.config.daemon.authProject,'--only',services.join(','),'--ready-file',readyFile,'--owner-stdin','--log-verbosity','quiet'];
     for(const name of ['firestore','http','storage','functions','eventarc','tasks','pubsub','database','logging'])args.push(`--${name}-port`,'0');
+    if(services.includes('hosting'))args.push('--hosting-port','0');
     args.push('--hub-port',options.hub?'auto':'0');
     args.push('--ui-port',options.ui?'auto':'0');
     if(prepared.seed)args.push('--import',prepared.seed);
@@ -169,6 +171,7 @@ export async function createTestWorld(options={}){
           await requestFor(active,'GET','/health/ready',undefined,AbortSignal.timeout(Math.min(1000,timeout)));
           if(daemon.result())throw Error('daemon exited during test-world readiness');
           active.endpoints=endpoints(descriptor,active.control);
+          active.hostingSites=Object.freeze((descriptor.hostingSites??[]).map(site=>Object.freeze(site)));
           active.environment=Object.freeze({...descriptor.environment,NODE_PATH:prepared.nodePath,TMPDIR:temporary,TEMP:temporary,TMP:temporary,FIREEMU_TEST_WORLD_ID:id,FIREEMU_TEST_WORLD_GENERATION:String(next)});
           generation=next;
           return;
@@ -212,6 +215,8 @@ export async function createTestWorld(options={}){
   const world={
     get generation(){return generation;},
     get uiUrl(){check();return current.descriptor.uiUrl??undefined;},
+    get hostingUrl(){check();return current.descriptor.hostingUrl??undefined;},
+    get hostingSites(){check();return current.hostingSites;},
     get endpoints(){check();return current.endpoints;},
     get environment(){check();return current.environment;},
     get directory(){return directory;},

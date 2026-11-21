@@ -536,6 +536,13 @@ jobs:
       - run: node --test npm/scripts/types-consumer.test.mjs
       - run: node --test npm/scripts/types-exports.test.mjs
       - run: cargo build --release --locked -p fireemu
+      - name: Test World Rules and Hosting with the release daemon
+        env:
+          FIREEMU_TEST_BINARY: ${{ github.workspace }}/target/release/fireemu
+        run: >-
+          node --test
+          --test-name-pattern='a database world resets to the Rules|Hosting readiness follows|parallel Hosting worlds'
+          npm/scripts/testing-worlds.test.mjs
       - run: node npm/scripts/pack-local.mjs
       - run: node npm/scripts/verify-install.mjs --dist npm/dist
 

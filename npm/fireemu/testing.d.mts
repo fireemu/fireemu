@@ -2,7 +2,7 @@ import type { Environment } from './control.mjs';
 export type { Environment } from './control.mjs';
 
 /** Codebase suffixes must match [A-Za-z0-9_-]+; this is checked at runtime. */
-export type TestWorldService = 'auth' | 'firestore' | 'storage' | 'functions' | `functions:${string}` | 'pubsub' | 'database' | 'appcheck';
+export type TestWorldService = 'auth' | 'firestore' | 'storage' | 'functions' | `functions:${string}` | 'pubsub' | 'database' | 'appcheck' | 'hosting';
 
 export interface TestWorldOptions {
   readonly binaryPath?: string;
@@ -50,6 +50,7 @@ export interface TestWorldEndpoints {
   readonly tasks?: Endpoint;
   readonly pubsub?: Endpoint;
   readonly database?: Endpoint;
+  readonly hosting?: Endpoint;
   readonly hub?: Endpoint;
   readonly logging?: Endpoint;
 }
@@ -186,6 +187,12 @@ export interface RunResult {
   stderr: string;
 }
 
+export interface TestWorldHostingSite {
+  /** The site ID from firebase.json, its resolved target, or the world's project ID. */
+  readonly site: string;
+  readonly url: string;
+}
+
 /** Frozen world; generation-scoped getters and operations may reject or throw after disposal. */
 export interface TestWorld {
   readonly id: string;
@@ -193,6 +200,10 @@ export interface TestWorld {
   readonly generation: number;
   readonly directory: string;
   readonly uiUrl: string | undefined;
+  /** Primary Hosting site for this generation, or undefined when Hosting is not selected. */
+  readonly hostingUrl: string | undefined;
+  /** Sites in configuration order for this generation. */
+  readonly hostingSites: readonly TestWorldHostingSite[];
   readonly endpoints: TestWorldEndpoints;
   readonly environment: Environment;
   readonly clock: TestWorldClock;
