@@ -388,7 +388,7 @@
     ],
     "status": "implemented",
     "unimplemented": [
-      "Remote Config template storage, fetching and real publishing (local trigger injection only)",
+      "Remote Config client and server SDK fetching and automatic Functions events from template publication",
       "protobuf CloudEvents payloads (JSON is what firebase-functions consumes)"
     ],
     "notes": [

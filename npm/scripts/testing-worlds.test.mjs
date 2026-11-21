@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createSign, createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, rm, stat, mkdir, chmod, open, symlink } from 'node:fs/promises';
+import { get as httpGet } from 'node:http';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
@@ -1106,4 +1107,135 @@ test('parallel Hosting worlds route the same API through their own Functions and
     assert.deepEqual(await read(left.hostingUrl), { marker: 'left', data: null, path: '/api/shared' });
     assert.deepEqual(await read(right.hostingUrl), { marker: 'right', data: 'database-1', path: '/api/shared' });
   }));
+});
+
+test('Remote Config admin handles observed client template transitions', native, async t => {
+  await withTestWorld({ ...options, services: ['auth'] }, async world => {
+    const request = async (suffix = '', { method = 'GET', body, match, coding = 'gzip', caller = 'valid', project = world.projectId } = {}) => {
+      const url = new URL(`projects/${project}/remoteConfig${suffix}`, world.endpoints.control.apiBaseUrl);
+      const headers = { 'accept-encoding': coding };
+      if (caller !== 'missing') headers.authorization = `Bearer ${caller === 'valid' ? world.environment.FIREEMU_CONTROL_TOKEN : 'wrong'}`;
+      if (match !== undefined) headers['if-match'] = match;
+      let data;
+      if (body !== undefined) {
+        headers['content-type'] = 'application/json';
+        data = typeof body === 'string' ? body : JSON.stringify(body);
+      }
+      const response = await fetch(url, { method, body: data, headers });
+      assert.equal(response.headers.get('content-encoding'), coding === 'gzip' ? 'gzip' : null);
+      return { status: response.status, etag: response.headers.get('etag'), body: await response.json() };
+    };
+
+    for (const operation of ['read', 'validate', 'history']) {
+      for (const coding of ['identity', 'gzip']) {
+        for (const caller of ['valid', 'missing', 'wrong']) {
+          await t.test(`${operation}/${coding}/${caller}`, async () => {
+            const args = { caller, coding };
+            const response = operation === 'validate'
+              ? await request('?validateOnly=true', { ...args, method: 'PUT', match: '*', body: caller === 'valid' ? {} : '{' })
+              : await request(operation === 'history' ? ':listVersions' : '', args);
+            assert.equal(response.status, caller === 'valid' ? 200 : 401);
+            if (caller === 'valid' && operation !== 'validate') assert.deepEqual(response.body, {});
+          });
+        }
+      }
+    }
+
+    assert.equal((await request('', { project: 'demo-other' })).status, 404);
+    assert.deepEqual(await request('?versionNumber=9223372036854775807'), { status: 200, etag: null, body: {} });
+    const first = await request('', { method: 'PUT', match: '*', body: { version: { description: 'Empty' } } });
+    assert.equal(first.status, 200);
+    assert.match(first.etag, /^etag-/);
+    assert.equal(first.body.version.versionNumber, '1');
+    assert.equal(first.body.version.updateType, 'FORCED_UPDATE');
+    const withoutCoding = await request('', { coding: 'identity' });
+    assert.deepEqual(withoutCoding, { ...first, etag: null });
+    const repeatedCoding = await new Promise((resolve, reject) => {
+      const url = new URL(`projects/${world.projectId}/remoteConfig`, world.endpoints.control.apiBaseUrl);
+      const req = httpGet(url, { headers: {
+        authorization: `Bearer ${world.environment.FIREEMU_CONTROL_TOKEN}`,
+        'accept-encoding': ['*', 'gzip;q=0'],
+      } }, response => {
+        response.resume();
+        response.on('end', () => resolve([response.statusCode, response.headers['content-encoding']]));
+        response.on('error', reject);
+      });
+      req.on('error', reject);
+    });
+    assert.deepEqual(repeatedCoding, [200, undefined]);
+    if (process.env.FIREEMU_TEST_SDK_MODULES) {
+      await t.test('Admin SDK reads and validates using the local capability', async () => {
+        const child = await world.run(process.execPath, ['-e', `
+          const assert = require('node:assert/strict');
+          const { createRequire } = require('node:module');
+          const { join } = require('node:path');
+          const load = createRequire(join(process.env.SDK_MODULES, '..', 'package.json'));
+          const { initializeApp, deleteApp } = load('firebase-admin/app');
+          const { getRemoteConfig } = load('firebase-admin/remote-config');
+          const app = initializeApp({
+            projectId: process.env.RC_PROJECT,
+            credential: { getAccessToken: async () => ({ access_token: process.env.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) }
+          });
+          (async () => {
+            try {
+              const admin = getRemoteConfig(app);
+              const current = await admin.getTemplate();
+              assert.equal(current.version.versionNumber, '1');
+              assert.equal(current.etag, process.env.RC_START_ETAG);
+              const proposal = {
+                etag: current.etag, conditions: current.conditions ?? [], parameterGroups: current.parameterGroups ?? {},
+                parameters: { sdk: { defaultValue: { value: 'local' } } },
+              };
+              const validated = await admin.validateTemplate(proposal);
+              assert.equal(validated.etag, current.etag);
+              assert.equal(validated.parameters.sdk.defaultValue.value, 'local');
+              assert.deepEqual((await admin.getTemplate()).parameters ?? {}, {});
+            } finally { await deleteApp(app); }
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+        `], { env: {
+          SDK_MODULES: process.env.FIREEMU_TEST_SDK_MODULES,
+          RC_PROJECT: world.projectId,
+          RC_START_ETAG: first.etag,
+          FIREBASE_REMOTE_CONFIG_URL_BASE: new URL(world.endpoints.control.apiBaseUrl).origin,
+        } });
+        assert.equal(child.code, 0, child.stderr);
+      });
+    }
+
+    const marker = { parameters: { probe: { defaultValue: { value: 'local' } } } };
+    const dry = await request('?validate_only=true', { method: 'PUT', match: first.etag, body: marker });
+    assert.equal(dry.status, 200);
+    assert.match(dry.etag, /-0$/);
+    assert.deepEqual(dry.body, marker);
+    const stale = await request('?validateOnly=true', { method: 'PUT', match: 'etag-old', body: marker });
+    assert.equal(stale.status, 412);
+    assert.equal(stale.body.error.status, 'FAILED_PRECONDITION');
+    assert.deepEqual(await request(), first);
+
+    const second = await request('', { method: 'PUT', match: first.etag, body: marker });
+    assert.equal(second.status, 200);
+    assert.equal(second.body.version.versionNumber, '2');
+    assert.equal(second.body.version.updateType, 'INCREMENTAL_UPDATE');
+    const restored = await request(':rollback', { method: 'POST', body: { versionNumber: '1' } });
+    assert.equal(restored.status, 200);
+    assert.equal(restored.body.version.versionNumber, '3');
+    assert.equal(restored.body.version.rollbackSource, '1');
+    assert.equal(restored.body.version.description, 'Rollback to version 1');
+    assert.equal(restored.body.parameters, undefined);
+    assert.deepEqual(await request(), restored);
+    const historical = await request('?versionNumber=2');
+    assert.deepEqual(historical, {
+      ...second,
+      body: { ...second.body, parameters: { probe: { ...marker.parameters.probe, valueType: 'STRING' } } },
+    });
+
+    const history = await request(':listVersions?pageSize=2');
+    assert.equal(history.status, 200);
+    assert.deepEqual(history.body.versions.map(version => version.versionNumber), ['3', '2']);
+    assert.ok(history.body.nextPageToken);
+    const page = await request(`:listVersions?pageSize=2&pageToken=${encodeURIComponent(history.body.nextPageToken)}`);
+    assert.deepEqual(page.body.versions.map(version => version.versionNumber), ['1']);
+    await world.reset();
+    assert.deepEqual(await request(), { status: 200, etag: null, body: {} });
+  });
 });

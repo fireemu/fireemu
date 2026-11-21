@@ -15,6 +15,7 @@ use tokio::sync::{oneshot, Semaphore};
 
 use crate::control::{self, ControlState};
 use crate::identity_toolkit::{handle_with, AuthState, RequestHeaders};
+use crate::{remote_config::TemplateStore, remote_config_http};
 
 /// Maximum accepted request body (spec 33.3 input budget).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -24,6 +25,7 @@ const MAX_BLOCKING_AUTH_TASKS: usize = 64;
 async fn respond(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
+    remote_config: Option<Arc<TemplateStore>>,
     blocking_auth_slots: Option<Arc<Semaphore>>,
     peer_ip: Option<String>,
     remote_peer: bool,
@@ -164,6 +166,28 @@ async fn respond(
             .map(str::to_owned)
     };
     let accept_encoding = header("accept-encoding");
+    if let (Some(control), Some(store)) = (&control, &remote_config) {
+        let (endpoint, query) = path.split_once('?').unwrap_or((&path, ""));
+        if let Some(route) = remote_config_http::route(endpoint) {
+            let encodings = req
+                .headers()
+                .get_all(hyper::header::ACCEPT_ENCODING)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(",");
+            return Ok(remote_config_response(
+                control,
+                store,
+                &route,
+                query,
+                req,
+                origin.as_deref(),
+                Some(&encodings),
+            )
+            .await);
+        }
+    }
     let headers = RequestHeaders {
         authorization: header("authorization"),
         origin: header("origin"),
@@ -378,6 +402,86 @@ async fn respond(
     ))
 }
 
+async fn remote_config_response(
+    control: &ControlState,
+    store: &TemplateStore,
+    route: &remote_config_http::Route<'_>,
+    query: &str,
+    req: Request<Incoming>,
+    origin: Option<&str>,
+    accept_encoding: Option<&str>,
+) -> Response<Full<Bytes>> {
+    use remote_config_http::Reply;
+
+    let headers = req.headers();
+    let mut auth = headers.get_all(hyper::header::AUTHORIZATION).iter();
+    let presented = auth
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let reply = if auth.next().is_some()
+        || !control::token_matches(presented, &control.control_token)
+    {
+        Reply::error(
+            401,
+            "Remote Config administration requires the local control capability",
+            "UNAUTHENTICATED",
+        )
+    } else if route.project != control.default_project {
+        Reply::error(404, "Remote Config project not found", "NOT_FOUND")
+    } else {
+        let mut etags = headers.get_all(hyper::header::IF_MATCH).iter();
+        let etag = etags
+            .next()
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        if etags.next().is_some() {
+            Reply::error(400, "Duplicate If-Match header", "INVALID_ARGUMENT")
+        } else {
+            let method = req.method().clone();
+            match fireemu_adapter_support::body::collect_limited(req.into_body(), MAX_BODY_BYTES)
+                .await
+            {
+                Err(_) => Reply::error(
+                    413,
+                    "Remote Config request exceeds the local body bound",
+                    "RESOURCE_EXHAUSTED",
+                ),
+                Ok(bytes) => {
+                    let now = control.clock.lock().expect("clock lock").snapshot().instant;
+                    remote_config_http::dispatch(
+                        store,
+                        route,
+                        method.as_str(),
+                        query,
+                        &bytes,
+                        etag.as_deref(),
+                        now,
+                    )
+                }
+            }
+        }
+    };
+    let mut body = serde_json::to_vec_pretty(&reply.body).unwrap_or_default();
+    body.push(b'\n');
+    let mut response = with_cors(Response::builder().status(reply.status), origin)
+        .header("content-type", "application/json; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("vary", "accept-encoding");
+    if crate::identity_framing::accepts_gzip(accept_encoding) {
+        body = crate::identity_framing::gzip_stored(&body);
+        response = response.header("content-encoding", "gzip");
+        if let Some(etag) = reply.etag {
+            response = response
+                .header("etag", etag)
+                .header("access-control-expose-headers", "etag");
+        }
+    }
+    response
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+}
+
 /// Renders one JSON response, optionally forbidding every cache.
 fn finish(
     status: u16,
@@ -581,6 +685,7 @@ async fn serve_inner(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
 ) -> std::io::Result<()> {
+    let remote_config = control.as_ref().map(|_| Arc::new(TemplateStore::default()));
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking
@@ -596,6 +701,7 @@ async fn serve_inner(
         let remote_peer = is_remote_peer(peer_addr.ip());
         let state = state.clone();
         let control = control.clone();
+        let remote_config = remote_config.clone();
         let blocking_auth_slots = blocking_auth_slots.clone();
         tokio::spawn(async move {
             let io = TokioIo::new(GracefulClose::new(
@@ -606,6 +712,7 @@ async fn serve_inner(
                 respond(
                     state.clone(),
                     control.clone(),
+                    remote_config.clone(),
                     blocking_auth_slots.clone(),
                     peer_ip.clone(),
                     remote_peer,

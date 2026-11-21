@@ -7,6 +7,8 @@ pub mod control;
 pub mod identity_framing;
 pub mod identity_toolkit;
 pub mod oidc;
+pub mod remote_config;
+mod remote_config_http;
 pub mod saml;
 pub mod server;
 pub mod signing;

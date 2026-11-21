@@ -45,7 +45,7 @@ Non-trigger exports (`params`, `logger`, `config`, `app`, `onInit`, `runWith`, `
 | `remoteConfig` (`onConfigUpdated`) | served | `remoteConfig` | as v1 `remoteConfig` | Local injection accepts caller-supplied CloudEvent metadata |
 | `testLab` (`onTestMatrixCompleted`) | not-planned | none | `DEFERRED_TRIGGER_PRODUCTS` | Test Lab has no local emulator |
 
-Template storage and publishing, SDK fetch behavior, and production trigger observations are tracked in the [Remote Config compatibility parent](../spec/compatibility/closure/REMOTE-CONFIG.json).
+The [local client-template administration API](remote-config.md) supports template storage and publishing. SDK fetch behavior and automatic production trigger delivery are tracked in the [Remote Config compatibility parent](../spec/compatibility/closure/REMOTE-CONFIG.json).
 
 ## Anything else
 

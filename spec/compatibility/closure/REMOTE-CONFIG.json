@@ -16,7 +16,12 @@
   "scopeDecisions": [
     {
       "id": "RC-LOCAL-INJECTION",
-      "decision": "Fireemu's capability-protected control command delivers caller-supplied version data to local v1 and v2 handlers in both profiles. This is local trigger evidence. Template storage, SDK fetching and publishing remain unimplemented, and production event delivery remains unobserved.",
+      "decision": "Fireemu's capability-protected control command delivers caller-supplied version data to local v1 and v2 handlers in both profiles. Production event delivery is still planned.",
+      "status": "ANSWERED"
+    },
+    {
+      "id": "RC-LOCAL-TEMPLATE-ADMIN",
+      "decision": "The loopback control listener provides client-template administration for the default project using the local control capability. It covers current and historical reads, structural validation, conditional publishing, history and rollback. Formal coverage and comparison remain planned for the full conditions below.",
       "status": "ANSWERED"
     }
   ],
@@ -25,24 +30,28 @@
       "conditionId": "REMOTE-CONFIG/template-read",
       "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects.",
       "status": "PLANNED",
+      "localEvidence": ["npm/scripts/testing-worlds.test.mjs"],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/template-validation",
       "description": "Validate parameters, parameter groups and condition references. Compare errors and confirm that validation-only requests leave the current template, history and event stream unchanged.",
       "status": "PLANNED",
+      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/template-publish",
       "description": "Publish templates with a matching, missing, stale or wildcard If-Match value. Compare response metadata, version creation and the stored template after concurrent accepted or refused updates.",
       "status": "PLANNED",
+      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/version-history-and-rollback",
       "description": "List template versions and follow continuation tokens. Compare version-specific reads, rollback to an existing version, and refusal of an unavailable version without a state change.",
       "status": "PLANNED",
+      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
       "productionEvidence": []
     },
     {
