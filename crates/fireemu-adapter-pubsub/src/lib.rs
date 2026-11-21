@@ -469,6 +469,9 @@ pub struct PubSubHandle {
     /// Wall time added to every reading, so a test can let wall time pass without sleeping.
     #[cfg(test)]
     wall_skew_nanos: Arc<AtomicU64>,
+    /// Pins delivery and pull scheduling to the same wall instant in clock tests.
+    #[cfg(test)]
+    freeze_wall_at_origin: bool,
 }
 
 impl PubSubHandle {
@@ -512,6 +515,8 @@ impl PubSubHandle {
             quantum_pause: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             wall_skew_nanos: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            freeze_wall_at_origin: false,
             paging_policy: PagingPolicy::Emulator,
             local_bearer_token: None,
             rest_negative_cache: None,
@@ -626,6 +631,9 @@ impl PubSubHandle {
         let mut wall = self.wall_origin.elapsed().as_nanos();
         #[cfg(test)]
         {
+            if self.freeze_wall_at_origin {
+                wall = 0;
+            }
             wall += u128::from(self.wall_skew_nanos.load(Ordering::Acquire));
         }
         let at = delivery.observe(logical, wall, stands_still);
@@ -928,6 +936,12 @@ impl PubSubHandle {
             )
         };
         let wall = tokio::time::Instant::now();
+        #[cfg(test)]
+        let wall = if self.freeze_wall_at_origin {
+            tokio::time::Instant::from_std(self.wall_origin)
+        } else {
+            wall
+        };
         let fallback = std::time::Duration::from_secs(1);
         if let Some((seen_now, seen_deadline, wake)) = scheduled {
             if *seen_now == logical && *seen_deadline == deadline {
@@ -2952,7 +2966,15 @@ mod dispatch_tests {
     fn leased_recheck_fixture_with(
         policy: PagingPolicy,
     ) -> (PubSubHandle, SubscriptionName, String) {
-        let (handle, subscription, topic) = unary_pull_fixture(policy);
+        leased_recheck_fixture_on_wall(policy, false)
+    }
+
+    fn leased_recheck_fixture_on_wall(
+        policy: PagingPolicy,
+        freeze_wall_at_origin: bool,
+    ) -> (PubSubHandle, SubscriptionName, String) {
+        let (mut handle, subscription, topic) = unary_pull_fixture(policy);
+        handle.freeze_wall_at_origin = freeze_wall_at_origin;
         let now = handle.now();
         handle
             .state()
@@ -3606,21 +3628,38 @@ mod dispatch_tests {
     /// An advanced logical clock with an unchanged pull deadline recomputes the wake time.
     #[test]
     fn pull_recheck_recomputes_when_only_the_logical_clock_advances() {
-        let (handle, subscription, _) = leased_recheck_fixture();
+        let (handle, subscription, _) = leased_recheck_fixture_on_wall(PagingPolicy::Strict, true);
+        let wall = tokio::time::Instant::from_std(handle.wall_origin);
         let deadline = next_recheck_deadline(&handle, &subscription);
         assert!(deadline.as_nanos() - handle.now().as_nanos() > 1_000_000_000);
         let mut scheduled = None;
         let first_wake = handle.pull_recheck_at(&subscription, &mut scheduled);
+        assert_eq!(scheduled, Some((handle.now(), Some(deadline), first_wake)));
 
         advance_logical_until(&handle, deadline, LogicalDuration::from_millis(100));
         assert_eq!(next_recheck_deadline(&handle, &subscription), deadline);
-        let before = tokio::time::Instant::now();
+        // Reusing an expired wake would select the one-second safety cadence.
+        scheduled.as_mut().unwrap().2 = wall;
         let wake = handle.pull_recheck_at(&subscription, &mut scheduled);
-        let after = tokio::time::Instant::now();
 
-        assert_ne!(wake, first_wake);
-        assert_recomputed_wake(wake, before, after, std::time::Duration::from_millis(100));
+        assert_eq!(wake, wall + std::time::Duration::from_millis(100));
         assert_eq!(scheduled, Some((handle.now(), Some(deadline), wake)));
+    }
+
+    #[test]
+    fn pull_recheck_renews_an_expired_wake_with_an_unchanged_cache_key() {
+        let (handle, subscription, _) = leased_recheck_fixture_on_wall(PagingPolicy::Strict, true);
+        let deadline = next_recheck_deadline(&handle, &subscription);
+        advance_logical_until(&handle, deadline, LogicalDuration::from_millis(100));
+        let logical = handle.now();
+        let wall = tokio::time::Instant::from_std(handle.wall_origin);
+
+        for cached_wake in [wall - std::time::Duration::from_nanos(1), wall] {
+            let mut scheduled = Some((logical, Some(deadline), cached_wake));
+            let wake = handle.pull_recheck_at(&subscription, &mut scheduled);
+            assert_eq!(wake, wall + std::time::Duration::from_secs(1));
+            assert_eq!(scheduled, Some((logical, Some(deadline), wake)));
+        }
     }
 
     /// A changed pull deadline at an unchanged logical clock recomputes the wake time.
