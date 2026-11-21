@@ -4,6 +4,7 @@ mod support;
 
 use fireemu_core_app_check::claims::{issuer_for, AppCheckClaims};
 use fireemu_core_app_check::jwt::{base64url_encode, encode};
+use fireemu_core_app_check::limits::MAX_TOKEN_BYTES;
 use fireemu_core_app_check::registry::{AppCheckRegistry, AppRegistration, ProjectEpoch};
 use fireemu_core_app_check::verify::{
     verify_token, AdmissionDecision, AppCheckCredentialState, AppCheckFailure, BaselineMode,
@@ -394,6 +395,24 @@ fn a_token_that_is_not_three_base64url_segments_is_malformed() {
     let oversized = "a".repeat(16 * 1024 + 1);
     assert_eq!(
         verify_token(&oversized, &registry, "demo-app", &signer, now(0)),
+        Err(AppCheckFailure::Malformed)
+    );
+}
+
+#[test]
+fn a_token_one_byte_over_the_size_limit_is_rejected_before_header_validation() {
+    let registry = fixture_registry();
+    let signer = TestSigner::new(1);
+    let header = base64url_encode(br#"{"alg":"none","typ":"JWT"}"#);
+    let prefix = format!("{header}.YQ.");
+    let mut token = format!("{prefix}{}", "A".repeat(MAX_TOKEN_BYTES - prefix.len()));
+    assert_eq!(
+        verify_token(&token, &registry, "demo-app", &signer, now(0)),
+        Err(AppCheckFailure::UnsupportedAlgorithm)
+    );
+    token.push('A');
+    assert_eq!(
+        verify_token(&token, &registry, "demo-app", &signer, now(0)),
         Err(AppCheckFailure::Malformed)
     );
 }

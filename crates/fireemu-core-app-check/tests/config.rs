@@ -9,8 +9,8 @@ use fireemu_core_app_check::limits::{
     MAX_DEBUG_TOKENS_PER_APP, MAX_TOKEN_TTL_SECONDS, MIN_TOKEN_TTL_SECONDS,
 };
 use fireemu_core_app_check::registry::{
-    embedded_project_number, validate_display_name, validate_project_number, AppCheckRegistry,
-    AppRegistration, DebugTokenDigest, RegistryError,
+    embedded_project_number, validate_display_name, validate_project_number, validate_registration,
+    AppCheckRegistry, AppRegistration, DebugTokenDigest, RegistryError,
 };
 use support::{digest_of, DEMO_APP_ID, DEMO_SECRET};
 
@@ -92,13 +92,31 @@ fn a_standard_app_id_must_embed_its_own_project_number() {
 fn project_numbers_are_decimal_digits_without_a_leading_zero() {
     assert!(validate_project_number("1234567890").is_ok());
     assert!(validate_project_number("7").is_ok());
-    for bad in ["", "0", "01234", "12 34", "12a4", "-1", "١٢٣"] {
+    for bad in ["", "0", "01", "01234", "12 34", "12a4", "-1", "١٢٣"] {
         assert_eq!(
             validate_project_number(bad),
             Err(RegistryError::InvalidProjectNumber),
             "{bad:?} must be refused"
         );
     }
+}
+
+#[test]
+fn a_registration_requires_a_bounded_project_id_and_a_valid_project_number() {
+    let too_long = "p".repeat(64);
+    let max_id = "p".repeat(63);
+    let registration = |project, number| app(project, number, "custom-app-id");
+    for invalid in ["", &too_long] {
+        assert_eq!(
+            validate_registration(&registration(invalid, "7")),
+            Err(RegistryError::InvalidProjectId)
+        );
+    }
+    assert_eq!(validate_registration(&registration(&max_id, "7")), Ok(()));
+    assert_eq!(
+        validate_registration(&registration(&max_id, "01")),
+        Err(RegistryError::InvalidProjectNumber)
+    );
 }
 
 #[test]
