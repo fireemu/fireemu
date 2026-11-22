@@ -284,6 +284,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   let sequence=0;
   const directoryModes=[];
   const relocationLinks=[];
+  let hostingRootsPath;
   const writeTracked=async(path,text)=>{
     let before;
     try{before=(await stat(path)).size;}catch(error){if(error.code!=='ENOENT')throw error;}
@@ -414,10 +415,15 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     }
     if(withHosting){
       const sites=Array.isArray(value.hosting)?value.hosting:[value.hosting];
+      const hostingRoots=[];
       for(const site of sites){
         if(typeof site?.public!=='string')continue;
-        site._fireemuTestWorldPublicRoot=resolve(base,site.public);
+        hostingRoots.push(resolve(base,site.public));
         site.public=await copyHostingPublic(firebaseInputPath(site.public,base));
+      }
+      if(hostingRoots.length){
+        hostingRootsPath=join(baseline,'hosting-roots.json');
+        await writeTracked(hostingRootsPath,JSON.stringify(hostingRoots));
       }
     }
     if(withFunctions){
@@ -488,7 +494,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   let seed;
   if(options.import){seed=join(baseline,'seed');await copyInputTree(resolve(cwd,options.import),seed,{signal,dereference:true,directoryModes,stats});}
   await restoreDirectoryModes(directoryModes,signal);
-  return {baseline,config,seed,nodePaths,relocationLinks,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
+  return {baseline,config,seed,nodePaths,relocationLinks,hostingRootsPath,functionsConfigured,functionsSkipped:!withFunctions,stats:reportStats(stats,started),totals:totalsOf(stats)};
 }
 
 // Clone the whole baseline with the platform tool. Returns false, leaving nothing behind, when the
@@ -539,7 +545,7 @@ async function prepareGenerationInputs(snapshot,directory,signal){
   await rewriteFile(join(inputs,'fireemu.json'),JSON.stringify(config));
   await checked(signal,()=>mkdir(join(directory,'tmp'),{mode:0o700}));
   await restoreDirectoryModes(directoryModes,signal);
-  return {configPath:join(inputs,'fireemu.json'),cwd:inputs,seed:snapshot.seed?rewrite(snapshot.seed):undefined,nodePath:(snapshot.nodePaths??[]).map(rewrite).join(delimiter),stats:reportStats(stats,started,cloned?'clone':undefined)};
+  return {configPath:join(inputs,'fireemu.json'),cwd:inputs,seed:snapshot.seed?rewrite(snapshot.seed):undefined,nodePath:(snapshot.nodePaths??[]).map(rewrite).join(delimiter),hostingRootsPath:rewrite(snapshot.hostingRootsPath),stats:reportStats(stats,started,cloned?'clone':undefined)};
 }
 
 export async function prepareGeneration(snapshot,directory,signal){

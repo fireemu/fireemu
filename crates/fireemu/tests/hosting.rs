@@ -337,6 +337,54 @@ fn ordinary_hosting_ignores_the_test_world_public_root_member() {
 }
 
 #[test]
+fn ordinary_hosting_ignores_the_test_world_public_root_member_with_supervisor_flags() {
+    let dir = Scratch::new("hosting", "ordinary-ignore-root-supervised");
+    std::fs::create_dir(dir.join("public")).unwrap();
+    std::fs::write(dir.join("public/hidden.txt"), "ordinary asset").unwrap();
+    let firebase = serde_json::json!({"hosting": {
+        "public": "public",
+        "_fireemuTestWorldPublicRoot": "/authored",
+        "ignore": ["/authored/hidden.txt"]
+    }, "emulators": emulators()});
+    let config = dir.join("firebase.json");
+    std::fs::write(&config, firebase.to_string()).unwrap();
+    let ready = dir.join("ready.json");
+    let mut child = OwnedChild(
+        Command::new(env!("CARGO_BIN_EXE_fireemu"))
+            .args(["up", "--only", "hosting", "--project", "demo-hosting"])
+            .arg("--firebase-json")
+            .arg(config)
+            .arg("--ready-file")
+            .arg(&ready)
+            .args(["--owner-stdin", "--log-verbosity", "quiet"])
+            .env("FIREEMU_TEST_WORLD_ID", "local")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let descriptor: serde_json::Value = loop {
+        if let Ok(bytes) = std::fs::read(&ready) {
+            break serde_json::from_slice(&bytes).unwrap();
+        }
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "daemon exited before readiness"
+        );
+        assert!(Instant::now() < deadline, "readiness deadline");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let address = descriptor["hostingUrl"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    let reply = request(address, "/hidden.txt");
+    assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    assert!(reply.ends_with("ordinary asset"), "{reply}");
+}
+
+#[test]
 fn hosting_ignored_assets_are_absent_from_every_route() {
     for profile in PROFILES {
         ignored_assets_are_absent_from_every_route(profile);
