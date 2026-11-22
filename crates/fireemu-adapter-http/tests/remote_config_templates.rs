@@ -450,7 +450,7 @@ fn server_namespace_rejects_client_etags_and_rolls_back_its_own_content() {
     assert!(Arc::ptr_eq(&stores.server.current(), &rolled_back));
 }
 
-// The HTTP test pict_rows_follow_the_recorded_namespace_rules uses remote_config_pict.tsv.
+// The HTTP test pict_rows_follow_the_recorded_namespace_rules uses src/remote_config_testdata/pict.tsv.
 
 #[test]
 fn history_is_bounded_even_for_identical_forced_writes() {

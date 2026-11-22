@@ -1127,7 +1127,7 @@ mod tests {
             tag = reply.etag.unwrap();
         }
 
-        let fixture = include_str!("../tests/remote_config_server_dataplane.json");
+        let fixture = include_str!("remote_config_testdata/server_dataplane.json");
         let (status, body, etag) = read().into_wire();
         assert_eq!(status, 200);
         assert_eq!(etag.as_deref(), Some(tag.as_str()));
@@ -1296,7 +1296,7 @@ mod tests {
 
     #[test]
     fn pict_rows_follow_the_recorded_namespace_rules() {
-        let table = include_str!("../tests/remote_config_pict.tsv");
+        let table = include_str!("remote_config_testdata/pict.tsv");
         for row in table.lines().skip(1) {
             let columns: Vec<_> = row.split('\t').collect();
             let [name, operation, precondition, state, _]: [&str; 5] = columns.try_into().unwrap();
