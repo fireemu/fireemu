@@ -8,6 +8,12 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Remote Config: the loopback control listener serves the `firebase-server` namespace (`/v1/projects/{p}/namespaces/firebase-server/remoteConfig`) with its own version history, as recorded in production on 2026-11-21: an unpublished server template reads as `{}` with an ETag, server publishes leave the client template unchanged, and an unknown namespace is refused with 400. The explicit client form `namespaces/firebase` is served too.
+- Remote Config: `namespaces/firebase-server/serverRemoteConfig` serves the published server template in the shape the Node Admin SDK's `getServerTemplate()` reads, so `initServerTemplate().load()` and `evaluate()` work against Fireemu with `FIREBASE_REMOTE_CONFIG_URL_BASE` set to the control listener. Conditions are converted to the recorded structured form for the two recorded expression forms (custom-signal exact match and `percent(seed) <= n`); other expressions become an empty condition, which the SDK evaluates as false.
+- Remote Config: a client-template publish or rollback through the local administration delivers the event shape recorded in production to v1 and v2 Remote Config functions; validate-only and refused requests deliver nothing. Server-template publishes deliver no event (unrecorded in production). See `docs/remote-config.md`.
+
 ## [0.64.0] - 2026-11-22
 
 ### Added
