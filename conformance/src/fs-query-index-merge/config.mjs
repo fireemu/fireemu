@@ -60,6 +60,7 @@ const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
 /**
  * As the lane index files state them, E1 to E5 are the first observation's entries, E6 to E8 are the added overrides for observation 2a, and E9 to E16 are the entries that fs-query-index-merge3.indexes.json adds to the base for observation 2b-1.
  * E17 to E23 are the entries that fs-query-index-merge4.indexes.json adds to the base for observation 2b-2.
+ * E24 to E30 are the entries that fs-query-index-merge5.indexes.json adds to the base for observation 2b-3.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -118,11 +119,24 @@ export const ENTRIES = {
       { queryScope: "COLLECTION", order: "DESCENDING" },
     ],
   },
+  E24: { kind: "composite", group: "ig2", queryScope: "COLLECTION", fields: [ASC, TAGS] },
+  E25: { kind: "override", group: "ig2", field: "a", indexes: [] },
+  E26: {
+    kind: "override",
+    group: "ig2",
+    field: "tags",
+    indexes: [{ queryScope: "COLLECTION_GROUP", arrayConfig: "CONTAINS" }],
+  },
+  E27: { kind: "composite", group: "i2p", queryScope: "COLLECTION", fields: [ASC, B_ASC, TAGS] },
+  E28: { kind: "override", group: "i2p", field: "a", indexes: [] },
+  E29: { kind: "override", group: "i2p", field: "b", indexes: [] },
+  E30: { kind: "override", group: "i2p", field: "tags", indexes: [] },
 };
 
 /**
  * The first observation uses `f2` (E3), `f1` (composites and exemptions) or `all` (both), observation 2a uses `obs2a` (`all` plus the group-scope overrides in `g`), and observation 2b-1 uses `obs2b1` (the additions in fs-query-index-merge3.indexes.json).
  * Observation 2b-2 uses `obs2b2`, starting with the ordered-only tags override.
+ * Observation 2b-3 uses `obs2b3`, starting with the group-scope contains override.
  */
 export const SETS = {
   f2: ["E3"],
@@ -132,6 +146,7 @@ export const SETS = {
   obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
   obs2b1: ["E16", "E9", "E10", "E14", "E11", "E12", "E13", "E15"],
   obs2b2: ["E23", "E17", "E18", "E21", "E19", "E20", "E22"],
+  obs2b3: ["E26", "E24", "E27", "E25", "E28", "E29", "E30"],
 };
 
 export const POLL_ROUNDS = 40;
