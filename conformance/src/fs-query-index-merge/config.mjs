@@ -65,6 +65,7 @@ const NAME_DESC = { fieldPath: "__name__", order: "DESCENDING" };
  * E24 to E30 are the entries that fs-query-index-merge5.indexes.json adds to the base for observation 2b-3.
  * E31 to E36 are the entries that fs-query-index-merge6.indexes.json adds to the base for observation 2b-4.
  * E37 to E43 are the entries that fs-query-index-merge7.indexes.json adds to the base for observation 2b-5.
+ * E44 to E51 are the entries that fs-query-index-merge8.indexes.json adds to the base for observation 2b-6.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -161,6 +162,42 @@ export const ENTRIES = {
   E41: { kind: "composite", group: "ip1", queryScope: "COLLECTION", fields: [A_DESC, TAGS] },
   E42: { kind: "override", group: "ip1", field: "a", indexes: [] },
   E43: { kind: "override", group: "ip1", field: "tags", indexes: [] },
+  E44: {
+    kind: "override",
+    group: "is1",
+    field: "a",
+    indexes: [{ queryScope: "COLLECTION", order: "ASCENDING" }],
+  },
+  E45: {
+    kind: "override",
+    group: "is1",
+    field: "tags",
+    indexes: [{ queryScope: "COLLECTION", arrayConfig: "CONTAINS" }],
+  },
+  E46: {
+    kind: "override",
+    group: "is2",
+    field: "a",
+    indexes: [{ queryScope: "COLLECTION", order: "DESCENDING" }],
+  },
+  E47: {
+    kind: "override",
+    group: "is2",
+    field: "tags",
+    indexes: [{ queryScope: "COLLECTION", arrayConfig: "CONTAINS" }],
+  },
+  E48: { kind: "composite", group: "igy", queryScope: "COLLECTION_GROUP", fields: [ASC, TAGS] },
+  E49: { kind: "override", group: "igy", field: "a", indexes: [] },
+  E50: { kind: "override", group: "igy", field: "tags", indexes: [] },
+  E51: {
+    kind: "override",
+    group: "igy",
+    field: "b",
+    indexes: [
+      { queryScope: "COLLECTION", order: "ASCENDING" },
+      { queryScope: "COLLECTION_GROUP", order: "ASCENDING" },
+    ],
+  },
 };
 
 /**
@@ -169,6 +206,7 @@ export const ENTRIES = {
  * Observation 2b-3 uses `obs2b3`, starting with the group-scope contains override.
  * Observation 2b-4 uses `obs2b4`, starting with the three explicit-name composites.
  * Observation 2b-5 uses `obs2b5`, starting with the ascending b override at both scopes.
+ * Observation 2b-6 uses `obs2b6`, starting with the ascending b override at both scopes on igy.
  */
 export const SETS = {
   f2: ["E3"],
@@ -181,6 +219,7 @@ export const SETS = {
   obs2b3: ["E26", "E24", "E27", "E25", "E28", "E29", "E30"],
   obs2b4: ["E31", "E33", "E35", "E32", "E34", "E36"],
   obs2b5: ["E40", "E37", "E41", "E38", "E39", "E42", "E43"],
+  obs2b6: ["E51", "E48", "E44", "E45", "E46", "E47", "E49", "E50"],
 };
 
 export const POLL_ROUNDS = 40;
