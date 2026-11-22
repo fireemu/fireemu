@@ -1,4 +1,4 @@
-//! Immutable client templates and version transitions for one Remote Config store.
+//! Immutable templates and version transitions for Remote Config namespaces.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -314,6 +314,12 @@ pub enum Error {
     UnknownVersion,
     /// The version counter cannot advance.
     VersionExhausted,
+    /// The Functions queue cannot hold all deliveries for this version.
+    EventCapacity,
+    /// The Functions runtime cannot admit this version's events.
+    EventUnavailable,
+    /// The current logical time cannot be represented in RFC 3339.
+    ClockOutOfRange,
 }
 
 /// Successful result of validating or publishing a client template.
@@ -397,10 +403,42 @@ impl Version {
     }
 }
 
-/// In-memory history for one project's client template.
+/// Remote Config template namespaces supported by local administration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Namespace {
+    /// The default `firebase` namespace.
+    Client,
+    /// The `firebase-server` namespace.
+    Server,
+}
+
+/// Independent template histories for the project's two namespaces.
+#[derive(Default)]
+pub struct RemoteConfigStores {
+    /// History for `firebase`.
+    pub client: TemplateStore,
+    /// History for `firebase-server`.
+    pub server: TemplateStore,
+}
+
+impl RemoteConfigStores {
+    /// Selects the history for the requested namespace.
+    #[must_use]
+    pub const fn get(&self, namespace: Namespace) -> &TemplateStore {
+        match namespace {
+            Namespace::Client => &self.client,
+            Namespace::Server => &self.server,
+        }
+    }
+}
+
+/// In-memory history for one project's template namespace.
 pub struct TemplateStore {
     history: Mutex<History>,
+    reserver: Option<Box<VersionReserver>>,
 }
+
+type VersionReserver = dyn Fn(&Version) -> Result<Box<dyn FnOnce() + Send>, Error> + Send + Sync;
 
 struct History {
     versions: VecDeque<Arc<Version>>,
@@ -428,6 +466,7 @@ impl Default for TemplateStore {
                 versions: VecDeque::from([Arc::new(initial)]),
                 current_body: None,
             }),
+            reserver: None,
         }
     }
 }
@@ -452,6 +491,15 @@ fn published_index(versions: &VecDeque<Arc<Version>>, number: u64) -> Option<usi
 }
 
 impl TemplateStore {
+    /// Creates an empty store that reserves before appending and publishes after appending,
+    /// with both operations under the history lock.
+    pub fn with_reserver(reserver: Box<VersionReserver>) -> Self {
+        Self {
+            reserver: Some(reserver),
+            ..Self::default()
+        }
+    }
+
     /// The current version, or the store's empty initial state.
     #[must_use]
     pub fn current(&self) -> Arc<Version> {
@@ -556,7 +604,7 @@ impl TemplateStore {
                 base_etag,
             });
         }
-        Self::commit(
+        self.commit(
             &mut history,
             Arc::new(template),
             now,
@@ -572,15 +620,17 @@ impl TemplateStore {
             .ok_or(Error::UnknownVersion)?
             .template
             .clone();
-        Self::commit(&mut history, template, now, Change::Rollback { source })
+        self.commit(&mut history, template, now, Change::Rollback { source })
     }
 
     fn commit(
+        &self,
         history: &mut History,
         template: Arc<ClientTemplate>,
         now: LogicalInstant,
         change: Change,
     ) -> Result<Arc<Version>, Error> {
+        now.to_rfc3339().map_err(|_| Error::ClockOutOfRange)?;
         let versions = &mut history.versions;
         let current = head(versions);
         let number = current
@@ -594,11 +644,19 @@ impl TemplateStore {
             update_time: Some(now),
             change,
         });
+        let publish = self
+            .reserver
+            .as_ref()
+            .map(|reserve| reserve(&version))
+            .transpose()?;
         versions.push_back(version.clone());
         if number == 1 || versions.len() > MAX_RETAINED_VERSIONS {
             versions.pop_front();
         }
         history.current_body = None;
+        if let Some(publish) = publish {
+            publish();
+        }
         Ok(version)
     }
 }

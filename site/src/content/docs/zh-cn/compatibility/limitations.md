@@ -49,7 +49,7 @@ npx fireemu capabilities
 
 ### Cloud Functions
 
-- Fireemu 不为其投递事件的产品的触发器，例如 Data Connect（已推迟）。Remote Config 处理程序仅通过本地注入操作运行：通过 Fireemu 本地模板管理发布的模板尚不会触发它们，尽管生产环境的发布事件已于 2026-11-21 记录。
+- Fireemu 不为其投递事件的产品的触发器，例如 Data Connect（已推迟）。通过 Fireemu 本地模板管理发布或回滚 Remote Config 客户端模板时，会向 v1 和 v2 处理程序投递 2026-11-21 在生产环境记录的事件形式。服务器模板的发布不投递事件，因为生产环境在这种情况下的行为尚未记录；重复投递和顺序保证同样未记录。
 - Dart 代码库，以及 Firestore 事件以外的 protobuf CloudEvents 入口。Firestore 事件以 protobuf 形式到达 Python SDK，在 `strict` 下也以 protobuf 形式到达 Node 第 2 代函数。
 - Storage 归档事件的确切形态仍未记录。
 - Python 代码库支持 HTTP、可调用、Firestore、Pub/Sub、Storage、Eventarc、Realtime Database、定时、任务队列和 Auth 阻塞函数。它们只看到真实时间（无虚拟时钟），会重新加载应用源代码的更改，但忽略对其 `venv` 和 Python 字节码缓存的编辑，并且仅在 macOS 和 Linux 上运行。更改已安装的依赖后请重启 Fireemu。其可调用函数的 App Check 令牌由 Python SDK 根据 App Check 模拟器的密钥进行验证（不支持限用令牌消耗，并且显式的 App Check 配置会拒绝启动）。参见 [Cloud Functions（Python）](../../products/functions-python/)。

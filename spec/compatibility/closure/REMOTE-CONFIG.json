@@ -23,6 +23,16 @@
       "id": "RC-LOCAL-TEMPLATE-ADMIN",
       "decision": "The loopback control listener provides client-template administration for the default project using the local control capability. It covers current and historical reads, structural validation, conditional publishing, history and rollback. Formal coverage and comparison remain planned for the full conditions below.",
       "status": "ANSWERED"
+    },
+    {
+      "id": "RC-LOCAL-SERVER-TEMPLATES",
+      "decision": "The loopback control listener serves the firebase-server namespace with its own history and the server-template data plane the Node Admin SDK reads, following shapes recorded in production on 2026-11-21. Only the two recorded condition expression forms are converted to the structured form.",
+      "status": "ANSWERED"
+    },
+    {
+      "id": "RC-LOCAL-PUBLISH-EVENTS",
+      "decision": "Client-template publishes and rollbacks through the local administration deliver the recorded v1 and v2 event shapes through ordinary Functions delivery. Server-namespace publishes deliver nothing because production did not record them; duplicate delivery and ordering are unrecorded.",
+      "status": "ANSWERED"
     }
   ],
   "conditions": [
@@ -30,28 +40,42 @@
       "conditionId": "REMOTE-CONFIG/template-read",
       "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects.",
       "status": "PLANNED",
-      "localEvidence": ["npm/scripts/testing-worlds.test.mjs"],
+      "localEvidence": [
+        "npm/scripts/testing-worlds.test.mjs",
+        "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
+        "crates/fireemu-adapter-http/src/remote_config_http.rs"
+      ],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/template-validation",
       "description": "Validate parameters, parameter groups and condition references. Compare errors and confirm that validation-only requests leave the current template, history and event stream unchanged.",
       "status": "PLANNED",
-      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
+        "npm/scripts/testing-worlds.test.mjs"
+      ],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/template-publish",
       "description": "Publish templates with a matching, missing, stale or wildcard If-Match value. Compare response metadata, version creation and the stored template after concurrent accepted or refused updates.",
       "status": "PLANNED",
-      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
+        "npm/scripts/testing-worlds.test.mjs"
+      ],
       "productionEvidence": []
     },
     {
       "conditionId": "REMOTE-CONFIG/version-history-and-rollback",
       "description": "List template versions and follow continuation tokens. Compare version-specific reads, rollback to an existing version, and refusal of an unavailable version without a state change.",
       "status": "PLANNED",
-      "localEvidence": ["crates/fireemu-adapter-http/tests/remote_config_templates.rs", "npm/scripts/testing-worlds.test.mjs"],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
+        "npm/scripts/testing-worlds.test.mjs",
+        "crates/fireemu-adapter-http/src/remote_config_http.rs"
+      ],
       "productionEvidence": []
     },
     {
@@ -64,7 +88,11 @@
       "conditionId": "REMOTE-CONFIG/server-template-evaluation",
       "description": "Retrieve the server template through a pinned Admin SDK and compare typed parameters, defaults and evaluation with condition signals in its supported scope.",
       "status": "PLANNED",
-      "productionEvidence": []
+      "productionEvidence": [],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/src/remote_config_http.rs",
+        "npm/scripts/testing-worlds.test.mjs"
+      ]
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
@@ -77,7 +105,9 @@
       "description": "Observe which accepted template operations invoke v1 and v2 Functions handlers, and compare version metadata, event envelopes and delivery. Existing injection tests exercise the caller-supplied local event path.",
       "status": "PLANNED",
       "localEvidence": [
-        "crates/fireemu/tests/functions_remote_config.rs"
+        "crates/fireemu/tests/functions_remote_config.rs",
+        "crates/fireemu-adapter-http/tests/control.rs",
+        "crates/fireemu-adapter-functions/src/events.rs"
       ],
       "productionEvidence": []
     }

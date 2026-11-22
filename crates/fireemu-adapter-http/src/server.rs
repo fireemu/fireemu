@@ -13,9 +13,12 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Semaphore};
 
-use crate::control::{self, ControlState};
+use crate::control::{self, ControlState, PublishEventError};
 use crate::identity_toolkit::{handle_with, AuthState, RequestHeaders};
-use crate::{remote_config::TemplateStore, remote_config_http};
+use crate::{
+    remote_config::{Error as RemoteConfigError, RemoteConfigStores, TemplateStore, Version},
+    remote_config_http,
+};
 
 /// Maximum accepted request body (spec 33.3 input budget).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -25,7 +28,7 @@ const MAX_BLOCKING_AUTH_TASKS: usize = 64;
 async fn respond(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
-    remote_config: Option<Arc<TemplateStore>>,
+    remote_config: Option<Arc<RemoteConfigStores>>,
     blocking_auth_slots: Option<Arc<Semaphore>>,
     peer_ip: Option<String>,
     remote_peer: bool,
@@ -375,7 +378,7 @@ async fn respond(
 
 async fn remote_config_response(
     control: &ControlState,
-    store: &TemplateStore,
+    store: &RemoteConfigStores,
     route: &remote_config_http::Route<'_>,
     query: &str,
     parts: &hyper::http::request::Parts,
@@ -414,6 +417,16 @@ async fn remote_config_response(
                 ),
                 Ok(bytes) => {
                     let now = control.clock.lock().expect("clock lock").snapshot().instant;
+                    // A commit (publish or rollback) reserves, appends and enqueues its version
+                    // under admission, as other mutating control routes do: a reset takes the
+                    // barrier exclusively and advances the Functions epoch, so it runs before the
+                    // write or waits for it. Reads and validate-only requests change nothing and
+                    // take no admission, so they never queue behind a pending reset (a blocking
+                    // Auth callback that reads Remote Config while its signup holds admission
+                    // would otherwise wait for the reset that waits for the signup).
+                    let _admitted = remote_config_http::commits(parts.method.as_str(), query)
+                        .then(|| control.barrier.as_ref().map(|barrier| barrier.admit()))
+                        .flatten();
                     remote_config_http::dispatch(
                         store,
                         route,
@@ -655,7 +668,31 @@ async fn serve_inner(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
 ) -> std::io::Result<()> {
-    let remote_config = control.as_ref().map(|_| Arc::new(TemplateStore::default()));
+    let remote_config =
+        control.as_ref().map(|control| {
+            Arc::new(control.functions.as_ref().map_or_else(
+                RemoteConfigStores::default,
+                |functions| {
+                    let functions = functions.clone();
+                    RemoteConfigStores {
+                        client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
+                            let metadata = remote_config_http::version_fields(version);
+                            let publication = functions
+                                .reserve_remote_config_version(&metadata)
+                                .map_err(|error| match error {
+                                    PublishEventError::Capacity => RemoteConfigError::EventCapacity,
+                                    PublishEventError::Invalid | PublishEventError::Unavailable => {
+                                        RemoteConfigError::EventUnavailable
+                                    }
+                                })?;
+                            Ok(Box::new(move || publication.publish()))
+                        })),
+                        // Production did not record events for server-namespace commits.
+                        server: TemplateStore::default(),
+                    }
+                },
+            ))
+        });
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking

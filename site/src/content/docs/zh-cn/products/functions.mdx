@@ -362,7 +362,7 @@ Fireemu 仍会加载并发现你的代码库，因此运行器会启动，代码
 
 - **Realtime Database，第 2 代。** 本地 Realtime Database 实例位于 `us-central1`，因此其他区域的第 2 代数据库触发器不会触发，加载时会给出警告。
 - **Fireemu 不投递事件的产品。** Data Connect（已推迟）等产品的触发器无法运行。默认情况下，发现过程会拒绝导出此类触发器的代码库（`functions.unservedTriggers = "refuse"`）；将其设为 `"report"` 可逐一报告并加载其余部分。[Emulator UI](../../guides/ui/) 的 Functions 页面以及控制 API 上的 `GET /v1/sessions/default/functions` 会列出所有被忽略的导出及原因。
-- **Remote Config。** 处理程序只能通过本地注入操作运行，其生产环境事件形式尚未观测。
+- **Remote Config。** 通过本地模板管理发布或回滚客户端模板时，会向 v1 和 v2 处理程序投递 2026-11-21 在生产环境记录的事件形式；仅验证的请求和被拒绝的请求不投递任何事件。服务器模板的发布不投递事件（生产环境未记录）。本地注入操作仍会投递调用方提供的元数据。
 - **Storage 归档事件。** 它们只对启用了版本控制的存储桶触发（带 `{"versioning":{"enabled":true}}` 的 `PATCH /storage/v1/b/{bucket}`），其形式未经录制。
 - **`beforeEmailSent`。** 仅在 `strict` 下运行。
 
