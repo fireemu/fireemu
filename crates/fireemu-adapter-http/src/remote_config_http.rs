@@ -1,4 +1,4 @@
-//! Remote Config template administration on the daemon's capability-protected local listener.
+//! Remote Config templates on the daemon's capability-protected local listener.
 
 use std::collections::BTreeMap;
 
@@ -33,6 +33,11 @@ pub(crate) fn route(path: &str) -> Option<Route<'_>> {
         (Ok(Namespace::Client), action)
     };
     match action {
+        "serverRemoteConfig" if namespace == Ok(Namespace::Server) => Some(Route {
+            project,
+            namespace,
+            action,
+        }),
         "remoteConfig" | "remoteConfig:listVersions" | "remoteConfig:rollback" => Some(Route {
             project,
             namespace,
@@ -194,6 +199,86 @@ fn published_body(version: &Version, reading: bool) -> Value {
 
 fn published(version: &Version, reading: bool) -> Reply {
     Reply::ok(published_body(version, reading), Some(version.etag()))
+}
+
+/// Translates the two recorded server condition forms. Unrecorded expressions become an empty
+/// condition, which the Admin SDK evaluates as false.
+fn server_condition(expression: &str) -> Value {
+    let translate = || {
+        if expression.contains(['\\', '"']) {
+            return None;
+        }
+        let whitespace = |c| matches!(c, ' ' | '\t'..='\r');
+        let matches_tokens = |text: &str, tokens: &[&str]| {
+            tokens
+                .iter()
+                .try_fold(text, |rest, token| {
+                    rest.trim_start_matches(whitespace).strip_prefix(*token)
+                })
+                .is_some_and(|rest| rest.trim_matches(whitespace).is_empty())
+        };
+        let mut parts = expression.split('\'');
+        let prefix = parts.next()?;
+        let key = parts.next()?;
+        let tail = parts.next()?;
+        let leaf = if matches_tokens(prefix, &["percent", "("]) {
+            let number = tail
+                .trim_start_matches(whitespace)
+                .strip_prefix(')')?
+                .trim_start_matches(whitespace)
+                .strip_prefix("<=")?
+                .trim_matches(whitespace);
+            let (whole, fraction) = number.split_once('.').unwrap_or((number, "0"));
+            if fraction.len() > 6
+                || !whole
+                    .bytes()
+                    .chain(fraction.bytes())
+                    .all(|b| b.is_ascii_digit())
+            {
+                return None;
+            }
+            let whole = whole.parse::<u32>().ok()?;
+            if whole > 100 {
+                return None;
+            }
+            let scale = (fraction.len()..6).fold(1, |scale, _| scale * 10);
+            let micro = whole * 1_000_000 + fraction.parse::<u32>().ok()? * scale;
+            if micro > 100_000_000 {
+                return None;
+            }
+            json!({"percent": {
+                "percentOperator": "LESS_OR_EQUAL",
+                "microPercent": micro,
+                "seed": key
+            }})
+        } else if matches_tokens(prefix, &["app", ".", "customSignal", "["])
+            && matches_tokens(tail, &["]", ".", "exactlyMatches", "(", "["])
+        {
+            let mut values = Vec::new();
+            loop {
+                values.push(parts.next()?);
+                let separator = parts.next()?;
+                if matches_tokens(separator, &["]", ")"]) {
+                    break;
+                }
+                if separator.trim_matches(whitespace) != "," {
+                    return None;
+                }
+            }
+            json!({"customSignal": {
+                "customSignalOperator": "STRING_EXACTLY_MATCHES",
+                "customSignalKey": key,
+                "targetCustomSignalValues": values
+            }})
+        } else {
+            return None;
+        };
+        parts.next().is_none().then_some(leaf)
+    };
+    translate().map_or_else(
+        || json!({}),
+        |leaf| json!({"orCondition": {"conditions": [{"andCondition": {"conditions": [leaf]}}]}}),
+    )
 }
 
 fn read(store: &TemplateStore, namespace: Namespace, query: &str) -> Result<Reply, Reply> {
@@ -378,6 +463,72 @@ pub(crate) fn dispatch(
     };
     let store = stores.get(namespace);
     let result = match (route.action, method) {
+        ("serverRemoteConfig", "GET") => {
+            if let Err(reply) = parameters(query, &[]) {
+                return reply;
+            }
+            let version = store.current();
+            if version.change() == Change::Initial {
+                return Reply::error(
+                    404,
+                    &format!(
+                        "[NOT_FOUND]: Template not found for project {} and namespace firebase-server",
+                        route.project
+                    ),
+                    "NOT_FOUND",
+                );
+            }
+            let mut body = visible_fields(version.template());
+            let etag = Some(version.etag());
+            let number = version.number();
+            if body.is_empty() {
+                // Preserve the recorded key order for the byte-exact empty response.
+                return Reply {
+                    status: 200,
+                    body: ReplyBody::Rendered(Bytes::from(format!(
+                        "{{\n  \"version\": {{\n    \"versionNumber\": \"{number}\",\n    \"isLegacy\": true\n  }}\n}}\n"
+                    ))),
+                    etag,
+                };
+            }
+            if let Some(conditions) = body.get_mut("conditions").and_then(Value::as_array_mut) {
+                for condition in conditions {
+                    let expression = condition["expression"]
+                        .as_str()
+                        .expect("validated expression");
+                    *condition = json!({
+                        "name": condition["name"],
+                        "condition": server_condition(expression)
+                    });
+                }
+            }
+            let remove_value_types = |parameters: &mut Value| {
+                if let Some(parameters) = parameters.as_object_mut() {
+                    for parameter in parameters.values_mut().filter_map(Value::as_object_mut) {
+                        parameter.remove("valueType");
+                    }
+                }
+            };
+            if let Some(parameters) = body.get_mut("parameters") {
+                remove_value_types(parameters);
+            }
+            if let Some(groups) = body
+                .get_mut("parameterGroups")
+                .and_then(Value::as_object_mut)
+            {
+                for parameters in groups
+                    .values_mut()
+                    .filter_map(|group| group.get_mut("parameters"))
+                {
+                    remove_value_types(parameters);
+                }
+            }
+            body.insert(
+                "version".to_owned(),
+                json!({"versionNumber": number.to_string(), "isLegacy": true}),
+            );
+            Ok(Reply::ok(Value::Object(body), etag))
+        }
         ("remoteConfig", "GET") => read(store, namespace, query),
         ("remoteConfig", "PUT") => write(store, query, bytes, if_match, now),
         ("remoteConfig:listVersions", "GET") => history(store, query),
@@ -745,10 +896,19 @@ mod tests {
                 "{method} {endpoint}"
             );
         }
-        for prefix in ["", "namespaces/firebase-server/", "namespaces/unknown-ns/"] {
+        for prefix in [
+            "",
+            "namespaces/firebase/",
+            "namespaces/firebase-server/",
+            "namespaces/unknown-ns/",
+        ] {
             for suffix in ["", ":listVersions", ":rollback"] {
                 let path = format!("/v1/projects/demo-config/{prefix}serverRemoteConfig{suffix}");
-                assert!(route(&path).is_none(), "{path}");
+                assert_eq!(
+                    route(&path).is_some(),
+                    prefix == "namespaces/firebase-server/" && suffix.is_empty(),
+                    "{path}"
+                );
             }
         }
     }
@@ -952,27 +1112,205 @@ mod tests {
     }
 
     #[test]
+    fn server_data_plane_reads_the_current_published_template() {
+        let stores = RemoteConfigStores::default();
+        let server = "namespaces/firebase-server/remoteConfig";
+        let data_plane = "namespaces/firebase-server/serverRemoteConfig";
+        let publish = |body: &[u8], tag: &str| request(&stores, server, "PUT", "", body, Some(tag));
+        let read = || request(&stores, data_plane, "GET", "", b"", None);
+        let seed = br#"{"version":{"description":"Fireemu RC server coverage seed"},"conditions":[{"name":"audited","expression":"app.customSignal['fireemu_tier'].exactlyMatches(['premium'])"},{"name":"always","expression":"percent('fireemu_server') <= 100"}],"parameters":{"fireemu_text":{"defaultValue":{"value":"seed"},"valueType":"STRING","conditionalValues":{"audited":{"value":"matched"},"always":{"value":"fallback"}}},"fireemu_bool":{"defaultValue":{"value":"true"},"valueType":"BOOLEAN","conditionalValues":{"audited":{"value":"false"}}},"fireemu_number":{"defaultValue":{"value":"9.5"},"valueType":"NUMBER","conditionalValues":{"audited":{"value":"2.25"}}},"fireemu_json":{"defaultValue":{"value":"{\"outside\":1}"},"valueType":"JSON","conditionalValues":{"audited":{"value":"{\"inside\":2}"}}}}}"#;
+        let mut tag = "*".to_owned();
+        for (body, version) in [(b"{}".as_slice(), "1"), (b"{}", "2"), (seed, "3")] {
+            let reply = publish(body, &tag);
+            assert_eq!(reply.status, 200);
+            assert_eq!(json_body(&reply)["version"]["versionNumber"], version);
+            tag = reply.etag.unwrap();
+        }
+
+        let fixture = include_str!("../tests/remote_config_server_dataplane.json");
+        let (status, body, etag) = read().into_wire();
+        assert_eq!(status, 200);
+        assert_eq!(etag.as_deref(), Some(tag.as_str()));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            serde_json::from_str::<Value>(fixture).unwrap()
+        );
+        assert_eq!(fixture.len(), 2040);
+        assert_eq!(body.len(), fixture.len());
+
+        let empty = publish(b"{}", &tag);
+        assert_eq!(empty.status, 200);
+        let (status, body, etag) = read().into_wire();
+        assert_eq!(status, 200);
+        assert_eq!(etag, empty.etag);
+        assert_eq!(body.len(), 70);
+        assert_eq!(
+            body.as_ref(),
+            b"{\n  \"version\": {\n    \"versionNumber\": \"4\",\n    \"isLegacy\": true\n  }\n}\n"
+        );
+    }
+
+    #[test]
+    fn server_data_plane_stays_unpublished_after_a_client_publish() {
+        let stores = RemoteConfigStores::default();
+        let data_plane = "namespaces/firebase-server/serverRemoteConfig";
+        let expected = json!({
+            "error": {
+                "code": 404,
+                "message": "[NOT_FOUND]: Template not found for project demo-config and namespace firebase-server",
+                "status": "NOT_FOUND"
+            }
+        });
+        let read = || request(&stores, data_plane, "GET", "", b"", None);
+        for client_published in [false, true] {
+            if client_published {
+                assert_eq!(
+                    request(&stores, "remoteConfig", "PUT", "", b"{}", Some("*")).status,
+                    200
+                );
+            }
+            let reply = read();
+            assert_eq!(reply.status, 404);
+            assert_eq!(reply.etag, None);
+            assert_eq!(json_body(&reply), expected);
+        }
+
+        let post = request(&stores, data_plane, "POST", "", b"", None);
+        assert_eq!(post.status, 405);
+        assert_eq!(json_body(&post)["error"]["status"], "METHOD_NOT_ALLOWED");
+        let query = request(&stores, data_plane, "GET", "x=1", b"", None);
+        assert_eq!(query.status, 400);
+        assert_eq!(json_body(&query)["error"]["status"], "INVALID_ARGUMENT");
+    }
+
+    #[test]
+    fn server_data_plane_preserves_group_metadata_and_only_removes_parameter_value_types() {
+        let stores = RemoteConfigStores::default();
+        let reply = request(
+            &stores,
+            "namespaces/firebase-server/remoteConfig",
+            "PUT",
+            "",
+            br#"{
+                "conditions": [{"name":"unknown","expression":"device.os == 'ios'","tagColor":"BLUE"}],
+                "parameterGroups": {
+                    "sample": {
+                        "description": "Group metadata",
+                        "parameters": {"p": {"defaultValue":{"value":"true"},"valueType":"BOOLEAN","description":"Parameter metadata"}}
+                    }
+                }
+            }"#,
+            Some("*"),
+        );
+        assert_eq!(reply.status, 200);
+        let data = request(
+            &stores,
+            "namespaces/firebase-server/serverRemoteConfig",
+            "GET",
+            "",
+            b"",
+            None,
+        );
+        assert_eq!(data.status, 200);
+        assert_eq!(
+            json_body(&data),
+            json!({
+                "conditions": [{"name":"unknown","condition":{}}],
+                "parameterGroups": {
+                    "sample": {
+                        "description": "Group metadata",
+                        "parameters": {"p": {"defaultValue":{"value":"true"},"description":"Parameter metadata"}}
+                    }
+                },
+                "version": {"versionNumber":"1","isLegacy":true}
+            })
+        );
+    }
+
+    #[test]
+    fn server_condition_translates_only_the_recorded_forms() {
+        for expression in [
+            "percent('s') < 100",
+            "percent('s') <= 100.0000001",
+            "percent('s') <= 100.000001",
+            "percent('s') <= -1",
+            r#"percent("s") <= 100"#,
+            r#"percent('s"eed') <= 100"#,
+            r"percent('s\eed') <= 100",
+            "percent('s'eed') <= 100",
+            "app.customSignal['k'].exactlyMatches(['a']) && percent('s') <= 5",
+            "app.customSignal['k'].exactlyMatches(['a',])",
+            "device.os == 'ios'",
+        ] {
+            assert_eq!(server_condition(expression), json!({}), "{expression}");
+        }
+        let leaf = "/orCondition/conditions/0/andCondition/conditions/0";
+        assert_eq!(
+            server_condition("percent('s') <= 12.5").pointer(&format!("{leaf}/percent")),
+            Some(&json!({"percentOperator":"LESS_OR_EQUAL","microPercent":12_500_000,"seed":"s"}))
+        );
+        assert_eq!(
+            server_condition(
+                " app . customSignal [ 'k' ] . exactlyMatches (\t[ 'a,b' , 'c' ] )\r\n"
+            )
+            .pointer(&format!("{leaf}/customSignal")),
+            Some(&json!({
+                "customSignalOperator": "STRING_EXACTLY_MATCHES",
+                "customSignalKey": "k",
+                "targetCustomSignalValues": ["a,b", "c"]
+            }))
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn server_condition_preserves_every_decimal_micro_percent(micro in 0..=100_000_000_u32) {
+            let whole = micro / 1_000_000;
+            let fraction = format!("{:06}", micro % 1_000_000);
+            let fraction = fraction.trim_end_matches('0');
+            let decimal = if fraction.is_empty() {
+                whole.to_string()
+            } else {
+                format!("{whole}.{fraction}")
+            };
+            let condition = server_condition(&format!("percent('s') <= {decimal}"));
+            proptest::prop_assert_eq!(
+                condition.pointer("/orCondition/conditions/0/andCondition/conditions/0/percent/microPercent")
+                    .and_then(Value::as_u64),
+                Some(u64::from(micro))
+            );
+        }
+
+        #[test]
+        fn server_condition_rejects_non_grammar_tokens(
+            unexpected in proptest::strategy::Strategy::prop_filter(
+                proptest::arbitrary::any::<char>(),
+                "outside the grammar for unquoted tokens",
+                |&c| !matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '\t'..='\r' | ' ' | '\'' | '.' | ',' | '(' | ')' | '[' | ']' | '<' | '='),
+            )
+        ) {
+            proptest::prop_assert_eq!(server_condition(&format!("percent('s') {unexpected}<= 100")), json!({}));
+            proptest::prop_assert_eq!(server_condition(&format!("app.customSignal['k']{unexpected}.exactlyMatches(['a'])")), json!({}));
+        }
+    }
+
+    #[test]
     fn pict_rows_follow_the_recorded_namespace_rules() {
         let table = include_str!("../tests/remote_config_pict.tsv");
         for row in table.lines().skip(1) {
             let columns: Vec<_> = row.split('\t').collect();
             let [name, operation, precondition, state, _]: [&str; 5] = columns.try_into().unwrap();
-            if operation == "dataplane" {
-                continue;
-            }
             let stores = RemoteConfigStores::default();
-            let (endpoint, namespace) = match name {
-                "legacy-client" => ("remoteConfig", Namespace::Client),
-                "explicit-client" => ("namespaces/firebase/remoteConfig", Namespace::Client),
-                "server" => ("namespaces/firebase-server/remoteConfig", Namespace::Server),
-                "unknown" => ("namespaces/unknown/remoteConfig", Namespace::Client),
+            let (client, server) = (&stores.client, &stores.server);
+            let (prefix, store, other) = match name {
+                "legacy-client" => ("", client, server),
+                "explicit-client" => ("namespaces/firebase/", client, server),
+                "server" => ("namespaces/firebase-server/", server, client),
+                "unknown" => ("namespaces/unknown/", client, server),
                 _ => panic!("Invalid namespace in {row}"),
             };
-            let seed_endpoint = if name == "unknown" {
-                "remoteConfig"
-            } else {
-                endpoint
-            };
+            let seed_prefix = if name == "unknown" { "" } else { prefix };
+            let seed_endpoint = format!("{seed_prefix}remoteConfig");
             let version_count = match state {
                 "unpublished" => 0,
                 "one-version" => 1,
@@ -981,17 +1319,12 @@ mod tests {
             };
             for _ in 0..version_count {
                 assert_eq!(
-                    request(&stores, seed_endpoint, "PUT", "", b"{}", Some("*")).status,
+                    request(&stores, &seed_endpoint, "PUT", "", b"{}", Some("*")).status,
                     200,
                     "{row}"
                 );
             }
 
-            let store = stores.get(namespace);
-            let other = stores.get(match namespace {
-                Namespace::Client => Namespace::Server,
-                Namespace::Server => Namespace::Client,
-            });
             let before = store.current();
             let history = store.history();
             let other_tag = other.current().etag();
@@ -1004,29 +1337,41 @@ mod tests {
                 "wildcard" => Some("*"),
                 _ => panic!("Invalid precondition in {row}"),
             };
-            let (suffix, method, query, body): (_, _, _, &[u8]) = match operation {
-                "publish" => ("", "PUT", "", b"{}"),
-                "validate" => ("", "PUT", "validateOnly=true", b"{}"),
-                "rollback-known" => (":rollback", "POST", "", br#"{"versionNumber":"1"}"#),
-                "rollback-unknown" => (":rollback", "POST", "", br#"{"versionNumber":"99"}"#),
-                "read" => ("", "GET", "", b""),
-                "read-version" => ("", "GET", "versionNumber=1", b""),
-                "list-versions" => (":listVersions", "GET", "", b""),
+            let rollback_path = "remoteConfig:rollback";
+            let (action, method, query, body): (_, _, _, &[u8]) = match operation {
+                "publish" => ("remoteConfig", "PUT", "", b"{}"),
+                "validate" => ("remoteConfig", "PUT", "validateOnly=true", b"{}"),
+                "rollback-known" => (rollback_path, "POST", "", br#"{"versionNumber":"1"}"#),
+                "rollback-unknown" => (rollback_path, "POST", "", br#"{"versionNumber":"99"}"#),
+                "read" => ("remoteConfig", "GET", "", b""),
+                "read-version" => ("remoteConfig", "GET", "versionNumber=1", b""),
+                "list-versions" => ("remoteConfig:listVersions", "GET", "", b""),
+                "dataplane" => ("serverRemoteConfig", "GET", "", b""),
                 _ => panic!("Invalid operation in {row}"),
             };
-            let endpoint = format!("{endpoint}{suffix}");
+            let endpoint = format!("{prefix}{action}");
+            if operation == "dataplane" && name != "server" {
+                let path = format!("/v1/projects/demo-config/{endpoint}");
+                assert!(route(&path).is_none(), "{row}");
+                continue;
+            }
             let reply = request(&stores, &endpoint, method, query, body, tag);
             let (status, error) = match (name, operation, precondition) {
                 ("unknown", _, _) => (400, Some("INVALID_ARGUMENT")),
                 (_, "publish" | "validate", "absent") => (400, Some("FAILED_PRECONDITION")),
                 (_, "publish" | "validate", "stale") => (412, Some("FAILED_PRECONDITION")),
                 (_, "rollback-unknown", _) => (404, Some("NOT_FOUND")),
+                (_, "dataplane", _) if state == "unpublished" => (404, Some("NOT_FOUND")),
                 _ => (200, None),
             };
             let added = status == 200 && matches!(operation, "publish" | "rollback-known");
             assert_eq!(reply.status, status, "{row}");
             let body = json_body(&reply);
             assert_eq!(body["error"]["status"].as_str(), error, "{row}");
+            if operation == "dataplane" {
+                let expected = (status == 200).then_some(current_tag.as_str());
+                assert_eq!(reply.etag.as_deref(), expected, "{row}");
+            }
             let current = store.current();
             let retained = store.history();
             assert_eq!(current.number(), version_count + u64::from(added), "{row}");
