@@ -136,7 +136,7 @@ fn visible(value: &Value) -> bool {
     !value.as_object().is_some_and(Map::is_empty) && !value.as_array().is_some_and(Vec::is_empty)
 }
 
-fn version_fields(version: &Version) -> Value {
+pub(crate) fn version_fields(version: &Version) -> Value {
     let change = version.change();
     let mut output = json!({
         "versionNumber": version.number().to_string(),

@@ -1,4 +1,4 @@
-//! Real SDK handlers reached through the capability-protected local control action.
+//! Real SDK handlers reached by injected events and committed Remote Config versions.
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -50,6 +50,16 @@ impl FunctionsHook for Hook {
     fn publish_remote_config(&self, body: &Value) -> Result<usize, PublishEventError> {
         self.0
             .publish_remote_config(body)
+            .map_err(|error| match error {
+                SourceEventAdmissionError::InvalidEvent
+                | SourceEventAdmissionError::PayloadTooLarge => PublishEventError::Invalid,
+                SourceEventAdmissionError::Capacity => PublishEventError::Capacity,
+                SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
+            })
+    }
+    fn deliver_remote_config_version(&self, version: &Value) -> Result<usize, PublishEventError> {
+        self.0
+            .publish_remote_config_version(version)
             .map_err(|error| match error {
                 SourceEventAdmissionError::InvalidEvent
                 | SourceEventAdmissionError::PayloadTooLarge => PublishEventError::Invalid,
@@ -341,5 +351,128 @@ async fn remote_config_control_delivers_real_sdk_events_in_both_profiles() {
         }
         runtime.shutdown().await;
         dispatch.await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+#[ignore = "requires own tools/sdk-smoke npm ci dependencies"]
+async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runner = Arc::new(
+        Runner::spawn_spec(&SpawnSpec {
+            command: vec![
+                "node".into(),
+                root.join("tools/runner-node/index.mjs")
+                    .display()
+                    .to_string(),
+                "--source".into(),
+                root.join("tools/sdk-smoke/functions-project/fixtures/remote-config")
+                    .display()
+                    .to_string(),
+            ],
+            cwd: None,
+            env: vec![
+                ("GCLOUD_PROJECT".into(), "demo-app".into()),
+                ("FIREEMU_HTTP_PROFILE".into(), "strict".into()),
+            ],
+            hello_timeout: Duration::from_secs(15),
+        })
+        .await
+        .unwrap(),
+    );
+    let manifest = parse_manifest(runner.hello().manifest.as_ref().unwrap()).unwrap();
+    assert_eq!(manifest.functions.len(), 2);
+    let clock = Arc::new(Mutex::new(VirtualClock::new(
+        LogicalInstant::from_unix_seconds(1_788_004_860),
+    )));
+    let runtime = FunctionsRuntime::with_codebases(
+        vec![CodebaseSpec {
+            function: None,
+            name: "default".into(),
+            manifest,
+            runner,
+            spawn: None,
+            cleanup_dir: None,
+        }],
+        FunctionsConfig::for_tests(1, "test-secret".into()),
+        clock,
+        FunctionsHttpProfile::Strict,
+    )
+    .unwrap();
+    runtime.set_background_triggers(true);
+    let dispatch = tokio::spawn(runtime.clone().dispatch_loop());
+    let time = "2026-11-21T08:12:31.348152Z";
+    let publish = json!({
+        "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
+        "updateType": "INCREMENTAL_UPDATE", "description": "d",
+    });
+    let rollback = json!({
+        "versionNumber": "2", "updateTime": time, "updateOrigin": "REST_API",
+        "updateType": "ROLLBACK", "description": "Rollback to version 1", "rollbackSource": "1",
+    });
+    assert_eq!(runtime.publish_remote_config_version(&publish), Ok(2));
+    assert_eq!(runtime.publish_remote_config_version(&rollback), Ok(2));
+    wait_rows(&runtime, 4).await;
+    runtime.await_idle(Duration::from_secs(10)).await.unwrap();
+    let rows = observed(&runtime);
+    runtime.shutdown().await;
+    dispatch.await.unwrap();
+
+    assert_eq!(rows.len(), 4);
+    for (version, v1_id, v2_id, source) in [
+        (publish, "-245244595", "-712634052", "0"),
+        (rollback, "-381579043", "1907107344", "1"),
+    ] {
+        let row = |generation| {
+            rows.iter()
+                .find(|row| {
+                    row["generation"] == generation
+                        && row["data"]["versionNumber"] == version["versionNumber"]
+                })
+                .unwrap()
+        };
+        let v1 = row(1);
+        assert_eq!(v1["attempt"], 1);
+        assert_eq!(v1["data"], version);
+        let context = json!({
+            "eventId": v1_id,
+            "eventType": "google.firebase.remoteconfig.update",
+            "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": "projects/demo-app"},
+            "timestamp": time,
+        });
+        for (key, value) in context.as_object().unwrap() {
+            assert_eq!(&v1["context"][key], value, "{key}");
+        }
+
+        let v2 = row(2);
+        assert_eq!(v2["attempt"], 1);
+        assert_eq!(
+            v2["data"],
+            json!({
+                "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+                "versionNumber": version["versionNumber"],
+                "updateTime": time,
+                "updateOrigin": "REST_API",
+                "updateType": version["updateType"],
+                "description": version["description"],
+                "rollbackSource": source,
+            })
+        );
+        let mut context = v2["context"].as_object().unwrap().clone();
+        // The SDK exposes these v1 compatibility accessors on its v2 event.
+        context.remove("context");
+        context.remove("version");
+        assert_eq!(
+            Value::Object(context),
+            json!({
+                "id": v2_id,
+                "project": "demo-app",
+                "source": "//firebaseremoteconfig.googleapis.com/projects/demo-app",
+                "specversion": "1.0",
+                "time": time,
+                "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+            })
+        );
     }
 }

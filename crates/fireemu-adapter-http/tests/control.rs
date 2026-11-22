@@ -434,6 +434,17 @@ fn fault_plans_are_validated_installed_reported_and_removed() {
 struct FakeFunctions(Mutex<Vec<(String, Vec<Value>)>>);
 
 impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
+    fn deliver_remote_config_version(
+        &self,
+        version: &Value,
+    ) -> Result<usize, fireemu_adapter_http::control::PublishEventError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(("remoteConfigVersion".into(), vec![version.clone()]));
+        Ok(2)
+    }
+
     fn publish_remote_config(
         &self,
         body: &Value,
@@ -3826,6 +3837,304 @@ async fn remote_config_wire_authentication_precedes_json_parsing() {
     tokio::net::TcpListener::bind(addr)
         .await
         .expect("the test listener was released");
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn admin_publish_delivers_only_committed_client_versions() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const LEGACY: &str = "/v1/projects/demo-app/remoteConfig";
+    const CLIENT: &str = "/v1/projects/demo-app/namespaces/firebase/remoteConfig";
+    const SERVER: &str = "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig";
+    const SERVER_READ: &str = "/v1/projects/demo-app/namespaces/firebase-server/serverRemoteConfig";
+    const TIME: &str = "2026-08-29T12:01:00Z";
+
+    for client in [LEGACY, CLIENT] {
+        let mut state = state(Arc::new(AtomicUsize::new(0)));
+        let hook = Arc::new(FakeFunctions(Mutex::new(Vec::new())));
+        state.functions = Some(hook.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+            listener,
+            Arc::new(remote_config_wire_auth()),
+            Arc::new(state),
+        ));
+        let request = |method: &str,
+                       path: String,
+                       body: &str,
+                       etag: Option<&str>,
+                       authorized: bool| {
+            let etag = etag.map_or_else(String::new, |tag| format!("If-Match: {tag}\r\n"));
+            let token = if authorized { "test-token" } else { "wrong" };
+            // The Remote Config wire response returns ETag only with gzip.
+            let gzip = if method == "GET" {
+                "Accept-Encoding: gzip\r\n"
+            } else {
+                ""
+            };
+            let wire = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{etag}{gzip}\r\n{body}", body.len());
+            async move {
+                let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+                stream.write_all(wire.as_bytes()).await.unwrap();
+                let mut response = Vec::new();
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    stream.read_to_end(&mut response),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                let end = response
+                    .windows(4)
+                    .position(|part| part == b"\r\n\r\n")
+                    .unwrap();
+                let head = std::str::from_utf8(&response[..end]).unwrap();
+                let status = head
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .parse::<u16>()
+                    .unwrap();
+                let etag = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("etag: "))
+                    .map(str::to_owned);
+                let body = if gzip.is_empty() {
+                    serde_json::from_slice(&response[end + 4..]).unwrap()
+                } else {
+                    Value::Null
+                };
+                (status, etag, body)
+            }
+        };
+        let committed = [
+            json!({
+                "versionNumber": "1", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "FORCED_UPDATE", "description": "d",
+            }),
+            json!({
+                "versionNumber": "2", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "INCREMENTAL_UPDATE",
+            }),
+            json!({
+                "versionNumber": "3", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "ROLLBACK", "description": "Rollback to version 1", "rollbackSource": "1",
+            }),
+        ].map(|version| ("remoteConfigVersion".to_owned(), vec![version]));
+
+        let (status, _, body) = request(
+            "PUT",
+            client.into(),
+            r#"{"version":{"description":"d"}}"#,
+            Some("*"),
+            true,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"], committed[0].1[0]);
+        assert_eq!(*hook.0.lock().unwrap(), committed[..1]);
+        let (status, etag, _) = request("GET", client.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.0.lock().unwrap(), committed[..1]);
+        let etag = etag.unwrap();
+
+        for (method, path, body, tag, authorized, expected) in [
+            (
+                "PUT",
+                format!("{client}?validateOnly=true"),
+                "{}",
+                Some(etag.as_str()),
+                true,
+                200,
+            ),
+            ("PUT", client.into(), "{}", Some("\"stale\""), true, 412),
+            ("PUT", client.into(), "{}", None, true, 400),
+            (
+                "PUT",
+                client.into(),
+                r#"{"conditions":[{}]}"#,
+                Some("*"),
+                true,
+                400,
+            ),
+            (
+                "POST",
+                format!("{client}:rollback"),
+                r#"{"versionNumber":"99"}"#,
+                None,
+                true,
+                404,
+            ),
+            ("PUT", client.into(), "{}", Some("*"), false, 401),
+            (
+                "PUT",
+                client.replace("demo-app", "demo-other"),
+                "{}",
+                Some("*"),
+                true,
+                404,
+            ),
+        ] {
+            let (status, _, body) = request(method, path.clone(), body, tag, authorized).await;
+            assert_eq!(status, expected, "{method} {path}: {body}");
+            assert_eq!(*hook.0.lock().unwrap(), committed[..1], "{method} {path}");
+        }
+
+        let (status, _, body) = request("PUT", client.into(), "{}", Some(&etag), true).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"], committed[1].1[0]);
+        assert_eq!(*hook.0.lock().unwrap(), committed[..2]);
+        let (status, _, body) = request(
+            "POST",
+            format!("{client}:rollback"),
+            r#"{"versionNumber":"1"}"#,
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"], committed[2].1[0]);
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+
+        let (status, _, _) = request("GET", SERVER_READ.into(), "", None, true).await;
+        assert_eq!(status, 404);
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+        let (status, _, body) = request("PUT", SERVER.into(), "{}", Some("*"), true).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["versionNumber"], "1");
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+        let (status, etag, _) = request("GET", SERVER.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+        let (status, _, body) = request("PUT", SERVER.into(), "{}", etag.as_deref(), true).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["updateType"], "INCREMENTAL_UPDATE");
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+        let (status, _, body) = request(
+            "POST",
+            format!("{SERVER}:rollback"),
+            r#"{"versionNumber":"1"}"#,
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["updateType"], "ROLLBACK");
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+
+        for path in [LEGACY, CLIENT, SERVER] {
+            for suffix in ["", "?versionNumber=1", "?versionNumber=99", ":listVersions"] {
+                let (status, _, _) =
+                    request("GET", format!("{path}{suffix}"), "", None, true).await;
+                assert_eq!(status, 200, "{path}{suffix}");
+                assert_eq!(*hook.0.lock().unwrap(), committed, "{path}{suffix}");
+            }
+        }
+        let (status, _, _) = request("GET", SERVER_READ.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.0.lock().unwrap(), committed);
+        server.abort();
+        let _ = server.await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admin_publish_observes_concurrent_commits_in_version_order() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const N: usize = 8;
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    let hook = Arc::new(FakeFunctions(Mutex::new(Vec::new())));
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let put = move |etag: String| async move {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("PUT /v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nAccept-Encoding: gzip\r\nIf-Match: {etag}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let end = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap();
+        let head = std::str::from_utf8(&response[..end]).unwrap();
+        let status = head
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        let etag = head
+            .lines()
+            .find_map(|line| line.strip_prefix("etag: "))
+            .map(str::to_owned);
+        (status, etag)
+    };
+    let (status, etag) = put("*".to_owned()).await;
+    assert_eq!(status, 200);
+    assert_eq!(hook.0.lock().unwrap().len(), 1);
+
+    let etag = etag.unwrap();
+    for (tag, expected_successes) in [(etag, 1), ("*".into(), N)] {
+        let previous_calls = hook.0.lock().unwrap().len();
+        let start = Arc::new(tokio::sync::Barrier::new(N));
+        let mut tasks = Vec::new();
+        for _ in 0..N {
+            let tag = tag.clone();
+            let start = start.clone();
+            tasks.push(tokio::spawn(async move {
+                start.wait().await;
+                put(tag).await.0
+            }));
+        }
+        let mut successes = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                200 => successes += 1,
+                412 => {}
+                status => panic!("unexpected publish status {status}"),
+            }
+        }
+        assert_eq!(successes, expected_successes);
+        assert_eq!(
+            hook.0.lock().unwrap().len(),
+            previous_calls + expected_successes
+        );
+    }
+    let versions: Vec<_> = hook
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, versions)| {
+            versions[0]["versionNumber"]
+                .as_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(versions, (1..=N + 2).collect::<Vec<_>>());
+    server.abort();
+    let _ = server.await;
 }
 
 /// A hook whose publish answers a fixed refusal.

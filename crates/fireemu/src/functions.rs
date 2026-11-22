@@ -7954,6 +7954,22 @@ impl FunctionsHook for Hook {
             })
     }
 
+    fn deliver_remote_config_version(
+        &self,
+        version: &serde_json::Value,
+    ) -> Result<usize, fireemu_adapter_http::control::PublishEventError> {
+        use fireemu_adapter_functions::runtime::SourceEventAdmissionError;
+        use fireemu_adapter_http::control::PublishEventError;
+        self.0
+            .publish_remote_config_version(version)
+            .map_err(|error| match error {
+                SourceEventAdmissionError::InvalidEvent
+                | SourceEventAdmissionError::PayloadTooLarge => PublishEventError::Invalid,
+                SourceEventAdmissionError::Capacity => PublishEventError::Capacity,
+                SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
+            })
+    }
+
     fn validate_clock_target(
         &self,
         instant: fireemu_core_types::time::LogicalInstant,

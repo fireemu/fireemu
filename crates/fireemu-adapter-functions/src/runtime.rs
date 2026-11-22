@@ -3661,6 +3661,24 @@ impl FunctionsRuntime {
     ) -> Result<usize, SourceEventAdmissionError> {
         let (first, second) = crate::events::remote_config_events(&self.config.project, body)
             .map_err(|_| SourceEventAdmissionError::InvalidEvent)?;
+        self.deliver_remote_config(first, second)
+    }
+
+    /// Delivers a committed Remote Config admin version through ordinary background delivery.
+    pub fn publish_remote_config_version(
+        self: &Arc<Self>,
+        version: &Value,
+    ) -> Result<usize, SourceEventAdmissionError> {
+        let (first, second) =
+            crate::events::remote_config_version_events(&self.config.project, version);
+        self.deliver_remote_config(Some(first), Some(second))
+    }
+
+    fn deliver_remote_config(
+        self: &Arc<Self>,
+        first: Option<Value>,
+        second: Option<Value>,
+    ) -> Result<usize, SourceEventAdmissionError> {
         let (first, second) = (first.map(Arc::new), second.map(Arc::new));
         let time = self.now();
         let subject = format!("projects/{}", self.config.project);

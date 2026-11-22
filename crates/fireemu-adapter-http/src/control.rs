@@ -164,6 +164,10 @@ pub trait FunctionsHook: Send + Sync {
     fn publish_remote_config(&self, _body: &Value) -> Result<usize, PublishEventError> {
         Err(PublishEventError::Unavailable)
     }
+    /// Admits deliveries for an already committed Remote Config admin version.
+    fn deliver_remote_config_version(&self, _version: &Value) -> Result<usize, PublishEventError> {
+        Err(PublishEventError::Unavailable)
+    }
     /// The project the functions belong to (the Pub/Sub REST path must name it).
     fn project(&self) -> String;
 }

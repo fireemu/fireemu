@@ -429,6 +429,8 @@ impl RemoteConfigStores {
 /// In-memory history for one project's template namespace.
 pub struct TemplateStore {
     history: Mutex<History>,
+    #[allow(clippy::type_complexity)]
+    observer: Option<Box<dyn Fn(&Version) + Send + Sync>>,
 }
 
 struct History {
@@ -457,6 +459,7 @@ impl Default for TemplateStore {
                 versions: VecDeque::from([Arc::new(initial)]),
                 current_body: None,
             }),
+            observer: None,
         }
     }
 }
@@ -481,6 +484,14 @@ fn published_index(versions: &VecDeque<Arc<Version>>, number: u64) -> Option<usi
 }
 
 impl TemplateStore {
+    /// Creates an empty store that calls the observer after each commit under the history lock.
+    pub fn with_observer(observer: Box<dyn Fn(&Version) + Send + Sync>) -> Self {
+        Self {
+            observer: Some(observer),
+            ..Self::default()
+        }
+    }
+
     /// The current version, or the store's empty initial state.
     #[must_use]
     pub fn current(&self) -> Arc<Version> {
@@ -585,7 +596,7 @@ impl TemplateStore {
                 base_etag,
             });
         }
-        Self::commit(
+        self.commit(
             &mut history,
             Arc::new(template),
             now,
@@ -601,10 +612,11 @@ impl TemplateStore {
             .ok_or(Error::UnknownVersion)?
             .template
             .clone();
-        Self::commit(&mut history, template, now, Change::Rollback { source })
+        self.commit(&mut history, template, now, Change::Rollback { source })
     }
 
     fn commit(
+        &self,
         history: &mut History,
         template: Arc<ClientTemplate>,
         now: LogicalInstant,
@@ -628,6 +640,9 @@ impl TemplateStore {
             versions.pop_front();
         }
         history.current_body = None;
+        if let Some(observer) = &self.observer {
+            observer(&version);
+        }
         Ok(version)
     }
 }
