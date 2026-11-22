@@ -1,8 +1,4 @@
-// The configuration changes of an index-merge observation send: the five entries that
-// fs-query-index-merge.indexes.json adds to fs-query-index.indexes.json (the first observation),
-// and the three group-scope overrides fs-query-index-merge2.indexes.json adds to that file (the
-// second observation, set `obs2a`), created before the recording and removed after it, in the
-// sandbox `(default)` database of fireemu-oracle-query.
+// The configuration changes of an index-merge observation send come from fs-query-index-merge.indexes.json (first observation), fs-query-index-merge2.indexes.json (observation 2a) or fs-query-index-merge3.indexes.json (observation 2b-1) and are created before recording and removed after it in the sandbox `(default)` database of fireemu-oracle-query.
 //
 //   node src/fs-query-index-merge/config.mjs status --set <set> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs apply  --set <set> --out <new dir>
@@ -53,12 +49,11 @@ export const SEND_FLAG = "FIREEMU_MERGE_CONFIG_SEND";
 export const SEND_FLAG_VALUE = "index-merge-obs-launch-v3";
 
 const ASC = { fieldPath: "a", order: "ASCENDING" };
+const B_ASC = { fieldPath: "b", order: "ASCENDING" };
 const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
 
 /**
- * The entries, as the lane index files state them (the test derives them from the files): E1 to
- * E5 are fs-query-index-merge.indexes.json's, E6 to E8 the overrides on collection groups igc and
- * iga that fs-query-index-merge2.indexes.json adds.
+ * As the lane index files state them, E1 to E5 are the first observation's entries, E6 to E8 are the added overrides for observation 2a, and E9 to E16 are the entries that fs-query-index-merge3.indexes.json adds to the base for observation 2b-1.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -89,11 +84,23 @@ export const ENTRIES = {
     field: "tags",
     indexes: [{ queryScope: "COLLECTION_GROUP", arrayConfig: "CONTAINS" }],
   },
+  E9: { kind: "composite", group: "iw2", queryScope: "COLLECTION", fields: [ASC, TAGS] },
+  E10: { kind: "composite", group: "iw2", queryScope: "COLLECTION", fields: [B_ASC, TAGS] },
+  E11: { kind: "override", group: "iw2", field: "a", indexes: [] },
+  E12: { kind: "override", group: "iw2", field: "b", indexes: [] },
+  E13: { kind: "override", group: "iw2", field: "tags", indexes: [] },
+  E14: { kind: "composite", group: "it1", queryScope: "COLLECTION", fields: [ASC, TAGS] },
+  E15: { kind: "override", group: "it1", field: "a", indexes: [] },
+  E16: {
+    kind: "override",
+    group: "imd",
+    field: "a",
+    indexes: [{ queryScope: "COLLECTION", order: "DESCENDING" }],
+  },
 };
 
 /**
- * F2 alone needs E3; F1 needs the composites and the exemptions; `all` is the first observation.
- * `g` is the group-scope overrides alone; `obs2a` the second observation: all of the first and `g`.
+ * The first observation uses `f2` (E3), `f1` (composites and exemptions) or `all` (both), observation 2a uses `obs2a` (`all` plus the group-scope overrides in `g`), and observation 2b-1 uses `obs2b1` (the additions in fs-query-index-merge3.indexes.json).
  */
 export const SETS = {
   f2: ["E3"],
@@ -101,6 +108,7 @@ export const SETS = {
   all: ["E3", "E1", "E2", "E4", "E5"],
   g: ["E6", "E7", "E8"],
   obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
+  obs2b1: ["E16", "E9", "E10", "E14", "E11", "E12", "E13", "E15"],
 };
 
 export const POLL_ROUNDS = 40;
@@ -298,8 +306,7 @@ function compositeState(entry, body, forms) {
   if (Object.hasOwn(body, "indexes") && !Array.isArray(body.indexes))
     return unexpected("malformed list");
   const listed = Object.hasOwn(body, "indexes") ? body.indexes : [];
-  // Every index of the database is listed: each must be a well-formed index of this project and
-  // database (any group), and only the ones of the entry's own group are the entry's.
+  // Each listed name must belong to this project and database, and only indexes of the entry's group are matched against its siblings.
   const own = [];
   for (const index of listed) {
     if (!isObject(index) || !onlyKeys(index, COMPOSITE_KEYS))
@@ -309,13 +316,22 @@ function compositeState(entry, body, forms) {
     if (group === undefined) return unexpected("index name outside the expected pattern");
     if (group === entry.group) own.push(index);
   }
-  if (own.length === 0) return { state: "absent" };
-  if (own.length > 1) return unexpected(`${own.length} indexes in ${entry.group}`);
-  const [index] = own;
-  if (index.density !== undefined && index.density !== "SPARSE_ALL")
-    return unexpected("index density differs");
-  if (typeof index.state !== "string") return unexpected("index without a state");
-  if (!compositeMatches(index, entry)) return unexpected("index fields or scope differ");
+  const siblings = Object.values(ENTRIES).filter(
+    (e) => e.kind === "composite" && e.group === entry.group,
+  );
+  const matches = [];
+  for (const index of own) {
+    if (index.density !== undefined && index.density !== "SPARSE_ALL")
+      return unexpected("index density differs");
+    if (typeof index.state !== "string") return unexpected("index without a state");
+    const matched = siblings.filter((sibling) => compositeMatches(index, sibling));
+    if (matched.length === 0) return unexpected(`an index of ${entry.group} matches no entry`);
+    if (matched.length > 1) return unexpected(`an index of ${entry.group} matches two entries`);
+    if (compositeMatches(index, entry)) matches.push(index);
+  }
+  if (matches.length === 0) return { state: "absent" };
+  if (matches.length > 1) return unexpected(`${matches.length} indexes match the entry`);
+  const [index] = matches;
   return { state: "present", name: index.name, ready: index.state === "READY" };
 }
 
