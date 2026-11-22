@@ -43,6 +43,28 @@ fn publish(
 }
 
 #[test]
+fn out_of_range_clock_leaves_both_histories_intact() {
+    let stores = RemoteConfigStores::default();
+    let now = LogicalInstant::from_unix_seconds(253_402_300_801);
+    assert!(now.to_rfc3339().is_err());
+    for namespace in [Namespace::Client, Namespace::Server] {
+        let store = stores.get(namespace);
+        let before = publish(store, "*", "original");
+        assert_eq!(
+            store
+                .write(WriteMode::Publish, Some("*"), draft("changed"), now)
+                .unwrap_err(),
+            Error::ClockOutOfRange,
+        );
+        assert_eq!(store.rollback(1, now).unwrap_err(), Error::ClockOutOfRange);
+        assert!(Arc::ptr_eq(&store.current(), &before));
+        let history = store.history();
+        assert_eq!(history.len(), 1);
+        assert!(Arc::ptr_eq(&history[0], &before));
+    }
+}
+
+#[test]
 fn write_matrix_changes_history_only_for_a_valid_publication() {
     for (mode, operation) in [
         (WriteMode::Validate, "validate"),

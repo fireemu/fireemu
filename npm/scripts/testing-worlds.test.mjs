@@ -1228,15 +1228,18 @@ test('Remote Config admin handles observed client template transitions', native,
       req.on('error', reject);
     });
     assert.deepEqual(repeatedCoding, [200, undefined]);
-    if (process.env.FIREEMU_TEST_SDK_MODULES) {
-      await t.test('Admin SDK reads and validates using the local capability', async () => {
+    await t.test(
+      'Admin SDK reads and validates using the local capability',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
         const child = await world.run(process.execPath, ['-e', `
           const assert = require('node:assert/strict');
           const { createRequire } = require('node:module');
           const { join } = require('node:path');
           const load = createRequire(join(process.env.SDK_MODULES, '..', 'package.json'));
-          const { initializeApp, deleteApp } = load('firebase-admin/app');
+          const { initializeApp, deleteApp, SDK_VERSION } = load('firebase-admin/app');
           const { getRemoteConfig } = load('firebase-admin/remote-config');
+          assert.equal(SDK_VERSION, '14.3.0');
           const app = initializeApp({
             projectId: process.env.RC_PROJECT,
             credential: { getAccessToken: async () => ({ access_token: process.env.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) }
@@ -1264,8 +1267,8 @@ test('Remote Config admin handles observed client template transitions', native,
           FIREBASE_REMOTE_CONFIG_URL_BASE: new URL(world.endpoints.control.apiBaseUrl).origin,
         } });
         assert.equal(child.code, 0, child.stderr);
-      });
-    }
+      },
+    );
 
     const marker = { parameters: { probe: { defaultValue: { value: 'local' } } } };
     const dry = await request('?validate_only=true', { method: 'PUT', match: first.etag, body: marker });
@@ -1345,8 +1348,10 @@ test('Remote Config admin serves server templates to the Admin SDK', native, asy
         credential: { getAccessToken: async () => ({ access_token: process.env.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) }
       });
     `;
-    if (sdkModules) {
-      await t.test('Admin SDK sees an unpublished server template as not found', async () => {
+    await t.test(
+      'Admin SDK sees an unpublished server template as not found',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
         const child = await world.run(process.execPath, ['-e', `${sdkSetup}
           (async () => {
             try {
@@ -1355,8 +1360,8 @@ test('Remote Config admin serves server templates to the Admin SDK', native, asy
           })().catch(error => { console.error(error); process.exitCode = 1; });
         `], { env: sdkEnv });
         assert.equal(child.code, 0, child.stderr);
-      });
-    }
+      },
+    );
 
     const draft = String.raw`{"version":{"description":"Fireemu RC server coverage seed"},"conditions":[{"name":"audited","expression":"app.customSignal['fireemu_tier'].exactlyMatches(['premium'])"},{"name":"always","expression":"percent('fireemu_server') <= 100"}],"parameters":{"fireemu_text":{"defaultValue":{"value":"seed"},"valueType":"STRING","conditionalValues":{"audited":{"value":"matched"},"always":{"value":"fallback"}}},"fireemu_bool":{"defaultValue":{"value":"true"},"valueType":"BOOLEAN","conditionalValues":{"audited":{"value":"false"}}},"fireemu_number":{"defaultValue":{"value":"9.5"},"valueType":"NUMBER","conditionalValues":{"audited":{"value":"2.25"}}},"fireemu_json":{"defaultValue":{"value":"{\"outside\":1}"},"valueType":"JSON","conditionalValues":{"audited":{"value":"{\"inside\":2}"}}}}}`;
     const publishHeaders = { ...headers, 'content-type': 'application/json' };
@@ -1383,8 +1388,10 @@ test('Remote Config admin serves server templates to the Admin SDK', native, asy
     assert.equal(refused.status, 412);
     assert.equal((await refused.json()).error.status, 'FAILED_PRECONDITION');
 
-    if (sdkModules) {
-      await t.test('Admin SDK evaluates the local server template', async () => {
+    await t.test(
+      'Admin SDK evaluates the local server template',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
         const child = await world.run(process.execPath, ['-e', `${sdkSetup}
           (async () => {
             try {
@@ -1416,7 +1423,7 @@ test('Remote Config admin serves server templates to the Admin SDK', native, asy
           })().catch(error => { console.error(error); process.exitCode = 1; });
         `], { env: sdkEnv });
         assert.equal(child.code, 0, child.stderr);
-      });
-    }
+      },
+    );
   });
 });

@@ -107,6 +107,16 @@ pub enum PublishEventError {
     Unavailable,
 }
 
+/// Reserved deliveries for a Remote Config version. Dropping it cancels delivery.
+pub trait RemoteConfigPublication: Send {
+    /// Publishes the reserved deliveries after the version has been appended.
+    fn publish(self: Box<Self>);
+}
+
+impl RemoteConfigPublication for () {
+    fn publish(self: Box<Self>) {}
+}
+
 /// The functions runtime as the control API sees it (spec 10.5 `await-idle`, 11.2 clock
 /// operations, manual schedule runs).
 pub trait FunctionsHook: Send + Sync {
@@ -164,9 +174,12 @@ pub trait FunctionsHook: Send + Sync {
     fn publish_remote_config(&self, _body: &Value) -> Result<usize, PublishEventError> {
         Err(PublishEventError::Unavailable)
     }
-    /// Admits deliveries for an already committed Remote Config admin version.
-    fn deliver_remote_config_version(&self, _version: &Value) -> Result<usize, PublishEventError> {
-        Err(PublishEventError::Unavailable)
+    /// Reserves deliveries for a proposed Remote Config admin version.
+    fn reserve_remote_config_version(
+        &self,
+        _version: &Value,
+    ) -> Result<Box<dyn RemoteConfigPublication>, PublishEventError> {
+        Ok(Box::new(()))
     }
     /// The project the functions belong to (the Pub/Sub REST path must name it).
     fn project(&self) -> String;

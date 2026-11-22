@@ -13,18 +13,16 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Semaphore};
 
-use crate::control::{self, ControlState};
+use crate::control::{self, ControlState, PublishEventError};
 use crate::identity_toolkit::{handle_with, AuthState, RequestHeaders};
 use crate::{
-    remote_config::{RemoteConfigStores, TemplateStore, Version},
+    remote_config::{Error as RemoteConfigError, RemoteConfigStores, TemplateStore, Version},
     remote_config_http,
 };
 
 /// Maximum accepted request body (spec 33.3 input budget).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 const MAX_BLOCKING_AUTH_TASKS: usize = 64;
-/// Production did not record events for server-namespace commits.
-const SERVER_NAMESPACE_EVENTS: bool = false;
 
 #[allow(clippy::too_many_lines)]
 async fn respond(
@@ -660,33 +658,31 @@ async fn serve_inner(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
 ) -> std::io::Result<()> {
-    let remote_config = control.as_ref().map(|control| {
-        Arc::new(control.functions.as_ref().map_or_else(
-            RemoteConfigStores::default,
-            |functions| {
-                let functions = functions.clone();
-                let observe = move |version: &Version| {
-                    let metadata = remote_config_http::version_fields(version);
-                    if let Err(error) = functions.deliver_remote_config_version(&metadata) {
-                        fireemu_adapter_support::eprintln_at!(
-                            fireemu_adapter_support::term::Level::Warn,
-                            "warning: Remote Config version {} committed but event delivery was refused: {error:?}",
-                            version.number()
-                        );
+    let remote_config =
+        control.as_ref().map(|control| {
+            Arc::new(control.functions.as_ref().map_or_else(
+                RemoteConfigStores::default,
+                |functions| {
+                    let functions = functions.clone();
+                    RemoteConfigStores {
+                        client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
+                            let metadata = remote_config_http::version_fields(version);
+                            let publication = functions
+                                .reserve_remote_config_version(&metadata)
+                                .map_err(|error| match error {
+                                    PublishEventError::Capacity => RemoteConfigError::EventCapacity,
+                                    PublishEventError::Invalid | PublishEventError::Unavailable => {
+                                        RemoteConfigError::EventUnavailable
+                                    }
+                                })?;
+                            Ok(Box::new(move || publication.publish()))
+                        })),
+                        // Production did not record events for server-namespace commits.
+                        server: TemplateStore::default(),
                     }
-                };
-                let server = if SERVER_NAMESPACE_EVENTS {
-                    TemplateStore::with_observer(Box::new(observe.clone()))
-                } else {
-                    TemplateStore::default()
-                };
-                RemoteConfigStores {
-                    client: TemplateStore::with_observer(Box::new(observe)),
-                    server,
-                }
-            },
-        ))
-    });
+                },
+            ))
+        });
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking

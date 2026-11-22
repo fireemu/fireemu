@@ -2,11 +2,20 @@ const v1 = require('firebase-functions/v1');
 const {onConfigUpdated} = require('firebase-functions/v2/remoteConfig');
 const fs = require('node:fs');
 const attempts = new Map();
-function record(generation, data, context) {
+async function record(generation, data, context) {
+  let readVersion;
+  if (process.env.REMOTE_CONFIG_READ_URL) {
+    const response = await fetch(process.env.REMOTE_CONFIG_READ_URL, {
+      headers: {authorization: `Bearer ${process.env.REMOTE_CONFIG_READ_TOKEN}`},
+    });
+    if (!response.ok) throw new Error(`Remote Config read failed: ${response.status}`);
+    readVersion = (await response.json()).version.versionNumber;
+  }
   const key = `${generation}:${data.versionNumber}`;
   const attempt = (attempts.get(key) || 0) + 1;
   attempts.set(key, attempt);
   const row = {generation, data, context, attempt};
+  if (readVersion !== undefined) row.readVersion = readVersion;
   if (process.env.REMOTE_CONFIG_OUTPUT) fs.appendFileSync(process.env.REMOTE_CONFIG_OUTPUT, JSON.stringify(row) + '\n');
   console.log('REMOTE_CONFIG_EVENT ' + JSON.stringify(row));
   if (data.description === 'fail once' && attempt === 1) throw new Error('requested first failure');
@@ -14,7 +23,7 @@ function record(generation, data, context) {
 exports.configV1 = v1.runWith({failurePolicy: true}).remoteConfig.onUpdate((data, context) => record(1, data, context));
 exports.configV2 = onConfigUpdated({retry: true}, event => {
   const {data, ...context} = event;
-  record(2, data, context);
+  return record(2, data, context);
 });
 
 // A deliberately malformed descriptor must not become an update subscription.

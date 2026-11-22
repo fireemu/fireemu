@@ -441,6 +441,21 @@ fn store_error(error: Error) -> Reply {
         Error::VersionExhausted => {
             Reply::error(500, "Remote Config version number exhausted", "INTERNAL")
         }
+        Error::EventCapacity => Reply::error(
+            429,
+            "the functions event queue is at capacity",
+            "RESOURCE_EXHAUSTED",
+        ),
+        Error::EventUnavailable => Reply::error(
+            503,
+            "the functions runtime cannot admit events",
+            "UNAVAILABLE",
+        ),
+        Error::ClockOutOfRange => Reply::error(
+            500,
+            "the local clock is outside the RFC 3339 range",
+            "INTERNAL",
+        ),
     }
 }
 
@@ -546,6 +561,35 @@ mod tests {
         match &reply.body {
             ReplyBody::Json(value) => value.clone(),
             ReplyBody::Rendered(bytes) => serde_json::from_slice(bytes).unwrap(),
+        }
+    }
+
+    #[test]
+    fn dispatch_refuses_commits_when_the_clock_is_out_of_range() {
+        let stores = RemoteConfigStores::default();
+        let now = LogicalInstant::from_unix_seconds(253_402_300_801);
+        let expected = Reply::error(
+            500,
+            "the local clock is outside the RFC 3339 range",
+            "INTERNAL",
+        )
+        .into_wire();
+        for endpoint in ["remoteConfig", "namespaces/firebase-server/remoteConfig"] {
+            let first = request(&stores, endpoint, "PUT", "", b"{}", Some("*"));
+            assert_eq!(first.status, 200);
+            for (method, suffix, body, tag) in [
+                ("PUT", "", b"{}".as_slice(), first.etag.as_deref()),
+                (
+                    "POST",
+                    ":rollback",
+                    br#"{"versionNumber":"1"}"#.as_slice(),
+                    None,
+                ),
+            ] {
+                let path = format!("/v1/projects/demo-config/{endpoint}{suffix}");
+                let reply = dispatch(&stores, &route(&path).unwrap(), method, "", body, tag, now);
+                assert_eq!(reply.into_wire(), expected);
+            }
         }
     }
 

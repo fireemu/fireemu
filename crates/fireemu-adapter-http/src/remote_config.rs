@@ -314,6 +314,12 @@ pub enum Error {
     UnknownVersion,
     /// The version counter cannot advance.
     VersionExhausted,
+    /// The Functions queue cannot hold all deliveries for this version.
+    EventCapacity,
+    /// The Functions runtime cannot admit this version's events.
+    EventUnavailable,
+    /// The current logical time cannot be represented in RFC 3339.
+    ClockOutOfRange,
 }
 
 /// Successful result of validating or publishing a client template.
@@ -429,9 +435,10 @@ impl RemoteConfigStores {
 /// In-memory history for one project's template namespace.
 pub struct TemplateStore {
     history: Mutex<History>,
-    #[allow(clippy::type_complexity)]
-    observer: Option<Box<dyn Fn(&Version) + Send + Sync>>,
+    reserver: Option<Box<VersionReserver>>,
 }
+
+type VersionReserver = dyn Fn(&Version) -> Result<Box<dyn FnOnce() + Send>, Error> + Send + Sync;
 
 struct History {
     versions: VecDeque<Arc<Version>>,
@@ -459,7 +466,7 @@ impl Default for TemplateStore {
                 versions: VecDeque::from([Arc::new(initial)]),
                 current_body: None,
             }),
-            observer: None,
+            reserver: None,
         }
     }
 }
@@ -484,10 +491,11 @@ fn published_index(versions: &VecDeque<Arc<Version>>, number: u64) -> Option<usi
 }
 
 impl TemplateStore {
-    /// Creates an empty store that calls the observer after each commit under the history lock.
-    pub fn with_observer(observer: Box<dyn Fn(&Version) + Send + Sync>) -> Self {
+    /// Creates an empty store that reserves before appending and publishes after appending,
+    /// with both operations under the history lock.
+    pub fn with_reserver(reserver: Box<VersionReserver>) -> Self {
         Self {
-            observer: Some(observer),
+            reserver: Some(reserver),
             ..Self::default()
         }
     }
@@ -622,6 +630,7 @@ impl TemplateStore {
         now: LogicalInstant,
         change: Change,
     ) -> Result<Arc<Version>, Error> {
+        now.to_rfc3339().map_err(|_| Error::ClockOutOfRange)?;
         let versions = &mut history.versions;
         let current = head(versions);
         let number = current
@@ -635,13 +644,18 @@ impl TemplateStore {
             update_time: Some(now),
             change,
         });
+        let publish = self
+            .reserver
+            .as_ref()
+            .map(|reserve| reserve(&version))
+            .transpose()?;
         versions.push_back(version.clone());
         if number == 1 || versions.len() > MAX_RETAINED_VERSIONS {
             versions.pop_front();
         }
         history.current_body = None;
-        if let Some(observer) = &self.observer {
-            observer(&version);
+        if let Some(publish) = publish {
+            publish();
         }
         Ok(version)
     }

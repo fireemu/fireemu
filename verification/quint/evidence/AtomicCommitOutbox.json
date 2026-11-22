@@ -310,7 +310,7 @@
     },
     "crates/fireemu-adapter-functions/src/events.rs": {
       "kind": "sha256",
-      "value": "207f9164299aefce682b083ed82ecb5ae685e40563475e8cf45100c88c943545"
+      "value": "410fe3d8bb38a3e8f9348d351378db20af2b78da819f3684b9fec7c351a23cbe"
     },
     "crates/fireemu-adapter-functions/src/http.rs": {
       "kind": "sha256",
@@ -346,7 +346,7 @@
     },
     "crates/fireemu-adapter-functions/src/runtime.rs": {
       "kind": "sha256",
-      "value": "cffb91879b000928c2b3690809d442c4d8b3ddd7fef4f302186a423bb56e8b84"
+      "value": "1470dd7a88343e987a26213a1f2f3e942c0097921bda961f503f930cc542ea6c"
     },
     "crates/fireemu-adapter-functions/src/task_scheduler.rs": {
       "kind": "sha256",

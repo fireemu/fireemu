@@ -3661,24 +3661,28 @@ impl FunctionsRuntime {
     ) -> Result<usize, SourceEventAdmissionError> {
         let (first, second) = crate::events::remote_config_events(&self.config.project, body)
             .map_err(|_| SourceEventAdmissionError::InvalidEvent)?;
-        self.deliver_remote_config(first, second)
+        let reservation = self.reserve_remote_config(first, second)?;
+        let count = reservation.deliveries.as_ref().map_or(0, Vec::len);
+        reservation.publish();
+        Ok(count)
     }
 
-    /// Delivers a committed Remote Config admin version through ordinary background delivery.
-    pub fn publish_remote_config_version(
+    /// Reserves background deliveries for a client Remote Config admin version.
+    pub fn reserve_remote_config_version(
         self: &Arc<Self>,
         version: &Value,
-    ) -> Result<usize, SourceEventAdmissionError> {
+    ) -> Result<EventBatchReservation, SourceEventAdmissionError> {
         let (first, second) =
-            crate::events::remote_config_version_events(&self.config.project, version);
-        self.deliver_remote_config(Some(first), Some(second))
+            crate::events::remote_config_version_events(&self.config.project, "firebase", version)
+                .map_err(|_| SourceEventAdmissionError::InvalidEvent)?;
+        self.reserve_remote_config(Some(first), Some(second))
     }
 
-    fn deliver_remote_config(
+    fn reserve_remote_config(
         self: &Arc<Self>,
         first: Option<Value>,
         second: Option<Value>,
-    ) -> Result<usize, SourceEventAdmissionError> {
+    ) -> Result<EventBatchReservation, SourceEventAdmissionError> {
         let (first, second) = (first.map(Arc::new), second.map(Arc::new));
         let time = self.now();
         let subject = format!("projects/{}", self.config.project);
@@ -3737,23 +3741,16 @@ impl FunctionsRuntime {
                 });
             }
         }
-        let count = drafts.len();
         let mut inner = self
             .inner
             .lock()
             .map_err(|_| SourceEventAdmissionError::Unavailable)?;
         let reservation = self.reserve_drafts(EventSource::Manual, drafts, &mut inner);
         drop(inner);
-        match reservation {
-            Ok(reservation) => {
-                reservation.publish();
-                Ok(count)
-            }
-            Err(error) => {
-                self.note_admission_refusal(error);
-                Err(error)
-            }
+        if let Err(error) = &reservation {
+            self.note_admission_refusal(*error);
         }
+        reservation
     }
 
     /// Publishes messages on `topic`: one event per message and subscribed function.
