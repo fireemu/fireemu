@@ -153,11 +153,24 @@ impl Config {
             }
         }
         let mut data = data.clone();
-        // Test World relocates the files, but absolute ignore globs still match the authored path.
-        let ignore_root = data
-            .as_object_mut()
-            .and_then(|object| object.remove("_fireemuTestWorldPublicRoot"))
-            .and_then(|value| value.as_str().map(|path| path.replace('\\', "/")));
+        let ignore_root = data.as_object_mut().and_then(|object| {
+            if !object.contains_key("_fireemuTestWorldPublicRoot")
+                || std::env::var_os("FIREEMU_TEST_WORLD_ID").is_none()
+            {
+                return None;
+            }
+            // The ID also reaches world.run children. The supervised daemon uses both private flags.
+            let mut args = std::env::args().skip(1);
+            if args.next().as_deref() != Some("up")
+                || !crate::parse_raw_options(&args.collect::<Vec<_>>(), crate::OptionContext::Start)
+                    .is_ok_and(|options| options.owner_stdin && options.ready_file.is_some())
+            {
+                return None;
+            }
+            object
+                .remove("_fireemuTestWorldPublicRoot")
+                .and_then(|value| value.as_str().map(|path| path.replace('\\', "/")))
+        });
         Ok(Self {
             data,
             public: base.join(public),

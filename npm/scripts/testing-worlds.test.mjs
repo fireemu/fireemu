@@ -1005,6 +1005,25 @@ test('Hosting readiness follows service selection and the current generation', n
   }
 });
 
+test('Test World Hosting matches absolute ignore rules against the authored public root after relocation', native, async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-ignore-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const publicDir = join(cwd, 'public');
+  await mkdir(publicDir);
+  await writeFile(join(publicDir, 'hidden.txt'), 'hidden');
+  await writeFile(join(publicDir, 'visible.txt'), 'visible');
+  await writeFile(join(cwd, 'firebase.json'), JSON.stringify({
+    hosting: { public: 'public', ignore: [join(publicDir, 'hidden.txt').replaceAll('\\', '/')] },
+  }));
+  await withTestWorld({ ...options, cwd, firebaseJson: 'firebase.json', services: ['hosting'] }, async world => {
+    const visible = await fetch(new URL('/visible.txt', world.hostingUrl));
+    assert.equal(visible.status, 200);
+    assert.equal(await visible.text(), 'visible');
+    const hidden = await fetch(new URL('/hidden.txt', world.hostingUrl));
+    assert.equal(hidden.status, 404);
+  });
+});
+
 test('parallel Hosting worlds route the same API through their own Functions and Firestore', {...native, timeout: 60_000}, async t => {
   const root = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -1632,6 +1632,90 @@ async fn function_logs_cover_all_codebases_and_report_replacement_without_reusin
 }
 
 #[tokio::test]
+async fn function_log_stream_marks_shared_codebase_runner_replacements_on_the_first_poll() {
+    use fireemu_adapter_functions::http::FunctionsHttpProfile;
+    use fireemu_adapter_functions::runner::{Runner, SpawnSpec};
+    use fireemu_adapter_functions::runtime::{CodebaseSpec, FunctionsConfig, FunctionsRuntime};
+    use std::time::Duration;
+
+    let names = ["alpha", "beta"];
+    let mut codebases = Vec::new();
+    for name in names {
+        let script = attributed_runner_script().replace("\"tick\"", &format!("\"{name}\""));
+        let runner = Arc::new(
+            Runner::spawn_spec(&SpawnSpec {
+                command: vec!["python3".into(), "-c".into(), script],
+                cwd: None,
+                env: Vec::new(),
+                hello_timeout: Duration::from_secs(60),
+            })
+            .await
+            .unwrap(),
+        );
+        let manifest = fireemu_adapter_functions::manifest_json::parse_manifest(
+            runner.hello().manifest.as_ref().unwrap(),
+        )
+        .unwrap();
+        codebases.push(CodebaseSpec {
+            function: None,
+            name: "shared".to_owned(),
+            manifest,
+            runner,
+            spawn: None,
+            cleanup_dir: None,
+        });
+    }
+    let runtime = FunctionsRuntime::with_codebases(
+        codebases,
+        FunctionsConfig::for_tests(99, "s".into()),
+        Arc::new(Mutex::new(VirtualClock::new(
+            LogicalInstant::from_unix_seconds(1_788_004_860),
+        ))),
+        FunctionsHttpProfile::Emulator,
+    )
+    .unwrap();
+    tokio::spawn(runtime.clone().dispatch_loop());
+    let mut state = Arc::try_unwrap(state()).ok().unwrap();
+    state.functions = Some(runtime.clone());
+    let state = Arc::new(state);
+    for name in names {
+        runtime.run_schedule(name).unwrap();
+    }
+    runtime.await_idle(Duration::from_secs(10)).await.unwrap();
+    let mut stream = open_log_stream(&state).await;
+    let (snapshot_kind, snapshot) = next_sse(&mut stream).await;
+    let (poll_kind, poll) = next_sse(&mut stream).await;
+    drop(stream);
+    runtime.shutdown().await;
+
+    assert_eq!(snapshot_kind, "snapshot");
+    assert_eq!(poll_kind, "log-state");
+    let records = snapshot["logRecords"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    assert_ne!(records[0]["runner"], records[1]["runner"]);
+    assert_eq!(
+        snapshot["logs"],
+        json!([
+            records[0]["line"],
+            "[fireemu] earlier function logs were truncated",
+            records[1]["line"],
+        ])
+    );
+    for (index, name) in names.into_iter().enumerate() {
+        let record = &records[index];
+        assert_eq!(record["function"], name);
+        assert_eq!(record["cursor"], "0");
+        let scope = &snapshot["logScopes"][index];
+        assert_eq!(scope["codebase"], "shared");
+        assert_eq!(scope["runner"], record["runner"]);
+        assert_eq!(scope["nextCursor"], "1");
+        assert_eq!(scope["replaced"], index == 1);
+        assert_eq!(poll["logScopes"][index]["replaced"], true);
+        assert_eq!(poll["logScopes"][index]["nextCursor"], "1");
+    }
+}
+
+#[tokio::test]
 async fn retained_log_snapshots_explicitly_report_eviction() {
     let script = attributed_runner_script().replace(
         "    send({\"type\":\"log\"",

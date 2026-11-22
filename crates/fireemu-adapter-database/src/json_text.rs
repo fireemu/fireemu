@@ -132,7 +132,7 @@ fn array_length<'a>(keys: impl Iterator<Item = &'a str>, count: usize) -> Option
         }
         max = max.max(key.parse().ok()?);
     }
-    (max < 2 * count).then_some(max + 1)
+    max.checked_add(1).filter(|_| max < count.saturating_mul(2))
 }
 
 /// The value a write to `path` reports in its events and data messages: the node's, or

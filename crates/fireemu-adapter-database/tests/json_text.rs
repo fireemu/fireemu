@@ -90,6 +90,12 @@ fn numbers_and_strings_render_like_the_server() {
 }
 
 #[test]
+fn usize_max_child_key_renders_as_an_object() {
+    let text = format!(r#"{{"{}":"child"}}"#, usize::MAX);
+    assert_eq!(get(&stored(&text), Format::Plain, Style::Compact), text);
+}
+
+#[test]
 fn integer_keyed_children_render_as_arrays_when_dense_enough() {
     assert_eq!(
         get(

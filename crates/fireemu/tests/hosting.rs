@@ -287,6 +287,7 @@ fn start_descriptor(
             .arg(&ready)
             .args(["--owner-stdin", "--log-verbosity", "quiet"])
             .args(extra_args)
+            .env_remove("FIREEMU_TEST_WORLD_ID")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -317,6 +318,22 @@ fn start_descriptor(
 
 fn emulators() -> serde_json::Value {
     serde_json::json!({"hosting":{"port":0},"ui":{"enabled":false},"hub":{"port":0},"logging":{"port":0}})
+}
+
+#[test]
+fn ordinary_hosting_ignores_the_test_world_public_root_member() {
+    let dir = Scratch::new("hosting", "ordinary-ignore-root");
+    std::fs::create_dir(dir.join("public")).unwrap();
+    std::fs::write(dir.join("public/hidden.txt"), "ordinary asset").unwrap();
+    let firebase = serde_json::json!({"hosting": {
+        "public": "public",
+        "_fireemuTestWorldPublicRoot": "/authored",
+        "ignore": ["/authored/hidden.txt"]
+    }, "emulators": emulators()});
+    let (_child, address) = start(&dir, &firebase, "hosting");
+    let reply = request(&address, "/hidden.txt");
+    assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    assert!(reply.ends_with("ordinary asset"), "{reply}");
 }
 
 #[test]

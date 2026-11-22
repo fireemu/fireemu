@@ -207,7 +207,11 @@ pub(crate) fn function_logs_since(
         let function = unit.function;
         let runner = unit.runner;
         let identity = runner.diagnostic_id();
-        let previous = previous_cursors.get(&key).copied();
+        let previous = cursors
+            .0
+            .get(&key)
+            .or_else(|| previous_cursors.get(&key))
+            .copied();
         let replaced = previous.is_some_and(|(old, _)| old != identity);
         let cursor = previous
             .filter(|(old, _)| *old == identity)
