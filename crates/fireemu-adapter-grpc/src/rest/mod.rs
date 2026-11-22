@@ -132,7 +132,15 @@ fn run_query_row_json(row: &pb::RunQueryResponse) -> Value {
     value
 }
 
-fn run_query_wire_bytes(rows: Vec<pb::RunQueryResponse>) -> Result<Vec<u8>, serde_json::Error> {
+/// Encodes the HTTP `RunQuery` response one row at a time.
+pub(crate) fn run_query_wire_bytes(
+    rows: Vec<pb::RunQueryResponse>,
+    #[cfg(test)] before_serialize: Option<&(dyn Fn() + Send + Sync)>,
+) -> Result<Vec<u8>, serde_json::Error> {
+    #[cfg(test)]
+    if let Some(before_serialize) = before_serialize {
+        before_serialize();
+    }
     let mut bytes = vec![b'['];
     for (index, row) in rows.into_iter().enumerate() {
         if index != 0 {
@@ -175,8 +183,8 @@ fn run_query_wire_uses_the_same_row_shape_without_a_json_tree() {
         responses.iter().map(run_query_row_json).collect(),
     ))
     .unwrap();
-    assert_eq!(run_query_wire_bytes(responses).unwrap(), expected);
-    assert_eq!(run_query_wire_bytes(Vec::new()).unwrap(), b"[]");
+    assert_eq!(run_query_wire_bytes(responses, None).unwrap(), expected);
+    assert_eq!(run_query_wire_bytes(Vec::new(), None).unwrap(), b"[]");
 }
 
 fn http_status(code: Code) -> u16 {
@@ -1084,17 +1092,11 @@ impl RestState {
         }
     }
 
-    /// The HTTP `RunQuery` body is prepared one row at a time on the blocking worker.
-    pub(crate) fn handle_wire(&self, req: &RestRequest) -> RoutedResponse<Vec<u8>> {
-        match self.handle_routed(req) {
-            RoutedResponse::Response(response) => RoutedResponse::Response(response),
-            RoutedResponse::RunQuery(rows) => {
-                RoutedResponse::RunQuery(run_query_wire_bytes(rows).unwrap_or_default())
-            }
-        }
-    }
-
-    fn handle_routed(&self, req: &RestRequest) -> RoutedResponse<Vec<pb::RunQueryResponse>> {
+    /// Dispatches a request and leaves successful `RunQuery` rows ready for formatting.
+    pub(crate) fn handle_routed(
+        &self,
+        req: &RestRequest,
+    ) -> RoutedResponse<Vec<pb::RunQueryResponse>> {
         if let Some(refused) = crate::admin::rest::foreign_project(self, &req.path) {
             return RoutedResponse::Response(refused);
         }

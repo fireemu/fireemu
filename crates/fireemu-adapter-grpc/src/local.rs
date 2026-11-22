@@ -362,6 +362,10 @@ pub struct FieldOperation {
     pub response: serde_json::Value,
 }
 
+/// Time-to-live catalogs keyed like [`LocalBackend::indexes`], shared so that a snapshot can
+/// take them without holding the lock while it filters.
+type TtlCatalogs = BTreeMap<(Option<String>, String), Arc<TtlCatalog>>;
+
 /// Local backend state.
 pub struct LocalBackend {
     gateway: Gateway,
@@ -372,7 +376,7 @@ pub struct LocalBackend {
     indexes: RwLock<BTreeMap<(Option<String>, String), fireemu_core_firestore::index::IndexSet>>,
     /// Time-to-live field configuration per database, keyed like [`LocalBackend::indexes`]:
     /// a project-specific entry wins over the entry shared by every project.
-    ttl: RwLock<BTreeMap<(Option<String>, String), TtlCatalog>>,
+    ttl: RwLock<TtlCatalogs>,
     /// When each attached database was last swept for expired documents, and which
     /// databases a sweep is running against right now.
     ttl_sweeps: Mutex<TtlSweepState>,
@@ -381,7 +385,7 @@ pub struct LocalBackend {
     /// The most recent completed field-configuration operations of each project, oldest
     /// first, bounded per project by [`FIELD_OPERATIONS_RETAINED_PER_PROJECT`] so that
     /// neither a caller nor another project can grow or evict this record.
-    field_operations: Mutex<BTreeMap<String, std::collections::VecDeque<FieldOperation>>>,
+    field_operations: Mutex<BTreeMap<String, Arc<std::collections::VecDeque<FieldOperation>>>>,
     /// Monotonic ordinal of every recorded field-configuration operation. It never resets
     /// and never depends on how many records are retained, so two operations on the same
     /// field at the same virtual instant still get distinct names once the bound evicts.
@@ -2630,6 +2634,45 @@ mod tests {
     }
 
     #[test]
+    fn ttl_snapshot_predicates_can_reenter_the_catalog() {
+        let backend = admission_backend();
+        let catalog = declared_ttl(&[("sessions", "expireAt")]);
+        backend.replace_ttl_catalog("demo-app", "(default)", catalog.clone());
+        backend.replace_ttl_catalog("other-project", "(default)", catalog);
+
+        let captured = backend.owned_ttl_catalogs(|project| {
+            // Probe with a write lock so a held read lock fails without blocking the test.
+            assert!(backend.ttl.try_write().is_ok());
+            assert_eq!(backend.ttl_catalogs().len(), 2);
+            project == "demo-app"
+        });
+        assert_eq!(captured.len(), 1);
+        assert!(captured.contains_key(&("demo-app".to_owned(), "(default)".to_owned())));
+    }
+
+    #[test]
+    fn field_operation_snapshot_predicates_can_reenter_the_catalog() {
+        let backend = admission_backend();
+        for project in ["demo-app", "other-project"] {
+            backend.record_field_operation(
+                project,
+                "(default)",
+                "expireAt",
+                backend.now(),
+                serde_json::json!({}),
+            );
+        }
+
+        let captured = backend.owned_field_operations(|project| {
+            assert!(backend.field_operations.try_lock().is_ok());
+            assert_eq!(backend.field_operations_by_project().len(), 2);
+            project == "demo-app"
+        });
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured["demo-app"], backend.field_operations("demo-app"));
+    }
+
+    #[test]
     fn a_declared_ttl_catalog_is_in_force_for_every_project() {
         let backend = admission_backend();
         backend.replace_shared_ttl_catalog("(default)", declared_ttl(&[("sessions", "expireAt")]));
@@ -4616,7 +4659,7 @@ impl LocalBackend {
         catalogs
             .get(&(Some(project.to_owned()), database.to_owned()))
             .or_else(|| catalogs.get(&(None, database.to_owned())))
-            .cloned()
+            .map(|catalog| (**catalog).clone())
             .unwrap_or_default()
     }
 
@@ -4655,7 +4698,10 @@ impl LocalBackend {
         if catalog.is_empty() {
             catalogs.remove(&(Some(project.to_owned()), database.to_owned()));
         } else {
-            catalogs.insert((Some(project.to_owned()), database.to_owned()), catalog);
+            catalogs.insert(
+                (Some(project.to_owned()), database.to_owned()),
+                Arc::new(catalog),
+            );
         }
     }
 
@@ -4674,7 +4720,7 @@ impl LocalBackend {
         if catalog.is_empty() {
             catalogs.remove(&(None, database.to_owned()));
         } else {
-            catalogs.insert((None, database.to_owned()), catalog);
+            catalogs.insert((None, database.to_owned()), Arc::new(catalog));
         }
     }
 
@@ -4693,18 +4739,22 @@ impl LocalBackend {
         &self,
         owned: impl Fn(&str) -> bool,
     ) -> BTreeMap<(String, String), TtlCatalog> {
-        let catalogs = self
+        // Capture immutable handles under the lock, then invoke the predicate outside it.
+        let catalogs: Vec<_> = self
             .ttl
             .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        catalogs
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .filter_map(|((project, database), catalog)| {
                 project
                     .as_ref()
-                    .filter(|project| owned(project))
-                    .map(|project| ((project.clone(), database.clone()), catalog.clone()))
+                    .map(|project| ((project.clone(), database.clone()), Arc::clone(catalog)))
             })
+            .collect();
+        catalogs
+            .into_iter()
+            .filter(|((project, _), _)| owned(project))
+            .map(|(key, catalog)| (key, Arc::unwrap_or_clone(catalog)))
             .collect()
     }
 
@@ -4735,7 +4785,10 @@ impl LocalBackend {
             if catalog.is_empty() && !masks_declared {
                 continue;
             }
-            current.insert((Some(project.clone()), database.clone()), catalog.clone());
+            current.insert(
+                (Some(project.clone()), database.clone()),
+                Arc::new(catalog.clone()),
+            );
         }
         drop(current);
         // A restored policy is in force from the restore, so its sweep interval restarts
@@ -4790,10 +4843,10 @@ impl LocalBackend {
         let mut catalog = catalogs
             .get(&key)
             .or_else(|| catalogs.get(&(None, database.to_owned())))
-            .cloned()
+            .map(|catalog| (**catalog).clone())
             .unwrap_or_default();
         let state = catalog.enable_with_offset(collection_group, field, expiration_offset)?;
-        catalogs.insert(key, catalog);
+        catalogs.insert(key, Arc::new(catalog));
         drop(catalogs);
         // The policy takes effect now, so the sweep interval is measured from now: a
         // document that was already expired when the policy was created still survives one
@@ -4827,7 +4880,11 @@ impl LocalBackend {
         // that removes nothing changes nothing: the project keeps following the file.
         let declared = catalogs.get(&(None, database.to_owned()));
         let has_declared = declared.is_some_and(|catalog| !catalog.is_empty());
-        let mut catalog = catalogs.get(&key).or(declared).cloned().unwrap_or_default();
+        let mut catalog = catalogs
+            .get(&key)
+            .or(declared)
+            .map(|catalog| (**catalog).clone())
+            .unwrap_or_default();
         let removed = catalog.disable(collection_group, field);
         if removed {
             // An emptied catalog of a project whose configuration declares policies stays,
@@ -4835,7 +4892,7 @@ impl LocalBackend {
             if catalog.is_empty() && !has_declared {
                 catalogs.remove(&key);
             } else {
-                catalogs.insert(key, catalog);
+                catalogs.insert(key, Arc::new(catalog));
             }
         }
         removed
@@ -4869,7 +4926,7 @@ impl LocalBackend {
             .field_operations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let project_operations = operations.entry(project.to_owned()).or_default();
+        let project_operations = Arc::make_mut(operations.entry(project.to_owned()).or_default());
         project_operations.push_back(FieldOperation {
             name: name.clone(),
             field: field.to_owned(),
@@ -4917,12 +4974,15 @@ impl LocalBackend {
         &self,
         owned: impl Fn(&str) -> bool,
     ) -> BTreeMap<String, Vec<FieldOperation>> {
-        self.field_operations
+        let operations = self
+            .field_operations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
+            .clone();
+        operations
+            .into_iter()
             .filter(|(project, _)| owned(project))
-            .map(|(project, operations)| (project.clone(), operations.iter().cloned().collect()))
+            .map(|(project, operations)| (project, operations.iter().cloned().collect()))
             .collect()
     }
 
@@ -4944,7 +5004,7 @@ impl LocalBackend {
             if records.is_empty() || !owned(project) {
                 continue;
             }
-            operations.insert(project.clone(), records.iter().cloned().collect());
+            operations.insert(project.clone(), Arc::new(records.iter().cloned().collect()));
         }
     }
 

@@ -136,13 +136,17 @@ fn try_admit_rest_payload_from(
     limiter.clone().try_acquire_many_owned(units).ok()
 }
 
-fn try_admit_rest_payload(units: usize) -> Option<tokio::sync::OwnedSemaphorePermit> {
-    try_admit_rest_payload_from(rest_payload_limiter(), units)
-}
-
 struct RestEnvelope {
     request: RestRequest,
     _payload_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct RestAdmissionTest {
+    work_limiter: Arc<tokio::sync::Semaphore>,
+    payload_limiter: Arc<tokio::sync::Semaphore>,
+    before_query_serialization: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 fn try_admit_rest_work(
@@ -443,10 +447,16 @@ async fn rest_call(
     let json = |response: &RestResponse| {
         json_response_with_layout(response, origin.as_deref(), false, production_json)
     };
-    // REST admits every request, body or not: the permit covers the `spawn_blocking`
-    // execution below as well as the body, so it bounds the blocking pool and not only
-    // memory. The channel path has no such execution and admits only a declared body.
-    let Some(permit) = try_admit_rest_work(rest_work_limiter()) else {
+    // REST admits every request, body or not. The permit covers the body and the routed
+    // work on the blocking pool. The channel path admits only a declared body.
+    let limiter = rest_work_limiter();
+    #[cfg(test)]
+    let admission = req.extensions().get::<RestAdmissionTest>().cloned();
+    #[cfg(test)]
+    let limiter = admission
+        .as_ref()
+        .map_or(limiter, |test| &test.work_limiter);
+    let Some(permit) = try_admit_rest_work(limiter) else {
         return Ok(json(&too_many_concurrent_requests()));
     };
     let method = req.method().as_str().to_owned();
@@ -474,7 +484,12 @@ async fn rest_call(
     // Content-Length: 0. Charge the full allowance before the read so a body that was not
     // advertised cannot bypass the retained-payload bound.
     let payload_units = body_limit.div_ceil(REST_PAYLOAD_UNIT_BYTES);
-    let payload_permit = match try_admit_rest_payload(payload_units) {
+    let payload_limiter = rest_payload_limiter();
+    #[cfg(test)]
+    let payload_limiter = admission
+        .as_ref()
+        .map_or(payload_limiter, |test| &test.payload_limiter);
+    let payload_permit = match try_admit_rest_payload_from(payload_limiter, payload_units) {
         Some(permit) => Some(permit),
         None => {
             return Ok(json(&too_many_concurrent_requests()));
@@ -531,7 +546,7 @@ async fn rest_call(
             let _permit = attempt_permit;
             crate::local::LocalBackend::with_commit_wait_owner(owner.as_ref(), || {
                 crate::local::LocalBackend::without_waiting(|| {
-                    attempt_state.handle_wire(&attempt_request.request)
+                    attempt_state.handle_routed(&attempt_request.request)
                 })
             })
         })
@@ -548,14 +563,23 @@ async fn rest_call(
         }
         // Re-admitted for the retry; an exhausted pool answers the retry as it answers a new
         // request.
-        match try_admit_rest_work(rest_work_limiter()) {
+        match try_admit_rest_work(limiter) {
             Some(admitted) => permit = admitted,
             None => break RoutedResponse::Response(too_many_concurrent_requests()),
         }
     };
     let response = match response {
         RoutedResponse::Response(response) => response,
-        RoutedResponse::RunQuery(bytes) => {
+        RoutedResponse::RunQuery(rows) => {
+            // Response serialization happens after the worker releases its work permit.
+            let bytes = crate::rest::run_query_wire_bytes(
+                rows,
+                #[cfg(test)]
+                admission
+                    .as_ref()
+                    .and_then(|test| test.before_query_serialization.as_deref()),
+            )
+            .unwrap_or_default();
             return Ok(json_bytes_response(
                 200,
                 bytes,
@@ -2282,7 +2306,16 @@ mod document_not_found_layout_tests {
         path: &str,
         body: &[u8],
     ) -> (String, Vec<u8>) {
-        wire_exchange(state, method, path, body, body.len(), BODY_READ_DEADLINE).await
+        wire_exchange(
+            state,
+            method,
+            path,
+            body,
+            body.len(),
+            BODY_READ_DEADLINE,
+            None,
+        )
+        .await
     }
 
     async fn wire_exchange(
@@ -2292,15 +2325,23 @@ mod document_not_found_layout_tests {
         body: &[u8],
         declared_bytes: usize,
         deadline: std::time::Duration,
+        admission: Option<RestAdmissionTest>,
     ) -> (String, Vec<u8>) {
-        let port = std::env::var("PORT").unwrap_or_else(|_| "0".to_owned());
+        let port = if admission.is_some() {
+            "0".to_owned()
+        } else {
+            std::env::var("PORT").unwrap_or_else(|_| "0".to_owned())
+        };
         let listener = TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
         let address = listener.local_addr().unwrap();
         let mut server = WireServer(Some(tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
-            let service = hyper::service::service_fn(move |request| {
+            let service = hyper::service::service_fn(move |mut request: Request<Incoming>| {
+                if let Some(admission) = &admission {
+                    request.extensions_mut().insert(admission.clone());
+                }
                 super::rest_call(Arc::clone(&state), request, deadline)
             });
             hyper::server::conn::http1::Builder::new()
@@ -3248,6 +3289,7 @@ mod document_not_found_layout_tests {
                     b"",
                     1,
                     std::time::Duration::from_millis(20),
+                    None,
                 )
                 .await;
                 assert_json_headers(&headers, &bytes, production, 408);
@@ -3277,6 +3319,72 @@ mod document_not_found_layout_tests {
             drop(held);
             assert_eq!(limiter.available_permits(), units);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_query_serialization_leaves_the_last_rest_permit_available_for_a_get() {
+        const QUERY: &str = "/v1/projects/demo-app/databases/(default)/documents:runQuery";
+        const BODY: &[u8] = br#"{"structuredQuery":{"from":[{"collectionId":"cases"}]}}"#;
+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        let state = state(false, false);
+        let mut seed = request("PATCH", PATH);
+        seed.body = serde_json::json!({"fields":{"v":{"integerValue":"1"}}});
+        let seeded = state.handle(&seed);
+        assert_eq!(seeded.status, 200, "{seeded:?}");
+
+        let limiter = Arc::new(tokio::sync::Semaphore::new(MAX_BLOCKING_REST_REQUESTS));
+        let _held: Vec<_> = (1..MAX_BLOCKING_REST_REQUESTS)
+            .map(|_| try_admit_rest_work(&limiter).unwrap())
+            .collect();
+        let admission = RestAdmissionTest {
+            work_limiter: limiter,
+            payload_limiter: Arc::new(tokio::sync::Semaphore::new(REST_PAYLOAD_UNITS)),
+            before_query_serialization: None,
+        };
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (resume, wait) = std::sync::mpsc::channel();
+        let wait = Mutex::new(wait);
+        let before_query_serialization = {
+            let entered = Arc::clone(&entered);
+            move || {
+                entered.notify_one();
+                wait.lock().unwrap().recv_timeout(TIMEOUT).unwrap();
+            }
+        };
+        let query = tokio::spawn(wire_exchange(
+            Arc::clone(&state),
+            "POST",
+            QUERY,
+            BODY,
+            BODY.len(),
+            BODY_READ_DEADLINE,
+            Some(RestAdmissionTest {
+                before_query_serialization: Some(Arc::new(before_query_serialization)),
+                ..admission.clone()
+            }),
+        ));
+        tokio::time::timeout(TIMEOUT, entered.notified())
+            .await
+            .expect("RunQuery reaches JSON serialization");
+        let (get_headers, get_body) = wire_exchange(
+            state,
+            "GET",
+            PATH,
+            b"",
+            0,
+            BODY_READ_DEADLINE,
+            Some(admission),
+        )
+        .await;
+        resume.send(()).unwrap();
+        let (query_headers, query_body) = query.await.unwrap();
+
+        assert_json_headers(&get_headers, &get_body, false, 200);
+        let document = serde_json::from_slice::<serde_json::Value>(&get_body).unwrap();
+        assert_eq!(document, seeded.body);
+        assert_json_headers(&query_headers, &query_body, false, 200);
+        let rows = serde_json::from_slice::<serde_json::Value>(&query_body).unwrap();
+        assert_eq!(rows[0]["document"], document);
     }
 
     /// A held REST commit waits without being turned away at the pool: the pool is exhausted

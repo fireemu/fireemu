@@ -4208,6 +4208,54 @@ fn union_limit_zero_still_denies_nonowner_on_both_routes() {
 }
 
 #[test]
+#[allow(clippy::result_large_err)] // `DatabaseHandle::with` returns `tonic::Status`.
+fn union_rejects_imported_range_sentinels_as_invalid_document_names() {
+    use fireemu_adapter_grpc::decode::parse_parent;
+    use fireemu_core_firestore::{path::DocumentPath, store::ImportedDocument};
+
+    let s = state(false);
+    let parent = parse_parent(DOCS).unwrap();
+    let path = DocumentPath::parse(&parent.project, &parent.database, "items/a")
+        .unwrap()
+        .descendants_upper_bound();
+    let message = format!(
+        "pipeline input {:?} is not a document name",
+        path.resource_name()
+    );
+    let now = s.local.now();
+    s.local
+        .ensure_database(&parent)
+        .unwrap()
+        .with(|db| {
+            db.import_documents(
+                vec![ImportedDocument {
+                    path,
+                    fields: BTreeMap::new(),
+                    create_time: None,
+                    update_time: None,
+                }],
+                now,
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+    for (primary, branch) in [("/items", "/empty"), ("/empty", "/items")] {
+        let body = json!({"structuredPipeline":{"pipeline":{"stages":[
+            {"name":"collection","args":[{"referenceValue":primary}]},
+            {"name":"union","args":[{"pipelineValue":{"stages":[
+                {"name":"collection","args":[{"referenceValue":branch}]}
+            ]}}]}
+        ]}}});
+        let (status, body) = call(&s, "POST", &format!("{DOCS}:executePipeline"), &body);
+        assert_eq!(status, 500, "{body}");
+        assert_eq!(body[0]["error"]["status"], "INTERNAL");
+        assert_eq!(body[0]["error"]["message"], message);
+    }
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn union_generated_route_combinations() {
     use fireemu_adapter_grpc::rules::{RulesEnforcer, TokenSemantics};

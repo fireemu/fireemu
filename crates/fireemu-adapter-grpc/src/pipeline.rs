@@ -2011,7 +2011,7 @@ pub(crate) fn execute_union(
             let (documents, _) = results
                 .next()
                 .ok_or_else(|| Status::internal("missing union branch"))?;
-            let rows = union_rows(documents).collect();
+            let rows = union_rows(documents).collect::<Result<Vec<_>, _>>()?;
             prepared.push(pipeline_exec::PreparedUnionBranch {
                 stages: branch.stages,
                 rows,
@@ -2029,7 +2029,7 @@ pub(crate) fn execute_union(
         if cursor.is_exhausted() {
             break;
         }
-        output.extend(cursor.push(row).map_err(|error| eval_status(&error))?);
+        output.extend(cursor.push(row?).map_err(|error| eval_status(&error))?);
     }
     output.extend(cursor.finish().map_err(|error| eval_status(&error))?);
     Ok(pack_results(
@@ -2038,11 +2038,10 @@ pub(crate) fn execute_union(
     ))
 }
 
-/// The query returned validated stored documents. Transfer their fields to the executor in
-/// the same parent, CRC and name order in which the wire pipeline reads a collection.
+/// Transfer stored fields to the executor in the wire pipeline's parent, CRC and name order.
 fn union_rows(
     mut documents: Vec<fireemu_core_firestore::store::Document>,
-) -> impl Iterator<Item = pipeline_exec::Row> {
+) -> impl Iterator<Item = Result<pipeline_exec::Row, Status>> {
     documents.sort_by_cached_key(|doc| {
         let path = &doc.path;
         (
@@ -2052,15 +2051,28 @@ fn union_rows(
         )
     });
     documents.into_iter().map(|document| {
+        // DocumentPath validates its identifiers at construction. A range upper bound
+        // appends a NUL to a document ID and can be passed to a programmatic import.
+        if document
+            .path
+            .pairs()
+            .iter()
+            .any(|(_, id)| id.as_str().ends_with('\0'))
+        {
+            return Err(Status::internal(format!(
+                "pipeline input {:?} is not a document name",
+                document.path.resource_name()
+            )));
+        }
         let times = row_times(
             Some(&crate::encode::encode_instant(document.create_time)),
             Some(&crate::encode::encode_instant(document.update_time)),
         );
-        pipeline_exec::Row {
+        Ok(pipeline_exec::Row {
             path: Some(document.path),
             times,
             fields: document.fields,
-        }
+        })
     })
 }
 
@@ -8952,7 +8964,12 @@ vector	grpc	emulator	function	foreign";
                 .into_iter()
                 .map(|response| document_row(&response.document.unwrap()).unwrap())
                 .collect();
-            assert_eq!(union_rows(documents).collect::<Vec<_>>(), expected);
+            assert_eq!(
+                union_rows(documents)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                expected
+            );
         }
 
         proptest! {
@@ -8972,7 +8989,7 @@ vector	grpc	emulator	function	foreign";
                     update_time: LogicalInstant::UNIX_EPOCH,
                     version: CommitVersion::from_value(1),
                 }).collect();
-                let direct: Vec<_> = union_rows(documents).map(|row| row.path.unwrap().resource_name()).collect();
+                let direct: Vec<_> = union_rows(documents).map(|row| row.unwrap().path.unwrap().resource_name()).collect();
                 let expected: Vec<_> = in_scan_order(wire).into_iter().map(|row| row.document.unwrap().name).collect();
                 prop_assert_eq!(direct, expected);
             }
