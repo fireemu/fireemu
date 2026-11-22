@@ -1,4 +1,4 @@
-//! Immutable client templates and version transitions for one Remote Config store.
+//! Immutable templates and version transitions for Remote Config namespaces.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -397,7 +397,36 @@ impl Version {
     }
 }
 
-/// In-memory history for one project's client template.
+/// Remote Config template namespaces supported by local administration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Namespace {
+    /// The default `firebase` namespace.
+    Client,
+    /// The `firebase-server` namespace.
+    Server,
+}
+
+/// Independent template histories for the project's two namespaces.
+#[derive(Default)]
+pub struct RemoteConfigStores {
+    /// History for `firebase`.
+    pub client: TemplateStore,
+    /// History for `firebase-server`.
+    pub server: TemplateStore,
+}
+
+impl RemoteConfigStores {
+    /// Selects the history for the requested namespace.
+    #[must_use]
+    pub const fn get(&self, namespace: Namespace) -> &TemplateStore {
+        match namespace {
+            Namespace::Client => &self.client,
+            Namespace::Server => &self.server,
+        }
+    }
+}
+
+/// In-memory history for one project's template namespace.
 pub struct TemplateStore {
     history: Mutex<History>,
 }

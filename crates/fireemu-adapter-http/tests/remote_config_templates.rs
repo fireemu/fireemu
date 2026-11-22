@@ -3,7 +3,8 @@
 use std::sync::{Arc, Barrier};
 
 use fireemu_adapter_http::remote_config::{
-    Change, Error, TemplateStore, WriteMode, WriteResult, MAX_RETAINED_VERSIONS,
+    Change, Error, Namespace, RemoteConfigStores, TemplateStore, WriteMode, WriteResult,
+    MAX_RETAINED_VERSIONS,
 };
 use fireemu_core_types::time::LogicalInstant;
 use proptest::prelude::*;
@@ -391,6 +392,67 @@ fn etags_cannot_be_reused_against_an_independent_store() {
 }
 
 #[test]
+fn server_namespace_publishes_version_one_with_its_initial_etag() {
+    let stores = RemoteConfigStores::default();
+    let client = stores.get(Namespace::Client);
+    let server = stores.get(Namespace::Server);
+    let initial_server = server.current();
+    assert_eq!(initial_server.number(), 0);
+    assert_ne!(initial_server.etag(), client.current().etag());
+
+    let first_client = publish(client, "*", "client one");
+    let second_client = publish(client, &first_client.etag(), "client two");
+    assert_eq!(server.current().etag(), initial_server.etag());
+    assert!(server.history().is_empty());
+
+    let first_server = publish(server, &initial_server.etag(), "server one");
+    assert_eq!(first_server.number(), 1);
+    assert_eq!(first_server.change(), Change::Publish { forced: false });
+    assert_ne!(first_server.etag(), first_client.etag());
+    assert!(Arc::ptr_eq(&client.current(), &second_client));
+    assert_eq!(client.history().len(), 2);
+    assert_eq!(server.history().len(), 1);
+}
+
+#[test]
+fn server_namespace_rejects_client_etags_and_rolls_back_its_own_content() {
+    let stores = RemoteConfigStores::default();
+    let client = publish(&stores.client, "*", "client");
+    let first_server = publish(&stores.server, "*", "server one");
+    let second_server = publish(&stores.server, "*", "server two");
+    for (store, foreign_etag) in [
+        (&stores.client, second_server.etag()),
+        (&stores.server, client.etag()),
+    ] {
+        let current = store.current();
+        assert!(matches!(
+            store.write(
+                WriteMode::Publish,
+                Some(&foreign_etag),
+                draft("crossed"),
+                NOW
+            ),
+            Err(Error::PreconditionFailed)
+        ));
+        assert!(Arc::ptr_eq(&store.current(), &current));
+    }
+
+    let rolled_back = stores.server.rollback(1, NOW).unwrap();
+    assert_eq!(rolled_back.number(), 3);
+    assert_eq!(rolled_back.change(), Change::Rollback { source: 1 });
+    assert_eq!(rolled_back.template(), first_server.template());
+    assert!(Arc::ptr_eq(&stores.client.current(), &client));
+    assert!(matches!(
+        stores.client.rollback(2, NOW),
+        Err(Error::UnknownVersion)
+    ));
+    assert_eq!(stores.client.history().len(), 1);
+    assert!(Arc::ptr_eq(&stores.server.current(), &rolled_back));
+}
+
+// The HTTP test pict_rows_follow_the_recorded_namespace_rules uses remote_config_pict.tsv.
+
+#[test]
 fn history_is_bounded_even_for_identical_forced_writes() {
     let store = TemplateStore::default();
     assert_eq!(
@@ -415,6 +477,99 @@ fn history_is_bounded_even_for_identical_forced_writes() {
 }
 
 proptest! {
+    #[test]
+    fn server_namespace_versions_are_independent_of_client(
+        steps in proptest::collection::vec(
+            (
+                any::<bool>(),
+                prop_oneof![
+                    Just("publish-current"),
+                    Just("publish-wildcard"),
+                    Just("publish-stale"),
+                    Just("validate"),
+                    Just("rollback-known"),
+                    Just("rollback-unknown"),
+                ],
+                0_usize..40,
+            ),
+            0..=40,
+        ),
+    ) {
+        let stores = RemoteConfigStores::default();
+        let namespaces = [Namespace::Client, Namespace::Server].map(|namespace| stores.get(namespace));
+        let empty = json!({"conditions": [], "parameters": {}, "parameterGroups": {}});
+        let mut model = [Vec::<Value>::new(), Vec::new()];
+        for (step, (server, operation, choice)) in steps.into_iter().enumerate() {
+            let selected = usize::from(server);
+            let store = namespaces[selected];
+            let current = namespaces.map(TemplateStore::current);
+            let history = namespaces.map(TemplateStore::history);
+            let etag = current[selected].etag();
+            let mut proposal = empty.clone();
+            proposal["parameters"]["colour"] = json!({"defaultValue": {"value": step.to_string()}});
+            let versions = &mut model[selected];
+            match operation {
+                "publish-current" | "publish-wildcard" => {
+                    let forced = operation == "publish-wildcard";
+                    let precondition = if forced { "*" } else { etag.as_str() };
+                    let result = store.write(WriteMode::Publish, Some(precondition), proposal.clone(), NOW);
+                    prop_assert!(matches!(result, Ok(WriteResult::Published(version))
+                        if version.change() == (Change::Publish { forced })), "step {step}: {operation}");
+                    versions.push(proposal);
+                }
+                "publish-stale" => {
+                    let result = store.write(WriteMode::Publish, Some("stale"), proposal, NOW);
+                    prop_assert!(matches!(result, Err(Error::PreconditionFailed)));
+                }
+                "validate" => {
+                    let result = store.write(WriteMode::Validate, Some(&etag), proposal.clone(), NOW);
+                    prop_assert!(matches!(result, Ok(WriteResult::Validated { template, base_etag })
+                        if template.document() == &proposal && base_etag == etag), "step {step}: {operation}");
+                }
+                "rollback-known" | "rollback-unknown" => {
+                    let index = if operation == "rollback-known" {
+                        choice % versions.len().max(1)
+                    } else {
+                        versions.len()
+                    };
+                    let source = u64::try_from(index + 1).unwrap();
+                    let result = store.rollback(source, NOW);
+                    if let Some(expected) = versions.get(index).cloned() {
+                        prop_assert!(matches!(result, Ok(version)
+                            if version.change() == (Change::Rollback { source })), "step {step}: {operation}");
+                        versions.push(expected);
+                    } else {
+                        prop_assert!(matches!(result, Err(Error::UnknownVersion)));
+                    }
+                }
+                _ => unreachable!(),
+            }
+
+            for (index, store) in namespaces.iter().enumerate() {
+                let versions = &model[index];
+                let head = store.current();
+                let retained = store.history();
+                prop_assert_eq!(head.number(), u64::try_from(versions.len()).unwrap());
+                prop_assert_eq!(head.template().document(), versions.last().unwrap_or(&empty));
+                prop_assert_eq!(retained.len(), versions.len());
+                let added = versions.len() - history[index].len();
+                if added == 0 {
+                    prop_assert_eq!(head.number(), current[index].number());
+                    prop_assert_eq!(head.etag(), current[index].etag());
+                } else {
+                    prop_assert_ne!(head.etag(), current[index].etag());
+                }
+                for (before, after) in history[index].iter().zip(&retained[added..]) {
+                    prop_assert!(Arc::ptr_eq(before, after));
+                }
+                for (index, (version, expected)) in retained.iter().rev().zip(versions).enumerate() {
+                    prop_assert_eq!(version.number(), u64::try_from(index + 1).unwrap());
+                    prop_assert_eq!(version.template().document(), expected);
+                }
+            }
+        }
+    }
+
     #[test]
     fn condition_membership_and_literal_values_survive_draft_validation(
         ids in proptest::collection::btree_set(0_u8..8, 0..8),

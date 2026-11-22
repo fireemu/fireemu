@@ -15,7 +15,7 @@ use tokio::sync::{oneshot, Semaphore};
 
 use crate::control::{self, ControlState};
 use crate::identity_toolkit::{handle_with, AuthState, RequestHeaders};
-use crate::{remote_config::TemplateStore, remote_config_http};
+use crate::{remote_config::RemoteConfigStores, remote_config_http};
 
 /// Maximum accepted request body (spec 33.3 input budget).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -25,7 +25,7 @@ const MAX_BLOCKING_AUTH_TASKS: usize = 64;
 async fn respond(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
-    remote_config: Option<Arc<TemplateStore>>,
+    remote_config: Option<Arc<RemoteConfigStores>>,
     blocking_auth_slots: Option<Arc<Semaphore>>,
     peer_ip: Option<String>,
     remote_peer: bool,
@@ -375,7 +375,7 @@ async fn respond(
 
 async fn remote_config_response(
     control: &ControlState,
-    store: &TemplateStore,
+    store: &RemoteConfigStores,
     route: &remote_config_http::Route<'_>,
     query: &str,
     parts: &hyper::http::request::Parts,
@@ -655,7 +655,9 @@ async fn serve_inner(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
 ) -> std::io::Result<()> {
-    let remote_config = control.as_ref().map(|_| Arc::new(TemplateStore::default()));
+    let remote_config = control
+        .as_ref()
+        .map(|_| Arc::new(RemoteConfigStores::default()));
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking
