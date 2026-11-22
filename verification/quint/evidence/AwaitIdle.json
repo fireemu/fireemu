@@ -1217,7 +1217,7 @@
     },
     "crates/fireemu-core-storage/src/store.rs": {
       "kind": "sha256",
-      "value": "61ce964fbca2ee865d5b337316632b50fe2bff15d9140d3f991cc623e973851c"
+      "value": "e3e2e6f02051eb0ee79a349f56da5e0c96123163da5038c4380bcd5ede878a96"
     },
     "crates/fireemu-core-types/Cargo.toml": {
       "kind": "sha256",

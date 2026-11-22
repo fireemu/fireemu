@@ -969,7 +969,7 @@ pub struct ImportedBody(ImportedBodyKind);
 #[derive(Debug)]
 enum ImportedBodyKind {
     Memory(Vec<u8>),
-    Staged(SpillFile, ObjectDigests, std::fs::Metadata),
+    Staged(SpillFile, ObjectDigests, Box<std::fs::Metadata>),
 }
 
 /// Why the streamed staging of an imported body failed.
@@ -1028,7 +1028,7 @@ impl ImportedBody {
         Ok(Self(ImportedBodyKind::Staged(
             file,
             ObjectDigests::from_parts(md5.finalize(), crc32c.finalize()),
-            metadata,
+            Box::new(metadata),
         )))
     }
 
