@@ -82,6 +82,17 @@ export const LANES = {
     harness: "src/fs-query-index",
     sources: ["src/fs-query-index", "src/fs-query-index-merge", "src/fs-query-index-merge3"],
   },
+  // Observation 2b-2 covers ASC and DESC carriers together, and a carrier with tags in ordered modes only.
+  "fs-query-index-merge4": {
+    id: "fs-query-index-merge4",
+    taskId: "FS-QUERY-INDEX-MERGE-4",
+    corpus: "../fs-query-index-merge4/corpus.mjs",
+    fixture: "fs-query-index-merge4-production.json",
+    indexes: "fs-query-index-merge4.indexes.json",
+    localConfig: "fs-query-index-merge4.fireemu.json",
+    harness: "src/fs-query-index",
+    sources: ["src/fs-query-index", "src/fs-query-index-merge", "src/fs-query-index-merge4"],
+  },
   // FS-ENT-ORACLE O-1 (owner ledger 1468 Q1): pipeline semantics in the named Enterprise
   // database `entpipe1`, which this campaign creates and deletes in its own packet steps. No
   // index file: Enterprise runs pipelines without indexes, and the lane never deploys any. The

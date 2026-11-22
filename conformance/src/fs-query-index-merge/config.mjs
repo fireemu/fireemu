@@ -1,11 +1,11 @@
-// The configuration changes of an index-merge observation send come from fs-query-index-merge.indexes.json (first observation), fs-query-index-merge2.indexes.json (observation 2a) or fs-query-index-merge3.indexes.json (observation 2b-1) and are created before recording and removed after it in the sandbox `(default)` database of fireemu-oracle-query.
+// The configuration changes of an index-merge observation send come from its lane's index file and are created before recording and removed after it in the sandbox `(default)` database of fireemu-oracle-query.
 //
 //   node src/fs-query-index-merge/config.mjs status --set <set> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs apply  --set <set> --out <new dir>
 //   node src/fs-query-index-merge/config.mjs remove --set <set> --out <new dir> [--journal <file>]...
 //   node src/fs-query-index-merge/config.mjs may-retry --set <s> --first <remove result.json> --a2 <status result.json>...
 //
-// `status` is read-only: which entries of the set exist (composites by the one-page, database-wide
+// `status` is read-only: which entries of the set exist (composites by the paged, database-wide
 // list `collectionGroups/-/indexes`, filtered by each validated name's own group; overrides by a GET
 // of their field) and the state of the operations named in earlier
 // journals. `apply` requires every entry of the set to be absent, then sends one POST or PATCH per
@@ -21,6 +21,8 @@
 //   expected pattern (project id or the FIREEMU_SANDBOX_PROJECT_NUMBER number, `(default)`, its
 //   own group). A read counts only in a shape production was recorded answering (entryState,
 //   operationState); a failed, malformed or unrecorded read sends nothing.
+// - A composite list is unreadable if a resource name repeats anywhere in its pages.
+// - A journaled composite operation is unreadable in status if its target differs from the entry's present name or another entry's operation claims the same target.
 // - Redirects are never followed (a 3xx is unknown for a write, unreadable for a read), and the URL
 //   sent is exactly the URL checked.
 // - Every mutating request is sent once and classified done (2xx with a readable body), refused
@@ -29,7 +31,7 @@
 //   absence never settles it. `remove` settles an entry's absence only against the journals of
 //   the apply that created it, or of an earlier remove that removed it (--journal).
 // - Bounds: a request cap per subcommand computed from the set, a wall-time cap checked before and
-//   after the token, at most one page per list, a timeout per request of 30 s or the time left, a
+//   after the token, at most five pages per list, a timeout per request of 30 s or the time left, a
 //   fresh token at least every 10 minutes from a gcloud call limited to 30 s; the journal
 //   (journal.jsonl in --out, which must not exist yet) records every request and the counter.
 // - Nothing is sent unless FIREEMU_MERGE_CONFIG_SEND has the launch script's exact value. No test
@@ -49,11 +51,13 @@ export const SEND_FLAG = "FIREEMU_MERGE_CONFIG_SEND";
 export const SEND_FLAG_VALUE = "index-merge-obs-launch-v3";
 
 const ASC = { fieldPath: "a", order: "ASCENDING" };
+const A_DESC = { fieldPath: "a", order: "DESCENDING" };
 const B_ASC = { fieldPath: "b", order: "ASCENDING" };
 const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
 
 /**
  * As the lane index files state them, E1 to E5 are the first observation's entries, E6 to E8 are the added overrides for observation 2a, and E9 to E16 are the entries that fs-query-index-merge3.indexes.json adds to the base for observation 2b-1.
+ * E17 to E23 are the entries that fs-query-index-merge4.indexes.json adds to the base for observation 2b-2.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -97,10 +101,26 @@ export const ENTRIES = {
     field: "a",
     indexes: [{ queryScope: "COLLECTION", order: "DESCENDING" }],
   },
+  E17: { kind: "composite", group: "iwd", queryScope: "COLLECTION", fields: [ASC, TAGS] },
+  E18: { kind: "composite", group: "iwd", queryScope: "COLLECTION", fields: [A_DESC, TAGS] },
+  E19: { kind: "override", group: "iwd", field: "a", indexes: [] },
+  E20: { kind: "override", group: "iwd", field: "tags", indexes: [] },
+  E21: { kind: "composite", group: "io1", queryScope: "COLLECTION", fields: [ASC, TAGS] },
+  E22: { kind: "override", group: "io1", field: "a", indexes: [] },
+  E23: {
+    kind: "override",
+    group: "io1",
+    field: "tags",
+    indexes: [
+      { queryScope: "COLLECTION", order: "ASCENDING" },
+      { queryScope: "COLLECTION", order: "DESCENDING" },
+    ],
+  },
 };
 
 /**
  * The first observation uses `f2` (E3), `f1` (composites and exemptions) or `all` (both), observation 2a uses `obs2a` (`all` plus the group-scope overrides in `g`), and observation 2b-1 uses `obs2b1` (the additions in fs-query-index-merge3.indexes.json).
+ * Observation 2b-2 uses `obs2b2`, starting with the ordered-only tags override.
  */
 export const SETS = {
   f2: ["E3"],
@@ -109,6 +129,7 @@ export const SETS = {
   g: ["E6", "E7", "E8"],
   obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
   obs2b1: ["E16", "E9", "E10", "E14", "E11", "E12", "E13", "E15"],
+  obs2b2: ["E23", "E17", "E18", "E21", "E19", "E20", "E22"],
 };
 
 export const POLL_ROUNDS = 40;
@@ -371,6 +392,8 @@ function fieldState(entry, body, forms) {
  * (with a reason). A read that failed (anything but a 200 with a JSON object) is `unreadable`.
  */
 export function entryState(entry, answer, forms) {
+  if (typeof answer?.unreadable === "string")
+    return { state: "unreadable", reason: answer.unreadable };
   if (!readOk(answer)) return { state: "unreadable", reason: `read answered ${answer?.status}` };
   if (!isObject(answer.json)) return unexpected("the body is not an object");
   return entry.kind === "composite"
@@ -472,7 +495,12 @@ export async function readCompositeList(session, phase) {
     if (Object.hasOwn(body, "indexes") && !Array.isArray(body.indexes))
       return bad("malformed list");
     union.push(...(Object.hasOwn(body, "indexes") ? body.indexes : []));
-    if (!Object.hasOwn(body, "nextPageToken")) return { status: 200, json: { indexes: union } };
+    if (!Object.hasOwn(body, "nextPageToken")) {
+      const names = union.map((index) => index?.name).filter((name) => typeof name === "string");
+      if (new Set(names).size !== names.length)
+        return { unreadable: "a resource name repeats in the list" };
+      return { status: 200, json: { indexes: union } };
+    }
     token = body.nextPageToken;
     if (typeof token !== "string" || token === "" || seen.has(token))
       return bad("a page token that is not a new non-empty string");
@@ -735,9 +763,9 @@ export async function remove({ session, set, forms, sleep, applied = {}, removed
 export async function status({ session, set, forms, operations = {} }) {
   const ids = SETS[set];
   const states = await readStates(session, "status", ids, forms);
-  const names = Object.entries(operations).slice(0, STATUS_MAX_OPERATIONS);
+  const journaled = Object.entries(operations);
   const polled = {};
-  for (const [id, { name, target }] of names) {
+  for (const [id, { name, target }] of journaled.slice(0, STATUS_MAX_OPERATIONS)) {
     if (typeof name !== "string" || !operationNamePattern(forms).test(name)) {
       polled[id] = "unreadable";
       continue;
@@ -749,6 +777,21 @@ export async function status({ session, set, forms, operations = {} }) {
       entryOfKey(id),
       target,
     );
+  }
+  // Journal targets can conflict even when the operation read cap excludes one of them.
+  for (const [id, { target }] of journaled) {
+    const entry = entryOfKey(id);
+    if (entry?.kind !== "composite") continue;
+    const state = states[id.split(":").pop()];
+    if (
+      (state?.state === "present" && target !== state.name) ||
+      (typeof target === "string" &&
+        journaled.some(([otherId, other]) => {
+          const otherEntry = entryOfKey(otherId);
+          return other.target === target && otherEntry && otherEntry !== entry;
+        }))
+    )
+      polled[id] = "unreadable";
   }
   const ok = ids.every((id) => states[id].state === "absent" || states[id].state === "present");
   // `baseline`: none of the set exists; `applied`: all of it exists and is READY.

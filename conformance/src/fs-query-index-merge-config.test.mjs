@@ -186,7 +186,12 @@ function fakeFirestore({
     }
     if (kind === "indexes" && !id && request.method === "POST") {
       const { fields, queryScope } = request.body;
-      const indexId = group === "iw2" ? `${group}${fields[0].fieldPath}` : group;
+      const indexId =
+        group === "iw2"
+          ? `${group}${fields[0].fieldPath}`
+          : group === "iwd"
+            ? `${group}${fields[0].order}`
+            : group;
       const index = listedIndex(group, {
         name: `${DB_NUMBER}/collectionGroups/${group}/indexes/CICAg${indexId}`,
         queryScope,
@@ -251,6 +256,7 @@ test("the entries are exactly what the merge index files add to the base file", 
   const merge = readJson("fs-query-index-merge.indexes.json");
   const merge2 = readJson("fs-query-index-merge2.indexes.json");
   const merge3 = readJson("fs-query-index-merge3.indexes.json");
+  const merge4 = readJson("fs-query-index-merge4.indexes.json");
   // E1 to E5 are the first observation's (fs-query-index-merge.indexes.json); E6 to E8 the
   // group-scope overrides the second observation's file adds to it.
   assert.deepEqual(merge2.indexes, merge.indexes);
@@ -258,10 +264,12 @@ test("the entries are exactly what the merge index files add to the base file", 
   assert.deepEqual(merge.fieldOverrides.slice(base.fieldOverrides.length), overrides.slice(0, 3));
   assert.deepEqual(
     Object.keys(ENTRIES),
-    Array.from({ length: 16 }, (_, i) => `E${i + 1}`),
+    Array.from({ length: 23 }, (_, i) => `E${i + 1}`),
   );
   assert.deepEqual(merge3.indexes.slice(0, base.indexes.length), base.indexes);
   assert.deepEqual(merge3.fieldOverrides.slice(0, base.fieldOverrides.length), base.fieldOverrides);
+  assert.deepEqual(merge4.indexes.slice(0, base.indexes.length), base.indexes);
+  assert.deepEqual(merge4.fieldOverrides.slice(0, base.fieldOverrides.length), base.fieldOverrides);
   const composites = Object.values(ENTRIES).filter((e) => e.kind === "composite");
   assert.deepEqual(
     composites.map((e) => ({
@@ -269,12 +277,20 @@ test("the entries are exactly what the merge index files add to the base file", 
       queryScope: e.queryScope,
       fields: e.fields,
     })),
-    [...merge.indexes.slice(base.indexes.length), ...merge3.indexes.slice(base.indexes.length)],
+    [
+      ...merge.indexes.slice(base.indexes.length),
+      ...merge3.indexes.slice(base.indexes.length),
+      ...merge4.indexes.slice(base.indexes.length),
+    ],
   );
   const fields = Object.values(ENTRIES).filter((e) => e.kind === "override");
   assert.deepEqual(
     fields.map((e) => ({ collectionGroup: e.group, fieldPath: e.field, indexes: e.indexes })),
-    [...overrides, ...merge3.fieldOverrides.slice(base.fieldOverrides.length)],
+    [
+      ...overrides,
+      ...merge3.fieldOverrides.slice(base.fieldOverrides.length),
+      ...merge4.fieldOverrides.slice(base.fieldOverrides.length),
+    ],
   );
   assert.deepEqual(SETS, {
     f2: ["E3"],
@@ -283,6 +299,7 @@ test("the entries are exactly what the merge index files add to the base file", 
     g: ["E6", "E7", "E8"],
     obs2a: ["E3", "E1", "E2", "E4", "E5", "E6", "E7", "E8"],
     obs2b1: ["E16", "E9", "E10", "E14", "E11", "E12", "E13", "E15"],
+    obs2b2: ["E23", "E17", "E18", "E21", "E19", "E20", "E22"],
   });
 });
 
@@ -370,13 +387,13 @@ test("the request caps of each subcommand and set", () => {
     Object.fromEntries(
       ["status", "apply", "remove"].map((c) => [
         c,
-        ["f2", "f1", "all", "g", "obs2a", "obs2b1"].map((s) => requestCap(c, s)),
+        ["f2", "f1", "all", "g", "obs2a", "obs2b1", "obs2b2"].map((s) => requestCap(c, s)),
       ]),
     ),
     {
-      status: [6, 17, 18, 8, 21, 25],
-      apply: [43, 188, 231, 129, 360, 368],
-      remove: [43, 108, 151, 129, 280, 248],
+      status: [6, 17, 18, 8, 21, 25, 24],
+      apply: [43, 188, 231, 129, 360, 368, 325],
+      remove: [43, 108, 151, 129, 280, 248, 205],
     },
   );
 });
@@ -564,6 +581,41 @@ test("an unrecognized composite in a two-composite group blocks apply and remove
   }
 });
 
+test("a repeated index name in one page is unreadable and blocks apply and remove", async () => {
+  const unreadable = { state: "unreadable", reason: "a resource name repeats in the list" };
+  for (const indexes of [
+    [IW2_A, IW2_A],
+    [IW2_A, { ...IW2_B, name: IW2_A.name }],
+  ]) {
+    const fake = fakeFirestore({ composites: { iw2: indexes } });
+    const { states } = await status({ session: session(fake), set: "obs2b1", forms: FORMS });
+    assert.deepEqual([states.E9, states.E10], [unreadable, unreadable]);
+    for (const command of [apply, remove]) {
+      const result = await command({
+        session: session(fake),
+        set: "obs2b1",
+        forms: FORMS,
+        sleep: noSleep,
+      });
+      assert.equal(result.ok, false, command.name);
+      assert.equal(result.refusedBeforeSending, true, command.name);
+      assert.deepEqual([result.before.E9, result.before.E10], [unreadable, unreadable]);
+      assert.deepEqual(writesOf(fake), []);
+    }
+  }
+});
+
+test("a repeated index name across two pages is unreadable", async () => {
+  const fake = fakeFirestore({
+    composites: { iw2: [IW2_A, { ...IW2_B, name: IW2_A.name }] },
+    others: [],
+    pageSize: 1,
+  });
+  const { states } = await status({ session: session(fake), set: "obs2b1", forms: FORMS });
+  const unreadable = { state: "unreadable", reason: "a resource name repeats in the list" };
+  assert.deepEqual([states.E9, states.E10], [unreadable, unreadable]);
+});
+
 test("a composite read checks the density and state of its sibling too", () => {
   for (const [index, reason] of [
     [{ ...IW2_B, density: "DENSE" }, "index density differs"],
@@ -662,6 +714,89 @@ test("the obs2b1 cycle creates, reads and removes all eight entries", async () =
       ["PATCH", "iw2/fields/b?updateMask=indexConfig", {}],
       ["PATCH", "iw2/fields/tags?updateMask=indexConfig", {}],
       ["PATCH", "it1/fields/a?updateMask=indexConfig", {}],
+    ],
+  );
+  assert.ok(removed.sent <= requestCap("remove", set));
+  const after = await status({
+    session: session(fake, requestCap("status", set)),
+    set,
+    forms: FORMS,
+  });
+  assert.equal(after.baseline, true);
+  assert.deepEqual(fake.state.others, BASE_INDEXES);
+});
+
+test("the obs2b2 cycle creates, reads and removes all seven entries", async () => {
+  const set = "obs2b2";
+  const fake = fakeFirestore({ opRounds: 2, pageSize: 13 });
+  const tagsModes = [
+    { queryScope: "COLLECTION", order: "ASCENDING" },
+    { queryScope: "COLLECTION", order: "DESCENDING" },
+  ];
+  const applied = await apply({
+    session: session(fake, requestCap("apply", set)),
+    set,
+    forms: FORMS,
+    sleep: noSleep,
+  });
+  assert.equal(applied.ok, true);
+  for (const id of SETS[set]) assert.equal(applied.entries[id].outcome, "created", id);
+  const writes = writesOf(fake);
+  assert.deepEqual(
+    writes.map((r) => `${r.method} ${r.url.split("/collectionGroups/")[1]}`),
+    [
+      "PATCH io1/fields/tags?updateMask=indexConfig",
+      "POST iwd/indexes",
+      "POST iwd/indexes",
+      "POST io1/indexes",
+      "PATCH iwd/fields/a?updateMask=indexConfig",
+      "PATCH iwd/fields/tags?updateMask=indexConfig",
+      "PATCH io1/fields/a?updateMask=indexConfig",
+    ],
+  );
+  assert.deepEqual(writes[0].body, {
+    indexConfig: {
+      indexes: tagsModes.map(({ queryScope, order }) => ({
+        queryScope,
+        fields: [{ fieldPath: "tags", order }],
+      })),
+    },
+  });
+  const a = "iwd/indexes/CICAgiwdASCENDING";
+  const d = "iwd/indexes/CICAgiwdDESCENDING";
+  assert.equal(applied.entries.E17.read.name, `${DB_NUMBER}/collectionGroups/${a}`);
+  assert.equal(applied.entries.E18.read.name, `${DB_NUMBER}/collectionGroups/${d}`);
+  assert.ok(applied.sent <= requestCap("apply", set));
+  const between = await status({
+    session: session(fake, requestCap("status", set)),
+    set,
+    forms: FORMS,
+  });
+  assert.equal(between.applied, true);
+  assert.equal(between.baseline, false);
+  const tagsName = `${DB_NUMBER}/collectionGroups/io1/fields/tags`;
+  assert.deepEqual(between.states.E23, { state: "present", name: tagsName, ready: true });
+  assert.deepEqual(fake.state.fields["io1/tags"], overrideJson(tagsName, "tags", tagsModes));
+  fake.requests.length = 0;
+  const removed = await remove({
+    session: session(fake, requestCap("remove", set)),
+    set,
+    forms: FORMS,
+    sleep: noSleep,
+    ...fromJournals([`${JSON.stringify({ result: { command: "apply", ...applied } })}\n`]),
+  });
+  assert.equal(removed.ok, true);
+  for (const id of SETS[set]) assert.equal(removed.entries[id].outcome, "closed", id);
+  assert.deepEqual(
+    writesOf(fake).map((r) => [r.method, r.url.split("/collectionGroups/")[1], r.body]),
+    [
+      ["PATCH", "io1/fields/tags?updateMask=indexConfig", {}],
+      ["DELETE", a, undefined],
+      ["DELETE", d, undefined],
+      ["DELETE", "io1/indexes/CICAgio1", undefined],
+      ["PATCH", "iwd/fields/a?updateMask=indexConfig", {}],
+      ["PATCH", "iwd/fields/tags?updateMask=indexConfig", {}],
+      ["PATCH", "io1/fields/a?updateMask=indexConfig", {}],
     ],
   );
   assert.ok(removed.sent <= requestCap("remove", set));
@@ -1067,6 +1202,79 @@ test("status reads each entry once and each named operation once", async () => {
   assert.equal(baseline.baseline, true);
 });
 
+test("status checks journaled composite targets against the entries and each other", async () => {
+  const overrideName = `${DB_NUMBER}/collectionGroups/imd/fields/a`;
+  for (const [targets, expected] of [
+    [[IW2_B.name, IW2_A.name], "unreadable"],
+    [[IW2_A.name, IW2_A.name], "unreadable"],
+    [[IW2_A.name, IW2_B.name], "done"],
+  ]) {
+    const fake = fakeFirestore({ composites: { iw2: [IW2_A, IW2_B] } });
+    const operations = {};
+    for (const [id, target] of [
+      ["E9", targets[0]],
+      ["E10", targets[1]],
+      ["E16", overrideName],
+    ]) {
+      const name = `${DB_NUMBER}/operations/op${id}`;
+      fake.state.ops[name] = {
+        left: 1,
+        metadata:
+          id === "E16"
+            ? { "@type": FIELD_META, field: target }
+            : { "@type": INDEX_META, index: target },
+        response: {},
+      };
+      operations[`apply:${id}`] = { name, target };
+    }
+    operations.E9 = operations["apply:E9"];
+    operations["remove:E16"] = operations["apply:E16"];
+    const result = await status({
+      session: session(fake, requestCap("status", "obs2b1")),
+      set: "obs2b1",
+      forms: FORMS,
+      operations,
+    });
+    assert.deepEqual(result.states.E9, { state: "present", name: IW2_A.name, ready: true });
+    assert.deepEqual(result.states.E10, { state: "present", name: IW2_B.name, ready: true });
+    assert.deepEqual(result.operations, {
+      "apply:E9": expected,
+      "apply:E10": expected,
+      "apply:E16": "done",
+      E9: expected,
+      "remove:E16": "done",
+    });
+  }
+});
+
+test("status detects a shared target past its operation read cap", async () => {
+  const fake = fakeFirestore();
+  const name = `${DB_NUMBER}/operations/shared`;
+  const target = IW2_A.name;
+  fake.state.ops[name] = {
+    left: 1,
+    metadata: { "@type": INDEX_META, index: target },
+    response: {},
+  };
+  const result = await status({
+    session: session(fake, requestCap("status", "obs2b1")),
+    set: "obs2b1",
+    forms: FORMS,
+    operations: {
+      "apply:E9": { name, target },
+      E11: {},
+      E12: {},
+      E13: {},
+      E15: {},
+      "apply:E10": { name, target },
+    },
+  });
+  assert.equal(result.baseline, true);
+  assert.equal(result.operations["apply:E9"], "unreadable");
+  assert.equal(result.operations["apply:E10"], "unreadable");
+  assert.equal(fake.requests.filter((r) => r.url.includes("/operations/")).length, 1);
+});
+
 test("the session enforces the request cap, the wall time and a fresh token", async () => {
   const fake = fakeFirestore();
   const capped = session(fake, 2);
@@ -1196,9 +1404,10 @@ test("arguments: the set is required and closed, --out is required, apply takes 
   // The second observation's sets are accepted too, and an unknown set names every set.
   assert.equal(parseArgs(["remove", "--set", "obs2a", "--out", "o"]).set, "obs2a");
   assert.equal(parseArgs(["apply", "--set", "obs2b1", "--out", "o"]).set, "obs2b1");
+  assert.equal(parseArgs(["apply", "--set", "obs2b2", "--out", "o"]).set, "obs2b2");
   assert.equal(parseArgs(["status", "--set", "g", "--out", "o"]).set, "g");
   assert.throws(() => parseArgs(["apply", "--set", "obs2", "--out", "o"]), {
-    message: "--set must be one of f2, f1, all, g, obs2a, obs2b1",
+    message: "--set must be one of f2, f1, all, g, obs2a, obs2b1, obs2b2",
   });
 });
 
