@@ -24,6 +24,7 @@ import {
   TOKEN_MAX_AGE_MS,
   apply,
   classify,
+  compositeMatches,
   createRequest,
   createSession,
   entryState,
@@ -534,8 +535,8 @@ const IW2_B = listedIndex("iw2", {
 
 test("a group can hold two composites, each read by its fields and own name", async () => {
   const absent = { state: "absent" };
-  const a = { state: "present", name: IW2_A.name, ready: true };
-  const b = { state: "present", name: IW2_B.name, ready: true };
+  const a = { state: "present", name: IW2_A.name, ready: true, implicitName: "ASCENDING" };
+  const b = { state: "present", name: IW2_B.name, ready: true, implicitName: "ASCENDING" };
   const cases = [
     [[], [absent, absent]],
     [[IW2_A], [a, absent]],
@@ -556,6 +557,62 @@ test("a group can hold two composites, each read by its fields and own name", as
     const fake = fakeFirestore({ composites: { iw2: indexes } });
     const { states } = await status({ session: session(fake), set: "obs2b1", forms: FORMS });
     assert.deepEqual([states.E9, states.E10], expected, JSON.stringify(indexes));
+  }
+});
+
+test("E17 and E18 each report either implicit name direction without matching their sibling", () => {
+  const { E17, E18 } = ENTRIES;
+  const directions = ["ASCENDING", "DESCENDING"];
+  for (const a of directions) {
+    for (const b of directions) {
+      const first = listedIndex("iwd", {
+        name: `${DB_NUMBER}/collectionGroups/iwd/indexes/idx-E17`,
+        fields: [...E17.fields, { fieldPath: "__name__", order: a }],
+      });
+      const second = listedIndex("iwd", {
+        name: `${DB_NUMBER}/collectionGroups/iwd/indexes/idx-E18`,
+        fields: [...E18.fields, { fieldPath: "__name__", order: b }],
+      });
+      assert.equal(compositeMatches(first, E18), false);
+      assert.equal(compositeMatches(second, E17), false);
+      const answer = { status: 200, json: { indexes: [first, second] } };
+      assert.deepEqual(entryState(E17, answer, FORMS), {
+        state: "present",
+        name: first.name,
+        ready: true,
+        implicitName: a,
+      });
+      assert.deepEqual(entryState(E18, answer, FORMS), {
+        state: "present",
+        name: second.name,
+        ready: true,
+        implicitName: b,
+      });
+    }
+  }
+});
+
+test("a composite still requires one exact trailing name field", () => {
+  const entry = ENTRIES.E17;
+  const name = { fieldPath: "__name__", order: "DESCENDING" };
+  for (const fields of [
+    entry.fields,
+    [...entry.fields, name, name],
+    [...entry.fields, name, { fieldPath: "b", order: "ASCENDING" }],
+    [...entry.fields, { ...name, arrayConfig: "CONTAINS" }],
+  ]) {
+    const indexes = [listedIndex("iwd", { fields })];
+    assert.equal(entryState(entry, { status: 200, json: { indexes } }, FORMS).state, "unexpected");
+  }
+
+  const ordered = { ...entry, fields: [entry.fields[0]] };
+  const ascending = { ...name, order: "ASCENDING" };
+  for (const [suffix, expected] of [
+    [name, false],
+    [ascending, true],
+  ]) {
+    const index = listedIndex("iwd", { fields: [...ordered.fields, suffix] });
+    assert.equal(compositeMatches(index, ordered), expected, suffix.order);
   }
 });
 
@@ -654,6 +711,31 @@ test("remove sends one DELETE to each composite's own name in a two-composite gr
       ["DELETE", `${API}/${IW2_B.name}`],
     ],
   );
+});
+
+test("remove refuses before writing when separate lists assign the same name to two entries", async () => {
+  const set = "obs2b2";
+  const name = `${DB_NUMBER}/collectionGroups/iwd/indexes/idx-1`;
+  let lists = 0;
+  const fake = fakeFirestore({
+    fail: ({ method, url }) => {
+      if (method !== "GET" || !url.endsWith("/-/indexes")) return;
+      const entry = [ENTRIES.E17, ENTRIES.E18][lists++];
+      if (!entry) return;
+      const fields = [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }];
+      return { status: 200, json: { indexes: [listedIndex("iwd", { name, fields })] } };
+    },
+  });
+  const result = await remove({ session: session(fake), set, forms: FORMS, sleep: noSleep });
+  const present = { state: "present", name, ready: true, implicitName: "ASCENDING" };
+  assert.deepEqual(result.before.E17, present);
+  assert.deepEqual(result.before.E18, present);
+  assert.equal(result.ok, false);
+  assert.equal(result.refusedBeforeSending, true);
+  assert.equal(result.reason, "two entries read the same index name");
+  assert.deepEqual(result.entries, {});
+  assert.equal(result.sent, SETS[set].length);
+  assert.deepEqual(writesOf(fake), []);
 });
 
 test("the obs2b1 cycle creates, reads and removes all eight entries", async () => {
@@ -1235,8 +1317,18 @@ test("status checks journaled composite targets against the entries and each oth
       forms: FORMS,
       operations,
     });
-    assert.deepEqual(result.states.E9, { state: "present", name: IW2_A.name, ready: true });
-    assert.deepEqual(result.states.E10, { state: "present", name: IW2_B.name, ready: true });
+    assert.deepEqual(result.states.E9, {
+      state: "present",
+      name: IW2_A.name,
+      ready: true,
+      implicitName: "ASCENDING",
+    });
+    assert.deepEqual(result.states.E10, {
+      state: "present",
+      name: IW2_B.name,
+      ready: true,
+      implicitName: "ASCENDING",
+    });
     assert.deepEqual(result.operations, {
       "apply:E9": expected,
       "apply:E10": expected,
@@ -1245,6 +1337,31 @@ test("status checks journaled composite targets against the entries and each oth
       "remove:E16": "done",
     });
   }
+});
+
+test("status marks a done composite operation unreadable when its target reads as another entry", async () => {
+  const name = `${DB_NUMBER}/operations/op-b`;
+  const target = `${DB_NUMBER}/collectionGroups/iwd/indexes/idx-E18`;
+  const fields = [...ENTRIES.E18.fields, { fieldPath: "__name__", order: "ASCENDING" }];
+  const fake = fakeFirestore({
+    composites: { iwd: [listedIndex("iwd", { name: target, fields })] },
+  });
+  fake.state.ops[name] = {
+    left: 1,
+    metadata: { "@type": INDEX_META, index: target },
+    response: {},
+  };
+  const result = await status({
+    session: session(fake),
+    set: "obs2b2",
+    forms: FORMS,
+    operations: { "apply:E17": { name, target } },
+  });
+  assert.deepEqual(result.states.E17, { state: "absent" });
+  assert.equal(result.states.E18.state, "present");
+  assert.equal(result.states.E18.name, target);
+  assert.equal(fake.state.ops[name].left, 0);
+  assert.equal(result.operations["apply:E17"], "unreadable");
 });
 
 test("status detects a shared target past its operation read cap", async () => {

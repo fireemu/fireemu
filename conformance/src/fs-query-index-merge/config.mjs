@@ -21,8 +21,10 @@
 //   expected pattern (project id or the FIREEMU_SANDBOX_PROJECT_NUMBER number, `(default)`, its
 //   own group). A read counts only in a shape production was recorded answering (entryState,
 //   operationState); a failed, malformed or unrecorded read sends nothing.
+// - A composite read records the trailing implicit `__name__` direction, allowing DESCENDING only when the last configured field has no order.
 // - A composite list is unreadable if a resource name repeats anywhere in its pages.
-// - A journaled composite operation is unreadable in status if its target differs from the entry's present name or another entry's operation claims the same target.
+// - Remove sends nothing if two entries read present as composites with the same name.
+// - A journaled composite operation is unreadable in status if its target differs from the entry's present name, another entry reads present at that target, or another entry's operation claims the same target.
 // - Redirects are never followed (a 3xx is unknown for a write, unreadable for a read), and the URL
 //   sent is exactly the URL checked.
 // - Every mutating request is sent once and classified done (2xx with a readable body), refused
@@ -290,14 +292,22 @@ const METADATA_KEYS = {
   ],
 };
 
-/** A composite as listed matches its entry exactly: scope, and the fields then `__name__` ASC. */
+/** A listed composite must match the scope, configured fields and permitted `__name__` suffix. */
 export function compositeMatches(index, entry) {
-  const expected = [...entry.fields, { fieldPath: "__name__", order: "ASCENDING" }];
-  return (
-    index?.queryScope === entry.queryScope &&
-    Array.isArray(index.fields) &&
-    index.fields.length === expected.length &&
-    index.fields.every((field, i) => isObject(field) && canonical(field) === canonical(expected[i]))
+  if (
+    index?.queryScope !== entry.queryScope ||
+    !Array.isArray(index.fields) ||
+    index.fields.length !== entry.fields.length + 1
+  )
+    return false;
+  const last = entry.fields.at(-1);
+  const order =
+    last && !Object.hasOwn(last, "order") && index.fields.at(-1)?.order === "DESCENDING"
+      ? "DESCENDING"
+      : "ASCENDING";
+  const expected = [...entry.fields, { fieldPath: "__name__", order }];
+  return index.fields.every(
+    (field, i) => isObject(field) && canonical(field) === canonical(expected[i]),
   );
 }
 
@@ -353,7 +363,12 @@ function compositeState(entry, body, forms) {
   if (matches.length === 0) return { state: "absent" };
   if (matches.length > 1) return unexpected(`${matches.length} indexes match the entry`);
   const [index] = matches;
-  return { state: "present", name: index.name, ready: index.state === "READY" };
+  return {
+    state: "present",
+    name: index.name,
+    ready: index.state === "READY",
+    implicitName: index.fields.at(-1).order,
+  };
 }
 
 function fieldState(entry, body, forms) {
@@ -712,6 +727,18 @@ export function applyOutcomes(results) {
 export async function remove({ session, set, forms, sleep, applied = {}, removed = [] }) {
   const ids = SETS[set];
   const before = await readStates(session, "before", ids, forms);
+  const names = ids
+    .filter((id) => ENTRIES[id].kind === "composite" && before[id].state === "present")
+    .map((id) => before[id].name);
+  if (new Set(names).size !== names.length)
+    return {
+      ok: false,
+      refusedBeforeSending: true,
+      reason: "two entries read the same index name",
+      before,
+      entries: {},
+      sent: session.sent,
+    };
   const blocked = ids.filter((id) => !["absent", "present"].includes(before[id].state));
   if (blocked.length)
     return { ok: false, refusedBeforeSending: true, before, entries: {}, sent: session.sent };
@@ -782,9 +809,16 @@ export async function status({ session, set, forms, operations = {} }) {
   for (const [id, { target }] of journaled) {
     const entry = entryOfKey(id);
     if (entry?.kind !== "composite") continue;
-    const state = states[id.split(":").pop()];
+    const entryId = id.split(":").pop();
+    const state = states[entryId];
     if (
       (state?.state === "present" && target !== state.name) ||
+      ids.some(
+        (otherId) =>
+          otherId !== entryId &&
+          states[otherId].state === "present" &&
+          states[otherId].name === target,
+      ) ||
       (typeof target === "string" &&
         journaled.some(([otherId, other]) => {
           const otherEntry = entryOfKey(otherId);
