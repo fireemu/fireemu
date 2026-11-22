@@ -2283,6 +2283,8 @@ fn database_delta(before: &Value, after: &Value) -> Value {
     Value::Object(delta)
 }
 
+/// IDs are unique within a (project, namespace, generation) stream only.
+/// IDs can coincide across v1 and v2 or client and server because each handler sees one generation and only the client namespace emits events.
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn remote_config_event_id(project: &str, namespace: &str, generation: &str, number: u64) -> String {
     let Ok(version) = u32::try_from(number) else {

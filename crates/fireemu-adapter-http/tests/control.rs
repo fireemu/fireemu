@@ -9,6 +9,7 @@ use fireemu_adapter_http::control::{
 };
 use fireemu_adapter_http::identity_toolkit::RequestHeaders;
 use fireemu_core_rules::runtime::RulesetSlot;
+use fireemu_core_session::barrier::AdmissionBarrier;
 use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_session::tenancy::Scope;
 use fireemu_core_types::edition::FirestoreEdition;
@@ -438,6 +439,8 @@ struct FakeFunctions {
     calls: Arc<Mutex<FunctionCalls>>,
     refusal: Mutex<Option<PublishEventError>>,
     cancelled: Arc<AtomicUsize>,
+    reset_barrier: Option<Arc<AdmissionBarrier>>,
+    reset_refused: Mutex<Option<bool>>,
 }
 
 struct FakeRemoteConfigPublication {
@@ -473,6 +476,9 @@ impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
             cancelled: self.cancelled.clone(),
             version: Some(version.clone()),
         });
+        if let Some(barrier) = &self.reset_barrier {
+            *self.reset_refused.lock().unwrap() = Some(barrier.try_exclusive().is_none());
+        }
         if let Some(error) = *self.refusal.lock().unwrap() {
             // Simulate rejecting admission after obtaining a provisional publication.
             return Err(error);
@@ -4125,6 +4131,126 @@ async fn admin_publish_delivers_only_committed_client_versions() {
         server.abort();
         let _ = server.await;
     }
+}
+
+#[tokio::test]
+async fn admin_publish_waits_for_reset_during_reservation() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    for (query, published) in [("?validateOnly=true", false), ("", true)] {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("PUT /v1/projects/demo-app/remoteConfig{query} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+        assert_eq!(
+            *hook.reset_refused.lock().unwrap(),
+            published.then_some(true)
+        );
+        assert_eq!(hook.calls.lock().unwrap().len(), usize::from(published));
+    }
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn admin_publish_waits_for_reset_during_reservation_namespaced() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!("PUT /v1/projects/demo-app/namespaces/firebase/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+    assert_eq!(*hook.reset_refused.lock().unwrap(), Some(true));
+    assert_eq!(hook.calls.lock().unwrap().len(), 1);
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn admin_rollback_waits_for_reset_during_reservation() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    for (method, suffix, etag, body) in [
+        ("PUT", "", "If-Match: *\r\n", "{}"),
+        ("POST", ":rollback", "", r#"{"versionNumber":"1"}"#),
+    ] {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("{method} /v1/projects/demo-app/remoteConfig{suffix} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\n{etag}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+        assert_eq!(hook.reset_refused.lock().unwrap().take(), Some(true));
+        let mut calls = hook.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        calls.clear();
+    }
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

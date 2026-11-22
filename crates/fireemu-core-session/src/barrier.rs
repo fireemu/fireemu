@@ -3,7 +3,7 @@
 //! Storage, functions), so no request can observe or straddle a half-reset session.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 /// The barrier.
 #[derive(Debug, Default)]
@@ -77,6 +77,17 @@ impl AdmissionBarrier {
         Exclusive(guard)
     }
 
+    /// Takes the barrier exclusively and advances the epoch if the lock is available immediately.
+    pub fn try_exclusive(&self) -> Option<Exclusive<'_>> {
+        let guard = match self.lock.try_write() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        Some(Exclusive(guard))
+    }
+
     /// Takes the barrier exclusively without starting a new epoch: for a change that must not
     /// interleave with admitted requests but invalidates no one's credentials or intent
     /// (deleting one database). A request that started before it is still admitted after it.
@@ -92,5 +103,24 @@ pub struct ResetSince;
 impl std::fmt::Display for ResetSince {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("the session was reset while the request was in flight")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AdmissionBarrier;
+
+    #[test]
+    fn try_exclusive_advances_epoch_only_after_admission_ends() {
+        let barrier = AdmissionBarrier::new();
+        let admitted = barrier.admit();
+        let epoch = admitted.epoch();
+
+        assert!(barrier.try_exclusive().is_none());
+        assert_eq!(barrier.epoch(), epoch);
+        drop(admitted);
+
+        let _exclusive = barrier.try_exclusive().expect("admission ended");
+        assert_eq!(barrier.epoch(), epoch + 1);
     }
 }

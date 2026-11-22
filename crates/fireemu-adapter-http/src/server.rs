@@ -417,6 +417,9 @@ async fn remote_config_response(
                 ),
                 Ok(bytes) => {
                     let now = control.clock.lock().expect("clock lock").snapshot().instant;
+                    // Dispatch reserves, appends, and enqueues the version under admission, as on other mutating control routes.
+                    // A reset takes the barrier exclusively and advances the Functions epoch, so it runs before the write or waits for it to finish.
+                    let _admitted = control.barrier.as_ref().map(|barrier| barrier.admit());
                     remote_config_http::dispatch(
                         store,
                         route,
