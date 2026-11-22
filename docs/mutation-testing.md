@@ -5,7 +5,7 @@
 Install the version used by the workspace campaign runner:
 
 ```bash
-cargo install targeted-mutation --version '=0.2.1' --locked
+cargo install targeted-mutation --version '=0.3.1' --locked
 ```
 
 Run mutation tests from an independent, credential-free checkout in a loopback-only sandbox. On a Fireemu development machine, use the local mutation sandbox and run its guard before executing mutants. Give direct invocations their own work directory. TMT sets both Cargo output directories inside it. Keep the paths outside the source checkout so reports and caches stay out of later scans.
@@ -30,7 +30,7 @@ The campaign runner processes packages sequentially and reuses its own build dir
 
 Tracing and mutant replay need the same test inputs. The campaign uses `PROPTEST_RNG_SEED=0` by default and records the effective seed. Rerun with a different explicit seed to sample more inputs. For a direct run, set the seed in the sandbox before calling `cargo tmt`. Use `--audit` on a focused selection to check for trace drift.
 
-Version 0.2.1 can build selected test targets directly when Cargo can express the selection. Check `analysis.test_selection.build_scope` in the JSON report. It is `selected_targets` when Cargo received the narrow selection and `package_wide` when Cargo needed the package-wide build. Use `--include-test` for exact test names, `--include-ignored` for explicitly selected ignored tests, and `--test-wrapper tools/ci/nextest-private-tmpdir.sh` to give each selected test a private temporary directory.
+Version 0.3.1 can build selected test targets directly when Cargo can express the selection. Check `analysis.test_selection.build_scope` in the JSON report. It is `selected_targets` when Cargo received the narrow selection and `package_wide` when Cargo needed the package-wide build. Use `--include-test` for exact test names, `--include-ignored` for explicitly selected ignored tests, and `--test-wrapper tools/ci/nextest-private-tmpdir.sh` to give each selected test a private temporary directory.
 
 For CLI tests that clear the child environment, use `--source-only` on a small source scope. Source rebuilds preserve the test's environment behavior. For example:
 
