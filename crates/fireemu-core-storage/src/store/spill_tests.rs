@@ -77,6 +77,50 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn prepared_import_keeps_no_spill_descriptors_open() {
+    let mut f = Fixture::new(4);
+    let (dir, _) = f.store.spill_config().unwrap();
+    let bytes = b"spill-sized body";
+    let size = bytes.len() as u64;
+    let bodies: Vec<_> = (0..64)
+        .map(|_| ImportedBody::stage(&dir, bytes.as_slice(), size, size).unwrap())
+        .collect();
+    assert_eq!(f.files(), bodies.len());
+    let open = bodies
+        .iter()
+        .filter(|body| matches!(&body.0, ImportedBodyKind::Staged(file, ..) if file.is_open()))
+        .count();
+    assert_eq!(open, 0, "prepared bodies should fit any descriptor budget");
+
+    for (index, body) in bodies.into_iter().enumerate() {
+        let object = ImportedObject {
+            bucket: f.bucket.clone(),
+            name: ObjectName::try_new(format!("object-{index}")).unwrap(),
+            generation: index as u64 + 1,
+            metageneration: 1,
+            content_type: "application/octet-stream".to_owned(),
+            content_disposition: None,
+            content_encoding: None,
+            content_language: None,
+            cache_control: None,
+            custom: BTreeMap::new(),
+            custom_defined: false,
+            time_created: NOW,
+            updated: NOW,
+            download_tokens: Vec::new(),
+            md5: None,
+            crc32c: None,
+            size: Some(size),
+        };
+        let restored = f.store.insert_imported_body(object, body).unwrap();
+        assert_eq!(f.store.body_bytes(&restored).unwrap().as_ref(), bytes);
+    }
+    f.store.clear();
+    assert_eq!(f.files(), 0);
+}
+
 #[test]
 fn a_failed_truncate_leaves_the_session_as_it_was_and_a_retry_rolls_back() {
     let mut f = Fixture::new(4);

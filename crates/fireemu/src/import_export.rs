@@ -2803,30 +2803,60 @@ fn read_storage_blob(
     object: &str,
     expected_size: u64,
     max_object_bytes: u64,
-    spill: Option<&(SpillDir, u64)>,
+    spill: &mut Option<&(SpillDir, u64)>,
 ) -> Result<ImportedBody, ArtifactError> {
-    let body =
-        if let Some((spill_dir, _)) = spill.filter(|(_, threshold)| expected_size >= *threshold) {
-            read_spilled_storage_blob(
-                dir,
-                path,
-                remaining_bytes,
-                object,
-                max_object_bytes,
-                spill_dir,
-            )?
+    use std::io::{Read as _, Seek as _};
+
+    let allowance = (*remaining_bytes).min(max_object_bytes);
+    let source_error = |error: String| storage_blob_read_error(path, object, &error);
+    let too_large = || {
+        source_error(if *remaining_bytes <= max_object_bytes {
+            format!("the Storage files exceed the {IMPORT_STORAGE_TOTAL_BYTES_LIMIT} byte cumulative import limit")
         } else {
-            let bytes = read_inside_budgeted(
-                dir,
-                path,
-                remaining_bytes,
-                IMPORT_STORAGE_TOTAL_BYTES_LIMIT,
-                max_object_bytes,
-                "Storage files",
-            )
-            .map_err(|error| storage_blob_read_error(path, object, &error))?;
-            ImportedBody::from_bytes(bytes)
+            format!("it exceeds the {allowance} byte per-file import limit")
+        })
+    };
+    let mut file = open_file_inside(dir, path).map_err(source_error)?;
+    let len = file
+        .metadata()
+        .map_err(|e| source_error(format!("cannot inspect the opened file: {e}")))?
+        .len();
+    if len > allowance {
+        return Err(too_large());
+    }
+    let staged =
+        if let Some((spill_dir, _)) = spill.filter(|(_, threshold)| expected_size >= *threshold) {
+            match ImportedBody::stage(spill_dir, &mut file, allowance, len) {
+                Ok(body) => Some(body),
+                Err(ImportSpoolError::Limit) => return Err(too_large()),
+                Err(ImportSpoolError::Read(error)) => {
+                    return Err(source_error(format!("cannot read it: {error}")))
+                }
+                Err(ImportSpoolError::Spill(_)) => {
+                    // Retry writing during installation, after validation. Later bodies must
+                    // also wait so they cannot take up space this body needs.
+                    *spill = None;
+                    file.rewind()
+                        .map_err(|error| source_error(format!("cannot read it: {error}")))?;
+                    None
+                }
+            }
+        } else {
+            None
         };
+    let body = if let Some(body) = staged {
+        body
+    } else {
+        let mut bytes = Vec::with_capacity(usize::try_from(len).unwrap_or(usize::MAX));
+        file.take(allowance.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|error| source_error(format!("cannot read it: {error}")))?;
+        if bytes.len() as u64 > allowance {
+            return Err(too_large());
+        }
+        ImportedBody::from_bytes(bytes)
+    };
+    *remaining_bytes -= body.len();
     if body.len() != expected_size {
         return Err(ArtifactError::new(
             "storage",
@@ -2837,49 +2867,6 @@ fn read_storage_blob(
         ));
     }
     Ok(body)
-}
-
-fn read_spilled_storage_blob(
-    root: &Path,
-    path: &Path,
-    remaining: &mut u64,
-    object: &str,
-    per_file_limit: u64,
-    dir: &SpillDir,
-) -> Result<ImportedBody, ArtifactError> {
-    use fireemu_core_storage::store::StorageError;
-
-    let allowance = (*remaining).min(per_file_limit);
-    let source_error = |error: String| storage_blob_read_error(path, object, &error);
-    let too_large = || {
-        source_error(if *remaining <= per_file_limit {
-            format!("the Storage files exceed the {IMPORT_STORAGE_TOTAL_BYTES_LIMIT} byte cumulative import limit")
-        } else {
-            format!("it exceeds the {allowance} byte per-file import limit")
-        })
-    };
-    let file = open_file_inside(root, path).map_err(source_error)?;
-    let len = file
-        .metadata()
-        .map_err(|e| source_error(format!("cannot inspect the opened file: {e}")))?
-        .len();
-    if len > allowance {
-        return Err(too_large());
-    }
-    let staged = ImportedBody::stage(dir, file, allowance, len).map_err(|error| match error {
-        ImportSpoolError::Limit => too_large(),
-        ImportSpoolError::Read(error) => source_error(format!("cannot read it: {error}")),
-        ImportSpoolError::Spill(error) => ArtifactError::new(
-            "storage",
-            PathBuf::from(STORAGE_PATH).join(BLOBS_DIR),
-            format!(
-                "object {object}: {}",
-                StorageError::SpillFailed(error.to_string())
-            ),
-        ),
-    })?;
-    *remaining -= staged.len();
-    Ok(staged)
 }
 
 /// The largest Realtime Database section an import reads, all files together.
@@ -2966,7 +2953,7 @@ fn read_storage_section(
     dir: &Path,
     section: &Section,
     max_object_bytes: u64,
-    spill: Option<&(SpillDir, u64)>,
+    mut spill: Option<&(SpillDir, u64)>,
 ) -> Result<PreparedStorage, ArtifactError> {
     let section_dir = dir.join(&section.path);
     scan_storage_import_tree(dir, &section_dir)?;
@@ -3085,7 +3072,7 @@ fn read_storage_section(
             &meta.name,
             meta.size,
             max_object_bytes,
-            spill,
+            &mut spill,
         )?;
         objects.push((imported_object(&meta, &path)?, bytes));
     }
@@ -4867,33 +4854,18 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn storage_import_distinguishes_blob_reads_from_spill_destination_failures() {
+    fn storage_import_checks_the_source_and_checksum_before_reporting_a_spill_failure() {
         use fireemu_core_storage::spill::SpillDir;
+        use fireemu_core_storage::store::{ObjectDigests, StorageState};
 
         let root = super::trusted_temp::TrustedTempDir::new("import-spill-diagnostics");
         let path = root.join("data.blob");
         let unavailable = root.join("not-a-directory");
-        std::fs::write(&path, b"valid data").unwrap();
+        let bytes = b"valid data";
+        std::fs::write(&path, bytes).unwrap();
         std::fs::write(&unavailable, b"regular file").unwrap();
         let bad_spill = (SpillDir::new(unavailable), 0);
         let mut remaining = 100;
-        let error = super::read_storage_blob(
-            &root,
-            &path,
-            &mut remaining,
-            "fixture",
-            10,
-            100,
-            Some(&bad_spill),
-        )
-        .unwrap_err();
-        assert!(
-            error.message.starts_with("object fixture: spill failed:"),
-            "{error}"
-        );
-        assert_eq!(error.product, "storage");
-        assert_eq!(error.path, std::path::Path::new("storage_export/blobs"));
-
         let missing = root.join("missing");
         let error = super::read_storage_blob(
             &root,
@@ -4902,7 +4874,7 @@ mod tests {
             "fixture",
             10,
             100,
-            Some(&bad_spill),
+            &mut Some(&bad_spill),
         )
         .unwrap_err();
         assert!(
@@ -4911,6 +4883,46 @@ mod tests {
         );
         assert_eq!(error.path, missing);
         assert_eq!(remaining, 100);
+
+        let mut store = StorageState::new(1);
+        store.set_spill(Some(bad_spill.clone()));
+        for (md5, expected) in [
+            ([0; 16], "checksum mismatch:"),
+            (ObjectDigests::new(bytes).md5(), "spill failed:"),
+        ] {
+            let body = super::read_storage_blob(
+                &root,
+                &path,
+                &mut remaining,
+                "fixture",
+                10,
+                100,
+                &mut Some(&bad_spill),
+            )
+            .unwrap();
+            let object = super::ImportedObject {
+                bucket: super::BucketName::try_new("example.test").unwrap(),
+                name: super::ObjectName::try_new("fixture").unwrap(),
+                generation: 1,
+                metageneration: 1,
+                content_type: "application/octet-stream".to_owned(),
+                content_disposition: None,
+                content_encoding: None,
+                content_language: None,
+                cache_control: None,
+                custom: std::collections::BTreeMap::new(),
+                custom_defined: false,
+                time_created: LogicalInstant::UNIX_EPOCH,
+                updated: LogicalInstant::UNIX_EPOCH,
+                download_tokens: Vec::new(),
+                md5: Some(md5),
+                crc32c: None,
+                size: Some(10),
+            };
+            let error = store.insert_imported_body(object, body).unwrap_err();
+            assert!(error.to_string().starts_with(expected), "{error}");
+        }
+        assert_eq!(remaining, 80);
     }
 
     #[cfg(unix)]

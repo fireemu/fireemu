@@ -969,7 +969,7 @@ pub struct ImportedBody(ImportedBodyKind);
 #[derive(Debug)]
 enum ImportedBodyKind {
     Memory(Vec<u8>),
-    Staged(SpillFile, ObjectDigests),
+    Staged(SpillFile, ObjectDigests, std::fs::Metadata),
 }
 
 /// Why the streamed staging of an imported body failed.
@@ -979,7 +979,7 @@ pub enum ImportSpoolError {
     Limit,
     /// Reading the artifact failed.
     Read(io::Error),
-    /// Creating or writing the private spill file failed.
+    /// Preparing the private spill file failed.
     Spill(io::Error),
 }
 
@@ -991,8 +991,9 @@ impl ImportedBody {
     }
 
     /// Snapshots an artifact reader into a private file with a bounded buffer. On any error the
-    /// partial staging file is removed without publishing it to the store. The size hint
-    /// only selects the scratch buffer size. The actual byte allowance is still enforced.
+    /// partial staging file is removed without publishing it to the store. The file stays
+    /// closed until installation. The size hint only selects the scratch buffer size.
+    /// The actual byte allowance is still enforced.
     pub fn stage(
         dir: &SpillDir,
         input: impl io::Read,
@@ -1023,9 +1024,11 @@ impl ImportedBody {
             md5.update(bytes);
             crc32c.update(bytes);
         }
+        let metadata = file.close_staged().map_err(ImportSpoolError::Spill)?;
         Ok(Self(ImportedBodyKind::Staged(
             file,
             ObjectDigests::from_parts(md5.finalize(), crc32c.finalize()),
+            metadata,
         )))
     }
 
@@ -1034,7 +1037,7 @@ impl ImportedBody {
     pub fn len(&self) -> u64 {
         match &self.0 {
             ImportedBodyKind::Memory(bytes) => bytes.len() as u64,
-            ImportedBodyKind::Staged(file, _) => file.len(),
+            ImportedBodyKind::Staged(file, _, _) => file.len(),
         }
     }
 
@@ -3294,7 +3297,7 @@ impl StorageState {
         }
         let digests = match &body.0 {
             ImportedBodyKind::Memory(bytes) => ObjectDigests::new(bytes),
-            ImportedBodyKind::Staged(_, digests) => *digests,
+            ImportedBodyKind::Staged(_, digests, _) => *digests,
         };
         let md5 = digests.md5;
         if let Some(recorded) = object.md5 {
@@ -3328,7 +3331,11 @@ impl StorageState {
             .checked_add(1)
             .ok_or(StorageError::IdentityExhausted)?;
         let body = match body.0 {
-            ImportedBodyKind::Staged(file, _) => BlobBody::Spilled(Arc::new(file)),
+            ImportedBodyKind::Staged(mut file, _, metadata) => {
+                file.reopen_staged(&metadata)
+                    .map_err(|e| spill_failed(&e))?;
+                BlobBody::Spilled(Arc::new(file))
+            }
             ImportedBodyKind::Memory(bytes) => self.blob_for_bytes(bytes)?,
         };
         self.next_blob = next_blob;

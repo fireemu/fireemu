@@ -192,6 +192,54 @@ fn spilled_and_memory_downloads_match_for_ranges_and_conditions() {
 
 #[cfg(unix)]
 #[test]
+fn a_readable_range_of_a_truncated_spill_returns_the_same_retryable_error_as_a_full_read() {
+    let root = std::env::temp_dir().join(format!("storage-truncated-range-{}", std::process::id()));
+    let process = fireemu_core_storage::spill::ProcessSpill::create(&root).unwrap();
+    let bucket = BucketName::try_new(BUCKET).unwrap();
+    let name = ObjectName::try_new("truncated.bin").unwrap();
+    let path = format!("/storage/v1/b/{BUCKET}/o/{name}?alt=media");
+    for profile in [TokenAcceptance::EmulatorMock, TokenAcceptance::Verified] {
+        let s = state_with(None, profile);
+        {
+            let mut store = s.store.lock().unwrap();
+            store.set_spill(Some((process.spill_dir(), 0)));
+            store
+                .put(
+                    &bucket,
+                    &name,
+                    b"01234567".to_vec(),
+                    NewMetadata::default(),
+                    Precondition::default(),
+                    START,
+                )
+                .unwrap();
+        }
+        let spill = std::fs::read_dir(process.path())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .find(|entry| entry.file_name().to_string_lossy().starts_with("spill-"))
+            .unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(spill.path())
+            .unwrap()
+            .set_len(4)
+            .unwrap();
+
+        let full = handle(&s, req("GET", &path, &[], b""));
+        assert_eq!(full.status, 503);
+        assert_eq!(header(&full, "retry-after"), Some("1"));
+        let range = handle(&s, req("GET", &path, &[("range", "bytes=0-1")], b""));
+        assert_eq!(range.status, full.status);
+        assert_eq!(range.headers, full.headers);
+        assert_eq!(range.body, full.body);
+    }
+    drop(process);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn media_window_headers_and_bytes_match_for_memory_and_spill() {
     let root = std::env::temp_dir().join(format!("storage-range-matrix-{}", std::process::id()));
     let process = fireemu_core_storage::spill::ProcessSpill::create(&root).unwrap();

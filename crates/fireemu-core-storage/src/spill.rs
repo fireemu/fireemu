@@ -163,6 +163,40 @@ impl SpillFile {
         self.len == 0
     }
 
+    #[cfg(all(test, unix))]
+    pub(crate) fn is_open(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// Closes a staged file while preserving its path for installation or cleanup.
+    pub(crate) fn close_staged(&mut self) -> io::Result<fs::Metadata> {
+        self.file.take().expect("spill file is open").metadata()
+    }
+
+    /// Reopens the private staging file and checks its recorded metadata.
+    pub(crate) fn reopen_staged(&mut self, staged: &fs::Metadata) -> io::Result<()> {
+        #[cfg(unix)]
+        check_dir(
+            self.path.parent().expect("spill file has a parent"),
+            self.uid,
+        )?;
+        let changed = || io::Error::new(io::ErrorKind::InvalidData, "staged spill file changed");
+        if !fs::symlink_metadata(&self.path)?.is_file() {
+            return Err(changed());
+        }
+        let file = File::open(&self.path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() != staged.len() || staged.len() != self.len {
+            return Err(changed());
+        }
+        #[cfg(unix)]
+        if metadata.dev() != staged.dev() || metadata.ino() != staged.ino() {
+            return Err(changed());
+        }
+        self.file = Some(file);
+        Ok(())
+    }
+
     /// Appends bytes to the file. A failed append leaves the length as it was; bytes it may have written past that end are never read and the next append overwrites them.
     pub fn append(&mut self, mut bytes: &[u8]) -> io::Result<()> {
         #[cfg(unix)]
@@ -274,6 +308,16 @@ impl SpillFile {
                 "range exceeds spill file",
             ));
         }
+        // A partial read can miss EOF even when the full body is unreadable.
+        if length < self.len {
+            let file = self.file.as_ref().expect("spill file is open");
+            if file.metadata()?.len() < self.len {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "spill file shortened",
+                ));
+            }
+        }
         let mut bytes = vec![0; len];
         self.read_exact_range(start, &mut bytes)?;
         Ok(bytes)
@@ -335,7 +379,8 @@ impl SpillFile {
         let mut offset = 0;
         while offset < self.len {
             let len = (self.len - offset).min(64 * 1024) as usize;
-            let buffer = self.read_range(offset, len)?;
+            let mut buffer = vec![0; len];
+            self.read_exact_range(offset, &mut buffer)?;
             md5.update(&buffer);
             crc32c.update(&buffer);
             offset += len as u64;

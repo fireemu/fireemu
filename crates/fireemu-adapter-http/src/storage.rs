@@ -41,9 +41,9 @@ use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_session::loopback::PrivilegedAdmission;
 use fireemu_core_storage::name::{BucketName, ObjectName};
 use fireemu_core_storage::store::{
-    CustomMetadataPatch, MetadataPatch, NewMetadata, ObjectBody, ObjectMetadata, Precondition,
-    PreparedObject, StorageError, StorageEvent, StorageState as ObjectStore, UploadAdmission,
-    UploadId, UploadOptions, UploadPhase, VersionsCursor, DEFAULT_LIST_PAGE_SIZE,
+    CustomMetadataPatch, MetadataPatch, NewMetadata, ObjectMetadata, Precondition, PreparedObject,
+    StorageError, StorageEvent, StorageState as ObjectStore, UploadAdmission, UploadId,
+    UploadOptions, UploadPhase, VersionsCursor, DEFAULT_LIST_PAGE_SIZE,
 };
 use fireemu_core_types::codec::{percent_decode_bytes, percent_escapes_are_well_formed, PlusMode};
 use fireemu_core_types::determinism::Clock;
@@ -4763,23 +4763,13 @@ fn firebase_range_not_satisfiable(meta: &ObjectMetadata, req: &StorageRequest) -
     }
 }
 
-fn read_media_window(
+fn read_media_window<T: AsRef<[u8]> + Send + 'static>(
     store: StoreGuard<'_>,
-    body: ObjectBody,
-    interval: std::ops::Range<u64>,
+    read: impl FnOnce() -> std::io::Result<T>,
 ) -> Result<bytes::Bytes, StorageError> {
-    // Whole and large reads stay serialized. A small partial read can complete without
-    // holding the store lock and buffers at most a MiB per active HTTP handler.
-    const MAX_UNLOCKED_RANGE_BYTES: u64 = 1024 * 1024;
-    let count = interval.end - interval.start;
-    let result = if count < body.size() && count <= MAX_UNLOCKED_RANGE_BYTES {
-        drop(store);
-        body.read(interval)
-    } else {
-        let result = body.read(interval);
-        drop(store);
-        result
-    };
+    // A delete must be able to reclaim the spill file before the next upload.
+    let result = read();
+    drop(store);
     result
         .map(bytes::Bytes::from_owner)
         .map_err(|error| StorageError::SpillFailed(error.to_string()))
@@ -4803,7 +4793,7 @@ fn send_file_bytes(
         ParsedRange::Satisfiable(start, end) => start..end,
         _ => 0..len,
     };
-    let bytes = read_media_window(store, body, interval)?;
+    let bytes = read_media_window(store, || body.read(interval))?;
     let filename = meta
         .name
         .as_str()
@@ -8414,6 +8404,73 @@ mod storage_rules_registry_tests {
             (400, "large".to_owned(), "invalid")
         );
     }
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn a_partial_spill_read_holds_the_store_lock_until_the_body_is_read() {
+    let root = std::env::temp_dir().join(format!("storage-media-lock-{}", std::process::id()));
+    let process = fireemu_core_storage::spill::ProcessSpill::create(&root).unwrap();
+    let store = Mutex::new(ObjectStore::new(1));
+    let bucket = BucketName::try_new("example.test").unwrap();
+    let name = ObjectName::try_new("object").unwrap();
+    let mut guard = StoreGuard {
+        guard: store.lock().unwrap(),
+        sink: None,
+    };
+    guard.set_spill(Some((process.spill_dir(), 0)));
+    let meta = guard
+        .put(
+            &bucket,
+            &name,
+            b"old body".to_vec(),
+            NewMetadata::default(),
+            Precondition::default(),
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let body = guard.pin_body(&meta);
+    let bytes = read_media_window(guard, || {
+        assert!(matches!(
+            store.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        ));
+        body.read(0..3)
+    })
+    .unwrap();
+
+    let mut guard = store.lock().unwrap();
+    guard
+        .delete(
+            &bucket,
+            &name,
+            Precondition::default(),
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    // The response retains only the range bytes, so a delete reclaims the backing file.
+    assert!(
+        !std::fs::read_dir(process.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("spill-"))
+    );
+    guard
+        .put(
+            &bucket,
+            &name,
+            b"new body".to_vec(),
+            NewMetadata::default(),
+            Precondition::default(),
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    assert_eq!(bytes.as_ref(), b"old");
+    drop(guard);
+    drop(store);
+    drop(process);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(test)]
