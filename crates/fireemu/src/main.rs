@@ -1101,6 +1101,7 @@ struct RawOptions {
     config_path: Option<PathBuf>,
     ready_file: Option<PathBuf>,
     owner_stdin: bool,
+    test_world_hosting_roots: Option<PathBuf>,
     firebase_json: Option<PathBuf>,
     /// Whether the working directory is searched when neither `--config` nor `--firebase-json`
     /// is given (`--no-config-discovery` turns it off).
@@ -1962,6 +1963,21 @@ fn load_project_config(
             }
         }
     }
+    if let Some(path) = &raw.test_world_hosting_roots {
+        let sites = cfg.hosting.as_deref_mut().ok_or_else(|| {
+            CliError::refused("--test-world-hosting-roots requires configured Hosting sites")
+        })?;
+        let data = std::fs::read(path).map_err(|error| {
+            CliError::refused(format!("cannot read {}: {error}", diagnostic_path(path)))
+        })?;
+        hosting::Config::parse_test_world_roots(sites, &data).map_err(|error| {
+            CliError::refused(format!(
+                "{}: {}",
+                diagnostic_path(path),
+                diagnostic_text(&error)
+            ))
+        })?;
+    }
     Ok((cfg, project_root, sources))
 }
 
@@ -1970,7 +1986,25 @@ fn parse_options(
     args: &[String],
     context: OptionContext,
 ) -> Result<(Options, Option<String>), CliError> {
+    // The supervisor puts its private Hosting handoff before the shared daemon options.
+    let (hosting_roots, args) = match args {
+        [flag, rest @ ..]
+            if context == OptionContext::Start && flag == "--test-world-hosting-roots" =>
+        {
+            let (path, remaining) = rest
+                .split_first()
+                .ok_or_else(|| CliError::usage("--test-world-hosting-roots needs a value"))?;
+            (Some(PathBuf::from(path)), remaining)
+        }
+        _ => (None, args),
+    };
     let mut raw = parse_raw_options(args, context)?;
+    if hosting_roots.is_some() && (!raw.owner_stdin || raw.ready_file.is_none()) {
+        return Err(CliError::usage(
+            "--test-world-hosting-roots requires up with --owner-stdin and --ready-file",
+        ));
+    }
+    raw.test_world_hosting_roots = hosting_roots;
     // Taken before discovery fills in the files it found: the plan lists what was typed.
     let overrides = command_line_overrides(&raw);
     let plan_format = plan_format(&raw, context)?;
@@ -5253,6 +5287,47 @@ mod config_reload_tests {
             err.message
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_world_hosting_roots_option_is_private_to_owned_start() {
+        let flag = "--test-world-hosting-roots";
+        for topic in [
+            help::Topic::Up,
+            help::Topic::Exec,
+            help::Topic::Capabilities,
+        ] {
+            assert!(!help::command_help(topic).contains(flag));
+        }
+        for ownership in [
+            &[][..],
+            &["--owner-stdin"][..],
+            &["--ready-file", "ready.json"][..],
+        ] {
+            let args: Vec<_> = [flag, "roots.json"]
+                .into_iter()
+                .chain(ownership.iter().copied())
+                .map(str::to_owned)
+                .collect();
+            let error = parse_options(&args, OptionContext::Start).err().unwrap();
+            assert_eq!(error.code, 2);
+            assert!(error
+                .message
+                .contains("requires up with --owner-stdin and --ready-file"));
+        }
+        let args = [
+            flag,
+            "roots.json",
+            "--owner-stdin",
+            "--ready-file",
+            "ready.json",
+        ]
+        .map(str::to_owned);
+        for context in [OptionContext::Exec, OptionContext::Inspect] {
+            let error = parse_options(&args, context).err().unwrap();
+            assert_eq!(error.code, 2);
+            assert_eq!(error.message, format!("unknown argument {flag}"));
+        }
     }
 
     #[test]
