@@ -152,32 +152,25 @@ impl Config {
                 }
             }
         }
-        let mut data = data.clone();
-        let ignore_root = data.as_object_mut().and_then(|object| {
-            if !object.contains_key("_fireemuTestWorldPublicRoot")
-                || std::env::var_os("FIREEMU_TEST_WORLD_ID").is_none()
-            {
-                return None;
-            }
-            // The ID also reaches world.run children. The supervised daemon uses both private flags.
-            let mut args = std::env::args().skip(1);
-            if args.next().as_deref() != Some("up")
-                || !crate::parse_raw_options(&args.collect::<Vec<_>>(), crate::OptionContext::Start)
-                    .is_ok_and(|options| options.owner_stdin && options.ready_file.is_some())
-            {
-                return None;
-            }
-            object
-                .remove("_fireemuTestWorldPublicRoot")
-                .and_then(|value| value.as_str().map(|path| path.replace('\\', "/")))
-        });
         Ok(Self {
-            data,
+            data: data.clone(),
             public: base.join(public),
-            ignore_root,
+            ignore_root: None,
             site,
             target,
         })
+    }
+
+    /// Parses the supervisor's authored public roots in `firebase.json` site order.
+    pub fn parse_test_world_roots(sites: &mut [Self], data: &[u8]) -> Result<(), String> {
+        let roots: Vec<String> = serde_json::from_slice(data).map_err(|e| e.to_string())?;
+        if roots.len() != sites.len() {
+            return Err("expected one authored public root per Hosting site".to_owned());
+        }
+        for (site, root) in sites.iter_mut().zip(roots) {
+            site.ignore_root = Some(root.replace('\\', "/"));
+        }
+        Ok(())
     }
 }
 

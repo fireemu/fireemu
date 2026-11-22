@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-VERSION = "0.3.1"
+VERSION = "0.4.0"
 
 
 def run_package(package, output, scope, env):

@@ -147,7 +147,9 @@ export async function createTestWorld(options={}){
     options.signal?.throwIfAborted();
     const next=generation+1;
     const readyFile=join(generationDirectory,'ready.json');
-    const args=['up','--config',prepared.configPath,'--project',snapshot.config.daemon.authProject,'--only',services.join(','),'--ready-file',readyFile,'--owner-stdin','--log-verbosity','quiet'];
+    const args=['up'];
+    if(prepared.hostingRootsPath)args.push('--test-world-hosting-roots',prepared.hostingRootsPath);
+    args.push('--config',prepared.configPath,'--project',snapshot.config.daemon.authProject,'--only',services.join(','),'--ready-file',readyFile,'--owner-stdin','--log-verbosity','quiet');
     for(const name of ['firestore','http','storage','functions','eventarc','tasks','pubsub','database','logging'])args.push(`--${name}-port`,'0');
     if(services.includes('hosting'))args.push('--hosting-port','0');
     args.push('--hub-port',options.hub?'auto':'0');

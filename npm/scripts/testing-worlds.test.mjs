@@ -1024,6 +1024,40 @@ test('Test World Hosting matches absolute ignore rules against the authored publ
   });
 });
 
+test('Test World Hosting keeps each authored public root outside the relocated Firebase config across reset', native, async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-roots-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const hosting = [];
+  for (const site of ['first', 'second']) {
+    const publicDir = join(cwd, site);
+    await mkdir(publicDir);
+    await writeFile(join(publicDir, 'hidden.txt'), 'hidden');
+    await writeFile(join(publicDir, 'visible.txt'), site);
+    hosting.push({ site, public: site, ignore: [join(publicDir, 'hidden.txt').replaceAll('\\', '/')] });
+  }
+  hosting[0]._fireemuTestWorldPublicRoot = '/unrelated';
+  hosting[0].ignore.push('/unrelated/visible.txt');
+  await writeFile(join(cwd, 'firebase.json'), JSON.stringify({ hosting }));
+  await withTestWorld({ ...options, cwd, firebaseJson: 'firebase.json', services: ['hosting'] }, async world => {
+    for (const generation of [1, 2]) {
+      const path = join(world.directory, `generation-${generation}`, 'inputs', 'firebase.json');
+      const relocated = JSON.parse(await readFile(path, 'utf8'));
+      assert.equal(relocated.hosting[0]._fireemuTestWorldPublicRoot, '/unrelated');
+      assert.equal(Object.hasOwn(relocated.hosting[1], '_fireemuTestWorldPublicRoot'), false);
+      assert.deepEqual(world.hostingSites.map(({ site }) => site), ['first', 'second']);
+      for (const { site, url } of world.hostingSites) {
+        const hidden = await fetch(new URL('/hidden.txt', url));
+        assert.equal(hidden.status, 404, site);
+        await hidden.text();
+        const visible = await fetch(new URL('/visible.txt', url));
+        assert.equal(visible.status, 200, site);
+        assert.equal(await visible.text(), site);
+      }
+      if (generation === 1) await world.reset();
+    }
+  });
+});
+
 test('parallel Hosting worlds route the same API through their own Functions and Firestore', {...native, timeout: 60_000}, async t => {
   const root = await mkdtemp(join(tmpdir(), 'fireemu-world-hosting-'));
   t.after(() => rm(root, { recursive: true, force: true }));
