@@ -31,7 +31,7 @@ export const AREAS = {
 	'REMOTE-CONFIG': {
 		product: 'Firebase Remote Config',
 		title: 'Templates and delivery',
-		covers: 'Planned coverage for template reads and publishing, version history, client and server delivery, and publish-triggered functions. Fireemu currently offers local trigger injection with caller-supplied metadata.',
+		covers: 'Planned coverage for template reads and publishing, version history, client and server delivery, and publish-triggered functions. Fireemu currently serves client-template administration (read, validate, publish, list versions, roll back) on its loopback control listener, and local trigger injection with caller-supplied metadata.',
 	},
 	'FS-DATA-WRITE': {
 		product: 'Cloud Firestore',

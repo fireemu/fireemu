@@ -49,7 +49,7 @@ Consulta [Realtime Database](../../products/realtime-database/#diferencias-con-e
 
 ### Cloud Functions
 
-- Los triggers de productos para los que Fireemu no entrega eventos, como Data Connect (aplazado). Los handlers de Remote Config se ejecutan solo mediante la acción de inyección local, y la forma de su evento en producción no se ha observado.
+- Los triggers de productos para los que Fireemu no entrega eventos, como Data Connect (aplazado). Los handlers de Remote Config se ejecutan solo mediante la acción de inyección local: una plantilla publicada con la administración local de plantillas de Fireemu todavía no los activa, aunque los eventos de publicación de producción se registraron el 2026-11-21.
 - Los codebases de Dart, y la entrada de CloudEvents en protobuf distinta de los eventos de Firestore. Los eventos de Firestore llegan al SDK de Python como protobuf, y a las funciones de 2.ª generación de Node como protobuf con `strict`.
 - La forma exacta de los eventos de archivado de Storage sigue sin grabarse.
 - Los codebases de Python sirven funciones HTTP, callable, de Firestore, de Pub/Sub, de Storage, de Eventarc, de Realtime Database, programadas, de colas de tareas y de bloqueo de Auth. Solo ven el tiempo real (sin reloj virtual), recargan los cambios del código fuente de la aplicación e ignoran las ediciones de su `venv` y de las cachés de bytecode de Python, y se ejecutan solo en macOS y Linux. Reinicia Fireemu después de cambiar las dependencias instaladas. Los App Check tokens de sus callables los verifica el SDK de Python contra las claves del emulador de App Check (sin consumo de uso limitado, y una configuración explícita de App Check se niega a iniciarse). Consulta [Cloud Functions (Python)](../../products/functions-python/).

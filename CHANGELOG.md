@@ -8,8 +8,18 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Remote Config: the daemon's loopback control listener serves client-template administration for its configured project, following answers recorded in production on 2026-11-21: read the current template or a given version, validate, publish with `If-Match` (an ETag is returned for gzip requests), list versions with paging, and roll back. Authenticate with the control token. Server templates, SDK fetch and real-time delivery, and functions triggered by a publish are not served yet. See `docs/remote-config.md`.
+- Test worlds: `hosting` serves the sites of `firebase.json` on ports of the world, with Functions rewrites; `world.hostingUrl` and `world.hostingSites` give the URLs, and parallel worlds can share a project ID.
+
+### Changed
+
+- Performance: less repeated work on the hot paths of Firestore (queries, Listen, commits, pipelines, text search), Storage (hashing, ranges, imports), Auth, Realtime Database, Pub/Sub, Hosting and Functions. Answers, ordering and limits are unchanged.
+
 ### Fixed
 
+- Test worlds: a world snapshots the Realtime Database Rules it was created with, and `reset()` restores them, as it already did for Firestore Rules.
 - Firestore, strict profile: match the additional Standard index rules recorded on 2026-11-20. A single-field equality index must agree with the requested document-name direction for the recorded equality, IN, OR, IS NULL, and count queries. The recorded array-membership shapes now merge the matching indexes at collection and collection-group scope, including single-value array-contains-any and count in the recorded collection cases. Explain lists the members in the recorded order. Missing-index links and query diagnostics use the recorded field order and messages.
 
 ## [0.63.0] - 2026-11-20
