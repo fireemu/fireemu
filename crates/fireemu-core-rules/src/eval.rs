@@ -1344,26 +1344,27 @@ fn endpoint_reachability(
     }
 
     for (index, segment) in pattern.iter().enumerate().rev() {
-        let next_row = table[index + 1].clone();
+        let (earlier, later) = table.split_at_mut(index + 1);
+        let row = &mut earlier[index];
+        let next_row = &later[0];
         match segment {
             PathSegment::RecursiveWildcard { .. } => {
-                let mut eligible = vec![false; segment_count + 1];
+                let mut suffix_reachable = false;
                 for offset in (0..=segment_count).rev() {
                     let current = work.fetch_add(1, Ordering::Relaxed).saturating_add(1);
                     if current > MATCH_PATH_PREFILTER_WORK_MAX {
                         return None;
                     }
-                    eligible[offset] = next_row[offset]
-                        && (offset == segment_count || segments[offset] != MatchSegment::AnyPrefix);
-                }
-                let mut suffix_any = vec![false; segment_count + 2];
-                for offset in (0..=segment_count).rev() {
-                    suffix_any[offset] = eligible[offset] || suffix_any[offset + 1];
-                }
-                let minimum = usize::from(!zero_or_more);
-                for (offset, value) in table[index].iter_mut().enumerate() {
-                    let target = offset.saturating_add(minimum);
-                    *value = target <= segment_count && suffix_any[target];
+                    let inclusive = suffix_reachable
+                        || (next_row[offset]
+                            && (offset == segment_count
+                                || segments[offset] != MatchSegment::AnyPrefix));
+                    row[offset] = if zero_or_more {
+                        inclusive
+                    } else {
+                        suffix_reachable
+                    };
+                    suffix_reachable = inclusive;
                 }
             }
             PathSegment::Literal(literal) => {
@@ -1372,7 +1373,7 @@ fn endpoint_reachability(
                     if current > MATCH_PATH_PREFILTER_WORK_MAX {
                         return None;
                     }
-                    table[index][offset] = offset < segment_count
+                    row[offset] = offset < segment_count
                         && segments[offset].matches_literal(literal)
                         && next_row[offset + 1];
                 }
@@ -1383,7 +1384,7 @@ fn endpoint_reachability(
                     if current > MATCH_PATH_PREFILTER_WORK_MAX {
                         return None;
                     }
-                    table[index][offset] = segments
+                    row[offset] = segments
                         .get(offset)
                         .is_some_and(|candidate| *candidate != MatchSegment::AnyPrefix)
                         && offset < segment_count
@@ -1396,7 +1397,7 @@ fn endpoint_reachability(
                     if current > MATCH_PATH_PREFILTER_WORK_MAX {
                         return None;
                     }
-                    table[index][offset] = false;
+                    row[offset] = false;
                 }
             }
         }
@@ -4189,9 +4190,9 @@ impl<'a> Evaluator<'a> {
             }
             ("hashing", "crc32" | "crc32c" | "md5" | "sha256") => {
                 arity(1)?;
-                let input: Vec<u8> = match &args[0] {
-                    V::Bytes(b) => b.clone(),
-                    V::String(s) => s.as_bytes().to_vec(),
+                let input: &[u8] = match &args[0] {
+                    V::Bytes(b) => b,
+                    V::String(s) => s.as_bytes(),
                     other => {
                         return Err(soft(format!(
                             "hashing.{name}() expects bytes or a string, got {}",
@@ -4202,10 +4203,10 @@ impl<'a> Evaluator<'a> {
                 V::Bytes(match name {
                     // The checksums come back little-endian: `hashing.crc32('abc')` prints
                     // as `C2412435` where the checksum itself is `0x352441C2`, recorded.
-                    "crc32" => crate::hash::crc32(&input).to_le_bytes().to_vec(),
-                    "crc32c" => crate::hash::crc32c(&input).to_le_bytes().to_vec(),
-                    "md5" => crate::hash::md5(&input).to_vec(),
-                    _ => crate::hash::sha256(&input).to_vec(),
+                    "crc32" => crate::hash::crc32(input).to_le_bytes().to_vec(),
+                    "crc32c" => crate::hash::crc32c(input).to_le_bytes().to_vec(),
+                    "md5" => crate::hash::md5(input).to_vec(),
+                    _ => crate::hash::sha256(input).to_vec(),
                 })
             }
             _ => return Err(soft(format!("unknown function {namespace}.{name}()"))),

@@ -19,6 +19,58 @@ for(const width of [1,2,3,7,64,1024]) {
   });
 }
 
+// Full order-3 PICT table for fragmentation × payload × coalesced shutdown.
+for (const split of ['Contiguous', 'BeforeNewline', 'AfterNewline', 'InBody']) {
+  for (const payload of ['Ascii', 'Unicode', 'InvalidUtf8']) {
+    for (const followed of ['None', 'Shutdown']) {
+      test(`copies only split bodies: ${split} / ${payload} / ${followed}`, t => {
+        const input = payload === 'Ascii'
+          ? { ...message, event: { data: 'hello' } }
+          : message;
+        const body = Buffer.from(JSON.stringify(input));
+        if (payload === 'InvalidUtf8') body[body.length - 1] = 0xff;
+        const frame = encode(body);
+        const bytes = followed === 'Shutdown'
+          ? Buffer.concat([frame, encode({ type: 'shutdown' })])
+          : frame;
+        const newline = frame.indexOf(10);
+        const prefixBytes = {
+          Contiguous: 0, BeforeNewline: newline, AfterNewline: newline + 1, InBody: newline + 5,
+        }[split];
+        const originalAlloc = Buffer.allocUnsafe;
+        let frameAllocations = 0;
+        const mock = t.mock.method(Buffer, 'allocUnsafe', size => {
+          if (size === body.length) frameAllocations++;
+          return originalAlloc(size);
+        });
+        const values = [];
+        const parser = new FrameDecoder((value, length) => {
+          values.push([value, length]);
+          return value.type !== 'shutdown';
+        });
+        try {
+          if (prefixBytes > 0) parser.push(bytes.subarray(0, prefixBytes));
+          const pushRest = () => parser.push(bytes.subarray(prefixBytes));
+          if (payload === 'InvalidUtf8') {
+            assert.throws(pushRest, { message: 'invalid runner frame (UTF-8 or JSON)' });
+            assert.throws(() => parser.end(), { message: 'invalid runner frame (closed)' });
+            assert.deepEqual(values, []);
+          } else {
+            pushRest();
+            parser.end();
+            const wanted = [[input, body.length]];
+            if (followed === 'Shutdown') wanted.push([{ type: 'shutdown' }, 19]);
+            assert.deepEqual(values, wanted);
+          }
+        } finally {
+          mock.mock.restore();
+        }
+        assert.equal(frameAllocations, prefixBytes > newline ? 1 : 0);
+      });
+    }
+  }
+}
+
 for(const header of ['','0','00','01','-1','+1',' 1','1 ','1\r','1x','1.5','1e2','0x10','16777217','999999999999999999999999','１２','\xff']) {
   test(`noncanonical or oversized header ${JSON.stringify(header)} is terminal`,()=>{
     let called=0;const parser=new FrameDecoder(()=>called++);

@@ -105,6 +105,80 @@ pub struct RestResponse {
     pub body: Value,
 }
 
+/// Dispatch keeps the structured response used by in-process callers, or the rows of a `RunQuery`.
+pub(crate) enum RoutedResponse<Query> {
+    Response(RestResponse),
+    RunQuery(Query),
+}
+
+fn run_query_row_json(row: &pb::RunQueryResponse) -> Value {
+    let mut value = json!({});
+    if let Some(document) = &row.document {
+        value["document"] = document_to_json(document);
+    }
+    if row.read_time.is_some() {
+        value["readTime"] = optional_timestamp_to_json(row.read_time.as_ref());
+    }
+    if !row.transaction.is_empty() {
+        value["transaction"] = Value::String(base64_encode(&row.transaction));
+    }
+    if row.skipped_results != 0 {
+        value["skippedResults"] = json!(row.skipped_results);
+    }
+    if let Some(metrics) = &row.explain_metrics {
+        value["explainMetrics"] = json::explain_metrics_to_json(metrics);
+    }
+    // Production's REST array ends without a separate done marker.
+    value
+}
+
+fn run_query_wire_bytes(rows: Vec<pb::RunQueryResponse>) -> Result<Vec<u8>, serde_json::Error> {
+    let mut bytes = vec![b'['];
+    for (index, row) in rows.into_iter().enumerate() {
+        if index != 0 {
+            bytes.push(b',');
+        }
+        serde_json::to_writer(&mut bytes, &run_query_row_json(&row))?;
+    }
+    bytes.push(b']');
+    Ok(bytes)
+}
+
+#[cfg(test)]
+#[test]
+fn run_query_wire_uses_the_same_row_shape_without_a_json_tree() {
+    let now = prost_types::Timestamp {
+        seconds: 17,
+        nanos: 13_000,
+    };
+    let responses = vec![
+        pb::RunQueryResponse {
+            transaction: vec![1, 2, 3],
+            ..Default::default()
+        },
+        pb::RunQueryResponse {
+            document: Some(pb::Document {
+                name: "projects/p/databases/(default)/documents/items/é".to_owned(),
+                ..Default::default()
+            }),
+            read_time: Some(now),
+            skipped_results: 2,
+            ..Default::default()
+        },
+        pb::RunQueryResponse {
+            read_time: Some(now),
+            explain_metrics: Some(pb::ExplainMetrics::default()),
+            ..Default::default()
+        },
+    ];
+    let expected = serde_json::to_vec(&Value::Array(
+        responses.iter().map(run_query_row_json).collect(),
+    ))
+    .unwrap();
+    assert_eq!(run_query_wire_bytes(responses).unwrap(), expected);
+    assert_eq!(run_query_wire_bytes(Vec::new()).unwrap(), b"[]");
+}
+
 fn http_status(code: Code) -> u16 {
     match code {
         Code::Ok => 200,
@@ -1002,8 +1076,27 @@ impl RestState {
 
     /// Handles one request.
     pub fn handle(&self, req: &RestRequest) -> RestResponse {
+        match self.handle_routed(req) {
+            RoutedResponse::Response(response) => response,
+            RoutedResponse::RunQuery(rows) => {
+                ok(Value::Array(rows.iter().map(run_query_row_json).collect()))
+            }
+        }
+    }
+
+    /// The HTTP `RunQuery` body is prepared one row at a time on the blocking worker.
+    pub(crate) fn handle_wire(&self, req: &RestRequest) -> RoutedResponse<Vec<u8>> {
+        match self.handle_routed(req) {
+            RoutedResponse::Response(response) => RoutedResponse::Response(response),
+            RoutedResponse::RunQuery(rows) => {
+                RoutedResponse::RunQuery(run_query_wire_bytes(rows).unwrap_or_default())
+            }
+        }
+    }
+
+    fn handle_routed(&self, req: &RestRequest) -> RoutedResponse<Vec<pb::RunQueryResponse>> {
         if let Some(refused) = crate::admin::rest::foreign_project(self, &req.path) {
-            return refused;
+            return RoutedResponse::Response(refused);
         }
         match self.dispatch(req) {
             Ok(r) => r,
@@ -1017,7 +1110,9 @@ impl RestState {
                             .unwrap_or(req.path.as_str())
                             .to_owned()
                     });
-                error_response(&crate::local::rest_limit_diagnostic(&s, &resource))
+                RoutedResponse::Response(error_response(&crate::local::rest_limit_diagnostic(
+                    &s, &resource,
+                )))
             }
         }
     }
@@ -1157,30 +1252,33 @@ impl RestState {
         None
     }
 
-    fn dispatch(&self, req: &RestRequest) -> Result<RestResponse, Status> {
+    fn dispatch(
+        &self,
+        req: &RestRequest,
+    ) -> Result<RoutedResponse<Vec<pb::RunQueryResponse>>, Status> {
         // The custom-method suffix is recognised on the raw path (an encoded colon inside a
         // document ID is data, not routing syntax); segments are decoded afterwards.
         if req.path.starts_with("/emulator/v1/projects/") {
             if let Some(rest) = decode_path(&req.path)?.strip_prefix("/emulator/v1/projects/") {
-                return self.emulator_route(req, rest);
+                return self.emulator_route(req, rest).map(RoutedResponse::Response);
             }
         }
         // The Admin API's database, location and operation routes (FS-CONFIG-LIFECYCLE).
         if let Some(response) = crate::admin::rest::route(self, req) {
-            return Ok(response);
+            return Ok(RoutedResponse::Response(response));
         }
         let Some((decoded, action)) = decoded_rest_route(req, self.gateway.production_refusals())?
         else {
-            return Ok(not_found_text());
+            return Ok(RoutedResponse::Response(not_found_text()));
         };
         let path = decoded.as_str();
         let params = query_params(&req.query);
         let segments: Vec<&str> = path.split('/').collect();
         if let Some(response) = self.database_subroute(req, path, &segments, action, &params) {
-            return response;
+            return response.map(RoutedResponse::Response);
         }
         if !path.contains("/documents") {
-            return Ok(not_found_text());
+            return Ok(RoutedResponse::Response(not_found_text()));
         }
         // App Check, once the route and the target project are resolved and before the
         // Firebase Auth credential, Security Rules and every mutation (spec 7.4).
@@ -1188,16 +1286,27 @@ impl RestState {
         let principal = self.request_principal(req, path, action)?;
         if let Some(action) = action {
             if req.method != "POST" {
-                return Ok(not_found_text());
+                return Ok(RoutedResponse::Response(not_found_text()));
             }
-            return self.custom_method(
-                &principal,
-                path,
-                action,
-                &req.body,
-                &req.batch_field_order,
-                &req.key_order,
-            );
+            if action == "runQuery" {
+                let rows = self
+                    .transcoded(action, &req.body)
+                    .and_then(|body| self.run_query(&principal, path, &body));
+                return match rows {
+                    Ok(rows) => Ok(RoutedResponse::RunQuery(rows)),
+                    Err(status) => stream_errors(Err(status)).map(RoutedResponse::Response),
+                };
+            }
+            return self
+                .custom_method(
+                    &principal,
+                    path,
+                    action,
+                    &req.body,
+                    &req.batch_field_order,
+                    &req.key_order,
+                )
+                .map(RoutedResponse::Response);
         }
         match (req.method.as_str(), classify(path)?) {
             ("GET", Target::Resource(name)) => self.get(&principal, &name, &params),
@@ -1223,6 +1332,7 @@ impl RestState {
             ))),
             _ => Ok(not_found_text()),
         }
+        .map(RoutedResponse::Response)
     }
 
     fn get(
@@ -1449,10 +1559,6 @@ impl RestState {
                 Ok(ok(json!({})))
             }
             // The streaming methods answer an error as a one-element array, like their results.
-            "runQuery" => stream_errors(
-                self.transcoded(action, body)
-                    .and_then(|body| self.run_query(principal, resource, &body)),
-            ),
             "runAggregationQuery" => stream_errors(
                 self.transcoded(action, body)
                     .and_then(|body| self.run_aggregation_query(principal, resource, &body)),
@@ -2149,7 +2255,7 @@ impl RestState {
         principal: &Caller,
         resource: &str,
         body: &Value,
-    ) -> Result<RestResponse, Status> {
+    ) -> Result<Vec<pb::RunQueryResponse>, Status> {
         json::strict_keys(
             body,
             &[
@@ -2215,31 +2321,7 @@ impl RestState {
             .local
             .run_query(&req, &*guard)
             .map_err(|status| self.run_query_status(&req, status))?;
-        let out: Vec<Value> = responses
-            .iter()
-            .map(|r| {
-                let mut v = json!({});
-                if let Some(d) = &r.document {
-                    v["document"] = document_to_json(d);
-                }
-                if r.read_time.is_some() {
-                    v["readTime"] = optional_timestamp_to_json(r.read_time.as_ref());
-                }
-                if !r.transaction.is_empty() {
-                    v["transaction"] = Value::String(base64_encode(&r.transaction));
-                }
-                if r.skipped_results != 0 {
-                    v["skippedResults"] = json!(r.skipped_results);
-                }
-                if let Some(metrics) = &r.explain_metrics {
-                    v["explainMetrics"] = json::explain_metrics_to_json(metrics);
-                }
-                // Production Firestore sends no `done` marker over REST (the official emulator
-                // does); the last element is simply the last element of the array.
-                v
-            })
-            .collect();
-        Ok(ok(Value::Array(out)))
+        Ok(responses)
     }
 
     #[allow(clippy::too_many_lines)] // Keep the request decoding and refusal mapping in one entry point.

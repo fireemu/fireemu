@@ -385,7 +385,7 @@ pub async fn handle(state: &Arc<UiState>, req: &UiRequest) -> UiResponse {
         let Ok(nonce) = fireemu_adapter_support::entropy::hex_128() else {
             return UiResponse::error(500, "INTERNAL : UI script nonce unavailable");
         };
-        return match assets::resolve(rel, &config_json(state), &nonce) {
+        return match assets::resolve_bytes(rel, || assets::index_html(&config_json(state), &nonce)) {
             Some(asset) => UiResponse {
                 status: 200,
                 headers: vec![
@@ -404,7 +404,7 @@ pub async fn handle(state: &Arc<UiState>, req: &UiRequest) -> UiResponse {
                         ),
                     ),
                 ],
-                body: UiBody::Full(bytes::Bytes::from(asset.body)),
+                body: UiBody::Full(asset.body),
             },
             None => UiResponse::error(404, "NOT_FOUND"),
         };

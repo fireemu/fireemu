@@ -73,6 +73,18 @@ test('time is rechecked after JSON decoding, before the callback', () => {
   assert.throws(()=>p.push(payload),/input frame deadline/);assert.equal(calls,0);
 });
 
+test('the contiguous body does not bypass the post-decode deadline', () => {
+  let reads = 0;
+  let dispatched = false;
+  const expireAt = header.length + 3; // arrival, each header byte, pre-body, post-decode
+  const parser = new FrameDecoder(() => { dispatched = true; }, {
+    frameWaitMs: 100,
+    now: () => ++reads >= expireAt ? 100 : 0,
+  });
+  assert.throws(() => parser.push(frame), /input frame deadline/);
+  assert.equal(dispatched, false);
+});
+
 test('coalesced trailing frame cannot renew time spent in a synchronous callback', () => {
   let now=0;let called=0;
   const p=new FrameDecoder(()=>{called++;now=100;},{frameWaitMs:100,now:()=>now});

@@ -261,6 +261,23 @@ pub(crate) enum Change {
 }
 
 impl Change {
+    /// Whether any written path can affect the stream's stored view. SSE compares numeric
+    /// forms even when a value is equal, so it must not use the realtime effective flag.
+    fn overlaps_view(&self, location: &Path) -> bool {
+        match self {
+            Change::Put { path, .. } => location.contains(path) || path.contains(location),
+            Change::Patch { base, entries } => {
+                let Some(suffix) = location.keys().strip_prefix(base.keys()) else {
+                    return !entries.is_empty() && location.contains(base);
+                };
+                entries.iter().any(|entry| {
+                    let relative = entry.path.keys();
+                    relative.starts_with(suffix) || suffix.starts_with(relative)
+                })
+            }
+        }
+    }
+
     /// Whether an effective part of the write lies at, above or below `location`.
     pub(crate) fn touches(&self, location: &Path) -> bool {
         let related = |path: &Path| location.contains(path) || path.contains(location);
@@ -1329,7 +1346,7 @@ impl Database {
         };
         let mut events = Vec::new();
         for (id, subscription) in &mut self.subscriptions {
-            if subscription.namespace != namespace {
+            if subscription.namespace != namespace || !change.overlaps_view(&subscription.path) {
                 continue;
             }
             let fresh = view(
@@ -2260,8 +2277,15 @@ fn shallow(node: Option<&Node>, format: Format) -> Json {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static SSE_VIEWS_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The answer for a location, or the children a query selects there.
 fn view(tree: &Tree, path: &Path, query: Option<&QueryParams>, format: Format) -> Json {
+    #[cfg(test)]
+    SSE_VIEWS_BUILT.with(|count| count.set(count.get() + 1));
     let node = tree.get(path);
     let (
         Some(query),
@@ -2764,6 +2788,64 @@ fn in_hearing_order<'a>(mut listens: Vec<&'a mut Listen>, change: &Change) -> Ve
 mod tests {
     use super::*;
     use crate::realtime::Opened;
+
+    #[test]
+    fn sse_views_skip_unrelated_writes_and_keep_numeric_form_changes() {
+        let mut db = Database::new(RestOptions::default(), 1);
+        let request = |method: &str, target: &str, body: &str| HttpRequest {
+            method: method.to_owned(),
+            target: target.to_owned(),
+            headers: if method == "GET" {
+                vec![("Accept".to_owned(), "text/event-stream".to_owned())]
+            } else {
+                Vec::new()
+            },
+            body: body.as_bytes().to_vec(),
+        };
+        let write = |db: &mut Database, method, path, body| {
+            let Handled::Response { response, events } = db.handle(&request(method, path, body), 0)
+            else {
+                panic!("expected a write response");
+            };
+            assert_eq!(response.status, 200);
+            events
+        };
+        write(&mut db, "PUT", "/watch.json", r#"{"n":1,"keep":true}"#);
+        let Handled::Stream { id, initial, .. } = db.handle(&request("GET", "/watch.json", ""), 0)
+        else {
+            panic!("expected an SSE stream");
+        };
+        assert!(initial.data.contains(r#""n":1"#));
+        let before = SSE_VIEWS_BUILT.with(std::cell::Cell::get);
+        assert!(write(&mut db, "PUT", "/other.json", "1").is_empty());
+        assert!(write(
+            &mut db,
+            "PATCH",
+            "/.json",
+            r#"{"other":2,"siblings/another":null}"#
+        )
+        .is_empty());
+        assert_eq!(SSE_VIEWS_BUILT.with(std::cell::Cell::get), before);
+
+        let events = write(
+            &mut db,
+            "PUT",
+            "/.json",
+            r#"{"watch":{"n":1.0,"keep":true},"different":3}"#,
+        );
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, id);
+        assert!(events[0].1.data.contains(r#""n":1.0"#));
+        let mixed = write(
+            &mut db,
+            "PATCH",
+            "/.json",
+            r#"{"other":2,"watch/keep":null}"#,
+        );
+        assert_eq!(mixed.len(), 1);
+        assert_eq!(mixed[0].0, id);
+        assert!(mixed[0].1.data.contains("keep"));
+    }
 
     #[test]
     fn unrelated_writes_rebuild_no_view() {

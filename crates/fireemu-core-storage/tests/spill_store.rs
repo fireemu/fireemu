@@ -100,6 +100,59 @@ fn readers_keep_snapshot_bytes_during_delete_and_overwrite() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn a_pinned_range_uses_its_generation_after_delete_and_replace() {
+    let root = std::env::temp_dir().join(format!("spill-pinned-range-{}", std::process::id()));
+    let process = ProcessSpill::create(&root).unwrap();
+    let bucket = BucketName::try_new("example.appspot.com").unwrap();
+    let name = ObjectName::try_new("object").unwrap();
+    let now = LogicalInstant::UNIX_EPOCH;
+    for spill in [false, true] {
+        let mut store = StorageState::new(1);
+        if spill {
+            store.set_spill(Some((process.spill_dir(), 0)));
+        }
+        let first = store
+            .put(
+                &bucket,
+                &name,
+                b"first version".to_vec(),
+                NewMetadata::default(),
+                Precondition::default(),
+                now,
+            )
+            .unwrap();
+        let selected = store.pin_body(&first);
+        let memory = (!spill).then(|| store.shared_bytes(&first));
+
+        store
+            .delete(&bucket, &name, Precondition::default(), now)
+            .unwrap();
+        let second = store
+            .put(
+                &bucket,
+                &name,
+                b"now a new object".to_vec(),
+                NewMetadata::default(),
+                Precondition::default(),
+                now,
+            )
+            .unwrap();
+
+        assert_ne!(first.generation, second.generation);
+        assert_eq!(selected.size(), 13);
+        assert_eq!(store.pin_body(&second).read(2..5).unwrap().as_ref(), b"w a");
+        let window = selected.read(2..5).unwrap();
+        assert_eq!(window.as_ref(), b"rst");
+        if let Some(bytes) = memory {
+            assert_eq!(window.as_ref().as_ptr(), bytes[2..].as_ptr());
+        }
+    }
+    drop(process);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(not(unix))]
 #[test]
 fn process_spill_is_unsupported() {

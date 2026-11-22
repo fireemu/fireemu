@@ -277,6 +277,10 @@ struct Record {
 struct State {
     /// Lifecycle time never rewinds when the session clock is restored or set backwards.
     now: Nanos,
+    #[cfg(test)]
+    settle_visits: usize,
+    /// The first accepted deletion to finish, if any.
+    next_deletion: Option<Nanos>,
     /// Channels by full name.
     channels: BTreeMap<String, Record>,
     /// The time of creation of each channel that has been deleted, by UID (for the page tokens that name it).
@@ -366,12 +370,27 @@ impl ChannelStore {
     fn settle(state: &mut State, now: Nanos) -> Nanos {
         let now = now.max(state.now);
         state.now = now;
+        if state.next_deletion.is_none_or(|end| now < end) {
+            return now;
+        }
+        #[cfg(test)]
+        {
+            state.settle_visits += state.channels.len();
+        }
+        let mut next_deletion = None;
         let gone: Vec<String> = state
             .channels
             .iter()
-            .filter(|(_, record)| record.deleting.is_some_and(|(_, end)| now >= end))
-            .map(|(name, _)| name.clone())
+            .filter_map(|(name, record)| {
+                let (_, end) = record.deleting?;
+                if now >= end {
+                    return Some(name.clone());
+                }
+                next_deletion = Some(next_deletion.map_or(end, |next: Nanos| next.min(end)));
+                None
+            })
             .collect();
+        state.next_deletion = next_deletion;
         for name in gone {
             if let Some(record) = state.channels.remove(&name) {
                 state.retired.insert(record.uid, record.create_time);
@@ -529,6 +548,7 @@ impl ChannelStore {
         let moved = now.checked_add(UPDATE_AFTER_DELETE).unwrap_or(Nanos::MAX);
         if let Some(record) = state.channels.get_mut(name) {
             record.deleting = Some((now, end));
+            state.next_deletion = Some(state.next_deletion.map_or(end, |next| next.min(end)));
         }
         // The creation's operation shows the channel as the deletion moved it, when it ends after it.
         if now < ready_at {
@@ -970,6 +990,31 @@ mod tests {
 
     fn done(operation: &Ordered) -> bool {
         operation["done"] == Ordered::Bool(true)
+    }
+
+    #[test]
+    fn lookups_settle_channels_only_when_deletion_can_end() {
+        let store = store();
+        let active = name("us-central1", "active");
+        let deleted = name("us-central1", "deleted");
+        store.declare(&active, T0);
+        store.declare(&deleted, T0);
+        let before = store.state().settle_visits;
+        assert!(matches!(store.lookup(&active, T0), Lookup::Ready(_)));
+        assert!(matches!(store.delete(&deleted, T0), Deleted::Started(_)));
+        assert!(matches!(
+            store.lookup(&deleted, T0 + 4 * SECOND - 1),
+            Lookup::Deleting(_)
+        ));
+        assert_eq!(store.state().settle_visits, before);
+        assert_eq!(store.lookup(&deleted, T0 + 4 * SECOND), Lookup::Absent);
+        assert_eq!(store.state().settle_visits, before + 2);
+        assert_eq!(store.lookup(&deleted, T0), Lookup::Absent);
+        assert!(matches!(
+            store.lookup(&active, T0 + 10 * SECOND),
+            Lookup::Ready(_)
+        ));
+        assert_eq!(store.state().settle_visits, before + 2);
     }
 
     #[test]

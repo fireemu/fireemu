@@ -29,6 +29,12 @@ pub struct Asset {
     pub body: Vec<u8>,
 }
 
+pub(crate) struct ResolvedAsset<B> {
+    pub(crate) content_type: &'static str,
+    pub(crate) cache_control: &'static str,
+    pub(crate) body: B,
+}
+
 fn content_type(path: &str) -> &'static str {
     match path.rsplit('.').next().unwrap_or("") {
         "html" => "text/html; charset=utf-8",
@@ -76,12 +82,33 @@ pub fn index_html(config: &Value, nonce: &str) -> Vec<u8> {
 /// `index.html` so a deep link loads the app; unknown files are `None`.
 #[must_use]
 pub fn resolve(path: &str, config: &Value, nonce: &str) -> Option<Asset> {
+    resolve_with(path, <[u8]>::to_vec, || index_html(config, nonce)).map(|asset| Asset {
+        content_type: asset.content_type,
+        cache_control: asset.cache_control,
+        body: asset.body,
+    })
+}
+
+pub(crate) fn resolve_bytes(
+    path: &str,
+    render_index: impl FnOnce() -> Vec<u8>,
+) -> Option<ResolvedAsset<bytes::Bytes>> {
+    resolve_with(path, bytes::Bytes::from_static, || {
+        bytes::Bytes::from(render_index())
+    })
+}
+
+fn resolve_with<B>(
+    path: &str,
+    static_body: impl FnOnce(&'static [u8]) -> B,
+    render_index: impl FnOnce() -> B,
+) -> Option<ResolvedAsset<B>> {
     let rel = path.trim_start_matches('/');
     if rel.is_empty() || rel == "index.html" {
-        return Some(Asset {
+        return Some(ResolvedAsset {
             content_type: content_type("index.html"),
             cache_control: "no-cache",
-            body: index_html(config, nonce),
+            body: render_index(),
         });
     }
     if rel == "fireemu-ui.json" || rel.contains("..") {
@@ -89,23 +116,42 @@ pub fn resolve(path: &str, config: &Value, nonce: &str) -> Option<Asset> {
     }
     if let Some(file) = UI_DIR.get_file(rel) {
         let immutable = rel.starts_with("assets/");
-        return Some(Asset {
+        return Some(ResolvedAsset {
             content_type: content_type(rel),
             cache_control: if immutable {
                 "public, max-age=31536000, immutable"
             } else {
                 "no-cache"
             },
-            body: file.contents().to_vec(),
+            body: static_body(file.contents()),
         });
     }
     let last = rel.rsplit('/').next().unwrap_or(rel);
     if last.contains('.') {
         return None;
     }
-    Some(Asset {
+    Some(ResolvedAsset {
         content_type: content_type("index.html"),
         cache_control: "no-cache",
-        body: index_html(config, nonce),
+        body: render_index(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Asset;
+
+    #[test]
+    #[allow(
+        clippy::default_trait_access,
+        reason = "An explicitly typed body would bypass the inference regression."
+    )]
+    fn asset_struct_literal_infers_default_body() {
+        let asset = Asset {
+            content_type: "application/octet-stream",
+            cache_control: "no-cache",
+            body: Default::default(),
+        };
+        assert_eq!(asset.cache_control, "no-cache");
+    }
 }

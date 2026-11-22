@@ -56,76 +56,85 @@ const USER_ORDER: &[&str] = &[
 ];
 const PROVIDER_ORDER: &[&str] = &["providerId", "federatedId", "email", "rawId"];
 
+#[derive(Clone, Copy)]
+enum Position {
+    Response,
+    User,
+    Provider,
+    Other,
+}
+
+impl Position {
+    fn order(self) -> &'static [&'static str] {
+        match self {
+            Self::Response => RESPONSE_ORDER,
+            Self::User => USER_ORDER,
+            Self::Provider => PROVIDER_ORDER,
+            Self::Other => &[],
+        }
+    }
+
+    fn child(self, key: &str) -> Self {
+        match (self, key) {
+            (Self::Response, "users") => Self::User,
+            (Self::User, "providerUserInfo") => Self::Provider,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// The body in production's layout.
 #[must_use]
-pub fn layout(body: &Value) -> Vec<u8> {
+pub fn layout(value: &Value) -> Vec<u8> {
     let mut out = Vec::new();
-    write(&mut out, body, 0, Some(RESPONSE_ORDER), &[]);
+    write(&mut out, value, 0, Position::Response);
     out.push(b'\n');
     out
 }
 
-fn write(out: &mut Vec<u8>, value: &Value, indent: usize, order: Option<&[&str]>, path: &[&str]) {
+fn write(out: &mut Vec<u8>, value: &Value, indent: usize, position: Position) {
     match value {
         Value::Object(map) if map.is_empty() => out.extend_from_slice(b"{}"),
         Value::Object(map) => {
-            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-            if let Some(order) = order {
-                entries.sort_by_key(|(key, _)| {
-                    order
-                        .iter()
-                        .position(|known| known == key)
-                        .unwrap_or(order.len())
-                });
-            }
+            let order = position.order();
+            let ordered = order
+                .iter()
+                .filter_map(|&key| map.get(key).map(|value| (key, value)));
+            let remaining = map
+                .iter()
+                .filter(|(key, _)| !order.contains(&key.as_str()))
+                .map(|(key, value)| (key.as_str(), value));
             out.extend_from_slice(b"{\n");
-            for (index, (key, member)) in entries.iter().enumerate() {
-                out.extend_from_slice("  ".repeat(indent + 1).as_bytes());
-                out.extend_from_slice(
-                    serde_json::to_string(key.as_str())
-                        .unwrap_or_default()
-                        .as_bytes(),
-                );
+            for (index, (key, member)) in ordered.chain(remaining).enumerate() {
+                out.resize(out.len() + indent + 2, b' ');
+                serde_json::to_writer(&mut *out, key).expect("JSON string can be written to a Vec");
                 out.extend_from_slice(b": ");
-                let mut deeper = path.to_vec();
-                deeper.push(key.as_str());
-                write(out, member, indent + 1, member_order(&deeper), &deeper);
-                out.extend_from_slice(if index + 1 == entries.len() {
+                write(out, member, indent + 2, position.child(key));
+                out.extend_from_slice(if index + 1 == map.len() {
                     b"\n"
                 } else {
                     b",\n"
                 });
             }
-            out.extend_from_slice("  ".repeat(indent).as_bytes());
+            out.resize(out.len() + indent, b' ');
             out.push(b'}');
         }
         Value::Array(items) if items.is_empty() => out.extend_from_slice(b"[]"),
         Value::Array(items) => {
             out.extend_from_slice(b"[\n");
             for (index, item) in items.iter().enumerate() {
-                out.extend_from_slice("  ".repeat(indent + 1).as_bytes());
-                write(out, item, indent + 1, order, path);
+                out.resize(out.len() + indent + 2, b' ');
+                write(out, item, indent + 2, position);
                 out.extend_from_slice(if index + 1 == items.len() {
                     b"\n"
                 } else {
                     b",\n"
                 });
             }
-            out.extend_from_slice("  ".repeat(indent).as_bytes());
+            out.resize(out.len() + indent, b' ');
             out.push(b']');
         }
-        scalar => {
-            out.extend_from_slice(serde_json::to_string(scalar).unwrap_or_default().as_bytes());
-        }
-    }
-}
-
-/// The recorded order for the object found at `path` (the keys leading to it).
-fn member_order(path: &[&str]) -> Option<&'static [&'static str]> {
-    match path {
-        ["users"] => Some(USER_ORDER),
-        ["users", "providerUserInfo"] => Some(PROVIDER_ORDER),
-        _ => None,
+        scalar => serde_json::to_writer(out, scalar).expect("JSON value can be written to a Vec"),
     }
 }
 
@@ -165,8 +174,11 @@ pub fn accepts_gzip(accept_encoding: Option<&str>) -> bool {
 /// it needs no compressor. The bytes of production's compressed stream are not reproduced.
 #[must_use]
 pub fn gzip_stored(data: &[u8]) -> Vec<u8> {
-    let mut out = vec![0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff];
-    let mut blocks = data.chunks(65_535).peekable();
+    let block_size = usize::from(u16::MAX);
+    let block_count = data.len().div_ceil(block_size).max(1);
+    let mut out = Vec::with_capacity(data.len() + block_count * 5 + 18);
+    out.extend_from_slice(&[0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff]);
+    let mut blocks = data.chunks(block_size).peekable();
     if blocks.peek().is_none() {
         out.extend_from_slice(&[0x01, 0x00, 0x00, 0xff, 0xff]);
     }
@@ -177,29 +189,13 @@ pub fn gzip_stored(data: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&(!length).to_le_bytes());
         out.extend_from_slice(block);
     }
-    out.extend_from_slice(&crc32(data).to_le_bytes());
+    out.extend_from_slice(&crc32fast::hash(data).to_le_bytes());
     out.extend_from_slice(
         &u32::try_from(data.len() & 0xffff_ffff)
             .unwrap_or(0)
             .to_le_bytes(),
     );
     out
-}
-
-/// CRC-32 (IEEE 802.3), bitwise.
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffff_u32;
-    for &byte in data {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0xedb8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
 }
 
 /// The answer as production frames it: the recorded headers, the body laid out and, when the
@@ -377,6 +373,52 @@ mod tests {
 
     fn hex(bytes: &[u8]) -> String {
         fireemu_core_storage::hash::hex(bytes)
+    }
+
+    fn assert_gzip_blocks_and_trailer(data: &[u8]) {
+        let stream = gzip_stored(data);
+        assert_eq!(&stream[..10], &[0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff]);
+        let mut offset = 10;
+        if data.is_empty() {
+            assert_eq!(&stream[offset..offset + 5], &[1, 0, 0, 0xff, 0xff]);
+            offset += 5;
+        }
+        for (index, block) in data.chunks(65_535).enumerate() {
+            let last = index + 1 == data.len().div_ceil(65_535);
+            let length = u16::try_from(block.len()).unwrap();
+            assert_eq!(stream[offset], u8::from(last));
+            assert_eq!(&stream[offset + 1..offset + 3], &length.to_le_bytes());
+            assert_eq!(&stream[offset + 3..offset + 5], &(!length).to_le_bytes());
+            offset += 5;
+            assert_eq!(&stream[offset..offset + block.len()], block);
+            offset += block.len();
+        }
+        let expected_crc = fireemu_core_rules::hash::crc32(data);
+        assert_eq!(&stream[offset..offset + 4], &expected_crc.to_le_bytes());
+        assert_eq!(
+            &stream[offset + 4..],
+            &u32::try_from(data.len()).unwrap().to_le_bytes()
+        );
+        assert_eq!(
+            stream.capacity(),
+            stream.len(),
+            "gzip output needs exactly one allocation"
+        );
+    }
+
+    #[test]
+    fn gzip_is_capacity_bounded_at_deflate_block_boundaries() {
+        for len in [0, 1, 64, 65_534, 65_535, 65_536, 131_071] {
+            let data: Vec<u8> = (0u8..=250).cycle().take(len).collect();
+            assert_gzip_blocks_and_trailer(&data);
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn gzip_crc_matches_rules_ieee_crc(data in proptest::collection::vec(proptest::num::u8::ANY, 0..2048)) {
+            assert_gzip_blocks_and_trailer(&data);
+        }
     }
 
     #[test]

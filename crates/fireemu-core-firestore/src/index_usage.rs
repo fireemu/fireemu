@@ -219,10 +219,24 @@ impl IndexSet {
         fields: &BTreeMap<String, Value>,
         scope: LimitScope,
     ) -> Result<IndexUsage, FirestoreError> {
+        self.document_index_usage_with_known_size(document, fields, scope, None)
+    }
+
+    /// The same index charge with a document size already checked by the store.
+    pub(crate) fn document_index_usage_with_known_size(
+        &self,
+        document: &DocumentPath,
+        fields: &BTreeMap<String, Value>,
+        scope: LimitScope,
+        known_size: Option<u64>,
+    ) -> Result<IndexUsage, FirestoreError> {
         let enforce = scope == LimitScope::Production;
         let mut usage = self.index_usage_of(document, fields, enforce)?;
         if enforce {
-            let stored = stored_bytes(document, fields)?;
+            let stored = match known_size {
+                Some(size) => size,
+                None => stored_bytes(document, fields)?,
+            };
             usage.finish(stored)?;
             usage.charged_bytes = usage.total_bytes.saturating_add(stored);
         }

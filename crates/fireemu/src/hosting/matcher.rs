@@ -482,7 +482,9 @@ fn glob_flavored(pattern: &str, path: &str, dot: bool, empty_matches: bool) -> b
 }
 
 pub(super) fn deploy_ignore(pattern: &str, path: &str, public_root: &str) -> bool {
-    let absolute_path = format!("{}/{}", public_root.trim_end_matches('/'), path);
+    if !pattern.contains('{') {
+        return matches_ignore_pattern(pattern.trim_start_matches("./"), path, public_root);
+    }
     alternatives(pattern, true).iter().any(|expanded| {
         let expanded = expanded.trim_start_matches("./");
         // Brace expansion unescapes these characters before Ignore parses globParts again.
@@ -504,21 +506,33 @@ pub(super) fn deploy_ignore(pattern: &str, path: &str, public_root: &str) -> boo
             }
         }
         let expanded = reconstructed;
-        alternatives(&expanded, true).iter().any(|pattern| {
-            let path = if pattern.starts_with('/')
-                || (cfg!(windows) && pattern.as_bytes().get(1) == Some(&b':'))
-            {
-                &absolute_path
-            } else {
-                path
-            };
-            let pattern = slash_split(pattern);
-            let slash_path = format!("{path}/");
-            let nocase = cfg!(any(target_os = "macos", windows));
-            path_match(&pattern, &slash_split(path), true, nocase)
-                || path_match(&pattern, &slash_split(&slash_path), true, nocase)
-        })
+        alternatives(&expanded, true)
+            .iter()
+            .any(|pattern| matches_ignore_pattern(pattern, path, public_root))
     })
+}
+
+fn matches_ignore_pattern(pattern: &str, path: &str, public_root: &str) -> bool {
+    let absolute_path;
+    let path = if pattern.starts_with('/')
+        || (cfg!(windows) && pattern.as_bytes().get(1) == Some(&b':'))
+    {
+        absolute_path = format!("{}/{}", public_root.trim_end_matches('/'), path);
+        &absolute_path
+    } else {
+        path
+    };
+    let pattern = slash_split(pattern);
+    let mut parts = slash_split(path);
+    let nocase = cfg!(any(target_os = "macos", windows));
+    if path_match(&pattern, &parts, true, nocase) {
+        return true;
+    }
+    if path.ends_with('/') {
+        return false;
+    }
+    parts.push("");
+    path_match(&pattern, &parts, true, nocase)
 }
 
 /// Request path shared by the rules of one routing stage. Regexes use the original spelling.

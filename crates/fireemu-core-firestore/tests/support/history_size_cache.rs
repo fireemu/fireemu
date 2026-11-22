@@ -35,8 +35,8 @@ fn admission_reuses_validated_sizes_without_cloning_retained_history() {
         state
             .commit(&[write(history)], None, LogicalInstant::UNIX_EPOCH)
             .unwrap();
-        // Admission charges the written document twice (the document size limit and the
-        // index-usage document charge), each as a total without a breakdown (FSM-3).
+        // Admission calculates the written document size once and reuses it for the
+        // index-usage document charge, without a breakdown (FSM-3).
         assert_eq!(
             crate::size::DOCUMENT_BREAKDOWNS.with(std::cell::Cell::get),
             0
@@ -47,7 +47,7 @@ fn admission_reuses_validated_sizes_without_cloning_retained_history() {
         measurements.push((history, bytes, clones));
     }
     for (history, bytes, clones) in measurements {
-        assert_eq!((bytes, clones), (2, 2), "history={history}");
+        assert_eq!((bytes, clones), (1, 2), "history={history}");
     }
 }
 

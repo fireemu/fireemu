@@ -521,10 +521,36 @@ fn test_only_file_edits_preserve_evidence_and_other_references_remain_bound() {
     }
 }
 
+// Each descriptor uses a private repository. Four test processes let Nextest
+// schedule those independent checks without creating one process per model.
+const EDIT_BINDING_PARTITIONS: usize = 4;
+
 #[test]
-fn test_only_edits_follow_each_models_binding() {
+fn test_only_edits_follow_each_models_binding_part_1() {
+    check_test_only_edits_for_model_partition(0);
+}
+
+#[test]
+fn test_only_edits_follow_each_models_binding_part_2() {
+    check_test_only_edits_for_model_partition(1);
+}
+
+#[test]
+fn test_only_edits_follow_each_models_binding_part_3() {
+    check_test_only_edits_for_model_partition(2);
+}
+
+#[test]
+fn test_only_edits_follow_each_models_binding_part_4() {
+    check_test_only_edits_for_model_partition(3);
+}
+
+fn check_test_only_edits_for_model_partition(partition: usize) {
     let root = repository_root();
-    for descriptor in all_models() {
+    for descriptor in all_models()
+        .skip(partition)
+        .step_by(EDIT_BINDING_PARTITIONS)
+    {
         let inputs = expected_bound_inputs(&root, descriptor, None).expect("current inputs");
         let moved_modules = [
             (

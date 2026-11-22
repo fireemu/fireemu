@@ -6,6 +6,7 @@ use core::fmt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::ops::Range;
 use std::sync::Arc;
 
 use fireemu_core_types::admission::EventAdmissionError;
@@ -907,6 +908,56 @@ impl BlobBody {
         match self {
             Self::Memory(bytes) => bytes.len() as u64,
             Self::Spilled(file) => file.len(),
+        }
+    }
+}
+
+/// An immutable object body selected under the store lock. It remains readable after the
+/// generation is overwritten or removed.
+pub struct ObjectBody(Option<BlobBody>);
+
+impl ObjectBody {
+    /// The size of the selected body.
+    #[must_use]
+    pub fn size(&self) -> u64 {
+        self.0.as_ref().map_or(0, BlobBody::len)
+    }
+
+    /// Reads the given byte interval, sharing memory-backed data and reading only the interval
+    /// from spilled bodies. The returned bytes do not need the store lock.
+    pub fn read(self, interval: Range<u64>) -> io::Result<impl AsRef<[u8]> + Send + 'static> {
+        let len = interval
+            .end
+            .checked_sub(interval.start)
+            .filter(|_| interval.end <= self.size())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "invalid object range"))?;
+        let to_usize = |value| {
+            usize::try_from(value)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "object range too large"))
+        };
+        Ok(match self.0 {
+            Some(BlobBody::Memory(bytes)) => {
+                let range = to_usize(interval.start)?..to_usize(interval.end)?;
+                ObjectBodyWindow::Shared(bytes, range)
+            }
+            Some(BlobBody::Spilled(file)) => {
+                ObjectBodyWindow::Owned(file.read_range(interval.start, to_usize(len)?)?)
+            }
+            None => ObjectBodyWindow::Owned(Vec::new()),
+        })
+    }
+}
+
+enum ObjectBodyWindow {
+    Shared(Arc<Vec<u8>>, Range<usize>),
+    Owned(Vec<u8>),
+}
+
+impl AsRef<[u8]> for ObjectBodyWindow {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Shared(bytes, range) => &bytes[range.clone()],
+            Self::Owned(bytes) => bytes.as_slice(),
         }
     }
 }
@@ -1980,6 +2031,12 @@ impl StorageState {
             Some(BlobBody::Spilled(file)) => file.read_all().map(Cow::Owned),
             None => Ok(Cow::Borrowed(&[])),
         }
+    }
+
+    /// Pins the body of the specified generation independently of the store.
+    #[must_use]
+    pub fn pin_body(&self, meta: &ObjectMetadata) -> ObjectBody {
+        ObjectBody(self.blobs.get(&meta.blob).cloned())
     }
 
     /// Reads object bytes into a shared buffer.

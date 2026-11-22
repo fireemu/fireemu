@@ -384,81 +384,117 @@ pub struct IdTokenClaims {
     pub custom: CustomClaims,
 }
 
+enum ClaimRef<'a> {
+    Str(&'a str),
+    Bool(bool),
+    Int(i64),
+    Existing(&'a ClaimValue),
+    Firebase(&'a FirebaseClaims),
+}
+
+impl ClaimRef<'_> {
+    fn write(&self, out: &mut String) {
+        match self {
+            Self::Str(value) => write_json_string(out, value),
+            Self::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Self::Int(value) => {
+                let _ = write!(out, "{value}");
+            }
+            Self::Existing(value) => value.write_canonical_json(out),
+            Self::Firebase(value) => write_firebase(out, value),
+        }
+    }
+}
+
+fn write_firebase(out: &mut String, firebase: &FirebaseClaims) {
+    out.push('{');
+    if let Some(epoch) = &firebase.fireemu_session_epoch {
+        out.push_str("\"fireemu_session_epoch\":");
+        write_json_string(out, epoch);
+        out.push(',');
+    }
+    out.push_str("\"identities\":{");
+    for (index, (provider, ids)) in firebase.identities.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        write_json_string(out, provider);
+        out.push_str(":[");
+        for (index, id) in ids.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            write_json_string(out, id);
+        }
+        out.push(']');
+    }
+    out.push('}');
+    if let Some(id) = &firebase.second_factor_identifier {
+        out.push_str(",\"second_factor_identifier\":");
+        write_json_string(out, id);
+    }
+    if let Some(attributes) = &firebase.sign_in_attributes {
+        out.push_str(",\"sign_in_attributes\":");
+        attributes.write_canonical_json(out);
+    }
+    out.push_str(",\"sign_in_provider\":");
+    write_json_string(out, &firebase.sign_in_provider);
+    if let Some(factor) = &firebase.sign_in_second_factor {
+        out.push_str(",\"sign_in_second_factor\":");
+        write_json_string(out, factor);
+    }
+    if let Some(tenant) = &firebase.tenant {
+        out.push_str(",\"tenant\":");
+        write_json_string(out, tenant);
+    }
+    out.push('}');
+}
+
 impl IdTokenClaims {
     /// Canonical JSON (sorted keys, no whitespace).
     #[must_use]
     pub fn canonical_json(&self) -> String {
-        let mut entries: BTreeMap<String, ClaimValue> = self.custom.entries.clone();
-        entries.insert("iss".into(), ClaimValue::String(self.iss.clone()));
-        entries.insert("aud".into(), ClaimValue::String(self.aud.clone()));
-        entries.insert("auth_time".into(), ClaimValue::Int(self.auth_time));
-        entries.insert("user_id".into(), ClaimValue::String(self.user_id.clone()));
-        entries.insert("sub".into(), ClaimValue::String(self.sub.clone()));
-        entries.insert("iat".into(), ClaimValue::Int(self.iat));
-        entries.insert("exp".into(), ClaimValue::Int(self.exp));
-        if let Some(provider) = &self.provider_id {
-            entries.insert("provider_id".into(), ClaimValue::String(provider.clone()));
-        }
-        if let Some(email) = &self.email {
-            entries.insert("email".into(), ClaimValue::String(email.clone()));
-            entries.insert(
-                "email_verified".into(),
-                ClaimValue::Bool(self.email_verified),
-            );
-        }
-        if let Some(phone) = &self.phone_number {
-            entries.insert("phone_number".into(), ClaimValue::String(phone.clone()));
-        }
-        if let Some(name) = &self.display_name {
-            entries.insert("name".into(), ClaimValue::String(name.clone()));
-        }
-        if let Some(photo) = &self.photo_url {
-            entries.insert("picture".into(), ClaimValue::String(photo.clone()));
-        }
-        let mut firebase = BTreeMap::new();
-        let identities: BTreeMap<String, ClaimValue> = self
-            .firebase
-            .identities
+        let mut entries: BTreeMap<&str, ClaimRef<'_>> = self
+            .custom
+            .entries()
             .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    ClaimValue::List(v.iter().cloned().map(ClaimValue::String).collect()),
-                )
-            })
+            .map(|(key, value)| (key.as_str(), ClaimRef::Existing(value)))
             .collect();
-        firebase.insert("identities".to_owned(), ClaimValue::Map(identities));
-        firebase.insert(
-            "sign_in_provider".to_owned(),
-            ClaimValue::String(self.firebase.sign_in_provider.clone()),
-        );
-        if let Some(sf) = &self.firebase.sign_in_second_factor {
-            firebase.insert(
-                "sign_in_second_factor".to_owned(),
-                ClaimValue::String(sf.clone()),
-            );
+        entries.extend([
+            ("iss", ClaimRef::Str(&self.iss)),
+            ("aud", ClaimRef::Str(&self.aud)),
+            ("auth_time", ClaimRef::Int(self.auth_time)),
+            ("user_id", ClaimRef::Str(&self.user_id)),
+            ("sub", ClaimRef::Str(&self.sub)),
+            ("iat", ClaimRef::Int(self.iat)),
+            ("exp", ClaimRef::Int(self.exp)),
+            ("firebase", ClaimRef::Firebase(&self.firebase)),
+        ]);
+        for (key, value) in [
+            ("provider_id", self.provider_id.as_deref()),
+            ("email", self.email.as_deref()),
+            ("phone_number", self.phone_number.as_deref()),
+            ("name", self.display_name.as_deref()),
+            ("picture", self.photo_url.as_deref()),
+        ] {
+            if let Some(value) = value {
+                entries.insert(key, ClaimRef::Str(value));
+            }
         }
-        if let Some(id) = &self.firebase.second_factor_identifier {
-            firebase.insert(
-                "second_factor_identifier".to_owned(),
-                ClaimValue::String(id.clone()),
-            );
+        if self.email.is_some() {
+            entries.insert("email_verified", ClaimRef::Bool(self.email_verified));
         }
-        if let Some(tenant) = &self.firebase.tenant {
-            firebase.insert("tenant".to_owned(), ClaimValue::String(tenant.clone()));
-        }
-        if let Some(attributes) = &self.firebase.sign_in_attributes {
-            firebase.insert("sign_in_attributes".to_owned(), attributes.clone());
-        }
-        if let Some(epoch) = &self.firebase.fireemu_session_epoch {
-            firebase.insert(
-                "fireemu_session_epoch".to_owned(),
-                ClaimValue::String(epoch.clone()),
-            );
-        }
-        entries.insert("firebase".into(), ClaimValue::Map(firebase));
         let mut out = String::new();
-        write_map(&mut out, &entries);
+        out.push('{');
+        for (index, (key, value)) in entries.into_iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            write_json_string(&mut out, key);
+            out.push(':');
+            value.write(&mut out);
+        }
+        out.push('}');
         out
     }
 }

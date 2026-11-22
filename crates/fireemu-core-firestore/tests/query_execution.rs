@@ -680,7 +680,7 @@ fn name_continuation_seeks_the_ordered_scope_index() {
     assert_eq!(first[0].fields.get("n"), Some(&Value::Integer(0)));
     assert_eq!(first[31].fields.get("n"), Some(&Value::Integer(31)));
     assert_eq!(first_stats.scanned, 32);
-    assert_eq!(first_stats.peak_candidates, 32);
+    assert_eq!(first_stats.peak_candidates, 0);
 
     let (second, second_stats) = db
         .run_query_after_document_with_stats(&query, None, &first[31].path)
@@ -689,7 +689,7 @@ fn name_continuation_seeks_the_ordered_scope_index() {
     assert_eq!(second[0].fields.get("n"), Some(&Value::Integer(32)));
     assert_eq!(second[31].fields.get("n"), Some(&Value::Integer(63)));
     assert_eq!(second_stats.scanned, 32);
-    assert_eq!(second_stats.peak_candidates, 32);
+    assert_eq!(second_stats.peak_candidates, 0);
 }
 
 #[test]
@@ -707,7 +707,7 @@ fn descending_name_continuation_seeks_backwards_through_the_scope_index() {
     assert_eq!(first[0].fields.get("n"), Some(&Value::Integer(499)));
     assert_eq!(first[31].fields.get("n"), Some(&Value::Integer(468)));
     assert_eq!(first_stats.scanned, 32);
-    assert_eq!(first_stats.peak_candidates, 32);
+    assert_eq!(first_stats.peak_candidates, 0);
 
     let (second, second_stats) = db
         .run_query_after_document_with_stats(&query, None, &first[31].path)
@@ -716,7 +716,7 @@ fn descending_name_continuation_seeks_backwards_through_the_scope_index() {
     assert_eq!(second[0].fields.get("n"), Some(&Value::Integer(467)));
     assert_eq!(second[31].fields.get("n"), Some(&Value::Integer(436)));
     assert_eq!(second_stats.scanned, 32);
-    assert_eq!(second_stats.peak_candidates, 32);
+    assert_eq!(second_stats.peak_candidates, 0);
 }
 
 #[test]
@@ -1193,6 +1193,24 @@ fn incremental_query_matches_full_query_on_the_changed_subset() {
         incremental[0].fields,
         BTreeMap::from([("n".to_owned(), Value::Integer(3))])
     );
+    let projected = db
+        .run_incremental_query_shared(&query, &changed_paths)
+        .unwrap()
+        .unwrap();
+    assert_eq!(*projected[0], incremental[0]);
+    assert!(!std::sync::Arc::ptr_eq(
+        &projected[0],
+        &db.get_shared(&projected[0].path).unwrap(),
+    ));
+    query.projection = None;
+    let unprojected = db
+        .run_incremental_query_shared(&query, &changed_paths)
+        .unwrap()
+        .unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &unprojected[0],
+        &db.get_shared(&unprojected[0].path).unwrap(),
+    ));
 }
 
 #[test]

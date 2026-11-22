@@ -200,16 +200,14 @@ pub(crate) fn function_logs_since(
         entries: Vec::new(),
     };
     let runners = runtime.current_runner_units();
-    cursors
-        .0
-        .retain(|name, _| runners.iter().any(|unit| &unit.key() == name));
+    let previous_cursors = std::mem::take(&mut cursors.0);
     for unit in runners {
         let key = unit.key();
         let codebase = unit.codebase;
         let function = unit.function;
         let runner = unit.runner;
         let identity = runner.diagnostic_id();
-        let previous = cursors.0.get(&key).copied();
+        let previous = previous_cursors.get(&key).copied();
         let replaced = previous.is_some_and(|(old, _)| old != identity);
         let cursor = previous
             .filter(|(old, _)| *old == identity)

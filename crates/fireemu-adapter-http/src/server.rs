@@ -462,23 +462,22 @@ async fn remote_config_response(
             }
         }
     };
-    let mut body = serde_json::to_vec_pretty(&reply.body).unwrap_or_default();
-    body.push(b'\n');
-    let mut response = with_cors(Response::builder().status(reply.status), origin)
+    let (status, mut body, etag) = reply.into_wire();
+    let mut response = with_cors(Response::builder().status(status), origin)
         .header("content-type", "application/json; charset=utf-8")
         .header("cache-control", "no-store")
         .header("vary", "accept-encoding");
     if crate::identity_framing::accepts_gzip(accept_encoding) {
-        body = crate::identity_framing::gzip_stored(&body);
+        body = crate::identity_framing::gzip_stored(&body).into();
         response = response.header("content-encoding", "gzip");
-        if let Some(etag) = reply.etag {
+        if let Some(etag) = etag {
             response = response
                 .header("etag", etag)
                 .header("access-control-expose-headers", "etag");
         }
     }
     response
-        .body(Full::new(Bytes::from(body)))
+        .body(Full::new(body))
         .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
 }
 

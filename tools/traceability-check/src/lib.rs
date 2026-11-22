@@ -374,6 +374,8 @@ pub fn check(root: &Path) -> Report {
 }
 
 /// Runs every traceability rule with an optional staged Quint evidence directory.
+///
+/// The repository and staged inputs must remain stable for the duration of the check.
 #[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn check_with_quint_evidence(root: &Path, quint_evidence_dir: Option<&Path>) -> Report {
@@ -437,6 +439,13 @@ pub fn check_with_quint_evidence(root: &Path, quint_evidence_dir: Option<&Path>)
     }
 
     let index = RepoIndex::build(root);
+    let evidence_dir = quint_evidence_dir.map_or_else(
+        || root.join("verification/quint/evidence"),
+        Path::to_path_buf,
+    );
+    let cargo_authority =
+        quint_evidence_dir.map(|directory| directory.join("cargo-authority.json"));
+    let mut verified_models = BTreeMap::new();
 
     // Requirements.
     let mut req_ids = BTreeSet::new();
@@ -561,24 +570,20 @@ pub fn check_with_quint_evidence(root: &Path, quint_evidence_dir: Option<&Path>)
         let mut formal_mutant_ids = BTreeSet::new();
         if resolve {
             if let Some((descriptor, property)) = resolved_quint {
-                let evidence_path = quint_evidence_dir
-                    .map_or_else(
-                        || root.join("verification/quint/evidence"),
-                        Path::to_path_buf,
+                let verified = verified_models.entry(descriptor.name).or_insert_with(|| {
+                    let path = evidence_dir.join(format!("{}.json", descriptor.name));
+                    validate_quint_evidence_file(
+                        root,
+                        &path,
+                        descriptor,
+                        cargo_authority.as_deref(),
                     )
-                    .join(format!("{}.json", descriptor.name));
-                let cargo_authority =
-                    quint_evidence_dir.map(|directory| directory.join("cargo-authority.json"));
-                match validate_quint_evidence_file(
-                    root,
-                    &evidence_path,
-                    descriptor,
-                    cargo_authority.as_deref(),
-                ) {
+                });
+                match verified {
                     Ok(verified) => {
                         let mut matching_property_mutation = false;
-                        for result in verified.mutations {
-                            formal_mutant_ids.insert(result.id.clone());
+                        for result in &verified.mutations {
+                            formal_mutant_ids.insert(result.id.as_str());
                             if a.mutation.contains(&result.id)
                                 && result.property == property
                                 && result.outcome.is_killed()

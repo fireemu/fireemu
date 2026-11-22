@@ -294,16 +294,28 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   };
   const graph=new Map();
   const inside=(parent,path)=>{const suffix=relative(parent,path);return suffix===''||(!suffix.startsWith(`..${sep}`)&&suffix!=='..'&&!isAbsolute(suffix));};
+  const capturedOwner=target=>{
+    // Windows relative paths compare case-insensitively, unlike Map keys.
+    if(process.platform==='win32')return [...graph].filter(([original])=>inside(original,target)).sort((a,b)=>b[0].length-a[0].length)[0];
+    let ancestor=target;
+    for(;;){
+      const destination=graph.get(ancestor);
+      if(destination!==undefined)return [ancestor,destination];
+      const parent=dirname(ancestor);
+      if(parent===ancestor)return;
+      ancestor=parent;
+    }
+  };
   const omitted=new Set();
   const captureTree=async(source,destination,excludes=[])=>{
     try{
       const canonical=await checked(signal,()=>realpath(source));
       graph.set(canonical,destination);
       const links=[];
-      await copyInputTree(canonical,destination,{signal,dereference:false,directoryModes,stats,filter:async(path)=>{
+      await copyInputTree(canonical,destination,{signal,dereference:false,directoryModes,stats,filter:(path,info)=>{
         if(excludes.includes(path)){omitted.add(path);return false;}
         if(['.git','.worktree'].includes(basename(path)))return false;
-        if((await checked(signal,()=>lstat(path))).isSymbolicLink())links.push([path,join(destination,relative(canonical,path))]);
+        if(info.isSymbolicLink())links.push([path,join(destination,relative(canonical,path))]);
         return true;
       }});
       for(const [sourceLink,targetLink] of links){
@@ -314,9 +326,9 @@ export async function snapshotInputs(options, root, signal=options.signal) {
           const linkedExcludes=excludes.filter(path=>inside(sourceLink,path)).map(path=>join(target,relative(sourceLink,path)));
           if([...omitted].some(path=>inside(path,target)))throw Error(`Retained link ${JSON.stringify(sourceLink)} requires excluded NODE_PATH package content ${JSON.stringify(target)}; remove that package from nodePathExcludes`);
           let copied;
-          const owners=[...graph].filter(([original])=>inside(original,target)).sort((a,b)=>b[0].length-a[0].length);
-          if(owners.length&&linkedExcludes.length)throw Error(`Cannot apply nodePathExcludes through linked scope ${JSON.stringify(sourceLink)}: target ${JSON.stringify(target)} was already captured; narrow env.NODE_PATH instead`);
-          if(owners.length){const [original,snapshot]=owners[0];copied=join(snapshot,relative(original,target));}
+          const owner=capturedOwner(target);
+          if(owner&&linkedExcludes.length)throw Error(`Cannot apply nodePathExcludes through linked scope ${JSON.stringify(sourceLink)}: target ${JSON.stringify(target)} was already captured; narrow env.NODE_PATH instead`);
+          if(owner){const [original,snapshot]=owner;copied=join(snapshot,relative(original,target));}
           else{
             if(graph.size>=4096)throw Error('Functions dependency graph exceeds the snapshot budget');
             // pnpm packages resolve dependencies from their enclosing node_modules,

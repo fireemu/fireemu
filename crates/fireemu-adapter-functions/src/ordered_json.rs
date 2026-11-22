@@ -47,6 +47,25 @@ impl Ordered {
         }
     }
 
+    /// Converts an owned event without copying its strings.
+    #[must_use]
+    pub(crate) fn into_value(self) -> serde_json::Value {
+        use serde_json::Value;
+        match self {
+            Self::Null => Value::Null,
+            Self::Bool(value) => Value::Bool(value),
+            Self::Number(value) => Value::Number(value),
+            Self::String(value) => Value::String(value),
+            Self::Array(items) => Value::Array(items.into_iter().map(Self::into_value).collect()),
+            Self::Object(members) => Value::Object(
+                members
+                    .into_iter()
+                    .map(|(name, value)| (name, value.into_value()))
+                    .collect(),
+            ),
+        }
+    }
+
     /// The members of an object.
     #[must_use]
     pub fn members(&self) -> Option<&[(String, Self)]> {

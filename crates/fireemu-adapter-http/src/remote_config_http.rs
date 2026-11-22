@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
 use fireemu_adapter_support::api_error::google_rpc;
 use fireemu_core_types::codec::{percent_decode, PlusMode};
 use fireemu_core_types::time::LogicalInstant;
@@ -29,23 +30,42 @@ pub(crate) fn route(path: &str) -> Option<Route<'_>> {
 
 pub(crate) struct Reply {
     pub status: u16,
-    pub body: Value,
+    body: ReplyBody,
     pub etag: Option<String>,
+}
+
+enum ReplyBody {
+    Json(Value),
+    Rendered(Bytes),
+}
+
+fn pretty_json(value: &Value) -> Vec<u8> {
+    let mut body = serde_json::to_vec_pretty(value).unwrap_or_default();
+    body.push(b'\n');
+    body
 }
 
 impl Reply {
     pub(crate) fn error(status: u16, message: &str, code: &str) -> Self {
         Self {
             status,
-            body: google_rpc(status, message, code),
+            body: ReplyBody::Json(google_rpc(status, message, code)),
             etag: None,
         }
+    }
+
+    pub(crate) fn into_wire(self) -> (u16, Bytes, Option<String>) {
+        let body = match self.body {
+            ReplyBody::Json(value) => Bytes::from(pretty_json(&value)),
+            ReplyBody::Rendered(body) => body,
+        };
+        (self.status, body, self.etag)
     }
 
     fn ok(body: Value, etag: Option<String>) -> Self {
         Self {
             status: 200,
-            body,
+            body: ReplyBody::Json(body),
             etag,
         }
     }
@@ -135,7 +155,7 @@ fn insert_default_types(parameters: &mut Value) {
     }
 }
 
-fn published(version: &Version, reading: bool) -> Reply {
+fn published_body(version: &Version, reading: bool) -> Value {
     let mut body = visible_fields(version.template());
     if reading {
         if let Some(parameters) = body.get_mut("parameters") {
@@ -154,7 +174,11 @@ fn published(version: &Version, reading: bool) -> Reply {
         }
     }
     body.insert("version".to_owned(), version_fields(version));
-    Reply::ok(Value::Object(body), Some(version.etag()))
+    Value::Object(body)
+}
+
+fn published(version: &Version, reading: bool) -> Reply {
+    Reply::ok(published_body(version, reading), Some(version.etag()))
 }
 
 fn read(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
@@ -167,21 +191,33 @@ fn read(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
                 .map_err(|_| invalid("Invalid version number"))
         })
         .transpose()?;
-    let current = store.current();
-    if current.change() == Change::Initial {
-        return Ok(Reply::ok(json!({}), None));
-    }
     let requested = requested
         .and_then(|number| u64::try_from(number).ok())
         .filter(|number| *number > 0);
-    let reply = match requested {
-        Some(number) => store.version(number).map_or_else(
-            || Reply::ok(json!({}), Some(current.empty_etag())),
-            |version| published(&version, true),
-        ),
-        None => published(&current, true),
-    };
-    Ok(reply)
+    if let Some(number) = requested {
+        let current = store.current();
+        return Ok(if current.change() == Change::Initial {
+            Reply::ok(json!({}), None)
+        } else {
+            store.version(number).map_or_else(
+                || Reply::ok(json!({}), Some(current.empty_etag())),
+                |version| published(&version, true),
+            )
+        });
+    }
+
+    let (version, body) = store.render_current(|version| {
+        if version.change() == Change::Initial {
+            Bytes::from_static(b"{}\n")
+        } else {
+            Bytes::from(pretty_json(&published_body(version, true)).into_boxed_slice())
+        }
+    });
+    Ok(Reply {
+        status: 200,
+        body: ReplyBody::Rendered(body),
+        etag: (version.change() != Change::Initial).then(|| version.etag()),
+    })
 }
 
 fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
@@ -198,23 +234,16 @@ fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
         .filter(|size| *size > 0)
         .unwrap_or(MAX_RETAINED_VERSIONS)
         .min(MAX_RETAINED_VERSIONS);
-    let versions = store.history();
-    let start = if let Some(token) = params.get("pageToken") {
-        versions
-            .iter()
-            .position(|version| version.etag() == *token)
-            .ok_or_else(|| invalid("Invalid or expired page token"))?
-            + 1
-    } else {
-        0
-    };
-    let page = versions.get(start..).unwrap_or_default();
-    if page.is_empty() {
+    let (page, has_more) = store
+        .history_page(limit, params.get("pageToken").map(String::as_str))
+        .ok_or_else(|| invalid("Invalid or expired page token"))?;
+    let Some(last) = page.last() else {
         return Ok(Reply::ok(json!({}), None));
-    }
-    let mut body = json!({"versions": page.iter().take(limit).map(|entry| version_fields(entry)).collect::<Vec<_>>()});
-    if page.len() > limit {
-        body["nextPageToken"] = json!(page[limit - 1].etag());
+    };
+    let mut body =
+        json!({"versions": page.iter().map(|entry| version_fields(entry)).collect::<Vec<_>>()});
+    if has_more {
+        body["nextPageToken"] = json!(last.etag());
     }
     Ok(Reply::ok(body, None))
 }
@@ -334,6 +363,13 @@ pub(crate) fn dispatch(
 mod tests {
     use super::*;
 
+    fn json_body(reply: &Reply) -> Value {
+        match &reply.body {
+            ReplyBody::Json(value) => value.clone(),
+            ReplyBody::Rendered(bytes) => serde_json::from_slice(bytes).unwrap(),
+        }
+    }
+
     fn request(
         store: &TemplateStore,
         action: &str,
@@ -357,6 +393,38 @@ mod tests {
     }
 
     #[test]
+    fn latest_get_reuses_rendered_bytes_only_within_its_version() {
+        let store = TemplateStore::default();
+        let latest = || request(&store, "remoteConfig", "GET", "", b"", None).into_wire();
+        let publish = |value: &[u8]| request(&store, "remoteConfig", "PUT", "", value, Some("*"));
+        assert_eq!(
+            publish(br#"{"parameters":{"p":{"defaultValue":{"value":"one"}}}}"#).status,
+            200
+        );
+        let (status, first, first_tag) = latest();
+        let (_, repeated, repeated_tag) = latest();
+        assert_eq!(status, 200);
+        assert_eq!(first_tag, repeated_tag);
+        assert_eq!(first, repeated);
+        assert_eq!(
+            first.as_ptr(),
+            repeated.as_ptr(),
+            "latest GET rebuilt bytes"
+        );
+        assert_eq!(
+            publish(br#"{"parameters":{"p":{"defaultValue":{"value":"two"}}}}"#).status,
+            200
+        );
+        let (_, after, after_tag) = latest();
+        assert_ne!(first_tag, after_tag);
+        assert_ne!(first, after);
+        let (_, historical, historical_tag) =
+            request(&store, "remoteConfig", "GET", "versionNumber=1", b"", None).into_wire();
+        assert_eq!(first, historical);
+        assert_eq!(first_tag, historical_tag);
+    }
+
+    #[test]
     fn historical_reads_distinguish_missing_versions_from_unpublished_templates() {
         let store = TemplateStore::default();
         for (query, status, version, tagged) in [
@@ -371,13 +439,13 @@ mod tests {
             let reply = request(&store, "remoteConfig", "GET", query, b"", None);
             assert_eq!(reply.status, status, "{query}");
             assert_eq!(
-                reply.body["version"]["versionNumber"].as_str(),
+                json_body(&reply)["version"]["versionNumber"].as_str(),
                 version,
                 "{query}"
             );
             assert_eq!(reply.etag.is_some(), tagged, "{query}");
             if status == 200 {
-                assert_eq!(reply.body, json!({}), "{query}");
+                assert_eq!(json_body(&reply), json!({}), "{query}");
             }
         }
 
@@ -401,7 +469,7 @@ mod tests {
             let reply = request(&store, "remoteConfig", "GET", query, b"", None);
             assert_eq!(reply.status, status, "{query}");
             assert_eq!(
-                reply.body["version"]["versionNumber"].as_str(),
+                json_body(&reply)["version"]["versionNumber"].as_str(),
                 version,
                 "{query}"
             );
@@ -416,7 +484,7 @@ mod tests {
             None,
         );
         assert_eq!(missing.status, 200);
-        assert_eq!(missing.body, json!({}));
+        assert_eq!(json_body(&missing), json!({}));
         let tag = missing.etag.as_deref().unwrap();
         assert!(tag.starts_with("etag-"));
         assert_ne!(missing.etag, second.etag);
@@ -457,7 +525,8 @@ mod tests {
         ] {
             let reply = request(&store, "remoteConfig:listVersions", "GET", query, b"", None);
             if let Some(expected) = expected {
-                let versions: Vec<_> = reply.body["versions"]
+                let body = json_body(&reply);
+                let versions: Vec<_> = body["versions"]
                     .as_array()
                     .expect("successful history has three retained versions")
                     .iter()
@@ -465,10 +534,7 @@ mod tests {
                     .collect();
                 assert_eq!(reply.status, 200, "{query}");
                 assert_eq!(versions, expected, "{query}");
-                assert_eq!(
-                    reply.body.get("nextPageToken").is_some(),
-                    expected.len() < 3
-                );
+                assert_eq!(body.get("nextPageToken").is_some(), expected.len() < 3);
             } else {
                 assert_eq!(reply.status, 400, "{query}");
             }
@@ -495,7 +561,7 @@ mod tests {
                 first.etag.as_deref(),
             );
             assert_eq!(reply.status, 200);
-            assert_eq!(reply.body, expected);
+            assert_eq!(json_body(&reply), expected);
             assert!(reply.etag.unwrap().ends_with("-0"));
         }
         for (query, body, tag, status, error) in [
@@ -524,7 +590,7 @@ mod tests {
         ] {
             let reply = request(&store, "remoteConfig", "PUT", query, body, tag);
             assert_eq!(reply.status, status);
-            assert_eq!(reply.body["error"]["status"], error);
+            assert_eq!(json_body(&reply)["error"]["status"], error);
         }
         assert_eq!(store.current().number(), 1);
         assert_eq!(store.history().len(), 1);
@@ -559,7 +625,7 @@ mod tests {
                         "{query}/{tag:?}"
                     );
                     assert_eq!(
-                        reply.body["error"]["status"],
+                        json_body(&reply)["error"]["status"],
                         if invalid {
                             "INVALID_ARGUMENT"
                         } else {

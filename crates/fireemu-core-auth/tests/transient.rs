@@ -76,6 +76,44 @@ fn oob_and_sms_codes_are_swept_at_their_exact_boundaries() {
 }
 
 #[test]
+fn oob_sweeps_recompute_after_policy_changes_and_restore() {
+    let mut s = store();
+    s.set_production_oob_lifetimes(true);
+    let code = s
+        .create_oob_code(
+            OobRequestType::VerifyEmail,
+            "a@example.com",
+            None,
+            None,
+            t0(),
+        )
+        .unwrap();
+    let snapshot = AuthSnapshot::capture(&s);
+    let deadline = after(OOB_CODE_TTL_SECONDS);
+    let past_deadline = deadline
+        .checked_add(LogicalDuration::from_nanos(1))
+        .unwrap();
+
+    s.sweep_transient_credentials(past_deadline);
+    assert!(s.oob_code(&code).is_some());
+    s.set_production_oob_lifetimes(false);
+    s.sweep_transient_credentials(deadline);
+    assert!(s.oob_code(&code).is_some());
+    s.sweep_transient_credentials(past_deadline);
+    assert!(s.oob_code(&code).is_none());
+
+    s.clear();
+    snapshot.restore_into(&mut s);
+    s.sweep_transient_credentials(past_deadline);
+    assert!(s.oob_code(&code).is_some());
+    s.set_production_oob_lifetimes(false);
+    s.sweep_transient_credentials(t0());
+    assert!(s.oob_code(&code).is_some());
+    s.sweep_transient_credentials(past_deadline);
+    assert!(s.oob_code(&code).is_none());
+}
+
+#[test]
 fn abandoned_flows_stay_bounded_and_the_budget_refuses_atomically() {
     let mut s = store();
     let uid = s

@@ -398,6 +398,12 @@ pub struct SubscriptionState {
     entries: Vec<Entry>,
     first_unacked: usize,
     outstanding: BTreeMap<String, usize>,
+    /// A shared stamp if every outstanding lease is known to have the same deadline and clock.
+    /// May be stale when no leases remain, and is then replaced by the next lease batch.
+    uniform_lease_deadline: Option<Stamp>,
+    /// No pending transfer can exist while this is false. Completion can leave it true
+    /// until a later pull releases any remaining transfers or the indexes are rebuilt.
+    may_have_pending_forwards: bool,
     retained_bytes: usize,
     /// Minimum interval between two push deliveries of the same message while the subscription
     /// has no retry policy. Registry-wide setting, copied in when the subscription is created.
@@ -413,6 +419,8 @@ impl SubscriptionState {
             entries: Vec::new(),
             first_unacked: 0,
             outstanding: BTreeMap::new(),
+            uniform_lease_deadline: None,
+            may_have_pending_forwards: false,
             retained_bytes: 0,
             push_minimum_redelivery_interval: LogicalDuration::from_millis(
                 DEFAULT_PUSH_MINIMUM_REDELIVERY_INTERVAL_MILLIS,
@@ -472,6 +480,10 @@ impl SubscriptionState {
     pub fn convert_to_lease_clock(&mut self, now: impl Into<DeliveryTimes>) {
         let times = now.into();
         let clock = self.lease_clock();
+        self.uniform_lease_deadline = self.uniform_lease_deadline.map(|stamp| Stamp {
+            at: stamp.on(times, clock),
+            clock,
+        });
         for entry in &mut self.entries[self.first_unacked..] {
             let stamp = match &mut entry.state {
                 Delivery::Available { available_at } => available_at,
@@ -527,10 +539,13 @@ impl SubscriptionState {
             .position(|entry| entry.state != Delivery::Acked)
             .unwrap_or(self.entries.len());
         self.outstanding.clear();
+        self.uniform_lease_deadline = None;
+        self.may_have_pending_forwards = false;
         for (index, entry) in self.entries.iter().enumerate() {
             if let Delivery::Outstanding { ack_id, .. } = &entry.state {
                 self.outstanding.insert(ack_id.clone(), index);
             }
+            self.may_have_pending_forwards |= entry.state == Delivery::ForwardPending;
         }
         self.retained_bytes = self
             .entries
@@ -718,6 +733,15 @@ impl SubscriptionState {
     ) -> Option<LogicalInstant> {
         let times = now.into();
         let clock = self.lease_clock();
+        // If the suffix consists entirely of outstanding leases, there are no retry stamps to
+        // consider alongside their shared deadline.
+        if !self.outstanding.is_empty()
+            && self.outstanding.len() == self.entries.len() - self.first_unacked
+        {
+            if let Some(stamp) = self.uniform_lease_deadline {
+                return (!stamp.due(times)).then(|| stamp.on(times, clock));
+            }
+        }
         self.entries[self.first_unacked..]
             .iter()
             .filter_map(|entry| match entry.state {
@@ -750,6 +774,12 @@ impl SubscriptionState {
     /// next pull redelivers it. Call this on every clock advance.
     pub fn expire_deadlines(&mut self, now: impl Into<DeliveryTimes>) {
         let times = now.into();
+        if self
+            .uniform_lease_deadline
+            .is_some_and(|stamp| !stamp.due(times))
+        {
+            return;
+        }
         let expired: Vec<String> = self
             .outstanding
             .iter()
@@ -815,8 +845,8 @@ impl SubscriptionState {
         admit: impl FnOnce(&[&StoredMessage]) -> bool,
     ) -> PullOutcome {
         let times = now.into();
-        if !forwarding_authorized {
-            for entry in &mut self.entries {
+        if !forwarding_authorized && std::mem::take(&mut self.may_have_pending_forwards) {
+            for entry in &mut self.entries[self.first_unacked..] {
                 if entry.state == Delivery::ForwardPending {
                     entry.state = Delivery::Available {
                         available_at: Stamp::now(times),
@@ -903,9 +933,17 @@ impl SubscriptionState {
         if !candidates.is_empty() && !admit(&candidates) {
             return out;
         }
+        self.may_have_pending_forwards |= !forwarded.is_empty();
         for i in forwarded {
             self.entries[i].state = Delivery::ForwardPending;
             out.dead_lettered.push(Arc::clone(&self.entries[i].stored));
+        }
+        if !selected.is_empty() {
+            if self.outstanding.is_empty() {
+                self.uniform_lease_deadline = Some(deadline);
+            } else if self.uniform_lease_deadline != Some(deadline) {
+                self.uniform_lease_deadline = None;
+            }
         }
         for i in selected {
             let ack_id = next_ack_id();
@@ -1015,6 +1053,11 @@ impl SubscriptionState {
             let extended = self.stamp(times, LogicalDuration::from_seconds(i64::from(seconds)));
             if let Delivery::Outstanding { deadline, .. } = &mut self.entries[index].state {
                 *deadline = extended;
+                if self.outstanding.len() == 1 {
+                    self.uniform_lease_deadline = Some(extended);
+                } else if self.uniform_lease_deadline != Some(extended) {
+                    self.uniform_lease_deadline = None;
+                }
             }
         }
     }
@@ -1572,6 +1615,40 @@ mod tests {
     }
 
     #[test]
+    fn shortened_lease_replaces_uniform_summary_and_due_retry_is_selected() {
+        let at = LogicalInstant::from_unix_seconds;
+        let mut config = cfg();
+        config.retry_policy = Some(RetryPolicy {
+            minimum_backoff: LogicalDuration::from_seconds(2),
+            maximum_backoff: LogicalDuration::from_seconds(2),
+        });
+        let mut sub = SubscriptionState::new(config);
+        let now = DeliveryTimes::new(at(100), at(160));
+        sub.enqueue(stored("first", b"a", 100), now).unwrap();
+        sub.enqueue(stored("second", b"b", 100), now).unwrap();
+        let leased = sub.pull(2, now, counter()).received;
+        assert_eq!(sub.next_pull_deadline(now), Some(at(170)));
+
+        sub.modify_ack_deadline(&leased[0].ack_id, 5, now);
+        assert_eq!(sub.next_pull_deadline(now), Some(at(165)));
+        let earlier = DeliveryTimes::new(at(100), at(164));
+        sub.expire_deadlines(earlier);
+        assert_eq!(sub.outstanding_count(), 2);
+        let elapsed = DeliveryTimes::new(at(100), at(165));
+        sub.expire_deadlines(elapsed);
+        assert_eq!(sub.outstanding_count(), 1);
+
+        // Updating the only outstanding lease can recover a uniform summary, but an earlier
+        // delayed retry must still take precedence in the wake calculation.
+        sub.modify_ack_deadline(&leased[1].ack_id, 20, elapsed);
+        assert_eq!(sub.next_pull_deadline(elapsed), Some(at(167)));
+        let retry = DeliveryTimes::new(at(100), at(167));
+        let next = sub.pull(1, retry, || "retry-ack".to_owned()).received;
+        assert_eq!(message_ids(&next), ["first"]);
+        assert_eq!(next[0].delivery_attempt, 2);
+    }
+
+    #[test]
     fn expired_deadline_redelivers() {
         let mut s = SubscriptionState::new(cfg());
         let t0 = LogicalInstant::from_unix_seconds(100);
@@ -1789,6 +1866,95 @@ mod tests {
         let replayed = s.pull(10, now, &mut counter());
         assert_eq!(replayed.received.len(), 1);
         assert_eq!(replayed.received[0].delivery_attempt, 1);
+    }
+
+    #[test]
+    fn pull_revocation_releases_only_pending_forwards_after_retention_or_seek() {
+        // History, pending transfer, authority, limit, ordered, seek.
+        let cases = [
+            (false, false, false, 1, false, ""),
+            (true, false, false, 1, false, ""),
+            (true, true, false, 0, true, ""),
+            (true, true, false, 1, false, "timestamp"),
+            (true, true, true, 1, true, "snapshot"),
+            (false, false, true, 0, false, ""),
+            (false, false, false, 0, true, "snapshot"),
+            (false, false, true, 0, false, "timestamp"),
+            (false, true, false, 1, false, "snapshot"),
+            (true, true, false, 1, true, ""),
+        ];
+        for (history, pending, authorized, max, ordered, seek) in cases {
+            let mut config = cfg();
+            config.enable_message_ordering = ordered;
+            if pending {
+                config.dead_letter_policy = Some(DeadLetterPolicy {
+                    dead_letter_topic: TopicName::new("demo-app", "dead-letters").unwrap(),
+                    max_delivery_attempts: MIN_DEAD_LETTER_ATTEMPTS,
+                });
+            }
+            let now = LogicalInstant::from_unix_seconds(100);
+            let mut sub = SubscriptionState::new(config);
+            let mut ids = counter();
+            if history {
+                for index in 0..32 {
+                    sub.enqueue(stored(&format!("history-{index}"), b"acked", 99), now)
+                        .unwrap();
+                }
+                let first = sub.pull(32, now, &mut ids);
+                assert_eq!(first.received.len(), 32);
+                let ack_ids = first
+                    .received
+                    .into_iter()
+                    .map(|msg| msg.ack_id)
+                    .collect::<Vec<_>>();
+                assert_eq!(sub.acknowledge(&ack_ids), 32);
+            }
+            let mut message = stored("target", b"data", 100);
+            message.message.ordering_key = "key".to_owned();
+            sub.enqueue(message, now).unwrap();
+            if pending {
+                for _ in 0..MIN_DEAD_LETTER_ATTEMPTS {
+                    let pulled = sub.pull(1, now, &mut ids);
+                    sub.modify_ack_deadline(&pulled.received[0].ack_id, 0, now);
+                }
+                assert_eq!(sub.pull(1, now, &mut ids).dead_lettered.len(), 1);
+            }
+            match seek {
+                "snapshot" => {
+                    let messages = sub.retained_messages();
+                    let retained = sub.retained_message_ids();
+                    let unacknowledged = sub.unacknowledged_message_ids();
+                    sub.seek_to_snapshot(&messages, &retained, &unacknowledged, now, now)
+                        .unwrap();
+                }
+                "timestamp" => sub.seek_to_time(now, now).unwrap(),
+                _ => {}
+            }
+            let pending_at_pull = pending && seek.is_empty();
+            let first = sub.pull_with_forwarding(
+                max,
+                now,
+                authorized,
+                OrderedPullBatching::SeparateUnkeyed,
+                &mut ids,
+            );
+            assert!(first.dead_lettered.is_empty());
+            assert_eq!(
+                sub.pending_forwards().len(),
+                usize::from(pending_at_pull && authorized)
+            );
+            if max != 0 && !(pending_at_pull && authorized) {
+                assert_eq!(message_ids(&first.received), ["target"]);
+                let consumed_attempts = if pending_at_pull {
+                    MIN_DEAD_LETTER_ATTEMPTS
+                } else {
+                    0
+                };
+                assert_eq!(first.received[0].delivery_attempt, consumed_attempts + 1);
+            } else {
+                assert!(first.received.is_empty());
+            }
+        }
     }
 
     #[test]

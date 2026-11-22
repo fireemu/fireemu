@@ -103,6 +103,7 @@ pub(crate) enum RetryToken {
 struct QueuedTask {
     id: u64,
     task: Arc<Task>,
+    schedule: PendingSchedule,
     retry: TaskRetryConfig,
     retained_bytes: usize,
     name: Arc<str>,
@@ -235,6 +236,7 @@ struct QueueState {
     limits: TaskRateLimits,
     burst_rule: BurstRule,
     pending: VecDeque<QueuedTask>,
+    pending_with_deadline: usize,
     active: BTreeMap<u64, ActiveTask>,
     names: BTreeSet<Arc<str>>,
     tokens: f64,
@@ -286,6 +288,7 @@ impl QueueState {
             limits,
             burst_rule: BurstRule::Emulator,
             pending: VecDeque::new(),
+            pending_with_deadline: 0,
             active: BTreeMap::new(),
             names: BTreeSet::new(),
             tokens: 0.0,
@@ -358,30 +361,63 @@ pub(crate) struct PendingTask {
     pub run_now: bool,
 }
 
-/// Whether `task` may be dispatched at `epoch_nanos` (nanoseconds since the Unix epoch on the
-/// axis the scheduler is gated on). Without an epoch nothing waits; a task without a
-/// `scheduleTime` never waits; a `scheduleTime` that does not parse never waits either (the
-/// enqueue route refuses one, so this only meets a task from a profile that does not validate).
-fn schedule_is_due(task: &Task, epoch_nanos: Option<i128>) -> bool {
-    epoch_nanos.is_none_or(|epoch| {
-        task.schedule_time.as_deref().is_none_or(|text| {
-            fireemu_core_types::time::LogicalInstant::parse_rfc3339(text)
-                .is_ok_and(|instant| instant.as_nanos() <= epoch)
-        })
-    })
+#[cfg(test)]
+thread_local! {
+    static SCHEDULE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn parse_schedule_time(
+    text: &str,
+) -> Result<fireemu_core_types::time::LogicalInstant, fireemu_core_types::time::TimeParseError> {
+    #[cfg(test)]
+    SCHEDULE_PARSES.with(|count| count.set(count.get() + 1));
+    fireemu_core_types::time::LogicalInstant::parse_rfc3339(text)
+}
+
+/// The scheduler's interpretation of the original `scheduleTime` text.
+#[derive(Debug, Clone, Copy)]
+enum PendingSchedule {
+    Unspecified,
+    Invalid,
+    At(i128),
+}
+
+impl PendingSchedule {
+    fn from_task(task: &Task) -> Self {
+        match task.schedule_time.as_deref() {
+            None => Self::Unspecified,
+            Some(text) => parse_schedule_time(text)
+                .map_or(Self::Invalid, |instant| Self::At(instant.as_nanos())),
+        }
+    }
+}
+
+impl QueuedTask {
+    /// With an epoch, invalid schedules do not dispatch until explicitly released.
+    /// Without an epoch the scheduler does not gate on `scheduleTime`.
+    fn is_due(&self, epoch_nanos: Option<i128>) -> bool {
+        self.run_now
+            || epoch_nanos.is_none_or(|epoch| match self.schedule {
+                PendingSchedule::Unspecified => true,
+                PendingSchedule::Invalid => false,
+                PendingSchedule::At(due) => due <= epoch,
+            })
+    }
 }
 
 impl QueueState {
     /// How long until the earliest pending task that is not yet due becomes due.
     fn next_schedule_in(&self, epoch_nanos: i128) -> Option<Duration> {
+        if self.pending_with_deadline == 0 {
+            return None;
+        }
         self.pending
             .iter()
             .filter(|queued| !queued.run_now)
             .filter_map(|queued| {
-                let text = queued.task.schedule_time.as_deref()?;
-                let due = fireemu_core_types::time::LogicalInstant::parse_rfc3339(text)
-                    .ok()?
-                    .as_nanos();
+                let PendingSchedule::At(due) = queued.schedule else {
+                    return None;
+                };
                 let wait = u128::try_from(due.checked_sub(epoch_nanos)?).ok()?;
                 (wait > 0).then(|| {
                     Duration::new(
@@ -564,6 +600,8 @@ impl TaskScheduler {
         let Some(queued) = state.pending.remove(position) else {
             return false;
         };
+        state.pending_with_deadline -=
+            usize::from(matches!(queued.schedule, PendingSchedule::At(_)));
         self.outstanding = self.outstanding.saturating_sub(1);
         self.release_name(queue, queued.name, queued.retained_bytes, now);
         true
@@ -649,8 +687,11 @@ impl TaskScheduler {
         self.next_id = self.next_id.wrapping_add(1).max(1);
         let name = Arc::<str>::from(task.name.as_str());
         state.names.insert(name.clone());
+        let schedule = PendingSchedule::from_task(&task);
+        state.pending_with_deadline += usize::from(matches!(schedule, PendingSchedule::At(_)));
         state.pending.push_back(QueuedTask {
             id: self.next_id,
+            schedule,
             task: Arc::new(task),
             retry,
             retained_bytes,
@@ -715,9 +756,10 @@ impl TaskScheduler {
                 {
                     continue;
                 }
-                let ready = queue.pending.iter().position(|queued| {
-                    queued.run_now || schedule_is_due(&queued.task, epoch_nanos)
-                });
+                let ready = queue
+                    .pending
+                    .iter()
+                    .position(|queued| queued.is_due(epoch_nanos));
                 let Some(queued) = ready.and_then(|position| queue.pending.remove(position)) else {
                     continue;
                 };
@@ -725,6 +767,8 @@ impl TaskScheduler {
                     queue.pending.push_front(queued);
                     continue;
                 };
+                queue.pending_with_deadline -=
+                    usize::from(matches!(queued.schedule, PendingSchedule::At(_)));
                 match queue.burst_rule {
                     BurstRule::Emulator => queue.tokens -= 1.0,
                     BurstRule::Production => {
@@ -1093,7 +1137,7 @@ impl TaskScheduler {
         };
         for (function, queue) in &self.queues {
             for queued in &queue.pending {
-                let future = !queued.run_now && !schedule_is_due(&queued.task, epoch);
+                let future = !queued.is_due(epoch);
                 let saturated = queue.active.len()
                     >= usize::try_from(queue.limits.max_concurrent_dispatches)
                         .unwrap_or(usize::MAX);
@@ -1220,6 +1264,7 @@ impl TaskScheduler {
         self.next_queue = 0;
         for queue in self.queues.values_mut() {
             queue.pending.clear();
+            queue.pending_with_deadline = 0;
             queue.active.clear();
             queue.names.clear();
             queue.tokens = 0.0;
@@ -1522,6 +1567,72 @@ mod tests {
             1
         );
         assert_ne!(old_generation, scheduler.generation);
+    }
+
+    #[test]
+    fn pending_schedule_times_are_parsed_once_and_keep_the_source_text() {
+        let start = Instant::now();
+        let mut scheduler = TaskScheduler::from_manifest(
+            &manifest(TaskRateLimits {
+                max_concurrent_dispatches: 2,
+                max_dispatches_per_second: 2.0,
+            }),
+            start,
+        );
+        let before = super::SCHEDULE_PARSES.with(std::cell::Cell::get);
+        for (name, time) in [
+            ("invalid", "invalid"),
+            ("later", "2026-02-01T09:00:00.25+09:00"),
+        ] {
+            let mut pending = task(name);
+            pending.schedule_time = Some(time.to_owned());
+            scheduler
+                .enqueue_at("queue", pending, TaskRetryConfig::default(), 64, start)
+                .unwrap();
+        }
+        assert_eq!(scheduler.queues["queue"].pending_with_deadline, 1);
+        let epoch = nanos("2026-02-01T00:00:00.25Z");
+        let tick = start + Duration::from_secs(1);
+        for _ in 0..8 {
+            let (dispatches, wake) = scheduler.dispatch_ready_at(
+                tick,
+                Some(epoch - 1),
+                "demo-app",
+                |_| Some(DEFAULT_REGION.to_owned()),
+                2,
+            );
+            assert!(dispatches.is_empty());
+            assert_eq!(
+                wake,
+                Some(super::TaskTime::Real(tick + Duration::from_nanos(1)))
+            );
+        }
+        let (dispatches, _) = scheduler.dispatch_ready_at(
+            tick,
+            Some(epoch),
+            "demo-app",
+            |_| Some(DEFAULT_REGION.to_owned()),
+            2,
+        );
+        assert_eq!(dispatches.len(), 1);
+        assert_eq!(dispatches[0].task.name, "later");
+        assert_eq!(scheduler.queues["queue"].pending_with_deadline, 0);
+        assert_eq!(
+            dispatches[0].task.schedule_time.as_deref(),
+            Some("2026-02-01T09:00:00.25+09:00")
+        );
+        let (dispatches, _) = scheduler.dispatch_ready_at(
+            tick,
+            None,
+            "demo-app",
+            |_| Some(DEFAULT_REGION.to_owned()),
+            1,
+        );
+        assert_eq!(dispatches[0].task.name, "invalid");
+        assert_eq!(
+            super::SCHEDULE_PARSES.with(std::cell::Cell::get),
+            before + 2
+        );
     }
 
     #[test]

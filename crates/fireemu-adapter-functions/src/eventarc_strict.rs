@@ -1101,6 +1101,18 @@ pub struct ParsedEvent {
     fields: Fields,
 }
 
+struct SourceEvent {
+    json: Ordered,
+    inner_size: usize,
+    fields: Fields,
+}
+
+impl SourceEvent {
+    fn any_size(&self) -> usize {
+        event_any_size(self.inner_size)
+    }
+}
+
 /// What the semantic checks of an existing channel read from an event.
 #[derive(Debug, Clone, PartialEq, Default)]
 struct Fields {
@@ -1116,7 +1128,7 @@ struct Fields {
 enum Data {
     #[default]
     None,
-    Text(String),
+    Text(usize),
     Binary,
 }
 
@@ -1124,18 +1136,22 @@ impl ParsedEvent {
     /// The serialized size of the event as an `Any`: type URL and value.
     #[must_use]
     pub fn any_size(&self) -> usize {
-        field_len(CLOUD_EVENT_TYPE_URL.len()) + field_len(self.inner_size)
+        event_any_size(self.inner_size)
     }
+}
+
+fn event_any_size(inner_size: usize) -> usize {
+    field_len(CLOUD_EVENT_TYPE_URL.len()) + field_len(inner_size)
+}
+
+fn request_size_with_events(channel: &str, events: impl Iterator<Item = usize>) -> usize {
+    field_len(channel.len()) + events.map(field_len).sum::<usize>()
 }
 
 /// The serialized size of a whole `PublishEventsRequest`: the channel name and each event as an `Any`.
 #[must_use]
 pub fn request_size(channel: &str, events: &[ParsedEvent]) -> usize {
-    field_len(channel.len())
-        + events
-            .iter()
-            .map(|event| field_len(event.any_size()))
-            .sum::<usize>()
+    request_size_with_events(channel, events.iter().map(ParsedEvent::any_size))
 }
 
 /// The mapped Pub/Sub request size for a ready channel, separate from CloudEvent/Any size.
@@ -1145,6 +1161,13 @@ pub fn request_size(channel: &str, events: &[ParsedEvent]) -> usize {
 /// supplies publish admission only for these supported representations; `None` leaves that size facet unknown.
 #[must_use]
 pub fn mapped_publish_request_size(channel: &Lookup, events: &[ParsedEvent]) -> Option<usize> {
+    mapped_request_size(channel, events.iter().map(|event| &event.fields))
+}
+
+fn mapped_request_size<'a>(
+    channel: &Lookup,
+    events: impl Iterator<Item = &'a Fields>,
+) -> Option<usize> {
     let Lookup::Ready(view) = channel else {
         return None;
     };
@@ -1152,15 +1175,14 @@ pub fn mapped_publish_request_size(channel: &Lookup, events: &[ParsedEvent]) -> 
         return None;
     }
     let mut request = field_len(view.pubsub_topic.len());
-    for event in events {
-        let fields = &event.fields;
-        let Data::Text(data) = &fields.data else {
+    for fields in events {
+        let Data::Text(data_len) = fields.data else {
             return None;
         };
-        if data.is_empty() {
+        if data_len == 0 {
             return None;
         }
-        let mut message = field_len(data.len());
+        let mut message = field_len(data_len);
         for (key, value) in [
             ("ce-id", &fields.id),
             ("ce-source", &fields.source),
@@ -1237,7 +1259,7 @@ fn publish(place: &Place, channel: &str, body: &[u8], world: &World<'_>) -> Outc
     if !too_large.is_empty() {
         let message = format!(
             "The event size ({} bytes) is too large. The maximum size is {MAX_EVENT_BYTES} bytes.",
-            request_size(&name, &events)
+            request_size_with_events(&name, events.iter().map(SourceEvent::any_size))
         );
         let fields: Vec<String> = too_large
             .iter()
@@ -1274,7 +1296,7 @@ fn publish(place: &Place, channel: &str, body: &[u8], world: &World<'_>) -> Outc
     // INFERRED fitted policy for the helper's supported representations: strict upper edge and
     // payload-before-numeric precedence. Native numeric/payload/LF cases fit it; no exact upper pair
     // or universal priority was measured. None preserves existing behavior, not a size MATCH.
-    if let Some(size) = mapped_publish_request_size(&channel, &events) {
+    if let Some(size) = mapped_request_size(&channel, events.iter().map(|event| &event.fields)) {
         if size > 10_485_760 {
             return error(
                 400,
@@ -1295,7 +1317,10 @@ fn publish(place: &Place, channel: &str, body: &[u8], world: &World<'_>) -> Outc
     if (world.declared_channel)(&name) {
         return Outcome::Deliver {
             channel: name,
-            events: events.into_iter().map(|event| event.json).collect(),
+            events: events
+                .into_iter()
+                .map(|event| delivery_value(event.json))
+                .collect(),
         };
     }
     // A channel created through the API has no trigger: the publication is accepted and goes nowhere.
@@ -1304,9 +1329,14 @@ fn publish(place: &Place, channel: &str, body: &[u8], world: &World<'_>) -> Outc
 
 /// What production checks of the events once the channel is known to exist (stage B, rows 85 to 119 and
 /// 148 to 150). The order between the checks is INFERRED: each was recorded alone.
-fn validate_events(events: &[ParsedEvent]) -> Option<Outcome> {
+fn validate_events(events: &[SourceEvent]) -> Option<Outcome> {
     for (index, event) in events.iter().enumerate() {
-        if let Some(refusal) = validate_event(index, &event.fields) {
+        let text = event
+            .json
+            .get("textData")
+            .or_else(|| event.json.get("text_data"));
+        if let Some(refusal) = validate_event(index, &event.fields, text.and_then(Ordered::as_str))
+        {
             return Some(refusal);
         }
     }
@@ -1330,7 +1360,7 @@ fn validate_events(events: &[ParsedEvent]) -> Option<Outcome> {
     None
 }
 
-fn validate_event(index: usize, fields: &Fields) -> Option<Outcome> {
+fn validate_event(index: usize, fields: &Fields, text: Option<&str>) -> Option<Outcome> {
     let at = format!("events[{index}]");
     for (name, value) in [
         ("id", &fields.id),
@@ -1408,7 +1438,7 @@ fn validate_event(index: usize, fields: &Fields) -> Option<Outcome> {
         ));
     }
     match &fields.data {
-        Data::Text(text) if serde_json::from_str::<Value>(text).is_ok() => {}
+        Data::Text(_) if text.is_some_and(|value| serde_json::from_str::<Value>(value).is_ok()) => {}
         Data::Text(_) => violations.push((
             at.clone(),
             "Provided CloudEvent data is not a valid json object.",
@@ -1431,19 +1461,24 @@ fn validate_event(index: usize, fields: &Fields) -> Option<Outcome> {
     ))
 }
 
-fn parse_publish(body: &[u8]) -> Result<Vec<ParsedEvent>, Outcome> {
+fn parse_publish(body: &[u8]) -> Result<Vec<SourceEvent>, Outcome> {
     let document =
         parse(body).map_err(|_| invalid_argument("Invalid JSON payload received.", None))?;
     let Ordered::Object(members) = document else {
         return Err(invalid_argument("Invalid JSON payload received.", None));
     };
     let mut events = Vec::new();
-    for (name, value) in &members {
+    for (name, value) in members {
         match name.as_str() {
             "events" => match value {
                 Ordered::Array(items) => {
-                    for (index, item) in items.iter().enumerate() {
-                        events.push(parse_event(index, item)?);
+                    for (index, item) in items.into_iter().enumerate() {
+                        let (inner_size, fields) = parse_event_fields(index, &item)?;
+                        events.push(SourceEvent {
+                            json: item,
+                            inner_size,
+                            fields,
+                        });
                     }
                 }
                 Ordered::Null => {}
@@ -1491,7 +1526,28 @@ fn snake(name: &str) -> &str {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static DELIVERY_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn delivery_value(event: Ordered) -> Value {
+    #[cfg(test)]
+    DELIVERY_VALUES.with(|count| count.set(count.get() + 1));
+    event.into_value()
+}
+
+#[cfg(test)]
 fn parse_event(index: usize, event: &Ordered) -> Result<ParsedEvent, Outcome> {
+    let (inner_size, fields) = parse_event_fields(index, event)?;
+    Ok(ParsedEvent {
+        json: event.to_value(),
+        inner_size,
+        fields,
+    })
+}
+
+fn parse_event_fields(index: usize, event: &Ordered) -> Result<(usize, Fields), Outcome> {
     let at = format!("events[{index}]");
     let Ordered::Object(members) = event else {
         return Err(invalid_argument(
@@ -1578,7 +1634,7 @@ fn parse_event(index: usize, event: &Ordered) -> Result<ParsedEvent, Outcome> {
                             return Err(wrong_type("text_data", "TYPE_STRING", value));
                         };
                         inner += field_len(text.len());
-                        fields.data = Data::Text(text.clone());
+                        fields.data = Data::Text(text.len());
                     }
                     _ => return Err(unobserved("an event with proto data")),
                 }
@@ -1586,11 +1642,7 @@ fn parse_event(index: usize, event: &Ordered) -> Result<ParsedEvent, Outcome> {
             unknown => return Err(unknown_name(unknown, None)),
         }
     }
-    Ok(ParsedEvent {
-        json: event.to_value(),
-        inner_size: inner,
-        fields,
-    })
+    Ok((inner, fields))
 }
 
 /// The map of attributes of one event; returns the serialized size of its entries and the entries.
@@ -1895,6 +1947,24 @@ mod tests {
             &format!(r#"{{"events":[{}]}}"#, events.join(",")),
             declared,
         )
+    }
+
+    #[test]
+    fn only_delivered_events_create_delivery_values() {
+        let before = DELIVERY_VALUES.with(std::cell::Cell::get);
+        let event = delivered_event("id");
+        assert_eq!(
+            status_and_message(&publish(std::slice::from_ref(&event), &[])).0,
+            404
+        );
+        assert_eq!(DELIVERY_VALUES.with(std::cell::Cell::get), before);
+        let declared = ["projects/demo/locations/us-central1/channels/c"];
+        let Outcome::Deliver { events, .. } = publish(std::slice::from_ref(&event), &declared)
+        else {
+            panic!("expected a dispatch");
+        };
+        assert_eq!(events, vec![serde_json::from_str::<Value>(&event).unwrap()]);
+        assert_eq!(DELIVERY_VALUES.with(std::cell::Cell::get), before + 1);
     }
 
     #[test]

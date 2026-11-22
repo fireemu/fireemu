@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use fireemu_core_types::time::LogicalInstant;
 use rand_core::{OsRng, RngCore};
 use serde::Deserialize;
@@ -373,8 +374,15 @@ impl Version {
 
 /// In-memory history for one project's client template.
 pub struct TemplateStore {
-    versions: Mutex<VecDeque<Arc<Version>>>,
+    history: Mutex<History>,
 }
+
+struct History {
+    versions: VecDeque<Arc<Version>>,
+    current_body: Option<Bytes>,
+}
+
+const MAX_CACHED_TEMPLATE_BYTES: usize = 1024 * 1024;
 
 impl Default for TemplateStore {
     fn default() -> Self {
@@ -391,7 +399,10 @@ impl Default for TemplateStore {
             change: Change::Initial,
         };
         Self {
-            versions: Mutex::new(VecDeque::from([Arc::new(initial)])),
+            history: Mutex::new(History {
+                versions: VecDeque::from([Arc::new(initial)]),
+                current_body: None,
+            }),
         }
     }
 }
@@ -401,35 +412,95 @@ fn head(versions: &VecDeque<Arc<Version>>) -> &Arc<Version> {
 }
 
 fn published(versions: &VecDeque<Arc<Version>>, number: u64) -> Option<&Arc<Version>> {
-    versions
-        .iter()
-        .find(|version| version.number == number && number > 0)
+    let index = published_index(versions, number)?;
+    versions.get(index)
+}
+
+fn published_index(versions: &VecDeque<Arc<Version>>, number: u64) -> Option<usize> {
+    // Each commit appends exactly the next version; retention only removes the oldest.
+    if number == 0 {
+        return None;
+    }
+    let oldest = versions.front()?.number;
+    let index = usize::try_from(number.checked_sub(oldest)?).ok()?;
+    (index < versions.len()).then_some(index)
 }
 
 impl TemplateStore {
     /// The current version, or the store's empty initial state.
     #[must_use]
     pub fn current(&self) -> Arc<Version> {
-        head(&self.versions.lock().expect("template store lock")).clone()
+        head(&self.history.lock().expect("template store lock").versions).clone()
     }
 
     /// A retained published version, excluding the empty initial state.
     #[must_use]
     pub fn version(&self, number: u64) -> Option<Arc<Version>> {
-        published(&self.versions.lock().expect("template store lock"), number).cloned()
+        published(
+            &self.history.lock().expect("template store lock").versions,
+            number,
+        )
+        .cloned()
     }
 
     /// Retained published versions in descending order.
     #[must_use]
     pub fn history(&self) -> Vec<Arc<Version>> {
-        self.versions
+        self.history
             .lock()
             .expect("template store lock")
+            .versions
             .iter()
             .rev()
             .filter(|version| version.number > 0)
             .cloned()
             .collect()
+    }
+
+    pub(crate) fn history_page(
+        &self,
+        limit: usize,
+        after: Option<&str>,
+    ) -> Option<(Vec<Arc<Version>>, bool)> {
+        let history = self.history.lock().expect("template store lock");
+        let versions = &history.versions;
+        let end = if let Some(token) = after {
+            let (_, number) = token.rsplit_once('-')?;
+            let index = published_index(versions, number.parse().ok()?)?;
+            if versions[index].etag() != token {
+                return None;
+            }
+            index
+        } else {
+            versions.len()
+        };
+        let first_published =
+            usize::from(versions.front().is_some_and(|version| version.number == 0));
+        let first = end.saturating_sub(limit).max(first_published);
+        let page = versions.range(first..end).rev().cloned().collect();
+        Some((page, first > first_published))
+    }
+
+    pub(crate) fn render_current(
+        &self,
+        render: impl FnOnce(&Version) -> Bytes,
+    ) -> (Arc<Version>, Bytes) {
+        let version = {
+            let history = self.history.lock().expect("template store lock");
+            let current = head(&history.versions).clone();
+            if let Some(body) = &history.current_body {
+                return (current, body.clone());
+            }
+            current
+        };
+        let body = render(&version);
+        if body.len() <= MAX_CACHED_TEMPLATE_BYTES {
+            let mut history = self.history.lock().expect("template store lock");
+            if Arc::ptr_eq(head(&history.versions), &version) && history.current_body.is_none() {
+                history.current_body = Some(body.clone());
+            }
+        }
+        (version, body)
     }
 
     /// Applies a matching `ETag` or an explicit wildcard to a proposal. Validation leaves history
@@ -444,9 +515,9 @@ impl TemplateStore {
         let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
         let template = ClientTemplate::validate(draft);
-        let mut versions = self.versions.lock().expect("template store lock");
+        let mut history = self.history.lock().expect("template store lock");
         let forced = if_match == "*";
-        let base_etag = head(&versions).etag();
+        let base_etag = head(&history.versions).etag();
         if !forced && if_match != base_etag {
             return Err(Error::PreconditionFailed);
         }
@@ -458,7 +529,7 @@ impl TemplateStore {
             });
         }
         Self::commit(
-            &mut versions,
+            &mut history,
             Arc::new(template),
             now,
             Change::Publish { forced },
@@ -468,20 +539,21 @@ impl TemplateStore {
 
     /// Reuses a retained version's template with a fresh version number and timestamp.
     pub fn rollback(&self, source: u64, now: LogicalInstant) -> Result<Arc<Version>, Error> {
-        let mut versions = self.versions.lock().expect("template store lock");
-        let template = published(&versions, source)
+        let mut history = self.history.lock().expect("template store lock");
+        let template = published(&history.versions, source)
             .ok_or(Error::UnknownVersion)?
             .template
             .clone();
-        Self::commit(&mut versions, template, now, Change::Rollback { source })
+        Self::commit(&mut history, template, now, Change::Rollback { source })
     }
 
     fn commit(
-        versions: &mut VecDeque<Arc<Version>>,
+        history: &mut History,
         template: Arc<ClientTemplate>,
         now: LogicalInstant,
         change: Change,
     ) -> Result<Arc<Version>, Error> {
+        let versions = &mut history.versions;
         let current = head(versions);
         let number = current
             .number
@@ -498,6 +570,45 @@ impl TemplateStore {
         if number == 1 || versions.len() > MAX_RETAINED_VERSIONS {
             versions.pop_front();
         }
+        history.current_body = None;
         Ok(version)
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn late_render_cannot_replace_the_current_version() {
+        let store = TemplateStore::default();
+        let now = LogicalInstant::UNIX_EPOCH;
+        store
+            .write(WriteMode::Publish, Some("*"), json!({}), now)
+            .unwrap();
+
+        let (old, body) = store.render_current(|version| {
+            assert_eq!(version.number(), 1);
+            store.rollback(1, now).unwrap();
+            let (new, body) = store.render_current(|_| Bytes::from_static(b"new"));
+            assert_eq!(new.number(), 2);
+            assert_eq!(body, "new");
+            Bytes::from_static(b"old")
+        });
+        assert_eq!(old.number(), 1);
+        assert_eq!(body, "old");
+        let (new, body) = store.render_current(|_| panic!("version 2 was already rendered"));
+        assert_eq!(new.number(), 2);
+        assert_eq!(body, "new");
+    }
+
+    #[test]
+    fn large_current_body_is_rendered_each_time() {
+        let store = TemplateStore::default();
+        let oversized =
+            store.render_current(|_| Bytes::from(vec![0; MAX_CACHED_TEMPLATE_BYTES + 1]));
+        assert_eq!(oversized.1.len(), MAX_CACHED_TEMPLATE_BYTES + 1);
+        let (_, body) = store.render_current(|_| Bytes::from_static(b"next render"));
+        assert_eq!(body, "next render");
     }
 }

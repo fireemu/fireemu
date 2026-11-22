@@ -23,7 +23,7 @@ use tokio_stream::StreamExt;
 use tonic::codegen::Service;
 use tonic::Status;
 
-use crate::rest::{RestRequest, RestResponse, RestState};
+use crate::rest::{RestRequest, RestResponse, RestState, RoutedResponse};
 use crate::webchannel::{ChannelRequest, ChannelResponse, Hub, StreamKind};
 
 /// `FS-LIMIT-API-REQUEST-BYTES` as the limits catalog publishes it: 10 MiB. Production does
@@ -222,6 +222,15 @@ fn json_response_with_document_layout(
     } else {
         serde_json::to_vec(&r.body).unwrap_or_default()
     };
+    json_bytes_response(r.status, text, origin, production_json)
+}
+
+fn json_bytes_response(
+    status: u16,
+    text: Vec<u8>,
+    origin: Option<&str>,
+    production_json: bool,
+) -> Response<OutBody> {
     // The observed production REST JSON header uses this literal charset spelling.
     // Strict local administration shares this styling; its native behavior is unobserved.
     let content_type = if production_json {
@@ -229,7 +238,7 @@ fn json_response_with_document_layout(
     } else {
         "application/json; charset=utf-8"
     };
-    cors_headers(Response::builder().status(r.status), origin)
+    cors_headers(Response::builder().status(status), origin)
         .header("content-type", content_type)
         .body(full(Bytes::from(text)))
         .unwrap_or_else(|_| Response::new(full(Bytes::new())))
@@ -522,7 +531,7 @@ async fn rest_call(
             let _permit = attempt_permit;
             crate::local::LocalBackend::with_commit_wait_owner(owner.as_ref(), || {
                 crate::local::LocalBackend::without_waiting(|| {
-                    attempt_state.handle(&attempt_request.request)
+                    attempt_state.handle_wire(&attempt_request.request)
                 })
             })
         })
@@ -541,7 +550,18 @@ async fn rest_call(
         // request.
         match try_admit_rest_work(rest_work_limiter()) {
             Some(admitted) => permit = admitted,
-            None => break too_many_concurrent_requests(),
+            None => break RoutedResponse::Response(too_many_concurrent_requests()),
+        }
+    };
+    let response = match response {
+        RoutedResponse::Response(response) => response,
+        RoutedResponse::RunQuery(bytes) => {
+            return Ok(json_bytes_response(
+                200,
+                bytes,
+                origin.as_deref(),
+                production_json,
+            ));
         }
     };
     if crate::rest::drops_connection(&response) {

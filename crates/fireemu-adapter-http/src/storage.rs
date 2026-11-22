@@ -41,9 +41,9 @@ use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_session::loopback::PrivilegedAdmission;
 use fireemu_core_storage::name::{BucketName, ObjectName};
 use fireemu_core_storage::store::{
-    CustomMetadataPatch, MetadataPatch, NewMetadata, ObjectMetadata, Precondition, PreparedObject,
-    StorageError, StorageEvent, StorageState as ObjectStore, UploadAdmission, UploadId,
-    UploadOptions, UploadPhase, VersionsCursor, DEFAULT_LIST_PAGE_SIZE,
+    CustomMetadataPatch, MetadataPatch, NewMetadata, ObjectBody, ObjectMetadata, Precondition,
+    PreparedObject, StorageError, StorageEvent, StorageState as ObjectStore, UploadAdmission,
+    UploadId, UploadOptions, UploadPhase, VersionsCursor, DEFAULT_LIST_PAGE_SIZE,
 };
 use fireemu_core_types::codec::{percent_decode_bytes, percent_escapes_are_well_formed, PlusMode};
 use fireemu_core_types::determinism::Clock;
@@ -1943,6 +1943,22 @@ fn find_delimiter(body: &[u8], from: usize, delimiter: &[u8]) -> Option<usize> {
     // body of pure delimiter bytes used to make every offset match, get rejected for not
     // starting a line, and advance by a single byte, burning minutes of CPU on one
     // unauthenticated request (S-3).
+    let mut from = from;
+    if let Some(&marker) = delimiter.first() {
+        for chunk in body.get(from..)?.chunks_exact(128) {
+            // A line-break byte may be in the previous block.
+            let starts_on_line =
+                chunk[0] == marker && (from == 0 || body.get(from - 1) == Some(&b'\n'));
+            if starts_on_line
+                || (chunk.contains(&marker)
+                    && chunk.contains(&b'\n')
+                    && chunk.windows(2).any(|pair| pair == [b'\n', marker]))
+            {
+                break;
+            }
+            from += chunk.len();
+        }
+    }
     let mut pos = if from == 0 || body.get(from.wrapping_sub(1)) == Some(&b'\n') {
         from
     } else {
@@ -1979,11 +1995,24 @@ fn next_line_start(body: &[u8], from: usize) -> Option<usize> {
         .map(|i| from + i + 1)
 }
 
+// A match cannot start in a block without the needle's first byte. Leave the
+// subsequent bounded line or separator search untouched once a block can match.
+fn leading_bytes_without(haystack: &[u8], marker: u8) -> usize {
+    const BLOCK: usize = 128;
+    haystack
+        .chunks_exact(BLOCK)
+        .take_while(|chunk| !chunk.contains(&marker))
+        .count()
+        * BLOCK
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack.windows(needle.len()).position(|w| w == needle)
+    let marker = *needle.first()?;
+    let start = leading_bytes_without(haystack, marker);
+    haystack[start..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|offset| start + offset)
 }
 
 /// Part headers and the offset of the part content inside `part`.
@@ -4690,16 +4719,13 @@ fn fb_get(
     if media {
         // A media read leaves the object as it is (production, stage 3 v9: the metadata read
         // after `get-media` still has its metageneration and no token).
-        let bytes = store
-            .body_shared(&meta)
-            .map_err(|e| fb_core_err(StorageError::SpillFailed(e.to_string())))?;
-        drop(store);
-        Ok(send_file_bytes(
-            bytes,
+        send_file_bytes(
+            store,
             &meta,
             req,
             state.strict_range_style(RangeStyle::Firebase),
-        ))
+        )
+        .map_err(fb_core_err)
     } else {
         // Production mints a download token the first time the Firebase dialect reads the
         // metadata of an object that has none (stage 3 v9: `get-metadata-present` answers
@@ -4709,15 +4735,6 @@ fn fb_get(
             meta = store.add_download_token(&b, &n, now).map_err(fb_core_err)?;
         }
         Ok(StorageResponse::json(200, &firebase_json(&meta)))
-    }
-}
-
-/// The official `sendFileBytes`: object bytes with the header set both dialects share.
-struct SharedBlob(Arc<Vec<u8>>);
-
-impl AsRef<[u8]> for SharedBlob {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_slice()
     }
 }
 
@@ -4746,13 +4763,47 @@ fn firebase_range_not_satisfiable(meta: &ObjectMetadata, req: &StorageRequest) -
     }
 }
 
+fn read_media_window(
+    store: StoreGuard<'_>,
+    body: ObjectBody,
+    interval: std::ops::Range<u64>,
+) -> Result<bytes::Bytes, StorageError> {
+    // Whole and large reads stay serialized. A small partial read can complete without
+    // holding the store lock and buffers at most a MiB per active HTTP handler.
+    const MAX_UNLOCKED_RANGE_BYTES: u64 = 1024 * 1024;
+    let count = interval.end - interval.start;
+    let result = if count < body.size() && count <= MAX_UNLOCKED_RANGE_BYTES {
+        drop(store);
+        body.read(interval)
+    } else {
+        let result = body.read(interval);
+        drop(store);
+        result
+    };
+    result
+        .map(bytes::Bytes::from_owner)
+        .map_err(|error| StorageError::SpillFailed(error.to_string()))
+}
+
+/// The official `sendFileBytes`: object bytes with the header set both dialects share.
 fn send_file_bytes(
-    shared: Arc<Vec<u8>>,
+    store: StoreGuard<'_>,
     meta: &ObjectMetadata,
     req: &StorageRequest,
     strict_range: Option<RangeStyle>,
-) -> StorageResponse {
-    let bytes = bytes::Bytes::from_owner(SharedBlob(shared));
+) -> Result<StorageResponse, StorageError> {
+    let body = store.pin_body(meta);
+    let len = body.size();
+    // https://cloud.google.com/storage/docs/json_api/v1/status-codes
+    // https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4
+    // Emulator mode preserves the official emulator's whole-object fallback; strict answers as
+    // production does (recorded, lean-v4 and lean-v5, both dialects).
+    let range = parse_range(req.header("range"), len);
+    let interval = match range {
+        ParsedRange::Satisfiable(start, end) => start..end,
+        _ => 0..len,
+    };
+    let bytes = read_media_window(store, body, interval)?;
     let filename = meta
         .name
         .as_str()
@@ -4800,21 +4851,15 @@ fn send_file_bytes(
     if let Some(style) = strict_range {
         production_media_headers(&mut headers, meta, style);
     }
-    let len = bytes.len() as u64;
-    // https://cloud.google.com/storage/docs/json_api/v1/status-codes
-    // https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4
-    // Emulator mode preserves the official emulator's whole-object fallback; strict answers as
-    // production does (recorded, lean-v4 and lean-v5, both dialects).
-    let range = parse_range(req.header("range"), len);
     match (strict_range, &range) {
         // The JSON API: the sentence as `text/html` and the unsatisfied range of the object.
         (Some(RangeStyle::Gcs), ParsedRange::Unsatisfiable) => {
-            return html_text(416, "Request range not satisfiable")
-                .with_header("content-range", format!("bytes */{len}"));
+            return Ok(html_text(416, "Request range not satisfiable")
+                .with_header("content-range", format!("bytes */{len}")));
         }
         // The Firebase dialect: an XML error naming the range that was asked for.
         (Some(RangeStyle::Firebase), ParsedRange::Unsatisfiable) => {
-            return firebase_range_not_satisfiable(meta, req);
+            return Ok(firebase_range_not_satisfiable(meta, req));
         }
         // A nonzero suffix of an empty object is satisfied by an empty 206 (JSON API only).
         (Some(RangeStyle::Gcs), ParsedRange::EmptySuffix) => {
@@ -4822,11 +4867,11 @@ fn send_file_bytes(
             // Only the checksum of no bytes (recorded: the empty 206 carries `crc32c` alone).
             headers.retain(|(name, _)| name != "x-goog-hash");
             headers.push(("x-goog-hash".to_owned(), "crc32c=AAAAAA==".to_owned()));
-            return StorageResponse {
+            return Ok(StorageResponse {
                 status: 206,
                 headers,
                 body: bytes::Bytes::new(),
-            };
+            });
         }
         _ => {}
     }
@@ -4840,24 +4885,17 @@ fn send_file_bytes(
             "content-range".to_owned(),
             format!("bytes {start}-{}/{len}", end - 1),
         ));
-        let (s, e) = (
-            usize::try_from(start).unwrap_or(usize::MAX),
-            usize::try_from(end).unwrap_or(usize::MAX),
-        );
-        let body = bytes
-            .get(s..e)
-            .map_or_else(bytes::Bytes::new, |_| bytes.slice(s..e));
-        return StorageResponse {
+        return Ok(StorageResponse {
             status: 206,
             headers,
-            body,
-        };
+            body: bytes,
+        });
     }
-    StorageResponse {
+    Ok(StorageResponse {
         status: 200,
         headers,
         body: bytes,
-    }
+    })
 }
 
 /// The headers of a media answer as production writes them under strict (recorded, lean-v4 and
@@ -6724,16 +6762,8 @@ fn gcs_object(
                 Err(e) => return Ok(gcs_core_err(e)),
             }
             if media {
-                let bytes = store
-                    .body_shared(&meta)
-                    .map_err(|e| gcs_core_err(StorageError::SpillFailed(e.to_string())))?;
-                drop(store);
-                Ok(send_file_bytes(
-                    bytes,
-                    &meta,
-                    req,
-                    state.strict_range_style(RangeStyle::Gcs),
-                ))
+                send_file_bytes(store, &meta, req, state.strict_range_style(RangeStyle::Gcs))
+                    .map_err(gcs_core_err)
             } else {
                 Ok(StorageResponse::json(
                     200,
@@ -8224,12 +8254,8 @@ fn xml_style_get(
     let Some(meta) = store.get(&b, &n).cloned() else {
         return Ok(gcs_no_such_object(bucket, name, media));
     };
-    let bytes = store
-        .body_shared(&meta)
-        .map_err(|e| gcs_core_err(StorageError::SpillFailed(e.to_string())))?;
-    drop(store);
     // XML range and media-header behavior remain unrecorded here, so both profiles keep the emulator framing. RECORDED (STORAGE-STRICTNESS-OBS run ss-48adbd8e, case C5): GET CORS is applied separately by the server.
-    Ok(send_file_bytes(bytes, &meta, req, None))
+    send_file_bytes(store, &meta, req, None).map_err(gcs_core_err)
 }
 
 #[cfg(test)]

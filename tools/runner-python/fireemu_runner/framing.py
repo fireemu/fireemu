@@ -7,7 +7,9 @@ a JSON parser error can quote the payload.
 """
 
 import json
+import re
 import threading
+from collections.abc import Callable
 
 MAX_FRAME_BYTES = 16 * 1024 * 1024
 _MAX_HEADER_DIGITS = len(str(MAX_FRAME_BYTES))
@@ -29,6 +31,7 @@ def encode_frame(message: dict) -> bytes:
 
 _DECODER = json.JSONDecoder()
 _WHITESPACE = " \t\n\r"
+_FLAT_ARRAY = re.compile(r'\[[^"{}\[\]]*\]')
 # The trigger types whose request body is the event's JSON data as the daemon framed it.
 _RAW_DATA_TRIGGERS = frozenset(("eventarc", "pubsub", "storage", "database"))
 
@@ -39,13 +42,34 @@ def _after_whitespace(text: str, index: int) -> int:
     return index
 
 
+def _decoded_value_end(text: str, start: int) -> int:
+    return _DECODER.raw_decode(text, start)[1]
+
+
+def _validated_value_end(text: str, start: int) -> int:
+    # JSON validation has already run. These spans need no intermediate Python value.
+    if text[start] == '"':
+        end = text.find('"', start + 1)
+        if end >= 0 and text.find("\\", start + 1, end) < 0:
+            return end + 1
+    elif text[start] == "[":
+        matched = _FLAT_ARRAY.match(text, start)
+        if matched is not None:
+            return matched.end()
+    return _decoded_value_end(text, start)
+
+
 def raw_event_data(text: str) -> str | None:
     """The text of `event.data` exactly as it stands in a frame, or None when the frame has none or is malformed.
 
     The decoder turns the data into Python values and forgets its spelling (`1e-7`, `\\u00e9`, member order, white space).
     For a custom Eventarc event in the strict profile the daemon frames the publisher's own JSON text, and that text is the
-    request body production delivered, so it is read here from the frame text, member by member, without parsing the data.
+    request body production delivered, so it is read here from the frame text, member by member.
     """
+    return _raw_event_data(text, _decoded_value_end)
+
+
+def _raw_event_data(text: str, value_end: Callable[[str, int], int]) -> str | None:
     try:
         index = _after_whitespace(text, 0)
         for wanted in ("event", "data"):
@@ -61,11 +85,11 @@ def raw_event_data(text: str) -> str | None:
                 index = _after_whitespace(text, index + 1)
                 if key == wanted:
                     break
-                index = _after_whitespace(text, _DECODER.raw_decode(text, index)[1])
+                index = _after_whitespace(text, value_end(text, index))
                 if text[index] == ",":
                     index += 1
         start = index
-        end = _DECODER.raw_decode(text, start)[1]
+        end = value_end(text, start)
         # A value must be followed by what ends it, or the frame is cut short.
         return text[start:end] if text[_after_whitespace(text, end)] in ",}" else None
     except (IndexError, ValueError):
@@ -96,7 +120,7 @@ def _decode_message(payload: bytes) -> dict:
     ):
         raise ProtocolError("message fields")
     if message["trigger"] in _RAW_DATA_TRIGGERS and "data" in message["event"]:
-        raw = raw_event_data(text)
+        raw = _raw_event_data(text, _validated_value_end)
         if raw is not None:
             message["rawEventData"] = raw
     return message

@@ -95,9 +95,15 @@ pub struct PreparedPublication {
     initial_message_counter: u64,
     next_message_counter: u64,
     published: Vec<Arc<StoredMessage>>,
+    admission: PublishAdmission,
+}
+
+#[derive(Debug)]
+struct PublishAdmission {
     subscription_keys: Vec<String>,
     snapshot_names: Vec<String>,
     snapshot_total_bytes: usize,
+    filter_matches: Vec<Option<Box<[u64]>>>,
 }
 
 impl PreparedPublication {
@@ -1491,28 +1497,52 @@ impl PubSubState {
         topic_key: &str,
         topic_incarnation: u64,
         published: &[Arc<StoredMessage>],
-    ) -> Result<(Vec<String>, Vec<String>, usize)> {
+        remember_filter_matches: bool,
+    ) -> Result<PublishAdmission> {
         let subscription_keys: Vec<String> = self
             .topic_subs
             .get(topic_key)
             .map(|s| s.iter().cloned().collect())
             .unwrap_or_default();
-        for key in &subscription_keys {
+        // Single-message and small batches are cheaper without an extra fan-out allocation.
+        let mut filter_matches = if remember_filter_matches && published.len() >= 16 {
+            vec![None; subscription_keys.len()]
+        } else {
+            Vec::new()
+        };
+        for (index, key) in subscription_keys.iter().enumerate() {
             if self.function_subscriptions.contains(key) {
                 continue;
             }
             if let Some(sub) = self.subscriptions.get(key) {
-                sub.ensure_enqueue_capacity(
-                    published
-                        .iter()
-                        .filter(|stored| sub.admits(&stored.message.attributes))
-                        .map(AsRef::as_ref),
-                )?;
+                let matches = published
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, stored)| sub.admits(&stored.message.attributes));
+                if let Some(remember) = filter_matches.get_mut(index) {
+                    if !sub.config().filter.as_str().is_empty() {
+                        // A bit per input keeps temporary storage bounded even when every
+                        // message matches every subscription.
+                        let mut bits = vec![0_u64; published.len().div_ceil(64)].into_boxed_slice();
+                        sub.ensure_enqueue_capacity(matches.map(|(i, stored)| {
+                            bits[i / 64] |= 1 << (i % 64);
+                            stored.as_ref()
+                        }))?;
+                        *remember = Some(bits);
+                        continue;
+                    }
+                }
+                sub.ensure_enqueue_capacity(matches.map(|(_, stored)| stored.as_ref()))?;
             }
         }
         let (snapshot_names, snapshot_total_bytes) =
             self.snapshot_publish_admission(topic_key, topic_incarnation, published)?;
-        Ok((subscription_keys, snapshot_names, snapshot_total_bytes))
+        Ok(PublishAdmission {
+            subscription_keys,
+            snapshot_names,
+            snapshot_total_bytes,
+            filter_matches,
+        })
     }
 
     /// Prepares a publication after validating broker capacity and assigning stable message ids.
@@ -1528,6 +1558,7 @@ impl PubSubState {
             topic,
             messages.into_iter().map(|m| (m, None)).collect(),
             now,
+            false,
         )
     }
 
@@ -1552,6 +1583,7 @@ impl PubSubState {
             topic,
             messages.into_iter().map(|(m, id)| (m, Some(id))).collect(),
             now,
+            false,
         )
     }
 
@@ -1560,6 +1592,7 @@ impl PubSubState {
         topic: &TopicName,
         messages: Vec<(PubsubMessage, Option<String>)>,
         now: LogicalInstant,
+        remember_filter_matches: bool,
     ) -> Result<PreparedPublication> {
         let topic_key = topic.to_full();
         let topic_incarnation = self
@@ -1602,17 +1635,19 @@ impl PubSubState {
             }));
         }
 
-        let (subscription_keys, snapshot_names, snapshot_total_bytes) =
-            self.publish_admission(&topic_key, topic_incarnation, &published)?;
+        let admission = self.publish_admission(
+            &topic_key,
+            topic_incarnation,
+            &published,
+            remember_filter_matches,
+        )?;
         Ok(PreparedPublication {
             topic_key,
             topic_incarnation,
             initial_message_counter,
             next_message_counter,
             published,
-            subscription_keys,
-            snapshot_names,
-            snapshot_total_bytes,
+            admission,
         })
     }
 
@@ -1637,29 +1672,52 @@ impl PubSubState {
                 "the prepared Pub/Sub publication is no longer current",
             ));
         }
-        let (subscription_keys, snapshot_names, snapshot_total_bytes) = self.publish_admission(
+        let admission = self.publish_admission(
             &prepared.topic_key,
             prepared.topic_incarnation,
             &prepared.published,
+            false,
         )?;
-        if subscription_keys != prepared.subscription_keys
-            || snapshot_names != prepared.snapshot_names
-            || snapshot_total_bytes != prepared.snapshot_total_bytes
+        if admission.subscription_keys != prepared.admission.subscription_keys
+            || admission.snapshot_names != prepared.admission.snapshot_names
+            || admission.snapshot_total_bytes != prepared.admission.snapshot_total_bytes
         {
             return Err(PubSubError::failed_precondition(
                 "the Pub/Sub publication admission changed before commit",
             ));
         }
 
+        Ok(self.commit_current_publication(prepared, now))
+    }
+
+    // Only called after checking the current state or with the uninterrupted mutable borrow
+    // that built the admission result.
+    fn commit_current_publication(
+        &mut self,
+        prepared: PreparedPublication,
+        now: LogicalInstant,
+    ) -> Vec<Arc<StoredMessage>> {
         let publish_time = prepared
             .published
             .first()
             .map_or(now, |message| message.publish_time);
-        for key in &prepared.subscription_keys {
+        for (index, key) in prepared.admission.subscription_keys.iter().enumerate() {
             if self.function_subscriptions.contains(key) {
                 continue;
             }
             if let Some(sub) = self.subscriptions.get_mut(key) {
+                if let Some(Some(bits)) = prepared.admission.filter_matches.get(index) {
+                    for (offset, &word) in bits.iter().enumerate() {
+                        let mut remaining = word;
+                        while remaining != 0 {
+                            let index = offset * 64 + remaining.trailing_zeros() as usize;
+                            sub.enqueue(Arc::clone(&prepared.published[index]), publish_time)
+                                .expect("publish admission preflight guaranteed capacity");
+                            remaining &= remaining - 1;
+                        }
+                    }
+                    continue;
+                }
                 for stored in &prepared.published {
                     if sub.admits(&stored.message.attributes) {
                         sub.enqueue(Arc::clone(stored), publish_time)
@@ -1668,10 +1726,10 @@ impl PubSubState {
                 }
             }
         }
-        self.retain_snapshot_publication(&prepared.snapshot_names, &prepared.published);
-        self.snapshot_retained_bytes = prepared.snapshot_total_bytes;
+        self.retain_snapshot_publication(&prepared.admission.snapshot_names, &prepared.published);
+        self.snapshot_retained_bytes = prepared.admission.snapshot_total_bytes;
         self.message_counter = prepared.next_message_counter;
-        Ok(prepared.published)
+        prepared.published
     }
 
     fn snapshot_publish_admission(
@@ -1787,8 +1845,35 @@ impl PubSubState {
         messages: Vec<PubsubMessage>,
         now: LogicalInstant,
     ) -> Result<Vec<Arc<StoredMessage>>> {
-        let prepared = self.prepare_publish(topic, messages, now)?;
-        self.commit_prepared(prepared, now)
+        self.publish_shared_admitted(topic, messages, now, |_| Ok(()))
+            .map(|(published, ())| published)
+    }
+
+    /// Publishes a batch only after an external admission callback accepts the prepared records.
+    ///
+    /// The mutable broker borrow lasts from preflight through commit, so subscription and
+    /// snapshot membership cannot change while the callback runs. A refusal leaves the batch
+    /// invisible and preserves the next message ID. The callback must not reenter the broker
+    /// or block when the caller holds the broker lock.
+    pub fn publish_shared_admitted<R>(
+        &mut self,
+        topic: &TopicName,
+        messages: Vec<PubsubMessage>,
+        now: LogicalInstant,
+        admit: impl FnOnce(&[Arc<StoredMessage>]) -> Result<R>,
+    ) -> Result<(Vec<Arc<StoredMessage>>, R)> {
+        let prepared = self.prepare_publish_numbered(
+            topic,
+            messages
+                .into_iter()
+                .map(|message| (message, None))
+                .collect(),
+            now,
+            true,
+        )?;
+        let reservation = admit(prepared.published_messages())?;
+        let _changed = self.delivery_change();
+        Ok((self.commit_current_publication(prepared, now), reservation))
     }
 
     /// Delivers up to `max` messages from a subscription. Dead-lettered messages are forwarded
@@ -3914,6 +3999,156 @@ mod tests {
             now.checked_add(LogicalDuration::from_seconds(SNAPSHOT_TTL_SECONDS))
                 .unwrap()
         );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Keep the generated admission cases adjacent to their expected outcomes.
+    fn exclusive_publish_keeps_filter_order_and_reserves_only_after_capacity_admission() {
+        // Subscriptions, batch size, filter, active snapshot, rejected bridge, full budget.
+        let cases = [
+            (1, 1, "empty", false, false, false),
+            (64, 100, "some", true, false, false),
+            (64, 100, "none", false, false, false),
+            (64, 100, "all", true, true, true),
+            (1, 1, "empty", true, false, true),
+            (1, 1, "some", false, true, true),
+            (64, 1, "all", false, false, false),
+            (1, 100, "all", true, false, false),
+            (1, 1, "none", true, false, true),
+            (1, 100, "none", true, true, false),
+            (1, 1, "some", false, false, false),
+            (64, 100, "empty", true, true, false),
+            (2, 15, "some", false, false, false),
+            (2, 16, "some", false, false, false),
+            (2, 17, "some", false, false, false),
+        ];
+        for (count, batch_size, filter_kind, with_snapshot, bridge_rejects, full) in cases {
+            let mut state = PubSubState::new(5);
+            let topic_name = topic("test-project", "test-topic");
+            let now = LogicalInstant::from_unix_seconds(100);
+            state
+                .create_topic(topic_name.clone(), BTreeMap::new())
+                .unwrap();
+            let names = (0..count)
+                .map(|index| {
+                    let label = format!("subscription-{index:03}");
+                    let filter = if filter_kind == "empty" {
+                        Filter::always()
+                    } else {
+                        Filter::parse(r#"attributes.kind = "matched""#).unwrap()
+                    };
+                    let config = sub_cfg("test-project", &label, "test-topic", filter);
+                    let name = config.name.clone();
+                    state.create_subscription(config).unwrap();
+                    name
+                })
+                .collect::<Vec<_>>();
+            if count > 1 {
+                state.mark_function_subscription(&names[count - 1]).unwrap();
+            }
+            let snapshot_name = "projects/test-project/snapshots/test-snapshot";
+            if with_snapshot {
+                state
+                    .create_snapshot(snapshot_name, &names[0], BTreeMap::new(), now)
+                    .unwrap();
+            }
+            if full {
+                if with_snapshot {
+                    // Model an exactly full shared snapshot budget without retaining 64 MiB.
+                    state.snapshot_retained_bytes = MAX_SNAPSHOT_RETAINED_BYTES;
+                } else {
+                    let filler = Arc::new(StoredMessage {
+                        message_id: "filler".to_owned(),
+                        publish_time: now,
+                        message: data(b"retained"),
+                    });
+                    let sub = state.sub_mut(&names[0]).unwrap();
+                    for _ in 0..crate::subscription::MAX_RETAINED_PER_SUB {
+                        sub.enqueue(Arc::clone(&filler), now).unwrap();
+                    }
+                }
+            }
+            let matches = |index| match filter_kind {
+                "none" => false,
+                "some" => index % 2 == 0,
+                _ => true,
+            };
+            let messages = (0..batch_size)
+                .map(|index| {
+                    let mut message = data(format!("message-{index}").as_bytes());
+                    let kind = if matches(index) {
+                        "matched"
+                    } else {
+                        "excluded"
+                    };
+                    message
+                        .attributes
+                        .insert("kind".to_owned(), kind.to_owned());
+                    message
+                })
+                .collect();
+            let mut bridge_calls = 0;
+            let result = state.publish_shared_admitted(&topic_name, messages, now, |candidates| {
+                bridge_calls += 1;
+                assert_eq!(candidates.len(), batch_size);
+                assert_eq!(candidates[0].message_id, crate::pubsub_message_id(1));
+                if bridge_rejects {
+                    return Err(PubSubError::failed_precondition("bridge refused the batch"));
+                }
+                Ok(candidates.len())
+            });
+            let failure = if full {
+                Some(crate::error::Code::ResourceExhausted)
+            } else if bridge_rejects {
+                Some(crate::error::Code::FailedPrecondition)
+            } else {
+                None
+            };
+            assert_eq!(bridge_calls, usize::from(!full));
+            if let Some(code) = failure {
+                assert_eq!(result.unwrap_err().code(), code);
+                assert_eq!(state.message_counter, 0);
+                if with_snapshot {
+                    assert!(state.snapshots[snapshot_name].captured_messages.is_empty());
+                }
+                let unaffected = if full && !with_snapshot {
+                    &names[1..]
+                } else {
+                    &names[..]
+                };
+                assert!(unaffected
+                    .iter()
+                    .all(|name| state.pull(name, 1, now).unwrap().is_empty()));
+                continue;
+            }
+
+            let (published, reserved_count) = result.unwrap();
+            assert_eq!(reserved_count, batch_size);
+            assert_eq!(state.message_counter, u64::try_from(batch_size).unwrap());
+            if with_snapshot {
+                assert_eq!(
+                    state.snapshots[snapshot_name].captured_messages.as_slice(),
+                    published
+                );
+            }
+            for (index, name) in names.iter().enumerate() {
+                let got = state.pull(name, batch_size, now).unwrap();
+                if count > 1 && index == count - 1 {
+                    assert!(got.is_empty());
+                } else {
+                    let want = published
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| matches(*index))
+                        .map(|(_, message)| message)
+                        .collect::<Vec<_>>();
+                    assert_eq!(got.len(), want.len());
+                    for (receipt, expected) in got.iter().zip(want) {
+                        assert!(Arc::ptr_eq(&receipt.message, expected));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

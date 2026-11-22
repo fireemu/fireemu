@@ -2616,3 +2616,75 @@ fn admitted_nested_sum_evaluates_child_once() {
     expected.next_u64();
     assert_eq!(rng.lock().unwrap().next_u64(), expected.next_u64());
 }
+
+#[test]
+fn a_scalar_count_keeps_no_payload_and_emits_only_at_finish() {
+    let aggregate = Stage::Aggregate {
+        accumulators: vec![(
+            "count".to_owned(),
+            Accumulator {
+                argument: None,
+                kind: AccumulatorKind::CountAll,
+            },
+        )],
+        groups: Vec::new(),
+    };
+    let mut cursor = Cursor::new(vec![Stage::Limit(2), aggregate]);
+    for i in 0..3 {
+        assert!(cursor
+            .push(Row::derived(BTreeMap::from([(
+                "payload".to_owned(),
+                Value::Bytes(vec![i; 4_096]),
+            )])))
+            .unwrap()
+            .is_empty());
+    }
+    assert!(!matches!(&cursor.state[1], StageState::Buffer(rows) if !rows.is_empty()));
+    let count = |value| {
+        Row::derived(BTreeMap::from([(
+            "count".to_owned(),
+            Value::Integer(value),
+        )]))
+    };
+    assert_eq!(cursor.finish().unwrap(), vec![count(2)]);
+    assert_eq!(cursor.finish().unwrap(), vec![count(0)]);
+}
+
+#[test]
+fn a_small_nearest_limit_preserves_input_ties_and_validates_late_rows() {
+    let vector = FieldPath::parse("vector").unwrap();
+    let nearest = |measure, limit| Stage::FindNearest {
+        expression: Expr::Field(vector.clone()),
+        query: vec![1.0, 2.0],
+        measure,
+        limit,
+        distance_field: Some(FieldPath::parse("distance").unwrap()),
+    };
+    let rows: Vec<_> = (0..80)
+        .map(|index| {
+            let value = f64::from(index % 6 + 1);
+            Row::derived(BTreeMap::from([
+                ("index".to_owned(), Value::Integer(i64::from(index))),
+                ("vector".to_owned(), Value::Vector(vec![value, value])),
+            ]))
+        })
+        .collect();
+    for measure in [
+        DistanceMeasure::Euclidean,
+        DistanceMeasure::DotProduct,
+        DistanceMeasure::Cosine,
+    ] {
+        let sorted = execute(vec![nearest(measure, rows.len())], rows.clone()).unwrap();
+        assert_eq!(
+            &execute(vec![nearest(measure, 3)], rows.clone()).unwrap(),
+            &sorted[..3]
+        );
+
+        let mut invalid = rows.clone();
+        invalid.push(Row::derived(BTreeMap::new()));
+        assert_eq!(
+            execute(vec![nearest(measure, 3)], invalid.clone()),
+            execute(vec![nearest(measure, invalid.len())], invalid),
+        );
+    }
+}

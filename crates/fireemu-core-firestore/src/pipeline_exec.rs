@@ -22,7 +22,7 @@ use fireemu_core_types::determinism::{DeterministicRng, SplitMix64};
 use fireemu_core_types::ids::DocumentId;
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt::{self, Write as _};
 use std::sync::{Arc, Mutex};
 
@@ -2609,6 +2609,8 @@ enum StageState {
     Remaining(u64),
     /// The rows a blocking stage has received.
     Buffer(Vec<Row>),
+    /// Row count for an ungrouped `count()` without an input expression.
+    CountAll(i64),
     /// A union that has already appended its sources.
     UnionDone,
     /// A documents sample has already emitted.
@@ -2661,6 +2663,23 @@ impl Cursor {
             .iter()
             .map(|stage| match stage {
                 Stage::Offset(n) | Stage::Limit(n) => StageState::Remaining(*n),
+                Stage::Aggregate {
+                    accumulators,
+                    groups,
+                } if groups.is_empty()
+                    && matches!(
+                        accumulators.as_slice(),
+                        [(
+                            _,
+                            Accumulator {
+                                kind: AccumulatorKind::CountAll,
+                                argument: None
+                            }
+                        )]
+                    ) =>
+                {
+                    StageState::CountAll(0)
+                }
                 Stage::Sort(_)
                 | Stage::FindNearest { .. }
                 | Stage::Distinct(_)
@@ -2778,6 +2797,15 @@ impl Cursor {
                         }
                     }
                 }
+                continue;
+            }
+            if let StageState::CountAll(count) = &mut self.state[index] {
+                let Stage::Aggregate { accumulators, .. } = &self.stages[index] else {
+                    unreachable!("only a scalar aggregate counts all rows");
+                };
+                let count = Value::Integer(std::mem::take(count));
+                let row = Row::derived(BTreeMap::from([(accumulators[0].0.clone(), count)]));
+                self.run(index + 1, row, &mut out)?;
                 continue;
             }
             if !self.stages[index].is_blocking() {
@@ -3110,19 +3138,46 @@ impl Cursor {
                 | Stage::Distinct(_)
                 | Stage::Aggregate { .. }
                 | Stage::Sample(SampleMode::Documents(_)) => {
-                    if matches!(held, StageState::SampleDone) {
-                        return Ok(());
+                    match held {
+                        StageState::SampleDone => {}
+                        StageState::CountAll(count) => *count += 1,
+                        StageState::Buffer(rows) => rows.push(row),
+                        _ => unreachable!("a blocking stage keeps its own state"),
                     }
-                    let StageState::Buffer(rows) = held else {
-                        unreachable!("a blocking stage keeps rows");
-                    };
-                    rows.push(row);
                     return Ok(());
                 }
             }
         }
         out.push(row);
         Ok(())
+    }
+}
+
+struct RankedPipelineRow {
+    key: f64,
+    position: usize,
+    row: Row,
+}
+
+impl PartialEq for RankedPipelineRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for RankedPipelineRow {}
+
+impl PartialOrd for RankedPipelineRow {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RankedPipelineRow {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key
+            .total_cmp(&other.key)
+            .then_with(|| self.position.cmp(&other.position))
     }
 }
 
@@ -3142,8 +3197,11 @@ fn nearest_rows(
     else {
         unreachable!("nearest_rows requires a nearest stage");
     };
+    let bounded = limit.saturating_mul(4) < rows.len();
+    let descending = *measure == DistanceMeasure::DotProduct;
     let mut ranked = Vec::new();
-    for mut row in rows {
+    let mut nearest = BinaryHeap::new();
+    for (position, row) in rows.into_iter().enumerate() {
         let vector = match expression.eval_at(&row, unrecorded, false, runtime) {
             Eval::Value(Value::Vector(vector)) => vector,
             Eval::Error(error) => return Err(error),
@@ -3164,20 +3222,57 @@ fn nearest_rows(
                 reason: "non-finite or zero vector distance",
             });
         };
-        if let Some(field) = distance_field {
-            set_path(&mut row.fields, field, Value::Double(distance));
-        }
-        ranked.push((distance, row));
-    }
-    ranked.sort_by(|a, b| {
-        if *measure == DistanceMeasure::DotProduct {
-            b.0.total_cmp(&a.0)
+        if bounded {
+            // The heap drops the worst score. Input position preserves the stable sort's
+            // ordering of equal scores, including at the limit boundary.
+            let candidate = RankedPipelineRow {
+                key: if descending { -distance } else { distance },
+                position,
+                row,
+            };
+            if nearest.len() < *limit {
+                nearest.push(candidate);
+            } else if let Some(mut worst) = nearest.peek_mut() {
+                if candidate < *worst {
+                    *worst = candidate;
+                }
+            }
         } else {
-            a.0.total_cmp(&b.0)
+            ranked.push((distance, row));
         }
-    });
-    ranked.truncate(*limit);
-    Ok(ranked.into_iter().map(|(_, row)| row).collect())
+    }
+    if bounded {
+        ranked = nearest
+            .into_sorted_vec()
+            .into_iter()
+            .map(|candidate| {
+                let distance = if descending {
+                    -candidate.key
+                } else {
+                    candidate.key
+                };
+                (distance, candidate.row)
+            })
+            .collect();
+    } else {
+        ranked.sort_by(|a, b| {
+            if descending {
+                b.0.total_cmp(&a.0)
+            } else {
+                a.0.total_cmp(&b.0)
+            }
+        });
+        ranked.truncate(*limit);
+    }
+    Ok(ranked
+        .into_iter()
+        .map(|(distance, mut row)| {
+            if let Some(field) = distance_field {
+                set_path(&mut row.fields, field, Value::Double(distance));
+            }
+            row
+        })
+        .collect())
 }
 
 fn pipeline_vector_distance(

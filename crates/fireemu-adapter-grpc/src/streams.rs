@@ -1691,9 +1691,8 @@ fn refresh_target_full(
             // filter of the documents the target matches, whatever its count was (`resume-grid-*`
             // k1-expected, k2-expected, k2-wrong, both L1b runs).
             if answer == ResumeAnswer::BloomWhenUnchanged && departed.is_empty() {
-                let names: Vec<String> =
-                    current.iter().map(|doc| doc.path.resource_name()).collect();
-                if let Some(bloom) = crate::bloom::Bloom::for_documents(&names) {
+                let names = current.iter().map(|doc| doc.path.resource_name());
+                if let Some(bloom) = crate::bloom::Bloom::for_documents(names) {
                     state.pending.push(existence_filter(
                         id,
                         current.len(),
@@ -1814,12 +1813,8 @@ fn refresh_target_delta(
             }
         }
         TargetKind::Query(query) => {
-            let changed_documents = changed_paths
-                .iter()
-                .filter_map(|path| db.get(path))
-                .collect::<Vec<_>>();
             let Some(matched) = db
-                .run_incremental_query(query, changed_documents)
+                .run_incremental_query_shared(query, changed_paths)
                 .map_err(|error| crate::encode::status_from_error(&error))?
             else {
                 return Ok(None);
@@ -1832,7 +1827,7 @@ fn refresh_target_delta(
             for document in matched {
                 if state.known.get(&document.path) != Some(document.version) {
                     state.known.insert(&document.path, document.version);
-                    out_change(Arc::new(document), id, &mut state.pending);
+                    out_change(document, id, &mut state.pending);
                 }
             }
             for path in changed_paths {

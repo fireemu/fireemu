@@ -8,7 +8,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use fireemu_core_firestore::store::{Document, FirestoreState, SharedDocument};
 use fireemu_core_firestore::value::Value;
+use fireemu_core_types::ids::CollectionId;
 use fireemu_core_types::time::LogicalInstant;
 use serde_json::{json, Map, Value as Json};
 
@@ -112,6 +114,22 @@ pub trait ManagedStorage: Send + Sync {
     ///
     /// Why the objects could not be written.
     fn export(&self, job: &ExportJob) -> Result<ExportOutcome, String>;
+    /// Writes a captured database snapshot. The default keeps compatibility with owned jobs.
+    /// `job.documents` is empty; `documents` supplies the captured documents in path order.
+    ///
+    /// # Errors
+    ///
+    /// Why the objects could not be written.
+    fn export_snapshot(
+        &self,
+        job: ExportJob,
+        documents: &[SharedDocument],
+    ) -> Result<ExportOutcome, String> {
+        self.export(&ExportJob {
+            documents: documents.iter().map(|doc| managed_document(doc)).collect(),
+            ..job
+        })
+    }
     /// Reads an export.
     ///
     /// # Errors
@@ -241,68 +259,79 @@ pub(crate) fn first_document_key(
     Ok(keys.into_iter().next())
 }
 
+fn database_of(
+    state: &RestState,
+    project: &str,
+    database: &str,
+) -> Result<crate::local::DatabaseHandle, RestResponse> {
+    let parent = crate::decode::parse_parent(&format!(
+        "projects/{project}/databases/{database}/documents"
+    ))
+    .map_err(|e| crate::rest::error_response(&tonic::Status::invalid_argument(e.to_string())))?;
+    state
+        .local
+        .database_handle(&parent)
+        .map_err(|s| crate::rest::error_response(&s))
+}
+
 fn documents_of(
     state: &RestState,
     project: &str,
     database: &str,
 ) -> Result<Vec<ManagedDocument>, RestResponse> {
-    let parent = crate::decode::parse_parent(&format!(
-        "projects/{project}/databases/{database}/documents"
-    ))
-    .map_err(|e| crate::rest::error_response(&tonic::Status::invalid_argument(e.to_string())))?;
-    let handle = state
-        .local
-        .database_handle(&parent)
-        .map_err(|s| crate::rest::error_response(&s))?;
-    let documents = handle
-        .read(fireemu_core_firestore::store::FirestoreState::documents)
+    let documents = database_of(state, project, database)?
+        .read(FirestoreState::documents)
         .unwrap_or_default();
     Ok(documents
         .into_iter()
-        .map(|d| ManagedDocument {
-            path: d
-                .path
-                .pairs()
-                .iter()
-                .map(|(c, id)| (c.as_str().to_owned(), id.as_str().to_owned()))
-                .collect(),
-            fields: d.fields,
+        .map(|doc| ManagedDocument {
+            path: managed_path(&doc),
+            fields: doc.fields,
         })
         .collect())
 }
 
-/// How many documents of a database belong to one collection group (an index build's and a
-/// field change's progress counter).
+fn managed_path(doc: &Document) -> Vec<(String, String)> {
+    doc.path
+        .pairs()
+        .iter()
+        .map(|(collection, id)| (collection.as_str().to_owned(), id.as_str().to_owned()))
+        .collect()
+}
+
+fn managed_document(doc: &Document) -> ManagedDocument {
+    ManagedDocument {
+        path: managed_path(doc),
+        fields: doc.fields.clone(),
+    }
+}
+
 /// The document count of every collection group of a database, from one snapshot.
 pub(crate) fn group_document_counts(
     state: &RestState,
     project: &str,
     database: &str,
 ) -> BTreeMap<String, u64> {
-    let mut counts = BTreeMap::new();
-    for document in documents_of(state, project, database).unwrap_or_default() {
-        if let Some((collection, _)) = document.path.last() {
-            *counts.entry(collection.clone()).or_insert(0) += 1;
-        }
-    }
-    counts
+    database_of(state, project, database)
+        .ok()
+        .and_then(|handle| handle.read(FirestoreState::live_collection_group_counts))
+        .unwrap_or_default()
 }
 
+/// How many documents belong to one collection group for index and field operation progress.
 pub(crate) fn group_document_count(
     state: &RestState,
     project: &str,
     database: &str,
     group: &str,
 ) -> u64 {
-    documents_of(state, project, database).map_or(0, |all| {
-        all.iter()
-            .filter(|d| {
-                d.path
-                    .last()
-                    .is_some_and(|(collection, _)| collection == group)
-            })
-            .count() as u64
-    })
+    database_of(state, project, database)
+        .ok()
+        .and_then(|handle| {
+            let group = CollectionId::try_new(group).ok()?;
+            handle.read(|db| db.live_collection_group_count(&group))
+        })
+        .unwrap_or_default()
 }
 
 /// `databases/{d}:exportDocuments`.
@@ -345,8 +374,10 @@ pub(crate) fn export(
     }
     let collection_ids = strings(body, "collectionIds");
     let namespace_ids = strings(body, "namespaceIds");
-    let documents = match documents_of(state, project, database) {
-        Ok(documents) => documents,
+    let documents = match database_of(state, project, database) {
+        Ok(handle) => handle
+            .read(FirestoreState::live_document_handles)
+            .unwrap_or_default(),
         Err(response) => return response,
     };
     let start = state.local.admin_now();
@@ -358,9 +389,9 @@ pub(crate) fn export(
         collection_ids: collection_ids.clone(),
         namespace_ids: namespace_ids.clone(),
         window: (start, finished(start)),
-        documents,
+        documents: Vec::new(),
     };
-    let outcome = match storage.export(&job) {
+    let outcome = match storage.export_snapshot(job, &documents) {
         Ok(outcome) => outcome,
         Err(message) => return error(tonic::Code::Internal, &message, None),
     };

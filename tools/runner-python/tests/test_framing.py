@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from fireemu_runner import framing
 from fireemu_runner.framing import MAX_FRAME_BYTES, FrameWriter, ProtocolError, encode_frame, raw_event_data, read_frame
 
 
@@ -17,6 +18,43 @@ def invoke(**overrides):
     message = {"type": "invoke", "invocationId": "i-1", "function": "f", "trigger": "firestore", "event": {}}
     message.update(overrides)
     return message
+
+
+# Full order-3 PICT table for value shape × position in the frame × trigger.
+@pytest.mark.parametrize(
+    "value, requires_second_decode",
+    [
+        ('"plain ü😀"', False),
+        (r'"escaped \"quote\" and \u00e9"', True),
+        ('[ -0.25e+03, 42, null, true, false ]', False),
+        ('[ 23, [ 17 ] ]', True),
+        ('{"duplicate": 1, "duplicate": 2}', True),
+    ],
+    ids=["Plain", "Escaped", "FlatArray", "NestedArray", "Object"],
+)
+@pytest.mark.parametrize("placement", ["Data", "EventMetadata", "EnvelopeMetadata"])
+@pytest.mark.parametrize("trigger", ["eventarc", "firestore"], ids=["Raw", "Other"])
+def test_wire_span_reuses_validation(monkeypatch, value, requires_second_decode, placement, trigger):
+    encoded_data = value if placement == "Data" else "2.000e+9"
+    prefix = f'{{"type":"invoke","invocationId":"i","trigger":"{trigger}","function":"f",'
+    top = f'"meta":{value},' if placement == "EnvelopeMetadata" else ""
+    event = f'"meta":{value},' if placement == "EventMetadata" else ""
+    text = prefix + top + '"event":{' + event + f'"data":{encoded_data}}}}}'
+    expected = json.loads(text)
+    value_offset = text.index(value)
+    original = framing._DECODER
+    indexes = []
+
+    class RecordingDecoder:
+        def raw_decode(self, source, index):
+            indexes.append(index)
+            return original.raw_decode(source, index)
+
+    monkeypatch.setattr(framing, "_DECODER", RecordingDecoder())
+    if trigger == "eventarc":
+        expected["rawEventData"] = encoded_data
+    assert read_frame(io.BytesIO(frame(text.encode("utf-8")))) == expected
+    assert (value_offset in indexes) == (trigger == "eventarc" and requires_second_decode)
 
 
 def test_encode_is_decimal_length_newline_compact_utf8_json():

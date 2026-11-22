@@ -50,14 +50,18 @@ impl Bloom {
 
     /// The filter production sent for exactly these names, or `None` for a count it was not
     /// recorded for (zero, or more than three).
-    pub(crate) fn for_documents(names: &[String]) -> Option<Self> {
+    pub(crate) fn for_documents<I>(names: I) -> Option<Self>
+    where
+        I: ExactSizeIterator,
+        I::Item: AsRef<str>,
+    {
         let (_, hash_count, bytes, padding) = RECORDED
             .iter()
             .copied()
             .find(|(count, ..)| *count == names.len())?;
         let mut bloom = Self::with_size(hash_count, bytes, padding);
         for name in names {
-            bloom.insert(name);
+            bloom.insert(name.as_ref());
         }
         Some(bloom)
     }
@@ -151,7 +155,7 @@ mod tests {
                 .map(str::to_owned)
                 .collect();
             let actual = if mode == "recorded" {
-                Bloom::for_documents(&names)
+                Bloom::for_documents(names.iter())
             } else {
                 assert_eq!(mode, "direct");
                 let mut filter = Bloom::with_size(
@@ -219,14 +223,29 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for (count, hash_count, bytes, padding) in RECORDED {
-            let bloom = Bloom::for_documents(&names(count)).expect("recorded");
+            let bloom = Bloom::for_documents(names(count).iter()).expect("recorded");
             assert_eq!(bloom.hash_count, hash_count);
             assert_eq!(bloom.bitmap.len(), bytes);
             assert_eq!(bloom.padding, padding);
         }
-        assert_eq!(Bloom::for_documents(&names(0)), None);
-        assert_eq!(Bloom::for_documents(&names(4)), None);
-        assert_eq!(Bloom::for_documents(&names(40)), None);
+        assert_eq!(Bloom::for_documents(names(0).iter()), None);
+        assert_eq!(Bloom::for_documents(names(4).iter()), None);
+        assert_eq!(Bloom::for_documents(names(40).iter()), None);
+    }
+
+    #[test]
+    fn an_unrecorded_count_does_not_build_resource_names() {
+        let builds = std::cell::Cell::new(0);
+        for count in [0, 4, 4_096] {
+            assert_eq!(
+                Bloom::for_documents((0..count).map(|id| {
+                    builds.set(builds.get() + 1);
+                    format!("projects/p/databases/(default)/documents/items/{id}")
+                })),
+                None
+            );
+        }
+        assert_eq!(builds.get(), 0);
     }
 
     /// The relation the sizes are derived from: for each recorded count the chosen byte count is
@@ -272,7 +291,7 @@ mod tests {
 
     #[test]
     fn it_carries_its_size_in_the_message() {
-        let bloom = Bloom::for_documents(&["a".to_owned(), "b".to_owned()]).unwrap();
+        let bloom = Bloom::for_documents(["a", "b"].into_iter()).unwrap();
         let message = bloom.clone().into_proto();
         assert_eq!(message.hash_count, 13);
         let bits = message.bits.unwrap();
@@ -292,13 +311,13 @@ mod tests {
                 .into_iter()
                 .map(|n| format!("projects/p/databases/(default)/documents/{n}"))
                 .collect();
-            let bloom = Bloom::for_documents(&names).expect("recorded count");
+            let bloom = Bloom::for_documents(names.iter()).expect("recorded count");
             for name in &names {
                 prop_assert!(bloom.might_contain(name), "{name}");
             }
             let mut reversed = names.clone();
             reversed.reverse();
-            prop_assert_eq!(Bloom::for_documents(&reversed), Some(bloom));
+            prop_assert_eq!(Bloom::for_documents(reversed.iter()), Some(bloom));
         }
     }
 }

@@ -144,12 +144,10 @@ export class FrameDecoder {
           }
         }
         this.#check();
+        let payload;
         if (this.#body === null) {
           const byte = chunk[at++];
-          if (byte === 10) {
-            if (this.#digits === 0) throw new ProtocolError('empty length');
-            this.#body = Buffer.allocUnsafe(this.#length);
-          } else {
+          if (byte !== 10) {
             if (byte < 48 || byte > 57 || (this.#digits === 0 && byte === 48)) {
               throw new ProtocolError('decimal length');
             }
@@ -158,27 +156,39 @@ export class FrameDecoder {
             if (this.#digits > MAX_HEADER_BYTES || this.#length > MAX_FRAME_BYTES) {
               throw new ProtocolError('frame too large');
             }
+            continue;
           }
+          if (this.#digits === 0) throw new ProtocolError('empty length');
+          if (chunk.length - at < this.#length) {
+            this.#body = Buffer.allocUnsafe(this.#length);
+            continue;
+          }
+          // Complete bodies are decoded synchronously while the input chunk is still owned by the caller.
+          this.#check();
+          const end = at + this.#length;
+          payload = chunk.subarray(at, end);
+          at = end;
         } else {
           const count = Math.min(chunk.length - at, this.#length - this.#offset);
           chunk.copy(this.#body, this.#offset, at, at + count);
           at += count;
           this.#offset += count;
           if (this.#offset !== this.#length) continue;
-          const message = decodeMessage(this.#body);
-          // Timers can run late. Check after decoding, before any user callback,
-          // so a late final chunk cannot race the timer into successful dispatch.
-          this.#check();
-          const payloadBytes = this.#length;
-          this.#body = null;
-          this.#offset = 0;
-          this.#length = 0;
-          this.#digits = 0;
-          this.#deadline = null;
-          // Byte accounting is the actual received payload length, not a
-          // caller-supplied field or a second JSON serialization.
-          if (this.#onFrame(message, payloadBytes) === false) this.#ended = true;
+          payload = this.#body;
         }
+        const message = decodeMessage(payload);
+        // Timers can run late. Check after decoding, before any user callback,
+        // so a late final chunk cannot race the timer into successful dispatch.
+        this.#check();
+        const payloadBytes = this.#length;
+        this.#body = null;
+        this.#offset = 0;
+        this.#length = 0;
+        this.#digits = 0;
+        this.#deadline = null;
+        // Byte accounting is the actual received payload length, not a
+        // caller-supplied field or a second JSON serialization.
+        if (this.#onFrame(message, payloadBytes) === false) this.#ended = true;
       }
     } catch (error) { this.#fail(error); }
   }

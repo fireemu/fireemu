@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use traceability_check::check;
+use traceability_check::{check, check_with_quint_evidence};
 
 /// A throw-away repository root that removes itself when dropped.
 struct Fixture {
@@ -34,6 +34,10 @@ impl Fixture {
     }
 
     fn write_ledger_only(&self, requirement: &Value) {
+        self.write_requirements(std::slice::from_ref(requirement));
+    }
+
+    fn write_requirements(&self, requirements: &[Value]) {
         self.write(
             "verification/mutants/catalog.json",
             &json!({
@@ -53,7 +57,7 @@ impl Fixture {
             &json!({
                 "schemaVersion": 1,
                 "source": "fixture",
-                "requirements": [requirement],
+                "requirements": requirements,
             })
             .to_string(),
         );
@@ -555,4 +559,68 @@ fn quint_backed_requirements_need_safe_fresh_killed_property_evidence() {
             ),
         }
     }
+}
+
+#[test]
+fn repeated_model_evidence_preserves_each_requirement_and_rechecks_on_the_next_run() {
+    let fixture = Fixture::new("repeated-model");
+    fixture.copy_event_delivery_quint_authority();
+    fixture.write("crates/fixture/tests/it.rs", "#[test] fn it() {}");
+    let first = requirement(
+        "implemented",
+        &json!({
+            "quint": "EventDelivery.qnt::LegalStateTransitions",
+            "mutation": ["M-FIX-001", "M-FORMAL-EVENT-LEGAL-001"]
+        }),
+    );
+    let mut same_property = first.clone();
+    same_property["id"] = "FIX-002".into();
+    let mut other_property = first.clone();
+    other_property["id"] = "FIX-003".into();
+    other_property["artifacts"]["quint"] = "EventDelivery.qnt::NoTerminalRegression".into();
+    fixture.write_requirements(&[first, same_property, other_property]);
+
+    let assert_valid_evidence = |report: traceability_check::Report| {
+        assert_eq!(
+            report.problems,
+            ["requirement FIX-003: no referenced killed Quint mutation for property NoTerminalRegression"]
+        );
+    };
+    let assert_stale_evidence = |report: traceability_check::Report| {
+        let invalid_evidence: Vec<_> = report
+            .problems
+            .iter()
+            .filter(|problem| problem.contains("Quint evidence for EventDelivery is invalid"))
+            .collect();
+        assert_eq!(invalid_evidence.len(), 3);
+        for (problem, id) in invalid_evidence
+            .into_iter()
+            .zip(["FIX-001", "FIX-002", "FIX-003"])
+        {
+            assert!(
+                problem.starts_with(&format!("requirement {id}:")),
+                "{problem}"
+            );
+        }
+    };
+
+    assert_valid_evidence(check(&fixture.root));
+    let evidence_relative = "verification/quint/evidence/EventDelivery.json";
+    let authority_relative = "verification/quint/evidence/cargo-authority.json";
+    for (source, target) in [
+        (evidence_relative, "staged/EventDelivery.json"),
+        (authority_relative, "staged/cargo-authority.json"),
+    ] {
+        fixture.write(
+            target,
+            &fs::read_to_string(fixture.root.join(source)).unwrap(),
+        );
+    }
+    let staged = fixture.root.join("staged");
+    assert_valid_evidence(check_with_quint_evidence(&fixture.root, Some(&staged)));
+    fixture.write("staged/cargo-authority.json", "{}");
+    assert_stale_evidence(check_with_quint_evidence(&fixture.root, Some(&staged)));
+
+    fixture.write("verification/quint/specs/EventDelivery.qnt", "// stale\n");
+    assert_stale_evidence(check(&fixture.root));
 }

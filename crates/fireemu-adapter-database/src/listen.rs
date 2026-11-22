@@ -227,7 +227,7 @@ impl Listen {
         if shown.contains_key(key) {
             return true;
         }
-        let window = OldWindow::new(query, tree, &self.path, &shown);
+        let window = OldWindow::new(query, tree, &self.path, shown);
         if window.bounds.is_some() {
             return false;
         }
@@ -254,7 +254,7 @@ impl Listen {
         let depth = location.depth();
         let before = as_map(&self.last);
         let after = as_map(fresh);
-        let old_window = OldWindow::new(query, tree, location, &before);
+        let old_window = OldWindow::new(query, tree, location, before);
         let touches = |path: &Path| {
             let key = &path.keys()[depth];
             before.contains_key(key)
@@ -380,10 +380,11 @@ impl OldWindow {
     }
 }
 
-fn as_map(view: &Json) -> BTreeMap<String, Json> {
+fn as_map(view: &Json) -> &BTreeMap<String, Json> {
+    static EMPTY: BTreeMap<String, Json> = BTreeMap::new();
     match view {
-        Json::Object(map) => map.clone(),
-        _ => BTreeMap::new(),
+        Json::Object(map) => map,
+        _ => &EMPTY,
     }
 }
 
@@ -480,4 +481,23 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn views_built() -> usize {
     VIEWS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comparison_borrows_window_children() {
+        let view = Json::Object(BTreeMap::from([("key".to_owned(), Json::int(1))]));
+        let Json::Object(owned) = &view else {
+            unreachable!();
+        };
+        let compared = as_map(&view);
+        assert!(std::ptr::eq(
+            compared.get("key").unwrap(),
+            owned.get("key").unwrap()
+        ));
+        assert!(as_map(&Json::Null).is_empty());
+    }
 }

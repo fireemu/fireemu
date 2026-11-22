@@ -8160,14 +8160,13 @@ impl LocalBackend {
                     Some(at) => Some(Self::retained_read_version(db, at)?),
                     None => None,
                 };
-                let mut ids = db.list_collection_ids_at(parent.document.as_ref(), version);
-                if let Some(after) = &after {
-                    ids.retain(|id| id > after);
-                }
-                // As for documents: a token only when a collection id follows the page.
-                let full = ids.len() > page_size;
-                ids.truncate(page_size);
-                let next_page_token = if full {
+                let (ids, has_more) = db.list_collection_ids_page_at(
+                    parent.document.as_ref(),
+                    version,
+                    after.as_ref(),
+                    page_size,
+                );
+                let next_page_token = if has_more {
                     ids.last().map_or(String::new(), |id| {
                         crate::rest::json::base64_encode(format!("{id}\n{identity}").as_bytes())
                     })
@@ -8547,7 +8546,7 @@ fn check_list_mask(mask: Option<&pb::DocumentMask>) -> Result<(), Status> {
 fn list_collection_ids_page_cursor(
     page_token: &str,
     identity: &str,
-) -> Result<Option<String>, Status> {
+) -> Result<Option<CollectionId>, Status> {
     if page_token.is_empty() {
         return Ok(None);
     }
@@ -8562,8 +8561,7 @@ fn list_collection_ids_page_cursor(
     if token_identity != identity {
         return Err(Status::invalid_argument(LIST_TOKEN_FOREIGN));
     }
-    CollectionId::try_new(id).map_err(|_| malformed())?;
-    Ok(Some(id.to_owned()))
+    CollectionId::try_new(id).map(Some).map_err(|_| malformed())
 }
 
 /// `RunQuery` responses for `docs`: one per document (or one empty response carrying the

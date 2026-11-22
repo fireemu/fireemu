@@ -158,9 +158,10 @@ pub enum QuotaError {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct BucketKey {
+    // Sort by window first so pruning can inspect the earliest possible expiry.
+    window_start: LogicalInstant,
     project_id: String,
     peer_ip: String,
-    window_start: LogicalInstant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,13 +414,21 @@ impl SignupQuota {
     }
 
     fn prune_expired_buckets(&mut self, now: LogicalInstant) {
-        let active_keys: BTreeSet<BucketKey> = self.active_reservations.values().cloned().collect();
-        self.buckets.retain(|key, bucket| {
-            let expired = key
-                .window_start
+        let expired = |key: &BucketKey| {
+            key.window_start
                 .checked_add(LogicalDuration::from_nanos(NANOS_PER_HOUR))
-                .is_some_and(|end| end <= now);
-            !expired || bucket.reserved != 0 || active_keys.contains(key)
+                .is_some_and(|end| end <= now)
+        };
+        if self
+            .buckets
+            .first_key_value()
+            .is_none_or(|(key, _)| !expired(key))
+        {
+            return;
+        }
+        let active_keys: BTreeSet<&BucketKey> = self.active_reservations.values().collect();
+        self.buckets.retain(|key, bucket| {
+            !expired(key) || bucket.reserved != 0 || active_keys.contains(key)
         });
     }
 }
@@ -442,6 +451,23 @@ mod tests {
             ..SignupQuotaConfig::default()
         })
         .unwrap()
+    }
+
+    #[test]
+    fn earliest_window_remains_at_the_front_after_a_rewind() {
+        let mut quota = quota(QuotaMode::Observe, 100);
+        let later = T0
+            .checked_add(LogicalDuration::from_seconds(3_600))
+            .unwrap();
+        let active = quota.reserve("a", "192.0.2.1", later).unwrap();
+        let earlier = quota.reserve("z", "192.0.2.2", T0).unwrap();
+        quota.commit(earlier, T0).unwrap();
+        assert_eq!(quota.buckets.first_key_value().unwrap().0.window_start, T0);
+        quota.prune_expired_buckets(later);
+        assert_eq!(quota.tracked_bucket_count(), 1);
+        assert_eq!(quota.usage("z", "192.0.2.2", T0), (0, 0));
+        quota.release(active).unwrap();
+        assert_eq!(quota.tracked_bucket_count(), 0);
     }
 
     #[test]

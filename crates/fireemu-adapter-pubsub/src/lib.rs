@@ -746,28 +746,33 @@ impl PubSubHandle {
         messages: Vec<PubsubMessage>,
     ) -> Result<Vec<Arc<StoredMessage>>, PubSubError> {
         let now = self.now();
-        self.publish_prepared(topic, now, false, |state| {
-            if self.paging_policy == PagingPolicy::Strict
-                && messages.len() <= fireemu_core_pubsub::state::MAX_MESSAGES_PER_PUBLISH
-                && state.topic_exists(topic)
-            {
-                // Preserve topic, count, and individual-message error precedence before batch validation.
-                for message in &messages {
-                    message.validate()?;
-                }
-                if let Some(first) = messages.first() {
-                    if messages
-                        .iter()
-                        .any(|message| message.ordering_key != first.ordering_key)
-                    {
-                        return Err(PubSubError::failed_precondition(
-                            "In a single publish request, all messages must have no ordering key or they must all have the same ordering key. [code=539b]",
-                        ));
-                    }
+        let mut state = self.state();
+        if self.paging_policy == PagingPolicy::Strict
+            && messages.len() <= fireemu_core_pubsub::state::MAX_MESSAGES_PER_PUBLISH
+            && state.topic_exists(topic)
+        {
+            // Preserve topic, count, and individual-message error precedence before batch validation.
+            for message in &messages {
+                message.validate()?;
+            }
+            if let Some(first) = messages.first() {
+                if messages
+                    .iter()
+                    .any(|message| message.ordering_key != first.ordering_key)
+                {
+                    return Err(PubSubError::failed_precondition(
+                        "In a single publish request, all messages must have no ordering key or they must all have the same ordering key. [code=539b]",
+                    ));
                 }
             }
-            state.prepare_publish(topic, messages, now)
-        })
+        }
+        let (published, bridge_reservation) =
+            state.publish_shared_admitted(topic, messages, now, |prepared| {
+                self.reserve_publication(topic, prepared, false)
+            })?;
+        drop(state);
+        self.finish_publication(topic, bridge_reservation);
+        Ok(published)
     }
 
     /// Admits and commits one publication that `prepare` builds against the locked state, at `now`, through the broker and
@@ -783,12 +788,24 @@ impl PubSubHandle {
     ) -> Result<Vec<Arc<StoredMessage>>, PubSubError> {
         let mut state = self.state();
         let prepared = prepare(&mut state)?;
-        let bridge_reservation = self
-            .bridge
+        let bridge_reservation =
+            self.reserve_publication(topic, prepared.published_messages(), scheduler)?;
+        let published = state.commit_prepared(prepared, now)?;
+        drop(state);
+        self.finish_publication(topic, bridge_reservation);
+        Ok(published)
+    }
+
+    fn reserve_publication(
+        &self,
+        topic: &TopicName,
+        published: &[Arc<StoredMessage>],
+        scheduler: bool,
+    ) -> Result<Option<Box<dyn TopicDeliveryReservation>>, PubSubError> {
+        self.bridge
             .as_ref()
             .map(|bridge| {
-                let bridge_messages = prepared
-                    .published_messages()
+                let bridge_messages = published
                     .iter()
                     .cloned()
                     .map(|message| BridgeMessage { message })
@@ -800,14 +817,18 @@ impl PubSubHandle {
                 };
                 reservation.map_err(Self::topic_delivery_error)
             })
-            .transpose()?;
-        let published = state.commit_prepared(prepared, now)?;
-        drop(state);
+            .transpose()
+    }
+
+    fn finish_publication(
+        &self,
+        topic: &TopicName,
+        bridge_reservation: Option<Box<dyn TopicDeliveryReservation>>,
+    ) {
         if let Some(reservation) = bridge_reservation {
             reservation.commit();
         }
         self.schedule_push(topic);
-        Ok(published)
     }
 
     /// Publishes a batch through broker admission and every configured topic delivery bridge.

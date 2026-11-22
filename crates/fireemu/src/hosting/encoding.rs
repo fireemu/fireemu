@@ -13,7 +13,7 @@
 //! Brotli is not produced here (a declared difference): a request that accepts only `br` is answered
 //! as identity, one that accepts both as gzip.
 
-use std::io::Read;
+use std::io::{self, Read, Write};
 
 /// The largest file strict compresses. A bigger one is answered as identity: the whole answer is
 /// built in memory, because the length of a gzip body is known only once it is compressed.
@@ -55,9 +55,31 @@ const GZIP_OS: u8 = 0x13;
 /// them gave (a source shorter than `size` is an error). The same input always gives the same
 /// output: the header carries no time and no file name. Blocking: callers run it on a blocking thread.
 pub(super) fn gzip_reader(source: impl Read, size: u64) -> std::io::Result<Vec<u8>> {
+    gzip_to(source, size, Vec::new())
+}
+
+pub(super) fn gzip_length(source: impl Read, size: u64) -> io::Result<u64> {
+    gzip_to(source, size, CountBytes::default()).map(|count| count.0)
+}
+
+#[derive(Default)]
+struct CountBytes(u64);
+
+impl Write for CountBytes {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 += bytes.len() as u64;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn gzip_to<W: Write>(source: impl Read, size: u64, sink: W) -> io::Result<W> {
     let mut encoder = flate2::GzBuilder::new()
         .operating_system(GZIP_OS)
-        .write(Vec::new(), flate2::Compression::default());
+        .write(sink, flate2::Compression::default());
     let copied = std::io::copy(&mut source.take(size), &mut encoder)?;
     if copied != size {
         return Err(std::io::Error::new(

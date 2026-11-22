@@ -115,6 +115,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#argon2@0.5.3",
         "registry+https://github.com/rust-lang/crates.io-index#bcrypt@0.16.0",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.2",
         "registry+https://github.com/rust-lang/crates.io-index#ctr@0.9.2",
         "registry+https://github.com/rust-lang/crates.io-index#hmac@0.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.5",
@@ -970,7 +971,10 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "manifest": null,
       "procMacro": false,
-      "features": [],
+      "features": [
+        "default",
+        "std"
+      ],
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4"
       ]

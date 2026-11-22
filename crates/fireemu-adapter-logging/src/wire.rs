@@ -5,6 +5,7 @@ use base64::Engine as _;
 use fireemu_core_session::loopback::{authority_is_loopback, origin_is_local};
 use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
+use std::borrow::Cow;
 
 /// The GUID RFC 6455 §1.3 appends to the client key before hashing.
 const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -109,20 +110,29 @@ fn sanitize_fields(fields: &Map<String, Value>) -> Map<String, Value> {
     let mut sanitized = Map::new();
     // Keep already-safe keys at their canonical spelling. Sanitized collisions remain visible
     // under deterministic suffixes instead of silently replacing either value.
-    for changed in [false, true] {
-        for (key, value) in fields {
-            let clean = strip_control(key);
-            if (clean != *key) != changed {
-                continue;
+    let mut changed = Vec::new();
+    for (key, value) in fields {
+        match strip_control_cow(key) {
+            Cow::Borrowed(_) => {
+                sanitized.insert(key.clone(), sanitize_field_value(value));
             }
-            let mut candidate = clean.clone();
+            Cow::Owned(clean) => changed.push((clean, value)),
+        }
+    }
+    for (clean, value) in changed {
+        let key = if sanitized.contains_key(&clean) {
             let mut collision = 1usize;
-            while sanitized.contains_key(&candidate) {
-                candidate = format!("{clean} [sanitized {collision}]");
+            loop {
+                let candidate = format!("{clean} [sanitized {collision}]");
+                if !sanitized.contains_key(&candidate) {
+                    break candidate;
+                }
                 collision += 1;
             }
-            sanitized.insert(candidate, sanitize_field_value(value));
-        }
+        } else {
+            clean
+        };
+        sanitized.insert(key, sanitize_field_value(value));
     }
     sanitized
 }
@@ -150,8 +160,17 @@ pub fn bundle_text(input: &LogInput) -> String {
 /// (including non-ASCII) is untouched.
 #[must_use]
 pub fn strip_control(text: &str) -> String {
+    strip_control_cow(text).into_owned()
+}
+
+// The ordinary text prefix is copied in one operation and needs no allocation to classify a key.
+fn strip_control_cow(text: &str) -> Cow<'_, str> {
+    let Some((start, _)) = text.char_indices().find(|&(_, c)| is_control(c)) else {
+        return Cow::Borrowed(text);
+    };
     let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
+    out.push_str(&text[..start]);
+    let mut chars = text[start..].chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\u{1b}' {
             // ESC: skip a CSI (`ESC [ ... final`) or a two-byte escape.
@@ -175,22 +194,24 @@ pub fn strip_control(text: &str) -> String {
         }
         // Drop C0/C1, DEL, and Unicode bidi-formatting controls. Those characters are not log
         // content and can alter a terminal or visual ordering after a WebSocket client parses JSON.
-        if (c as u32) < 0x20
-            || ('\u{7f}'..='\u{9f}').contains(&c)
-            || matches!(
-                c,
-                '\u{061c}'
-                    | '\u{200e}'
-                    | '\u{200f}'
-                    | '\u{202a}'..='\u{202e}'
-                    | '\u{2066}'..='\u{2069}'
-            )
-        {
-            continue;
+        if !is_control(c) {
+            out.push(c);
         }
-        out.push(c);
     }
-    out
+    Cow::Owned(out)
+}
+
+fn is_control(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0}'..='\u{1f}'
+            | '\u{7f}'..='\u{9f}'
+            | '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+    )
 }
 
 /// The 101 Switching Protocols response for an accepted handshake.

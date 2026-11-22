@@ -685,6 +685,8 @@ pub struct Invocation {
     pub late: Option<oneshot::Receiver<InvokeOutcome>>,
 }
 
+pub(crate) type InvocationMembers = BTreeMap<String, Box<serde_json::value::RawValue>>;
+
 impl Runner {
     /// Spawns a runner from its spec.
     pub async fn spawn_spec(spec: &SpawnSpec) -> Result<Self, String> {
@@ -1180,10 +1182,38 @@ impl Runner {
         if !self.is_alive() {
             return done(InvokeOutcome::RunnerGone("runner exited".into()));
         }
-        let Ok(request) = serde_json::from_str::<BTreeMap<String, Box<serde_json::value::RawValue>>>(
-            &request.to_string(),
-        ) else {
+        let Ok(request) = serde_json::from_str::<InvocationMembers>(&request.to_string()) else {
             return done(InvokeOutcome::RunnerGone("invalid invocation JSON".into()));
+        };
+        self.write_invocation(request, timeout, kind, hand_on_late)
+            .await
+    }
+
+    pub(crate) async fn invoke_event(
+        &self,
+        request: InvocationMembers,
+        timeout: Option<Duration>,
+    ) -> Invocation {
+        if !self.is_alive() {
+            return Invocation {
+                outcome: InvokeOutcome::RunnerGone("runner exited".into()),
+                late: None,
+            };
+        }
+        self.write_invocation(request, timeout, "invoke", true)
+            .await
+    }
+
+    async fn write_invocation(
+        &self,
+        request: InvocationMembers,
+        timeout: Option<Duration>,
+        kind: &str,
+        hand_on_late: bool,
+    ) -> Invocation {
+        let done = |outcome| Invocation {
+            outcome,
+            late: None,
         };
         let id = request
             .get("invocationId")

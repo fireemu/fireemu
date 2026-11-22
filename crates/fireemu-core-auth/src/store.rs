@@ -1371,6 +1371,8 @@ pub struct AuthStore {
     /// [`crate::jwt::TokenAcceptance`].
     future_id_token_claims: crate::jwt::FutureClaims,
     oob_codes: Arc<BTreeMap<String, OobCode>>,
+    // Earliest possible removal time. Deletion may leave an earlier conservative bound.
+    oob_sweep_after: Option<LogicalInstant>,
     verification_codes: Arc<BTreeMap<String, VerificationCode>>,
     /// Outstanding phone `temporaryProof`s: proof to the verified number and its issue time.
     temporary_proofs: BTreeMap<String, (String, LogicalInstant)>,
@@ -1865,6 +1867,7 @@ impl AuthStore {
             totp_clock_running: true,
             future_id_token_claims: crate::jwt::FutureClaims::Refuse,
             oob_codes: Arc::new(BTreeMap::new()),
+            oob_sweep_after: None,
             verification_codes: Arc::new(BTreeMap::new()),
             temporary_proofs: BTreeMap::new(),
             pending_sign_in_owners: Arc::new(BTreeMap::new()),
@@ -2211,6 +2214,7 @@ impl AuthStore {
         self.deleted_refresh_digests = Arc::new(BTreeMap::new());
         self.tokens_by_user = Arc::new(BTreeMap::new());
         self.oob_codes = Arc::new(BTreeMap::new());
+        self.oob_sweep_after = None;
         self.verification_codes = Arc::new(BTreeMap::new());
         self.temporary_proofs.clear();
         self.pending_sign_in_owners = Arc::new(BTreeMap::new());
@@ -2238,14 +2242,17 @@ impl AuthStore {
     /// the order of operations only.
     pub fn sweep_transient_credentials(&mut self, now: LogicalInstant) {
         self.pending_idp.sweep(now);
-        if self
-            .oob_codes
-            .values()
-            .any(|code| Self::oob_code_swept(self.production_oob_lifetimes, code, now))
-        {
+        if self.oob_sweep_after.is_some_and(|deadline| deadline < now) {
             let production = self.production_oob_lifetimes;
-            Arc::make_mut(&mut self.oob_codes)
-                .retain(|_, code| !Self::oob_code_swept(production, code, now));
+            if self
+                .oob_codes
+                .values()
+                .any(|code| Self::oob_code_swept(production, code, now))
+            {
+                Arc::make_mut(&mut self.oob_codes)
+                    .retain(|_, code| !Self::oob_code_swept(production, code, now));
+            }
+            self.recompute_oob_sweep_after();
         }
         let production = self.second_factor_rules_are_production();
         if self
@@ -3802,6 +3809,14 @@ impl AuthStore {
         if self.oob_codes.len() >= MAX_OUTSTANDING_CODES {
             return Err(AuthError::TooManyOutstandingCodes);
         }
+        if let Some(deadline) =
+            Self::oob_sweep_time(self.production_oob_lifetimes, request_type, now)
+        {
+            self.oob_sweep_after = Some(
+                self.oob_sweep_after
+                    .map_or(deadline, |old| old.min(deadline)),
+            );
+        }
         let code = self.next_id("oob-");
         Arc::make_mut(&mut self.oob_codes).insert(
             code.clone(),
@@ -4014,7 +4029,35 @@ impl AuthStore {
 
     /// Switches action codes to production's lifetimes (see `production_oob_lifetimes`).
     pub fn set_production_oob_lifetimes(&mut self, production: bool) {
-        self.production_oob_lifetimes = production;
+        if self.production_oob_lifetimes != production {
+            self.production_oob_lifetimes = production;
+            self.recompute_oob_sweep_after();
+        }
+    }
+
+    fn recompute_oob_sweep_after(&mut self) {
+        self.oob_sweep_after = self
+            .oob_codes
+            .values()
+            .filter_map(|code| {
+                Self::oob_sweep_time(
+                    self.production_oob_lifetimes,
+                    code.request_type,
+                    code.created_at,
+                )
+            })
+            .min();
+    }
+
+    fn oob_sweep_time(
+        production: bool,
+        request_type: OobRequestType,
+        created_at: LogicalInstant,
+    ) -> Option<LogicalInstant> {
+        created_at.checked_add(LogicalDuration::from_seconds(Self::oob_retention(
+            production,
+            request_type,
+        )?))
     }
 
     /// A code's lifetime in seconds; `None` when it has none (production lifetimes, every kind

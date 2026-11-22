@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, unlink, readlink, realpath, readdir, open, chmod, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname, delimiter, relative, isAbsolute } from 'node:path';
+import path, { join, dirname, delimiter, relative, isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
 import { setTimeout as delay, setImmediate } from 'node:timers/promises';
 import { Readable } from 'node:stream';
@@ -75,6 +75,93 @@ async function fixture(t) {
   const source = join(root, 'source'), modules = join(root, 'shared'), world = join(root, 'world');
   await Promise.all([source, modules, world].map(path => mkdir(path)));
   return { root, source, modules, world, options: { cwd: root, functionsSource: source, env: { NODE_PATH: 'shared' } } };
+}
+
+// Full order-3 PICT table for origin × entry × copy mode.
+for (const origin of ['Source', 'NodePath']) {
+  for (const entry of ['File', 'Directory']) {
+    for (const copy of ['Portable', 'CloneEnabled']) {
+      test(`Functions capture inspects each entry once: ${origin} / ${entry} / ${copy}`, async t => {
+        const f = await fixture(t);
+        await withCloneSupport(t, { file: copy === 'CloneEnabled' });
+        const parent = origin === 'Source' ? f.source : f.modules;
+        const input = join(parent, 'tracked');
+        const leaf = entry === 'File' ? input : join(input, 'leaf.txt');
+        if (entry === 'Directory') await mkdir(input);
+        await writeFile(leaf, 'creation bytes');
+        const originalLstat = fsp.lstat;
+        let inspections = 0;
+        const mock = t.mock.method(fsp, 'lstat', (path, ...args) => {
+          if (path === input) inspections++;
+          return originalLstat(path, ...args);
+        });
+        syncBuiltinESMExports();
+        t.after(() => {
+          mock.mock.restore();
+          syncBuiltinESMExports();
+        });
+        const snapshot = await snapshotInputs(f.options, f.world);
+        const copyParent = origin === 'Source' ? snapshot.config.functions.source : snapshot.nodePaths[0];
+        assert.equal(await readFile(join(copyParent, relative(parent, leaf)), 'utf8'), 'creation bytes');
+        assert.equal(inspections, 1);
+      });
+    }
+  }
+}
+
+// Full order-3 PICT table for target × capture graph × snapshot generation.
+for (const target of ['Exact', 'Descendant', 'External']) {
+  for (const graph of ['Single', 'Overlap']) {
+    for (const verify of ['Capture', 'Generation']) {
+      test(`Functions links use the closest captured owner: ${target} / ${graph} / ${verify}`, async t => {
+        const f = await fixture(t);
+        const owner = graph === 'Overlap' ? join(f.source, 'nested') : f.source;
+        const consumer = join(f.root, 'consumer');
+        const selected = {
+          Exact: owner,
+          Descendant: join(owner, 'pkg'),
+          External: join(f.root, 'external'),
+        }[target];
+        await mkdir(owner, { recursive: true });
+        await mkdir(selected, { recursive: true });
+        await mkdir(consumer);
+        await writeFile(join(selected, 'fixture.txt'), 'original dependency');
+        await symlink(selected, join(consumer, 'dependency'), directoryLink);
+        const originalRelative = path.relative;
+        let unrelatedChecks = 0;
+        const mock = t.mock.method(path, 'relative', (from, to) => {
+          if (from === consumer && to === selected) unrelatedChecks++;
+          return originalRelative(from, to);
+        });
+        syncBuiltinESMExports();
+        t.after(() => {
+          mock.mock.restore();
+          syncBuiltinESMExports();
+        });
+
+        const sources = graph === 'Overlap' ? [f.source, owner, consumer] : [owner, consumer];
+        const snapshot = await snapshotInputs({
+          cwd: f.root,
+          config: { functions: sources.map(source => ({ source })) },
+          services: ['functions'],
+          env: { NODE_PATH: '' },
+        }, f.world);
+        const config = verify === 'Capture' ? snapshot.config
+          : JSON.parse(await readFile((await prepareGeneration(snapshot, join(f.world, 'generation'))).configPath, 'utf8'));
+        const { functions } = JSON.parse(await readFile(config.firebaseJson, 'utf8'));
+        const linked = join(functions.at(-1).source, 'dependency');
+        const savedOwner = functions.at(-2).source;
+        assert.equal(await readFile(join(linked, 'fixture.txt'), 'utf8'), 'original dependency');
+        if (target !== 'External') {
+          const expected = target === 'Exact' ? savedOwner : join(savedOwner, 'pkg');
+          assert.equal(await realpath(linked), await realpath(expected));
+        } else {
+          assert.notEqual(await realpath(linked), await realpath(selected));
+        }
+        if (process.platform !== 'win32') assert.equal(unrelatedChecks, 0);
+      });
+    }
+  }
 }
 function hideAbortSignalAny(t) {
   const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');

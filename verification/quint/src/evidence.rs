@@ -825,6 +825,15 @@ fn retain_referenced_candidates(
         if unparsed.iter().any(|path| !candidates.contains_key(*path)) {
             return false;
         }
+        if candidates.is_empty() {
+            return true;
+        }
+        let mut by_name = BTreeMap::<&str, Vec<_>>::new();
+        let mut literal_paths = Vec::with_capacity(candidates.len());
+        for (path, (name, declarations)) in candidates.iter() {
+            by_name.entry(name).or_default().push((path, declarations));
+            literal_paths.push((path, format!("{name}.rs"), format!("{name}/")));
+        }
         for (&parent, tokens) in syntax {
             if candidates.contains_key(parent) {
                 continue;
@@ -877,18 +886,25 @@ fn retain_referenced_candidates(
                 {
                     retained.extend(candidates.keys().cloned());
                 }
-                for (candidate, (name, declarations)) in candidates.iter() {
-                    if (token == name
-                        && Path::new(candidate).starts_with(&module_directory)
-                        && !declarations.contains(&(parent, offset))
-                        && !(index > 0
-                            && tokens[index - 1].1 == "mod"
-                            && tokens.get(index + 1).map(|(_, token)| *token) == Some("{")))
-                        || (token.contains('"')
-                            && (token.contains(&format!("{name}.rs"))
-                                || token.contains(&format!("{name}/"))))
-                    {
-                        retained.insert(candidate.clone());
+                if let Some(matches) = by_name.get(token) {
+                    let inline_declaration = index > 0
+                        && tokens[index - 1].1 == "mod"
+                        && tokens.get(index + 1).map(|(_, token)| *token) == Some("{");
+                    if !inline_declaration {
+                        for &(path, declarations) in matches {
+                            if Path::new(path).starts_with(&module_directory)
+                                && !declarations.contains(&(parent, offset))
+                            {
+                                retained.insert(path.clone());
+                            }
+                        }
+                    }
+                }
+                if token.contains('"') {
+                    for (path, file, directory) in &literal_paths {
+                        if token.contains(file) || token.contains(directory) {
+                            retained.insert((*path).clone());
+                        }
                     }
                 }
             }
@@ -967,36 +983,85 @@ fn compute_digests(
     relative_paths
         .iter()
         .map(|relative| {
-            let path = if relative == CARGO_AUTHORITY_INPUT {
-                cargo_authority.map_or_else(|| repository_root.join(relative), Path::to_path_buf)
-            } else {
-                repository_root.join(relative)
-            };
-            if relative != CARGO_AUTHORITY_INPUT || cargo_authority.is_none() {
-                source_closure::checked_path(repository_root, relative, false)?;
-            }
-            let metadata = fs::symlink_metadata(&path).map_err(|error| {
-                format!("cannot inspect bound input {}: {error}", path.display())
-            })?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(format!(
-                    "bound input is not a regular file: {}",
-                    path.display()
-                ));
-            }
-            let bytes = fs::read(&path)
-                .map_err(|error| format!("cannot read bound input {}: {error}", path.display()))?;
+            let bytes = read_bound_input(repository_root, relative, cargo_authority)?;
             Ok((relative.clone(), input_digest(relative, &bytes)?))
         })
         .collect()
 }
 
+fn read_bound_input(
+    repository_root: &Path,
+    relative: &str,
+    cargo_authority: Option<&Path>,
+) -> Result<Vec<u8>, String> {
+    let path = if relative == CARGO_AUTHORITY_INPUT {
+        cargo_authority.map_or_else(|| repository_root.join(relative), Path::to_path_buf)
+    } else {
+        repository_root.join(relative)
+    };
+    if relative != CARGO_AUTHORITY_INPUT || cargo_authority.is_none() {
+        source_closure::checked_path(repository_root, relative, false)?;
+    }
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("cannot inspect bound input {}: {error}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "bound input is not a regular file: {}",
+            path.display()
+        ));
+    }
+    fs::read(&path).map_err(|error| format!("cannot read bound input {}: {error}", path.display()))
+}
+
 /// Computes the current digest of one bound input with the same path checks as validation.
 pub fn current_input_digest(repository_root: &Path, relative: &str) -> Result<InputDigest, String> {
-    let mut digests = compute_digests(repository_root, &[relative.to_owned()], None)?;
-    digests
-        .remove(relative)
-        .ok_or_else(|| format!("missing digest for {relative}"))
+    let bytes = read_bound_input(repository_root, relative, None)?;
+    input_digest(relative, &bytes)
+}
+
+/// Shares digest computation during a repository-wide stale-evidence diagnostic.
+///
+/// Each observation still checks the path and reads the file. Only exact byte
+/// equality permits a previous normalization and hash to be reused.
+pub struct CurrentInputDigests<'a> {
+    repository_root: &'a Path,
+    inputs: BTreeMap<String, (Vec<u8>, InputDigest)>,
+    cached_bytes: usize,
+}
+
+impl<'a> CurrentInputDigests<'a> {
+    const MAX_CACHED_INPUTS: usize = 1024;
+    const MAX_CACHED_BYTES: usize = 32 * 1024 * 1024;
+
+    /// Creates an empty memo scoped to a single check of this repository.
+    #[must_use]
+    pub fn new(repository_root: &'a Path) -> Self {
+        Self {
+            repository_root,
+            inputs: BTreeMap::new(),
+            cached_bytes: 0,
+        }
+    }
+
+    /// Reads a bound input and returns the digest of its current bytes.
+    pub fn current(&mut self, relative: &str) -> Result<InputDigest, String> {
+        let bytes = read_bound_input(self.repository_root, relative, None)?;
+        if let Some((previous, digest)) = self.inputs.get(relative) {
+            if previous == &bytes {
+                return Ok(digest.clone());
+            }
+            return input_digest(relative, &bytes);
+        }
+        let digest = input_digest(relative, &bytes)?;
+        if self.inputs.len() < Self::MAX_CACHED_INPUTS
+            && bytes.len() <= Self::MAX_CACHED_BYTES - self.cached_bytes
+        {
+            self.cached_bytes += bytes.len();
+            self.inputs
+                .insert(relative.to_owned(), (bytes, digest.clone()));
+        }
+        Ok(digest)
+    }
 }
 
 /// Whether `path` has the given extension, compared without regard to ASCII case.
@@ -1155,6 +1220,79 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn digest_memo_always_checks_current_input_bytes_and_file_type() {
+        for (initial, next, full) in [
+            ("input", "same", false),
+            ("input", "edited", false),
+            ("input", "missing", false),
+            ("input", "symlink", false),
+            ("", "same", true),
+            ("", "edited", false),
+            ("", "missing", true),
+            ("input", "symlink", true),
+            ("input", "edited", true),
+            ("", "symlink", true),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let relative = "input.rs";
+            let path = root.path().join(relative);
+            fs::write(&path, initial).unwrap();
+            let mut batch = CurrentInputDigests::new(root.path());
+            if full {
+                batch.cached_bytes = CurrentInputDigests::MAX_CACHED_BYTES;
+            }
+            let baseline = batch.current(relative).unwrap();
+            if full && !initial.is_empty() {
+                assert!(!batch.inputs.contains_key(relative));
+            }
+            assert_eq!(
+                baseline,
+                input_digest(relative, initial.as_bytes()).unwrap()
+            );
+            match next {
+                "same" => assert_eq!(batch.current(relative), Ok(baseline)),
+                "edited" => {
+                    fs::write(&path, "updated").unwrap();
+                    assert_ne!(batch.current(relative).unwrap(), baseline);
+                }
+                "missing" => {
+                    fs::remove_file(&path).unwrap();
+                    assert!(batch.current(relative).is_err());
+                }
+                "symlink" => {
+                    #[cfg(unix)]
+                    {
+                        fs::remove_file(&path).unwrap();
+                        let other = root.path().join("other.rs");
+                        fs::write(&other, initial).unwrap();
+                        std::os::unix::fs::symlink(other, &path).unwrap();
+                        assert!(batch.current(relative).unwrap_err().contains("symlink"));
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn digest_memo_counts_retained_bytes_and_caps_the_input_count() {
+        let root = tempfile::tempdir().unwrap();
+        let mut batch = CurrentInputDigests::new(root.path());
+        let limit = CurrentInputDigests::MAX_CACHED_INPUTS;
+        for index in 0..=limit {
+            let relative = format!("input-{index}.rs");
+            fs::write(root.path().join(&relative), b"x").unwrap();
+            assert_eq!(
+                batch.current(&relative).unwrap(),
+                input_digest(&relative, b"x").unwrap()
+            );
+        }
+        assert_eq!(batch.inputs.len(), limit);
+        assert_eq!(batch.cached_bytes, limit);
+        assert!(!batch.inputs.contains_key(&format!("input-{limit}.rs")));
+    }
 
     #[test]
     fn semantic_digests_ignore_only_the_requested_changes() {

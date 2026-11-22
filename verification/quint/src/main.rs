@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use fireemu_verification_quint::cargo_authority::{validate_authority_file, write_authority};
 use fireemu_verification_quint::evidence::{
-    current_input_digest, expected_bound_inputs, validate_evidence_file_with_cargo_authority,
+    expected_bound_inputs, validate_evidence_file_with_cargo_authority, CurrentInputDigests,
     InputDigest,
 };
 use fireemu_verification_quint::model::{all_models, model, ModelDescriptor};
@@ -68,6 +68,7 @@ fn check_evidence(arguments: &[String]) -> Result<bool, String> {
             println!("QUINT_HOME=$HOME/.quint cargo run -p fireemu-verification-quint -- mutate-model --model {model} --evidence verification/quint/evidence/{model}.json");
         }
     }
+    let mut current_digests = CurrentInputDigests::new(&root);
     for file in files {
         if file.extension().and_then(|extension| extension.to_str()) != Some("json")
             || file.file_name().and_then(|name| name.to_str()) == Some("cargo-authority.json")
@@ -122,7 +123,7 @@ fn check_evidence(arguments: &[String]) -> Result<bool, String> {
                 let recorded = digests
                     .and_then(|digests| digests.get(path))
                     .and_then(|value| serde_json::from_value::<InputDigest>(value.clone()).ok());
-                let current = current_input_digest(&root, path).ok();
+                let current = current_digests.current(path).ok();
                 if recorded.is_none() || current.is_none() || recorded != current {
                     changed.push(path);
                 }

@@ -141,12 +141,14 @@ pub(super) async fn find(
 pub(super) struct FileBody {
     file: tokio::fs::File,
     remaining: u64,
+    buffer: Vec<u8>,
 }
 impl FileBody {
     pub fn new(file: std::fs::File, remaining: u64) -> Self {
         Self {
             file: tokio::fs::File::from_std(file),
             remaining,
+            buffer: Vec::new(),
         }
     }
 }
@@ -154,21 +156,27 @@ impl hyper::body::Body for FileBody {
     type Data = bytes::Bytes;
     type Error = std::io::Error;
     fn poll_frame(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
         use tokio::io::AsyncRead;
-        if self.remaining == 0 {
+        let this = self.get_mut();
+        if this.remaining == 0 {
             return std::task::Poll::Ready(None);
         }
-        let size = usize::try_from(self.remaining.min(65536)).expect("bounded chunk");
-        let mut data = vec![0; size];
-        let mut buffer = tokio::io::ReadBuf::new(&mut data);
-        match std::pin::Pin::new(&mut self.file).poll_read(cx, &mut buffer) {
+        let size = usize::try_from(this.remaining.min(65536)).expect("bounded chunk");
+        this.buffer.resize(size, 0);
+        let mut buffer = tokio::io::ReadBuf::new(&mut this.buffer);
+        let outcome = std::pin::Pin::new(&mut this.file).poll_read(cx, &mut buffer);
+        let read = buffer.filled().len();
+        match outcome {
             std::task::Poll::Pending => std::task::Poll::Pending,
-            std::task::Poll::Ready(Err(error)) => std::task::Poll::Ready(Some(Err(error))),
+            std::task::Poll::Ready(Err(error)) => {
+                this.buffer = Vec::new();
+                std::task::Poll::Ready(Some(Err(error)))
+            }
             std::task::Poll::Ready(Ok(())) => {
-                let read = buffer.filled().len();
+                let mut data = std::mem::take(&mut this.buffer);
                 if read == 0 {
                     return std::task::Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
@@ -176,7 +184,7 @@ impl hyper::body::Body for FileBody {
                     ))));
                 }
                 data.truncate(read);
-                self.remaining -= read as u64;
+                this.remaining -= read as u64;
                 std::task::Poll::Ready(Some(Ok(hyper::body::Frame::data(data.into()))))
             }
         }

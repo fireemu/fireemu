@@ -10,6 +10,7 @@
 //! write into, nor its import read from, a bucket another project uses.
 
 use crate::term::errln;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use fireemu_adapter_grpc::admin::managed::{
@@ -22,6 +23,7 @@ use fireemu_core_export::managed::{
     partitions, read_managed_output, read_overall, read_partition_outputs, write_managed_export,
     Partition,
 };
+use fireemu_core_firestore::store::SharedDocument;
 use fireemu_core_storage::name::{BucketName, ObjectName};
 use fireemu_core_storage::store::{NewMetadata, Precondition};
 use fireemu_core_types::determinism::Clock;
@@ -149,6 +151,47 @@ impl StorageBridge {
         )
     }
 
+    fn write_export(
+        &self,
+        job: &ExportJob,
+        documents: &[ExportDocument],
+    ) -> Result<ExportOutcome, String> {
+        let micros = |at: fireemu_core_types::time::LogicalInstant| {
+            u64::try_from(at.as_nanos() / 1_000).unwrap_or(0)
+        };
+        let export = write_managed_export(
+            export_name(&job.prefix),
+            &job.database,
+            &job.collection_ids,
+            &job.namespace_ids,
+            (micros(job.window.0), micros(job.window.1)),
+            documents,
+        )
+        .map_err(|e| e.to_string())?;
+        let bucket = BucketName::try_new(job.bucket.clone()).map_err(|e| e.to_string())?;
+        let now = self.now();
+        let mut store = self.storage.store().map_err(|(_, message)| message)?;
+        for (name, bytes) in export.files {
+            let object =
+                ObjectName::try_new(join(&job.prefix, &name)).map_err(|e| e.to_string())?;
+            store
+                .put(
+                    &bucket,
+                    &object,
+                    bytes,
+                    NewMetadata::default(),
+                    Precondition::default(),
+                    now,
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        self.owners.claim(&job.project, &job.bucket);
+        Ok(ExportOutcome {
+            documents: export.documents,
+            bytes: export.bytes,
+        })
+    }
+
     fn read(&self, bucket: &str, name: &str) -> Option<Vec<u8>> {
         let bucket = BucketName::try_new(bucket).ok()?;
         let name = ObjectName::try_new(name).ok()?;
@@ -203,40 +246,40 @@ impl ManagedStorage for StorageBridge {
                 fields: d.fields.clone(),
             })
             .collect();
-        let micros = |at: fireemu_core_types::time::LogicalInstant| {
-            u64::try_from(at.as_nanos() / 1_000).unwrap_or(0)
-        };
-        let export = write_managed_export(
-            export_name(&job.prefix),
-            &job.database,
-            &job.collection_ids,
-            &job.namespace_ids,
-            (micros(job.window.0), micros(job.window.1)),
-            &documents,
-        )
-        .map_err(|e| e.to_string())?;
-        let bucket = BucketName::try_new(job.bucket.clone()).map_err(|e| e.to_string())?;
-        let now = self.now();
-        let mut store = self.storage.store().map_err(|(_, message)| message)?;
-        for (name, bytes) in export.files {
-            let object =
-                ObjectName::try_new(join(&job.prefix, &name)).map_err(|e| e.to_string())?;
-            store
-                .put(
-                    &bucket,
-                    &object,
-                    bytes,
-                    NewMetadata::default(),
-                    Precondition::default(),
-                    now,
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        self.owners.claim(&job.project, &job.bucket);
-        Ok(ExportOutcome {
-            documents: export.documents,
-            bytes: export.bytes,
-        })
+        self.write_export(job, &documents)
+    }
+
+    fn export_snapshot(
+        &self,
+        job: ExportJob,
+        documents: &[SharedDocument],
+    ) -> Result<ExportOutcome, String> {
+        let selected = partitions(&job.collection_ids, &job.namespace_ids);
+        let all = selected.contains(&Partition::AllKinds);
+        let kinds: BTreeSet<_> = selected
+            .iter()
+            .filter_map(|partition| match partition {
+                Partition::Kind(kind) => Some(kind.as_str()),
+                _ => None,
+            })
+            .collect();
+        let documents: Vec<_> = documents
+            .iter()
+            .filter(|document| all || kinds.contains(document.path.collection_id().as_str()))
+            .map(|document| ExportDocument {
+                project: job.project.clone(),
+                path: document
+                    .path
+                    .pairs()
+                    .iter()
+                    .map(|(collection, id)| {
+                        (collection.as_str().to_owned(), id.as_str().to_owned())
+                    })
+                    .collect(),
+                fields: document.fields.clone(),
+            })
+            .collect();
+        self.write_export(&job, &documents)
     }
 
     fn import(&self, job: &ImportJob) -> Result<ImportOutcome, ImportRefusal> {
@@ -381,6 +424,92 @@ mod tests {
             prefix: "x".to_owned(),
             collection_ids: Vec::new(),
             namespace_ids: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_shared_export_matches_the_owned_export_for_every_partition_shape() {
+        use fireemu_core_firestore::path::DocumentPath;
+        use fireemu_core_firestore::store::{CommitVersion, Document};
+        use fireemu_core_firestore::value::Value;
+        use fireemu_core_types::ids::{DatabaseId, ProjectId};
+        use fireemu_core_types::time::LogicalInstant;
+        use std::collections::BTreeMap;
+
+        let now = LogicalInstant::UNIX_EPOCH;
+        let documents: Vec<_> = ["items/a", "things/a", "things/a/items/b"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, relative)| {
+                Arc::new(Document {
+                    path: DocumentPath::parse(
+                        &ProjectId::try_new("proj-a").unwrap(),
+                        &DatabaseId::default_database(),
+                        relative,
+                    )
+                    .unwrap(),
+                    fields: BTreeMap::from([(
+                        "body".to_owned(),
+                        Value::Bytes(vec![u8::try_from(index).unwrap(); 4096]),
+                    )]),
+                    create_time: now,
+                    update_time: now,
+                    version: CommitVersion::default(),
+                })
+            })
+            .collect();
+
+        for (collections, namespaces) in [
+            (&[][..], &[][..]),
+            (&["items", "items"][..], &[][..]),
+            (&["items"][..], &["custom"][..]),
+            (&["unmatched"][..], &["custom", ""][..]),
+        ] {
+            let old_bridge = bridge();
+            let new_bridge = bridge();
+            let mut job = ExportJob {
+                project: "proj-a".to_owned(),
+                database: "(default)".to_owned(),
+                bucket: "proj-a.appspot.com".to_owned(),
+                prefix: "test".to_owned(),
+                collection_ids: collections.iter().map(|id| (*id).to_owned()).collect(),
+                namespace_ids: namespaces.iter().map(|id| (*id).to_owned()).collect(),
+                window: (now, now),
+                documents: documents
+                    .iter()
+                    .map(|document| ManagedDocument {
+                        path: document
+                            .path
+                            .pairs()
+                            .iter()
+                            .map(|(collection, id)| {
+                                (collection.as_str().to_owned(), id.as_str().to_owned())
+                            })
+                            .collect(),
+                        fields: document.fields.clone(),
+                    })
+                    .collect(),
+            };
+            let expected = old_bridge.export(&job).unwrap();
+            job.documents.clear();
+            assert_eq!(
+                new_bridge.export_snapshot(job, &documents).unwrap(),
+                expected
+            );
+            let bytes = |bridge: &StorageBridge| {
+                let store = bridge.storage.store().unwrap();
+                store
+                    .all_objects()
+                    .into_iter()
+                    .map(|meta| {
+                        (
+                            meta.name.as_str().to_owned(),
+                            store.body_bytes(meta).unwrap().into_owned(),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            };
+            assert_eq!(bytes(&new_bridge), bytes(&old_bridge));
         }
     }
 

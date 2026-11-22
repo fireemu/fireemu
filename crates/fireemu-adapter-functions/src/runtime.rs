@@ -3550,6 +3550,7 @@ impl FunctionsRuntime {
         messages: &[Value],
         include_schedules: bool,
     ) -> Result<EventBatchReservation, SourceEventAdmissionError> {
+        const EVENT_TYPE: &str = "google.cloud.pubsub.topic.v1.messagePublished";
         if !self.background_triggers_enabled() {
             return Ok(self.empty_event_reservation());
         }
@@ -3559,34 +3560,34 @@ impl FunctionsRuntime {
             .lock()
             .map_err(|_| SourceEventAdmissionError::Unavailable)?;
         let mut drafts = Vec::new();
+        let mut matches = None;
+        let subject = format!("topics/{topic}");
         for message in messages {
             let message_id = message
                 .get("messageId")
                 .and_then(Value::as_str)
                 .filter(|id| !id.is_empty())
                 .ok_or(SourceEventAdmissionError::InvalidEvent)?;
-            for function in self.pubsub_matches(topic, include_schedules) {
+            let functions = matches.get_or_insert_with(|| {
+                self.pubsub_matches(topic, include_schedules)
+                    .collect::<Vec<_>>()
+            });
+            for &function in functions.iter() {
                 let payload =
                     Arc::new(self.pubsub_payload(function, message_id, topic, message, time));
-                let copies = self.delivery_copies(
-                    &function.name,
-                    "google.cloud.pubsub.topic.v1.messagePublished",
-                );
+                let copies = self.delivery_copies(&function.name, EVENT_TYPE);
+                let retained_bytes =
+                    Self::retained_event_bytes(&function.name, EVENT_TYPE, &subject, &payload)
+                        .ok_or(SourceEventAdmissionError::Capacity)?;
                 for _ in 0..copies {
                     drafts.push(DeliveryDraft {
                         function: function.name.clone(),
-                        event_type: "google.cloud.pubsub.topic.v1.messagePublished".to_owned(),
-                        subject: format!("topics/{topic}"),
+                        event_type: EVENT_TYPE.to_owned(),
+                        subject: subject.clone(),
                         time,
                         payload: Arc::clone(&payload),
                         raw_data: None,
-                        retained_bytes: Self::retained_event_bytes(
-                            &function.name,
-                            "google.cloud.pubsub.topic.v1.messagePublished",
-                            &format!("topics/{topic}"),
-                            &payload,
-                        )
-                        .ok_or(SourceEventAdmissionError::Capacity)?,
+                        retained_bytes,
                         parent: None,
                     });
                 }
@@ -3743,8 +3744,11 @@ impl FunctionsRuntime {
         // The budget is checked as each target is planned, before its copies are expanded, so a
         // publish that cannot fit never builds the messages x subscribers x copies vector.
         let (mut records, mut bytes) = (0_usize, 0_usize);
+        let mut matches = None;
         for (message, message_id) in messages.iter().zip(&ids) {
-            for function in self.pubsub_matches(topic, true) {
+            let functions =
+                matches.get_or_insert_with(|| self.pubsub_matches(topic, true).collect::<Vec<_>>());
+            for &function in functions.iter() {
                 let payload =
                     Arc::new(self.pubsub_payload(function, message_id, topic, message, time));
                 let copies = self.delivery_copies(&function.name, EVENT_TYPE);
@@ -5107,14 +5111,14 @@ impl FunctionsRuntime {
                 let chunk = room.max(1);
                 let mut pending = false;
                 let mut steps = 0u64;
-                let mut runs: Vec<(String, String, LogicalInstant)> = Vec::new();
+                let mut runs = Vec::new();
                 let mut skipped: Vec<(String, RunCount)> = Vec::new();
                 let jobs: &mut [_] = if backlog_held {
                     &mut []
                 } else {
                     &mut inner.jobs
                 };
-                for job in jobs {
+                for (job_index, job) in jobs.iter_mut().enumerate() {
                     // Translate only interval schedules into the epoch-based core calculation, then restore their phase.
                     let shift = LogicalDuration::from_nanos(-job.phase.as_nanos());
                     let (Some(from), Some(to)) =
@@ -5137,18 +5141,12 @@ impl FunctionsRuntime {
                                     due.into_iter().take(chunk).collect();
                                 job.cursor = kept.last().copied().unwrap_or(job.cursor);
                                 pending = true;
-                                runs.extend(
-                                    kept.into_iter()
-                                        .map(|t| (job.function.clone(), job.region.clone(), t)),
-                                );
+                                runs.extend(kept.into_iter().map(|at| (job_index, at)));
                             } else {
                                 if now.as_nanos() > job.cursor.as_nanos() {
                                     job.cursor = now;
                                 }
-                                runs.extend(
-                                    due.into_iter()
-                                        .map(|t| (job.function.clone(), job.region.clone(), t)),
-                                );
+                                runs.extend(due.into_iter().map(|at| (job_index, at)));
                             }
                         }
                         CatchUpPolicy::Latest | CatchUpPolicy::None => {
@@ -5165,7 +5163,7 @@ impl FunctionsRuntime {
                             }
                             let dropped = match (policy, window.latest) {
                                 (CatchUpPolicy::Latest, Some(t)) => {
-                                    runs.push((job.function.clone(), job.region.clone(), t));
+                                    runs.push((job_index, t));
                                     window.count.saturating_sub(1)
                                 }
                                 (CatchUpPolicy::None, Some(_)) => window.count,
@@ -5199,40 +5197,46 @@ impl FunctionsRuntime {
                 // Oldest occurrence first across jobs (the sort is stable: job order breaks ties), and
                 // the sweep stops at the first capacity refusal, so freed capacity always goes to the
                 // oldest due run, whatever its job and however many copies it needs.
-                runs.sort_by_key(|(_, _, at)| at.as_nanos());
+                runs.sort_by_key(|(_, at)| at.as_nanos());
                 // The handlers executing before this sweep: under `skip-in-flight` only these suppress an occurrence, never a
                 // run this same sweep admitted (a jump over several occurrences runs each, as each would have run when it came).
                 let executing: BTreeSet<String> = inner.running.values().cloned().collect();
                 let epoch = inner.epoch;
-                for (index, (function, region, at)) in runs.iter().enumerate() {
+                for (index, &(job_index, at)) in runs.iter().enumerate() {
+                    let function = inner.jobs[job_index].function.clone();
                     if self.config.overlap == OverlapPolicy::SkipInFlight
-                        && executing.contains(function)
+                        && executing.contains(&function)
                     {
                         inner.record_invocation(InvocationRecord {
                             event_id: 0,
-                            function: function.clone(),
+                            function,
                             attempt: 0,
                             outcome: "skipped: in flight".to_owned(),
                         });
                         continue;
                     }
-                    if !self.admit_scheduled_run(&mut inner, function) {
+                    if !self.admit_scheduled_run(&mut inner, &function) {
                         continue;
                     }
                     let ordinal = inner.next_event + 1;
                     let id = format!("{}-{}", self.config.session.value(), ordinal);
-                    let mut payload =
-                        schedule_event(&id, &self.config.project, region, function, *at);
-                    let message = self.schedule_message_topic(function).map(|topic| {
+                    let mut payload = schedule_event(
+                        &id,
+                        &self.config.project,
+                        &inner.jobs[job_index].region,
+                        &function,
+                        at,
+                    );
+                    let message = self.schedule_message_topic(&function).map(|topic| {
                         let message_id = schedule_message_id(self.config.session, ordinal);
                         payload["data"]["messageId"] = Value::String(message_id.clone());
-                        (topic, message_id, *at)
+                        (topic, message_id, at)
                     });
                     if let Ok(reservation) = self.enqueue_schedule_run(
                         &mut inner,
                         EventSource::Scheduler,
-                        function,
-                        *at,
+                        &function,
+                        at,
                         &payload,
                     ) {
                         enqueued = true;
@@ -5256,15 +5260,12 @@ impl FunctionsRuntime {
                     // (this one and all later ones) so those occurrences are due again, and keep the
                     // catch-up pending so the next completion, cancelled reservation or clock change
                     // retries them. A job's earliest such run decides its cursor.
-                    for (function, _, at) in &runs[index..] {
+                    // Job positions stay stable for the life of this runtime. A reset can
+                    // change the cursors, but the epoch check above restarts that sweep.
+                    for &(unadmitted_job, at) in &runs[index..] {
+                        let job = &mut inner.jobs[unadmitted_job];
                         let before = LogicalInstant::from_nanos(at.as_nanos() - 1);
-                        if let Some(job) =
-                            inner.jobs.iter_mut().find(|job| &job.function == function)
-                        {
-                            if before.as_nanos() < job.cursor.as_nanos() {
-                                job.cursor = before;
-                            }
-                        }
+                        job.cursor = job.cursor.min(before);
                     }
                     inner.catch_up_pending = true;
                     break;
@@ -7280,6 +7281,9 @@ impl FunctionsRuntime {
 
     #[allow(clippy::too_many_lines)]
     fn dispatch_ready(self: &Arc<Self>) {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
         if self
             .dispatch_stopping
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -7308,16 +7312,17 @@ impl FunctionsRuntime {
         // The inner lock excludes concurrent enqueue, retry release and completion. This pass only leases/starts existing records; faults do not enqueue, and spawned work must acquire the same lock. Queue-head traversal therefore sees the same ready set as a snapshot.
         let dispatch_outbox_len = inner.outbox.len();
         let mut dispatches = Vec::new();
-        let mut ready = inner
+        let ready_heads = inner
             .outbox
             .dispatchable_queue_heads()
-            .map(|(function, key)| (key, function.to_owned()))
-            .collect::<BTreeSet<_>>();
+            .map(|(function, key)| Reverse((key, function.to_owned())))
+            .collect::<Vec<_>>();
+        let mut ready = BinaryHeap::from(ready_heads);
         #[cfg(test)]
         {
             inner.dispatch_candidate_visits += ready.len();
         }
-        while let Some(((time, id), function_name)) = ready.pop_first() {
+        while let Some(Reverse(((time, id), function_name))) = ready.pop() {
             if inner.running.len() >= self.config.max_running {
                 break;
             }
@@ -7326,7 +7331,7 @@ impl FunctionsRuntime {
                     .outbox
                     .next_dispatchable_in_queue(&function_name, (time, id))
                 {
-                    ready.insert((next, function_name));
+                    ready.push(Reverse((next, function_name)));
                     #[cfg(test)]
                     {
                         inner.dispatch_candidate_visits += 1;
@@ -7359,7 +7364,7 @@ impl FunctionsRuntime {
                 .outbox
                 .next_dispatchable_in_queue(&function_name, (time, id))
             {
-                ready.insert((next, function_name.clone()));
+                ready.push(Reverse((next, function_name.clone())));
                 #[cfg(test)]
                 {
                     inner.dispatch_candidate_visits += 1;
@@ -7465,7 +7470,7 @@ impl FunctionsRuntime {
                 fault_outcome,
                 crash,
             } = dispatch;
-            let request = self.invoke_request_at(
+            let request = self.invoke_members_at(
                 id,
                 &spec,
                 attempt,
@@ -7496,10 +7501,10 @@ impl FunctionsRuntime {
                         return;
                     }
                     None => match request {
-                        Ok(request) if runtime.config.debug_mode => {
-                            runner.invoke_unbounded(request).await
+                        Ok(request) => {
+                            let timeout = (!runtime.config.debug_mode).then_some(timeout);
+                            runner.invoke_event(request, timeout).await
                         }
-                        Ok(request) => runner.invoke(request, timeout).await,
                         Err(error) => Invocation {
                             outcome: InvokeOutcome::Failed(error.to_string()),
                             late: None,
@@ -7561,6 +7566,7 @@ impl FunctionsRuntime {
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn invoke_request_at(
         &self,
@@ -7574,6 +7580,26 @@ impl FunctionsRuntime {
         now: LogicalInstant,
     ) -> Result<
         Box<serde_json::value::RawValue>,
+        fireemu_adapter_support::entropy::EntropyUnavailable,
+    > {
+        let members =
+            self.invoke_members_at(id, spec, attempt, epoch, event, admitted_at, raw_data, now)?;
+        Ok(serde_json::value::to_raw_value(&members).expect("raw invocation serializes"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn invoke_members_at(
+        &self,
+        id: EventId,
+        spec: &FunctionSpec,
+        attempt: u32,
+        epoch: Epoch,
+        event: &Value,
+        admitted_at: LogicalInstant,
+        raw_data: Option<&str>,
+        now: LogicalInstant,
+    ) -> Result<
+        crate::runner::InvocationMembers,
         fireemu_adapter_support::entropy::EntropyUnavailable,
     > {
         #[cfg(test)]
@@ -7674,7 +7700,7 @@ impl FunctionsRuntime {
             event_frame_member(event, traceparent.as_ref())
         };
         members.insert("event".to_owned(), event_member);
-        Ok(serde_json::value::to_raw_value(&members).expect("raw invocation serializes"))
+        Ok(members)
     }
 
     /// Frees an invocation slot.

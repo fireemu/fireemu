@@ -660,26 +660,28 @@ impl Site {
     /// Carries out a pending gzip answer (see [`GzipPending`]): the file is packed on a blocking
     /// thread and the packed body is sent when it is smaller than the file (`v15.size-*`), with the
     /// file's own `ETag`, over which the request's `Range` is taken (`v15.ae-range`). The answer holds
-    /// the packed bytes, the length of a gzip body being known only once it is packed (a `HEAD` reports
-    /// it too).
+    /// the packed bytes for GET. HEAD reports their length without retaining them.
     async fn pack_gzip(answer: &mut Response<Body>, head: bool) {
         let Some(pending) = answer.extensions_mut().remove::<GzipPending>() else {
             return;
         };
         let handle = Arc::clone(&pending.file);
         let length = pending.length;
-        let Ok(Ok(packed)) = tokio::task::spawn_blocking(move || {
+        let Ok(Ok((total, packed))) = tokio::task::spawn_blocking(move || {
             use std::io::Seek as _;
             let mut file = &*handle;
             file.seek(std::io::SeekFrom::Start(0))?;
-            encoding::gzip_reader(file, length)
+            if head {
+                encoding::gzip_length(file, length).map(|total| (total, Vec::new()))
+            } else {
+                encoding::gzip_reader(file, length).map(|packed| (packed.len() as u64, packed))
+            }
         })
         .await
         else {
             *answer = response(500, "Could not read the file", None);
             return;
         };
-        let total = packed.len() as u64;
         if !encoding::pays_off(total, length) {
             // the identity answer stays; its body reads from the shared file offset, put back
             use std::io::Seek as _;
@@ -688,16 +690,20 @@ impl Site {
             return;
         }
         let outcome = production::range(pending.range.as_deref(), total);
-        let (status, body) = match outcome {
-            production::RangeOutcome::Whole => (pending.status, packed),
+        let (status, body_length, body) = match outcome {
+            production::RangeOutcome::Whole => (pending.status, total, packed),
             production::RangeOutcome::Partial { start, end } => {
-                // the range lies inside the packed body, which is in memory (`production::range`
-                // clamps it to `total`, the length of `packed`), so the indices fit
-                #[allow(clippy::cast_possible_truncation)]
-                let (start, end) = (start as usize, end as usize);
-                (206, packed[start..=end].to_vec())
+                let body = if head {
+                    packed
+                } else {
+                    // The range is inside the packed body, which fits in memory.
+                    #[allow(clippy::cast_possible_truncation)]
+                    let range = start as usize..=end as usize;
+                    packed[range].to_vec()
+                };
+                (206, end - start + 1, body)
             }
-            production::RangeOutcome::Unsatisfiable => (416, Vec::new()),
+            production::RangeOutcome::Unsatisfiable => (416, 0, Vec::new()),
         };
         if let Ok(code) = hyper::StatusCode::from_u16(status) {
             *answer.status_mut() = code;
@@ -723,7 +729,7 @@ impl Site {
         }
         headers.insert(
             "content-length",
-            hyper::header::HeaderValue::from(body.len()),
+            hyper::header::HeaderValue::from(body_length),
         );
         if pending.unknown_type
             && headers

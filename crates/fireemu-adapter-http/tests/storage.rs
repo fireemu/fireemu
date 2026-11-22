@@ -43,6 +43,87 @@ impl AtomicStorageEventSink for RefusingStorageEvents {
     }
 }
 
+#[test]
+fn multipart_keeps_midline_and_false_closing_delimiters_as_data() {
+    let s = state(None);
+    let path = format!("/upload/storage/v1/b/{BUCKET}/o?name=delimiters.bin&uploadType=multipart");
+    let media = format!("/storage/v1/b/{BUCKET}/o/delimiters.bin?alt=media");
+    for eol in ["\r\n", "\n"] {
+        for fill_len in [16, 4096] {
+            let mut data = vec![b'x'; fill_len];
+            for content in [
+                b"--fireemu-boundary".as_slice(),
+                eol.as_bytes(),
+                b"--fireemu-boundary-- no",
+                eol.as_bytes(),
+                b"--fireemu-boundary.tail",
+                eol.as_bytes(),
+            ] {
+                data.extend_from_slice(content);
+            }
+            let mut body = format!(
+                "--fireemu-boundary{eol}Content-Type: application/json{eol}{eol}{{}}{eol}--fireemu-boundary{eol}Content-Type: application/octet-stream{eol}{eol}"
+            )
+            .into_bytes();
+            body.extend_from_slice(&data);
+            body.extend_from_slice(format!("{eol}--fireemu-boundary-- \t{eol}").as_bytes());
+            let upload = handle(
+                &s,
+                owned_req(
+                    "POST",
+                    &path,
+                    &[(
+                        "content-type",
+                        "multipart/related; boundary=fireemu-boundary",
+                    )],
+                    body,
+                ),
+            );
+            assert_eq!(upload.status, 200, "{upload:?}");
+            let download = handle(&s, req("GET", &media, &[], b""));
+            assert_eq!(download.status, 200);
+            assert_eq!(download.body.as_ref(), data.as_slice());
+        }
+    }
+}
+
+#[test]
+fn multipart_closing_delimiter_can_start_on_a_scan_block_boundary() {
+    let s = state(None);
+    let upload_path =
+        format!("/upload/storage/v1/b/{BUCKET}/o?name=block-boundary.bin&uploadType=multipart");
+    let download_path = format!("/storage/v1/b/{BUCKET}/o/block-boundary.bin?alt=media");
+    for eol in ["\r\n", "\n"] {
+        let data_headers = format!("Content-Type: application/octet-stream{eol}{eol}");
+        // The data-part scan starts before its headers. Position the closing delimiter at
+        // the first byte of a full search block with the line break in the preceding block.
+        let data = vec![b'x'; 1024 - data_headers.len() - eol.len()];
+        let mut upload = format!(
+            "--fireemu-boundary{eol}Content-Type: application/json{eol}{eol}{{}}{eol}--fireemu-boundary{eol}{data_headers}"
+        )
+        .into_bytes();
+        upload.extend_from_slice(&data);
+        upload.extend_from_slice(format!("{eol}--fireemu-boundary--{eol}").as_bytes());
+        upload.extend_from_slice(&[b'x'; 128]);
+        let response = handle(
+            &s,
+            owned_req(
+                "POST",
+                &upload_path,
+                &[(
+                    "content-type",
+                    "multipart/related; boundary=fireemu-boundary",
+                )],
+                upload,
+            ),
+        );
+        assert_eq!(response.status, 200, "{response:?}");
+        let download = handle(&s, req("GET", &download_path, &[], b""));
+        assert_eq!(download.status, 200);
+        assert_eq!(download.body.as_ref(), data.as_slice());
+    }
+}
+
 /// The control token `state` gives every fixture, as a run's control surface holds it.
 const CONTROL_TOKEN: &str = "storage-test-control-token";
 
@@ -105,6 +186,168 @@ fn spilled_and_memory_downloads_match_for_ranges_and_conditions() {
     assert_eq!(a.status, 304);
     assert_eq!((a.status, a.headers, a.body), (b.status, b.headers, b.body));
     drop(spilled);
+    drop(process);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn media_window_headers_and_bytes_match_for_memory_and_spill() {
+    let root = std::env::temp_dir().join(format!("storage-range-matrix-{}", std::process::id()));
+    let process = fireemu_core_storage::spill::ProcessSpill::create(&root).unwrap();
+    let bucket = BucketName::try_new(BUCKET).unwrap();
+    let cases = [
+        ("Firebase", true, "Whole"),
+        ("Firebase", true, "Suffix"),
+        ("Gcs", true, "Middle"),
+        ("Gcs", true, "OutOfRange"),
+        ("Gcs", true, "EmptySuffix"),
+        ("Xml", true, "Middle"),
+        ("Gcs", false, "OutOfRange"),
+        ("Gcs", false, "Whole"),
+        ("Gcs", false, "Invalid"),
+        ("Xml", false, "OutOfRange"),
+        ("Firebase", false, "EmptySuffix"),
+        ("Gcs", true, "Multiple"),
+        ("Firebase", true, "Invalid"),
+        ("Xml", false, "EmptySuffix"),
+        ("Gcs", false, "Suffix"),
+        ("Xml", false, "Multiple"),
+        ("Xml", false, "Whole"),
+        ("Firebase", false, "Multiple"),
+        ("Firebase", false, "OutOfRange"),
+        ("Xml", true, "Suffix"),
+        ("Firebase", false, "Middle"),
+        ("Xml", false, "Invalid"),
+        ("Firebase", true, "OutOfRange"),
+    ];
+    for (dialect, strict, kind) in cases {
+        let (range, status, content_range, expected): (_, _, _, &[u8]) = match kind {
+            "Whole" => (None, 200, None, b"0123456789"),
+            "Middle" => (Some("bytes=2-4"), 206, Some("bytes 2-4/10"), b"234"),
+            "Suffix" => (Some("bytes=-3"), 206, Some("bytes 7-9/10"), b"789"),
+            "Invalid" => (Some("bytes=4-2"), 200, None, b"0123456789"),
+            "Multiple" => (Some("bytes=0-1,4-5"), 200, None, b"0123456789"),
+            "OutOfRange" if strict && dialect == "Gcs" => {
+                (Some("bytes=10-"), 416, Some("bytes */10"), b"")
+            }
+            "OutOfRange" if strict && dialect == "Firebase" => (Some("bytes=10-"), 416, None, b""),
+            "OutOfRange" => (Some("bytes=10-"), 200, None, b"0123456789"),
+            "EmptySuffix" if strict && dialect == "Gcs" => {
+                (Some("bytes=-3"), 206, Some("bytes 0-0/0"), b"")
+            }
+            "EmptySuffix" => (Some("bytes=-3"), 200, None, b""),
+            _ => unreachable!("unknown range fixture"),
+        };
+        let empty = kind == "EmptySuffix";
+        let profile = if strict {
+            TokenAcceptance::Verified
+        } else {
+            TokenAcceptance::EmulatorMock
+        };
+        let memory = state_with(Some(ALLOW_ALL_RULES), profile);
+        let spilled = state_with(Some(ALLOW_ALL_RULES), profile);
+        spilled
+            .store
+            .lock()
+            .unwrap()
+            .set_spill(Some((process.spill_dir(), 0)));
+        let name = ObjectName::try_new("window.bin").unwrap();
+        for s in [&memory, &spilled] {
+            let mut store = s.store.lock().unwrap();
+            store
+                .put(
+                    &bucket,
+                    &name,
+                    if empty {
+                        vec![]
+                    } else {
+                        b"0123456789".to_vec()
+                    },
+                    NewMetadata::default(),
+                    Precondition::default(),
+                    START,
+                )
+                .unwrap();
+        }
+        let path = match dialect {
+            "Firebase" => format!("/v0/b/{BUCKET}/o/{name}?alt=media"),
+            "Gcs" => format!("/storage/v1/b/{BUCKET}/o/{name}?alt=media"),
+            _ => format!("/{BUCKET}/{name}"),
+        };
+        let mut headers = vec![("authorization", "Bearer owner")];
+        if let Some(range) = range {
+            headers.push(("range", range));
+        }
+        let first = handle(&memory, req("GET", &path, &headers, b""));
+        let second = handle(&spilled, req("GET", &path, &headers, b""));
+        assert_eq!(first, second, "{dialect} {strict} {range:?}");
+        assert_eq!(first.status, status, "{dialect} {strict} {range:?}");
+        assert_eq!(header(&first, "content-range"), content_range);
+        if status != 416 {
+            assert_eq!(first.body.as_ref(), expected);
+        }
+    }
+    drop(process);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gcs_range_reads_the_selected_noncurrent_spilled_generation() {
+    let root = std::env::temp_dir().join(format!("storage-range-version-{}", std::process::id()));
+    let process = fireemu_core_storage::spill::ProcessSpill::create(&root).unwrap();
+    let s = state(None);
+    let bucket = BucketName::try_new(BUCKET).unwrap();
+    let name = ObjectName::try_new("versions.bin").unwrap();
+    let (old, current) = {
+        let mut store = s.store.lock().unwrap();
+        store.set_spill(Some((process.spill_dir(), 0)));
+        store.set_versioning(&bucket, true);
+        let mut upload = |bytes: &[u8]| {
+            store
+                .put(
+                    &bucket,
+                    &name,
+                    bytes.to_vec(),
+                    NewMetadata::default(),
+                    Precondition::default(),
+                    START,
+                )
+                .unwrap()
+        };
+        (upload(b"old-body"), upload(b"latest-version"))
+    };
+    let path = format!("/storage/v1/b/{BUCKET}/o/{name}?alt=media");
+    let headers = [("range", "bytes=1-3")];
+    let old_response = handle(
+        &s,
+        req(
+            "GET",
+            &format!("{path}&generation={}", old.generation),
+            &headers,
+            b"",
+        ),
+    );
+    let current_response = handle(&s, req("GET", &path, &headers, b""));
+    assert_eq!(old_response.status, 206);
+    assert_eq!(current_response.status, 206);
+    assert_eq!(
+        header(&old_response, "x-goog-generation"),
+        Some(old.generation.to_string().as_str())
+    );
+    assert_eq!(
+        header(&current_response, "x-goog-generation"),
+        Some(current.generation.to_string().as_str())
+    );
+    assert_eq!(header(&old_response, "content-range"), Some("bytes 1-3/8"));
+    assert_eq!(
+        header(&current_response, "content-range"),
+        Some("bytes 1-3/14")
+    );
+    assert_eq!(old_response.body.as_ref(), b"ld-");
+    assert_eq!(current_response.body.as_ref(), b"ate");
+    drop(s);
     drop(process);
     std::fs::remove_dir_all(root).unwrap();
 }

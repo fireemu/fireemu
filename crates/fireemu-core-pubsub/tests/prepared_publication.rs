@@ -50,11 +50,11 @@ fn message(data: &[u8]) -> PubsubMessage {
 #[test]
 fn a_competing_publication_rejects_the_stale_preparation_without_enqueuing_it() {
     let (mut state, topic, subscription) = broker();
-    let stale = state
+    let prepared = state
         .prepare_publish(&topic, vec![message(b"prepared")], NOW)
         .unwrap();
     let committed = state.publish(&topic, vec![message(b"other")], NOW).unwrap();
-    let error = state.commit_prepared(stale, NOW).unwrap_err();
+    let error = state.commit_prepared(prepared, NOW).unwrap_err();
     assert_eq!(error.code(), Code::FailedPrecondition);
     let messages = state.pull(&subscription, 10, NOW).unwrap();
     assert_eq!(messages.len(), 1);
@@ -65,11 +65,11 @@ fn a_competing_publication_rejects_the_stale_preparation_without_enqueuing_it() 
 #[test]
 fn a_new_subscription_invalidates_the_preparation_without_delivery() {
     let (mut state, topic, original) = broker();
-    let stale = state
+    let prepared = state
         .prepare_publish(&topic, vec![message(b"prepared")], NOW)
         .unwrap();
     let added = subscribe(&mut state, "added-sub", &topic);
-    let error = state.commit_prepared(stale, NOW).unwrap_err();
+    let error = state.commit_prepared(prepared, NOW).unwrap_err();
     assert_eq!(error.code(), Code::FailedPrecondition);
     assert!(state.pull(&original, 10, NOW).unwrap().is_empty());
     assert!(state.pull(&added, 10, NOW).unwrap().is_empty());
@@ -80,14 +80,14 @@ fn recreating_a_topic_invalidates_prepared_work_even_without_subscriptions() {
     let mut state = PubSubState::new(17);
     let topic = TopicName::new("source-project", "events").unwrap();
     state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
-    let stale = state
+    let prepared = state
         .prepare_publish(&topic, vec![message(b"prepared")], NOW)
         .unwrap();
     state.delete_topic(&topic).unwrap();
     state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
 
     assert_eq!(
-        state.commit_prepared(stale, NOW).unwrap_err().code(),
+        state.commit_prepared(prepared, NOW).unwrap_err().code(),
         Code::FailedPrecondition
     );
     assert_eq!(
@@ -104,7 +104,7 @@ fn replacing_an_empty_snapshot_with_an_equal_length_name_invalidates_prepared_wo
     state
         .create_snapshot(before, &subscription, BTreeMap::new(), NOW)
         .unwrap();
-    let stale = state
+    let prepared = state
         .prepare_publish(&topic, vec![message(b"prepared")], NOW)
         .unwrap();
     state.delete_snapshot(before, NOW).unwrap();
@@ -113,7 +113,7 @@ fn replacing_an_empty_snapshot_with_an_equal_length_name_invalidates_prepared_wo
         .unwrap();
 
     assert_eq!(
-        state.commit_prepared(stale, NOW).unwrap_err().code(),
+        state.commit_prepared(prepared, NOW).unwrap_err().code(),
         Code::FailedPrecondition
     );
     assert_eq!(state.list_topic_snapshots(&topic, NOW).unwrap(), [after]);
@@ -128,7 +128,7 @@ fn snapshot_retention_on_another_topic_invalidates_the_shared_budget_admission()
         .create_topic(other_topic.clone(), BTreeMap::new())
         .unwrap();
     let other_subscription = subscribe(&mut state, "other-sub", &other_topic);
-    let stale = state
+    let prepared = state
         .prepare_publish(&topic, vec![message(b"prepared")], NOW)
         .unwrap();
     let snapshot = "projects/consumer-project/snapshots/unrelated";
@@ -137,7 +137,7 @@ fn snapshot_retention_on_another_topic_invalidates_the_shared_budget_admission()
         .unwrap();
 
     assert_eq!(
-        state.commit_prepared(stale, NOW).unwrap_err().code(),
+        state.commit_prepared(prepared, NOW).unwrap_err().code(),
         Code::FailedPrecondition
     );
     assert!(state.list_topic_snapshots(&topic, NOW).unwrap().is_empty());

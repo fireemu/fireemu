@@ -100,7 +100,7 @@
     },
     "crates/fireemu-core-auth/src/claims.rs": {
       "kind": "sha256",
-      "value": "ce62a2950fdb805be891cf4f84f6b93de99416d1ecafedf4818b243a45f73238"
+      "value": "e9a82df7a79c2606fa07d0cee8f33ba5499894a43a0620bf20283e42da23f6b5"
     },
     "crates/fireemu-core-auth/src/config_members.rs": {
       "kind": "sha256",
@@ -136,11 +136,11 @@
     },
     "crates/fireemu-core-auth/src/signup_quota.rs": {
       "kind": "sha256",
-      "value": "5e3f4c264d3a0c78f0bc0a2003ab42c73babc4de73f106ccd55b6c4c7c295ef4"
+      "value": "aeed8ca290d28c72b27cc08451a82b0e8c8661bae66de4e7155d705d3b37555e"
     },
     "crates/fireemu-core-auth/src/store.rs": {
       "kind": "sha256",
-      "value": "f4e66c3c2e5ba296fbe5054f74b3b7809ba3d6ab72c454e8d08673e4e29625ef"
+      "value": "8818657d68e2362fd34a92535dc8cc983e6ec2f26c975edfebfa4935649eec6f"
     },
     "crates/fireemu-core-auth/src/totp.rs": {
       "kind": "sha256",
@@ -200,7 +200,7 @@
     },
     "crates/fireemu-core-types/src/codec.rs": {
       "kind": "sha256",
-      "value": "20a45a23c992b5a646a9ca4eb338d5e43505162af1bc35785e0eb1f4ad672801"
+      "value": "660f0b3d475b972e9fe837657767808081f6ade610d5a64c432aa9ece4226293"
     },
     "crates/fireemu-core-types/src/determinism.rs": {
       "kind": "sha256",
@@ -264,7 +264,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "63f8b293cb03f59c35b732f161f346cdaa3fa911fd1c4616423e684e92ccbbb1"
+      "value": "5f087a07b1c617e885c2473f4a3a39a7c35a71bd3444a9cc91750f653a6a8161"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",
@@ -300,7 +300,7 @@
     },
     "verification/quint/src/evidence.rs": {
       "kind": "sha256",
-      "value": "49d5d84a90ba872eba203bdab4570ed27e130facd726f05dacd46d37b526a524"
+      "value": "7966c9f3fb42c37ff374be20c834fef016eaed70227529e663a6d7d7786f439b"
     },
     "verification/quint/src/evidence/source_closure.rs": {
       "kind": "sha256",
@@ -312,7 +312,7 @@
     },
     "verification/quint/src/main.rs": {
       "kind": "sha256",
-      "value": "831d2442bf3ef0850ab0f450d3fb419932758252fe6876ee32da07f5d1fd13fd"
+      "value": "fc9954f729e96bf78dfd94efe75eafb8e9f7bf118635afc320827f4f789b1a35"
     },
     "verification/quint/src/model.rs": {
       "kind": "sha256",

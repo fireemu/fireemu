@@ -120,7 +120,31 @@ impl std::ops::Deref for RetainedDocument {
     }
 }
 
+type RetainedVersions = [(CommitVersion, Option<RetainedDocument>)];
 type DocumentHistory = BTreeMap<DocumentPath, Vec<(CommitVersion, Option<RetainedDocument>)>>;
+
+fn retained_at(history: &RetainedVersions, version: CommitVersion) -> Option<&RetainedDocument> {
+    let (latest, older) = history.split_last()?;
+    if latest.0 <= version {
+        return latest.1.as_ref();
+    }
+    let (previous, older) = older.split_last()?;
+    if previous.0 <= version {
+        return previous.1.as_ref();
+    }
+    // Retained versions are appended in commit order. Keep near-head reads cheap, then
+    // search the remaining history without walking every intervening version.
+    let (old, recent) = older.split_at(older.len().saturating_sub(2));
+    if let Some((_, document)) = recent
+        .iter()
+        .rev()
+        .find(|(candidate, _)| *candidate <= version)
+    {
+        return document.as_ref();
+    }
+    let end = old.partition_point(|(candidate, _)| *candidate <= version);
+    old[end.checked_sub(1)?].1.as_ref()
+}
 type StagedChange = (
     DocumentPath,
     Option<RetainedDocument>,
@@ -2031,12 +2055,7 @@ impl FirestoreState {
     /// Document as of `version`.
     #[must_use]
     pub fn get_at(&self, path: &DocumentPath, version: CommitVersion) -> Option<&Document> {
-        self.history
-            .get(path)?
-            .iter()
-            .rev()
-            .find(|(v, _)| *v <= version)
-            .and_then(|(_, d)| d.as_deref())
+        retained_at(self.history.get(path)?, version).map(|retained| &**retained)
     }
 
     /// Immutable shared handle to the current document, absent at a tombstone.
@@ -2058,14 +2077,7 @@ impl FirestoreState {
         path: &DocumentPath,
         version: CommitVersion,
     ) -> Option<SharedDocument> {
-        self.history
-            .get(path)?
-            .iter()
-            .rev()
-            .find(|(candidate, _)| *candidate <= version)?
-            .1
-            .as_ref()
-            .map(|retained| Arc::clone(&retained.document))
+        retained_at(self.history.get(path)?, version).map(|retained| Arc::clone(&retained.document))
     }
 
     fn equality_candidate_index(
@@ -2668,6 +2680,25 @@ impl FirestoreState {
         self.live_documents(None).cloned().collect()
     }
 
+    /// Number of live documents whose final collection is `group`.
+    #[must_use]
+    pub fn live_collection_group_count(&self, group: &CollectionId) -> u64 {
+        self.path_indexes
+            .live_collection_group_paths()
+            .get(group)
+            .map_or(0, |paths| paths.len() as u64)
+    }
+
+    /// Number of live documents for every collection group, from this snapshot.
+    #[must_use]
+    pub fn live_collection_group_counts(&self) -> BTreeMap<String, u64> {
+        self.path_indexes
+            .live_collection_group_paths()
+            .iter()
+            .map(|(group, paths)| (group.as_str().to_owned(), paths.len() as u64))
+            .collect()
+    }
+
     /// Every live document (latest versions), in path order, as the allocations the store
     /// holds: an export can write them without copying a path or a field.
     #[must_use]
@@ -2809,10 +2840,11 @@ impl FirestoreState {
                 version: next_version,
             };
             let logical_bytes = validate_document(&document, self.limit_scope)?;
-            self.index_catalog.document_index_usage_in(
+            self.index_catalog.document_index_usage_with_known_size(
                 &document.path,
                 &document.fields,
                 self.limit_scope,
+                Some(logical_bytes),
             )?;
             let update_nanos = document.update_time.as_nanos();
             let round_up = (1_000 - update_nanos.rem_euclid(1_000)) % 1_000;
@@ -4750,10 +4782,11 @@ impl FirestoreState {
             let mut validated_size = None;
             if let Some(Cow::Owned(doc)) = &next {
                 validated_size = Some(validate_document(doc, self.limit_scope)?);
-                let usage = self.index_catalog.document_index_usage_in(
+                let usage = self.index_catalog.document_index_usage_with_known_size(
                     &doc.path,
                     &doc.fields,
                     self.limit_scope,
+                    validated_size,
                 )?;
                 commit_charges.insert(doc.path.clone(), usage.charged_bytes);
             } else if next.is_none() {
@@ -5040,14 +5073,14 @@ impl FirestoreState {
         if before.is_some_and(passes) {
             return true;
         }
-        let mut current = before.cloned();
+        let mut current = before.map(Cow::Borrowed);
         for write in writes {
-            match Self::preview_from(current.as_ref(), write, LogicalInstant::UNIX_EPOCH) {
-                Ok(next) => current = next,
+            match Self::preview_from(current.as_deref(), write, LogicalInstant::UNIX_EPOCH) {
+                Ok(next) => current = next.map(Cow::Owned),
                 Err(_) => return true,
             }
         }
-        current.as_ref().is_some_and(passes)
+        current.as_deref().is_some_and(passes)
     }
 
     /// Pessimistic locking, as production runs it (`concurrencyMode: PESSIMISTIC`, measured
@@ -5701,11 +5734,27 @@ impl FirestoreState {
         parent: Option<&DocumentPath>,
         version: Option<CommitVersion>,
     ) -> Vec<String> {
-        self.path_indexes
-            .listing_trie()
-            .collections_under(parent)
-            .into_iter()
-            .flat_map(|collections| collections.iter())
+        self.list_collection_ids_page_at(parent, version, None, usize::MAX)
+            .0
+    }
+
+    /// The next visible collection IDs strictly after `after`, and whether more remain.
+    #[must_use]
+    pub fn list_collection_ids_page_at(
+        &self,
+        parent: Option<&DocumentPath>,
+        version: Option<CommitVersion>,
+        after: Option<&CollectionId>,
+        page_size: usize,
+    ) -> (Vec<String>, bool) {
+        use std::ops::Bound::{Excluded, Unbounded};
+
+        let Some(collections) = self.path_indexes.listing_trie().collections_under(parent) else {
+            return (Vec::new(), false);
+        };
+        let start = after.map_or(Unbounded, Excluded);
+        let mut visible = collections
+            .range::<CollectionId, _>((start, Unbounded))
             .filter(|(_, collection)| match version {
                 Some(version) => {
                     let mut checks = 0;
@@ -5714,9 +5763,13 @@ impl FirestoreState {
                     })
                 }
                 None => !collection.live_candidates.is_empty(),
-            })
+            });
+        let page = visible
+            .by_ref()
+            .take(page_size)
             .map(|(collection_id, _)| collection_id.as_str().to_owned())
-            .collect()
+            .collect();
+        (page, visible.next().is_some())
     }
 
     /// Executes a canonical query at `version` (latest when `None`).
@@ -6124,26 +6177,60 @@ impl FirestoreState {
     where
         I: IntoIterator<Item = &'a Document>,
     {
-        if query.find_nearest.is_some() {
-            return Ok(None);
-        }
-        if query.limit.is_some()
+        let mut documents = Vec::new();
+        let applied = Self::select_incremental(query, changed_documents, |document| {
+            documents.push(project_document(document, query.projection.as_deref()));
+        })?;
+        Ok(applied.then_some(documents))
+    }
+
+    /// Selects the current documents for changed paths and keeps unprojected matches by handle.
+    /// As with [`Self::run_incremental_query`], `None` requests a full query evaluation.
+    pub fn run_incremental_query_shared<'a>(
+        &'a self,
+        query: &Query,
+        changed_paths: impl IntoIterator<Item = &'a DocumentPath>,
+    ) -> Result<Option<Vec<SharedDocument>>, FirestoreError> {
+        let mut documents = Vec::new();
+        let applied = Self::select_incremental(
+            query,
+            changed_paths.into_iter().filter_map(|path| self.get(path)),
+            |document| {
+                let shared = query.projection.as_deref().map_or_else(
+                    || {
+                        self.get_shared(&document.path)
+                            .expect("a matched document is live in this immutable state")
+                    },
+                    |projection| Arc::new(project_document(document, Some(projection))),
+                );
+                documents.push(shared);
+            },
+        )?;
+        Ok(applied.then_some(documents))
+    }
+
+    fn select_incremental<'a>(
+        query: &Query,
+        changed_documents: impl IntoIterator<Item = &'a Document>,
+        sink: impl FnMut(&'a Document),
+    ) -> Result<bool, FirestoreError> {
+        if query.find_nearest.is_some()
+            || query.limit.is_some()
             || query.offset != 0
             || query.start_at.is_some()
             || query.end_at.is_some()
         {
-            return Ok(None);
+            return Ok(false);
         }
-        let mut documents = Vec::new();
         select_from(
             query,
             changed_documents,
             None,
             &[],
             Consumption::Ordered,
-            |document| documents.push(project_document(document, query.projection.as_deref())),
+            sink,
         )?;
-        Ok(Some(documents))
+        Ok(true)
     }
 
     /// Feeds every document the query selects to `sink`, borrowed from the store, in query
@@ -6700,8 +6787,9 @@ where
             && order[0].field.is_document_name()
             && order[0].direction == source_direction
     });
+    let ordered_streaming = path_ordered && consumption == Consumption::Ordered;
     let streaming =
-        consumption == Consumption::Unordered && (path_ordered || (bound.is_none() && offset == 0));
+        path_ordered || (consumption == Consumption::Unordered && bound.is_none() && offset == 0);
     let mut stats = QueryStats::default();
     if bound == Some(0) {
         return Ok(stats);
@@ -6745,15 +6833,22 @@ where
         if streaming {
             if skipped < offset {
                 skipped += 1;
-                continue;
-            }
-            if let Some(limit) = query.limit {
-                if emitted >= usize::try_from(limit).unwrap_or(usize::MAX) {
+            } else {
+                if !ordered_streaming
+                    && query.limit.is_some_and(|limit| {
+                        emitted >= usize::try_from(limit).unwrap_or(usize::MAX)
+                    })
+                {
                     break;
                 }
+                sink(document);
+                emitted += 1;
             }
-            sink(document);
-            emitted += 1;
+            // Ordered selection used to stop as soon as the candidate bound was full.
+            // Keep that stop point, including when the entire bound is skipped.
+            if ordered_streaming && bound == Some(skipped + emitted) {
+                break;
+            }
             continue;
         }
         let candidate = Candidate {
@@ -6761,16 +6856,6 @@ where
             doc: document,
             order: &order,
         };
-        if path_ordered {
-            if let Some(bound) = bound {
-                rows.push(candidate);
-                stats.peak_candidates = stats.peak_candidates.max(rows.len() as u64);
-                if rows.len() >= bound {
-                    break;
-                }
-                continue;
-            }
-        }
         match bound {
             Some(0) => {}
             Some(maximum) if heap.len() >= maximum => {
@@ -6787,9 +6872,7 @@ where
     if streaming {
         return Ok(stats);
     }
-    let mut selected = if path_ordered && bound.is_some() {
-        rows
-    } else if bound.is_some() {
+    let mut selected = if bound.is_some() {
         heap.into_sorted_vec()
     } else {
         rows.sort_by(|left, right| compare_keys(&left.key, &right.key, &order));
@@ -7619,6 +7702,51 @@ mod streaming_order_key_tests {
             },
             precondition: None,
             transforms: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn name_ordered_query_does_not_retain_sort_keys() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = FirestoreState::new();
+        state
+            .commit(
+                &[
+                    test_write("a", Some(1)),
+                    test_write("a!", Some(2)),
+                    test_write("é", Some(3)),
+                ],
+                None,
+                now,
+            )
+            .unwrap();
+        let mut query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("items").unwrap(),
+        ));
+        for (direction, expected) in [
+            (Direction::Ascending, ["a!", "é"]),
+            (Direction::Descending, ["a!", "a"]),
+        ] {
+            query.order_by = vec![OrderClause {
+                field: FieldPath::parse("__name__").unwrap(),
+                direction,
+            }];
+            query.offset = 1;
+            for limit in [None, Some(2)] {
+                query.limit = limit;
+                let _ = take_order_key_build_count();
+                let (docs, counters) = state.run_query_with_stats(&query, None).unwrap();
+                assert_eq!(
+                    docs.iter()
+                        .map(|doc| doc.path.document_id().as_str())
+                        .collect::<Vec<_>>(),
+                    expected,
+                );
+                assert_eq!((counters.scanned, counters.matched), (3, 3));
+                assert_eq!(counters.peak_candidates, 0);
+                assert_eq!(take_order_key_build_count(), 0);
+            }
         }
     }
 
@@ -9325,6 +9453,125 @@ mod scope_index_tests {
     }
 
     #[test]
+    fn an_unprojected_incremental_row_reuses_the_live_document() {
+        let mut state = FirestoreState::new();
+        let now = LogicalInstant::UNIX_EPOCH;
+        let item = path("items/a");
+        state.commit(&[set("items/a")], None, now).unwrap();
+        let query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("items").unwrap(),
+        ));
+        let rows = state
+            .run_incremental_query_shared(&query, [&item])
+            .unwrap()
+            .unwrap();
+        assert!(Arc::ptr_eq(&rows[0], &state.get_shared(&item).unwrap()));
+    }
+
+    #[test]
+    fn group_counts_keep_only_live_documents_in_their_final_collection() {
+        let mut state = FirestoreState::new();
+        let now = LogicalInstant::UNIX_EPOCH;
+        let children = CollectionId::try_new("children").unwrap();
+        assert_eq!(state.live_collection_group_count(&children), 0);
+        state
+            .commit(
+                &[
+                    set("root/a"),
+                    set("root/a/children/x"),
+                    set("children/y"),
+                    set("children/y/other/z"),
+                ],
+                None,
+                now,
+            )
+            .unwrap();
+        assert_eq!(state.live_collection_group_count(&children), 2);
+        state.commit(&[delete("children/y")], None, now).unwrap();
+        assert_eq!(state.live_collection_group_count(&children), 1);
+        assert_eq!(
+            state.visible_snapshot().live_collection_group_counts(),
+            BTreeMap::from([
+                ("children".to_owned(), 1),
+                ("other".to_owned(), 1),
+                ("root".to_owned(), 1),
+            ]),
+        );
+        state.commit(&[set("children/y")], None, now).unwrap();
+        assert_eq!(state.live_collection_group_count(&children), 2);
+    }
+
+    #[test]
+    fn collection_id_page_seeks_after_a_cursor_and_looks_ahead_one_visible_branch() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = FirestoreState::new();
+        let parent = path("ancestors/missing");
+        state
+            .commit(
+                &[
+                    set("ancestors/missing/a/x"),
+                    set("ancestors/missing/b/x"),
+                    set("ancestors/missing/c/x/leaf/x"),
+                    set("ancestors/sibling/d/x"),
+                ],
+                None,
+                now,
+            )
+            .unwrap();
+        let version = state.current_version();
+        state
+            .commit(&[delete("ancestors/missing/a/x")], None, now)
+            .unwrap();
+
+        let cursor_between_ids = CollectionId::try_new("a!").unwrap();
+        assert_eq!(
+            state.list_collection_ids_page_at(Some(&parent), None, Some(&cursor_between_ids), 1),
+            (vec!["b".to_owned()], true),
+        );
+        assert_eq!(
+            state.list_collection_ids_page_at(Some(&parent), Some(version), None, 1),
+            (vec!["a".to_owned()], true),
+        );
+        let cursor = CollectionId::try_new("b").unwrap();
+        assert_eq!(
+            state.list_collection_ids_page_at(Some(&parent), None, Some(&cursor), 1),
+            (vec!["c".to_owned()], false),
+        );
+    }
+
+    #[test]
+    fn both_historical_reads_choose_the_last_version_including_tombstones() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = FirestoreState::new();
+        let target = path("items/hot");
+        for step in 0..32 {
+            let write = if step % 3 == 1 {
+                delete("items/hot")
+            } else {
+                let mut write = set("items/hot");
+                let WriteOp::Set { fields, .. } = &mut write.op else {
+                    unreachable!();
+                };
+                fields.insert("step".to_owned(), Value::Integer(step));
+                write
+            };
+            state
+                .commit(&[write, set(&format!("edits/c{step}"))], None, now)
+                .unwrap();
+        }
+        for version in (0..=34).map(CommitVersion::from_value) {
+            let expected = state.history[&target]
+                .iter()
+                .rev()
+                .find(|(candidate, _)| *candidate <= version)
+                .and_then(|(_, document)| document.as_deref());
+            assert_eq!(state.get_at(&target, version), expected);
+            assert_eq!(state.get_at_shared(&target, version).as_deref(), expected);
+        }
+    }
+
+    #[test]
     fn scope_indexes_exactly_project_retained_history() {
         let mut state = FirestoreState::new();
         state
@@ -9441,6 +9688,33 @@ mod scope_index_tests {
     /// [`crate::size::field_value_size`] at every level. That is a second implementation of
     /// the same formula, so this pins the two together: every value's validated total is its
     /// `field_value_size`, and the document's total is `document_size`.
+    #[test]
+    fn strict_commit_and_import_reuse_the_validated_document_size() {
+        let now = LogicalInstant::UNIX_EPOCH;
+        let mut state = FirestoreState::with_limit_scope(LimitScope::Production);
+        let _ = crate::size::DOCUMENT_BYTE_VISITS.with(std::cell::Cell::take);
+        state.commit(&[set("charge/write")], None, now).unwrap();
+        assert_eq!(
+            crate::size::DOCUMENT_BYTE_VISITS.with(std::cell::Cell::take),
+            1
+        );
+        state
+            .import_documents(
+                vec![ImportedDocument {
+                    path: path("charge/import"),
+                    fields: BTreeMap::from([("n".to_owned(), Value::Integer(2))]),
+                    create_time: None,
+                    update_time: None,
+                }],
+                now,
+            )
+            .unwrap();
+        assert_eq!(
+            crate::size::DOCUMENT_BYTE_VISITS.with(std::cell::Cell::take),
+            1
+        );
+    }
+
     #[test]
     fn the_validated_size_is_the_size_model_for_every_shape() {
         let nested = |depth: usize| {

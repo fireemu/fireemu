@@ -62,6 +62,9 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
 /// never accepted.
 #[must_use]
 pub fn percent_decode(value: &str, plus: PlusMode) -> String {
+    if !value.contains('%') && (plus == PlusMode::Literal || !value.contains('+')) {
+        return value.to_owned();
+    }
     String::from_utf8_lossy(&percent_decode_bytes(value, plus)).into_owned()
 }
 
@@ -185,6 +188,15 @@ mod tests {
         assert_eq!(percent_decode("a%20b+c", PlusMode::Literal), "a b+c");
         assert_eq!(percent_decode("%+f%2G%", PlusMode::Literal), "%+f%2G%");
         assert_eq!(percent_decode("%2f%2F", PlusMode::Literal), "//");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn percent_decode_preserves_the_byte_decoder_policy(value in ".*", form: bool) {
+            let mode = if form { PlusMode::Space } else { PlusMode::Literal };
+            let bytes = percent_decode_bytes(&value, mode);
+            proptest::prop_assert_eq!(percent_decode(&value, mode), String::from_utf8_lossy(&bytes));
+        }
     }
 
     #[test]

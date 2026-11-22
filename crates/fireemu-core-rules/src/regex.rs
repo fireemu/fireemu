@@ -888,7 +888,11 @@ impl Regex {
     /// the one returned by [`Self::is_full_match`].
     #[must_use]
     pub fn full_match_diagnostics(&self, text: &str) -> RegexMatchDiagnostics {
-        let chars: Vec<u32> = text.chars().map(|c| c as u32).collect();
+        let chars: Vec<u32> = if text.len() >= 32 && text.is_ascii() {
+            text.as_bytes().iter().copied().map(u32::from).collect()
+        } else {
+            text.chars().map(|c| c as u32).collect()
+        };
         self.full_match_elements(&chars)
     }
 
