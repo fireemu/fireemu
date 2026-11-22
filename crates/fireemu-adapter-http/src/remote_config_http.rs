@@ -1232,6 +1232,8 @@ mod tests {
         for expression in [
             "percent('s') < 100",
             "percent('s') <= 100.0000001",
+            "percent('s') <= 12.5000001",
+            "percent('s') <= +5",
             "percent('s') <= 100.000001",
             "percent('s') <= -1",
             r#"percent("s") <= 100"#,
