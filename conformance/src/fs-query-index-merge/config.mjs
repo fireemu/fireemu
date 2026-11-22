@@ -64,6 +64,7 @@ const NAME_DESC = { fieldPath: "__name__", order: "DESCENDING" };
  * E17 to E23 are the entries that fs-query-index-merge4.indexes.json adds to the base for observation 2b-2.
  * E24 to E30 are the entries that fs-query-index-merge5.indexes.json adds to the base for observation 2b-3.
  * E31 to E36 are the entries that fs-query-index-merge6.indexes.json adds to the base for observation 2b-4.
+ * E37 to E43 are the entries that fs-query-index-merge7.indexes.json adds to the base for observation 2b-5.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -145,6 +146,21 @@ export const ENTRIES = {
   E34: { kind: "override", group: "irv", field: "a", indexes: [] },
   E35: { kind: "composite", group: "icm", queryScope: "COLLECTION", fields: [ASC, NAME_DESC] },
   E36: { kind: "override", group: "icm", field: "a", indexes: [] },
+  E37: { kind: "composite", group: "igx", queryScope: "COLLECTION_GROUP", fields: [ASC, TAGS] },
+  E38: { kind: "override", group: "igx", field: "a", indexes: [] },
+  E39: { kind: "override", group: "igx", field: "tags", indexes: [] },
+  E40: {
+    kind: "override",
+    group: "igx",
+    field: "b",
+    indexes: [
+      { queryScope: "COLLECTION", order: "ASCENDING" },
+      { queryScope: "COLLECTION_GROUP", order: "ASCENDING" },
+    ],
+  },
+  E41: { kind: "composite", group: "ip1", queryScope: "COLLECTION", fields: [A_DESC, TAGS] },
+  E42: { kind: "override", group: "ip1", field: "a", indexes: [] },
+  E43: { kind: "override", group: "ip1", field: "tags", indexes: [] },
 };
 
 /**
@@ -152,6 +168,7 @@ export const ENTRIES = {
  * Observation 2b-2 uses `obs2b2`, starting with the ordered-only tags override.
  * Observation 2b-3 uses `obs2b3`, starting with the group-scope contains override.
  * Observation 2b-4 uses `obs2b4`, starting with the three explicit-name composites.
+ * Observation 2b-5 uses `obs2b5`, starting with the ascending b override at both scopes.
  */
 export const SETS = {
   f2: ["E3"],
@@ -163,6 +180,7 @@ export const SETS = {
   obs2b2: ["E23", "E17", "E18", "E21", "E19", "E20", "E22"],
   obs2b3: ["E26", "E24", "E27", "E25", "E28", "E29", "E30"],
   obs2b4: ["E31", "E33", "E35", "E32", "E34", "E36"],
+  obs2b5: ["E40", "E37", "E41", "E38", "E39", "E42", "E43"],
 };
 
 export const POLL_ROUNDS = 40;
