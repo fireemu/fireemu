@@ -417,9 +417,16 @@ async fn remote_config_response(
                 ),
                 Ok(bytes) => {
                     let now = control.clock.lock().expect("clock lock").snapshot().instant;
-                    // Dispatch reserves, appends, and enqueues the version under admission, as on other mutating control routes.
-                    // A reset takes the barrier exclusively and advances the Functions epoch, so it runs before the write or waits for it to finish.
-                    let _admitted = control.barrier.as_ref().map(|barrier| barrier.admit());
+                    // A commit (publish or rollback) reserves, appends and enqueues its version
+                    // under admission, as other mutating control routes do: a reset takes the
+                    // barrier exclusively and advances the Functions epoch, so it runs before the
+                    // write or waits for it. Reads and validate-only requests change nothing and
+                    // take no admission, so they never queue behind a pending reset (a blocking
+                    // Auth callback that reads Remote Config while its signup holds admission
+                    // would otherwise wait for the reset that waits for the signup).
+                    let _admitted = remote_config_http::commits(parts.method.as_str(), query)
+                        .then(|| control.barrier.as_ref().map(|barrier| barrier.admit()))
+                        .flatten();
                     remote_config_http::dispatch(
                         store,
                         route,

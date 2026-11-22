@@ -441,16 +441,23 @@ struct FakeFunctions {
     cancelled: Arc<AtomicUsize>,
     reset_barrier: Option<Arc<AdmissionBarrier>>,
     reset_refused: Mutex<Option<bool>>,
+    /// Whether a reset was refused while the publication was enqueued.
+    publish_refused: Arc<Mutex<Option<bool>>>,
 }
 
 struct FakeRemoteConfigPublication {
     calls: Arc<Mutex<FunctionCalls>>,
     cancelled: Arc<AtomicUsize>,
     version: Option<Value>,
+    reset_barrier: Option<Arc<AdmissionBarrier>>,
+    publish_refused: Arc<Mutex<Option<bool>>>,
 }
 
 impl RemoteConfigPublication for FakeRemoteConfigPublication {
     fn publish(mut self: Box<Self>) {
+        if let Some(barrier) = &self.reset_barrier {
+            *self.publish_refused.lock().unwrap() = Some(barrier.try_exclusive().is_none());
+        }
         self.calls.lock().unwrap().push((
             "remoteConfigVersion".into(),
             vec![self.version.take().unwrap()],
@@ -475,6 +482,8 @@ impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
             calls: self.calls.clone(),
             cancelled: self.cancelled.clone(),
             version: Some(version.clone()),
+            reset_barrier: self.reset_barrier.clone(),
+            publish_refused: self.publish_refused.clone(),
         });
         if let Some(barrier) = &self.reset_barrier {
             *self.reset_refused.lock().unwrap() = Some(barrier.try_exclusive().is_none());
@@ -4167,6 +4176,10 @@ async fn admin_publish_waits_for_reset_during_reservation() {
             *hook.reset_refused.lock().unwrap(),
             published.then_some(true)
         );
+        assert_eq!(
+            *hook.publish_refused.lock().unwrap(),
+            published.then_some(true)
+        );
         assert_eq!(hook.calls.lock().unwrap().len(), usize::from(published));
     }
     assert!(barrier.try_exclusive().is_some());
@@ -4204,6 +4217,7 @@ async fn admin_publish_waits_for_reset_during_reservation_namespaced() {
 
     assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
     assert_eq!(*hook.reset_refused.lock().unwrap(), Some(true));
+    assert_eq!(*hook.publish_refused.lock().unwrap(), Some(true));
     assert_eq!(hook.calls.lock().unwrap().len(), 1);
     assert!(barrier.try_exclusive().is_some());
     server.abort();
@@ -4244,6 +4258,7 @@ async fn admin_rollback_waits_for_reset_during_reservation() {
 
         assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
         assert_eq!(hook.reset_refused.lock().unwrap().take(), Some(true));
+        assert_eq!(hook.publish_refused.lock().unwrap().take(), Some(true));
         let mut calls = hook.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
         calls.clear();
@@ -4630,4 +4645,98 @@ fn a_sync_uses_one_wall_reading() {
         LogicalInstant::from_nanos(last),
         "no lag behind the wall clock"
     );
+}
+
+/// Reads and validate-only requests take no session admission: with a reset holding the
+/// barrier exclusively (the state in which a pending reset blocks new admissions), each still
+/// answers. The server runs on its own runtime and the client on a plain thread, so a
+/// regression that blocks a worker cannot stall the test; the receive timeout only bounds such
+/// a regression and synchronises nothing. The reset is released before a failure is reported.
+#[test]
+fn admin_reads_proceed_while_a_reset_holds_the_barrier() {
+    use std::io::{Read, Write};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions::default());
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = runtime.spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let reset = barrier.exclusive();
+    let mut failures = Vec::new();
+    for (method, path, body, expected) in [
+        ("GET", "/v1/projects/demo-app/remoteConfig", "", "200"),
+        (
+            "GET",
+            "/v1/projects/demo-app/remoteConfig?versionNumber=1",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/remoteConfig:listVersions",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/namespaces/firebase-server/serverRemoteConfig",
+            "",
+            "404",
+        ),
+        (
+            "PUT",
+            "/v1/projects/demo-app/remoteConfig?validateOnly=true",
+            "{}",
+            "200",
+        ),
+        (
+            "PUT",
+            "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig?validate_only=true",
+            "{}",
+            "200",
+        ),
+    ] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(addr).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+            let _ = sender.send(response);
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(response) if response.starts_with(&format!("HTTP/1.1 {expected} ")) => {}
+            Ok(response) => failures.push(format!("{method} {path}: {response}")),
+            Err(_) => {
+                failures.push(format!("{method} {path} waited for the reset"));
+                break;
+            }
+        }
+    }
+    drop(reset);
+    server.abort();
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert!(hook.calls.lock().unwrap().is_empty());
 }

@@ -459,6 +459,17 @@ fn store_error(error: Error) -> Reply {
     }
 }
 
+/// Whether a request can commit a version: a publish (`PUT` that is not validate-only) or a
+/// rollback (`POST`). A query that `dispatch` refuses commits nothing either way.
+pub(crate) fn commits(method: &str, query: &str) -> bool {
+    match method {
+        "POST" => true,
+        "PUT" => parameters(query, &["validateOnly"])
+            .is_ok_and(|params| params.get("validateOnly").map(String::as_str) != Some("true")),
+        _ => false,
+    }
+}
+
 pub(crate) fn dispatch(
     stores: &RemoteConfigStores,
     route: &Route<'_>,
