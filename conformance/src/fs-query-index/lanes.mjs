@@ -104,6 +104,17 @@ export const LANES = {
     harness: "src/fs-query-index",
     sources: ["src/fs-query-index", "src/fs-query-index-merge", "src/fs-query-index-merge5"],
   },
+  // Observation 2b-4 covers a group composite for a collection query (I1), its reverse, and a configured composite as a merge member.
+  "fs-query-index-merge6": {
+    id: "fs-query-index-merge6",
+    taskId: "FS-QUERY-INDEX-MERGE-6",
+    corpus: "../fs-query-index-merge6/corpus.mjs",
+    fixture: "fs-query-index-merge6-production.json",
+    indexes: "fs-query-index-merge6.indexes.json",
+    localConfig: "fs-query-index-merge6.fireemu.json",
+    harness: "src/fs-query-index",
+    sources: ["src/fs-query-index", "src/fs-query-index-merge", "src/fs-query-index-merge6"],
+  },
   // FS-ENT-ORACLE O-1 (owner ledger 1468 Q1): pipeline semantics in the named Enterprise
   // database `entpipe1`, which this campaign creates and deletes in its own packet steps. No
   // index file: Enterprise runs pipelines without indexes, and the lane never deploys any. The

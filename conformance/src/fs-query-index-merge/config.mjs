@@ -21,6 +21,7 @@
 //   expected pattern (project id or the FIREEMU_SANDBOX_PROJECT_NUMBER number, `(default)`, its
 //   own group). A read counts only in a shape production was recorded answering (entryState,
 //   operationState); a failed, malformed or unrecorded read sends nothing.
+// - A composite with a configured trailing `__name__` reads with exactly its configured fields.
 // - A composite read records the trailing implicit `__name__` direction, allowing DESCENDING only when the last configured field has no order.
 // - A composite list is unreadable if a resource name repeats anywhere in its pages.
 // - Remove sends nothing if two entries read present as composites with the same name.
@@ -56,11 +57,13 @@ const ASC = { fieldPath: "a", order: "ASCENDING" };
 const A_DESC = { fieldPath: "a", order: "DESCENDING" };
 const B_ASC = { fieldPath: "b", order: "ASCENDING" };
 const TAGS = { fieldPath: "tags", arrayConfig: "CONTAINS" };
+const NAME_DESC = { fieldPath: "__name__", order: "DESCENDING" };
 
 /**
  * As the lane index files state them, E1 to E5 are the first observation's entries, E6 to E8 are the added overrides for observation 2a, and E9 to E16 are the entries that fs-query-index-merge3.indexes.json adds to the base for observation 2b-1.
  * E17 to E23 are the entries that fs-query-index-merge4.indexes.json adds to the base for observation 2b-2.
  * E24 to E30 are the entries that fs-query-index-merge5.indexes.json adds to the base for observation 2b-3.
+ * E31 to E36 are the entries that fs-query-index-merge6.indexes.json adds to the base for observation 2b-4.
  */
 export const ENTRIES = {
   E1: { kind: "composite", group: "imx", queryScope: "COLLECTION", fields: [ASC, TAGS] },
@@ -131,12 +134,24 @@ export const ENTRIES = {
   E28: { kind: "override", group: "i2p", field: "a", indexes: [] },
   E29: { kind: "override", group: "i2p", field: "b", indexes: [] },
   E30: { kind: "override", group: "i2p", field: "tags", indexes: [] },
+  E31: {
+    kind: "composite",
+    group: "ig1",
+    queryScope: "COLLECTION_GROUP",
+    fields: [ASC, NAME_DESC],
+  },
+  E32: { kind: "override", group: "ig1", field: "a", indexes: [] },
+  E33: { kind: "composite", group: "irv", queryScope: "COLLECTION", fields: [ASC, NAME_DESC] },
+  E34: { kind: "override", group: "irv", field: "a", indexes: [] },
+  E35: { kind: "composite", group: "icm", queryScope: "COLLECTION", fields: [ASC, NAME_DESC] },
+  E36: { kind: "override", group: "icm", field: "a", indexes: [] },
 };
 
 /**
  * The first observation uses `f2` (E3), `f1` (composites and exemptions) or `all` (both), observation 2a uses `obs2a` (`all` plus the group-scope overrides in `g`), and observation 2b-1 uses `obs2b1` (the additions in fs-query-index-merge3.indexes.json).
  * Observation 2b-2 uses `obs2b2`, starting with the ordered-only tags override.
  * Observation 2b-3 uses `obs2b3`, starting with the group-scope contains override.
+ * Observation 2b-4 uses `obs2b4`, starting with the three explicit-name composites.
  */
 export const SETS = {
   f2: ["E3"],
@@ -147,6 +162,7 @@ export const SETS = {
   obs2b1: ["E16", "E9", "E10", "E14", "E11", "E12", "E13", "E15"],
   obs2b2: ["E23", "E17", "E18", "E21", "E19", "E20", "E22"],
   obs2b3: ["E26", "E24", "E27", "E25", "E28", "E29", "E30"],
+  obs2b4: ["E31", "E33", "E35", "E32", "E34", "E36"],
 };
 
 export const POLL_ROUNDS = 40;
@@ -309,18 +325,21 @@ const METADATA_KEYS = {
 
 /** A listed composite must match the scope, configured fields and permitted `__name__` suffix. */
 export function compositeMatches(index, entry) {
+  const last = entry.fields.at(-1);
+  const explicitName = last?.fieldPath === "__name__";
   if (
     index?.queryScope !== entry.queryScope ||
     !Array.isArray(index.fields) ||
-    index.fields.length !== entry.fields.length + 1
+    index.fields.length !== entry.fields.length + (explicitName ? 0 : 1)
   )
     return false;
-  const last = entry.fields.at(-1);
   const order =
     last && !Object.hasOwn(last, "order") && index.fields.at(-1)?.order === "DESCENDING"
       ? "DESCENDING"
       : "ASCENDING";
-  const expected = [...entry.fields, { fieldPath: "__name__", order }];
+  const expected = explicitName
+    ? entry.fields
+    : [...entry.fields, { fieldPath: "__name__", order }];
   return index.fields.every(
     (field, i) => isObject(field) && canonical(field) === canonical(expected[i]),
   );
@@ -382,7 +401,9 @@ function compositeState(entry, body, forms) {
     state: "present",
     name: index.name,
     ready: index.state === "READY",
-    implicitName: index.fields.at(-1).order,
+    ...(entry.fields.at(-1)?.fieldPath === "__name__"
+      ? {}
+      : { implicitName: index.fields.at(-1).order }),
   };
 }
 
