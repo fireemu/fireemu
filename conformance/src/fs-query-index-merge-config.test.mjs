@@ -592,6 +592,60 @@ test("E17 and E18 each report either implicit name direction without matching th
   }
 });
 
+test("no two composite entries of one group differ only in the trailing name field", () => {
+  const explicit = (entry) =>
+    JSON.stringify(entry.fields.filter((field) => field.fieldPath !== "__name__"));
+  const composites = Object.entries(ENTRIES).filter(([, entry]) => entry.kind === "composite");
+  for (const [id, entry] of composites)
+    for (const [otherId, other] of composites)
+      if (id < otherId && entry.group === other.group && entry.queryScope === other.queryScope)
+        assert.notEqual(explicit(entry), explicit(other), `${id} and ${otherId}`);
+});
+
+test("E18 reads present in the recorded implicit-name shape of qn, and E17 and E21 in the carriers'", () => {
+  // Production lists qn (g ASC, n DESC) as g ASC, n DESC, __name__ DESC (send-2b1-v2 apply
+  // journal): the implicit name takes the direction of the last ordered field. The carriers
+  // (a ASC, tags CONTAINS) of iw2 and it1 were listed with __name__ ASC. The base fixture of
+  // this file follows that rule; E18 (a DESC, tags CONTAINS) has no recorded listing, so both
+  // directions read present and the read says which one production listed.
+  const qn = BASE_INDEXES.find(
+    (index) =>
+      index.name.includes("/qn/") &&
+      JSON.stringify(index.fields.map((f) => f.order)) ===
+        JSON.stringify(["ASCENDING", "DESCENDING", "DESCENDING"]),
+  );
+  assert.deepEqual(
+    qn.fields.map((f) => f.fieldPath),
+    ["g", "n", "__name__"],
+  );
+  const shaped = (group, id, fields) => ({
+    ...qn,
+    name: `${DB_NUMBER}/collectionGroups/${group}/indexes/${id}`,
+    fields,
+  });
+  for (const order of ["DESCENDING", "ASCENDING"]) {
+    const e18 = shaped("iwd", "idx-E18", [...ENTRIES.E18.fields, { fieldPath: "__name__", order }]);
+    const e17 = shaped("iwd", "idx-E17", [
+      ...ENTRIES.E17.fields,
+      { fieldPath: "__name__", order: "ASCENDING" },
+    ]);
+    const answer = { status: 200, json: { indexes: [...BASE_INDEXES, e17, e18] } };
+    assert.deepEqual(entryState(ENTRIES.E18, answer, FORMS), {
+      state: "present",
+      name: e18.name,
+      ready: true,
+      implicitName: order,
+    });
+    assert.equal(entryState(ENTRIES.E17, answer, FORMS).implicitName, "ASCENDING");
+  }
+  const e21 = shaped("io1", "idx-E21", [
+    ...ENTRIES.E21.fields,
+    { fieldPath: "__name__", order: "ASCENDING" },
+  ]);
+  const answer = { status: 200, json: { indexes: [...BASE_INDEXES, e21] } };
+  assert.equal(entryState(ENTRIES.E21, answer, FORMS).implicitName, "ASCENDING");
+});
+
 test("a composite still requires one exact trailing name field", () => {
   const entry = ENTRIES.E17;
   const name = { fieldPath: "__name__", order: "DESCENDING" };
