@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-11-22
+
 ### Added
 
 - Remote Config: the daemon's loopback control listener serves client-template administration for its configured project, following answers recorded in production on 2026-11-21: read the current template or a given version, validate, publish with `If-Match` (an ETag is returned for gzip requests), list versions with paging, and roll back. Authenticate with the control token. Server templates, SDK fetch and real-time delivery, and functions triggered by a publish are not served yet. See `docs/remote-config.md`.
@@ -15,7 +17,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ### Changed
 
-- Performance: less repeated work on the hot paths of Firestore (queries, Listen, commits, pipelines, text search), Storage (hashing, ranges, imports), Auth, Realtime Database, Pub/Sub, Hosting and Functions. Answers, ordering and limits are unchanged.
+- Performance: less repeated work on the hot paths of Firestore (queries, Listen, commits, pipelines, text search), Storage (hashing, ranges, imports), Auth, Realtime Database, Pub/Sub, Hosting and Functions. Answers, ordering and limits are unchanged, except that a Remote Config publish whose `If-Match` tag is already stale is refused with 412 before its template is validated.
 
 ### Fixed
 
@@ -1520,7 +1522,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.63.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.64.0...HEAD
+[0.64.0]: https://github.com/fireemu/fireemu/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/fireemu/fireemu/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/fireemu/fireemu/compare/v0.61.0...v0.62.0
 [0.61.0]: https://github.com/fireemu/fireemu/compare/v0.60.0...v0.61.0
