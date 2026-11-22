@@ -1182,13 +1182,16 @@ mod tests {
             tag = reply.etag.unwrap();
         }
 
-        let fixture = include_str!("remote_config_testdata/server_dataplane.json");
+        // A Windows checkout may turn the fixture's LF line ends into CRLF; the recorded
+        // body (2040 bytes) used LF.
+        let fixture =
+            include_str!("remote_config_testdata/server_dataplane.json").replace("\r\n", "\n");
         let (status, body, etag) = read().into_wire();
         assert_eq!(status, 200);
         assert_eq!(etag.as_deref(), Some(tag.as_str()));
         assert_eq!(
             serde_json::from_slice::<Value>(&body).unwrap(),
-            serde_json::from_str::<Value>(fixture).unwrap()
+            serde_json::from_str::<Value>(&fixture).unwrap()
         );
         assert_eq!(fixture.len(), 2040);
         assert_eq!(body.len(), fixture.len());
