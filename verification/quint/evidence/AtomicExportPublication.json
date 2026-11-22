@@ -600,7 +600,7 @@
     },
     "crates/fireemu-adapter-functions/src/events.rs": {
       "kind": "sha256",
-      "value": "410fe3d8bb38a3e8f9348d351378db20af2b78da819f3684b9fec7c351a23cbe"
+      "value": "19f08bd0c05aa4d902f9508374f730398fbd37dad2b6a043978a1765fbd352b5"
     },
     "crates/fireemu-adapter-functions/src/http.rs": {
       "kind": "sha256",

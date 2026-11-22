@@ -2544,7 +2544,13 @@ mod remote_config_tests {
 
     #[test]
     fn committed_remote_config_ids_distinguish_previously_colliding_versions() {
-        for (generation, a, b) in [("v2", 2740, 56384), ("v1", 8184, 44818)] {
+        for (generation, a, b) in [
+            ("v2", 2740, 56384),
+            ("v1", 8184, 44818),
+            // Equal under `x | (x >> 16)`, distinct under the invertible `x ^ (x >> 16)`.
+            ("v1", 65536, 65537),
+            ("v2", 65536, 65537),
+        ] {
             assert_ne!(
                 remote_config_event_id("demo-config", "firebase", generation, a),
                 remote_config_event_id("demo-config", "firebase", generation, b),
