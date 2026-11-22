@@ -47,11 +47,12 @@ async fn respond(
             .body(Full::new(Bytes::from(refusal.body())))
             .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
     }
-    let method = req.method().as_str().to_owned();
+    let (parts, incoming) = req.into_parts();
+    let method = parts.method.as_str();
     // The control API answers loopback peers only. The listener is on loopback unless
     // `network.allowNonLoopbackHosts` exposed the Auth emulator, and then a peer on another
     // host reaches Identity Toolkit but never the control surface.
-    if refuses_remote_control(remote_peer, control.is_some(), req.uri().path()) {
+    if refuses_remote_control(remote_peer, control.is_some(), parts.uri.path()) {
         return Ok(finish(
             403,
             &serde_json::json!({
@@ -61,15 +62,8 @@ async fn respond(
             false,
         ));
     }
-    let origin = req
-        .headers()
-        .get("origin")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    if origin
-        .as_deref()
-        .is_some_and(|o| !crate::identity_toolkit::origin_is_local(o))
-    {
+    let origin = parts.headers.get("origin").and_then(|v| v.to_str().ok());
+    if origin.is_some_and(|o| !crate::identity_toolkit::origin_is_local(o)) {
         return Ok(Response::builder()
             .status(StatusCode::FORBIDDEN)
             .body(Full::new(Bytes::from_static(b"forbidden origin")))
@@ -77,28 +71,26 @@ async fn respond(
     }
     if method == "OPTIONS" {
         // Browser preflight (the Auth SDK sends JSON with an Authorization header).
-        let requested = req
-            .headers()
+        let requested = parts
+            .headers
             .get("access-control-request-headers")
             .and_then(|v| v.to_str().ok())
-            .unwrap_or("authorization, content-type, x-firebase-appcheck")
-            .to_owned();
-        return Ok(
-            with_cors(Response::builder().status(204), origin.as_deref())
-                .header("access-control-allow-headers", requested)
-                .header("access-control-max-age", "3600")
-                .body(Full::new(Bytes::new()))
-                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))),
-        );
+            .unwrap_or("authorization, content-type, x-firebase-appcheck");
+        return Ok(with_cors(Response::builder().status(204), origin)
+            .header("access-control-allow-headers", requested)
+            .header("access-control-max-age", "3600")
+            .body(Full::new(Bytes::new()))
+            .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
     }
-    let mut path = req
-        .uri()
-        .path_and_query()
-        .map_or_else(|| req.uri().path().to_owned(), |pq| pq.as_str().to_owned());
+    let uri = &parts.uri;
+    let mut path = std::borrow::Cow::Borrowed(
+        uri.path_and_query()
+            .map_or_else(|| uri.path(), |pq| pq.as_str()),
+    );
     // The emulator accepts the API key header as an alternative to the query key.
     // Preserve Authorization-bearing requests and leave strict profile routing unchanged.
     if state.stateless_refresh_tokens
-        && !req.headers().contains_key(hyper::header::AUTHORIZATION)
+        && !parts.headers.contains_key(hyper::header::AUTHORIZATION)
         && (path.starts_with("/identitytoolkit.googleapis.com/")
             || path.starts_with("/securetoken.googleapis.com/"))
         && !path.split_once('?').is_some_and(|(_, query)| {
@@ -107,11 +99,12 @@ async fn respond(
                 .any(|part| part.split('=').next() == Some("key"))
         })
     {
-        if let Some(key) = req
-            .headers()
+        if let Some(key) = parts
+            .headers
             .get("x-goog-api-key")
             .and_then(|v| v.to_str().ok())
         {
+            let path = path.to_mut();
             path.push(if path.contains('?') { '&' } else { '?' });
             path.push_str("key=");
             path.push_str(&crate::identity_toolkit::percent_encode(key));
@@ -121,7 +114,7 @@ async fn respond(
         return Ok(finish(
             200,
             &serde_json::json!({"emulator": "auth"}),
-            origin.as_deref(),
+            origin,
             true,
         ));
     }
@@ -131,7 +124,7 @@ async fn respond(
     {
         let (widget_path, widget_query) = match path.split_once('?') {
             Some((p, q)) => (p, Some(q)),
-            None => (path.as_str(), None),
+            None => (path.as_ref(), None),
         };
         if crate::identity_toolkit::widget::is_widget_path(widget_path) {
             if method != "GET" {
@@ -141,7 +134,7 @@ async fn respond(
                         405,
                         "METHOD_NOT_ALLOWED",
                     ),
-                    origin.as_deref(),
+                    origin,
                     false,
                 ));
             }
@@ -150,7 +143,7 @@ async fn respond(
             let builder = with_cors(
                 Response::builder()
                     .status(StatusCode::from_u16(rendered.status).unwrap_or(StatusCode::OK)),
-                origin.as_deref(),
+                origin,
             )
             .header("content-type", rendered.content_type)
             .header("cache-control", "no-store");
@@ -160,44 +153,35 @@ async fn respond(
         }
     }
     let header = |name: &str| {
-        req.headers()
+        parts
+            .headers
             .get(name)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
-    let accept_encoding = header("accept-encoding");
     if let (Some(control), Some(store)) = (&control, &remote_config) {
         let (endpoint, query) = path.split_once('?').unwrap_or((&path, ""));
         if let Some(route) = remote_config_http::route(endpoint) {
-            let encodings = req
-                .headers()
-                .get_all(hyper::header::ACCEPT_ENCODING)
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .collect::<Vec<_>>()
-                .join(",");
             return Ok(remote_config_response(
-                control,
-                store,
-                &route,
-                query,
-                req,
-                origin.as_deref(),
-                Some(&encodings),
+                control, store, &route, query, &parts, incoming, origin,
             )
             .await);
         }
     }
+    let accept_encoding = parts
+        .headers
+        .get("accept-encoding")
+        .and_then(|value| value.to_str().ok());
     let headers = RequestHeaders {
         authorization: header("authorization"),
-        origin: header("origin"),
+        origin: origin.map(str::to_owned),
         content_type: header("content-type"),
         host: header("host"),
         // Every instance, in wire order: duplicates and folded values must survive to the
         // classifier, which refuses them (spec 7.3). An unrenderable value becomes an empty
         // string, which is malformed too.
-        app_check: req
-            .headers()
+        app_check: parts
+            .headers
             .get_all(fireemu_core_app_check::header::APP_CHECK_HEADER)
             .iter()
             .map(|v| v.to_str().unwrap_or_default().to_owned())
@@ -206,18 +190,12 @@ async fn respond(
     };
     if let Some(refusal) = control
         .as_ref()
-        .and_then(|control| control::remote_config_guard(control, &method, &path, &headers))
+        .and_then(|control| control::remote_config_guard(control, method, &path, &headers))
     {
-        return Ok(finish(
-            refusal.status,
-            &refusal.body,
-            origin.as_deref(),
-            true,
-        ));
+        return Ok(finish(refusal.status, &refusal.body, origin, true));
     }
     // Bound the body before reading it (spec 33.3): oversized payloads never allocate fully.
-    let collected =
-        fireemu_adapter_support::body::collect_limited(req.into_body(), MAX_BODY_BYTES).await;
+    let collected = fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await;
     let (status, body) = match collected {
         Err(_) => (
             413,
@@ -233,7 +211,7 @@ async fn respond(
                     Some(app_check) => crate::app_check::handle_raw(
                         app_check,
                         &crate::app_check::RawRequest {
-                            method: &method,
+                            method,
                             path: &path,
                             headers: &headers,
                             body: &bytes,
@@ -248,7 +226,7 @@ async fn respond(
                         ),
                     },
                 };
-                return Ok(finish(r.status, &r.body, origin.as_deref(), true));
+                return Ok(finish(r.status, &r.body, origin, true));
             }
             let is_form = headers
                 .content_type
@@ -297,17 +275,17 @@ async fn respond(
                 Some(json) => {
                     let r = match &control {
                         Some(c) if method == "POST" && control::is_await_idle_path(&path) => {
-                            match control::browser_guard(c, &method, &path, &headers) {
+                            match control::browser_guard(c, method, &path, &headers) {
                                 Some(refusal) => refusal,
                                 None => control::await_idle(c, &json).await,
                             }
                         }
                         Some(c) if control::is_control_path(&path) => {
-                            control::handle_async(c, &method, &path, &headers, &json).await
+                            control::handle_async(c, method, &path, &headers, &json).await
                         }
                         _ if crate::identity_toolkit::request_may_invoke_blocking_auth(
                             state.blocking.as_deref(),
-                            &method,
+                            method,
                             &path,
                         ) =>
                         {
@@ -317,16 +295,11 @@ async fn respond(
                             let Some(permit) = permit else {
                                 let refusal =
                                     crate::identity_toolkit::blocking_auth_overload_response();
-                                return Ok(finish(
-                                    refusal.status,
-                                    &refusal.body,
-                                    origin.as_deref(),
-                                    false,
-                                ));
+                                return Ok(finish(refusal.status, &refusal.body, origin, false));
                             };
                             let dispatch_state = state.clone();
-                            let dispatch_method = method.clone();
-                            let dispatch_path = path.clone();
+                            let dispatch_method = method.to_owned();
+                            let dispatch_path = path.to_string();
                             let runtime_handle = tokio::runtime::Handle::current();
                             let (result_tx, result_rx) = oneshot::channel();
                             let spawned = std::thread::Builder::new()
@@ -351,7 +324,7 @@ async fn respond(
                                 })
                             }
                         }
-                        _ => handle_with(&state, &method, &path, &headers, &json),
+                        _ => handle_with(&state, method, &path, &headers, &json),
                     };
                     (r.status, r.body)
                 }
@@ -362,19 +335,17 @@ async fn respond(
     // official emulator does; only that route builds a 303.
     if status == 303 {
         if let Some(location) = crate::identity_toolkit::redirect_location(&body) {
-            return Ok(
-                with_cors(Response::builder().status(303), origin.as_deref())
-                    .header("location", location)
-                    .header("cache-control", "no-store")
-                    .body(Full::new(Bytes::new()))
-                    .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))),
-            );
+            return Ok(with_cors(Response::builder().status(303), origin)
+                .header("location", location)
+                .header("cache-control", "no-store")
+                .body(Full::new(Bytes::new()))
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
         }
     }
     // Production Identity Toolkit uses an HTML 404 for unknown methods. Match only the
     // route-miss envelope: missing tenants and other API errors must remain JSON.
     if status == 404 && body == fireemu_adapter_support::api_error::identity_not_found() {
-        return Ok(with_cors(Response::builder().status(404), origin.as_deref())
+        return Ok(with_cors(Response::builder().status(404), origin)
             .header("content-type", "text/html; charset=UTF-8")
             .body(Full::new(Bytes::from_static(
                 b"<!DOCTYPE html><html lang=en><title>Error 404 (Not Found)</title><p>Not Found</p></html>",
@@ -385,19 +356,19 @@ async fn respond(
     // (headers, member order, layout, gzip); every other answer keeps the official emulator's.
     if !state.stateless_refresh_tokens
         && status == 200
-        && crate::identity_framing::is_recorded_route(&method, &path)
+        && crate::identity_framing::is_recorded_route(method, &path)
     {
         return Ok(crate::identity_framing::respond(
             &body,
-            origin.as_deref(),
-            accept_encoding.as_deref(),
+            origin,
+            accept_encoding,
         ));
     }
     // Privileged App Check observations must never be cached (spec 15).
     Ok(finish(
         status,
         &body,
-        origin.as_deref(),
+        origin,
         crate::control::is_no_store_path(&path),
     ))
 }
@@ -407,13 +378,13 @@ async fn remote_config_response(
     store: &TemplateStore,
     route: &remote_config_http::Route<'_>,
     query: &str,
-    req: Request<Incoming>,
+    parts: &hyper::http::request::Parts,
+    incoming: Incoming,
     origin: Option<&str>,
-    accept_encoding: Option<&str>,
 ) -> Response<Full<Bytes>> {
     use remote_config_http::Reply;
 
-    let headers = req.headers();
+    let headers = &parts.headers;
     let mut auth = headers.get_all(hyper::header::AUTHORIZATION).iter();
     let presented = auth
         .next()
@@ -431,17 +402,11 @@ async fn remote_config_response(
         Reply::error(404, "Remote Config project not found", "NOT_FOUND")
     } else {
         let mut etags = headers.get_all(hyper::header::IF_MATCH).iter();
-        let etag = etags
-            .next()
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
+        let etag = etags.next().and_then(|value| value.to_str().ok());
         if etags.next().is_some() {
             Reply::error(400, "Duplicate If-Match header", "INVALID_ARGUMENT")
         } else {
-            let method = req.method().clone();
-            match fireemu_adapter_support::body::collect_limited(req.into_body(), MAX_BODY_BYTES)
-                .await
-            {
+            match fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await {
                 Err(_) => Reply::error(
                     413,
                     "Remote Config request exceeds the local body bound",
@@ -452,10 +417,10 @@ async fn remote_config_response(
                     remote_config_http::dispatch(
                         store,
                         route,
-                        method.as_str(),
+                        parts.method.as_str(),
                         query,
                         &bytes,
-                        etag.as_deref(),
+                        etag,
                         now,
                     )
                 }
@@ -467,7 +432,13 @@ async fn remote_config_response(
         .header("content-type", "application/json; charset=utf-8")
         .header("cache-control", "no-store")
         .header("vary", "accept-encoding");
-    if crate::identity_framing::accepts_gzip(accept_encoding) {
+    let encodings = headers
+        .get_all(hyper::header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .collect::<Vec<_>>()
+        .join(",");
+    if crate::identity_framing::accepts_gzip(Some(&encodings)) {
         body = crate::identity_framing::gzip_stored(&body).into();
         response = response.header("content-encoding", "gzip");
         if let Some(etag) = etag {

@@ -15,7 +15,7 @@
 //!
 //! Error bodies use the Firebase shape `{"error": {"code": 400, "message": "EMAIL_EXISTS"}}`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex};
 
 use fireemu_core_app_check::admission::{AdmissionRequest, PrivilegedBypass, ServiceAdmission};
@@ -1699,20 +1699,16 @@ fn api_service(path: &str) -> &'static str {
 /// Refuses an API key the project did not declare, when it declared any.
 fn declared_api_key_check(
     state: &AuthState,
-    tenant_reading: QueryTenant,
+    api_key: Option<&str>,
     path: &str,
-    query: Option<&str>,
 ) -> Result<(), JsonResponse> {
-    let (Ok((Some(key), _)), Some(tenancy)) = (
-        query_selectors_reading(query, tenant_reading),
-        state.tenancy.as_ref(),
-    ) else {
+    let (Some(key), Some(tenancy)) = (api_key, state.tenancy.as_ref()) else {
         return Ok(());
     };
     let Ok(tenancy) = tenancy.read() else {
         return Err(error(500, "INTERNAL"));
     };
-    if tenancy.refuses_api_key(&key) {
+    if tenancy.refuses_api_key(key) {
         return Err(invalid_api_key(api_service(path)));
     }
     Ok(())
@@ -3887,24 +3883,21 @@ fn emulator_creates_named_tenant(
         return Ok(None);
     }
     let (path, query) = (request.path, request.query);
-    let project = request_project(
-        state,
-        query_reads_tenant(state, resolution, path),
-        path,
-        query,
-    )?;
+    let reading = query_reads_tenant(state, resolution, path);
+    let project = request_project(state, reading, path, query)?;
+    let selectors = query_selectors_reading(query, reading);
     // A request the daemon serves from another project's store than its own project (chosen by
     // the store selection itself, not by a copy of its rules) makes nothing here and is admitted
     // by App Check for the project it is served from, by the pipeline. A selection that fails
     // (a tenant not made yet) or lands in this project goes on.
-    if select_store(state, routing, path, query, body, resolution).is_ok_and(|store| {
+    if select_store(state, routing, selectors, body, resolution).is_ok_and(|store| {
         store
             .lock()
             .is_ok_and(|store| store.project_id() != project)
     }) {
         return Ok(None);
     }
-    let path_tenant = routes::scoped_target(path).and_then(|(_, tenant)| tenant);
+    let path_tenant = resolution.scoped_target().and_then(|(_, tenant)| tenant);
     let body_tenant = match body.get("tenantId") {
         Some(Value::String(named)) if !named.is_empty() => Some(named.as_str()),
         None | Some(Value::Null | Value::String(_)) => None,
@@ -4372,8 +4365,9 @@ fn handle_with_policy_inner(
     // Whether the caller identified itself with an API key; its validity is checked when the
     // store is selected.
     let resolution = routes::resolve(method, path);
-    let api_key = query_selectors_reading(query, query_reads_tenant(state, resolution, path))
-        .is_ok_and(|(key, _)| key.is_some());
+    let selectors = query_selectors_reading(query, query_reads_tenant(state, resolution, path));
+    let key = selectors.as_ref().ok().and_then(|(key, _)| key.as_deref());
+    let api_key = key.is_some();
     let at = now(state);
     // Production's API front end answers a caller without identity before the service reads
     // any selector, tenant or body (sandbox recording 2026-09-23).
@@ -4386,12 +4380,7 @@ fn handle_with_policy_inner(
             response
         };
     }
-    if let Err(response) = declared_api_key_check(
-        state,
-        query_reads_tenant(state, resolution, path),
-        path,
-        query,
-    ) {
+    if let Err(response) = declared_api_key_check(state, key, path) {
         return response;
     }
     // Production's reading of the tenant a request names (strict profile).
@@ -4585,7 +4574,7 @@ fn handle_with_policy_inner(
         }
         body_tenant_store.unwrap_or(store)
     } else {
-        match select_store(state, &routing, path, query, body, resolution) {
+        match select_store(state, &routing, selectors, body, resolution) {
             Ok(store) => store,
             // Production answers a client policy read of an unknown tenant with the v2 API's
             // INVALID_TENANT_ID (sandbox recording 2026-09-25).
@@ -9658,15 +9647,13 @@ fn request_may_create_end_user(
 fn select_store(
     state: &AuthState,
     routing: &RoutingIdToken,
-    path: &str,
-    query: Option<&str>,
+    selectors: Result<(Option<String>, Option<String>), JsonResponse>,
     body: &Value,
     resolution: routes::Resolution<'_>,
 ) -> Result<Arc<Mutex<AuthStore>>, JsonResponse> {
     // The emulator profile reads (and refuses a malformed) query tenant only where the official
     // emulator reads it.
-    let (api_key, query_tenant) =
-        query_selectors_reading(query, query_reads_tenant(state, resolution, path))?;
+    let (api_key, query_tenant) = selectors?;
     let query_body_scope = state.query_limits == AuthQueryLimits::ProductionBounded
         && matches!(
             resolution,
@@ -9692,7 +9679,7 @@ fn select_store(
         routes::Resolution::Matched { route, .. } => Some(route.handler),
         _ => None,
     };
-    if let Some((_, Some(path_tenant))) = routes::scoped_target(path) {
+    if let Some((_, Some(path_tenant))) = resolution.scoped_target() {
         // Production's Admin create on a tenant path takes a different body tenantId without
         // an error (admin-accounts#create-in-a-body-tenant-b); the path's tenant is used.
         let body_ignored = strict && handler == Some(routes::Handler::AdminCreate);
@@ -9768,7 +9755,9 @@ fn select_store(
     }
     let Some(registry) = &state.registry else {
         if requested_tenant.is_some()
-            || routes::scoped_target(path).is_some_and(|(_, tenant)| tenant.is_some())
+            || resolution
+                .scoped_target()
+                .is_some_and(|(_, tenant)| tenant.is_some())
         {
             return Err(error(
                 if body_tenant.is_some() { 400 } else { 404 },
@@ -9777,7 +9766,7 @@ fn select_store(
         }
         return Ok(state.store.clone());
     };
-    if let Some((project, tenant)) = routes::scoped_target(path) {
+    if let Some((project, tenant)) = resolution.scoped_target() {
         if let Some(tenant) = tenant {
             let Some(store) = registry.tenant_store(project, tenant) else {
                 return Err(error(404, "TENANT_NOT_FOUND"));
@@ -11122,35 +11111,43 @@ fn lookup(store: &AuthStore, body: &Value, at: LogicalInstant, admin: bool) -> J
         return error(400, "MISSING_ID_TOKEN");
     }
     // Authenticated Admin lookup resolves identifiers in request order without duplicates.
-    let mut found: Vec<LocalId> = Vec::new();
-    let mut push = |uid: LocalId| {
-        if !found.contains(&uid) {
+    let mut found = Vec::new();
+    let mut seen: Option<HashSet<_>> = None;
+    let mut push = |uid| {
+        // Small lookups fit in the ordered result without building a second index.
+        let fresh = if found.len() < 16 {
+            !found.contains(&uid)
+        } else {
+            seen.get_or_insert_with(|| found.iter().copied().collect())
+                .insert(uid)
+        };
+        if fresh {
             found.push(uid);
         }
     };
     for id in &local_ids {
         if let Some(u) = store.user_by_id(id) {
-            push(u.local_id.clone());
+            push(&u.local_id);
         }
     }
     // Every account sharing an address answers (sandbox recording 2026-09-23,
     // `config/duplicate-email#admin-lookup-by-email`).
     for email in &emails {
         for u in store.users_by_email(email) {
-            push(u.local_id.clone());
+            push(&u.local_id);
         }
     }
     for phone in &phones {
         if let Some(u) = store.user_by_phone(phone) {
-            push(u.local_id.clone());
+            push(&u.local_id);
         }
     }
     for (provider_id, raw_id) in &federated {
         if let Some(u) = store.user_by_federated(provider_id, raw_id) {
-            push(u.local_id.clone());
+            push(&u.local_id);
         }
     }
-    let users: Vec<Value> = found.iter().map(|uid| user_json(store, uid)).collect();
+    let users: Vec<Value> = found.into_iter().map(|uid| user_json(store, uid)).collect();
     // No match is an absent `users`, not an empty list (what the Admin SDK's
     // `user-not-found` is decided from).
     let mut response = json!({"kind": "identitytoolkit#GetAccountInfoResponse"});
@@ -18032,8 +18029,10 @@ mod body_tenant_selector_tests {
         select_store(
             state,
             &routing,
-            route.path,
-            Some(query),
+            query_selectors_reading(
+                Some(query),
+                query_reads_tenant(state, resolution, route.path),
+            ),
             &effective_body,
             resolution,
         )

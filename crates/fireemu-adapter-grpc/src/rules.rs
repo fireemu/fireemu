@@ -1125,7 +1125,25 @@ impl RulesEnforcer {
         items: &[(DocumentPath, Option<Document>)],
         access: &dyn DocumentAccess,
     ) -> Result<(), Status> {
-        if let Some((first, _)) = items.first() {
+        self.authorize_gets_borrowed(
+            principal,
+            items
+                .iter()
+                .map(|(path, document)| (path, document.as_ref())),
+            access,
+        )
+    }
+
+    /// Checks document references from one immutable snapshot against one shared read budget.
+    pub(crate) fn authorize_gets_borrowed<'a>(
+        &self,
+        principal: &Principal,
+        items: impl Iterator<Item = (&'a DocumentPath, Option<&'a Document>)>,
+        access: &dyn DocumentAccess,
+    ) -> Result<(), Status> {
+        let mut items = items.peekable();
+        let first = items.peek().map(|(path, _)| *path);
+        if let Some(first) = first {
             self.check_audience(principal, first.project().as_str())?;
         }
         if matches!(principal, Principal::Owner) {
@@ -1133,18 +1151,16 @@ impl RulesEnforcer {
         }
         let rules = self
             .rules_for_database(
-                items
-                    .first()
-                    .map_or(fireemu_core_types::ids::DatabaseId::DEFAULT, |(path, _)| {
-                        path.database().as_str()
-                    }),
+                first.map_or(fireemu_core_types::ids::DatabaseId::DEFAULT, |path| {
+                    path.database().as_str()
+                }),
             )
             .snapshot()
             .map_err(Status::internal)?;
         let Some(ruleset) = &rules.ruleset else {
-            let (database, path) = items.first().map_or(
+            let (database, path) = first.map_or(
                 (fireemu_core_types::ids::DatabaseId::DEFAULT, String::new()),
-                |(path, _)| (path.database().as_str(), path.relative()),
+                |path| (path.database().as_str(), path.relative()),
             );
             return self.without_ruleset(
                 &rules.diagnostics,
@@ -1155,11 +1171,9 @@ impl RulesEnforcer {
             );
         };
         let now = self.now()?;
-        let database = items
-            .first()
-            .map_or(fireemu_core_types::ids::DatabaseId::DEFAULT, |(path, _)| {
-                path.database().as_str()
-            });
+        let database = first.map_or(fireemu_core_types::ids::DatabaseId::DEFAULT, |path| {
+            path.database().as_str()
+        });
         let sink = self.sink(&rules, database);
         let reader = AggregateReader {
             inner: access,
@@ -1172,7 +1186,7 @@ impl RulesEnforcer {
                 principal,
                 Method::Get,
                 path,
-                snapshot.as_ref(),
+                snapshot,
                 None,
                 now,
                 &reader,

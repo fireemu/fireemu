@@ -660,3 +660,51 @@ fn an_unnameable_project_id_opens_no_ring() {
         [] as [std::string::String; 0]
     );
 }
+
+#[test]
+fn concurrent_admissions_preserve_project_counts_and_writer_order_across_reset() {
+    let gate = gate(fixture_registry());
+    let policy = ServiceAdmission::new(gate.clone(), "firestore", BaselineMode::Unenforced)
+        .expect("unenforced classifies");
+    let writers = [("demo-app", "a"), ("demo-app", "b"), ("demo-other", "c")];
+    for start in [0, 8] {
+        if start == 8 {
+            gate.clear_observations(|project| project == "demo-app");
+        }
+        let barrier = std::sync::Barrier::new(writers.len());
+        std::thread::scope(|scope| {
+            for (project_id, operation) in writers {
+                let policy = &policy;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for second in start..start + 8 {
+                        let req = AdmissionRequest {
+                            project_id,
+                            now: LogicalInstant::from_unix_seconds(second),
+                            ..other_project_request(operation)
+                        };
+                        assert!(policy.admit(&req).allowed);
+                    }
+                });
+            }
+        });
+    }
+    let registry = gate.registry().read().expect("readable");
+    for (project_id, operation) in writers {
+        let instants: Vec<_> = registry
+            .observations(project_id)
+            .into_iter()
+            .filter(|entry| entry.operation == operation)
+            .map(|entry| entry.at)
+            .collect();
+        let start = if project_id == "demo-app" { 8 } else { 0 };
+        let expected: Vec<_> = (start..16).map(LogicalInstant::from_unix_seconds).collect();
+        assert_eq!(instants, expected);
+    }
+    for project in ["demo-app", "demo-other"] {
+        let counters = registry.observation_counters(project);
+        assert_eq!(counters.len(), 1);
+        assert_eq!(counters[0].1, 16);
+    }
+}

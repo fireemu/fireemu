@@ -37,8 +37,8 @@ use fireemu_core_auth::signup_quota::{
     QuotaAlgorithm, QuotaMode, SignupQuotaConfig, TemporaryQuota,
 };
 use fireemu_core_auth::store::{
-    AuthNamespaceConfigPatch, AuthRegistry, AuthStore, FederatedIdentity, ImportedUser,
-    ProjectAuthConfig, Provider, TenantMetadata,
+    AuthExportAccounts, AuthNamespaceConfigPatch, AuthRegistry, AuthStore, FederatedIdentity,
+    ImportedUser, ProjectAuthConfig, Provider, TenantMetadata,
 };
 use fireemu_core_export::auth::{
     fake_hash, AccountsFile, AuthConfig, AuthSettings, AuthSettingsNamespace, AuthSettingsRecord,
@@ -62,7 +62,8 @@ use fireemu_core_firestore::path::DocumentPath;
 use fireemu_core_firestore::store::{FirestoreState, ImportedDocument};
 use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_storage::name::{BucketName, ObjectName};
-use fireemu_core_storage::store::ImportedObject;
+use fireemu_core_storage::spill::SpillDir;
+use fireemu_core_storage::store::{ImportSpoolError, ImportedBody, ImportedObject};
 use fireemu_core_types::determinism::Clock;
 use fireemu_core_types::ids::{DatabaseId, ProjectId};
 use fireemu_core_types::time::{civil_from_days, LogicalDuration, LogicalInstant};
@@ -256,7 +257,10 @@ impl PreparedAuth {
 }
 
 /// The objects with their bytes, and the buckets the Storage section listed.
-type PreparedStorage = (Vec<(ImportedObject, Vec<u8>)>, BTreeMap<BucketName, bool>);
+type PreparedStorage = (
+    Vec<(ImportedObject, ImportedBody)>,
+    BTreeMap<BucketName, bool>,
+);
 
 /// Everything one export directory holds, parsed and ready to install.
 #[derive(Debug, Default)]
@@ -443,7 +447,7 @@ fn directory_is_empty(dir: &Path) -> bool {
     std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_none())
 }
 
-/// Reads every section of the selected products into memory. Nothing is installed.
+/// Reads and stages every section of the selected products. Nothing is installed.
 ///
 /// A section of a product `--only` did not select is skipped with a notice rather than an
 /// error: a run that asked for Auth alone should still start from a multi-product fixture.
@@ -460,6 +464,7 @@ pub fn prepare(
     project: &str,
     rtdb_lone_surrogates: bool,
     storage_max_object_bytes: u64,
+    storage_spill: Option<&(SpillDir, u64)>,
 ) -> Result<Prepared, ArtifactError> {
     ensure_directory_inside(dir, dir).map_err(|e| ArtifactError::new("import", dir, e))?;
     let manifest_path = dir.join(METADATA_FILE_NAME);
@@ -520,6 +525,7 @@ pub fn prepare(
                     dir,
                     section,
                     storage_max_object_bytes,
+                    storage_spill,
                 )?);
             }
             Product::Database => {
@@ -615,9 +621,9 @@ pub fn apply(mut prepared: Prepared, endpoints: &Endpoints) -> Result<(), Artifa
         for (bucket, enabled) in buckets {
             store.set_uniform_bucket_level_access(&bucket, enabled);
         }
-        for (object, bytes) in objects {
+        for (object, body) in objects {
             let name = object.name.as_str().to_owned();
-            store.insert_imported(object, bytes).map_err(|e| {
+            store.insert_imported_body(object, body).map_err(|e| {
                 ArtifactError::new(
                     "storage",
                     PathBuf::from(STORAGE_PATH).join(BLOBS_DIR),
@@ -2782,6 +2788,14 @@ fn read_storage_text(
     .map_err(|error| ArtifactError::new("storage", path, error))
 }
 
+fn storage_blob_read_error(path: &Path, object: &str, error: &str) -> ArtifactError {
+    ArtifactError::new(
+        "storage",
+        path,
+        format!("the object {object} names a blob that cannot be read: {error}"),
+    )
+}
+
 fn read_storage_blob(
     dir: &Path,
     path: &Path,
@@ -2789,23 +2803,31 @@ fn read_storage_blob(
     object: &str,
     expected_size: u64,
     max_object_bytes: u64,
-) -> Result<Vec<u8>, ArtifactError> {
-    let bytes = read_inside_budgeted(
-        dir,
-        path,
-        remaining_bytes,
-        IMPORT_STORAGE_TOTAL_BYTES_LIMIT,
-        max_object_bytes,
-        "Storage files",
-    )
-    .map_err(|error| {
-        ArtifactError::new(
-            "storage",
-            path,
-            format!("the object {object} names a blob that cannot be read: {error}"),
-        )
-    })?;
-    if bytes.len() as u64 != expected_size {
+    spill: Option<&(SpillDir, u64)>,
+) -> Result<ImportedBody, ArtifactError> {
+    let body =
+        if let Some((spill_dir, _)) = spill.filter(|(_, threshold)| expected_size >= *threshold) {
+            read_spilled_storage_blob(
+                dir,
+                path,
+                remaining_bytes,
+                object,
+                max_object_bytes,
+                spill_dir,
+            )?
+        } else {
+            let bytes = read_inside_budgeted(
+                dir,
+                path,
+                remaining_bytes,
+                IMPORT_STORAGE_TOTAL_BYTES_LIMIT,
+                max_object_bytes,
+                "Storage files",
+            )
+            .map_err(|error| storage_blob_read_error(path, object, &error))?;
+            ImportedBody::from_bytes(bytes)
+        };
+    if body.len() != expected_size {
         return Err(ArtifactError::new(
             "storage",
             path,
@@ -2814,7 +2836,50 @@ fn read_storage_blob(
             ),
         ));
     }
-    Ok(bytes)
+    Ok(body)
+}
+
+fn read_spilled_storage_blob(
+    root: &Path,
+    path: &Path,
+    remaining: &mut u64,
+    object: &str,
+    per_file_limit: u64,
+    dir: &SpillDir,
+) -> Result<ImportedBody, ArtifactError> {
+    use fireemu_core_storage::store::StorageError;
+
+    let allowance = (*remaining).min(per_file_limit);
+    let source_error = |error: String| storage_blob_read_error(path, object, &error);
+    let too_large = || {
+        source_error(if *remaining <= per_file_limit {
+            format!("the Storage files exceed the {IMPORT_STORAGE_TOTAL_BYTES_LIMIT} byte cumulative import limit")
+        } else {
+            format!("it exceeds the {allowance} byte per-file import limit")
+        })
+    };
+    let file = open_file_inside(root, path).map_err(source_error)?;
+    let len = file
+        .metadata()
+        .map_err(|e| source_error(format!("cannot inspect the opened file: {e}")))?
+        .len();
+    if len > allowance {
+        return Err(too_large());
+    }
+    let staged = ImportedBody::stage(dir, file, allowance, len).map_err(|error| match error {
+        ImportSpoolError::Limit => too_large(),
+        ImportSpoolError::Read(error) => source_error(format!("cannot read it: {error}")),
+        ImportSpoolError::Spill(error) => ArtifactError::new(
+            "storage",
+            PathBuf::from(STORAGE_PATH).join(BLOBS_DIR),
+            format!(
+                "object {object}: {}",
+                StorageError::SpillFailed(error.to_string())
+            ),
+        ),
+    })?;
+    *remaining -= staged.len();
+    Ok(staged)
 }
 
 /// The largest Realtime Database section an import reads, all files together.
@@ -2901,6 +2966,7 @@ fn read_storage_section(
     dir: &Path,
     section: &Section,
     max_object_bytes: u64,
+    spill: Option<&(SpillDir, u64)>,
 ) -> Result<PreparedStorage, ArtifactError> {
     let section_dir = dir.join(&section.path);
     scan_storage_import_tree(dir, &section_dir)?;
@@ -3019,6 +3085,7 @@ fn read_storage_section(
             &meta.name,
             meta.size,
             max_object_bytes,
+            spill,
         )?;
         objects.push((imported_object(&meta, &path)?, bytes));
     }
@@ -3742,7 +3809,7 @@ fn export_auth(
         };
         let snapshot = endpoints
             .auth
-            .capture_export_snapshot(endpoints.project)
+            .capture_artifact_snapshot(endpoints.project)
             .map_err(|error| ArtifactError::new("auth", &section_dir, error))?
             .ok_or_else(|| {
                 ArtifactError::new(
@@ -3773,18 +3840,10 @@ fn export_auth(
         (snapshot, project_blocking)
     };
     let store = snapshot.default_store();
-    let mut file = AccountsFile::default();
     let accounts_path = section_dir.join(ACCOUNTS_FILE);
-    for user in store.users_by_creation() {
-        ensure_restorable(store, user, &accounts_path.full)
-            .map_err(|e| ArtifactError::new("auth", &accounts_path, e))?;
-        file.users.push(exported_account(store, user, None));
-    }
-    accounts_path
-        .write(file.to_json().as_bytes())
-        .map_err(|e| ArtifactError::new("auth", &accounts_path, e))?;
+    write_auth_accounts(&accounts_path, store, None)?;
 
-    let config = store.config();
+    let config = store.config;
     let config_path = section_dir.join(CONFIG_FILE);
     let document = AuthConfig {
         allow_duplicate_emails: Some(config.allow_duplicate_emails),
@@ -3795,8 +3854,8 @@ fn export_auth(
     config_path
         .write(document.to_json().as_bytes())
         .map_err(|e| ArtifactError::new("auth", &config_path, e))?;
-    let project_policy = exported_password_policy(store.password_policy());
-    let project_quota = store.signup_quota().config().clone();
+    let project_policy = exported_password_policy(&store.password_policy);
+    let project_quota = store.quota.clone();
     let mut tenant_policies = Vec::new();
     let mut tenant_settings = Vec::new();
     for (tenant, tenant_store) in snapshot.tenant_stores() {
@@ -3807,14 +3866,14 @@ fn export_auth(
                 format!("tenant {tenant:?} has no captured authorization metadata"),
             )
         })?;
-        let tenant_policy = exported_password_policy(tenant_store.password_policy());
+        let tenant_policy = exported_password_policy(&tenant_store.password_policy);
         if tenant_policy != exported_password_policy(&PasswordPolicy::default()) {
             tenant_policies.push(PasswordPolicyNamespace {
                 tenant_id: Some(tenant.to_owned()),
                 policy: tenant_policy,
             });
         }
-        let tenant_quota = tenant_store.signup_quota().config().clone();
+        let tenant_quota = tenant_store.quota.clone();
         let tenant_config_override = snapshot.tenant_config_override(tenant);
         tenant_settings.push(AuthSettingsNamespace {
             tenant_id: Some(tenant.to_owned()),
@@ -3824,22 +3883,14 @@ fn export_auth(
                     .then(|| exported_quota_settings(&tenant_quota)),
                 blocking: None,
                 config_members: fireemu_adapter_http::identity_toolkit::exportable_tenant_members(
-                    tenant_store.stored_config_members(),
+                    &tenant_store.config_members,
                 ),
             },
             config_is_explicit: tenant_config_override.is_some(),
             metadata: Some(exported_tenant_metadata(tenant_metadata)),
         });
-        let mut file = AccountsFile::default();
         let path = section_dir.join(format!("accounts-{tenant}.json"));
-        for user in tenant_store.users_by_creation() {
-            ensure_restorable(tenant_store, user, &path.full)
-                .map_err(|e| ArtifactError::new("auth", &path, e))?;
-            file.users
-                .push(exported_account(tenant_store, user, Some(tenant)));
-        }
-        path.write(file.to_json().as_bytes())
-            .map_err(|e| ArtifactError::new("auth", &path, e))?;
+        write_auth_accounts(&path, tenant_store, Some(tenant))?;
     }
 
     // The official export format has no password-policy member. Keep this state in an
@@ -3857,9 +3908,8 @@ fn export_auth(
         path.write(policies.to_json().as_bytes())
             .map_err(|e| ArtifactError::new("auth", &path, e))?;
     }
-    let project_members = fireemu_adapter_http::identity_toolkit::exportable_config_members(
-        store.stored_config_members(),
-    );
+    let project_members =
+        fireemu_adapter_http::identity_toolkit::exportable_config_members(&store.config_members);
     if project_quota != SignupQuotaConfig::default()
         || project_blocking.is_some()
         || !tenant_settings.is_empty()
@@ -3991,14 +4041,40 @@ fn imported_password_of(
 
 /// Refuses to export an account whose credential this fireemu could not import again, naming
 /// the cause, rather than writing an export that fails later on restore.
+fn write_auth_accounts(
+    path: &ExportPath,
+    store: &impl AuthExportAccounts,
+    tenant: Option<&str>,
+) -> Result<(), ArtifactError> {
+    use std::io::Write as _;
+
+    for user in store.users_by_creation() {
+        ensure_restorable(store, user, &path.full)
+            .map_err(|e| ArtifactError::new("auth", path, e))?;
+    }
+    let file = path
+        .create_file()
+        .map_err(|e| ArtifactError::new("auth", path, e))?;
+    let mut output = std::io::BufWriter::new(file);
+    AccountsFile::write_users(
+        &mut output,
+        store
+            .users_by_creation()
+            .map(|user| exported_account(store, user, tenant)),
+    )
+    .and_then(|()| output.flush())
+    .map_err(|e| ArtifactError::new("auth", path, format!("cannot write it: {e}")))
+}
+
 fn ensure_restorable(
-    store: &fireemu_core_auth::store::AuthStore,
+    store: &impl fireemu_core_auth::store::AuthExportAccounts,
     user: &fireemu_core_auth::store::UserRecord,
     path: &impl std::fmt::Debug,
 ) -> Result<(), String> {
     use fireemu_core_auth::store::{ExportablePassword, PasswordDigest};
     if let Some(ExportablePassword::Hash(hash)) = store
-        .password_digest(&user.local_id)
+        .export_password_fields(&user.local_id)
+        .0
         .map(PasswordDigest::export_form)
     {
         if let Some(cause) =
@@ -4016,15 +4092,13 @@ fn ensure_restorable(
 
 /// One account as the Identity Toolkit document an export carries.
 fn exported_account(
-    store: &fireemu_core_auth::store::AuthStore,
+    store: &impl fireemu_core_auth::store::AuthExportAccounts,
     user: &fireemu_core_auth::store::UserRecord,
     tenant_id: Option<&str>,
 ) -> UserRecord {
     use fireemu_core_auth::store::{ExportablePassword, PasswordDigest};
-    let (password_hash, salt, imported_extra) = match store
-        .password_digest(&user.local_id)
-        .map(PasswordDigest::export_form)
-    {
+    let (password, updated_at) = store.export_password_fields(&user.local_id);
+    let (password_hash, salt, imported_extra) = match password.map(PasswordDigest::export_form) {
         Some(ExportablePassword::Emulator { salt, password }) => (
             Some(fake_hash::encode(salt, password)),
             Some(salt.to_owned()),
@@ -4040,7 +4114,7 @@ fn exported_account(
         ),
         None => (None, None, Vec::new()),
     };
-    let has_password = password_hash.is_some() || store.has_password(&user.local_id);
+    let has_password = password.is_some();
     let email_link_signin =
         user.provider == fireemu_core_auth::store::Provider::EmailLink && !has_password;
     let providers = exported_providers(user, has_password, email_link_signin);
@@ -4080,9 +4154,7 @@ fn exported_account(
         password_hash,
         salt,
         #[allow(clippy::cast_precision_loss)]
-        password_updated_at: store
-            .password_updated_at(&user.local_id)
-            .map(|t| (t.as_nanos() / 1_000_000) as f64),
+        password_updated_at: updated_at.map(|t| (t.as_nanos() / 1_000_000) as f64),
         valid_since: Some((user.tokens_valid_after.as_nanos() / 1_000_000_000).to_string()),
         created_at: Some((user.created_at.as_nanos() / 1_000_000).to_string()),
         last_login_at: user
@@ -4191,7 +4263,24 @@ fn capture_storage(
         .store
         .lock()
         .map_err(|_| ArtifactError::new("storage", section_dir, "the object store is poisoned"))?
-        .capture_bucket_objects(|_| true))
+        .capture_live_bucket_objects(|_| true))
+}
+
+fn write_storage_blob<W: std::io::Write>(
+    store: &fireemu_core_storage::store::StorageState,
+    object: &fireemu_core_storage::store::ObjectMetadata,
+    create_output: impl FnOnce() -> Result<W, String>,
+) -> Result<(), String> {
+    match create_output() {
+        Ok(output) => store.write_body(object, output).map_err(|e| e.to_string()),
+        Err(error) => {
+            // Verify the source even if the private destination could not be opened.
+            store
+                .write_body(object, std::io::sink())
+                .map_err(|e| e.to_string())?;
+            Err(error)
+        }
+    }
 }
 
 fn export_storage(
@@ -4249,11 +4338,7 @@ fn export_storage(
         })?;
         let id = blob_id(object.bucket.as_str(), object.name.as_str(), generation);
         let blob_path = blobs_dir.join(&id);
-        let body = store
-            .body_bytes(object)
-            .map_err(|e| ArtifactError::new("storage", &blob_path, e.to_string()))?;
-        blob_path
-            .write(&body)
+        write_storage_blob(&store, object, || blob_path.create_file())
             .map_err(|e| ArtifactError::new("storage", &blob_path, e))?;
         let document = ExportedObject {
             name: object.name.as_str().to_owned(),
@@ -4782,6 +4867,122 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn storage_import_distinguishes_blob_reads_from_spill_destination_failures() {
+        use fireemu_core_storage::spill::SpillDir;
+
+        let root = super::trusted_temp::TrustedTempDir::new("import-spill-diagnostics");
+        let path = root.join("data.blob");
+        let unavailable = root.join("not-a-directory");
+        std::fs::write(&path, b"valid data").unwrap();
+        std::fs::write(&unavailable, b"regular file").unwrap();
+        let bad_spill = (SpillDir::new(unavailable), 0);
+        let mut remaining = 100;
+        let error = super::read_storage_blob(
+            &root,
+            &path,
+            &mut remaining,
+            "fixture",
+            10,
+            100,
+            Some(&bad_spill),
+        )
+        .unwrap_err();
+        assert!(
+            error.message.starts_with("object fixture: spill failed:"),
+            "{error}"
+        );
+        assert_eq!(error.product, "storage");
+        assert_eq!(error.path, std::path::Path::new("storage_export/blobs"));
+
+        let missing = root.join("missing");
+        let error = super::read_storage_blob(
+            &root,
+            &missing,
+            &mut remaining,
+            "fixture",
+            10,
+            100,
+            Some(&bad_spill),
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("names a blob that cannot be read"),
+            "{error}"
+        );
+        assert_eq!(error.path, missing);
+        assert_eq!(remaining, 100);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_export_source_read_failure_precedes_output_failures() {
+        use fireemu_core_storage::name::{BucketName, ObjectName};
+        use fireemu_core_storage::spill::ProcessSpill;
+        use fireemu_core_storage::store::{NewMetadata, Precondition, StorageState};
+        use std::io::{self, Write};
+
+        struct FailingOutput;
+        impl Write for FailingOutput {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let root = super::trusted_temp::TrustedTempDir::new("export-spill-precedence");
+        let process = ProcessSpill::create(&root.join("spill")).unwrap();
+        let mut store = StorageState::new(1);
+        store.set_spill(Some((process.spill_dir(), 0)));
+        let object = store
+            .put(
+                &BucketName::try_new("example.test").unwrap(),
+                &ObjectName::try_new("object").unwrap(),
+                vec![3; 2 * 64 * 1024 + 17],
+                NewMetadata::default(),
+                Precondition::default(),
+                LogicalInstant::UNIX_EPOCH,
+            )
+            .unwrap();
+        let open_failure = || Err::<io::Sink, _>("output is unavailable".to_owned());
+        assert_eq!(
+            super::write_storage_blob(&store, &object, open_failure).unwrap_err(),
+            "output is unavailable"
+        );
+        let write_failure =
+            super::write_storage_blob(&store, &object, || Ok(FailingOutput)).unwrap_err();
+        assert!(
+            write_failure.starts_with("cannot write it:"),
+            "{write_failure}"
+        );
+
+        let spill = std::fs::read_dir(process.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("spill-")
+            })
+            .unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(spill)
+            .unwrap()
+            .set_len(64 * 1024 + 17)
+            .unwrap();
+
+        let open = super::write_storage_blob(&store, &object, open_failure).unwrap_err();
+        let write = super::write_storage_blob(&store, &object, || Ok(FailingOutput)).unwrap_err();
+        assert_eq!(open, "spill file shortened");
+        assert_eq!(write, open);
+    }
+
+    #[cfg(unix)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn spilled_and_memory_objects_round_trip_through_export_artifacts() {
         use fireemu_adapter_grpc::gateway::Gateway;
@@ -4923,15 +5124,21 @@ mod tests {
                 "memory-export"
             });
             super::export(&dir, products, &endpoints, "test").unwrap();
+            let spill_config = spill.then(|| (process.spill_dir(), original.size));
             let prepared = super::prepare(
                 &dir,
                 products,
                 "demo-app",
                 false,
                 fireemu_core_storage::store::MAX_OBJECT_BYTES,
+                spill_config.as_ref(),
             )
             .unwrap();
-            *storage.store.lock().unwrap() = StorageState::new(1);
+            {
+                let mut target = storage.store.lock().unwrap();
+                *target = StorageState::new(1);
+                target.set_spill(spill_config);
+            }
             super::apply(prepared, &endpoints).unwrap();
             let store = storage.store.lock().unwrap();
             let restored = store.get(&bucket, &name).unwrap();
@@ -5024,6 +5231,7 @@ mod tests {
                 "demo-app",
                 false,
                 fireemu_core_storage::store::MAX_OBJECT_BYTES,
+                None,
             )
             .unwrap();
             super::apply(prepared, &endpoints).unwrap();
@@ -5830,13 +6038,13 @@ mod tests {
             path: "storage_export".into(),
             metadata_file: None,
         };
-        let (objects, buckets) = super::read_storage_section(&root, &section, 1024).unwrap();
+        let (objects, buckets) = super::read_storage_section(&root, &section, 1024, None).unwrap();
         assert!(objects.is_empty());
         assert_eq!(buckets.len(), 1);
         assert!(buckets[&fireemu_core_storage::name::BucketName::try_new("empty-bucket").unwrap()]);
         let metadata = section_dir.join("metadata");
         std::fs::write(&metadata, b"not a directory").unwrap();
-        let error = super::read_storage_section(&root, &section, 1024)
+        let error = super::read_storage_section(&root, &section, 1024, None)
             .unwrap_err()
             .to_string();
         assert!(error.contains("storage_export/metadata"), "{error}");
@@ -6304,6 +6512,7 @@ mod tests {
             "demo-app",
             false,
             fireemu_core_storage::store::MAX_OBJECT_BYTES,
+            None,
         )
         .expect("Auth export is prepared");
         super::apply(prepared, &destination_endpoints).expect("Auth import succeeds");
@@ -7569,6 +7778,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn artifact_projection_preserves_account_bytes_and_restorability_errors() {
+        use fireemu_core_auth::store::{AuthExportAccounts, AuthRegistry};
+        use fireemu_core_export::auth::AccountsFile;
+        use std::sync::{Arc, Mutex};
+
+        let path = std::path::Path::new("accounts.json");
+        for spec in [
+            r#"{"algorithm":"MD5","rounds":1}"#,
+            r#"{"algorithm":"NOPE"}"#,
+        ] {
+            let (store, expected_row) = exported_with(&hash_with(spec, &[1, 2]));
+            let expected_check =
+                super::ensure_restorable(&store, store.user_by_id("h").unwrap(), &path);
+            let expected = AccountsFile {
+                users: vec![expected_row],
+            }
+            .to_json();
+            let registry = AuthRegistry::new("demo-app", Arc::new(Mutex::new(store)));
+            let capture = registry
+                .capture_artifact_snapshot("demo-app")
+                .unwrap()
+                .unwrap();
+            let archive = capture.default_store();
+            let rows: Vec<_> = archive.users_by_creation().collect();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                super::ensure_restorable(archive, rows[0], &path),
+                expected_check
+            );
+            let actual = AccountsFile {
+                users: vec![super::exported_account(archive, rows[0], None)],
+            };
+            assert_eq!(actual.to_json().as_bytes(), expected.as_bytes());
+        }
+    }
+
     /// Everything batchCreate accepts restores from fireemu's own export, at each edge of the
     /// import ranges, including bcrypt costs and PBKDF outputs beyond the sign-in work bounds
     /// (closure review 3, Closure Should Fix 1).
@@ -8543,7 +8789,7 @@ mod credential_persistence_tests {
     fn restore(state: &AuthState, plaintext: &str) {
         let mut store = state.store.lock().unwrap();
         let user = store.user_by_email("persist@example.com").unwrap();
-        let record = super::exported_account(&store, user, None);
+        let record = super::exported_account(&*store, user, None);
         assert!(record.password_hash.is_none());
         let imported =
             super::imported_user(&record, std::path::Path::new("credential-test.json")).unwrap();
@@ -8672,7 +8918,7 @@ mod credential_persistence_tests {
                 let store = state.store.lock().unwrap();
                 let user = store.user_by_email("persist@example.com").unwrap();
                 let path = std::path::Path::new("accounts.json");
-                let checked = super::ensure_restorable(&store, user, &path);
+                let checked = super::ensure_restorable(&*store, user, &path);
                 proptest::prop_assert!(checked.is_ok(), "{:?}", checked);
             }
             restore(&state, "password123");

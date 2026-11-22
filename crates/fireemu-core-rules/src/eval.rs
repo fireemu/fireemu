@@ -16,7 +16,7 @@
 //!   `duration`, `latlng`, `math` and `hashing` namespaces, `map.diff()`, and the
 //!   `firestore.get()` / `firestore.exists()` namespace of Storage rules.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -389,6 +389,22 @@ struct Binding<'a> {
     state: BindingState<'a>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Default)]
+struct ArgumentProvenance {
+    query_derived: bool,
+    float_zero_ambiguous: bool,
+    stringification_sensitive: bool,
+    numeric_source: bool,
+    numeric_error_source: bool,
+    query_resource: bool,
+}
+
+struct FunctionArgument {
+    value: RulesValue,
+    provenance: ArgumentProvenance,
+}
+
 enum BindingState<'a> {
     Value(RulesValue),
     Lazy(&'a Expr),
@@ -415,25 +431,17 @@ impl Binding<'_> {
         }
     }
 
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn with_provenance(
-        name: String,
-        value: RulesValue,
-        query_derived: bool,
-        query_numeric_source: bool,
-        query_numeric_error_source: bool,
-        query_float_zero_ambiguous: bool,
-        query_numeric_stringification_sensitive: bool,
-    ) -> Self {
+    fn parameter(name: String, argument: FunctionArgument) -> Self {
+        let FunctionArgument { value, provenance } = argument;
         Self {
             name,
             visible_before: 0,
-            query_derived,
-            query_numeric_source,
-            query_numeric_error_source,
-            query_float_zero_ambiguous,
-            query_numeric_stringification_sensitive,
-            query_resource: false,
+            query_derived: provenance.query_derived,
+            query_numeric_source: provenance.numeric_source,
+            query_numeric_error_source: provenance.numeric_error_source,
+            query_float_zero_ambiguous: provenance.float_zero_ambiguous,
+            query_numeric_stringification_sensitive: provenance.stringification_sensitive,
+            query_resource: provenance.query_resource,
             absent_read: false,
             state: BindingState::Value(value),
         }
@@ -476,6 +484,9 @@ impl DocumentAccess for NoDocumentAccess {
     }
 }
 
+// Current state, then post-write state. An unread slot is distinct from a cached miss.
+type DocumentStates = [Option<Option<RulesValue>>; 2];
+
 struct Evaluator<'a> {
     /// Current `eval` recursion depth.
     nesting: u32,
@@ -492,9 +503,9 @@ struct Evaluator<'a> {
     /// The service: in Firestore rules the FS-RULES observations (a missing document is null,
     /// `getAfter()` in a read is the current state) apply; Storage rules keep their answers.
     service: RulesService,
-    /// Documents read so far, keyed by (`getAfter`?, path): a path is charged once per
-    /// request and kind, as in production.
-    doc_cache: BTreeMap<(bool, Vec<String>), Option<RulesValue>>,
+    /// Reads by document path, charged once regardless of whether either state is cached.
+    /// Each slot distinguishes a state not yet read, a missing document, and a value.
+    doc_cache: BTreeMap<Vec<String>, DocumentStates>,
     /// Successful and failed dynamic pattern compilations retained only for this request.
     regex_cache: BTreeMap<String, Result<Arc<crate::regex::Regex>, crate::regex::RegexError>>,
     regex_diagnostics: RegexEvaluationDiagnostics,
@@ -3979,16 +3990,18 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Reads a document through the access provider (`after`: `getAfter()`), charging the
-    /// budget once per path and kind.
+    /// Reads a document state through the provider, charging the budget once per path.
+    /// Project presence or an owned value without cloning a document for an exists call.
     fn read_document(
         &mut self,
         path: Vec<String>,
         after: bool,
-    ) -> Result<Option<RulesValue>, EvalError> {
-        let key = (after, path);
-        if let Some(cached) = self.doc_cache.get(&key) {
-            return Ok(cached.clone());
+        project: impl FnOnce(Option<&RulesValue>) -> Result<RulesValue, EvalError>,
+    ) -> Result<RulesValue, EvalError> {
+        let slot = usize::from(after);
+        let states = self.doc_cache.get(&path);
+        if let Some(cached) = states.and_then(|states| states[slot].as_ref()) {
+            return project(cached.as_ref());
         }
         let Some(access) = self.access else {
             return Err(EvalError::Unsupported(
@@ -3997,21 +4010,15 @@ impl<'a> Evaluator<'a> {
             ));
         };
         // Not a read: a path that is no document is refused before it is charged or cached.
-        if self.service == RulesService::Firestore && !access.is_document_path(&key.1) {
+        if self.service == RulesService::Firestore && !access.is_document_path(&path) {
             return Err(soft(format!(
                 "/{} is not a document of this database",
-                key.1.join("/")
+                path.join("/")
             )));
         }
         // The budget counts documents, not calls: get() and getAfter() of one path are one
         // access, as production counts them (FS-RULES, 2026-09-24).
-        let reads = self
-            .doc_cache
-            .keys()
-            .map(|(_, cached)| cached)
-            .chain(core::iter::once(&key.1))
-            .collect::<BTreeSet<_>>()
-            .len() as u64;
+        let reads = (self.doc_cache.len() + usize::from(states.is_none())) as u64;
         if reads > self.doc_reads_max {
             return Err(EvalError::Budget {
                 limit_id: "RULES-DOC-ACCESS-SINGLE",
@@ -4022,9 +4029,9 @@ impl<'a> Evaluator<'a> {
         // In a Firestore read no write is applied, so the state after it is the current state.
         // Storage rules have no write to apply either and do not offer it.
         let doc = if after {
-            match access.get_after(&key.1) {
+            match access.get_after(&path) {
                 Some(doc) => doc,
-                None if self.service == RulesService::Firestore => access.get(&key.1),
+                None if self.service == RulesService::Firestore => access.get(&path),
                 None => {
                     return Err(EvalError::Unsupported(
                         "getAfter()/existsAfter() are only available in Firestore rules".into(),
@@ -4032,10 +4039,11 @@ impl<'a> Evaluator<'a> {
                 }
             }
         } else {
-            access.get(&key.1)
+            access.get(&path)
         };
-        self.doc_cache.insert(key, doc.clone());
-        Ok(doc)
+        let result = project(doc.as_ref());
+        self.doc_cache.entry(path).or_default()[slot] = Some(doc);
+        result
     }
 
     /// `get()` / `exists()` / `getAfter()` / `existsAfter()` with the evaluated path argument.
@@ -4053,14 +4061,16 @@ impl<'a> Evaluator<'a> {
                 )))
             }
         };
-        let doc = self.read_document(path, matches!(name, "getAfter" | "existsAfter"))?;
-        Ok(match (name, doc) {
-            ("exists" | "existsAfter", d) => RulesValue::Bool(d.is_some()),
-            (_, Some(d)) => d,
-            // Production Firestore answers null for a missing document (FS-RULES, 2026-09-24);
-            // reading a member of it is the error. Storage rules keep the error.
-            (_, None) if self.service == RulesService::Firestore => RulesValue::Null,
-            (_, None) => return Err(soft(format!("{name}() of a missing document"))),
+        let service = self.service;
+        self.read_document(path, matches!(name, "getAfter" | "existsAfter"), |doc| {
+            match (name, doc) {
+                ("exists" | "existsAfter", doc) => Ok(RulesValue::Bool(doc.is_some())),
+                (_, Some(doc)) => Ok(doc.clone()),
+                // Production Firestore answers null for a missing document (FS-RULES, 2026-09-24);
+                // reading a member of it is the error. Storage rules keep the error.
+                (_, None) if service == RulesService::Firestore => Ok(RulesValue::Null),
+                (_, None) => Err(soft(format!("{name}() of a missing document"))),
+            }
         })
     }
 
@@ -5015,43 +5025,39 @@ impl<'a> Evaluator<'a> {
                     // 2026-11-08 r5). An undetermined value that exists (`resource.id`, a field
                     // the query orders by) and `resource` itself pass (review r6;
                     // `f(resource)`, FS-RULES-SHAPES-TWO).
-                    let values = args
+                    let mut arguments = args
                         .iter()
-                        .map(|argument| self.eval_operand_that_cannot_fail(argument))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let query_provenance = args
-                        .iter()
-                        .map(|argument| {
-                            (
-                                self.query_derived_expression(argument),
-                                self.query_float_zero_source(argument),
-                            )
+                        .map(|expr| {
+                            self.eval_operand_that_cannot_fail(expr)
+                                .map(|value| FunctionArgument {
+                                    value,
+                                    provenance: ArgumentProvenance::default(),
+                                })
                         })
-                        .collect();
-                    let stringification_provenance = args
-                        .iter()
-                        .map(|argument| self.query_numeric_stringification_sensitive(argument))
-                        .collect();
-                    let numeric_source_provenance = args
-                        .iter()
-                        .map(|argument| self.query_numeric_expression_source(argument))
-                        .collect();
-                    let numeric_error_provenance = args
-                        .iter()
-                        .map(|argument| self.query_numeric_error_source(argument))
-                        .collect();
-                    let resource_provenance = args
-                        .iter()
-                        .map(|argument| self.is_query_resource_expr(argument))
-                        .collect();
-                    return self.call_user(
-                        f,
-                        values,
-                        query_provenance,
-                        stringification_provenance,
-                        numeric_source_provenance,
-                        (numeric_error_provenance, resource_provenance),
-                    );
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // Keep each analysis pass in order across all arguments. The analyses
+                    // can update request-local caches and counters.
+                    for (expr, argument) in args.iter().zip(&mut arguments) {
+                        argument.provenance.query_derived = self.query_derived_expression(expr);
+                        argument.provenance.float_zero_ambiguous =
+                            self.query_float_zero_source(expr);
+                    }
+                    for (expr, argument) in args.iter().zip(&mut arguments) {
+                        argument.provenance.stringification_sensitive =
+                            self.query_numeric_stringification_sensitive(expr);
+                    }
+                    for (expr, argument) in args.iter().zip(&mut arguments) {
+                        argument.provenance.numeric_source =
+                            self.query_numeric_expression_source(expr);
+                    }
+                    for (expr, argument) in args.iter().zip(&mut arguments) {
+                        argument.provenance.numeric_error_source =
+                            self.query_numeric_error_source(expr);
+                    }
+                    for (expr, argument) in args.iter().zip(&mut arguments) {
+                        argument.provenance.query_resource = self.is_query_resource_expr(expr);
+                    }
+                    return self.call_user(f, arguments);
                 }
                 match name.as_str() {
                     "get" | "exists" | "getAfter" | "existsAfter" => {
@@ -5391,13 +5397,9 @@ impl<'a> Evaluator<'a> {
     fn call_user(
         &mut self,
         f: &'a FunctionDecl,
-        values: Vec<RulesValue>,
-        query_provenance: Vec<QueryFloatZeroProvenance>,
-        stringification_provenance: Vec<bool>,
-        numeric_source_provenance: Vec<bool>,
-        (numeric_error_provenance, resource_provenance): (Vec<bool>, Vec<bool>),
+        arguments: Vec<FunctionArgument>,
     ) -> Result<RulesValue, EvalError> {
-        if values.len() != f.params.len() {
+        if arguments.len() != f.params.len() {
             return Err(soft(format!(
                 "{} expects {} arguments",
                 f.name,
@@ -5419,38 +5421,10 @@ impl<'a> Evaluator<'a> {
             .iter()
             .map(|(name, value)| Binding::value(name.clone(), value.clone()))
             .collect();
-        for (
-            (
-                (((p, v), (query_derived, float_zero_ambiguous)), stringification_sensitive),
-                numeric_source,
-            ),
-            numeric_error_source,
-        ) in f
-            .params
-            .iter()
-            .zip(values)
-            .zip(query_provenance)
-            .zip(stringification_provenance)
-            .zip(numeric_source_provenance)
-            .zip(numeric_error_provenance)
-        {
-            self.scope.bindings.push(Binding::with_provenance(
-                p.clone(),
-                v,
-                query_derived,
-                numeric_source,
-                numeric_error_source,
-                float_zero_ambiguous,
-                stringification_sensitive,
-            ));
-        }
-        // The parameters are the last bindings pushed.
-        let parameters = self.scope.bindings.len() - f.params.len();
-        for (binding, query_resource) in self.scope.bindings[parameters..]
-            .iter_mut()
-            .zip(resource_provenance)
-        {
-            binding.query_resource = query_resource;
+        for (parameter, argument) in f.params.iter().zip(arguments) {
+            self.scope
+                .bindings
+                .push(Binding::parameter(parameter.clone(), argument));
         }
         let result = {
             for l in &f.lets {
@@ -6065,20 +6039,20 @@ fn method_call(
                 V::String(k) => m.get(k).cloned().unwrap_or_else(|| args[1].clone()),
                 // A list key walks nested maps: `{'a': {'b': 1}}.get(['a', 'b'], 0)` is 1.
                 V::List(path) => {
-                    let mut current = receiver.clone();
+                    let mut current = receiver;
                     for step in path {
                         let V::String(k) = step else {
                             return Err(soft("get() expects string keys in a key path"));
                         };
                         match current {
-                            V::Map(ref inner) => match inner.get(k) {
-                                Some(v) => current = v.clone(),
+                            V::Map(inner) => match inner.get(k) {
+                                Some(v) => current = v,
                                 None => return Ok(args[1].clone()),
                             },
                             _ => return Ok(args[1].clone()),
                         }
                     }
-                    current
+                    current.clone()
                 }
                 _ => return Err(soft("get() expects a string key")),
             }
@@ -6221,18 +6195,33 @@ fn method_call(
                 changed: Vec::new(),
                 unchanged: Vec::new(),
             };
-            for (k, v) in m {
-                match other.get(k) {
-                    None => diff.added.push(k.clone()),
-                    Some(o) if values_equal(v, o) => diff.unchanged.push(k.clone()),
-                    Some(_) => diff.changed.push(k.clone()),
+            let mut left = m.iter().peekable();
+            let mut right = other.iter().peekable();
+            while let (Some(&(key, value)), Some(&(other_key, other_value))) =
+                (left.peek(), right.peek())
+            {
+                match key.cmp(other_key) {
+                    core::cmp::Ordering::Less => {
+                        diff.added.push(key.clone());
+                        left.next();
+                    }
+                    core::cmp::Ordering::Greater => {
+                        diff.removed.push(other_key.clone());
+                        right.next();
+                    }
+                    core::cmp::Ordering::Equal => {
+                        if values_equal(value, other_value) {
+                            diff.unchanged.push(key.clone());
+                        } else {
+                            diff.changed.push(key.clone());
+                        }
+                        left.next();
+                        right.next();
+                    }
                 }
             }
-            for k in other.keys() {
-                if !m.contains_key(k) {
-                    diff.removed.push(k.clone());
-                }
-            }
+            diff.added.extend(left.map(|(key, _)| key.clone()));
+            diff.removed.extend(right.map(|(key, _)| key.clone()));
             V::MapDiff(diff)
         }
         (

@@ -7,7 +7,7 @@
 use core::fmt;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 
@@ -213,6 +213,16 @@ impl RegisteredApp {
         out
     }
 
+    pub(crate) fn digest_at(&self, slot: usize) -> Option<&DebugTokenDigest> {
+        if slot < self.static_digests.len() {
+            self.static_digests.get(slot)
+        } else {
+            self.dynamic
+                .get(slot - self.static_digests.len())
+                .map(|record| &record.digest)
+        }
+    }
+
     /// Digests bound to the app.
     #[must_use]
     pub fn digest_count(&self) -> usize {
@@ -392,9 +402,14 @@ struct ProjectObservations {
 }
 
 impl ProjectObservations {
+    fn record(&mut self, observation: Observation, key: ObservationCounterKey, clock: &AtomicU64) {
+        self.touched = clock.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        self.count(key);
+        self.retain(observation);
+    }
+
     /// Counts one observation under its bounded key.
-    fn count(&mut self, observation: &Observation) {
-        let key = ObservationCounterKey::of(observation);
+    fn count(&mut self, key: ObservationCounterKey) {
         if let Some(count) = self.counters.get_mut(&key) {
             *count = count.saturating_add(1);
             return;
@@ -425,8 +440,8 @@ impl ProjectObservations {
 /// The observation rings of every observed project, and the clock that orders them.
 #[derive(Debug, Default)]
 struct ObservationLog {
-    projects: BTreeMap<String, ProjectObservations>,
-    next_touch: u64,
+    projects: BTreeMap<String, Mutex<ProjectObservations>>,
+    next_touch: AtomicU64,
 }
 
 /// The App Check registry of one daemon.
@@ -442,7 +457,7 @@ pub struct AppCheckRegistry {
     projects: BTreeMap<String, ProjectState>,
     token_ttl_seconds: i64,
     next_debug_token_seq: AtomicU64,
-    observations: Mutex<ObservationLog>,
+    observations: RwLock<ObservationLog>,
 }
 
 impl AppCheckRegistry {
@@ -459,7 +474,7 @@ impl AppCheckRegistry {
             projects: BTreeMap::new(),
             token_ttl_seconds,
             next_debug_token_seq: AtomicU64::new(1),
-            observations: Mutex::new(ObservationLog::default()),
+            observations: RwLock::new(ObservationLog::default()),
         })
     }
 
@@ -763,38 +778,47 @@ impl AppCheckRegistry {
     /// least recently used ring of one it does not, so unregistered traffic cannot crowd the
     /// real sessions out of the table.
     pub fn record_observation(&self, observation: Observation) {
-        let Ok(mut guard) = self.observations.lock() else {
-            return;
-        };
-        let log = &mut *guard;
         let project = observation.project_id.as_str();
-        if !log.projects.contains_key(project) {
-            if project.is_empty() || project.len() > MAX_OBSERVED_PROJECT_ID_BYTES {
+        if project.is_empty() || project.len() > MAX_OBSERVED_PROJECT_ID_BYTES {
+            return;
+        }
+        {
+            let Ok(log) = self.observations.read() else {
+                return;
+            };
+            if let Some(entry) = log.projects.get(project) {
+                let key = ObservationCounterKey::of(&observation);
+                if let Ok(mut entry) = entry.lock() {
+                    entry.record(observation, key, &log.next_touch);
+                }
                 return;
             }
-            if log.projects.len() >= MAX_OBSERVED_PROJECTS {
-                let victim = log
-                    .projects
-                    .iter()
-                    .filter(|(observed, _)| !self.projects.contains_key(observed.as_str()))
-                    .min_by_key(|(_, entry)| entry.touched)
-                    .map(|(observed, _)| observed.clone());
-                let Some(victim) = victim else {
-                    return;
-                };
-                log.projects.remove(&victim);
-            }
-            log.projects
-                .insert(project.to_owned(), ProjectObservations::default());
         }
-        log.next_touch = log.next_touch.wrapping_add(1);
-        let touch = log.next_touch;
-        let Some(entry) = log.projects.get_mut(project) else {
+
+        let Ok(mut log) = self.observations.write() else {
             return;
         };
-        entry.touched = touch;
-        entry.count(&observation);
-        entry.retain(observation);
+        if !log.projects.contains_key(project) && log.projects.len() >= MAX_OBSERVED_PROJECTS {
+            let victim = log
+                .projects
+                .iter_mut()
+                .filter(|(name, _)| !self.projects.contains_key(name.as_str()))
+                .filter_map(|(name, entry)| Some((name, entry.get_mut().ok()?.touched)))
+                .min_by_key(|(_, touch)| *touch)
+                .map(|(name, _)| name.clone());
+            let Some(victim) = victim else {
+                return;
+            };
+            log.projects.remove(&victim);
+        }
+        let ObservationLog {
+            projects,
+            next_touch,
+        } = &mut *log;
+        if let Ok(entry) = projects.entry(project.to_owned()).or_default().get_mut() {
+            let key = ObservationCounterKey::of(&observation);
+            entry.record(observation, key, next_touch);
+        }
     }
 
     /// The retained observations of one project, oldest first.
@@ -804,12 +828,15 @@ impl AppCheckRegistry {
     #[must_use]
     pub fn observations(&self, project_id: &str) -> Vec<Observation> {
         self.observations
-            .lock()
+            .read()
             .ok()
             .and_then(|log| {
-                log.projects
-                    .get(project_id)
-                    .map(|entry| entry.ring.iter().cloned().collect())
+                log.projects.get(project_id).and_then(|entry| {
+                    entry
+                        .lock()
+                        .ok()
+                        .map(|entry| entry.ring.iter().cloned().collect())
+                })
             })
             .unwrap_or_default()
     }
@@ -821,15 +848,17 @@ impl AppCheckRegistry {
     #[must_use]
     pub fn observation_counters(&self, project_id: &str) -> Vec<(ObservationCounterKey, u64)> {
         self.observations
-            .lock()
+            .read()
             .ok()
             .and_then(|log| {
-                log.projects.get(project_id).map(|entry| {
-                    entry
-                        .counters
-                        .iter()
-                        .map(|(key, count)| (key.clone(), *count))
-                        .collect()
+                log.projects.get(project_id).and_then(|entry| {
+                    entry.lock().ok().map(|entry| {
+                        entry
+                            .counters
+                            .iter()
+                            .map(|(key, count)| (key.clone(), *count))
+                            .collect()
+                    })
                 })
             })
             .unwrap_or_default()
@@ -839,7 +868,7 @@ impl AppCheckRegistry {
     #[must_use]
     pub fn observed_projects(&self) -> Vec<String> {
         self.observations
-            .lock()
+            .read()
             .map(|log| log.projects.keys().cloned().collect())
             .unwrap_or_default()
     }
@@ -847,7 +876,7 @@ impl AppCheckRegistry {
     /// Drops the ring and the counters of every project `accept` admits: counters reset with
     /// project state, and a deleted project keeps nothing at all (section 14).
     pub fn clear_observations<A: Fn(&str) -> bool>(&self, accept: A) {
-        if let Ok(mut log) = self.observations.lock() {
+        if let Ok(mut log) = self.observations.write() {
             log.projects.retain(|project, _| !accept(project));
         }
     }

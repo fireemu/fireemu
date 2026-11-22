@@ -39,7 +39,7 @@ pub fn output_json(node: Option<&Node>, format: Format) -> Json {
     };
     let priority = match format {
         Format::Plain => None,
-        Format::Export => node.priority.as_ref(),
+        Format::Export => node.priority.as_deref(),
     };
     match &node.content {
         Content::Leaf(leaf) => {
@@ -51,28 +51,37 @@ pub fn output_json(node: Option<&Node>, format: Format) -> Json {
                 }
             }
         }
-        Content::Children(children) => {
-            if priority.is_none() {
-                if let Some(length) = array_length(children) {
-                    let mut items = vec![Json::Null; length];
-                    for (key, child) in children {
-                        // `array_length` checked that every key is an index below `length`.
-                        let index: usize = key.parse().unwrap_or(0);
-                        items[index] = output_json(Some(child), format);
-                    }
-                    return Json::Array(items);
-                }
+        Content::Children(children) => children_json(
+            children.iter().map(|(key, node)| (key.as_str(), node)),
+            priority,
+            format,
+        ),
+    }
+}
+
+/// Renders a node's children or a query selection, applying the SDK's array conversion.
+pub(crate) fn children_json<'a>(
+    children: impl ExactSizeIterator<Item = (&'a str, &'a Node)> + Clone,
+    priority: Option<&Priority>,
+    format: Format,
+) -> Json {
+    if priority.is_none() {
+        if let Some(length) = array_length(children.clone().map(|(key, _)| key), children.len()) {
+            let mut items = vec![Json::Null; length];
+            for (key, child) in children {
+                let index = key.parse::<usize>().expect("canonical array index");
+                items[index] = output_json(Some(child), format);
             }
-            let mut map: BTreeMap<String, Json> = children
-                .iter()
-                .map(|(k, child)| (k.clone(), output_json(Some(child), format)))
-                .collect();
-            if let Some(p) = priority {
-                map.insert(PRIORITY_KEY.to_owned(), priority_json(p, false));
-            }
-            Json::Object(map)
+            return Json::Array(items);
         }
     }
+    let mut map: BTreeMap<String, Json> = children
+        .map(|(key, child)| (key.to_owned(), output_json(Some(child), format)))
+        .collect();
+    if let Some(p) = priority {
+        map.insert(PRIORITY_KEY.to_owned(), priority_json(p, false));
+    }
+    Json::Object(map)
 }
 
 fn leaf_json(leaf: &Leaf) -> Json {
@@ -113,9 +122,9 @@ pub fn wire_json(node: Option<&Node>) -> Json {
 /// The array length children render as: every key is a canonical index (`0` or a digit
 /// string without a leading zero) and the largest is below twice the number of children,
 /// the rule of the SDK's `val()`.
-fn array_length(children: &BTreeMap<String, Node>) -> Option<usize> {
+fn array_length<'a>(keys: impl Iterator<Item = &'a str>, count: usize) -> Option<usize> {
     let mut max = 0usize;
-    for key in children.keys() {
+    for key in keys {
         let canonical =
             key == "0" || (!key.starts_with('0') && key.bytes().all(|b| b.is_ascii_digit()));
         if !canonical || key.is_empty() {
@@ -123,7 +132,7 @@ fn array_length(children: &BTreeMap<String, Node>) -> Option<usize> {
         }
         max = max.max(key.parse().ok()?);
     }
-    (max < 2 * children.len()).then_some(max + 1)
+    (max < 2 * count).then_some(max + 1)
 }
 
 /// The value a write to `path` reports in its events and data messages: the node's, or

@@ -3015,10 +3015,7 @@ impl AuthStore {
     /// Users in creation order (stable `listUsers` paging).
     #[must_use]
     pub fn users_by_creation(&self) -> Vec<&UserRecord> {
-        self.by_sequence
-            .values()
-            .filter_map(|id| self.users.get(id).map(Arc::as_ref))
-            .collect()
+        AuthExportAccounts::users_by_creation(self).collect()
     }
 
     /// At most `limit` users created after `sequence`, in stable creation order.
@@ -4217,9 +4214,14 @@ impl AuthStore {
         now: LogicalInstant,
     ) -> Result<(), AuthError> {
         let own = |code: &&VerificationCode| matches!(&code.purpose, VerificationPurpose::Enrollment { uid: owner } if owner == uid);
-        let held = self.verification_codes.values().filter(own).count();
-        let full = held >= crate::mfa::MAX_PENDING_PER_USER;
-        if full || self.verification_codes.len() >= MAX_OUTSTANDING_CODES {
+        let full = self.verification_codes.len() >= MAX_OUTSTANDING_CODES
+            || self
+                .verification_codes
+                .values()
+                .filter(own)
+                .nth(crate::mfa::MAX_PENDING_PER_USER - 1)
+                .is_some();
+        if full {
             let oldest = self
                 .verification_codes
                 .values()
@@ -4233,8 +4235,7 @@ impl AuthStore {
                 Some(oldest) => {
                     Arc::make_mut(&mut self.verification_codes).remove(&oldest);
                 }
-                None if full => return Err(AuthError::TooManyOutstandingCodes),
-                None => {}
+                None => return Err(AuthError::TooManyOutstandingCodes),
             }
         }
         Ok(())
@@ -4425,16 +4426,18 @@ impl AuthStore {
     /// login widget offers for reuse (`listProviderInfosByProviderId`).
     #[must_use]
     pub fn provider_infos(&self, provider_id: &str) -> Vec<FederatedIdentity> {
+        self.iter_provider_infos(provider_id).cloned().collect()
+    }
+
+    /// Iterates over the first identity at the provider on each account, in creation order.
+    pub fn iter_provider_infos<'a>(
+        &'a self,
+        provider_id: &'a str,
+    ) -> impl Iterator<Item = &'a FederatedIdentity> {
         self.by_sequence
             .values()
-            .filter_map(|id| self.users.get(id).map(Arc::as_ref))
-            .filter_map(|u| {
-                u.federated
-                    .iter()
-                    .find(|f| f.provider_id == provider_id)
-                    .cloned()
-            })
-            .collect()
+            .filter_map(|id| self.users.get(id))
+            .filter_map(move |u| u.federated.iter().find(|f| f.provider_id == provider_id))
     }
 
     /// Links a federated identity to `uid` (replacing the user's identity at that provider).
@@ -4945,7 +4948,7 @@ impl AuthStore {
         } else {
             Vec::new()
         };
-        if self.password_policy.rejects(operation, password) {
+        if !violations.is_empty() && self.password_policy.rejects_for(operation) {
             if violations.contains(&ViolationCode::MinimumPasswordLength)
                 && password.encode_utf16().count() < Self::MIN_PASSWORD_CHARS
             {
@@ -4983,9 +4986,10 @@ impl AuthStore {
         } else {
             Vec::new()
         };
-        if self
-            .password_policy
-            .rejects(PasswordPolicyOperation::SignIn, password)
+        if !violations.is_empty()
+            && self
+                .password_policy
+                .rejects_for(PasswordPolicyOperation::SignIn)
         {
             return Err(AuthError::PasswordPolicyViolation(
                 self.policy_refusal(violations),
@@ -5084,12 +5088,7 @@ impl AuthStore {
     /// without a password or for an imported credential.
     #[must_use]
     pub fn password_updated_at(&self, uid: &LocalId) -> Option<LogicalInstant> {
-        self.users.get(uid).and_then(|u| {
-            u.password
-                .as_ref()
-                .and_then(|p| p.updated_at)
-                .or(u.removed_password_updated_at)
-        })
+        password_fields(self.user(uid)).1
     }
 
     /// Removes the password credential (`deleteProvider: password`, `deleteAttribute:
@@ -5280,13 +5279,17 @@ impl AuthStore {
     /// hide the password account (sandbox recording 2026-09-23), and of two imported password
     /// accounts the earlier one is reached (sandbox recording 2026-09-25).
     fn password_owner_by_email(&self, email: &str) -> Option<&UserRecord> {
-        let active = self.user_by_email(email)?;
-        Some(
-            self.users_by_email(email)
-                .into_iter()
-                .find(|user| user.password.is_some())
-                .unwrap_or(active),
-        )
+        let email = Self::canonicalize_email(email);
+        let active = self.users.get(self.local_id_for_email.get(&email)?)?;
+        let earliest = self
+            .local_ids_for_email
+            .get(&email)
+            .into_iter()
+            .flatten()
+            .filter_map(|uid| self.users.get(uid))
+            .filter(|user| user.password.is_some())
+            .min_by_key(|user| user.sequence);
+        Some(earliest.unwrap_or(active).as_ref())
     }
 
     /// User by email: the active owner of the address.
@@ -6391,21 +6394,116 @@ impl AuthSnapshot {
     }
 }
 
+/// Account and password fields read when serializing an Auth archive.
+pub trait AuthExportAccounts {
+    /// Captured accounts in stable creation order.
+    fn users_by_creation(&self) -> impl Iterator<Item = &UserRecord>;
+
+    /// Password and update time resolved under the account's reported local ID.
+    fn export_password_fields(
+        &self,
+        id: &LocalId,
+    ) -> (Option<&PasswordDigest>, Option<LogicalInstant>);
+}
+
+fn password_fields(
+    record: Option<&UserRecord>,
+) -> (Option<&PasswordDigest>, Option<LogicalInstant>) {
+    let Some(user) = record else {
+        return (None, None);
+    };
+    let password = user.password.as_ref();
+    (
+        password,
+        password
+            .and_then(|p| p.updated_at)
+            .or(user.removed_password_updated_at),
+    )
+}
+
+impl AuthExportAccounts for AuthStore {
+    fn users_by_creation(&self) -> impl Iterator<Item = &UserRecord> {
+        self.by_sequence
+            .values()
+            .filter_map(|id| self.users.get(id).map(Arc::as_ref))
+    }
+
+    fn export_password_fields(
+        &self,
+        id: &LocalId,
+    ) -> (Option<&PasswordDigest>, Option<LogicalInstant>) {
+        password_fields(self.user(id))
+    }
+}
+
+/// The account rows and namespace settings used by the CLI's Auth artifact writer.
+pub struct AuthArtifactNamespace {
+    accounts: Vec<Arc<UserRecord>>,
+    credential_owners: BTreeMap<LocalId, Arc<UserRecord>>,
+    /// The effective Auth configuration.
+    pub config: ProjectAuthConfig,
+    /// The namespace password policy.
+    pub password_policy: PasswordPolicy,
+    /// The namespace sign-up quota configuration.
+    pub quota: SignupQuotaConfig,
+    /// Stored configuration members for export.
+    pub config_members: crate::config_members::StoredConfigMembers,
+}
+
+impl AuthArtifactNamespace {
+    fn capture(store: &AuthStore) -> Self {
+        Self {
+            accounts: store
+                .by_sequence
+                .values()
+                .filter_map(|id| store.users.get(id).cloned())
+                .collect(),
+            // A publicly mutable record can report a different ID from its map key. The archive
+            // resolves passwords by the reported ID, including a removed password's update time.
+            credential_owners: store
+                .users
+                .iter()
+                .filter(|(_, user)| {
+                    user.password.is_some() || user.removed_password_updated_at.is_some()
+                })
+                .map(|(id, user)| (id.clone(), Arc::clone(user)))
+                .collect(),
+            config: store.config(),
+            password_policy: store.password_policy().clone(),
+            quota: store.signup_quota().config().clone(),
+            config_members: store.stored_config_members().clone(),
+        }
+    }
+}
+
+impl AuthExportAccounts for AuthArtifactNamespace {
+    fn users_by_creation(&self) -> impl Iterator<Item = &UserRecord> {
+        self.accounts.iter().map(Arc::as_ref)
+    }
+
+    fn export_password_fields(
+        &self,
+        id: &LocalId,
+    ) -> (Option<&PasswordDigest>, Option<LogicalInstant>) {
+        password_fields(self.credential_owners.get(id).map(Arc::as_ref))
+    }
+}
+
 /// A consistent export view of one Auth project and all of its published tenants.
 ///
 /// The view is captured while the project's operation gate and every participating store lock
 /// are held. Callers can then serialize the owned copies without keeping registry locks or
 /// blocking Auth mutations during file I/O.
 #[derive(Debug)]
-pub struct AuthExportSnapshot {
+pub struct AuthExportSnapshot<Namespace = AuthStore> {
     project: String,
-    default: AuthStore,
-    tenants: Vec<(String, AuthStore)>,
+    default: Namespace,
+    tenants: Vec<(String, Namespace)>,
     tenant_metadata: BTreeMap<String, TenantMetadata>,
     tenant_config_overrides: BTreeMap<String, AuthNamespaceConfigPatch>,
 }
 
-impl AuthExportSnapshot {
+impl<Namespace> AuthExportSnapshot<Namespace> {
     /// The project captured by this view.
     #[must_use]
     pub fn project_id(&self) -> &str {
@@ -6414,12 +6512,12 @@ impl AuthExportSnapshot {
 
     /// The project-level Auth store captured by this view.
     #[must_use]
-    pub const fn default_store(&self) -> &AuthStore {
+    pub const fn default_store(&self) -> &Namespace {
         &self.default
     }
 
     /// Tenant stores captured by this view in lexical tenant-ID order.
-    pub fn tenant_stores(&self) -> impl Iterator<Item = (&str, &AuthStore)> {
+    pub fn tenant_stores(&self) -> impl Iterator<Item = (&str, &Namespace)> {
         self.tenants
             .iter()
             .map(|(tenant, store)| (tenant.as_str(), store))
@@ -8417,11 +8515,12 @@ impl AuthRegistry {
         let live = self.owned_tenants(project)?;
         // Building a namespace reads the startup overrides and the parent store, so every
         // recreated tenant is built before the membership locks are taken.
+        // Capture and live traversal both retain the ordered membership-map keys.
         let mut recreated = Vec::new();
         for captured in &snapshot.tenants {
-            if !live
-                .iter()
-                .any(|((_, tenant), ..)| tenant == &captured.tenant)
+            if live
+                .binary_search_by(|((_, tenant), ..)| tenant.cmp(&captured.tenant))
+                .is_err()
             {
                 let store = self
                     .build_tenant_store(project, &captured.tenant, &parent)
@@ -8469,7 +8568,8 @@ impl AuthRegistry {
         }
         let mut report = RestoreReport::default();
         for (key, guard) in &mut live_guards {
-            if let Some(captured) = snapshot.tenants.iter().find(|c| c.tenant == key.1) {
+            if let Ok(position) = snapshot.tenants.binary_search_by(|c| c.tenant.cmp(&key.1)) {
+                let captured = &snapshot.tenants[position];
                 report.totp_factors_dropped +=
                     captured.store.restore_into(guard).totp_factors_dropped;
             } else {
@@ -8591,6 +8691,26 @@ impl AuthRegistry {
         &self,
         project: &str,
     ) -> Result<Option<AuthExportSnapshot>, &'static str> {
+        self.capture_export_namespaces(project, |store| {
+            let mut snapshot = store.clone();
+            snapshot.pending_idp = PendingIdpCache::default();
+            snapshot
+        })
+    }
+
+    /// Captures the immutable records and settings that the CLI serializes.
+    pub fn capture_artifact_snapshot(
+        &self,
+        project: &str,
+    ) -> Result<Option<AuthExportSnapshot<AuthArtifactNamespace>>, &'static str> {
+        self.capture_export_namespaces(project, AuthArtifactNamespace::capture)
+    }
+
+    fn capture_export_namespaces<T>(
+        &self,
+        project: &str,
+        capture: impl Fn(&AuthStore) -> T,
+    ) -> Result<Option<AuthExportSnapshot<T>>, &'static str> {
         let gate = self
             .operation_gate(project, None)
             .ok_or("the Auth operation-gate registry is poisoned")?;
@@ -8660,21 +8780,13 @@ impl AuthRegistry {
             &startup_overrides,
             &runtime_overrides,
         );
-        // Export views are serialization inputs, not a way to transfer raw IdP
-        // continuation credentials between processes/namespaces.
-        let mut exported_default = default_guard.clone();
-        exported_default.pending_idp = PendingIdpCache::default();
         let snapshot = AuthExportSnapshot {
             project: project.to_owned(),
-            default: exported_default,
+            default: capture(&default_guard),
             tenants: tenant_entries
                 .iter()
                 .zip(&tenant_guards)
-                .map(|((tenant, _), store)| {
-                    let mut exported = (*store).clone();
-                    exported.pending_idp = PendingIdpCache::default();
-                    (tenant.clone(), exported)
-                })
+                .map(|((tenant, _), store)| (tenant.clone(), capture(store)))
                 .collect(),
             tenant_metadata,
             tenant_config_overrides,

@@ -4695,3 +4695,53 @@ fn like_maps_resolver_errors_with_their_own_answers() {
         })
     );
 }
+
+#[test]
+fn array_search_keeps_the_first_last_and_all_nested_matches() {
+    let needle = Value::Map(BTreeMap::from([(
+        "blob".into(),
+        Value::Bytes(vec![19; 8_192]),
+    )]));
+    let input = array(vec![
+        Value::Integer(1),
+        needle.clone(),
+        Value::Null,
+        needle.clone(),
+    ]);
+    let search = Eval::Value(needle);
+    assert_eq!(
+        emulator(
+            "array_index_of",
+            &[input.clone(), search.clone(), text("first")],
+        ),
+        int(1),
+    );
+    assert_eq!(
+        emulator(
+            "array_index_of",
+            &[input.clone(), search.clone(), text("last")],
+        ),
+        int(3),
+    );
+    assert_eq!(
+        emulator("array_index_of_all", &[input.clone(), search.clone()]),
+        array(vec![Value::Integer(1), Value::Integer(3)]),
+    );
+    assert!(is_unobserved(&strict(
+        "array_index_of_all",
+        &[input, search]
+    )));
+}
+
+#[test]
+fn extrema_checks_distinguishable_ties_outside_the_output() {
+    for (name, selected) in [("minimum_n", -1.0), ("maximum_n", 1.0)] {
+        let input = array(vec![
+            Value::Double(selected),
+            Value::Double(0.0),
+            Value::Double(-0.0),
+        ]);
+        assert!(is_unobserved(&strict(name, &[input.clone(), int(1)])));
+        assert_eq!(strict(name, &[input, int(0)]), array(Vec::new()));
+    }
+}

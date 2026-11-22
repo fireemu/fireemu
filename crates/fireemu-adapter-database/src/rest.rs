@@ -308,8 +308,12 @@ pub(crate) fn in_write_order(entries: Vec<Patched>) -> Vec<Patched> {
         .iter()
         .map(|entry| entry.path.keys().to_vec())
         .collect();
+    permute_entries(entries, crate::scala_map::write_order(&raw, &paths))
+}
+
+fn permute_entries(entries: Vec<Patched>, order: Vec<usize>) -> Vec<Patched> {
     let mut slots: Vec<Option<Patched>> = entries.into_iter().map(Some).collect();
-    crate::scala_map::write_order(&raw, &paths)
+    order
         .into_iter()
         .filter_map(|at| slots[at].take())
         .collect()
@@ -882,27 +886,25 @@ impl Database {
         match method.as_str() {
             "GET" => {
                 let tree = &self.namespace(&call.namespace).tree;
-                if let Some(Condition::NoneMatch(tag)) = call.condition {
-                    if tag_at(tree, &call.path) == tag {
-                        let tag = call.want_etag.then(|| tag.to_owned());
-                        return Ok(respond(not_modified(&call.output, tag)));
+                let etag = if let Some(Condition::NoneMatch(tag)) = call.condition {
+                    let current = tag_at(tree, &call.path);
+                    if current == tag {
+                        return Ok(respond(not_modified(
+                            &call.output,
+                            call.want_etag.then_some(current),
+                        )));
                     }
-                    return Ok(respond(read(
-                        tree,
-                        &call.path,
-                        None,
-                        None,
-                        &call.output,
-                        true,
-                    )));
-                }
+                    Some(current)
+                } else {
+                    call.want_etag.then(|| tag_at(tree, &call.path))
+                };
                 Ok(respond(read(
                     tree,
                     &call.path,
                     query.as_ref(),
                     page.as_ref(),
                     &call.output,
-                    call.want_etag,
+                    etag,
                 )))
             }
             "PUT" => self.put(
@@ -955,12 +957,11 @@ impl Database {
         }
         let tree = &mut self.namespace(&call.namespace).tree;
         let current = tree.get(&call.path);
-        let current_tag = tag_at(tree, &call.path);
         match call.condition {
-            Some(Condition::Match(tag)) if current_tag != tag => {
+            Some(Condition::Match(tag)) if tag_at(tree, &call.path) != tag => {
                 return Ok(respond(precondition_failed(current, &call.output, true)));
             }
-            Some(Condition::NoneMatch(tag)) if current_tag == tag => {
+            Some(Condition::NoneMatch(tag)) if tag_at(tree, &call.path) == tag => {
                 // The ETag only when asked (X-Firebase-ETag), as the official emulator.
                 return Ok(respond(precondition_failed(
                     current,
@@ -1064,7 +1065,8 @@ impl Database {
         let tree = &mut self.namespace(&call.namespace).tree;
         // The answer echoes the request with its placeholders resolved, read before the
         // update changes what they resolve against.
-        let echo = patch_echo(tree, &call.path, &entries, call.context);
+        let echo =
+            (!call.output.silent).then(|| patch_echo(tree, &call.path, &entries, call.context));
         if call.disable_triggers {
             self.tree_mut(&call.namespace)
                 .update(&call.path, &wire, call.context)
@@ -1080,18 +1082,25 @@ impl Database {
         }
         .map_err(|err| change_refusal(&err, || Refusal::bad(PATCH_ERROR)))?;
         let effective = self.effective(&call.namespace, &absolute, before);
-        let entries = in_write_order(
-            entries
-                .into_iter()
-                .zip(effective)
-                .map(|(entry, effective)| Patched {
-                    path: entry.path,
-                    key: entry.key,
-                    effective,
-                })
-                .collect(),
-        );
-        let response = ordered_response(&echo.ordered(), &call.output, None);
+        let entries = entries
+            .into_iter()
+            .zip(effective)
+            .map(|(entry, effective)| Patched {
+                path: entry.path,
+                key: entry.key,
+                effective,
+            })
+            .collect();
+        let (entries, response) = match echo {
+            Some(echo) => {
+                let response = ordered_response(&echo.ordered(), &call.output, None);
+                (permute_entries(entries, echo.order), response)
+            }
+            None => (
+                in_write_order(entries),
+                json_response(&Json::Null, &call.output, None),
+            ),
+        };
         let change = Change::Patch {
             base: call.path.clone(),
             entries,
@@ -1441,8 +1450,8 @@ impl Database {
     pub(crate) fn add_listen(&mut self, mut listen: Listen, hash: &str) {
         self.remove_listen(listen.client, &listen.path, listen.tag);
         let tree = self.tree_mut(&listen.namespace.clone());
-        let view = listen.view(tree);
-        if listen.hash(tree) != hash {
+        let (view, current_hash) = listen.initial_view(tree);
+        if current_hash != hash {
             self.pushes.push((listen.client, listen.snapshot(&view)));
         }
         listen.last = view;
@@ -2108,12 +2117,7 @@ fn json_response(json: &Json, output: &Output, etag: Option<String>) -> HttpResp
 /// [`json_response`] for members in a given order.
 fn ordered_response(json: &Ordered<'_>, output: &Output, etag: Option<String>) -> HttpResponse {
     let mut headers = output_headers(output);
-    let mut body = render_ordered(json, output.style);
-    if output.style == Style::Pretty {
-        body.push('\n');
-    }
-    if let Some(callback) = &output.callback {
-        body = format!("/**/ {callback}({body});");
+    if output.callback.is_some() {
         headers.push(header("X-Content-Type-Options", "nosniff"));
     }
     if let Some(etag) = etag {
@@ -2126,6 +2130,13 @@ fn ordered_response(json: &Ordered<'_>, output: &Output, etag: Option<String>) -
             headers,
             body: Vec::new(),
         };
+    }
+    let mut body = render_ordered(json, output.style);
+    if output.style == Style::Pretty {
+        body.push('\n');
+    }
+    if let Some(callback) = &output.callback {
+        body = format!("/**/ {callback}({body});");
     }
     HttpResponse {
         status: 200,
@@ -2161,7 +2172,7 @@ fn read(
     query: Option<&QueryParams>,
     page: Option<&ShallowPage>,
     output: &Output,
-    want_etag: bool,
+    etag: Option<String>,
 ) -> HttpResponse {
     let format = if output.export {
         Format::Export
@@ -2169,7 +2180,6 @@ fn read(
         Format::Plain
     };
     let node = tree.get(path);
-    let etag = want_etag.then(|| tag_at(tree, path));
     if path.is_priority() {
         return json_response(&priority_at(tree, path), output, etag);
     }
@@ -2200,6 +2210,9 @@ fn read(
                 .map(|at| (keys[at].to_owned(), Ordered::Value(&values[at])))
                 .collect();
             return ordered_response(&Ordered::Members(members), output, etag);
+        }
+        if matches!(node.map(|node| &node.content), Some(Content::Children(_))) {
+            return json_response(&Json::Object(BTreeMap::new()), output, etag);
         }
     }
     json_response(&view(tree, path, query, format), output, etag)
@@ -2235,22 +2248,32 @@ fn shallow_keys(
     else {
         return None;
     };
-    let mut keys: Vec<String> = children.keys().cloned().collect();
-    keys.sort_by(|a, b| fireemu_core_database::key::name_compare(a, b));
-    if format == Format::Export && priority.is_some() {
-        keys.insert(0, PRIORITY_KEY.to_owned());
-    }
+    let mut keys: Vec<&str> = children.keys().map(String::as_str).collect();
+    let has_priority = format == Format::Export && priority.is_some();
     if let Some(page) = page {
-        keys.sort_by(|a, b| fireemu_core_database::key::utf16_cmp(a, b));
+        if has_priority {
+            keys.push(PRIORITY_KEY);
+        }
         if let Some(after) = &page.start_after {
             keys.retain(|key| fireemu_core_database::key::utf16_cmp(key, after).is_gt());
         }
+        let by_text = |a: &&str, b: &&str| fireemu_core_database::key::utf16_cmp(a, b);
         if let Some(limit) = page.limit {
-            keys.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+            let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+            if limit < keys.len() {
+                keys.select_nth_unstable_by(limit, by_text);
+                keys.truncate(limit);
+            }
+        }
+        keys.sort_unstable_by(by_text);
+    } else {
+        keys.sort_by(|a, b| fireemu_core_database::key::name_compare(a, b));
+        if has_priority {
+            keys.insert(0, PRIORITY_KEY);
         }
     }
     let order = crate::scala_map::scala_order(&keys, false);
-    Some(order.into_iter().map(|at| keys[at].clone()).collect())
+    Some(order.into_iter().map(|at| keys[at].to_owned()).collect())
 }
 
 /// The `ETag` of a location; for `<location>/.priority`, of its priority as a leaf (the
@@ -2297,19 +2320,8 @@ fn view(tree: &Tree, path: &Path, query: Option<&QueryParams>, format: Format) -
     else {
         return output_json(node, format);
     };
-    let selected: BTreeMap<String, Node> = query
-        .run(node)
-        .into_iter()
-        .map(|(key, child)| (key.to_owned(), child.clone()))
-        .collect();
-    if selected.is_empty() {
-        return Json::Object(BTreeMap::new());
-    }
-    let view = Node {
-        content: Content::Children(selected),
-        priority: None,
-    };
-    output_json(Some(&view), format)
+    let selected = query.run(node);
+    crate::json_text::children_json(selected.iter().copied(), None, format)
 }
 
 /// The 412 answer: the current value, with its `ETag` for a failed `if-match`. A
@@ -2365,6 +2377,9 @@ fn written(
     // The node as written, server values resolved: an equal value stays stored in its own
     // form, but the answer and its ETag are what was written, as the official emulator's.
     let tag = want_etag.then(|| etag(node));
+    if output.silent {
+        return json_response(&Json::Null, output, tag);
+    }
     json_response(&output_json(node, Format::Export), output, tag)
 }
 
@@ -2451,6 +2466,7 @@ fn patch_entries(
 struct PatchEcho {
     values: Vec<Json>,
     tree: crate::scala_map::WriteTree,
+    order: Vec<usize>,
 }
 
 impl PatchEcho {
@@ -2493,9 +2509,11 @@ fn patch_echo(
         .collect();
     let raw: Vec<String> = entries.iter().map(|entry| entry.key.clone()).collect();
     let paths: Vec<Vec<String>> = entries.iter().map(|e| e.path.keys().to_vec()).collect();
+    let (tree, order) = crate::scala_map::write_tree(&raw, &paths);
     PatchEcho {
         values,
-        tree: crate::scala_map::write_tree(&raw, &paths),
+        tree,
+        order,
     }
 }
 

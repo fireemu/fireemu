@@ -136,12 +136,24 @@ impl Outbox {
         queue: &str,
     ) -> Result<(), OutboxError> {
         let id = event.event_id;
-        if self.records.contains_key(&id) {
+        let std::collections::btree_map::Entry::Vacant(entry) = self.records.entry(id) else {
             return Err(OutboxError::DuplicateEventId(id));
-        }
-        self.records.insert(id, EventRecord::new(event));
+        };
+        let key = (event.logical_time, id);
+        entry.insert(EventRecord::new(event));
         self.queue_by_id.insert(id, queue.to_owned());
-        self.reindex(id);
+        if !self.active.insert(id) {
+            // A replaced terminal record can have left an active index when it was evicted.
+            self.reindex(id);
+            return Ok(());
+        }
+        self.pending.insert(key);
+        if let Some(pending) = self.pending_by_queue.get_mut(queue) {
+            pending.insert(key);
+        } else {
+            self.pending_by_queue
+                .insert(queue.to_owned(), BTreeSet::from([key]));
+        }
         Ok(())
     }
 

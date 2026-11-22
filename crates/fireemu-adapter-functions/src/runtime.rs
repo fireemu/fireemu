@@ -29,7 +29,7 @@ use fireemu_core_storage::store::StorageEvent;
 use fireemu_core_types::determinism::Clock;
 use fireemu_core_types::ids::{CorrelationId, Epoch, EventId, SessionId};
 use fireemu_core_types::resources::{
-    Gauge, Refusal, RetentionRoot, RootBudget, ServiceResources, Unit,
+    Gauge, Refusal, RetentionRoot, RetentionRoots, RootBudget, ServiceResources, Unit,
 };
 use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 use serde_json::{json, Value};
@@ -40,7 +40,7 @@ use crate::events::{
     pubsub_event_with_subscription, schedule_event, storage_event,
 };
 use crate::http::{
-    forward, forward_stream, FunctionsHttpProfile, ProxiedResponse, ProxiedStreamResponse,
+    forward, forward_stream_body, FunctionsHttpProfile, ProxiedResponse, ProxiedStreamResponse,
     StreamCompletion, StreamStartError,
 };
 use crate::runner::{Invocation, InvokeOutcome, Runner, SpawnSpec};
@@ -288,6 +288,18 @@ pub struct PendingTaskInfo {
     pub run_now: bool,
 }
 
+impl From<crate::task_scheduler::PendingTask> for PendingTaskInfo {
+    fn from(task: crate::task_scheduler::PendingTask) -> Self {
+        Self {
+            function: task.function,
+            id: task.name.rsplit('/').next().unwrap_or_default().to_owned(),
+            name: task.name,
+            schedule_time: task.schedule_time,
+            run_now: task.run_now,
+        }
+    }
+}
+
 /// Static runtime configuration.
 #[derive(Clone)]
 #[allow(clippy::struct_excessive_bools)] // Independent switches of the profile, not a state machine.
@@ -438,8 +450,31 @@ struct ScheduledJob {
     zone: crate::zone::SharedZone,
     /// Runs strictly after this instant are due.
     cursor: LogicalInstant,
+    /// A previously searched interval on the phase-adjusted axis with no due run.
+    empty_until: Option<(LogicalInstant, LogicalInstant)>,
     /// Strict intervals retain the creation minute; cron and emulator schedules keep zero phase.
     phase: LogicalDuration,
+}
+
+impl ScheduledJob {
+    fn due_runs(
+        &mut self,
+        from: LogicalInstant,
+        to: LogicalInstant,
+        limit: usize,
+    ) -> Vec<LogicalInstant> {
+        if self
+            .empty_until
+            .is_some_and(|(start, next)| start <= from && from < next && to < next)
+        {
+            return Vec::new();
+        }
+        let (runs, later) = self
+            .schedule
+            .runs_between_with_next(from, to, &*self.zone, limit);
+        self.empty_until = later.map(|next| (runs.last().copied().unwrap_or(from), next));
+        runs
+    }
 }
 
 /// What happens when a schedule comes due while a previous run of the same function is
@@ -561,7 +596,10 @@ impl RecordLog {
         while self.records.len() > self.retention {
             self.records.pop_front();
         }
-        self.oldest = self.records.front().map_or(self.last + 1, |r| r.sequence);
+        self.oldest = self
+            .records
+            .front()
+            .map_or_else(|| self.last.saturating_add(1), |r| r.sequence);
     }
 
     fn window(&self) -> Vec<InvocationRecord> {
@@ -570,16 +608,16 @@ impl RecordLog {
 
     /// The records after `sequence`, or `None` when some of them have been evicted.
     fn since(&self, sequence: u64) -> Option<Vec<SequencedRecord>> {
-        if sequence > self.last || sequence + 1 < self.oldest {
+        if sequence > self.last || sequence < self.oldest.saturating_sub(1) {
             return None;
         }
-        Some(
-            self.records
-                .iter()
-                .filter(|r| r.sequence > sequence)
-                .cloned()
-                .collect(),
-        )
+        if sequence == self.last {
+            return Some(Vec::new());
+        }
+        let start = self
+            .records
+            .partition_point(|entry| entry.sequence <= sequence);
+        Some(self.records.range(start..).cloned().collect())
     }
 }
 
@@ -686,20 +724,26 @@ impl CausalityLog {
     /// The projection `status()` publishes: unfinished entries first, at most
     /// [`MAX_CAUSALITY_PROJECTED`], with the counters that say what the window does not show.
     fn project(&self, epoch: u64) -> Value {
-        let mut listed: Vec<&CausalEntry> = self
-            .order
-            .iter()
-            .filter_map(|id| self.entries.get(id))
-            .filter(|entry| !entry.terminal)
-            .collect();
+        let mut listed = Vec::new();
+        let mut completed = Vec::new();
+        for entry in self.order.iter().filter_map(|id| self.entries.get(id)) {
+            if entry.terminal {
+                if completed.len() < MAX_CAUSALITY_PROJECTED {
+                    completed.push(entry);
+                }
+            } else {
+                listed.push(entry);
+                if listed.len() == MAX_CAUSALITY_PROJECTED {
+                    break;
+                }
+            }
+        }
         listed.extend(
-            self.order
-                .iter()
-                .filter_map(|id| self.entries.get(id))
-                .filter(|entry| entry.terminal),
+            completed
+                .into_iter()
+                .take(MAX_CAUSALITY_PROJECTED - listed.len()),
         );
-        let truncated = listed.len() > MAX_CAUSALITY_PROJECTED;
-        listed.truncate(MAX_CAUSALITY_PROJECTED);
+        let truncated = self.entries.len() > MAX_CAUSALITY_PROJECTED;
         json!({
             "epoch": epoch,
             "retained": self.entries.len(),
@@ -819,7 +863,7 @@ struct PendingAuthEvent {
 /// payload of each matching function with its copy count, and the records and bytes the whole
 /// event needs.
 struct AuthPlan<'a> {
-    deliveries: Vec<(&'a str, usize, Value)>,
+    deliveries: Vec<(&'a str, usize, Value, usize)>,
     records: usize,
     bytes: usize,
 }
@@ -1657,6 +1701,7 @@ impl FunctionsRuntime {
                 zone: crate::zone::resolve(tz)
                     .unwrap_or_else(|_| Arc::new(fireemu_core_functions::cron::FixedOffset(0))),
                 cursor: now,
+                empty_until: None,
                 phase: {
                     let lower = schedule.as_str().to_ascii_lowercase();
                     let words: Vec<&str> = lower.split_whitespace().collect();
@@ -3422,7 +3467,7 @@ impl FunctionsRuntime {
             .inner
             .lock()
             .map_err(|_| SourceEventAdmissionError::Unavailable)?;
-        let mut drafts = Vec::new();
+        let mut drafts: Vec<DeliveryDraft> = Vec::new();
         let mut draft_bytes = 0usize;
         for f in
             self.manifest
@@ -3434,7 +3479,14 @@ impl FunctionsRuntime {
                 .and_then(|next| next.checked_add(1))
                 .ok_or(SourceEventAdmissionError::Capacity)?;
             let id = format!("{}-{next}", self.config.session.value());
-            let payload = storage_event(&id, kind, object, event_time, time_deleted);
+            let payload = match drafts.first() {
+                Some(first) => {
+                    let mut event = Value::clone(&first.payload);
+                    event["id"] = Value::String(crate::events::storage_event_id(&id));
+                    event
+                }
+                None => storage_event(&id, kind, object, event_time, time_deleted),
+            };
             let event_type = kind.event_type().to_owned();
             let subject = format!("objects/{}", object.name.as_str());
             let copies = self.delivery_copies(&f.name, &event_type);
@@ -3946,23 +3998,14 @@ impl FunctionsRuntime {
             body: refusal.body().to_string(),
         };
         // A `scheduleTime` minted on the other clock keeps its delay on the task clock.
-        let rebased_body;
-        let body = match body
+        let rebased = body
             .pointer("/task/scheduleTime")
             .and_then(Value::as_str)
             .and_then(|text| {
                 self.rebased_schedule_time(text, |text| {
                     crate::tasks_production::parse_timestamp(text).is_some()
                 })
-            }) {
-            Some(rebased) => {
-                let mut copy = body.clone();
-                copy["task"]["scheduleTime"] = Value::String(rebased);
-                rebased_body = copy;
-                &rebased_body
-            }
-            None => body,
-        };
+            });
         let served = self
             .manifest
             .get(queue)
@@ -4016,9 +4059,10 @@ impl FunctionsRuntime {
                 .map_or(0, |text| text.len() / 4 * 3)
                 .saturating_add(headers)
         };
-        let admitted = production::admit(
+        let admitted = production::admit_with_schedule(
             &queue_path,
             body,
+            rebased.as_deref(),
             now_nanos,
             counter,
             self.config.task_default_deadline_seconds,
@@ -4056,6 +4100,10 @@ impl FunctionsRuntime {
             .saturating_add(project.len())
             .saturating_add(location.len())
             .saturating_add(queue_key_bytes);
+        // The quota above includes the parsed echo. Only the emulator profile uses that
+        // echo or its parser error. Strict dispatch and FULL views read the original bytes.
+        task.body = Value::Null;
+        task.body_json_error = None;
         let now_task = self.task_now();
         {
             let mut inner = self.inner.lock().map_err(|_| EnqueueRefusal {
@@ -4067,13 +4115,10 @@ impl FunctionsRuntime {
                 NameState::Finished => return Err(json(Refusal::existed_too_recently())),
                 NameState::Free => {}
             }
-            match inner.task_scheduler.enqueue_at(
-                queue,
-                task.clone(),
-                retry,
-                retained_bytes,
-                now_task,
-            ) {
+            match inner
+                .task_scheduler
+                .enqueue_at(queue, task, retry, retained_bytes, now_task)
+            {
                 Ok(()) => {}
                 Err(AdmissionError::Duplicate) => return Err(json(Refusal::already_exists())),
                 Err(AdmissionError::QueueFull) => {
@@ -4734,11 +4779,27 @@ impl FunctionsRuntime {
     }
 
     /// Atomically admits and enqueues one Eventarc publish request.
-    #[allow(clippy::too_many_lines)]
     pub fn publish_registered_custom_events(
         &self,
         channel: &str,
         events: &[crate::eventarc::PublishedEvent],
+    ) -> Result<usize, EventarcPublishError> {
+        self.publish_events(channel, events.iter().map(std::borrow::Cow::Borrowed))
+    }
+
+    pub(crate) fn publish_owned_events(
+        &self,
+        channel: &str,
+        events: Vec<crate::eventarc::PublishedEvent>,
+    ) -> Result<usize, EventarcPublishError> {
+        self.publish_events(channel, events.into_iter().map(std::borrow::Cow::Owned))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn publish_events<'a>(
+        &self,
+        channel: &str,
+        events: impl Iterator<Item = std::borrow::Cow<'a, crate::eventarc::PublishedEvent>>,
     ) -> Result<usize, EventarcPublishError> {
         if !self.background_triggers_enabled() {
             return Ok(0);
@@ -4748,9 +4809,8 @@ impl FunctionsRuntime {
         // raw data into shared buffers -- is done before either lock is taken. Errors are kept
         // and raised at the event's turn below, so admission decides exactly as before.
         let encoded: Vec<_> = events
-            .iter()
-            .map(|event| {
-                EventType::try_new(&event.event_type).is_ok().then(|| {
+            .map(|mut event| {
+                let encoded = EventType::try_new(&event.event_type).is_ok().then(|| {
                     #[cfg(test)]
                     crate::events::probe_payload_encoding();
                     let payload_bytes = serde_json::to_vec(&event.event)
@@ -4763,10 +4823,14 @@ impl FunctionsRuntime {
                         });
                     (
                         payload_bytes,
-                        Arc::new(event.event.clone()),
+                        Arc::new(match &mut event {
+                            std::borrow::Cow::Borrowed(event) => event.event.clone(),
+                            std::borrow::Cow::Owned(event) => std::mem::take(&mut event.event),
+                        }),
                         event.raw_data.as_deref().map(Arc::<str>::from),
                     )
-                })
+                });
+                (event, encoded)
             })
             .collect();
         let registry = self
@@ -4780,7 +4844,7 @@ impl FunctionsRuntime {
         let mut planned = Vec::new();
         let mut delivery_count = 0usize;
         let mut retained_bytes = 0usize;
-        for (event, encoded) in events.iter().zip(&encoded) {
+        for (event, encoded) in &encoded {
             // A type the runtime cannot hold (outside `[A-Za-z0-9._-]`, or longer than 256 bytes) cannot name a
             // function's trigger either. The official emulator looks the trigger up by the type's text and
             // answers 200 whatever the type is, so such an event is logged and not delivered; it does not
@@ -4947,7 +5011,7 @@ impl FunctionsRuntime {
                 return None;
             }
             ordinal += *copies as u64;
-            deliveries.push((function.as_str(), *copies, payload));
+            deliveries.push((function.as_str(), *copies, payload, one));
         }
         Some(AuthPlan {
             deliveries,
@@ -4970,9 +5034,10 @@ impl FunctionsRuntime {
             return false;
         }
         let subject = format!("users/{}", user.local_id.as_str());
-        for (function, copies, payload) in plan.deliveries {
+        for (function, copies, payload, retained_bytes) in plan.deliveries {
+            let payload = Arc::new(payload);
             for _ in 0..copies {
-                let admitted = Self::enqueue(
+                let admitted = Self::enqueue_encoded(
                     inner,
                     self.config.session,
                     EventSource::Auth,
@@ -4980,8 +5045,9 @@ impl FunctionsRuntime {
                     kind.event_type(),
                     &subject,
                     time,
-                    &payload,
+                    Arc::clone(&payload),
                     None,
+                    retained_bytes,
                 );
                 debug_assert!(admitted, "a planned Auth delivery fits");
             }
@@ -5129,8 +5195,7 @@ impl FunctionsRuntime {
                     match policy {
                         CatchUpPolicy::All => {
                             let due = job
-                                .schedule
-                                .runs_between_in(from, to, &*job.zone, chunk.saturating_add(1))
+                                .due_runs(from, to, chunk.saturating_add(1))
                                 .into_iter()
                                 .filter_map(|at| at.checked_add(job.phase))
                                 .collect::<Vec<_>>();
@@ -6022,7 +6087,7 @@ impl FunctionsRuntime {
                 && !i.catch_up_pending
                 && if runnable_only {
                     let (now, epoch) = self.task_projection_time();
-                    i.task_scheduler.idle_projection(now, epoch)["runnable"] == 0
+                    !i.task_scheduler.has_runnable(now, epoch)
                 } else {
                     i.task_scheduler.outstanding() == 0
                 }
@@ -6101,16 +6166,16 @@ impl FunctionsRuntime {
             // One entry per loaded codebase, so a multi-codebase project can see which runner
             // is down and which functions went with it.
             "codebases": (0..self.codebases.len()).map(|i| {
+                let runner = self.runner_at(i);
                 let mut entry = json!({
                     "codebase": self.codebases[i].name,
-                    "runnerAlive": self.runner_at(i).is_alive() || self.runner_at(i).never_started(),
-                    "functions": self.manifest.functions.iter()
-                        .filter(|f| self.owner.get(&f.name).copied() == Some(i))
+                    "runnerAlive": runner.is_alive() || runner.never_started(),
+                    "functions": self.codebases[i].manifest.functions.iter()
                         .map(|f| f.name.clone()).collect::<Vec<_>>(),
                 });
                 if let Some(function) = &self.codebases[i].function {
                     entry["function"] = json!(function);
-                    entry["started"] = json!(!self.runner_at(i).never_started());
+                    entry["started"] = json!(!runner.never_started());
                 }
                 entry
             }).collect::<Vec<_>>(),
@@ -6157,12 +6222,13 @@ impl FunctionsRuntime {
                     }),
             )
             .collect(),
-            roots: budget.bound(Self::resource_roots(&inner)),
+            roots: Self::resource_roots(&inner, budget),
         })
     }
 
-    fn resource_roots(inner: &Inner) -> Vec<RetentionRoot> {
+    fn resource_roots(inner: &Inner, budget: RootBudget) -> RetentionRoots {
         let mut roots = Vec::new();
+        let mut total = inner.running.len();
         for (id, payload) in &inner.payloads {
             let Some(record) = inner.outbox.record(*id) else {
                 continue;
@@ -6172,6 +6238,10 @@ impl FunctionsRuntime {
                 EventState::RetryWaiting { .. } => "retry",
                 _ => continue,
             };
+            total += 1;
+            if roots.len() == budget.max_roots {
+                continue;
+            }
             roots.push(RetentionRoot {
                 kind: format!("event.{phase}"),
                 id: format!("{id:?}"),
@@ -6180,7 +6250,7 @@ impl FunctionsRuntime {
                 outstanding: true,
             });
         }
-        for key in inner.running.keys() {
+        for key in inner.running.keys().take(budget.max_roots - roots.len()) {
             roots.push(RetentionRoot {
                 kind: "invocation".to_owned(),
                 id: key.clone(),
@@ -6189,7 +6259,11 @@ impl FunctionsRuntime {
                 outstanding: true,
             });
         }
-        roots
+        RetentionRoots {
+            truncated: roots.len() < total,
+            roots,
+            total: u64::try_from(total).unwrap_or(u64::MAX),
+        }
     }
 
     fn resource_gauges(&self, inner: &Inner) -> Vec<Gauge> {
@@ -6265,14 +6339,34 @@ impl FunctionsRuntime {
             .task_scheduler
             .pending_tasks()
             .into_iter()
-            .map(|task| PendingTaskInfo {
-                function: task.function,
-                id: task.name.rsplit('/').next().unwrap_or_default().to_owned(),
-                name: task.name,
-                schedule_time: task.schedule_time,
-                run_now: task.run_now,
-            })
+            .map(PendingTaskInfo::from)
             .collect()
+    }
+
+    /// Queue counts and at most `limit` waiting tasks per queue, in dispatch order.
+    pub fn pending_tasks_by_queue(
+        &self,
+        limit: usize,
+    ) -> BTreeMap<String, (usize, Vec<PendingTaskInfo>)> {
+        self.inner
+            .lock()
+            .map(|inner| {
+                inner
+                    .task_scheduler
+                    .pending_overview(limit)
+                    .into_iter()
+                    .map(|(function, (count, tasks))| {
+                        (
+                            function,
+                            (
+                                count,
+                                tasks.into_iter().map(PendingTaskInfo::from).collect(),
+                            ),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Releases pending tasks of `function` from waiting for their `scheduleTime`, so they
@@ -6856,6 +6950,26 @@ impl FunctionsRuntime {
         body: &[u8],
         profile: FunctionsHttpProfile,
     ) -> Result<HttpStreamStart, String> {
+        self.invoke_http_stream_body(
+            target,
+            method,
+            path_and_query,
+            headers,
+            || hyper::body::Bytes::copy_from_slice(body),
+            profile,
+        )
+        .await
+    }
+
+    pub(crate) async fn invoke_http_stream_body(
+        self: &Arc<Self>,
+        target: &HttpTarget,
+        method: &str,
+        path_and_query: &str,
+        headers: &[(String, String)],
+        body: impl FnOnce() -> hyper::body::Bytes,
+        profile: FunctionsHttpProfile,
+    ) -> Result<HttpStreamStart, String> {
         if self.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("the Functions runtime is shutting down".to_owned());
         }
@@ -6900,7 +7014,17 @@ impl FunctionsRuntime {
             &crate::tasks::without_task_identity(headers),
             &self.config.runner_secret,
         );
-        match forward_stream(&addr, method, path_and_query, &forwarded, body, deadline).await {
+        match forward_stream_body(
+            &addr,
+            method,
+            path_and_query,
+            &forwarded,
+            body,
+            deadline,
+            crate::http::MAX_STREAMING_FUNCTION_RESPONSE_BYTES,
+        )
+        .await
+        {
             Ok(started) => {
                 let status = started.response.status;
                 self.retain_stream_lifecycle(
@@ -7299,12 +7423,12 @@ impl FunctionsRuntime {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
+        if inner.running.len() >= self.config.max_running || inner.outbox.dispatch_visits() == 0 {
+            return;
+        }
         let runners: Vec<Arc<Runner>> = (0..self.codebases.len())
             .map(|i| self.runner_at(i))
             .collect();
-        if inner.running.len() >= self.config.max_running {
-            return;
-        }
         let mut running_counts = BTreeMap::<String, usize>::new();
         for function in inner.running.values() {
             *running_counts.entry(function.clone()).or_default() += 1;

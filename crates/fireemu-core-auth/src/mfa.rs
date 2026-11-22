@@ -18,7 +18,7 @@ use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 
 use crate::base32;
 use crate::claims::ClaimValue;
-use crate::totp::{hotp, time_step, TotpParams};
+use crate::totp::{time_step, TotpParams};
 
 /// TOTP policy (versioned; unconfirmed values are conformance items).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -573,11 +573,12 @@ pub fn match_code(
     if secret.is_detached() {
         return CodeMatch::NoMatch;
     }
+    let mac = crate::sha1::HotpMac::new(secret.expose_for_enrollment());
     match_step_window(
         time_step(params, now),
         window_steps,
         last_accepted,
-        |step| hotp(secret.expose_for_enrollment(), step, params.digits) == code,
+        |step| crate::totp::truncate(&mac.counter(step), params.digits) == code,
     )
 }
 

@@ -6,12 +6,12 @@
 //! with the connection's own answers. A new request first releases the held one with what
 //! is waiting (possibly nothing), then hands its packets to the session.
 //!
-//! Locks: a connection's state is locked only with the database lock held, by every path
+//! Mutations of a connection's state take the database lock first, on every path
 //! (`poll`, an expired hold, `disconn`, the reaper and `deliver`), so the database lock
 //! serializes them. Under it the order varies: `deliver` takes the listeners and then a
 //! connection, `close` a connection and then the listeners and the registry. That cannot
 //! deadlock, because neither runs without the database lock. The registry lock is never held
-//! while the database lock is taken.
+//! while the database lock is taken. The reaper may first inspect the connection alone. It drops that guard before taking any other lock and rechecks before closing.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -150,7 +150,14 @@ fn html(body: String) -> Response<Body> {
     )
 }
 
+#[cfg(test)]
+thread_local! {
+    static DATABASE_LOCKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn lock_database(shared: &Shared) -> MutexGuard<'_, Database> {
+    #[cfg(test)]
+    DATABASE_LOCKS.with(|locks| locks.set(locks.get() + 1));
     shared
         .database
         .lock()
@@ -442,6 +449,12 @@ async fn reap(shared: Arc<Shared>, connection: Arc<Connection>) {
     ticks.tick().await;
     loop {
         ticks.tick().await;
+        {
+            let state = connection.lock();
+            if !state.closed && !state.is_stale(idle_close, state.last_request.elapsed()) {
+                continue;
+            }
+        }
         let _admitted = shared
             .config
             .admission
@@ -604,6 +617,19 @@ mod tests {
                 receiver != 1 && elapsed >= idle_close
             );
         }
+    }
+
+    #[tokio::test]
+    async fn reaping_a_live_held_poll_leaves_the_database_available() {
+        let (shared, connection) = fixture();
+        let (sender, _receiver) = oneshot::channel();
+        connection.lock().held = Some(sender);
+        let mut reaper = Box::pin(reap(Arc::clone(&shared), Arc::clone(&connection)));
+        assert!(ready_once(reaper.as_mut()).is_pending());
+        DATABASE_LOCKS.with(|locks| locks.set(0));
+        tokio::time::sleep(reap_period(shared.config.long_poll_idle_close) * 3).await;
+        assert!(ready_once(reaper.as_mut()).is_pending());
+        assert_eq!(DATABASE_LOCKS.with(std::cell::Cell::get), 0);
     }
 
     #[tokio::test]

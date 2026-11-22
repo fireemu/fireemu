@@ -31,12 +31,12 @@ pub fn paginate<T>(
     paginate_after(resources, page_size, page_token, policy, name, None)
 }
 
-pub(crate) fn paginate_after<T>(
+pub(crate) fn paginate_after<T, N: AsRef<str> + Into<String>>(
     resources: Vec<T>,
     page_size: i32,
     page_token: &str,
     policy: PagingPolicy,
-    name: impl Fn(&T) -> String,
+    name: impl Fn(&T) -> N,
     issued_boundary: Option<&str>,
 ) -> Result<Page<T>> {
     let limit = match policy {
@@ -66,13 +66,13 @@ pub(crate) fn paginate_after<T>(
         match policy {
             PagingPolicy::Strict => resources
                 .iter()
-                .position(|r| opaque_token(&name(r)) == page_token)
+                .position(|r| opaque_token(name(r).as_ref()) == page_token)
                 .map(|i| i + 1)
                 .or_else(|| {
                     issued_boundary.map(|boundary| {
                         resources
                             .iter()
-                            .position(|resource| name(resource).as_str() > boundary)
+                            .position(|resource| name(resource).as_ref() > boundary)
                             .unwrap_or(resources.len())
                     })
                 })
@@ -83,15 +83,15 @@ pub(crate) fn paginate_after<T>(
                 })?,
             PagingPolicy::Emulator => resources
                 .iter()
-                .position(|r| name(r).as_str() >= page_token)
+                .position(|r| name(r).as_ref() >= page_token)
                 .unwrap_or(resources.len()),
         }
     };
     let end = start.saturating_add(limit).min(resources.len());
     let next_page_token = if end < resources.len() {
         match policy {
-            PagingPolicy::Strict => opaque_token(&name(&resources[end - 1])),
-            PagingPolicy::Emulator => name(&resources[end]),
+            PagingPolicy::Strict => opaque_token(name(&resources[end - 1]).as_ref()),
+            PagingPolicy::Emulator => name(&resources[end]).into(),
         }
     } else {
         String::new()

@@ -24,6 +24,7 @@ tonic = { version = "0.13", features = ["transport", "codegen", "prost"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"] }
 
 tokio-stream = "0.1"
+serde.workspace = true
 serde_json.workspace = true
 md-5.workspace = true
 hyper = { version = "1", features = ["http1", "http2", "server"] }

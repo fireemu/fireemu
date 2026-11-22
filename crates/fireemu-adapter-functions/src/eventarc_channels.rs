@@ -423,15 +423,24 @@ impl ChannelStore {
     }
 
     fn lookup_in(state: &State, name: &str, now: Nanos) -> Lookup {
-        match state.channels.get(name) {
-            None => Lookup::Absent,
-            Some(record) if now < record.ready_at => {
-                Lookup::Creating(Self::view(name, record, Phase::Creating))
+        state.channels.get(name).map_or(Lookup::Absent, |record| {
+            let phase = Self::phase(record, now);
+            let view = Self::view(name, record, phase);
+            match phase {
+                Phase::Creating => Lookup::Creating(view),
+                Phase::Deleting => Lookup::Deleting(view),
+                Phase::Active => Lookup::Ready(view),
             }
-            Some(record) if record.deleting.is_some() => {
-                Lookup::Deleting(Self::view(name, record, Phase::Deleting))
-            }
-            Some(record) => Lookup::Ready(Self::view(name, record, Phase::Active)),
+        })
+    }
+
+    fn phase(record: &Record, now: Nanos) -> Phase {
+        if now < record.ready_at {
+            Phase::Creating
+        } else if record.deleting.is_some() {
+            Phase::Deleting
+        } else {
+            Phase::Active
         }
     }
 
@@ -612,20 +621,9 @@ impl ChannelStore {
                 location == "-" || rest.split('/').next().is_some_and(|l| l == location)
             })
         };
-        let mut items: Vec<ChannelView> = Vec::new();
-        for name in state.channels.keys() {
-            if !in_scope(name) {
-                continue;
-            }
-            if let Some(view) = Self::lookup_in(&state, name, now).view() {
-                items.push(view.clone());
-            }
-        }
-        // Production's order is not known (see the module documentation): this store orders by the time
-        // of creation, then the UID. A page token names the UID of the last channel of its page, and the
-        // time of that channel is remembered even after it is deleted, so that a page continues after it.
-        items.sort_by(|a, b| (a.create_time, &a.uid).cmp(&(b.create_time, &b.uid)));
-        if let Some(after) = after {
+        // Production's order is not known (see the module documentation). A page continues
+        // after its last channel's creation time and UID, including after that channel is deleted.
+        let after_key = if let Some(after) = after {
             let Some(created) = state
                 .channels
                 .values()
@@ -639,10 +637,25 @@ impl ChannelStore {
                     unknown_position: true,
                 };
             };
-            items.retain(|view| (view.create_time, &view.uid) > (created, &after.uid));
-        }
-        let more = items.len() > limit;
-        items.truncate(limit);
+            Some((created, &after.uid))
+        } else {
+            None
+        };
+        let mut records: Vec<_> = state
+            .channels
+            .iter()
+            .filter(|(name, record)| {
+                in_scope(name)
+                    && after_key.is_none_or(|key| (record.create_time, &record.uid) > key)
+            })
+            .collect();
+        records.sort_by(|(_, a), (_, b)| (a.create_time, &a.uid).cmp(&(b.create_time, &b.uid)));
+        let more = records.len() > limit;
+        let items = records
+            .into_iter()
+            .take(limit)
+            .map(|(name, record)| Self::view(name, record, Self::phase(record, now)))
+            .collect();
         Listing {
             items,
             more,

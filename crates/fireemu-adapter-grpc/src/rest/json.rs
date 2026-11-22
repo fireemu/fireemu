@@ -214,10 +214,11 @@ impl<'a> FieldPath<'a> {
 /// RFC 3339 with the protobuf JSON fraction: none, three, six or nine digits, whichever
 /// is the shortest exact rendering.
 pub(crate) fn timestamp_to_json(t: &prost_types::Timestamp) -> Value {
-    let full = decode_instant(t)
-        .to_rfc3339()
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned());
-    Value::String(shorten_fraction(&full))
+    Value::String(
+        decode_instant(t)
+            .to_rfc3339_protobuf()
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+    )
 }
 
 /// Shorten the fraction of an RFC 3339 UTC time to the protobuf JSON form: none, three, six or
@@ -2009,7 +2010,32 @@ pub fn write_response_to_json(r: &pb::WriteResponse) -> Value {
 
 #[cfg(test)]
 mod fraction_tests {
-    use super::shorten_fraction;
+    use super::{decode_instant, shorten_fraction, timestamp_to_json};
+    use serde_json::Value;
+
+    proptest::proptest! {
+        #[test]
+        fn protobuf_timestamp_matches_fixed_timestamp_shortening(
+            seconds in proptest::prop_oneof![
+                -62_167_219_200_i64..=253_402_300_799,
+                proptest::arbitrary::any::<i64>(),
+            ],
+            nanos in 0_i32..1_000_000_000,
+            divisor in proptest::sample::select(vec![1, 1_000, 1_000_000, 1_000_000_000]),
+        ) {
+            let timestamp = prost_types::Timestamp {
+                seconds,
+                nanos: nanos / divisor * divisor,
+            };
+            let formatted = decode_instant(&timestamp)
+                .to_rfc3339()
+                .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned());
+            proptest::prop_assert_eq!(
+                timestamp_to_json(&timestamp),
+                Value::String(shorten_fraction(&formatted))
+            );
+        }
+    }
 
     #[test]
     fn a_fraction_prints_in_the_shortest_of_three_six_or_nine_digits() {

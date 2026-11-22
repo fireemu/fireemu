@@ -397,28 +397,26 @@ impl Subscriber for SubscriberService {
         let req = request.into_inner();
         let project = project_of(&req.project)?;
         let mut state = self.handle.state();
-        let subscriptions: Vec<_> = state
-            .list_subscriptions(project)
-            .iter()
-            .map(|c| {
-                let reported = state
-                    .reported_topic(&c.name)
-                    .unwrap_or_else(|| c.topic.to_full());
-                subscription_to_proto(c, &reported, self.handle.paging_policy)
-            })
-            .collect();
         let page = state
-            .paginate(
-                &format!("projects/{project}/subscriptions"),
-                subscriptions,
+            .list_subscriptions_page(
+                project,
                 req.page_size,
                 &req.page_token,
                 self.handle.paging_policy,
-                |subscription| subscription.name.clone(),
             )
             .map_err(|e| status(&e))?;
+        let subscriptions = page
+            .resources
+            .iter()
+            .map(|config| {
+                let reported = state
+                    .reported_topic(&config.name)
+                    .unwrap_or_else(|| config.topic.to_full());
+                subscription_to_proto(config, &reported, self.handle.paging_policy)
+            })
+            .collect();
         Ok(Response::new(pb::ListSubscriptionsResponse {
-            subscriptions: page.resources,
+            subscriptions,
             next_page_token: page.next_page_token,
         }))
     }

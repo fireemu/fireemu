@@ -157,7 +157,7 @@
     },
     "crates/fireemu-core-rules/src/eval.rs": {
       "kind": "sha256",
-      "value": "e36e0d9617c4883bf7cea532459520af339d7f0f75238508101aa3bb63bdac8f"
+      "value": "8fbb03d8a65c9e2d69f726c482ea6508deb2b56eccb18781f2611fd098af08cd"
     },
     "crates/fireemu-core-rules/src/hash.rs": {
       "kind": "sha256",
@@ -237,7 +237,7 @@
     },
     "crates/fireemu-core-types/src/time.rs": {
       "kind": "sha256",
-      "value": "9687d95e81a52960bf01132f489a2e2248202dab7237eb15f365ae26704b8340"
+      "value": "e3d96f715affec9282509817c241b7a7ac6d5d692998253a5a604557b97ad083"
     },
     "rust-toolchain.toml": {
       "kind": "sha256",
@@ -265,7 +265,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "5f087a07b1c617e885c2473f4a3a39a7c35a71bd3444a9cc91750f653a6a8161"
+      "value": "c6c74c49fce0b5ab07cc9fa7961c2412145027529d2234bf54ae9210215cfd95"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",
@@ -317,7 +317,7 @@
     },
     "verification/quint/src/process.rs": {
       "kind": "sha256",
-      "value": "56fbdc380eb60993a038366f050f45c030b22f5dc7048971aa451f54883dbb5f"
+      "value": "a761f2fbdec0bdc4ffc6f504c9aa0470be4f421bd0445544d19a70cddaadb301"
     },
     "verification/quint/src/publication.rs": {
       "kind": "sha256",
@@ -329,7 +329,7 @@
     },
     "verification/quint/src/server.rs": {
       "kind": "sha256",
-      "value": "b0d10768918bf0449419d9e6384a574e14db01f651264e6037856c3367e05c0a"
+      "value": "b77471ef5095e1b0a8910e6dd46afe4db826d129e959bcba7d6e89c349ab4c39"
     },
     "verification/quint/tests/regex_linear_repeat_connect.rs": {
       "kind": "sha256",

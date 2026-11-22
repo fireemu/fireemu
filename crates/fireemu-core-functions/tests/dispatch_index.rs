@@ -111,3 +111,17 @@ proptest! {
         );
     }
 }
+
+#[test]
+fn indexed_names_return_the_first_source_match_across_the_scan_cutoff() {
+    for count in [2, 64, 65, 256] {
+        let mut source = manifest(count, false, false);
+        source.functions[0].name = "same-name".to_owned();
+        source.functions[count - 1].name = "same-name".to_owned();
+        let indexed = FirestoreDispatchManifest::new(source.clone());
+        for function in &source.functions {
+            assert_eq!(indexed.get(&function.name), source.get(&function.name));
+        }
+        assert!(indexed.get("absent").is_none());
+    }
+}

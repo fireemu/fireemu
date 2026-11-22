@@ -91,10 +91,16 @@ pub fn encode_value(v: &Value) -> pb::Value {
 /// Core document → protobuf document.
 #[must_use]
 pub fn encode_document(doc: &Document) -> pb::Document {
+    encode_document_fields(doc, &doc.fields)
+}
+
+pub(crate) fn encode_document_fields(
+    doc: &Document,
+    fields: &BTreeMap<String, Value>,
+) -> pb::Document {
     pb::Document {
         name: doc.path.resource_name(),
-        fields: doc
-            .fields
+        fields: fields
             .iter()
             .map(|(k, v)| (k.clone(), encode_value(v)))
             .collect(),
@@ -111,6 +117,18 @@ pub fn decode_document_name(name: &str) -> Result<DocumentPath, DecodeError> {
         .ok_or_else(|| DecodeError::InvalidParent(format!("{name} is not a document name")))
 }
 
+/// Parses a document name once for operations that retain both its parent and its full path.
+pub(crate) fn document_parent(
+    name: &str,
+) -> Result<(crate::decode::Parent, DocumentPath), DecodeError> {
+    let parent = parse_parent(name)?;
+    let path = parent
+        .document
+        .clone()
+        .ok_or_else(|| DecodeError::InvalidParent(format!("{name} is not a document name")))?;
+    Ok((parent, path))
+}
+
 /// Decodes a document's fields.
 #[allow(clippy::implicit_hasher)] // prost generates std HashMap with the default hasher
 pub fn decode_fields(
@@ -123,7 +141,7 @@ pub fn decode_fields(
                 "field name __name__ is reserved".into(),
             ));
         }
-        FieldPath::from_segments([k.as_str()]).map_err(|error| match error {
+        fireemu_core_firestore::field_path::validate_segment(k).map_err(|error| match error {
             FieldPathError::EmptySegment { .. } => {
                 DecodeError::InvalidStoredFieldName("The property.name is the empty string.".into())
             }

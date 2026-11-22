@@ -10,7 +10,7 @@
 //! `{"type":"log","level":"info","message":"...","fields":{},"invocationId":"...","functionName":"...","user":true}`.
 
 use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
 /// Maximum accepted frame (an invocation carries at most one document pair plus metadata).
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -26,42 +26,117 @@ pub fn encode_frame(v: &impl std::fmt::Display) -> Vec<u8> {
 }
 
 /// Reads one frame; `Ok(None)` at a clean end of stream.
-pub async fn read_frame<R: tokio::io::AsyncBufRead + Unpin>(
-    reader: &mut R,
+pub async fn read_frame<R: AsyncBufRead + Unpin>(reader: &mut R) -> std::io::Result<Option<Value>> {
+    let Some(len) = read_frame_length(reader).await? else {
+        return Ok(None);
+    };
+    read_frame_payload(reader, len).await
+}
+
+/// Reads a frame whose entire payload may already be buffered.
+pub(crate) async fn read_buffered_frame<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
 ) -> std::io::Result<Option<Value>> {
-    let mut len = 0_usize;
-    let mut digits = 0_usize;
-    loop {
-        let mut byte = [0_u8; 1];
-        if reader.read(&mut byte).await? == 0 {
-            if digits == 0 {
-                return Ok(None);
+    // When a new read is needed, keep the ordinary prefix path. Consecutive frames
+    // already in the reader can consume their prefix in one pass.
+    let len = if reader.buffer().is_empty() {
+        let Some(len) = read_frame_length(reader).await? else {
+            return Ok(None);
+        };
+        len
+    } else {
+        let (mut len, mut digits) = (0, 0);
+        loop {
+            let bytes = reader.fill_buf().await?;
+            if bytes.is_empty() {
+                return eof_after_prefix(digits);
             }
-            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+            let (consumed, result) = scan_prefix(bytes, &mut len, &mut digits);
+            reader.consume(consumed);
+            if let Some(result) = result {
+                result?;
+                break len;
+            }
         }
-        match byte[0] {
-            b'\n' if digits > 0 => break,
-            b'0'..=b'9' if digits < MAX_FRAME_LENGTH_DIGITS => {
-                len = len * 10 + usize::from(byte[0] - b'0');
-                digits += 1;
-                if len > MAX_FRAME_BYTES {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("frame of {len} bytes exceeds {MAX_FRAME_BYTES}"),
-                    ));
-                }
-            }
-            _ => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "malformed frame length",
-                ));
-            }
+    };
+    if let Some(payload) = reader.buffer().get(..len) {
+        let decoded = decode_payload(payload);
+        reader.consume(len);
+        decoded
+    } else {
+        read_frame_payload(reader, len).await
+    }
+}
+
+fn scan_prefix(
+    available: &[u8],
+    len: &mut usize,
+    digits: &mut usize,
+) -> (usize, Option<std::io::Result<()>>) {
+    for (offset, byte) in available.iter().copied().enumerate() {
+        match parse_length_byte(byte, len, digits) {
+            Ok(false) => (),
+            result => return (offset + 1, Some(result.map(|_| ()))),
         }
     }
-    let mut payload = vec![0u8; len];
+    (available.len(), None)
+}
+
+fn eof_after_prefix<T>(digits: usize) -> std::io::Result<Option<T>> {
+    if digits == 0 {
+        Ok(None)
+    } else {
+        Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))
+    }
+}
+
+fn parse_length_byte(byte: u8, len: &mut usize, digits: &mut usize) -> std::io::Result<bool> {
+    match byte {
+        b'\n' if *digits > 0 => Ok(true),
+        b'0'..=b'9' if *digits < MAX_FRAME_LENGTH_DIGITS => {
+            *len = *len * 10 + usize::from(byte - b'0');
+            *digits += 1;
+            if *len > MAX_FRAME_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("frame of {len} bytes exceeds {MAX_FRAME_BYTES}"),
+                ));
+            }
+            Ok(false)
+        }
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "malformed frame length",
+        )),
+    }
+}
+
+async fn read_frame_length(
+    reader: &mut (impl AsyncRead + Unpin),
+) -> std::io::Result<Option<usize>> {
+    let (mut len, mut digits) = (0, 0);
+    loop {
+        let mut byte = [0; 1];
+        if reader.read(&mut byte).await? == 0 {
+            return eof_after_prefix(digits);
+        }
+        if parse_length_byte(byte[0], &mut len, &mut digits)? {
+            return Ok(Some(len));
+        }
+    }
+}
+
+async fn read_frame_payload(
+    reader: &mut (impl AsyncRead + Unpin),
+    len: usize,
+) -> std::io::Result<Option<Value>> {
+    let mut payload = vec![0; len];
     reader.read_exact(&mut payload).await?;
-    serde_json::from_slice(&payload)
+    decode_payload(&payload)
+}
+
+fn decode_payload(payload: &[u8]) -> std::io::Result<Option<Value>> {
+    serde_json::from_slice(payload)
         .map(Some)
         .map_err(|e| std::io::Error::other(format!("malformed frame JSON: {e}")))
 }
@@ -99,6 +174,24 @@ mod tests {
         let error = read_frame(&mut reader).await.unwrap_err();
         assert_eq!(error.kind(), ErrorKind::InvalidData);
         assert!(reader.get_ref().position() <= 2);
+    }
+
+    #[tokio::test]
+    async fn buffered_decode_consumes_an_invalid_frame_before_the_next_frame() {
+        let valid = serde_json::json!({"result": "ok"});
+        let mut wire = b"01\n{".to_vec();
+        wire.extend(encode_frame(&valid));
+
+        for capacity in [1, 7, 8192] {
+            let mut reader = BufReader::with_capacity(capacity, wire.as_slice());
+            let malformed = super::read_buffered_frame(&mut reader).await.unwrap_err();
+            assert!(malformed.to_string().starts_with("malformed frame JSON:"));
+            assert_eq!(
+                super::read_buffered_frame(&mut reader).await.unwrap(),
+                Some(valid.clone())
+            );
+            assert_eq!(super::read_buffered_frame(&mut reader).await.unwrap(), None);
+        }
     }
 
     #[tokio::test]

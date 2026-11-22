@@ -127,7 +127,14 @@ impl LogicalInstant {
     /// RFC 3339 only covers years 0000-9999; instants outside that range return
     /// [`TimeFormatError`] instead of a string the parser would reject.
     pub fn to_rfc3339(self) -> Result<String, TimeFormatError> {
-        rfc3339::format(self)
+        rfc3339::format(self, rfc3339::Fraction::Nanoseconds)
+    }
+
+    /// Formats RFC 3339 UTC using the shortest exact protobuf JSON fraction.
+    ///
+    /// The fraction is omitted for whole seconds and uses three, six, or nine digits otherwise.
+    pub fn to_rfc3339_protobuf(self) -> Result<String, TimeFormatError> {
+        rfc3339::format(self, rfc3339::Fraction::Protobuf)
     }
 }
 
@@ -383,7 +390,16 @@ mod rfc3339 {
         Ok(LogicalInstant(i128::from(utc_secs) * NANOS_PER_SEC + nanos))
     }
 
-    pub(super) fn format(instant: LogicalInstant) -> Result<String, TimeFormatError> {
+    #[derive(Clone, Copy)]
+    pub(super) enum Fraction {
+        Nanoseconds,
+        Protobuf,
+    }
+
+    pub(super) fn format(
+        instant: LogicalInstant,
+        fraction: Fraction,
+    ) -> Result<String, TimeFormatError> {
         let secs = instant.0.div_euclid(NANOS_PER_SEC);
         let nanos = instant.0.rem_euclid(NANOS_PER_SEC);
         let days = secs.div_euclid(i128::from(SECS_PER_DAY));
@@ -398,7 +414,14 @@ mod rfc3339 {
         Ok(if nanos == 0 {
             format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
         } else {
-            format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{nanos:09}Z")
+            let (value, digits) = match fraction {
+                Fraction::Protobuf if nanos % 1_000_000 == 0 => (nanos / 1_000_000, 3),
+                Fraction::Protobuf if nanos % 1_000 == 0 => (nanos / 1_000, 6),
+                Fraction::Nanoseconds | Fraction::Protobuf => (nanos, 9),
+            };
+            format!(
+                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{value:0digits$}Z"
+            )
         })
     }
 
@@ -418,6 +441,43 @@ mod rfc3339 {
 
     #[cfg(test)]
     mod tests {
+        #[test]
+        fn protobuf_width_keeps_rfc3339_exact() {
+            use super::super::LogicalInstant;
+
+            for (input, protobuf, rfc) in [
+                (
+                    "0000-01-01T00:00:00.001Z",
+                    "0000-01-01T00:00:00.001Z",
+                    "0000-01-01T00:00:00.001000000Z",
+                ),
+                (
+                    "1969-12-31T23:59:59.000001Z",
+                    "1969-12-31T23:59:59.000001Z",
+                    "1969-12-31T23:59:59.000001000Z",
+                ),
+                (
+                    "1970-01-01T00:00:00Z",
+                    "1970-01-01T00:00:00Z",
+                    "1970-01-01T00:00:00Z",
+                ),
+                (
+                    "9999-12-31T23:59:59.999999999Z",
+                    "9999-12-31T23:59:59.999999999Z",
+                    "9999-12-31T23:59:59.999999999Z",
+                ),
+            ] {
+                let instant = LogicalInstant::parse_rfc3339(input).unwrap();
+                assert_eq!(instant.to_rfc3339_protobuf().unwrap(), protobuf);
+                assert_eq!(instant.to_rfc3339().unwrap(), rfc);
+            }
+            for nanos in [i128::MIN, i128::MAX] {
+                assert!(LogicalInstant::from_nanos(nanos)
+                    .to_rfc3339_protobuf()
+                    .is_err());
+            }
+        }
+
         #[test]
         fn civil_round_trip_over_wide_range() {
             for days in (-800_000..800_000).step_by(37) {

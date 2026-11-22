@@ -1,32 +1,43 @@
 #!/usr/bin/env bash
-# CI 31.1 #5: enforce ADR-001's small, explicit normal dependency allowlist.
-# Path dependencies on other fireemu-core-* crates are allowed. crc32c is allowed only for
-# fireemu-core-types so CRC32C can use its safe runtime-dispatched backend.
+# Enforce ADR-001's normal dependency allowlist for every core manifest.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-status=0
-for manifest in crates/fireemu-core-*/Cargo.toml; do
-  crate="$(basename "$(dirname "$manifest")")"
-  # List normal (non-dev, non-build) dependencies via cargo metadata.
-  deps="$(cargo metadata --no-deps --format-version 1 --manifest-path "$manifest" \
-    | python3 -c '
-import json, sys
-meta = json.load(sys.stdin)
-pkg = next(p for p in meta["packages"] if p["name"] == sys.argv[1])
-for d in pkg["dependencies"]:
-    if d["kind"] is None and not d["name"].startswith("fireemu-core-"):
-        print(d["name"])
-' "$crate")"
-  allowed=""
-  if [[ "$crate" == "fireemu-core-types" ]]; then
-    allowed="crc32c"
-  fi
-  unexpected="$(python3 -c 'import sys; allowed=set(sys.argv[1].split()); print("\n".join(sorted(set(sys.stdin.read().split()) - allowed)))' "$allowed" <<<"$deps")"
-  if [[ -n "$unexpected" ]]; then
-    echo "error: $crate has external normal dependencies outside its allowlist: $unexpected" >&2
-    status=1
-  else
-    echo "ok: $crate external normal dependencies match its allowlist"
-  fi
-done
-exit $status
+exec python3 - <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+def packages_by_manifest(*extra):
+    command = ["cargo", "metadata", "--no-deps", "--format-version", "1", *extra]
+    metadata = json.loads(subprocess.check_output(command))
+    return {Path(package["manifest_path"]).resolve(): package for package in metadata["packages"]}
+
+
+packages = packages_by_manifest()
+failed = False
+manifests = sorted(Path("crates").glob("fireemu-core-*/Cargo.toml"))
+if not manifests:
+    sys.exit("error: no core manifests found")
+for manifest in manifests:
+    crate = manifest.parent.name
+    path = manifest.resolve()
+    if path not in packages:
+        # A core crate explicitly excluded from the workspace has its own metadata.
+        packages.update(packages_by_manifest("--manifest-path", manifest))
+    package = packages.get(path)
+    if package is None or package["name"] != crate:
+        sys.exit(f"error: {manifest} does not identify package {crate}")
+    allowed = {"crc32c"} if crate == "fireemu-core-types" else set()
+    unexpected = sorted({
+        dep["name"] for dep in package["dependencies"]
+        if dep["kind"] is None and not dep["name"].startswith("fireemu-core-")
+    } - allowed)
+    if unexpected:
+        names = "\n".join(unexpected)
+        print(f"error: {crate} has external normal dependencies outside its allowlist: {names}", file=sys.stderr)
+        failed = True
+    else:
+        print(f"ok: {crate} external normal dependencies match its allowlist")
+sys.exit(int(failed))
+PY

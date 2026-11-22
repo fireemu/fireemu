@@ -962,6 +962,89 @@ impl AsRef<[u8]> for ObjectBodyWindow {
     }
 }
 
+/// A read-only import body with digests bound to any staged file.
+#[derive(Debug)]
+pub struct ImportedBody(ImportedBodyKind);
+
+#[derive(Debug)]
+enum ImportedBodyKind {
+    Memory(Vec<u8>),
+    Staged(SpillFile, ObjectDigests),
+}
+
+/// Why the streamed staging of an imported body failed.
+#[derive(Debug)]
+pub enum ImportSpoolError {
+    /// Reading would exceed the remaining artifact byte allowance.
+    Limit,
+    /// Reading the artifact failed.
+    Read(io::Error),
+    /// Creating or writing the private spill file failed.
+    Spill(io::Error),
+}
+
+impl ImportedBody {
+    /// An ordinary in-memory import, with digests still to compute.
+    #[must_use]
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(ImportedBodyKind::Memory(bytes))
+    }
+
+    /// Snapshots an artifact reader into a private file with a bounded buffer. On any error the
+    /// partial staging file is removed without publishing it to the store. The size hint
+    /// only selects the scratch buffer size. The actual byte allowance is still enforced.
+    pub fn stage(
+        dir: &SpillDir,
+        input: impl io::Read,
+        limit: u64,
+        size_hint: u64,
+    ) -> Result<Self, ImportSpoolError> {
+        use io::Read as _;
+        const MAX_STAGE_CHUNK: u64 = 1024 * 1024;
+
+        let mut input = input.take(limit.saturating_add(1));
+        let mut file = dir.create_file().map_err(ImportSpoolError::Spill)?;
+        let mut md5 = Md5::new();
+        let mut crc32c = Crc32c::new();
+        let chunk = size_hint.clamp(1, MAX_STAGE_CHUNK);
+        let mut buffer = vec![0; usize::try_from(chunk).expect("bounded size hint")];
+        loop {
+            let n = match input.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(ImportSpoolError::Read(error)),
+            };
+            let bytes = &buffer[..n];
+            if file.len().saturating_add(n as u64) > limit {
+                return Err(ImportSpoolError::Limit);
+            }
+            file.append(bytes).map_err(ImportSpoolError::Spill)?;
+            md5.update(bytes);
+            crc32c.update(bytes);
+        }
+        Ok(Self(ImportedBodyKind::Staged(
+            file,
+            ObjectDigests::from_parts(md5.finalize(), crc32c.finalize()),
+        )))
+    }
+
+    /// Bytes actually read from the artifact.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        match &self.0 {
+            ImportedBodyKind::Memory(bytes) => bytes.len() as u64,
+            ImportedBodyKind::Staged(file, _) => file.len(),
+        }
+    }
+
+    /// Whether the artifact body was empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// How a listing treats a page token and a name that equals its own prefix.
 #[derive(Debug, Clone, Copy, Default)]
 struct ListMode {
@@ -1228,27 +1311,29 @@ impl StorageState {
             if !owned(bucket.as_str()) {
                 continue;
             }
-            let listed = self.objects(&bucket);
-            // Noncurrent versions hold object data too: it counts toward the bytes (and the
-            // `storage.maxStoredBytes` bound they are shown against), and they are counted apart.
-            let noncurrent: Vec<&NoncurrentVersion> = self
+            let first = ObjectName::range_start("");
+            let live = self
+                .objects
+                .range((bucket.clone(), first.clone())..)
+                .take_while(|((candidate, _), _)| candidate == &bucket)
+                .map(|(_, meta)| meta.size);
+            // Noncurrent versions hold object data too, and have a separate count.
+            let archived = self
                 .noncurrent
-                .iter()
-                .filter(|((candidate, _, _), _)| *candidate == bucket)
-                .map(|(_, version)| version)
-                .collect();
-            let bytes = listed
-                .iter()
-                .map(|meta| meta.size)
-                .chain(noncurrent.iter().map(|version| version.object.size))
-                .fold(0u64, u64::saturating_add);
-            noncurrent_versions = noncurrent_versions.saturating_add(count(noncurrent.len()));
-            objects = objects.saturating_add(count(listed.len()));
+                .range((bucket.clone(), first, 0)..)
+                .take_while(|((candidate, _, _), _)| candidate == &bucket)
+                .map(|(_, version)| version.object.size);
+            let tally = |(count, total): (u64, u64), size| (count + 1, total.saturating_add(size));
+            let (live_count, live_bytes) = live.fold((0, 0), tally);
+            let (archived_count, archived_bytes) = archived.fold((0, 0), tally);
+            let bytes = live_bytes.saturating_add(archived_bytes);
+            noncurrent_versions = noncurrent_versions.saturating_add(archived_count);
+            objects = objects.saturating_add(live_count);
             object_bytes = object_bytes.saturating_add(bytes);
             roots.push(RetentionRoot {
                 kind: "bucket".to_owned(),
                 id: bucket.as_str().to_owned(),
-                count: count(listed.len()),
+                count: live_count,
                 bytes,
                 outstanding: false,
             });
@@ -1431,18 +1516,32 @@ impl StorageState {
     /// Captures committed objects and bucket metadata without copying upload sessions.
     #[must_use]
     pub fn capture_bucket_objects(&self, owned: impl Fn(&str) -> bool) -> Self {
+        self.capture_objects(owned, true)
+    }
+
+    /// Captures only live objects and their committed bodies for a Storage export.
+    #[must_use]
+    pub fn capture_live_bucket_objects(&self, owned: impl Fn(&str) -> bool) -> Self {
+        self.capture_objects(owned, false)
+    }
+
+    fn capture_objects(&self, owned: impl Fn(&str) -> bool, include_archived: bool) -> Self {
         let objects: BTreeMap<(BucketName, ObjectName), ObjectMetadata> = self
             .objects
             .iter()
             .filter(|((b, _), _)| owned(b.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let noncurrent: BTreeMap<(BucketName, ObjectName, u64), NoncurrentVersion> = self
-            .noncurrent
-            .iter()
-            .filter(|((b, _, _), _)| owned(b.as_str()))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let noncurrent: BTreeMap<(BucketName, ObjectName, u64), NoncurrentVersion> =
+            if include_archived {
+                self.noncurrent
+                    .iter()
+                    .filter(|((b, _, _), _)| owned(b.as_str()))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
         let blobs = objects
             .values()
             .chain(noncurrent.values().map(|version| &version.object))
@@ -1458,7 +1557,13 @@ impl StorageState {
         let public_read = self
             .public_read
             .iter()
-            .filter(|(b, _, _)| owned(b.as_str()))
+            .filter(|(bucket, name, generation)| {
+                owned(bucket.as_str())
+                    && (include_archived
+                        || objects
+                            .get(&(bucket.clone(), name.clone()))
+                            .is_some_and(|meta| meta.generation == *generation))
+            })
             .cloned()
             .collect();
         let stored_bytes = blob_bytes(&blobs);
@@ -2002,6 +2107,12 @@ impl StorageState {
         self.spill = spill;
     }
 
+    /// Spill configuration for staging a CLI import before the exclusive installation.
+    #[must_use]
+    pub fn spill_config(&self) -> Option<(SpillDir, u64)> {
+        self.spill.clone()
+    }
+
     /// Object bytes.
     #[must_use]
     #[track_caller]
@@ -2045,6 +2156,17 @@ impl StorageState {
             Some(BlobBody::Memory(bytes)) => Ok(Arc::clone(bytes)),
             Some(BlobBody::Spilled(file)) => file.read_all().map(Arc::new),
             None => Ok(Arc::new(Vec::new())),
+        }
+    }
+
+    /// Writes one committed body to `output`. Spilled objects use a bounded read buffer.
+    pub fn write_body(&self, meta: &ObjectMetadata, mut output: impl io::Write) -> io::Result<()> {
+        match self.blobs.get(&meta.blob) {
+            Some(BlobBody::Memory(bytes)) => output
+                .write_all(bytes)
+                .map_err(|error| crate::spill::export_write_error(&error)),
+            Some(BlobBody::Spilled(file)) => file.write_to(output),
+            None => Ok(()),
         }
     }
 
@@ -2137,25 +2259,30 @@ impl StorageState {
             pre,
             now,
         )?;
-        let body = if let Some((dir, threshold)) = &self.spill {
-            if bytes.len() as u64 >= *threshold {
-                let mut file = dir
-                    .create_file()
-                    .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
-                file.append(&bytes)
-                    .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
-                BlobBody::Spilled(Arc::new(file))
-            } else {
-                BlobBody::Memory(Arc::new(bytes))
-            }
-        } else {
-            BlobBody::Memory(Arc::new(bytes))
-        };
+        let body = self.blob_for_bytes(bytes)?;
         let events = Self::put_events(&plan);
         let reservation = admit(&events)?;
         let meta = plan.meta.clone();
         self.apply_planned_put(plan, body, events);
         Ok((meta, reservation))
+    }
+
+    fn blob_for_bytes(&self, bytes: Vec<u8>) -> Result<BlobBody, StorageError> {
+        let size = bytes.len() as u64;
+        if let Some((dir, _)) = self
+            .spill
+            .as_ref()
+            .filter(|(_, threshold)| size >= *threshold)
+        {
+            let mut file = dir
+                .create_file()
+                .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
+            file.append(&bytes)
+                .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
+            Ok(BlobBody::Spilled(Arc::new(file)))
+        } else {
+            Ok(BlobBody::Memory(Arc::new(bytes)))
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3136,7 +3263,17 @@ impl StorageState {
         object: ImportedObject,
         bytes: Vec<u8>,
     ) -> Result<ObjectMetadata, StorageError> {
-        if bytes.len() as u64 > self.max_object_bytes {
+        self.insert_imported_body(object, ImportedBody::from_bytes(bytes))
+    }
+
+    /// Installs an in-memory object or consumes a prepared spill file without copying its bytes.
+    pub fn insert_imported_body(
+        &mut self,
+        object: ImportedObject,
+        body: ImportedBody,
+    ) -> Result<ObjectMetadata, StorageError> {
+        let size = body.len();
+        if size > self.max_object_bytes {
             return Err(StorageError::TooLarge);
         }
         if custom_metadata_size(&object.custom) > MAX_CUSTOM_METADATA_BYTES {
@@ -3155,7 +3292,11 @@ impl StorageState {
                 "generation and metageneration must both be between 1 and {MAX_PERSISTED_IDENTITY}"
             )));
         }
-        let md5 = md5(&bytes);
+        let digests = match &body.0 {
+            ImportedBodyKind::Memory(bytes) => ObjectDigests::new(bytes),
+            ImportedBodyKind::Staged(_, digests) => *digests,
+        };
+        let md5 = digests.md5;
         if let Some(recorded) = object.md5 {
             if recorded != md5 {
                 return Err(StorageError::ChecksumMismatch(format!(
@@ -3164,7 +3305,7 @@ impl StorageState {
                 )));
             }
         }
-        let crc = crc32c(&bytes);
+        let crc = digests.crc32c;
         if let Some(recorded) = object.crc32c {
             if recorded != crc {
                 return Err(StorageError::ChecksumMismatch(format!(
@@ -3174,11 +3315,11 @@ impl StorageState {
             }
         }
         if let Some(recorded) = object.size {
-            if recorded != bytes.len() as u64 {
+            if recorded != size {
                 return Err(StorageError::ChecksumMismatch(format!(
                     "the imported object {} is {} bytes, not the {recorded} its metadata records",
                     object.name.as_str(),
-                    bytes.len()
+                    size
                 )));
             }
         }
@@ -3186,20 +3327,9 @@ impl StorageState {
             .next_blob
             .checked_add(1)
             .ok_or(StorageError::IdentityExhausted)?;
-        let size = bytes.len() as u64;
-        let body = if let Some((dir, threshold)) = &self.spill {
-            if size >= *threshold {
-                let mut file = dir
-                    .create_file()
-                    .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
-                file.append(&bytes)
-                    .map_err(|e| StorageError::SpillFailed(e.to_string()))?;
-                BlobBody::Spilled(Arc::new(file))
-            } else {
-                BlobBody::Memory(Arc::new(bytes))
-            }
-        } else {
-            BlobBody::Memory(Arc::new(bytes))
+        let body = match body.0 {
+            ImportedBodyKind::Staged(file, _) => BlobBody::Spilled(Arc::new(file)),
+            ImportedBodyKind::Memory(bytes) => self.blob_for_bytes(bytes)?,
         };
         self.next_blob = next_blob;
         let blob = BlobId(next_blob);
@@ -3295,12 +3425,7 @@ impl StorageState {
             .next_upload
             .checked_add(1)
             .ok_or(StorageError::IdentityExhausted)?;
-        self.sweep_uploads(now);
-        let receiving = self
-            .uploads
-            .values()
-            .filter(|u| u.state == UploadState::Receiving)
-            .count();
+        let receiving = self.sweep_uploads(now);
         if receiving >= MAX_UPLOAD_SESSIONS {
             return Err(StorageError::TooManyUploads);
         }
@@ -3377,13 +3502,20 @@ impl StorageState {
 
     /// Drops expired sessions; finished sessions beyond the tombstone cap are evicted oldest
     /// first (ids are sequence-ordered).
-    fn sweep_uploads(&mut self, now: LogicalInstant) {
-        self.retain_uploads(|u| !Self::expired(u, now));
-        let mut finished = self
-            .uploads
-            .values()
-            .filter(|u| u.state != UploadState::Receiving)
-            .count();
+    fn sweep_uploads(&mut self, now: LogicalInstant) -> usize {
+        let mut receiving = 0;
+        let mut finished = 0;
+        self.retain_uploads(|upload| {
+            if Self::expired(upload, now) {
+                return false;
+            }
+            if upload.state == UploadState::Receiving {
+                receiving += 1;
+            } else {
+                finished += 1;
+            }
+            true
+        });
         if finished > MAX_FINISHED_UPLOAD_SESSIONS {
             self.retain_uploads(|u| {
                 if u.state != UploadState::Receiving && finished > MAX_FINISHED_UPLOAD_SESSIONS {
@@ -3394,6 +3526,7 @@ impl StorageState {
                 }
             });
         }
+        receiving
     }
 
     fn upload_mut(

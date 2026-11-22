@@ -470,7 +470,7 @@ fn functions(state: &UiState) -> UiResponse {
     };
     let now = runtime.now();
     // The tasks that wait in a queue, so the console can show when each is due and run it now.
-    let pending = runtime.pending_tasks();
+    let pending = runtime.pending_tasks_by_queue(MAX_LISTED_PENDING_TASKS);
     let functions: Vec<Value> = runtime
         .manifest()
         .functions
@@ -495,15 +495,13 @@ fn functions(state: &UiState) -> UiResponse {
                 }
             }
             if matches!(f.trigger, Trigger::TaskQueue { .. }) {
-                let waiting: Vec<&fireemu_adapter_functions::runtime::PendingTaskInfo> = pending
-                    .iter()
-                    .filter(|task| task.function == f.name)
-                    .collect();
-                entry["pendingTaskCount"] = json!(waiting.len());
+                let (count, waiting) = pending
+                    .get(&f.name)
+                    .map_or((0, &[][..]), |(count, tasks)| (*count, tasks.as_slice()));
+                entry["pendingTaskCount"] = json!(count);
                 entry["pendingTasks"] = Value::Array(
                     waiting
                         .iter()
-                        .take(MAX_LISTED_PENDING_TASKS)
                         .map(|task| {
                             json!({
                                 "id": task.id,

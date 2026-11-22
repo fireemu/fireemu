@@ -675,11 +675,7 @@ pub(crate) fn advance_text_builds(
             index: definition.id.clone(),
             generation,
         };
-        let documents: Vec<_> = db
-            .documents()
-            .into_iter()
-            .filter(|document| document.path.collection_id() == &definition.collection_id)
-            .collect();
+        let documents = db.live_collection_group_handles(&definition.collection_id);
         // Review S2: a valid tag builds language-neutral in the default profile; productionExact
         // completes only languages production has recorded, and a malformed tag fails the build
         // below as production recorded.
@@ -721,7 +717,10 @@ pub(crate) fn advance_text_builds(
             Some(target.generation),
             10_000,
             None,
-            documents.clone(),
+            documents
+                .iter()
+                .map(|document| (**document).clone())
+                .collect(),
             fireemu_adapter_support::lexical::tokenize_index,
         ) {
             Ok(()) => {

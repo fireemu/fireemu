@@ -67,28 +67,33 @@ impl Listen {
 
     /// The data the listen currently shows.
     pub fn view(&self, tree: &Tree) -> Json {
+        self.view_with_children(tree, self.window_children(tree).as_deref())
+    }
+
+    fn view_with_children(&self, tree: &Tree, selected: Option<&[(&str, &Node)]>) -> Json {
         #[cfg(test)]
         VIEWS.with(|views| views.set(views.get() + 1));
-        match self.window_children(tree) {
+        match selected {
             None if self.path.is_priority() => priority_at(tree, &self.path),
             None => wire_json(tree.get(&self.path)),
-            Some(children) if children.is_empty() => match &self.window {
+            Some([]) => match &self.window {
                 Some((query, _)) if query.limit.is_none() => Json::Object(BTreeMap::new()),
                 _ => Json::Null,
             },
             Some(children) => Json::Object(
                 children
-                    .into_iter()
-                    .map(|(key, child)| (key.to_owned(), wire_json(Some(child))))
+                    .iter()
+                    .map(|&(key, child)| (key.to_owned(), wire_json(Some(child))))
                     .collect(),
             ),
         }
     }
 
-    /// The hash the client compares to skip the first value: of the location, or of the
-    /// window's children.
-    pub fn hash(&self, tree: &Tree) -> String {
-        match self.window_children(tree) {
+    /// The initial value and its hash use the same selected children.
+    pub fn initial_view(&self, tree: &Tree) -> (Json, String) {
+        let selected = self.window_children(tree);
+        let view = self.view_with_children(tree, selected.as_deref());
+        let hash = match selected {
             None if self.path.is_priority() => {
                 let parent = self.path.parent().unwrap_or_default();
                 let priority = tree.get(&parent).and_then(|node| node.priority.as_ref());
@@ -97,7 +102,8 @@ impl Listen {
             None => node_hash(tree.get(&self.path)),
             Some(children) if children.is_empty() => node_hash(None),
             Some(children) => children_hash_without_priority(children),
-        }
+        };
+        (view, hash)
     }
 
     fn tag(&self) -> Option<i64> {

@@ -69,12 +69,20 @@ struct DatabaseEntry {
 }
 
 impl DatabaseEntry {
+    fn check_attached(&self) -> Result<(), Status> {
+        if self.cell.read().map_err(|_| lock_poisoned())?.detached {
+            return Err(Status::unavailable("database catalog entry is detached"));
+        }
+        Ok(())
+    }
+
     /// A fresh, attached entry holding a restored state.
     fn restored(state: FirestoreState, incarnation: u64) -> Self {
         Self {
             incarnation,
             cell: RwLock::new(DatabaseCell {
                 detached: false,
+                opaque_mutations: 0,
                 state,
             }),
             releases: TransactionReleases::default(),
@@ -135,6 +143,8 @@ struct DatabaseCell {
     /// retained across that removal must not read or mutate state nobody can reach any
     /// more, so every operation through it answers `UNAVAILABLE` instead.
     detached: bool,
+    /// Counts calls that may replace the state without advancing its commit version.
+    opaque_mutations: u64,
     state: FirestoreState,
 }
 
@@ -166,11 +176,29 @@ impl DatabaseHandle {
         &self,
         f: impl FnOnce(&mut FirestoreState) -> Result<T, Status>,
     ) -> Result<T, Status> {
+        self.with_cell(|cell| {
+            cell.opaque_mutations = cell.opaque_mutations.saturating_add(1);
+            f(&mut cell.state)
+        })
+    }
+
+    /// For backend operations whose document changes always advance the commit version.
+    fn with_versioned_state<T>(
+        &self,
+        f: impl FnOnce(&mut FirestoreState) -> Result<T, Status>,
+    ) -> Result<T, Status> {
+        self.with_cell(|cell| f(&mut cell.state))
+    }
+
+    fn with_cell<T>(
+        &self,
+        f: impl FnOnce(&mut DatabaseCell) -> Result<T, Status>,
+    ) -> Result<T, Status> {
         let mut cell = self.0.cell.write().map_err(|_| lock_poisoned())?;
         if cell.detached {
             return Err(detached());
         }
-        let outcome = f(&mut cell.state);
+        let outcome = f(&mut cell);
         // Published under the database lock, so a waiter that read the marker before this
         // operation cannot miss the release it caused.
         self.0.releases.publish(cell.state.transaction_releases());
@@ -245,11 +273,18 @@ impl DatabaseHandle {
         &self,
         f: impl FnOnce(&FirestoreState) -> Result<T, Status>,
     ) -> Result<T, Status> {
+        self.read_cell(|cell| f(&cell.state))
+    }
+
+    fn read_cell<T>(
+        &self,
+        f: impl FnOnce(&DatabaseCell) -> Result<T, Status>,
+    ) -> Result<T, Status> {
         let cell = self.0.cell.read().map_err(|_| lock_poisoned())?;
         if cell.detached {
             return Err(detached());
         }
-        f(&cell.state)
+        f(&cell)
     }
 
     /// Whether a reset or restore has retired this database.
@@ -1253,6 +1288,12 @@ pub struct DocumentSnapshot {
     pub mask: Option<Vec<FieldPath>>,
 }
 
+struct SharedDocumentRead {
+    path: DocumentPath,
+    document: Option<Arc<Document>>,
+    mask: Option<Vec<FieldPath>>,
+}
+
 /// Consistency selector normalized from the three generated Firestore request enums.
 #[derive(Clone, Copy)]
 enum SnapshotSelector<'a> {
@@ -1264,6 +1305,13 @@ enum SnapshotSelector<'a> {
     Pinned(QuerySnapshot),
 }
 
+/// Identifies the entry and its history of externally mutable state accesses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DatabaseSource {
+    incarnation: u64,
+    opaque_mutations: u64,
+}
+
 /// The snapshot the first page of a query without a consistency selector read: its later
 /// pages read the same version under the shared database lock. The version is held by the
 /// store's `read_time` retention window; a page that finds it compacted away is refused.
@@ -1271,11 +1319,19 @@ enum SnapshotSelector<'a> {
 pub(crate) struct QuerySnapshot {
     version: CommitVersion,
     read_time: fireemu_core_types::time::LogicalInstant,
-    /// The incarnation of the database entry the first page read, captured under its lock. A
-    /// database deleted and created again has an incarnation of its own and a version history
-    /// of its own, so a later page refuses to read it at this version (as the internal
-    /// transaction's token did).
-    incarnation: Option<u64>,
+    /// Captured with the documents. Pinned pages check the entry's incarnation, while text
+    /// postings also depend on mutable accesses that could have replaced the version history.
+    database: Option<DatabaseSource>,
+}
+
+impl QuerySnapshot {
+    /// Identity of a shared document snapshot, excluding the per-request read time.
+    pub(crate) fn source_identity(self) -> Option<(DatabaseSource, CommitVersion)> {
+        self.database
+            // Exhaustion disables reuse instead of aliasing earlier contents.
+            .filter(|db| db.opaque_mutations != u64::MAX)
+            .map(|db| (db, self.version))
+    }
 }
 
 /// Snapshot chosen for one read operation. A non-empty report is the token for a transaction
@@ -1387,9 +1443,8 @@ enum SnapshotState<'a> {
 
 struct SnapshotAccess<'a> {
     state: SnapshotState<'a>,
-    /// The incarnation of the database entry a shared read runs against (none for an exclusive
-    /// one, whose snapshot is a transaction's).
-    incarnation: Option<u64>,
+    /// The source identity of a shared read. Exclusive reads use the transaction's snapshot.
+    database: Option<DatabaseSource>,
     selected: SelectedSnapshot,
     query_execution_id: Option<QueryExecutionId>,
     complete_query_execution: bool,
@@ -1621,13 +1676,7 @@ impl SelectedSnapshot {
 impl DocumentSnapshot {
     /// Wire form (`NOT_FOUND` when missing).
     pub fn into_response(self) -> Result<pb::Document, Status> {
-        match self.document {
-            Some(d) => Ok(encode_masked(&d, self.mask.as_deref())),
-            None => Err(Status::not_found(format!(
-                "Document \"{}\" not found.",
-                self.path.resource_name()
-            ))),
-        }
+        encode_get_document(&self.path, self.document.as_ref(), self.mask.as_deref())
     }
 }
 
@@ -3051,6 +3100,7 @@ impl LocalBackend {
             catalog,
             production_exact,
             warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            search_cache: Arc::default(),
         });
         Ok(())
     }
@@ -3569,7 +3619,7 @@ impl LocalBackend {
         let scope =
             fireemu_core_session::tenancy::Scope::AllExcept(std::collections::BTreeSet::new());
         for (key, handle) in self.handles_of(&scope) {
-            let _ = handle.with(|state| {
+            let _ = handle.with_versioned_state(|state| {
                 state.compact(now);
                 self.issued_transactions
                     .lock()
@@ -3714,7 +3764,7 @@ impl LocalBackend {
         let mut reclaimable_bytes = 0u64;
         let now = self.now();
         for ((project, database), handle) in self.handles_of(scope) {
-            let Ok((usage, stats, reclaimable)) = handle.with(|state| {
+            let Ok((usage, stats, reclaimable)) = handle.with_versioned_state(|state| {
                 Ok((
                     state.history_usage(),
                     state.transaction_bookkeeping_stats(),
@@ -4303,11 +4353,10 @@ impl LocalBackend {
         // The index-file indexes are the database's deployed indexes: one deleted through the
         // Admin API, or gone with its database, no longer serves. Planning only reads the
         // registry; nothing a query names is recorded.
-        let configured = set.composites().to_vec();
         for definition in self
             .admin
             .indexes()
-            .retracted(project, database, &configured)
+            .retracted(project, database, set.composites())
         {
             set.remove_composite(&definition);
         }
@@ -4408,9 +4457,17 @@ impl LocalBackend {
     ) -> Result<AcceptedQuery, Status> {
         let query = decode_structured_query_in(parent, sq, self.gateway.production_refusals())
             .map_err(status)?;
+        self.accept_decoded_query(parent, &query)
+    }
+
+    fn accept_decoded_query(
+        &self,
+        parent: &Parent,
+        query: &Query,
+    ) -> Result<AcceptedQuery, Status> {
         let database_indexes = self.planning_indexes(parent)?;
         self.gateway
-            .validate_query_with_indexes(&query, &database_indexes)
+            .validate_query_with_indexes(query, &database_indexes)
             .map_err(|rejection| self.index_rejection(parent, &rejection))
             .inspect(|accepted| self.report_missing_index(parent, accepted))
     }
@@ -4627,6 +4684,15 @@ impl LocalBackend {
     /// configuration that installed it, not to any one database's state.
     #[must_use]
     pub fn ttl_catalogs(&self) -> BTreeMap<(String, String), TtlCatalog> {
+        self.owned_ttl_catalogs(|_| true)
+    }
+
+    /// Captures the project-specific TTL overrides belonging to a session.
+    #[must_use]
+    pub fn owned_ttl_catalogs(
+        &self,
+        owned: impl Fn(&str) -> bool,
+    ) -> BTreeMap<(String, String), TtlCatalog> {
         let catalogs = self
             .ttl
             .read()
@@ -4636,6 +4702,7 @@ impl LocalBackend {
             .filter_map(|((project, database), catalog)| {
                 project
                     .as_ref()
+                    .filter(|project| owned(project))
                     .map(|project| ((project.clone(), database.clone()), catalog.clone()))
             })
             .collect()
@@ -4841,10 +4908,20 @@ impl LocalBackend {
     /// Every project's retained field-configuration operations, for a snapshot capture.
     #[must_use]
     pub fn field_operations_by_project(&self) -> BTreeMap<String, Vec<FieldOperation>> {
+        self.owned_field_operations(|_| true)
+    }
+
+    /// Captures retained field operations for the projects belonging to a session.
+    #[must_use]
+    pub fn owned_field_operations(
+        &self,
+        owned: impl Fn(&str) -> bool,
+    ) -> BTreeMap<String, Vec<FieldOperation>> {
         self.field_operations
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
+            .filter(|(project, _)| owned(project))
             .map(|(project, operations)| (project.clone(), operations.iter().cloned().collect()))
             .collect()
     }
@@ -5142,7 +5219,7 @@ impl LocalBackend {
     ) -> Result<fireemu_core_firestore::store::TtlExpirySelection, Status> {
         let _admitted = self.barrier.admit();
         let handle = self.database_handle(parent)?;
-        handle.with(|state| {
+        handle.with_versioned_state(|state| {
             state
                 .select_ttl_expiry(policies, group, now, limit, resume)
                 .map_err(|error| status_from_error(&error))
@@ -5608,6 +5685,21 @@ impl LocalBackend {
         self.database_catalog_with_hook(|| {})
     }
 
+    /// Checks every database before a session transition, including databases outside its scope.
+    pub fn validate_database_catalog(&self) -> Result<(), Status> {
+        let entries: Vec<_> = self
+            .databases
+            .lock()
+            .map_err(|_| lock_poisoned())?
+            .values()
+            .cloned()
+            .collect();
+        for entry in entries {
+            entry.check_attached()?;
+        }
+        Ok(())
+    }
+
     fn database_catalog_with_hook(
         &self,
         after_catalog_lock: impl FnOnce(),
@@ -5622,9 +5714,7 @@ impl LocalBackend {
         entries
             .into_iter()
             .map(|(key, entry)| {
-                if entry.cell.read().map_err(|_| lock_poisoned())?.detached {
-                    return Err(Status::unavailable("database catalog entry is detached"));
-                }
+                entry.check_attached()?;
                 Ok((key, entry.incarnation))
             })
             .collect()
@@ -5646,7 +5736,7 @@ impl LocalBackend {
         let _actor = ActorScope::enter();
         let releases_before = handle.release_marker();
         let key = database_key(parent);
-        let outcome = handle.with(|state| {
+        let outcome = handle.with_versioned_state(|state| {
             let releases = state.transaction_releases();
             let pruned = state.transaction_bookkeeping_stats().pruned_deadlines;
             let outcome = f(state);
@@ -5701,19 +5791,24 @@ impl LocalBackend {
         parent: &Parent,
         f: impl FnOnce(&FirestoreState) -> Result<T, Status>,
     ) -> Result<T, Status> {
-        self.read_db_incarnation(parent, |db, _| f(db))
+        self.read_db_source(parent, |db, _| f(db))
     }
 
-    /// [`Self::read_db`], also handing `f` the incarnation of the entry whose state it reads.
-    fn read_db_incarnation<T>(
+    /// Captures the database source and its documents under the same read lock.
+    fn read_db_source<T>(
         &self,
         parent: &Parent,
-        f: impl FnOnce(&FirestoreState, u64) -> Result<T, Status>,
+        f: impl FnOnce(&FirestoreState, DatabaseSource) -> Result<T, Status>,
     ) -> Result<T, Status> {
         let _admitted = self.barrier.admit();
         let handle = self.database_handle(parent)?;
-        let incarnation = handle.0.incarnation;
-        handle.read_status(|db| f(db, incarnation))
+        handle.read_cell(|cell| {
+            let source = DatabaseSource {
+                incarnation: handle.0.incarnation,
+                opaque_mutations: cell.opaque_mutations,
+            };
+            f(&cell.state, source)
+        })
     }
 
     fn auto_id(&self) -> String {
@@ -6054,34 +6149,32 @@ impl LocalBackend {
             self.compact_all(now);
         }
         match selector {
-            SnapshotSelector::ReadTime(read_at) => {
-                self.read_db_incarnation(parent, |db, incarnation| {
-                    run(&mut SnapshotAccess {
-                        state: SnapshotState::Shared(db),
-                        incarnation: Some(incarnation),
-                        selected: SelectedSnapshot {
-                            transaction: None,
-                            report: Vec::new(),
-                            read_at: Some(read_at),
-                            pinned: None,
-                        },
-                        query_execution_id: None,
-                        complete_query_execution: false,
-                    })
+            SnapshotSelector::ReadTime(read_at) => self.read_db_source(parent, |db, source| {
+                run(&mut SnapshotAccess {
+                    state: SnapshotState::Shared(db),
+                    database: Some(source),
+                    selected: SelectedSnapshot {
+                        transaction: None,
+                        report: Vec::new(),
+                        read_at: Some(read_at),
+                        pinned: None,
+                    },
+                    query_execution_id: None,
+                    complete_query_execution: false,
                 })
-            }
+            }),
             SnapshotSelector::Pinned(snapshot) => {
-                self.read_db_incarnation(parent, |db, incarnation| {
+                self.read_db_source(parent, |db, source| {
                     // The database was deleted and created again since the first page: this one is
                     // not the database the snapshot was taken in.
-                    if snapshot.incarnation != Some(incarnation) {
+                    if snapshot.database.map(|db| db.incarnation) != Some(source.incarnation) {
                         return Err(Status::aborted(
                             "The referenced transaction has expired or is no longer valid.",
                         ));
                     }
                     run(&mut SnapshotAccess {
                         state: SnapshotState::Shared(db),
-                        incarnation: Some(incarnation),
+                        database: Some(source),
                         selected: SelectedSnapshot {
                             transaction: None,
                             report: Vec::new(),
@@ -6093,10 +6186,10 @@ impl LocalBackend {
                     })
                 })
             }
-            SnapshotSelector::Latest => self.read_db_incarnation(parent, |db, incarnation| {
+            SnapshotSelector::Latest => self.read_db_source(parent, |db, source| {
                 run(&mut SnapshotAccess {
                     state: SnapshotState::Shared(db),
-                    incarnation: Some(incarnation),
+                    database: Some(source),
                     selected: SelectedSnapshot {
                         transaction: None,
                         report: Vec::new(),
@@ -6112,7 +6205,7 @@ impl LocalBackend {
                     let selected = self.select_snapshot(parent, db, selector, now)?;
                     let mut access = SnapshotAccess {
                         state: SnapshotState::Exclusive(db),
-                        incarnation: None,
+                        database: None,
                         selected,
                         query_execution_id: None,
                         complete_query_execution: false,
@@ -6142,8 +6235,20 @@ impl LocalBackend {
         req: &pb::GetDocumentRequest,
         guard: ReadGuard<'_>,
     ) -> Result<DocumentSnapshot, Status> {
-        let path = decode_document_name(&req.name).map_err(status)?;
-        let parent = parse_parent(&req.name).map_err(status)?;
+        let shared = self.get_shared_document_snapshot(req, guard)?;
+        Ok(DocumentSnapshot {
+            path: shared.path,
+            document: shared.document.map(|doc| (*doc).clone()),
+            mask: shared.mask,
+        })
+    }
+
+    fn get_shared_document_snapshot(
+        &self,
+        req: &pb::GetDocumentRequest,
+        guard: ReadGuard<'_>,
+    ) -> Result<SharedDocumentRead, Status> {
+        let (parent, path) = crate::encode::document_parent(&req.name).map_err(status)?;
         self.fault(parent.project.as_str(), "firestore.read")?;
         let now = self.write_time();
         let (txn, read_at) = match &req.consistency_selector {
@@ -6166,17 +6271,17 @@ impl LocalBackend {
                 let version = db
                     .transaction_read_version(&txn)
                     .map_err(|e| status_from_error(&e))?;
-                let document = db.get_at(&path, version).cloned();
+                let document = db.get_at_shared(&path, version);
                 guard(
                     db,
                     Some(version),
                     ReadCheck::Document {
                         path: &path,
-                        snapshot: document.as_ref(),
+                        snapshot: document.as_deref(),
                     },
                 )?;
                 // The read joins the transaction's read set only once it is authorized.
-                db.record_transaction_read(&txn, &path, document.as_ref())
+                db.record_transaction_read(&txn, &path, document.as_deref())
                     .map_err(|e| status_from_error(&e))?;
                 Ok(document)
             })?
@@ -6184,22 +6289,22 @@ impl LocalBackend {
             self.read_db(&parent, |db| {
                 let (document, version) = if let Some(at) = read_at {
                     let version = Self::retained_read_version(db, at)?;
-                    (db.get_at(&path, version).cloned(), Some(version))
+                    (db.get_at_shared(&path, version), Some(version))
                 } else {
-                    (db.get(&path).cloned(), None)
+                    (db.get_shared(&path), None)
                 };
                 guard(
                     db,
                     version,
                     ReadCheck::Document {
                         path: &path,
-                        snapshot: document.as_ref(),
+                        snapshot: document.as_deref(),
                     },
                 )?;
                 Ok(document)
             })?
         };
-        Ok(DocumentSnapshot {
+        Ok(SharedDocumentRead {
             path,
             document,
             mask,
@@ -6212,7 +6317,8 @@ impl LocalBackend {
         req: &pb::GetDocumentRequest,
         guard: ReadGuard<'_>,
     ) -> Result<pb::Document, Status> {
-        self.get_document_snapshot(req, guard)?.into_response()
+        let read = self.get_shared_document_snapshot(req, guard)?;
+        encode_get_document(&read.path, read.document.as_deref(), read.mask.as_deref())
     }
 
     /// `BatchGetDocuments`: returns the items and the transaction to report (new or given);
@@ -6532,8 +6638,7 @@ impl LocalBackend {
             .document
             .as_ref()
             .ok_or_else(|| Status::invalid_argument("missing document"))?;
-        let path = decode_document_name(&doc.name).map_err(status)?;
-        let parent = parse_parent(&doc.name).map_err(status)?;
+        let (parent, path) = crate::encode::document_parent(&doc.name).map_err(status)?;
         let write = Write {
             op: WriteOp::Set {
                 path,
@@ -6554,8 +6659,7 @@ impl LocalBackend {
 
     /// Decodes a `DeleteDocument` request into its write.
     pub fn plan_delete(req: &pb::DeleteDocumentRequest) -> Result<(Parent, Write), Status> {
-        let path = decode_document_name(&req.name).map_err(status)?;
-        let parent = parse_parent(&req.name).map_err(status)?;
+        let (parent, path) = crate::encode::document_parent(&req.name).map_err(status)?;
         let write = Write {
             op: WriteOp::Delete { path },
             precondition: decode_precondition(req.current_document.as_ref()).map_err(status)?,
@@ -6706,7 +6810,7 @@ impl LocalBackend {
         let (parent, writes) = Self::plan_commit(req)?;
         let own = self.txn(&parent, &req.transaction)?;
         self.retry_on_contention(&parent, own.as_ref(), &writes, || {
-            self.commit_once_routed(req, guard, route)
+            self.commit_prepared_once(&parent, &writes, &req.transaction, guard, route)
         })
     }
 
@@ -6716,23 +6820,31 @@ impl LocalBackend {
         req: &pb::CommitRequest,
         guard: WriteGuard<'_>,
     ) -> Result<pb::CommitResponse, Status> {
-        self.commit_once_routed(req, guard, WriteRoute::Commit)
+        let (parent, writes) = Self::plan_commit(req)?;
+        self.commit_prepared_once(
+            &parent,
+            &writes,
+            &req.transaction,
+            guard,
+            WriteRoute::Commit,
+        )
     }
 
-    fn commit_once_routed(
+    pub(crate) fn commit_prepared_once(
         &self,
-        req: &pb::CommitRequest,
+        parent: &Parent,
+        writes: &[Write],
+        token: &[u8],
         guard: WriteGuard<'_>,
         route: WriteRoute,
     ) -> Result<pb::CommitResponse, Status> {
-        let (parent, writes) = Self::plan_commit(req)?;
         self.fault(parent.project.as_str(), "firestore.commit")?;
-        self.txn(&parent, &req.transaction)?;
+        self.txn(parent, token)?;
         let now = self.write_time();
-        let result = self.with_db(&parent, |db| {
-            let txn = self.txn(&parent, &req.transaction)?;
-            guard(db, &writes, now)?;
-            let result = self.commit_with_events(&parent, db, &writes, txn.as_ref(), now, route)?;
+        let result = self.with_db(parent, |db| {
+            let txn = self.txn(parent, token)?;
+            guard(db, writes, now)?;
+            let result = self.commit_with_events(parent, db, writes, txn.as_ref(), now, route)?;
             Ok(result)
         })?;
         Ok(encode_commit(&result))
@@ -6950,7 +7062,7 @@ impl LocalBackend {
         };
         let before = handle.release_marker();
         let released = handle
-            .with(|db| {
+            .with_versioned_state(|db| {
                 // Recheck idleness and roll back under the same database write lock. A read
                 // followed by a later write lock could otherwise sample an idle holder, let a
                 // concurrent transaction operation refresh it, then incorrectly roll it back.
@@ -7106,6 +7218,18 @@ impl LocalBackend {
         requests: &[pb::RunQueryRequest],
         guard: ReadGuard<'_>,
     ) -> Result<Vec<Vec<pb::RunQueryResponse>>, Status> {
+        self.map_pipeline_sources(requests, guard, |docs, read_time, transaction| {
+            query_responses(&docs, read_time, transaction, 0)
+        })
+    }
+
+    /// Reads each source under the same guarded snapshot, letting the consumer own the result.
+    pub(crate) fn map_pipeline_sources<T>(
+        &self,
+        requests: &[pb::RunQueryRequest],
+        guard: ReadGuard<'_>,
+        mut map: impl FnMut(Vec<Document>, Option<prost_types::Timestamp>, &[u8]) -> T,
+    ) -> Result<Vec<T>, Status> {
         let mut queries = Vec::with_capacity(requests.len());
         for request in requests {
             let parent =
@@ -7150,7 +7274,7 @@ impl LocalBackend {
             for (_, accepted) in &queries {
                 let (docs, _) =
                     access.run_query_with_stats(&accepted.query, &accepted.query, false)?;
-                result.push(query_responses(&docs, read_time, access.report(), 0));
+                result.push(map(docs, read_time, access.report()));
             }
             Ok(result)
         })
@@ -7286,6 +7410,18 @@ impl LocalBackend {
         Ok((responses, warnings))
     }
 
+    /// Run the ordinary guarded query and return the identity of the exact source it read.
+    pub(crate) fn run_text_search_source(
+        &self,
+        request: &pb::RunQueryRequest,
+        guard: ReadGuard<'_>,
+    ) -> Result<(Vec<pb::RunQueryResponse>, QuerySnapshot), Status> {
+        let (responses, _, _, snapshot) = self.run_query_authorized_as_after_internal(
+            request, request, guard, None, false, None, None, None,
+        )?;
+        Ok((responses, snapshot))
+    }
+
     /// Executes the first bounded page of one streamed query execution.
     pub(crate) fn run_query_authorized_as_for_execution(
         &self,
@@ -7382,9 +7518,13 @@ impl LocalBackend {
                 crate::query_messages::RUN_QUERY_WITHOUT_QUERY,
             ));
         };
+        let explain_error = |s| crate::index_messages::for_explain(req.explain_options.as_ref(), s);
+        let decoded = decode_structured_query_in(&parent, sq, self.gateway.production_refusals())
+            .map_err(status)
+            .map_err(explain_error)?;
         let accepted = self
-            .accepted_query(&parent, sq)
-            .map_err(|s| crate::index_messages::for_explain(req.explain_options.as_ref(), s))?;
+            .accept_decoded_query(&parent, &decoded)
+            .map_err(explain_error)?;
         let authorization_parent = parse_parent(&authorization_req.parent).map_err(status)?;
         if authorization_parent.project != parent.project
             || authorization_parent.database != parent.database
@@ -7401,9 +7541,12 @@ impl LocalBackend {
                 crate::query_messages::RUN_QUERY_WITHOUT_QUERY,
             ));
         };
-        let authorization = self
-            .accepted_query(&authorization_parent, authorization_query)
-            .map_err(|s| crate::index_messages::for_explain(req.explain_options.as_ref(), s))?;
+        let authorization = if std::ptr::eq(sq, authorization_query) {
+            self.accept_decoded_query(&authorization_parent, &decoded)
+        } else {
+            self.accepted_query(&authorization_parent, authorization_query)
+        }
+        .map_err(explain_error)?;
         let now = self.write_time();
         let selector = match &req.consistency_selector {
             Some(pb::run_query_request::ConsistencySelector::Transaction(bytes)) => {
@@ -7430,7 +7573,7 @@ impl LocalBackend {
             let snapshot = QuerySnapshot {
                 version: version.unwrap_or_else(|| access.db().current_version()),
                 read_time: access.read_time(now)?,
-                incarnation: access.incarnation,
+                database: access.database,
             };
             // Authorized from the query constraints before any data is touched.
             guard(
@@ -7962,29 +8105,22 @@ impl LocalBackend {
                         // The whole query is read and recorded as the transaction's read set
                         // (a commit re-runs it to detect a conflict); a page then continues
                         // after the values the token recorded.
-                        let all = access
+                        let mut all = access
                             .run_query_with_stats(&accepted.query, &accepted.query, false)?
                             .0;
-                        match token_values.clone() {
-                            Some(values) => {
-                                let mut continued = accepted.query.clone();
-                                continued.start_at = Some(fireemu_core_firestore::query::Cursor {
-                                    values,
-                                    before: false,
-                                });
-                                let after: std::collections::BTreeSet<String> = access
-                                    .db()
-                                    .run_query(&continued, version)
-                                    .map_err(|e| status_from_error(&e))?
-                                    .iter()
-                                    .map(|d| d.path.resource_name())
-                                    .collect();
-                                all.into_iter()
-                                    .filter(|d| after.contains(&d.path.resource_name()))
-                                    .collect()
+                        if let Some(values) = &token_values {
+                            let order = accepted.query.effective_order_by();
+                            let start = all.partition_point(|doc| {
+                                !fireemu_core_firestore::store::document_after_cursor(
+                                    doc, &order, values,
+                                )
+                            });
+                            all.drain(..start);
+                            if !show_missing {
+                                all.truncate(scan_size);
                             }
-                            None => all,
                         }
+                        all
                     }
                     (None, true) => access
                         .db()
@@ -8347,12 +8483,21 @@ fn database_tag(parent: &Parent) -> [u8; 8] {
     h.to_be_bytes()
 }
 
+fn encode_get_document(
+    path: &DocumentPath,
+    document: Option<&Document>,
+    mask: Option<&[FieldPath]>,
+) -> Result<pb::Document, Status> {
+    document.map(|doc| encode_masked(doc, mask)).ok_or_else(|| {
+        Status::not_found(format!(r#"Document "{}" not found."#, path.resource_name()))
+    })
+}
+
 fn encode_masked(doc: &Document, mask: Option<&[FieldPath]>) -> pb::Document {
     match mask {
         Some(mask) => {
-            let mut d = doc.clone();
-            d.fields = project_fields(&d.fields, mask);
-            encode_document(&d)
+            let fields = project_fields(&doc.fields, mask);
+            crate::encode::encode_document_fields(doc, &fields)
         }
         None => encode_document(doc),
     }
@@ -8678,6 +8823,67 @@ mod lock_tests {
             ))),
             7,
         ))
+    }
+
+    #[test]
+    fn exhausted_opaque_mutations_cannot_reuse_an_older_corpus() {
+        let local = backend();
+        let parent = parse_parent("projects/demo-app/databases/(default)/documents").unwrap();
+        let handle = local.database_handle(&parent).unwrap();
+        handle.0.cell.write().unwrap().opaque_mutations = u64::MAX - 1;
+        let source = || {
+            local
+                .read_db_source(&parent, |db, source| {
+                    Ok(QuerySnapshot {
+                        version: db.current_version(),
+                        read_time: LogicalInstant::UNIX_EPOCH,
+                        database: Some(source),
+                    }
+                    .source_identity())
+                })
+                .unwrap()
+        };
+        assert!(source().is_some());
+        for _ in 0..2 {
+            handle.with(|_| Ok(())).unwrap();
+            assert!(source().is_none());
+        }
+    }
+
+    #[test]
+    fn a_denied_get_authorizes_the_store_snapshot_before_copying_response_fields() {
+        let local = backend();
+        let name = "projects/demo-app/databases/(default)/documents/books/a";
+        let write = pb::Write {
+            operation: Some(pb::write::Operation::Update(pb::Document {
+                name: name.to_owned(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        local
+            .commit(&pb::CommitRequest {
+                database: "projects/demo-app/databases/(default)".into(),
+                writes: vec![write],
+                ..Default::default()
+            })
+            .unwrap();
+        let request = pb::GetDocumentRequest {
+            name: name.into(),
+            ..Default::default()
+        };
+        let result = local.get_document(&request, &|state, _, check| {
+            let ReadCheck::Document {
+                path,
+                snapshot: Some(doc),
+            } = check
+            else {
+                panic!("expected an existing document");
+            };
+            assert!(std::ptr::eq(doc, state.get(path).unwrap()));
+            Err(Status::permission_denied("rejected by rules"))
+        });
+        assert_eq!(result.unwrap_err().code(), tonic::Code::PermissionDenied);
     }
 
     #[test]

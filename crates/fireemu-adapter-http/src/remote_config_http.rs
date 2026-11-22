@@ -108,12 +108,13 @@ fn visible_fields(template: &ClientTemplate) -> Map<String, Value> {
         .expect("validated template object");
     object
         .iter()
-        .filter(|(_, value)| {
-            !value.as_object().is_some_and(Map::is_empty)
-                && !value.as_array().is_some_and(Vec::is_empty)
-        })
+        .filter(|(_, value)| visible(value))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
+}
+
+fn visible(value: &Value) -> bool {
+    !value.as_object().is_some_and(Map::is_empty) && !value.as_array().is_some_and(Vec::is_empty)
 }
 
 fn version_fields(version: &Version) -> Value {
@@ -270,11 +271,14 @@ fn write(
             template,
             base_etag,
         } => {
-            let mut body = visible_fields(&template);
             let version = template.description().map_or_else(
                 || json!({}),
                 |description| json!({"description": description}),
             );
+            let Value::Object(mut body) = template.into_document() else {
+                unreachable!("validated template object")
+            };
+            body.retain(|_, value| visible(value));
             body.insert("version".to_owned(), version);
             Ok(Reply::ok(
                 Value::Object(body),

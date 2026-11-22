@@ -11,11 +11,149 @@ import fs, { constants as fsConstants } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import fsp from 'node:fs/promises';
 import test from 'node:test';
-import { snapshotInputs, prepareGeneration, readRegularFile, cloneSupport } from '../fireemu/testing-snapshot.mjs';
+import { snapshotInputs, prepareGeneration, readRegularFile, removeSnapshotTree, cloneSupport } from '../fireemu/testing-snapshot.mjs';
 import { createTestWorld } from '../fireemu/testing.mjs';
 
 const exec = promisify(execFile);
 const directoryLink = process.platform === 'win32' ? 'junction' : 'dir';
+
+// Full order-3 PICT table for read-only location × links × first removal attempt.
+for (const readOnly of ['None', 'Root', 'Leaf']) {
+  for (const link of ['NoLink', 'External']) {
+    for (const failure of ['Actual', 'Permission', 'Other']) {
+      test(`snapshot removal repairs only permission failures: ${readOnly} / ${link} / ${failure}`, { skip: process.platform === 'win32' }, async t => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'fireemu-world-remove-')));
+        t.after(() => removeSnapshotTree(root));
+        const owned = join(root, 'owned'), leaf = join(owned, 'leaf'), external = join(root, 'external');
+        await mkdir(leaf, { recursive: true });
+        await mkdir(external, { mode: 0o750 });
+        const mode = (await stat(external)).mode & 0o777;
+        await writeFile(join(leaf, 'data'), 'owned');
+        await writeFile(join(external, 'data'), 'outside');
+        if (link === 'External') await symlink(external, join(owned, 'link'), directoryLink);
+        if (readOnly === 'Root') await chmod(owned, 0o500);
+        if (readOnly === 'Leaf') await chmod(leaf, 0o500);
+        const error = Object.assign(new Error('first removal attempt'), { code: failure === 'Permission' ? 'EACCES' : 'EIO' });
+        let attempts = 0, repairs = 0;
+        const originalRemove = fsp.rm, originalChmod = fsp.chmod;
+        const remove = t.mock.method(fsp, 'rm', (path, ...args) => {
+          if (path === owned && ++attempts === 1 && failure !== 'Actual') return Promise.reject(error);
+          return originalRemove(path, ...args);
+        });
+        const repair = t.mock.method(fsp, 'chmod', (path, ...args) => {
+          if (path === owned || path === leaf) repairs++;
+          return originalChmod(path, ...args);
+        });
+        syncBuiltinESMExports();
+        try {
+          if (failure === 'Other') {
+            await assert.rejects(removeSnapshotTree(owned), reason => reason === error);
+            assert.equal(attempts, 1);
+            assert.equal(repairs, 0);
+          } else {
+            await removeSnapshotTree(owned);
+            const needsRepair = failure === 'Permission' || (readOnly !== 'None' && process.getuid?.() !== 0);
+            assert.equal(attempts, needsRepair ? 2 : 1);
+            assert.equal(repairs > 0, needsRepair);
+            await assert.rejects(stat(owned), { code: 'ENOENT' });
+          }
+          assert.equal((await stat(external)).mode & 0o777, mode);
+          assert.equal(await readFile(join(external, 'data'), 'utf8'), 'outside');
+        } finally {
+          remove.mock.restore();
+          repair.mock.restore();
+          syncBuiltinESMExports();
+        }
+      });
+    }
+  }
+}
+
+test('permission recovery continues after a different directory has already disappeared', { skip: process.platform === 'win32' }, async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'fireemu-world-remove-partial-')));
+  t.after(() => removeSnapshotTree(root));
+  const owned = join(root, 'owned'), first = join(owned, 'first'), last = join(owned, 'last');
+  await mkdir(first, { recursive: true });
+  await mkdir(last);
+  await writeFile(join(last, 'data'), 'owned');
+  await chmod(last, 0o500);
+  const originalChmod = fsp.chmod, originalReaddir = fsp.readdir;
+  const repair = t.mock.method(fsp, 'chmod', async (path, ...args) => {
+    if (path === first) await rm(first, { recursive: true, force: true });
+    return originalChmod(path, ...args);
+  });
+  const list = t.mock.method(fsp, 'readdir', async (path, ...args) => {
+    const entries = await originalReaddir(path, ...args);
+    return path === owned ? entries.sort((a,b) => a.name.localeCompare(b.name)) : entries;
+  });
+  const originalRemove = fsp.rm;
+  let attempt = 0;
+  const remove = t.mock.method(fsp, 'rm', (path, ...args) => {
+    if (path === owned && ++attempt === 1) return Promise.reject(Object.assign(Error('permission denied'), { code: 'EACCES' }));
+    return originalRemove(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    await removeSnapshotTree(owned);
+    assert.equal(attempt, 2);
+    await assert.rejects(stat(owned), { code: 'ENOENT' });
+  } finally {
+    repair.mock.restore();
+    list.mock.restore();
+    remove.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+// Full order-3 PICT table for tree depth × leaf kind × capture or portable generation.
+for (const depth of ['Flat', 'Nested']) {
+  for (const leaf of ['File', 'Link']) {
+    for (const stage of ['Snapshot', 'Generation']) {
+      test(`portable copy creates a visited leaf parent once: ${depth} / ${leaf} / ${stage}`, { skip: process.platform === 'win32' && leaf === 'Link' }, async t => {
+        const f = await fixture(t);
+        await withCloneSupport(t, { file: false, tree: false });
+        const parent = depth === 'Nested' ? join(f.source, 'nested') : f.source;
+        await mkdir(parent, { recursive: true });
+        await writeFile(join(parent, 'target.txt'), 'snapshot bytes');
+        if (leaf === 'Link') await symlink('target.txt', join(parent, 'linked.txt'), 'file');
+        const generation = join(f.world, 'generation');
+        const mkdirCalls = [];
+        const originalMkdir = fsp.mkdir;
+        const mock = t.mock.method(fsp, 'mkdir', (path, ...args) => {
+          mkdirCalls.push(path);
+          return originalMkdir(path, ...args);
+        });
+        syncBuiltinESMExports();
+        try {
+          const snapshot = await snapshotInputs(f.options, f.world);
+          let copied = snapshot.config.functions.source;
+          if (stage === 'Generation') {
+            const prepared = await prepareGeneration(snapshot, generation);
+            copied = JSON.parse(await readFile(prepared.configPath, 'utf8')).functions.source;
+          }
+          const copiedParent = join(copied, relative(f.source, parent));
+          const copiedLeaf = join(copiedParent, leaf === 'File' ? 'target.txt' : 'linked.txt');
+          assert.equal(await readFile(copiedLeaf, 'utf8'), 'snapshot bytes');
+          await writeFile(copiedLeaf, 'generation bytes');
+          assert.equal(await readFile(join(parent, 'target.txt'), 'utf8'), 'snapshot bytes');
+          assert.equal(mkdirCalls.filter(path => path === copiedParent).length, 1);
+        } finally {
+          mock.mock.restore();
+          syncBuiltinESMExports();
+        }
+      });
+    }
+  }
+}
+
+test('portable copy still prepares missing parents for a root file input', async t => {
+  const f = await fixture(t);
+  const source = join(f.source, 'entry.cjs');
+  await writeFile(source, 'module.exports = {};');
+  await mkdir(join(f.root, 'node_modules'));
+  const snapshot = await snapshotInputs({ ...f.options, functionsSource: source }, f.world);
+  assert.equal(await readFile(snapshot.config.functions.source, 'utf8'), 'module.exports = {};');
+});
 
 test('configuration open cancellation closes a handle returned after abort', async t => {
   const root = await mkdtemp(join(tmpdir(), 'fireemu-world-open-cancel-'));

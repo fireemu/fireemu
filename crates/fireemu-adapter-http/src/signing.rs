@@ -8,6 +8,7 @@ use fireemu_core_auth::jwt::{base64url_encode, IdTokenSigner, PublicJwk};
 use rand_core::SeedableRng;
 use rsa::pkcs1v15::{Signature, SigningKey, VerifyingKey};
 use rsa::pkcs8::{DecodePrivateKey as _, EncodePrivateKey as _, SecretDocument};
+use rsa::signature::hazmat::PrehashVerifier as _;
 use rsa::signature::{Keypair, SignatureEncoding, Signer, Verifier};
 use rsa::traits::{PrivateKeyParts as _, PublicKeyParts};
 use rsa::RsaPrivateKey;
@@ -158,9 +159,20 @@ impl std::fmt::Debug for AppCheckPrivateKey {
     }
 }
 
+const VERIFIED_SIGNATURE_SLOTS: usize = 64;
+
+#[derive(Clone, Copy)]
+struct VerifiedAppCheckSignature {
+    digest: [u8; 32],
+    signature: [u8; 256],
+}
+
 /// The generated half of an App Check signer.
 struct AppCheckKeyMaterial {
     signing: AppCheckPrivateKey,
+    // RSA verifies the SHA-256 digest with this immutable public key. Keep only that
+    // digest and the exact successful signature, never the token or an admission verdict.
+    verified: std::sync::Mutex<Box<[Option<VerifiedAppCheckSignature>]>>,
     verifying: VerifyingKey<Sha256>,
     kid: String,
     jwk: PublicJwk,
@@ -194,6 +206,9 @@ impl AppCheckKeyMaterial {
         };
         Ok(Self {
             signing: AppCheckPrivateKey(signing),
+            verified: std::sync::Mutex::new(
+                vec![None; VERIFIED_SIGNATURE_SLOTS].into_boxed_slice(),
+            ),
             verifying,
             kid,
             jwk,
@@ -313,8 +328,30 @@ impl fireemu_core_app_check::crypto::AppCheckSigner for AppCheckRsaSigner {
         let Some(material) = self.ready() else {
             return false;
         };
-        Signature::try_from(signature)
-            .is_ok_and(|s| material.verifying.verify(signing_input, &s).is_ok())
+        let Ok(signature_bytes) = <&[u8; 256]>::try_from(signature) else {
+            return Signature::try_from(signature)
+                .is_ok_and(|s| material.verifying.verify(signing_input, &s).is_ok());
+        };
+        let digest: [u8; 32] = Sha256::digest(signing_input).into();
+        let slot = usize::from(digest[0]) % VERIFIED_SIGNATURE_SLOTS;
+        if material.verified.try_lock().is_ok_and(|cache| {
+            cache[slot]
+                .as_ref()
+                .is_some_and(|hit| hit.digest == digest && hit.signature == *signature_bytes)
+        }) {
+            return true;
+        }
+        let valid = Signature::try_from(signature)
+            .is_ok_and(|s| material.verifying.verify_prehash(&digest, &s).is_ok());
+        if valid {
+            if let Ok(mut cache) = material.verified.try_lock() {
+                cache[slot] = Some(VerifiedAppCheckSignature {
+                    digest,
+                    signature: *signature_bytes,
+                });
+            }
+        }
+        valid
     }
 
     fn public_jwk_json(&self) -> String {

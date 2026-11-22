@@ -153,6 +153,168 @@ fn a_pinned_range_uses_its_generation_after_delete_and_replace() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn staged_import_uses_the_observed_bytes_and_cleans_up_a_refused_file() {
+    use fireemu_core_storage::store::{
+        ImportSpoolError, ImportedBody, ImportedObject, ObjectDigests,
+    };
+
+    let root = std::env::temp_dir().join(format!("spill-stage-import-{}", std::process::id()));
+    let process = ProcessSpill::create(&root).unwrap();
+    let dir = process.spill_dir();
+    let bucket = BucketName::try_new("example.appspot.com").unwrap();
+    let name = ObjectName::try_new("object").unwrap();
+    let now = LogicalInstant::UNIX_EPOCH;
+    let original: Vec<u8> = (0..147_593_u64).map(|i| i.to_le_bytes()[0]).collect();
+    let size = original.len() as u64;
+    let template = |md5| ImportedObject {
+        bucket: bucket.clone(),
+        name: name.clone(),
+        generation: 42,
+        metageneration: 3,
+        content_type: "text/plain".to_owned(),
+        content_disposition: None,
+        content_encoding: None,
+        content_language: None,
+        cache_control: None,
+        custom: std::collections::BTreeMap::new(),
+        custom_defined: false,
+        time_created: now,
+        updated: now,
+        download_tokens: vec![],
+        md5: Some(md5),
+        crc32c: Some(ObjectDigests::new(&original).crc32c()),
+        size: Some(size),
+    };
+
+    assert!(matches!(
+        ImportedBody::stage(&dir, original.as_slice(), size - 1, 64 * 1024),
+        Err(ImportSpoolError::Limit)
+    ));
+    assert!(spill_files(process.path()).is_empty());
+
+    let mut store = StorageState::new(1);
+    store.set_spill(Some((dir.clone(), 0)));
+    let staged = ImportedBody::stage(&dir, original.as_slice(), size, 64 * 1024).unwrap();
+    assert_eq!(staged.len(), size);
+    assert!(matches!(
+        store.insert_imported_body(template([0; 16]), staged),
+        Err(StorageError::ChecksumMismatch(_))
+    ));
+    assert!(spill_files(process.path()).is_empty());
+    assert!(store.get(&bucket, &name).is_none());
+
+    let staged = ImportedBody::stage(&dir, original.as_slice(), size, 64 * 1024).unwrap();
+    let before = spill_files(process.path());
+    assert_eq!(before.len(), 1);
+    let object = template(ObjectDigests::new(&original).md5());
+    let restored = store.insert_imported_body(object, staged).unwrap();
+    assert_eq!(spill_files(process.path()), before);
+    assert_eq!(
+        store.body_bytes(&restored).unwrap().as_ref(),
+        original.as_slice()
+    );
+    drop(store);
+    assert!(spill_files(process.path()).is_empty());
+    drop(process);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_spill_export_reuses_complete_and_tail_chunks() {
+    let root = std::env::temp_dir().join(format!("spill-copy-writer-{}", std::process::id()));
+    let process = ProcessSpill::create(&root).unwrap();
+    let mut store = StorageState::new(1);
+    store.set_spill(Some((process.spill_dir(), 0)));
+    let bucket = BucketName::try_new("example.appspot.com").unwrap();
+    let name = ObjectName::try_new("object").unwrap();
+    let data: Vec<u8> = (0..141_721_u64).map(|i| i.to_le_bytes()[0]).collect();
+    let object = store
+        .put(
+            &bucket,
+            &name,
+            data.clone(),
+            NewMetadata::default(),
+            Precondition::default(),
+            LogicalInstant::UNIX_EPOCH,
+        )
+        .unwrap();
+    let mut output = Vec::new();
+    store.write_body(&object, &mut output).unwrap();
+    assert_eq!(output, data);
+    let error = store.write_body(&object, FailingWriter).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    drop(store);
+    drop(process);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+struct FailingWriter;
+
+#[cfg(unix)]
+impl std::io::Write for FailingWriter {
+    fn write(&mut self, _data: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn live_export_capture_drops_archived_bodies_but_pins_the_live_generation() {
+    let root = std::env::temp_dir().join(format!("spill-export-capture-{}", std::process::id()));
+    let process = ProcessSpill::create(&root).unwrap();
+    let bucket = BucketName::try_new("example.appspot.com").unwrap();
+    let name = ObjectName::try_new("history").unwrap();
+    let now = LogicalInstant::UNIX_EPOCH;
+    for backed_by_file in [false, true] {
+        let mut store = StorageState::new(1);
+        if backed_by_file {
+            store.set_spill(Some((process.spill_dir(), 0)));
+        }
+        store.set_versioning(&bucket, true);
+        let archived = store
+            .put(
+                &bucket,
+                &name,
+                b"past".to_vec(),
+                NewMetadata::default(),
+                Precondition::default(),
+                now,
+            )
+            .unwrap();
+        let live = store
+            .put(
+                &bucket,
+                &name,
+                b"current".to_vec(),
+                NewMetadata::default(),
+                Precondition::default(),
+                now,
+            )
+            .unwrap();
+        let checkpoint = store.capture_bucket_objects(|_| true);
+        let export = store.capture_live_bucket_objects(|_| true);
+        assert!(checkpoint
+            .generation(&bucket, &name, archived.generation)
+            .is_some());
+        assert!(export
+            .generation(&bucket, &name, archived.generation)
+            .is_none());
+        assert_eq!(export.all_objects(), vec![&live]);
+        store.remove_bucket(&bucket);
+        assert_eq!(export.body_bytes(&live).unwrap().as_ref(), b"current");
+    }
+    drop(process);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(not(unix))]
 #[test]
 fn process_spill_is_unsupported() {

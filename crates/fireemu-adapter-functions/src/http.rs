@@ -537,7 +537,7 @@ fn streaming_request(
     method: &str,
     path_and_query: &str,
     headers: &[(String, String)],
-    body: &[u8],
+    body: impl FnOnce() -> Bytes,
 ) -> Result<Request<Full<Bytes>>, String> {
     let mut builder = Request::builder().method(method).uri(path_and_query);
     let mut has_host = false;
@@ -566,10 +566,11 @@ fn streaming_request(
     if !has_host {
         builder = builder.header("host", addr);
     }
+    let body = body();
     builder
         .header("content-length", body.len())
         .header("connection", "close")
-        .body(Full::new(Bytes::copy_from_slice(body)))
+        .body(Full::new(body))
         .map_err(|error| format!("building the runner request: {error}"))
 }
 
@@ -718,6 +719,27 @@ async fn forward_stream_with_limit(
     path_and_query: &str,
     headers: &[(String, String)],
     body: &[u8],
+    deadline: Option<tokio::time::Instant>,
+    response_limit: u64,
+) -> Result<StartedStream, StreamStartError> {
+    forward_stream_body(
+        addr,
+        method,
+        path_and_query,
+        headers,
+        || Bytes::copy_from_slice(body),
+        deadline,
+        response_limit,
+    )
+    .await
+}
+
+pub(crate) async fn forward_stream_body(
+    addr: &str,
+    method: &str,
+    path_and_query: &str,
+    headers: &[(String, String)],
+    body: impl FnOnce() -> Bytes,
     deadline: Option<tokio::time::Instant>,
     response_limit: u64,
 ) -> Result<StartedStream, StreamStartError> {
@@ -968,12 +990,13 @@ fn publish_events(runtime: &FunctionsRuntime, channel: &str, body: &[u8]) -> Res
             }
         }
     }
-    match runtime.publish_registered_custom_events(channel, &published) {
+    let count = published.len();
+    match runtime.publish_owned_events(channel, published) {
         Ok(delivered) => {
             eprintln_at!(
                 Level::Info,
                 "[functions] eventarc: {} event(s) on {channel} reached {delivered} function(s)",
-                published.len()
+                count
             );
             // `res.sendStatus(400)` writes its status text as the body.
             if refused {
@@ -1574,12 +1597,13 @@ fn deliver_strict(
             }
         }
     }
-    match runtime.publish_registered_custom_events(channel, &published) {
+    let count = published.len();
+    match runtime.publish_owned_events(channel, published) {
         Ok(delivered) => {
             eprintln_at!(
                 Level::Info,
                 "[functions] eventarc: {} event(s) on {channel} reached {delivered} function(s)",
-                published.len()
+                count
             );
             typed(StatusCode::OK, "application/json; charset=UTF-8", "{}\n")
         }
@@ -1836,17 +1860,17 @@ async fn invoke_runner(
     method: &str,
     path_and_query: &str,
     headers: &[(String, String)],
-    body: &[u8],
+    body: Bytes,
     mode: HttpIngressMode,
 ) -> Result<Response<OutBody>, std::io::Error> {
     if mode.streaming {
         return match runtime
-            .invoke_http_stream_with_profile(
+            .invoke_http_stream_body(
                 target,
                 method,
                 path_and_query,
                 headers,
-                body,
+                || body,
                 mode.profile,
             )
             .await
@@ -1864,7 +1888,7 @@ async fn invoke_runner(
         };
     }
     match runtime
-        .invoke_http_with_profile(target, method, path_and_query, headers, body, mode.profile)
+        .invoke_http_with_profile(target, method, path_and_query, headers, &body, mode.profile)
         .await
     {
         Ok(response) => Ok(strict_default_content_type(
@@ -2053,7 +2077,7 @@ async fn respond(
         &method,
         &query.map_or_else(|| path.clone(), |q| format!("{path}?{q}")),
         &headers,
-        &body,
+        body,
         HttpIngressMode { profile, streaming },
     )
     .await
@@ -2639,6 +2663,17 @@ mod streaming_tests {
             String::from_utf8_lossy(&request).into_owned()
         });
         (address, task)
+    }
+
+    #[test]
+    fn invalid_forwarding_headers_refuse_a_stream_before_acquiring_its_body() {
+        let headers = [("invalid\nname".into(), "value".into())];
+        assert!(
+            super::streaming_request("localhost", "POST", "/call", &headers, || {
+                panic!("an invalid request must not acquire its body")
+            })
+            .is_err()
+        );
     }
 
     #[tokio::test]

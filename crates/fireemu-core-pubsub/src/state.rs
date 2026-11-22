@@ -6,6 +6,7 @@
 //! derived from the daemon seed so a run reproduces byte for byte. The protocol adapter drives
 //! it, forwarding the virtual clock and holding the lock.
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 
@@ -129,6 +130,8 @@ struct TopicEntry {
 /// Mailbox-only observers; callbacks must never acquire broker or clock locks.
 type DeliveryObserver = dyn Fn() + Send + Sync;
 
+type IssuedPageBoundaries = BTreeMap<String, BTreeMap<String, Option<String>>>;
+
 #[derive(Clone, Default)]
 struct DeliveryObservers(Vec<Weak<DeliveryObserver>>);
 
@@ -140,16 +143,22 @@ impl std::fmt::Debug for DeliveryObservers {
     }
 }
 
-/// Publishes a coalescible wake after a mutation, while its caller still holds the broker lock.
-struct DeliveryChange(DeliveryObservers);
-
-impl Drop for DeliveryChange {
-    fn drop(&mut self) {
-        for observer in &self.0 .0 {
+impl DeliveryObservers {
+    fn notify(&self) {
+        for observer in &self.0 {
             if let Some(observer) = observer.upgrade() {
                 observer();
             }
         }
+    }
+}
+
+/// Publishes a coalescible wake after a mutation, while its caller still holds the broker lock.
+struct DeliveryChange<T: Borrow<DeliveryObservers> = DeliveryObservers>(T);
+
+impl<T: Borrow<DeliveryObservers>> Drop for DeliveryChange<T> {
+    fn drop(&mut self) {
+        self.0.borrow().notify();
     }
 }
 
@@ -164,10 +173,11 @@ pub struct PubSubState {
     enforce_dead_letter_iam: bool,
     dead_letter_grants_required: bool,
     project_numbers: BTreeMap<String, String>,
-    issued_page_boundaries: BTreeMap<String, BTreeMap<String, Option<String>>>,
+    issued_page_boundaries: IssuedPageBoundaries,
     topics: BTreeMap<String, TopicEntry>,
     subscriptions: BTreeMap<String, SubscriptionState>,
     topic_subs: BTreeMap<String, BTreeSet<String>>,
+    topic_push_subs: BTreeMap<String, BTreeSet<String>>,
     function_subscriptions: BTreeSet<String>,
     snapshots: BTreeMap<String, Snapshot>,
     topic_snapshots: BTreeMap<(String, u64), BTreeSet<String>>,
@@ -177,6 +187,8 @@ pub struct PubSubState {
     ack_rng: SplitMix64,
     snapshot_counter: u64,
     snapshot_retained_bytes: usize,
+    // The earliest deadline may be earlier than all current snapshots after a deletion.
+    next_snapshot_expiry: Option<LogicalInstant>,
     push_minimum_redelivery_interval: LogicalDuration,
 }
 
@@ -196,6 +208,7 @@ impl PubSubState {
             topics: BTreeMap::new(),
             subscriptions: BTreeMap::new(),
             topic_subs: BTreeMap::new(),
+            topic_push_subs: BTreeMap::new(),
             function_subscriptions: BTreeSet::new(),
             snapshots: BTreeMap::new(),
             topic_snapshots: BTreeMap::new(),
@@ -206,6 +219,7 @@ impl PubSubState {
             ack_rng: SplitMix64::new(seed ^ 0x5053_5542_4143_4b5f),
             snapshot_counter: 0,
             snapshot_retained_bytes: 0,
+            next_snapshot_expiry: None,
             push_minimum_redelivery_interval: LogicalDuration::from_millis(
                 DEFAULT_PUSH_MINIMUM_REDELIVERY_INTERVAL_MILLIS,
             ),
@@ -337,10 +351,7 @@ impl PubSubState {
                         .dead_letter_policy
                         .as_ref()
                         .is_some_and(|p| p.dead_letter_topic == forward.dead_letter_topic)
-                        && sub
-                            .pending_forwards()
-                            .iter()
-                            .any(|message| Arc::ptr_eq(message, &forward.message))
+                        && sub.forwarding_attempt(&forward.message).is_some()
                 })
     }
 
@@ -420,8 +431,27 @@ impl PubSubState {
         policy: crate::pagination::PagingPolicy,
         name: impl Fn(&T) -> String,
     ) -> Result<crate::pagination::Page<T>> {
-        let boundary = self
-            .issued_page_boundaries
+        Self::paginate_and_record(
+            &mut self.issued_page_boundaries,
+            context,
+            resources,
+            page_size,
+            page_token,
+            policy,
+            name,
+        )
+    }
+
+    fn paginate_and_record<T, N: AsRef<str> + Into<String>>(
+        issued: &mut IssuedPageBoundaries,
+        context: &str,
+        resources: Vec<T>,
+        page_size: i32,
+        page_token: &str,
+        policy: crate::pagination::PagingPolicy,
+        name: impl Fn(&T) -> N,
+    ) -> Result<crate::pagination::Page<T>> {
+        let boundary = issued
             .get(context)
             .and_then(|tokens| tokens.get(page_token))
             .and_then(Option::as_deref);
@@ -429,8 +459,8 @@ impl PubSubState {
             resources, page_size, page_token, policy, &name, boundary,
         )?;
         if policy == crate::pagination::PagingPolicy::Strict && !page.next_page_token.is_empty() {
-            let boundary = name(page.resources.last().expect("nonempty continuation page"));
-            self.issued_page_boundaries
+            let boundary = name(page.resources.last().expect("nonempty continuation page")).into();
+            issued
                 .entry(context.to_owned())
                 .or_default()
                 .entry(page.next_page_token.clone())
@@ -580,11 +610,13 @@ impl PubSubState {
         self.resource_policies.clear();
         self.subscriptions.clear();
         self.topic_subs.clear();
+        self.topic_push_subs.clear();
         self.function_subscriptions.clear();
         self.snapshots.clear();
         self.topic_snapshots.clear();
         self.snapshot_message_refs.clear();
         self.snapshot_retained_bytes = 0;
+        self.next_snapshot_expiry = None;
         self.message_counter = 0;
         self.ack_rng = SplitMix64::new(self.seed ^ 0x5053_5542_4143_4b5f);
         self.snapshot_counter = 0;
@@ -847,6 +879,7 @@ impl PubSubState {
         let prefix = format!("{key}/");
         self.issued_page_boundaries
             .retain(|context, _| !context.starts_with(&prefix));
+        self.topic_push_subs.remove(&key);
         for subscription in self.topic_subs.remove(&key).unwrap_or_default() {
             if let Some(state) = self.subscriptions.get_mut(&subscription) {
                 state.mark_topic_deleted();
@@ -895,11 +928,15 @@ impl PubSubState {
                 "the maximum of {MAX_SUBSCRIPTIONS} subscriptions has been reached"
             )));
         }
+        let push_topic = config.is_push().then(|| topic_key.clone());
         self.topic_subs
             .entry(topic_key)
             .or_default()
             .insert(key.clone());
         self.create_resource_policy(key.clone())?;
+        if let Some(topic) = push_topic {
+            self.set_push_membership(&topic, &key, true);
+        }
         let mut subscription = SubscriptionState::new(config);
         subscription.set_push_minimum_redelivery_interval(self.push_minimum_redelivery_interval);
         self.subscriptions.insert(key, subscription);
@@ -966,15 +1003,89 @@ impl PubSubState {
             .collect()
     }
 
+    /// Selects subscriptions by resource name, cloning only configurations on the selected page.
+    pub fn list_subscriptions_page(
+        &mut self,
+        project: &str,
+        page_size: i32,
+        page_token: &str,
+        policy: crate::pagination::PagingPolicy,
+    ) -> Result<crate::pagination::Page<SubscriptionConfig>> {
+        let context = format!("projects/{project}/subscriptions");
+        // An unbounded first page must copy every configuration anyway. Keep its direct path.
+        if self.subscriptions.len() <= 1
+            || (policy == crate::pagination::PagingPolicy::Strict
+                && page_size == 0
+                && page_token.is_empty())
+        {
+            let subscriptions = self.list_subscriptions(project);
+            return self.paginate(
+                &context,
+                subscriptions,
+                page_size,
+                page_token,
+                policy,
+                |config| config.name.to_full(),
+            );
+        }
+        let prefix = format!("{context}/");
+        let subscriptions = self
+            .subscriptions
+            .range::<str, _>((
+                std::ops::Bound::Included(prefix.as_str()),
+                std::ops::Bound::Unbounded,
+            ))
+            .take_while(|(name, _)| name.starts_with(&prefix))
+            .map(|(name, subscription)| (name.as_str(), subscription.config()))
+            .collect();
+        let page = Self::paginate_and_record(
+            &mut self.issued_page_boundaries,
+            &context,
+            subscriptions,
+            page_size,
+            page_token,
+            policy,
+            |(name, _)| *name,
+        )?;
+        Ok(crate::pagination::Page {
+            resources: page
+                .resources
+                .into_iter()
+                .map(|(_, config)| config.clone())
+                .collect(),
+            next_page_token: page.next_page_token,
+        })
+    }
+
+    fn set_push_membership(&mut self, topic_key: &str, subscription_key: &str, push: bool) {
+        if push {
+            // A subscription can outlive its deleted topic. A mode update cannot reattach it.
+            if self
+                .topic_subs
+                .get(topic_key)
+                .is_some_and(|members| members.contains(subscription_key))
+            {
+                self.topic_push_subs
+                    .entry(topic_key.to_owned())
+                    .or_default()
+                    .insert(subscription_key.to_owned());
+            }
+        } else if let Some(members) = self.topic_push_subs.get_mut(topic_key) {
+            members.remove(subscription_key);
+            if members.is_empty() {
+                self.topic_push_subs.remove(topic_key);
+            }
+        }
+    }
+
     /// Returns push-enabled subscriptions attached to a topic.
     #[must_use]
     pub fn push_subscriptions(&self, topic: &TopicName) -> Vec<(SubscriptionName, String)> {
-        self.topic_subs
+        self.topic_push_subs
             .get(&topic.to_full())
             .into_iter()
             .flatten()
             .filter_map(|key| self.subscriptions.get(key))
-            .filter(|subscription| subscription.config().is_push())
             .map(|subscription| {
                 (
                     subscription.config().name.clone(),
@@ -995,8 +1106,12 @@ impl PubSubState {
         };
         self.resource_policies.remove(&key);
         self.function_subscriptions.remove(&key);
-        if let Some(set) = self.topic_subs.get_mut(&state.config().topic.to_full()) {
+        let topic_key = state.config().topic.to_full();
+        if let Some(set) = self.topic_subs.get_mut(&topic_key) {
             set.remove(&key);
+        }
+        if state.config().is_push() {
+            self.set_push_membership(&topic_key, &key, false);
         }
         Ok(())
     }
@@ -1025,7 +1140,13 @@ impl PubSubState {
     ) -> Result<()> {
         let _changed = self.delivery_change();
         let subscription = self.sub_mut(name)?;
+        let was_push = subscription.config().is_push();
         subscription.set_push_config(push_config);
+        let push = subscription.config().is_push();
+        if was_push != push {
+            let topic_key = subscription.config().topic.to_full();
+            self.set_push_membership(&topic_key, &name.to_full(), push);
+        }
         Ok(())
     }
 
@@ -1084,7 +1205,14 @@ impl PubSubState {
         if strict {
             candidate.validate_production_configuration()?;
         }
-        self.sub_mut(name)?.replace_config(candidate);
+        let subscription = self.sub_mut(name)?;
+        let was_push = subscription.config().is_push();
+        subscription.replace_config(candidate);
+        let push = subscription.config().is_push();
+        if was_push != push {
+            let topic_key = subscription.config().topic.to_full();
+            self.set_push_membership(&topic_key, &name.to_full(), push);
+        }
         Ok(())
     }
 
@@ -1101,12 +1229,21 @@ impl PubSubState {
     }
 
     fn remove_expired_snapshots(&mut self, now: LogicalInstant) {
-        let expired = self
-            .snapshots
-            .values()
-            .filter(|snapshot| snapshot.expire_at <= now)
-            .map(|snapshot| snapshot.name.clone())
-            .collect::<Vec<_>>();
+        if self.next_snapshot_expiry.is_none_or(|expiry| expiry > now) {
+            return;
+        }
+        let mut next = None;
+        let mut expired = Vec::new();
+        for snapshot in self.snapshots.values() {
+            if snapshot.expire_at <= now {
+                expired.push(snapshot.name.clone());
+            } else {
+                next = Some(next.map_or(snapshot.expire_at, |earliest: LogicalInstant| {
+                    earliest.min(snapshot.expire_at)
+                }));
+            }
+        }
+        self.next_snapshot_expiry = next;
         for name in expired {
             self.remove_snapshot(&name);
         }
@@ -1183,6 +1320,20 @@ impl PubSubState {
     }
 
     fn snapshot_owned_bytes(snapshot: &Snapshot) -> usize {
+        Self::snapshot_non_label_bytes(snapshot)
+            .saturating_add(Self::snapshot_label_bytes(&snapshot.labels))
+    }
+
+    fn snapshot_label_bytes(labels: &BTreeMap<String, String>) -> usize {
+        labels
+            .iter()
+            .map(|(key, value)| {
+                Self::owned_string_bytes(key).saturating_add(Self::owned_string_bytes(value))
+            })
+            .sum()
+    }
+
+    fn snapshot_non_label_bytes(snapshot: &Snapshot) -> usize {
         let references = snapshot
             .captured_messages
             .iter()
@@ -1195,20 +1346,12 @@ impl PubSubState {
                 )
             })
             .sum::<usize>();
-        let labels = snapshot
-            .labels
-            .iter()
-            .map(|(key, value)| {
-                Self::owned_string_bytes(key).saturating_add(Self::owned_string_bytes(value))
-            })
-            .sum::<usize>();
         std::mem::size_of::<Snapshot>()
             .saturating_add(256)
             .saturating_add(Self::owned_string_bytes(&snapshot.name))
             .saturating_add(Self::owned_string_bytes(&snapshot.owner_project))
             .saturating_add(snapshot.topic.to_full().len())
             .saturating_add(references)
-            .saturating_add(labels)
     }
 
     fn snapshot_lifetime(
@@ -1327,10 +1470,10 @@ impl PubSubState {
                     ))
                 })?;
         let oldest_unacknowledged = source_subscription.oldest_unacknowledged_publish_time();
+        let lifetime = Self::snapshot_lifetime(oldest_unacknowledged, now)?;
         let unacknowledged_message_ids = source_subscription.unacknowledged_message_ids();
         let retained_message_ids = source_subscription.retained_message_ids();
         let captured_messages = source_subscription.retained_messages();
-        let lifetime = Self::snapshot_lifetime(oldest_unacknowledged, now)?;
         let expire_at = now.checked_add(lifetime).unwrap_or(LogicalInstant::MAX);
         let snapshot = Snapshot {
             name: name.clone(),
@@ -1368,6 +1511,10 @@ impl PubSubState {
             .entry((snapshot.topic.to_full(), snapshot.topic_incarnation))
             .or_default()
             .insert(name.clone());
+        self.next_snapshot_expiry = Some(
+            self.next_snapshot_expiry
+                .map_or(expire_at, |earliest| earliest.min(expire_at)),
+        );
         self.snapshots.insert(name, snapshot.clone());
         Ok(snapshot)
     }
@@ -1428,9 +1575,11 @@ impl PubSubState {
             .get(name)
             .cloned()
             .ok_or_else(|| PubSubError::not_found(format!("snapshot {name} not found")))?;
-        let previous_bytes = Self::snapshot_owned_bytes(&updated);
+        let non_label_bytes = Self::snapshot_non_label_bytes(&updated);
+        let previous_bytes =
+            non_label_bytes.saturating_add(Self::snapshot_label_bytes(&updated.labels));
+        let updated_bytes = non_label_bytes.saturating_add(Self::snapshot_label_bytes(&labels));
         updated.labels = labels;
-        let updated_bytes = Self::snapshot_owned_bytes(&updated);
         let total = self
             .snapshot_retained_bytes
             .saturating_sub(previous_bytes)
@@ -2004,27 +2153,30 @@ impl PubSubState {
     pub fn pending_dead_letters(&self) -> Vec<DeadLetterForward> {
         self.subscriptions
             .values()
-            .flat_map(|subscription| {
-                let source_subscription = subscription.config().name.clone();
-                let dead_letter_topic = subscription
-                    .config()
-                    .dead_letter_policy
-                    .as_ref()
-                    .map(|policy| policy.dead_letter_topic.clone());
-                subscription
-                    .pending_forwards()
-                    .into_iter()
-                    .filter_map(move |message| {
-                        dead_letter_topic
-                            .clone()
-                            .map(|dead_letter_topic| DeadLetterForward {
-                                source_subscription: source_subscription.clone(),
-                                dead_letter_topic,
-                                message,
-                            })
-                    })
+            .filter_map(|subscription| {
+                let policy = subscription.config().dead_letter_policy.as_ref()?;
+                Some(
+                    subscription
+                        .pending_forwards()
+                        .into_iter()
+                        .map(move |message| DeadLetterForward {
+                            source_subscription: subscription.config().name.clone(),
+                            dead_letter_topic: policy.dead_letter_topic.clone(),
+                            message,
+                        }),
+                )
             })
+            .flatten()
             .collect()
+    }
+
+    /// Whether a retained transfer still needs destination admission, without cloning messages.
+    #[must_use]
+    pub fn has_pending_dead_letters(&self) -> bool {
+        self.subscriptions.values().any(|subscription| {
+            subscription.config().dead_letter_policy.is_some()
+                && subscription.has_pending_forwards()
+        })
     }
 
     /// Marks a dead-letter source message complete after its destination publication succeeds.
@@ -2071,6 +2223,35 @@ impl PubSubState {
         let sub = self.sub_mut(name)?;
         for id in ack_ids {
             sub.modify_ack_deadline(id, seconds, now);
+        }
+        Ok(())
+    }
+
+    /// Applies one streaming frame's deadline changes in order against one subscription.
+    ///
+    /// Repeated ACK IDs retain their order, and observers receive the same wake notification
+    /// after each change as with individual calls.
+    pub fn modify_ack_deadlines(
+        &mut self,
+        name: &SubscriptionName,
+        changes: &[(String, u32)],
+        now: impl Into<crate::subscription::DeliveryTimes>,
+    ) -> Result<()> {
+        let Some(((first_id, first_seconds), rest)) = changes.split_first() else {
+            return Ok(());
+        };
+        let now = now.into();
+        let observers = self.delivery_observers.clone();
+        // Scope each wake to one change so an observer unwinding cannot notify twice.
+        let sub = {
+            let _changed = DeliveryChange(&observers);
+            let sub = self.sub_mut(name)?;
+            sub.modify_ack_deadline(first_id, *first_seconds, now);
+            sub
+        };
+        for (ack_id, seconds) in rest {
+            let _changed = DeliveryChange(&observers);
+            sub.modify_ack_deadline(ack_id, *seconds, now);
         }
         Ok(())
     }
@@ -3588,6 +3769,7 @@ mod tests {
         state.delete_topic(&dead_topic).unwrap();
         assert_eq!(state.pull(&source, 10, now).unwrap().len(), 0);
         assert_eq!(state.pending_dead_letters().len(), 1);
+        assert!(state.has_pending_dead_letters());
         assert_eq!(state.pull(&source, 10, now).unwrap().len(), 0);
 
         state.delete_subscription(&dead_sub).unwrap();
@@ -3612,6 +3794,7 @@ mod tests {
             .complete_dead_letter(&forward.source_subscription, &forward.message.message_id)
             .unwrap());
         assert_eq!(state.pending_dead_letters().len(), 0);
+        assert!(!state.has_pending_dead_letters());
         let dead = state.pull(&dead_sub, 10, now).unwrap();
         assert_eq!(dead.len(), 1);
         assert_eq!(dead[0].message.message.data, b"recoverable poison");
@@ -4146,6 +4329,344 @@ mod tests {
                     for (receipt, expected) in got.iter().zip(want) {
                         assert!(Arc::ptr_eq(&receipt.message, expected));
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn earlier_snapshot_created_after_rewind_still_expires_on_publish() {
+        let mut state = PubSubState::new(7);
+        let source = topic("p", "snapshot-source");
+        let other = topic("p", "snapshot-target");
+        let sub = SubscriptionName::new("p", "snapshot-sub").unwrap();
+        let at = LogicalInstant::from_unix_seconds;
+        for item in [&source, &other] {
+            state.create_topic(item.clone(), BTreeMap::new()).unwrap();
+        }
+        state
+            .create_subscription(sub_cfg(
+                "p",
+                "snapshot-sub",
+                "snapshot-source",
+                Filter::always(),
+            ))
+            .unwrap();
+        let deleted = "projects/p/snapshots/deleted";
+        let standing = "projects/p/snapshots/standing";
+        let earlier = "projects/p/snapshots/earlier";
+        state
+            .create_snapshot(deleted, &sub, BTreeMap::new(), at(100))
+            .unwrap();
+        state
+            .create_snapshot(standing, &sub, BTreeMap::new(), at(200))
+            .unwrap();
+        state.delete_snapshot(deleted, at(201)).unwrap();
+        let early = state
+            .create_snapshot(earlier, &sub, BTreeMap::new(), at(50))
+            .unwrap();
+        let before = at(50 + SNAPSHOT_TTL_SECONDS - 1);
+        state
+            .publish(&other, vec![data(b"before")], before)
+            .unwrap();
+        assert!(state.snapshots.contains_key(earlier));
+        state
+            .publish(&other, vec![data(b"due")], early.expire_at)
+            .unwrap();
+        assert!(!state.snapshots.contains_key(earlier));
+        assert!(state.snapshots.contains_key(standing));
+        state
+            .publish(&other, vec![data(b"later")], at(200 + SNAPSHOT_TTL_SECONDS))
+            .unwrap();
+        assert!(state.snapshots.is_empty());
+        assert_eq!(state.snapshot_retained_bytes, 0);
+    }
+
+    #[test]
+    fn subscription_page_conversion_preserves_policy_and_issued_boundaries() {
+        use crate::pagination::PagingPolicy;
+
+        let make = || {
+            let mut state = PubSubState::new(1);
+            for project in ["p", "p-a", "z"] {
+                state
+                    .create_topic(topic(project, "events"), BTreeMap::new())
+                    .unwrap();
+                for suffix in ["first", "second", "third"] {
+                    state
+                        .create_subscription(sub_cfg(project, suffix, "events", Filter::always()))
+                        .unwrap();
+                }
+            }
+            state
+        };
+        let predecessor = |state: &mut PubSubState, size, token: &str, policy| {
+            state.paginate(
+                "projects/p/subscriptions",
+                state.list_subscriptions("p"),
+                size,
+                token,
+                policy,
+                |cfg| cfg.name.to_full(),
+            )
+        };
+        for policy in [PagingPolicy::Strict, PagingPolicy::Emulator] {
+            let mut baseline = make();
+            let mut current = make();
+            let page = predecessor(&mut baseline, 1, "", policy).unwrap();
+            assert_eq!(
+                current.list_subscriptions_page("p", 1, "", policy).unwrap(),
+                page
+            );
+            let deleted = page.resources[0].name.clone();
+            for state in [&mut baseline, &mut current] {
+                state.delete_subscription(&deleted).unwrap();
+                state.delete_topic(&topic("p", "events")).unwrap();
+            }
+            for (size, token) in [
+                (1, page.next_page_token.as_str()),
+                (0, ""),
+                (-1, ""),
+                (3, "unknown"),
+                (1001, ""),
+            ] {
+                assert_eq!(
+                    current.list_subscriptions_page("p", size, token, policy),
+                    predecessor(&mut baseline, size, token, policy)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn snapshot_label_budget_matches_reference_with_spare_string_capacity() {
+        let mut state = PubSubState::new(9);
+        let source = topic("p", "snapshot-topic");
+        let sub = SubscriptionName::new("p", "snapshot-sub").unwrap();
+        let at = LogicalInstant::from_unix_seconds(100);
+        let snapshot_name = "projects/p/snapshots/edit";
+        state.create_topic(source.clone(), BTreeMap::new()).unwrap();
+        state
+            .create_subscription(sub_cfg(
+                "p",
+                "snapshot-sub",
+                "snapshot-topic",
+                Filter::always(),
+            ))
+            .unwrap();
+        state.publish(&source, vec![data(b"pending")], at).unwrap();
+        let mut previous_label = String::with_capacity(200);
+        previous_label.push_str("old");
+        state
+            .create_snapshot(
+                snapshot_name,
+                &sub,
+                BTreeMap::from([("label".to_owned(), previous_label)]),
+                at,
+            )
+            .unwrap();
+
+        let mut new_label = String::with_capacity(400);
+        new_label.push_str("new");
+        let labels = BTreeMap::from([("label".to_owned(), new_label)]);
+        let old_owned = PubSubState::snapshot_owned_bytes(&state.snapshots[snapshot_name].clone());
+        let mut labels_reference = state.snapshots[snapshot_name].clone();
+        labels_reference.labels = labels;
+        let new_owned = PubSubState::snapshot_owned_bytes(&labels_reference);
+
+        state.snapshot_retained_bytes = MAX_SNAPSHOT_RETAINED_BYTES + old_owned - new_owned + 1;
+        assert_eq!(
+            state
+                .update_snapshot(
+                    snapshot_name,
+                    labels_reference
+                        .labels
+                        .clone()
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let mut identical_capacity = String::with_capacity(400);
+                            identical_capacity.push_str(&v);
+                            (k, identical_capacity)
+                        })
+                        .collect(),
+                    at
+                )
+                .unwrap_err()
+                .code(),
+            crate::Code::ResourceExhausted
+        );
+        assert_eq!(state.snapshots[snapshot_name].labels["label"], "old");
+        state.snapshot_retained_bytes -= 1;
+        state
+            .update_snapshot(snapshot_name, labels_reference.labels, at)
+            .unwrap();
+        assert_eq!(state.snapshot_retained_bytes, MAX_SNAPSHOT_RETAINED_BYTES);
+        assert_eq!(state.snapshots[snapshot_name].labels["label"], "new");
+    }
+
+    #[test]
+    fn push_membership_follows_config_updates_and_topic_detachment() {
+        let mut state = PubSubState::new(8);
+        let source = topic("p", "events");
+        let push_sub = SubscriptionName::new("p", "push-sub").unwrap();
+        let pull_sub = SubscriptionName::new("p-other", "pull-sub").unwrap();
+        let at = LogicalInstant::from_unix_seconds(100);
+        let create_topic =
+            |state: &mut PubSubState| state.create_topic(source.clone(), BTreeMap::new()).unwrap();
+        create_topic(&mut state);
+        let push = PushConfig {
+            push_endpoint: "http://localhost:55555".to_owned(),
+            ..Default::default()
+        };
+        let mut pull_config = sub_cfg("p-other", "pull-sub", "events", Filter::always());
+        pull_config.topic = source.clone();
+        state.create_subscription(pull_config).unwrap();
+        let mut push_config = sub_cfg("p", "push-sub", "events", Filter::always());
+        push_config.push_config = push.clone();
+        state.create_subscription(push_config).unwrap();
+        assert_eq!(
+            state.push_subscriptions(&source),
+            [(push_sub.clone(), push.push_endpoint.clone())]
+        );
+
+        state
+            .update_subscription(&pull_sub, Some(10), Some(push.clone()))
+            .unwrap();
+        assert_eq!(state.push_subscriptions(&source).len(), 2);
+        state
+            .update_push_config(&push_sub, PushConfig::default())
+            .unwrap();
+        assert_eq!(
+            state.push_subscriptions(&source),
+            [(pull_sub.clone(), push.push_endpoint.clone())]
+        );
+
+        state.delete_topic(&source).unwrap();
+        create_topic(&mut state);
+        state
+            .update_push_config(&pull_sub, PushConfig::default())
+            .unwrap();
+        state.update_push_config(&pull_sub, push.clone()).unwrap();
+        state
+            .publish(&source, vec![data(b"new incarnation")], at)
+            .unwrap();
+        assert!(state.push_subscriptions(&source).is_empty());
+        assert!(state
+            .subscription_config(&pull_sub)
+            .unwrap()
+            .topic
+            .is_deleted_sentinel());
+        state.delete_subscription(&pull_sub).unwrap();
+        state.clear_project("p");
+        assert!(state.push_subscriptions(&source).is_empty());
+    }
+
+    #[test]
+    fn deadline_batch_preserves_mutation_order_and_notification_count() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut state = PubSubState::new(6);
+        let source = topic("p", "events");
+        let sub = SubscriptionName::new("p", "subscriber").unwrap();
+        let at = LogicalInstant::from_unix_seconds;
+        state.create_topic(source.clone(), BTreeMap::new()).unwrap();
+        state
+            .create_subscription(sub_cfg("p", "subscriber", "events", Filter::always()))
+            .unwrap();
+        state
+            .publish(&source, vec![data(b"first"), data(b"second")], at(100))
+            .unwrap();
+        let batch = state.pull(&sub, 2, at(100)).unwrap();
+        let notices = Arc::new(AtomicUsize::new(0));
+        let increments = Arc::clone(&notices);
+        let observer: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            increments.fetch_add(1, Ordering::Relaxed);
+        });
+        state.observe_delivery(&observer);
+        let changes = [
+            (batch[0].ack_id.clone(), 100),
+            (batch[0].ack_id.clone(), 0),
+            (batch[0].ack_id.clone(), 200),
+            ("unknown".to_owned(), 10),
+            (batch[1].ack_id.clone(), 100),
+            (batch[1].ack_id.clone(), 8),
+        ];
+        state.modify_ack_deadlines(&sub, &changes, at(101)).unwrap();
+        assert_eq!(notices.load(Ordering::Relaxed), changes.len());
+        let redelivered = state.pull(&sub, 2, at(101)).unwrap();
+        assert_eq!(redelivered.len(), 1);
+        assert_eq!(redelivered[0].message.message.data, b"first");
+        assert!(state.pull(&sub, 2, at(108)).unwrap().is_empty());
+        let expired = state.pull(&sub, 1, at(109)).unwrap();
+        assert_eq!(expired[0].message.message.data, b"second");
+    }
+
+    #[test]
+    fn batch_observer_unwind_stops_after_one_notification() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let apply = |multiple: bool, present: bool, panics: bool, batch: bool| {
+            let mut state = PubSubState::new(7);
+            let source = topic("p", "events");
+            let subscriber = SubscriptionName::new("p", "subscriber").unwrap();
+            let missing = SubscriptionName::new("p", "missing").unwrap();
+            let at = LogicalInstant::from_unix_seconds;
+            state.create_topic(source.clone(), BTreeMap::new()).unwrap();
+            state
+                .create_subscription(sub_cfg("p", "subscriber", "events", Filter::always()))
+                .unwrap();
+            state
+                .publish(&source, vec![data(b"one"), data(b"two")], at(100))
+                .unwrap();
+            let leases = state.pull(&subscriber, 2, at(100)).unwrap();
+            let mut changes = vec![(leases[0].ack_id.clone(), 5)];
+            if multiple {
+                changes.push((leases[1].ack_id.clone(), 2));
+            }
+            let watched = if present { &subscriber } else { &missing };
+            let calls = Arc::new(AtomicUsize::new(0));
+            let ticks = Arc::clone(&calls);
+            let observer: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                assert!(
+                    ticks.fetch_add(1, Ordering::Relaxed) != 0 || !panics,
+                    "first delivery observation panicked"
+                );
+            });
+            state.observe_delivery(&observer);
+            let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+                if batch {
+                    state.modify_ack_deadlines(watched, &changes, at(101))?;
+                } else {
+                    for (id, seconds) in &changes {
+                        state.modify_ack_deadline(
+                            watched,
+                            std::slice::from_ref(id),
+                            *seconds,
+                            at(101),
+                        )?;
+                    }
+                }
+                Ok(())
+            }));
+            let outcome = result
+                .map(|result| result.map_err(|error| error.code()))
+                .map_err(|_| ());
+            (
+                outcome,
+                calls.load(Ordering::Relaxed),
+                state.next_pull_deadline(&subscriber, at(101)).unwrap(),
+            )
+        };
+        for multiple in [false, true] {
+            for present in [false, true] {
+                for panics in [false, true] {
+                    let reference = apply(multiple, present, panics, false);
+                    assert_eq!(
+                        apply(multiple, present, panics, true),
+                        reference,
+                        "multiple {multiple}, present {present}, panics {panics}",
+                    );
                 }
             }
         }

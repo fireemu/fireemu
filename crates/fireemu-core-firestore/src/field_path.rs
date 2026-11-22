@@ -29,6 +29,31 @@ pub(crate) fn implied_path_too_long_message(path: &str) -> String {
 
 const DOCUMENT_NAME: &str = "__name__";
 
+/// Validates one raw segment without allocating a field path.
+pub fn validate_segment(segment: &str) -> Result<(), FieldPathError> {
+    check_segment(segment, 0, false)
+}
+
+fn check_segment(s: &str, index: usize, allow_reserved: bool) -> Result<(), FieldPathError> {
+    if s.is_empty() {
+        return Err(FieldPathError::EmptySegment { index });
+    }
+    if let Some((offset, _)) = s.char_indices().find(|(_, c)| c.is_control()) {
+        return Err(FieldPathError::ControlCharacter { offset });
+    }
+    if s.len() > MAX_FIELD_NAME_BYTES {
+        return Err(FieldPathError::SegmentTooLong {
+            index,
+            bytes: s.len(),
+            maximum: MAX_FIELD_NAME_BYTES,
+        });
+    }
+    if is_reserved(s) && s != DOCUMENT_NAME && !allow_reserved {
+        return Err(FieldPathError::ReservedSegment { index });
+    }
+    Ok(())
+}
+
 /// Field path parse / validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldPathError {
@@ -172,22 +197,7 @@ impl FieldPath {
         }
         let mut canonical_len = segments.len() - 1;
         for (index, s) in segments.iter().enumerate() {
-            if s.is_empty() {
-                return Err(FieldPathError::EmptySegment { index });
-            }
-            if let Some((offset, _)) = s.char_indices().find(|(_, c)| c.is_control()) {
-                return Err(FieldPathError::ControlCharacter { offset });
-            }
-            if s.len() > MAX_FIELD_NAME_BYTES {
-                return Err(FieldPathError::SegmentTooLong {
-                    index,
-                    bytes: s.len(),
-                    maximum: MAX_FIELD_NAME_BYTES,
-                });
-            }
-            if is_reserved(s) && s != DOCUMENT_NAME && !allow_reserved {
-                return Err(FieldPathError::ReservedSegment { index });
-            }
+            check_segment(s, index, allow_reserved)?;
             // Path bytes are counted on the raw segment bytes plus separators; backtick
             // quoting is a client-side notation and does not count toward the limit.
             canonical_len += s.len();

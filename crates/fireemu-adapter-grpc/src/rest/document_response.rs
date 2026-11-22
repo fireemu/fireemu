@@ -1,31 +1,62 @@
 //! Root-only framing for the selected single Document success envelope.
 
+use serde::ser::{SerializeMap as _, Serializer as _};
 use serde_json::Value;
 
-/// Keep scalar escaping and every nested value with `serde_json`, while ordering the root.
+/// Serialize the root in wire order, keeping every nested value and escape with `serde_json`.
 pub(crate) fn to_vec(body: &Value) -> Result<Vec<u8>, serde_json::Error> {
     let document = body.as_object().expect("selected Document is an object");
-    let mut bytes = b"{\n".to_vec();
-    let mut first = true;
-    for key in ["name", "fields", "createTime", "updateTime"] {
-        let Some(value) = document.get(key) else {
-            continue;
-        };
-        if !first {
-            bytes.extend_from_slice(b",\n");
-        }
-        first = false;
-        bytes.extend_from_slice(b"  ");
-        bytes.extend_from_slice(&serde_json::to_vec(key)?);
-        bytes.extend_from_slice(b": ");
-        let encoded = serde_json::to_vec_pretty(value)?;
-        for (index, line) in encoded.split(|byte| *byte == b'\n').enumerate() {
-            if index > 0 {
-                bytes.extend_from_slice(b"\n  ");
-            }
-            bytes.extend_from_slice(line);
+    let keys = ["name", "fields", "createTime", "updateTime"];
+    // The selected envelope includes an empty line when no known fields are present.
+    if !keys.iter().any(|key| document.contains_key(*key)) {
+        return Ok(b"{\n\n}\n".to_vec());
+    }
+
+    let mut bytes = Vec::new();
+    let mut serializer = serde_json::Serializer::pretty(&mut bytes);
+    let mut root = serializer.serialize_map(None)?;
+    for key in keys {
+        if let Some(value) = document.get(key) {
+            root.serialize_entry(key, value)?;
         }
     }
-    bytes.extend_from_slice(b"\n}\n");
+    root.end()?;
+    bytes.push(b'\n');
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ordered_document_keeps_exact_root_and_nested_layout() {
+        let body = json!({
+            "updateTime": "2000Z",
+            "unknown": "omitted",
+            "name": "projects/é/documents/🔥",
+            "fields": {"z": [{"stringValue": "a\nb"}, true]},
+            "createTime": "1999Z"
+        });
+        assert_eq!(
+            to_vec(&body).unwrap(),
+            r#"{
+  "name": "projects/é/documents/🔥",
+  "fields": {
+    "z": [
+      {
+        "stringValue": "a\nb"
+      },
+      true
+    ]
+  },
+  "createTime": "1999Z",
+  "updateTime": "2000Z"
+}
+"#
+            .as_bytes(),
+        );
+        assert_eq!(to_vec(&json!({})).unwrap(), b"{\n\n}\n");
+    }
 }

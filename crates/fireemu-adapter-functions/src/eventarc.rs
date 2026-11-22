@@ -355,16 +355,16 @@ impl TriggerRegistry {
         } else {
             format!("projects/{project}/locations/{location}/channels/")
         };
-        let mut names: Vec<String> = self
+        let mut names: Vec<&String> = self
             .events
             .values()
             .flatten()
-            .map(|registration| registration.match_channel.clone())
+            .map(|registration| &registration.match_channel)
             .filter(|channel| channel.starts_with(&prefix))
             .collect();
         names.sort();
         names.dedup();
-        names
+        names.into_iter().cloned().collect()
     }
 
     /// Resolves matching registrations to their local function names.
@@ -458,6 +458,9 @@ pub fn registered_function(
                         == Some(channel.as_str())
                     && registered_filters == &filters
             );
+            if !event_matches {
+                return false;
+            }
             let key = match &function.trigger {
                 Trigger::Eventarc {
                     channel: registered_channel,
@@ -468,7 +471,7 @@ pub fn registered_function(
                 ),
                 _ => format!("{}-{}-{generation}", function.region, function.name),
             };
-            event_matches && trigger_name == key
+            trigger_name == key
         })
         .map(|function| function.name.clone())
 }

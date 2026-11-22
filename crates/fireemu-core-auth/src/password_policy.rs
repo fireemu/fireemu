@@ -218,9 +218,12 @@ impl PasswordPolicy {
     /// credential is checked only when `force_upgrade_on_signin` is enabled.
     #[must_use]
     pub fn rejects(&self, operation: Operation, password: &str) -> bool {
+        self.rejects_for(operation) && !self.violations(password).is_empty()
+    }
+
+    pub(crate) fn rejects_for(&self, operation: Operation) -> bool {
         self.enforcement_state == EnforcementState::Enforce
             && (operation != Operation::SignIn || self.force_upgrade_on_signin)
-            && !self.violations(password).is_empty()
     }
 }
 

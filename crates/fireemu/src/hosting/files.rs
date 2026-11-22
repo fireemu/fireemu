@@ -49,13 +49,12 @@ pub(super) fn decode_uri(value: &str) -> Option<String> {
     String::from_utf8(output).ok()
 }
 
-pub(super) fn open(
+fn open_candidate(
     root: &cap_std::fs::Dir,
     public_root: &str,
     path: &str,
     ignore: &[String],
-    strict: bool,
-) -> Option<Asset> {
+) -> Option<(std::fs::File, std::fs::Metadata)> {
     let decoded = decode_uri(path)?;
     let relative = decoded.strip_prefix('/')?;
     if relative.is_empty()
@@ -89,11 +88,22 @@ pub(super) fn open(
         use cap_std::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NONBLOCK);
     }
-    let mut file = root.open_with(&resolved, &options).ok()?.into_std();
+    let file = root.open_with(&resolved, &options).ok()?.into_std();
     let metadata = file.metadata().ok()?;
     if !metadata.is_file() {
         return None;
     }
+    Some((file, metadata))
+}
+
+pub(super) fn open(
+    root: &cap_std::fs::Dir,
+    public_root: &str,
+    path: &str,
+    ignore: &[String],
+    strict: bool,
+) -> Option<Asset> {
+    let (mut file, metadata) = open_candidate(root, public_root, path, ignore)?;
     let etag = if strict {
         format!("\"{:x}\"", digest::<Sha256>(&mut file)?)
     } else {
@@ -108,30 +118,47 @@ pub(super) fn open(
     })
 }
 
-fn digest<D: Digest>(file: &mut std::fs::File) -> Option<md5::digest::Output<D>> {
-    let mut digest = D::new();
+fn read_file(file: &mut std::fs::File, mut consume: impl FnMut(&[u8])) -> Option<()> {
     let mut buffer = vec![0u8; 65536];
     loop {
         let read = file.read(&mut buffer).ok()?;
         if read == 0 {
-            return Some(digest.finalize());
+            return Some(());
         }
-        digest.update(&buffer[..read]);
+        consume(&buffer[..read]);
     }
 }
 
-pub(super) async fn find(
+fn digest<D: Digest>(file: &mut std::fs::File) -> Option<md5::digest::Output<D>> {
+    let mut digest = D::new();
+    read_file(file, |bytes| digest.update(bytes))?;
+    Some(digest.finalize())
+}
+
+/// Verify the same read and rewind as `open`, for responses that discard the digest.
+pub(super) fn readable(
+    root: &cap_std::fs::Dir,
+    public_root: &str,
+    path: &str,
+    ignore: &[String],
+) -> Option<()> {
+    let (mut file, _) = open_candidate(root, public_root, path, ignore)?;
+    read_file(&mut file, |_| {})?;
+    file.rewind().ok()
+}
+
+pub(super) async fn find<T: Send + 'static>(
     root: Option<Arc<cap_std::fs::Dir>>,
     paths: Vec<String>,
     ignore: Vec<String>,
     public_root: String,
-    strict: bool,
-) -> Option<(String, Asset)> {
+    probe: impl Fn(&cap_std::fs::Dir, &str, String, &[String]) -> Option<T> + Send + 'static,
+) -> Option<T> {
     let root = root?;
     tokio::task::spawn_blocking(move || {
-        paths.into_iter().find_map(|path| {
-            open(&root, &public_root, &path, &ignore, strict).map(|asset| (path, asset))
-        })
+        paths
+            .into_iter()
+            .find_map(|path| probe(&root, &public_root, path, &ignore))
     })
     .await
     .ok()

@@ -212,6 +212,24 @@ test("a hop whose recorded digest reproduces at its commit and whose tokens matc
   assert.deepEqual(problems([goodHop()]), []);
 });
 
+test("a lineage hop checks the same historical bytes for readability and both digests", () => {
+  const reads = [];
+  const result = lineageProblems(
+    { version: 1, hops: [goodHop()] },
+    {
+      lanes: { lane: LANE },
+      reader: (commit) => (file) => {
+        reads.push([commit, file]);
+        return reader(commit)(file);
+      },
+      shallow: false,
+      current: readTree,
+    },
+  );
+  assert.deepEqual(result, []);
+  assert.deepEqual(reads, [[COMMIT_OLD, "a.mjs"]]);
+});
+
 test("a hop that misreproduces its recorded digest or its scheme-2 digest is refused", () => {
   assert.match(problems([{ ...goodHop(), from: "9".repeat(64) }]).join("\n"), /recorded digest/);
   assert.match(problems([{ ...goodHop(), to: "9".repeat(64) }]).join("\n"), /scheme-2/);

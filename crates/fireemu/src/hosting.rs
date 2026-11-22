@@ -507,6 +507,26 @@ impl Site {
         path: &str,
         headers: &hyper::HeaderMap,
     ) -> Option<(String, files::Asset)> {
+        let strict = self.strict;
+        self.find_asset(path, headers, move |root, public, path, ignore| {
+            files::open(root, public, &path, ignore, strict).map(|asset| (path, asset))
+        })
+        .await
+    }
+
+    async fn readable_asset(&self, path: &str, headers: &hyper::HeaderMap) -> Option<()> {
+        self.find_asset(path, headers, |root, public, path, ignore| {
+            files::readable(root, public, &path, ignore)
+        })
+        .await
+    }
+
+    async fn find_asset<T: Send + 'static>(
+        &self,
+        path: &str,
+        headers: &hyper::HeaderMap,
+        probe: impl Fn(&cap_std::fs::Dir, &str, String, &[String]) -> Option<T> + Send + 'static,
+    ) -> Option<T> {
         files::find(
             self.root.clone(),
             self.candidates(path, headers),
@@ -521,7 +541,7 @@ impl Site {
                 )
                 .collect(),
             self.ignore_root.clone(),
-            self.strict,
+            probe,
         )
         .await
     }
@@ -986,80 +1006,68 @@ impl Site {
         let path = normalized.as_str();
         let clean = self.data["cleanUrls"].as_bool().unwrap_or(false);
         let slash = self.data["trailingSlash"].as_bool();
-        if let Some((file, asset)) = self.asset(path, headers).await {
-            if clean && path.ends_with(".html") {
-                let mut target = path.trim_end_matches(".html").to_owned();
-                if target.ends_with("/index") {
-                    target.truncate(target.len() - 6);
-                }
-                if slash == Some(true) && !target.ends_with('/') {
-                    target.push('/');
-                }
-                if target.is_empty() {
-                    target.push('/');
-                }
+        let lookup = async |path: &str, redirect: Option<String>, status| {
+            if let Some(mut target) = redirect {
+                self.readable_asset(path, headers).await?;
                 target.push_str(query);
                 return Some(self.redirect(&target, 301, head));
             }
-            return Some(self.serve_asset(
-                &file,
-                asset,
-                // Production serves `/404.html` as the file it is (`v01.not-found-direct`).
-                if path == "/404.html" && !self.strict {
-                    404
-                } else {
-                    200
-                },
-                head,
-                headers,
-            ));
+            let (file, asset) = self.asset(path, headers).await?;
+            Some(self.serve_asset(&file, asset, status, head, headers))
+        };
+        let redirect_html = (clean && path.ends_with(".html")).then(|| {
+            let mut target = path.trim_end_matches(".html").to_owned();
+            if target.ends_with("/index") {
+                target.truncate(target.len() - 6);
+            }
+            if (slash == Some(true) && !target.ends_with('/')) || target.is_empty() {
+                target.push('/');
+            }
+            target
+        });
+        // Production serves `/404.html` as the file it is (`v01.not-found-direct`).
+        let status = if path == "/404.html" && !self.strict {
+            404
+        } else {
+            200
+        };
+        if let Some(answer) = lookup(path, redirect_html, status).await {
+            return Some(answer);
         }
         let has_slash = path.ends_with('/');
         let index = format!("{}/index.html", path.trim_end_matches('/'));
-        if let Some((file, asset)) = self.asset(&index, headers).await {
+        let redirect_index =
             if (slash.is_none() && !has_slash && !clean) || (slash == Some(true) && !has_slash) {
-                return Some(self.redirect(&format!("{path}/{query}"), 301, head));
-            }
-            if slash == Some(false) && has_slash && path != "/" {
-                return Some(self.redirect(
-                    &format!("{}{query}", path.trim_end_matches('/')),
-                    301,
-                    head,
-                ));
-            }
-            return Some(self.serve_asset(&file, asset, 200, head, headers));
-        }
-        if clean {
-            let appended = if has_slash && slash.is_some() {
-                format!("{}.html", path.trim_end_matches('/'))
-            } else if !has_slash {
-                format!("{path}.html")
+                Some(format!("{path}/"))
+            } else if slash == Some(false) && has_slash && path != "/" {
+                Some(path.trim_end_matches('/').to_owned())
             } else {
-                path.to_owned()
+                None
             };
-            if let Some((file, asset)) = self.asset(&appended, headers).await {
-                if slash == Some(false) && has_slash {
-                    return Some(self.redirect(
-                        &format!("{}{query}", path.trim_end_matches('/')),
-                        301,
-                        head,
-                    ));
-                }
-                if slash == Some(true) && !has_slash {
-                    return Some(self.redirect(&format!("{path}/{query}"), 301, head));
-                }
-                if appended.ends_with("/index.html") {
-                    let target = appended.trim_end_matches("/index.html");
-                    return Some(self.redirect(
-                        &format!("{}{query}", if target.is_empty() { "/" } else { target }),
-                        301,
-                        head,
-                    ));
-                }
-                return Some(self.serve_asset(&file, asset, 200, head, headers));
-            }
+        if let Some(answer) = lookup(&index, redirect_index, 200).await {
+            return Some(answer);
         }
-        None
+        if !clean {
+            return None;
+        }
+        let appended = if has_slash && slash.is_some() {
+            format!("{}.html", path.trim_end_matches('/'))
+        } else if !has_slash {
+            format!("{path}.html")
+        } else {
+            path.to_owned()
+        };
+        let redirect_appended = if slash == Some(false) && has_slash {
+            Some(path.trim_end_matches('/').to_owned())
+        } else if slash == Some(true) && !has_slash {
+            Some(format!("{path}/"))
+        } else if appended.ends_with("/index.html") {
+            let target = appended.trim_end_matches("/index.html");
+            Some(if target.is_empty() { "/" } else { target }.to_owned())
+        } else {
+            None
+        };
+        lookup(&appended, redirect_appended, 200).await
     }
     /// A generated body that production serves as a deployed file would be (`init.json`, `init.js`:
     /// quoted SHA-256 `ETag`, `Last-Modified`, cacheable). The emulator profile sends the bare body.
@@ -1091,7 +1099,7 @@ impl Site {
         path: &str,
         headers: &hyper::HeaderMap,
     ) -> Option<Response<Body>> {
-        self.asset(path, headers).await?;
+        self.readable_asset(path, headers).await?;
         let mut answer = response(200, Bytes::new(), Some("text/html; charset=UTF-8"));
         answer.headers_mut().insert(
             "allow",
@@ -1511,13 +1519,18 @@ fn capture_part(part: &str, strict: bool) -> Option<(&str, &str)> {
     Some((&name[..end], &name[end..]))
 }
 
-fn capture_token(strict: bool) -> regex::Regex {
-    regex::Regex::new(if strict {
-        r":([A-Za-z_]+)"
+fn capture_token(strict: bool) -> &'static regex::Regex {
+    static STRICT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r":([A-Za-z_]+)").expect("strict capture token")
+    });
+    static EMULATOR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r":([A-Za-z0-9_]+)").expect("emulator capture token")
+    });
+    if strict {
+        &STRICT
     } else {
-        r":([A-Za-z0-9_]+)"
-    })
-    .expect("constant capture token")
+        &EMULATOR
+    }
 }
 
 fn redirect_parts<'a>(
@@ -1757,6 +1770,17 @@ mod redirect_tests {
             Config::parse_many(&json!([]), Path::new("/project")),
             Err("hosting must contain at least one site".to_owned())
         );
+    }
+
+    #[test]
+    fn each_profile_reuses_its_capture_pattern_and_keeps_its_own_syntax() {
+        let strict = capture_token(true);
+        let emulator = capture_token(false);
+        assert!(std::ptr::eq(strict, capture_token(true)));
+        assert!(std::ptr::eq(emulator, capture_token(false)));
+        assert!(!std::ptr::eq(strict, emulator));
+        assert_eq!(&strict.captures(":my_id2").unwrap()[1], "my_id");
+        assert_eq!(&emulator.captures(":my_id2").unwrap()[1], "my_id2");
     }
 
     fn configured_redirect(

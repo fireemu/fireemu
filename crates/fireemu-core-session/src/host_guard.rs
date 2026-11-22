@@ -41,6 +41,7 @@
 //! The official emulator (firebase-tools) checks no `Host`; this guard is a local-only
 //! defence with no production counterpart and applies to both profiles alike.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
@@ -121,7 +122,7 @@ impl AllowedHost {
         Ok(if suffix {
             Self::Suffix(format!(".{name}"))
         } else {
-            Self::Exact(name)
+            Self::Exact(name.into_owned())
         })
     }
 }
@@ -252,19 +253,21 @@ pub fn admits<'a>(
     match parse_authority(host) {
         Some(Authority::Address) => Ok(()),
         Some(Authority::Name(name)) if policy.admits_name(&name) => Ok(()),
-        Some(Authority::Name(name)) => Err(HostRefusal { name: Some(name) }),
+        Some(Authority::Name(name)) => Err(HostRefusal {
+            name: Some(name.into_owned()),
+        }),
         None => Err(HostRefusal { name: None }),
     }
 }
 
-enum Authority {
+enum Authority<'a> {
     Address,
-    Name(String),
+    Name(Cow<'a, str>),
 }
 
 /// Parses `host[:port]`: an IPv4 literal, a bracketed IPv6 literal or a host name, and a
 /// port of plain digits that fits in 16 bits.
-fn parse_authority(raw: &[u8]) -> Option<Authority> {
+fn parse_authority(raw: &[u8]) -> Option<Authority<'_>> {
     let raw = std::str::from_utf8(raw).ok()?;
     if let Some(rest) = raw.strip_prefix('[') {
         let (address, suffix) = rest.split_once(']')?;
@@ -296,18 +299,32 @@ fn port_ok(port: &str) -> bool {
 
 /// A host name lowercased and without one trailing dot, when every label is non-empty and
 /// holds letters, digits, `-` and `_` only.
-fn normalize_name(name: &str) -> Option<String> {
+fn normalize_name(name: &str) -> Option<Cow<'_, str>> {
     let name = name.strip_suffix('.').unwrap_or(name);
     if name.is_empty() || name.len() > MAX_NAME_BYTES {
         return None;
     }
-    let labels_ok = name.split('.').all(|label| {
-        !label.is_empty()
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    });
-    labels_ok.then(|| name.to_ascii_lowercase())
+    let mut needs_lowercase = false;
+    let mut label_is_empty = true;
+    for byte in name.bytes() {
+        match byte {
+            b'.' if !label_is_empty => label_is_empty = true,
+            b'A'..=b'Z' => {
+                label_is_empty = false;
+                needs_lowercase = true;
+            }
+            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => label_is_empty = false,
+            _ => return None,
+        }
+    }
+    if label_is_empty {
+        return None;
+    }
+    Some(if needs_lowercase {
+        Cow::Owned(name.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(name)
+    })
 }
 
 static POLICY: RwLock<Option<Arc<HostPolicy>>> = RwLock::new(None);

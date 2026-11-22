@@ -5,6 +5,7 @@
 //! loopback interface so a test fixture cannot turn a local publish into an arbitrary outbound
 //! request.
 
+use base64::Engine as _;
 use std::fmt::Write as _;
 use std::time::Duration;
 
@@ -160,15 +161,30 @@ async fn deliver_async(endpoint: &Endpoint, body: &str) -> Result<(), String> {
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
         .map_err(|error| format!("push endpoint connection failed: {error}"))?;
-    let request = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+    // Keep small messages in one write. A large already formatted JSON payload can be sent from
+    // its original buffer without allocating another copy of the complete HTTP request.
+    let inline_body = body.len() < 64 * 1024;
+    let inline_bytes = if inline_body { body.len() } else { 0 };
+    let mut request =
+        String::with_capacity(endpoint.path.len() + endpoint.authority.len() + 128 + inline_bytes);
+    let _ = write!(
+        request,
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         endpoint.path,
         endpoint.authority,
         body.len(),
-        body
     );
-    stream
-        .write_all(request.as_bytes())
+    if inline_body {
+        request.push_str(body);
+    }
+    let write = async {
+        stream.write_all(request.as_bytes()).await?;
+        if !inline_body {
+            stream.write_all(body.as_bytes()).await?;
+        }
+        Ok::<(), std::io::Error>(())
+    };
+    write
         .await
         .map_err(|error| format!("push endpoint write failed: {error}"))?;
     stream
@@ -236,16 +252,26 @@ fn push_body(
     } else {
         String::new()
     };
-    format!(
-        "{{\"message\":{{\"data\":\"{}\",\"messageId\":\"{}\",\"publishTime\":\"{}\",\"attributes\":{}{}}},\"subscription\":\"{}\"{}}}",
-        base64(&stored.message.data),
-        json_escape(&stored.message_id),
-        json_escape(&publish_time),
-        attributes,
-        ordering_key,
-        json_escape(&subscription.to_full()),
-        delivery_attempt,
-    )
+    let message_id = json_escape(&stored.message_id);
+    let publish_time = json_escape(&publish_time);
+    let subscription = json_escape(&subscription.to_full());
+    let mut body = String::with_capacity(
+        stored.message.data.len().div_ceil(3) * 4
+            + message_id.len()
+            + publish_time.len()
+            + attributes.len()
+            + ordering_key.len()
+            + subscription.len()
+            + delivery_attempt.len()
+            + 128,
+    );
+    body.push_str("{\"message\":{\"data\":\"");
+    base64::engine::general_purpose::STANDARD.encode_string(&stored.message.data, &mut body);
+    let _ = write!(
+        body,
+        "\",\"messageId\":\"{message_id}\",\"publishTime\":\"{publish_time}\",\"attributes\":{attributes}{ordering_key}}},\"subscription\":\"{subscription}\"{delivery_attempt}}}",
+    );
+    body
 }
 
 fn json_escape(value: &str) -> String {
@@ -270,6 +296,7 @@ fn json_escape_into(output: &mut String, value: &str) {
     }
 }
 
+#[cfg(test)]
 fn base64(bytes: &[u8]) -> String {
     fireemu_core_types::hash::base64_standard(bytes)
 }
@@ -396,6 +423,51 @@ mod tests {
             "without a dead-letter policy the payload reports no attempt: {body}"
         );
         assert_eq!(base64(b""), "");
+    }
+
+    #[tokio::test]
+    async fn large_push_request_keeps_exact_headers_and_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let subscription = SubscriptionName::new("demo-app", "push").unwrap();
+        let mut received = received();
+        Arc::make_mut(&mut received.message)
+            .message
+            .data
+            .resize(65_537, 0xab);
+        let expected_body = format!(
+            r#"{{"message":{{"data":"{}","messageId":"7","publishTime":"2023-11-14T22:13:20Z","attributes":{{}}}},"subscription":"projects/demo-app/subscriptions/push","deliveryAttempt":1}}"#,
+            base64(&received.message.message.data)
+        );
+        let expected = format!(
+            "POST /large HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{expected_body}",
+            expected_body.len()
+        );
+        let worker = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(2), async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = vec![0; expected.len()];
+                stream.read_exact(&mut request).await.unwrap();
+                assert_eq!(request, expected.as_bytes());
+                stream
+                    .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                    .await
+                    .unwrap();
+            })
+            .await
+            .unwrap();
+        });
+        let answer = deliver_with_timeout(
+            &format!("http://{address}/large"),
+            &subscription,
+            &received,
+            true,
+            Duration::from_secs(3),
+        )
+        .await;
+        worker.await.unwrap();
+        assert!(answer.is_ok(), "{answer:?}");
     }
 
     #[test]

@@ -92,7 +92,7 @@ impl Json {
         out
     }
 
-    fn write(&self, out: &mut String, depth: usize) {
+    pub(crate) fn write(&self, out: &mut String, depth: usize) {
         match self {
             Self::Null => out.push_str("null"),
             Self::Bool(true) => out.push_str("true"),

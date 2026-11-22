@@ -75,8 +75,7 @@ fn render_handler(state: &AuthState, query: Option<&str>) -> WidgetResponse {
 /// The `<li>` reuse-account items for every identity linked at `provider_id`.
 fn provider_list_html(store: &AuthStore, provider_id: &str) -> String {
     store
-        .provider_infos(provider_id)
-        .iter()
+        .iter_provider_infos(provider_id)
         .map(|info| {
             let claims = fake_claims_json(info);
             let id_token = encode_uri_component(&claims);

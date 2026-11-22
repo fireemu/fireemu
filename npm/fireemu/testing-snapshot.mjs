@@ -88,16 +88,21 @@ export async function readRegularFile(path,signal,openFile=open){
 }
 
 export async function removeSnapshotTree(root){
-  const makeWritable=async(path,knownInfo)=>{
-    let info=knownInfo;
-    try{info??=await lstat(path);}catch(error){if(error.code==='ENOENT')return;throw error;}
-    if(!info.isDirectory()||info.isSymbolicLink())return;
-    await chmod(path,0o700);
-    for(const entry of await readdir(path,{withFileTypes:true})){
-      if(entry.isDirectory())await makeWritable(join(path,entry.name));
-    }
+  if(process.platform!=='win32'){
+    try{await rm(root,{recursive:true,force:true});return;}
+    catch(error){if(error.code!=='EACCES'&&error.code!=='EPERM')throw error;}
+  }
+  const makeWritable=async path=>{
+    try{
+      const info=await lstat(path);
+      if(!info.isDirectory()||info.isSymbolicLink())return;
+      await chmod(path,0o700);
+      for(const entry of await readdir(path,{withFileTypes:true})){
+        if(entry.isDirectory())await makeWritable(join(path,entry.name));
+      }
+    }catch(error){if(error.code!=='ENOENT')throw error;}
   };
-  try{await makeWritable(root);}catch(error){if(error.code!=='ENOENT')throw error;}
+  await makeWritable(root);
   await rm(root,{recursive:true,force:true});
 }
 
@@ -185,7 +190,7 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
     activeCopies.add(operation);
     void operation.then(()=>activeCopies.delete(operation));
   };
-  const visit=async(input,output,ancestors=new Set())=>{
+  const visit=async(input,output,ancestors=new Set(),parentReady=false)=>{
     checkCopyState();
     let info=await checked(signal,()=>lstat(input));
     if(filter&&!await checked(signal,()=>filter(input,info)))return;
@@ -196,7 +201,7 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
         if(process.platform==='win32'){
           kind=(await checked(signal,()=>stat(input))).isDirectory()?(isAbsolute(value)?'junction':'dir'):'file';
         }
-        await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
+        if(!parentReady)await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
         await checked(signal,()=>symlink(value,output,kind));
         stats.symlinks++;
         return;
@@ -217,14 +222,14 @@ async function copyInputTree(source,destination,{signal,dereference=true,filter,
       }
       for(const entry of entries){
         checkSignal(signal);
-        await visit(join(input,entry.name),join(output,entry.name),nextAncestors);
+        await visit(join(input,entry.name),join(output,entry.name),nextAncestors,true);
       }
       directories.push([output,info.mode&0o7777]);
       stats.directories++;
       return;
     }
     if(!info.isFile())throw Error(`Cannot copy unsupported non-regular input ${JSON.stringify(input)}`);
-    await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
+    if(!parentReady)await checked(signal,()=>mkdir(dirname(output),{recursive:true,mode:0o700}));
     await copyLeaf(input,output,info);
   };
   try{

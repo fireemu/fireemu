@@ -1210,11 +1210,12 @@ fn listen_target_id(
     target: &pb::Target,
     targets: &BTreeMap<i32, TargetState>,
 ) -> Result<(i32, bool), Status> {
+    let strict = ctx.gateway.production_refusals();
     choose_target_id(
         target.target_id,
-        &targets.keys().copied().collect(),
-        targets.values().any(|t| t.assigned),
-        ctx.gateway.production_refusals(),
+        targets.keys(),
+        target.target_id > 0 && strict && targets.values().any(|t| t.assigned),
+        strict,
     )
     .map_err(Status::invalid_argument)
 }
@@ -1222,9 +1223,9 @@ fn listen_target_id(
 /// The decision of `listen_target_id`, without the stream: `requested` is the id on the wire,
 /// `used` the ids active on the stream, `assigned_before` whether one of them was server-assigned
 /// and `strict` whether production's refusals apply.
-fn choose_target_id(
+fn choose_target_id<'a>(
     requested: i32,
-    used: &BTreeSet<i32>,
+    used: impl IntoIterator<Item = &'a i32>,
     assigned_before: bool,
     strict: bool,
 ) -> Result<(i32, bool), &'static str> {
@@ -1298,11 +1299,18 @@ fn is_token_shaped(bytes: &[u8]) -> bool {
     <[u8; 32]>::try_from(bytes).is_ok()
 }
 
-/// The smallest positive id not in `used`: what the server assigns to a target sent with id 0.
-fn first_free_target_id(used: &BTreeSet<i32>) -> i32 {
-    (1..=i32::MAX)
-        .find(|id| !used.contains(id))
-        .unwrap_or(i32::MAX)
+/// The smallest positive id missing from the sorted active ids: what the server assigns to a target sent with id 0.
+fn first_free_target_id<'a>(used: impl IntoIterator<Item = &'a i32>) -> i32 {
+    let mut next = 1;
+    for &id in used {
+        if id > next {
+            break;
+        }
+        if id == next {
+            next = next.saturating_add(1);
+        }
+    }
+    next
 }
 
 fn decode_target(
@@ -1569,16 +1577,13 @@ fn authorize_target(
     match &state.kind {
         TargetKind::Documents(paths) => {
             if let Some(rules) = &ctx.rules {
-                let items = paths
-                    .iter()
-                    .map(|path| (path.clone(), db.get(path).cloned()))
-                    .collect::<Vec<_>>();
+                let items = paths.iter().map(|path| (path, db.get(path)));
                 let reader = crate::rules::StateReader {
                     db,
                     parent: &state.parent,
                     version: None,
                 };
-                rules.authorize_gets(principal, &items, &reader)?;
+                rules.authorize_gets_borrowed(principal, items, &reader)?;
             }
         }
         TargetKind::Query(query) => {
@@ -1820,20 +1825,32 @@ fn refresh_target_delta(
                 return Ok(None);
             };
             examined = changed_paths.len();
-            let matched_paths = matched
-                .iter()
-                .map(|document| document.path.clone())
-                .collect::<BTreeSet<_>>();
+            // Each changed path produces at most one match. When all matched, none can leave.
+            if matched.is_empty() {
+                for path in changed_paths {
+                    if state.known.remove(path) {
+                        out_removal(db, path, id, read_time, &mut state.pending);
+                    }
+                }
+                return Ok(Some(examined));
+            }
+            let mut removals = Vec::new();
+            if matched.len() < changed_paths.len() {
+                let matched_paths = matched.iter().map(|doc| &doc.path).collect::<BTreeSet<_>>();
+                for path in changed_paths {
+                    if !matched_paths.contains(path) && state.known.remove(path) {
+                        removals.push(path);
+                    }
+                }
+            }
             for document in matched {
                 if state.known.get(&document.path) != Some(document.version) {
                     state.known.insert(&document.path, document.version);
                     out_change(document, id, &mut state.pending);
                 }
             }
-            for path in changed_paths {
-                if !matched_paths.contains(path) && state.known.remove(path) {
-                    out_removal(db, path, id, read_time, &mut state.pending);
-                }
+            for path in removals {
+                out_removal(db, path, id, read_time, &mut state.pending);
             }
         }
     }
@@ -3696,6 +3713,30 @@ mod refresh_tests {
     }
 
     #[test]
+    fn document_target_authorization_reads_each_resource_from_the_supplied_snapshot() {
+        let mut fixture = generation_fixture();
+        let rules = fireemu_core_rules::runtime::LoadedRules::from_source("rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /restored/{document} { allow get: if resource.data.v == 'visible'; } } }").unwrap();
+        let auth = fireemu_core_auth::store::AuthStore::new(
+            "demo-app",
+            fireemu_core_types::determinism::SplitMix64::new(3),
+            fireemu_core_auth::mfa::TotpPolicy::default(),
+        );
+        fixture.context.rules = Some(Arc::new(RulesEnforcer::new(
+            Arc::new(fireemu_core_rules::runtime::RulesetSlot::new(rules)),
+            Arc::new(std::sync::Mutex::new(auth)),
+            Arc::clone(&fixture.clock),
+        )));
+        let target = fixture.targets.get_mut(&1).unwrap();
+        target.kind = TargetKind::Documents(vec![path("restored/a")]);
+        let state = state_with_value("visible");
+        authorize_target(&fixture.context, &Principal::Anonymous, &state, target).unwrap();
+        target.kind = TargetKind::Documents(vec![path("restored/a"), path("restored/missing")]);
+        let error =
+            authorize_target(&fixture.context, &Principal::Anonymous, &state, target).unwrap_err();
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
+    }
+
+    #[test]
     fn same_version_target_add_reauthorizes_existing_targets_after_rules_reload() {
         const ALLOW: &str = "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{path=**} { allow read: if true; } } }";
         const DENY: &str = "rules_version = '2'; service cloud.firestore { match /databases/{database}/documents { match /{path=**} { allow read: if false; } } }";
@@ -4409,6 +4450,63 @@ mod refresh_tests {
         .unwrap();
         assert_eq!(examined, Some(1));
         assert_eq!(target.pending.len(), 1);
+    }
+
+    #[test]
+    fn mixed_query_delta_emits_the_matching_change_before_the_removed_document() {
+        let mut fixture = generation_fixture();
+        let target = fixture.targets.get_mut(&1).unwrap();
+        let mut db = FirestoreState::new();
+        let added = path("restored/z");
+        let removed = path("restored/a");
+        db.commit(&[set("restored/z")], None, LogicalInstant::UNIX_EPOCH)
+            .unwrap();
+        let paths = BTreeSet::from([removed.clone(), added.clone()]);
+        refresh_target_delta(&db, 1, target, prost_types::Timestamp::default(), &paths).unwrap();
+        assert_eq!(target.known.len(), 1);
+        assert!(target.known.get(&added).is_some());
+        assert!(target.known.get(&removed).is_none());
+        assert_eq!(target.pending.len(), 2);
+        let PendingListenResponse::Documents {
+            documents,
+            target_id,
+        } = &target.pending[0]
+        else {
+            panic!("expected the new document before the deletion");
+        };
+        assert_eq!(*target_id, 1);
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].path, added);
+        let removed_frame = target.pending[1]
+            .as_wire()
+            .and_then(|wire| wire.response_type.as_ref());
+        assert!(
+            matches!(removed_frame, Some(pb::listen_response::ResponseType::DocumentDelete(change)) if change.document == removed.resource_name())
+        );
+    }
+
+    #[test]
+    fn a_query_delta_without_any_matches_still_emits_the_known_deletion() {
+        let mut fixture = generation_fixture();
+        let target = fixture.targets.get_mut(&1).unwrap();
+        let removed = path("restored/a");
+        let paths = BTreeSet::from([removed.clone()]);
+        refresh_target_delta(
+            &FirestoreState::new(),
+            1,
+            target,
+            prost_types::Timestamp::default(),
+            &paths,
+        )
+        .unwrap();
+        assert_eq!(target.known.len(), 0);
+        assert_eq!(target.pending.len(), 1);
+        let frame = target.pending[0]
+            .as_wire()
+            .and_then(|wire| wire.response_type.as_ref());
+        assert!(
+            matches!(frame, Some(pb::listen_response::ResponseType::DocumentDelete(change)) if change.document == removed.resource_name())
+        );
     }
 
     #[test]

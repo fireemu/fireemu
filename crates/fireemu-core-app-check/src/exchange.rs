@@ -91,16 +91,13 @@ pub fn exchange(
     let project = registry.resolve_project(request.project_selector);
     let app = project.and_then(|p| registry.app(p, request.app_id));
     let usable = app.is_some_and(crate::registry::RegisteredApp::enabled);
-    let digests = app
-        .map(crate::registry::RegisteredApp::digests)
-        .unwrap_or_default();
-
-    // Fixed-capacity scan without an early exit; an unknown app compares against the dummy.
+    // Preserve the fixed number of comparisons regardless of app, digest count, or slot.
     let mut matched = false;
     for slot in 0..MAX_DEBUG_TOKENS_PER_APP {
-        let candidate = digests.get(slot).copied().unwrap_or(DUMMY_DIGEST);
+        let digest = app.and_then(|app| app.digest_at(slot));
+        let candidate = digest.unwrap_or(&DUMMY_DIGEST);
         let equal = constant_time.eq(&presented, candidate.as_bytes());
-        matched |= equal && slot < digests.len();
+        matched |= equal && digest.is_some();
     }
     if !matched || !usable || canonical.is_none() {
         return ExchangeOutcome::AttestationFailed;

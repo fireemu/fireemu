@@ -383,3 +383,66 @@ fn a_successful_update_restores_dispatch_index_after_a_caught_callback_panic() {
     assert!(outbox.dispatchable_queue_heads().next().is_none());
     assert!(outbox.has_active());
 }
+
+#[test]
+fn a_reused_evicted_id_registers_its_new_pending_key_and_queue() {
+    let mut outbox = Outbox::with_terminal_retention(1);
+    for id in [1, 2] {
+        outbox.enqueue_in_queue(event(id, 5), "old").unwrap();
+        outbox
+            .update(EventId::new(id), EventRecord::cancel)
+            .unwrap()
+            .unwrap();
+    }
+    assert!(outbox.record(EventId::new(1)).is_none());
+    outbox.enqueue_in_queue(event(1, 9), "new").unwrap();
+    assert_eq!(outbox.evicted(), 1);
+    assert!(outbox.has_active());
+    assert_eq!(
+        outbox.dispatchable_queue_heads().collect::<Vec<_>>(),
+        vec![(
+            "new",
+            (LogicalInstant::from_unix_seconds(9), EventId::new(1))
+        )],
+    );
+    assert!(outbox
+        .retries_due(LogicalInstant::from_unix_seconds(100))
+        .is_empty());
+}
+
+#[test]
+fn reusing_an_evicted_id_reconciles_an_older_retry_left_by_a_replacement() {
+    use fireemu_core_events::retry::RetryPolicy;
+    use fireemu_core_types::time::LogicalDuration;
+
+    let mut outbox = Outbox::with_terminal_retention(1);
+    let id = EventId::new(1);
+    outbox.enqueue_in_queue(event(1, 0), "old").unwrap();
+    outbox.update(id, EventRecord::cancel).unwrap().unwrap();
+
+    let mut replacement = EventRecord::new(event(1, 0));
+    replacement.lease().unwrap();
+    replacement.start().unwrap();
+    let delay = LogicalDuration::from_seconds(10);
+    let policy = RetryPolicy::try_new(3, delay, delay).unwrap();
+    replacement
+        .fail(&policy, LogicalInstant::from_unix_seconds(1))
+        .unwrap();
+    outbox.update(id, |record| *record = replacement).unwrap();
+
+    outbox.enqueue_in_queue(event(2, 0), "other").unwrap();
+    outbox
+        .update(EventId::new(2), EventRecord::cancel)
+        .unwrap()
+        .unwrap();
+    assert!(outbox.record(id).is_none());
+
+    outbox.enqueue_in_queue(event(1, 9), "new").unwrap();
+    assert!(outbox
+        .retries_due(LogicalInstant::from_unix_seconds(100))
+        .is_empty());
+    assert_eq!(
+        outbox.dispatchable_queue_heads().collect::<Vec<_>>(),
+        vec![("new", (LogicalInstant::from_unix_seconds(9), id)),]
+    );
+}

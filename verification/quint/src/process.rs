@@ -659,6 +659,27 @@ fn copy_checker_input(
     Ok(())
 }
 
+/// Hashes exactly the bytes successfully written to the destination.
+pub(crate) fn copy_with_sha256(
+    mut source: impl std::io::Read,
+    mut destination: impl std::io::Write,
+) -> std::io::Result<String> {
+    let mut buffer = vec![0; 128 * 1024];
+    let mut hasher = Sha256::new();
+    loop {
+        let count = match source.read(&mut buffer) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if count == 0 {
+            break;
+        }
+        destination.write_all(&buffer[..count])?;
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Verifies the exact backend artifact before any model or mutation can execute it.
 pub fn validate_apalache_distribution() -> Result<PathBuf, String> {
     let quint_home = std::env::var_os("QUINT_HOME")
@@ -684,9 +705,9 @@ pub fn validate_apalache_distribution() -> Result<PathBuf, String> {
             launcher.display()
         ));
     }
-    let bytes = fs::read(&jar)
+    let digest = fs::File::open(&jar)
+        .and_then(|jar| copy_with_sha256(jar, std::io::sink()))
         .map_err(|error| format!("cannot read pinned Apalache JAR {}: {error}", jar.display()))?;
-    let digest = format!("{:x}", Sha256::digest(bytes));
     if digest != APALACHE_JAR_SHA256 {
         return Err(format!(
             "Apalache JAR digest mismatch for {}: expected {APALACHE_JAR_SHA256}, found {digest}",

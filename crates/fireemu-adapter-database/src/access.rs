@@ -349,10 +349,8 @@ impl Database {
             return self.options().rules == RulesMode::AllowAll;
         };
         let limits = self.options().limits;
-        let before = self
-            .tree(namespace)
-            .cloned()
-            .unwrap_or_else(|| Tree::new(limits));
+        let empty = Tree::new(limits);
+        let before = self.tree(namespace).unwrap_or(&empty);
         let mut after = before.clone();
         let context = fireemu_core_database::ServerValueContext { now_millis: now };
         let written: Vec<Path> = match op {
@@ -403,10 +401,8 @@ impl Database {
             };
         };
         let limits = self.options().limits;
-        let before = self
-            .tree(namespace)
-            .cloned()
-            .unwrap_or_else(|| Tree::new(limits));
+        let empty = Tree::new(limits);
+        let before = self.tree(namespace).unwrap_or(&empty);
         let context = fireemu_core_database::ServerValueContext { now_millis: now };
         let auth = access.auth();
         let requester = Requester { auth: &auth, now };

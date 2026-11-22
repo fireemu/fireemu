@@ -23,7 +23,7 @@ struct Draft {
     version: Option<DraftVersion>,
 }
 
-#[derive(Deserialize, serde::Serialize)]
+#[derive(Deserialize)]
 struct Group {
     #[serde(default)]
     parameters: Parameters,
@@ -129,12 +129,24 @@ impl ClientTemplate {
             }
             validate_parameter(name, definition, &conditions)?;
         }
+        let groups = draft
+            .parameter_groups
+            .into_iter()
+            .map(|(name, group)| {
+                let mut metadata = group.metadata;
+                metadata.insert("parameters".into(), parameters_value(group.parameters));
+                (name, Value::Object(metadata))
+            })
+            .collect();
         Ok(Self {
-            document: json!({
-                "conditions": draft.conditions,
-                "parameters": draft.parameters,
-                "parameterGroups": draft.parameter_groups,
-            }),
+            document: Value::Object(Map::from_iter([
+                (
+                    "conditions".into(),
+                    Value::Array(draft.conditions.into_iter().map(Value::Object).collect()),
+                ),
+                ("parameters".into(), parameters_value(draft.parameters)),
+                ("parameterGroups".into(), Value::Object(groups)),
+            ])),
             description: draft.version.and_then(|version| version.description),
         })
     }
@@ -145,11 +157,24 @@ impl ClientTemplate {
         &self.document
     }
 
+    pub(crate) fn into_document(self) -> Value {
+        self.document
+    }
+
     /// Optional author-supplied version description.
     #[must_use]
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
+}
+
+fn parameters_value(parameters: Parameters) -> Value {
+    Value::Object(
+        parameters
+            .into_iter()
+            .map(|(key, fields)| (key, Value::Object(fields)))
+            .collect(),
+    )
 }
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -514,9 +539,12 @@ impl TemplateStore {
     ) -> Result<WriteResult, Error> {
         let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
+        let forced = if_match == "*";
+        if !forced && if_match != self.current().etag() {
+            return Err(Error::PreconditionFailed);
+        }
         let template = ClientTemplate::validate(draft);
         let mut history = self.history.lock().expect("template store lock");
-        let forced = if_match == "*";
         let base_etag = head(&history.versions).etag();
         if !forced && if_match != base_etag {
             return Err(Error::PreconditionFailed);

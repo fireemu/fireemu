@@ -618,10 +618,31 @@ fn unknown_name(field: &str, at: Option<&str>) -> Refusal {
 ///
 /// # Errors
 /// The refusal production gave for the first check that failed.
-#[allow(clippy::too_many_lines)] // One ordered pass over the checks production makes; splitting it would hide the order.
 pub fn admit(
     queue: &str,
     body: &Value,
+    now_nanos: i128,
+    counter: u64,
+    default_deadline_seconds: u64,
+    size: impl FnOnce() -> usize,
+) -> Result<Admitted, Refusal> {
+    admit_with_schedule(
+        queue,
+        body,
+        None,
+        now_nanos,
+        counter,
+        default_deadline_seconds,
+        size,
+    )
+}
+
+/// Applies an already validated clock rebase at the timestamp check, preserving field error precedence.
+#[allow(clippy::too_many_lines)] // One ordered pass over the checks production makes; splitting it would hide the order.
+pub(crate) fn admit_with_schedule(
+    queue: &str,
+    body: &Value,
+    rebased: Option<&str>,
     now_nanos: i128,
     counter: u64,
     default_deadline_seconds: u64,
@@ -652,9 +673,10 @@ pub fn admit(
         _ => "BASIC",
     };
     // 2. The proto parse of the two times.
-    let schedule_text = task
-        .and_then(|t| t.get("scheduleTime"))
-        .and_then(Value::as_str);
+    let schedule_text = rebased.or_else(|| {
+        task.and_then(|t| t.get("scheduleTime"))
+            .and_then(Value::as_str)
+    });
     let deadline_text = task
         .and_then(|t| t.get("dispatchDeadline"))
         .and_then(Value::as_str);

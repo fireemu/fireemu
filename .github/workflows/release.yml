@@ -459,6 +459,7 @@ jobs:
       - name: verify RTDB namespace timeout cleanup
         run: sudo env PATH="$PATH" HOME="$HOME" node conformance/src/rtdb-namespace-probe.mjs --out strict-namespace-probe
       - name: pinned OpenSSL for the frozen federation certificate fixtures
+        if: matrix.group == 'rest'
         run: |
           sh npm/scripts/install-federation-openssl.sh "$RUNNER_TEMP/fireemu-federation-openssl"
           echo "FIREEMU_FEDERATION_OPENSSL_DIR=$RUNNER_TEMP/fireemu-federation-openssl/bin" >> "$GITHUB_ENV"

@@ -6467,6 +6467,38 @@ fn account_lifecycle_keeps_admin_and_client_post_state_consistent() {
 }
 
 #[test]
+fn admin_lookup_preserves_first_occurrences_across_large_selector_lists() {
+    let s = state();
+    let ids: Vec<_> = (0..33).map(|i| format!("user-{i}")).collect();
+    for id in &ids {
+        let (status, _) = admin(
+            &s,
+            "POST",
+            &format!("{ADMIN}/accounts"),
+            &json!({"localId": id}),
+        );
+        assert_eq!(status, 200);
+    }
+    let mut requested = ids.clone();
+    requested.splice(16..16, [ids[0].clone(), ids[15].clone()]);
+    requested.extend(ids.iter().rev().cloned());
+    let (status, body) = admin(
+        &s,
+        "POST",
+        &format!("{ADMIN}/accounts:lookup"),
+        &json!({"localId": requested}),
+    );
+    assert_eq!(status, 200);
+    let returned: Vec<_> = body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|user| user["localId"].as_str().unwrap())
+        .collect();
+    assert_eq!(returned, ids);
+}
+
+#[test]
 fn admin_lookup_resolves_every_identifier_and_batch_get_pages_over_get() {
     let s = state();
     for i in 0..5 {

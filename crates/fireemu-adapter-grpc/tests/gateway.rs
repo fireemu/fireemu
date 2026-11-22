@@ -749,3 +749,53 @@ mod cursor_validation {
         }
     }
 }
+
+#[test]
+fn gateway_scan_metadata_agrees_with_per_disjunct_planning() {
+    use fireemu_core_firestore::index::plan_scans;
+    use fireemu_core_firestore::query::{FieldOp, FilterExpr, Query, QueryScope};
+    use fireemu_core_firestore::value::Value;
+
+    let clause = |name, op| FilterExpr::Field {
+        field: FieldPath::parse(name).unwrap(),
+        op,
+        value: Value::Integer(1),
+    };
+    let filters = [
+        None,
+        Some(clause("a", FieldOp::Equal)),
+        Some(FilterExpr::And(vec![
+            clause("a", FieldOp::Equal),
+            clause("b", FieldOp::Equal),
+        ])),
+        Some(FilterExpr::And(vec![
+            clause("a", FieldOp::Equal),
+            clause("b", FieldOp::GreaterThan),
+        ])),
+        Some(FilterExpr::Or(vec![
+            clause("a", FieldOp::Equal),
+            clause("b", FieldOp::Equal),
+        ])),
+    ];
+    let gateway = Gateway {
+        enforce_limits: true,
+        ctx: PlanningContext {
+            edition: FirestoreEdition::Standard,
+            api_mode: FirestoreApiMode::Native,
+            policy: IndexValidationPolicy::Emulator,
+        },
+        indexes: IndexSet::default(),
+    };
+    for filter in filters {
+        let mut query = Query::new(QueryScope::collection(
+            None,
+            CollectionId::try_new("items").unwrap(),
+        ));
+        query.filter = filter;
+        let accepted = gateway.validate_query(&query).unwrap();
+        assert_eq!(
+            accepted.scans,
+            plan_scans(&accepted.query, &[], &gateway.indexes, &gateway.ctx)
+        );
+    }
+}

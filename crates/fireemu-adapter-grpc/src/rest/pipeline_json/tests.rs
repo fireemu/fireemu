@@ -328,3 +328,33 @@ fn a_body_is_rewritten_with_canonical_bytes_or_refused() {
         );
     }
 }
+
+#[test]
+fn execute_pipeline_byte_normalization_keeps_untouched_string_storage() {
+    let mut body = json!({
+        "structuredPipeline": {"pipeline": {"stages": [{
+            "name": "select",
+            "args": [{"stringValue": "kept as owned string"}, {"bytesValue": "-_8"}]
+        }]}}
+    });
+    let string_path = "/structuredPipeline/pipeline/stages/0/args/0/stringValue";
+    let bytes_path = "/structuredPipeline/pipeline/stages/0/args/1/bytesValue";
+    let original = body
+        .pointer(string_path)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .as_ptr();
+
+    official_bytes_in_place(&mut body).unwrap();
+
+    assert_eq!(
+        body.pointer(string_path)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .as_ptr(),
+        original
+    );
+    assert_eq!(body.pointer(bytes_path).unwrap(), &json!("+/8="));
+}

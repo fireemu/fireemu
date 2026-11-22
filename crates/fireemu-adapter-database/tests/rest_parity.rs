@@ -764,6 +764,7 @@ fn a_ranged_query_without_a_limit_answers_in_query_order() {
             ),
             ("orderBy=%22%24priority%22&startAt=%22a%22", r#"{"b":"x"}"#),
             ("orderBy=%22%24priority%22&equalTo=1", r#"{"c":true}"#),
+            ("orderBy=%22%24key%22&startAt=%22zzz%22", "{}"),
             (
                 "orderBy=%22%24key%22&startAt=%22b%22&endAt=%22e%22",
                 r#"{"b":"x","c":true,"d":{"h":1},"e":7}"#,

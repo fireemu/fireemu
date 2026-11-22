@@ -433,22 +433,29 @@ pub fn encode_text_frame(payload: &str) -> Vec<u8> {
 /// Encodes an unmasked control/data frame with the given opcode.
 #[must_use]
 pub fn encode_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let (header, header_len) = frame_header(opcode, payload.len());
     let mut frame = Vec::with_capacity(payload.len() + 10);
-    frame.push(0x80 | (opcode & 0x0f)); // FIN + opcode
-    let len = payload.len();
-    if len < 126 {
-        #[allow(clippy::cast_possible_truncation)]
-        frame.push(len as u8);
-    } else if u16::try_from(len).is_ok() {
-        frame.push(126);
-        #[allow(clippy::cast_possible_truncation)]
-        frame.extend_from_slice(&(len as u16).to_be_bytes());
-    } else {
-        frame.push(127);
-        frame.extend_from_slice(&(len as u64).to_be_bytes());
-    }
+    frame.extend_from_slice(&header[..header_len]);
     frame.extend_from_slice(payload);
     frame
+}
+
+pub(crate) fn frame_header(opcode: u8, len: usize) -> ([u8; 10], usize) {
+    let mut header = [0; 10];
+    header[0] = 0x80 | (opcode & 0x0f);
+    let header_len = if len < 126 {
+        header[1] = u8::try_from(len).expect("bounded payload length");
+        2
+    } else if let Ok(len) = u16::try_from(len) {
+        header[1] = 126;
+        header[2..4].copy_from_slice(&len.to_be_bytes());
+        4
+    } else {
+        header[1] = 127;
+        header[2..].copy_from_slice(&(len as u64).to_be_bytes());
+        10
+    };
+    (header, header_len)
 }
 
 /// An unmasked close frame with a normal (1000) status.

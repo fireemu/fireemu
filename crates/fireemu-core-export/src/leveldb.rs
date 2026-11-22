@@ -224,7 +224,9 @@ pub(crate) fn for_each_record<R, E>(
 where
     R: std::io::Read,
 {
-    let mut pending: Option<Vec<u8>> = None;
+    const MAX_RETAINED_RECORD: usize = 4 * BLOCK_SIZE;
+    let mut pending = false;
+    let mut record = Vec::new();
     let mut block = vec![0u8; BLOCK_SIZE].into_boxed_slice();
     let mut base = 0usize;
     loop {
@@ -260,7 +262,7 @@ where
             }
             match kind {
                 1 => {
-                    if pending.is_some() {
+                    if pending {
                         return Err(LogError::Fragmentation { offset: base + pos });
                     }
                     if let Err(error) = visit(payload) {
@@ -268,24 +270,31 @@ where
                     }
                 }
                 2 => {
-                    if pending.is_some() {
+                    if pending {
                         return Err(LogError::Fragmentation { offset: base + pos });
                     }
-                    pending = Some(payload.to_vec());
+                    pending = true;
+                    record.extend_from_slice(payload);
                 }
                 3 => {
-                    let acc = pending
-                        .as_mut()
-                        .ok_or(LogError::Fragmentation { offset: base + pos })?;
-                    acc.extend_from_slice(payload);
+                    if !pending {
+                        return Err(LogError::Fragmentation { offset: base + pos });
+                    }
+                    record.extend_from_slice(payload);
                 }
                 4 => {
-                    let mut acc = pending
-                        .take()
-                        .ok_or(LogError::Fragmentation { offset: base + pos })?;
-                    acc.extend_from_slice(payload);
-                    if let Err(error) = visit(&acc) {
+                    if !pending {
+                        return Err(LogError::Fragmentation { offset: base + pos });
+                    }
+                    record.extend_from_slice(payload);
+                    if let Err(error) = visit(&record) {
                         return Ok(Err(error));
+                    }
+                    pending = false;
+                    if record.capacity() > MAX_RETAINED_RECORD {
+                        record = Vec::new();
+                    } else {
+                        record.clear();
                     }
                 }
                 found => {
@@ -305,7 +314,7 @@ where
             break;
         }
     }
-    if pending.is_some() {
+    if pending {
         return Err(LogError::Truncated { offset: base });
     }
     Ok(Ok(()))
@@ -336,6 +345,18 @@ fn fill_block(
 #[cfg(test)]
 mod tests {
     use super::{crc32c, mask, read_log, write_log, LogError, BLOCK_SIZE};
+
+    #[test]
+    fn consecutive_fragmented_records_keep_separate_bytes() {
+        let records = [
+            vec![1; super::BLOCK_SIZE + 5],
+            vec![2; 2 * super::BLOCK_SIZE + 7],
+            vec![3; super::BLOCK_SIZE + 11],
+            b"last".to_vec(),
+        ];
+        let framed = write_log(&records);
+        assert_eq!(read_log(&framed).unwrap(), records);
+    }
 
     #[test]
     fn the_crc32c_matches_the_published_castagnoli_check_values() {

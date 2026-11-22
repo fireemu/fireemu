@@ -5,7 +5,7 @@ use fireemu_core_firestore::{
     field_path::FieldPath,
     index::IndexQueryScope,
     pipeline_exec::{self, Unrecorded},
-    text_index::{TextIndexCatalog, TextIndexState},
+    text_index::{TextIndexCatalog, TextIndexDefinition, TextIndexState},
     text_search::{SearchDocument, SearchIndex, SearchOptions, SearchOrder, SearchQuery},
 };
 use fireemu_proto_firestore::google::firestore::v1 as pb;
@@ -22,7 +22,112 @@ pub(crate) struct Configuration {
     pub catalog: Arc<Mutex<TextIndexCatalog>>,
     pub production_exact: bool,
     pub warned: Arc<AtomicBool>,
+    pub search_cache: Arc<Mutex<SearchCache>>,
 }
+/// Retain at most one bounded index across both transports. The first observation only
+/// records the key so that one-off searches and interleaved writes never retain postings.
+#[derive(Default)]
+pub(crate) struct SearchCache {
+    entry: Option<(CorpusKey, Option<Arc<SearchIndex>>)>,
+}
+
+#[derive(PartialEq, Eq)]
+struct CorpusKey {
+    parent: String,
+    database: crate::local::DatabaseSource,
+    version: fireemu_core_firestore::store::CommitVersion,
+    epoch: u64,
+    definition: TextIndexDefinition,
+    generation: u64,
+}
+
+struct SearchSource<'a> {
+    parent: &'a str,
+    database: crate::local::DatabaseSource,
+    version: fireemu_core_firestore::store::CommitVersion,
+    epoch: u64,
+    cache: &'a Mutex<SearchCache>,
+}
+
+fn is_complete_collection_input(input: &pb::RunQueryRequest) -> bool {
+    let Some(pb::run_query_request::QueryType::StructuredQuery(query)) = &input.query_type else {
+        return false;
+    };
+    input.consistency_selector.is_none()
+        && input.explain_options.is_none()
+        && matches!(query.from.as_slice(), [selector] if !selector.all_descendants && !selector.collection_id.is_empty())
+        && query.select.is_none()
+        && query.r#where.is_none()
+        && query.order_by.is_empty()
+        && query.start_at.is_none()
+        && query.end_at.is_none()
+        && query.offset == 0
+        && query.limit.is_none()
+        && query.find_nearest.is_none()
+}
+
+impl SearchSource<'_> {
+    fn index(
+        &self,
+        definition: &TextIndexDefinition,
+        generation: u64,
+        documents: &[SearchDocument],
+    ) -> Result<Arc<SearchIndex>, fireemu_core_firestore::text_search::SearchError> {
+        // The key is used exclusively with this lexical analyzer and complete collection input.
+        let make = || {
+            SearchIndex::build(
+                definition,
+                documents,
+                fireemu_adapter_support::lexical::tokenize_index,
+            )
+        };
+        if self.parent.len() > 6_144
+            || matches!(&definition.language, fireemu_core_firestore::text_index::DefaultTextLanguage::Tag(tag) if tag.len() > 255)
+        {
+            return make().map(Arc::new);
+        }
+        let key = CorpusKey {
+            parent: self.parent.to_owned(),
+            database: self.database,
+            version: self.version,
+            epoch: self.epoch,
+            definition: definition.clone(),
+            generation,
+        };
+        {
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match &cache.entry {
+                Some((prior, value)) if *prior == key => {
+                    if let Some(index) = value {
+                        return Ok(Arc::clone(index));
+                    }
+                }
+                _ => {
+                    cache.entry = Some((key, None));
+                    drop(cache);
+                    return make().map(Arc::new);
+                }
+            }
+        }
+        let index = Arc::new(make()?);
+        if index.retained_bytes() <= 4 * 1024 * 1024 {
+            let mut cache = self
+                .cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((prior, slot)) = &mut cache.entry {
+                if *prior == key && slot.is_none() {
+                    *slot = Some(Arc::clone(&index));
+                }
+            }
+        }
+        Ok(index)
+    }
+}
+
 /// A search immediately following collection input. The remaining stages use the existing cursor.
 #[derive(Debug, Clone)]
 pub struct SearchPlan {
@@ -280,12 +385,21 @@ fn execute_at_snapshot(
                     && def.api_scope == "ANY_API"
                     && def.state == TextIndexState::Ready
             })
-            .map(|(_, _, definition)| definition.clone())
+            .map(|(p, d, definition)| {
+                (
+                    definition.clone(),
+                    catalog
+                        .build(p, d, &definition.id)
+                        .map(|build| build.generation),
+                )
+            })
             .collect::<Vec<_>>();
         local.check_native_text_epoch(&catalog, |p, d, def| {
             p == parent.project.as_str()
                 && d == parent.database.as_str()
-                && definitions.iter().any(|selected| selected.id == def.id)
+                && definitions
+                    .iter()
+                    .any(|(selected, _)| selected.id == def.id)
         })?;
         if definitions.is_empty() {
             return Err(Status::failed_precondition(
@@ -299,14 +413,26 @@ fn execute_at_snapshot(
     };
     let barrier = local.barrier();
     let epoch = barrier.epoch();
-    let (responses, _) = local.run_query(&compiled.input, &capture)?;
+    let (responses, snapshot) = local.run_text_search_source(&compiled.input, &capture)?;
+    let source = snapshot
+        .source_identity()
+        .filter(|_| {
+            (32..=4_096).contains(&responses.len()) && is_complete_collection_input(&compiled.input)
+        })
+        .map(|(database, version)| SearchSource {
+            parent: &compiled.input.parent,
+            database,
+            version,
+            epoch,
+            cache: &config.search_cache,
+        });
     let definitions = captured
         .into_inner()
         .map_err(|_| Status::internal("text index capture is poisoned"))?
         .ok_or_else(|| Status::internal("text index catalog was not captured"))?;
     after_snapshot();
     let execution_time = responses.iter().find_map(|response| response.read_time);
-    let (originals, hits) = search_snapshot(&responses, definitions, plan)?;
+    let (originals, hits) = search_snapshot(&responses, definitions, plan, source.as_ref())?;
     if !config.warned.swap(true, Ordering::Relaxed) {
         fireemu_adapter_support::eprintln_at!(fireemu_adapter_support::term::Level::Info, "[firestore] text search uses fireemu-lexical-v1: approximate BM25, language-neutral tokenization; no stemming, synonyms, typo correction or language autodetection");
     }
@@ -348,8 +474,9 @@ fn execute_at_snapshot(
 
 fn search_snapshot(
     responses: &[pb::RunQueryResponse],
-    definitions: Vec<fireemu_core_firestore::text_index::TextIndexDefinition>,
+    definitions: Vec<(TextIndexDefinition, Option<u64>)>,
     plan: &SearchPlan,
+    source: Option<&SearchSource<'_>>,
 ) -> Result<
     (
         BTreeMap<fireemu_core_firestore::path::DocumentPath, pb::Document>,
@@ -380,15 +507,19 @@ fn search_snapshot(
     }
     let mut chosen = None;
     let mut last_error = None;
-    for definition in definitions {
+    for (definition, generation) in definitions {
         if !plan.query.is_covered_by(&definition) {
             continue;
         }
-        let index = SearchIndex::build(
-            &definition,
-            &documents,
-            fireemu_adapter_support::lexical::tokenize_index,
-        )
+        let index = match (source, generation) {
+            (Some(source), Some(generation)) => source.index(&definition, generation, &documents),
+            _ => SearchIndex::build(
+                &definition,
+                &documents,
+                fireemu_adapter_support::lexical::tokenize_index,
+            )
+            .map(Arc::new),
+        }
         .map_err(|error| invalid(&error.to_string()))?;
         match index.search(&plan.query, &plan.options) {
             Ok(hits) => {
@@ -533,6 +664,290 @@ mod snapshot_tests {
             {"name":"search","options":{"query":{"functionValue":{"name":"document_matches","args":[{"stringValue":"before"}]}}}}
         ]}}})).unwrap();
         pipeline::compile_pipeline(&request, parent, Unrecorded::OfficialEmulator).unwrap()
+    }
+    #[test]
+    fn pipeline_search_follows_same_version_public_state_replacements() {
+        // Corpus sizes exercise the cache threshold. Each tuple also selects whether
+        // the mutator returns an error and whether the search has an offset and limit.
+        for (count, fails, paged) in [
+            (40, false, false),
+            (40, true, true),
+            (32, true, false),
+            (31, false, true),
+            (31, true, false),
+            (32, false, true),
+        ] {
+            let (local, _, parent) = fixture();
+            let (replacement, _, _) = fixture();
+            for i in 0..count {
+                let name = if i == 0 {
+                    "a".to_owned()
+                } else {
+                    format!("d{i:02}")
+                };
+                seed_named(&local, &name, "alpha", "body");
+                seed_named(&replacement, &name, "beta", "body");
+            }
+            let search = |term, uncached| {
+                let mut plan = compiled(&parent);
+                let search = plan.search.as_mut().unwrap();
+                search.query =
+                    SearchQuery::parse(term, fireemu_adapter_support::lexical::tokenize_query)
+                        .unwrap();
+                if paged {
+                    search.options.offset = 3;
+                    search.options.limit = Some(7);
+                }
+                if uncached {
+                    let Some(pb::run_query_request::QueryType::StructuredQuery(query)) =
+                        &mut plan.input.query_type
+                    else {
+                        panic!("missing collection query")
+                    };
+                    query.limit = Some(1000);
+                }
+                execute(
+                    &local,
+                    &parent,
+                    plan,
+                    &allow_all_reads,
+                    Unrecorded::OfficialEmulator,
+                )
+                .unwrap()
+            };
+            let alpha = search("alpha", true);
+            let rows = alpha.iter().map(|batch| batch.results.len()).sum::<usize>();
+            assert_eq!(rows, if paged { 7 } else { count });
+            for _ in 0..3 {
+                assert_eq!(search("alpha", false), alpha);
+            }
+            let state = replacement
+                .with_snapshot(&parent, |db, _, _, _| db.clone())
+                .unwrap();
+            let handle = local.database_handle(&parent).unwrap();
+            let outcome = handle.with(|db| {
+                assert_eq!(state.current_version(), db.current_version());
+                *db = state;
+                if fails {
+                    Err(Status::aborted("caller stopped after replacement"))
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(outcome.is_err(), fails);
+            for _ in 0..3 {
+                let old = search("alpha", false);
+                assert!(old.iter().all(|batch| batch.results.is_empty()));
+                let new = search("beta", false);
+                assert_eq!(new, search("beta", true));
+                assert_eq!(
+                    new.iter().map(|batch| batch.results.len()).sum::<usize>(),
+                    rows
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_search_reuses_only_an_admitted_unchanged_corpus() {
+        let (local, catalog, parent) = fixture();
+        for n in 1..40 {
+            seed_named(&local, &format!("d{n}"), "other", "before");
+        }
+        let run = || {
+            execute(
+                &local,
+                &parent,
+                compiled(&parent),
+                &allow_all_reads,
+                Unrecorded::OfficialEmulator,
+            )
+            .unwrap()
+        };
+        let cached = || {
+            local
+                .text_search_configuration()
+                .unwrap()
+                .unwrap()
+                .search_cache
+                .lock()
+                .unwrap()
+                .entry
+                .as_ref()
+                .and_then(|(_, index)| index.clone())
+        };
+        assert_eq!(run()[0].results.len(), 1);
+        assert!(cached().is_none());
+        assert_eq!(run()[0].results.len(), 1);
+        let first = cached().expect("second identical source retains the index");
+        assert_eq!(run()[0].results.len(), 1);
+        assert!(Arc::ptr_eq(&first, &cached().unwrap()));
+
+        let refused = execute(
+            &local,
+            &parent,
+            compiled(&parent),
+            &|_, _, _| Err(Status::permission_denied("denied")),
+            Unrecorded::OfficialEmulator,
+        )
+        .unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::PermissionDenied);
+        assert!(Arc::ptr_eq(&first, &cached().unwrap()));
+        seed(&local, "other", "after");
+        assert!(run().iter().all(|response| response.results.is_empty()));
+        assert!(cached().is_none());
+
+        let mut definitions = catalog.lock().unwrap();
+        let mut replacement = definitions
+            .get("demo-app", "(default)", "text")
+            .unwrap()
+            .clone();
+        replacement.fields[0].path = FieldPath::parse("body").unwrap();
+        definitions.remove("demo-app", "(default)", "text");
+        definitions
+            .add("demo-app", "(default)", replacement)
+            .unwrap();
+        drop(definitions);
+        assert_eq!(run()[0].results.len(), 39);
+        assert!(cached().is_none());
+        assert_eq!(run()[0].results.len(), 39);
+        assert!(!Arc::ptr_eq(&first, &cached().unwrap()));
+
+        let mut filtered = compiled(&parent);
+        let Some(pb::run_query_request::QueryType::StructuredQuery(source)) =
+            &mut filtered.input.query_type
+        else {
+            panic!("structured query")
+        };
+        source.limit = Some(1);
+        let result = execute(
+            &local,
+            &parent,
+            filtered,
+            &allow_all_reads,
+            Unrecorded::OfficialEmulator,
+        )
+        .unwrap();
+        assert!(result.iter().all(|response| response.results.is_empty()));
+    }
+    #[test]
+    fn repeated_terms_and_score_ties_match_an_uncached_source() {
+        let (local, _, parent) = fixture();
+        for i in 1..40 {
+            seed_named(
+                &local,
+                &format!("d{i}"),
+                if i % 3 == 0 { "other other" } else { "other" },
+                "after",
+            );
+        }
+        let run = |plan| {
+            execute(
+                &local,
+                &parent,
+                plan,
+                &allow_all_reads,
+                Unrecorded::OfficialEmulator,
+            )
+            .unwrap()
+        };
+        for _ in 0..2 {
+            run(compiled(&parent));
+        }
+        let mut scored = compiled(&parent);
+        let search = scored.search.as_mut().unwrap();
+        search.query =
+            SearchQuery::parse("other", fireemu_adapter_support::lexical::tokenize_query).unwrap();
+        search.options.order = SearchOrder::ScoreDescending;
+        search.options.offset = 3;
+        search.options.limit = Some(19);
+        search.score_fields.push("score".into());
+        let mut uncached = scored.clone();
+        let Some(pb::run_query_request::QueryType::StructuredQuery(source)) =
+            &mut uncached.input.query_type
+        else {
+            panic!("collection query")
+        };
+        source.limit = Some(1000);
+        let cached = run(scored);
+        assert_eq!(cached, run(uncached));
+        let rows = &cached[0].results;
+        assert_eq!(rows.len(), 19);
+        assert_ne!(
+            rows.first().unwrap().fields["score"],
+            rows.last().unwrap().fields["score"]
+        );
+    }
+    #[test]
+    fn search_cache_distinguishes_nested_sources_and_restored_database_incarnations() {
+        let (local, _, parent) = fixture();
+        let (replacement, _, _) = fixture();
+        for i in 1..40 {
+            let name = format!("d{i}");
+            seed_named(&local, &name, "other", "after");
+            seed_named(&replacement, &name, "before", "after");
+            let nested = format!("a/products/d{i}");
+            seed_named(&local, &nested, "before", "after");
+            seed_named(&replacement, &nested, "other", "after");
+        }
+        let run = |nested| {
+            let mut plan = compiled(&parent);
+            if nested {
+                plan.input.parent = format!("{DB}/documents/products/a");
+            }
+            execute(
+                &local,
+                &parent,
+                plan,
+                &allow_all_reads,
+                Unrecorded::OfficialEmulator,
+            )
+            .unwrap()
+            .iter()
+            .map(|response| response.results.len())
+            .sum::<usize>()
+        };
+        for _ in 0..3 {
+            assert_eq!(run(false), 1);
+        }
+        assert_eq!(run(true), 39);
+        for _ in 0..3 {
+            assert_eq!(run(false), 1);
+        }
+        let scope = fireemu_core_session::tenancy::Scope::Project("demo-app".into());
+        local
+            .restore_scope(&scope, &replacement.snapshot_scope(&scope))
+            .unwrap();
+        assert_eq!(run(false), 40);
+        assert_eq!(run(true), 0);
+    }
+    #[test]
+    fn search_cache_leaves_large_postings_ephemeral() {
+        use std::fmt::Write;
+        let (local, _, parent) = fixture();
+        let mut title = "before".to_string();
+        for n in 0..700 {
+            write!(title, " token{n}").unwrap();
+        }
+        for n in 1..32 {
+            seed_named(&local, &format!("d{n}"), &title, "after");
+        }
+        for _ in 0..2 {
+            let result = execute(
+                &local,
+                &parent,
+                compiled(&parent),
+                &allow_all_reads,
+                Unrecorded::OfficialEmulator,
+            )
+            .unwrap();
+            assert_eq!(result.iter().map(|r| r.results.len()).sum::<usize>(), 32);
+        }
+        let config = local.text_search_configuration().unwrap().unwrap();
+        assert!(matches!(
+            &config.search_cache.lock().unwrap().entry,
+            Some((_, None))
+        ));
     }
     #[test]
     fn text_search_evaluates_request_scoped_timestamp() {

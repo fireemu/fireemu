@@ -749,6 +749,17 @@ impl Default for DeliveryState {
 }
 
 impl DeliveryState {
+    /// Acknowledgements remove only a prefix, and refusals replace the queue atomically.
+    /// Any surviving array IDs are contiguous, so locating a replay does not need to scan
+    /// the retained (often unacknowledged) prefix of the queue.
+    fn outbound_offset(&self, aid: u64) -> usize {
+        self.outbound.front().map_or(0, |(first, _)| {
+            usize::try_from(aid.saturating_sub(*first))
+                .unwrap_or(self.outbound.len())
+                .min(self.outbound.len())
+        })
+    }
+
     fn with_budgets(budgets: &WebChannelBudgets) -> Self {
         Self {
             outbound: VecDeque::new(),
@@ -1193,7 +1204,8 @@ impl Session {
 
     fn pending_batch_plan_after(&self, aid: u64) -> Option<PendingBatch> {
         let delivery = self.delivery.lock().ok()?;
-        let pending = delivery.outbound.iter().skip_while(|(id, _)| *id <= aid);
+        let offset = delivery.outbound_offset(aid.checked_add(1)?);
+        let pending = delivery.outbound.iter().skip(offset);
         let mut first = None;
         let mut last = None;
         let mut count = 0;
@@ -1205,7 +1217,7 @@ impl Session {
                 body_bytes.checked_add(separator)?.checked_add(text.len())?;
             let candidate_utf16_units = body_utf16_units
                 .checked_add(separator)?
-                .checked_add(text.encode_utf16().count())?;
+                .checked_add(utf16_units(text))?;
             let framed_bytes = candidate_body_bytes
                 .checked_add(decimal_digits(candidate_utf16_units))?
                 .checked_add(1)?;
@@ -1249,7 +1261,7 @@ impl Session {
         let pending = delivery
             .outbound
             .iter()
-            .skip_while(|(id, _)| *id < plan.first_aid)
+            .skip(delivery.outbound_offset(plan.first_aid))
             .take_while(|(id, _)| *id <= plan.last_aid);
         let mut frame = Vec::with_capacity(plan.framed_bytes);
         frame.extend_from_slice(plan.body_utf16_units.to_string().as_bytes());
@@ -1499,6 +1511,16 @@ pub struct ChannelRequest {
     pub body: String,
 }
 
+/// Every UTF-8 leading byte contributes one unit, with a second for four-byte scalars.
+fn utf16_units(text: &str) -> usize {
+    if text.is_ascii() {
+        return text.len();
+    }
+    text.bytes().fold(0, |units, byte| {
+        units + usize::from(byte & 0xc0 != 0x80) + usize::from(byte >= 0xf0)
+    })
+}
+
 /// `<length>\n<text>` where the length counts UTF-16 code units (what the browser's string
 /// slicing sees).
 fn chunk(text: &str) -> String {
@@ -1623,7 +1645,7 @@ impl Hub {
                         .last_seen
                         .lock()
                         .is_ok_and(|t| t.elapsed() >= SESSION_IDLE_TTL);
-                    let live = s.backchannel_attached();
+                    let live = idle && s.backchannel_attached();
                     let keep = !s.is_terminated()
                         && if s.is_stream_ended() {
                             !s.terminal_delivery_expired()
@@ -2190,7 +2212,7 @@ fn commit_backchannel_chunk(
             for (aid, _) in delivery
                 .outbound
                 .iter()
-                .skip_while(|(aid, _)| *aid < batch.first_aid)
+                .skip(delivery.outbound_offset(batch.first_aid))
                 .take(batch.count)
             {
                 if *aid != expected_aid {
@@ -3002,6 +3024,49 @@ mod tests {
         );
         assert!(!rendered.contains("private-project"));
         assert!(!rendered.contains("private-user"));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn utf8_counting_matches_utf16_for_generated_strings(
+            text in proptest::arbitrary::any::<String>(),
+        ) {
+            proptest::prop_assert_eq!(utf16_units(&text), text.encode_utf16().count());
+        }
+    }
+
+    #[test]
+    fn utf8_counting_matches_utf16_for_each_scalar_width() {
+        let text = "\u{0}\u{7f}\u{80}\u{7ff}\u{800}\u{ffff}\u{10000}\u{10ffff}";
+        assert_eq!(utf16_units(text), text.encode_utf16().count());
+        assert_eq!(
+            utf16_units(&text.repeat(67)),
+            text.encode_utf16().count() * 67
+        );
+    }
+
+    #[test]
+    fn replay_offset_matches_linear_search_after_ack_and_terminal_replacement() {
+        let mut delivery = DeliveryState::default();
+        for id in 1_u64..=15 {
+            delivery.outbound.push_back((id, format!("[{id},[]]")));
+        }
+        for _ in 0..=16 {
+            for aid in [0, 1, 7, 15, 16, u64::MAX] {
+                let expected = delivery
+                    .outbound
+                    .iter()
+                    .take_while(|(id, _)| *id < aid)
+                    .count();
+                assert_eq!(delivery.outbound_offset(aid), expected);
+            }
+            delivery.outbound.pop_front();
+        }
+        delivery
+            .outbound
+            .push_back((u64::MAX, "terminal".to_owned()));
+        assert_eq!(delivery.outbound_offset(u64::MAX - 1), 0);
+        assert_eq!(delivery.outbound_offset(u64::MAX), 0);
     }
 
     #[test]

@@ -324,3 +324,53 @@ fn latin_purpose_lifecycle_keeps_index_analysis_across_batches_and_completion() 
     assert_eq!(hits(&catalog, "iris"), ["products/copper"]);
     assert_eq!(hits(&catalog, "İris"), [] as [std::string::String; 0]);
 }
+
+#[test]
+fn rejected_second_batch_preserves_all_earlier_postings_and_progress() {
+    for duplicate in [true, false] {
+        let mut def = definition("text");
+        def.language_override =
+            LanguageOverridePolicy::ExplicitField(FieldPath::parse("language").unwrap());
+        let mut invalid = document(if duplicate { "a" } else { "b" }, "later");
+        if !duplicate {
+            invalid.fields.insert("language".into(), Value::Integer(42));
+        }
+        let mut catalog = TextIndexCatalog::default();
+        catalog.add("demo-app", "(default)", def).unwrap();
+        let source = vec![document("a", "first"), document("c", "middle"), invalid];
+        catalog
+            .lifecycle(
+                "demo-app",
+                "(default)",
+                "text",
+                "advanceBackfill",
+                None,
+                1,
+                None,
+                source,
+                tokenize,
+            )
+            .unwrap();
+        let before = catalog.clone();
+        for _ in 0..2 {
+            let failure = catalog.lifecycle(
+                "demo-app",
+                "(default)",
+                "text",
+                "advanceBackfill",
+                None,
+                2,
+                None,
+                vec![],
+                tokenize,
+            );
+            assert!(matches!(
+                failure,
+                Err(TextIndexBuildError::InvalidSource(
+                    TextIndexSourceError::Search(_)
+                ))
+            ));
+            assert_eq!(catalog, before);
+        }
+    }
+}

@@ -52,6 +52,7 @@ import {
   readReleaseJson,
   selectGroup,
 } from "./release-strict-regression.mjs";
+import { federationEnvironment } from "./release-openssl.mjs";
 import { PROGRAMS } from "./firestore-probe/programs.mjs";
 import { createBudget } from "../functions-http/harness.mjs";
 import { historicalProductionSummary } from "./firestore-probe/run.mjs";
@@ -1516,6 +1517,23 @@ test("groups partition runs and keep each comparison together", () => {
     matrix[1].split(",").map((name) => name.trim()),
     Object.keys(GROUPS),
   );
+});
+
+test("the pinned OpenSSL build runs in exactly the groups that use it", () => {
+  const groups = new Set();
+  for (const [group, ids] of Object.entries(GROUPS)) {
+    for (const id of ids) {
+      federationEnvironment(id, {}, () => {
+        groups.add(group);
+        return "OpenSSL 3.6.4";
+      });
+    }
+  }
+  const steps = strictProductionJob()
+    .split(/\n      - /)
+    .filter((text) => text.includes("sh npm/scripts/install-federation-openssl.sh"));
+  assert.equal(steps.length, 1, "exactly one pinned source build");
+  assert.deepEqual([...groups], [steps[0].match(/^        if: matrix\.group == '([^']+)'$/m)?.[1]]);
 });
 
 test("rtdb is split in two groups covering R22 to R36 once", () => {

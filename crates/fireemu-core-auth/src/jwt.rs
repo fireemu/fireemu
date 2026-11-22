@@ -22,6 +22,12 @@ const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 #[must_use]
 pub fn base64url_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    write_base64url(&mut out, data);
+    out
+}
+
+/// Appends base64url without padding to an existing compact-token buffer.
+pub fn write_base64url(out: &mut String, data: &[u8]) {
     for chunk in data.chunks(3) {
         let mut buf = [0u8; 3];
         buf[..chunk.len()].copy_from_slice(chunk);
@@ -32,7 +38,6 @@ pub fn base64url_encode(data: &[u8]) -> String {
             out.push(ALPHABET[index] as char);
         }
     }
-    out
 }
 
 /// Decodes base64url without padding; padding and the standard alphabet are rejected.
@@ -546,8 +551,14 @@ pub fn encode_payload_shaped(
     shape: HeaderShape,
 ) -> String {
     let Some(signer) = signer else {
-        let header = base64url_encode(unsigned_header(shape));
-        return format!("{header}.{}.", base64url_encode(payload_json.as_bytes()));
+        let mut token = String::with_capacity(
+            (payload_json.len() + unsigned_header(shape).len()).div_ceil(3) * 4 + 4,
+        );
+        write_base64url(&mut token, unsigned_header(shape));
+        token.push('.');
+        write_base64url(&mut token, payload_json.as_bytes());
+        token.push('.');
+        return token;
     };
     let header = match shape {
         HeaderShape::Typed => format!(
@@ -557,21 +568,21 @@ pub fn encode_payload_shaped(
         ),
         HeaderShape::Untyped => format!(r#"{{"alg":"{}","kid":"{}"}}"#, signer.alg(), signer.kid()),
     };
-    let signing_input = format!(
-        "{}.{}",
-        base64url_encode(header.as_bytes()),
-        base64url_encode(payload_json.as_bytes())
-    );
-    let signature = signer.sign(signing_input.as_bytes());
-    format!("{signing_input}.{}", base64url_encode(&signature))
+    let mut token = String::with_capacity((header.len() + payload_json.len()).div_ceil(3) * 4 + 4);
+    write_base64url(&mut token, header.as_bytes());
+    token.push('.');
+    write_base64url(&mut token, payload_json.as_bytes());
+    let signature = signer.sign(token.as_bytes());
+    token.push('.');
+    token.reserve(signature.len().div_ceil(3) * 4);
+    write_base64url(&mut token, &signature);
+    token
 }
 
 /// Encodes claims as an unsigned emulator-style token.
 #[must_use]
 pub fn encode_unsigned(claims: &IdTokenClaims) -> String {
-    let header = base64url_encode(br#"{"alg":"none","typ":"JWT"}"#);
-    let payload = base64url_encode(claims.canonical_json().as_bytes());
-    format!("{header}.{payload}.")
+    encode_with(claims, None)
 }
 
 /// Encodes claims in `mode`, failing closed for unimplemented modes.

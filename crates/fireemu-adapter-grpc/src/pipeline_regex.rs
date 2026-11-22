@@ -10,12 +10,108 @@ mod replay;
 #[cfg(test)]
 mod rewrite_tests;
 
+const MAX_CACHED_PATTERN_BYTES: usize = 256;
+const CACHED_PROGRAM_LIMIT: usize = 256 * 1024;
+const CACHED_DFA_LIMIT: usize = 128 * 1024;
+const PROGRAM_LIMIT: usize = 10 * 1024 * 1024;
+const DFA_LIMIT: usize = 2 * 1024 * 1024;
+
+struct CachedRegex {
+    pattern: String,
+    operation: RegexOperation,
+    mode: Unrecorded,
+    compiled: regex::Regex,
+}
+
+/// One lazy, bounded entry owned by an `ExecutePipeline` request.
+#[derive(Default)]
+pub(crate) struct RequestCache(Option<Box<CachedRegex>>);
+
+thread_local! {
+    static ACTIVE_CACHE: std::cell::RefCell<Option<RequestCache>> = const { std::cell::RefCell::new(None) };
+}
+
+struct CacheScope<'a> {
+    owner: &'a mut RequestCache,
+    previous: Option<RequestCache>,
+}
+
+impl Drop for CacheScope<'_> {
+    fn drop(&mut self) {
+        *self.owner = ACTIVE_CACHE
+            .replace(self.previous.take())
+            .expect("an active scope owns the request cache");
+    }
+}
+
+impl RequestCache {
+    /// Makes this request's entry available only during synchronous expression evaluation.
+    pub(crate) fn scope<T>(&mut self, run: impl FnOnce() -> T) -> T {
+        let _scope = CacheScope {
+            previous: ACTIVE_CACHE.replace(Some(std::mem::take(self))),
+            owner: self,
+        };
+        run()
+    }
+
+    fn resolve(
+        &mut self,
+        subject: &str,
+        pattern: &str,
+        operation: RegexOperation,
+        mode: Unrecorded,
+    ) -> Result<RegexResult, RegexError> {
+        if let Some(entry) = self.0.as_ref().filter(|entry| {
+            entry.pattern == pattern && entry.operation == operation && entry.mode == mode
+        }) {
+            return Ok(evaluate(&entry.compiled, subject, operation));
+        }
+        self.0 = None;
+        let prepared = prepare_pattern(pattern, operation, mode)?;
+        // Counted repeats can expand despite a short input. Compile these under the ordinary limits.
+        if pattern.len() <= MAX_CACHED_PATTERN_BYTES && !pattern.contains('{') {
+            match compile(&prepared, CACHED_PROGRAM_LIMIT, CACHED_DFA_LIMIT) {
+                Ok(compiled) => {
+                    let result = evaluate(&compiled, subject, operation);
+                    self.0 = Some(Box::new(CachedRegex {
+                        pattern: pattern.to_owned(),
+                        operation,
+                        mode,
+                        compiled,
+                    }));
+                    return Ok(result);
+                }
+                // A pattern too large to retain can still run under the normal request limits.
+                Err(RegexError::ResourceLimit) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        compile(&prepared, PROGRAM_LIMIT, DFA_LIMIT)
+            .map(|compiled| evaluate(&compiled, subject, operation))
+    }
+}
+
 pub(crate) fn resolve(
     subject: &str,
     pattern: &str,
     operation: RegexOperation,
     mode: Unrecorded,
 ) -> Result<RegexResult, RegexError> {
+    ACTIVE_CACHE.with_borrow_mut(|active| {
+        if let Some(cache) = active {
+            return cache.resolve(subject, pattern, operation, mode);
+        }
+        let prepared = prepare_pattern(pattern, operation, mode)?;
+        compile(&prepared, PROGRAM_LIMIT, DFA_LIMIT)
+            .map(|compiled| evaluate(&compiled, subject, operation))
+    })
+}
+
+fn prepare_pattern(
+    pattern: &str,
+    operation: RegexOperation,
+    mode: Unrecorded,
+) -> Result<String, RegexError> {
     let analysis = analysis::analyze(pattern, mode)?;
     if matches!(operation, RegexOperation::Find | RegexOperation::FindAll)
         && analysis.capture_groups > 1
@@ -28,15 +124,26 @@ pub(crate) fn resolve(
     } else {
         pattern
     };
-    let compiled = regex::RegexBuilder::new(&pattern)
-        .size_limit(10 * 1024 * 1024)
-        .dfa_size_limit(2 * 1024 * 1024)
+    Ok(pattern)
+}
+
+fn compile(
+    pattern: &str,
+    program_limit: usize,
+    dfa_limit: usize,
+) -> Result<regex::Regex, RegexError> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(program_limit)
+        .dfa_size_limit(dfa_limit)
         .build()
         .map_err(|error| match error {
             regex::Error::Syntax(_) => RegexError::InvalidSyntax,
             _ => RegexError::ResourceLimit,
-        })?;
-    Ok(match operation {
+        })
+}
+
+fn evaluate(compiled: &regex::Regex, subject: &str, operation: RegexOperation) -> RegexResult {
+    match operation {
         RegexOperation::Contains | RegexOperation::Match => {
             RegexResult::Boolean(compiled.is_match(subject))
         }
@@ -57,7 +164,7 @@ pub(crate) fn resolve(
                 })
                 .collect(),
         ),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -70,6 +177,82 @@ mod tests {
     use fireemu_core_firestore::value::Value;
     use proptest::prelude::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn request_caches_restore_on_nested_scopes_unwinding_and_thread_switches() {
+        use super::{RegexOperation, RegexResult, RequestCache, ACTIVE_CACHE};
+        let mut outer = RequestCache::default();
+        let mut inner = RequestCache::default();
+        let mode = Unrecorded::OfficialEmulator;
+
+        outer.scope(|| {
+            assert_eq!(
+                resolve("aa", "a", RegexOperation::Contains, mode),
+                Ok(RegexResult::Boolean(true)),
+            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inner.scope(|| {
+                    assert_eq!(
+                        resolve("bb", "b", RegexOperation::Match, mode),
+                        Ok(RegexResult::Boolean(false)),
+                    );
+                    panic!("exercise scope restoration");
+                });
+            }));
+            assert!(result.is_err());
+            ACTIVE_CACHE.with_borrow(|cache| {
+                let Some(ref entry) = cache.as_ref().unwrap().0 else {
+                    panic!("the outer cache must be restored");
+                };
+                assert_eq!(entry.pattern, "a");
+            });
+        });
+        assert!(ACTIVE_CACHE.with_borrow(Option::is_none));
+        assert_eq!(outer.0.as_ref().unwrap().pattern, "a");
+        assert_eq!(inner.0.as_ref().unwrap().pattern, "b");
+
+        let outer = std::thread::spawn(move || {
+            assert!(ACTIVE_CACHE.with_borrow(Option::is_none));
+            outer.scope(|| {
+                assert_eq!(
+                    resolve("aa", "a", RegexOperation::Match, mode),
+                    Ok(RegexResult::Boolean(false)),
+                );
+            });
+            assert!(ACTIVE_CACHE.with_borrow(Option::is_none));
+            outer
+        })
+        .join()
+        .unwrap();
+        assert_eq!(outer.0.as_ref().unwrap().operation, RegexOperation::Match);
+    }
+
+    #[test]
+    fn request_cache_does_not_retain_errors_or_programs_over_its_budget() {
+        use super::{
+            compile, prepare_pattern, RegexError, RegexOperation, RequestCache, CACHED_DFA_LIMIT,
+            CACHED_PROGRAM_LIMIT,
+        };
+        let mut cache = RequestCache::default();
+        let operation = RegexOperation::Contains;
+        let mode = Unrecorded::OfficialEmulator;
+        let large = "a{16384}";
+        let prepared = prepare_pattern(large, operation, mode).unwrap();
+        assert!(matches!(
+            compile(&prepared, CACHED_PROGRAM_LIMIT, CACHED_DFA_LIMIT),
+            Err(RegexError::ResourceLimit)
+        ));
+        let expected = resolve("a", large, operation, mode);
+        assert!(expected.is_ok());
+        assert_eq!(
+            cache.scope(|| resolve("a", large, operation, mode)),
+            expected
+        );
+        assert!(cache.0.is_none());
+        let expected = resolve("a", "(", operation, mode);
+        assert_eq!(cache.scope(|| resolve("a", "(", operation, mode)), expected);
+        assert!(cache.0.is_none());
+    }
 
     fn text(value: &str) -> Eval {
         Eval::Value(Value::String(value.to_owned()))

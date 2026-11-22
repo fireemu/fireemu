@@ -314,6 +314,21 @@ fn a_tenant_snapshot_does_not_capture_another_projects_tenants() {
 /// A session restore recovers captured tenant users and settings, recreates a deleted tenant,
 /// and removes a namespace that was published after the capture.
 #[test]
+fn restoring_multiple_existing_tenants_keeps_each_store_handle() {
+    let registry = AuthRegistry::new("demo-app", Arc::new(Mutex::new(store("demo-app", 1))));
+    let handles = ["charlie", "alpha", "delta", "bravo"]
+        .map(|tenant| (tenant, registry.ensure_tenant("demo-app", tenant).unwrap()));
+    let snapshot = registry.capture_tenants_snapshot("demo-app").unwrap();
+    registry
+        .restore_tenants_snapshot("demo-app", &snapshot)
+        .unwrap();
+    for (tenant, original) in handles {
+        let restored = registry.tenant_store("demo-app", tenant).unwrap();
+        assert!(Arc::ptr_eq(&original, &restored), "{tenant}");
+    }
+}
+
+#[test]
 fn a_tenant_snapshot_restores_membership_users_and_settings() {
     let registry = AuthRegistry::new("demo-app", Arc::new(Mutex::new(store("demo-app", 1))));
     let kept = registry.ensure_tenant("demo-app", "kept").unwrap();

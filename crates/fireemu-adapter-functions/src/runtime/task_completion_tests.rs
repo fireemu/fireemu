@@ -3248,3 +3248,103 @@ fn strict_get_rejects_unserved_resources_before_accessing_scheduler_state() {
         500
     );
 }
+
+#[test]
+fn sparse_history_cursors_preserve_the_replay_boundary_and_exclude_the_cursor() {
+    let mut log = super::RecordLog::new(3);
+    for sequence in [2, 4, 6, u64::MAX] {
+        log.push(
+            sequence,
+            super::InvocationRecord {
+                function: "example".into(),
+                event_id: u128::from(sequence),
+                attempt: 1,
+                outcome: "ok".into(),
+            },
+        );
+    }
+    let sequences = |cursor| {
+        log.since(cursor).map(|records| {
+            records
+                .into_iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(sequences(2), None);
+    assert_eq!(sequences(3), Some(vec![4, 6, u64::MAX]));
+    assert_eq!(sequences(4), Some(vec![6, u64::MAX]));
+    assert_eq!(sequences(5), Some(vec![6, u64::MAX]));
+    assert_eq!(sequences(u64::MAX), Some(vec![]));
+}
+
+#[test]
+fn causality_keeps_live_entries_first_and_fills_the_rest_in_registration_order() {
+    use super::{CausalEntry, CausalityLog, EventSource, MAX_CAUSALITY_PROJECTED};
+    let count = MAX_CAUSALITY_PROJECTED + 9;
+    for terminal_stride in [1, 2, count] {
+        let mut log = CausalityLog::new(count);
+        for i in 1..=count {
+            log.register(
+                CausalEntry {
+                    event_id: i as u128,
+                    epoch: 1,
+                    source: EventSource::Auth,
+                    event_type: "user".into(),
+                    function: "handler".into(),
+                    parent: None,
+                    terminal: i % terminal_stride == 0,
+                    phases: Vec::new(),
+                    phases_dropped: 0,
+                },
+                LogicalInstant::UNIX_EPOCH,
+            );
+        }
+        let projected = log.project(1);
+        let ids: Vec<_> = projected["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["eventId"].as_str().unwrap().parse::<usize>().unwrap())
+            .collect();
+        let expected: Vec<_> = (1..=count)
+            .filter(|i| i % terminal_stride != 0)
+            .chain((1..=count).filter(|i| i % terminal_stride == 0))
+            .take(MAX_CAUSALITY_PROJECTED)
+            .collect();
+        assert_eq!(ids, expected);
+        assert_eq!(projected["truncated"], true);
+    }
+}
+
+#[test]
+fn scheduled_empty_intervals_match_a_fresh_search_after_rewinds_and_at_the_next_run() {
+    use fireemu_core_functions::cron::{FixedOffset, Schedule};
+    use fireemu_core_types::time::LogicalDuration;
+    let instant = LogicalInstant::from_unix_seconds;
+    let mut job = super::ScheduledJob {
+        function: "scheduled".into(),
+        region: "us-central1".into(),
+        schedule: Schedule::parse("* * * * *").unwrap(),
+        zone: Arc::new(FixedOffset(0)),
+        cursor: instant(0),
+        phase: LogicalDuration::ZERO,
+        empty_until: None,
+    };
+    for (from, to, cap) in [
+        (0, 1, 3),
+        (1, 59, 3),
+        (59, 60, 3),
+        (60, 61, 3),
+        (0, 59, 3),
+        (0, 181, 2),
+        (120, 180, 2),
+        (180, 179, 3),
+        (0, 181, 0),
+    ] {
+        let expected = job
+            .schedule
+            .runs_between_in(instant(from), instant(to), &*job.zone, cap);
+        assert_eq!(job.due_runs(instant(from), instant(to), cap), expected);
+    }
+}

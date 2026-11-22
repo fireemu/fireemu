@@ -405,6 +405,20 @@ impl Schedule {
         zone: &dyn ZoneRules,
         max: usize,
     ) -> Vec<LogicalInstant> {
+        self.runs_between_with_next(from_exclusive, to_inclusive, zone, max)
+            .0
+    }
+
+    /// The bounded run list and the first later run the search already encountered.
+    /// A full list or an exhausted calendar search has no known later run.
+    #[must_use]
+    pub fn runs_between_with_next(
+        &self,
+        from_exclusive: LogicalInstant,
+        to_inclusive: LogicalInstant,
+        zone: &dyn ZoneRules,
+        max: usize,
+    ) -> (Vec<LogicalInstant>, Option<LogicalInstant>) {
         let mut out = Vec::new();
         let mut cursor = from_exclusive;
         while out.len() < max {
@@ -413,10 +427,10 @@ impl Schedule {
                     out.push(t);
                     cursor = t;
                 }
-                _ => break,
+                later => return (out, later),
             }
         }
-        out
+        (out, None)
     }
 
     /// [`Self::window_in`] in the zone with `offset_seconds` from UTC.

@@ -1313,13 +1313,35 @@ impl AccountsFile {
     /// Writes an accounts document in the Identity Toolkit shape.
     #[must_use]
     pub fn to_json(&self) -> String {
-        let mut doc = Json::object();
-        doc.insert("kind", Json::string(DOWNLOAD_KIND));
-        doc.insert(
-            "users",
-            Json::Array(self.users.iter().map(write_user).collect()),
-        );
-        doc.to_pretty()
+        let mut out = Vec::new();
+        Self::write_users(&mut out, &self.users).expect("writing into a Vec is infallible");
+        String::from_utf8(out).expect("the account formatter writes UTF-8")
+    }
+
+    /// Writes the accounts file one user at a time, preserving the export member order.
+    pub fn write_users(
+        mut out: impl std::io::Write,
+        users: impl IntoIterator<Item = impl std::borrow::Borrow<UserRecord>>,
+    ) -> std::io::Result<()> {
+        write!(out, "{{\n  \"kind\": \"{DOWNLOAD_KIND}\",\n  \"users\": [")?;
+        let mut scratch = String::new();
+        let mut first = true;
+        for user in users {
+            if first {
+                out.write_all(b"\n")?;
+                first = false;
+            } else {
+                out.write_all(b",\n")?;
+            }
+            scratch.clear();
+            scratch.push_str("    ");
+            write_user(user.borrow()).write(&mut scratch, 2);
+            out.write_all(scratch.as_bytes())?;
+        }
+        if !first {
+            out.write_all(b"\n  ")?;
+        }
+        out.write_all(b"]\n}\n")
     }
 }
 
@@ -1749,6 +1771,33 @@ mod tests {
         }
       ]
     }"#;
+
+    #[test]
+    fn streaming_accounts_reproduces_the_ordered_document() {
+        let users = [
+            UserRecord {
+                local_id: "first account".to_owned(),
+                display_name: Some("Line\n🚀".to_owned()),
+                ..UserRecord::default()
+            },
+            UserRecord {
+                local_id: "second".to_owned(),
+                email: Some("user@example.invalid".to_owned()),
+                ..UserRecord::default()
+            },
+        ];
+        for users in [&users[..0], &users[..1], &users[..]] {
+            let mut legacy = super::Json::object();
+            legacy.insert("kind", super::Json::string(super::DOWNLOAD_KIND));
+            legacy.insert(
+                "users",
+                super::Json::Array(users.iter().map(super::write_user).collect()),
+            );
+            let mut bytes = Vec::new();
+            AccountsFile::write_users(&mut bytes, users).unwrap();
+            assert_eq!(bytes, legacy.to_pretty().as_bytes());
+        }
+    }
 
     #[test]
     fn a_recorded_official_account_parses_into_every_modelled_member() {

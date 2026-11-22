@@ -72,27 +72,32 @@ pub fn official_base64(text: &str) -> Option<Vec<u8>> {
 /// this way; the other methods keep the shared decoder (see
 /// docs.local/issues/open/rest-base64-skips-line-breaks-outside-execute-pipeline.md).
 pub fn official_bytes(body: &Value) -> Option<Value> {
+    let mut body = body.clone();
+    official_bytes_in_place(&mut body)?;
+    Some(body)
+}
+
+/// Normalize an owned request body. The caller discards it if any value is refused.
+pub(super) fn official_bytes_in_place(body: &mut Value) -> Option<()> {
     match body {
-        Value::Object(object) => object
-            .iter()
-            .map(|(key, inner)| {
-                let value = match (key.as_str(), inner) {
+        Value::Object(object) => {
+            for (key, inner) in object {
+                match (key.as_str(), inner) {
                     ("bytesValue", Value::String(text)) => {
-                        Value::String(super::json::base64_encode(&official_base64(text)?))
+                        *text = base64_encode(&official_base64(text)?);
                     }
-                    _ => official_bytes(inner)?,
-                };
-                Some((key.clone(), value))
-            })
-            .collect::<Option<Map<String, Value>>>()
-            .map(Value::Object),
-        Value::Array(values) => values
-            .iter()
-            .map(official_bytes)
-            .collect::<Option<Vec<_>>>()
-            .map(Value::Array),
-        other => Some(other.clone()),
+                    (_, value) => official_bytes_in_place(value)?,
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                official_bytes_in_place(value)?;
+            }
+        }
+        _ => {}
     }
+    Some(())
 }
 
 /// JSON → `ExecutePipelineRequest`. `database` is the URL-bound database; a body

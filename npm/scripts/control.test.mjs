@@ -135,7 +135,7 @@ test('the public package exports and publishes the shared client', async () => {
 test('fireemu exec provides the unchanged base URL to the public control client', {skip:!process.env.FIREEMU_TEST_BINARY,timeout:30_000}, async t => {
   const cwd = await mkdtemp(join(tmpdir(),'fireemu-control-exec-'));
   t.after(()=>rm(cwd,{recursive:true,force:true}));
-  await writeFile(join(cwd,'fireemu.json'),JSON.stringify({schemaVersion:1,profile:'strict'}));
+  await writeFile(join(cwd,'fireemu.json'),JSON.stringify({schemaVersion:1,profile:'strict',daemon:{clockStart:'2026-01-01T00:00:00Z'}}));
   const module = new URL('../fireemu/control.mjs',import.meta.url).href;
   const script = `import {createControlClient} from ${JSON.stringify(module)};
     const client=createControlClient();

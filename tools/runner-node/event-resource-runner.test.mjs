@@ -660,6 +660,43 @@ test('v2: members of a Storage object that the recordings never showed follow th
   assert.deepEqual(Object.keys(call.data.data), [...Object.keys(recorded.data), 'aaa', 'cacheControl', 'contentEncoding', 'zzz']);
 });
 
+test('v2: Storage sorts only unrecorded root keys and keeps their object semantics', { timeout: 10000 }, async t => {
+  const f = await start(t, [], `
+const {appendFileSync} = require('node:fs');
+const sort = Array.prototype.sort;
+let sortedKeys;
+Array.prototype.sort = function (...args) {
+  if (new Error().stack.includes('at storageObjectInRecordedOrder')) sortedKeys = [...this];
+  return Reflect.apply(sort, this, args);
+};
+const fn = async event => {
+  appendFileSync(__dirname+'/calls.jsonl', JSON.stringify({data:event.data, sortedKeys:sortedKeys ?? []})+'\\n');
+  sortedKeys = undefined;
+};
+fn.run = fn;
+fn.__endpoint = {platform:'gcfv2',eventTrigger:{eventType:'google.cloud.storage.object.v1.finalized',eventFilters:{bucket:'demo-app'}}};
+module.exports = {object: fn};
+`, 'strict');
+  const recorded = Object.keys(v5Frame('6ac29fb7000987a59af4b7f6').frame.data);
+  // Full order-3 PICT table for known keys × unknown keys × data shape.
+  for (const knownKeys of [recorded, ['kind', 'etag'], []]) {
+    for (const unknownKeys of [[], ['extra'], ['zzz', 'aaa', '10', '2', '__proto__', 'toString']]) {
+      for (const nested of [false, true]) {
+        const value = nested ? { z: 'é', a: [1e-7, true] } : 'body';
+        const data = Object.fromEntries([...knownKeys, ...unknownKeys].reverse().map(key => [key, value]));
+        const event = { id: 'one', type: 'google.cloud.storage.object.v1.finalized', time: '2026-10-04T18:49:25.459311Z', source: '//storage.googleapis.com/projects/_/buckets/demo-app', specversion: '1.0', bucket: 'demo-app', data };
+        assert.equal((await f.invoke('object', 'storage', event)).ok, true);
+        const call = (await f.calls()).at(-1);
+        const integers = unknownKeys.filter(key => key === '2' || key === '10').map(Number).sort((a,b) => a-b).map(String);
+        const others = unknownKeys.filter(key => !integers.includes(key) && key !== '__proto__').sort();
+        const expected = Object.fromEntries([...integers, ...knownKeys, ...others].map(key => [key, value]));
+        assert.equal(JSON.stringify(call.data), JSON.stringify(expected));
+        assert.deepEqual(call.sortedKeys.toSorted(), unknownKeys.toSorted());
+      }
+    }
+  }
+});
+
 const v5Orders = JSON.parse(await readFile(new URL('../../crates/fireemu-adapter-functions/tests/fixtures/production-storage-v5-v2-member-orders.json', import.meta.url), 'utf8'));
 
 test('v2: every one of the 44 recorded Storage frames is handed over in its recorded member order (FE v5, finalize, delete, metadataUpdate and archive, with timeDeleted and metadata)', { timeout: 30000 }, async t => {

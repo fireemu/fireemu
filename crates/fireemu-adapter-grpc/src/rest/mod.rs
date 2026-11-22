@@ -1365,8 +1365,7 @@ impl RestState {
             request_options: None,
         };
         let guard = self.read_guard(principal);
-        let snapshot = self.local.get_document_snapshot(&req, &*guard)?;
-        let doc = snapshot.into_response()?;
+        let doc = self.local.get_document(&req, &*guard)?;
         Ok(ok(document_to_json(&doc)))
     }
 
@@ -1576,7 +1575,12 @@ impl RestState {
                         if enterprise || self.gateway.production_refusals() =>
                     {
                         let database = format!("projects/{project}/databases/{database}");
-                        stream_errors(self.execute_pipeline(principal, &database, body, key_order))
+                        let mut regex_cache = crate::pipeline_regex::RequestCache::default();
+                        stream_errors(
+                            regex_cache.scope(|| {
+                                self.execute_pipeline(principal, &database, body, key_order)
+                            }),
+                        )
                     }
                     _ => Ok(not_found_text()),
                 }
@@ -1732,7 +1736,7 @@ impl RestState {
             crate::pipeline_shape::RefusalGate::Open
         };
         let wire_body = body;
-        let body = if unrecorded == fireemu_core_firestore::pipeline_exec::Unrecorded::Refuse {
+        let mut body = if unrecorded == fireemu_core_firestore::pipeline_exec::Unrecorded::Refuse {
             self.transcoded("executePipeline", body)
                 .map_err(|error| gate.answer(nesting(error)))?
         } else {
@@ -1743,7 +1747,7 @@ impl RestState {
         };
         // Bytes as the official emulator reads them, on the transcoded body (both spellings of
         // the field); base64 it refuses is its one text, and strict refuses it as unobserved.
-        let body = pipeline_json::official_bytes(&body).ok_or_else(|| {
+        pipeline_json::official_bytes_in_place(&mut body).ok_or_else(|| {
             gate.answer(Status::invalid_argument("Payload isn't valid for request."))
         })?;
         let request = pipeline_json::request_from_json(database, &body)

@@ -143,6 +143,10 @@ impl fmt::Debug for SpillFile {
     }
 }
 
+pub(crate) fn export_write_error(error: &io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("cannot write it: {error}"))
+}
+
 impl SpillFile {
     /// Returns the path of the temporary file.
     pub fn path(&self) -> &Path {
@@ -223,14 +227,41 @@ impl SpillFile {
             self.uid,
         )?;
         let mut offset = 0;
+        let mut buffer = self.chunk_buffer();
         while offset < self.len {
-            let len = (self.len - offset).min(64 * 1024) as usize;
+            let len = self.chunk_len(offset);
             #[cfg(test)]
             fault::check(fault::Op::Copy)?;
-            copy.append(&self.read_range(offset, len)?)?;
+            self.read_exact_range(offset, &mut buffer[..len])?;
+            copy.append(&buffer[..len])?;
             offset += len as u64;
         }
         Ok(copy)
+    }
+
+    /// Writes all of the retained file, reusing a bounded scratch buffer.
+    pub fn write_to(&self, mut output: impl io::Write) -> io::Result<()> {
+        let mut offset = 0;
+        let mut buffer = self.chunk_buffer();
+        let mut destination_error = None;
+        while offset < self.len {
+            let len = self.chunk_len(offset);
+            self.read_exact_range(offset, &mut buffer[..len])?;
+            // A source failure takes precedence over any error writing the export.
+            if destination_error.is_none() {
+                destination_error = output.write_all(&buffer[..len]).err();
+            }
+            offset += len as u64;
+        }
+        destination_error.map_or(Ok(()), |error| Err(export_write_error(&error)))
+    }
+
+    fn chunk_len(&self, offset: u64) -> usize {
+        usize::try_from((self.len - offset).min(64 * 1024)).expect("bounded chunk length")
+    }
+
+    fn chunk_buffer(&self) -> Vec<u8> {
+        vec![0; self.chunk_len(0)]
     }
 
     /// Reads a window entirely within the file.
@@ -244,11 +275,17 @@ impl SpillFile {
             ));
         }
         let mut bytes = vec![0; len];
+        self.read_exact_range(start, &mut bytes)?;
+        Ok(bytes)
+    }
+
+    // Every caller checks the requested interval or computes a chunk within the file length.
+    fn read_exact_range(&self, start: u64, bytes: &mut [u8]) -> io::Result<()> {
         #[cfg(unix)]
         {
             let file = self.file.as_ref().expect("spill file is open");
             let mut offset = 0;
-            while offset < len {
+            while offset < bytes.len() {
                 match spill_io!(
                     "read",
                     &self.path,
@@ -279,9 +316,9 @@ impl SpillFile {
                 .expect("spill file is open")
                 .try_clone()?;
             file.seek(SeekFrom::Start(start))?;
-            file.read_exact(&mut bytes)?;
+            file.read_exact(bytes)?;
         }
-        Ok(bytes)
+        Ok(())
     }
 
     /// Reads the entire file.

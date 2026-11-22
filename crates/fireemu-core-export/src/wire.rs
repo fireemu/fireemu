@@ -258,6 +258,7 @@ impl<'a> Reader<'a> {
 #[derive(Debug, Default, Clone)]
 pub struct Writer {
     bytes: Vec<u8>,
+    scratch: Vec<Vec<u8>>,
 }
 
 impl Writer {
@@ -341,9 +342,19 @@ impl Writer {
 
     /// Writes a nested message built by `body`.
     pub fn write_message(&mut self, number: u32, body: impl FnOnce(&mut Writer)) {
-        let mut inner = Writer::new();
+        const MAX_SCRATCH_BYTES: usize = 64 * 1024;
+        const MAX_SCRATCH_DEPTH: usize = 16;
+        let mut inner = Self {
+            bytes: self.scratch.pop().unwrap_or_default(),
+            scratch: std::mem::take(&mut self.scratch),
+        };
         body(&mut inner);
         self.write_bytes(number, inner.as_slice());
+        self.scratch = inner.scratch;
+        if inner.bytes.capacity() <= MAX_SCRATCH_BYTES && self.scratch.len() < MAX_SCRATCH_DEPTH {
+            inner.bytes.clear();
+            self.scratch.push(inner.bytes);
+        }
     }
 
     /// Writes a group built by `body`.
@@ -357,6 +368,17 @@ impl Writer {
 #[cfg(test)]
 mod tests {
     use super::{Reader, WireType, Writer};
+
+    #[test]
+    fn consecutive_delimited_messages_keep_separate_buffers() {
+        let mut writer = Writer::new();
+        writer.write_message(2, |inner| inner.write_varint(1, 1));
+        writer.write_message(2, |inner| inner.write_varint(1, 2));
+        assert_eq!(
+            writer.finish(),
+            [0x12, 0x02, 0x08, 0x01, 0x12, 0x02, 0x08, 0x02]
+        );
+    }
 
     #[test]
     fn a_varint_round_trips_through_the_writer_and_the_reader() {

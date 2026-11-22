@@ -1047,12 +1047,23 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         false
     });
     if let Some(dir) = &import {
+        let storage_spill = if exporter.products.storage && cfg.storage_spill_object_bytes.is_some()
+        {
+            storage
+                .store
+                .lock()
+                .map_err(|_| "the Storage store lock is poisoned".to_owned())?
+                .spill_config()
+        } else {
+            None
+        };
         let prepared = import_export::prepare(
             dir,
             exporter.products,
             &cfg.auth_project,
             cfg.profile != crate::config::CompatibilityProfile::Strict,
             cfg.storage_max_object_bytes,
+            storage_spill.as_ref(),
         )
         .map_err(|e| format!("--import {}: {e}", dir.display()))?;
         if !quiet {
@@ -1502,31 +1513,24 @@ async fn serve_suite(
         let bus = log_bus.clone();
         let clock = clock.clone();
         tokio::spawn(async move {
-            let mut cursors: std::collections::BTreeMap<
-                String,
-                (Arc<fireemu_adapter_functions::runner::Runner>, Option<u64>),
-            > = std::collections::BTreeMap::new();
+            type RunnerCursor = (Arc<fireemu_adapter_functions::runner::Runner>, Option<u64>);
+            let mut cursors = std::collections::BTreeMap::<String, (RunnerCursor, bool)>::new();
             let mut poll = tokio::time::interval(std::time::Duration::from_millis(250));
             loop {
                 poll.tick().await;
-                let runners = runtime.current_runner_units();
-                let current: Vec<String> = runners
-                    .iter()
-                    .map(fireemu_adapter_functions::runtime::RunnerUnit::key)
-                    .collect();
-                crate::functions::retain_current_cursors(&mut cursors, &current);
-                for unit in runners {
-                    let codebase = unit.key();
-                    let runner = unit.runner;
-                    let state = cursors
-                        .entry(codebase.clone())
-                        .or_insert_with(|| (runner.clone(), None));
-                    if !Arc::ptr_eq(&state.0, &runner) {
-                        *state = (runner.clone(), None);
+                for unit in runtime.current_runner_units() {
+                    let ((runner, cursor), seen) = cursors
+                        .entry(unit.key())
+                        .or_insert_with(|| ((Arc::clone(&unit.runner), None), false));
+                    if !Arc::ptr_eq(runner, &unit.runner) {
+                        *runner = Arc::clone(&unit.runner);
+                        *cursor = None;
                     }
-                    let slice = runner.logs_since(state.1);
-                    state.1 = Some(slice.next_seq);
+                    *seen = true;
+                    let slice = runner.logs_since(*cursor);
+                    *cursor = Some(slice.next_seq);
                     if slice.truncated {
+                        let codebase = unit.key();
                         bus.publish(
                             &fireemu_adapter_logging::LogInput::plain(
                                 "warning",
@@ -1549,6 +1553,7 @@ async fn serve_suite(
                         ));
                     }
                 }
+                crate::functions::retain_current_cursors(&mut cursors);
             }
         })
     });

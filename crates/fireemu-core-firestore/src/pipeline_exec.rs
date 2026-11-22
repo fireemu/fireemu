@@ -1213,9 +1213,20 @@ impl Comparison {
 fn official_order(a: &Eval, b: &Eval) -> Option<Ordering> {
     match (a, b) {
         (Eval::Absent, Eval::Absent) => Some(Ordering::Equal),
-        (Eval::Value(a), Eval::Value(b)) if a.kind() == b.kind() => Some(a.canonical_cmp(b)),
+        (Eval::Value(a), Eval::Value(b)) => official_value_order(a, b),
         _ => None,
     }
+}
+
+fn official_value_order(a: &Value, b: &Value) -> Option<Ordering> {
+    (a.kind() == b.kind()).then(|| a.canonical_cmp(b))
+}
+
+fn array_element_matches(value: &Value, search: &Eval) -> bool {
+    matches!(
+        search,
+        Eval::Value(search) if official_value_order(value, search) == Some(Ordering::Equal)
+    )
 }
 
 /// A comparison, in the official emulator's order under both profiles: production answered
@@ -1659,15 +1670,14 @@ fn eval_extrema_n(args: &[Eval], cx: Context<'_>, name: &'static str, maximum: b
     if n == 0 {
         return Eval::Value(Value::Array(Vec::new()));
     }
-    let mut selected: Vec<Value> = values
+    let mut selected: Vec<&Value> = values
         .iter()
         .filter(|value| !matches!(value, Value::Null))
-        .cloned()
         .collect();
     if let Some(first) = selected.first() {
         if selected
             .iter()
-            .any(|value| std::mem::discriminant(value) != std::mem::discriminant(first))
+            .any(|value| std::mem::discriminant(*value) != std::mem::discriminant(*first))
         {
             return Eval::Error(EvalError::Unobserved {
                 function: name,
@@ -1675,10 +1685,10 @@ fn eval_extrema_n(args: &[Eval], cx: Context<'_>, name: &'static str, maximum: b
             });
         }
     }
-    selected.sort_by(Value::canonical_cmp);
+    selected.sort_by(|a, b| a.canonical_cmp(b));
     if selected.windows(2).any(|pair| {
-        pair[0].canonical_cmp(&pair[1]) == Ordering::Equal
-            && (pair[0] != pair[1] || !pair[0].stored_eq(&pair[1]))
+        pair[0].canonical_cmp(pair[1]) == Ordering::Equal
+            && (pair[0] != pair[1] || !pair[0].stored_eq(pair[1]))
     }) {
         return Eval::Error(EvalError::Unobserved {
             function: name,
@@ -1688,8 +1698,9 @@ fn eval_extrema_n(args: &[Eval], cx: Context<'_>, name: &'static str, maximum: b
     if maximum {
         selected.reverse();
     }
-    selected.truncate(n);
-    Eval::Value(Value::Array(selected))
+    Eval::Value(Value::Array(
+        selected.into_iter().take(n).cloned().collect(),
+    ))
 }
 fn eval_maximum_n(args: &[Eval], cx: Context<'_>) -> Eval {
     eval_extrema_n(args, cx, "maximum_n", true)
@@ -1891,7 +1902,7 @@ fn eval_array_index_of_all(args: &[Eval], cx: Context<'_>) -> Eval {
         .iter()
         .enumerate()
         .filter_map(|(index, value)| {
-            if official_order(&Eval::Value(value.clone()), &args[1]) == Some(Ordering::Equal) {
+            if array_element_matches(value, &args[1]) {
                 i64::try_from(index).ok().map(Value::Integer)
             } else {
                 None
@@ -1907,8 +1918,7 @@ fn eval_array_index_of(args: &[Eval], cx: Context<'_>) -> Eval {
         Err(e) => return e,
     };
     let direction = match &args[2] { Eval::Value(Value::String(direction)) if direction == "first" || direction == "last" => direction.as_str(), _ => return Eval::Error(EvalError::Invalid("The argument 'direction' for function 'array_index_of' must be a literal of type string from the following list: [first, last]".to_owned())) };
-    let matches =
-        |v: &Value| official_order(&Eval::Value(v.clone()), &args[1]) == Some(Ordering::Equal);
+    let matches = |value| array_element_matches(value, &args[1]);
     let index = if direction == "first" {
         values.iter().position(matches)
     } else {
@@ -2751,6 +2761,15 @@ impl Cursor {
             })
     }
 
+    fn remaining_limit(&self, index: usize) -> Option<usize> {
+        match (self.stages.get(index), self.state.get(index)) {
+            (Some(Stage::Limit(_)), Some(StageState::Remaining(remaining))) => {
+                usize::try_from(*remaining).ok()
+            }
+            _ => None,
+        }
+    }
+
     /// Pushes one row through the stages: the rows that come out (none when a stage drops the
     /// row or a blocking stage holds it).
     pub fn push(&mut self, row: Row) -> Result<Vec<Row>, EvalError> {
@@ -2833,7 +2852,10 @@ impl Cursor {
                     rows.truncate(usize::try_from(*count).unwrap_or(usize::MAX));
                     rows
                 }
-                Stage::Sort(keys) => sort_rows(rows, keys, self.unrecorded, &self.runtime)?,
+                Stage::Sort(keys) => {
+                    let prefix = self.remaining_limit(index + 1);
+                    sort_rows(rows, keys, self.unrecorded, &self.runtime, prefix)?
+                }
                 stage @ Stage::FindNearest { .. } => {
                     nearest_rows(rows, stage, self.unrecorded, &self.runtime)?
                 }
@@ -3336,43 +3358,129 @@ fn blocking_value(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static SORT_PEAK_KEYS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn evaluate_sort_keys(
+    row: &Row,
+    keys: &[SortKey],
+    unrecorded: Unrecorded,
+    runtime: &RuntimeContext,
+) -> Result<Vec<Value>, EvalError> {
+    keys.iter()
+        .map(|key| {
+            blocking_value(
+                key.expr.eval_at(row, unrecorded, false, runtime),
+                unrecorded,
+                "sort",
+            )
+            .map(|value| value.unwrap_or(Value::Null))
+        })
+        .collect()
+}
+
+fn compare_sort_keys(left: &[Value], right: &[Value], keys: &[SortKey]) -> Ordering {
+    for ((x, y), key) in left.iter().zip(right).zip(keys) {
+        let order = x.canonical_cmp(y);
+        let order = if key.descending {
+            order.reverse()
+        } else {
+            order
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    Ordering::Equal
+}
+
+struct SortCandidate<'a> {
+    values: Vec<Value>,
+    row: Row,
+    position: usize,
+    keys: &'a [SortKey],
+}
+
+impl PartialEq for SortCandidate<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for SortCandidate<'_> {}
+
+impl PartialOrd for SortCandidate<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SortCandidate<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_sort_keys(&self.values, &other.values, self.keys)
+            .then_with(|| self.position.cmp(&other.position))
+    }
+}
+
 /// Orders rows by the keys, ties staying in input order. A missing key value sorts as null.
 fn sort_rows(
     rows: Vec<Row>,
     keys: &[SortKey],
     unrecorded: Unrecorded,
     runtime: &RuntimeContext,
+    prefix: Option<usize>,
 ) -> Result<Vec<Row>, EvalError> {
+    if let Some(limit) = prefix.filter(|limit| limit.saturating_mul(4) < rows.len()) {
+        return sort_prefix(rows, keys, unrecorded, runtime, limit);
+    }
     let mut keyed = Vec::with_capacity(rows.len());
     for row in rows {
-        let values = keys
-            .iter()
-            .map(|key| {
-                blocking_value(
-                    key.expr.eval_at(&row, unrecorded, false, runtime),
-                    unrecorded,
-                    "sort",
-                )
-                .map(|value| value.unwrap_or(Value::Null))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let values = evaluate_sort_keys(&row, keys, unrecorded, runtime)?;
         keyed.push((values, row));
+        #[cfg(test)]
+        SORT_PEAK_KEYS.with(|peak| peak.set(peak.get().max(keyed.len())));
     }
-    keyed.sort_by(|(a, _), (b, _)| {
-        for ((x, y), key) in a.iter().zip(b).zip(keys) {
-            let order = x.canonical_cmp(y);
-            let order = if key.descending {
-                order.reverse()
-            } else {
-                order
-            };
-            if order != Ordering::Equal {
-                return order;
+    keyed.sort_by(|(a, _), (b, _)| compare_sort_keys(a, b, keys));
+    Ok(keyed.into_iter().map(|(_, row)| row).collect())
+}
+
+/// Keeps a small sorted prefix while evaluating every row's keys in the original input order.
+fn sort_prefix(
+    rows: Vec<Row>,
+    keys: &[SortKey],
+    unrecorded: Unrecorded,
+    runtime: &RuntimeContext,
+    limit: usize,
+) -> Result<Vec<Row>, EvalError> {
+    let mut best = BinaryHeap::new();
+    for (position, row) in rows.into_iter().enumerate() {
+        let values = evaluate_sort_keys(&row, keys, unrecorded, runtime)?;
+        if limit == 0 {
+            continue;
+        }
+        let candidate = SortCandidate {
+            values,
+            row,
+            position,
+            keys,
+        };
+        if best.len() < limit {
+            best.push(candidate);
+        } else if let Some(mut worst) = best.peek_mut() {
+            if candidate < *worst {
+                *worst = candidate;
             }
         }
-        Ordering::Equal
-    });
-    Ok(keyed.into_iter().map(|(_, row)| row).collect())
+        #[cfg(test)]
+        SORT_PEAK_KEYS.with(|peak| peak.set(peak.get().max(best.len())));
+    }
+    Ok(best
+        .into_sorted_vec()
+        .into_iter()
+        .map(|candidate| candidate.row)
+        .collect())
 }
 
 /// A tuple of values grouped by equality: `1` and `1.0`, `-0.0` and `0.0`, and NaNs are equal,

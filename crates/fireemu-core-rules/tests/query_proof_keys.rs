@@ -63,6 +63,31 @@ fn allows(condition: &str, ctx: &RequestContext) -> bool {
     matches!(evaluate_request(&ruleset, ctx).decision, Decision::Allow)
 }
 
+#[test]
+fn query_resource_passed_through_nested_calls_preserves_closed_data_defaults() {
+    let source = "rules_version = '2'; service cloud.firestore {
+        function known(r) {
+            return r.data.get('missing', 99) == 99;
+        }
+        function nested(r) {
+            return known(r);
+        }
+        match /databases/{database}/documents/notes/{id} {
+            allow list: if nested(resource);
+        }
+    }";
+    let c = ctx(BTreeMap::from([("n".to_owned(), RulesValue::Int(2))]), true);
+    let direct = parse_ruleset(source).unwrap();
+    assert_eq!(evaluate_request(&direct, &c).decision, Decision::Allow);
+
+    let wrapper = source.replace("nested(resource);", "nested({'data': resource.data});");
+    let ordinary_map = parse_ruleset(&wrapper).unwrap();
+    assert!(matches!(
+        evaluate_request(&ordinary_map, &c).decision,
+        Decision::Deny(_)
+    ));
+}
+
 /// A constraint a query can put on a field.
 fn constraint() -> impl Strategy<Value = RulesValue> {
     prop_oneof![

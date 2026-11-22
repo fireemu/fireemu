@@ -103,7 +103,7 @@ impl Projects {
         // the backend's wipe instead of reported, so it is caught here before anything else
         // is wiped. The backend offers this check only over the whole catalog, so a poisoned
         // database outside `scope` refuses the transition too: refusing wipes nothing.
-        if let Err(status) = self.backend.database_catalog() {
+        if let Err(status) = self.backend.validate_database_catalog() {
             return Err(TransitionFailure::new(
                 "firestore",
                 format!(
@@ -139,6 +139,31 @@ impl ProjectHooks for Projects {
         self.backend
             .database_handle(&parent)
             .and_then(|handle| handle.with(|state| Ok(state.documents())))
+            .map_err(|error| error.to_string())
+    }
+
+    #[allow(clippy::result_large_err)] // Database handles use tonic::Status at the adapter boundary.
+    fn text_index_group_documents(
+        &self,
+        project: &str,
+        database: &str,
+        group: &fireemu_core_types::ids::CollectionId,
+    ) -> Result<Vec<fireemu_core_firestore::store::Document>, String> {
+        let parent = fireemu_adapter_grpc::decode::parse_parent(&format!(
+            "projects/{project}/databases/{database}/documents"
+        ))
+        .map_err(|error| error.to_string())?;
+        self.backend
+            .database_handle(&parent)
+            .and_then(|handle| {
+                handle.with(|state| {
+                    Ok(state
+                        .live_collection_group_handles(group)
+                        .iter()
+                        .map(|document| (**document).clone())
+                        .collect())
+                })
+            })
             .map_err(|error| error.to_string())
     }
 

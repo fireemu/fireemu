@@ -1047,7 +1047,7 @@ impl PubSubHandle {
     }
 
     fn has_pending_dead_letters(&self) -> bool {
-        !self.state().pending_dead_letters().is_empty()
+        self.state().has_pending_dead_letters()
     }
 
     async fn run_dead_letter_dispatcher(&self, recovery_notify: Arc<Notify>) {
@@ -1144,14 +1144,7 @@ impl PubSubHandle {
             if !ack_ids.is_empty() {
                 state.acknowledge(subscription, ack_ids)?;
             }
-            for (ack_id, seconds) in changes {
-                state.modify_ack_deadline(
-                    subscription,
-                    std::slice::from_ref(ack_id),
-                    *seconds,
-                    now,
-                )?;
-            }
+            state.modify_ack_deadlines(subscription, changes, now)?;
         }
         // An ack can make room for a pending dead-letter transfer; retrying is cheap and
         // idempotent, so every frame does it.

@@ -1234,6 +1234,20 @@ pub(crate) enum Resolution<'a> {
     NotFound,
 }
 
+impl<'a> Resolution<'a> {
+    pub(crate) fn scoped_target(self) -> Option<(&'a str, Option<&'a str>)> {
+        match self {
+            Self::Matched {
+                project, tenant, ..
+            }
+            | Self::MethodNotAllowed {
+                project, tenant, ..
+            } => project.map(|project| (project, tenant)),
+            Self::NotFound => None,
+        }
+    }
+}
+
 type KnownRoute<'a> = (
     RouteClass,
     Option<&'a str>,
@@ -1359,6 +1373,32 @@ mod tests {
                     );
                 }
                 Pattern::Exact(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn resolved_scope_matches_the_path_scope_for_every_table_row() {
+        for route in ROUTES {
+            let path = match route.pattern {
+                Pattern::Exact(path) => path.to_owned(),
+                Pattern::Project { prefix, suffix } => format!("{prefix}project{suffix}"),
+                Pattern::Tenant { prefix, suffix } => {
+                    format!("{prefix}project/tenants/tenant{suffix}")
+                }
+                Pattern::ProjectResource { prefix, collection } => {
+                    format!("{prefix}project{collection}/resource")
+                }
+                Pattern::TenantResource { prefix, collection } => {
+                    format!("{prefix}project/tenants/tenant{collection}/resource")
+                }
+            };
+            for method in [route.method, "HEAD"] {
+                assert_eq!(
+                    resolve(method, &path).scoped_target(),
+                    super::scoped_target(&path),
+                    "{method} {path}"
+                );
             }
         }
     }

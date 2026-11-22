@@ -146,3 +146,24 @@ fn prefix_relation() {
     assert!(!ab.is_prefix_of(&a));
     assert!(a.is_prefix_of(&a));
 }
+
+#[test]
+fn validating_a_borrowed_segment_preserves_field_path_errors() {
+    use fireemu_core_firestore::field_path::validate_segment;
+
+    for name in [
+        String::new(),
+        "field.with.`quotes`".into(),
+        "__reserved__".into(),
+        "__name__".into(),
+        "単\u{007f}".into(),
+        "é".repeat(750),
+        "é".repeat(751),
+    ] {
+        assert_eq!(
+            validate_segment(&name),
+            FieldPath::from_segments([name.as_str()]).map(|_| ()),
+            "{name:?}"
+        );
+    }
+}

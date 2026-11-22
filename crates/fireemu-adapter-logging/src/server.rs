@@ -1,17 +1,17 @@
 //! The RFC 6455 server: a dedicated tokio accept loop on the logging port. No hyper upgrade is
 //! needed; the handshake is a handful of headers and the frames are small.
 
-use std::io;
+use std::io::{self, IoSlice};
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::bus::LogBus;
 use crate::wire::{
-    close_frame, encode_frame, encode_text_frame, handshake_response, parse_handshake, unmask,
-    ClientFrame, HandshakeError,
+    close_frame, encode_frame, encode_text_frame, frame_header, handshake_response,
+    parse_handshake, unmask, ClientFrame, HandshakeError,
 };
 
 /// The largest handshake request head accepted, in bytes. A well-formed handshake is a few
@@ -108,10 +108,7 @@ async fn handle_connection(
     // Snapshot history and subscribe atomically, then replay history before any live frame.
     let mut sub = bus.subscribe();
     for frame in &sub.history {
-        reader
-            .get_mut()
-            .write_all(&encode_text_frame(frame))
-            .await?;
+        write_text_frame(reader.get_mut(), frame).await?;
     }
     drop(sub.history);
 
@@ -119,7 +116,7 @@ async fn handle_connection(
         tokio::select! {
             live = sub.live.recv() => match live {
                 Ok(text) => {
-                    reader.get_mut().write_all(&encode_text_frame(&text)).await?;
+                    write_text_frame(reader.get_mut(), &text).await?;
                 }
                 // The client fell behind the live buffer: it keeps the history it has and the
                 // stream continues from here (a documented divergence: no replay of the gap).
@@ -142,6 +139,27 @@ async fn handle_connection(
             },
         }
     }
+}
+
+// Keep the text borrowed from its Arc while the socket consumes the frame.
+async fn write_text_frame(writer: &mut (impl AsyncWrite + Unpin), text: &str) -> io::Result<()> {
+    if text.len() < 126 {
+        return writer.write_all(&encode_text_frame(text)).await;
+    }
+    let (header, header_len) = frame_header(0x1, text.len());
+    let mut slices = [
+        IoSlice::new(&header[..header_len]),
+        IoSlice::new(text.as_bytes()),
+    ];
+    let mut remaining = slices.as_mut_slice();
+    while !remaining.is_empty() {
+        let written = writer.write_vectored(remaining).await?;
+        if written == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        IoSlice::advance_slices(&mut remaining, written);
+    }
+    Ok(())
 }
 
 /// Answers one refused handshake and closes the connection. No frame is ever written here.
@@ -268,4 +286,30 @@ async fn read_exact_or_eof<R: AsyncReadExt + Unpin>(
         filled += n;
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn text_frame_keeps_every_byte_across_partial_writes() {
+        for size in [125, 126, 65_535, 65_536] {
+            let text = "x".repeat(size);
+            let expected = encode_text_frame(&text);
+            let (mut writer, mut reader) = tokio::io::duplex(257);
+            let read = async {
+                let mut frame = vec![0; expected.len()];
+                reader.read_exact(&mut frame).await.unwrap();
+                assert_eq!(frame, expected);
+            };
+            let write = async {
+                let outcome = write_text_frame(&mut writer, &text).await;
+                writer.shutdown().await.unwrap();
+                outcome
+            };
+            let (outcome, ()) = tokio::join!(write, read);
+            outcome.unwrap();
+        }
+    }
 }

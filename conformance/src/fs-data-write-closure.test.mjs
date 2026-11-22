@@ -30,6 +30,30 @@ const closurePath = fileURLToPath(
 const fixturePath = fileURLToPath(
   new URL("../fs-data-write-production-matrix.json", import.meta.url),
 );
+// These inputs are identical across the closure checks in this test process.
+function immutableJson(value) {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) immutableJson(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+let recordedFixture;
+function productionFixture() {
+  return (recordedFixture ??= immutableJson(JSON.parse(readFileSync(fixturePath, "utf8"))));
+}
+
+let generatedCorpus;
+function sandboxCorpus() {
+  return (generatedCorpus ??= prepareSandboxCorpus()
+    .then(immutableJson)
+    .catch((error) => {
+      generatedCorpus = undefined;
+      throw error;
+    }));
+}
+
 const manifestPath = fileURLToPath(
   new URL("../fs-data-write-recipe-digests.json", import.meta.url),
 );
@@ -140,9 +164,9 @@ test("current accepted conditions bind every selected row and no difference", as
   const candidate = JSON.parse(readFileSync(reviewCandidatePath, "utf8"));
   const accepted = JSON.parse(readFileSync(acceptedConditionsPath, "utf8"));
   const localRows = JSON.parse(readFileSync(acceptedLocalRowsPath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const { base, supplemental } = currentRecordingSelection(fixture, manifest, corpus);
   const sourceById = new Map();
   for (const selection of [{ name: "base", ...base }, ...supplemental.comparisons]) {
@@ -363,7 +387,7 @@ test("current accepted conditions bind every selected row and no difference", as
 test("conditions bound to older comparisons are covered by the release comparison", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
   const candidate = JSON.parse(readFileSync(reviewCandidatePath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const restIds = new Set(corpus.restPrograms.map(({ id }) => id));
   const streamIds = new Set(
     corpus.streamRecipes.filter(({ transport }) => transport === "grpc").map(({ id }) => id),
@@ -799,9 +823,9 @@ test("integrated list conditions retain exact recipe ownership", () => {
 
 test("verified conditions are bound to their saved comparisons", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const digestProgram = (program) => ({
     steps: Object.fromEntries(
       Object.entries(program.steps).map(([stepId, step]) => {
@@ -1021,7 +1045,7 @@ test("verified conditions are bound to their saved comparisons", async () => {
 test("10 MiB accepted samples and strict 11 MiB Commit probes keep separate recipe identities", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const accepted = closure.conditions.find(
     ({ conditionId }) =>
       conditionId === "FS-LIMIT-API-REQUEST-BYTES/rest-commit-json-accepted-samples",
@@ -1203,9 +1227,9 @@ test("near-limit deletion names all six recorded route and size combinations", (
 
 test("changed field-path and indexed-value recipes are covered by the partial supplement", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const { base, supplemental } = currentRecordingSelection(fixture, manifest, corpus);
   for (const [conditionId, recipeId] of [
     ["FS-LIMIT-FIELD-PATH-BYTES", "writes/limits/field-path-mask/1500"],
@@ -1221,9 +1245,9 @@ test("changed field-path and indexed-value recipes are covered by the partial su
 
 test("the recorded empty-write response remains separate from half-close and trailing metadata", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const { base, supplemental } = currentRecordingSelection(fixture, manifest, corpus);
   const responseId = "writes/write-stream-terminal/response-before-half-close";
   const response = closure.conditions.find(
@@ -1266,7 +1290,7 @@ test("half-close accepts the source-bound current run without rewriting historic
     "ba880dc6feb56588256298deba48c9cbfd53de115e2f9381968867a28279d56f",
     "ba880dc6feb56588256298deba48c9cbfd53de115e2f9381968867a28279d56f",
   ]);
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   assert.deepEqual(comparison.productionRecordingDigests, fixture.evidence.streamRecordingDigests);
   assert.deepEqual(comparison.productionRecordingTimes, fixture.evidence.recordedAt);
   assert.equal(new Set(comparison.productionRecordingTimes).size, 2);
@@ -1365,9 +1389,9 @@ test("batch malformed-middle is rebound to the current source-bound comparison",
 
 test("recorded conditions contain no changed or unrecorded runnable recipes", async () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const { corpus } = await prepareSandboxCorpus();
+  const { corpus } = await sandboxCorpus();
   const { supplemental } = currentRecordingSelection(fixture, manifest, corpus);
   const pending = new Set([...supplemental.pendingRestIds, ...supplemental.pendingStreamIds]);
   const failures = closure.conditions
@@ -1549,7 +1573,7 @@ test("boundary evidence brackets REST steps, gRPC recordings and typed dropped c
 
 test("FS-DATA-WRITE closure inventory cannot silently omit a declared condition", () => {
   const closure = JSON.parse(readFileSync(closurePath, "utf8"));
-  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture = productionFixture();
   const allPrograms = Object.assign(
     {},
     fixture.programs,

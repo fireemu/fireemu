@@ -17,6 +17,10 @@ pub struct TotpParams {
 #[must_use]
 pub fn hotp(secret: &[u8], counter: u64, digits: u8) -> u32 {
     let mac = hmac_sha1(secret, &counter.to_be_bytes());
+    truncate(&mac, digits)
+}
+
+pub(crate) fn truncate(mac: &[u8; 20], digits: u8) -> u32 {
     let offset = usize::from(mac[19] & 0x0F);
     let binary = (u32::from(mac[offset] & 0x7F) << 24)
         | (u32::from(mac[offset + 1]) << 16)

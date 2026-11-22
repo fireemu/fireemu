@@ -741,27 +741,7 @@ fn paged_collection_json(
     state: &mut PubSubState,
     context: &str,
 ) -> Result<Value, RestError> {
-    let mut size = 0;
-    let mut token = String::new();
-    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        let decoded =
-            decode_query(key).and_then(|key| decode_query(value).map(|value| (key, value)));
-        let (key, value) = match decoded {
-            Ok(pair) => pair,
-            Err(_) if handle.paging_policy == crate::PagingPolicy::Emulator => continue,
-            Err(error) => return Err(error),
-        };
-        match key.as_str() {
-            "pageSize" | "page_size" => match value.parse::<i32>() {
-                Ok(parsed) => size = parsed,
-                Err(_) if handle.paging_policy == crate::PagingPolicy::Emulator => {}
-                Err(_) => return Err(RestError::invalid("pageSize must be an integer")),
-            },
-            "pageToken" | "page_token" => token = value,
-            _ => {}
-        }
-    }
+    let (size, token) = page_parameters(query, handle.paging_policy)?;
     let page = state
         .paginate(
             context,
@@ -778,14 +758,47 @@ fn paged_collection_json(
             },
         )
         .map_err(RestError::from_core)?;
-    let mut response = collection_json(field, page.resources);
-    if !page.next_page_token.is_empty() {
-        response.as_object_mut().expect("collection object").insert(
-            "nextPageToken".to_owned(),
-            Value::String(page.next_page_token),
-        );
+    Ok(paged_response_json(
+        field,
+        page.resources,
+        page.next_page_token,
+    ))
+}
+
+fn page_parameters(query: &str, policy: crate::PagingPolicy) -> Result<(i32, String), RestError> {
+    let mut size = 0;
+    let mut token = String::new();
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let decoded =
+            decode_query(key).and_then(|key| decode_query(value).map(|value| (key, value)));
+        let (key, value) = match decoded {
+            Ok(pair) => pair,
+            Err(_) if policy == crate::PagingPolicy::Emulator => continue,
+            Err(error) => return Err(error),
+        };
+        match key.as_str() {
+            "pageSize" | "page_size" => match value.parse::<i32>() {
+                Ok(parsed) => size = parsed,
+                Err(_) if policy == crate::PagingPolicy::Emulator => {}
+                Err(_) => return Err(RestError::invalid("pageSize must be an integer")),
+            },
+            "pageToken" | "page_token" => token = value,
+            _ => {}
+        }
     }
-    Ok(response)
+    Ok((size, token))
+}
+
+fn paged_response_json(field: &str, resources: Vec<Value>, token: String) -> Value {
+    let mut response = collection_json(field, resources);
+    if !token.is_empty() {
+        response
+            .as_object_mut()
+            .expect("collection object")
+            .insert("nextPageToken".to_owned(), Value::String(token));
+    }
+    response
 }
 
 pub(crate) fn decode_query(value: &str) -> Result<String, RestError> {
@@ -871,21 +884,18 @@ async fn dispatch_subscription(
             return Err(RestError::method_not_allowed());
         }
         let mut state = handle.state();
-        let subscriptions = state
-            .list_subscriptions(project)
-            .into_iter()
-            .map(|config| subscription_json(&state, &config, handle.paging_policy))
-            .collect::<Vec<_>>();
+        let (size, token) = page_parameters(query, handle.paging_policy)?;
+        let page = state
+            .list_subscriptions_page(project, size, &token, handle.paging_policy)
+            .map_err(RestError::from_core)?;
+        let subscriptions = page
+            .resources
+            .iter()
+            .map(|config| subscription_json(&state, config, handle.paging_policy))
+            .collect();
         return Ok((
             StatusCode::OK,
-            paged_collection_json(
-                "subscriptions",
-                subscriptions,
-                query,
-                handle,
-                &mut state,
-                &format!("projects/{project}/subscriptions"),
-            )?,
+            paged_response_json("subscriptions", subscriptions, page.next_page_token),
             Schema::Subscriptions,
         ));
     }

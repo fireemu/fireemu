@@ -2688,3 +2688,87 @@ fn a_small_nearest_limit_preserves_input_ties_and_validates_late_rows() {
         );
     }
 }
+
+#[test]
+fn sort_immediately_before_a_small_limit_retains_only_the_prefix() {
+    let rows: Vec<_> = (0..96)
+        .map(|index| {
+            doc(
+                &format!("r{index:02}"),
+                &[("n", int(index % 4)), ("tie", int(index % 3))],
+            )
+        })
+        .collect();
+    let stage = Stage::Sort(vec![
+        ascending(field("n")),
+        SortKey {
+            expr: field("tie"),
+            descending: true,
+        },
+    ]);
+    let expected = execute_rows_in(vec![stage.clone()], rows.clone(), Unrecorded::Refuse).unwrap();
+    let _ = SORT_PEAK_KEYS.with(std::cell::Cell::take);
+    let actual = execute_rows_in(vec![stage, Stage::Limit(5)], rows, Unrecorded::Refuse).unwrap();
+    assert_eq!(actual, expected[..5]);
+    assert_eq!(SORT_PEAK_KEYS.with(std::cell::Cell::take), 5);
+}
+
+#[test]
+fn a_zero_limit_after_sort_still_evaluates_a_later_invalid_key() {
+    let key = Expr::call("sqrt", vec![field("score")], Placement::Value).unwrap();
+    let stages = vec![Stage::Sort(vec![ascending(key)]), Stage::Limit(0)];
+    let rows = ["first", "second", "last"].into_iter().map(|name| {
+        doc(
+            name,
+            &[(
+                "score",
+                if name == "last" {
+                    Value::String("bad".to_owned())
+                } else {
+                    Value::Double(4.0)
+                },
+            )],
+        )
+    });
+    assert!(matches!(
+        execute_rows_in(stages, rows, Unrecorded::Refuse),
+        Err(EvalError::Unobserved {
+            function: "sort",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_small_sort_prefix_consumes_the_same_random_draws_as_a_full_sort() {
+    let rows: Vec<_> = (0..64)
+        .map(|index| doc(&format!("r{index:02}"), &[]))
+        .collect();
+    let random = Expr::call("rand", Vec::new(), Placement::Value).unwrap();
+    let sort = Stage::Sort(vec![ascending(random)]);
+    let evaluate = |limit| {
+        let random = Arc::new(Mutex::new(SplitMix64::new(19)));
+        let runtime = RuntimeContext {
+            expr_rng: Some(Arc::clone(&random)),
+            ..RuntimeContext::default()
+        };
+        let mut stages = vec![sort.clone()];
+        if let Some(limit) = limit {
+            stages.push(Stage::Limit(limit));
+        }
+        let mut cursor = Cursor::new_in_with_runtime(stages, Unrecorded::OfficialEmulator, runtime);
+        for row in &rows {
+            assert!(cursor.push(row.clone()).unwrap().is_empty());
+        }
+        let selected = cursor.finish().unwrap();
+        let next = random.lock().unwrap().next_u64();
+        (selected, next)
+    };
+
+    let (all, all_next) = evaluate(None);
+    for limit in [0, 5] {
+        let (prefix, next) = evaluate(Some(limit));
+        assert_eq!(prefix, all[..usize::try_from(limit).unwrap()]);
+        assert_eq!(all_next, next);
+    }
+}

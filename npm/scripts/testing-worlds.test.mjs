@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createSign, createHash } from 'node:crypto';
-import { mkdtemp, readFile, writeFile, rm, stat, mkdir, chmod, open, symlink } from 'node:fs/promises';
+import fs from 'node:fs';
+import { mkdtemp, readFile, readdir, writeFile, rm, stat, mkdir, chmod, open, symlink } from 'node:fs/promises';
 import { get as httpGet } from 'node:http';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import test from 'node:test';
 import { createTestWorld, withTestWorld } from '../fireemu/testing.mjs';
 import { cloneSupport } from '../fireemu/testing-snapshot.mjs';
@@ -326,49 +327,66 @@ test('world cleanup removes read-only snapshots after generation cancellation an
   const source = join(root, 'source'), readonly = join(source, 'readonly');
   await mkdir(readonly, { recursive: true });
   await writeFile(join(source, 'index.js'), 'module.exports = {};');
-  const large = join(readonly, 'large.bin');
-  const handle = await open(large, 'w');
-  await handle.truncate(256 * 1024 * 1024);
-  await handle.close();
+  const payload = Buffer.alloc(1024, 0x61);
+  await writeFile(join(readonly, 'payload.bin'), payload);
   await chmod(readonly, 0o555);
   t.after(async () => { await chmod(readonly, 0o700).catch(() => {}); await rm(root, { recursive: true, force: true }); });
 
   const controller = new AbortController();
   const tempRoot = join(root, 'worlds');
   await mkdir(tempRoot);
-  const pending = createTestWorld({ ...options, services: ['auth', 'firestore', 'functions'], functionsSource: source, tempRoot, signal: controller.signal, snapshotTimeoutMs: 30_000 });
-  let worldDirectory;
-  const observationDeadline = Date.now() + 20_000;
-  while (!worldDirectory && Date.now() < observationDeadline) {
-    const entries = await (await import('node:fs/promises')).readdir(tempRoot);
-    if (entries.length) worldDirectory = join(tempRoot, entries[0]);
-    else await new Promise(resolve => setTimeout(resolve, 2));
-  }
-  assert.ok(worldDirectory, 'world construction allocated its owned root');
-  const generatedFile = join(worldDirectory, 'generation-1', 'inputs', 'functions-0', 'readonly', 'large.bin');
-  let partial = false;
-  while (!partial && Date.now() < observationDeadline) {
-    try {
-      const size = (await stat(generatedFile)).size;
-      partial = size > 0 && size < 256 * 1024 * 1024;
-    } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (!partial) await new Promise(resolve => setTimeout(resolve, 2));
-  }
-  if (!partial) {
-    controller.abort(Error('cancelled because generation copy did not become observable'));
-    await assert.rejects(pending);
-    assert.fail('expected to observe generation copying below the read-only directory');
-  }
+  let recordWrite, releaseWrite;
+  const written = new Promise(resolve => { recordWrite = resolve; });
+  const released = new Promise(resolve => { releaseWrite = resolve; });
+  const originalCreateWriteStream = fs.createWriteStream;
+  const writer = t.mock.method(fs, 'createWriteStream', (path, streamOptions) => {
+    const [worldName, ...leaf] = relative(tempRoot, path).split(sep);
+    if (!worldName.startsWith('fireemu-world-') || leaf.join('/') !== 'generation-1/inputs/functions-0/readonly/payload.bin') {
+      return originalCreateWriteStream(path, streamOptions);
+    }
+    return originalCreateWriteStream(path, {
+      ...streamOptions,
+      fs: {
+        open: fs.open,
+        close: fs.close,
+        write(fd, buffer, offset, length, position, callback) {
+          // Hold the real copy after a short successful write and before the stream can write the remainder.
+          fs.write(fd, buffer, offset, Math.min(length, 128), position, (error, bytes, data) => {
+            if (error) { callback(error); return; }
+            recordWrite({ path, worldName, bytes });
+            void released.then(() => callback(null, bytes, data));
+          });
+        },
+      },
+    });
+  });
+  syncBuiltinESMExports();
   const reason = Error('read-only generation deadline elapsed');
   reason.name = 'TimeoutError';
-  const deadline = setTimeout(() => controller.abort(reason), 5);
-  await assert.rejects(pending, error => {
-    assert.match(error.message, /test world snapshot timed out/);
-    assert.equal(error.cause, reason);
-    return true;
-  });
-  clearTimeout(deadline);
-  assert.deepEqual(await (await import('node:fs/promises')).readdir(tempRoot), []);
+  const pending = createTestWorld({ ...options, services: ['auth', 'firestore', 'functions'], functionsSource: source, tempRoot, signal: controller.signal, snapshotTimeoutMs: 30_000 });
+  try {
+    const partial = await Promise.race([
+      written,
+      pending.then(() => assert.fail('world became ready before the generation write was intercepted')),
+    ]);
+    assert.ok(partial.bytes > 0 && partial.bytes < payload.length);
+    assert.equal((await stat(partial.path)).size, partial.bytes);
+    assert.equal((await stat(join(tempRoot, partial.worldName, 'baseline', 'functions-0', 'readonly'))).mode & 0o777, 0o555);
+    controller.abort(reason);
+    releaseWrite();
+    await assert.rejects(pending, error => {
+      assert.match(error.message, /test world snapshot timed out/);
+      assert.equal(error.cause, reason);
+      return true;
+    });
+  } finally {
+    controller.abort(reason);
+    releaseWrite();
+    writer.mock.restore();
+    syncBuiltinESMExports();
+    await pending.then(world => world.dispose(), () => {});
+  }
+  assert.deepEqual(await readdir(tempRoot), []);
 
   const runner = new URL('../../tools/runner-node/index.mjs', import.meta.url).pathname;
   const world = await createTestWorld({ ...options, services: ['auth', 'firestore', 'functions'], functionsSource: source, tempRoot, env: { ...options.env, FIREEMU_RUNNER_NODE: runner } });
@@ -378,7 +396,7 @@ test('world cleanup removes read-only snapshots after generation cancellation an
   assert.equal(world.generation, 2);
   await world.dispose();
   await assert.rejects(stat(owned), { code: 'ENOENT' });
-  assert.deepEqual(await (await import('node:fs/promises')).readdir(tempRoot), []);
+  assert.deepEqual(await readdir(tempRoot), []);
 });
 
 test('owned cleanup does not follow symlinks into caller-owned directories', async () => {
@@ -679,7 +697,8 @@ test('real Functions imports, trial boundaries, Rules and module globals belong 
   assert.equal((await readScheduled(b)).status,404);
   assert.equal((await query(b)).scheduled,0);
   const start=(await query(a)).now;
-  const taskResponse=await fetch(`${a.endpoints.tasks.url}/projects/${a.projectId}/locations/us-central1/queues/task/tasks`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({task:{name:'clock-boundary',scheduleTime:new Date(start+1000).toISOString(),httpRequest:{url:'',body:Buffer.from(JSON.stringify({data:{}})).toString('base64')}}})});
+  const taskQueue=`projects/${a.projectId}/locations/us-central1/queues/task`;
+  const taskResponse=await fetch(`${a.endpoints.tasks.url}/${taskQueue}/tasks`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({task:{name:`${taskQueue}/tasks/clock-boundary`,scheduleTime:new Date(start+1000).toISOString(),httpRequest:{url:'',body:Buffer.from(JSON.stringify({data:{}})).toString('base64')}}})});
   assert.equal(taskResponse.status,200,await taskResponse.text());
   await a.clock.advance(999);await new Promise(resolve=>setTimeout(resolve,50));assert.equal((await query(a)).taskAttempts,0);
   await a.clock.advance(1);

@@ -1108,6 +1108,7 @@ pub struct FirestoreMatch<'a> {
 pub struct FirestoreDispatchManifest {
     manifest: FunctionManifest,
     positions_by_database: Option<HashMap<String, Vec<usize>>>,
+    positions_by_name: Vec<usize>,
 }
 
 impl FirestoreDispatchManifest {
@@ -1124,10 +1125,38 @@ impl FirestoreDispatchManifest {
             }
             positions
         });
+        let mut positions_by_name = Vec::new();
+        if manifest.functions.len() > SCAN_LIMIT {
+            positions_by_name.extend(0..manifest.functions.len());
+            positions_by_name
+                .sort_by(|&a, &b| manifest.functions[a].name.cmp(&manifest.functions[b].name));
+        }
         Self {
             manifest,
             positions_by_database,
+            positions_by_name,
         }
+    }
+
+    /// Looks up the first function with this name in source order.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&FunctionSpec> {
+        if self.positions_by_name.is_empty() {
+            return self.manifest.get(name);
+        }
+        // The name index exists only for large manifests. Keep a hit on the
+        // first declaration as cheap as the source-order scan.
+        let first = &self.manifest.functions[0];
+        if first.name == name {
+            return Some(first);
+        }
+        let offset = self
+            .positions_by_name
+            .partition_point(|&index| self.manifest.functions[index].name.as_str() < name);
+        self.positions_by_name
+            .get(offset)
+            .map(|&index| &self.manifest.functions[index])
+            .filter(|function| function.name == name)
     }
 
     /// Returns the matching Firestore functions in source order with their path parameters.

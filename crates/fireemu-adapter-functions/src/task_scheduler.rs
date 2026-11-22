@@ -142,6 +142,7 @@ struct StatisticBucket {
 struct StatisticWindow {
     window: Duration,
     buckets: VecDeque<StatisticBucket>,
+    total: u128,
 }
 
 impl StatisticWindow {
@@ -149,6 +150,7 @@ impl StatisticWindow {
         Self {
             window,
             buckets: VecDeque::new(),
+            total: 0,
         }
     }
 
@@ -158,7 +160,9 @@ impl StatisticWindow {
             .front()
             .is_some_and(|bucket| now.saturating_duration_since(bucket.recorded_at) >= self.window)
         {
-            self.buckets.pop_front();
+            if let Some(bucket) = self.buckets.pop_front() {
+                self.total -= u128::from(bucket.count);
+            }
         }
     }
 
@@ -167,13 +171,19 @@ impl StatisticWindow {
         self.prune(now);
         if let Some(bucket) = self.buckets.back_mut() {
             if bucket.recorded_at == now {
-                bucket.count = bucket.count.saturating_add(1);
+                if bucket.count < u64::MAX {
+                    bucket.count += 1;
+                    self.total += 1;
+                }
                 return;
             }
         }
         if self.buckets.len() == MAX_STATISTICS_BUCKETS {
-            self.buckets.pop_front();
+            if let Some(bucket) = self.buckets.pop_front() {
+                self.total -= u128::from(bucket.count);
+            }
         }
+        self.total += 1;
         self.buckets.push_back(StatisticBucket {
             recorded_at: now,
             count: 1,
@@ -183,13 +193,12 @@ impl StatisticWindow {
     fn count(&mut self, now: impl Into<TaskTime>) -> u64 {
         let now = now.into();
         self.prune(now);
-        self.buckets
-            .iter()
-            .fold(0, |total, bucket| total.saturating_add(bucket.count))
+        u64::try_from(self.total).unwrap_or(u64::MAX)
     }
 
     fn clear(&mut self) {
         self.buckets = VecDeque::new();
+        self.total = 0;
     }
 
     #[cfg(test)]
@@ -361,6 +370,17 @@ pub(crate) struct PendingTask {
     pub run_now: bool,
 }
 
+impl PendingTask {
+    fn from_queued(function: &str, queued: &QueuedTask) -> Self {
+        Self {
+            function: function.to_owned(),
+            name: queued.task.name.clone(),
+            schedule_time: queued.task.schedule_time.clone(),
+            run_now: queued.run_now,
+        }
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static SCHEDULE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -483,6 +503,7 @@ pub(crate) struct TaskScheduler {
     retained_bytes: usize,
     completed_names: VecDeque<(String, Arc<str>, TaskTime)>,
     completed_history_bytes: usize,
+    queue_order: Vec<String>,
     next_queue: usize,
     closed: bool,
 }
@@ -490,7 +511,7 @@ pub(crate) struct TaskScheduler {
 impl TaskScheduler {
     pub(crate) fn from_manifest(manifest: &FunctionManifest, now: impl Into<TaskTime>) -> Self {
         let now = now.into();
-        let queues = manifest
+        let queues: BTreeMap<_, _> = manifest
             .functions
             .iter()
             .filter_map(|function| match function.trigger {
@@ -504,6 +525,7 @@ impl TaskScheduler {
             name_reuse: NameReuse::Retained,
             generation: 0,
             next_id: 0,
+            queue_order: queues.keys().cloned().collect(),
             queues,
             outstanding: 0,
             failed_total: 0,
@@ -735,7 +757,7 @@ impl TaskScheduler {
         for queue in self.queues.values_mut() {
             queue.refill(now);
         }
-        let functions = self.queues.keys().cloned().collect::<Vec<_>>();
+        let functions = &self.queue_order;
         while dispatches.len() < maximum && !functions.is_empty() {
             let mut selected = None;
             for offset in 0..functions.len() {
@@ -838,12 +860,28 @@ impl TaskScheduler {
         self.queues
             .iter()
             .flat_map(|(function, queue)| {
-                queue.pending.iter().map(|queued| PendingTask {
-                    function: function.clone(),
-                    name: queued.task.name.clone(),
-                    schedule_time: queued.task.schedule_time.clone(),
-                    run_now: queued.run_now,
-                })
+                queue
+                    .pending
+                    .iter()
+                    .map(|queued| PendingTask::from_queued(function, queued))
+            })
+            .collect()
+    }
+
+    pub(crate) fn pending_overview(
+        &self,
+        limit: usize,
+    ) -> BTreeMap<String, (usize, Vec<PendingTask>)> {
+        self.queues
+            .iter()
+            .map(|(function, queue)| {
+                let tasks = queue
+                    .pending
+                    .iter()
+                    .take(limit)
+                    .map(|queued| PendingTask::from_queued(function, queued))
+                    .collect();
+                (function.clone(), (queue.pending.len(), tasks))
             })
             .collect()
     }
@@ -1108,7 +1146,17 @@ impl TaskScheduler {
         }
     }
 
-    /// One projection drives both scoped waiting and bounded diagnostics. Due work remains
+    /// Whether runnable-scope settlement must still wait for a task.
+    pub(crate) fn has_runnable(&self, now: TaskTime, epoch: Option<i128>) -> bool {
+        self.queues.values().any(|queue| {
+            queue.pending.iter().any(|queued| queued.is_due(epoch))
+                || queue.active.values().any(
+                    |task| !matches!(task.phase, ActivePhase::Retry(deadline) if now < deadline),
+                )
+        })
+    }
+
+    /// Describes task waits for bounded diagnostics. Due work remains
     /// included even before the dispatch coroutine observes its wakeup.
     pub(crate) fn idle_projection(&self, now: TaskTime, epoch: Option<i128>) -> Value {
         let mut runnable = 0usize;
@@ -1302,6 +1350,53 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn bounded_queue_overview_reports_full_counts_and_only_the_requested_prefix() {
+        let now = Instant::now();
+        let mut scheduler =
+            TaskScheduler::from_manifest(&two_queue_manifest(TaskRateLimits::default()), now);
+        for (queue, name) in [("a", "z"), ("b", "middle"), ("a", "a")] {
+            scheduler
+                .enqueue_at(queue, task(name), TaskRetryConfig::default(), 128, now)
+                .unwrap();
+        }
+        scheduler.run_now("a", Some("a"));
+        for limit in [0, 1, 2, usize::MAX] {
+            let overview = scheduler.pending_overview(limit);
+            for (queue, count) in [("a", 2), ("b", 1)] {
+                let expected: Vec<_> = scheduler
+                    .pending_tasks()
+                    .into_iter()
+                    .filter(|task| task.function == queue)
+                    .take(limit)
+                    .collect();
+                let (total, listed) = &overview[queue];
+                assert_eq!(*total, count);
+                assert_eq!(listed.len(), expected.len());
+                for (actual, entry) in listed.iter().zip(expected) {
+                    assert_eq!(actual.name, entry.name);
+                    assert_eq!(actual.schedule_time, entry.schedule_time);
+                    assert_eq!(actual.run_now, entry.run_now);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_saturated_statistic_bucket_preserves_the_rest_of_the_window_on_expiry() {
+        let now = Instant::now();
+        let mut window = super::StatisticWindow::new(Duration::from_secs(2));
+        window.record(now);
+        window.buckets.front_mut().unwrap().count = u64::MAX;
+        window.total = u128::from(u64::MAX);
+        window.record(now);
+        window.record(now + Duration::from_secs(1));
+        assert_eq!(window.count(now + Duration::from_secs(1)), u64::MAX);
+        assert_eq!(window.count(now + Duration::from_secs(2)), 1);
+        window.clear();
+        assert_eq!(window.count(now + Duration::from_secs(2)), 0);
+    }
+
+    #[test]
     fn strict_period_covers_exact_rates_and_duration_boundary() {
         let boundary = f64::from_bits(0x3bf0_0000_0000_0001);
         for (rate, expected) in [
@@ -1404,6 +1499,7 @@ mod tests {
             let excluded = phase == 1 && now < deadline;
             proptest::prop_assert_eq!(actual["excluded"].as_u64(), Some(u64::from(excluded)));
             proptest::prop_assert_eq!(actual["runnable"].as_u64(), Some(u64::from(!excluded)));
+            proptest::prop_assert_eq!(scheduler.has_runnable((start + Duration::from_millis(now)).into(), None), !excluded);
         }
 
     }

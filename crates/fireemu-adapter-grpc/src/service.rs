@@ -408,8 +408,9 @@ impl Firestore for GatewayService {
         if let Some(local) = self.local_backend() {
             let caller = self.caller(request.metadata(), &request.get_ref().name, "GetDocument")?;
             let guard = self.read_guard(&caller);
-            let snapshot = local.get_document_snapshot(request.get_ref(), &*guard)?;
-            return snapshot.into_response().map(Response::new);
+            return local
+                .get_document(request.get_ref(), &*guard)
+                .map(Response::new);
         }
         self.client()?.get_document(request.into_inner()).await
     }
@@ -596,7 +597,13 @@ impl Firestore for GatewayService {
             return local
                 .retry_on_contention_async(&parent, own.as_ref(), &writes, || {
                     let guard = self.write_guard(&caller);
-                    local.commit_once(request.get_ref(), &*guard)
+                    local.commit_prepared_once(
+                        &parent,
+                        &writes,
+                        &request.get_ref().transaction,
+                        &*guard,
+                        fireemu_core_firestore::index_usage::WriteRoute::Commit,
+                    )
                 })
                 .await
                 .map(Response::new);
@@ -1550,6 +1557,7 @@ fn numeric_row_scope(
 struct PipelineResponseStream {
     inner: Option<BoxStream<pb::RunQueryResponse>>,
     cursor: fireemu_core_firestore::pipeline_exec::Cursor,
+    regex_cache: crate::pipeline_regex::RequestCache,
     /// The input snapshot's read time, sent as every response's execution time.
     read_time: Option<prost_types::Timestamp>,
     canonical: String,
@@ -1577,6 +1585,7 @@ impl PipelineResponseStream {
         Self {
             inner: Some(inner),
             cursor,
+            regex_cache: crate::pipeline_regex::RequestCache::default(),
             read_time: None,
             canonical: "collection(items)".to_owned(),
             gate: crate::pipeline_shape::RefusalGate::Open,
@@ -1603,6 +1612,7 @@ impl PipelineResponseStream {
         Self {
             inner: Some(inner),
             cursor,
+            regex_cache: crate::pipeline_regex::RequestCache::default(),
             read_time: None,
             canonical,
             gate,
@@ -1668,7 +1678,7 @@ impl PipelineResponseStream {
     fn close(&mut self) {
         self.inner = None;
         self.done = true;
-        match self.cursor.finish() {
+        match self.regex_cache.scope(|| self.cursor.finish()) {
             Ok(rows) => {
                 self.absorb(&rows);
                 if let Some((local, database, transaction)) = self.auto_commit.take() {
@@ -1802,7 +1812,7 @@ impl tokio_stream::Stream for PipelineResponseStream {
                         continue;
                     }
                     match crate::pipeline::document_row(&document) {
-                        Ok(row) => match this.cursor.push(row) {
+                        Ok(row) => match this.regex_cache.scope(|| this.cursor.push(row)) {
                             Ok(rows) => this.absorb(&rows),
                             Err(error) => this.refuse_eval(&error),
                         },

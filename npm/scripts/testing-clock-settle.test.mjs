@@ -52,9 +52,10 @@ async function worldWithTasks(t, extra = {}) {
 
 async function scheduleTask(world, name, delayMs, queue = 'task') {
   const now = Date.parse((await world.clock.get()).clock.clock);
-  const response = await fetch(`${world.endpoints.tasks.url}/projects/${world.projectId}/locations/us-central1/queues/${queue}/tasks`, {
+  const taskQueue = `projects/${world.projectId}/locations/us-central1/queues/${queue}`;
+  const response = await fetch(`${world.endpoints.tasks.url}/${taskQueue}/tasks`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ task: { name, scheduleTime: new Date(now + delayMs).toISOString(), httpRequest: { url: '', body: Buffer.from('{}').toString('base64') } } }),
+    body: JSON.stringify({ task: { name: `${taskQueue}/tasks/${name}`, scheduleTime: new Date(now + delayMs).toISOString(), httpRequest: { url: '', body: Buffer.from('{}').toString('base64') } } }),
   });
   assert.equal(response.status, 200, await response.clone().text());
 }

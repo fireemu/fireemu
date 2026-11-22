@@ -1800,7 +1800,7 @@ pub(crate) fn execute_correlated_scalar(
     );
     let read_time = parents.iter().find_map(|r| r.read_time);
     let parents: Vec<_> = parents.into_iter().filter_map(|r| r.document).collect();
-    let children: Vec<_> = children.into_iter().filter_map(|r| r.document).collect();
+    let mut children: Vec<_> = children.into_iter().filter_map(|r| r.document).collect();
     if parents.len() > 32 || children.len() > 64 {
         return Err(Status::unimplemented(
             "correlated input exceeds local bound",
@@ -1813,6 +1813,9 @@ pub(crate) fn execute_correlated_scalar(
             .filter(|n| *n <= 1_048_576)
             .ok_or_else(|| Status::unimplemented("correlated input exceeds local bound"))?;
     }
+    // Only another parent can reuse a decoded child. Keep a single parent's rows transient.
+    let reuse_children = parents.len() > 1;
+    let mut decoded_children = Vec::new();
     let mut output = Vec::new();
     let mut output_bytes = 0usize;
     for document in parents {
@@ -1826,10 +1829,20 @@ pub(crate) fn execute_correlated_scalar(
             ));
         };
         let mut matched = None;
-        for child in &children {
-            let child_row = document_row(child)?;
+        for (index, wire) in children.iter_mut().enumerate() {
+            let transient;
+            let child_row = if reuse_children {
+                if decoded_children.len() == index {
+                    decoded_children.push(document_row(wire)?);
+                    *wire = pb::Document::default();
+                }
+                &decoded_children[index]
+            } else {
+                transient = document_row(wire)?;
+                &transient
+            };
             let pipeline_exec::Eval::Value(Value::String(key)) = Expr::Field(predicate.clone())
-                .eval_in_with_runtime(&child_row, unrecorded, (*runtime).clone())
+                .eval_in_with_runtime(child_row, unrecorded, (*runtime).clone())
             else {
                 return Err(Status::unimplemented(
                     "correlated predicate type is unobserved",
@@ -1842,7 +1855,7 @@ pub(crate) fn execute_correlated_scalar(
                 let pipeline_exec::Eval::Value(Value::String(actual)) = Expr::Field(
                     filter_field.clone(),
                 )
-                .eval_in_with_runtime(&child_row, unrecorded, (*runtime).clone()) else {
+                .eval_in_with_runtime(child_row, unrecorded, (*runtime).clone()) else {
                     return Err(Status::unimplemented(
                         "correlated filter type is unobserved",
                     ));
@@ -1856,7 +1869,7 @@ pub(crate) fn execute_correlated_scalar(
             }
             matched = Some(
                 match Expr::Field(field.clone()).eval_in_with_runtime(
-                    &child_row,
+                    child_row,
                     unrecorded,
                     (*runtime).clone(),
                 ) {
@@ -1986,25 +1999,19 @@ pub(crate) fn execute_union(
     for (_, branches) in &compiled.unions {
         requests.extend(branches.iter().map(|branch| branch.input.clone()));
     }
-    let mut results = local.run_pipeline_sources(&requests, guard)?.into_iter();
-    let primary = in_scan_order(
-        results
-            .next()
-            .ok_or_else(|| Status::internal("missing union input"))?,
-    );
-    let execution_time = primary.iter().find_map(|row| row.read_time);
+    let mut results = local
+        .map_pipeline_sources(&requests, guard, |docs, time, _| (docs, time))?
+        .into_iter();
+    let (primary, execution_time) = results
+        .next()
+        .ok_or_else(|| Status::internal("missing union input"))?;
     for (position, branches) in compiled.unions {
         let mut prepared = Vec::with_capacity(branches.len());
         for branch in branches {
-            let rows = in_scan_order(
-                results
-                    .next()
-                    .ok_or_else(|| Status::internal("missing union branch"))?,
-            )
-            .iter()
-            .filter_map(|row| row.document.as_ref())
-            .map(document_row)
-            .collect::<Result<Vec<_>, _>>()?;
+            let (documents, _) = results
+                .next()
+                .ok_or_else(|| Status::internal("missing union branch"))?;
+            let rows = union_rows(documents).collect();
             prepared.push(pipeline_exec::PreparedUnionBranch {
                 stages: branch.stages,
                 rows,
@@ -2018,21 +2025,43 @@ pub(crate) fn execute_union(
     let mut cursor =
         pipeline_exec::Cursor::new_in_with_runtime(compiled.stages, unrecorded, runtime);
     let mut output = Vec::new();
-    for row in primary.iter().filter_map(|row| row.document.as_ref()) {
+    for row in union_rows(primary) {
         if cursor.is_exhausted() {
             break;
         }
-        output.extend(
-            cursor
-                .push(document_row(row)?)
-                .map_err(|error| eval_status(&error))?,
-        );
+        output.extend(cursor.push(row).map_err(|error| eval_status(&error))?);
     }
     output.extend(cursor.finish().map_err(|error| eval_status(&error))?);
     Ok(pack_results(
         output.iter().map(row_document).collect(),
         execution_time,
     ))
+}
+
+/// The query returned validated stored documents. Transfer their fields to the executor in
+/// the same parent, CRC and name order in which the wire pipeline reads a collection.
+fn union_rows(
+    mut documents: Vec<fireemu_core_firestore::store::Document>,
+) -> impl Iterator<Item = pipeline_exec::Row> {
+    documents.sort_by_cached_key(|doc| {
+        let path = &doc.path;
+        (
+            path.parent_document().map(|parent| parent.relative()),
+            crc32(path.document_id().as_str().as_bytes()),
+            path.resource_name(),
+        )
+    });
+    documents.into_iter().map(|document| {
+        let times = row_times(
+            Some(&crate::encode::encode_instant(document.create_time)),
+            Some(&crate::encode::encode_instant(document.update_time)),
+        );
+        pipeline_exec::Row {
+            path: Some(document.path),
+            times,
+            fields: document.fields,
+        }
+    })
 }
 
 /// The status of an expression error. fireemu's own argument-count texts are not
@@ -4942,23 +4971,41 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 /// `pp/b` in O-9b): it is plain string order of the parent document's path. CRC-32 ties, which production has not shown, fall back to the name.
 #[must_use]
 pub fn in_scan_order(mut responses: Vec<pb::RunQueryResponse>) -> Vec<pb::RunQueryResponse> {
-    let key = |response: &pb::RunQueryResponse| {
-        let name = response
-            .document
-            .as_ref()
-            .map(|document| document.name.as_str())?;
-        let (collection, id) = name.rsplit_once('/')?;
-        // The parent document of the collection (the root for a top-level collection); every
-        // document of one collection has the same one, so it orders a collection group only.
-        let collection = collection
-            .split_once("/documents")
-            .map_or("", |(_, path)| path.trim_start_matches('/'));
-        let parent = collection
-            .rsplit_once('/')
-            .map_or(String::new(), |(document, _)| document.to_owned());
-        Some((parent, crc32(id.as_bytes()), name.to_owned()))
-    };
-    responses.sort_by_cached_key(key);
+    if responses.len() < 2 {
+        return responses;
+    }
+    let mut ordered: Vec<_> = responses
+        .iter()
+        .enumerate()
+        .map(|(position, response)| {
+            let key = response.document.as_ref().and_then(|document| {
+                let name = document.name.as_str();
+                let (collection, id) = name.rsplit_once('/')?;
+                // A top-level collection has the root as its parent.
+                let collection = collection
+                    .split_once("/documents")
+                    .map_or("", |(_, path)| path.trim_start_matches('/'));
+                let parent = collection
+                    .rsplit_once('/')
+                    .map_or("", |(document, _)| document);
+                Some((parent, fireemu_core_rules::hash::crc32(id.as_bytes()), name))
+            });
+            (key, position)
+        })
+        .collect();
+    // The starting position preserves the order of equal keys, including control responses.
+    ordered.sort_unstable();
+    let mut destinations = vec![0; ordered.len()];
+    for (destination, (_, source)) in ordered.into_iter().enumerate() {
+        destinations[source] = destination;
+    }
+    for position in 0..destinations.len() {
+        while destinations[position] != position {
+            let destination = destinations[position];
+            responses.swap(position, destination);
+            destinations.swap(position, destination);
+        }
+    }
     responses
 }
 
@@ -4979,19 +5026,24 @@ pub fn document_row(document: &pb::Document) -> Result<pipeline_exec::Row, Statu
                 .map_err(|e| Status::internal(format!("pipeline input field {k:?}: {e}")))
         })
         .collect::<Result<_, _>>()?;
-    let time = |time: &Option<prost_types::Timestamp>| {
-        time.as_ref().and_then(|t| {
-            fireemu_core_firestore::value::Timestamp::new(t.seconds, u32::try_from(t.nanos).ok()?)
-                .ok()
-        })
-    };
-    let times = time(&document.create_time)
-        .zip(time(&document.update_time))
-        .map(|(created, updated)| pipeline_exec::RowTimes { created, updated });
+    let times = row_times(document.create_time.as_ref(), document.update_time.as_ref());
     Ok(pipeline_exec::Row {
         path: Some(path),
         times,
         fields,
+    })
+}
+
+fn row_times(
+    created: Option<&prost_types::Timestamp>,
+    updated: Option<&prost_types::Timestamp>,
+) -> Option<pipeline_exec::RowTimes> {
+    let time = |t: &prost_types::Timestamp| {
+        fireemu_core_firestore::value::Timestamp::new(t.seconds, u32::try_from(t.nanos).ok()?).ok()
+    };
+    Some(pipeline_exec::RowTimes {
+        created: time(created?)?,
+        updated: time(updated?)?,
     })
 }
 
@@ -8860,6 +8912,70 @@ vector	grpc	emulator	function	foreign";
                 .filter_map(|r| r.document.as_ref())
                 .map(|d| d.name.rsplit("/documents/").next().unwrap().to_owned())
                 .collect()
+        }
+
+        #[test]
+        fn union_source_rows_match_wire_rows_including_order_fields_and_times() {
+            use fireemu_core_firestore::store::{CommitVersion, Document};
+            use fireemu_core_firestore::value::Value;
+            use fireemu_core_types::time::LogicalInstant;
+            let documents = ["c/b", "a/p/c/z", "c/d15", "a/p/c/q", "c/d01"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, name)| Document {
+                    path: DocumentPath::from_resource_name(&response(name).document.unwrap().name)
+                        .unwrap(),
+                    fields: std::collections::BTreeMap::from([
+                        ("text".into(), Value::String(name.into())),
+                        ("embedding".into(), Value::Vector(vec![-0.0, 1.5])),
+                        (
+                            "map".into(),
+                            Value::Map(std::collections::BTreeMap::from([(
+                                "bytes".into(),
+                                Value::Bytes(vec![0, 128, 255]),
+                            )])),
+                        ),
+                    ]),
+                    create_time: LogicalInstant::from_nanos(-1),
+                    update_time: LogicalInstant::from_nanos(if index == 0 { i128::MAX } else { 1 }),
+                    version: CommitVersion::from_value(1),
+                })
+                .collect::<Vec<_>>();
+            let wire = documents
+                .iter()
+                .map(|doc| pb::RunQueryResponse {
+                    document: Some(crate::encode::encode_document(doc)),
+                    ..Default::default()
+                })
+                .collect();
+            let expected: Vec<_> = in_scan_order(wire)
+                .into_iter()
+                .map(|response| document_row(&response.document.unwrap()).unwrap())
+                .collect();
+            assert_eq!(union_rows(documents).collect::<Vec<_>>(), expected);
+        }
+
+        proptest! {
+            #[test]
+            fn union_collections_keep_the_wire_scan_order(
+                names in proptest::collection::vec((proptest::option::of("[a-z]{1,5}"), "[A-Za-z0-9]{1,8}"), 0..24),
+            ) {
+                use fireemu_core_firestore::store::{CommitVersion, Document};
+                use fireemu_core_types::time::LogicalInstant;
+                let wire: Vec<_> = names.into_iter().map(|(parent, id)| {
+                    response(&parent.map_or_else(|| format!("c/{id}"), |p| format!("roots/{p}/c/{id}")))
+                }).collect();
+                let documents = wire.iter().map(|row| Document {
+                    path: DocumentPath::from_resource_name(&row.document.as_ref().unwrap().name).unwrap(),
+                    fields: std::collections::BTreeMap::new(),
+                    create_time: LogicalInstant::UNIX_EPOCH,
+                    update_time: LogicalInstant::UNIX_EPOCH,
+                    version: CommitVersion::from_value(1),
+                }).collect();
+                let direct: Vec<_> = union_rows(documents).map(|row| row.path.unwrap().resource_name()).collect();
+                let expected: Vec<_> = in_scan_order(wire).into_iter().map(|row| row.document.unwrap().name).collect();
+                prop_assert_eq!(direct, expected);
+            }
         }
 
         #[test]

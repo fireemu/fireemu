@@ -682,3 +682,76 @@ impl SearchIndex {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::*;
+    use crate::index::IndexQueryScope;
+    use crate::store::{CommitVersion, Document};
+    use crate::text_index::{
+        DefaultTextLanguage, TextIndexCatalog, TextIndexState, TextIndexType, TextIndexedField,
+        TextMatchType,
+    };
+    use fireemu_core_types::ids::{CollectionId, DatabaseId, ProjectId};
+
+    #[test]
+    fn advancing_backfill_keeps_the_previous_posting_allocation() {
+        let mut catalog = TextIndexCatalog::default();
+        let definition = TextIndexDefinition {
+            id: "test".into(),
+            collection_id: CollectionId::try_new("items").unwrap(),
+            query_scope: IndexQueryScope::Collection,
+            api_scope: "ANY_API".into(),
+            fields: vec![TextIndexedField {
+                path: FieldPath::parse("title").unwrap(),
+                index_type: TextIndexType::Tokenized,
+                match_type: TextMatchType::MatchGlobally,
+            }],
+            language: DefaultTextLanguage::Tag("en".into()),
+            language_override: LanguageOverridePolicy::Disabled,
+            state: TextIndexState::Creating,
+        };
+        catalog.add("demo-app", "(default)", definition).unwrap();
+        let documents = ["a", "b"].map(|id| Document {
+            path: DocumentPath::parse(
+                &ProjectId::try_new("demo-app").unwrap(),
+                &DatabaseId::default_database(),
+                &format!("items/{id}"),
+            )
+            .unwrap(),
+            fields: BTreeMap::from([("title".into(), Value::String(id.into()))]),
+            create_time: LogicalInstant::UNIX_EPOCH,
+            update_time: LogicalInstant::UNIX_EPOCH,
+            version: CommitVersion::from_value(1),
+        });
+        let advance = |catalog: &mut TextIndexCatalog, source| {
+            catalog
+                .lifecycle(
+                    "demo-app",
+                    "(default)",
+                    "test",
+                    "advanceBackfill",
+                    None,
+                    1,
+                    None,
+                    source,
+                    |s| vec![s.to_owned()],
+                )
+                .unwrap();
+        };
+        let first = |catalog: &TextIndexCatalog| {
+            catalog
+                .build("demo-app", "(default)", "test")
+                .unwrap()
+                .index()
+                .unwrap()
+                .positions("a", 0, 0)
+                .unwrap()
+                .as_ptr()
+        };
+        advance(&mut catalog, documents.to_vec());
+        let original = first(&catalog);
+        advance(&mut catalog, Vec::new());
+        assert_eq!(original, first(&catalog));
+    }
+}

@@ -13,10 +13,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rustix::process::{kill_process, Signal};
-use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-use crate::process::{validate_apalache_distribution, OwnedApalacheServer, APALACHE_JAR_SHA256};
+use crate::process::{
+    copy_with_sha256, validate_apalache_distribution, OwnedApalacheServer, APALACHE_JAR_SHA256,
+};
 
 const READINESS_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -193,25 +194,31 @@ struct RuntimeArtifacts {
     agent_jar: PathBuf,
 }
 
-fn prepare_runtime(temporary: &TempDir) -> Result<RuntimeArtifacts, String> {
-    let source_jar = validate_apalache_distribution()?;
-    let jar_bytes = fs::read(&source_jar).map_err(|error| {
+fn copy_verified_jar(source: &Path, private: &Path, expected: &str) -> Result<(), String> {
+    let original = File::open(source).map_err(|error| {
         format!(
             "cannot read pinned Apalache JAR {}: {error}",
-            source_jar.display()
+            source.display()
         )
     })?;
-    let digest = format!("{:x}", Sha256::digest(&jar_bytes));
-    if digest != APALACHE_JAR_SHA256 {
+    let target = File::create(private)
+        .map_err(|error| format!("cannot create private Apalache JAR: {error}"))?;
+    let digest = copy_with_sha256(original, target)
+        .map_err(|error| format!("cannot copy pinned Apalache JAR: {error}"))?;
+    fs::set_permissions(private, fs::Permissions::from_mode(0o400))
+        .map_err(|error| format!("cannot protect private Apalache JAR: {error}"))?;
+    if digest != expected {
         return Err(format!(
-            "Apalache JAR changed before private copy: expected {APALACHE_JAR_SHA256}, found {digest}"
+            "Apalache JAR changed before private copy: expected {expected}, found {digest}"
         ));
     }
+    Ok(())
+}
+
+fn prepare_runtime(temporary: &TempDir) -> Result<RuntimeArtifacts, String> {
+    let source_jar = validate_apalache_distribution()?;
     let private_jar = temporary.path().join("apalache.jar");
-    fs::write(&private_jar, jar_bytes)
-        .map_err(|error| format!("cannot create private Apalache JAR: {error}"))?;
-    fs::set_permissions(&private_jar, fs::Permissions::from_mode(0o400))
-        .map_err(|error| format!("cannot protect private Apalache JAR: {error}"))?;
+    copy_verified_jar(&source_jar, &private_jar, APALACHE_JAR_SHA256)?;
 
     let java = trusted_executable("java")?;
     let jdk_bin = java
@@ -512,6 +519,38 @@ mod tests {
     use std::net::SocketAddr;
 
     use super::{parse_linux_listener_table, parse_lsof_listener_output, validated_listener};
+
+    #[test]
+    fn the_private_jar_rechecks_the_bytes_copied_after_distribution_validation() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let private = dir.path().join("private.jar");
+        std::fs::write(&source, b"abc").unwrap();
+        let digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        super::copy_verified_jar(&source, &private, digest).unwrap();
+        assert_eq!(std::fs::read(&private).unwrap(), b"abc");
+        assert_eq!(
+            std::fs::metadata(&private).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        let mut multiple_blocks = vec![42; 256 * 1024];
+        multiple_blocks.extend_from_slice(b"tail!");
+        let expected = format!(
+            "{:x}",
+            <sha2::Sha256 as sha2::Digest>::digest(&multiple_blocks)
+        );
+        std::fs::write(&source, &multiple_blocks).unwrap();
+        let other = dir.path().join("multiple-blocks.jar");
+        super::copy_verified_jar(&source, &other, &expected).unwrap();
+        assert_eq!(std::fs::read(other).unwrap(), multiple_blocks);
+
+        std::fs::write(&source, b"changed").unwrap();
+        let error = super::copy_verified_jar(&source, &dir.path().join("other.jar"), digest)
+            .expect_err("the installed distribution changed before its private copy");
+        assert!(error.contains("Apalache JAR changed before private copy"));
+    }
 
     #[test]
     fn listener_validation_requires_one_nonzero_ipv4_loopback_socket() {

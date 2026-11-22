@@ -7,13 +7,7 @@
 #[must_use]
 #[allow(clippy::many_single_char_names)] // RFC 3174 notation
 pub fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [
-        0x6745_2301,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
+    let mut h = INITIAL;
     let mut message = data.to_vec();
     let bit_len = (data.len() as u64).wrapping_mul(8);
     message.push(0x80);
@@ -22,44 +16,104 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
     }
     message.extend_from_slice(&bit_len.to_be_bytes());
     for block in message.chunks_exact(64) {
-        let mut w = [0u32; 80];
-        for (i, chunk) in block.chunks_exact(4).enumerate() {
-            w[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        }
-        for i in 16..80 {
-            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
-        }
-        let [mut a, mut b, mut c, mut d, mut e] = h;
-        for (i, wi) in w.iter().enumerate() {
-            let (f, k) = match i {
-                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
-                _ => (b ^ c ^ d, 0xCA62_C1D6),
-            };
-            let temp = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*wi);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = temp;
-        }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(c);
-        h[3] = h[3].wrapping_add(d);
-        h[4] = h[4].wrapping_add(e);
+        compress(&mut h, block);
     }
+    digest(h)
+}
+
+const INITIAL: [u32; 5] = [
+    0x6745_2301,
+    0xEFCD_AB89,
+    0x98BA_DCFE,
+    0x1032_5476,
+    0xC3D2_E1F0,
+];
+
+#[allow(clippy::many_single_char_names)]
+fn compress(h: &mut [u32; 5], block: &[u8]) {
+    let mut w = [0u32; 80];
+    for (i, chunk) in block.chunks_exact(4).enumerate() {
+        w[i] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    for i in 16..80 {
+        w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+    }
+    let [mut a, mut b, mut c, mut d, mut e] = *h;
+    for (i, wi) in w.iter().enumerate() {
+        let (f, k) = match i {
+            0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+            20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+            40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+            _ => (b ^ c ^ d, 0xCA62_C1D6),
+        };
+        let temp = a
+            .rotate_left(5)
+            .wrapping_add(f)
+            .wrapping_add(e)
+            .wrapping_add(k)
+            .wrapping_add(*wi);
+        e = d;
+        d = c;
+        c = b.rotate_left(30);
+        b = a;
+        a = temp;
+    }
+    h[0] = h[0].wrapping_add(a);
+    h[1] = h[1].wrapping_add(b);
+    h[2] = h[2].wrapping_add(c);
+    h[3] = h[3].wrapping_add(d);
+    h[4] = h[4].wrapping_add(e);
+}
+
+fn digest(h: [u32; 5]) -> [u8; 20] {
     let mut out = [0u8; 20];
     for (i, v) in h.iter().enumerate() {
         out[i * 4..i * 4 + 4].copy_from_slice(&v.to_be_bytes());
     }
     out
+}
+
+/// Request-local HMAC prefix states for the fixed eight-byte HOTP counter.
+pub(crate) struct HotpMac {
+    inner: [u32; 5],
+    outer: [u32; 5],
+}
+
+impl HotpMac {
+    pub(crate) fn new(key: &[u8]) -> Self {
+        let mut block = [0u8; 64];
+        if key.len() > 64 {
+            block[..20].copy_from_slice(&sha1(key));
+        } else {
+            block[..key.len()].copy_from_slice(key);
+        }
+        for byte in &mut block {
+            *byte ^= 0x36;
+        }
+        let mut inner = INITIAL;
+        compress(&mut inner, &block);
+        for byte in &mut block {
+            *byte ^= 0x36 ^ 0x5c;
+        }
+        let mut outer = INITIAL;
+        compress(&mut outer, &block);
+        Self { inner, outer }
+    }
+
+    pub(crate) fn counter(&self, counter: u64) -> [u8; 20] {
+        let mut inner = self.inner;
+        let mut block = [0u8; 64];
+        block[..8].copy_from_slice(&counter.to_be_bytes());
+        block[8] = 0x80;
+        block[56..].copy_from_slice(&(72u64 * 8).to_be_bytes());
+        compress(&mut inner, &block);
+        let mut outer = self.outer;
+        block[..20].copy_from_slice(&digest(inner));
+        block[20] = 0x80;
+        block[56..].copy_from_slice(&(84u64 * 8).to_be_bytes());
+        compress(&mut outer, &block);
+        digest(outer)
+    }
 }
 
 /// HMAC-SHA1 of `message` under `key`.
@@ -110,6 +164,20 @@ mod tests {
             hex(&sha1(&vec![b'a'; 1_000_000])),
             "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
         );
+    }
+
+    #[test]
+    fn hotp_prefix_states_match_the_general_hmac_for_each_counter() {
+        for length in [0, 1, 20, 63, 64, 65, 128] {
+            let key = vec![0x9f; length];
+            let state = super::HotpMac::new(&key);
+            for counter in [0u64, 1, 4095, u64::MAX] {
+                assert_eq!(
+                    state.counter(counter),
+                    hmac_sha1(&key, &counter.to_be_bytes())
+                );
+            }
+        }
     }
 
     #[test]

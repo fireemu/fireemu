@@ -790,6 +790,50 @@ fn snapshot_reads_by_version() {
 }
 
 #[test]
+fn wide_array_membership_keeps_firestore_equality_at_the_last_item() {
+    let nan = Value::Double(f64::NAN);
+    let nested_nan = Value::Map(BTreeMap::from([("nested".to_owned(), nan.clone())]));
+    for (stored, candidate, matches) in [
+        (Value::Null, Value::Null, false),
+        (nan.clone(), nan, false),
+        (nested_nan.clone(), nested_nan, true),
+        (Value::Double(-0.0), Value::Integer(0), true),
+        (
+            Value::Integer(9_007_199_254_740_993),
+            Value::Double(9_007_199_254_740_992.0),
+            false,
+        ),
+    ] {
+        let mut items = vec![Value::String("unrelated".into()); 12];
+        items.push(stored);
+        let mut operands = vec![Value::String("absent".into()); 12];
+        operands.push(candidate);
+        let mut state = FirestoreState::new();
+        state
+            .commit(
+                &[Write {
+                    op: WriteOp::Set {
+                        path: path("tasks/item"),
+                        fields: BTreeMap::from([("tags".into(), Value::Array(items))]),
+                        update_mask: None,
+                    },
+                    precondition: None,
+                    transforms: vec![],
+                }],
+                None,
+                LogicalInstant::UNIX_EPOCH,
+            )
+            .unwrap();
+        let query = tasks().with_filter(field(
+            "tags",
+            FieldOp::ArrayContainsAny,
+            Value::Array(operands),
+        ));
+        assert_eq!(ids(&state, &query).len(), usize::from(matches));
+    }
+}
+
+#[test]
 fn not_in_with_a_null_candidate_matches_nothing() {
     let s = seeded();
     let q = tasks().with_filter(field(
@@ -848,6 +892,16 @@ fn a_cosine_search_over_a_zero_vector_is_refused() {
         fireemu_core_firestore::store::FirestoreError::FailedPrecondition(
             "Cannot compute cosine distance against a vector with a magnitude of zero.".to_owned()
         )
+    );
+    assert_eq!(
+        state
+            .run_aggregation(
+                &nearest(DistanceMeasure::Cosine, 1).canonicalize().unwrap(),
+                &[Aggregation::Count { up_to: Some(1) }],
+                None,
+            )
+            .unwrap_err(),
+        error
     );
     assert!(state
         .run_query(
@@ -918,6 +972,39 @@ fn aggregations_run_over_the_nearest_results() {
             .unwrap(),
         vec![Value::Integer(2), Value::Integer(3)]
     );
+}
+
+#[test]
+fn nearest_counts_report_the_selected_cardinality_without_copying_documents() {
+    let db = vector_state();
+    let mut query = nearest(DistanceMeasure::Euclidean, 2)
+        .canonicalize()
+        .unwrap();
+    for (threshold, expected) in [(None, 2), (Some(-1.0), 0)] {
+        let nearest = query.find_nearest.as_mut().unwrap();
+        nearest.distance_result_field = Some(fp("d"));
+        nearest.distance_threshold = threshold;
+        let (values, stats) = db
+            .run_aggregation_with_stats(
+                &query,
+                &[
+                    Aggregation::Count { up_to: None },
+                    Aggregation::Count { up_to: Some(1) },
+                ],
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            values,
+            [Value::Integer(expected), Value::Integer(expected.min(1))]
+        );
+        assert_eq!(stats.cloned_documents, 0);
+        assert_eq!(stats.cloned_field_bytes, 0);
+        assert_eq!(
+            stats.nearest_peak_candidates,
+            u64::try_from(expected).unwrap()
+        );
+    }
 }
 
 /// The zero-vector refusal is production's, so a query without production's refusals (the

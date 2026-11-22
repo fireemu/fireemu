@@ -15,7 +15,7 @@ use fireemu_adapter_http::signing::{
     AppCheckKeySource, AppCheckRsaSigner, OsDebugSecrets, Sha256DebugTokenHasher,
     SubtleConstantTimeEq,
 };
-use fireemu_core_app_check::crypto::DebugTokenHasher;
+use fireemu_core_app_check::crypto::{AppCheckSigner, DebugTokenHasher};
 use fireemu_core_app_check::registry::{
     AppCheckRegistry, AppRegistration, DebugTokenDigest, ProjectEpoch,
 };
@@ -46,6 +46,21 @@ fn signer(seed: u64) -> Arc<AppCheckRsaSigner> {
             AppCheckRsaSigner::generate(AppCheckKeySource::Seed(seed)).expect("key generation")
         })
         .clone()
+}
+
+#[test]
+fn repeated_verification_binds_the_message_and_signature() {
+    let signer = signer(1);
+    let first = b"first message";
+    let second = b"second message";
+    let first_signature = signer.sign(first);
+    let second_signature = signer.sign(second);
+    for _ in 0..2 {
+        assert!(signer.verify(first, &first_signature));
+        assert!(signer.verify(second, &second_signature));
+        assert!(!signer.verify(first, &second_signature));
+        assert!(!signer.verify(second, &first_signature));
+    }
 }
 
 fn digest_of(secret: &str) -> DebugTokenDigest {

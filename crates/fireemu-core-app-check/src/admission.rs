@@ -152,7 +152,7 @@ impl AppCheckGate {
         let mut out: Vec<String> = Vec::new();
         for app in registry.apps() {
             let project = app.project_id();
-            if accept(project) && !out.iter().any(|seen| seen == project) {
+            if accept(project) && out.last().is_none_or(|seen| seen != project) {
                 out.push(project.to_owned());
             }
         }

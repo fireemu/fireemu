@@ -188,6 +188,139 @@ fn map_diff_reports_added_removed_changed_and_unchanged_keys() {
     ));
 }
 
+proptest::proptest! {
+    #[test]
+    fn ordered_map_diff_classes_match_independent_key_lookups(
+        after in proptest::collection::btree_map(0u8..32, 0i64..8, 0..22),
+        before in proptest::collection::btree_map(0u8..32, 0i64..8, 0..22),
+    ) {
+        let key = |key: &u8| format!("k{key}");
+        let document = |fields: &BTreeMap<u8, i64>| {
+            RulesValue::Map(BTreeMap::from([(
+                "data".to_owned(),
+                RulesValue::Map(fields.iter().map(|(k, n)| (key(k), RulesValue::Int(*n))).collect()),
+            )]))
+        };
+        let c = RequestContext {
+            resource: Some(document(&before)),
+            request_resource: Some(document(&after)),
+            ..ctx(&[])
+        };
+        let list = |keys: Vec<&u8>| {
+            keys.into_iter().map(|k| format!("'{}'", key(k))).collect::<Vec<_>>().join(",")
+        };
+        let added = list(after.keys().filter(|k| !before.contains_key(k)).collect());
+        let removed = list(before.keys().filter(|k| !after.contains_key(k)).collect());
+        let changed = list(after.iter().filter(|(k, value)| {
+            before.get(k).is_some_and(|old| old != *value)
+        }).map(|(k, _)| k).collect());
+        let unchanged = list(after.iter().filter(|(k, value)| {
+            before.get(k).is_some_and(|old| old == *value)
+        }).map(|(k, _)| k).collect());
+        let diff = "request.resource.data.diff(resource.data)";
+        for (method, expected) in [("added", added), ("removed", removed), ("changed", changed), ("unchanged", unchanged)] {
+            let condition = format!("{diff}.{method}Keys() == [{expected}].toSet()");
+            proptest::prop_assert_eq!(decide(&condition, &c), Decision::Allow, "{}", condition);
+        }
+    }
+}
+
+#[test]
+fn list_keys_walk_only_reached_steps_and_keep_the_default_eager() {
+    for expression in [
+        "{'a': {'b': 2}}.get(['a', 'b'], 9) == 2",
+        "{'a': {'b': 2}}.get(['a', 'missing', 7], 9) == 9",
+        "{'a': 1}.get(['a', 'missing', 7], 9) == 9",
+        "{'a': 1}.get([], 9) == {'a': 1}",
+    ] {
+        assert!(holds(expression), "{expression}");
+    }
+    for expression in [
+        "{'a': {'b': 2}}.get(['a', 7], 9) == 9",
+        "{'a': 1}.get(['a', 7], 9) == 9",
+        "{'a': {'b': 2}}.get(['a', 'b'], resource.missing) == 2",
+    ] {
+        assert!(!holds(expression), "{expression}");
+    }
+}
+
+#[test]
+fn exists_reuses_each_document_state_without_spending_a_second_path_slot() {
+    use std::cell::Cell;
+
+    #[derive(Default)]
+    struct CountingAccess {
+        current: Cell<usize>,
+        after: Cell<usize>,
+        validated: Cell<usize>,
+    }
+
+    impl DocumentAccess for CountingAccess {
+        fn get(&self, _: &[String]) -> Option<RulesValue> {
+            self.current.set(self.current.get() + 1);
+            Some(doc(&[("version", RulesValue::Int(42))]))
+        }
+
+        fn get_after(&self, _: &[String]) -> Option<Option<RulesValue>> {
+            self.after.set(self.after.get() + 1);
+            Some(None)
+        }
+
+        fn is_document_path(&self, _: &[String]) -> bool {
+            self.validated.set(self.validated.get() + 1);
+            true
+        }
+    }
+
+    let conditions = (0..10)
+        .map(|i| {
+            let path = format!("/databases/$(database)/documents/cache/p{i}");
+            format!(
+                "exists({path}) && get({path}).data.version == 42 && !existsAfter({path}) && getAfter({path}) == null"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" && ");
+    let decide = |conditions: &str, access: &CountingAccess| {
+        evaluate_request_with(
+            &parse_ruleset(&rules(conditions)).unwrap(),
+            &ctx(&[]),
+            Some(access),
+        )
+        .decision
+    };
+
+    let access = CountingAccess::default();
+    assert_eq!(decide(&conditions, &access), Decision::Allow);
+    assert_eq!(
+        (
+            access.current.get(),
+            access.after.get(),
+            access.validated.get()
+        ),
+        (10, 10, 20)
+    );
+
+    let access = CountingAccess::default();
+    let overflow = format!("{conditions} && exists(/databases/$(database)/documents/cache/extra)");
+    assert_eq!(
+        decide(&overflow, &access),
+        Decision::Deny(DenyReason::BudgetExceeded {
+            limit_id: "RULES-DOC-ACCESS-SINGLE",
+            current: 11,
+            maximum: 10,
+        })
+    );
+    assert_eq!(
+        (
+            access.current.get(),
+            access.after.get(),
+            access.validated.get()
+        ),
+        (10, 10, 21)
+    );
+}
+
 struct Access {
     before: BTreeMap<String, RulesValue>,
     after: Option<BTreeMap<String, RulesValue>>,

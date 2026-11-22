@@ -528,8 +528,8 @@ export function lineageProblems(lineage, { lanes, reader, shallow, current = tre
     let atCommit;
     try {
       const read = reader(hop.commit);
-      lane.files.forEach((file) => read(file));
-      atCommit = read;
+      const sources = new Map(lane.files.map((file) => [file, read(file)]));
+      atCommit = (file) => sources.get(file);
     } catch (error) {
       return problems.push(
         `${at}: the sources at ${hop.commit} are not readable (${error.message})`,
@@ -607,10 +607,15 @@ export function unconnectedProblems({
   lanes = HARNESS_LANES,
   known = KNOWN_UNCONNECTED,
   lineage,
+  statuses,
 } = {}) {
   const problems = Object.entries(lanes)
     .map(([name, lane]) =>
-      unconnectedProblem(name, laneStatus(name, lane, { lineage }), known[name]),
+      unconnectedProblem(
+        name,
+        statuses?.[name] ?? laneStatus(name, lane, { lineage }),
+        known[name],
+      ),
     )
     .filter(Boolean);
   for (const name of Object.keys(known))
@@ -650,16 +655,22 @@ export function isShallowCheckout({ cwd = REPO_ROOT } = {}) {
 /** Everything the release gate and the selftest refuse: a shallow clone counts. */
 export function bindingProblems({
   reader = gitReader,
-  shallow = isShallowCheckout(),
+  shallow,
   unconnected = unconnectedProblems,
   waivedDigests = waivedDigestProblems,
+  report,
 } = {}) {
-  const lineage = loadLineage();
+  const lineage = report ? undefined : loadLineage();
   return [
-    ...lineageProblems(lineage, { lanes: HARNESS_LANES, reader, shallow }),
-    ...enrollmentProblems(),
+    ...(report?.lineageProblems ??
+      lineageProblems(lineage, {
+        lanes: HARNESS_LANES,
+        reader,
+        shallow: shallow ?? isShallowCheckout(),
+      })),
+    ...(report?.enrollmentProblems ?? enrollmentProblems()),
     ...waivedDigests(),
-    ...unconnected({ lineage: lineage.hops }),
+    ...unconnected(report ? { statuses: report.lanes } : { lineage: lineage.hops }),
   ];
 }
 
@@ -830,7 +841,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     );
     process.exitCode = 2;
   } else {
-    const outcome = verifyOutcome({ json: process.argv.includes("--json") });
+    const report = verifyReport();
+    const outcome = verifyOutcome({
+      json: process.argv.includes("--json"),
+      report,
+      problems: bindingProblems({ report }),
+    });
     for (const line of outcome.lines) console.log(line);
     for (const problem of outcome.errors) console.error(problem);
     process.exitCode = outcome.exitCode;

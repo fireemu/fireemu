@@ -249,6 +249,22 @@ pub trait ProjectHooks: Send + Sync {
         Err("a Firestore document source is not attached".to_owned())
     }
 
+    /// Captures one collection group in the same path order as the full database source.
+    fn text_index_group_documents(
+        &self,
+        project: &str,
+        database: &str,
+        group: &fireemu_core_types::ids::CollectionId,
+    ) -> Result<Vec<fireemu_core_firestore::store::Document>, String> {
+        self.text_index_documents(project, database)
+            .map(|documents| {
+                documents
+                    .into_iter()
+                    .filter(|document| document.path.collection_id() == group)
+                    .collect()
+            })
+    }
+
     /// Runs one Firestore time-to-live sweep over `scope` whether or not the interval has
     /// elapsed, and returns how many documents it deleted.
     fn sweep_expired_documents_now(&self, _scope: &Scope, _now: LogicalInstant) -> usize {
@@ -2120,13 +2136,12 @@ fn text_index_route(
                                 "UNIMPLEMENTED : a Firestore document source is not attached",
                             );
                         };
-                        match hooks.text_index_documents(project, database) {
-                            Ok(documents) => documents
-                                .into_iter()
-                                .filter(|document| {
-                                    document.path.collection_id() == &definition.collection_id
-                                })
-                                .collect(),
+                        match hooks.text_index_group_documents(
+                            project,
+                            database,
+                            &definition.collection_id,
+                        ) {
+                            Ok(documents) => documents,
                             Err(message) => return error(500, &format!("INTERNAL : {message}")),
                         }
                     } else {

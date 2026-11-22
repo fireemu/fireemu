@@ -2277,25 +2277,33 @@ impl FirestoreState {
         }
     }
 
-    fn update_ttl_expiry_path(&mut self, path: &DocumentPath, insert: bool) {
+    fn update_ttl_expiry(
+        &mut self,
+        path: &DocumentPath,
+        before: Option<&Document>,
+        after: Option<&Document>,
+    ) {
         let Some(index) = self.ttl_expiry_indexes.get(path.collection_id()) else {
             return;
         };
-        let Some(Value::Timestamp(at)) = self
-            .get(path)
-            .and_then(|doc| get_field(&doc.fields, &index.field))
-        else {
-            return;
+        let expiry = |doc: &Document| match get_field(&doc.fields, &index.field) {
+            Some(Value::Timestamp(at)) => Some(*at),
+            _ => None,
         };
-        let key = (*at, self.retained_scope_path(path));
+        let (before, after) = (before.and_then(expiry), after.and_then(expiry));
+        if before == after {
+            return;
+        }
+        let shared = self.retained_scope_path(path);
         let index = self
             .ttl_expiry_indexes
             .get_mut(path.collection_id())
             .expect("registered TTL index");
-        if insert {
-            index.entries.insert(key);
-        } else {
-            index.entries.remove(&key);
+        if let Some(at) = before {
+            index.entries.remove(&(at, Arc::clone(&shared)));
+        }
+        if let Some(at) = after {
+            index.entries.insert((at, shared));
         }
     }
 
@@ -2680,6 +2688,18 @@ impl FirestoreState {
         self.live_documents(None).cloned().collect()
     }
 
+    /// Live source documents in a collection group, in document path order.
+    #[must_use]
+    pub fn live_collection_group_handles(&self, group: &CollectionId) -> Vec<SharedDocument> {
+        self.path_indexes
+            .live_collection_group_paths()
+            .get(group)
+            .into_iter()
+            .flatten()
+            .filter_map(|path| self.get_shared(path))
+            .collect()
+    }
+
     /// Number of live documents whose final collection is `group`.
     #[must_use]
     pub fn live_collection_group_count(&self, group: &CollectionId) -> u64 {
@@ -2885,13 +2905,17 @@ impl FirestoreState {
             if became_live {
                 self.insert_live_scope_path(&path);
             }
+            self.update_ttl_expiry(
+                &path,
+                before.as_ref().map(|r| r.document.as_ref()),
+                Some(&document),
+            );
             let document = Arc::new(document);
             changes.push(DocumentChange {
                 path: path.clone(),
                 before: before.map(|retained| retained.document),
                 after: Some(Arc::clone(&document)),
             });
-            self.update_ttl_expiry_path(&path, false);
             self.history.entry(path.clone()).or_default().push((
                 next_version,
                 Some(RetainedDocument {
@@ -2900,7 +2924,6 @@ impl FirestoreState {
                 }),
             ));
             self.record_capacity_pressure(&path);
-            self.update_ttl_expiry_path(&path, true);
             self.refresh_reclaim_threshold(&path);
         }
         self.rebuild_history_usage();
@@ -4883,13 +4906,16 @@ impl FirestoreState {
                 } else if became_missing {
                     self.remove_live_scope_path(&path);
                 }
-                self.update_ttl_expiry_path(&path, false);
+                self.update_ttl_expiry(
+                    &path,
+                    before.as_ref().map(|r| r.document.as_ref()),
+                    doc.as_ref().map(|r| r.document.as_ref()),
+                );
                 self.history
                     .entry(path.clone())
                     .or_default()
                     .push((next_version, doc));
                 self.record_capacity_pressure(&path);
-                self.update_ttl_expiry_path(&path, true);
                 self.refresh_reclaim_threshold(&path);
             }
         }
@@ -4909,7 +4935,7 @@ impl FirestoreState {
     /// here accepts a write production would reject.
     fn check_transform_budget(writes: &[Write]) -> Result<(), FirestoreError> {
         let mut transforms_per_document: BTreeMap<&DocumentPath, u64> = BTreeMap::new();
-        for write in writes {
+        for write in writes.iter().filter(|write| !write.transforms.is_empty()) {
             let count = transforms_per_document.entry(write.op.path()).or_default();
             *count += write.transforms.len() as u64;
             check_limit(limits::FIELD_TRANSFORMS_PER_DOCUMENT, *count)?;
@@ -5872,12 +5898,46 @@ impl FirestoreState {
         Ok((documents, counters))
     }
 
-    #[allow(clippy::too_many_lines)]
     fn run_find_nearest_with_stats(
         &self,
         query: &Query,
         version: Option<CommitVersion>,
     ) -> Result<(Vec<Document>, QueryStats), FirestoreError> {
+        let (candidates, mut stats) = self.select_nearest_candidates(query, version)?;
+        let Some(find_nearest) = query.find_nearest.as_ref() else {
+            unreachable!("nearest execution requires a findNearest stage");
+        };
+        let mut out = Vec::new();
+        let candidates = candidates.into_sorted_vec();
+        for candidate in candidates {
+            let distance = candidate.distance;
+            let document = candidate.document;
+            let mut projected = project_document(document, query.projection.as_deref());
+            if let Some(field) = &find_nearest.distance_result_field {
+                let include_distance = query
+                    .projection
+                    .as_ref()
+                    .is_none_or(|projection| projection_includes_field(projection, field));
+                if include_distance {
+                    set_field(&mut projected.fields, field, Value::Double(distance));
+                }
+            }
+            out.push(projected);
+        }
+        stats.cloned_documents = out.len() as u64;
+        stats.cloned_field_bytes = out
+            .iter()
+            .map(|document| fields_retained_bytes(&document.fields))
+            .fold(0u64, u64::saturating_add);
+        Ok((out, stats))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn select_nearest_candidates(
+        &self,
+        query: &Query,
+        version: Option<CommitVersion>,
+    ) -> Result<(BinaryHeap<NearestCandidate<'_>>, QueryStats), FirestoreError> {
         // Non-name pre-ranking needs an ordered prefix in memory. Keep that prefix within the
         // public findNearest result ceiling; name-ordered scans stream any ordinary limit.
         const MAX_MATERIALIZED_NEAREST_ORDINARY_ROWS: u64 = 1_000;
@@ -6013,29 +6073,7 @@ impl FirestoreState {
         }
         stats.nearest_peak_candidates =
             u64::try_from(nearest_peak_candidates.get()).unwrap_or(u64::MAX);
-        let mut out = Vec::new();
-        let candidates = candidates.into_sorted_vec();
-        for candidate in candidates {
-            let distance = candidate.distance;
-            let document = candidate.document;
-            let mut projected = project_document(document, query.projection.as_deref());
-            if let Some(field) = &find_nearest.distance_result_field {
-                let include_distance = query
-                    .projection
-                    .as_ref()
-                    .is_none_or(|projection| projection_includes_field(projection, field));
-                if include_distance {
-                    set_field(&mut projected.fields, field, Value::Double(distance));
-                }
-            }
-            out.push(projected);
-        }
-        stats.cloned_documents = out.len() as u64;
-        stats.cloned_field_bytes = out
-            .iter()
-            .map(|document| fields_retained_bytes(&document.fields))
-            .fold(0u64, u64::saturating_add);
-        Ok((out, stats))
+        Ok((candidates, stats))
     }
 
     /// Executes a query without cloning its documents and returns the ordered document paths.
@@ -6297,20 +6335,17 @@ impl FirestoreState {
                 (None, None, true) => self.scope_paths_descending(scope, version),
                 (None, None, false) => self.scope_paths(scope, version),
             };
-        let documents = paths
-            .inspect(|path| {
-                visited.set(visited.get() + 1);
-                if let Some((builder, Some(document))) = index_builder
-                    .as_mut()
-                    .map(|builder| (builder, self.get(path)))
-                {
-                    builder.add(self, path, document);
-                }
-            })
-            .filter_map(|path| match version {
+        let documents = paths.filter_map(|path| {
+            visited.set(visited.get() + 1);
+            let document = match version {
                 Some(version) => self.get_at(path, version),
                 None => self.get(path),
-            });
+            }?;
+            if let Some(builder) = &mut index_builder {
+                builder.add(self, path, document);
+            }
+            Some(document)
+        });
         let mut stats = select_from(
             query,
             documents,
@@ -6408,6 +6443,24 @@ impl FirestoreState {
         // An aggregation over a nearest-neighbour query folds its nearest documents
         // (FS-QUERY-INDEX vector/with-query-clauses#count-over-nearest).
         if query.find_nearest.is_some() {
+            if aggregations
+                .iter()
+                .all(|agg| matches!(agg, Aggregation::Count { .. }))
+            {
+                let (candidates, stats) = self.select_nearest_candidates(query, version)?;
+                let count = candidates.len() as u64;
+                let values = aggregations
+                    .iter()
+                    .map(|agg| {
+                        Accumulator {
+                            count,
+                            ..Accumulator::default()
+                        }
+                        .finish(agg)
+                    })
+                    .collect();
+                return Ok((values, stats));
+            }
             let (documents, stats) = self.run_find_nearest_with_stats(query, version)?;
             for document in &documents {
                 for (aggregation, accumulator) in aggregations.iter().zip(&mut accumulators) {
@@ -6661,7 +6714,9 @@ fn apply_write<'a>(
             }
             // Store what production stores (timestamps at microsecond precision) so that
             // reads, ordering and the no-op check below see the same content as production.
-            normalize_fields_for_storage(&mut next_fields);
+            if !write.transforms.is_empty() {
+                normalize_fields_for_storage(&mut next_fields);
+            }
             let doc = Document {
                 path: path.clone(),
                 fields: next_fields,
@@ -6790,6 +6845,7 @@ where
     let ordered_streaming = path_ordered && consumption == Consumption::Ordered;
     let streaming =
         path_ordered || (consumption == Consumption::Unordered && bound.is_none() && offset == 0);
+    let mut wide_any = WideArrayContainsAny::prepare(query.filter.as_ref());
     let mut stats = QueryStats::default();
     if bound == Some(0) {
         return Ok(stats);
@@ -6811,7 +6867,11 @@ where
         }
         if let Some(filter) = &query.filter {
             stats.filter_evaluations += 1;
-            if !eval_filter(filter, document)? {
+            let matches = match &mut wide_any {
+                Some(plan) => plan.matches(document),
+                None => eval_filter(filter, document)?,
+            };
+            if !matches {
                 continue;
             }
         }
@@ -6897,8 +6957,7 @@ fn validate_stored_field_name(name: &str) -> Result<(), FirestoreError> {
             "field name '{name}' is reserved."
         )));
     }
-    FieldPath::from_segments([name])
-        .map(|_| ())
+    crate::field_path::validate_segment(name)
         .map_err(|e| FirestoreError::InvalidArgument(format!("field name {name:?}: {e}")))
 }
 
@@ -7559,6 +7618,65 @@ fn equal_ref(a: FieldRef<'_>, b: &Value) -> bool {
     a.cmp_value(b) == Ordering::Equal
 }
 
+fn array_contains_any(items: &[Value], candidates: &[Value]) -> bool {
+    items.iter().any(|item| {
+        candidates
+            .iter()
+            .any(|candidate| !matches!(candidate, Value::Null) && equal(item, candidate))
+    })
+}
+
+/// Shares a wide operand index across rows of a simple array-contains-any filter.
+struct WideArrayContainsAny<'a> {
+    field: &'a FieldPath,
+    candidates: &'a [Value],
+    index: Option<BTreeSet<IndexValue<'a>>>,
+}
+
+impl<'a> WideArrayContainsAny<'a> {
+    fn prepare(filter: Option<&'a FilterExpr>) -> Option<Self> {
+        let Some(FilterExpr::Field {
+            field,
+            op: FieldOp::ArrayContainsAny,
+            value: Value::Array(candidates),
+        }) = filter
+        else {
+            return None;
+        };
+        (candidates.len() >= 8).then_some(Self {
+            field,
+            candidates,
+            index: None,
+        })
+    }
+
+    fn matches(&mut self, document: &Document) -> bool {
+        let Some(Value::Array(items)) =
+            field_value(document, self.field).and_then(FieldRef::stored)
+        else {
+            return false;
+        };
+        if items.len() < 8 {
+            return array_contains_any(items, self.candidates);
+        }
+        let first = &self.candidates[0];
+        if !matches!(first, Value::Null) && equal(&items[0], first) {
+            return true;
+        }
+        let index = self.index.get_or_insert_with(|| {
+            self.candidates
+                .iter()
+                .filter(|value| {
+                    !matches!(value, Value::Null)
+                        && !matches!(value, Value::Double(n) if n.is_nan())
+                })
+                .map(IndexValue)
+                .collect()
+        });
+        items.iter().any(|item| index.contains(&IndexValue(item)))
+    }
+}
+
 fn eval_filter(filter: &FilterExpr, doc: &Document) -> Result<bool, FirestoreError> {
     Ok(match filter {
         FilterExpr::And(children) => {
@@ -7638,11 +7756,7 @@ fn eval_filter(filter: &FilterExpr, doc: &Document) -> Result<bool, FirestoreErr
                 }
                 FieldOp::ArrayContainsAny => match (v.stored(), value) {
                     (Some(Value::Array(items)), Value::Array(candidates)) => {
-                        items.iter().any(|i| {
-                            candidates
-                                .iter()
-                                .any(|c| !matches!(c, Value::Null) && equal(i, c))
-                        })
+                        array_contains_any(items, candidates)
                     }
                     _ => false,
                 },
@@ -8570,6 +8684,13 @@ mod equality_index_benchmark {
             median(&mut one_shot_scan_samples).as_micros(),
         );
     }
+}
+
+/// Whether a document with all ordering fields lies beyond an exclusive query cursor.
+#[must_use]
+pub fn document_after_cursor(document: &Document, order: &[OrderClause], values: &[Value]) -> bool {
+    order_key(document, order)
+        .is_some_and(|key| compare_cursor(&key, values, order) == Ordering::Greater)
 }
 
 /// Compares an order key with a cursor's values, clause by clause.

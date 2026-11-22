@@ -101,16 +101,10 @@ impl SnapshotHook for FieldConfig {
         Ok(Arc::new(FieldConfigSnapshot {
             catalogs: self
                 .0
-                .ttl_catalogs()
-                .into_iter()
-                .filter(|((project, _), _)| scope.owns_project(project))
-                .collect(),
+                .owned_ttl_catalogs(|project| scope.owns_project(project)),
             operations: self
                 .0
-                .field_operations_by_project()
-                .into_iter()
-                .filter(|(project, _)| scope.owns_project(project))
-                .collect(),
+                .owned_field_operations(|project| scope.owns_project(project)),
         }))
     }
     fn validate(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {

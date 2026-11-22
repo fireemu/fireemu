@@ -2660,6 +2660,7 @@ async fn correlated_scalar_binds_each_outer_row_and_returns_null_for_no_match() 
         docs: vec![
             (Some(value(V::StringValue("A".to_owned()))), None),
             (Some(value(V::StringValue("B".to_owned()))), None),
+            (Some(value(V::StringValue("A".to_owned()))), None),
         ],
         m_shapes: vec![],
         literal: None,
@@ -2696,7 +2697,7 @@ async fn correlated_scalar_binds_each_outer_row_and_returns_null_for_no_match() 
     let service = GatewayService::local(gateway, backend);
     let request = correlated_test_request(&case);
     let (rows, _) = executor_documents(&service, request).await;
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 3);
     for row in rows {
         let key = row.fields["f"].value_type.as_ref().unwrap();
         let child = row.fields["child"].value_type.as_ref().unwrap();

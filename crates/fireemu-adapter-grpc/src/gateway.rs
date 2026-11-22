@@ -577,21 +577,13 @@ impl Gateway {
                 return Err(Rejection::Unsupported((*feature).to_owned()));
             }
         }
-        let scans = matches!(
-            decision,
-            IndexDecision::UseIndex { .. }
-                | IndexDecision::MergeIndexes { .. }
-                | IndexDecision::AssumedIndex { .. }
-        )
-        .then(|| {
-            plan_scans(
-                &execution_query,
-                aggregations.unwrap_or_default(),
-                indexes,
-                &self.ctx,
-            )
-        })
-        .flatten();
+        let scans = self.accepted_scans(
+            &execution_query,
+            aggregations,
+            indexes,
+            &decision,
+            disjunctions == 1,
+        );
         Ok(AcceptedQuery {
             query: canonical,
             decision,
@@ -599,6 +591,34 @@ impl Gateway {
             warnings,
             missing_indexes,
         })
+    }
+    /// A single ordinary disjunct uses the scan already selected for its decision.
+    fn accepted_scans(
+        &self,
+        query: &Query,
+        aggregations: Option<&[Aggregation]>,
+        indexes: &IndexSet,
+        decision: &IndexDecision,
+        single_disjunct: bool,
+    ) -> Option<Vec<PlannedScan>> {
+        let single = single_disjunct && aggregations.is_none() && query.find_nearest.is_none();
+        match decision {
+            IndexDecision::UseIndex { index }
+            | IndexDecision::AssumedIndex { requirement: index }
+                if single =>
+            {
+                Some(vec![PlannedScan::Index(index.clone())])
+            }
+            IndexDecision::MergeIndexes { indexes } if single => {
+                Some(vec![PlannedScan::Merge(indexes.clone())])
+            }
+            IndexDecision::UseIndex { .. }
+            | IndexDecision::MergeIndexes { .. }
+            | IndexDecision::AssumedIndex { .. } => {
+                plan_scans(query, aggregations.unwrap_or_default(), indexes, &self.ctx)
+            }
+            _ => None,
+        }
     }
 }
 

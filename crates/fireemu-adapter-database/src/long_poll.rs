@@ -148,7 +148,21 @@ pub fn callbacks(callback: Option<i32>) -> String {
 
 /// Answer `number` carrying `messages`, each one JSON text.
 pub fn packet(number: u64, messages: &[String]) -> String {
-    format!("pRTLPCB({number},[{}]);\n", messages.join(","))
+    use std::fmt::Write;
+    let bytes: usize = messages.iter().map(String::len).sum();
+    let digits =
+        usize::try_from(number.checked_ilog10().unwrap_or(0)).expect("at most 20 digits") + 1;
+    let overhead = "pRTLPCB(,[]);\n".len() + digits + messages.len().saturating_sub(1);
+    let mut body = String::with_capacity(overhead + bytes);
+    write!(body, "pRTLPCB({number},[").expect("writing to a String cannot fail");
+    for (index, message) in messages.iter().enumerate() {
+        if index > 0 {
+            body.push(',');
+        }
+        body.push_str(message);
+    }
+    body.push_str("]);\n");
+    body
 }
 
 /// The answer for a request naming no live connection: reset to `host` and close.

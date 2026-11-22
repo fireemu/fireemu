@@ -993,7 +993,7 @@ impl SubscriptionState {
 
     /// Returns the retained delivery counter for this exact pending message instance.
     pub(crate) fn forwarding_attempt(&self, message: &Arc<StoredMessage>) -> Option<u32> {
-        self.entries
+        self.entries[self.first_unacked..]
             .iter()
             .find(|entry| {
                 entry.state == Delivery::ForwardPending && Arc::ptr_eq(&entry.stored, message)
@@ -1020,11 +1020,21 @@ impl SubscriptionState {
     /// Returns exhausted messages whose dead-letter destination has not accepted them yet.
     #[must_use]
     pub fn pending_forwards(&self) -> Vec<Arc<StoredMessage>> {
-        self.entries
+        if !self.may_have_pending_forwards {
+            return Vec::new();
+        }
+        self.entries[self.first_unacked..]
             .iter()
             .filter(|entry| entry.state == Delivery::ForwardPending)
             .map(|entry| Arc::clone(&entry.stored))
             .collect()
+    }
+
+    pub(crate) fn has_pending_forwards(&self) -> bool {
+        self.may_have_pending_forwards
+            && self.entries[self.first_unacked..]
+                .iter()
+                .any(|entry| entry.state == Delivery::ForwardPending)
     }
 
     /// Modifies the ack deadline of one outstanding message. A deadline of zero seconds nacks

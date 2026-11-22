@@ -23,7 +23,7 @@ use crate::admin_app_check::{
     answer, malformed_frame, parse_request, reply_frame, AdminAppCheckVerifier, Reply,
     MAX_IN_FLIGHT,
 };
-use crate::protocol::{read_frame, write_frame};
+use crate::protocol::{read_buffered_frame, write_frame};
 
 /// What the runner announced in its `hello`.
 #[derive(Debug, Clone, Default)]
@@ -146,13 +146,20 @@ pub struct RunnerLog {
     fields: Map<String, Value>,
 }
 
+// Keep byte accounting private so diagnostic RunnerLog values retain their existing shape.
+#[derive(Debug)]
+struct RetainedLog {
+    line: RunnerLog,
+    bytes: usize,
+}
+
 impl RunnerLog {
     #[cfg(test)]
-    fn raw(message: impl Into<String>) -> Self {
+    fn raw(message: impl Into<String>) -> RetainedLog {
         Self::raw_with_truncation(message, false)
     }
 
-    fn raw_with_truncation(message: impl Into<String>, truncated: bool) -> Self {
+    fn raw_with_truncation(message: impl Into<String>, truncated: bool) -> RetainedLog {
         let message = message.into();
         Self {
             display: message.clone(),
@@ -174,7 +181,7 @@ impl RunnerLog {
         function: Option<&str>,
         user: bool,
         fields: Map<String, Value>,
-    ) -> Self {
+    ) -> RetainedLog {
         let level = level.into();
         let message = message.into();
         let display = invocation_id.map_or_else(
@@ -201,13 +208,12 @@ impl RunnerLog {
             .saturating_add(self.message.len())
             .saturating_add(self.function.as_ref().map_or(0, String::len))
             .saturating_add(self.invocation_id.as_ref().map_or(0, String::len))
-            .saturating_add(
-                serde_json::to_vec(&self.fields).map_or(usize::MAX, |fields| fields.len()),
-            )
+            .saturating_add(log_fields_bytes(&self.fields))
     }
 
-    fn bounded(mut self) -> Self {
-        if self.retained_bytes() > LOG_ENTRY_BYTE_LIMIT {
+    fn bounded(mut self) -> RetainedLog {
+        let mut bytes = self.retained_bytes();
+        if bytes > LOG_ENTRY_BYTE_LIMIT {
             let marker = "[runner log truncated: byte limit]".to_owned();
             self.display = marker.clone();
             "warning".clone_into(&mut self.level);
@@ -217,8 +223,9 @@ impl RunnerLog {
             self.truncated = true;
             self.user = false;
             self.fields.clear();
+            bytes = self.retained_bytes();
         }
-        self
+        RetainedLog { line: self, bytes }
     }
 
     /// The line `fireemu` prints on the terminal for this log: `<label> <display>`, painted by
@@ -290,6 +297,25 @@ impl RunnerLog {
     }
 }
 
+fn log_fields_bytes(fields: &Map<String, Value>) -> usize {
+    struct ByteCount(usize);
+    impl std::io::Write for ByteCount {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    if fields.is_empty() {
+        return 2; // An empty JSON object is "{}".
+    }
+    let mut count = ByteCount(0);
+    serde_json::to_writer(&mut count, fields).map_or(usize::MAX, |()| count.0)
+}
+
 /// A cursor-based view of the runner log buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogSlice {
@@ -303,24 +329,23 @@ pub struct LogSlice {
 
 #[derive(Debug, Default)]
 struct LogBuffer {
-    lines: VecDeque<(RunnerLog, usize)>,
+    lines: VecDeque<RetainedLog>,
     bytes: usize,
     first_seq: u64,
     next_seq: u64,
 }
 
 impl LogBuffer {
-    fn push(&mut self, line: RunnerLog) {
-        let bytes = line.retained_bytes();
-        self.lines.push_back((line, bytes));
-        self.bytes = self.bytes.saturating_add(bytes);
+    fn push(&mut self, log: RetainedLog) {
+        self.bytes = self.bytes.saturating_add(log.bytes);
+        self.lines.push_back(log);
         self.next_seq = self.next_seq.saturating_add(1);
         while self.lines.len() > LOG_CAPACITY || self.bytes > LOG_BUFFER_BYTE_LIMIT {
-            let (_, bytes) = self
+            let removed = self
                 .lines
                 .pop_front()
                 .expect("the log buffer is over a limit");
-            self.bytes -= bytes;
+            self.bytes -= removed.bytes;
             self.first_seq = self.first_seq.saturating_add(1);
         }
     }
@@ -338,7 +363,7 @@ impl LogBuffer {
                 .lines
                 .iter()
                 .skip(start)
-                .map(|(line, _)| line.clone())
+                .map(|log| log.line.clone())
                 .collect(),
             next_seq: self.next_seq,
             truncated,
@@ -376,7 +401,14 @@ async fn read_bounded_stderr_line<R: AsyncBufRead + Unpin>(
     if !truncated && bytes.last() == Some(&b'\r') {
         bytes.pop();
     }
-    let mut line = String::from_utf8_lossy(&bytes).into_owned();
+    let mut line = match String::from_utf8(bytes) {
+        Ok(mut line) => {
+            // The bounded reader may have grown its Vec beyond the retained text.
+            line.shrink_to_fit();
+            line
+        }
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    };
     if line.len() > keep {
         let end = (0..=keep)
             .rev()
@@ -893,7 +925,7 @@ impl Runner {
                 let mut reader = BufReader::new(stdout);
                 let mut hello_tx = Some(hello_tx);
                 loop {
-                    let frame = match read_frame(&mut reader).await {
+                    let frame = match read_buffered_frame(&mut reader).await {
                         Ok(Some(f)) => f,
                         Ok(None) => break,
                         Err(e) => {
@@ -981,7 +1013,7 @@ impl Runner {
                                     .cloned()
                                     .unwrap_or_default(),
                             );
-                            eprintln!("{}", log.terminal_line(&label));
+                            eprintln!("{}", log.line.terminal_line(&label));
                             if let Ok(mut l) = logs.lock() {
                                 l.push(log);
                             }
@@ -1597,8 +1629,8 @@ mod tests {
         ];
         for log in &logs {
             assert_eq!(
-                without_escape_sequences(&log.terminal_line(label)),
-                format!("{label} {}", log.display())
+                without_escape_sequences(&log.line.terminal_line(label)),
+                format!("{label} {}", log.line.display())
             );
         }
         let own = RunnerLog::structured(
@@ -1609,10 +1641,13 @@ mod tests {
             true,
             serde_json::Map::new(),
         );
-        assert!(own.terminal_line(label).ends_with(" \x1b[35mmine\x1b[0m"));
+        assert!(own
+            .line
+            .terminal_line(label)
+            .ends_with(" \x1b[35mmine\x1b[0m"));
         // The truncation marker is never repainted as a level and a message.
         assert_eq!(
-            logs[4].terminal_line(label),
+            logs[4].line.terminal_line(label),
             format!("{label} [runner log truncated: byte limit]")
         );
     }
@@ -2344,6 +2379,79 @@ mod tests {
     }
 
     #[test]
+    fn log_buffer_charges_the_compact_json_bytes_and_the_replacement_marker() {
+        let fields = serde_json::Map::from_iter([(
+            "payload".to_owned(),
+            serde_json::json!({"quote": "\"\r\n", "unicode": "界"}),
+        )]);
+        let mut logs = LogBuffer::default();
+        let expected = "info id message".len()
+            + "info".len()
+            + "id".len()
+            + "message".len()
+            + "function".len()
+            + serde_json::to_vec(&fields).unwrap().len();
+        logs.push(RunnerLog::structured(
+            "info",
+            "message",
+            Some("id"),
+            Some("function"),
+            true,
+            fields,
+        ));
+        assert_eq!(logs.bytes, expected);
+        let marker = "[runner log truncated: byte limit]";
+        logs.push(RunnerLog::structured(
+            "info",
+            "x".repeat(super::LOG_ENTRY_BYTE_LIMIT),
+            Some("id"),
+            Some("function"),
+            true,
+            serde_json::Map::new(),
+        ));
+        assert_eq!(
+            logs.bytes,
+            expected + marker.len() * 2 + "warning".len() + 2
+        );
+    }
+
+    #[tokio::test]
+    async fn stderr_repairs_invalid_utf8_and_preserves_the_following_line() {
+        for capacity in [1, 8192] {
+            let mut reader = tokio::io::BufReader::with_capacity(
+                capacity,
+                b"\xcf\x80\xffx\r\nnext\n".as_slice(),
+            );
+            assert_eq!(
+                super::read_bounded_stderr_line(&mut reader).await.unwrap(),
+                Some(("π�x".to_owned(), false))
+            );
+            assert_eq!(
+                super::read_bounded_stderr_line(&mut reader).await.unwrap(),
+                Some(("next".to_owned(), false))
+            );
+            assert_eq!(
+                super::read_bounded_stderr_line(&mut reader).await.unwrap(),
+                None
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn valid_stderr_line_does_not_keep_the_read_buffers_spare_capacity() {
+        let mut input = vec![b'x'; 8193];
+        input.push(b'\n');
+        let mut reader = tokio::io::BufReader::with_capacity(8192, input.as_slice());
+        let (line, truncated) = super::read_bounded_stderr_line(&mut reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!truncated);
+        assert_eq!(line.len(), 8193);
+        assert_eq!(line.capacity(), line.len());
+    }
+
+    #[test]
     fn log_buffer_evicts_by_total_bytes_as_well_as_line_count() {
         let mut logs = LogBuffer::default();
         for _ in 0..100 {
@@ -2406,8 +2514,11 @@ sys.stdin.readline()
             true,
             fields,
         );
-        assert_eq!(log.invocation_id(), Some("real-2"));
-        assert_eq!(RunnerLog::raw("info real-2 forged").invocation_id(), None);
+        assert_eq!(log.line.invocation_id(), Some("real-2"));
+        assert_eq!(
+            RunnerLog::raw("info real-2 forged").line.invocation_id(),
+            None
+        );
         let oversized = RunnerLog::structured(
             "info",
             "x".repeat(super::LOG_ENTRY_BYTE_LIMIT),
@@ -2416,9 +2527,9 @@ sys.stdin.readline()
             true,
             serde_json::Map::new(),
         );
-        assert_eq!(oversized.invocation_id(), None);
-        assert_eq!(oversized.function(), None);
-        assert!(oversized.is_truncated());
+        assert_eq!(oversized.line.invocation_id(), None);
+        assert_eq!(oversized.line.function(), None);
+        assert!(oversized.line.is_truncated());
         // The retained trusted ID has its own allocation in addition to the display prefix.
         let large_id = "x".repeat(super::LOG_ENTRY_BYTE_LIMIT / 2);
         let metadata_limit = RunnerLog::structured(
@@ -2429,8 +2540,8 @@ sys.stdin.readline()
             true,
             serde_json::Map::new(),
         );
-        assert!(metadata_limit.is_truncated());
-        assert_eq!(metadata_limit.invocation_id(), None);
+        assert!(metadata_limit.line.is_truncated());
+        assert_eq!(metadata_limit.line.invocation_id(), None);
     }
 
     proptest::proptest! {
@@ -2438,9 +2549,9 @@ sys.stdin.readline()
         fn trusted_log_attribution_is_independent_of_arbitrary_user_fields(id in "[a-z0-9-]{1,32}", forged in ".{0,64}", message in ".{0,64}") {
             let fields = serde_json::Map::from_iter([("invocationId".to_owned(), serde_json::json!(forged))]);
             let log = RunnerLog::structured("info", message, Some(&id), Some("consume"), true, fields);
-            proptest::prop_assert_eq!(log.invocation_id(), Some(id.as_str()));
-            let raw = RunnerLog::raw(log.display());
-            proptest::prop_assert_eq!(raw.invocation_id(), None);
+            proptest::prop_assert_eq!(log.line.invocation_id(), Some(id.as_str()));
+            let raw = RunnerLog::raw(log.line.display());
+            proptest::prop_assert_eq!(raw.line.invocation_id(), None);
         }
 
         #[test]
@@ -2469,13 +2580,13 @@ sys.stdin.readline()
             fields.clone(),
         );
 
-        assert_eq!(log.display(), "warning inv-7 payment delayed");
-        assert_eq!(log.level(), "warning");
-        assert_eq!(log.message(), "payment delayed");
-        assert_eq!(log.function(), Some("settlePayment"));
-        assert_eq!(log.invocation_id(), Some("inv-7"));
-        assert!(log.is_user());
-        assert_eq!(log.fields(), &fields);
+        assert_eq!(log.line.display(), "warning inv-7 payment delayed");
+        assert_eq!(log.line.level(), "warning");
+        assert_eq!(log.line.message(), "payment delayed");
+        assert_eq!(log.line.function(), Some("settlePayment"));
+        assert_eq!(log.line.invocation_id(), Some("inv-7"));
+        assert!(log.line.is_user());
+        assert_eq!(log.line.fields(), &fields);
     }
 
     /// A real bundled Node runner on a virtual Date clock, for the clock-sync stop tests.

@@ -63,11 +63,14 @@ pub fn encode(claims: &AppCheckClaims, signer: &dyn AppCheckSigner) -> String {
         signer.alg(),
         signer.kid()
     );
-    let signing_input = format!(
-        "{}.{}",
-        base64url_encode(header.as_bytes()),
-        base64url_encode(claims.canonical_json().as_bytes())
-    );
-    let signature = signer.sign(signing_input.as_bytes());
-    format!("{signing_input}.{}", base64url_encode(&signature))
+    let payload = claims.canonical_json();
+    let mut token = String::with_capacity((header.len() + payload.len()).div_ceil(3) * 4 + 4);
+    fireemu_core_auth::jwt::write_base64url(&mut token, header.as_bytes());
+    token.push('.');
+    fireemu_core_auth::jwt::write_base64url(&mut token, payload.as_bytes());
+    let signature = signer.sign(token.as_bytes());
+    token.push('.');
+    token.reserve(signature.len().div_ceil(3) * 4);
+    fireemu_core_auth::jwt::write_base64url(&mut token, &signature);
+    token
 }

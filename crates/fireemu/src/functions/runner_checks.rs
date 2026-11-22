@@ -68,12 +68,12 @@ pub(crate) fn process_notice(dedicated: bool, codebases: &[&str]) -> Option<Stri
 
 /// Drops the state kept for a runner that is no longer current. The log pump keeps one cursor per
 /// runner unit, keyed by [`RunnerUnit::key`](fireemu_adapter_functions::runtime::RunnerUnit::key):
-/// a unit that is still current keeps its cursor, so its lines are forwarded once.
+/// a unit that is still current keeps its cursor, so its lines are forwarded once. Clear each
+/// surviving unit's marker so the next poll must visit it again.
 pub(crate) fn retain_current_cursors<V>(
-    cursors: &mut std::collections::BTreeMap<String, V>,
-    current: &[String],
+    cursors: &mut std::collections::BTreeMap<String, (V, bool)>,
 ) {
-    cursors.retain(|key, _| current.contains(key));
+    cursors.retain(|_, (_, seen)| std::mem::take(seen));
 }
 
 #[cfg(test)]
@@ -158,21 +158,21 @@ mod tests {
 
     #[test]
     fn a_cursor_survives_only_while_its_runner_is_current() {
-        let mut cursors: std::collections::BTreeMap<String, u64> =
-            [("api/a", 1), ("api/b", 2), ("old", 3)]
-                .into_iter()
-                .map(|(key, value)| (key.to_owned(), value))
-                .collect();
-        retain_current_cursors(
-            &mut cursors,
-            &["api/a".to_owned(), "api/b".to_owned(), "new".to_owned()],
-        );
+        let mut cursors = [
+            ("api/a", (1, true)),
+            ("api/b", (2, true)),
+            ("old", (3, false)),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value))
+        .collect();
+        retain_current_cursors(&mut cursors);
         assert_eq!(
             cursors.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["api/a", "api/b"]
         );
-        assert_eq!(cursors["api/b"], 2);
-        retain_current_cursors(&mut cursors, &[]);
+        assert_eq!(cursors["api/b"], (2, false));
+        retain_current_cursors(&mut cursors);
         assert!(cursors.is_empty());
     }
 

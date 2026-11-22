@@ -329,6 +329,25 @@ impl TextIndexBuild {
             .map_or(0, crate::text_search::SearchIndex::document_count)
     }
 
+    fn complete(
+        &mut self,
+        definition: &TextIndexDefinition,
+        documents: &[crate::store::Document],
+        analyze: fn(&str) -> Vec<String>,
+    ) -> Result<(), TextIndexBuildError> {
+        let index = crate::text_search::SearchIndex::build(
+            definition,
+            &search_documents(documents),
+            analyze,
+        )
+        .map_err(search_source_error)?;
+        self.processed = documents.len();
+        self.total = Some(documents.len());
+        self.source = Vec::new();
+        self.index = Some(index);
+        Ok(())
+    }
+
     /// The immutable partial or completed posting data.
     #[must_use]
     pub fn index(&self) -> Option<&crate::text_search::SearchIndex> {
@@ -625,11 +644,20 @@ impl TextIndexCatalog {
             return Err(TextIndexBuildError::InvalidBatch);
         }
         let key = (project.to_owned(), database.to_owned(), id.to_owned());
-        let def = self
-            .get(project, database, id)
+        let definition = self
+            .sets
+            .get_mut(&(project.to_owned(), database.to_owned()))
+            .and_then(|set| {
+                set.definitions
+                    .iter_mut()
+                    .find(|definition| definition.id == id)
+            })
             .ok_or(TextIndexBuildError::NotFound)?;
-        let state = def.state;
-        let build = self.builds.get(&key).ok_or(TextIndexBuildError::NotFound)?;
+        let state = definition.state;
+        let build = self
+            .builds
+            .get_mut(&key)
+            .ok_or(TextIndexBuildError::NotFound)?;
         if generation.is_some_and(|value| value != build.generation) {
             return Err(TextIndexBuildError::StaleGeneration);
         }
@@ -654,18 +682,12 @@ impl TextIndexCatalog {
         if documents.iter().any(|document| {
             document.path.project().as_str() != project
                 || document.path.database().as_str() != database
-                || document.path.collection_id() != &def.collection_id
+                || document.path.collection_id() != &definition.collection_id
         }) {
             return Err(TextIndexBuildError::InvalidSource(
                 TextIndexSourceError::OutsideScope,
             ));
         }
-        let (prepared_index, prepared_processed) =
-            prepare_postings(def, build, action, batch, &documents, analyze)?;
-        let build = self
-            .builds
-            .get_mut(&key)
-            .ok_or(TextIndexBuildError::NotFound)?;
         let new_state = match action {
             "failBuild" => {
                 build.failure = Some(reason.unwrap_or("injected build failure").to_owned());
@@ -683,33 +705,37 @@ impl TextIndexCatalog {
                 TextIndexState::Creating
             }
             "advanceBackfill" => {
-                if build.total.is_none() {
-                    build.source = documents;
-                    build.total = Some(build.source.len());
+                let source = if build.total.is_some() {
+                    &build.source
+                } else {
+                    &documents
+                };
+                let processed = build.processed.saturating_add(batch).min(source.len());
+                let batch = search_documents(&source[build.processed..processed]);
+                if let Some(index) = &mut build.index {
+                    // extend verifies the complete new batch before it changes any postings.
+                    index
+                        .extend(definition, &batch, analyze)
+                        .map_err(search_source_error)?;
+                } else {
+                    let index = crate::text_search::SearchIndex::build(definition, &batch, analyze)
+                        .map_err(search_source_error)?;
+                    build.index = Some(index);
                 }
-                build.processed = prepared_processed;
-                build.index = prepared_index;
+                if build.total.is_none() {
+                    build.total = Some(documents.len());
+                    build.source = documents;
+                }
+                build.processed = processed;
                 TextIndexState::Creating
             }
             "completeBackfill" => {
-                build.processed = documents.len();
-                build.total = Some(documents.len());
-                build.source = Vec::new();
-                build.index = prepared_index;
+                build.complete(definition, &documents, analyze)?;
                 TextIndexState::Ready
             }
             _ => return Err(TextIndexBuildError::InvalidState),
         };
-        let set = self
-            .sets
-            .get_mut(&(project.to_owned(), database.to_owned()))
-            .ok_or(TextIndexBuildError::NotFound)?;
-        let def = set
-            .definitions
-            .iter_mut()
-            .find(|def| def.id == id)
-            .ok_or(TextIndexBuildError::NotFound)?;
-        def.state = new_state;
+        definition.state = new_state;
         Ok(())
     }
 
@@ -726,57 +752,21 @@ impl TextIndexCatalog {
     }
 }
 
-fn prepare_postings(
-    def: &TextIndexDefinition,
-    build: &TextIndexBuild,
-    action: &str,
-    batch: usize,
+fn search_source_error(error: crate::text_search::SearchError) -> TextIndexBuildError {
+    TextIndexBuildError::InvalidSource(TextIndexSourceError::Search(error))
+}
+
+fn search_documents(
     documents: &[crate::store::Document],
-    analyze: fn(&str) -> Vec<String>,
-) -> Result<(Option<crate::text_search::SearchIndex>, usize), TextIndexBuildError> {
-    let source_error =
-        |error| TextIndexBuildError::InvalidSource(TextIndexSourceError::Search(error));
-    let convert = |documents: &[crate::store::Document]| {
-        documents
-            .iter()
-            .map(|document| crate::text_search::SearchDocument {
-                path: document.path.clone(),
-                fields: document.fields.clone(),
-                created_at: document.create_time,
-            })
-            .collect::<Vec<_>>()
-    };
-    // Prepare all fallible posting work before changing progress or readiness.
-    let mut prepared_index = None;
-    let mut prepared_processed = 0;
-    if action == "advanceBackfill" {
-        let source = if build.total.is_none() {
-            documents
-        } else {
-            build.source.as_slice()
-        };
-        prepared_processed = build.processed.saturating_add(batch).min(source.len());
-        let mut index = match &build.index {
-            Some(index) => index.clone(),
-            None => {
-                crate::text_search::SearchIndex::build(def, &[], analyze).map_err(source_error)?
-            }
-        };
-        index
-            .extend(
-                def,
-                &convert(&source[build.processed..prepared_processed]),
-                analyze,
-            )
-            .map_err(source_error)?;
-        prepared_index = Some(index);
-    } else if action == "completeBackfill" {
-        prepared_index = Some(
-            crate::text_search::SearchIndex::build(def, &convert(documents), analyze)
-                .map_err(source_error)?,
-        );
-    }
-    Ok((prepared_index, prepared_processed))
+) -> Vec<crate::text_search::SearchDocument> {
+    documents
+        .iter()
+        .map(|document| crate::text_search::SearchDocument {
+            path: document.path.clone(),
+            fields: document.fields.clone(),
+            created_at: document.create_time,
+        })
+        .collect()
 }
 
 #[cfg(test)]

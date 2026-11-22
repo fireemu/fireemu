@@ -1159,14 +1159,16 @@ const STORAGE_OBJECT_MEMBERS = [
   "timeCreated", "updated", "timeDeleted", "storageClass", "timeStorageClassUpdated", "size", "md5Hash",
   "mediaLink", "metadata", "crc32c", "etag",
 ];
+const STORAGE_OBJECT_KEYS = new Set(STORAGE_OBJECT_MEMBERS);
+
 function storageObjectInRecordedOrder(data) {
   if (data === null || typeof data !== "object" || Array.isArray(data)) return data;
   const ordered = {};
   for (const key of STORAGE_OBJECT_MEMBERS) {
     if (Object.hasOwn(data, key)) ordered[key] = data[key];
   }
-  for (const key of Object.keys(data).sort()) {
-    if (!Object.hasOwn(ordered, key)) ordered[key] = data[key];
+  for (const key of Object.keys(data).filter(key => !STORAGE_OBJECT_KEYS.has(key)).sort()) {
+    ordered[key] = data[key];
   }
   return ordered;
 }
