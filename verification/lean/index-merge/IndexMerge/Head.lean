@@ -148,7 +148,12 @@ def pairMerge (q : Query) (s : ISet) (source : QuerySource) (left right t : Fiel
     [(Scope.collection, Mode.asc), (.collection, .desc), (.group, .asc)].findSome? fun (scope, mode) =>
       if q.group && scope != .group then none else
       [(right, left), (left, right)].findSome? fun (field, other) =>
-        if !hasMode s q.coll other q.group .asc then none else
+        if !hasMode s q.coll other q.group .asc ||
+            (scope == .group &&
+              ((!q.group && !(isExempt s q.coll field false && isExempt s q.coll t false)) ||
+               (s.composites.filter fun i =>
+                 i.coll == q.coll && i.scope == .group && i.fields.contains ⟨t, .contains⟩).length != 1))
+          then none else
         (carrier scope field t mode).map fun idx =>
           let idx := if scope == .collection && mode == .asc then
             (carrier scope field t .desc).getD idx else idx
@@ -249,6 +254,10 @@ def arrayFirst (q : Query) (s : ISet) (source : QuerySource) (base : Decision) :
         q.filters.contains (.eq t) && q.filters.contains (.contains t) &&
         q.filters.all Filter.plainAtom && q.filters.length == r.eq.length + 1 &&
         ((s.modes q.coll t).filter (·.1 == .collection)).map Prod.snd == [.contains] &&
+        (r.eq.all fun f => f == t ||
+          match ((s.modes q.coll f).filter (·.1 == .collection)).map Prod.snd with
+          | [.asc] | [.desc] => true
+          | _ => false) &&
         !s.composites.any (fun i => i.coll == q.coll && i.fields.any (·.path == t))
     else if source != .plain || !q.conjunction || !q.filters.contains (.contains t) then false
     else match r.eq with

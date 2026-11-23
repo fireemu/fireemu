@@ -592,9 +592,10 @@ fn value_from_json_at(
         }),
         "timestampValue" => V::TimestampValue(timestamp_from_json(inner).or_else(|error| {
             // Only the whole-second UTC value spelling carries second 60 into the next minute.
+            // Year 0000 stays outside it (unrecorded; strict refuses year 0000 as recorded for T1).
             use fireemu_core_firestore::value::Timestamp;
             let Some(prefix) = inner.as_str().and_then(|s| s.strip_suffix(":60Z"))
-                .filter(|s| s.len() == 16 && s.as_bytes()[10] == b'T') else { return Err(error); };
+                .filter(|s| s.len() == 16 && s.as_bytes()[10] == b'T' && !s.starts_with("0000-")) else { return Err(error); };
             let Ok(last) = LogicalInstant::parse_rfc3339(&format!("{prefix}:59Z")) else { return Err(error); };
             let mut timestamp = encode_instant(last);
             timestamp.seconds += 1;

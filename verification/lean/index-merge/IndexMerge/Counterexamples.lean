@@ -28,7 +28,7 @@ The other two findings concern how the result depends on the configuration:
 These are facts about the base decision. The last section states the head decision
 (`IndexMerge/Head.lean`) on the recorded shapes F1 (`head_f1`), F3 (`head_f3`), F2
 (`head_f2_refused`) and the single-equality refusal (`head_single_equality_refused`), and on
-their neighbours. In `first_attempt_conflation` the base covers by path and the head distinguishes an array equality from a scalar equality.
+their neighbours. In `first_attempt_conflation` both equality sources keep the base plan when the other equality field has both directions.
 
 Fields are numbers: 1 is `a`, 2 is `b`, 3 is `tags`, 4 is `e`; collection group 0.
 -/
@@ -317,7 +317,7 @@ theorem head_enterprise_base :
         .fullScan (requiredIndex (reqOf qF3) 0 false) := by
   constructor <;> decide
 
-/-- Merge8 refuses the array-valued equality when only a contains index is available on the shared field. -/
+/-- Give the other equality field both collection directions, outside the two merge8 catalogs. -/
 def conflationSet : ISet :=
   ⟨[], fun _ f => if f == 1 then [(.collection, .asc), (.collection, .desc)]
     else if f == 3 then [(.collection, .contains)] else stdModes⟩
@@ -330,7 +330,7 @@ theorem first_attempt_conflation :
       decideHead q conflationSet .production .standard =
         .merge [singleFieldIndex 0 false 1 .asc .asc, singleFieldIndex 0 false 3 .contains .asc] ∧
       decideHead q conflationSet .production .standard .sharedArray =
-        .missing ⟨0, .collection, [⟨3, .contains⟩, ⟨1, .asc⟩, ⟨3, .asc⟩, ⟨NAME, .asc⟩]⟩ ∧
+        decideBase q conflationSet .production .standard ∧
       decideHead qd conflationSet .production .standard =
         .missing (requiredIndex (reqOf qd) 0 false) ∧
       decideHead qd conflationSet .production .standard .sharedArray =

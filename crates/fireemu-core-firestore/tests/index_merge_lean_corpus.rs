@@ -1851,7 +1851,7 @@ fn obs2_merge_members(shape: &str, scope: &str, catalog: &str) -> Option<Vec<Ind
             vec![&a, &b, &tags]
         }
         "twoEqContains" => vec![&tags, &b, &a],
-        "sharedAsc" if catalog == "sparseShared" => return None,
+        "sharedAsc" if catalog == "sparseShared" => vec![&a, &tags],
         "sharedAsc" | "sharedDesc" => vec![&tags, &a, &ordered_tags],
         _ => vec![&tags, &a],
     };
@@ -2506,6 +2506,17 @@ fn merge_b_serves_with_two_collection_carriers_or_one_group_carrier() {
             requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc")
         }
     );
+    // Restoring either exempt field in merge8's igy catalog keeps the base refusal.
+    for field in ["a", "tags"] {
+        let mut restored = group_carrier.clone();
+        restored.clear_single_field_override(&coll("qx"), &fp(field));
+        assert_eq!(
+            decide(&f1(), &restored, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc")
+            }
+        );
+    }
     let mut two = f1_set();
     assert!(served(&decide(&f1(), &two, &standard())));
     two.add_composite(parse_index("qx C b:asc,tags:contains"));
@@ -2903,12 +2914,10 @@ fn unordered_pair_carrier_excludes_counts_with_singleton_array_contains_any() {
 }
 
 #[test]
-fn group_carrier_keeps_its_ascending_prefix_with_a_descending_alternative() {
-    // Add a descending carrier to fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-plan.
-    // The descending preference was recorded in fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-plan.
+fn group_carrier_with_a_descending_alternative_keeps_the_base_refusal() {
+    // Merge7 recorded one group carrier. Neither carrier alone covers the base requirement.
     let mut set = IndexSet::default();
-    let asc = parse_index("qx G a:asc,tags:contains");
-    set.add_composite(asc.clone());
+    set.add_composite(parse_index("qx G a:asc,tags:contains"));
     set.add_composite(parse_index("qx G a:desc,tags:contains"));
     modes_only(
         &mut set,
@@ -2918,8 +2927,41 @@ fn group_carrier_keeps_its_ascending_prefix_with_a_descending_alternative() {
     );
     assert_eq!(
         decide(&obs2_merge_query("twoEqContains", true), &set, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx G a:asc,b:asc,tags:contains,__name__:asc")
+        }
+    );
+}
+
+#[test]
+fn shared_path_with_builtin_equality_modes_keeps_the_base_merge() {
+    let mut set = IndexSet::default();
+    modes_only(
+        &mut set,
+        "tags",
+        &[IndexFieldMode::Contains],
+        IndexQueryScope::Collection,
+    );
+    let query = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            field_filter(
+                "tags",
+                FieldOp::Equal,
+                Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
+            ),
+            filter("contains", "tags", "qx"),
+        ],
+        &[(fp("__name__"), Direction::Ascending)],
+        false,
+    );
+    assert_eq!(
+        decide(&query, &set, &standard()),
         IndexDecision::MergeIndexes {
-            indexes: vec![asc, parse_index("qx G b:asc,__name__:asc")]
+            indexes: vec![
+                parse_index("qx C a:asc,__name__:asc"),
+                parse_index("qx C tags:contains,__name__:asc")
+            ]
         }
     );
 }

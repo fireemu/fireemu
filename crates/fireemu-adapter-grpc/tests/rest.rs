@@ -973,6 +973,8 @@ fn whole_second_sixty_round_trips_in_writes_and_equality_filters() {
         for (id, input, normalized) in [
             ("leap", "2016-12-31T23:59:60Z", "2017-01-01T00:00:00Z"),
             ("minute", "2026-01-01T00:00:60Z", "2026-01-01T00:01:00Z"),
+            ("february", "2025-02-28T23:59:60Z", "2025-03-01T00:00:00Z"),
+            ("leap-day", "2024-02-29T23:59:60Z", "2024-03-01T00:00:00Z"),
             ("last", "9999-12-31T23:58:60Z", "9999-12-31T23:59:00Z"),
         ] {
             let path = format!("{DOCS}/instants/{id}");
@@ -1021,6 +1023,12 @@ fn unrecorded_second_sixty_spellings_keep_the_timestamp_error() {
         let original = precondition_from_json(Some(&json!({"updateTime": input}))).unwrap_err();
         assert_eq!(error.to_string(), original.to_string(), "{input}");
     }
+    let error =
+        value_from_json(&json!({"timestampValue": "2026-01-01T00:00:60+01:00"})).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        r#"invalid timestamp "2026-01-01T00:00:60+01:00": invalid RFC 3339 timestamp at byte 17: expected second 00-59"#
+    );
     assert!(precondition_from_json(Some(&json!({"updateTime": "2016-12-31T23:59:60Z"}))).is_err());
 }
 
@@ -5354,6 +5362,60 @@ fn explain_rest_plan_and_analyze_return_only_requested_data_and_one_metrics_obje
 }
 
 #[test]
+fn explain_rest_collection_merge_with_a_group_carrier() {
+    let s = state_with_profile(true);
+    let collection = CollectionId::try_new("igy").unwrap();
+    let a = FieldPath::parse("a").unwrap();
+    let tags = FieldPath::parse("tags").unwrap();
+    let mut indexes = IndexSet::default();
+    indexes.set_single_field_indexes(&collection, &a, vec![]);
+    indexes.set_single_field_indexes(&collection, &tags, vec![]);
+    indexes.set_single_field_indexes(
+        &collection,
+        &FieldPath::parse("b").unwrap(),
+        vec![
+            (IndexQueryScope::Collection, IndexFieldMode::Ascending),
+            (IndexQueryScope::CollectionGroup, IndexFieldMode::Ascending),
+        ],
+    );
+    indexes.add_composite(IndexDefinition {
+        collection_group: collection,
+        query_scope: IndexQueryScope::CollectionGroup,
+        fields: vec![
+            IndexField {
+                path: a,
+                mode: IndexFieldMode::Ascending,
+            },
+            IndexField {
+                path: tags,
+                mode: IndexFieldMode::Contains,
+            },
+        ],
+    });
+    s.local
+        .replace_project_database_indexes("demo-app", "(default)", indexes);
+    let (status, body) = call(
+        &s,
+        "POST",
+        &format!("{DOCS}:runQuery"),
+        json!({"structuredQuery": {"from": [{"collectionId": "igy"}], "where": {"compositeFilter": {"op": "AND", "filters": [
+            {"fieldFilter": {"field": {"fieldPath": "a"}, "op": "EQUAL", "value": {"integerValue": "1"}}},
+            {"fieldFilter": {"field": {"fieldPath": "b"}, "op": "EQUAL", "value": {"integerValue": "1"}}},
+            {"fieldFilter": {"field": {"fieldPath": "tags"}, "op": "ARRAY_CONTAINS", "value": {"integerValue": "1"}}}
+        ]}}}, "explainOptions": {"analyze": false}}),
+    );
+    assert_eq!(status, 200, "{body}");
+    // Merge8 recorded that the collection read was served. These Explain members are unrecorded.
+    assert_eq!(
+        body,
+        json!([{"explainMetrics": {"planSummary": {"indexesUsed": [
+            {"properties": "(a ASC, tags ARRAY_CONTAINS, __name__ ASC)", "query_scope": "Collection group"},
+            {"properties": "(b ASC, __name__ ASC)", "query_scope": "Collection"}
+        ]}}}])
+    );
+}
+
+#[test]
 fn explain_rest_plan_only_new_and_existing_transactions_can_be_rolled_back() {
     let s = state(None);
     for aggregation in [false, true] {
@@ -8501,4 +8563,50 @@ fn a_commit_is_charged_the_sum_of_its_documents_and_a_batch_write_each_write() {
         vec![document("g0", 4_310), document("g1", 4_310)],
     );
     assert_eq!(status, 200, "emulator 60x2: {body}");
+}
+
+/// Year 0000 stays outside the second-60 rule (coordinator triage r1 addendum, option (a)): no
+/// production row shows a year-0000 `:60` literal accepted, and strict refuses year-0000 query
+/// values as recorded (fs-query-index-merge2 read-only/triage-shapes#t1-year-0000-plus-offset).
+/// Both profiles keep the answers they gave before the second-60 rule.
+#[test]
+fn year_zero_second_sixty_keeps_its_earlier_refusals() {
+    let literal = "0000-12-31T23:59:60Z";
+    for strict in [false, true] {
+        let state = state_with_profile(strict);
+        let path = format!("{DOCS}/instants/minimum");
+        let (status, body) = call(
+            &state,
+            "PATCH",
+            &path,
+            json!({"fields": {"t": {"timestampValue": literal}}}),
+        );
+        assert_eq!(status, 400, "strict={strict} {body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("expected second 00-59")),
+            "strict={strict} {body}"
+        );
+        let (status, _) = call(&state, "GET", &path, Value::Null);
+        assert_eq!(status, 404, "strict={strict}");
+        let (status, rows) = call(
+            &state,
+            "POST",
+            &format!("{DOCS}:runQuery"),
+            json!({"structuredQuery": {"from": [{"collectionId": "instants"}], "where": {"fieldFilter": {
+                "field": {"fieldPath": "t"}, "op": "EQUAL", "value": {"timestampValue": literal}
+            }}}}),
+        );
+        assert_eq!(status, 400, "strict={strict} {rows}");
+        let message = rows[0]["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if strict {
+            assert!(message.contains("Timestamp value exceeds limits"), "{rows}");
+        } else {
+            assert!(message.contains("expected second 00-59"), "{rows}");
+        }
+    }
 }

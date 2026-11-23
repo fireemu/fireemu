@@ -18724,6 +18724,19 @@ config 2764
 override is2 a C:desc
 override is2 tags C:contains
 endconfig
+config 2765
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+composite qx G a:desc,tags:contains
+endconfig
+config 2766
+override qx b C:asc,G:asc
+override qx tags -
+composite qx G a:asc,tags:contains
+endconfig
+config 2767
+override qx tags C:contains
+endconfig
 case 0 fs-query-index/index-selection/automatic-and-merge#single-equality
 uses 0
 query qx C
@@ -82661,5 +82674,40 @@ order a desc
 production served fs-query-index-merge8/shapes/shared-path-descending-only#order-a-desc
 expect use is2 C a:desc,__name__:desc
 base use is2 C a:desc,__name__:desc
+guard none
+end
+case 5703 shape/b/group-with-descending-alternative
+uses 2765
+query qx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx G a:asc,b:asc,tags:contains,__name__:asc
+base missing qx G a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5704 shape/b/group-carrier-with-builtin-equality
+uses 2766
+query qx C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
+base missing qx C a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5705 shape/shared-path/builtin-equality-tags-contains
+uses 2767
+query qx C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
+base merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 guard none
 end

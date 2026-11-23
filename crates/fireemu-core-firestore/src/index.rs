@@ -1257,6 +1257,14 @@ fn recorded_merge(
                 index.query_scope == scope && prefix.path == *field && prefix.mode == mode
                     && array.path == *contains && array.mode == Contains
                     && (suffix.is_empty() || matches!(suffix, [name] if name.path.is_document_name() && name.mode == Ascending))
+            }).filter(|carrier| {
+                // Merge7 and merge8 use a lone group carrier. The collection read exempts both fields.
+                scope == IndexQueryScope::Collection
+                    || (group || set.is_exempt(collection, field, false)
+                        && set.is_exempt(collection, contains, false))
+                        && set.composites_for(collection)
+                            .filter(|i| i.query_scope == scope && i.fields.contains(&carrier.fields[1]))
+                            .nth(1).is_none()
             })
         };
         if !group {
@@ -1665,16 +1673,17 @@ fn decide_disjunct(
                             i.query_scope == IndexQueryScope::Collection && i.fields.len() == 2
                         })
             }
-            (RecordedMerge::SharedAscending, _) => {
-                indexes
-                    .single_field_modes(collection, array)
-                    .iter()
-                    .filter(|(scope, _)| *scope == IndexQueryScope::Collection)
-                    .map(|(_, mode)| *mode)
-                    .eq([Contains])
-                    && !indexes
-                        .composites_for(collection)
-                        .any(|i| i.fields.iter().any(|f| f.path == *array))
+            (RecordedMerge::SharedAscending, fields) => {
+                fields.iter().all(|field| {
+                    let mut modes = indexes.single_field_modes(collection, field);
+                    modes.retain(|(scope, _)| *scope == IndexQueryScope::Collection);
+                    matches!(
+                        (field == array, modes.as_slice()),
+                        (true, [(_, Contains)]) | (false, [(_, Ascending | Descending)])
+                    )
+                }) && !indexes
+                    .composites_for(collection)
+                    .any(|i| i.fields.iter().any(|f| f.path == *array))
             }
             (RecordedMerge::ReverseAutomatic, [field]) if missing => {
                 indexes.is_exempt(collection, field, false)
