@@ -1873,6 +1873,24 @@ test("every combination of compact version, summary, corpus digest and answer in
   assert.equal(cases, 216);
 });
 
+test("the pipeline condition proves a -1 row from the corpus it is given, as the shared one does", () => {
+  const program = {
+    id: "p",
+    steps: [{ id: "dep" }, { id: "row", query: [["pageToken", [REF]]] }],
+  };
+  const fixture = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  const summary = () => ({ version: 1, programs: {} });
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, { p: program }, summary), []);
+  assert.match(
+    pipelineBodyReadStageProblems(fixture, {}, summary).join("\n"),
+    /does not reference/,
+  );
+});
+
 test("a pipeline condition whose framing summary cannot be read is a problem, not a throw", () => {
   const fixture = readConformanceJson("fs-ent-pipeline-production.json");
   for (const summary of [undefined, null, 7, "x", {}, { version: 1 }])
