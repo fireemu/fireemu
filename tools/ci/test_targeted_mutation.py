@@ -80,7 +80,7 @@ class CampaignTest(unittest.TestCase):
             if args[1] == "metadata":
                 return subprocess.CompletedProcess(args, 0, json.dumps(METADATA))
             if args == ["cargo", "tmt", "--version"]:
-                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.4.0\n")
+                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.5.0\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
             self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
@@ -134,7 +134,7 @@ class CampaignTest(unittest.TestCase):
                 self.assertEqual(code, expected_code)
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
-                self.assertEqual(summary["tool_version"], "0.4.0")
+                self.assertEqual(summary["tool_version"], "0.5.0")
                 self.assertEqual(summary["since"], "review-base" if scope else None)
                 for result in summary["packages"]:
                     report = OUTCOMES[outcomes[result["package"]]][1]
