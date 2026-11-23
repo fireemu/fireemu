@@ -1792,6 +1792,9 @@ test("a compact framing program counts only when the summary of the same recordi
     check(undefined, (p) => (p.steps["f5-rest"].second = p.steps["f5-rest"])),
     check(undefined, (p) => delete p.steps["f500-rest"].second),
     check((p) => delete p.second["f500-rest"]),
+    // A summary program whose steps are not an object answers nothing, and does not throw.
+    check(undefined, (p) => (p.steps = null)),
+    check(undefined, (p) => (p.steps = "f5-rest")),
   ]) {
     assert.match(
       found,
