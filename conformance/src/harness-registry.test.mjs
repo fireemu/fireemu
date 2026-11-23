@@ -1961,16 +1961,11 @@ test("a revision's exports are read from that revision's own sources", () => {
   );
 });
 
-test("every lane's extra inputs rebuilt from the committed revision equal this checkout's", () => {
+test("every lane's extra inputs rebuilt from the committed revision equal this checkout's (commit module changes first)", () => {
   const head = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: REPO_ROOT,
     encoding: "utf8",
   }).trim();
-  const status = execFileSync("git", ["status", "--porcelain", "--", "conformance"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  });
-  if (status.trim() !== "") return; // uncommitted work: the committed revision is not this checkout
   for (const [name, lane] of Object.entries(HARNESS_LANES)) {
     if (typeof lane.extra !== "function" || name === "auth-config-sdk") continue;
     const rebuilt = extraOf(lane, {
@@ -2012,6 +2007,16 @@ test("a lineage digest counts for a lane runner only when a hop that connects it
     state((h) => (h === other ? [] : ["refused"]), [hop, other]),
     "lineage",
   );
+  // A verified hop that does not connect this digest (another lane, digest or endpoint) is no proof.
+  for (const unrelated of [
+    { ...hop, lane: "other" },
+    { ...hop, from: "8".repeat(64) },
+    { ...hop, to: "8".repeat(64) },
+  ])
+    assert.equal(
+      state((h) => (h === hop ? ["refused"] : []), [hop, unrelated]),
+      "stale",
+    );
   // Other states are not the lineage's business and never call the verification.
   const never = () => assert.fail("verify must not run");
   assert.equal(
