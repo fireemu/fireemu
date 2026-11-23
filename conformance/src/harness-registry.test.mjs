@@ -1818,6 +1818,61 @@ test("a compact framing program counts only when the summary of the same corpus 
   );
 });
 
+test("every combination of compact version, summary, corpus digest and answer in either slot", () => {
+  const compactRow = { kind: "read", results: 1 };
+  const answers = { ok: { status: 200 }, unknown: { status: 0 }, absent: undefined };
+  let cases = 0;
+  for (const version of [undefined, 1, 2])
+    for (const summaryVersion of [1, 2])
+      for (const listed of [true, false])
+        for (const digest of ["match", "mismatch", "missing"])
+          for (const answer of Object.keys(answers))
+            for (const slot of ["steps", "second"]) {
+              cases += 1;
+              const program = {
+                ...(digest === "missing" ? {} : { corpusDigest: "a".repeat(64) }),
+                ...(version === undefined ? {} : { compactFramingVersion: version }),
+                steps: { s: compactRow },
+                ...(slot === "second" ? { second: { s: compactRow } } : {}),
+              };
+              const entry =
+                slot === "steps"
+                  ? answers[answer]
+                  : { status: 200, ...(answers[answer] ? { second: answers[answer] } : {}) };
+              const summary = {
+                version: summaryVersion,
+                programs: listed
+                  ? {
+                      p: {
+                        ...(digest === "match" ? { corpusDigest: "a".repeat(64) } : {}),
+                        ...(digest === "mismatch" ? { corpusDigest: "b".repeat(64) } : {}),
+                        steps: entry === undefined ? {} : { s: entry },
+                      },
+                    }
+                  : {},
+              };
+              const read = version === 1 && summaryVersion === 1 && listed && digest === "match";
+              const found = pipelineBodyReadStageProblems(
+                { programs: { p: program } },
+                {},
+                () => summary,
+              );
+              const label = JSON.stringify({
+                version,
+                summaryVersion,
+                listed,
+                digest,
+                answer,
+                slot,
+              });
+              assert.equal(found.length === 0, read && answer === "ok", label);
+              // A program the summary does not answer keeps its compact key, and is refused for it.
+              if (!read && version !== undefined)
+                assert.ok(found.includes("p: unexpected key compactFramingVersion"), label);
+            }
+  assert.equal(cases, 216);
+});
+
 test("a pipeline condition whose framing summary cannot be read is a problem, not a throw", () => {
   const fixture = readConformanceJson("fs-ent-pipeline-production.json");
   for (const summary of [undefined, null, 7, "x", {}, { version: 1 }])
