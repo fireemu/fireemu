@@ -1832,6 +1832,7 @@ test("a compact framing program counts only when the summary of the same recordi
     ["f5-rest", { status: 200, transportError: "x" }],
     ["f5-rest", { status: 0 }],
     ["f5-rest", { status: -1, unresolved: "step a recorded nothing at b" }],
+    ["f5-rest", { status: -1 }],
     ["f5-rest", { status: 200, unresolved: "x" }],
     ["f5-rest", { transport: "rest", results: 5 }],
     ["f5-rest", { status: "200" }],
@@ -1963,6 +1964,20 @@ test("the framing summary is read from the HEAD blob, must be the working tree's
   // A working tree copy that differs from HEAD, whichever side holds the recorded bytes.
   assert.throws(() => read(bytes, altered), /differs between HEAD and the working tree/);
   assert.throws(() => read(altered, bytes), /differs between HEAD and the working tree/);
+  // The condition reads the summary through this check, against its own pin, by default.
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}, { lane: "fs-ent-pipeline" }), []);
+  assert.match(
+    pipelineBodyReadStageProblems(
+      fixture,
+      {},
+      {
+        lane: "fs-ent-pipeline",
+        condition: { ...PIPELINE_CONDITION, summarySha256: "0".repeat(64) },
+      },
+    )[0],
+    /the framing summary cannot be read: .*is not the recorded summary 0+$/,
+  );
 });
 
 /** The two pipeline hops, verified by the release verifier with a changed fixture or summary. */
@@ -2075,6 +2090,25 @@ test("the review's reproductions are refused by the release verifier and the lan
     }),
     /framing-small: a compact program the condition does not name/,
   );
+  // A compact program the condition does not name is not answered: it keeps its compact key.
+  assert.match(
+    pipelineProblems(
+      withFixture((f) => (f.programs[FRAMING_SMALL] = production.programs[FRAMING_SMALL]), regex),
+      summaryJson,
+      { lane: "fs-ent-pipeline-regex" },
+    ).join("\n"),
+    /framing-small: unexpected key compactFramingVersion/,
+  );
+  // A listed program that is no longer compact is a listed compact program the fixture lacks.
+  assert.match(
+    pipelineProblems(
+      withFixture(
+        (f) => delete f.programs["fs-ent-pipeline/o8a/framing-large"].compactFramingVersion,
+      ),
+      summaryJson,
+    ).join("\n"),
+    /framing-large: the condition names a compact program the fixture does not have/,
+  );
   refused(
     "listed compact program missing",
     pipelineHopProblems({
@@ -2127,6 +2161,16 @@ test("the review's reproductions are refused by the release verifier and the lan
     }),
     /framing-small#f5-grpc: status -1 names f5-rest/,
   );
+  // A row that is not an object is never a compact row, and does not throw.
+  for (const row of [null, "x", 7])
+    assert.match(
+      pipelineProblems(
+        withFixture((f) => (f.programs[FRAMING_SMALL].steps["f5-rest"] = row)),
+        summaryJson,
+      ).join("\n"),
+      /framing-small#f5-rest: neither a numeric status/,
+      String(row),
+    );
   // Each field of an answer keeps a row from being replaced.
   for (const key of ["status", "code", "transportError", "unresolved", "dependencyTransient"])
     assert.match(
