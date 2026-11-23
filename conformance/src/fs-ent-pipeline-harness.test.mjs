@@ -48,50 +48,6 @@ const lane = LANES["fs-ent-pipeline"];
 // compact fixture and full corpus identities are checked separately.
 const PROGRAMS = ALL_PROGRAMS.filter((program) => !SUMMARY_ONLY.has(program.id));
 
-/** The shared session text without the body-read classification of 72c4889d9 and 0c7a9ee56. */
-function withoutBodyReadClassification(text) {
-  const pairs = [
-    [
-      `    const transportFailure = (error, stage) => {
-      const code = error?.cause?.code ?? error?.name ?? "error";
-      const failed = {
-        ...sent,
-        response: { transportError: stage === undefined ? code : \`\${stage}\${code}\` },
-      };
-      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
-    };
-    let response;
-    let text;
-`,
-      "    let response;\n",
-    ],
-    [
-      `      return transportFailure(error);
-    }
-    try {
-      text = await response.text();
-    } catch (error) {
-      // The status line arrived and the body did not: the answer is unknown, as for a fetch that
-      // failed, and it is told apart by the \`body:\` prefix of its transport error.
-      return transportFailure(error, "body:");
-    }
-`,
-      `      const failed = {
-        ...sent,
-        response: { transportError: error?.cause?.code ?? error?.name ?? "error" },
-      };
-      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
-    }
-    const text = await response.text();
-`,
-    ],
-  ];
-  return pairs.reduce((current, [fixed, before]) => {
-    assert.ok(current.includes(fixed), "the shared session has the body-read classification");
-    return current.replace(fixed, () => before);
-  }, text);
-}
-
 const production = (database = lane.database) =>
   createContext({
     run: "1",
@@ -106,13 +62,12 @@ test("the pipeline lane has its own copy of the request layer and the others kee
   assert.equal(lane.harness, "src/fs-ent-pipeline");
   assert.equal(LANES["fs-query-index"].harness, "src/fs-query-index");
   assert.equal(LANES["fs-data-write-list"].harness, "src/fs-query-index");
-  // The session copy is the shared one as it was before the shared one classified a response
-  // body that cannot be read (72c4889d9, 0c7a9ee56); the pipeline lane's recorded rows are bound to the copy
-  // as it is. Only the harness differs, by the named database. The shared harness has no named
-  // database at all.
+  // The session copy is the shared one, with the same classification of a response body that
+  // cannot be read. Only the harness differs, by the named database. The shared harness has no
+  // named database at all.
   assert.equal(
     await read("./fs-ent-pipeline/session.mjs"),
-    withoutBodyReadClassification(await read("./fs-query-index/session.mjs")),
+    await read("./fs-query-index/session.mjs"),
   );
   assert.equal(queryHarness.DATABASES, undefined);
   assert.notEqual(DATABASES, undefined);
