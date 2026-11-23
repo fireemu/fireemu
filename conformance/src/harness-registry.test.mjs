@@ -2376,6 +2376,15 @@ test("the runner reads the lineage once and does every lookup on the object it v
   assert.equal(runnerState(snapshot, "5".repeat(64)), "stale");
   assert.deepEqual([reads, verifies], [1, 1]);
   assert.strictEqual(snapshot(), snapshot());
+  // The snapshot's hops are the only ones: a lineage handed in by the caller is ignored.
+  assert.equal(
+    checkVerifiedFixtureDigest("lane", RUNNER_LANE, hop.from, {
+      read: (f) => TREES[REC][f],
+      lineage: [],
+      snapshot,
+    }).state,
+    "lineage",
+  );
 });
 
 test("a malformed hop or an unreadable lineage is a lineage problem for the runner, never a throw", () => {
