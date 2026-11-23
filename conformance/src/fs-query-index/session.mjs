@@ -100,20 +100,30 @@ export function createSession(
         : {}),
       ...(step.query !== undefined ? { request: resolveQuery(step, ctx, raw) } : {}),
     };
+    const transportFailure = (error, stage = "") => {
+      const failed = {
+        ...sent,
+        response: { transportError: `${stage}${error?.cause?.code ?? error?.name ?? "error"}` },
+      };
+      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
+    };
     let response;
+    let text;
     try {
       response = await fetch(request.url, {
         ...request.init,
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      const failed = {
-        ...sent,
-        response: { transportError: error?.cause?.code ?? error?.name ?? "error" },
-      };
-      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
+      return transportFailure(error);
     }
-    const text = await response.text();
+    try {
+      text = await response.text();
+    } catch (error) {
+      // The status line arrived and the body did not: the answer is unknown, as for a fetch that
+      // failed, and it is told apart by the `body:` prefix of its transport error.
+      return transportFailure(error, "body:");
+    }
     let json = null;
     try {
       json = JSON.parse(text);
