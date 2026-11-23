@@ -2008,10 +2008,6 @@ const MODULES = {
 const CLOSURE = ["m.mjs", "sub/v.mjs", "sub/y.mjs", "w.mjs", "z.mjs"];
 
 test("the files a module comes from are itself and everything it imports by a relative specifier", () => {
-  assert.deepEqual(
-    importClosure("m.mjs", (path) => MODULES[path]),
-    CLOSURE,
-  );
   // Each file is read once, so a cycle ends at once (a second read of any file fails the test).
   const reads = new Set();
   assert.deepEqual(
@@ -2021,6 +2017,10 @@ test("the files a module comes from are itself and everything it imports by a re
       return MODULES[path];
     }),
     ["sub/v.mjs", "sub/y.mjs", "w.mjs"],
+  );
+  assert.deepEqual(
+    importClosure("m.mjs", (path) => MODULES[path]),
+    CLOSURE,
   );
   // Static, re-exported, side-effect and literal dynamic imports; cycles end; bare and node: are not sources.
   assert.deepEqual(
