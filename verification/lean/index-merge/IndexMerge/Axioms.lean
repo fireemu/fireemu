@@ -100,6 +100,15 @@ info: 'IM.head_eq_base_outside_guards' depends on axioms: [propext, Classical.ch
 -/
 #guard_msgs in #print axioms IM.head_eq_base_outside_guards
 
+/-- info: 'IM.different_catalog_excludes_row' depends on axioms: [propext] -/
+#guard_msgs in #print axioms IM.different_catalog_excludes_row
+
+/-- info: 'IM.completion_outside_serving_catalogs' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in #print axioms IM.completion_outside_serving_catalogs
+
+/-- info: 'IM.head_eq_base_outside_serving_catalogs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_base_outside_serving_catalogs
+
 /-- info: 'IM.guardOf_off_gate' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.guardOf_off_gate
 

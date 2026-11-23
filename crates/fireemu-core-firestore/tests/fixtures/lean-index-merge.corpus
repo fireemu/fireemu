@@ -18737,6 +18737,19 @@ endconfig
 config 2767
 override qx tags C:contains
 endconfig
+config 2768
+override qx a G:asc
+override qx tags -
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+endconfig
+config 2769
+override qx a -
+override qx tags -
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+composite qx C b:asc,tags:contains
+endconfig
 case 0 fs-query-index/index-selection/automatic-and-merge#single-equality
 uses 0
 query qx C
@@ -47451,9 +47464,9 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C b:asc,tags:contains ; qx C a:asc,tags:contains
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
 base missing qx C a:asc,b:asc,tags:contains,__name__:asc
-guard b
+guard none
 end
 case 2531 shape/b/automatic-contains-available
 uses 70
@@ -47473,9 +47486,9 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C a:desc,tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
 base missing qx C a:asc,b:asc,tags:contains,__name__:asc
-guard b
+guard none
 end
 case 2533 shape/b/carrier-name-asc
 uses 72
@@ -47506,9 +47519,9 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx G a:asc,tags:contains ; qx C b:asc,__name__:asc
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
 base missing qx C a:asc,b:asc,tags:contains,__name__:asc
-guard b
+guard none
 end
 case 2536 shape/b/remaining-desc-only
 uses 75
@@ -47630,9 +47643,9 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx G a:asc,tags:contains ; qx G b:asc,__name__:asc
+expect missing qx G a:asc,b:asc,tags:contains,__name__:asc
 base missing qx G a:asc,b:asc,tags:contains,__name__:asc
-guard b
+guard none
 end
 case 2547 shape/f3/group
 uses 78
@@ -81326,7 +81339,7 @@ ctx production standard
 filter eq a
 filter eq b
 filter contains tags
-expect merge qx C a:desc,tags:contains,__name__:asc ; qx C b:asc,__name__:asc
+expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc
 base missing qx C a:asc,b:asc,tags:contains,__name__:asc
 guard b
 end
@@ -82709,5 +82722,27 @@ filter contains tags
 order __name__ asc
 expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
 base merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
+guard none
+end
+case 5706 shape/b/group-with-equality-enabled-at-group-scope
+uses 2768
+query qx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx G a:asc,b:asc,tags:contains,__name__:asc
+base missing qx G a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5707 shape/b/group-carrier-with-extra-collection-carrier
+uses 2769
+query qx C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
+base missing qx C a:asc,b:asc,tags:contains,__name__:asc
 guard none
 end

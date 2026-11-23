@@ -298,68 +298,38 @@ theorem recorded_kinds {r : Req} {s : ISet} {coll : Nat} {group : Bool} {ms : Li
               List.mem_of_getElem? hcond.1.2.2, rfl, rfl⟩
         · contradiction
 
-private theorem pairCarrier_fields {s : ISet} {coll : Nat} {scope : Scope} {f t : Field}
-    {m : Mode} {i : Index} (h : pairCarrier s coll scope f t m = some i) :
-    (⟨f, m⟩ : IField) ∈ i.fields ∧ (⟨t, .contains⟩ : IField) ∈ i.fields := by
-  obtain ⟨idx, found, rfl⟩ := Option.map_eq_some_iff.mp h
-  have hf := List.find?_some found
-  simp only [Bool.or_eq_true, beq_iff_eq] at hf
-  rcases hf with rfl | rfl <;> split <;> simp
+/-- A different relevant configuration excludes this particular row even when another row applies. -/
+theorem different_catalog_excludes_row (q : Query) (s : ISet) (source : QuerySource)
+    (row : ServingCatalog × List Index) (different : relevantCatalog q s ≠ row.1) :
+    (servingRows q source).find? (fun candidate => relevantCatalog q s == candidate.1) ≠ some row := by
+  intro found
+  have matched := List.find?_some found
+  exact different (by simpa using matched)
 
-private theorem pairMerge_fields {q : Query} {s : ISet} {src : QuerySource} {l r t : Field}
-    {ms : List Index} (h : pairMerge q s src l r t = some ms) :
-    (∀ f ∈ [l, r], ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = f ∧ fld.mode.ordered = true) ∧
-      (∃ m ∈ ms, (⟨t, .contains⟩ : IField) ∈ m.fields) := by
-  unfold pairMerge at h
-  dsimp only at h
-  rcases Option.or_eq_some_iff.mp h with h | ⟨_, h⟩
-  · split at h
-    · contradiction
-    · simp only [bind, Option.bind_eq_some_iff, pure,
-        Option.some.injEq] at h
-      obtain ⟨i, hi, j, hj, rfl⟩ := h
-      obtain ⟨ir, it⟩ := pairCarrier_fields hi
-      obtain ⟨jl, _⟩ := pairCarrier_fields hj
-      constructor
-      · intro f hf
-        rcases List.mem_cons.mp hf with rfl | hf
-        · exact ⟨j, by simp, _, jl, rfl, rfl⟩
-        · obtain rfl := List.mem_singleton.mp hf
-          exact ⟨i, by simp, _, ir, rfl, rfl⟩
-      · exact ⟨i, by simp, it⟩
-  · split at h
-    · contradiction
-    · obtain ⟨⟨scope, mode⟩, hm, h⟩ := List.exists_of_findSome?_eq_some h
-      dsimp only at h
-      split at h
-      · contradiction
-      · obtain ⟨⟨field, other⟩, hp, h⟩ := List.exists_of_findSome?_eq_some h
-        dsimp only at h
-        split at h
-        · contradiction
-        · obtain ⟨idx, hi, rfl⟩ := Option.map_eq_some_iff.mp h
-          have ordered : mode.ordered = true := by
-            simp at hm
-            rcases hm with ⟨_, rfl⟩ | ⟨_, rfl⟩ | ⟨_, rfl⟩ <;> rfl
-          have ⟨hf, ht⟩ := pairCarrier_fields hi
-          have members (i : Index) (m : Mode) (om : m.ordered = true)
-              (fi : (⟨field, m⟩ : IField) ∈ i.fields) (ti : (⟨t, .contains⟩ : IField) ∈ i.fields) :
-              (∀ f ∈ [l, r], ∃ mi ∈ [i, singleFieldIndex q.coll q.group other .asc .asc],
-                ∃ fld ∈ mi.fields, fld.path = f ∧ fld.mode.ordered = true) ∧
-              (∃ mi ∈ [i, singleFieldIndex q.coll q.group other .asc .asc], (⟨t, .contains⟩ : IField) ∈ mi.fields) := by
-            refine ⟨fun f hmem => ?_, ⟨i, by simp, ti⟩⟩
-            have either : f = field ∨ f = other := by
-              simp at hp hmem
-              grind
-            rcases either with rfl | rfl
-            · exact ⟨i, by simp, _, fi, rfl, om⟩
-            · exact ⟨_, List.mem_cons_of_mem _ (List.mem_singleton_self _), ⟨f, .asc⟩,
-                by simp [singleFieldIndex], rfl, rfl⟩
-          split
-          · cases he : pairCarrier s q.coll scope field t .desc with
-            | none => exact members idx mode ordered hf ht
-            | some i => exact members i .desc rfl (pairCarrier_fields he).1 (pairCarrier_fields he).2
-          · exact members idx mode ordered hf ht
+/-- A configuration mismatch rules out every applicable serving row, including rows sharing the same query. -/
+theorem completion_outside_serving_catalogs (q : Query) (s : ISet) (source : QuerySource)
+    (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1) :
+    recordedCompletion q s source = earlierCompletion q s := by
+  have h : (servingRows q source).find? (fun row => relevantCatalog q s == row.1) = none := by
+    apply List.find?_eq_none.mpr
+    simpa using different
+  simp [recordedCompletion, h]
+
+/-- Outside the serving catalogs, only a separately applicable earlier rule or strict refusal can change the base. -/
+theorem head_eq_base_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1)
+    (earlier : earlierCompletion q s = none)
+    (refusal : arrayFirst q s source (decideBase q s p e) = false)
+    (single : ∀ i, decideBase q s p e = .use i →
+      (refusesSingleEquality q s i source || refusesGroupOrdered q s i source) = false)
+    (plan : ∀ ms, decideBase q s p e = .merge ms → recordedPlan q s source ms = none) :
+    decideHead q s p e source = decideBase q s p e := by
+  unfold decideHead
+  simp only [refusal, Bool.false_eq_true, ite_false]
+  split
+  · rfl
+  cases hd : decideBase q s p e <;>
+    simp_all [completion_outside_serving_catalogs q s source different]
 
 theorem completion_kinds {q : Query} {s : ISet} {source : QuerySource} {ms : List Index}
     (h : recordedCompletion q s source = some ms) :
@@ -367,35 +337,24 @@ theorem completion_kinds {q : Query} {s : ISet} {source : QuerySource} {ms : Lis
       (∀ t, (reqOf q).contains = some t →
         ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = t ∧ fld.mode = .contains) := by
   unfold recordedCompletion at h
-  dsimp only at h
-  split at h
-  · rename_i t f ht he
-    split at h
-    · cases h
-      refine ⟨?_, ?_⟩
-      · intro a ha
-        simp [he] at ha
-        subst a
-        exact ⟨_, List.mem_cons_of_mem _ (List.mem_singleton_self _), ⟨f, .asc⟩,
-          by simp [singleFieldIndex], rfl, rfl⟩
-      · intro a ha
-        rw [ht] at ha
-        cases ha
-        exact ⟨_, List.mem_cons_self, ⟨t, .contains⟩, by simp [singleFieldIndex], rfl, rfl⟩
-    · exact recorded_kinds h
-  · rename_i t l r ht he
-    split at h
-    · rcases Option.or_eq_some_iff.mp h with pair | ⟨_, old⟩
-      · obtain ⟨eqs, i, hi, ht'⟩ := pairMerge_fields pair
-        refine ⟨he ▸ eqs, fun a ha => ?_⟩
-        rw [ht] at ha
-        cases ha
-        exact ⟨i, hi, _, ht', rfl, rfl⟩
-      · split at old
-        · contradiction
-        · exact recorded_kinds old
-    · exact recorded_kinds h
-  · exact recorded_kinds h
+  rcases Option.or_eq_some_iff.mp h with found | ⟨_, old⟩
+  · obtain ⟨row, hrow, rfl⟩ := Option.map_eq_some_iff.mp found
+    have hm := List.mem_of_find?_eq_some hrow
+    unfold servingRows at hm
+    split at hm <;> try dsimp only at hm
+    · split at hm <;> simp_all [singleFieldIndex, Mode.ordered]
+    · split at hm
+      · simp at hm
+      · simp only [List.mem_append] at hm
+        rcases hm with (hm | hm) | hm <;> split at hm <;>
+          simp_all [singleFieldIndex, Mode.ordered]
+        rcases hm with rfl | rfl <;> simp
+    · simp at hm
+  · unfold earlierCompletion at old
+    dsimp only at old
+    split at old
+    · contradiction
+    · exact recorded_kinds old
 
 /-- A head merge is the base merge, the result of a recorded plan replacement of that merge,
 or a recorded merge with coverage by kind. -/

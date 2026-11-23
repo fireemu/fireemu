@@ -128,54 +128,69 @@ def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (Lis
             fun ms => idx :: ms
         | _ => none
 
-/-- The recorded two-equality carrier has one ordered field followed by membership and an implicit or explicit ascending name. -/
-def pairCarrier (s : ISet) (coll : Nat) (scope : Scope) (f t : Field) (m : Mode) : Option Index :=
-  let fields : List IField := [⟨f, m⟩, ⟨t, .contains⟩]
-  let bare : Index := ⟨coll, scope, fields⟩
-  let named : Index := ⟨coll, scope, fields ++ [⟨NAME, .asc⟩]⟩
-  (s.composites.find? fun i => i == bare || i == named).map fun i =>
-    if m == .desc then named else i
+/-- The modes `IndexSet::single_field_modes` returns without any override. -/
+def builtinModes : List (Scope × Mode) :=
+  [(.collection, .asc), (.collection, .desc), (.collection, .contains)]
 
-/-- Complete the implicit pair in the Rust planner's priority order. A count admits the two collection carriers and otherwise falls through to the original carrier rule. -/
-def pairMerge (q : Query) (s : ISet) (source : QuerySource) (left right t : Field) :
-    Option (List Index) :=
-  let carrier := pairCarrier s q.coll
-  let two := if q.group then none else do
-    let first ← carrier .collection right t .asc
-    let second ← carrier .collection left t .asc
-    return [first, second]
-  two.or <| if source != .plain then none else
-    [(Scope.collection, Mode.asc), (.collection, .desc), (.group, .asc)].findSome? fun (scope, mode) =>
-      if q.group && scope != .group then none else
-      [(right, left), (left, right)].findSome? fun (field, other) =>
-        if !hasMode s q.coll other q.group .asc ||
-            (scope == .group &&
-              ((!q.group && !(isExempt s q.coll field false && isExempt s q.coll t false)) ||
-               (s.composites.filter fun i =>
-                 i.coll == q.coll && i.scope == .group && i.fields.contains ⟨t, .contains⟩).length != 1))
-          then none else
-        (carrier scope field t mode).map fun idx =>
-          let idx := if scope == .collection && mode == .asc then
-            (carrier scope field t .desc).getD idx else idx
-          [idx, singleFieldIndex q.coll q.group other .asc .asc]
+/-- Sorting ignores catalog insertion order while retaining duplicate composites and their ordered fields. -/
+structure ServingCatalog where
+  composites : List Index
+  modes : List (Field × List (Scope × Mode))
+  deriving DecidableEq
 
-/-- The new completions apply only to plain membership. The caller checks the canonical conjunction, name order, scope and source with `mergeGate`. -/
-def recordedCompletion (q : Query) (s : ISet) (source : QuerySource) : Option (List Index) :=
+def servingCatalog (indexes : List Index) (modes : List (Field × List (Scope × Mode))) : ServingCatalog :=
+  let sort {α : Type} (le : α → α → Bool) (xs : List α) : List α := xs.foldr (fun x acc =>
+    let (before, after) := acc.span (fun y => le y x)
+    before ++ x :: after) []
+  let byMode (a b : Scope × Mode) :=
+    if a.1 == b.1 then compare a.2 b.2 != .gt else compare a.1 b.1 != .gt
+  ⟨sort (fun a b => compare a b != .gt) indexes,
+   sort (fun a b => a.1 ≤ b.1) (modes.map fun (f, ms) => (f, sort byMode ms))⟩
+
+def relevantCatalog (q : Query) (s : ISet) : ServingCatalog :=
+  let fields := (q.filters.map Filter.path ++ q.orderBy.map OrderC.path).eraseDups
+  servingCatalog (s.composites.filter fun i =>
+    i.coll == q.coll && i.fields.all (fun f => f.path == NAME || fields.contains f.path))
+    (fields.map fun f => (f, s.modes q.coll f))
+
+/-- Each row pairs one complete catalog with its recorded plan, in query role order. -/
+def servingRows (q : Query) (source : QuerySource) : List (ServingCatalog × List Index) :=
+  match (reqOf q).contains, (reqOf q).eq with
+  | some t, [e1] =>
+    let member := singleFieldIndex q.coll false e1 .asc .desc
+    if !q.group && q.orderBy == [⟨NAME, .desc⟩] && q.filters.contains (.contains t) then
+      [(servingCatalog [member] [(e1, []), (t, builtinModes), (NAME, builtinModes)],
+        [singleFieldIndex q.coll false t .contains .desc, member])]
+    else []
+  | some t, [e1, e2] =>
+    if !q.orderBy.isEmpty || !q.filters.contains (.contains t) then [] else
+    let carrier (scope : Scope) (f : Field) (m : Mode) : Index := ⟨q.coll, scope, [⟨f, m⟩, ⟨t, .contains⟩]⟩
+    let asc := carrier .collection e1 .asc
+    let second := carrier .collection e2 .asc
+    let desc := carrier .collection e1 .desc
+    let group := carrier .group e1 .asc
+    let remainder := singleFieldIndex q.coll q.group e2 .asc .asc
+    let fields := [(e1, []), (e2, builtinModes), (t, [])]
+    let descPlan := [{ desc with fields := desc.fields ++ [⟨NAME, .asc⟩] }, remainder]
+    (if q.group then [] else
+      [(servingCatalog [asc, second] [(e1, []), (e2, []), (t, [])], [second, asc])]) ++
+    (if source != .plain || q.group then [] else
+      [(servingCatalog [asc, desc] fields, descPlan), (servingCatalog [desc] fields, descPlan)]) ++
+    (if source != .plain then [] else
+      [(servingCatalog [group] [(e1, []), (e2, [(.collection, .asc), (.group, .asc)]), (t, [])],
+        [group, remainder])])
+  | _, _ => []
+
+/-- The group pair has no earlier collection-carrier fallback. -/
+def earlierCompletion (q : Query) (s : ISet) : Option (List Index) :=
   let r := reqOf q
-  let original := recordedMerge r s q.coll q.group
-  match r.contains, r.eq with
-  | some t, [f] =>
-    let member := singleFieldIndex q.coll false f .asc .desc
-    if !q.group && q.orderBy == [⟨NAME, .desc⟩] && q.filters.contains (.contains t) &&
-        !hasMode s q.coll f false .desc && hasMode s q.coll t false .contains &&
-        s.composites.contains member then
-      some [singleFieldIndex q.coll false t .contains .desc, member]
-    else original
-  | some t, [left, right] =>
-    if q.orderBy.isEmpty && q.filters.contains (.contains t) then
-      (pairMerge q s source left right t).or (if q.group then none else original)
-    else original
-  | _, _ => original
+  if q.group && q.orderBy.isEmpty && r.eq.length == 2 &&
+      r.contains.any (fun t => q.filters.contains (.contains t)) then none
+  else recordedMerge r s q.coll q.group
+
+def recordedCompletion (q : Query) (s : ISet) (source : QuerySource) : Option (List Index) :=
+  let actual := relevantCatalog q s
+  ((servingRows q source).find? (fun row => actual == row.1)).map Prod.snd |>.or (earlierCompletion q s)
 
 /-! ## The single-equality refusal (c) -/
 

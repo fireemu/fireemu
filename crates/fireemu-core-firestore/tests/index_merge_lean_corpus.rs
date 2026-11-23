@@ -761,6 +761,79 @@ fn recorded_shape(s: &Shape, q: &Query) -> bool {
             || (s.eq.len() == 1 && name_direction(q) == Direction::Descending))
 }
 
+/// Compare the generator's catalog with the production fixtures after renaming equality roles.
+fn matches_serving_row(s: &Shape, set: &IndexSet) -> bool {
+    static CATALOGS: std::sync::LazyLock<std::collections::BTreeMap<String, IndexSet>> =
+        std::sync::LazyLock::new(|| {
+            let corpus = parse_corpus();
+            corpus
+                .cases
+                .iter()
+                .filter(|c| {
+                    c.production.is_some()
+                        && matches!(
+                            c.collection.as_str(),
+                            "iw2" | "iwd" | "ip1" | "igy" | "igx" | "icm"
+                        )
+                })
+                .map(|c| (c.collection.clone(), corpus.configs[c.config].clone()))
+                .collect()
+        });
+    let ids: &[&str] = match (s.contains, s.eq.len(), s.order, s.group) {
+        (true, 2, 0, false) => &["iw2", "iwd", "ip1", "igy"],
+        (true, 2, 0, true) => &["igx"],
+        (true, 1, 2, false) => &["icm"],
+        _ => return false,
+    };
+    let signature = |set: &IndexSet, collection: &str, eq: &[&str]| {
+        let mut fields: Vec<_> = eq.iter().map(|f| fp(f)).collect();
+        fields.push(fp("tags"));
+        if s.order == 2 {
+            fields.push(fp("__name__"));
+        }
+        let collection = coll(collection);
+        let modes: Vec<_> = fields
+            .iter()
+            .map(|f| {
+                let mut modes: Vec<_> = set
+                    .single_field_modes(&collection, f)
+                    .into_iter()
+                    .map(|(scope, mode)| {
+                        (scope == IndexQueryScope::CollectionGroup, render_mode(mode))
+                    })
+                    .collect();
+                modes.sort_unstable();
+                modes
+            })
+            .collect();
+        let mut composites: Vec<_> = set
+            .composites()
+            .iter()
+            .filter(|i| i.collection_group == collection)
+            .filter_map(|i| {
+                let members: Option<Vec<_>> = i
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let role = if f.path.is_document_name() {
+                            fields.len()
+                        } else {
+                            fields.iter().position(|p| *p == f.path)?
+                        };
+                        Some((role, render_mode(f.mode)))
+                    })
+                    .collect();
+                Some((i.query_scope == IndexQueryScope::CollectionGroup, members?))
+            })
+            .collect();
+        composites.sort_unstable();
+        (modes, composites)
+    };
+    let actual = signature(set, "qx", &s.eq);
+    ids.iter()
+        .any(|id| actual == signature(&CATALOGS[*id], id, &["a", "b"][..s.eq.len()]))
+}
+
 /// The declarative merge condition (`IM.MergeSpec`): at least two wanted fields, no explicit
 /// order on an equality field, and either the pre-stage-B condition (members covering every
 /// wanted field by path, where a member is a configured composite that on its own serves some
@@ -830,40 +903,14 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     if !(recorded_shape(s, &q) && s.contains && name_only) {
         return false;
     }
-    if nm == IndexFieldMode::Descending {
-        let equality_member = !s.group
-            && s.eq.len() == 1
-            && s.order == 2
-            && set
-                .composites()
-                .contains(&parse_index(&format!("qx C {}:asc,__name__:desc", s.eq[0])));
-        return enabled("tags", IndexFieldMode::Contains)
-            && (s.eq.iter().all(|f| enabled(f, nm)) || equality_member);
+    if matches_serving_row(s, set) {
+        return true;
     }
-    if s.order == 0 && s.eq.len() == 2 {
-        let carries = |f: &str, scope, mode| {
-            set.composites().iter().any(|i| i.collection_group == coll("qx") && i.query_scope == scope
-                && matches!(&i.fields[..], [prefix, member, tail @ ..] if prefix.path == fp(f)
-                    && prefix.mode == mode && member.path == fp("tags") && member.mode == IndexFieldMode::Contains
-                    && (tail.is_empty() || matches!(tail, [name] if name.path.is_document_name() && name.mode == IndexFieldMode::Ascending))))
-        };
-        let asc = IndexFieldMode::Ascending;
-        let collection = IndexQueryScope::Collection;
-        if !s.group && s.eq.iter().all(|f| carries(f, collection, asc)) {
-            return true;
-        }
-        if s.eq.iter().enumerate().any(|(n, f)| {
-            enabled(s.eq[1 - n], asc)
-                && (carries(f, IndexQueryScope::CollectionGroup, asc)
-                    || (!s.group
-                        && (carries(f, collection, asc)
-                            || carries(f, collection, IndexFieldMode::Descending))))
-        }) {
-            return true;
-        }
-        if s.group {
-            return false;
-        }
+    if nm == IndexFieldMode::Descending {
+        return enabled("tags", IndexFieldMode::Contains) && s.eq.iter().all(|f| enabled(f, nm));
+    }
+    if s.group {
+        return false;
     }
     let carriers = carrier_prefixes(s, set);
     let [prefix] = carriers.as_slice() else {
@@ -1053,7 +1100,7 @@ proptest! {
     }
 
     /// `IM.decide_mono`: adding a composite or enabling a single-field mode never turns a
-    /// served query into a refused one.
+    /// served base query into a refused one. A recorded override can lose its catalog match.
     #[test]
     fn adding_indexes_never_refuses_a_served_query(
         s in shape_strategy(),
@@ -1071,18 +1118,16 @@ proptest! {
             let mut more = composites.clone();
             more.insert(position.min(more.len()), extra);
             let extended = index_set(&more, &overrides);
-            // The plain F1 case admits both carriers. Other query shapes retain the earlier
-            // exactly-one-carrier guard.
+            // A second qualifying carrier can disable the earlier single-carrier rule.
             let adding_second_carrier =
                 matches!(before, IndexDecision::MergeIndexes { .. })
-                && !(s.order == 0 && s.eq.len() == 2)
                 && s.contains && !s.group && recorded_shape(&s, &q)
                 && name_direction(&q) == Direction::Ascending
                 && carrier_prefixes(&s, &set).len() == 1
                 && carrier_prefixes(&s, &extended).len() == 2;
             let after = decide(&q, &extended, &standard());
             if !served(&after) {
-                prop_assert!(adding_second_carrier && only_name_ordered(&q));
+                prop_assert!((adding_second_carrier && only_name_ordered(&q)) || matches_serving_row(&s, &set));
                 prop_assert!(!merge_spec(&s, &extended));
                 prop_assert!(matches!(after, IndexDecision::MissingRequired { .. }), "unexpected {after:?}");
             }
@@ -1093,7 +1138,13 @@ proptest! {
                 modes.push(enable);
             }
             enabled[field] = Some(modes);
-            prop_assert!(served(&decide(&q, &index_set(&composites, &enabled), &standard())));
+            let enabled = index_set(&composites, &enabled);
+            let after = decide(&q, &enabled, &standard());
+            if !served(&after) {
+                prop_assert!(matches_serving_row(&s, &set));
+                prop_assert!(!merge_spec(&s, &enabled));
+                prop_assert!(matches!(after, IndexDecision::MissingRequired { .. }), "unexpected {after:?}");
+            }
         }
     }
 
@@ -1827,7 +1878,7 @@ fn obs2_merge_members(shape: &str, scope: &str, catalog: &str) -> Option<Vec<Ind
     }
     if catalog == "mixedExempt" {
         return Some(vec![
-            parse_index("qx C a:desc,tags:contains,__name__:asc"),
+            parse_index("qx C a:asc,tags:contains"),
             parse_index("qx C b:asc,__name__:asc"),
         ]);
     }
@@ -2520,7 +2571,10 @@ fn merge_b_serves_with_two_collection_carriers_or_one_group_carrier() {
     let mut two = f1_set();
     assert!(served(&decide(&f1(), &two, &standard())));
     two.add_composite(parse_index("qx C b:asc,tags:contains"));
-    assert!(served(&decide(&f1(), &two, &standard())));
+    assert!(matches!(
+        decide(&f1(), &two, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
     modes_only(&mut two, "b", &[], c);
     let plan = IndexDecision::MergeIndexes {
         indexes: vec![
@@ -2666,7 +2720,7 @@ fn merge_b_prefers_the_descending_prefix_and_requires_its_name_direction() {
     for (carrier, expected) in [
         ("qx C a:asc,tags:contains,__name__:asc", true),
         ("qx C a:asc,tags:contains,__name__:desc", false),
-        ("qx C a:desc,tags:contains,__name__:asc", true),
+        ("qx C a:desc,tags:contains,__name__:asc", false),
     ] {
         let mut set = IndexSet::default();
         modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
@@ -2934,20 +2988,14 @@ fn group_carrier_with_a_descending_alternative_keeps_the_base_refusal() {
 }
 
 #[test]
-fn group_carrier_counts_only_composites_on_the_array_field() {
-    // fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-plan with one more group
-    // composite on other fields: the ruling's "no other group carrier" refers to the array
-    // field, so the recorded merge stands.
+fn unrelated_group_composite_preserves_the_recorded_group_plan() {
     let mut set = IndexSet::default();
     let carrier = parse_index("qx G a:asc,tags:contains");
     set.add_composite(carrier.clone());
     set.add_composite(parse_index("qx G c:asc,e:asc"));
-    modes_only(
-        &mut set,
-        "b",
-        &[IndexFieldMode::Ascending],
-        IndexQueryScope::CollectionGroup,
-    );
+    set.set_single_field_indexes(&coll("qx"), &fp("a"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
     assert_eq!(
         decide(&obs2_merge_query("twoEqContains", true), &set, &standard()),
         IndexDecision::MergeIndexes {

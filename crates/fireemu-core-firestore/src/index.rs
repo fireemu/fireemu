@@ -208,6 +208,11 @@ pub struct SingleFieldExemption {
 }
 
 type SingleFieldModes = Vec<(IndexQueryScope, IndexFieldMode)>;
+const BUILTIN_MODES: &[(IndexQueryScope, IndexFieldMode)] = &[
+    (IndexQueryScope::Collection, IndexFieldMode::Ascending),
+    (IndexQueryScope::Collection, IndexFieldMode::Descending),
+    (IndexQueryScope::Collection, IndexFieldMode::Contains),
+];
 type SingleFieldOverrides = BTreeMap<(String, Vec<String>), SingleFieldModes>;
 
 /// Positions in the composite list, per collection group, in list order.
@@ -323,11 +328,7 @@ impl IndexSet {
                 return modes.clone();
             }
             if key.1.pop().is_none() {
-                return vec![
-                    (IndexQueryScope::Collection, IndexFieldMode::Ascending),
-                    (IndexQueryScope::Collection, IndexFieldMode::Descending),
-                    (IndexQueryScope::Collection, IndexFieldMode::Contains),
-                ];
+                return BUILTIN_MODES.to_vec();
             }
         }
     }
@@ -1209,6 +1210,46 @@ enum RecordedMergeOutcome {
     MembersForUnserved(Vec<IndexDefinition>),
 }
 
+struct RelevantConfiguration<'a> {
+    composites: Vec<&'a IndexDefinition>,
+    modes: Vec<SingleFieldModes>,
+}
+
+impl<'a> RelevantConfiguration<'a> {
+    /// Project both scopes onto the fields named by the query, in recorded role order.
+    fn for_fields(set: &'a IndexSet, collection: &CollectionId, fields: &[&FieldPath]) -> Self {
+        let composites = set
+            .composites_for(collection)
+            .filter(|index| {
+                index
+                    .fields
+                    .iter()
+                    .all(|f| f.path.is_document_name() || fields.contains(&&f.path))
+            })
+            .collect();
+        let modes = fields
+            .iter()
+            .map(|f| set.single_field_modes(collection, f))
+            .collect();
+        Self { composites, modes }
+    }
+
+    /// Recorded composites and mode entries are distinct. Ignore catalog insertion order
+    /// while comparing each composite's scope and ordered fields exactly.
+    fn matches(
+        &self,
+        composites: &[&IndexDefinition],
+        modes: &[&[(IndexQueryScope, IndexFieldMode)]],
+    ) -> bool {
+        self.composites.len() == composites.len()
+            && composites.iter().all(|i| self.composites.contains(i))
+            && self.modes.len() == modes.len()
+            && self.modes.iter().zip(modes).all(|(actual, expected)| {
+                actual.len() == expected.len() && expected.iter().all(|mode| actual.contains(mode))
+            })
+    }
+}
+
 /// Complete an otherwise unserved recorded query. The two-equality plain query admits
 /// the additional carriers from observation 2b. The count admits the two ascending carriers.
 fn recorded_merge(
@@ -1231,84 +1272,68 @@ fn recorded_merge(
     let contains = req.contains.as_ref()?;
     if case == RecordedMerge::DescendingMember {
         let equality = &req.equality[0];
-        if !has_single_field_mode(set, collection, equality, false, Descending)
-            && has_single_field_mode(set, collection, contains, false, Contains)
-        {
-            let member = single_field_index(collection, false, equality, Ascending, Descending);
-            if set.composites().contains(&member) {
-                return Some(vec![
-                    single_field_index(collection, false, contains, Contains, Descending),
-                    member,
-                ]);
-            }
+        let name = FieldPath::document_name();
+        let member = single_field_index(collection, false, equality, Ascending, Descending);
+        let catalog =
+            RelevantConfiguration::for_fields(set, collection, &[equality, contains, &name]);
+        if catalog.matches(&[&member], &[&[], BUILTIN_MODES, BUILTIN_MODES]) {
+            return Some(vec![
+                single_field_index(collection, false, contains, Contains, Descending),
+                member,
+            ]);
         }
     }
     if matches!(
         case,
         RecordedMerge::CarrierOrReverseAutomatic | RecordedMerge::CountPair
     ) {
-        let [left, right] = req.equality.as_slice() else {
+        use IndexQueryScope::{Collection, CollectionGroup};
+        let [e1, e2] = req.equality.as_slice() else {
             return None;
         };
-        let equalities = [(right, left), (left, right)];
-        let carrier = |field: &FieldPath, mode, scope| {
-            set.composites_for(collection).find(|index| {
-                let [prefix, array, suffix @ ..] = index.fields.as_slice() else { return false; };
-                index.query_scope == scope && prefix.path == *field && prefix.mode == mode
-                    && array.path == *contains && array.mode == Contains
-                    && (suffix.is_empty() || matches!(suffix, [name] if name.path.is_document_name() && name.mode == Ascending))
-            }).filter(|carrier| {
-                // Merge7 and merge8 use a lone group carrier. The collection read exempts both fields.
-                scope == IndexQueryScope::Collection
-                    || (group || set.is_exempt(collection, field, false)
-                        && set.is_exempt(collection, contains, false))
-                        && set.composites_for(collection)
-                            .filter(|i| i.query_scope == scope && i.fields.contains(&carrier.fields[1]))
-                            .nth(1).is_none()
-            })
+        let carrier = |scope, field: &FieldPath, mode| IndexDefinition {
+            collection_group: collection.clone(),
+            query_scope: scope,
+            fields: vec![
+                IndexField {
+                    path: field.clone(),
+                    mode,
+                },
+                IndexField {
+                    path: contains.clone(),
+                    mode: Contains,
+                },
+            ],
         };
-        if !group {
-            if let (Some(first), Some(second)) = (
-                carrier(right, Ascending, IndexQueryScope::Collection),
-                carrier(left, Ascending, IndexQueryScope::Collection),
-            ) {
-                return Some(vec![first.clone(), second.clone()]);
-            }
+        let asc = carrier(Collection, e1, Ascending);
+        let second = carrier(Collection, e2, Ascending);
+        let catalog = RelevantConfiguration::for_fields(set, collection, &[e1, e2, contains]);
+        if !group && catalog.matches(&[&asc, &second], &[&[], &[], &[]]) {
+            return Some(vec![second, asc]);
         }
         if case == RecordedMerge::CarrierOrReverseAutomatic {
-            for (mode, scope) in [
-                (Ascending, IndexQueryScope::Collection),
-                (Descending, IndexQueryScope::Collection),
-                (Ascending, IndexQueryScope::CollectionGroup),
-            ] {
-                if group && scope != IndexQueryScope::CollectionGroup {
-                    continue;
-                }
-                for (field, other) in equalities {
-                    let Some(index) = carrier(field, mode, scope) else {
-                        continue;
-                    };
-                    if !has_single_field_mode(set, collection, other, group, Ascending) {
-                        continue;
-                    }
-                    // For the same equality, merge4 selects the descending collection carrier.
-                    let mut index = if scope == IndexQueryScope::Collection && mode == Ascending {
-                        carrier(field, Descending, scope).unwrap_or(index)
-                    } else {
-                        index
-                    }
-                    .clone();
-                    if index.fields[0].mode == Descending && index.fields.len() == 2 {
-                        index.fields.push(IndexField {
-                            path: FieldPath::document_name(),
-                            mode: Ascending,
-                        });
-                    }
-                    return Some(vec![
-                        index,
-                        single_field_index(collection, group, other, Ascending, Ascending),
-                    ]);
-                }
+            let mut desc = carrier(Collection, e1, Descending);
+            let group_carrier = carrier(CollectionGroup, e1, Ascending);
+            let remainder = || single_field_index(collection, group, e2, Ascending, Ascending);
+            let modes = [&[][..], BUILTIN_MODES, &[]];
+            if !group
+                && (catalog.matches(&[&asc, &desc], &modes) || catalog.matches(&[&desc], &modes))
+            {
+                desc.fields.push(IndexField {
+                    path: FieldPath::document_name(),
+                    mode: Ascending,
+                });
+                return Some(vec![desc, remainder()]);
+            }
+            if catalog.matches(
+                &[&group_carrier],
+                &[
+                    &[],
+                    &[(Collection, Ascending), (CollectionGroup, Ascending)],
+                    &[],
+                ],
+            ) {
+                return Some(vec![group_carrier, remainder()]);
             }
         }
         if group {
@@ -2409,6 +2434,183 @@ mod stage_b_layer_tests {
                 IndexValidationPolicy::Emulator,
             ][policy],
         })
+    }
+
+    proptest! {
+        #[test]
+        fn one_changed_relevant_entry_preserves_the_base_or_an_independent_recorded_rule(
+            edit in 0..5usize,
+            pick in 0..12usize,
+            mode in 0..4usize,
+            at_group in any::<bool>(),
+        ) {
+            use IndexFieldMode::{Ascending, Contains, Descending};
+            let collection = CollectionId::try_new("qx").unwrap();
+            let carrier = |field, mode, group| IndexDefinition {
+                collection_group: collection.clone(),
+                query_scope: scope_for(group),
+                fields: vec![
+                    IndexField {
+                        path: path(field),
+                        mode,
+                    },
+                    IndexField {
+                        path: path("tags"),
+                        mode: Contains,
+                    },
+                ],
+            };
+            let asc = carrier("a", Ascending, false);
+            let desc = carrier("a", Descending, false);
+            let member = single_field_index(&collection, false, &path("a"), Ascending, Descending);
+            let ctx = PlanningContext {
+                edition: FirestoreEdition::Standard,
+                api_mode: FirestoreApiMode::Native,
+                policy: IndexValidationPolicy::Production,
+            };
+            for (row, group, count, composites) in [
+                (
+                    1,
+                    false,
+                    false,
+                    vec![asc.clone(), carrier("b", Ascending, false)],
+                ),
+                (
+                    1,
+                    false,
+                    true,
+                    vec![asc.clone(), carrier("b", Ascending, false)],
+                ),
+                (4, false, false, vec![asc.clone(), desc.clone()]),
+                (8, false, false, vec![member.clone()]),
+                (9, true, false, vec![carrier("a", Ascending, true)]),
+                (10, false, false, vec![desc.clone()]),
+                (11, false, false, vec![carrier("a", Ascending, true)]),
+            ] {
+                let mut set = IndexSet::default();
+                // Reverse the fixture order to check that it cannot select the plan order.
+                for index in composites.iter().rev() {
+                    set.add_composite(index.clone());
+                }
+                set.set_single_field_indexes(&collection, &path("a"), vec![]);
+                if row != 8 {
+                    set.set_single_field_indexes(&collection, &path("tags"), vec![]);
+                }
+                if row == 1 {
+                    set.set_single_field_indexes(&collection, &path("b"), vec![]);
+                } else if matches!(row, 9 | 11) {
+                    set.set_single_field_indexes(
+                        &collection,
+                        &path("b"),
+                        vec![(scope_for(true), Ascending), (scope_for(false), Ascending)],
+                    );
+                }
+                let explicit_name = row == 8;
+                let mut q = Query::new(if group {
+                    QueryScope::collection_group(collection.clone())
+                } else {
+                    QueryScope::collection(None, collection.clone())
+                });
+                let mut filters = vec![atom(0, 0)];
+                if !explicit_name {
+                    filters.push(atom(0, 1));
+                }
+                filters.push(atom(3, 2));
+                q = q.with_filter(FilterExpr::And(filters));
+                if explicit_name {
+                    q = q.with_order(OrderClause {
+                        field: FieldPath::document_name(),
+                        direction: Direction::Descending,
+                    });
+                }
+                let q = q.canonicalize().unwrap();
+                let req = requirement_for(&q.dnf()[0], &q.effective_order_by());
+                let shape = RecordedShape::of(
+                    &q,
+                    if count {
+                        &[Aggregation::Count { up_to: None }]
+                    } else {
+                        &[]
+                    },
+                );
+                let original = decide_disjunct(&req, &set, &collection, group, ctx, shape);
+                prop_assert!(matches!(
+                    original,
+                    DisjunctDecision::Scan(PlannedScan::Merge(_))
+                ));
+
+                let selected = &composites[pick % composites.len()];
+                match edit {
+                    0 => {
+                        let fields = if explicit_name {
+                            ["a", "tags", "__name__"]
+                        } else {
+                            ["a", "b", "tags"]
+                        };
+                        let field = path(fields[pick % fields.len()]);
+                        let mut modes = set.single_field_modes(&collection, &field);
+                        let entry = (
+                            scope_for(at_group),
+                            [
+                                Ascending,
+                                Descending,
+                                Contains,
+                                IndexFieldMode::Vector { dimension: 4 },
+                            ][mode],
+                        );
+                        if modes.contains(&entry) {
+                            modes.retain(|m| m != &entry);
+                        } else {
+                            modes.push(entry);
+                        }
+                        set.set_single_field_indexes(&collection, &field, modes);
+                    }
+                    1 => {
+                        set.add_composite(if row == 10 && !at_group {
+                            asc.clone()
+                        } else {
+                            required_index(&req, &collection, at_group)
+                        });
+                    }
+                    2 => {
+                        set.remove_composite(selected);
+                    }
+                    3 | 4 => {
+                        set.remove_composite(selected);
+                        let mut changed = selected.clone();
+                        if edit == 3 {
+                            changed.fields[0].mode = if changed.fields[0].mode == Ascending {
+                                Descending
+                            } else {
+                                Ascending
+                            };
+                        } else {
+                            changed.query_scope =
+                                scope_for(changed.query_scope == IndexQueryScope::Collection);
+                        }
+                        set.add_composite(changed);
+                    }
+                    _ => unreachable!(),
+                }
+                let base = decide_disjunct_base(&req, &set, &collection, group, ctx);
+                let head = decide_disjunct(&req, &set, &collection, group, ctx, shape);
+                // Removing Q4's ascending carrier yields Q10; adding it to Q10 yields Q4.
+                if (row == 4 && edit == 2 && selected == &asc) || (row == 10 && edit == 1 && !at_group) {
+                    prop_assert_eq!(head, original);
+                } else if !group && matches!(base, DisjunctDecision::Missing(_)) {
+                    // Observation 2a still completes its own eligible collection reads.
+                    match recorded_merge_outcome(&req, &set, &collection, false) {
+                        RecordedMergeOutcome::Members(ms)
+                        | RecordedMergeOutcome::MembersForUnserved(ms) => {
+                            prop_assert_eq!(head, DisjunctDecision::Scan(PlannedScan::Merge(ms)));
+                        }
+                        _ => prop_assert_eq!(head, base),
+                    }
+                } else {
+                    prop_assert_eq!(head, base);
+                }
+            }
+        }
     }
 
     proptest! {

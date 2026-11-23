@@ -288,7 +288,7 @@ theorem head_f1_descending_refused :
 /-- Scope-specific catalogs for the group boundary of (b) and the recorded group (a). -/
 def f1GroupSet : ISet :=
   ⟨[⟨0, .group, [⟨1, .asc⟩, ⟨3, .contains⟩]⟩],
-    fun _ f => if f == 1 || f == 3 then [] else [(.group, .asc)]⟩
+    fun _ f => if f == 2 then [(.collection, .asc), (.group, .asc)] else []⟩
 def f3GroupSet : ISet :=
   ⟨[], fun _ f => if f == 1 then [(.group, .desc)] else if f == 3 then [(.group, .contains)]
     else []⟩
@@ -345,7 +345,7 @@ theorem carried_array_field_with_equality_refused :
   decide
 
 /-- Merge3 joins two disjoint carriers. A single composite covering the whole requirement still takes priority. -/
-def f1TwoSet (second : Index) : ISet := { f1Set with composites := [f1Composite, second] }
+def f1TwoSet (second : Index) : ISet := ⟨[f1Composite, second], fun _ _ => []⟩
 def abTags : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨2, .asc⟩, ⟨3, .contains⟩]⟩
 def bTags : Index := ⟨0, .collection, [⟨2, .asc⟩, ⟨3, .contains⟩]⟩
 
@@ -363,7 +363,7 @@ theorem head_two_carriers :
 
 /-- Merge7 and merge8 serve the collection F1 query with a group carrier. -/
 def f1GroupCarrierSet : ISet :=
-  { f1Set with composites := [⟨0, .group, [⟨1, .asc⟩, ⟨3, .contains⟩]⟩] }
+  f1GroupSet
 
 theorem head_group_carrier :
     decideHead qF1 f1GroupCarrierSet .production .standard =
@@ -386,11 +386,12 @@ theorem head_b_with_automatic_contains :
   refine ⟨by decide, by decide, by decide⟩
 
 /-- Merge7 joins the descending prefix on ascending document name. -/
-def descCarrier : Index := ⟨0, .collection, [⟨1, .desc⟩, ⟨3, .contains⟩, ⟨NAME, .asc⟩]⟩
+def descCarrier : Index := ⟨0, .collection, [⟨1, .desc⟩, ⟨3, .contains⟩]⟩
 
 theorem head_b_descending_carrier :
     let s : ISet := { f1Set with composites := [descCarrier] }
-    decideHead qF1 s .production .standard = .merge [descCarrier, singleFieldIndex 0 false 2 .asc .asc] ∧
+    let named := { descCarrier with fields := descCarrier.fields ++ [⟨NAME, .asc⟩] }
+    decideHead qF1 s .production .standard = .merge [named, singleFieldIndex 0 false 2 .asc .asc] ∧
       decideBase qF1 s .production .standard = .missing (requiredIndex (reqOf qF1) 0 false) ∧
       guardOf qF1 s .production .standard = .b := by
   refine ⟨by decide, by decide, by decide⟩

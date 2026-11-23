@@ -33,7 +33,7 @@ inductive Mode where
   | desc
   | contains
   | vector (dim : Nat)
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Ord
 
 /-- `IndexFieldMode::is_ordered`. -/
 def Mode.ordered : Mode → Bool
@@ -54,7 +54,7 @@ def modeFor : Dir → Mode
 inductive Scope where
   | collection
   | group
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Ord
 
 /-- `scope_for`. -/
 def scopeFor (group : Bool) : Scope := if group then .group else .collection
@@ -62,14 +62,14 @@ def scopeFor (group : Bool) : Scope := if group then .group else .collection
 structure IField where
   path : Field
   mode : Mode
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Ord
 
 /-- `IndexDefinition`. -/
 structure Index where
   coll : Nat
   scope : Scope
   fields : List IField
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Repr, Ord
 
 structure OrderC where
   path : Field

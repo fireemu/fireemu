@@ -20,10 +20,6 @@ structure Config where
   overrides : List (Nat × Field × List (Scope × Mode)) := []
   deriving Repr
 
-/-- The modes `IndexSet::single_field_modes` returns without any override. -/
-def builtinModes : List (Scope × Mode) :=
-  [(.collection, .asc), (.collection, .desc), (.collection, .contains)]
-
 def Config.modes (c : Config) (coll : Nat) (f : Field) : List (Scope × Mode) :=
   match c.overrides.find? (fun o => o.1 == coll && o.2.1 == f) with
   | some o => o.2.2
