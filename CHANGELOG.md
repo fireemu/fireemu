@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-11-23
+
 ### Added
 
 - Remote Config: the loopback control listener serves the `firebase-server` namespace (`/v1/projects/{p}/namespaces/firebase-server/remoteConfig`) with its own version history, as recorded in production on 2026-11-21: an unpublished server template reads as `{}` with an ETag, server publishes leave the client template unchanged, and an unknown namespace is refused with 400. The explicit client form `namespaces/firebase` is served too.
@@ -1535,7 +1537,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/fireemu/fireemu/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/fireemu/fireemu/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/fireemu/fireemu/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/fireemu/fireemu/compare/v0.61.0...v0.62.0
