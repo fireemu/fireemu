@@ -2120,6 +2120,27 @@ test("the review's reproductions are refused by the release verifier and the lan
     }),
     /framing-large: the condition names a compact program the fixture does not have/,
   );
+  // Round 2: two answer ids merged into one key that sorts and joins to the same text, in each slot.
+  for (const [slotName, ids] of [
+    ["steps", ["f5-grpc", "f5-rest"]],
+    ["second", ["f500-grpc", "f500-rest"]],
+  ])
+    refused(
+      `merged ${slotName} key`,
+      pipelineHopProblems({
+        fixtures: {
+          "fs-ent-pipeline-production.json": withFixture((f) => {
+            const slot = f.programs[FRAMING_SMALL][slotName];
+            for (const id of ids) {
+              assert.ok(Object.hasOwn(slot, id), id);
+              delete slot[id];
+            }
+            slot[ids.join("\n")] = { status: 418 };
+          }),
+        },
+      }),
+      /framing-small: the framing summary does not answer the compact rows one to one/,
+    );
   // Must 2: a transport error in the summary (past the pin, and as bytes that fail the pin).
   assert.match(
     unpinned((p) => (p.steps["f5-rest"] = { status: 0, transportError: "ECONNRESET" })),
@@ -2181,6 +2202,25 @@ test("the review's reproductions are refused by the release verifier and the lan
       /framing-small#f5-rest: /,
       key,
     );
+});
+
+test("the closed condition table cannot be changed in the process", () => {
+  const condition = UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"];
+  const before = JSON.stringify(UNREACHED_CONDITIONS);
+  for (const change of [
+    () => (UNREACHED_CONDITIONS.other = {}),
+    () => delete UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"],
+    () => (condition.summarySha256 = "0".repeat(64)),
+    () => (condition.fix = "0".repeat(40)),
+    () => condition.compactPrograms["fs-ent-pipeline"].pop(),
+    () =>
+      (condition.compactPrograms["fs-ent-pipeline-regex"][0] = "fs-ent-pipeline/o8a/framing-small"),
+    () => (condition.compactPrograms.other = []),
+    () => UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"].touches.push("x"),
+  ])
+    assert.throws(change, TypeError);
+  assert.equal(JSON.stringify(UNREACHED_CONDITIONS), before);
+  assert.equal(condition.problems, pipelineBodyReadStageProblems);
 });
 
 test("the condition names each pipeline lane's compact programs and pins the summary of the recording", () => {

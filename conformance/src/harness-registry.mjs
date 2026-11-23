@@ -824,9 +824,16 @@ export function bodyReadStageProblems(fixture, corpus = {}) {
   return problems;
 }
 
-/** The step ids of an answer slot, sorted. */
-const slotIds = (slot) =>
-  Object.keys(slot !== null && typeof slot === "object" ? slot : {}).toSorted();
+/** The step ids of an answer slot. */
+const slotIds = (slot) => Object.keys(slot !== null && typeof slot === "object" ? slot : {});
+/** Whether two lists of ids are the same set: the same size, and each id a member of the other. */
+const sameIds = (a, b) => {
+  const left = new Set(a);
+  const right = new Set(b);
+  return (
+    left.size === right.size && a.every((id) => right.has(id)) && b.every((id) => left.has(id))
+  );
+};
 const isObject = (value) => value !== null && typeof value === "object";
 
 /** The fields that make a fixture row an answer of its own, so it is never a compact row. */
@@ -897,8 +904,8 @@ export function withFramingStatuses(fixture, summary, compact = []) {
       (stepId) => isObject(entries[stepId]) && Object.hasOwn(entries[stepId], "second"),
     );
     if (
-      slotIds(program.steps).join("\n") !== slotIds(entries).join("\n") ||
-      slotIds(program.second).join("\n") !== withSecond.toSorted().join("\n")
+      !sameIds(slotIds(program.steps), slotIds(entries)) ||
+      !sameIds(slotIds(program.second), withSecond)
     ) {
       problems.push(`${id}: the framing summary does not answer the compact rows one to one`);
       return [id, program];
@@ -981,7 +988,16 @@ const PIPELINE_CONDITION = "fs-ent-pipeline-body-read-unreached";
  * change hashes differently, is refused; a different fix needs a new reviewed entry.
  * `problems(fixture)` is empty when the recorded rows show the changed path was not reached.
  */
-export const UNREACHED_CONDITIONS = {
+/** `value` with every nested object and array frozen (functions are left as they are). */
+function deepFreeze(value) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export const UNREACHED_CONDITIONS = deepFreeze({
   "fs-query-index-body-read-unreached": {
     base: "e7b7a53a4fdf5eaa8206745f162da3c7bb81de8b",
     fix: "0c7a9ee5649cea2fdd4f108b704ae4ac3d760b75",
@@ -1004,7 +1020,7 @@ export const UNREACHED_CONDITIONS = {
     },
     summarySha256: "85b4db894388ab51ebfae4f396daa24e0aa593d7f8666feef50b55d85652f63a",
   },
-};
+});
 
 /**
  * What changed between two commits: every changed path, and the sha256 of the delta over `paths`,
