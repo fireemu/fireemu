@@ -495,6 +495,7 @@ const TODAY_EXPORTS = {
 /** The inputs a lane's `extra` is built from: this checkout's data, exports and SDK versions. */
 const TREE_INPUTS = {
   data: readConformanceData,
+  committed: (path) => gitDataReader("HEAD")(path),
   exported: (module, name) => {
     const value =
       Object.hasOwn(TODAY_EXPORTS, module) && Object.hasOwn(TODAY_EXPORTS[module], name)
@@ -556,7 +557,8 @@ export const gitDataReader = (commit) => (path) =>
 /**
  * The conformance/src files a module comes from: itself and, transitively, every file it imports
  * with a relative specifier (static, re-exported or a dynamic import of a literal), read through
- * `read` (a path under conformance/). Bare and node: specifiers are dependencies, not sources.
+ * `read` (a path under conformance/). A dynamic import of a computed specifier throws, a JSON module
+ * is a leaf that is listed and not parsed, and bare and node: specifiers are dependencies, not sources.
  */
 export function importClosure(module, read) {
   const found = new Set();
@@ -567,9 +569,16 @@ export function importClosure(module, read) {
     found.add(file);
     const visit = (node) => {
       if (node === null || typeof node !== "object") return;
+      if (node.type === "ImportExpression" && typeof node.source.value !== "string")
+        throw new Error(`${file}: a dynamic import of a computed specifier cannot be followed`);
       const source = node.source?.value;
-      if (typeof source === "string" && source.startsWith("."))
-        pending.push(posix.normalize(posix.join(posix.dirname(file), source)));
+      if (typeof source === "string" && source.startsWith(".")) {
+        const target = posix.normalize(posix.join(posix.dirname(file), source));
+        // A JSON module is a leaf, compared as bytes and never parsed.
+        if (target.endsWith(".json") || node.attributes?.some((a) => a.value?.value === "json"))
+          found.add(target);
+        else pending.push(target);
+      }
       Object.values(node).forEach(visit);
     };
     const text = read(`src/${file}`);
@@ -590,23 +599,42 @@ export function checkFixtureDigest(name, lane, saved, { read = treeReader, linea
   const current = scheme2Digest(lane, read);
   if (saved === current) return { state: "scheme2", saved, current };
   if (saved === rawDigest(lane, read)) return { state: "raw", saved, current };
-  const hop = hops.find((h) => h.lane === name && h.from === saved && h.to === current);
+  const hop = hops.find((h) => h?.lane === name && h.from === saved && h.to === current);
   return { state: hop ? "lineage" : "stale", saved, current };
 }
 
-let checkedLineageProblems;
+/**
+ * The lineage as read once, and what the release verifier says of it. Every later lookup of a
+ * lane runner is made on the same object. A lineage that cannot be read, or has a malformed hop, is
+ * a problem (and no hop), never a throw.
+ */
+export function createLineageSnapshot(read = loadLineage, verify = releaseLineageProblems) {
+  let snapshot;
+  return () => {
+    if (snapshot === undefined) {
+      try {
+        const lineage = read();
+        const problems = verify(lineage);
+        snapshot = { hops: problems.length === 0 ? lineage.hops : [], problems };
+      } catch (error) {
+        snapshot = { hops: [], problems: [`the lineage cannot be checked: ${error.message}`] };
+      }
+    }
+    return snapshot;
+  };
+}
+
+const lineageSnapshot = createLineageSnapshot();
 
 /**
  * checkFixtureDigest for a lane runner: a digest the lineage connects counts only when the whole
- * lineage file passes the verification the release gate runs (lineageProblems, against the git
- * history), once per process; any problem makes every lineage-connected row stale. `verify`
- * replaces that verification.
+ * lineage file, read once per process, passes the verification the release gate runs (lineageProblems,
+ * against the git history). With any problem there are no hops, so every lineage-connected row is
+ * stale. `snapshot` replaces the process's snapshot.
  */
-export function checkVerifiedFixtureDigest(name, lane, saved, { verify, ...options } = {}) {
-  const status = checkFixtureDigest(name, lane, saved, options);
-  if (status.state !== "lineage") return status;
-  const problems = verify?.() ?? (checkedLineageProblems ??= releaseLineageProblems());
-  return problems.length === 0 ? status : { ...status, state: "stale" };
+export function checkVerifiedFixtureDigest(name, lane, saved, { snapshot, ...options } = {}) {
+  const { hops } = (snapshot ?? lineageSnapshot)();
+  return checkFixtureDigest(name, lane, saved, { ...options, lineage: hops });
 }
 
 /** Lanes whose fixture records one harness digest for the whole file instead of one per program. */
@@ -683,7 +711,7 @@ function lookupPath(value, path) {
   return current;
 }
 
-/** The `{ $from, path }` references a corpus step's request is built from (harness.mjs chained). */
+/** The `{ $from, path }` references inside a value (harness.mjs resolveValue follows them all). */
 function referencesIn(value) {
   if (value === null || typeof value !== "object") return [];
   return [
@@ -693,19 +721,35 @@ function referencesIn(value) {
 }
 
 /**
- * Why a status -1 row is a step whose request could not be built, which the fixture and the corpus
- * show: the step's own request, as the corpus program the fixture was recorded from writes it,
- * references the step and path `unresolved` names; that step is an earlier step of the same slot (an own key, never an inherited name), and
- * that predecessor is a REST answer (a failed fetch and an earlier such row record no body, so they
- * pass too) (or a failed fetch) that
- * recorded nothing at the referenced path, so the reference could not resolve and the request
- * never reached fetch. `dependencyTransient` is the recorder's own flag for the predecessor.
+ * The fields of a corpus step that its request builder resolves, so that a reference in them must
+ * resolve for the request to be built (harness.mjs buildRestRequest, resolveQuery and
+ * buildGrpcRequest): a REST step resolves `query`, and `body` unless `rawBody` is sent instead; a
+ * gRPC step resolves `body`.
  */
-function unresolvedProblem(stepId, row, slot, corpusStep) {
+const resolvedFields = (step) =>
+  (step.transport ?? "rest") === "grpc"
+    ? [step.body ?? {}]
+    : [step.query ?? [], ...(step.rawBody === undefined ? [step.body] : [])];
+
+/**
+ * Why a status -1 row is a step whose request could not be built, which the fixture and the corpus
+ * show: a field the failed step's own request resolves, in the corpus program the fixture was
+ * recorded from, references the step and path `unresolved` names; that step is an earlier step of
+ * the same slot, a REST step by the corpus (its recorded body is the raw JSON the reference reads),
+ * and its recorded answer holds nothing at that path (a failed fetch and an earlier such row
+ * record no body, so they pass too). `dependencyTransient` is the recorder's own flag for it.
+ */
+function unresolvedProblem(stepId, row, slot, corpus) {
   const match = UNRESOLVED.exec(typeof row.unresolved === "string" ? row.unresolved : "");
   if (match === null) return "status -1 without the dependency evidence the recorder writes";
   const [, dependency, path] = match;
-  if (!referencesIn(corpusStep).some((ref) => ref.$from === dependency && ref.path === path))
+  const own = corpus?.steps?.find((step) => step.id === stepId);
+  if (
+    own === undefined ||
+    !resolvedFields(own)
+      .flatMap(referencesIn)
+      .some((ref) => ref.$from === dependency && ref.path === path)
+  )
     return `status -1 names ${dependency} at ${path}, which the request of step ${stepId} does not reference`;
   const order = Object.keys(slot);
   if (!Object.hasOwn(slot, dependency) || order.indexOf(dependency) >= order.indexOf(stepId))
@@ -713,7 +757,12 @@ function unresolvedProblem(stepId, row, slot, corpusStep) {
   const predecessor = slot[dependency];
   if (row.dependencyTransient !== isTransient(predecessor))
     return `status -1 whose dependencyTransient is not that of step ${dependency}`;
-  if (typeof predecessor?.status !== "number")
+  const earlier = corpus.steps.find((step) => step.id === dependency);
+  if (
+    earlier === undefined ||
+    (earlier.transport ?? "rest") !== "rest" ||
+    typeof predecessor?.status !== "number"
+  )
     return `status -1 after step ${dependency}, which is not a REST answer`;
   const found = lookupPath(predecessor.body, path);
   if (found !== undefined && found !== "")
@@ -727,11 +776,11 @@ function unresolvedProblem(stepId, row, slot, corpusStep) {
  * code. A status -1 row needs the proof of unresolvedProblem, since a body failure after a request
  * that was built never produces one.
  */
-function answerProblem(stepId, row, slot, corpusStep) {
+function answerProblem(stepId, row, slot, corpus) {
   const error = row?.transportError;
   if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
     return `the body of the answer could not be read (${error})`;
-  if (row?.status === -1) return unresolvedProblem(stepId, row, slot, corpusStep);
+  if (row?.status === -1) return unresolvedProblem(stepId, row, slot, corpus);
   if (row?.status === 0)
     return typeof error === "string" ? undefined : "status 0 without a transport error";
   if (typeof row?.status === "number" || typeof row?.code === "number") return undefined;
@@ -759,8 +808,7 @@ export function bodyReadStageProblems(fixture, corpus = {}) {
     for (const slotName of ANSWER_SLOTS)
       for (const [stepId, row] of Object.entries(program?.[slotName] ?? {})) {
         answers += 1;
-        const corpusStep = recorded?.steps?.find((step) => step.id === stepId);
-        const problem = answerProblem(stepId, row, program[slotName], corpusStep);
+        const problem = answerProblem(stepId, row, program[slotName], recorded);
         if (problem)
           problems.push(
             `${programId}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: ${problem}`,
@@ -852,6 +900,8 @@ export function lineageProblems(
   const seen = new Set();
   lineage.hops.forEach((hop, index) => {
     const at = `hop ${index}`;
+    if (hop === null || typeof hop !== "object" || Array.isArray(hop))
+      return problems.push(`${at}: the hop is not an object`);
     const before = problems.length;
     const allowedKeys = hop.kind === "unreached" ? UNREACHED_HOP_KEYS : HOP_KEYS;
     const extraKeys = Object.keys(hop).filter((key) => !allowedKeys.includes(key));
@@ -917,13 +967,18 @@ function inputsAt(lane, revision, { reader, dataReader, currentInputs }) {
     if (typeof text !== "string") throw new Error(`${file} is missing`);
   const data = dataReader(revision);
   // The data is the revision's own. A module's export is this checkout's, and is the revision's
-  // only if every file the module comes from is byte-identical at the revision.
+  // only if every file the module comes from is byte-identical at the revision and at HEAD, and the
+  // working tree still holds HEAD's bytes (the export is imported from the working tree).
   const extra = extraOf(lane, {
     data,
     exported: (module, name) => {
-      for (const file of importClosure(module, currentInputs.data))
-        if (data(`src/${file}`) !== currentInputs.data(`src/${file}`))
-          throw new Error(`${file} is not the same at ${revision} as in this checkout`);
+      for (const file of importClosure(module, currentInputs.committed)) {
+        const committed = currentInputs.committed(`src/${file}`);
+        if (data(`src/${file}`) !== committed)
+          throw new Error(`${file} is not the same at ${revision} as at HEAD`);
+        if (currentInputs.data(`src/${file}`) !== committed)
+          throw new Error(`${file} differs between HEAD and the working tree`);
+      }
       return currentInputs.exported(module, name);
     },
     sdkVersions: () => {
@@ -1266,14 +1321,20 @@ export function rewriteReport(
   // the lineage file is not.
   const changedConditionFixture = lineage.hops.some(
     (hop) =>
-      hop.kind === "unreached" && lanes[hop.lane] && fixturePath(lanes[hop.lane]) in overrides,
+      hop?.kind === "unreached" && lanes[hop.lane] && fixturePath(lanes[hop.lane]) in overrides,
   );
-  if (changedLineage || changedConditionFixture)
+  // A file a registered module export comes from is part of what a hop's digest read.
+  const overrideData = (path) => overrides[`conformance/${path}`] ?? readConformanceData(path);
+  const changedExportSource = Object.keys(TODAY_EXPORTS).some((module) =>
+    importClosure(module, readConformanceData).some((file) => inputPath(file) in overrides),
+  );
+  if (changedLineage || changedConditionFixture || changedExportSource)
     for (const problem of lineageProblems(lineage, {
       lanes,
       reader,
       shallow,
       current: (file) => overrides[inputPath(file)] ?? treeReader(file),
+      currentInputs: { ...TREE_INPUTS, data: overrideData },
       fixtureOf: (lane) =>
         fixturePath(lane) in overrides
           ? JSON.parse(overrides[fixturePath(lane)])

@@ -20,6 +20,7 @@ import {
   bodyReadStageProblems,
   checkFixtureDigest,
   checkVerifiedFixtureDigest,
+  createLineageSnapshot,
   corpusOfLane,
   extraOf,
   gitDataReader,
@@ -1528,6 +1529,72 @@ test("a -1 row needs the failed step's own corpus request to reference the named
   ]);
 });
 
+test("a -1 proof reads only the fields the request builder resolves, and only a REST predecessor", () => {
+  const ref = { $from: "dep", path: "nextPageToken" };
+  const check = (rowStep, depStep = { id: "dep" }, steps = { dep: DEP }) =>
+    scenario({ steps, corpusSteps: [depStep, { id: "row", ...rowStep }] });
+  const missing =
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference";
+  // REST: query and body are resolved, body only when no rawBody is sent instead.
+  assert.deepEqual(check({ query: [["pageToken", ref]] }), []);
+  assert.deepEqual(check({ body: { a: [ref] } }), []);
+  assert.deepEqual(check({ rawBody: "{}", body: { a: ref } }), [missing]);
+  assert.deepEqual(check({ rawBody: "{}", query: [["pageToken", ref]] }), []);
+  assert.deepEqual(check({ path: "x", collectionId: "c", parent: ref }), [missing]);
+  // gRPC: only body is resolved, never query.
+  assert.deepEqual(check({ transport: "grpc", body: { pageToken: ref } }), []);
+  assert.deepEqual(check({ transport: "grpc", query: [["pageToken", ref]] }), [missing]);
+  assert.deepEqual(check({ transport: "grpc", rawBody: "{}", body: ref }), []);
+  // References nested in $time and $array are still references.
+  assert.deepEqual(check({ body: { t: { $time: { ...ref, addSeconds: 1 } } } }), []);
+  assert.deepEqual(check({ body: { $array: { count: 2, item: { v: ref } } } }), []);
+  // The predecessor is a REST step by the corpus, whatever status the fixture gives it.
+  const notRest = "p#row: status -1 after step dep, which is not a REST answer";
+  const query = { query: [["pageToken", ref]] };
+  assert.deepEqual(check(query, { id: "dep", transport: "grpc" }), [notRest]);
+  assert.deepEqual(check(query, { id: "dep", transport: "rest" }), []);
+  assert.deepEqual(
+    scenario({ steps: { dep: DEP }, corpusSteps: [{ id: "other" }, { id: "row", ...query }] }),
+    [notRest],
+  );
+});
+
+test("the forgeries of the review are refused on the real fixture: a gRPC predecessor and an ignored body", async () => {
+  const { PROGRAMS } = await import("./fs-list/corpus.mjs");
+  const corpus = Object.fromEntries(PROGRAMS.map((program) => [program.id, program]));
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-data-write-list-production.json"), "utf8"),
+  );
+  const grpcId = "fs-data-write-list/grpc/list-documents";
+  const forged = structuredClone(fixture);
+  forged.programs[grpcId].steps["page-size-2"] = { status: 200, body: {} };
+  forged.programs[grpcId].steps["page-2"] = {
+    status: -1,
+    unresolved: "step page-size-2 recorded nothing at nextPageToken",
+    dependencyTransient: false,
+  };
+  assert.deepEqual(bodyReadStageProblems(forged, corpus), [
+    `${grpcId}#page-2: status -1 after step page-size-2, which is not a REST answer`,
+  ]);
+  // A digest-matched corpus step whose reference sits in a body that rawBody makes the builder ignore.
+  const ref = { $from: "dep", path: "nextPageToken" };
+  const program = {
+    id: "p",
+    steps: [
+      { id: "dep" },
+      { id: "row", rpc: "commit", rawBody: '{"writes":[]}', body: { a: ref } },
+    ],
+  };
+  const ignored = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  assert.deepEqual(bodyReadStageProblems(ignored, { p: program }), [
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference",
+  ]);
+});
+
 test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", async () => {
   const { PROGRAMS } = await import("./fs-list/corpus.mjs");
   const corpus = Object.fromEntries(PROGRAMS.map((program) => [program.id, program]));
@@ -1945,11 +2012,48 @@ test("the files a module comes from are itself and everything it imports by a re
     importClosure("m.mjs", (path) => MODULES[path]),
     CLOSURE,
   );
+  // Each file is read once, so a cycle ends at once (a second read of any file fails the test).
+  const reads = new Set();
+  assert.deepEqual(
+    importClosure("sub/y.mjs", (path) => {
+      assert.ok(!reads.has(path), `${path} was read twice`);
+      reads.add(path);
+      return MODULES[path];
+    }),
+    ["sub/v.mjs", "sub/y.mjs", "w.mjs"],
+  );
   // Static, re-exported, side-effect and literal dynamic imports; cycles end; bare and node: are not sources.
   assert.deepEqual(
     importClosure("w.mjs", (path) => MODULES[path]),
     ["w.mjs"],
   );
+  // A dynamic import that is not a string literal cannot be followed, so it refuses.
+  for (const source of [
+    'const p = "./dep.mjs"; await import(p);',
+    'await import("./" + "dep.mjs");',
+    "await import(`./dep.mjs`);",
+    'await import(await Promise.resolve("./dep.mjs"));',
+  ])
+    assert.throws(
+      () => importClosure("c.mjs", (path) => (path === "src/c.mjs" ? source : "export {};")),
+      /computed specifier/,
+      source,
+    );
+  // A JSON module is a leaf: listed, compared as bytes, never parsed and never followed.
+  const withJson = (path) =>
+    ({
+      "src/j.mjs":
+        'import a from "./sub/dep.json" with { type: "json" };\nawait import("./other.json");\nimport b from "./attr.data" with { type: "json" };\n',
+      "src/sub/dep.json": '{"not": "javascript" ',
+      "src/other.json": "not even json",
+      "src/attr.data": "also not javascript",
+    })[path];
+  assert.deepEqual(importClosure("j.mjs", withJson), [
+    "attr.data",
+    "j.mjs",
+    "other.json",
+    "sub/dep.json",
+  ]);
   assert.deepEqual(
     importClosure("z.mjs", (path) => MODULES[path]),
     ["z.mjs"],
@@ -1972,6 +2076,7 @@ const EXPORT_LANE = {
 const TODAY_X = JSON.stringify({ n: 1 });
 const todayInputs = {
   data: (path) => MODULES[path] ?? DATA,
+  committed: (path) => MODULES[path] ?? DATA,
   exported: (module, name) => (module === "m.mjs" && name === "X" ? { n: 1 } : undefined),
 };
 const exportHop = (kind) => ({
@@ -2023,6 +2128,111 @@ test("a hop's module exports count for its revision only when every source they 
       [],
     );
   }
+});
+
+test("a module's closure is read from HEAD and the working tree must still hold HEAD's bytes", () => {
+  const escaped = (file) => file.replace(".", "\\.");
+  for (const kind of ["scheme", "unreached"]) {
+    for (const file of CLOSURE) {
+      const path = `src/${file}`;
+      const worktreeOnly = exportProblems(
+        exportHop(kind),
+        {},
+        {
+          currentInputs: {
+            ...todayInputs,
+            data: (p) => (p === path ? `${MODULES[p]}// local\n` : todayInputs.data(p)),
+          },
+        },
+      );
+      assert.equal(worktreeOnly.length, 1, `${kind} ${file}`);
+      assert.match(
+        worktreeOnly[0],
+        new RegExp(`${escaped(file)} differs between HEAD and the working tree`),
+      );
+      // The revision is compared with HEAD's bytes, not with the working tree's.
+      const headOnly = exportProblems(
+        exportHop(kind),
+        {},
+        {
+          currentInputs: {
+            ...todayInputs,
+            committed: (p) => (p === path ? `${MODULES[p]}// head\n` : todayInputs.committed(p)),
+          },
+        },
+      );
+      assert.ok(headOnly.length >= 1, `${kind} ${file}`);
+      assert.match(
+        headOnly.join("\n"),
+        new RegExp(`${escaped(file)} (is not the same at|differs between)`),
+      );
+    }
+  }
+});
+
+test("a rewrite of a file a registered module export comes from is checked against HEAD", () => {
+  if (isShallowCheckout()) return;
+  const path = "conformance/src/auth-fs-cross/programs.mjs";
+  const text = readFileSync(join(REPO_ROOT, path), "utf8");
+  const found = rewriteReport({ [path]: `${text}// local\n` }).problems.join("\n");
+  assert.match(
+    found,
+    /lineage after the rewrite: hop 0: .*programs\.mjs differs between HEAD and the working tree/,
+  );
+  assert.deepEqual(rewriteReport({ [path]: text }).problems, []);
+  // A file no registered export comes from does not make a rewrite re-check the lineage.
+  const unrelated = rewriteReport(
+    { "conformance/src/auth-fs-cross/run.mjs": "// anything\n" },
+    NO_GIT,
+  );
+  assert.ok(!unrelated.problems.some((problem) => /lineage after the rewrite/.test(problem)));
+});
+
+test("a JSON module a hop's export imports counts as bytes, identical or refused", () => {
+  const modules = {
+    "src/m.mjs": 'import dep from "./dep.json" with { type: "json" };\nexport const X = dep;\n',
+    "src/dep.json": '{"n": 1}\n',
+  };
+  const inputs = {
+    ...todayInputs,
+    data: (p) => modules[p] ?? DATA,
+    committed: (p) => modules[p] ?? DATA,
+  };
+  const run = (changed) =>
+    exportProblems(exportHop("scheme"), changed, {
+      currentInputs: inputs,
+      dataReader: (commit) => (path) =>
+        Object.hasOwn(changed[commit] ?? {}, path) ? changed[commit][path] : inputs.data(path),
+    });
+  assert.deepEqual(run({}), []);
+  const found = run({ [REC]: { "src/dep.json": '{"n": 2}\n' } });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /dep\.json is not the same at/);
+  assert.match(
+    run({ [REC]: { "src/dep.json": undefined } }).join("\n"),
+    /dep\.json is not the same at/,
+  );
+});
+
+test("a computed dynamic import in a module an export comes from refuses the hop", () => {
+  const modules = {
+    "src/m.mjs": 'const p = "./dep.mjs";\nexport const X = (await import(p)).X;\n',
+  };
+  const inputs = {
+    ...todayInputs,
+    data: (p) => modules[p] ?? DATA,
+    committed: (p) => modules[p] ?? DATA,
+  };
+  const found = exportProblems(
+    exportHop("scheme"),
+    {},
+    {
+      currentInputs: inputs,
+      dataReader: () => inputs.data,
+    },
+  );
+  assert.equal(found.length, 1);
+  assert.match(found[0], /computed specifier/);
 });
 
 test("the data a hop's digest reads is not a module source: it is the revision's own", () => {
@@ -2113,41 +2323,97 @@ const RUNNER_HOP = () => ({
   from: "7".repeat(64),
   to: scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
 });
-const runnerState = (verify, saved = RUNNER_HOP().from) =>
+const snapshotOf = (hops, problems) =>
+  createLineageSnapshot(
+    () => ({ version: 1, hops }),
+    () => problems,
+  );
+const runnerState = (snapshot, saved = RUNNER_HOP().from) =>
   checkVerifiedFixtureDigest("lane", RUNNER_LANE, saved, {
     read: (f) => TREES[REC][f],
-    lineage: [RUNNER_HOP()],
-    verify,
+    snapshot,
   }).state;
 
 test("a lineage digest counts for a lane runner only when the whole lineage file verifies", () => {
-  let asked = 0;
-  assert.equal(
-    runnerState(() => (asked++, [])),
-    "lineage",
-  );
-  assert.equal(asked, 1);
-  assert.equal(
-    runnerState(() => ["refused"]),
-    "stale",
-  );
-  // Other states are not the lineage's business and never ask for the verification.
-  const never = () => assert.fail("verify must not run");
+  assert.equal(runnerState(snapshotOf([RUNNER_HOP()], [])), "lineage");
+  // Any problem leaves no hop, so every lineage-connected row is stale.
+  assert.equal(runnerState(snapshotOf([RUNNER_HOP()], ["refused"])), "stale");
+  // Other states are not the lineage's business.
+  const none = snapshotOf([RUNNER_HOP()], ["refused"]);
   assert.equal(
     runnerState(
-      never,
+      none,
       rawDigest(RUNNER_LANE, (f) => TREES[REC][f]),
     ),
     "raw",
   );
   assert.equal(
     runnerState(
-      never,
+      none,
       scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
     ),
     "scheme2",
   );
-  assert.equal(runnerState(never, "6".repeat(64)), "stale");
+  assert.equal(runnerState(none, "6".repeat(64)), "stale");
+});
+
+test("the runner reads the lineage once and does every lookup on the object it validated", () => {
+  let reads = 0;
+  let verifies = 0;
+  const hop = RUNNER_HOP();
+  const snapshot = createLineageSnapshot(
+    () => {
+      reads += 1;
+      // Whatever a later read would give, the first one is the only one used.
+      return reads === 1
+        ? { version: 1, hops: [hop] }
+        : { version: 2, hops: [{ ...hop, from: "5".repeat(64) }] };
+    },
+    () => ((verifies += 1), []),
+  );
+  assert.equal(runnerState(snapshot), "lineage");
+  assert.equal(runnerState(snapshot), "lineage");
+  assert.equal(runnerState(snapshot, "5".repeat(64)), "stale");
+  assert.deepEqual([reads, verifies], [1, 1]);
+  assert.strictEqual(snapshot(), snapshot());
+});
+
+test("a malformed hop or an unreadable lineage is a lineage problem for the runner, never a throw", () => {
+  const real = loadLineage();
+  for (const bad of [null, 7, "hop", [], undefined]) {
+    const hops = [...real.hops, bad];
+    assert.match(
+      releaseLineageProblems({ ...real, hops }).join("\n"),
+      /hop \d+: the hop is not an object/,
+    );
+    assert.match(
+      rewriteReport(
+        {
+          "conformance/harness-lineage.json": JSON.stringify({
+            ...real,
+            hops: [...real.hops, bad ?? null],
+          }),
+        },
+        NO_GIT,
+      ).problems.join("\n"),
+      /the hop is not an object/,
+    );
+  }
+  const lane = HARNESS_LANES["fs-query-index"];
+  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  const state = (snapshot) =>
+    checkVerifiedFixtureDigest("fs-query-index", lane, saved, { snapshot }).state;
+  const real2 = (hops) => createLineageSnapshot(() => ({ ...real, hops }));
+  assert.equal(state(real2(real.hops)), "lineage");
+  assert.equal(state(real2([...real.hops, null])), "stale");
+  assert.equal(state(createLineageSnapshot(() => null)), "stale");
+  assert.equal(state(createLineageSnapshot(() => ({ version: 1, hops: "no" }))), "stale");
+  const unreadable = createLineageSnapshot(() => {
+    throw new Error("no such file");
+  });
+  assert.equal(state(unreadable), "stale");
+  assert.match(unreadable().problems.join("\n"), /cannot be checked: no such file/);
 });
 
 test("the runner's verification is the release verifier's: version, duplicates, other hops and a shallow clone", () => {
@@ -2157,8 +2423,10 @@ test("the runner's verification is the release verifier's: version, duplicates, 
   const [saved] = recordedDigests("fs-query-index", fixture);
   const state = (lineage, options = {}) =>
     checkVerifiedFixtureDigest("fs-query-index", lane, saved, {
-      lineage: lineage.hops,
-      verify: () => releaseLineageProblems(lineage, { shallow: false, ...options }),
+      snapshot: createLineageSnapshot(
+        () => lineage,
+        (l) => releaseLineageProblems(l, { shallow: false, ...options }),
+      ),
     }).state;
   const real = loadLineage();
   assert.equal(checkVerifiedFixtureDigest("fs-query-index", lane, saved).state, "lineage");
@@ -2227,7 +2495,11 @@ test("the corpus of a lane is looked up by its own name", () => {
 
 test("the registry's default verification for a lane runner is the release verifier, once per process", () => {
   const source = readFileSync(join(CONFORMANCE_DIR, "src/harness-registry.mjs"), "utf8");
-  assert.match(source, /\(checkedLineageProblems \?\?= releaseLineageProblems\(\)\)/);
+  assert.match(source, /const lineageSnapshot = createLineageSnapshot\(\);/);
+  assert.match(
+    source,
+    /export function createLineageSnapshot\(read = loadLineage, verify = releaseLineageProblems\)/,
+  );
 });
 
 test("the lane runner asks for the verified state, never the endpoint lookup", () => {
