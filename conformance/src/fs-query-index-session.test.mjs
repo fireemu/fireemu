@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { createContext, isTransient } from "./fs-query-index/harness.mjs";
 import { createSession } from "./fs-query-index/session.mjs";
 import { isUnknownRow } from "./fs-query-index/unknown-rows.mjs";
+import { BODY_STAGE_PREFIX, bodyReadStageProblems } from "./harness-registry.mjs";
 
 const ctx = createContext({
   run: "1",
@@ -79,6 +80,9 @@ test("each body read failure code is recorded with the body marker", async () =>
   ]) {
     const { steps } = await record({ id: "p", steps: [commitStep] }, [brokenBody(error)]);
     assert.deepEqual(steps.write, { status: 0, transportError: `body:${expected}` });
+    // The registry's condition for the recorded fixtures recognises exactly this marker.
+    assert.ok(steps.write.transportError.startsWith(BODY_STAGE_PREFIX));
+    assert.equal(bodyReadStageProblems({ programs: { p: { steps } } }).length, 1);
   }
 });
 

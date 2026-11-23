@@ -18,6 +18,17 @@
 // equals today's, so the change between the recorded harness and today's is comments and
 // whitespace and nothing else. Nothing is rewritten in a fixture.
 //
+// A second kind of hop, "unreached", connects a recorded digest across one named fix of a source
+// whose changed path the recorded rows did not reach (UNREACHED_CONDITIONS). It is sound only when
+// all of this holds, and the check fails closed on each part:
+//   - the recorded raw digest reproduces at the hop's commit, and the scheme-2 digest of that
+//     commit is the one of the fix commit's parent (nothing but comments changed between them);
+//   - the fix commit has one parent and touches, among the lane's inputs, exactly the files its
+//     condition names;
+//   - the scheme-2 digest at the fix commit and of today's tree is the hop's, so nothing but the
+//     fix changed since;
+//   - the condition holds for the lane's fixture (for example: no recorded step shows the path).
+//
 // A lane's digest may also read data (`extra`, `guarded` paths) or belong to a fixture that is not
 // enrolled (WAIVED_FIXTURES, with the inputs it reads). A rewrite cannot follow those, so a rewrite
 // of any of them is refused (rewriteReport).
@@ -27,10 +38,13 @@
 //   node src/harness-registry.mjs paths               the repository paths a rewrite must show it
 //   node src/harness-registry.mjs rewrite-check <f> [--head <sha>]
 //                                                     what a rewrite of files does to each lane
+//   node src/harness-registry.mjs unreached-hops --fix <sha> --condition <name> [--write]
+//                                                     the "unreached" hops a fix commit calls for
+//                                                     (printed, or appended to the lineage)
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -536,7 +550,67 @@ export function laneStatus(
 
 export const LINEAGE_PATH = join(CONFORMANCE_DIR, "harness-lineage.json");
 const HOP_KEYS = ["commit", "from", "kind", "lane", "to"];
-const HOP_KINDS = ["scheme"];
+const UNREACHED_HOP_KEYS = [...HOP_KEYS, "condition", "fix"];
+const HOP_KINDS = ["scheme", "unreached"];
+
+/** The prefix of the transport error session.mjs records when a response body cannot be read. */
+export const BODY_STAGE_PREFIX = "body:";
+
+/**
+ * Why the rows of a FS-QUERY-INDEX fixture cannot have reached the body-read failure path of
+ * session.mjs: every recorded step has a numeric status (its body was read, or its fetch failed
+ * and says so) or a numeric gRPC code, a status 0 names its transport error, and no transport
+ * error is a body-stage one. An empty fixture proves nothing and is refused.
+ */
+export function bodyReadStageProblems(fixture) {
+  const problems = [];
+  let steps = 0;
+  for (const [programId, program] of Object.entries(fixture?.programs ?? {}))
+    for (const [stepId, step] of Object.entries(program?.steps ?? {})) {
+      steps += 1;
+      const at = `${programId}#${stepId}`;
+      const error = step?.transportError;
+      if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
+        problems.push(`${at}: the body of the answer could not be read (${error})`);
+      else if (step?.status === 0 && typeof error !== "string")
+        problems.push(`${at}: status 0 without a transport error`);
+      else if (typeof step?.status !== "number" && typeof step?.code !== "number")
+        problems.push(`${at}: neither a numeric status nor a numeric gRPC code`);
+    }
+  if (steps === 0) problems.push("the fixture records no step");
+  return problems;
+}
+
+/**
+ * The closed table of conditions an "unreached" hop may name. `touches` is exactly what the fix
+ * commit may change among the lane's inputs; `problems(fixture)` is empty when the recorded rows
+ * show the changed path was not reached.
+ */
+export const UNREACHED_CONDITIONS = {
+  "fs-query-index-body-read-unreached": {
+    touches: ["conformance/src/fs-query-index/session.mjs"],
+    problems: bodyReadStageProblems,
+  },
+};
+
+/** The parents and changed paths of one commit, from git. */
+export function gitFixInfo(commit, cwd = REPO_ROOT) {
+  const git = (...args) =>
+    execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const [, ...parents] = git("rev-list", "--parents", "-n", "1", commit).trim().split(" ");
+  const paths = git("diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", commit)
+    .split("\n")
+    .filter(Boolean);
+  return { parents, paths };
+}
+
+/** The current fixture of a lane. */
+const treeFixture = (lane) => JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
 
 export function loadLineage(path = LINEAGE_PATH) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -548,7 +622,18 @@ export function loadLineage(path = LINEAGE_PATH) {
  * (so the change between them is more than comments and whitespace), a commit that cannot be
  * read, and a shallow clone (history is needed, so this is a failure and never a skip).
  */
-export function lineageProblems(lineage, { lanes, reader, shallow, current = treeReader }) {
+export function lineageProblems(
+  lineage,
+  {
+    lanes,
+    reader,
+    shallow,
+    current = treeReader,
+    conditions = UNREACHED_CONDITIONS,
+    fixInfo = gitFixInfo,
+    fixtureOf = treeFixture,
+  },
+) {
   const problems = [];
   if (lineage?.version !== 1 || !Array.isArray(lineage.hops))
     return ["the lineage is not { version: 1, hops: [] }"];
@@ -558,7 +643,8 @@ export function lineageProblems(lineage, { lanes, reader, shallow, current = tre
   lineage.hops.forEach((hop, index) => {
     const at = `hop ${index}`;
     const before = problems.length;
-    const extraKeys = Object.keys(hop).filter((key) => !HOP_KEYS.includes(key));
+    const allowedKeys = hop.kind === "unreached" ? UNREACHED_HOP_KEYS : HOP_KEYS;
+    const extraKeys = Object.keys(hop).filter((key) => !allowedKeys.includes(key));
     if (extraKeys.length) problems.push(`${at}: unexpected ${extraKeys.join(", ")}`);
     const lane = lanes[hop.lane];
     if (!lane) return problems.push(`${at}: unknown lane ${hop.lane}`);
@@ -569,6 +655,12 @@ export function lineageProblems(lineage, { lanes, reader, shallow, current = tre
     for (const key of ["from", "to"])
       if (!/^[0-9a-f]{64}$/.test(hop[key] ?? ""))
         problems.push(`${at}: ${key} is not a 64-hex digest`);
+    if (hop.kind === "unreached") {
+      if (!/^[0-9a-f]{40}$/.test(hop.fix ?? ""))
+        problems.push(`${at}: fix is not a full 40-hex SHA`);
+      if (!Object.hasOwn(conditions, hop.condition ?? ""))
+        problems.push(`${at}: condition ${hop.condition} is not in the closed table`);
+    }
     const id = `${hop.lane}/${hop.from}`;
     if (seen.has(id)) problems.push(`${at}: duplicate hop for ${id}`);
     seen.add(id);
@@ -585,12 +677,117 @@ export function lineageProblems(lineage, { lanes, reader, shallow, current = tre
     }
     if (rawDigest(lane, atCommit) !== hop.from)
       problems.push(`${at}: the recorded digest does not reproduce at ${hop.commit}`);
-    if (scheme2Digest(lane, atCommit) !== hop.to)
-      problems.push(`${at}: the scheme-2 digest at ${hop.commit} is not the hop's`);
     if (scheme2Digest(lane, current) !== hop.to)
       problems.push(`${at}: the scheme-2 digest of the current tree is not the hop's`);
+    if (hop.kind === "unreached")
+      problems.push(
+        ...unreachedProblems(at, hop, lane, {
+          atCommit,
+          reader,
+          current,
+          condition: conditions[hop.condition],
+          fixInfo,
+          fixtureOf,
+        }),
+      );
+    else if (scheme2Digest(lane, atCommit) !== hop.to)
+      problems.push(`${at}: the scheme-2 digest at ${hop.commit} is not the hop's`);
   });
   return problems;
+}
+
+/** The inputs of a lane's digest as repository paths (sources, data it reads, its fixture). */
+const laneInputPaths = (lane) => [
+  ...lane.files.map((file) => `conformance/src/${file}`),
+  ...(lane.guarded ?? []),
+  `conformance/${lane.fixture}`,
+];
+
+/**
+ * What is wrong with an "unreached" hop beyond the checks every hop shares (see the header): the
+ * hop's commit differs from the fix commit's parent by comments and whitespace only, the fix
+ * commit has one parent and changes exactly the inputs its condition names, the fix commit's
+ * scheme-2 digest is the hop's, and the condition holds for the lane's fixture.
+ */
+function unreachedProblems(at, hop, lane, { atCommit, reader, condition, fixInfo, fixtureOf }) {
+  const problems = [];
+  let info;
+  try {
+    info = fixInfo(hop.fix);
+  } catch (error) {
+    return [`${at}: the fix commit ${hop.fix} is not readable (${error.message})`];
+  }
+  if (info.parents.length !== 1)
+    return [`${at}: the fix commit ${hop.fix} must have exactly one parent`];
+  const inputs = new Set(laneInputPaths(lane));
+  const touched = info.paths.filter((path) => inputs.has(path)).toSorted();
+  const allowed = [...condition.touches].toSorted();
+  if (touched.join("\n") !== allowed.join("\n"))
+    problems.push(
+      `${at}: the fix commit changes the inputs [${touched}], the condition allows exactly [${allowed}]`,
+    );
+  try {
+    const parent = reader(info.parents[0]);
+    const atFix = reader(hop.fix);
+    const sources = (read) => new Map(lane.files.map((file) => [file, read(file)]));
+    const parentSources = sources(parent);
+    const fixSources = sources(atFix);
+    if (scheme2Digest(lane, atCommit) !== scheme2Digest(lane, (file) => parentSources.get(file)))
+      problems.push(`${at}: the sources changed between ${hop.commit} and the parent of the fix`);
+    if (scheme2Digest(lane, (file) => fixSources.get(file)) !== hop.to)
+      problems.push(`${at}: the scheme-2 digest at the fix commit is not the hop's`);
+  } catch (error) {
+    problems.push(`${at}: the sources around the fix commit are not readable (${error.message})`);
+  }
+  for (const problem of condition.problems(fixtureOf(lane)))
+    problems.push(`${at}: condition ${hop.condition} fails: ${problem}`);
+  return problems;
+}
+
+/**
+ * The "unreached" hops a fix commit calls for: one for every distinct harness digest the fixtures
+ * of the lanes that read the condition's file record and the lineage does not have yet, at the
+ * fix commit's parent (the recorded raw digest must reproduce there). The caller adds them to the
+ * lineage; lineageProblems then checks every part of them.
+ */
+export function proposeUnreachedHops({
+  fix,
+  condition,
+  lanes = HARNESS_LANES,
+  lineage = loadLineage(),
+  reader = gitReader,
+  current = treeReader,
+  conditions = UNREACHED_CONDITIONS,
+  fixInfo = gitFixInfo,
+  fixtureOf = treeFixture,
+}) {
+  if (!Object.hasOwn(conditions, condition))
+    throw new Error(`condition ${condition} is not in the closed table`);
+  const { parents } = fixInfo(fix);
+  if (parents.length !== 1) throw new Error(`the fix commit ${fix} must have exactly one parent`);
+  const [parent] = parents;
+  const atParent = reader(parent);
+  const known = new Set(lineage.hops.map((hop) => `${hop.lane}/${hop.from}`));
+  const hops = [];
+  for (const [name, lane] of Object.entries(lanes)) {
+    const inputs = laneInputPaths(lane);
+    if (!conditions[condition].touches.every((path) => inputs.includes(path))) continue;
+    for (const from of recordedDigests(name, fixtureOf(lane))) {
+      if (known.has(`${name}/${from}`)) continue;
+      if (rawDigest(lane, atParent) !== from)
+        throw new Error(`${name}: the recorded digest ${from} does not reproduce at ${parent}`);
+      hops.push({
+        lane: name,
+        from,
+        to: scheme2Digest(lane, current),
+        commit: parent,
+        kind: "unreached",
+        fix,
+        condition,
+      });
+    }
+  }
+  return hops;
 }
 
 // ---- enrollment --------------------------------------------------------------------------------
@@ -829,6 +1026,10 @@ export function rewriteReport(
       reader,
       shallow,
       current: (file) => overrides[inputPath(file)] ?? treeReader(file),
+      fixtureOf: (lane) =>
+        fixturePath(lane) in overrides
+          ? JSON.parse(overrides[fixturePath(lane)])
+          : treeFixture(lane),
     }))
       problems.push(`lineage after the rewrite: ${problem}`);
   return { lanes: report, problems, proposedHops: proposed };
@@ -883,9 +1084,30 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
     console.log(JSON.stringify(result, null, 2));
     if (result.problems.length) process.exitCode = 1;
+  } else if (process.argv[2] === "unreached-hops") {
+    // --fix <sha> --condition <name> [--write]: the hops the fix commit calls for, checked as the
+    // lineage gate checks them; with --write they are appended to harness-lineage.json.
+    const option = (name) => process.argv[process.argv.indexOf(name) + 1];
+    const lineage = loadLineage();
+    const hops = proposeUnreachedHops({
+      fix: option("--fix"),
+      condition: option("--condition"),
+      lineage,
+    });
+    const next = { ...lineage, hops: [...lineage.hops, ...hops] };
+    const found = lineageProblems(next, {
+      lanes: HARNESS_LANES,
+      reader: gitReader,
+      shallow: isShallowCheckout(),
+    });
+    for (const problem of found) console.error(problem);
+    if (found.length) process.exitCode = 1;
+    else if (process.argv.includes("--write"))
+      writeFileSync(LINEAGE_PATH, `${JSON.stringify(next, null, 2)}\n`);
+    else console.log(JSON.stringify(hops, null, 2));
   } else if (process.argv[2] !== "verify") {
     console.error(
-      "usage: harness-registry.mjs verify [--json] | paths | rewrite-check <overrides.json> [--head <sha>]",
+      "usage: harness-registry.mjs verify [--json] | paths | rewrite-check <overrides.json> [--head <sha>] | unreached-hops --fix <sha> --condition <name> [--write]",
     );
     process.exitCode = 2;
   } else {
