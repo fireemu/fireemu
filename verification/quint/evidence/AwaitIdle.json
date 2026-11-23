@@ -423,7 +423,7 @@
     },
     "crates/fireemu-adapter-grpc/src/admin/indexes.rs": {
       "kind": "sha256",
-      "value": "a268c3ca927dfc6385ac07f44ecf7ff0357c513fee0e3e65d616d2114d460404"
+      "value": "8df386de2db864e0e17090c6e9f556a4f726415d6e7124233f58972a65a4ae70"
     },
     "crates/fireemu-adapter-grpc/src/admin/locations.json": {
       "kind": "json-semantic",
@@ -535,7 +535,7 @@
     },
     "crates/fireemu-adapter-grpc/src/rest/json.rs": {
       "kind": "sha256",
-      "value": "ce9e706808bf7482183751ec7256b7487621eea2ee6e3d05c0b21fc1991da452"
+      "value": "6fef7c6f147118249e3a4e722db72d39200314d5d9ecb9cf2d5d09d7d7b3c929"
     },
     "crates/fireemu-adapter-grpc/src/rest/json_syntax.rs": {
       "kind": "sha256",
@@ -923,7 +923,7 @@
     },
     "crates/fireemu-core-firestore/src/index.rs": {
       "kind": "sha256",
-      "value": "a86688db7c24fe4edcc220e004c4c17839cc3705175412317b9c2bd8754d4ba2"
+      "value": "50ba1cf1ca4db6d1428f6afef2f7080e61cf95a6e954823201487607546d0890"
     },
     "crates/fireemu-core-firestore/src/index_usage.rs": {
       "kind": "sha256",
