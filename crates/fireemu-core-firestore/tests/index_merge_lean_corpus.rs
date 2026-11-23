@@ -2842,6 +2842,29 @@ fn shared_ascending_refusal_is_collection_only_and_ignores_unrelated_composites(
 }
 
 #[test]
+fn shared_ascending_refusal_leaves_a_count_at_its_base_answer() {
+    // fs-query-index-merge8/shapes/shared-path-ascending-only#shared-path-name-asc is a plain
+    // query; a count of the same shape is unrecorded and keeps the base answer (served).
+    let mut set = IndexSet::default();
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), modes("C:contains"));
+    let q = qx_query(
+        vec![eq_tags_array(), filter("contains", "tags", "qx")],
+        &[(fp("__name__"), Direction::Ascending)],
+        false,
+    );
+    assert!(matches!(
+        decide(&q, &set, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    let count =
+        validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], &set, &standard());
+    assert!(
+        !matches!(count, IndexDecision::MissingRequired { .. }),
+        "{count:?}"
+    );
+}
+
+#[test]
 fn descending_member_refusal_requires_a_read_and_both_exemptions() {
     // fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains-name-desc
     let q = obs2_merge_query("descPlain", false);
