@@ -1731,7 +1731,8 @@ test("the pipeline condition holds for both recorded pipeline fixtures, with the
     2,
   );
   // The summary answers every compact row with a numeric status or gRPC code, and nothing else.
-  const expanded = withFramingStatuses(fixture, summary);
+  const { fixture: expanded, problems } = withFramingStatuses(fixture, summary);
+  assert.deepEqual(problems, []);
   const rows = expanded.programs[FRAMING_SMALL];
   assert.equal(Object.hasOwn(rows, "compactFramingVersion"), false);
   assert.deepEqual(rows.steps["f5-rest"], summary.programs[FRAMING_SMALL].steps["f5-rest"]);
@@ -1746,7 +1747,7 @@ test("the pipeline condition holds for both recorded pipeline fixtures, with the
       assert.equal(expanded.programs[id], program, id);
 });
 
-test("a compact framing program counts only when the summary of the same corpus program answers each of its rows", () => {
+test("a compact framing program counts only when the summary of the same recording answers its rows one to one", () => {
   const fixture = readConformanceJson("fs-ent-pipeline-production.json");
   const summary = readConformanceJson("fs-ent-pipeline-framing.json");
   const check = (changeFixture = () => {}, changeSummary = () => {}) => {
@@ -1758,63 +1759,80 @@ test("a compact framing program counts only when the summary of the same corpus 
       .filter((problem) => problem.startsWith(FRAMING_SMALL))
       .join("\n");
   };
+  const unanswered = (found) => assert.match(found, /unexpected key compactFramingVersion/);
   assert.equal(check(), "");
-  // Another compact version, or a summary of another version, is not read.
-  assert.match(
-    check((p) => (p.compactFramingVersion = 2)),
-    /unexpected key compactFramingVersion/,
-  );
-  assert.match(
+  // Another compact version is not read at all; it is refused for its key.
+  unanswered(check((p) => (p.compactFramingVersion = 2)));
+  // The summary is missing: another version, or no entry for the program.
+  for (const found of [
     check(undefined, (_p, s) => (s.version = 2)),
-    /unexpected key/,
-  );
-  assert.match(
     check(undefined, (_p, s) => delete s.programs[FRAMING_SMALL]),
-    /unexpected key/,
-  );
-  // The summary must be of the corpus program the fixture recorded, and a digest must be there.
-  assert.match(
+  ]) {
+    assert.match(found, /framing-small: the framing summary has no entry for this program/);
+    unanswered(found);
+  }
+  // A digest mismatch, or no digest on either side.
+  for (const found of [
     check(undefined, (p) => (p.corpusDigest = "0".repeat(64))),
-    /unexpected key/,
-  );
-  assert.match(
     check(
       (p) => delete p.corpusDigest,
       (p) => delete p.corpusDigest,
     ),
-    /unexpected key/,
-  );
-  // A row the summary does not answer, in either slot, is refused.
-  assert.match(
+  ]) {
+    assert.match(found, /framing-small: the framing summary is of another corpus program/);
+    unanswered(found);
+  }
+  // One to one, both ways and in both slots: a missing entry, an extra entry, an extra compact row,
+  // a second answer the compact program does not have, and one it has that the summary lacks.
+  for (const found of [
     check(undefined, (p) => delete p.steps["f5-rest"]),
-    /framing-small#f5-rest: neither a numeric status/,
-  );
-  assert.match(
-    check(undefined, (p) => delete p.steps["f500-rest"].second),
-    /framing-small#f500-rest \(second\): neither a numeric status/,
-  );
-  // A compact row the summary has no entry for, by its own name.
-  assert.match(
+    check(undefined, (p) => (p.steps.extra = p.steps["f5-rest"])),
     check((p) => (p.steps.extra = p.steps["f5-rest"])),
-    /framing-small#extra: neither a numeric status/,
-  );
-  // A name the summary only inherits is not an entry of it.
-  assert.match(
     check((p) => (p.steps.constructor = p.steps["f5-rest"])),
-    /framing-small#constructor: neither a numeric status/,
+    check(undefined, (p) => (p.steps["f5-rest"].second = p.steps["f5-rest"])),
+    check(undefined, (p) => delete p.steps["f500-rest"].second),
+    check((p) => delete p.second["f500-rest"]),
+  ]) {
+    assert.match(
+      found,
+      /framing-small: the framing summary does not answer the compact rows one to one/,
+    );
+    unanswered(found);
+  }
+  // A summary entry is judged as a full row: a transport error of either stage, in either slot, is
+  // a problem, and so is an entry without a numeric status or gRPC code.
+  assert.match(
+    check(
+      undefined,
+      (p) =>
+        (p.steps["f5-rest"] = { transport: "rest", status: 0, transportError: "TimeoutError" }),
+    ),
+    /framing-small#f5-rest: the framing summary records a transport error \(TimeoutError\)/,
   );
-  // What the summary answers is judged as any recorded answer is.
+  const bodyStage = check(
+    undefined,
+    (p) => (p.steps["f5-grpc"] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }),
+  );
+  assert.match(
+    bodyStage,
+    /f5-grpc: the framing summary records a transport error \(body:TimeoutError\)/,
+  );
+  assert.match(bodyStage, /f5-grpc: the body of the answer could not be read/);
+  assert.match(
+    check(undefined, (p) => (p.steps["f500-rest"].second = { status: 200, transportError: "x" })),
+    /framing-small#f500-rest \(second\): the framing summary records a transport error/,
+  );
   assert.match(
     check(undefined, (p) => (p.steps["f5-rest"] = { transport: "rest", status: 0 })),
     /f5-rest: status 0 without a transport error/,
   );
   assert.match(
-    check(
-      undefined,
-      (p) =>
-        (p.steps["f5-grpc"] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }),
-    ),
-    /f5-grpc: the body of the answer could not be read/,
+    check(undefined, (p) => (p.steps["f5-rest"] = { transport: "rest", results: 5 })),
+    /f5-rest: neither a numeric status nor a numeric gRPC code/,
+  );
+  assert.match(
+    check(undefined, (p) => (p.steps["f5-rest"] = null)),
+    /f5-rest: neither a numeric status/,
   );
 });
 

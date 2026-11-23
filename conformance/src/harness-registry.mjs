@@ -824,51 +824,86 @@ export function bodyReadStageProblems(fixture, corpus = {}) {
   return problems;
 }
 
+/** The step ids of an answer slot, sorted. */
+const slotIds = (slot) =>
+  Object.keys(slot !== null && typeof slot === "object" ? slot : {}).toSorted();
+
 /**
- * The fixture with each compact framing program of the pipeline lane answered by its summary. A
- * compact row (compactFramingVersion 1, fs-ent-pipeline/framing-summary.mjs) keeps no status; the
- * summary of the same corpus program (the same corpusDigest) records the status or gRPC code of
- * each step and of its second answer. Each row of the fixture, in `steps` and `second`, is replaced
- * by the summary's entry of its own name, or by nothing when the summary has none. A compact
- * program the summary does not cover is left as it is, so the condition refuses it.
+ * The fixture with each compact framing program of the pipeline lane answered by its summary, and
+ * why a compact program is not. A compact row (compactFramingVersion 1,
+ * fs-ent-pipeline/framing-summary.mjs) keeps no status; the summary written from the same recording
+ * records the status or gRPC code of each step and of its second answer. A compact program is
+ * answered only when the summary lists the program with the same corpusDigest and its entries
+ * match the compact rows one to one (the same step ids in `steps`, and the steps with a second
+ * answer are exactly those of `second`). An entry that records a transport error is a problem; every
+ * other answer is then judged as a full row is. A compact program that is not answered keeps its
+ * compact rows, which the condition refuses.
  */
 export function withFramingStatuses(fixture, summary) {
+  const problems = [];
   const programs = Object.entries(fixture?.programs ?? {}).map(([id, program]) => {
+    if (program?.compactFramingVersion !== 1) return [id, program];
     const kept =
       summary?.version === 1 && Object.hasOwn(summary.programs ?? {}, id)
         ? summary.programs[id]
         : undefined;
-    if (
-      program?.compactFramingVersion !== 1 ||
-      typeof program.corpusDigest !== "string" ||
-      kept?.corpusDigest !== program.corpusDigest
-    )
+    if (kept === undefined) {
+      problems.push(`${id}: the framing summary has no entry for this program`);
       return [id, program];
-    const entry = (stepId) =>
-      Object.hasOwn(kept.steps ?? {}, stepId) ? kept.steps[stepId] : undefined;
+    }
+    if (typeof program.corpusDigest !== "string" || kept?.corpusDigest !== program.corpusDigest) {
+      problems.push(`${id}: the framing summary is of another corpus program`);
+      return [id, program];
+    }
+    const entries = kept.steps !== null && typeof kept.steps === "object" ? kept.steps : {};
+    const withSecond = Object.keys(entries).filter(
+      (stepId) =>
+        entries[stepId] !== null &&
+        typeof entries[stepId] === "object" &&
+        Object.hasOwn(entries[stepId], "second"),
+    );
+    if (
+      slotIds(program.steps).join("\n") !== slotIds(entries).join("\n") ||
+      slotIds(program.second).join("\n") !== withSecond.toSorted().join("\n")
+    ) {
+      problems.push(`${id}: the framing summary does not answer the compact rows one to one`);
+      return [id, program];
+    }
     const { compactFramingVersion: _, ...rest } = program;
-    const answers = (slot, pick) =>
+    // The rows keep the fixture's order, which the -1 proof reads.
+    const answers = (slotName, pick) =>
       Object.fromEntries(
-        Object.keys(program[slot] ?? {}).map((stepId) => [stepId, pick(entry(stepId))]),
+        Object.keys(program[slotName] ?? {}).map((stepId) => {
+          const answer = pick(entries[stepId]);
+          if (
+            answer !== null &&
+            typeof answer === "object" &&
+            Object.hasOwn(answer, "transportError")
+          )
+            problems.push(
+              `${id}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: the framing summary records a transport error (${answer.transportError})`,
+            );
+          return [stepId, answer];
+        }),
       );
     return [
       id,
       {
         ...rest,
-        steps: answers("steps", (row) => row),
+        steps: answers("steps", (entry) => entry),
         ...(Object.hasOwn(program, "second")
-          ? { second: answers("second", (row) => row?.second) }
+          ? { second: answers("second", (entry) => entry.second) }
           : {}),
       },
     ];
   });
-  return { ...fixture, programs: Object.fromEntries(programs) };
+  return { fixture: { ...fixture, programs: Object.fromEntries(programs) }, problems };
 }
 
 /**
  * bodyReadStageProblems for the pipeline lanes: the compact framing rows are judged by the answers
- * the framing summary recorded for them (withFramingStatuses). A summary that cannot be read is a
- * problem.
+ * the framing summary recorded for them (withFramingStatuses), and every reason a compact program
+ * is not answered is a problem too. A summary that cannot be read is a problem.
  */
 export function pipelineBodyReadStageProblems(
   fixture,
@@ -881,7 +916,8 @@ export function pipelineBodyReadStageProblems(
   } catch (error) {
     return [`the framing summary cannot be read: ${error.message}`];
   }
-  return bodyReadStageProblems(withFramingStatuses(fixture, summary), corpus);
+  const answered = withFramingStatuses(fixture, summary);
+  return [...answered.problems, ...bodyReadStageProblems(answered.fixture, corpus)];
 }
 
 /**
