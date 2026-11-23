@@ -1150,6 +1150,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    // Global-pool requests can overlap. Tests that count or exhaust permits need exclusive access.
+    pub(super) static REST_ADMISSION_LOCK: tokio::sync::RwLock<()> =
+        tokio::sync::RwLock::const_new(());
 
     /// FS-QUERY-INDEX request-shape/rest: a trailing comma is accepted, a truncated body and a
     /// bare word are refused in the front end's words, inside the result array of a streaming
@@ -1733,6 +1736,7 @@ mod tests {
         /// `WebChannel` path must not change how many requests are admitted.
         #[test]
         fn the_admitted_count_is_unchanged() {
+            let _guard = super::REST_ADMISSION_LOCK.blocking_write();
             assert_eq!(MAX_BLOCKING_REST_REQUESTS, 64);
             assert_eq!(
                 rest_work_limiter().available_permits(),
@@ -2247,6 +2251,7 @@ mod tests {
 
 #[cfg(test)]
 mod document_not_found_layout_tests {
+    use super::tests::REST_ADMISSION_LOCK;
     use super::*;
     use fireemu_core_firestore::index::{IndexSet, IndexValidationPolicy, PlanningContext};
     use fireemu_core_session::clock::VirtualClock;
@@ -3021,6 +3026,7 @@ mod document_not_found_layout_tests {
         const COLLECTION: &str = "/v1/projects/demo-app/databases/(default)/documents/cases";
         const DOCUMENT: &str = "/v1/projects/demo-app/databases/(default)/documents/cases/owned";
         const COMMIT: &[u8] = br#"{"writes":[{"update":{"name":"projects/demo-app/databases/(default)/documents/cases/owned","fields":{"allowed":{"booleanValue":true}}}}]}"#;
+        let _guard = REST_ADMISSION_LOCK.read().await;
         for production in [true, false] {
             for limits in [true, false] {
                 let state = state(production, limits);
@@ -3100,6 +3106,7 @@ mod document_not_found_layout_tests {
     #[tokio::test]
     async fn document_success_wire_masks_auto_ids_encoded_paths_and_query_create_are_selected() {
         const COLLECTION: &str = "/v1/projects/demo-app/databases/(default)/documents/cases";
+        let _guard = REST_ADMISSION_LOCK.read().await;
         for production in [true, false] {
             for limits in [true, false] {
                 let state = state(production, limits);
@@ -3172,6 +3179,7 @@ mod document_not_found_layout_tests {
     async fn document_success_wire_non_document_successes_stay_compact() {
         const COLLECTION: &str = "/v1/projects/demo-app/databases/(default)/documents/cases";
         const ROOT: &str = "/v1/projects/demo-app/databases/(default)/documents";
+        let _guard = REST_ADMISSION_LOCK.read().await;
         for production in [false, true] {
             for limits in [false, true] {
                 let expected_state = state(production, limits);
@@ -3223,6 +3231,7 @@ mod document_not_found_layout_tests {
     async fn rest_json_charset_follows_policy_through_document_lifecycle() {
         const COLLECTION: &str = "/v1/projects/demo-app/databases/(default)/documents/cases";
         const DOCUMENT: &str = "/v1/projects/demo-app/databases/(default)/documents/cases/owned";
+        let _guard = REST_ADMISSION_LOCK.read().await;
         for production in [true, false] {
             for enforce_limits in [false, true] {
                 let state = state(production, enforce_limits);
@@ -3261,6 +3270,7 @@ mod document_not_found_layout_tests {
 
     #[tokio::test]
     async fn rest_json_charset_follows_policy_on_early_parse_rejection() {
+        let _guard = REST_ADMISSION_LOCK.read().await;
         let path = "/v1/projects/demo-app/databases/(default)/documents:commit";
         let expected = super::request_body(b"not json", path, true).unwrap_err();
         let expected_bytes = serde_json::to_vec(&expected.body).unwrap();
@@ -3277,6 +3287,7 @@ mod document_not_found_layout_tests {
 
     #[tokio::test]
     async fn rest_json_charset_follows_policy_on_body_read_rejection() {
+        let _guard = REST_ADMISSION_LOCK.read().await;
         let expected = serde_json::to_vec(&body_read_deadline_exceeded().body).unwrap();
         for production in [true, false] {
             for enforce_limits in [false, true] {
@@ -3300,6 +3311,7 @@ mod document_not_found_layout_tests {
 
     #[tokio::test]
     async fn rest_json_charset_follows_policy_on_admission_refusals() {
+        let _guard = REST_ADMISSION_LOCK.write().await;
         let expected = serde_json::to_vec(&too_many_concurrent_requests().body).unwrap();
         for (limiter, units) in [
             (rest_work_limiter(), MAX_BLOCKING_REST_REQUESTS),
@@ -3394,6 +3406,7 @@ mod document_not_found_layout_tests {
     async fn a_held_strict_commit_is_not_turned_away_at_the_pool_while_it_waits() {
         use fireemu_proto_firestore::google::firestore::v1 as pb;
         const DATABASE: &str = "projects/demo-app/databases/(default)";
+        let _guard = REST_ADMISSION_LOCK.write().await;
         let document = format!("{DATABASE}/documents/contended/doc");
         let gateway = crate::gateway::Gateway {
             enforce_limits: true,
@@ -3611,6 +3624,7 @@ mod document_not_found_layout_tests {
 
     #[tokio::test]
     async fn production_document_404_has_literal_wire_layout_and_policy_controls() {
+        let _guard = REST_ADMISSION_LOCK.read().await;
         for enforce_limits in [false, true] {
             for production in [true, false] {
                 let (headers, bytes) = wire(state(production, enforce_limits), "GET", PATH).await;
