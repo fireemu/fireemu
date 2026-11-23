@@ -504,7 +504,10 @@ const TODAY_EXPORTS = {
 const TREE_INPUTS = {
   data: readConformanceData,
   exported: (module, name) => {
-    const value = Object.hasOwn(TODAY_EXPORTS, module) ? TODAY_EXPORTS[module][name] : undefined;
+    const value =
+      Object.hasOwn(TODAY_EXPORTS, module) && Object.hasOwn(TODAY_EXPORTS[module], name)
+        ? TODAY_EXPORTS[module][name]
+        : undefined;
     if (value === undefined) throw new Error(`${module}: no export ${name} is registered`);
     return value;
   },
@@ -634,7 +637,8 @@ const verifiedStates = new Map();
 export function checkVerifiedFixtureDigest(name, lane, saved, options = {}) {
   const status = checkFixtureDigest(name, lane, saved, options);
   if (status.state !== "lineage") return status;
-  const cacheable = options.lineage === undefined && options.verify === undefined;
+  const cacheable =
+    options.lineage === undefined && options.verify === undefined && options.shallow === undefined;
   const key = `${name}/${saved}/${status.current}`;
   if (cacheable && verifiedStates.has(key)) return verifiedStates.get(key);
   const verify =
@@ -642,7 +646,11 @@ export function checkVerifiedFixtureDigest(name, lane, saved, options = {}) {
     ((hop) =>
       lineageProblems(
         { version: 1, hops: [hop] },
-        { lanes: { [name]: lane }, reader: gitReader, shallow: isShallowCheckout() },
+        {
+          lanes: { [name]: lane },
+          reader: gitReader,
+          shallow: options.shallow ?? isShallowCheckout(),
+        },
       ));
   const hops = (options.lineage ?? loadLineage().hops).filter(
     (hop) => hop.lane === name && hop.from === saved && hop.to === status.current,
@@ -723,7 +731,8 @@ function lookupPath(value, path) {
 /**
  * Why a status -1 row is a step whose request could not be built, which the fixture itself shows:
  * `unresolved` names an earlier step of the same slot (an own key, never an inherited name), and
- * that predecessor either is itself such a row, or is a REST answer (or a failed fetch) that
+ * that predecessor is a REST answer (a failed fetch and an earlier such row record no body, so they
+ * pass too) (or a failed fetch) that
  * recorded nothing at the referenced path, so the reference could not resolve and the request
  * never reached fetch. `dependencyTransient` is the recorder's own flag for the predecessor.
  */
@@ -737,7 +746,6 @@ function unresolvedProblem(stepId, row, slot) {
   const predecessor = slot[dependency];
   if (row.dependencyTransient !== isTransient(predecessor))
     return `status -1 whose dependencyTransient is not that of step ${dependency}`;
-  if (predecessor?.status === -1) return undefined;
   if (typeof predecessor?.status !== "number")
     return `status -1 after step ${dependency}, which is not a REST answer`;
   const found = lookupPath(predecessor.body, path);

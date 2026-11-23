@@ -8,3 +8,5 @@ ui-debug.log
 database-debug.log
 pubsub-debug.log
 .firebase/
+# Unpacked revisions of src that harness-registry.mjs imports to rebuild a hop's inputs; removed on exit.
+.lineage-*/

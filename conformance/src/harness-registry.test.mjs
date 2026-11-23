@@ -1389,6 +1389,13 @@ test("the body-read condition accepts a -1 row only when the fixture proves its 
   assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
   // Not a string, even when its string form would match (an array of one string).
   assert.deepEqual(check({ unresolved: ["step dep recorded nothing at x"] }), [`p#row: ${none}`]);
+  // The whole message is the recorder's: text before it or after a line break is not.
+  assert.deepEqual(check({ unresolved: "Error: step dep recorded nothing at nextPageToken" }), [
+    `p#row: ${none}`,
+  ]);
+  assert.deepEqual(check({ unresolved: "step dep recorded nothing at nextPageToken\nmore" }), [
+    `p#row: ${none}`,
+  ]);
   // The predecessor must be an earlier step of the slot, by its own key.
   const notEarlier = (name) =>
     `p#row: status -1 names ${name}, which is not an earlier step of its slot`;
@@ -1908,6 +1915,23 @@ test("a hop is refused when the revision's export is not the value the recorded 
   );
 });
 
+test("this checkout's exports are those registered for the modules a lane reads, by own name only", () => {
+  const read = (module, name) => extraOf({ extra: ({ exported }) => exported(module, name) });
+  assert.deepEqual(read("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"), [
+    "{project}.firebaseapp.com",
+    "{project}.web.app",
+  ]);
+  for (const [module, name] of [
+    ["auth-account/authorized-domains.mjs", "NOPE"],
+    ["auth-account/authorized-domains.mjs", "toString"],
+    ["auth-account/authorized-domains.mjs", "constructor"],
+    ["no/such/module.mjs", "AUTHORIZED_DOMAINS"],
+    ["toString", "AUTHORIZED_DOMAINS"],
+    ["__proto__", "x"],
+  ])
+    assert.throws(() => read(module, name), /no export .* is registered/, `${module} ${name}`);
+});
+
 test("the installed SDK versions cannot be read at a revision, so such a lane's hop is refused", () => {
   const lane = { ...EXPORT_LANE, extra: ({ sdkVersions }) => JSON.stringify(sdkVersions()) };
   const found = lineageProblems(
@@ -2053,6 +2077,16 @@ test("the real lineage hop of fs-query-index passes the verification, and the sa
   assert.equal(
     checkFixtureDigest("fs-query-index", lane, saved, { lineage: hops }).state,
     "lineage",
+  );
+});
+
+test("a lineage digest is stale in a shallow clone, where no hop can be verified", () => {
+  const lane = HARNESS_LANES["fs-query-index"];
+  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  assert.equal(
+    checkVerifiedFixtureDigest("fs-query-index", lane, saved, { shallow: true }).state,
+    "stale",
   );
 });
 
