@@ -40,6 +40,7 @@ import {
   loadLineage,
   proposeUnreachedHops,
   rawDigest,
+  readPinnedFramingSummary,
   recordedDigests,
   releaseLineageProblems,
   registryPaths,
@@ -1709,17 +1710,32 @@ test("the approved change is what git holds: the same diff hash, and one input c
 
 const readConformanceJson = (path) => JSON.parse(readFileSync(join(CONFORMANCE_DIR, path), "utf8"));
 const FRAMING_SMALL = "fs-ent-pipeline/o8a/framing-small";
+const PIPELINE_CONDITION = UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"];
+/** The pipeline condition for `lane` with the given summary (and compact list) in place of the pinned one. */
+const pipelineProblems = (
+  fixture,
+  summary,
+  { lane = "fs-ent-pipeline", compact, corpus = {} } = {},
+) =>
+  pipelineBodyReadStageProblems(fixture, corpus, {
+    lane,
+    condition: compact ? { compactPrograms: { [lane]: compact } } : PIPELINE_CONDITION,
+    readSummary: typeof summary === "function" ? summary : () => summary,
+  });
 
 test("the pipeline condition holds for both recorded pipeline fixtures, with the compact rows answered by the framing summary", () => {
   const fixture = readConformanceJson("fs-ent-pipeline-production.json");
   const summary = readConformanceJson("fs-ent-pipeline-framing.json");
-  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}), []);
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}, { lane: "fs-ent-pipeline" }), []);
+  assert.deepEqual(pipelineProblems(fixture, summary), []);
   assert.deepEqual(
-    pipelineBodyReadStageProblems(fixture, {}, () => summary),
-    [],
-  );
-  assert.deepEqual(
-    pipelineBodyReadStageProblems(readConformanceJson("fs-ent-pipeline-regex-production.json"), {}),
+    pipelineBodyReadStageProblems(
+      readConformanceJson("fs-ent-pipeline-regex-production.json"),
+      {},
+      {
+        lane: "fs-ent-pipeline-regex",
+      },
+    ),
     [],
   );
   // Without the summary the compact rows prove nothing: each one, and each program's extra key, is
@@ -1731,7 +1747,11 @@ test("the pipeline condition holds for both recorded pipeline fixtures, with the
     2,
   );
   // The summary answers every compact row with a numeric status or gRPC code, and nothing else.
-  const { fixture: expanded, problems } = withFramingStatuses(fixture, summary);
+  const { fixture: expanded, problems } = withFramingStatuses(
+    fixture,
+    summary,
+    PIPELINE_CONDITION.compactPrograms["fs-ent-pipeline"],
+  );
   assert.deepEqual(problems, []);
   const rows = expanded.programs[FRAMING_SMALL];
   assert.equal(Object.hasOwn(rows, "compactFramingVersion"), false);
@@ -1755,7 +1775,7 @@ test("a compact framing program counts only when the summary of the same recordi
     const s = structuredClone(summary);
     changeFixture(f.programs[FRAMING_SMALL], f);
     changeSummary(s.programs[FRAMING_SMALL], s);
-    return pipelineBodyReadStageProblems(f, {}, () => s)
+    return pipelineProblems(f, s)
       .filter((problem) => problem.startsWith(FRAMING_SMALL))
       .join("\n");
   };
@@ -1802,40 +1822,39 @@ test("a compact framing program counts only when the summary of the same recordi
     );
     unanswered(found);
   }
-  // A summary entry is judged as a full row: a transport error of either stage, in either slot, is
-  // a problem, and so is an entry without a numeric status or gRPC code.
+  // A summary entry counts only as an answered row: a numeric status other than 0 and -1, or a
+  // numeric gRPC code, and no transport error or unresolved dependency, in either slot.
+  const notAnswered = (step) =>
+    new RegExp(`framing-small#${step}: the framing summary entry is not an answered row`);
+  for (const [step, entry] of [
+    ["f5-rest", { transport: "rest", status: 0, transportError: "ECONNRESET" }],
+    ["f5-grpc", { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }],
+    ["f5-rest", { status: 200, transportError: "x" }],
+    ["f5-rest", { status: 0 }],
+    ["f5-rest", { status: -1, unresolved: "step a recorded nothing at b" }],
+    ["f5-rest", { status: 200, unresolved: "x" }],
+    ["f5-rest", { transport: "rest", results: 5 }],
+    ["f5-rest", { status: "200" }],
+    ["f5-rest", null],
+  ])
+    assert.match(
+      check(undefined, (p) => (p.steps[step] = entry)),
+      notAnswered(step),
+      JSON.stringify(entry),
+    );
   assert.match(
-    check(
-      undefined,
-      (p) =>
-        (p.steps["f5-rest"] = { transport: "rest", status: 0, transportError: "TimeoutError" }),
-    ),
-    /framing-small#f5-rest: the framing summary records a transport error \(TimeoutError\)/,
+    check(undefined, (p) => (p.steps["f500-rest"].second = { status: 0, transportError: "x" })),
+    /framing-small#f500-rest \(second\): the framing summary entry is not an answered row/,
   );
-  const bodyStage = check(
-    undefined,
-    (p) => (p.steps["f5-grpc"] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }),
+  // A gRPC code of any number is an answer, as recorded.
+  assert.equal(
+    check(undefined, (p) => (p.steps["f5-grpc"] = { code: 13 })),
+    "",
   );
+  // A key the summary program should not have.
   assert.match(
-    bodyStage,
-    /f5-grpc: the framing summary records a transport error \(body:TimeoutError\)/,
-  );
-  assert.match(bodyStage, /f5-grpc: the body of the answer could not be read/);
-  assert.match(
-    check(undefined, (p) => (p.steps["f500-rest"].second = { status: 200, transportError: "x" })),
-    /framing-small#f500-rest \(second\): the framing summary records a transport error/,
-  );
-  assert.match(
-    check(undefined, (p) => (p.steps["f5-rest"] = { transport: "rest", status: 0 })),
-    /f5-rest: status 0 without a transport error/,
-  );
-  assert.match(
-    check(undefined, (p) => (p.steps["f5-rest"] = { transport: "rest", results: 5 })),
-    /f5-rest: neither a numeric status nor a numeric gRPC code/,
-  );
-  assert.match(
-    check(undefined, (p) => (p.steps["f5-rest"] = null)),
-    /f5-rest: neither a numeric status/,
+    check(undefined, (p) => (p.third = {})),
+    /framing-small: the framing summary has unexpected keys third/,
   );
 });
 
@@ -1873,11 +1892,9 @@ test("every combination of compact version, summary, corpus digest and answer in
                   : {},
               };
               const read = version === 1 && summaryVersion === 1 && listed && digest === "match";
-              const found = pipelineBodyReadStageProblems(
-                { programs: { p: program } },
-                {},
-                () => summary,
-              );
+              const found = pipelineProblems({ programs: { p: program } }, summary, {
+                compact: ["p"],
+              });
               const label = JSON.stringify({
                 version,
                 summaryVersion,
@@ -1904,10 +1921,10 @@ test("the pipeline condition proves a -1 row from the corpus it is given, as the
       p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
     },
   };
-  const summary = () => ({ version: 1, programs: {} });
-  assert.deepEqual(pipelineBodyReadStageProblems(fixture, { p: program }, summary), []);
+  const summary = { version: 1, programs: {} };
+  assert.deepEqual(pipelineProblems(fixture, summary, { compact: [], corpus: { p: program } }), []);
   assert.match(
-    pipelineBodyReadStageProblems(fixture, {}, summary).join("\n"),
+    pipelineProblems(fixture, summary, { compact: [] }).join("\n"),
     /does not reference/,
   );
 });
@@ -1916,14 +1933,229 @@ test("a pipeline condition whose framing summary cannot be read is a problem, no
   const fixture = readConformanceJson("fs-ent-pipeline-production.json");
   for (const summary of [undefined, null, 7, "x", {}, { version: 1 }])
     assert.match(
-      pipelineBodyReadStageProblems(fixture, {}, () => summary).join("\n"),
+      pipelineProblems(fixture, summary).join("\n"),
       /unexpected key compactFramingVersion/,
     );
   assert.deepEqual(
-    pipelineBodyReadStageProblems(fixture, {}, () => {
+    pipelineProblems(fixture, () => {
       throw new Error("gone");
     }),
     ["the framing summary cannot be read: gone"],
+  );
+});
+
+test("the framing summary is read from the HEAD blob, must be the working tree's bytes and hash to the pin", () => {
+  const path = "fs-ent-pipeline-framing.json";
+  const bytes = readFileSync(join(CONFORMANCE_DIR, path), "utf8");
+  const pin = PIPELINE_CONDITION.summarySha256;
+  assert.equal(sha(bytes), pin);
+  assert.deepEqual(readPinnedFramingSummary(pin), JSON.parse(bytes));
+  const read = (committed, worktree = committed) =>
+    readPinnedFramingSummary(pin, {
+      committed: (p) => (assert.equal(p, path), committed),
+      worktree: (p) => (assert.equal(p, path), worktree),
+    });
+  assert.deepEqual(read(bytes), JSON.parse(bytes));
+  // The review's same-shape summary: one status changed, every id and count kept.
+  const altered = bytes.replace('"status": 200', '"status": 418');
+  assert.notEqual(altered, bytes);
+  assert.throws(() => read(altered), /is not the recorded summary/);
+  // A working tree copy that differs from HEAD, whichever side holds the recorded bytes.
+  assert.throws(() => read(bytes, altered), /differs between HEAD and the working tree/);
+  assert.throws(() => read(altered, bytes), /differs between HEAD and the working tree/);
+});
+
+/** The two pipeline hops, verified by the release verifier with a changed fixture or summary. */
+function pipelineHopProblems({ fixtures = {}, summary } = {}) {
+  const lineage = loadLineage();
+  const hops = lineage.hops.filter(
+    (hop) => hop.condition === "fs-ent-pipeline-body-read-unreached",
+  );
+  assert.equal(hops.length, 2);
+  const readSummary =
+    summary === undefined
+      ? undefined
+      : () =>
+          readPinnedFramingSummary(PIPELINE_CONDITION.summarySha256, {
+            committed: () => summary,
+            worktree: () => summary,
+          });
+  const conditions = {
+    ...UNREACHED_CONDITIONS,
+    "fs-ent-pipeline-body-read-unreached": {
+      ...PIPELINE_CONDITION,
+      problems: (fixture, corpus, options) =>
+        pipelineBodyReadStageProblems(fixture, corpus, { ...options, readSummary }),
+    },
+  };
+  const inputs = {
+    conditions,
+    fixtureOf: (lane) => fixtures[lane.fixture] ?? readConformanceJson(lane.fixture),
+  };
+  const verified = { ...lineage, hops };
+  const problems = releaseLineageProblems(verified, { shallow: false, ...inputs });
+  // The lane runner's snapshot runs the same verifier once, and reads every row stale on a problem.
+  const snapshot = createLineageSnapshot(
+    () => verified,
+    (l) => releaseLineageProblems(l, { shallow: false, ...inputs }),
+  );
+  const states = ["fs-ent-pipeline", "fs-ent-pipeline-regex"].map(
+    (name) =>
+      checkVerifiedFixtureDigest(name, HARNESS_LANES[name], hops[0].from, { snapshot }).state,
+  );
+  return { problems, states };
+}
+
+test("the review's reproductions are refused by the release verifier and the lane runner", () => {
+  if (isShallowCheckout()) return;
+  const clean = pipelineHopProblems();
+  assert.deepEqual(clean, { problems: [], states: ["lineage", "lineage"] });
+  const production = readConformanceJson("fs-ent-pipeline-production.json");
+  const regex = readConformanceJson("fs-ent-pipeline-regex-production.json");
+  const summaryText = readFileSync(join(CONFORMANCE_DIR, "fs-ent-pipeline-framing.json"), "utf8");
+  const summaryJson = JSON.parse(summaryText);
+  const withSummary = (change) => {
+    const s = structuredClone(summaryJson);
+    change(s.programs[FRAMING_SMALL]);
+    return JSON.stringify(s);
+  };
+  const withFixture = (change, fixture = production) => {
+    const f = structuredClone(fixture);
+    change(f);
+    return f;
+  };
+  const refused = (label, run, pattern) => {
+    const { problems, states } = run;
+    assert.match(problems.join("\n"), pattern, label);
+    assert.deepEqual(states, ["stale", "stale"], label);
+  };
+  // Must 1: a summary-only extra in each slot, a fixture-only missing row, a compact program in the
+  // regex fixture, and a listed compact program the fixture lacks.
+  refused(
+    "summary extra step",
+    pipelineHopProblems({
+      summary: withSummary((p) => (p.steps["made-up-step"] = p.steps["f5-rest"])),
+    }),
+    /is not the recorded summary/,
+  );
+  const unpinned = (change) => {
+    // The same change, past the byte pin: what the closed matching refuses on its own.
+    const s = structuredClone(summaryJson);
+    change(s.programs[FRAMING_SMALL]);
+    return pipelineProblems(production, s).join("\n");
+  };
+  assert.match(
+    unpinned((p) => (p.steps["made-up-step"] = p.steps["f5-rest"])),
+    /not answer the compact rows one to one/,
+  );
+  assert.match(
+    unpinned((p) => (p.steps["f5-rest"].second = p.steps["f5-rest"])),
+    /not answer the compact rows one to one/,
+  );
+  refused(
+    "fixture missing row",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture(
+          (f) => delete f.programs[FRAMING_SMALL].steps["f5-rest"],
+        ),
+      },
+    }),
+    /not answer the compact rows one to one/,
+  );
+  refused(
+    "compact program copied into the regex fixture",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-regex-production.json": withFixture(
+          (f) => (f.programs[FRAMING_SMALL] = production.programs[FRAMING_SMALL]),
+          regex,
+        ),
+      },
+    }),
+    /framing-small: a compact program the condition does not name/,
+  );
+  refused(
+    "listed compact program missing",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture(
+          (f) => delete f.programs["fs-ent-pipeline/o8a/framing-large"],
+        ),
+      },
+    }),
+    /framing-large: the condition names a compact program the fixture does not have/,
+  );
+  // Must 2: a transport error in the summary (past the pin, and as bytes that fail the pin).
+  assert.match(
+    unpinned((p) => (p.steps["f5-rest"] = { status: 0, transportError: "ECONNRESET" })),
+    /f5-rest: the framing summary entry is not an answered row/,
+  );
+  // Must 3: same-shape summary bytes with one status changed.
+  refused(
+    "altered summary bytes",
+    pipelineHopProblems({ summary: summaryText.replace('"status": 200', '"status": 418') }),
+    /is not the recorded summary/,
+  );
+  // Must 4: a compact row that carries a failure, or an unproven -1, is judged as a full row.
+  refused(
+    "compact row with a body-stage error",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture((f) =>
+          Object.assign(f.programs[FRAMING_SMALL].steps["f5-rest"], {
+            status: 0,
+            transportError: `${BODY_STAGE_PREFIX}TimeoutError`,
+          }),
+        ),
+      },
+    }),
+    /framing-small#f5-rest: the body of the answer could not be read/,
+  );
+  refused(
+    "compact row with an unproven -1",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture((f) =>
+          Object.assign(f.programs[FRAMING_SMALL].steps["f5-grpc"], {
+            status: -1,
+            unresolved: "step f5-rest recorded nothing at nextPageToken",
+            dependencyTransient: false,
+          }),
+        ),
+      },
+    }),
+    /framing-small#f5-grpc: status -1 names f5-rest/,
+  );
+  // Each field of an answer keeps a row from being replaced.
+  for (const key of ["status", "code", "transportError", "unresolved", "dependencyTransient"])
+    assert.match(
+      pipelineProblems(
+        withFixture((f) => (f.programs[FRAMING_SMALL].steps["f5-rest"][key] = "x")),
+        summaryJson,
+      ).join("\n"),
+      /framing-small#f5-rest: /,
+      key,
+    );
+});
+
+test("the condition names each pipeline lane's compact programs and pins the summary of the recording", () => {
+  assert.deepEqual(PIPELINE_CONDITION.compactPrograms, {
+    "fs-ent-pipeline": ["fs-ent-pipeline/o8a/framing-small", "fs-ent-pipeline/o8a/framing-large"],
+    "fs-ent-pipeline-regex": [],
+  });
+  const recorded = JSON.parse(
+    readFileSync(join(REPO_ROOT, "spec/compatibility/closure/record-digests.json"), "utf8"),
+  ).records["conformance/fs-ent-pipeline-framing.json"];
+  assert.equal(PIPELINE_CONDITION.summarySha256, recorded);
+  // A lane the condition has no list for is refused.
+  assert.deepEqual(
+    pipelineBodyReadStageProblems({ programs: {} }, {}, { lane: "fs-query-index" }),
+    ["lane fs-query-index has no list of compact programs in the condition"],
+  );
+  assert.match(
+    pipelineBodyReadStageProblems({ programs: {} }, {}, { lane: "__proto__" })[0],
+    /has no list/,
   );
 });
 

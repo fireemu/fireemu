@@ -827,22 +827,54 @@ export function bodyReadStageProblems(fixture, corpus = {}) {
 /** The step ids of an answer slot, sorted. */
 const slotIds = (slot) =>
   Object.keys(slot !== null && typeof slot === "object" ? slot : {}).toSorted();
+const isObject = (value) => value !== null && typeof value === "object";
+
+/** The fields that make a fixture row an answer of its own, so it is never a compact row. */
+const ANSWER_FIELDS = ["status", "code", "transportError", "unresolved", "dependencyTransient"];
+/** A compact framing row: an object with none of the fields of an answer. */
+const isCompactRow = (row) =>
+  isObject(row) && !ANSWER_FIELDS.some((key) => Object.hasOwn(row, key));
+/**
+ * A framing summary entry that records an answered row: a numeric status that is neither 0 nor -1,
+ * or a numeric gRPC code, and no transport error or unresolved dependency.
+ */
+const isAnsweredEntry = (entry) =>
+  isObject(entry) &&
+  !Object.hasOwn(entry, "transportError") &&
+  !Object.hasOwn(entry, "unresolved") &&
+  ((typeof entry.status === "number" && entry.status !== 0 && entry.status !== -1) ||
+    typeof entry.code === "number");
 
 /**
  * The fixture with each compact framing program of the pipeline lane answered by its summary, and
- * why a compact program is not. A compact row (compactFramingVersion 1,
- * fs-ent-pipeline/framing-summary.mjs) keeps no status; the summary written from the same recording
- * records the status or gRPC code of each step and of its second answer. A compact program is
- * answered only when the summary lists the program with the same corpusDigest and its entries
- * match the compact rows one to one (the same step ids in `steps`, and the steps with a second
- * answer are exactly those of `second`). An entry that records a transport error is a problem; every
- * other answer is then judged as a full row is. A compact program that is not answered keeps its
- * compact rows, which the condition refuses.
+ * why it is not. `compact` is the closed list of the lane's compact program ids (the condition
+ * names it): a compact program outside it, or a listed program that is not compact, is a problem.
+ * A listed program (compactFramingVersion 1, fs-ent-pipeline/framing-summary.mjs) is answered only
+ * when the summary lists it with the same corpusDigest and the answer ids match in both directions
+ * (`steps` the summary's steps, `second` the steps whose summary entry has a second answer). Each
+ * summary entry used must be an answered row. Only a compact row is replaced by its entry; a row
+ * with any field of an answer stays as it is and is judged as a full row. A compact program that is
+ * not answered keeps its rows, which the condition refuses.
  */
-export function withFramingStatuses(fixture, summary) {
+export function withFramingStatuses(fixture, summary, compact = []) {
   const problems = [];
-  const programs = Object.entries(fixture?.programs ?? {}).map(([id, program]) => {
-    if (program?.compactFramingVersion !== 1) return [id, program];
+  const programs = Object.entries(fixture?.programs ?? {});
+  for (const id of compact)
+    if (
+      !programs.some(
+        ([found, program]) =>
+          found === id && isObject(program) && Object.hasOwn(program, "compactFramingVersion"),
+      )
+    )
+      problems.push(`${id}: the condition names a compact program the fixture does not have`);
+  const answered = programs.map(([id, program]) => {
+    if (!isObject(program) || !Object.hasOwn(program, "compactFramingVersion"))
+      return [id, program];
+    if (!compact.includes(id)) {
+      problems.push(`${id}: a compact program the condition does not name`);
+      return [id, program];
+    }
+    if (program.compactFramingVersion !== 1) return [id, program];
     const kept =
       summary?.version === 1 && Object.hasOwn(summary.programs ?? {}, id)
         ? summary.programs[id]
@@ -855,12 +887,14 @@ export function withFramingStatuses(fixture, summary) {
       problems.push(`${id}: the framing summary is of another corpus program`);
       return [id, program];
     }
-    const entries = kept.steps !== null && typeof kept.steps === "object" ? kept.steps : {};
+    const extraKeys = Object.keys(kept).filter((key) => key !== "corpusDigest" && key !== "steps");
+    if (extraKeys.length > 0) {
+      problems.push(`${id}: the framing summary has unexpected keys ${extraKeys}`);
+      return [id, program];
+    }
+    const entries = isObject(kept.steps) ? kept.steps : {};
     const withSecond = Object.keys(entries).filter(
-      (stepId) =>
-        entries[stepId] !== null &&
-        typeof entries[stepId] === "object" &&
-        Object.hasOwn(entries[stepId], "second"),
+      (stepId) => isObject(entries[stepId]) && Object.hasOwn(entries[stepId], "second"),
     );
     if (
       slotIds(program.steps).join("\n") !== slotIds(entries).join("\n") ||
@@ -873,17 +907,14 @@ export function withFramingStatuses(fixture, summary) {
     // The rows keep the fixture's order, which the -1 proof reads.
     const answers = (slotName, pick) =>
       Object.fromEntries(
-        Object.keys(program[slotName] ?? {}).map((stepId) => {
-          const answer = pick(entries[stepId]);
-          if (
-            answer !== null &&
-            typeof answer === "object" &&
-            Object.hasOwn(answer, "transportError")
-          )
+        Object.entries(program[slotName] ?? {}).map(([stepId, row]) => {
+          if (!isCompactRow(row)) return [stepId, row];
+          const entry = pick(entries[stepId]);
+          if (!isAnsweredEntry(entry))
             problems.push(
-              `${id}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: the framing summary records a transport error (${answer.transportError})`,
+              `${id}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: the framing summary entry is not an answered row`,
             );
-          return [stepId, answer];
+          return [stepId, entry];
         }),
       );
     return [
@@ -897,28 +928,50 @@ export function withFramingStatuses(fixture, summary) {
       },
     ];
   });
-  return { fixture: { ...fixture, programs: Object.fromEntries(programs) }, problems };
+  return { fixture: { ...fixture, programs: Object.fromEntries(answered) }, problems };
 }
 
 /**
- * bodyReadStageProblems for the pipeline lanes: the compact framing rows are judged by the answers
- * the framing summary recorded for them (withFramingStatuses), and every reason a compact program
- * is not answered is a problem too. A summary that cannot be read is a problem.
+ * The framing summary as the recording wrote it: the HEAD blob, which must be the working tree's
+ * bytes too and hash to `sha256` (the condition's pin, the value of
+ * spec/compatibility/closure/record-digests.json). Anything else throws.
+ */
+export function readPinnedFramingSummary(
+  sha256Pin,
+  { committed = gitDataReader("HEAD"), worktree = readConformanceData } = {},
+) {
+  const bytes = committed(FRAMING_SUMMARY_PATH);
+  if (worktree(FRAMING_SUMMARY_PATH) !== bytes)
+    throw new Error(`${FRAMING_SUMMARY_PATH} differs between HEAD and the working tree`);
+  if (sha256(bytes) !== sha256Pin)
+    throw new Error(`${FRAMING_SUMMARY_PATH} is not the recorded summary ${sha256Pin}`);
+  return JSON.parse(bytes);
+}
+
+/**
+ * bodyReadStageProblems for the pipeline lanes: the compact framing rows of `lane` (the closed list
+ * of the condition) are judged by the answers the pinned framing summary recorded for them
+ * (withFramingStatuses), and every reason one is not answered is a problem too. A summary that
+ * cannot be read or is not the pinned one is a problem.
  */
 export function pipelineBodyReadStageProblems(
   fixture,
   corpus = {},
-  readSummary = () => JSON.parse(readConformanceData(FRAMING_SUMMARY_PATH)),
+  { lane, condition = UNREACHED_CONDITIONS[PIPELINE_CONDITION], readSummary } = {},
 ) {
+  if (!Object.hasOwn(condition.compactPrograms ?? {}, lane ?? ""))
+    return [`lane ${lane} has no list of compact programs in the condition`];
   let summary;
   try {
-    summary = readSummary();
+    summary = (readSummary ?? (() => readPinnedFramingSummary(condition.summarySha256)))();
   } catch (error) {
     return [`the framing summary cannot be read: ${error.message}`];
   }
-  const answered = withFramingStatuses(fixture, summary);
+  const answered = withFramingStatuses(fixture, summary, condition.compactPrograms[lane]);
   return [...answered.problems, ...bodyReadStageProblems(answered.fixture, corpus)];
 }
+
+const PIPELINE_CONDITION = "fs-ent-pipeline-body-read-unreached";
 
 /**
  * The closed table of conditions an "unreached" hop may name. A condition is one approved change:
@@ -943,6 +996,13 @@ export const UNREACHED_CONDITIONS = {
     deltaSha256: "3c09054ce798f631ed38f0cf3977392bb10ee7cbcebc91b94f6e635649ec89d4",
     touches: ["conformance/src/fs-ent-pipeline/session.mjs"],
     problems: pipelineBodyReadStageProblems,
+    // The compact framing programs of each lane, and the sha256 of the framing summary that answers
+    // them (spec/compatibility/closure/record-digests.json).
+    compactPrograms: {
+      "fs-ent-pipeline": ["fs-ent-pipeline/o8a/framing-small", "fs-ent-pipeline/o8a/framing-large"],
+      "fs-ent-pipeline-regex": [],
+    },
+    summarySha256: "85b4db894388ab51ebfae4f396daa24e0aa593d7f8666feef50b55d85652f63a",
   },
 };
 
@@ -1101,9 +1161,10 @@ function inputsAt(lane, revision, { reader, dataReader, currentInputs }) {
 /** The release gate's check of the lineage file: `verify`, the selftest and the lane runners run it. */
 export function releaseLineageProblems(
   lineage = loadLineage(),
-  { reader = gitReader, shallow = isShallowCheckout() } = {},
+  { reader = gitReader, shallow = isShallowCheckout(), ...inputs } = {},
 ) {
-  return lineageProblems(lineage, { lanes: HARNESS_LANES, reader, shallow });
+  // `inputs` (fixtureOf, conditions, ...) replace what the checkout holds, for tests only.
+  return lineageProblems(lineage, { ...inputs, lanes: HARNESS_LANES, reader, shallow });
 }
 
 /** The inputs of a lane's digest as repository paths (sources, data it reads, its fixture). */
@@ -1152,7 +1213,10 @@ function unreachedProblems(
   } catch (error) {
     return [...problems, `${at}: the fix commit and its base are not readable (${error.message})`];
   }
-  for (const problem of condition.problems(fixtureOf(lane), corpusOf(hop.lane)))
+  for (const problem of condition.problems(fixtureOf(lane), corpusOf(hop.lane), {
+    lane: hop.lane,
+    condition,
+  }))
     problems.push(`${at}: condition ${hop.condition} fails: ${problem}`);
   return problems;
 }
