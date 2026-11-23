@@ -48,17 +48,9 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, posix } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parse } from "acorn";
 
@@ -70,6 +62,7 @@ import { PRINCIPALS as AUTH_FS_CROSS_PRINCIPALS } from "./auth-fs-cross/corpus.m
 import { STAGE2_PRINCIPALS } from "./auth-fs-cross/programs-stage2.mjs";
 import { CONFORMANCE_DIR, REPO_ROOT } from "./config.mjs";
 import { isTransient } from "./fs-query-index/harness.mjs";
+import { PROGRAMS as FS_LIST_PROGRAMS } from "./fs-list/corpus.mjs";
 import { PRINCIPALS as FS_RULES_PRINCIPALS } from "./fs-rules/corpus.mjs";
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
@@ -485,10 +478,9 @@ const withFile = (file, run) => {
 };
 
 /**
- * The values `extra` reads from modules, as this checkout imports them (the default), keyed by the
- * module and the export. A revision's values are rebuilt from that revision's sources instead
- * (gitExportReader); test `today's exports are what the tree's modules export` keeps the two apart
- * only by a version of the code.
+ * The values `extra` reads from modules, as this checkout imports them, keyed by the module and the
+ * export. They are a revision's values only when every source file the module comes from is
+ * byte-identical at that revision (see importClosure and inputsAt); nothing historical is imported.
  */
 const TODAY_EXPORTS = {
   "fs-rules/corpus.mjs": { PRINCIPALS: FS_RULES_PRINCIPALS },
@@ -561,56 +553,32 @@ export const gitDataReader = (commit) => (path) =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-const exportTrees = new Map();
-process.once("exit", () => {
-  for (const dir of exportTrees.values()) rmSync(dir, { recursive: true, force: true });
-});
-
 /**
- * The conformance/src tree at `revision`, unpacked next to this checkout's dependencies (a bare
- * import in it resolves from conformance/node_modules). Kept until the process exits.
+ * The conformance/src files a module comes from: itself and, transitively, every file it imports
+ * with a relative specifier (static, re-exported or a dynamic import of a literal), read through
+ * `read` (a path under conformance/). Bare and node: specifiers are dependencies, not sources.
  */
-function sourceTreeAt(revision) {
-  if (!exportTrees.has(revision)) {
-    const dir = mkdtempSync(join(CONFORMANCE_DIR, ".lineage-"));
-    try {
-      const archive = execFileSync(
-        "git",
-        ["archive", "--format=tar", `${revision}:conformance/src`],
-        {
-          cwd: REPO_ROOT,
-          maxBuffer: 1024 * 1024 * 1024,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
-      mkdirSync(join(dir, "src"));
-      execFileSync("tar", ["-x", "-C", join(dir, "src")], { input: archive });
-    } catch (error) {
-      rmSync(dir, { recursive: true, force: true });
-      throw error;
-    }
-    exportTrees.set(revision, dir);
+export function importClosure(module, read) {
+  const found = new Set();
+  const pending = [module];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (found.has(file)) continue;
+    found.add(file);
+    const visit = (node) => {
+      if (node === null || typeof node !== "object") return;
+      if (Array.isArray(node)) return node.forEach(visit);
+      const source = node.source?.type === "Literal" ? node.source.value : undefined;
+      if (typeof source === "string" && source.startsWith("."))
+        pending.push(posix.normalize(posix.join(posix.dirname(file), source)));
+      for (const [key, child] of Object.entries(node)) if (key !== "source") visit(child);
+    };
+    const text = read(`src/${file}`);
+    if (typeof text !== "string") throw new Error(`${file} is missing`);
+    visit(parse(text, { ecmaVersion: "latest", sourceType: "module" }));
   }
-  return exportTrees.get(revision);
+  return [...found].toSorted();
 }
-
-/**
- * Reads an export of a conformance/src module as the sources at `revision` define it, by importing
- * that revision's own module in a child process. A module or export it cannot supply throws.
- */
-export const gitExportReader = (revision) => (module, name) => {
-  const url = pathToFileURL(join(sourceTreeAt(revision), "src", module)).href;
-  const child = fileURLToPath(new URL("./harness-registry-export.mjs", import.meta.url));
-  const out = execFileSync(process.execPath, [child, url, name], {
-    cwd: CONFORMANCE_DIR,
-    env: { PATH: process.env.PATH },
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 120_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  return JSON.parse(out);
-};
 
 // ---- the acceptance rule -----------------------------------------------------------------------
 
@@ -627,39 +595,25 @@ export function checkFixtureDigest(name, lane, saved, { read = treeReader, linea
   return { state: hop ? "lineage" : "stale", saved, current };
 }
 
-const verifiedStates = new Map();
+let releaseLineageProblems;
 
 /**
- * checkFixtureDigest for a lane runner: a digest the lineage connects counts only when a hop that
- * connects it passes the same verification the release gate runs (lineageProblems, against the git
- * history); otherwise the row is stale. Cached per process for the checked-in lineage.
+ * checkFixtureDigest for a lane runner: a digest the lineage connects counts only when the whole
+ * lineage file passes the verification the release gate runs (lineageProblems, against the git
+ * history), once per process; any problem makes every lineage-connected row stale. `verify`
+ * replaces that verification.
  */
-export function checkVerifiedFixtureDigest(name, lane, saved, options = {}) {
+export function checkVerifiedFixtureDigest(name, lane, saved, { verify, ...options } = {}) {
   const status = checkFixtureDigest(name, lane, saved, options);
   if (status.state !== "lineage") return status;
-  const cacheable =
-    options.lineage === undefined && options.verify === undefined && options.shallow === undefined;
-  const key = `${name}/${saved}/${status.current}`;
-  if (cacheable && verifiedStates.has(key)) return verifiedStates.get(key);
-  const verify =
-    options.verify ??
-    ((hop) =>
-      lineageProblems(
-        { version: 1, hops: [hop] },
-        {
-          lanes: { [name]: lane },
-          reader: gitReader,
-          shallow: options.shallow ?? isShallowCheckout(),
-        },
-      ));
-  const hops = (options.lineage ?? loadLineage().hops).filter(
-    (hop) => hop.lane === name && hop.from === saved && hop.to === status.current,
-  );
-  const result = hops.some((hop) => verify(hop).length === 0)
-    ? status
-    : { ...status, state: "stale" };
-  if (cacheable) verifiedStates.set(key, result);
-  return result;
+  const problems =
+    verify?.() ??
+    (releaseLineageProblems ??= lineageProblems(loadLineage(), {
+      lanes: HARNESS_LANES,
+      reader: gitReader,
+      shallow: isShallowCheckout(),
+    }));
+  return problems.length === 0 ? status : { ...status, state: "stale" };
 }
 
 /** Lanes whose fixture records one harness digest for the whole file instead of one per program. */
@@ -718,6 +672,14 @@ const PROGRAM_KEYS = new Set([
 ]);
 const ANSWER_SLOTS = ["steps", "second"];
 
+/** The corpus programs of a lane, by id, for the lanes whose fixture has status -1 rows. */
+const CORPORA = {
+  "fs-data-write-list": Object.fromEntries(
+    FS_LIST_PROGRAMS.map((program) => [program.id, program]),
+  ),
+};
+const corpusOfLane = (name) => (Object.hasOwn(CORPORA, name) ? CORPORA[name] : {});
+
 /** harness.mjs `lookup`: a dotted path into a recorded answer, undefined when anything is absent. */
 function lookupPath(value, path) {
   let current = value;
@@ -728,18 +690,31 @@ function lookupPath(value, path) {
   return current;
 }
 
+/** The `{ $from, path }` references a corpus step's request is built from (harness.mjs chained). */
+function referencesIn(value) {
+  if (value === null || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap(referencesIn);
+  return [
+    ...(Object.hasOwn(value, "$from") ? [value] : []),
+    ...Object.values(value).flatMap(referencesIn),
+  ];
+}
+
 /**
- * Why a status -1 row is a step whose request could not be built, which the fixture itself shows:
- * `unresolved` names an earlier step of the same slot (an own key, never an inherited name), and
+ * Why a status -1 row is a step whose request could not be built, which the fixture and the corpus
+ * show: the step's own request, as the corpus program the fixture was recorded from writes it,
+ * references the step and path `unresolved` names; that step is an earlier step of the same slot (an own key, never an inherited name), and
  * that predecessor is a REST answer (a failed fetch and an earlier such row record no body, so they
  * pass too) (or a failed fetch) that
  * recorded nothing at the referenced path, so the reference could not resolve and the request
  * never reached fetch. `dependencyTransient` is the recorder's own flag for the predecessor.
  */
-function unresolvedProblem(stepId, row, slot) {
+function unresolvedProblem(stepId, row, slot, corpusStep) {
   const match = UNRESOLVED.exec(typeof row.unresolved === "string" ? row.unresolved : "");
   if (match === null) return "status -1 without the dependency evidence the recorder writes";
   const [, dependency, path] = match;
+  if (!referencesIn(corpusStep).some((ref) => ref.$from === dependency && ref.path === path))
+    return `status -1 names ${dependency} at ${path}, which the request of step ${stepId} does not reference`;
   const order = Object.keys(slot);
   if (!Object.hasOwn(slot, dependency) || order.indexOf(dependency) >= order.indexOf(stepId))
     return `status -1 names ${dependency}, which is not an earlier step of its slot`;
@@ -760,11 +735,11 @@ function unresolvedProblem(stepId, row, slot) {
  * code. A status -1 row needs the proof of unresolvedProblem, since a body failure after a request
  * that was built never produces one.
  */
-function answerProblem(stepId, row, slot) {
+function answerProblem(stepId, row, slot, corpusStep) {
   const error = row?.transportError;
   if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
     return `the body of the answer could not be read (${error})`;
-  if (row?.status === -1) return unresolvedProblem(stepId, row, slot);
+  if (row?.status === -1) return unresolvedProblem(stepId, row, slot, corpusStep);
   if (row?.status === 0)
     return typeof error === "string" ? undefined : "status 0 without a transport error";
   if (typeof row?.status === "number" || typeof row?.code === "number") return undefined;
@@ -774,19 +749,26 @@ function answerProblem(stepId, row, slot) {
 /**
  * Why the rows of a FS-QUERY-INDEX fixture cannot have reached the body-read failure path of
  * session.mjs: every recorded answer, in every answer slot of every program (`steps` and
- * `second`), passes answerProblem, and a program has no other key than the known ones. An empty
+ * `second`), passes answerProblem against `corpus` (the lane's corpus programs by id), and a program has no other key than the known ones. An empty
  * fixture proves nothing and is refused.
  */
-export function bodyReadStageProblems(fixture) {
+export function bodyReadStageProblems(fixture, corpus = {}) {
   const problems = [];
   let answers = 0;
   for (const [programId, program] of Object.entries(fixture?.programs ?? {})) {
+    // The corpus program is the recorded one only if it hashes to the digest the fixture saved.
+    const recorded =
+      Object.hasOwn(corpus, programId) &&
+      sha256(JSON.stringify(corpus[programId])) === program?.corpusDigest
+        ? corpus[programId]
+        : undefined;
     for (const key of Object.keys(program ?? {}))
       if (!PROGRAM_KEYS.has(key)) problems.push(`${programId}: unexpected key ${key}`);
     for (const slotName of ANSWER_SLOTS)
       for (const [stepId, row] of Object.entries(program?.[slotName] ?? {})) {
         answers += 1;
-        const problem = answerProblem(stepId, row, program[slotName]);
+        const corpusStep = recorded?.steps?.find((step) => step.id === stepId);
+        const problem = answerProblem(stepId, row, program[slotName], corpusStep);
         if (problem)
           problems.push(
             `${programId}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: ${problem}`,
@@ -866,8 +848,8 @@ export function lineageProblems(
     conditions = UNREACHED_CONDITIONS,
     fixDelta = gitFixDelta,
     dataReader = gitDataReader,
-    exportReader = gitExportReader,
     fixtureOf = treeFixture,
+    corpusOf = corpusOfLane,
   },
 ) {
   const problems = [];
@@ -903,7 +885,7 @@ export function lineageProblems(
     if (problems.length > before || shallow) return;
     let atCommit;
     try {
-      atCommit = inputsAt(lane, hop.commit, { reader, dataReader, exportReader });
+      atCommit = inputsAt(lane, hop.commit, { reader, dataReader, currentInputs });
     } catch (error) {
       return problems.push(
         `${at}: the sources at ${hop.commit} are not readable (${error.message})`,
@@ -919,10 +901,11 @@ export function lineageProblems(
           atCommit,
           reader,
           dataReader,
-          exportReader,
+          currentInputs,
           condition: conditions[hop.condition],
           fixDelta,
           fixtureOf,
+          corpusOf,
         }),
       );
     else if (scheme2Digest(lane, atCommit.read, atCommit.extra) !== hop.to)
@@ -935,15 +918,22 @@ export function lineageProblems(
  * Every input of a lane's digest as it was at `revision`: the sources and the data its `extra`
  * reads, each read at that revision. An input that is missing there throws.
  */
-function inputsAt(lane, revision, { reader, dataReader, exportReader }) {
+function inputsAt(lane, revision, { reader, dataReader, currentInputs }) {
   const read = reader(revision);
   const sources = new Map(lane.files.map((file) => [file, read(file)]));
   for (const [file, text] of sources)
     if (typeof text !== "string") throw new Error(`${file} is missing`);
-  // The data and the module exports its extra inputs are built from are the revision's own.
+  const data = dataReader(revision);
+  // The data is the revision's own. A module's export is this checkout's, and is the revision's
+  // only if every file the module comes from is byte-identical at the revision.
   const extra = extraOf(lane, {
-    data: dataReader(revision),
-    exported: exportReader(revision),
+    data,
+    exported: (module, name) => {
+      for (const file of importClosure(module, currentInputs.data))
+        if (data(`src/${file}`) !== currentInputs.data(`src/${file}`))
+          throw new Error(`${file} is not the same at ${revision} as in this checkout`);
+      return currentInputs.exported(module, name);
+    },
     sdkVersions: () => {
       throw new Error("the installed SDK versions cannot be read at a revision");
     },
@@ -970,7 +960,7 @@ function unreachedProblems(
   at,
   hop,
   lane,
-  { atCommit, reader, dataReader, exportReader, condition, fixDelta, fixtureOf },
+  { atCommit, reader, dataReader, currentInputs, condition, fixDelta, fixtureOf, corpusOf },
 ) {
   if (hop.fix !== condition.fix)
     return [`${at}: the fix commit ${hop.fix} is not the one the condition approves`];
@@ -986,19 +976,19 @@ function unreachedProblems(
       );
     if (delta.deltaSha256 !== condition.deltaSha256)
       problems.push(`${at}: the change to ${condition.touches} is not the approved one`);
-    const base = inputsAt(lane, condition.base, { reader, dataReader, exportReader });
+    const base = inputsAt(lane, condition.base, { reader, dataReader, currentInputs });
     if (
       scheme2Digest(lane, atCommit.read, atCommit.extra) !==
       scheme2Digest(lane, base.read, base.extra)
     )
       problems.push(`${at}: the inputs changed between ${hop.commit} and the base of the fix`);
-    const fixed = inputsAt(lane, condition.fix, { reader, dataReader, exportReader });
+    const fixed = inputsAt(lane, condition.fix, { reader, dataReader, currentInputs });
     if (scheme2Digest(lane, fixed.read, fixed.extra) !== hop.to)
       problems.push(`${at}: the scheme-2 digest at the fix commit is not the hop's`);
   } catch (error) {
     return [...problems, `${at}: the fix commit and its base are not readable (${error.message})`];
   }
-  for (const problem of condition.problems(fixtureOf(lane)))
+  for (const problem of condition.problems(fixtureOf(lane), corpusOf(hop.lane)))
     problems.push(`${at}: condition ${hop.condition} fails: ${problem}`);
   return problems;
 }
@@ -1015,7 +1005,6 @@ export function proposeUnreachedHops({
   lineage = loadLineage(),
   reader = gitReader,
   dataReader = gitDataReader,
-  exportReader = gitExportReader,
   current = treeReader,
   currentInputs = TREE_INPUTS,
   conditions = UNREACHED_CONDITIONS,
@@ -1029,7 +1018,7 @@ export function proposeUnreachedHops({
   for (const [name, lane] of Object.entries(lanes)) {
     const inputs = laneInputPaths(lane);
     if (!touches.every((path) => inputs.includes(path))) continue;
-    const atBase = inputsAt(lane, base, { reader, dataReader, exportReader });
+    const atBase = inputsAt(lane, base, { reader, dataReader, currentInputs });
     for (const from of recordedDigests(name, fixtureOf(lane))) {
       if (known.has(`${name}/${from}`)) continue;
       if (rawDigest(lane, atBase.read, atBase.extra) !== from)

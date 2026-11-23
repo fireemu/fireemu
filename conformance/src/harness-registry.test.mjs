@@ -22,11 +22,11 @@ import {
   checkVerifiedFixtureDigest,
   extraOf,
   gitDataReader,
-  gitExportReader,
   enrollmentProblems,
   frozenPaths,
   fixturesWithHarnessDigest,
   gitFixDelta,
+  importClosure,
   gitReader,
   bindingProblems,
   HARNESS_LANES,
@@ -1370,25 +1370,39 @@ test("the body-read condition refuses a program with a key it does not know", ()
   assert.deepEqual(found, ["p: unexpected key third"]);
 });
 
-test("the body-read condition accepts a -1 row only when the fixture proves its request could not be built", () => {
-  const dependency = { status: 200, body: [{}] };
-  const row = {
-    status: -1,
-    unresolved: "step dep recorded nothing at nextPageToken",
-    dependencyTransient: false,
+// A fixture program and the corpus program it was recorded from, for the -1 rows.
+const sha = (text) => createHash("sha256").update(text).digest("hex");
+const REF = { $from: "dep", path: "nextPageToken" };
+const unresolvedRow = {
+  status: -1,
+  unresolved: "step dep recorded nothing at nextPageToken",
+  dependencyTransient: false,
+};
+const scenario = ({ steps, refs = [REF], digest, corpusSteps, change = {} }) => {
+  const rows = { ...steps };
+  rows.row = { ...(rows.row ?? unresolvedRow), ...change };
+  const program = {
+    id: "p",
+    steps: corpusSteps ?? [{ id: "dep" }, { id: "row", query: [["pageToken", refs]] }],
   };
-  const check = (change, steps = { dep: dependency, row }) =>
-    bodyReadStageProblems({
-      programs: { p: { steps: { ...steps, row: { ...(steps.row ?? row), ...change } } } },
-    });
+  const fixture = {
+    programs: { p: { corpusDigest: digest ?? sha(JSON.stringify(program)), steps: rows } },
+  };
+  return bodyReadStageProblems(fixture, { p: program });
+};
+const DEP = { status: 200, body: [{}] };
+
+test("the body-read condition accepts a -1 row only when the fixture proves its request could not be built", () => {
+  const check = (change, steps = { dep: DEP }, refs) => scenario({ steps, change, refs });
   assert.deepEqual(check({}), []);
   const none = "status -1 without the dependency evidence the recorder writes";
   assert.deepEqual(check({ unresolved: undefined }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: 7 }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "step dep recorded nothing" }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
-  // Not a string, even when its string form would match (an array of one string).
-  assert.deepEqual(check({ unresolved: ["step dep recorded nothing at x"] }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: ["step dep recorded nothing at nextPageToken"] }), [
+    `p#row: ${none}`,
+  ]);
   // The whole message is the recorder's: text before it or after a line break is not.
   assert.deepEqual(check({ unresolved: "Error: step dep recorded nothing at nextPageToken" }), [
     `p#row: ${none}`,
@@ -1400,63 +1414,119 @@ test("the body-read condition accepts a -1 row only when the fixture proves its 
   const notEarlier = (name) =>
     `p#row: status -1 names ${name}, which is not an earlier step of its slot`;
   for (const name of ["ghost", "row", "constructor", "__proto__", "toString", "hasOwnProperty"])
-    assert.deepEqual(check({ unresolved: `step ${name} recorded nothing at x` }), [
-      notEarlier(name),
-    ]);
+    assert.deepEqual(
+      check({ unresolved: `step ${name} recorded nothing at nextPageToken` }, { dep: DEP }, [
+        { $from: name, path: "nextPageToken" },
+      ]),
+      [notEarlier(name)],
+    );
   assert.deepEqual(
-    bodyReadStageProblems({ programs: { p: { steps: { row, dep: dependency } } } }),
-    [notEarlier("dep")],
-  );
-  // A step named "undefined" is not the dependency of an unreadable message.
-  assert.deepEqual(
-    check({ unresolved: "garbage" }, { undefined: dependency, dep: dependency, row }),
-    [`p#row: ${none}`],
+    scenario({ steps: { row: unresolvedRow, dep: DEP }, refs: [REF] }).join("\n"),
+    notEarlier("dep"),
   );
   // The recorder's own flag for the predecessor.
   const flag = "p#row: status -1 whose dependencyTransient is not that of step dep";
   assert.deepEqual(check({ dependencyTransient: true }), [flag]);
   assert.deepEqual(check({ dependencyTransient: undefined }), [flag]);
   // A predecessor that recorded the path means the request was built and reached fetch.
-  const recorded = (body) => check({}, { dep: { status: 200, body }, row });
+  const recorded = (body) => check({}, { dep: { status: 200, body } });
   assert.deepEqual(recorded({ nextPageToken: "<page-token>" }), [
     "p#row: status -1 references nextPageToken, which step dep did record",
   ]);
   assert.deepEqual(recorded({ nextPageToken: "" }), []);
   assert.deepEqual(recorded({ documents: [] }), []);
-  const nested = { ...row, unresolved: "step dep recorded nothing at a.b" };
-  assert.deepEqual(check({}, { dep: { status: 200, body: { a: { b: 1 } } }, row: nested }), [
+  assert.deepEqual(check({}, { dep: { status: 200 } }), []);
+  const nested = { unresolved: "step dep recorded nothing at a.b" };
+  const nestedRef = [{ $from: "dep", path: "a.b" }];
+  assert.deepEqual(check(nested, { dep: { status: 200, body: { a: { b: 1 } } } }, nestedRef), [
     "p#row: status -1 references a.b, which step dep did record",
   ]);
-  assert.deepEqual(check({}, { dep: { status: 200, body: { a: null } }, row: nested }), []);
-  assert.deepEqual(check({}, { dep: { status: 200 }, row }), []);
+  assert.deepEqual(check(nested, { dep: { status: 200, body: { a: null } } }, nestedRef), []);
   // A predecessor whose fetch failed recorded nothing; a gRPC predecessor cannot prove it.
   assert.deepEqual(
-    check({ dependencyTransient: true }, { dep: { status: 0, transportError: "ECONNRESET" }, row }),
+    check({ dependencyTransient: true }, { dep: { status: 0, transportError: "ECONNRESET" } }),
     [],
   );
-  assert.deepEqual(check({}, { dep: { code: 0, body: [] }, row }), [
+  assert.deepEqual(check({}, { dep: { code: 0, body: [] } }), [
     "p#row: status -1 after step dep, which is not a REST answer",
   ]);
   // A predecessor that is itself such a row has its own transience and its own proof.
-  const chained = {
-    first: dependency,
-    dep: { status: -1, unresolved: "step first recorded nothing at t", dependencyTransient: false },
-    row: { ...row, unresolved: "step dep recorded nothing at t" },
-  };
-  assert.deepEqual(bodyReadStageProblems({ programs: { p: { steps: chained } } }), []);
-  assert.deepEqual(
-    bodyReadStageProblems({
-      programs: { p: { steps: { ...chained, first: { status: 200, body: { t: "x" } } } } },
-    }),
-    ["p#dep: status -1 references t, which step first did record"],
-  );
+  const chainedRefs = [
+    { id: "first" },
+    { id: "dep", query: [["pageToken", [{ $from: "first", path: "t" }]]] },
+    { id: "row", query: [["pageToken", [{ $from: "dep", path: "t" }]]] },
+  ];
+  const chain = (first) =>
+    scenario({
+      steps: {
+        first,
+        dep: {
+          status: -1,
+          unresolved: "step first recorded nothing at t",
+          dependencyTransient: false,
+        },
+      },
+      corpusSteps: chainedRefs,
+      change: { unresolved: "step dep recorded nothing at t" },
+    });
+  assert.deepEqual(chain(DEP), []);
+  assert.deepEqual(chain({ status: 200, body: { t: "x" } }), [
+    "p#dep: status -1 references t, which step first did record",
+  ]);
 });
 
-test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", () => {
+test("a -1 row needs the failed step's own corpus request to reference the named step and path", () => {
+  const missing =
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference";
+  const check = (options) => scenario({ steps: { dep: DEP }, ...options });
+  assert.deepEqual(check({}), []);
+  // The step never references it (the body failure of a request that carried no page token).
+  assert.deepEqual(check({ refs: [] }), [missing]);
+  assert.deepEqual(check({ corpusSteps: [{ id: "dep" }, { id: "row" }] }), [missing]);
+  // It references another step, or another path of the named one.
+  assert.deepEqual(check({ refs: [{ $from: "other", path: "nextPageToken" }] }), [missing]);
+  assert.deepEqual(check({ refs: [{ $from: "dep", path: "other" }] }), [missing]);
+  // The reference may sit anywhere in the request, beside others.
+  assert.deepEqual(
+    check({
+      corpusSteps: [
+        { id: "dep" },
+        { id: "row", body: { a: [{ b: { $from: "x", path: "y" } }, REF] } },
+      ],
+    }),
+    [],
+  );
+  // The corpus step is the fixture's own: the same program by id, hashing to the saved digest.
+  assert.deepEqual(check({ digest: "0".repeat(64) }), [missing]);
+  const program = { id: "p", steps: [{ id: "dep" }, { id: "row", query: [REF] }] };
+  const fixture = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  assert.deepEqual(bodyReadStageProblems(fixture, { p: program }), []);
+  assert.deepEqual(bodyReadStageProblems(fixture, {}), [missing]);
+  assert.deepEqual(bodyReadStageProblems(fixture), [missing]);
+  assert.deepEqual(bodyReadStageProblems(fixture, { other: program }), [missing]);
+  assert.deepEqual(
+    bodyReadStageProblems(fixture, {
+      p: { ...program, steps: [{ id: "dep" }, { id: "row", query: [REF] }, { id: "extra" }] },
+    }),
+    [missing],
+  );
+  // A step id of the corpus that is not the row's.
+  assert.deepEqual(check({ corpusSteps: [{ id: "dep" }, { id: "other", query: [REF] }] }), [
+    missing,
+  ]);
+});
+
+test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", async () => {
+  const { PROGRAMS } = await import("./fs-list/corpus.mjs");
+  const corpus = Object.fromEntries(PROGRAMS.map((program) => [program.id, program]));
   const fixture = JSON.parse(
     readFileSync(join(CONFORMANCE_DIR, "fs-data-write-list-production.json"), "utf8"),
   );
-  assert.deepEqual(bodyReadStageProblems(fixture), []);
+  assert.deepEqual(bodyReadStageProblems(fixture, corpus), []);
   const rows = Object.entries(fixture.programs).flatMap(([id, program]) =>
     Object.entries(program.steps)
       .filter(([, row]) => row.status === -1)
@@ -1466,21 +1536,40 @@ test("the recorded -1 rows of the checked-in fixtures all carry that evidence, a
   for (const [id, stepId] of rows) {
     const forged = structuredClone(fixture);
     delete forged.programs[id].steps[stepId].unresolved;
-    assert.match(bodyReadStageProblems(forged).join("\n"), /without the dependency evidence/);
+    assert.match(
+      bodyReadStageProblems(forged, corpus).join("\n"),
+      /without the dependency evidence/,
+    );
+    // Without the corpus nothing proves it.
+    assert.match(bodyReadStageProblems(fixture).join("\n"), /does not reference/);
   }
-  // A forged -1 after a real page that did record its token (the old recorder's body failure whose
-  // message imitates a dependency failure) is refused.
   const interleaved = "fs-data-write-list/list-documents/missing-interleaved";
-  assert.ok(fixture.programs[interleaved].steps["page-size-1"].body.nextPageToken);
-  const forgedRow = structuredClone(fixture);
-  forgedRow.programs[interleaved].steps["show-missing-page-size-2"] = {
-    status: -1,
-    unresolved: "step page-size-1 recorded nothing at nextPageToken",
-    dependencyTransient: false,
+  const forge = (stepId, unresolved) => {
+    const forged = structuredClone(fixture);
+    forged.programs[interleaved].steps[stepId] = {
+      status: -1,
+      unresolved,
+      dependencyTransient: false,
+    };
+    return bodyReadStageProblems(forged, corpus);
   };
-  assert.deepEqual(bodyReadStageProblems(forgedRow), [
-    `${interleaved}#show-missing-page-size-2: status -1 references nextPageToken, which step page-size-1 did record`,
-  ]);
+  // A forged -1 after a real page that did record its token is refused: its predecessor recorded it.
+  assert.ok(fixture.programs[interleaved].steps["page-size-1"].body.nextPageToken);
+  assert.deepEqual(
+    forge("page-size-1-next", "step page-size-1 recorded nothing at nextPageToken"),
+    [
+      `${interleaved}#page-size-1-next: status -1 references nextPageToken, which step page-size-1 did record`,
+    ],
+  );
+  // A body failure of a request that carries no page token, with a message that imitates one whose
+  // named step really lacks the token (the review's replay of show-missing-page-size-2).
+  assert.ok(!("nextPageToken" in fixture.programs[interleaved].steps["page-size-1-next"].body));
+  assert.deepEqual(
+    forge("show-missing-page-size-2", "step page-size-1-next recorded nothing at nextPageToken"),
+    [
+      `${interleaved}#show-missing-page-size-2: status -1 names page-size-1-next at nextPageToken, which the request of step show-missing-page-size-2 does not reference`,
+    ],
+  );
   // A body-stage failure in the second answer of a real program is found too.
   const [secondId] = Object.entries(fixture.programs).find(([, program]) => program.second) ?? [];
   const forged = structuredClone(fixture);
@@ -1489,7 +1578,10 @@ test("the recorded -1 rows of the checked-in fixtures all carry that evidence, a
     status: 0,
     transportError: `${BODY_STAGE_PREFIX}TimeoutError`,
   };
-  assert.match(bodyReadStageProblems(forged).join("\n"), /\(second\): the body of the answer/);
+  assert.match(
+    bodyReadStageProblems(forged, corpus).join("\n"),
+    /\(second\): the body of the answer/,
+  );
 });
 
 test("the closed table names the one approved change the ten FS-QUERY-INDEX lanes share", () => {
@@ -1827,20 +1919,53 @@ test("the lane runner does not call a committed row of the shared layer stale, a
   assert.doesNotMatch(source, /saved\.harnessDigest !== harness/);
 });
 
-// ---- inputs rebuilt from the revision being verified ------------------------------------------------
+// ---- module exports are the revision's only when their sources are identical -----------------------
+
+const MODULES = {
+  "src/m.mjs":
+    'import { y } from "./sub/y.mjs";\nimport fs from "node:fs";\nimport pkg from "pkg";\nexport * from "./z.mjs";\nexport const X = { n: 1 };\n',
+  "src/sub/y.mjs": 'export const y = 1;\nawait import("../w.mjs");\nexport { v } from "./v.mjs";\n',
+  "src/z.mjs": "export const Z = 2;\n",
+  "src/w.mjs": "export {};\n",
+  "src/sub/v.mjs": 'export const v = 3;\nimport "./y.mjs";\n',
+  "src/unrelated.mjs": "export const U = 1;\n",
+};
+const CLOSURE = ["m.mjs", "sub/v.mjs", "sub/y.mjs", "w.mjs", "z.mjs"];
+
+test("the files a module comes from are itself and everything it imports by a relative specifier", () => {
+  assert.deepEqual(
+    importClosure("m.mjs", (path) => MODULES[path]),
+    CLOSURE,
+  );
+  // Static, re-exported, side-effect and literal dynamic imports; cycles end; bare and node: are not sources.
+  assert.deepEqual(
+    importClosure("w.mjs", (path) => MODULES[path]),
+    ["w.mjs"],
+  );
+  assert.deepEqual(
+    importClosure("z.mjs", (path) => MODULES[path]),
+    ["z.mjs"],
+  );
+  assert.throws(() => importClosure("gone.mjs", (path) => MODULES[path]));
+  assert.throws(() =>
+    importClosure("m.mjs", (path) => (path === "src/z.mjs" ? undefined : MODULES[path])),
+  );
+  const real = importClosure("auth-fs-cross/corpus.mjs", (path) =>
+    readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+  );
+  assert.ok(real.includes("auth-fs-cross/programs.mjs") && real.includes("fs-rules/harness.mjs"));
+});
 
 const EXPORT_LANE = {
   files: ["a.mjs", "b.mjs"],
   extra: ({ exported }) => JSON.stringify(exported("m.mjs", "X")),
   fixture: "lane-production.json",
 };
-const EXPORTED = { [REC]: { X: { n: 1 } }, [BASE]: { X: { n: 1 } }, [FIX]: { X: { n: 1 } } };
-const exportsAt = (commit) => (module, name) => {
-  if (module !== "m.mjs" || EXPORTED[commit]?.[name] === undefined)
-    throw new Error(`${module} has no ${name} at ${commit}`);
-  return EXPORTED[commit][name];
-};
 const TODAY_X = JSON.stringify({ n: 1 });
+const todayInputs = {
+  data: (path) => MODULES[path] ?? DATA,
+  exported: (module, name) => (module === "m.mjs" && name === "X" ? { n: 1 } : undefined),
+};
 const exportHop = (kind) => ({
   lane: "lane",
   from: rawDigest(EXPORT_LANE, (file) => TREES[REC][file], TODAY_X),
@@ -1849,17 +1974,18 @@ const exportHop = (kind) => ({
   kind,
   ...(kind === "unreached" ? { fix: FIX, condition: "no-failures" } : {}),
 });
-const exportProblems = (hop, overrides = {}) =>
+/** `changed` maps a revision to the files whose content differs there from this checkout's. */
+const exportProblems = (hop, changed = {}, overrides = {}) =>
   lineageProblems(
     { version: 1, hops: [hop] },
     {
       lanes: { lane: EXPORT_LANE },
       reader: treesReader,
-      dataReader: dataAt,
-      exportReader: exportsAt,
+      dataReader: (commit) => (path) =>
+        Object.hasOwn(changed[commit] ?? {}, path) ? changed[commit][path] : todayInputs.data(path),
       shallow: false,
       current: (file) => TREES[hop.kind === "scheme" ? REC : FIX][file],
-      currentInputs: { exported: () => ({ n: 1 }) },
+      currentInputs: todayInputs,
       conditions: CONDITIONS,
       fixDelta: () => delta(),
       fixtureOf: () => ({ failures: [] }),
@@ -1867,60 +1993,59 @@ const exportProblems = (hop, overrides = {}) =>
     },
   );
 
-test("a hop's digest is rebuilt from the module exports of the revision it is verified at", () => {
+test("a hop's module exports count for its revision only when every source they come from is identical there", () => {
   for (const kind of ["scheme", "unreached"]) {
     assert.deepEqual(exportProblems(exportHop(kind)), [], kind);
-    const asked = [];
-    exportProblems(exportHop(kind), {
-      exportReader: (commit) => {
-        asked.push(commit);
-        return exportsAt(commit);
-      },
-    });
-    assert.ok(asked.includes(REC), kind);
-    if (kind === "unreached") assert.ok(asked.includes(BASE) && asked.includes(FIX));
+    const revisions = kind === "scheme" ? [REC] : [REC, BASE, FIX];
+    for (const commit of revisions)
+      for (const file of CLOSURE) {
+        const path = `src/${file}`;
+        for (const there of [`${MODULES[path]}// edited\n`, undefined]) {
+          const found = exportProblems(exportHop(kind), { [commit]: { [path]: there } });
+          assert.equal(found.length, 1, `${kind} ${commit} ${file}`);
+          assert.match(
+            found[0],
+            new RegExp(`${file.replace(".", "\\.")} is not the same at ${commit}`),
+          );
+        }
+      }
+    // A file the module does not come from may differ.
+    assert.deepEqual(
+      exportProblems(exportHop(kind), { [REC]: { "src/unrelated.mjs": "export const U = 2;\n" } }),
+      [],
+    );
   }
 });
 
-test("a hop is refused when a module export its digest reads is unavailable at a revision", () => {
-  for (const kind of ["scheme", "unreached"]) {
-    const revisions = kind === "scheme" ? [REC] : [REC, BASE, FIX];
-    for (const missingAt of revisions) {
-      const found = exportProblems(exportHop(kind), {
-        exportReader: (commit) =>
-          commit === missingAt
-            ? () => {
-                throw new Error("module not found");
-              }
-            : exportsAt(commit),
-      });
-      assert.equal(found.length, 1, `${kind} ${missingAt}`);
-      assert.match(found[0], /not readable \(module not found\)/);
+test("the data a hop's digest reads is not a module source: it is the revision's own", () => {
+  const found = exportProblems(exportHop("scheme"), {
+    [REC]: { "src/m.mjs": "export const X = 1;\n" },
+  });
+  assert.equal(found.length, 1);
+});
+
+test("every export a lane reads is the module's own export in this checkout, by own name only", async () => {
+  for (const [name, lane] of Object.entries(HARNESS_LANES)) {
+    if (typeof lane.extra !== "function" || name === "auth-config-sdk") continue;
+    const asked = [];
+    extraOf(lane, {
+      data: (path) => readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+      exported: (module, exportName) => {
+        asked.push([module, exportName]);
+        return {};
+      },
+      sdkVersions: () => ({}),
+    });
+    for (const [module, exportName] of asked) {
+      const imported = await import(`./${module}`);
+      assert.deepEqual(
+        extraOf({ extra: ({ exported }) => exported(module, exportName) }),
+        imported[exportName],
+        `${name} ${module}`,
+      );
     }
   }
-});
-
-test("a hop is refused when the revision's export is not the value the recorded digest was made from", () => {
-  // Today's value is { n: 1 }; the sources at the hop's commit define another one.
-  const other = (commit) => (commit === REC ? () => ({ n: 2 }) : exportsAt(commit));
-  assert.match(
-    exportProblems(exportHop("scheme"), { exportReader: other }).join("\n"),
-    /recorded digest does not reproduce/,
-  );
-  assert.match(
-    exportProblems(exportHop("unreached"), {
-      exportReader: (commit) => (commit === FIX ? () => ({ n: 2 }) : exportsAt(commit)),
-    }).join("\n"),
-    /at the fix commit is not the hop's/,
-  );
-});
-
-test("this checkout's exports are those registered for the modules a lane reads, by own name only", () => {
   const read = (module, name) => extraOf({ extra: ({ exported }) => exported(module, name) });
-  assert.deepEqual(read("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"), [
-    "{project}.firebaseapp.com",
-    "{project}.web.app",
-  ]);
   for (const [module, name] of [
     ["auth-account/authorized-domains.mjs", "NOPE"],
     ["auth-account/authorized-domains.mjs", "toString"],
@@ -1940,7 +2065,6 @@ test("the installed SDK versions cannot be read at a revision, so such a lane's 
       lanes: { lane },
       reader: treesReader,
       dataReader: dataAt,
-      exportReader: exportsAt,
       shallow: false,
       current: (file) => TREES[REC][file],
       currentInputs: { sdkVersions: () => ({}) },
@@ -1949,144 +2073,116 @@ test("the installed SDK versions cannot be read at a revision, so such a lane's 
   assert.match(found.join("\n"), /installed SDK versions cannot be read at a revision/);
 });
 
-test("the committed auth-fs-cross scheme hop is refused when its principals cannot be rebuilt at its commit", () => {
-  const lineage = loadLineage();
-  const hop = lineage.hops.find((h) => h.kind === "scheme");
+test("the committed auth-fs-cross scheme hop passes, and is refused when a source its principals come from differs", () => {
   if (isShallowCheckout()) return;
-  const asked = [];
-  const run = (exportReader) =>
+  const hop = loadLineage().hops.find((h) => h.kind === "scheme");
+  const run = (dataReader) =>
     lineageProblems(
       { version: 1, hops: [hop] },
-      { lanes: HARNESS_LANES, reader: gitReader, shallow: false, exportReader },
+      { lanes: HARNESS_LANES, reader: gitReader, shallow: false, dataReader },
     );
-  assert.deepEqual(run(gitExportReader), []);
-  const found = run((commit) => (module, name) => {
-    asked.push([commit, module, name]);
-    throw new Error("corpus.mjs is not available");
-  });
-  assert.match(found.join("\n"), /corpus\.mjs is not available/);
-  assert.deepEqual(asked, [[hop.commit, "auth-fs-cross/corpus.mjs", "PRINCIPALS"]]);
-});
-
-test("a revision's exports are read from that revision's own sources", () => {
-  const head = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  }).trim();
-  const read = gitExportReader(head);
-  assert.deepEqual(read("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"), [
-    "{project}.firebaseapp.com",
-    "{project}.web.app",
-  ]);
-  assert.throws(() => read("auth-account/authorized-domains.mjs", "NO_SUCH_EXPORT"));
-  assert.throws(() => read("no/such/module.mjs", "X"));
-  assert.throws(() =>
-    gitExportReader("0".repeat(40))("auth-account/corpus.mjs", "BASELINE_CONFIG"),
-  );
-});
-
-test("every lane's extra inputs rebuilt from the committed revision equal this checkout's (commit module changes first)", () => {
-  const head = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  }).trim();
-  for (const [name, lane] of Object.entries(HARNESS_LANES)) {
-    if (typeof lane.extra !== "function" || name === "auth-config-sdk") continue;
-    const rebuilt = extraOf(lane, {
-      data: gitDataReader(head),
-      exported: gitExportReader(head),
-      sdkVersions: () => {
-        throw new Error("not at a revision");
-      },
-    });
-    assert.equal(rebuilt, extraOf(lane), name);
+  assert.deepEqual(run(gitDataReader), []);
+  for (const file of importClosure("auth-fs-cross/corpus.mjs", (path) =>
+    readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+  )) {
+    const found = run(
+      (commit) => (path) =>
+        path === `src/${file}` ? "export const edited = 1;\n" : gitDataReader(commit)(path),
+    );
+    assert.match(
+      found.join("\n"),
+      new RegExp(`${file.replace(".", "\\.")} is not the same at`),
+      file,
+    );
   }
 });
 
-// ---- the lane runner accepts only a verified hop ----------------------------------------------------
+// ---- the lane runner accepts a lineage digest only when the whole lineage verifies ---------------------
 
-test("a lineage digest counts for a lane runner only when a hop that connects it passes the gate's verification", () => {
-  const lane = { ...EXPORT_LANE, extra: DATA };
-  const hop = {
-    ...exportHop("scheme"),
-    from: "7".repeat(64),
-    to: scheme2Digest(lane, (f) => TREES[REC][f]),
-  };
-  const state = (verify, lineage = [hop], saved = hop.from) =>
-    checkVerifiedFixtureDigest("lane", lane, saved, { read: (f) => TREES[REC][f], lineage, verify })
-      .state;
-  const seen = [];
+const RUNNER_LANE = { ...EXPORT_LANE, extra: DATA };
+const RUNNER_HOP = () => ({
+  ...exportHop("scheme"),
+  from: "7".repeat(64),
+  to: scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
+});
+const runnerState = (verify, saved = RUNNER_HOP().from) =>
+  checkVerifiedFixtureDigest("lane", RUNNER_LANE, saved, {
+    read: (f) => TREES[REC][f],
+    lineage: [RUNNER_HOP()],
+    verify,
+  }).state;
+
+test("a lineage digest counts for a lane runner only when the whole lineage file verifies", () => {
+  let asked = 0;
   assert.equal(
-    state((h) => (seen.push(h), [])),
+    runnerState(() => (asked++, [])),
     "lineage",
   );
-  assert.deepEqual(seen, [hop]);
+  assert.equal(asked, 1);
   assert.equal(
-    state(() => ["refused"]),
+    runnerState(() => ["refused"]),
     "stale",
   );
-  // Two hops for the same digest: one verified is enough.
-  const other = { ...hop, commit: "5".repeat(40) };
-  assert.equal(
-    state((h) => (h === other ? [] : ["refused"]), [hop, other]),
-    "lineage",
-  );
-  // A verified hop that does not connect this digest (another lane, digest or endpoint) is no proof.
-  for (const unrelated of [
-    { ...hop, lane: "other" },
-    { ...hop, from: "8".repeat(64) },
-    { ...hop, to: "8".repeat(64) },
-  ])
-    assert.equal(
-      state((h) => (h === hop ? ["refused"] : []), [hop, unrelated]),
-      "stale",
-    );
-  // Other states are not the lineage's business and never call the verification.
+  // Other states are not the lineage's business and never ask for the verification.
   const never = () => assert.fail("verify must not run");
   assert.equal(
-    state(
+    runnerState(
       never,
-      [],
-      rawDigest(lane, (f) => TREES[REC][f]),
+      rawDigest(RUNNER_LANE, (f) => TREES[REC][f]),
     ),
     "raw",
   );
   assert.equal(
-    state(
+    runnerState(
       never,
-      [],
-      scheme2Digest(lane, (f) => TREES[REC][f]),
+      scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
     ),
     "scheme2",
   );
-  assert.equal(state(never, [], "6".repeat(64)), "stale");
+  assert.equal(runnerState(never, "6".repeat(64)), "stale");
 });
 
-test("the real lineage hop of fs-query-index passes the verification, and the same hop naming another fix does not", () => {
+test("the runner's verification is the release verifier's: version, duplicates, other hops and a shallow clone", () => {
   if (isShallowCheckout()) return;
   const lane = HARNESS_LANES["fs-query-index"];
   const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
   const [saved] = recordedDigests("fs-query-index", fixture);
+  const state = (lineage, options = {}) =>
+    checkVerifiedFixtureDigest("fs-query-index", lane, saved, {
+      lineage: lineage.hops,
+      verify: () =>
+        lineageProblems(lineage, {
+          lanes: HARNESS_LANES,
+          reader: gitReader,
+          shallow: false,
+          ...options,
+        }),
+    }).state;
+  const real = loadLineage();
   assert.equal(checkVerifiedFixtureDigest("fs-query-index", lane, saved).state, "lineage");
-  const hops = loadLineage().hops.map((hop) =>
-    hop.lane === "fs-query-index" ? { ...hop, fix: "4".repeat(40) } : hop,
-  );
-  const forged = checkVerifiedFixtureDigest("fs-query-index", lane, saved, { lineage: hops });
-  assert.equal(forged.state, "stale");
-  // The endpoint lookup alone would have accepted it.
+  assert.equal(state(real), "lineage");
+  assert.equal(state({ ...real, version: 2 }), "stale");
+  const hop = real.hops.find((h) => h.lane === "fs-query-index");
+  assert.equal(state({ ...real, hops: [...real.hops, hop] }), "stale");
+  // Another hop the release verifier refuses makes the whole file refused, whatever connects this row.
+  const bad = { ...real.hops.find((h) => h.lane === "fs-query-index-merge"), fix: "4".repeat(40) };
   assert.equal(
-    checkFixtureDigest("fs-query-index", lane, saved, { lineage: hops }).state,
-    "lineage",
-  );
-});
-
-test("a lineage digest is stale in a shallow clone, where no hop can be verified", () => {
-  const lane = HARNESS_LANES["fs-query-index"];
-  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
-  const [saved] = recordedDigests("fs-query-index", fixture);
-  assert.equal(
-    checkVerifiedFixtureDigest("fs-query-index", lane, saved, { shallow: true }).state,
+    state({ ...real, hops: real.hops.map((h) => (h.lane === bad.lane ? bad : h)) }),
     "stale",
+  );
+  assert.equal(
+    state({
+      ...real,
+      hops: real.hops.map((h) => (h === hop ? { ...hop, fix: "4".repeat(40) } : h)),
+    }),
+    "stale",
+  );
+  assert.equal(state(real, { shallow: true }), "stale");
+  // The endpoint lookup alone would have accepted a forged hop.
+  const forged = real.hops.map((h) => (h === hop ? { ...hop, fix: "4".repeat(40) } : h));
+  assert.equal(
+    checkFixtureDigest("fs-query-index", lane, saved, { lineage: forged }).state,
+    "lineage",
   );
 });
 
