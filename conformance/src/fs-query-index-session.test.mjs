@@ -92,6 +92,12 @@ test("a fetch failure keeps its own transport error, without the body marker", a
   assert.equal(lines[0], "p#write 0");
 });
 
+test("a fetch failure keeps the type of its error code, as before the body read was classified", async () => {
+  const withNumber = Object.assign(new TypeError("fetch failed"), { cause: { code: 17 } });
+  const { steps } = await record({ id: "p", steps: [commitStep] }, [withNumber]);
+  assert.deepEqual(steps.write, { status: 0, transportError: 17 });
+});
+
 test("a body that is read is recorded as before", async () => {
   const { steps, raw } = await record({ id: "p", steps: [queryStep] }, [
     jsonResponse([{ readTime: "2026-11-23T00:00:00Z" }]),

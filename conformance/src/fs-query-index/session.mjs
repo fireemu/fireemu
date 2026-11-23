@@ -100,10 +100,11 @@ export function createSession(
         : {}),
       ...(step.query !== undefined ? { request: resolveQuery(step, ctx, raw) } : {}),
     };
-    const transportFailure = (error, stage = "") => {
+    const transportFailure = (error, stage) => {
+      const code = error?.cause?.code ?? error?.name ?? "error";
       const failed = {
         ...sent,
-        response: { transportError: `${stage}${error?.cause?.code ?? error?.name ?? "error"}` },
+        response: { transportError: stage === undefined ? code : `${stage}${code}` },
       };
       return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
     };
