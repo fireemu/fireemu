@@ -1098,6 +1098,23 @@ test("an unreached hop is refused when the fix commit changes another input, or 
   );
 });
 
+test("an unreached hop is refused when the fix commit changes a data input of the lane's digest", () => {
+  const guarded = {
+    ...UNREACHED_LANE,
+    fixture: "lane-production.json",
+    guarded: ["conformance/lane.indexes.json"],
+  };
+  const found = unreachedProblems(unreachedHop(), {
+    lanes: { lane: guarded },
+    fixInfo: () => ({ parents: [FIX_PARENT], paths: [A_PATH, "conformance/lane.indexes.json"] }),
+  });
+  assert.equal(found.length, 1);
+  assert.match(
+    found[0],
+    /changes the inputs \[conformance\/lane\.indexes\.json,conformance\/src\/a\.mjs\]/,
+  );
+});
+
 test("an unreached hop is refused when the fix commit is a merge, a root or unreadable", () => {
   const withParents = (parents) => () => ({ parents, paths: [A_PATH] });
   assert.match(
@@ -1355,6 +1372,9 @@ test("gitFixInfo reports the parents and the changed paths of a commit, renames 
         stdio: ["ignore", "pipe", "pipe"],
       }).trim();
     git("init", "-q", "-b", "main");
+    // Rename detection on, as a developer's configuration can have it: git's plumbing ignores it and
+    // reports both paths of a rename.
+    git("config", "diff.renames", "true");
     writeFileSync(join(dir, "kept.txt"), "kept\n");
     writeFileSync(join(dir, "old.txt"), "a long enough body to be a rename\n".repeat(5));
     git("add", ".");
@@ -1393,4 +1413,21 @@ test("the fix commit the checked-in unreached hops name has one parent and chang
     assert.ok(info.paths.includes("conformance/src/fs-query-index/session.mjs"));
     assert.ok(!info.paths.includes("conformance/src/fs-query-index/harness.mjs"));
   }
+});
+
+test("a rewrite that changes a lane's fixture is checked by the lineage's conditions against it", () => {
+  const fixturePath = "conformance/fs-query-index-production.json";
+  const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
+  const [program] = Object.values(fixture.programs);
+  const [stepId] = Object.keys(program.steps);
+  program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
+  const lineage = readFileSync(join(REPO_ROOT, "conformance/harness-lineage.json"), "utf8");
+  const report = rewriteReport({
+    "conformance/harness-lineage.json": lineage,
+    [fixturePath]: JSON.stringify(fixture),
+  });
+  assert.match(
+    report.problems.join("\n"),
+    /lineage after the rewrite: hop \d+: condition fs-query-index-body-read-unreached fails/,
+  );
 });

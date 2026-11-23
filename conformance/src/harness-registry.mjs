@@ -603,7 +603,7 @@ export function gitFixInfo(commit, cwd = REPO_ROOT) {
       stdio: ["ignore", "pipe", "pipe"],
     });
   const [, ...parents] = git("rev-list", "--parents", "-n", "1", commit).trim().split(" ");
-  const paths = git("diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", commit)
+  const paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", commit)
     .split("\n")
     .filter(Boolean);
   return { parents, paths };
