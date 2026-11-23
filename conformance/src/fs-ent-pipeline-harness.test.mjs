@@ -40,9 +40,25 @@ import {
 import { SUMMARY_ONLY } from "./fs-ent-pipeline/o8a-corpus.mjs";
 import * as queryHarness from "./fs-query-index/harness.mjs";
 import { LANES, selectLane } from "./fs-query-index/lanes.mjs";
-import { HARNESS_LANES, laneStatus, rawDigest, treeReader } from "./harness-registry.mjs";
+import {
+  HARNESS_LANES,
+  gitReader,
+  laneStatus,
+  rawDigest,
+  treeReader,
+  UNREACHED_CONDITIONS,
+} from "./harness-registry.mjs";
 
 const lane = LANES["fs-ent-pipeline"];
+
+/**
+ * The digest the pipeline rows were recorded under: the lane's own two files (no index file) as
+ * they were at the base of the body-read fix, which the lineage connects to today's.
+ */
+const RECORDED_DIGEST = rawDigest(
+  HARNESS_LANES["fs-ent-pipeline"],
+  gitReader(UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"].base),
+);
 
 // Keep large O-8A framing payloads out of the per-request harness checks; their restored
 // compact fixture and full corpus identities are checked separately.
@@ -71,20 +87,15 @@ test("the pipeline lane has its own copy of the request layer and the others kee
   );
   assert.equal(queryHarness.DATABASES, undefined);
   assert.notEqual(DATABASES, undefined);
-  // Every recorded row is bound to the digest of the lane's own two files (no index file).
-  const { createHash } = await import("node:crypto");
-  const own = createHash("sha256")
-    .update(
-      `${await read("./fs-ent-pipeline/harness.mjs")}\n${await read("./fs-ent-pipeline/session.mjs")}\n`,
-    )
-    .digest("hex");
+  // Every recorded row is bound to the digest of the lane's own two files (no index file) before
+  // the body-read fix, and the lineage connects it to today's.
   const recorded = JSON.parse(await read("../fs-ent-pipeline-production.json"));
   for (const [id, program] of Object.entries(recorded.programs)) {
-    assert.equal(program.harnessDigest, own, id);
+    assert.equal(program.harnessDigest, RECORDED_DIGEST, id);
   }
 });
 
-test("run.mjs digests the pipeline lane's own request layer: the digest its rows were recorded under", async () => {
+test("run.mjs digests the pipeline lane's own request layer, which the lineage connects to the digest its rows were recorded under", async () => {
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const { readFile } = await import("node:fs/promises");
@@ -104,9 +115,14 @@ test("run.mjs digests the pipeline lane's own request layer: the digest its rows
     await readFile(new URL("../fs-ent-pipeline-production.json", import.meta.url), "utf8"),
   );
   const ent = await digestOf("fs-ent-pipeline");
+  assert.equal(ent, rawDigest(HARNESS_LANES["fs-ent-pipeline"], treeReader));
   for (const [id, program] of Object.entries(recorded.programs)) {
-    assert.equal(program.harnessDigest, ent, id);
+    assert.equal(program.harnessDigest, RECORDED_DIGEST, id);
   }
+  assert.notEqual(ent, RECORDED_DIGEST);
+  // Both pipeline lanes' rows are connected by the unreached hop of the body-read fix.
+  for (const name of ["fs-ent-pipeline", "fs-ent-pipeline-regex"])
+    assert.equal(laneStatus(name, HARNESS_LANES[name]).state, "lineage", name);
   // The query lanes digest the shared request layer, which is not the pipeline lane's.
   const shared = await digestOf("fs-query-index");
   assert.notEqual(shared, ent);
@@ -902,15 +918,9 @@ test("O-5 original six programs retain their request cap: 2 x (240 + 80) + 5", a
     allO5.reduce((n, p) => n + p.steps.length, 0),
     310,
   );
-  const harness = createHash("sha256")
-    .update(await readFile(new URL("./fs-ent-pipeline/harness.mjs", import.meta.url), "utf8"))
-    .update("\n")
-    .update(await readFile(new URL("./fs-ent-pipeline/session.mjs", import.meta.url), "utf8"))
-    .update("\n")
-    .digest("hex");
   for (const program of allO5) {
     assert.equal(recorded[program.id]?.corpusDigest, programDigest(program), program.id);
-    assert.equal(recorded[program.id]?.harnessDigest, harness, program.id);
+    assert.equal(recorded[program.id]?.harnessDigest, RECORDED_DIGEST, program.id);
     assert.deepEqual(
       Object.keys(recorded[program.id].steps).toSorted(),
       program.steps.map((s) => s.id).toSorted(),

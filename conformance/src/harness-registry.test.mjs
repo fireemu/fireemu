@@ -36,6 +36,7 @@ import {
   KNOWN_UNCONNECTED,
   laneStatus,
   lineageProblems,
+  pipelineBodyReadStageProblems,
   loadLineage,
   proposeUnreachedHops,
   rawDigest,
@@ -52,6 +53,7 @@ import {
   verifyOutcome,
   waivedDigestProblems,
   WAIVED_FIXTURES,
+  withFramingStatuses,
 } from "./harness-registry.mjs";
 
 const digestOf = (text) => scheme2Digest({ files: ["a.mjs"], extra: "" }, () => text);
@@ -1659,30 +1661,188 @@ test("the recorded -1 rows of the checked-in fixtures all carry that evidence, a
   );
 });
 
-test("the closed table names the one approved change the ten FS-QUERY-INDEX lanes share", () => {
-  assert.deepEqual(Object.keys(UNREACHED_CONDITIONS), ["fs-query-index-body-read-unreached"]);
-  const condition = UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"];
-  assert.deepEqual(condition.touches, ["conformance/src/fs-query-index/session.mjs"]);
-  assert.equal(condition.problems, bodyReadStageProblems);
-  for (const sha of [condition.base, condition.fix]) assert.match(sha, /^[0-9a-f]{40}$/);
-  assert.match(condition.deltaSha256, /^[0-9a-f]{64}$/);
-  const lanes = Object.entries(HARNESS_LANES).filter(([, lane]) =>
-    lane.files.includes("fs-query-index/session.mjs"),
+/** Each approved change: its session copy, the lanes that read it and its fixture check. */
+const APPROVED = {
+  "fs-query-index-body-read-unreached": {
+    session: "fs-query-index/session.mjs",
+    lanes: 10,
+    problems: bodyReadStageProblems,
+  },
+  "fs-ent-pipeline-body-read-unreached": {
+    session: "fs-ent-pipeline/session.mjs",
+    lanes: 2,
+    problems: pipelineBodyReadStageProblems,
+  },
+};
+
+test("the closed table names the approved change of each copy of the request layer", () => {
+  assert.deepEqual(Object.keys(UNREACHED_CONDITIONS), Object.keys(APPROVED));
+  for (const [name, { session, lanes: count, problems }] of Object.entries(APPROVED)) {
+    const condition = UNREACHED_CONDITIONS[name];
+    assert.deepEqual(condition.touches, [`conformance/src/${session}`]);
+    assert.equal(condition.problems, problems);
+    for (const sha of [condition.base, condition.fix]) assert.match(sha, /^[0-9a-f]{40}$/);
+    assert.match(condition.deltaSha256, /^[0-9a-f]{64}$/);
+    const lanes = Object.entries(HARNESS_LANES).filter(([, lane]) => lane.files.includes(session));
+    assert.equal(lanes.length, count, name);
+  }
+  // The pipeline fix is its own commit, made on top of the shared one.
+  assert.equal(
+    UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"].fix,
+    "8eac9e9a56ddcb723a27d900c0bb97aead225e05",
   );
-  assert.equal(lanes.length, 10);
 });
 
 test("the approved change is what git holds: the same diff hash, and one input changed", () => {
   if (isShallowCheckout() && process.env.FIREEMU_REQUIRE_FULL_HISTORY !== "1") return;
-  const { base, fix, touches, deltaSha256 } =
-    UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"];
-  const found = gitFixDelta(base, fix, touches);
-  assert.equal(found.deltaSha256, deltaSha256);
-  const [lane] = Object.values(HARNESS_LANES).filter((l) =>
-    l.files.includes("fs-query-index/session.mjs"),
+  for (const [name, { session }] of Object.entries(APPROVED)) {
+    const { base, fix, touches, deltaSha256 } = UNREACHED_CONDITIONS[name];
+    const found = gitFixDelta(base, fix, touches);
+    assert.equal(found.deltaSha256, deltaSha256, name);
+    const lane = Object.values(HARNESS_LANES).find((l) => l.files.includes(session));
+    assert.ok(found.changed.includes(touches[0]), name);
+    assert.ok(!found.changed.includes(`conformance/src/${lane.files[0]}`), name);
+  }
+});
+
+// ---- the pipeline lanes' compact framing rows --------------------------------------------------------
+
+const readConformanceJson = (path) => JSON.parse(readFileSync(join(CONFORMANCE_DIR, path), "utf8"));
+const FRAMING_SMALL = "fs-ent-pipeline/o8a/framing-small";
+
+test("the pipeline condition holds for both recorded pipeline fixtures, with the compact rows answered by the framing summary", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  const summary = readConformanceJson("fs-ent-pipeline-framing.json");
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}), []);
+  assert.deepEqual(
+    pipelineBodyReadStageProblems(fixture, {}, () => summary),
+    [],
   );
-  assert.ok(found.changed.includes(touches[0]));
-  assert.ok(!found.changed.includes(`conformance/src/${lane.files[0]}`));
+  assert.deepEqual(
+    pipelineBodyReadStageProblems(readConformanceJson("fs-ent-pipeline-regex-production.json"), {}),
+    [],
+  );
+  // Without the summary the compact rows prove nothing: each one, and each program's extra key, is
+  // refused. Two compact programs with 34 answers between them.
+  const without = bodyReadStageProblems(fixture, {});
+  assert.equal(without.length, 36);
+  assert.equal(
+    without.filter((problem) => /unexpected key compactFramingVersion/.test(problem)).length,
+    2,
+  );
+  // The summary answers every compact row with a numeric status or gRPC code, and nothing else.
+  const expanded = withFramingStatuses(fixture, summary);
+  const rows = expanded.programs[FRAMING_SMALL];
+  assert.equal(Object.hasOwn(rows, "compactFramingVersion"), false);
+  assert.deepEqual(rows.steps["f5-rest"], summary.programs[FRAMING_SMALL].steps["f5-rest"]);
+  assert.deepEqual(
+    rows.second["f500-rest"],
+    summary.programs[FRAMING_SMALL].steps["f500-rest"].second,
+  );
+  assert.deepEqual(Object.keys(rows.second), Object.keys(fixture.programs[FRAMING_SMALL].second));
+  // Every other program is the fixture's own object.
+  for (const [id, program] of Object.entries(fixture.programs))
+    if (!Object.hasOwn(program, "compactFramingVersion"))
+      assert.equal(expanded.programs[id], program, id);
+});
+
+test("a compact framing program counts only when the summary of the same corpus program answers each of its rows", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  const summary = readConformanceJson("fs-ent-pipeline-framing.json");
+  const check = (changeFixture = () => {}, changeSummary = () => {}) => {
+    const f = structuredClone(fixture);
+    const s = structuredClone(summary);
+    changeFixture(f.programs[FRAMING_SMALL], f);
+    changeSummary(s.programs[FRAMING_SMALL], s);
+    return pipelineBodyReadStageProblems(f, {}, () => s)
+      .filter((problem) => problem.startsWith(FRAMING_SMALL))
+      .join("\n");
+  };
+  assert.equal(check(), "");
+  // Another compact version, or a summary of another version, is not read.
+  assert.match(
+    check((p) => (p.compactFramingVersion = 2)),
+    /unexpected key compactFramingVersion/,
+  );
+  assert.match(
+    check(undefined, (_p, s) => (s.version = 2)),
+    /unexpected key/,
+  );
+  assert.match(
+    check(undefined, (_p, s) => delete s.programs[FRAMING_SMALL]),
+    /unexpected key/,
+  );
+  // The summary must be of the corpus program the fixture recorded, and a digest must be there.
+  assert.match(
+    check(undefined, (p) => (p.corpusDigest = "0".repeat(64))),
+    /unexpected key/,
+  );
+  assert.match(
+    check(
+      (p) => delete p.corpusDigest,
+      (p) => delete p.corpusDigest,
+    ),
+    /unexpected key/,
+  );
+  // A row the summary does not answer, in either slot, is refused.
+  assert.match(
+    check(undefined, (p) => delete p.steps["f5-rest"]),
+    /framing-small#f5-rest: neither a numeric status/,
+  );
+  assert.match(
+    check(undefined, (p) => delete p.steps["f500-rest"].second),
+    /framing-small#f500-rest \(second\): neither a numeric status/,
+  );
+  // A compact row the summary has no entry for, by its own name.
+  assert.match(
+    check((p) => (p.steps.extra = p.steps["f5-rest"])),
+    /framing-small#extra: neither a numeric status/,
+  );
+  // A name the summary only inherits is not an entry of it.
+  assert.match(
+    check((p) => (p.steps.constructor = p.steps["f5-rest"])),
+    /framing-small#constructor: neither a numeric status/,
+  );
+  // What the summary answers is judged as any recorded answer is.
+  assert.match(
+    check(undefined, (p) => (p.steps["f5-rest"] = { transport: "rest", status: 0 })),
+    /f5-rest: status 0 without a transport error/,
+  );
+  assert.match(
+    check(
+      undefined,
+      (p) =>
+        (p.steps["f5-grpc"] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }),
+    ),
+    /f5-grpc: the body of the answer could not be read/,
+  );
+});
+
+test("a pipeline condition whose framing summary cannot be read is a problem, not a throw", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  for (const summary of [undefined, null, 7, "x", {}, { version: 1 }])
+    assert.match(
+      pipelineBodyReadStageProblems(fixture, {}, () => summary).join("\n"),
+      /unexpected key compactFramingVersion/,
+    );
+  assert.deepEqual(
+    pipelineBodyReadStageProblems(fixture, {}, () => {
+      throw new Error("gone");
+    }),
+    ["the framing summary cannot be read: gone"],
+  );
+});
+
+test("the pipeline lane guards its framing summary against a rewrite", () => {
+  assert.deepEqual(HARNESS_LANES["fs-ent-pipeline"].guarded, [
+    "conformance/fs-ent-pipeline-framing.json",
+  ]);
+  const path = "conformance/fs-ent-pipeline-framing.json";
+  const report = rewriteReport({ [path]: readFileSync(join(REPO_ROOT, path), "utf8") }, NO_GIT);
+  assert.match(
+    report.problems.join("\n"),
+    /fs-ent-pipeline-framing\.json: a rewrite changes an input/,
+  );
 });
 
 // ---- generating the hops -------------------------------------------------------------------------
@@ -1777,7 +1937,7 @@ test("the generator skips a hop the lineage already has, and refuses an unknown 
 test("the checked-in unreached hops are exactly what the generator proposes for their condition", () => {
   const lineage = loadLineage();
   const unreached = lineage.hops.filter((hop) => hop.kind === "unreached");
-  assert.equal(unreached.length, 10, "one hop for each recorded harness digest of ten lanes");
+  assert.equal(unreached.length, 12, "one hop for each recorded harness digest of twelve lanes");
   for (const condition of new Set(unreached.map((hop) => hop.condition))) {
     const mine = unreached.filter((hop) => hop.condition === condition);
     const without = { ...lineage, hops: lineage.hops.filter((hop) => !mine.includes(hop)) };
@@ -1786,15 +1946,17 @@ test("the checked-in unreached hops are exactly what the generator proposes for 
   }
 });
 
-test("every recorded harness digest of the ten lanes is connected without a waiver", () => {
+test("every recorded harness digest of the twelve lanes is connected without a waiver", () => {
   for (const [name, lane] of Object.entries(HARNESS_LANES)) {
-    if (!lane.files.includes("fs-query-index/session.mjs")) continue;
+    if (!Object.values(APPROVED).some(({ session }) => lane.files.includes(session))) continue;
     const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
     for (const saved of recordedDigests(name, fixture))
       assert.notEqual(checkFixtureDigest(name, lane, saved).state, "stale", `${name} ${saved}`);
   }
   assert.equal(
-    WAIVED_FIXTURES.some((waived) => /query-index|data-write-list/.test(waived.fixture)),
+    WAIVED_FIXTURES.some((waived) =>
+      /query-index|data-write-list|ent-pipeline/.test(waived.fixture),
+    ),
     false,
   );
 });
@@ -1843,6 +2005,21 @@ test("a rewrite that changes only a lane's fixture is checked against the lineag
     }).problems.join("\n"),
     /condition fs-query-index-body-read-unreached fails/,
   );
+});
+
+test("a rewrite of a pipeline fixture is checked against the pipeline condition", () => {
+  for (const name of ["fs-ent-pipeline-production.json", "fs-ent-pipeline-regex-production.json"]) {
+    const fixturePath = `conformance/${name}`;
+    const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
+    const [program] = Object.values(fixture.programs);
+    const [stepId] = Object.keys(program.steps);
+    program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
+    assert.match(
+      rewriteReport({ [fixturePath]: JSON.stringify(fixture) }).problems.join("\n"),
+      /lineage after the rewrite: hop \d+: condition fs-ent-pipeline-body-read-unreached fails/,
+      name,
+    );
+  }
 });
 
 test("a rewrite of a fixture no unreached hop reads does not re-check the lineage", () => {

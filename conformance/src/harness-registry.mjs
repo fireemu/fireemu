@@ -82,6 +82,9 @@ export const STAGE2_HARNESS_FILES = [
   "auth-fs-cross/browser-page.mjs",
 ];
 
+/** The summary of the O-8A framing programs whose fixture rows are compact (framing-summary.mjs). */
+const FRAMING_SUMMARY_PATH = "fs-ent-pipeline-framing.json";
+
 /** A data input of a digest (a path under conformance/) as this checkout has it. */
 const readConformanceData = (path) => readFileSync(join(CONFORMANCE_DIR, path), "utf8");
 
@@ -283,11 +286,13 @@ export const HARNESS_LANES = {
     guarded: ["conformance/fs-query-index-merge8.indexes.json"],
   },
   // FS-ENT-ORACLE: the pipeline lane's own copy of the query request layer (named database
-  // support), without an index file.
+  // support), without an index file. The framing summary is not digested; the lane's unreached hop
+  // reads it (pipelineBodyReadStageProblems), so a rewrite of it is refused.
   "fs-ent-pipeline": {
     fixture: "fs-ent-pipeline-production.json",
     files: ["fs-ent-pipeline/harness.mjs", "fs-ent-pipeline/session.mjs"],
     extra: "",
+    guarded: [`conformance/${FRAMING_SUMMARY_PATH}`],
   },
   // FS-PIPELINE-REGEX (2026-11-10): the same request layer as the O-series lane, its own fixture.
   "fs-ent-pipeline-regex": {
@@ -820,6 +825,66 @@ export function bodyReadStageProblems(fixture, corpus = {}) {
 }
 
 /**
+ * The fixture with each compact framing program of the pipeline lane answered by its summary. A
+ * compact row (compactFramingVersion 1, fs-ent-pipeline/framing-summary.mjs) keeps no status; the
+ * summary of the same corpus program (the same corpusDigest) records the status or gRPC code of
+ * each step and of its second answer. Each row of the fixture, in `steps` and `second`, is replaced
+ * by the summary's entry of its own name, or by nothing when the summary has none. A compact
+ * program the summary does not cover is left as it is, so the condition refuses it.
+ */
+export function withFramingStatuses(fixture, summary) {
+  const programs = Object.entries(fixture?.programs ?? {}).map(([id, program]) => {
+    const kept =
+      summary?.version === 1 && Object.hasOwn(summary.programs ?? {}, id)
+        ? summary.programs[id]
+        : undefined;
+    if (
+      program?.compactFramingVersion !== 1 ||
+      typeof program.corpusDigest !== "string" ||
+      kept?.corpusDigest !== program.corpusDigest
+    )
+      return [id, program];
+    const entry = (stepId) =>
+      Object.hasOwn(kept.steps ?? {}, stepId) ? kept.steps[stepId] : undefined;
+    const { compactFramingVersion: _, ...rest } = program;
+    const answers = (slot, pick) =>
+      Object.fromEntries(
+        Object.keys(program[slot] ?? {}).map((stepId) => [stepId, pick(entry(stepId))]),
+      );
+    return [
+      id,
+      {
+        ...rest,
+        steps: answers("steps", (row) => row),
+        ...(Object.hasOwn(program, "second")
+          ? { second: answers("second", (row) => row?.second) }
+          : {}),
+      },
+    ];
+  });
+  return { ...fixture, programs: Object.fromEntries(programs) };
+}
+
+/**
+ * bodyReadStageProblems for the pipeline lanes: the compact framing rows are judged by the answers
+ * the framing summary recorded for them (withFramingStatuses). A summary that cannot be read is a
+ * problem.
+ */
+export function pipelineBodyReadStageProblems(
+  fixture,
+  corpus = {},
+  readSummary = () => JSON.parse(readConformanceData(FRAMING_SUMMARY_PATH)),
+) {
+  let summary;
+  try {
+    summary = readSummary();
+  } catch (error) {
+    return [`the framing summary cannot be read: ${error.message}`];
+  }
+  return bodyReadStageProblems(withFramingStatuses(fixture, summary), corpus);
+}
+
+/**
  * The closed table of conditions an "unreached" hop may name. A condition is one approved change:
  * the commit it was made at (`fix`), the commit before it, where the recorded digests reproduce
  * (`base`), what it may change among a lane's inputs (`touches`) and the sha256 of its exact delta
@@ -834,6 +899,14 @@ export const UNREACHED_CONDITIONS = {
     deltaSha256: "6a43fe4af37970c41f62ece5a4a16100c58f1ede7d30491f4466b5d5b8a8caa8",
     touches: ["conformance/src/fs-query-index/session.mjs"],
     problems: bodyReadStageProblems,
+  },
+  // The same change to the pipeline lane's copy of the request layer, made as its own commit.
+  "fs-ent-pipeline-body-read-unreached": {
+    base: "d9dadaa474265c1bddd0bb8fddfd50cec1be34e5",
+    fix: "8eac9e9a56ddcb723a27d900c0bb97aead225e05",
+    deltaSha256: "3c09054ce798f631ed38f0cf3977392bb10ee7cbcebc91b94f6e635649ec89d4",
+    touches: ["conformance/src/fs-ent-pipeline/session.mjs"],
+    problems: pipelineBodyReadStageProblems,
   },
 };
 
