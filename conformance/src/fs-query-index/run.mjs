@@ -129,6 +129,15 @@ export function harnessDigestIsStale(saved, current) {
     : saved !== current;
 }
 
+/** Whether a saved program's rows are stale for today's corpus program and harness. */
+export function rowIsStale(saved, program, harness) {
+  return (
+    saved !== undefined &&
+    (saved.corpusDigest !== programDigest(program) ||
+      harnessDigestIsStale(saved.harnessDigest, harness))
+  );
+}
+
 /** Per recording: every step once; the harness gets its own budget for wipes and seeds. */
 export const ceilings = (programs) => ({
   maxRequests: programs.reduce((total, p) => total + p.steps.length, 0),
@@ -1085,10 +1094,7 @@ async function check() {
   const rows = [];
   for (const program of selected) {
     const saved = fixture.programs[program.id];
-    const stale =
-      saved !== undefined &&
-      (saved.corpusDigest !== programDigest(program) ||
-        harnessDigestIsStale(saved.harnessDigest, harness));
+    const stale = rowIsStale(saved, program, harness);
     for (const step of program.steps) {
       const production = saved?.steps?.[step.id];
       const alternative = saved?.second?.[step.id];

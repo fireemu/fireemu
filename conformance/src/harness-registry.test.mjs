@@ -1628,10 +1628,25 @@ test("gitFixDelta reports the changed paths and a hash of the diff that no confi
       ["diff.interHunkContext", "5"],
       ["diff.algorithm", "patience"],
       ["diff.renames", "copies"],
-      ["core.abbrev", "7"],
+      ["core.abbrev", "12"],
     ])
       git("config", key, value);
     assert.equal(gitFixDelta(base, fix, ["input.mjs"], dir).diffSha256, found.diffSha256);
+    assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir).changed, found.changed);
+    // Nor does the user's own configuration file, which the process environment points at.
+    const globalConfig = join(dir, "global.gitconfig");
+    writeFileSync(
+      globalConfig,
+      "[diff]\n\tnoprefix = true\n\tcontext = 9\n\trenames = copies\n\talgorithm = histogram\n[core]\n\tabbrev = 12\n",
+    );
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    try {
+      assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir), found);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved;
+    }
     // A different change to the same file hashes differently.
     writeFileSync(join(dir, "input.mjs"), "export const a = 9;\n");
     git("commit", "-q", "-am", "other");
@@ -1660,4 +1675,24 @@ test("the lane runner accepts a recorded digest the registry connects by lineage
   assert.equal(harnessDigestIsStale(saved, current), false);
   assert.equal(harnessDigestIsStale(current, current), false);
   assert.equal(harnessDigestIsStale("0".repeat(64), current), true);
+});
+
+test("the lane runner does not call a committed row of the shared layer stale, and calls a changed one stale", async () => {
+  const { harnessDigest, rowIsStale } = await import("./fs-query-index/run.mjs");
+  const { PROGRAMS } = await import("./fs-query-index/corpus.mjs");
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-query-index-production.json"), "utf8"),
+  );
+  const current = await harnessDigest();
+  for (const [id, saved] of Object.entries(fixture.programs)) {
+    const program = PROGRAMS.find((candidate) => candidate.id === id);
+    assert.equal(rowIsStale(saved, program, current), false, id);
+    assert.equal(rowIsStale({ ...saved, harnessDigest: "0".repeat(64) }, program, current), true);
+    assert.equal(rowIsStale({ ...saved, corpusDigest: "0".repeat(64) }, program, current), true);
+    assert.equal(rowIsStale(undefined, program, current), false);
+  }
+  // check() decides staleness through that function, not through a second comparison.
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/fs-query-index/run.mjs"), "utf8");
+  assert.match(source, /const stale = rowIsStale\(saved, program, harness\);/);
+  assert.doesNotMatch(source, /saved\.harnessDigest !== harness/);
 });
