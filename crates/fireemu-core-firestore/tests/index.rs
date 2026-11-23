@@ -1433,7 +1433,7 @@ fn aggregation_fields_participate_in_index_validation_without_changing_the_query
 }
 
 #[test]
-fn equality_only_automatic_indexes_accept_either_enabled_order_direction() {
+fn descending_only_equality_with_implicit_name_order_depends_on_policy() {
     let collection = CollectionId::try_new("tasks").unwrap();
     let mut indexes = IndexSet::default();
     indexes.set_single_field_indexes(
@@ -1443,10 +1443,26 @@ fn equality_only_automatic_indexes_accept_either_enabled_order_direction() {
     );
 
     let equality = tasks().with_filter(field("priority", FieldOp::Equal, Value::Integer(1)));
-    assert!(matches!(
+    let mut emulator = standard();
+    emulator.policy = IndexValidationPolicy::Emulator;
+    assert_eq!(
         decide(&equality, &indexes, standard()),
-        IndexDecision::UseIndex { .. }
-    ));
+        IndexDecision::MissingRequired {
+            requirement: composite(&[
+                ("priority", IndexFieldMode::Ascending),
+                ("__name__", IndexFieldMode::Ascending),
+            ]),
+        }
+    );
+    assert_eq!(
+        decide(&equality, &indexes, emulator),
+        IndexDecision::UseIndex {
+            index: composite(&[
+                ("priority", IndexFieldMode::Descending),
+                ("__name__", IndexFieldMode::Ascending),
+            ]),
+        }
+    );
 }
 
 #[test]

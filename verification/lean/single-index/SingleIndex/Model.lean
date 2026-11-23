@@ -173,7 +173,7 @@ def refusesSingleEquality (r : Requirement) (lookup : Overrides) (coll : String)
   let direction := requestedName r
   recordedEquality && r.equality.length == 1 && r.array.isNone &&
     (r.order.all (·.1 == name)) &&
-    (direction == .desc || (scope == .group && plainConjunction && !r.equalityOrdered)) &&
+    (direction == .desc || (plainConjunction && !r.equalityOrdered)) &&
     base.fields.head?.any (fun field => field.2 != .ordered direction) &&
     automaticIndexFor r lookup coll scope == some base &&
     (firstComposite r coll scope composites).isNone

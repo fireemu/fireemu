@@ -377,6 +377,201 @@ def obs2MergeRows : List Case :=
       (some [member "tags" .contains, member "a" .desc])
   ]
 
+/-- Observation 2b query verdicts. Explain rows also pin the ordered members, their scopes and name direction in the planner representation. -/
+def obs2bRows : List Case :=
+  let row (catalog : String × Nat × Config) (step : String) (served : Bool)
+      (filters : List Filter) (orders : List OrderC := []) (group := false)
+      (source := QuerySource.plain) (plan : Option (List Index) := none) : Case :=
+    let (program, coll, config) := catalog
+    let label := program ++ "#" ++ step
+    { label, query := query coll filters orders group, config, source,
+      production := some (served, label), productionIndexes := plan }
+  let a := eqF "a"
+  let b := eqF "b"
+  let c := eqF "c"
+  let t := hasF "tags"
+  let shared := eqF "tags"
+  let up := [asc "__name__"]
+  let down := [desc "__name__"]
+  let ilp := cid "ilp"
+  let ilpCfg : String × Nat × Config := ("fs-query-index-merge3/read-only/leap-second", ilp, {})
+  let it1 := cid "it1"
+  let it1Cfg : String × Nat × Config := ("fs-query-index-merge3/shapes/carrier-contains-automatic", it1,
+    { composites := [ix it1 [("a", .asc), ("tags", .contains)]],
+      overrides := [(it1, fid "a", [])] })
+  let imd := cid "imd"
+  let imdCfg : String × Nat × Config := ("fs-query-index-merge3/shapes/descending-only", imd, { overrides := [(imd, fid "a", [(.collection, .desc)])] })
+  let iw2 := cid "iw2"
+  let iw2Cfg : String × Nat × Config := ("fs-query-index-merge3/shapes/two-carriers", iw2,
+    { composites := [ix iw2 [("a", .asc), ("tags", .contains)], ix iw2 [("b", .asc), ("tags", .contains)]],
+      overrides := [(iw2, fid "a", []), (iw2, fid "b", []), (iw2, fid "tags", [])] })
+  let iwd := cid "iwd"
+  let iwdCfg : String × Nat × Config := ("fs-query-index-merge4/shapes/asc-and-desc-carriers", iwd,
+    { composites := [ix iwd [("a", .asc), ("tags", .contains)], ix iwd [("a", .desc), ("tags", .contains)]],
+      overrides := [(iwd, fid "a", []), (iwd, fid "tags", [])] })
+  let io1 := cid "io1"
+  let io1Cfg : String × Nat × Config := ("fs-query-index-merge4/shapes/carrier-tags-ordered-only", io1,
+    { composites := [ix io1 [("a", .asc), ("tags", .contains)]],
+      overrides := [(io1, fid "a", []), (io1, fid "tags", [(.collection, .asc), (.collection, .desc)])] })
+  let ilw := cid "ilw"
+  let ilwCfg : String × Nat × Config := ("fs-query-index-merge5/read-only/second-60-writes", ilw, {})
+  let ig2 := cid "ig2"
+  let ig2Cfg : String × Nat × Config := ("fs-query-index-merge5/shapes/group-contains-only", ig2,
+    { composites := [ix ig2 [("a", .asc), ("tags", .contains)]],
+      overrides := [(ig2, fid "a", []), (ig2, fid "tags", [(.group, .contains)])] })
+  let i2p := cid "i2p"
+  let i2pCfg : String × Nat × Config := ("fs-query-index-merge5/shapes/two-field-prefix", i2p,
+    { composites := [ix i2p [("a", .asc), ("b", .asc), ("tags", .contains)]],
+      overrides := [(i2p, fid "a", []), (i2p, fid "b", []), (i2p, fid "tags", [])] })
+  let irv := cid "irv"
+  let irvCfg : String × Nat × Config := ("fs-query-index-merge6/shapes/collection-composite-group-query", irv,
+    { composites := [ix irv [("a", .asc), ("__name__", .desc)]],
+      overrides := [(irv, fid "a", [])] })
+  let icm := cid "icm"
+  let icmCfg : String × Nat × Config := ("fs-query-index-merge6/shapes/composite-member", icm,
+    { composites := [ix icm [("a", .asc), ("__name__", .desc)]],
+      overrides := [(icm, fid "a", [])] })
+  let ig1 := cid "ig1"
+  let ig1Cfg : String × Nat × Config := ("fs-query-index-merge6/shapes/group-composite-collection-query", ig1,
+    { composites := [ix ig1 [("a", .asc), ("__name__", .desc)] .group],
+      overrides := [(ig1, fid "a", [])] })
+  let ip1 := cid "ip1"
+  let ip1Cfg : String × Nat × Config := ("fs-query-index-merge7/shapes/descending-prefix-carrier", ip1,
+    { composites := [ix ip1 [("a", .desc), ("tags", .contains)]],
+      overrides := [(ip1, fid "a", []), (ip1, fid "tags", [])] })
+  let igx := cid "igx"
+  let igxCfg : String × Nat × Config := ("fs-query-index-merge7/shapes/group-carrier", igx,
+    { composites := [ix igx [("a", .asc), ("tags", .contains)] .group],
+      overrides := [(igx, fid "a", []), (igx, fid "tags", []), (igx, fid "b", [(.collection, .asc), (.group, .asc)])] })
+  let igy := cid "igy"
+  let igyCfg : String × Nat × Config := ("fs-query-index-merge8/shapes/group-carrier-collection-readiness", igy,
+    { composites := [ix igy [("a", .asc), ("tags", .contains)] .group],
+      overrides := [(igy, fid "a", []), (igy, fid "tags", []), (igy, fid "b", [(.collection, .asc), (.group, .asc)])] })
+  let is1 := cid "is1"
+  let is1Cfg : String × Nat × Config := ("fs-query-index-merge8/shapes/shared-path-ascending-only", is1, { overrides := [(is1, fid "a", [(.collection, .asc)]), (is1, fid "tags", [(.collection, .contains)])] })
+  let is2 := cid "is2"
+  let is2Cfg : String × Nat × Config := ("fs-query-index-merge8/shapes/shared-path-descending-only", is2, { overrides := [(is2, fid "a", [(.collection, .desc)]), (is2, fid "tags", [(.collection, .contains)])] })
+  [
+    row ilpCfg "p7-leap-eq" true [eqF "t"],
+    row ilpCfg "p7-leap-ge" true [gtF "t"],
+    row ilpCfg "p7-leap-le" true [gtF "t"],
+    row ilpCfg "p7-leap-gt" true [gtF "t"],
+    row ilpCfg "p7-leap-lt" true [gtF "t"],
+    row ilpCfg "p7-second-60-eq" true [eqF "t"],
+    row ilpCfg "p7-second-60-ge" true [gtF "t"],
+    row ilpCfg "p7-second-60-le" true [gtF "t"],
+    row it1Cfg "a-b-and-contains" true [a, b, t],
+    row it1Cfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix it1 [("a", .asc), ("tags", .contains)], ix it1 [("b", .asc), ("__name__", .asc)]]),
+    row it1Cfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row it1Cfg "count-a-b-and-contains" true [a, b, t] (source := .count),
+    row it1Cfg "a-and-contains" true [a, t],
+    row it1Cfg "contains" true [t],
+    row it1Cfg "order-a-desc" false [] [desc "a"],
+    row imdCfg "a-name-asc" false [a] up,
+    row imdCfg "a" false [a],
+    row imdCfg "a-name-asc-plan" false [a] up,
+    row imdCfg "a-name-desc" true [a] down,
+    row imdCfg "a-and-b-name-asc" false [a, b] up,
+    row imdCfg "a-and-b-name-asc-plan" false [a, b] up,
+    row imdCfg "a-and-b-name-desc" true [a, b] down,
+    row imdCfg "order-a-asc" false [] [asc "a"],
+    row imdCfg "order-a-desc" true [] [desc "a"],
+    row iw2Cfg "a-b-and-contains" true [a, b, t],
+    row iw2Cfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix iw2 [("b", .asc), ("tags", .contains)], ix iw2 [("a", .asc), ("tags", .contains)]]),
+    row iw2Cfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row iw2Cfg "count-a-b-and-contains" true [a, b, t] (source := .count),
+    row iw2Cfg "a-and-contains" true [a, t],
+    row iw2Cfg "b-and-contains" true [b, t],
+    row iw2Cfg "contains" false [t],
+    row iw2Cfg "order-a-desc" false [] [desc "a"],
+    row iw2Cfg "order-b-asc" false [] [asc "b"],
+    row iwdCfg "a-b-and-contains" true [a, b, t],
+    row iwdCfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix iwd [("a", .desc), ("tags", .contains), ("__name__", .asc)], ix iwd [("b", .asc), ("__name__", .asc)]]),
+    row iwdCfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row iwdCfg "a-b-and-contains-name-desc-plan" false [a, b, t] down,
+    row iwdCfg "a-and-contains" true [a, t],
+    row iwdCfg "a-and-contains-name-desc" false [a, t] down,
+    row iwdCfg "contains" false [t],
+    row iwdCfg "order-a-desc" false [] [desc "a"],
+    row io1Cfg "a-b-and-contains" true [a, b, t],
+    row io1Cfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix io1 [("a", .asc), ("tags", .contains)], ix io1 [("b", .asc), ("__name__", .asc)]]),
+    row io1Cfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row io1Cfg "a-and-contains" true [a, t],
+    row io1Cfg "contains" false [t],
+    row io1Cfg "order-tags-asc" true [] [asc "tags"],
+    row io1Cfg "order-a-desc" false [] [desc "a"],
+    row ilwCfg "p7-query-stored-leap" true [eqF "t"],
+    row ilwCfg "p7-query-stored-second-60" true [eqF "t"],
+    row ig2Cfg "a-b-and-contains" true [a, b, t],
+    row ig2Cfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix ig2 [("a", .asc), ("tags", .contains)], ix ig2 [("b", .asc), ("__name__", .asc)]]),
+    row ig2Cfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row ig2Cfg "a-and-contains" true [a, t],
+    row ig2Cfg "contains" false [t],
+    row ig2Cfg "group-contains" true [t] (group := true),
+    row ig2Cfg "order-a-desc" false [] [desc "a"],
+    row i2pCfg "a-b-c-and-contains" true [a, b, c, t],
+    row i2pCfg "a-b-c-and-contains-plan" true [a, b, c, t] (plan := some [ix i2p [("a", .asc), ("b", .asc), ("tags", .contains)], ix i2p [("c", .asc), ("__name__", .asc)]]),
+    row i2pCfg "a-b-c-and-contains-name-desc" false [a, b, c, t] down,
+    row i2pCfg "a-b-and-contains" true [a, b, t],
+    row i2pCfg "contains" false [t],
+    row i2pCfg "order-a-desc" false [] [desc "a"],
+    row i2pCfg "order-b-asc" false [] [asc "b"],
+    row irvCfg "group-order-a-asc-name-desc" false [] [asc "a", desc "__name__"] (group := true),
+    row irvCfg "group-order-a-asc-name-desc-plan" false [] [asc "a", desc "__name__"] (group := true),
+    row irvCfg "order-a-asc-name-desc" true [] [asc "a", desc "__name__"],
+    row irvCfg "group-a-name-desc" false [a] down (group := true),
+    row irvCfg "a-name-desc" true [a] down,
+    row icmCfg "a-and-contains-name-desc" true [a, t] down,
+    row icmCfg "a-and-contains-name-desc-plan" true [a, t] down (plan := some [ix icm [("tags", .contains), ("__name__", .desc)], ix icm [("a", .asc), ("__name__", .desc)]]),
+    row icmCfg "a-and-contains-name-asc" false [a, t] up,
+    row icmCfg "a-name-desc" true [a] down,
+    row icmCfg "contains-name-desc" true [t] down,
+    row ig1Cfg "order-a-asc-name-desc" false [] [asc "a", desc "__name__"],
+    row ig1Cfg "order-a-asc-name-desc-plan" false [] [asc "a", desc "__name__"],
+    row ig1Cfg "group-order-a-asc-name-desc" true [] [asc "a", desc "__name__"] (group := true),
+    row ig1Cfg "a-name-desc" false [a] down,
+    row ig1Cfg "group-a-name-desc" true [a] down (group := true),
+    row ip1Cfg "a-b-and-contains" true [a, b, t],
+    row ip1Cfg "a-b-and-contains-plan" true [a, b, t] (plan := some [ix ip1 [("a", .desc), ("tags", .contains), ("__name__", .asc)], ix ip1 [("b", .asc), ("__name__", .asc)]]),
+    row ip1Cfg "a-b-and-contains-name-desc" false [a, b, t] down,
+    row ip1Cfg "a-b-and-contains-name-desc-plan" false [a, b, t] down,
+    row ip1Cfg "a-and-contains" true [a, t],
+    row ip1Cfg "a-and-contains-name-desc" false [a, t] down,
+    row ip1Cfg "contains" false [t],
+    row ip1Cfg "order-a-desc" false [] [desc "a"],
+    row igxCfg "group-a-b-and-contains" true [a, b, t] (group := true),
+    row igxCfg "group-a-b-and-contains-plan" true [a, b, t] (group := true) (plan := some [ix igx [("a", .asc), ("tags", .contains)] .group, ix igx [("b", .asc), ("__name__", .asc)] .group]),
+    row igxCfg "group-a-b-and-contains-name-desc" false [a, b, t] down (group := true),
+    row igxCfg "a-b-and-contains" true [a, b, t],
+    row igxCfg "group-a-and-contains" true [a, t] (group := true),
+    row igxCfg "group-contains" false [t] (group := true),
+    row igxCfg "group-order-b-asc" true [] [asc "b"] (group := true),
+    row igxCfg "order-b-asc" true [] [asc "b"],
+    row igxCfg "group-order-a-desc" false [] [desc "a"] (group := true),
+    row igyCfg "a-b-and-contains" true [a, b, t],
+    row igyCfg "contains" false [t],
+    row igyCfg "order-a-desc" false [] [desc "a"],
+    row igyCfg "group-a-and-contains" true [a, t] (group := true),
+    row is1Cfg "a-and-shared-path-name-asc" false [a, shared, t] up (source := .sharedArray),
+    row is1Cfg "a-and-shared-path-name-desc" false [a, shared, t] down (source := .sharedArray),
+    row is1Cfg "a-and-shared-path-name-asc-plan" false [a, shared, t] up (source := .sharedArray),
+    row is1Cfg "a-and-shared-path-name-desc-plan" false [a, shared, t] down (source := .sharedArray),
+    row is1Cfg "shared-path-name-asc" false [shared, t] up (source := .sharedArray),
+    row is1Cfg "contains" true [t],
+    row is1Cfg "order-tags-asc" false [] [asc "tags"],
+    row is1Cfg "order-a-asc" true [] [asc "a"],
+    row is1Cfg "order-a-desc" false [] [desc "a"],
+    row is2Cfg "a-and-shared-path-name-asc" false [a, shared, t] up (source := .sharedArray),
+    row is2Cfg "a-and-shared-path-name-desc" false [a, shared, t] down (source := .sharedArray),
+    row is2Cfg "a-and-shared-path-name-asc-plan" false [a, shared, t] up (source := .sharedArray),
+    row is2Cfg "a-and-shared-path-name-desc-plan" false [a, shared, t] down (source := .sharedArray),
+    row is2Cfg "shared-path-name-asc" false [shared, t] up (source := .sharedArray),
+    row is2Cfg "contains" true [t],
+    row is2Cfg "order-tags-asc" false [] [asc "tags"],
+    row is2Cfg "order-a-asc" false [] [asc "a"],
+    row is2Cfg "order-a-desc" true [] [desc "a"]
+  ]
+
 /-- The members a decision plans, without `__name__` fields. -/
 def Decision.planFields : Decision → List (List IField)
   | .use i => [i.fields.filter (·.path != NAME)]
@@ -389,15 +584,16 @@ def Case.agreesWithProduction (c : Case) : Bool :=
   match c.production with
   | none => true
   | some (served, _) =>
-    c.decision.served == served &&
+    c.decision.served == served && c.productionIndexes.all (fun ms => c.decision == .merge ms) &&
       match c.productionPlan with
       | none => true
       | some plan => sameSet c.decision.planFields plan
 
 /-- The rows the model contradicts; the build fails unless there are none. -/
 def productionDisagreements : List String :=
-  (productionRows.filter (!·.agreesWithProduction)).map (·.label)
+  ((productionRows ++ obs2bRows).filter (!·.agreesWithProduction)).map (·.label)
 
+#guard obs2bRows.length == 118
 #guard productionDisagreements == []
 #guard obs2P1Rows.length == 13
 #guard obs2P1Rows.all Case.agreesWithProduction

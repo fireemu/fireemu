@@ -144,6 +144,9 @@ info: 'IM.unqualified_carrier_keeps_implicit_plan' depends on axioms: [propext, 
 /-- info: 'IM.recorded_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.recorded_kinds
 
+/-- info: 'IM.completion_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.completion_kinds
+
 /-- info: 'IM.head_merge_kinds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.head_merge_kinds
 
@@ -171,8 +174,8 @@ info: 'IM.head_f1_descending_refused' depends on axioms: [propext, Classical.cho
 -/
 #guard_msgs in #print axioms IM.head_f1_descending_refused
 
-/-- info: 'IM.head_group_merges_a_and_refuses_b' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.head_group_merges_a_and_refuses_b
+/-- info: 'IM.head_group_merges_a_and_b' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_group_merges_a_and_b
 
 /--
 info: 'IM.head_contains_any_merges' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -192,11 +195,11 @@ info: 'IM.carried_array_field_with_equality_refused' depends on axioms: [propext
 -/
 #guard_msgs in #print axioms IM.carried_array_field_with_equality_refused
 
-/-- info: 'IM.head_two_carriers_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.head_two_carriers_base
+/-- info: 'IM.head_two_carriers' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_two_carriers
 
-/-- info: 'IM.head_group_carrier_base' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms IM.head_group_carrier_base
+/-- info: 'IM.head_group_carrier' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_group_carrier
 
 /--
 info: 'IM.head_b_with_automatic_contains' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -204,9 +207,9 @@ info: 'IM.head_b_with_automatic_contains' depends on axioms: [propext, Classical
 #guard_msgs in #print axioms IM.head_b_with_automatic_contains
 
 /--
-info: 'IM.head_b_descending_carrier_base' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: 'IM.head_b_descending_carrier' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in #print axioms IM.head_b_descending_carrier_base
+#guard_msgs in #print axioms IM.head_b_descending_carrier
 
 /--
 info: 'IM.head_b_explicit_name_carrier' depends on axioms: [propext, Classical.choice, Quot.sound]

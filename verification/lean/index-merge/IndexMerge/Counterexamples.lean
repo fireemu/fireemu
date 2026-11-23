@@ -28,8 +28,7 @@ The other two findings concern how the result depends on the configuration:
 These are facts about the base decision. The last section states the head decision
 (`IndexMerge/Head.lean`) on the recorded shapes F1 (`head_f1`), F3 (`head_f3`), F2
 (`head_f2_refused`) and the single-equality refusal (`head_single_equality_refused`), and on
-their unrecorded neighbours, among them `first_attempt_conflation`: the base's coverage by path,
-kept by the head.
+their neighbours. In `first_attempt_conflation` the base covers by path and the head distinguishes an array equality from a scalar equality.
 
 Fields are numbers: 1 is `a`, 2 is `b`, 3 is `tags`, 4 is `e`; collection group 0.
 -/
@@ -279,7 +278,7 @@ theorem head_single_equality_neighbours :
         .missing (singleFieldIndex 0 true 1 .asc .desc) := by
   refine ⟨by decide, by decide, by decide, by decide⟩
 
-/-- F1 ordered by `__name__` descending, unrecorded: (a) needs `tags`' contains index, which is
+/-- F1 ordered by `__name__` descending: (a) needs `tags`' contains index, which is
 exempt, and (b) applies to an ascending `__name__` only, so the head refuses as the base does. -/
 theorem head_f1_descending_refused :
     let q : Query := { qF1 with orderBy := nameDesc }
@@ -294,10 +293,11 @@ def f3GroupSet : ISet :=
   ⟨[], fun _ f => if f == 1 then [(.group, .desc)] else if f == 3 then [(.group, .contains)]
     else []⟩
 
-theorem head_group_merges_a_and_refuses_b :
+theorem head_group_merges_a_and_b :
     let q1 : Query := { qF1 with group := true }
     let q3 : Query := { qF3 with group := true }
-    decideHead q1 f1GroupSet .production .standard = .missing (requiredIndex (reqOf q1) 0 true) ∧
+    decideHead q1 f1GroupSet .production .standard =
+        .merge [⟨0, .group, f1Composite.fields⟩, singleFieldIndex 0 true 2 .asc .asc] ∧
       decideHead q3 f3GroupSet .production .standard =
         .merge [singleFieldIndex 0 true 3 .contains .desc, singleFieldIndex 0 true 1 .desc .desc] := by
   constructor <;> decide
@@ -317,11 +317,7 @@ theorem head_enterprise_base :
         .fullScan (requiredIndex (reqOf qF3) 0 false) := by
   constructor <;> decide
 
-/-- `a == 1 AND tags == [1] AND tags array-contains 1` with only `a`'s ascending and `tags`'
-contains index: the shared path fails the gate's shape, so the head is the base, whose merge
-covers by path. Ascending, the base merges `a`'s index with `tags`' contains index, which also
-counts as covering `tags == [1]` (the shared-path conflation, kept on purpose, unrecorded);
-descending, the contains index is no member and the query is refused. -/
+/-- Merge8 refuses the array-valued equality when only a contains index is available on the shared field. -/
 def conflationSet : ISet :=
   ⟨[], fun _ f => if f == 1 then [(.collection, .asc), (.collection, .desc)]
     else if f == 3 then [(.collection, .contains)] else stdModes⟩
@@ -333,9 +329,13 @@ theorem first_attempt_conflation :
         .merge [singleFieldIndex 0 false 1 .asc .asc, singleFieldIndex 0 false 3 .contains .asc] ∧
       decideHead q conflationSet .production .standard =
         .merge [singleFieldIndex 0 false 1 .asc .asc, singleFieldIndex 0 false 3 .contains .asc] ∧
+      decideHead q conflationSet .production .standard .sharedArray =
+        .missing ⟨0, .collection, [⟨3, .contains⟩, ⟨1, .asc⟩, ⟨3, .asc⟩, ⟨NAME, .asc⟩]⟩ ∧
       decideHead qd conflationSet .production .standard =
+        .missing (requiredIndex (reqOf qd) 0 false) ∧
+      decideHead qd conflationSet .production .standard .sharedArray =
         .missing (requiredIndex (reqOf qd) 0 false) := by
-  refine ⟨by decide, by decide, by decide⟩
+  refine ⟨by decide, by decide, by decide, by decide, by decide⟩
 
 /-- The F1 composite carries the array filter, not `tags == [1]`: with the equality on `tags`
 the shape fails, and the base refuses. -/
@@ -344,38 +344,33 @@ theorem carried_array_field_with_equality_refused :
     decideHead q f1Set .production .standard = .missing (requiredIndex (reqOf q) 0 false) := by
   decide
 
-/-- Two carriers, unrecorded: (b) applies only when exactly one composite carries the array
-field. With `(a ASC, tags CONTAINS)` and `(a ASC, b ASC, tags CONTAINS)` the second serves the
-F1 query on its own and the base answer stays; with `(a ASC, tags CONTAINS)` and `(b ASC, tags
-CONTAINS)` the base refuses and so does the head. -/
+/-- Merge3 joins two disjoint carriers. A single composite covering the whole requirement still takes priority. -/
 def f1TwoSet (second : Index) : ISet := { f1Set with composites := [f1Composite, second] }
 def abTags : Index := ⟨0, .collection, [⟨1, .asc⟩, ⟨2, .asc⟩, ⟨3, .contains⟩]⟩
 def bTags : Index := ⟨0, .collection, [⟨2, .asc⟩, ⟨3, .contains⟩]⟩
 
-theorem head_two_carriers_base :
+theorem head_two_carriers :
     decideHead qF1 (f1TwoSet abTags) .production .standard =
         decideBase qF1 (f1TwoSet abTags) .production .standard ∧
       decideBase qF1 (f1TwoSet abTags) .production .standard = .use abTags ∧
       guardOf qF1 (f1TwoSet abTags) .production .standard = .none ∧
       decideHead qF1 (f1TwoSet bTags) .production .standard =
-        decideBase qF1 (f1TwoSet bTags) .production .standard ∧
+        .merge [bTags, f1Composite] ∧
       decideBase qF1 (f1TwoSet bTags) .production .standard =
         .missing (requiredIndex (reqOf qF1) 0 false) ∧
-      guardOf qF1 (f1TwoSet bTags) .production .standard = .none := by
+      guardOf qF1 (f1TwoSet bTags) .production .standard = .b := by
   refine ⟨by decide, by decide, by decide, by decide, by decide, by decide⟩
 
-/-- A collection-group carrier, unrecorded: the F1 collection query with `(a ASC, tags
-CONTAINS)` scoped to the collection group. A carrier must be collection-scoped, so the base
-refusal stays. -/
+/-- Merge7 and merge8 serve the collection F1 query with a group carrier. -/
 def f1GroupCarrierSet : ISet :=
   { f1Set with composites := [⟨0, .group, [⟨1, .asc⟩, ⟨3, .contains⟩]⟩] }
 
-theorem head_group_carrier_base :
+theorem head_group_carrier :
     decideHead qF1 f1GroupCarrierSet .production .standard =
-        decideBase qF1 f1GroupCarrierSet .production .standard ∧
+        .merge [⟨0, .group, f1Composite.fields⟩, singleFieldIndex 0 false 2 .asc .asc] ∧
       decideBase qF1 f1GroupCarrierSet .production .standard =
         .missing (requiredIndex (reqOf qF1) 0 false) ∧
-      guardOf qF1 f1GroupCarrierSet .production .standard = .none := by
+      guardOf qF1 f1GroupCarrierSet .production .standard = .b := by
   refine ⟨by decide, by decide, by decide⟩
 
 /-- An enabled automatic contains index does not disable (b). -/
@@ -390,16 +385,14 @@ theorem head_b_with_automatic_contains :
       guardOf qF1 bAutoContainsSet .production .standard = .b := by
   refine ⟨by decide, by decide, by decide⟩
 
-/-- A carrier's prefix must be ascending, unrecorded: with `a` and `tags` exempt and only the
-composite `(a DESC, tags CONTAINS, __name__ ASC)`, (b) does not apply and the base refusal
-stays. -/
+/-- Merge7 joins the descending prefix on ascending document name. -/
 def descCarrier : Index := ⟨0, .collection, [⟨1, .desc⟩, ⟨3, .contains⟩, ⟨NAME, .asc⟩]⟩
 
-theorem head_b_descending_carrier_base :
+theorem head_b_descending_carrier :
     let s : ISet := { f1Set with composites := [descCarrier] }
-    decideHead qF1 s .production .standard = decideBase qF1 s .production .standard ∧
+    decideHead qF1 s .production .standard = .merge [descCarrier, singleFieldIndex 0 false 2 .asc .asc] ∧
       decideBase qF1 s .production .standard = .missing (requiredIndex (reqOf qF1) 0 false) ∧
-      guardOf qF1 s .production .standard = .none := by
+      guardOf qF1 s .production .standard = .b := by
   refine ⟨by decide, by decide, by decide⟩
 
 /-- The carrier with an explicit trailing `__name__`, unrecorded: `(a ASC, tags CONTAINS,

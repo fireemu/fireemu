@@ -24,42 +24,6 @@ use proptest::prelude::*;
 
 const CORPUS: &str = include_str!("fixtures/lean-index-merge.corpus");
 
-// Pin the old Lean answers together with the recorded replacements until the model is regenerated.
-const OBSERVATION_2B_REPLAY: &[(&str, &str, &str)] = {
-    const MISSING: &str = "expect missing qx C a:asc,b:asc,tags:contains,__name__:asc";
-    const DESCENDING: &str =
-        "expect merge qx C a:desc,tags:contains,__name__:asc ; qx C b:asc,__name__:asc";
-    &[
-        (
-            "shape/b/two-carrying-disjoint",
-            MISSING,
-            "expect merge qx C b:asc,tags:contains ; qx C a:asc,tags:contains",
-        ),
-        ("shape/b/descending-carrier", MISSING, DESCENDING),
-        ("shape/b/group-carrier", MISSING, "expect served"),
-        (
-            "shape/f1/group",
-            "expect missing qx G a:asc,b:asc,tags:contains,__name__:asc",
-            "expect merge qx G a:asc,tags:contains ; qx G b:asc,__name__:asc",
-        ),
-        (
-            "shape/a/exempt-equality-with-composite",
-            "expect missing qx C a:asc,tags:contains,__name__:desc",
-            "expect merge qx C tags:contains,__name__:desc ; qx C a:asc,__name__:desc",
-        ),
-        (
-            "random/2892",
-            "expect use qx C a:asc,tags:contains",
-            "expect missing qx C tags:contains,a:asc,__name__:desc",
-        ),
-        (
-            "shape/b/unserved-with-mixed-carriers",
-            "expect merge qx C a:asc,tags:contains ; qx C b:asc,__name__:asc",
-            DESCENDING,
-        ),
-    ]
-};
-
 fn fp(name: &str) -> FieldPath {
     FieldPath::parse(name).expect("field path")
 }
@@ -282,7 +246,7 @@ struct CorpusCase {
     expect: String,
     /// The Lean base (4fcd8a7a3) answer, rendered like `expect` but led by `base`.
     base: String,
-    /// The stage-B guard the Lean head says fires: `none`, `a`, `b` or `c`.
+    /// The stage-B guard selected by the Lean head.
     guard: String,
 }
 
@@ -376,15 +340,6 @@ fn parse_corpus() -> Corpus {
         set.is_none() && case.is_none(),
         "corpus ends inside a block"
     );
-    for &(label, old, new) in OBSERVATION_2B_REPLAY {
-        let case = cases
-            .iter_mut()
-            .find(|c| c.label == label)
-            .expect("superseded Lean row");
-        assert_eq!(case.expect, old, "{label}");
-        new.clone_into(&mut case.expect);
-        "obs2b".clone_into(&mut case.guard);
-    }
     Corpus { configs, cases }
 }
 
@@ -441,11 +396,6 @@ fn every_corpus_case_matches_the_lean_model() {
     let mut failures = Vec::new();
     for c in &corpus.cases {
         let decision = corpus_decision(&corpus, c, context(&c.ctx.0, &c.ctx.1));
-        if c.expect == "expect served" {
-            assert_eq!(c.label, "shape/b/group-carrier");
-            assert!(served(&decision), "{}", c.label);
-            continue;
-        }
         let actual = render_decision(&decision);
         if actual != c.expect {
             failures.push(format!(
@@ -496,22 +446,21 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
                     ));
                 }
             }
-            "obs2b" => {
-                // Enterprise under production rules reaches the same base scan selection.
-                // Translate its full-scan fallback back into Standard's missing requirement.
-                assert_eq!(c.ctx, ("production".into(), "standard".into()));
+            "a" | "b" | "c" | "reverse" | "shared" | "carrier" | "groupOrdered" | "arrayFirst" => {
                 let base = match corpus_decision(&corpus, c, context("production", "enterprise")) {
+                    IndexDecision::FullScanAllowed { plan } if c.ctx.0 == "report" => {
+                        IndexDecision::AssumedIndex {
+                            requirement: plan.missing_index,
+                        }
+                    }
                     IndexDecision::FullScanAllowed { plan } => IndexDecision::MissingRequired {
                         requirement: plan.missing_index,
                     },
                     decision => decision,
                 };
                 assert_eq!(render_decision(&base), c.base, "{}", c.label);
-                assert_ne!(c.base, c.expect);
-            }
-            "a" | "b" | "c" | "reverse" | "shared" | "carrier" => {
                 assert!(
-                    (!c.group || matches!(c.guard.as_str(), "a" | "c"))
+                    (!c.group || matches!(c.guard.as_str(), "a" | "b" | "c" | "arrayFirst"))
                         && c.ctx.1 == "standard"
                         && c.ctx.0 != "emulator",
                     "case {} {}: guard {} off the gate",
@@ -539,8 +488,16 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    assert_eq!(counts.get("obs2b"), Some(&OBSERVATION_2B_REPLAY.len()));
-    for guard in ["a", "b", "c", "reverse", "shared", "carrier"] {
+    for guard in [
+        "a",
+        "b",
+        "c",
+        "reverse",
+        "shared",
+        "carrier",
+        "groupOrdered",
+        "arrayFirst",
+    ] {
         assert!(
             counts.get(guard).is_some_and(|n| *n > 0),
             "no case for guard {guard}"
@@ -556,7 +513,7 @@ fn every_recorded_production_verdict_matches_the_planner() {
         .iter()
         .filter(|c| c.production.is_some())
         .collect();
-    assert_eq!(rows.len(), 131, "production rows in the corpus");
+    assert_eq!(rows.len(), 249, "production rows in the corpus");
     for c in rows {
         let (verdict, row) = c.production.as_ref().expect("production row");
         assert_eq!(
@@ -577,7 +534,7 @@ fn the_corpus_covers_every_decision_kind_and_merge_shape() {
         .collect();
     assert_eq!(
         kinds,
-        BTreeSet::from(["assumed", "fullscan", "merge", "missing", "served", "use"])
+        BTreeSet::from(["assumed", "fullscan", "merge", "missing", "use"])
     );
     // The pairwise rows of the coverage ledger's PICT model (`pictRows` in `Main.lean`).
     assert_eq!(

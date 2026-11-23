@@ -44,6 +44,7 @@ structure Case where
   production : Option (Bool × String) := none
   /-- The members production's plan named, without `__name__` fields, when recorded. -/
   productionPlan : Option (List (List IField)) := none
+  productionIndexes : Option (List Index) := none
   source : QuerySource := .plain
 
 def Case.decision (c : Case) : Decision :=
@@ -70,14 +71,15 @@ that a field's number is its position and numeric order is `FieldPath` order. -/
 def fieldNames : List String :=
   "__name__" :: sortStrings ([
       "a", "b", "c", "d", "e", "f", "s", "tags", "nx", "n", "category", "city",
-      "editors_pick", "star_rating", "p"] ++ (List.range 100).map (fun i => s!"e{i}"))
+      "editors_pick", "star_rating", "p", "t"] ++ (List.range 100).map (fun i => s!"e{i}"))
 
 def fid (name : String) : Field := fieldNames.idxOf name
 
 def fname (f : Field) : String := fieldNames.getD f s!"unknown{f}"
 
 def collNames : List String :=
-  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql", "imb", "ima", "imx", "imc", "igc", "iga"]
+  ["qx", "other", "pk", "ord", "mrg", "qcg", "items", "qg", "ql", "imb", "ima", "imx", "imc", "igc", "iga",
+    "ilp", "it1", "imd", "iw2", "iwd", "io1", "ilw", "ig2", "i2p", "irv", "icm", "ig1", "ip1", "igx", "igy", "is1", "is2"]
 
 def cid (name : String) : Nat := collNames.idxOf name
 
@@ -140,6 +142,8 @@ def Guard.tag : Guard → String
   | .reverse => "reverse"
   | .shared => "shared"
   | .carrier => "carrier"
+  | .groupOrdered => "groupOrdered"
+  | .arrayFirst => "arrayFirst"
 
 def Case.render (c : Case) (n : Nat) : List String :=
   [s!"case {n} {c.label}",

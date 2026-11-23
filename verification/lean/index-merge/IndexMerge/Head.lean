@@ -9,9 +9,9 @@ import IndexMerge.Model
 - (c) Observation 2a refuses a mismatched automatic name direction for the recorded equality
   shapes, unless a composite serves. These include the original plain equality, orders on
   its equality field, one-element IN, two equalities on the same field joined by OR, IS NULL,
-  and one count. The ascending-name mirror only covers a plain collection-group equality.
+  and one count. Merge3 records the ascending-name mirror for a plain equality at collection scope as well.
 - (a) A recorded descending-name array membership query uses the contains index and the automatic descending equality members, in that order.
-- (b) A recorded ascending-name query can use the unique collection-scoped carrier followed by the remaining ascending automatic members.
+- (b) An ascending-name query can join a carrier to the remaining ascending members. Observation 2b also records two carriers, a descending prefix and group carriers.
 - Recorded automatic plans can be reordered or replaced, including the three-member shared path and the carrier preference in observation 2a.
 -/
 
@@ -72,12 +72,10 @@ def mergeGate (q : Query) (source : QuerySource) : Bool :=
   normalized.conjunction && r.contains.isSome && !r.eq.isEmpty && nameOnly &&
     if nameDirOf r.order == .desc then
       source == .plain && ((!(q.group || any)) || (r.eq.length == 1 && !(q.group && any)))
-    else
-      !q.group &&
-        if source == .count || any then
-          (source == .plain || (source == .count && !any)) && q.orderBy.isEmpty && r.eq.length == 2
-        else
-          source == .plain && (q.orderBy.isEmpty || r.eq.length != 1)
+    else if q.group then source == .plain && !any && q.orderBy.isEmpty && r.eq.length == 2
+    else if source == .count || any then
+      (source == .plain || (source == .count && !any)) && q.orderBy.isEmpty && r.eq.length == 2
+    else source == .plain && (q.orderBy.isEmpty || r.eq.length != 1)
 
 /-! ## The recorded merge (a) and (b) -/
 
@@ -130,12 +128,60 @@ def recordedMerge (r : Req) (s : ISet) (coll : Nat) (group : Bool) : Option (Lis
             fun ms => idx :: ms
         | _ => none
 
+/-- The recorded two-equality carrier has one ordered field followed by membership and an implicit or explicit ascending name. -/
+def pairCarrier (s : ISet) (coll : Nat) (scope : Scope) (f t : Field) (m : Mode) : Option Index :=
+  let fields : List IField := [⟨f, m⟩, ⟨t, .contains⟩]
+  let bare : Index := ⟨coll, scope, fields⟩
+  let named : Index := ⟨coll, scope, fields ++ [⟨NAME, .asc⟩]⟩
+  (s.composites.find? fun i => i == bare || i == named).map fun i =>
+    if m == .desc then named else i
+
+/-- Complete the implicit pair in the Rust planner's priority order. A count admits the two collection carriers and otherwise falls through to the original carrier rule. -/
+def pairMerge (q : Query) (s : ISet) (source : QuerySource) (left right t : Field) :
+    Option (List Index) :=
+  let carrier := pairCarrier s q.coll
+  let two := if q.group then none else do
+    let first ← carrier .collection right t .asc
+    let second ← carrier .collection left t .asc
+    return [first, second]
+  two.or <| if source != .plain then none else
+    [(Scope.collection, Mode.asc), (.collection, .desc), (.group, .asc)].findSome? fun (scope, mode) =>
+      if q.group && scope != .group then none else
+      [(right, left), (left, right)].findSome? fun (field, other) =>
+        if !hasMode s q.coll other q.group .asc then none else
+        (carrier scope field t mode).map fun idx =>
+          let idx := if scope == .collection && mode == .asc then
+            (carrier scope field t .desc).getD idx else idx
+          [idx, singleFieldIndex q.coll q.group other .asc .asc]
+
+/-- The new completions apply only to plain membership. The caller checks the canonical conjunction, name order, scope and source with `mergeGate`. -/
+def recordedCompletion (q : Query) (s : ISet) (source : QuerySource) : Option (List Index) :=
+  let r := reqOf q
+  let original := recordedMerge r s q.coll q.group
+  match r.contains, r.eq with
+  | some t, [f] =>
+    let member := singleFieldIndex q.coll false f .asc .desc
+    if !q.group && q.orderBy == [⟨NAME, .desc⟩] && q.filters.contains (.contains t) &&
+        !hasMode s q.coll f false .desc && hasMode s q.coll t false .contains &&
+        s.composites.contains member then
+      some [singleFieldIndex q.coll false t .contains .desc, member]
+    else original
+  | some t, [left, right] =>
+    if q.orderBy.isEmpty && q.filters.contains (.contains t) then
+      (pairMerge q s source left right t).or (if q.group then none else original)
+    else original
+  | _, _ => original
+
 /-! ## The single-equality refusal (c) -/
 
 /-- The base's fallback for an unserved requirement. -/
-def unservedDecision (r : Req) (coll : Nat) (group : Bool) (p : Policy) (e : Edition) :
-    Decision :=
+def unservedDecision (r : Req) (coll : Nat) (group : Bool) (p : Policy) (e : Edition)
+    (membershipFirst : Bool := false) : Decision :=
   let q := requiredIndex r coll group
+  let q := if membershipFirst then
+    let n := r.eq.length + 1
+    { q with fields := (q.fields.take n).rotateRight ++ q.fields.drop n }
+    else q
   if p.assumes && e == .standard then .assumed q
   else
     match e with
@@ -157,7 +203,7 @@ def Query.equalityOrder (q : Query) : Bool :=
 def Query.equalityRefusal (q : Query) (source : QuerySource) : Bool :=
   let nameOnly := q.orderBy.all (·.path == NAME)
   if nameDirOf (reqOf q).order == .asc then
-    q.group && source == .plain && nameOnly && q.singleEquality
+    source == .plain && nameOnly && q.singleEquality
   else
     match source with
     | .plain =>
@@ -177,6 +223,52 @@ def refusesSingleEquality (q : Query) (s : ISet) (i : Index)
     automaticIndexFor r s q.coll q.group == some i &&
     (s.composites.find? (fun c => compositeServes c r q.coll q.group)).isNone
 
+/-- Merge6 refuses the collection equality or unfiltered ordering when the exempt field has only the group-scoped ordered composite. -/
+def refusesGroupOrdered (q : Query) (s : ISet) (i : Index) (source : QuerySource) : Bool :=
+  !q.group && source == .plain && i.scope == .group &&
+    (q.singleEquality && (q.orderBy.all (·.path == NAME) && nameDirOf (reqOf q).order == .desc) ||
+      (q.filters.isEmpty && match q.orderBy with
+        | [⟨f, .asc⟩, ⟨n, .desc⟩] => f != NAME && n == NAME
+        | _ => false)) &&
+    (match i.fields with
+     | [⟨f, .asc⟩, ⟨n, .desc⟩] => n == NAME && isExempt s q.coll f false
+     | _ => false) &&
+    s.composites.all (fun c => !compositeServes c (reqOf q) q.coll false || c == i)
+
+/-- The recorded refusals whose missing-index suggestion starts with the membership field. -/
+def arrayFirst (q : Query) (s : ISet) (source : QuerySource) (base : Decision) : Bool :=
+  let r := reqOf q
+  match r.contains with
+  | none => false
+  | some t =>
+    let ascName := q.orderBy == [⟨NAME, .asc⟩]
+    let descName := q.orderBy == [⟨NAME, .desc⟩]
+    let missing := match base with | .assumed _ | .missing _ => true | _ => false
+    if source == .sharedArray then
+      !q.group && ascName && (r.eq.length == 1 || r.eq.length == 2) &&
+        q.filters.contains (.eq t) && q.filters.contains (.contains t) &&
+        q.filters.all Filter.plainAtom && q.filters.length == r.eq.length + 1 &&
+        ((s.modes q.coll t).filter (·.1 == .collection)).map Prod.snd == [.contains] &&
+        !s.composites.any (fun i => i.coll == q.coll && i.fields.any (·.path == t))
+    else if source != .plain || !q.conjunction || !q.filters.contains (.contains t) then false
+    else match r.eq with
+    | [f] =>
+      !q.group && isExempt s q.coll f false &&
+        ((descName && isExempt s q.coll t false &&
+          (match base with | .use _ => true | _ => false) &&
+          s.composites.all (fun i => !compositeServes i r q.coll false ||
+            (i.scope == .collection && i.fields.length == 2))) ||
+         (ascName && missing && hasMode s q.coll t false .contains &&
+          s.composites.contains (singleFieldIndex q.coll false f .asc .desc)))
+    | fs =>
+      missing && descName && fs.length == (if q.group then 2 else 3) &&
+        isExempt s q.coll t q.group && s.composites.any fun i =>
+          let pre := i.fields.dropLast
+          i.coll == q.coll && i.scope == scopeFor q.group && i.fields.getLast? == some ⟨t, .contains⟩ &&
+            pre.length + 1 == fs.length &&
+            pre.all (fun f => f.mode == .asc && fs.contains f.path && isExempt s q.coll f.path q.group) &&
+            fs.any (fun f => !pre.any (·.path == f) && hasMode s q.coll f q.group .asc)
+
 /-! ## The head decision -/
 
 inductive Guard where
@@ -187,6 +279,8 @@ inductive Guard where
   | reverse
   | shared
   | carrier
+  | groupOrdered
+  | arrayFirst
   deriving DecidableEq, Repr
 
 inductive PlanChange where
@@ -245,12 +339,15 @@ def guardOf (q : Query) (s : ISet) (p : Policy) (e : Edition)
   if !gate p e then .none
   else
     let r := reqOf q
-    match decideBase q s p e with
-    | .use i => if refusesSingleEquality q s i source then .c else .none
+    let base := decideBase q s p e
+    if arrayFirst q s source base then .arrayFirst else
+    match base with
+    | .use i => if refusesSingleEquality q s i source then .c
+                else if refusesGroupOrdered q s i source then .groupOrdered else .none
     | .merge ms => ((recordedPlan q s source ms).map PlanChange.guard).getD .none
     | .missing _ | .assumed _ =>
       if mergeGate q source then
-        match recordedMerge r s q.coll q.group with
+        match recordedCompletion q s source with
         | some _ => if nameDirOf r.order == .desc then .a else .b
         | none => .none
       else .none
@@ -263,13 +360,14 @@ def decideHead (q : Query) (s : ISet) (p : Policy) (e : Edition)
   if !gate p e then base
   else
     let r := reqOf q
+    if arrayFirst q s source base then unservedDecision r q.coll q.group p e true else
     match base with
     | .use i =>
-      if refusesSingleEquality q s i source then unservedDecision r q.coll q.group p e else base
+      if refusesSingleEquality q s i source || refusesGroupOrdered q s i source then unservedDecision r q.coll q.group p e else base
     | .merge ms => ((recordedPlan q s source ms).map (Decision.merge ∘ PlanChange.members)).getD base
     | .missing _ | .assumed _ =>
       if mergeGate q source then
-        match recordedMerge r s q.coll q.group with
+        match recordedCompletion q s source with
         | some ms => .merge ms
         | none => base
       else base

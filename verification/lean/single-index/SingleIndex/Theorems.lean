@@ -355,7 +355,15 @@ theorem head_refusal_iff (r : Requirement) (lookup : Overrides) (coll : String) 
         false ↔
       stageB p e = true ∧
       ∃ i, decideBase r lookup coll s cs p e baseMerge = .useIndex i ∧
-        refusesSingleEquality r lookup coll s cs conjunction single i = true := by
+        single = true ∧ r.equality.length = 1 ∧ r.array = none ∧
+        r.order.all (·.1 == name) = true ∧
+        (requestedName r = .desc ∨ (conjunction = true ∧ r.equalityOrdered = false)) ∧
+        i.fields.head?.any (fun f => f.2 != .ordered (requestedName r)) = true ∧
+        automaticIndexFor r lookup coll s = some i ∧ firstComposite r coll s cs = none := by
+  suffices (decideHead r lookup coll s cs p e conjunction single baseMerge recordedMerge).isIndexed = false ↔
+      stageB p e = true ∧ ∃ i, decideBase r lookup coll s cs p e baseMerge = .useIndex i ∧
+        refusesSingleEquality r lookup coll s cs conjunction single i = true by
+    simpa [refusesSingleEquality, and_assoc] using this
   cases hb : decideBase r lookup coll s cs p e baseMerge with
   | useIndex i =>
     cases hg : stageB p e <;>
@@ -538,9 +546,10 @@ theorem head_after_base_indexed_extension (r : Requirement) (old new : Overrides
     (decideHead r new coll s ds p e conjunction single n rm).isIndexed = false ↔
       stageB p e = true ∧
       ∃ i, decideBase r new coll s ds p e n = .useIndex i ∧
-        refusesSingleEquality r new coll s ds conjunction single i = true :=
-  head_refusal_iff r new coll s ds p e conjunction single n rm
-    (base_monotone r old new coll s cs ds p e m n extendsModes extendsComposites mergePersists indexed)
+        refusesSingleEquality r new coll s ds conjunction single i = true := by
+  simpa [refusesSingleEquality, and_assoc] using
+    head_refusal_iff r new coll s ds p e conjunction single n rm
+      (base_monotone r old new coll s cs ds p e m n extendsModes extendsComposites mergePersists indexed)
 
 theorem automatic_single_result (r : Requirement) (lookup : Overrides) (coll : String)
     (s : Scope) (p : Path) (i : Index) (ht : touched r = [p])
