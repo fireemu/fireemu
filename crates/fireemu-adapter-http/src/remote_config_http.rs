@@ -1294,12 +1294,17 @@ mod tests {
             "percent('s') <= +5",
             "percent('s') <= 100.000001",
             "percent('s') <= -1",
+            // A whole part above 100 is refused before it is scaled to micro-percent, where
+            // 5000 * 1_000_000 would overflow u32.
+            "percent('s') <= 5000",
             r#"percent("s") <= 100"#,
             r#"percent('s"eed') <= 100"#,
             r"percent('s\eed') <= 100",
             "percent('s'eed') <= 100",
             "app.customSignal['k'].exactlyMatches(['a']) && percent('s') <= 5",
             "app.customSignal['k'].exactlyMatches(['a',])",
+            // The tail is the recorded one; the signal accessor before the key is not.
+            "app.userProperty['k'].exactlyMatches(['a'])",
             "device.os == 'ios'",
         ] {
             assert_eq!(server_condition(expression), json!({}), "{expression}");
