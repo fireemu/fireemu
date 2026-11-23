@@ -726,6 +726,42 @@ test("E18 reads present in the recorded implicit-name shape of qn, and E17 and E
   assert.equal(entryState(ENTRIES.E21, answer, FORMS).implicitName, "ASCENDING");
 });
 
+test("the implied name of a composite ending in an ordered field follows that field, as qn is listed", () => {
+  // Recorded: qn (g ASC, n DESC) is listed as g ASC, n DESC, __name__ DESC.
+  const entry = {
+    kind: "composite",
+    group: "iwd",
+    queryScope: "COLLECTION",
+    fields: [
+      { fieldPath: "g", order: "ASCENDING" },
+      { fieldPath: "n", order: "DESCENDING" },
+    ],
+  };
+  const listed = (order) =>
+    listedIndex("iwd", { fields: [...entry.fields, { fieldPath: "__name__", order }] });
+  assert.equal(compositeMatches(listed("DESCENDING"), entry), true);
+  assert.equal(compositeMatches(listed("ASCENDING"), entry), false);
+  const ascending = { ...entry, fields: [entry.fields[0]] };
+  assert.equal(
+    compositeMatches(
+      listedIndex("iwd", {
+        fields: [entry.fields[0], { fieldPath: "__name__", order: "ASCENDING" }],
+      }),
+      ascending,
+    ),
+    true,
+  );
+  assert.equal(
+    compositeMatches(
+      listedIndex("iwd", {
+        fields: [entry.fields[0], { fieldPath: "__name__", order: "DESCENDING" }],
+      }),
+      ascending,
+    ),
+    false,
+  );
+});
+
 test("a composite still requires one exact trailing name field", () => {
   const entry = ENTRIES.E17;
   const name = { fieldPath: "__name__", order: "DESCENDING" };

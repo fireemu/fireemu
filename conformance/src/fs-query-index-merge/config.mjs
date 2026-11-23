@@ -31,8 +31,12 @@
 // - Every mutating request is sent once and classified done (2xx with a readable body), refused
 //   (a definite 4xx other than 408, 429 and 499, with a readable body) or unknown (anything else).
 //   An unknown create settles only on an own read showing the entry or its operation reading done;
-//   absence never settles it. `remove` settles an entry's absence only against the journals of
-//   the apply that created it, or of an earlier remove that removed it (--journal).
+//   absence never settles it. An unknown DELETE or reset is never re-sent within the same remove
+//   run and is never settled by an absence within it; only an a2 read at least 10 minutes later
+//   showing absence closes it, and the one stated re-send is remove attempt 2, which may-retry
+//   allows only after attempt 1 ended open and such an a2 read showed the entry present. `remove`
+//   settles an entry's absence only against the journals of the apply that created it, or of an
+//   earlier remove that removed it (--journal).
 // - Bounds: a request cap per subcommand computed from the set, a wall-time cap checked before and
 //   after the token, at most five pages per list, a timeout per request of 30 s or the time left, a
 //   fresh token at least every 10 minutes from a gcloud call limited to 30 s; the journal
@@ -390,10 +394,14 @@ export function compositeMatches(index, entry) {
     index.fields.length !== entry.fields.length + (explicitName ? 0 : 1)
   )
     return false;
+  // The implied name takes the last configured field's direction (qn (g ASC, n DESC) is listed
+  // with __name__ DESC); after a non-directional field either direction reads, as recorded.
   const order =
-    last && !Object.hasOwn(last, "order") && index.fields.at(-1)?.order === "DESCENDING"
-      ? "DESCENDING"
-      : "ASCENDING";
+    last && Object.hasOwn(last, "order")
+      ? last.order
+      : index.fields.at(-1)?.order === "DESCENDING"
+        ? "DESCENDING"
+        : "ASCENDING";
   const expected = explicitName
     ? entry.fields
     : [...entry.fields, { fieldPath: "__name__", order }];
