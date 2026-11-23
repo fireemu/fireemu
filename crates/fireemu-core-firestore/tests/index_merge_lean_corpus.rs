@@ -2934,6 +2934,29 @@ fn group_carrier_with_a_descending_alternative_keeps_the_base_refusal() {
 }
 
 #[test]
+fn group_carrier_counts_only_composites_on_the_array_field() {
+    // fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-plan with one more group
+    // composite on other fields: the ruling's "no other group carrier" refers to the array
+    // field, so the recorded merge stands.
+    let mut set = IndexSet::default();
+    let carrier = parse_index("qx G a:asc,tags:contains");
+    set.add_composite(carrier.clone());
+    set.add_composite(parse_index("qx G c:asc,e:asc"));
+    modes_only(
+        &mut set,
+        "b",
+        &[IndexFieldMode::Ascending],
+        IndexQueryScope::CollectionGroup,
+    );
+    assert_eq!(
+        decide(&obs2_merge_query("twoEqContains", true), &set, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![carrier, parse_index("qx G b:asc,__name__:asc")]
+        }
+    );
+}
+
+#[test]
 fn shared_path_with_builtin_equality_modes_keeps_the_base_merge() {
     let mut set = IndexSet::default();
     modes_only(
