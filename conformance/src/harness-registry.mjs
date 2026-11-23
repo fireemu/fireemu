@@ -48,9 +48,17 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { parse } from "acorn";
 
@@ -65,10 +73,6 @@ import { isTransient } from "./fs-query-index/harness.mjs";
 import { PRINCIPALS as FS_RULES_PRINCIPALS } from "./fs-rules/corpus.mjs";
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
-const pubsubNames = JSON.parse(
-  readFileSync(join(CONFORMANCE_DIR, "pubsub-resource-names-production.json"), "utf8"),
-);
-
 /** The files stage 2's recorded rows depend on (its runner and recorder are not among them). */
 export const STAGE2_HARNESS_FILES = [
   "fs-rules/harness.mjs",
@@ -106,15 +110,18 @@ export const HARNESS_LANES = {
       "pubsub-production/stream-dlq-normalization.mjs",
       "pubsub-production/iam.mjs",
     ],
-    extra: JSON.stringify({
-      ...pubsubNames,
-      programs: Object.fromEntries(
-        Object.entries(pubsubNames.programs).map(([id, program]) => [
-          id,
-          Object.fromEntries(Object.entries(program).filter(([key]) => key !== "harnessDigest")),
-        ]),
-      ),
-    }),
+    extra: ({ data }) => {
+      const names = JSON.parse(data("pubsub-resource-names-production.json"));
+      return JSON.stringify({
+        ...names,
+        programs: Object.fromEntries(
+          Object.entries(names.programs).map(([id, program]) => [
+            id,
+            Object.fromEntries(Object.entries(program).filter(([key]) => key !== "harnessDigest")),
+          ]),
+        ),
+      });
+    },
     guarded: [
       "conformance/pubsub-resource-names-production.json",
       "conformance/src/pubsub-release/fixtures/resource-names.fireemu.json",
@@ -123,25 +130,26 @@ export const HARNESS_LANES = {
   "fs-rules": {
     fixture: "fs-rules-production.json",
     files: ["fs-rules/harness.mjs", "fs-rules/session.mjs", "auth-credential/tokens.mjs"],
-    extra: JSON.stringify(FS_RULES_PRINCIPALS),
+    extra: ({ exported }) => JSON.stringify(exported("fs-rules/corpus.mjs", "PRINCIPALS")),
     guarded: ["conformance/src/fs-rules/corpus.mjs"],
   },
   "auth-fs-cross": {
     fixture: "auth-fs-cross-production.json",
     files: ["fs-rules/harness.mjs", "auth-fs-cross/session.mjs", "auth-credential/tokens.mjs"],
-    extra: JSON.stringify(AUTH_FS_CROSS_PRINCIPALS),
+    extra: ({ exported }) => JSON.stringify(exported("auth-fs-cross/corpus.mjs", "PRINCIPALS")),
     guarded: ["conformance/src/auth-fs-cross/corpus.mjs"],
   },
   "auth-fs-cross-stage2": {
     fixture: "auth-fs-cross-stage2-production.json",
     files: STAGE2_HARNESS_FILES,
-    extra: JSON.stringify(STAGE2_PRINCIPALS),
+    extra: ({ exported }) =>
+      JSON.stringify(exported("auth-fs-cross/programs-stage2.mjs", "STAGE2_PRINCIPALS")),
     guarded: ["conformance/src/auth-fs-cross/programs-stage2.mjs"],
   },
   "auth-account": {
     fixture: "auth-account-production.json",
     files: ["auth-account/harness.mjs", "auth-account/session.mjs"],
-    extra: JSON.stringify(BASELINE_CONFIG),
+    extra: ({ exported }) => JSON.stringify(exported("auth-account/corpus.mjs", "BASELINE_CONFIG")),
     guarded: ["conformance/src/auth-account/corpus.mjs"],
   },
   "auth-action": {
@@ -154,7 +162,8 @@ export const HARNESS_LANES = {
       "auth-account/harness.mjs",
       "auth-account/session.mjs",
     ],
-    extra: `${JSON.stringify(BASELINE_CONFIG)}\n${JSON.stringify(AUTHORIZED_DOMAINS)}`,
+    extra: ({ exported }) =>
+      `${JSON.stringify(exported("auth-account/corpus.mjs", "BASELINE_CONFIG"))}\n${JSON.stringify(exported("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"))}`,
     guarded: [
       "conformance/src/auth-account/corpus.mjs",
       "conformance/src/auth-account/authorized-domains.mjs",
@@ -172,7 +181,8 @@ export const HARNESS_LANES = {
       "auth-account/harness.mjs",
     ],
     // The installed SDK versions are part of the digest, so the digest needs the dependencies.
-    extra: () => `${JSON.stringify(SANDBOX_BASELINE)}\n${JSON.stringify(installedSdkVersions())}`,
+    extra: ({ exported, sdkVersions }) =>
+      `${JSON.stringify(exported("auth-config-sdk/sandbox-baseline.mjs", "SANDBOX_BASELINE"))}\n${JSON.stringify(sdkVersions())}`,
     guarded: ["conformance/src/auth-config-sdk/sandbox-baseline.mjs"],
   },
   "auth-credential": {
@@ -183,7 +193,7 @@ export const HARNESS_LANES = {
       "auth-credential/tokens.mjs",
       "auth-account/harness.mjs",
     ],
-    extra: JSON.stringify(BASELINE_CONFIG),
+    extra: ({ exported }) => JSON.stringify(exported("auth-account/corpus.mjs", "BASELINE_CONFIG")),
     guarded: ["conformance/src/auth-account/corpus.mjs"],
   },
   "auth-mfa": {
@@ -196,7 +206,8 @@ export const HARNESS_LANES = {
       "auth-account/harness.mjs",
       "auth-account/session.mjs",
     ],
-    extra: `${JSON.stringify(BASELINE_CONFIG)}\n${JSON.stringify(AUTHORIZED_DOMAINS)}\n${JSON.stringify(ALIGN_WINDOW)}`,
+    extra: ({ exported }) =>
+      `${JSON.stringify(exported("auth-account/corpus.mjs", "BASELINE_CONFIG"))}\n${JSON.stringify(exported("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"))}\n${JSON.stringify(exported("auth-mfa/session.mjs", "ALIGN_WINDOW"))}`,
     guarded: [
       "conformance/src/auth-account/corpus.mjs",
       "conformance/src/auth-account/authorized-domains.mjs",
@@ -205,13 +216,13 @@ export const HARNESS_LANES = {
   "fs-query-index": {
     fixture: "fs-query-index-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index.indexes.json"),
+    extra: ({ data }) => data("fs-query-index.indexes.json"),
     guarded: ["conformance/fs-query-index.indexes.json"],
   },
   "fs-data-write-list": {
     fixture: "fs-data-write-list-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index.indexes.json"),
+    extra: ({ data }) => data("fs-query-index.indexes.json"),
     guarded: ["conformance/fs-query-index.indexes.json"],
   },
   // The index-merge observation lane (lanes.mjs fs-query-index-merge): the same request layer,
@@ -219,7 +230,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge": {
     fixture: "fs-query-index-merge-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge.indexes.json"),
     guarded: ["conformance/fs-query-index-merge.indexes.json"],
   },
   // The second index-merge observation lane (lanes.mjs fs-query-index-merge2): the same request
@@ -227,7 +238,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge2": {
     fixture: "fs-query-index-merge2-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge2.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge2.indexes.json"),
     guarded: ["conformance/fs-query-index-merge2.indexes.json"],
   },
   // Observation 2b-1 of the index-merge shapes (lanes.mjs fs-query-index-merge3): the same request
@@ -235,7 +246,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge3": {
     fixture: "fs-query-index-merge3-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge3.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge3.indexes.json"),
     guarded: ["conformance/fs-query-index-merge3.indexes.json"],
   },
   // Observation 2b-2 of the index-merge shapes (lanes.mjs fs-query-index-merge4): the same request
@@ -243,7 +254,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge4": {
     fixture: "fs-query-index-merge4-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge4.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge4.indexes.json"),
     guarded: ["conformance/fs-query-index-merge4.indexes.json"],
   },
   // Observation 2b-3 of the index-merge shapes (lanes.mjs fs-query-index-merge5): the same request
@@ -251,7 +262,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge5": {
     fixture: "fs-query-index-merge5-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge5.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge5.indexes.json"),
     guarded: ["conformance/fs-query-index-merge5.indexes.json"],
   },
   // Observation 2b-4 of the index-merge shapes (lanes.mjs fs-query-index-merge6): the same request
@@ -259,7 +270,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge6": {
     fixture: "fs-query-index-merge6-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge6.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge6.indexes.json"),
     guarded: ["conformance/fs-query-index-merge6.indexes.json"],
   },
   // Observation 2b-5 of the index-merge shapes (lanes.mjs fs-query-index-merge7): the same request
@@ -267,7 +278,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge7": {
     fixture: "fs-query-index-merge7-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge7.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge7.indexes.json"),
     guarded: ["conformance/fs-query-index-merge7.indexes.json"],
   },
   // Observation 2b-6 of the index-merge shapes (lanes.mjs fs-query-index-merge8): the same request
@@ -275,7 +286,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge8": {
     fixture: "fs-query-index-merge8-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: (readData = readConformanceData) => readData("fs-query-index-merge8.indexes.json"),
+    extra: ({ data }) => data("fs-query-index-merge8.indexes.json"),
     guarded: ["conformance/fs-query-index-merge8.indexes.json"],
   },
   // FS-ENT-ORACLE: the pipeline lane's own copy of the query request layer (named database
@@ -474,11 +485,39 @@ const withFile = (file, run) => {
 };
 
 /**
- * A lane's extra inputs: data, not code, as a string (a function when it reads data files, which
- * it reads through `readData`: this checkout's by default, a revision's when a hop is verified).
+ * The values `extra` reads from modules, as this checkout imports them (the default), keyed by the
+ * module and the export. A revision's values are rebuilt from that revision's sources instead
+ * (gitExportReader); test `today's exports are what the tree's modules export` keeps the two apart
+ * only by a version of the code.
  */
-const extraOf = (lane, readData) =>
-  typeof lane.extra === "function" ? lane.extra(readData) : lane.extra;
+const TODAY_EXPORTS = {
+  "fs-rules/corpus.mjs": { PRINCIPALS: FS_RULES_PRINCIPALS },
+  "auth-fs-cross/corpus.mjs": { PRINCIPALS: AUTH_FS_CROSS_PRINCIPALS },
+  "auth-fs-cross/programs-stage2.mjs": { STAGE2_PRINCIPALS },
+  "auth-account/corpus.mjs": { BASELINE_CONFIG },
+  "auth-account/authorized-domains.mjs": { AUTHORIZED_DOMAINS },
+  "auth-mfa/session.mjs": { ALIGN_WINDOW },
+  "auth-config-sdk/sandbox-baseline.mjs": { SANDBOX_BASELINE },
+};
+
+/** The inputs a lane's `extra` is built from: this checkout's data, exports and SDK versions. */
+const TREE_INPUTS = {
+  data: readConformanceData,
+  exported: (module, name) => {
+    const value = Object.hasOwn(TODAY_EXPORTS, module) ? TODAY_EXPORTS[module][name] : undefined;
+    if (value === undefined) throw new Error(`${module}: no export ${name} is registered`);
+    return value;
+  },
+  sdkVersions: installedSdkVersions,
+};
+
+/**
+ * A lane's extra inputs: data, not code, as a string. A function builds it from `inputs` (`data`
+ * reads a file under conformance/, `exported` a module's export, `sdkVersions` the installed SDKs),
+ * this checkout's by default, a revision's when a hop is verified.
+ */
+export const extraOf = (lane, inputs = TREE_INPUTS) =>
+  typeof lane.extra === "function" ? lane.extra(inputs) : lane.extra;
 
 /** The historical digest of a lane's inputs (see the header). */
 export function rawDigest(lane, read, extra = extraOf(lane)) {
@@ -519,6 +558,57 @@ export const gitDataReader = (commit) => (path) =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+const exportTrees = new Map();
+process.once("exit", () => {
+  for (const dir of exportTrees.values()) rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * The conformance/src tree at `revision`, unpacked next to this checkout's dependencies (a bare
+ * import in it resolves from conformance/node_modules). Kept until the process exits.
+ */
+function sourceTreeAt(revision) {
+  if (!exportTrees.has(revision)) {
+    const dir = mkdtempSync(join(CONFORMANCE_DIR, ".lineage-"));
+    try {
+      const archive = execFileSync(
+        "git",
+        ["archive", "--format=tar", `${revision}:conformance/src`],
+        {
+          cwd: REPO_ROOT,
+          maxBuffer: 1024 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      mkdirSync(join(dir, "src"));
+      execFileSync("tar", ["-x", "-C", join(dir, "src")], { input: archive });
+    } catch (error) {
+      rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+    exportTrees.set(revision, dir);
+  }
+  return exportTrees.get(revision);
+}
+
+/**
+ * Reads an export of a conformance/src module as the sources at `revision` define it, by importing
+ * that revision's own module in a child process. A module or export it cannot supply throws.
+ */
+export const gitExportReader = (revision) => (module, name) => {
+  const url = pathToFileURL(join(sourceTreeAt(revision), "src", module)).href;
+  const child = fileURLToPath(new URL("./harness-registry-export.mjs", import.meta.url));
+  const out = execFileSync(process.execPath, [child, url, name], {
+    cwd: CONFORMANCE_DIR,
+    env: { PATH: process.env.PATH },
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 120_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return JSON.parse(out);
+};
+
 // ---- the acceptance rule -----------------------------------------------------------------------
 
 /**
@@ -532,6 +622,36 @@ export function checkFixtureDigest(name, lane, saved, { read = treeReader, linea
   if (saved === rawDigest(lane, read)) return { state: "raw", saved, current };
   const hop = hops.find((h) => h.lane === name && h.from === saved && h.to === current);
   return { state: hop ? "lineage" : "stale", saved, current };
+}
+
+const verifiedStates = new Map();
+
+/**
+ * checkFixtureDigest for a lane runner: a digest the lineage connects counts only when a hop that
+ * connects it passes the same verification the release gate runs (lineageProblems, against the git
+ * history); otherwise the row is stale. Cached per process for the checked-in lineage.
+ */
+export function checkVerifiedFixtureDigest(name, lane, saved, options = {}) {
+  const status = checkFixtureDigest(name, lane, saved, options);
+  if (status.state !== "lineage") return status;
+  const cacheable = options.lineage === undefined && options.verify === undefined;
+  const key = `${name}/${saved}/${status.current}`;
+  if (cacheable && verifiedStates.has(key)) return verifiedStates.get(key);
+  const verify =
+    options.verify ??
+    ((hop) =>
+      lineageProblems(
+        { version: 1, hops: [hop] },
+        { lanes: { [name]: lane }, reader: gitReader, shallow: isShallowCheckout() },
+      ));
+  const hops = (options.lineage ?? loadLineage().hops).filter(
+    (hop) => hop.lane === name && hop.from === saved && hop.to === status.current,
+  );
+  const result = hops.some((hop) => verify(hop).length === 0)
+    ? status
+    : { ...status, state: "stale" };
+  if (cacheable) verifiedStates.set(key, result);
+  return result;
 }
 
 /** Lanes whose fixture records one harness digest for the whole file instead of one per program. */
@@ -578,7 +698,7 @@ const HOP_KINDS = ["scheme", "unreached"];
 export const BODY_STAGE_PREFIX = "body:";
 
 /** What the recorder writes for a step whose dependency recorded nothing (harness.mjs). */
-const UNRESOLVED = /^step (\S+) recorded nothing at .+$/;
+const UNRESOLVED = /^step (\S+) recorded nothing at (.+)$/;
 /** The keys of a recorded program; `steps` and `second` hold answers, the rest is provenance. */
 const PROGRAM_KEYS = new Set([
   "corpusDigest",
@@ -590,27 +710,53 @@ const PROGRAM_KEYS = new Set([
 ]);
 const ANSWER_SLOTS = ["steps", "second"];
 
+/** harness.mjs `lookup`: a dotted path into a recorded answer, undefined when anything is absent. */
+function lookupPath(value, path) {
+  let current = value;
+  for (const segment of String(path).split(".")) {
+    if (current === null || current === undefined) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+/**
+ * Why a status -1 row is a step whose request could not be built, which the fixture itself shows:
+ * `unresolved` names an earlier step of the same slot (an own key, never an inherited name), and
+ * that predecessor either is itself such a row, or is a REST answer (or a failed fetch) that
+ * recorded nothing at the referenced path, so the reference could not resolve and the request
+ * never reached fetch. `dependencyTransient` is the recorder's own flag for the predecessor.
+ */
+function unresolvedProblem(stepId, row, slot) {
+  const match = UNRESOLVED.exec(typeof row.unresolved === "string" ? row.unresolved : "");
+  if (match === null) return "status -1 without the dependency evidence the recorder writes";
+  const [, dependency, path] = match;
+  const order = Object.keys(slot);
+  if (!Object.hasOwn(slot, dependency) || order.indexOf(dependency) >= order.indexOf(stepId))
+    return `status -1 names ${dependency}, which is not an earlier step of its slot`;
+  const predecessor = slot[dependency];
+  if (row.dependencyTransient !== isTransient(predecessor))
+    return `status -1 whose dependencyTransient is not that of step ${dependency}`;
+  if (predecessor?.status === -1) return undefined;
+  if (typeof predecessor?.status !== "number")
+    return `status -1 after step ${dependency}, which is not a REST answer`;
+  const found = lookupPath(predecessor.body, path);
+  if (found !== undefined && found !== "")
+    return `status -1 references ${path}, which step ${dependency} did record`;
+  return undefined;
+}
+
 /**
  * Why one recorded answer cannot be the result of a body-read failure: it has a numeric status
  * (its body was read, or its fetch failed and says so with a transport error) or a numeric gRPC
- * code. A status -1 row is a step whose dependency recorded nothing; it is accepted only with the
- * evidence the recorder writes for it (`unresolved` naming another step of the same slot, and the
- * `dependencyTransient` of that step), since a body failure never writes it.
+ * code. A status -1 row needs the proof of unresolvedProblem, since a body failure after a request
+ * that was built never produces one.
  */
 function answerProblem(stepId, row, slot) {
   const error = row?.transportError;
   if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
     return `the body of the answer could not be read (${error})`;
-  if (row?.status === -1) {
-    const dependency = UNRESOLVED.exec(
-      typeof row.unresolved === "string" ? row.unresolved : "",
-    )?.[1];
-    if (dependency === undefined || dependency === stepId || slot[dependency] === undefined)
-      return "status -1 without the dependency evidence the recorder writes";
-    if (row.dependencyTransient !== isTransient(slot[dependency]))
-      return `status -1 whose dependencyTransient is not that of step ${dependency}`;
-    return undefined;
-  }
+  if (row?.status === -1) return unresolvedProblem(stepId, row, slot);
   if (row?.status === 0)
     return typeof error === "string" ? undefined : "status 0 without a transport error";
   if (typeof row?.status === "number" || typeof row?.code === "number") return undefined;
@@ -708,9 +854,11 @@ export function lineageProblems(
     reader,
     shallow,
     current = treeReader,
+    currentInputs = TREE_INPUTS,
     conditions = UNREACHED_CONDITIONS,
     fixDelta = gitFixDelta,
     dataReader = gitDataReader,
+    exportReader = gitExportReader,
     fixtureOf = treeFixture,
   },
 ) {
@@ -747,7 +895,7 @@ export function lineageProblems(
     if (problems.length > before || shallow) return;
     let atCommit;
     try {
-      atCommit = inputsAt(lane, hop.commit, { reader, dataReader });
+      atCommit = inputsAt(lane, hop.commit, { reader, dataReader, exportReader });
     } catch (error) {
       return problems.push(
         `${at}: the sources at ${hop.commit} are not readable (${error.message})`,
@@ -755,7 +903,7 @@ export function lineageProblems(
     }
     if (rawDigest(lane, atCommit.read, atCommit.extra) !== hop.from)
       problems.push(`${at}: the recorded digest does not reproduce at ${hop.commit}`);
-    if (scheme2Digest(lane, current) !== hop.to)
+    if (scheme2Digest(lane, current, extraOf(lane, currentInputs)) !== hop.to)
       problems.push(`${at}: the scheme-2 digest of the current tree is not the hop's`);
     if (hop.kind === "unreached")
       problems.push(
@@ -763,6 +911,7 @@ export function lineageProblems(
           atCommit,
           reader,
           dataReader,
+          exportReader,
           condition: conditions[hop.condition],
           fixDelta,
           fixtureOf,
@@ -778,12 +927,19 @@ export function lineageProblems(
  * Every input of a lane's digest as it was at `revision`: the sources and the data its `extra`
  * reads, each read at that revision. An input that is missing there throws.
  */
-function inputsAt(lane, revision, { reader, dataReader }) {
+function inputsAt(lane, revision, { reader, dataReader, exportReader }) {
   const read = reader(revision);
   const sources = new Map(lane.files.map((file) => [file, read(file)]));
   for (const [file, text] of sources)
     if (typeof text !== "string") throw new Error(`${file} is missing`);
-  const extra = extraOf(lane, dataReader(revision));
+  // The data and the module exports its extra inputs are built from are the revision's own.
+  const extra = extraOf(lane, {
+    data: dataReader(revision),
+    exported: exportReader(revision),
+    sdkVersions: () => {
+      throw new Error("the installed SDK versions cannot be read at a revision");
+    },
+  });
   if (typeof extra !== "string") throw new Error("a data input is missing");
   return { read: (file) => sources.get(file), extra };
 }
@@ -806,7 +962,7 @@ function unreachedProblems(
   at,
   hop,
   lane,
-  { atCommit, reader, dataReader, condition, fixDelta, fixtureOf },
+  { atCommit, reader, dataReader, exportReader, condition, fixDelta, fixtureOf },
 ) {
   if (hop.fix !== condition.fix)
     return [`${at}: the fix commit ${hop.fix} is not the one the condition approves`];
@@ -822,13 +978,13 @@ function unreachedProblems(
       );
     if (delta.deltaSha256 !== condition.deltaSha256)
       problems.push(`${at}: the change to ${condition.touches} is not the approved one`);
-    const base = inputsAt(lane, condition.base, { reader, dataReader });
+    const base = inputsAt(lane, condition.base, { reader, dataReader, exportReader });
     if (
       scheme2Digest(lane, atCommit.read, atCommit.extra) !==
       scheme2Digest(lane, base.read, base.extra)
     )
       problems.push(`${at}: the inputs changed between ${hop.commit} and the base of the fix`);
-    const fixed = inputsAt(lane, condition.fix, { reader, dataReader });
+    const fixed = inputsAt(lane, condition.fix, { reader, dataReader, exportReader });
     if (scheme2Digest(lane, fixed.read, fixed.extra) !== hop.to)
       problems.push(`${at}: the scheme-2 digest at the fix commit is not the hop's`);
   } catch (error) {
@@ -851,7 +1007,9 @@ export function proposeUnreachedHops({
   lineage = loadLineage(),
   reader = gitReader,
   dataReader = gitDataReader,
+  exportReader = gitExportReader,
   current = treeReader,
+  currentInputs = TREE_INPUTS,
   conditions = UNREACHED_CONDITIONS,
   fixtureOf = treeFixture,
 }) {
@@ -863,7 +1021,7 @@ export function proposeUnreachedHops({
   for (const [name, lane] of Object.entries(lanes)) {
     const inputs = laneInputPaths(lane);
     if (!touches.every((path) => inputs.includes(path))) continue;
-    const atBase = inputsAt(lane, base, { reader, dataReader });
+    const atBase = inputsAt(lane, base, { reader, dataReader, exportReader });
     for (const from of recordedDigests(name, fixtureOf(lane))) {
       if (known.has(`${name}/${from}`)) continue;
       if (rawDigest(lane, atBase.read, atBase.extra) !== from)
@@ -871,7 +1029,7 @@ export function proposeUnreachedHops({
       hops.push({
         lane: name,
         from,
-        to: scheme2Digest(lane, current),
+        to: scheme2Digest(lane, current, extraOf(lane, currentInputs)),
         commit: base,
         kind: "unreached",
         fix,

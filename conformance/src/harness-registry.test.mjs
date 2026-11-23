@@ -19,6 +19,10 @@ import {
   BODY_STAGE_PREFIX,
   bodyReadStageProblems,
   checkFixtureDigest,
+  checkVerifiedFixtureDigest,
+  extraOf,
+  gitDataReader,
+  gitExportReader,
   enrollmentProblems,
   frozenPaths,
   fixturesWithHarnessDigest,
@@ -999,7 +1003,7 @@ test("the federation waiver says what its digests are", () => {
 // A lane with two sources and a data input, read at a revision through `dataReader`.
 const UNREACHED_LANE = {
   files: ["a.mjs", "b.mjs"],
-  extra: (readData) => readData("lane.indexes.json"),
+  extra: ({ data }) => data("lane.indexes.json"),
   fixture: "lane-production.json",
   guarded: ["conformance/lane.indexes.json"],
 };
@@ -1053,6 +1057,7 @@ const unreachedProblems = (hop, overrides = {}) =>
       dataReader: dataAt,
       shallow: false,
       current: (file) => TREES[FIX][file],
+      currentInputs: { data: () => DATA },
       conditions: CONDITIONS,
       fixDelta: () => delta(),
       fixtureOf: () => ({ failures: [] }),
@@ -1060,7 +1065,6 @@ const unreachedProblems = (hop, overrides = {}) =>
     },
   );
 // lineageProblems reads today's data through the lane's default reader, which is this checkout's.
-UNREACHED_LANE.extra = (readData = () => DATA) => readData("lane.indexes.json");
 
 test("an unreached hop is sound when every part of its check holds", () => {
   assert.deepEqual(unreachedProblems(unreachedHop()), []);
@@ -1263,6 +1267,7 @@ test("a scheme hop reads its data at its commit too", () => {
         dataReader,
         shallow: false,
         current: (file) => TREES[REC][file],
+        currentInputs: { data: () => DATA },
       },
     );
   assert.deepEqual(run(dataAt), []);
@@ -1282,7 +1287,7 @@ test("an unreached hop in a shallow clone is a hard failure", () => {
 test("an unreached hop connects the recorded digest of its lane and no other", () => {
   const hop = unreachedHop();
   const state = (name, saved) =>
-    checkFixtureDigest(name, UNREACHED_LANE, saved, {
+    checkFixtureDigest(name, { ...UNREACHED_LANE, extra: DATA }, saved, {
       read: (file) => TREES[FIX][file],
       lineage: [hop],
     }).state;
@@ -1365,7 +1370,7 @@ test("the body-read condition refuses a program with a key it does not know", ()
   assert.deepEqual(found, ["p: unexpected key third"]);
 });
 
-test("the body-read condition accepts a -1 row only with the dependency evidence the recorder writes", () => {
+test("the body-read condition accepts a -1 row only when the fixture proves its request could not be built", () => {
   const dependency = { status: 200, body: [{}] };
   const row = {
     status: -1,
@@ -1373,37 +1378,71 @@ test("the body-read condition accepts a -1 row only with the dependency evidence
     dependencyTransient: false,
   };
   const check = (change, steps = { dep: dependency, row }) =>
-    bodyReadStageProblems({ programs: { p: { steps: { ...steps, row: { ...row, ...change } } } } });
+    bodyReadStageProblems({
+      programs: { p: { steps: { ...steps, row: { ...(steps.row ?? row), ...change } } } },
+    });
   assert.deepEqual(check({}), []);
   const none = "status -1 without the dependency evidence the recorder writes";
   assert.deepEqual(check({ unresolved: undefined }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: 7 }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "step dep recorded nothing" }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
-  assert.deepEqual(check({ unresolved: "step ghost recorded nothing at x" }), [`p#row: ${none}`]);
   // Not a string, even when its string form would match (an array of one string).
   assert.deepEqual(check({ unresolved: ["step dep recorded nothing at x"] }), [`p#row: ${none}`]);
-  // A step that happens to be named "undefined" is not the dependency of an unreadable message.
+  // The predecessor must be an earlier step of the slot, by its own key.
+  const notEarlier = (name) =>
+    `p#row: status -1 names ${name}, which is not an earlier step of its slot`;
+  for (const name of ["ghost", "row", "constructor", "__proto__", "toString", "hasOwnProperty"])
+    assert.deepEqual(check({ unresolved: `step ${name} recorded nothing at x` }), [
+      notEarlier(name),
+    ]);
+  assert.deepEqual(
+    bodyReadStageProblems({ programs: { p: { steps: { row, dep: dependency } } } }),
+    [notEarlier("dep")],
+  );
+  // A step named "undefined" is not the dependency of an unreadable message.
   assert.deepEqual(
     check({ unresolved: "garbage" }, { undefined: dependency, dep: dependency, row }),
     [`p#row: ${none}`],
   );
-  assert.deepEqual(check({ unresolved: "step row recorded nothing at x" }), [`p#row: ${none}`]);
-  assert.deepEqual(check({ dependencyTransient: true }), [
-    "p#row: status -1 whose dependencyTransient is not that of step dep",
+  // The recorder's own flag for the predecessor.
+  const flag = "p#row: status -1 whose dependencyTransient is not that of step dep";
+  assert.deepEqual(check({ dependencyTransient: true }), [flag]);
+  assert.deepEqual(check({ dependencyTransient: undefined }), [flag]);
+  // A predecessor that recorded the path means the request was built and reached fetch.
+  const recorded = (body) => check({}, { dep: { status: 200, body }, row });
+  assert.deepEqual(recorded({ nextPageToken: "<page-token>" }), [
+    "p#row: status -1 references nextPageToken, which step dep did record",
   ]);
-  assert.deepEqual(check({ dependencyTransient: undefined }), [
-    "p#row: status -1 whose dependencyTransient is not that of step dep",
+  assert.deepEqual(recorded({ nextPageToken: "" }), []);
+  assert.deepEqual(recorded({ documents: [] }), []);
+  const nested = { ...row, unresolved: "step dep recorded nothing at a.b" };
+  assert.deepEqual(check({}, { dep: { status: 200, body: { a: { b: 1 } } }, row: nested }), [
+    "p#row: status -1 references a.b, which step dep did record",
   ]);
-  // A dependency that was transient (a 503) makes the flag true.
-  assert.deepEqual(check({ dependencyTransient: true }, { dep: { status: 503 }, row }), []);
-  // A dependency that is itself a -1 row has its own transience.
+  assert.deepEqual(check({}, { dep: { status: 200, body: { a: null } }, row: nested }), []);
+  assert.deepEqual(check({}, { dep: { status: 200 }, row }), []);
+  // A predecessor whose fetch failed recorded nothing; a gRPC predecessor cannot prove it.
+  assert.deepEqual(
+    check({ dependencyTransient: true }, { dep: { status: 0, transportError: "ECONNRESET" }, row }),
+    [],
+  );
+  assert.deepEqual(check({}, { dep: { code: 0, body: [] }, row }), [
+    "p#row: status -1 after step dep, which is not a REST answer",
+  ]);
+  // A predecessor that is itself such a row has its own transience and its own proof.
   const chained = {
-    dep: { status: -1, unresolved: "step first recorded nothing at t", dependencyTransient: false },
     first: dependency,
+    dep: { status: -1, unresolved: "step first recorded nothing at t", dependencyTransient: false },
     row: { ...row, unresolved: "step dep recorded nothing at t" },
   };
   assert.deepEqual(bodyReadStageProblems({ programs: { p: { steps: chained } } }), []);
+  assert.deepEqual(
+    bodyReadStageProblems({
+      programs: { p: { steps: { ...chained, first: { status: 200, body: { t: "x" } } } } },
+    }),
+    ["p#dep: status -1 references t, which step first did record"],
+  );
 });
 
 test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", () => {
@@ -1422,6 +1461,19 @@ test("the recorded -1 rows of the checked-in fixtures all carry that evidence, a
     delete forged.programs[id].steps[stepId].unresolved;
     assert.match(bodyReadStageProblems(forged).join("\n"), /without the dependency evidence/);
   }
+  // A forged -1 after a real page that did record its token (the old recorder's body failure whose
+  // message imitates a dependency failure) is refused.
+  const interleaved = "fs-data-write-list/list-documents/missing-interleaved";
+  assert.ok(fixture.programs[interleaved].steps["page-size-1"].body.nextPageToken);
+  const forgedRow = structuredClone(fixture);
+  forgedRow.programs[interleaved].steps["show-missing-page-size-2"] = {
+    status: -1,
+    unresolved: "step page-size-1 recorded nothing at nextPageToken",
+    dependencyTransient: false,
+  };
+  assert.deepEqual(bodyReadStageProblems(forgedRow), [
+    `${interleaved}#show-missing-page-size-2: status -1 references nextPageToken, which step page-size-1 did record`,
+  ]);
   // A body-stage failure in the second answer of a real program is found too.
   const [secondId] = Object.entries(fixture.programs).find(([, program]) => program.second) ?? [];
   const forged = structuredClone(fixture);
@@ -1480,6 +1532,7 @@ const propose = (overrides = {}) =>
     reader: treesReader,
     dataReader: dataAt,
     current: (file) => TREES[FIX][file],
+    currentInputs: { data: () => DATA },
     conditions: CONDITIONS,
     fixtureOf: (lane) => fixtures[lane.fixture],
     ...overrides,
@@ -1765,4 +1818,241 @@ test("the lane runner does not call a committed row of the shared layer stale, a
   const source = readFileSync(join(CONFORMANCE_DIR, "src/fs-query-index/run.mjs"), "utf8");
   assert.match(source, /const stale = rowIsStale\(saved, program, harness\);/);
   assert.doesNotMatch(source, /saved\.harnessDigest !== harness/);
+});
+
+// ---- inputs rebuilt from the revision being verified ------------------------------------------------
+
+const EXPORT_LANE = {
+  files: ["a.mjs", "b.mjs"],
+  extra: ({ exported }) => JSON.stringify(exported("m.mjs", "X")),
+  fixture: "lane-production.json",
+};
+const EXPORTED = { [REC]: { X: { n: 1 } }, [BASE]: { X: { n: 1 } }, [FIX]: { X: { n: 1 } } };
+const exportsAt = (commit) => (module, name) => {
+  if (module !== "m.mjs" || EXPORTED[commit]?.[name] === undefined)
+    throw new Error(`${module} has no ${name} at ${commit}`);
+  return EXPORTED[commit][name];
+};
+const TODAY_X = JSON.stringify({ n: 1 });
+const exportHop = (kind) => ({
+  lane: "lane",
+  from: rawDigest(EXPORT_LANE, (file) => TREES[REC][file], TODAY_X),
+  to: scheme2Digest(EXPORT_LANE, (file) => TREES[kind === "scheme" ? REC : FIX][file], TODAY_X),
+  commit: REC,
+  kind,
+  ...(kind === "unreached" ? { fix: FIX, condition: "no-failures" } : {}),
+});
+const exportProblems = (hop, overrides = {}) =>
+  lineageProblems(
+    { version: 1, hops: [hop] },
+    {
+      lanes: { lane: EXPORT_LANE },
+      reader: treesReader,
+      dataReader: dataAt,
+      exportReader: exportsAt,
+      shallow: false,
+      current: (file) => TREES[hop.kind === "scheme" ? REC : FIX][file],
+      currentInputs: { exported: () => ({ n: 1 }) },
+      conditions: CONDITIONS,
+      fixDelta: () => delta(),
+      fixtureOf: () => ({ failures: [] }),
+      ...overrides,
+    },
+  );
+
+test("a hop's digest is rebuilt from the module exports of the revision it is verified at", () => {
+  for (const kind of ["scheme", "unreached"]) {
+    assert.deepEqual(exportProblems(exportHop(kind)), [], kind);
+    const asked = [];
+    exportProblems(exportHop(kind), {
+      exportReader: (commit) => {
+        asked.push(commit);
+        return exportsAt(commit);
+      },
+    });
+    assert.ok(asked.includes(REC), kind);
+    if (kind === "unreached") assert.ok(asked.includes(BASE) && asked.includes(FIX));
+  }
+});
+
+test("a hop is refused when a module export its digest reads is unavailable at a revision", () => {
+  for (const kind of ["scheme", "unreached"]) {
+    const revisions = kind === "scheme" ? [REC] : [REC, BASE, FIX];
+    for (const missingAt of revisions) {
+      const found = exportProblems(exportHop(kind), {
+        exportReader: (commit) =>
+          commit === missingAt
+            ? () => {
+                throw new Error("module not found");
+              }
+            : exportsAt(commit),
+      });
+      assert.equal(found.length, 1, `${kind} ${missingAt}`);
+      assert.match(found[0], /not readable \(module not found\)/);
+    }
+  }
+});
+
+test("a hop is refused when the revision's export is not the value the recorded digest was made from", () => {
+  // Today's value is { n: 1 }; the sources at the hop's commit define another one.
+  const other = (commit) => (commit === REC ? () => ({ n: 2 }) : exportsAt(commit));
+  assert.match(
+    exportProblems(exportHop("scheme"), { exportReader: other }).join("\n"),
+    /recorded digest does not reproduce/,
+  );
+  assert.match(
+    exportProblems(exportHop("unreached"), {
+      exportReader: (commit) => (commit === FIX ? () => ({ n: 2 }) : exportsAt(commit)),
+    }).join("\n"),
+    /at the fix commit is not the hop's/,
+  );
+});
+
+test("the installed SDK versions cannot be read at a revision, so such a lane's hop is refused", () => {
+  const lane = { ...EXPORT_LANE, extra: ({ sdkVersions }) => JSON.stringify(sdkVersions()) };
+  const found = lineageProblems(
+    { version: 1, hops: [{ ...exportHop("scheme"), from: "9".repeat(64) }] },
+    {
+      lanes: { lane },
+      reader: treesReader,
+      dataReader: dataAt,
+      exportReader: exportsAt,
+      shallow: false,
+      current: (file) => TREES[REC][file],
+      currentInputs: { sdkVersions: () => ({}) },
+    },
+  );
+  assert.match(found.join("\n"), /installed SDK versions cannot be read at a revision/);
+});
+
+test("the committed auth-fs-cross scheme hop is refused when its principals cannot be rebuilt at its commit", () => {
+  const lineage = loadLineage();
+  const hop = lineage.hops.find((h) => h.kind === "scheme");
+  if (isShallowCheckout()) return;
+  const asked = [];
+  const run = (exportReader) =>
+    lineageProblems(
+      { version: 1, hops: [hop] },
+      { lanes: HARNESS_LANES, reader: gitReader, shallow: false, exportReader },
+    );
+  assert.deepEqual(run(gitExportReader), []);
+  const found = run((commit) => (module, name) => {
+    asked.push([commit, module, name]);
+    throw new Error("corpus.mjs is not available");
+  });
+  assert.match(found.join("\n"), /corpus\.mjs is not available/);
+  assert.deepEqual(asked, [[hop.commit, "auth-fs-cross/corpus.mjs", "PRINCIPALS"]]);
+});
+
+test("a revision's exports are read from that revision's own sources", () => {
+  const head = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  const read = gitExportReader(head);
+  assert.deepEqual(read("auth-account/authorized-domains.mjs", "AUTHORIZED_DOMAINS"), [
+    "{project}.firebaseapp.com",
+    "{project}.web.app",
+  ]);
+  assert.throws(() => read("auth-account/authorized-domains.mjs", "NO_SUCH_EXPORT"));
+  assert.throws(() => read("no/such/module.mjs", "X"));
+  assert.throws(() =>
+    gitExportReader("0".repeat(40))("auth-account/corpus.mjs", "BASELINE_CONFIG"),
+  );
+});
+
+test("every lane's extra inputs rebuilt from the committed revision equal this checkout's", () => {
+  const head = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  const status = execFileSync("git", ["status", "--porcelain", "--", "conformance"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  if (status.trim() !== "") return; // uncommitted work: the committed revision is not this checkout
+  for (const [name, lane] of Object.entries(HARNESS_LANES)) {
+    if (typeof lane.extra !== "function" || name === "auth-config-sdk") continue;
+    const rebuilt = extraOf(lane, {
+      data: gitDataReader(head),
+      exported: gitExportReader(head),
+      sdkVersions: () => {
+        throw new Error("not at a revision");
+      },
+    });
+    assert.equal(rebuilt, extraOf(lane), name);
+  }
+});
+
+// ---- the lane runner accepts only a verified hop ----------------------------------------------------
+
+test("a lineage digest counts for a lane runner only when a hop that connects it passes the gate's verification", () => {
+  const lane = { ...EXPORT_LANE, extra: DATA };
+  const hop = {
+    ...exportHop("scheme"),
+    from: "7".repeat(64),
+    to: scheme2Digest(lane, (f) => TREES[REC][f]),
+  };
+  const state = (verify, lineage = [hop], saved = hop.from) =>
+    checkVerifiedFixtureDigest("lane", lane, saved, { read: (f) => TREES[REC][f], lineage, verify })
+      .state;
+  const seen = [];
+  assert.equal(
+    state((h) => (seen.push(h), [])),
+    "lineage",
+  );
+  assert.deepEqual(seen, [hop]);
+  assert.equal(
+    state(() => ["refused"]),
+    "stale",
+  );
+  // Two hops for the same digest: one verified is enough.
+  const other = { ...hop, commit: "5".repeat(40) };
+  assert.equal(
+    state((h) => (h === other ? [] : ["refused"]), [hop, other]),
+    "lineage",
+  );
+  // Other states are not the lineage's business and never call the verification.
+  const never = () => assert.fail("verify must not run");
+  assert.equal(
+    state(
+      never,
+      [],
+      rawDigest(lane, (f) => TREES[REC][f]),
+    ),
+    "raw",
+  );
+  assert.equal(
+    state(
+      never,
+      [],
+      scheme2Digest(lane, (f) => TREES[REC][f]),
+    ),
+    "scheme2",
+  );
+  assert.equal(state(never, [], "6".repeat(64)), "stale");
+});
+
+test("the real lineage hop of fs-query-index passes the verification, and the same hop naming another fix does not", () => {
+  if (isShallowCheckout()) return;
+  const lane = HARNESS_LANES["fs-query-index"];
+  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  assert.equal(checkVerifiedFixtureDigest("fs-query-index", lane, saved).state, "lineage");
+  const hops = loadLineage().hops.map((hop) =>
+    hop.lane === "fs-query-index" ? { ...hop, fix: "4".repeat(40) } : hop,
+  );
+  const forged = checkVerifiedFixtureDigest("fs-query-index", lane, saved, { lineage: hops });
+  assert.equal(forged.state, "stale");
+  // The endpoint lookup alone would have accepted it.
+  assert.equal(
+    checkFixtureDigest("fs-query-index", lane, saved, { lineage: hops }).state,
+    "lineage",
+  );
+});
+
+test("the lane runner asks for the verified state, never the endpoint lookup", () => {
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/fs-query-index/run.mjs"), "utf8");
+  assert.match(source, /checkVerifiedFixtureDigest\(LANE\.id, enrolled, saved\)/);
+  assert.doesNotMatch(source, /\bcheckFixtureDigest\b/);
 });

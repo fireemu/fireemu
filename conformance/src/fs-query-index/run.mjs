@@ -44,7 +44,7 @@ import { promisify } from "node:util";
 
 import { CONFORMANCE_DIR, REPO_ROOT } from "../config.mjs";
 import { resolveFireemuBinary } from "../evidence.mjs";
-import { checkFixtureDigest, HARNESS_LANES } from "../harness-registry.mjs";
+import { checkVerifiedFixtureDigest, HARNESS_LANES } from "../harness-registry.mjs";
 import { assertCompleteFixture, loadCommittedFixture, scanFixture } from "./fixture-scan.mjs";
 import { LANES, selectLane } from "./lanes.mjs";
 import { isMainModule } from "./main-module.mjs";
@@ -119,13 +119,13 @@ export async function harnessDigest() {
 
 /**
  * Whether a recorded harness digest no longer binds this lane: the registry's verdict (today's raw
- * or scheme-2 digest, or a hop of the lineage connects it), and plain equality with `current` for a
+ * or scheme-2 digest, or a hop of the lineage that passes the release gate's verification), and plain equality with `current` for a
  * lane the registry does not enroll.
  */
 export function harnessDigestIsStale(saved, current) {
   const enrolled = HARNESS_LANES[LANE.id];
   return enrolled
-    ? checkFixtureDigest(LANE.id, enrolled, saved).state === "stale"
+    ? checkVerifiedFixtureDigest(LANE.id, enrolled, saved).state === "stale"
     : saved !== current;
 }
 
