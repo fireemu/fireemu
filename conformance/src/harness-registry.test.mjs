@@ -2206,6 +2206,8 @@ test("the release verifier checks the whole lineage file: version, duplicates, e
     assert.match(releaseLineageProblems({ ...real, hops }).join("\n"), /are not readable/, lane);
   }
   assert.match(releaseLineageProblems(real, { shallow: true }).join("\n"), /shallow clone/);
+  // With no lineage given it is the checked-in file.
+  assert.match(releaseLineageProblems(undefined, { shallow: true }).join("\n"), /shallow clone/);
   // The git history is read through the reader it is given.
   assert.match(
     releaseLineageProblems(real, {
