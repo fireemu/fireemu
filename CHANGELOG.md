@@ -14,6 +14,13 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 - Remote Config: `namespaces/firebase-server/serverRemoteConfig` serves the published server template in the shape the Node Admin SDK's `getServerTemplate()` reads, so `initServerTemplate().load()` and `evaluate()` work against Fireemu with `FIREBASE_REMOTE_CONFIG_URL_BASE` set to the control listener. Conditions are converted to the recorded structured form for the two recorded expression forms (custom-signal exact match and `percent(seed) <= n`); other expressions become an empty condition, which the SDK evaluates as false.
 - Remote Config: a client-template publish or rollback through the local administration delivers the event shape recorded in production to v1 and v2 Remote Config functions; validate-only and refused requests deliver nothing. Server-template publishes deliver no event (unrecorded in production). See `docs/remote-config.md`.
 
+### Fixed
+
+- Firestore: Standard queries with two equality filters and an array-contains filter can use the recorded two-carrier, descending-prefix and collection-group carrier configurations. A collection equality plus array-contains can also use an explicit equality index for descending document-name order. Explain reports the recorded merge order under production rules.
+- Firestore, strict profile: missing-index errors now match the recorded collection queries with an opposite-direction equality index, an ascending-name array carrier, a group-only ordered composite, or a contains-only index on a path also filtered by equality.
+- Firestore REST: a UTC `timestampValue` ending in whole second `:60Z` advances to the first second of the next minute in writes and query filters.
+- Firestore Admin: a composite index ending in an array-contains field lists its implied `__name__` field as ascending.
+
 ## [0.64.0] - 2026-11-22
 
 ### Added

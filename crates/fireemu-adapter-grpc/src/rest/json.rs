@@ -590,7 +590,17 @@ fn value_from_json_at(
             },
             _ => return err("doubleValue must be a number"),
         }),
-        "timestampValue" => V::TimestampValue(timestamp_from_json(inner).map_err(|error| {
+        "timestampValue" => V::TimestampValue(timestamp_from_json(inner).or_else(|error| {
+            // Only the whole-second UTC value spelling carries second 60 into the next minute.
+            use fireemu_core_firestore::value::Timestamp;
+            let Some(prefix) = inner.as_str().and_then(|s| s.strip_suffix(":60Z"))
+                .filter(|s| s.len() == 16 && s.as_bytes()[10] == b'T') else { return Err(error); };
+            let Ok(last) = LogicalInstant::parse_rfc3339(&format!("{prefix}:59Z")) else { return Err(error); };
+            let mut timestamp = encode_instant(last);
+            timestamp.seconds += 1;
+            (Timestamp::MIN_SECONDS..=Timestamp::MAX_SECONDS).contains(&timestamp.seconds)
+                .then_some(timestamp).ok_or(error)
+        }).map_err(|error| {
             match (path, inner.as_str()) {
                 (Some(path), Some(text))
                     if !text.ends_with(['Z', 'z'])

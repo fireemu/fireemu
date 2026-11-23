@@ -967,6 +967,64 @@ fn batch_write_rest_reports_saved_production_value_decode_errors() {
 }
 
 #[test]
+fn whole_second_sixty_round_trips_in_writes_and_equality_filters() {
+    for strict in [false, true] {
+        let state = state_with_profile(strict);
+        for (id, input, normalized) in [
+            ("leap", "2016-12-31T23:59:60Z", "2017-01-01T00:00:00Z"),
+            ("minute", "2026-01-01T00:00:60Z", "2026-01-01T00:01:00Z"),
+            ("last", "9999-12-31T23:58:60Z", "9999-12-31T23:59:00Z"),
+        ] {
+            let path = format!("{DOCS}/instants/{id}");
+            let (status, body) = call(
+                &state,
+                "PATCH",
+                &path,
+                json!({"fields": {"t": {"timestampValue": input}}}),
+            );
+            assert_eq!(status, 200, "{body}");
+            let (status, doc) = call(&state, "GET", &path, Value::Null);
+            assert_eq!(status, 200, "{doc}");
+            assert_eq!(doc["fields"]["t"]["timestampValue"], normalized);
+            for filter in [input, normalized] {
+                let (status, rows) = call(
+                    &state,
+                    "POST",
+                    &format!("{DOCS}:runQuery"),
+                    json!({
+                        "structuredQuery": {"from": [{"collectionId": "instants"}], "where": {"fieldFilter": {
+                            "field": {"fieldPath": "t"}, "op": "EQUAL", "value": {"timestampValue": filter}
+                        }}}
+                    }),
+                );
+                assert_eq!(status, 200, "{rows}");
+                assert_eq!(rows.as_array().unwrap().len(), 1);
+                assert_eq!(rows[0]["document"], doc);
+            }
+        }
+    }
+}
+
+#[test]
+fn unrecorded_second_sixty_spellings_keep_the_timestamp_error() {
+    use fireemu_adapter_grpc::rest::json::{precondition_from_json, value_from_json};
+    for input in [
+        "2016-12-31T23:59:60.0Z",
+        "2016-12-31T23:59:60+00:00",
+        "2016-12-31T23:59:61Z",
+        "2016-12-31t23:59:60Z",
+        "2016-12-31T23:59:60z",
+        "9999-12-31T23:59:60Z",
+        "2026-02-30T00:00:60Z",
+    ] {
+        let error = value_from_json(&json!({"timestampValue": input})).unwrap_err();
+        let original = precondition_from_json(Some(&json!({"updateTime": input}))).unwrap_err();
+        assert_eq!(error.to_string(), original.to_string(), "{input}");
+    }
+    assert!(precondition_from_json(Some(&json!({"updateTime": "2016-12-31T23:59:60Z"}))).is_err());
+}
+
+#[test]
 fn batch_write_rest_does_not_reuse_the_observed_timezone_error_for_an_invalid_date() {
     let s = state(None);
     let name = "projects/demo-app/databases/(default)/documents/batch-decode/invalid-date";
