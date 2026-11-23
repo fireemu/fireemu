@@ -567,11 +567,10 @@ export function importClosure(module, read) {
     found.add(file);
     const visit = (node) => {
       if (node === null || typeof node !== "object") return;
-      if (Array.isArray(node)) return node.forEach(visit);
-      const source = node.source?.type === "Literal" ? node.source.value : undefined;
+      const source = node.source?.value;
       if (typeof source === "string" && source.startsWith("."))
         pending.push(posix.normalize(posix.join(posix.dirname(file), source)));
-      for (const [key, child] of Object.entries(node)) if (key !== "source") visit(child);
+      Object.values(node).forEach(visit);
     };
     const text = read(`src/${file}`);
     if (typeof text !== "string") throw new Error(`${file} is missing`);
@@ -595,7 +594,7 @@ export function checkFixtureDigest(name, lane, saved, { read = treeReader, linea
   return { state: hop ? "lineage" : "stale", saved, current };
 }
 
-let releaseLineageProblems;
+let checkedLineageProblems;
 
 /**
  * checkFixtureDigest for a lane runner: a digest the lineage connects counts only when the whole
@@ -606,13 +605,7 @@ let releaseLineageProblems;
 export function checkVerifiedFixtureDigest(name, lane, saved, { verify, ...options } = {}) {
   const status = checkFixtureDigest(name, lane, saved, options);
   if (status.state !== "lineage") return status;
-  const problems =
-    verify?.() ??
-    (releaseLineageProblems ??= lineageProblems(loadLineage(), {
-      lanes: HARNESS_LANES,
-      reader: gitReader,
-      shallow: isShallowCheckout(),
-    }));
+  const problems = verify?.() ?? (checkedLineageProblems ??= releaseLineageProblems());
   return problems.length === 0 ? status : { ...status, state: "stale" };
 }
 
@@ -678,7 +671,7 @@ const CORPORA = {
     FS_LIST_PROGRAMS.map((program) => [program.id, program]),
   ),
 };
-const corpusOfLane = (name) => (Object.hasOwn(CORPORA, name) ? CORPORA[name] : {});
+export const corpusOfLane = (name) => (Object.hasOwn(CORPORA, name) ? CORPORA[name] : {});
 
 /** harness.mjs `lookup`: a dotted path into a recorded answer, undefined when anything is absent. */
 function lookupPath(value, path) {
@@ -693,7 +686,6 @@ function lookupPath(value, path) {
 /** The `{ $from, path }` references a corpus step's request is built from (harness.mjs chained). */
 function referencesIn(value) {
   if (value === null || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(referencesIn);
   return [
     ...(Object.hasOwn(value, "$from") ? [value] : []),
     ...Object.values(value).flatMap(referencesIn),
@@ -942,6 +934,14 @@ function inputsAt(lane, revision, { reader, dataReader, currentInputs }) {
   return { read: (file) => sources.get(file), extra };
 }
 
+/** The release gate's check of the lineage file: `verify`, the selftest and the lane runners run it. */
+export function releaseLineageProblems(
+  lineage = loadLineage(),
+  { reader = gitReader, shallow = isShallowCheckout() } = {},
+) {
+  return lineageProblems(lineage, { lanes: HARNESS_LANES, reader, shallow });
+}
+
 /** The inputs of a lane's digest as repository paths (sources, data it reads, its fixture). */
 const laneInputPaths = (lane) => [
   ...lane.files.map((file) => `conformance/src/${file}`),
@@ -1154,12 +1154,7 @@ export function bindingProblems({
 } = {}) {
   const lineage = report ? undefined : loadLineage();
   return [
-    ...(report?.lineageProblems ??
-      lineageProblems(lineage, {
-        lanes: HARNESS_LANES,
-        reader,
-        shallow: shallow ?? isShallowCheckout(),
-      })),
+    ...(report?.lineageProblems ?? releaseLineageProblems(lineage, { reader, shallow })),
     ...(report?.enrollmentProblems ?? enrollmentProblems()),
     ...waivedDigests(),
     ...unconnected(report ? { statuses: report.lanes } : { lineage: lineage.hops }),
@@ -1302,7 +1297,7 @@ export function verifyReport({ reader = gitReader, shallow } = {}) {
   );
   return {
     lanes,
-    lineageProblems: lineageProblems(lineage, { lanes: HARNESS_LANES, reader, shallow: isShallow }),
+    lineageProblems: releaseLineageProblems(lineage, { reader, shallow: isShallow }),
     enrollmentProblems: enrollmentProblems(),
   };
 }

@@ -20,6 +20,7 @@ import {
   bodyReadStageProblems,
   checkFixtureDigest,
   checkVerifiedFixtureDigest,
+  corpusOfLane,
   extraOf,
   gitDataReader,
   enrollmentProblems,
@@ -38,6 +39,7 @@ import {
   proposeUnreachedHops,
   rawDigest,
   recordedDigests,
+  releaseLineageProblems,
   registryPaths,
   rewriteReport,
   scheme2Digest,
@@ -1496,6 +1498,12 @@ test("a -1 row needs the failed step's own corpus request to reference the named
     }),
     [],
   );
+  // Only the request's own references count, never inherited ones.
+  const inherited = Object.create(REF);
+  assert.deepEqual(
+    check({ corpusSteps: [{ id: "dep" }, { id: "row", query: [["pageToken", inherited]] }] }),
+    [missing],
+  );
   // The corpus step is the fixture's own: the same program by id, hashing to the saved digest.
   assert.deepEqual(check({ digest: "0".repeat(64) }), [missing]);
   const program = { id: "p", steps: [{ id: "dep" }, { id: "row", query: [REF] }] };
@@ -2150,13 +2158,7 @@ test("the runner's verification is the release verifier's: version, duplicates, 
   const state = (lineage, options = {}) =>
     checkVerifiedFixtureDigest("fs-query-index", lane, saved, {
       lineage: lineage.hops,
-      verify: () =>
-        lineageProblems(lineage, {
-          lanes: HARNESS_LANES,
-          reader: gitReader,
-          shallow: false,
-          ...options,
-        }),
+      verify: () => releaseLineageProblems(lineage, { shallow: false, ...options }),
     }).state;
   const real = loadLineage();
   assert.equal(checkVerifiedFixtureDigest("fs-query-index", lane, saved).state, "lineage");
@@ -2184,6 +2186,46 @@ test("the runner's verification is the release verifier's: version, duplicates, 
     checkFixtureDigest("fs-query-index", lane, saved, { lineage: forged }).state,
     "lineage",
   );
+});
+
+test("the release verifier checks the whole lineage file: version, duplicates, every hop and a shallow clone", () => {
+  if (isShallowCheckout()) return;
+  const real = loadLineage();
+  assert.deepEqual(releaseLineageProblems(), []);
+  assert.deepEqual(releaseLineageProblems(real, { shallow: false }), []);
+  assert.match(releaseLineageProblems({ ...real, version: 2 }).join("\n"), /not \{ version: 1/);
+  assert.match(
+    releaseLineageProblems({ ...real, hops: [...real.hops, real.hops[1]] }).join("\n"),
+    /duplicate hop/,
+  );
+  // Every lane's hop is checked, not only the one a row is connected by.
+  for (const lane of ["fs-query-index-merge8", "auth-fs-cross"]) {
+    const hops = real.hops.map((hop) =>
+      hop.lane === lane ? { ...hop, commit: "1".repeat(40) } : hop,
+    );
+    assert.match(releaseLineageProblems({ ...real, hops }).join("\n"), /are not readable/, lane);
+  }
+  assert.match(releaseLineageProblems(real, { shallow: true }).join("\n"), /shallow clone/);
+  // The git history is read through the reader it is given.
+  assert.match(
+    releaseLineageProblems(real, {
+      reader: () => () => {
+        throw new Error("no history");
+      },
+    }).join("\n"),
+    /no history/,
+  );
+});
+
+test("the corpus of a lane is looked up by its own name", () => {
+  assert.ok(Object.keys(corpusOfLane("fs-data-write-list")).length > 0);
+  for (const name of ["fs-query-index", "constructor", "toString", "__proto__"])
+    assert.deepEqual(corpusOfLane(name), {}, name);
+});
+
+test("the registry's default verification for a lane runner is the release verifier, once per process", () => {
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/harness-registry.mjs"), "utf8");
+  assert.match(source, /\(checkedLineageProblems \?\?= releaseLineageProblems\(\)\)/);
 });
 
 test("the lane runner asks for the verified state, never the endpoint lookup", () => {
