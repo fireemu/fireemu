@@ -40,12 +40,56 @@ import {
 import { SUMMARY_ONLY } from "./fs-ent-pipeline/o8a-corpus.mjs";
 import * as queryHarness from "./fs-query-index/harness.mjs";
 import { LANES, selectLane } from "./fs-query-index/lanes.mjs";
+import { HARNESS_LANES, laneStatus, rawDigest, treeReader } from "./harness-registry.mjs";
 
 const lane = LANES["fs-ent-pipeline"];
 
 // Keep large O-8A framing payloads out of the per-request harness checks; their restored
 // compact fixture and full corpus identities are checked separately.
 const PROGRAMS = ALL_PROGRAMS.filter((program) => !SUMMARY_ONLY.has(program.id));
+
+/** The shared session text without the body-read classification of 72c4889d9. */
+function withoutBodyReadClassification(text) {
+  const pairs = [
+    [
+      `    const transportFailure = (error, stage = "") => {
+      const failed = {
+        ...sent,
+        response: { transportError: \`\${stage}\${error?.cause?.code ?? error?.name ?? "error"}\` },
+      };
+      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
+    };
+    let response;
+    let text;
+`,
+      "    let response;\n",
+    ],
+    [
+      `      return transportFailure(error);
+    }
+    try {
+      text = await response.text();
+    } catch (error) {
+      // The status line arrived and the body did not: the answer is unknown, as for a fetch that
+      // failed, and it is told apart by the \`body:\` prefix of its transport error.
+      return transportFailure(error, "body:");
+    }
+`,
+      `      const failed = {
+        ...sent,
+        response: { transportError: error?.cause?.code ?? error?.name ?? "error" },
+      };
+      return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
+    }
+    const text = await response.text();
+`,
+    ],
+  ];
+  return pairs.reduce((current, [fixed, before]) => {
+    assert.ok(current.includes(fixed), "the shared session has the body-read classification");
+    return current.replace(fixed, () => before);
+  }, text);
+}
 
 const production = (database = lane.database) =>
   createContext({
@@ -61,11 +105,13 @@ test("the pipeline lane has its own copy of the request layer and the others kee
   assert.equal(lane.harness, "src/fs-ent-pipeline");
   assert.equal(LANES["fs-query-index"].harness, "src/fs-query-index");
   assert.equal(LANES["fs-data-write-list"].harness, "src/fs-query-index");
-  // The session copy is byte for byte the shared one: only the harness differs, by the named
-  // database. The shared harness has no named database at all.
+  // The session copy is the shared one as it was before the shared one classified a response
+  // body that cannot be read (72c4889d9); the pipeline lane's recorded rows are bound to the copy
+  // as it is. Only the harness differs, by the named database. The shared harness has no named
+  // database at all.
   assert.equal(
     await read("./fs-ent-pipeline/session.mjs"),
-    await read("./fs-query-index/session.mjs"),
+    withoutBodyReadClassification(await read("./fs-query-index/session.mjs")),
   );
   assert.equal(queryHarness.DATABASES, undefined);
   assert.notEqual(DATABASES, undefined);
@@ -106,13 +152,13 @@ test("run.mjs digests the pipeline lane's own request layer: the digest its rows
     assert.equal(program.harnessDigest, ent, id);
   }
   // The query lanes digest the shared request layer, which is not the pipeline lane's.
-  const query = JSON.parse(
-    await readFile(new URL("../fs-query-index-production.json", import.meta.url), "utf8"),
-  );
-  const queryDigests = new Set(Object.values(query.programs).map((p) => p.harnessDigest));
   const shared = await digestOf("fs-query-index");
   assert.notEqual(shared, ent);
-  assert.ok(queryDigests.has(shared), [...queryDigests].join(", "));
+  const queryLane = HARNESS_LANES["fs-query-index"];
+  assert.equal(shared, rawDigest(queryLane, treeReader));
+  // The shared layer's rows are bound to the digest they were recorded under, or connected to
+  // today's by the lineage; they are never stale.
+  assert.notEqual(laneStatus("fs-query-index", queryLane).state, "stale");
 });
 
 test("the pipeline lane records into the named Enterprise database without an index file", () => {
