@@ -2988,11 +2988,11 @@ fn group_carrier_with_a_descending_alternative_keeps_the_base_refusal() {
 }
 
 #[test]
-fn unrelated_group_composite_preserves_the_recorded_group_plan() {
+fn another_collection_id_preserves_the_recorded_group_plan() {
     let mut set = IndexSet::default();
     let carrier = parse_index("qx G a:asc,tags:contains");
     set.add_composite(carrier.clone());
-    set.add_composite(parse_index("qx G c:asc,e:asc"));
+    set.add_composite(parse_index("other G c:asc,e:asc"));
     set.set_single_field_indexes(&coll("qx"), &fp("a"), vec![]);
     set.set_single_field_indexes(&coll("qx"), &fp("tags"), vec![]);
     set.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
@@ -3002,6 +3002,27 @@ fn unrelated_group_composite_preserves_the_recorded_group_plan() {
             indexes: vec![carrier, parse_index("qx G b:asc,__name__:asc")]
         }
     );
+}
+
+#[test]
+fn extra_group_carrier_with_an_unnamed_suffix_refuses_q9_and_q11() {
+    let mut set = IndexSet::default();
+    set.add_composite(parse_index("qx G a:asc,tags:contains"));
+    set.add_composite(parse_index("qx G b:asc,tags:contains,c:asc"));
+    set.set_single_field_indexes(&coll("qx"), &fp("a"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
+    for (group, requirement) in [
+        (true, "qx G a:asc,b:asc,tags:contains,__name__:asc"),
+        (false, "qx C a:asc,b:asc,tags:contains,__name__:asc"),
+    ] {
+        assert_eq!(
+            decide(&obs2_merge_query("twoEqContains", group), &set, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index(requirement)
+            }
+        );
+    }
 }
 
 #[test]

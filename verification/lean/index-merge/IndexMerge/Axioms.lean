@@ -109,6 +109,15 @@ info: 'IM.head_eq_base_outside_guards' depends on axioms: [propext, Classical.ch
 /-- info: 'IM.head_eq_base_outside_serving_catalogs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.head_eq_base_outside_serving_catalogs
 
+/-- info: 'IM.head_outside_serving_catalogs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_outside_serving_catalogs
+
+/-- info: 'IM.strict_refusal_outside_serving_catalogs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.strict_refusal_outside_serving_catalogs
+
+/-- info: 'IM.head_eq_pinned_off_gate' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms IM.head_eq_pinned_off_gate
+
 /-- info: 'IM.guardOf_off_gate' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms IM.guardOf_off_gate
 

@@ -1216,17 +1216,9 @@ struct RelevantConfiguration<'a> {
 }
 
 impl<'a> RelevantConfiguration<'a> {
-    /// Project both scopes onto the fields named by the query, in recorded role order.
+    /// Compare every composite on the collection and both scopes' modes for each named field.
     fn for_fields(set: &'a IndexSet, collection: &CollectionId, fields: &[&FieldPath]) -> Self {
-        let composites = set
-            .composites_for(collection)
-            .filter(|index| {
-                index
-                    .fields
-                    .iter()
-                    .all(|f| f.path.is_document_name() || fields.contains(&&f.path))
-            })
-            .collect();
+        let composites = set.composites_for(collection).collect();
         let modes = fields
             .iter()
             .map(|f| set.single_field_modes(collection, f))
@@ -2539,6 +2531,36 @@ mod stage_b_layer_tests {
                     DisjunctDecision::Scan(PlannedScan::Merge(_))
                 ));
 
+                for extra_scope in [IndexQueryScope::Collection, IndexQueryScope::CollectionGroup] {
+                    for fields in [
+                        &[("a", Ascending), ("tags", Contains), ("c", Ascending)][..],
+                        &[("b", Ascending), ("tags", Contains), ("c", Ascending)],
+                        &[("c", Ascending), ("d", Ascending)],
+                    ] {
+                        let mut changed = set.clone();
+                        changed.add_composite(IndexDefinition {
+                            collection_group: collection.clone(),
+                            query_scope: extra_scope,
+                            fields: fields.iter().map(|&(f, mode)| IndexField {
+                                path: path(f),
+                                mode,
+                            }).collect(),
+                        });
+                        let base = decide_disjunct_base(&req, &changed, &collection, group, ctx);
+                        let head = decide_disjunct(&req, &changed, &collection, group, ctx, shape);
+                        let expected = if row == 4 {
+                            // The pinned head completes this refusal with the earlier ascending carrier.
+                            prop_assert!(matches!(base, DisjunctDecision::Missing(_)));
+                            DisjunctDecision::Scan(PlannedScan::Merge(vec![
+                                asc.clone(),
+                                single_field_index(&collection, false, &path("b"), Ascending, Ascending),
+                            ]))
+                        } else {
+                            base
+                        };
+                        prop_assert_eq!(head, expected, "Q{} count={} {:?} {:?}", row, count, extra_scope, fields);
+                    }
+                }
                 let selected = &composites[pick % composites.len()];
                 match edit {
                     0 => {

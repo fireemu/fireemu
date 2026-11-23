@@ -1,4 +1,4 @@
-import IndexMerge.Head
+import IndexMerge.HeadPinned
 import IndexMerge.Theorems
 
 /-!
@@ -330,6 +330,91 @@ theorem head_eq_base_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy
   · rfl
   cases hd : decideBase q s p e <;>
     simp_all [completion_outside_serving_catalogs q s source different]
+
+/-- Outside the six serving configurations, the only changes to the pinned decision are the production-rules refusals. Q5 and Q12 use the membership-first suggestion, Q7 refuses a group ordered index, and Q2 extends the ascending single-equality refusal to collection queries. -/
+theorem head_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1) :
+    decideHead q s p e source =
+      if gate p e && arrayFirst q s source (decideBase q s p e) then
+        unservedDecision (reqOf q) q.coll q.group p e true
+      else if gate p e && (match decideBase q s p e with
+          | .use i => refusesGroupOrdered q s i source ||
+              (!q.group && nameDirOf (reqOf q).order == .asc && refusesSingleEquality q s i source)
+          | _ => false) then
+        unservedDecision (reqOf q) q.coll q.group p e
+      else Pinned.decideHead q s p e source := by
+  have completion :
+      (if mergeGate q source then recordedCompletion q s source else none) =
+      (if Pinned.mergeGate q source then Pinned.recordedMerge (reqOf q) s q.coll q.group else none) := by
+    rw [completion_outside_serving_catalogs q s source different]
+    cases hg : q.group with
+    | false => simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg]; rfl
+    | true =>
+      have noCarrier (t : Field) : carryingComposites (reqOf q) s q.coll true t = [] := by
+        apply List.filter_eq_nil_iff.mpr
+        intro i _
+        cases hs : i.scope <;> simp [compositeServes, hs]
+      cases hd : nameDirOf (reqOf q).order with
+      | asc =>
+        have noMerge : recordedMerge (reqOf q) s q.coll true = none := by
+          unfold recordedMerge
+          split
+          · rfl
+          · cases (reqOf q).contains <;> simp [hd, noCarrier]
+        simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg, hd, noMerge]
+      | desc =>
+        by_cases hn : (reqOf q).eq.length = 2 <;>
+          simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg, hd, hn] <;> rfl
+  unfold decideHead Pinned.decideHead
+  simp only [show Pinned.gate = gate from rfl, show Pinned.recordedPlan = recordedPlan from rfl,
+    show Pinned.PlanChange.members = PlanChange.members from rfl]
+  cases gate p e <;> simp
+  cases arrayFirst q s source (decideBase q s p e) <;> simp
+  cases decideBase q s p e with
+  | use i =>
+    have single : Pinned.refusesSingleEquality q s i source =
+        (if !q.group && nameDirOf (reqOf q).order == .asc then false else refusesSingleEquality q s i source) := by
+      cases hgroup : q.group <;> cases hd : nameDirOf (reqOf q).order <;>
+        simp [Pinned.refusesSingleEquality, refusesSingleEquality, Pinned.Query.equalityRefusal,
+          Query.equalityRefusal, hgroup, hd] <;> rfl
+    simp only [single]
+    cases q.group <;> cases nameDirOf (reqOf q).order <;> cases refusesSingleEquality q s i source <;>
+      cases refusesGroupOrdered q s i source <;> rfl
+  | merge | fullScan => rfl
+  | missing i | assumed i =>
+    cases hn : mergeGate q source <;> cases hp : Pinned.mergeGate q source <;>
+      simp [hn, hp] at completion ⊢ <;>
+      cases hc : Pinned.recordedMerge (reqOf q) s q.coll q.group <;> simp_all
+
+/-- A differing decision outside the recorded serving configurations is missing under Production or assumed under ProductionReport, always on Standard. -/
+theorem strict_refusal_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1)
+    (changed : decideHead q s p e source ≠ Pinned.decideHead q s p e source) :
+    p.productionRules = true ∧ e = .standard ∧ ∃ i,
+      decideHead q s p e source = (if p.assumes then .assumed i else .missing i) := by
+  have answer := head_outside_serving_catalogs q s p e source different
+  have refusal : gate p e = true ∧ ∃ first : Bool,
+      decideHead q s p e source = unservedDecision (reqOf q) q.coll q.group p e first := by
+    split at answer
+    · rename_i h
+      exact ⟨(Bool.and_eq_true_iff.mp h).1, true, answer⟩
+    · cases hg : gate p e with
+      | false => exact (changed (by simpa [hg] using answer)).elim
+      | true =>
+        refine ⟨rfl, false, ?_⟩
+        split at answer <;> split at answer <;> first | exact answer | exact (changed answer).elim
+  obtain ⟨active, first, result⟩ := refusal
+  obtain ⟨production, rfl⟩ : p.productionRules = true ∧ e = .standard := by simpa [gate] using active
+  refine ⟨production, rfl, ?_⟩
+  rw [result]
+  unfold unservedDecision
+  exact ⟨_, by cases p.assumes <;> rfl⟩
+
+/-- Outside Standard's production rules all four refusal exceptions disappear, even on a serving catalog. -/
+theorem head_eq_pinned_off_gate (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (offGate : p.productionRules = false ∨ e = .enterprise) :
+    decideHead q s p e source = Pinned.decideHead q s p e source := by
+  rcases offGate with hp | rfl <;> simp_all [decideHead, Pinned.decideHead, gate, Pinned.gate]
 
 theorem completion_kinds {q : Query} {s : ISet} {source : QuerySource} {ms : List Index}
     (h : recordedCompletion q s source = some ms) :

@@ -149,8 +149,7 @@ def servingCatalog (indexes : List Index) (modes : List (Field × List (Scope ×
 
 def relevantCatalog (q : Query) (s : ISet) : ServingCatalog :=
   let fields := (q.filters.map Filter.path ++ q.orderBy.map OrderC.path).eraseDups
-  servingCatalog (s.composites.filter fun i =>
-    i.coll == q.coll && i.fields.all (fun f => f.path == NAME || fields.contains f.path))
+  servingCatalog (s.composites.filter fun i => i.coll == q.coll)
     (fields.map fun f => (f, s.modes q.coll f))
 
 /-- Each row pairs one complete catalog with its recorded plan, in query role order. -/
