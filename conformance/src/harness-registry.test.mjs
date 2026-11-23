@@ -14,7 +14,7 @@ import {
   enrollmentProblems,
   frozenPaths,
   fixturesWithHarnessDigest,
-  gitFixInfo,
+  gitFixDelta,
   gitReader,
   bindingProblems,
   HARNESS_LANES,
@@ -988,32 +988,49 @@ test("the federation waiver says what its digests are", () => {
 
 // ---- "unreached" hops ----------------------------------------------------------------------------
 
-const UNREACHED_LANE = { files: ["a.mjs", "b.mjs"], extra: "" };
+// A lane with two sources and a data input, read at a revision through `dataReader`.
+const UNREACHED_LANE = {
+  files: ["a.mjs", "b.mjs"],
+  extra: (readData) => readData("lane.indexes.json"),
+  fixture: "lane-production.json",
+  guarded: ["conformance/lane.indexes.json"],
+};
 const REC = "1".repeat(40);
-const FIX_PARENT = "2".repeat(40);
+const BASE = "2".repeat(40);
 const FIX = "3".repeat(40);
 const B_TEXT = "export const b = 1;\n";
+const DATA = '{"indexes":[]}\n';
 const TREES = {
-  // The recorded state, then a comment-only edit, then the fix, which is also today's tree.
+  // The recorded state, the base of the fix (a comment-only edit), the fix (today's tree).
   [REC]: { "a.mjs": "// recorded\nconst a = 1;\n", "b.mjs": B_TEXT },
-  [FIX_PARENT]: { "a.mjs": "// edited\nconst a = 1;\n", "b.mjs": B_TEXT },
+  [BASE]: { "a.mjs": "// edited\nconst a = 1;\n", "b.mjs": B_TEXT },
   [FIX]: { "a.mjs": "const a = 1;\ntry { a; } catch {}\n", "b.mjs": B_TEXT },
 };
+const DATA_AT = { [REC]: DATA, [BASE]: DATA, [FIX]: DATA };
 const treesReader = (commit) => (file) => {
   if (!TREES[commit]) throw new Error(`bad object ${commit}`);
   return TREES[commit][file];
 };
+const dataAt = (commit) => (path) => (path === "lane.indexes.json" ? DATA_AT[commit] : undefined);
 const A_PATH = "conformance/src/a.mjs";
+const DIFF_HASH = "d".repeat(64);
 const CONDITIONS = {
   "no-failures": {
+    base: BASE,
+    fix: FIX,
+    diffSha256: DIFF_HASH,
     touches: [A_PATH],
     problems: (fixture) => (fixture.failures ?? []).map((failure) => `failure ${failure}`),
   },
 };
+const delta = (changed = [A_PATH, "unrelated/file.txt"], diffSha256 = DIFF_HASH) => ({
+  changed,
+  diffSha256,
+});
 const unreachedHop = () => ({
   lane: "lane",
-  from: rawDigest(UNREACHED_LANE, (file) => TREES[REC][file]),
-  to: scheme2Digest(UNREACHED_LANE, (file) => TREES[FIX][file]),
+  from: rawDigest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+  to: scheme2Digest(UNREACHED_LANE, (file) => TREES[FIX][file], DATA),
   commit: REC,
   kind: "unreached",
   fix: FIX,
@@ -1023,17 +1040,19 @@ const unreachedProblems = (hop, overrides = {}) =>
   lineageProblems(
     { version: 1, hops: [hop] },
     {
-      lanes: { lane: { ...UNREACHED_LANE, fixture: "lane-production.json" } },
+      lanes: { lane: UNREACHED_LANE },
       reader: treesReader,
+      dataReader: dataAt,
       shallow: false,
       current: (file) => TREES[FIX][file],
       conditions: CONDITIONS,
-      fixInfo: (commit) =>
-        commit === FIX ? { parents: [FIX_PARENT], paths: [A_PATH, "unrelated/file.txt"] } : {},
+      fixDelta: () => delta(),
       fixtureOf: () => ({ failures: [] }),
       ...overrides,
     },
   );
+// lineageProblems reads today's data through the lane's default reader, which is this checkout's.
+UNREACHED_LANE.extra = (readData = () => DATA) => readData("lane.indexes.json");
 
 test("an unreached hop is sound when every part of its check holds", () => {
   assert.deepEqual(unreachedProblems(unreachedHop()), []);
@@ -1054,6 +1073,22 @@ test("an unreached hop needs its fix commit and a condition from the closed tabl
   assert.match(unreachedProblems({ ...unreachedHop(), extra: 1 }).join("\n"), /unexpected/);
 });
 
+test("an unreached hop that names another fix commit than the condition approves is refused", () => {
+  // A well-formed SHA that is not the approved one, whatever its history looks like.
+  const found = unreachedProblems({ ...unreachedHop(), fix: "4".repeat(40) });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /is not the one the condition approves/);
+});
+
+test("an unreached hop is refused when the change is not the approved one", () => {
+  // Same commit, same touched file, same tokens before and after: another delta hashes differently.
+  const found = unreachedProblems(unreachedHop(), {
+    fixDelta: () => delta(undefined, "e".repeat(64)),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /is not the approved one/);
+});
+
 test("fix and condition belong to unreached hops only", () => {
   const scheme = { ...goodHop(), fix: FIX, condition: "no-failures" };
   assert.match(problems([scheme]).join("\n"), /unexpected fix, condition/);
@@ -1067,46 +1102,33 @@ test("an unreached hop is refused when the recorded digest does not reproduce at
 });
 
 test("an unreached hop is refused when the condition fails for the lane's fixture", () => {
-  const found = unreachedProblems(unreachedHop(), {
-    fixtureOf: () => ({ failures: ["p#s"] }),
-  });
+  const found = unreachedProblems(unreachedHop(), { fixtureOf: () => ({ failures: ["p#s"] }) });
   assert.equal(found.length, 1);
   assert.match(found[0], /condition no-failures fails: failure p#s/);
 });
 
-test("an unreached hop is refused when the fix commit changes another input, or none of its own", () => {
-  const info = (paths) => () => ({ parents: [FIX_PARENT], paths });
+test("an unreached hop is refused when the fix changes another input, or none of its own", () => {
+  const changes = (...paths) => ({ fixDelta: () => delta(paths) });
   assert.match(
-    unreachedProblems(unreachedHop(), { fixInfo: info([A_PATH, "conformance/src/b.mjs"]) }).join(
-      "\n",
-    ),
+    unreachedProblems(unreachedHop(), changes(A_PATH, "conformance/src/b.mjs")).join("\n"),
     /changes the inputs \[conformance\/src\/a\.mjs,conformance\/src\/b\.mjs\]/,
   );
   assert.match(
-    unreachedProblems(unreachedHop(), {
-      fixInfo: info([A_PATH, "conformance/lane-production.json"]),
-    }).join("\n"),
+    unreachedProblems(unreachedHop(), changes(A_PATH, "conformance/lane-production.json")).join(
+      "\n",
+    ),
     /changes the inputs/,
   );
   assert.match(
-    unreachedProblems(unreachedHop(), { fixInfo: info(["conformance/src/b.mjs"]) }).join("\n"),
+    unreachedProblems(unreachedHop(), changes("conformance/src/b.mjs")).join("\n"),
     /changes the inputs \[conformance\/src\/b\.mjs\], the condition allows exactly \[conformance\/src\/a\.mjs\]/,
   );
-  assert.match(
-    unreachedProblems(unreachedHop(), { fixInfo: info([]) }).join("\n"),
-    /allows exactly/,
-  );
+  assert.match(unreachedProblems(unreachedHop(), changes()).join("\n"), /allows exactly/);
 });
 
-test("an unreached hop is refused when the fix commit changes a data input of the lane's digest", () => {
-  const guarded = {
-    ...UNREACHED_LANE,
-    fixture: "lane-production.json",
-    guarded: ["conformance/lane.indexes.json"],
-  };
+test("an unreached hop is refused when the fix changes a data input of the lane's digest", () => {
   const found = unreachedProblems(unreachedHop(), {
-    lanes: { lane: guarded },
-    fixInfo: () => ({ parents: [FIX_PARENT], paths: [A_PATH, "conformance/lane.indexes.json"] }),
+    fixDelta: () => delta([A_PATH, "conformance/lane.indexes.json"]),
   });
   assert.equal(found.length, 1);
   assert.match(
@@ -1115,36 +1137,33 @@ test("an unreached hop is refused when the fix commit changes a data input of th
   );
 });
 
-test("an unreached hop is refused when the fix commit is a merge, a root or unreadable", () => {
-  const withParents = (parents) => () => ({ parents, paths: [A_PATH] });
-  assert.match(
-    unreachedProblems(unreachedHop(), { fixInfo: withParents([FIX_PARENT, REC]) }).join("\n"),
-    /exactly one parent/,
-  );
-  assert.match(
-    unreachedProblems(unreachedHop(), { fixInfo: withParents([]) }).join("\n"),
-    /exactly one parent/,
-  );
+test("an unreached hop is refused when the delta of the fix cannot be read", () => {
   assert.match(
     unreachedProblems(unreachedHop(), {
-      fixInfo: () => {
+      fixDelta: () => {
         throw new Error("bad object");
       },
     }).join("\n"),
-    /fix commit .* is not readable/,
+    /fix commit and its base are not readable/,
   );
 });
 
-test("an unreached hop is refused when more than comments changed before the fix", () => {
-  const trees = {
-    ...TREES,
-    [FIX_PARENT]: { "a.mjs": "const a = 2;\n", "b.mjs": B_TEXT },
-  };
+test("an unreached hop is refused when more than comments changed before the base of the fix", () => {
+  const trees = { ...TREES, [BASE]: { "a.mjs": "const a = 2;\n", "b.mjs": B_TEXT } };
   const found = unreachedProblems(unreachedHop(), {
     reader: (commit) => (file) => trees[commit][file],
   });
   assert.equal(found.length, 1);
-  assert.match(found[0], /changed between .* and the parent of the fix/);
+  assert.match(found[0], /changed between .* and the base of the fix/);
+});
+
+test("an unreached hop is refused when the data changed before the base of the fix", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) =>
+      commit === BASE ? '{"indexes":[1]}\n' : dataAt(commit)(path),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /changed between .* and the base of the fix/);
 });
 
 test("an unreached hop is refused when the tree changed again after the fix", () => {
@@ -1168,12 +1187,46 @@ test("an unreached hop is refused when the history around the fix is not readabl
   assert.match(
     unreachedProblems(unreachedHop(), {
       reader: (commit) => {
-        if (commit === FIX_PARENT) throw new Error("bad object");
+        if (commit === BASE) throw new Error("bad object");
         return treesReader(commit);
       },
     }).join("\n"),
-    /around the fix commit are not readable/,
+    /fix commit and its base are not readable/,
   );
+});
+
+test("a hop is refused when a data input does not exist at the revision it is read at", () => {
+  // At the hop's commit: the recorded digest reproduced from this checkout's data, not the commit's.
+  for (const missingAt of [REC, BASE, FIX]) {
+    const found = unreachedProblems(unreachedHop(), {
+      dataReader: (commit) => (path) => (commit === missingAt ? undefined : dataAt(commit)(path)),
+    });
+    assert.equal(found.length, 1, missingAt);
+    assert.match(found[0], /are not readable|data input is missing/, missingAt);
+  }
+  const throwing = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => {
+      if (commit === REC) throw new Error("path does not exist");
+      return dataAt(commit)(path);
+    },
+  });
+  assert.match(throwing.join("\n"), /sources at .* are not readable \(path does not exist\)/);
+});
+
+test("a hop is refused when a source does not exist at its commit", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    reader: (commit) => (file) =>
+      commit === REC && file === "b.mjs" ? undefined : treesReader(commit)(file),
+  });
+  assert.match(found.join("\n"), /b\.mjs is missing/);
+});
+
+test("the data a hop's digest reads is read at the hop's commit", () => {
+  // The recorded digest was made from other data than the commit holds: it does not reproduce.
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => (commit === REC ? '{"other":1}\n' : dataAt(commit)(path)),
+  });
+  assert.match(found.join("\n"), /recorded digest does not reproduce/);
 });
 
 test("an unreached hop in a shallow clone is a hard failure", () => {
@@ -1197,7 +1250,7 @@ const fixtureOfSteps = (...steps) => ({
   programs: { p: { steps: Object.fromEntries(steps.map((step, i) => [`s${i}`, step])) } },
 });
 
-test("the body-read condition holds when every step has a status or a gRPC code", () => {
+test("the body-read condition holds when every answer has a status or a gRPC code", () => {
   assert.deepEqual(
     bodyReadStageProblems(
       fixtureOfSteps(
@@ -1227,7 +1280,7 @@ test("the body-read condition fails for a body-stage transport error, whatever e
   );
 });
 
-test("the body-read condition fails closed for a step it cannot classify", () => {
+test("the body-read condition fails closed for an answer it cannot classify", () => {
   assert.match(
     bodyReadStageProblems(fixtureOfSteps({ status: 0 })).join("\n"),
     /status 0 without a transport error/,
@@ -1242,58 +1295,145 @@ test("the body-read condition fails closed for a step it cannot classify", () =>
   );
   assert.match(bodyReadStageProblems(fixtureOfSteps(null)).join("\n"), /neither a numeric/);
   for (const empty of [{}, { programs: {} }, { programs: { p: { steps: {} } } }, undefined])
-    assert.match(bodyReadStageProblems(empty).join("\n"), /records no step/);
+    assert.match(bodyReadStageProblems(empty).join("\n"), /records no answer/);
 });
 
-test("the closed table names the one fix the ten FS-QUERY-INDEX lanes share", () => {
+test("the body-read condition visits the second answer of a program too", () => {
+  const program = {
+    steps: { s: { status: 200 } },
+    second: { s: { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` } },
+  };
+  assert.deepEqual(bodyReadStageProblems({ programs: { p: program } }), [
+    "p#s (second): the body of the answer could not be read (body:TimeoutError)",
+  ]);
+  assert.deepEqual(
+    bodyReadStageProblems({ programs: { p: { ...program, second: { s: { status: 200 } } } } }),
+    [],
+  );
+});
+
+test("the body-read condition refuses a program with a key it does not know", () => {
+  const found = bodyReadStageProblems({
+    programs: { p: { steps: { s: { status: 200 } }, third: { s: { status: 0 } } } },
+  });
+  assert.deepEqual(found, ["p: unexpected key third"]);
+});
+
+test("the body-read condition accepts a -1 row only with the dependency evidence the recorder writes", () => {
+  const dependency = { status: 200, body: [{}] };
+  const row = {
+    status: -1,
+    unresolved: "step dep recorded nothing at nextPageToken",
+    dependencyTransient: false,
+  };
+  const check = (change, steps = { dep: dependency, row }) =>
+    bodyReadStageProblems({ programs: { p: { steps: { ...steps, row: { ...row, ...change } } } } });
+  assert.deepEqual(check({}), []);
+  const none = "status -1 without the dependency evidence the recorder writes";
+  assert.deepEqual(check({ unresolved: undefined }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: 7 }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "step dep recorded nothing" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "step ghost recorded nothing at x" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "step row recorded nothing at x" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ dependencyTransient: true }), [
+    "p#row: status -1 whose dependencyTransient is not that of step dep",
+  ]);
+  assert.deepEqual(check({ dependencyTransient: undefined }), [
+    "p#row: status -1 whose dependencyTransient is not that of step dep",
+  ]);
+  // A dependency that was transient (a 503) makes the flag true.
+  assert.deepEqual(check({ dependencyTransient: true }, { dep: { status: 503 }, row }), []);
+  // A dependency that is itself a -1 row has its own transience.
+  const chained = {
+    dep: { status: -1, unresolved: "step first recorded nothing at t", dependencyTransient: false },
+    first: dependency,
+    row: { ...row, unresolved: "step dep recorded nothing at t" },
+  };
+  assert.deepEqual(bodyReadStageProblems({ programs: { p: { steps: chained } } }), []);
+});
+
+test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", () => {
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-data-write-list-production.json"), "utf8"),
+  );
+  assert.deepEqual(bodyReadStageProblems(fixture), []);
+  const rows = Object.entries(fixture.programs).flatMap(([id, program]) =>
+    Object.entries(program.steps)
+      .filter(([, row]) => row.status === -1)
+      .map(([stepId]) => [id, stepId]),
+  );
+  assert.equal(rows.length, 5);
+  for (const [id, stepId] of rows) {
+    const forged = structuredClone(fixture);
+    delete forged.programs[id].steps[stepId].unresolved;
+    assert.match(bodyReadStageProblems(forged).join("\n"), /without the dependency evidence/);
+  }
+  // A body-stage failure in the second answer of a real program is found too.
+  const [secondId] = Object.entries(fixture.programs).find(([, program]) => program.second) ?? [];
+  const forged = structuredClone(fixture);
+  const [stepId] = Object.keys(forged.programs[secondId].second);
+  forged.programs[secondId].second[stepId] = {
+    status: 0,
+    transportError: `${BODY_STAGE_PREFIX}TimeoutError`,
+  };
+  assert.match(bodyReadStageProblems(forged).join("\n"), /\(second\): the body of the answer/);
+});
+
+test("the closed table names the one approved change the ten FS-QUERY-INDEX lanes share", () => {
   assert.deepEqual(Object.keys(UNREACHED_CONDITIONS), ["fs-query-index-body-read-unreached"]);
   const condition = UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"];
   assert.deepEqual(condition.touches, ["conformance/src/fs-query-index/session.mjs"]);
   assert.equal(condition.problems, bodyReadStageProblems);
+  for (const sha of [condition.base, condition.fix]) assert.match(sha, /^[0-9a-f]{40}$/);
+  assert.match(condition.diffSha256, /^[0-9a-f]{64}$/);
   const lanes = Object.entries(HARNESS_LANES).filter(([, lane]) =>
     lane.files.includes("fs-query-index/session.mjs"),
   );
   assert.equal(lanes.length, 10);
 });
 
+test("the approved change is what git holds: the same diff hash, and one input changed", () => {
+  if (isShallowCheckout() && process.env.FIREEMU_REQUIRE_FULL_HISTORY !== "1") return;
+  const { base, fix, touches, diffSha256 } =
+    UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"];
+  const found = gitFixDelta(base, fix, touches);
+  assert.equal(found.diffSha256, diffSha256);
+  const [lane] = Object.values(HARNESS_LANES).filter((l) =>
+    l.files.includes("fs-query-index/session.mjs"),
+  );
+  assert.ok(found.changed.includes(touches[0]));
+  assert.ok(!found.changed.includes(`conformance/src/${lane.files[0]}`));
+});
+
 // ---- generating the hops -------------------------------------------------------------------------
 
 const GENERATED = {
-  lane1: { files: ["a.mjs", "b.mjs"], extra: "", fixture: "one.json", guarded: [] },
-  lane2: { files: ["a.mjs", "b.mjs"], extra: "", fixture: "two.json" },
+  lane1: { ...UNREACHED_LANE, fixture: "one.json" },
+  lane2: { ...UNREACHED_LANE, fixture: "two.json" },
   other: { files: ["b.mjs"], extra: "", fixture: "other.json" },
 };
-const rawAt = (name) => rawDigest(GENERATED[name], (file) => TREES[FIX_PARENT][file]);
+const rawAtBase = (name) => rawDigest(GENERATED[name], (file) => TREES[BASE][file], DATA);
 const fixtures = {
-  "one.json": { programs: { p: { harnessDigest: rawAt("lane1") } } },
-  "two.json": {
-    programs: { p: { harnessDigest: rawAt("lane2") }, q: { harnessDigest: "a".repeat(64) } },
-  },
+  "one.json": { programs: { p: { harnessDigest: rawAtBase("lane1") } } },
+  "two.json": { programs: { p: { harnessDigest: rawAtBase("lane2") } } },
   "other.json": { programs: { p: { harnessDigest: "b".repeat(64) } } },
 };
 const propose = (overrides = {}) =>
   proposeUnreachedHops({
-    fix: FIX,
     condition: "no-failures",
     lanes: GENERATED,
     lineage: { version: 1, hops: [] },
     reader: treesReader,
+    dataReader: dataAt,
     current: (file) => TREES[FIX][file],
     conditions: CONDITIONS,
-    fixInfo: () => ({ parents: [FIX_PARENT], paths: [A_PATH] }),
     fixtureOf: (lane) => fixtures[lane.fixture],
     ...overrides,
   });
 
 test("the generator proposes one hop per recorded digest of each lane that reads the fixed file", () => {
-  // lane2 records a digest that does not reproduce at the parent: the generator refuses it.
-  assert.throws(() => propose(), /lane2: the recorded digest a+ does not reproduce/);
-  const hops = propose({
-    fixtureOf: (lane) =>
-      lane.fixture === "two.json"
-        ? { programs: { p: { harnessDigest: rawAt("lane2") } } }
-        : fixtures[lane.fixture],
-  });
+  const hops = propose();
   assert.deepEqual(
     hops.map((hop) => hop.lane),
     ["lane1", "lane2"],
@@ -1301,37 +1441,68 @@ test("the generator proposes one hop per recorded digest of each lane that reads
   for (const hop of hops) {
     assert.equal(hop.kind, "unreached");
     assert.equal(hop.fix, FIX);
-    assert.equal(hop.commit, FIX_PARENT);
+    assert.equal(hop.commit, BASE);
     assert.equal(hop.condition, "no-failures");
     assert.equal(
       hop.to,
-      scheme2Digest(GENERATED[hop.lane], (file) => TREES[FIX][file]),
+      scheme2Digest(GENERATED[hop.lane], (file) => TREES[FIX][file], DATA),
     );
   }
-  assert.equal(hops[0].from, rawAt("lane1"));
+  assert.equal(hops[0].from, rawAtBase("lane1"));
+  // A lane with two distinct recorded digests gets a hop for each.
+  const two = propose({
+    fixtureOf: (lane) =>
+      lane.fixture === "two.json"
+        ? {
+            programs: {
+              p: { harnessDigest: rawAtBase("lane2") },
+              q: { harnessDigest: rawAtBase("lane1") },
+            },
+          }
+        : fixtures[lane.fixture],
+    lanes: { lane2: GENERATED.lane2 },
+  });
+  assert.equal(two.length, 1);
 });
 
-test("the generator skips a hop the lineage already has, and refuses a merge or an unknown condition", () => {
-  const fixtureOf = (lane) =>
-    lane.fixture === "two.json"
-      ? { programs: { p: { harnessDigest: rawAt("lane2") } } }
-      : fixtures[lane.fixture];
-  const once = propose({ fixtureOf });
-  assert.deepEqual(propose({ fixtureOf, lineage: { version: 1, hops: once } }), []);
-  assert.deepEqual(propose({ fixtureOf, lineage: { version: 1, hops: [once[0]] } }), [once[1]]);
-  assert.throws(() => propose({ fixInfo: () => ({ parents: [], paths: [] }) }), /one parent/);
+test("the generator refuses a recorded digest that does not reproduce at the base", () => {
+  assert.throws(
+    () =>
+      propose({
+        fixtureOf: (lane) =>
+          lane.fixture === "two.json"
+            ? { programs: { p: { harnessDigest: "a".repeat(64) } } }
+            : fixtures[lane.fixture],
+      }),
+    /lane2: the recorded digest a+ does not reproduce/,
+  );
+  // The data the digest read is the base's, not this checkout's.
+  assert.throws(
+    () =>
+      propose({
+        dataReader: (commit) => (path) => (commit === BASE ? "{}" : dataAt(commit)(path)),
+      }),
+    /does not reproduce/,
+  );
+});
+
+test("the generator skips a hop the lineage already has, and refuses an unknown condition", () => {
+  const once = propose();
+  assert.deepEqual(propose({ lineage: { version: 1, hops: once } }), []);
+  assert.deepEqual(propose({ lineage: { version: 1, hops: [once[0]] } }), [once[1]]);
   assert.throws(() => propose({ condition: "nope" }), /closed table/);
+  assert.throws(() => propose({ condition: "__proto__" }), /closed table/);
 });
 
-test("the checked-in unreached hops are exactly what the generator proposes for their fix", () => {
+test("the checked-in unreached hops are exactly what the generator proposes for their condition", () => {
   const lineage = loadLineage();
   const unreached = lineage.hops.filter((hop) => hop.kind === "unreached");
-  assert.ok(unreached.length >= 10, "one hop for each recorded harness digest of ten lanes");
-  const pairs = new Map(unreached.map((hop) => [`${hop.fix} ${hop.condition}`, hop]));
-  for (const { fix, condition } of pairs.values()) {
-    const mine = unreached.filter((hop) => hop.fix === fix && hop.condition === condition);
+  assert.equal(unreached.length, 10, "one hop for each recorded harness digest of ten lanes");
+  for (const condition of new Set(unreached.map((hop) => hop.condition))) {
+    const mine = unreached.filter((hop) => hop.condition === condition);
     const without = { ...lineage, hops: lineage.hops.filter((hop) => !mine.includes(hop)) };
-    assert.deepEqual(proposeUnreachedHops({ fix, condition, lineage: without }), mine);
+    assert.deepEqual(proposeUnreachedHops({ condition, lineage: without }), mine);
+    for (const hop of mine) assert.equal(hop.fix, UNREACHED_CONDITIONS[condition].fix);
   }
 });
 
@@ -1348,10 +1519,63 @@ test("every recorded harness digest of the ten lanes is connected without a waiv
   );
 });
 
+test("a real hop moved to a commit that lacks the lane's index file is refused", () => {
+  // 9ef5974b3 predates fs-query-index-merge8.indexes.json: the recorded digest reproduced from this
+  // checkout's copy of the file before the data was read at the hop's commit.
+  const commit = "9ef5974b3d726f95bf7126ac6b0c6ba42442b093";
+  if (isShallowCheckout()) return;
+  try {
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: REPO_ROOT });
+  } catch {
+    return;
+  }
+  const lineage = loadLineage();
+  const hops = lineage.hops.map((hop) =>
+    hop.lane === "fs-query-index-merge8" ? { ...hop, commit } : hop,
+  );
+  const found = lineageProblems(
+    { ...lineage, hops },
+    { lanes: HARNESS_LANES, reader: gitReader, shallow: false },
+  );
+  assert.match(found.join("\n"), /fs-query-index-merge8\.indexes\.json|are not readable/);
+});
+
+// ---- rewrites of a condition's fixture -------------------------------------------------------------
+
+test("a rewrite that changes only a lane's fixture is checked against the lineage's conditions", () => {
+  const fixturePath = "conformance/fs-query-index-production.json";
+  const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
+  const [program] = Object.values(fixture.programs);
+  const [stepId] = Object.keys(program.steps);
+  program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
+  // The lineage file itself is not in the rewrite.
+  const report = rewriteReport({ [fixturePath]: JSON.stringify(fixture) });
+  assert.match(
+    report.problems.join("\n"),
+    /lineage after the rewrite: hop \d+: condition fs-query-index-body-read-unreached fails/,
+  );
+  // With the lineage file in the rewrite too, the same refusal.
+  const lineage = readFileSync(join(REPO_ROOT, "conformance/harness-lineage.json"), "utf8");
+  assert.match(
+    rewriteReport({
+      "conformance/harness-lineage.json": lineage,
+      [fixturePath]: JSON.stringify(fixture),
+    }).problems.join("\n"),
+    /condition fs-query-index-body-read-unreached fails/,
+  );
+});
+
+test("a rewrite of a fixture no unreached hop reads does not re-check the lineage", () => {
+  const fixturePath = "conformance/auth-account-production.json";
+  const fixture = readFileSync(join(REPO_ROOT, fixturePath), "utf8");
+  const report = rewriteReport({ [fixturePath]: fixture }, NO_GIT);
+  assert.ok(!report.problems.some((problem) => /lineage after the rewrite/.test(problem)));
+});
+
 // ---- the fix commit as git reports it --------------------------------------------------------------
 
-test("gitFixInfo reports the parents and the changed paths of a commit, renames as both paths", () => {
-  const dir = mkdtempSync(join(tmpdir(), "fix-info-"));
+test("gitFixDelta reports the changed paths and a hash of the diff that no configuration changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fix-delta-"));
   try {
     // A throwaway repository with no configuration of the machine in it.
     const env = {
@@ -1372,62 +1596,68 @@ test("gitFixInfo reports the parents and the changed paths of a commit, renames 
         stdio: ["ignore", "pipe", "pipe"],
       }).trim();
     git("init", "-q", "-b", "main");
-    // Rename detection on, as a developer's configuration can have it: git's plumbing ignores it and
-    // reports both paths of a rename.
-    git("config", "diff.renames", "true");
     writeFileSync(join(dir, "kept.txt"), "kept\n");
     writeFileSync(join(dir, "old.txt"), "a long enough body to be a rename\n".repeat(5));
+    writeFileSync(join(dir, "input.mjs"), "export const a = 1;\n".repeat(20));
     git("add", ".");
-    git("commit", "-q", "-m", "root");
-    const root = git("rev-parse", "HEAD");
+    git("commit", "-q", "-m", "base");
+    const base = git("rev-parse", "HEAD");
     git("mv", "old.txt", "new.txt");
     writeFileSync(join(dir, "kept.txt"), "kept again\n");
+    writeFileSync(
+      join(dir, "input.mjs"),
+      `${"export const a = 1;\n".repeat(10)}export const b = 2;\n${"export const a = 1;\n".repeat(10)}`,
+    );
     git("add", ".");
-    git("commit", "-q", "-m", "change");
-    const change = git("rev-parse", "HEAD");
-    git("checkout", "-q", "-b", "side", root);
-    writeFileSync(join(dir, "side.txt"), "side\n");
-    git("add", ".");
-    git("commit", "-q", "-m", "side");
-    git("checkout", "-q", "main");
-    git("merge", "-q", "--no-ff", "-m", "merge", "side");
-    const merge = git("rev-parse", "HEAD");
-    assert.deepEqual(gitFixInfo(root, dir).parents, []);
-    assert.deepEqual(gitFixInfo(change, dir), {
-      parents: [root],
-      paths: ["kept.txt", "new.txt", "old.txt"],
-    });
-    assert.equal(gitFixInfo(merge, dir).parents.length, 2);
-    assert.throws(() => gitFixInfo("0".repeat(40), dir));
+    git("commit", "-q", "-m", "fix");
+    const fix = git("rev-parse", "HEAD");
+    const found = gitFixDelta(base, fix, ["input.mjs"], dir);
+    assert.deepEqual(found.changed, ["input.mjs", "kept.txt", "new.txt", "old.txt"]);
+    assert.match(found.diffSha256, /^[0-9a-f]{64}$/);
+    // Only the named paths are hashed.
+    assert.notEqual(gitFixDelta(base, fix, ["kept.txt"], dir).diffSha256, found.diffSha256);
+    assert.notEqual(
+      gitFixDelta(base, fix, ["input.mjs", "kept.txt"], dir).diffSha256,
+      found.diffSha256,
+    );
+    // Configuration that changes how git prints a diff does not change the hash.
+    for (const [key, value] of [
+      ["diff.noprefix", "true"],
+      ["diff.mnemonicPrefix", "true"],
+      ["diff.context", "9"],
+      ["diff.interHunkContext", "5"],
+      ["diff.algorithm", "patience"],
+      ["diff.renames", "copies"],
+      ["core.abbrev", "7"],
+    ])
+      git("config", key, value);
+    assert.equal(gitFixDelta(base, fix, ["input.mjs"], dir).diffSha256, found.diffSha256);
+    // A different change to the same file hashes differently.
+    writeFileSync(join(dir, "input.mjs"), "export const a = 9;\n");
+    git("commit", "-q", "-am", "other");
+    assert.notEqual(
+      gitFixDelta(base, git("rev-parse", "HEAD"), ["input.mjs"], dir).diffSha256,
+      found.diffSha256,
+    );
+    assert.throws(() => gitFixDelta(base, "0".repeat(40), ["input.mjs"], dir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("the fix commit the checked-in unreached hops name has one parent and changes the fixed file only", () => {
-  if (isShallowCheckout() && process.env.FIREEMU_REQUIRE_FULL_HISTORY !== "1") return;
-  const hops = loadLineage().hops.filter((hop) => hop.kind === "unreached");
-  for (const fix of new Set(hops.map((hop) => hop.fix))) {
-    const info = gitFixInfo(fix);
-    assert.equal(info.parents.length, 1);
-    assert.ok(info.paths.includes("conformance/src/fs-query-index/session.mjs"));
-    assert.ok(!info.paths.includes("conformance/src/fs-query-index/harness.mjs"));
-  }
-});
+// ---- the lane runner's stale check ------------------------------------------------------------------
 
-test("a rewrite that changes a lane's fixture is checked by the lineage's conditions against it", () => {
-  const fixturePath = "conformance/fs-query-index-production.json";
-  const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
-  const [program] = Object.values(fixture.programs);
-  const [stepId] = Object.keys(program.steps);
-  program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
-  const lineage = readFileSync(join(REPO_ROOT, "conformance/harness-lineage.json"), "utf8");
-  const report = rewriteReport({
-    "conformance/harness-lineage.json": lineage,
-    [fixturePath]: JSON.stringify(fixture),
-  });
-  assert.match(
-    report.problems.join("\n"),
-    /lineage after the rewrite: hop \d+: condition fs-query-index-body-read-unreached fails/,
+test("the lane runner accepts a recorded digest the registry connects by lineage, and refuses an unknown one", async () => {
+  const { harnessDigest, harnessDigestIsStale } = await import("./fs-query-index/run.mjs");
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-query-index-production.json"), "utf8"),
   );
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  const current = await harnessDigest();
+  // The runner's own raw digest of today's sources is not the recorded one: the lineage connects it.
+  assert.notEqual(saved, current);
+  assert.equal(laneStatus("fs-query-index", HARNESS_LANES["fs-query-index"]).state, "lineage");
+  assert.equal(harnessDigestIsStale(saved, current), false);
+  assert.equal(harnessDigestIsStale(current, current), false);
+  assert.equal(harnessDigestIsStale("0".repeat(64), current), true);
 });

@@ -48,14 +48,15 @@ const lane = LANES["fs-ent-pipeline"];
 // compact fixture and full corpus identities are checked separately.
 const PROGRAMS = ALL_PROGRAMS.filter((program) => !SUMMARY_ONLY.has(program.id));
 
-/** The shared session text without the body-read classification of 72c4889d9. */
+/** The shared session text without the body-read classification of 72c4889d9 and 0c7a9ee56. */
 function withoutBodyReadClassification(text) {
   const pairs = [
     [
-      `    const transportFailure = (error, stage = "") => {
+      `    const transportFailure = (error, stage) => {
+      const code = error?.cause?.code ?? error?.name ?? "error";
       const failed = {
         ...sent,
-        response: { transportError: \`\${stage}\${error?.cause?.code ?? error?.name ?? "error"}\` },
+        response: { transportError: stage === undefined ? code : \`\${stage}\${code}\` },
       };
       return { recorded: normalizeStep(failed, ctx, anchors), json: null, raw: failed };
     };
@@ -106,7 +107,7 @@ test("the pipeline lane has its own copy of the request layer and the others kee
   assert.equal(LANES["fs-query-index"].harness, "src/fs-query-index");
   assert.equal(LANES["fs-data-write-list"].harness, "src/fs-query-index");
   // The session copy is the shared one as it was before the shared one classified a response
-  // body that cannot be read (72c4889d9); the pipeline lane's recorded rows are bound to the copy
+  // body that cannot be read (72c4889d9, 0c7a9ee56); the pipeline lane's recorded rows are bound to the copy
   // as it is. Only the harness differs, by the named database. The shared harness has no named
   // database at all.
   assert.equal(

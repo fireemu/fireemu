@@ -44,6 +44,7 @@ import { promisify } from "node:util";
 
 import { CONFORMANCE_DIR, REPO_ROOT } from "../config.mjs";
 import { resolveFireemuBinary } from "../evidence.mjs";
+import { checkFixtureDigest, HARNESS_LANES } from "../harness-registry.mjs";
 import { assertCompleteFixture, loadCommittedFixture, scanFixture } from "./fixture-scan.mjs";
 import { LANES, selectLane } from "./lanes.mjs";
 import { isMainModule } from "./main-module.mjs";
@@ -114,6 +115,18 @@ export async function harnessDigest() {
   );
   const indexes = INDEXES ? await readFile(INDEXES, "utf8") : "";
   return sha256(`${sources.join("\n")}\n${indexes}`);
+}
+
+/**
+ * Whether a recorded harness digest no longer binds this lane: the registry's verdict (today's raw
+ * or scheme-2 digest, or a hop of the lineage connects it), and plain equality with `current` for a
+ * lane the registry does not enroll.
+ */
+export function harnessDigestIsStale(saved, current) {
+  const enrolled = HARNESS_LANES[LANE.id];
+  return enrolled
+    ? checkFixtureDigest(LANE.id, enrolled, saved).state === "stale"
+    : saved !== current;
 }
 
 /** Per recording: every step once; the harness gets its own budget for wipes and seeds. */
@@ -1074,7 +1087,8 @@ async function check() {
     const saved = fixture.programs[program.id];
     const stale =
       saved !== undefined &&
-      (saved.corpusDigest !== programDigest(program) || saved.harnessDigest !== harness);
+      (saved.corpusDigest !== programDigest(program) ||
+        harnessDigestIsStale(saved.harnessDigest, harness));
     for (const step of program.steps) {
       const production = saved?.steps?.[step.id];
       const alternative = saved?.second?.[step.id];

@@ -18,16 +18,20 @@
 // equals today's, so the change between the recorded harness and today's is comments and
 // whitespace and nothing else. Nothing is rewritten in a fixture.
 //
-// A second kind of hop, "unreached", connects a recorded digest across one named fix of a source
-// whose changed path the recorded rows did not reach (UNREACHED_CONDITIONS). It is sound only when
-// all of this holds, and the check fails closed on each part:
-//   - the recorded raw digest reproduces at the hop's commit, and the scheme-2 digest of that
-//     commit is the one of the fix commit's parent (nothing but comments changed between them);
-//   - the fix commit has one parent and touches, among the lane's inputs, exactly the files its
-//     condition names;
-//   - the scheme-2 digest at the fix commit and of today's tree is the hop's, so nothing but the
-//     fix changed since;
-//   - the condition holds for the lane's fixture (for example: no recorded step shows the path).
+// A second kind of hop, "unreached", connects a recorded digest across one approved change of a
+// source whose changed path the recorded rows did not reach. The change is a condition of the
+// closed table UNREACHED_CONDITIONS (its commit, the commit before it and the hash of its exact
+// diff); a hop that names another one is refused. A hop is sound only when all of this holds, and
+// each part fails closed:
+//   - every input (sources and data) is read at the revision it is verified at, and a missing one
+//     is refused;
+//   - the recorded raw digest reproduces at the hop's commit, and the inputs there differ from the
+//     condition's base by comments and whitespace only;
+//   - the change from the base to the approved commit hashes to the approved diff and touches,
+//     among the lane's inputs, exactly the files the condition names;
+//   - the scheme-2 digest at the approved commit and of today's tree is the hop's, so nothing but
+//     the change happened since;
+//   - the condition holds for every recorded answer of the lane's fixture.
 //
 // A lane's digest may also read data (`extra`, `guarded` paths) or belong to a fixture that is not
 // enrolled (WAIVED_FIXTURES, with the inputs it reads). A rewrite cannot follow those, so a rewrite
@@ -38,8 +42,8 @@
 //   node src/harness-registry.mjs paths               the repository paths a rewrite must show it
 //   node src/harness-registry.mjs rewrite-check <f> [--head <sha>]
 //                                                     what a rewrite of files does to each lane
-//   node src/harness-registry.mjs unreached-hops --fix <sha> --condition <name> [--write]
-//                                                     the "unreached" hops a fix commit calls for
+//   node src/harness-registry.mjs unreached-hops --condition <name> [--write]
+//                                                     the "unreached" hops a condition calls for
 //                                                     (printed, or appended to the lineage)
 
 import { execFileSync } from "node:child_process";
@@ -57,6 +61,7 @@ import { ALIGN_WINDOW } from "./auth-mfa/session.mjs";
 import { PRINCIPALS as AUTH_FS_CROSS_PRINCIPALS } from "./auth-fs-cross/corpus.mjs";
 import { STAGE2_PRINCIPALS } from "./auth-fs-cross/programs-stage2.mjs";
 import { CONFORMANCE_DIR, REPO_ROOT } from "./config.mjs";
+import { isTransient } from "./fs-query-index/harness.mjs";
 import { PRINCIPALS as FS_RULES_PRINCIPALS } from "./fs-rules/corpus.mjs";
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
@@ -79,6 +84,9 @@ export const STAGE2_HARNESS_FILES = [
   "auth-fs-cross/browser-driver.mjs",
   "auth-fs-cross/browser-page.mjs",
 ];
+
+/** A data input of a digest (a path under conformance/) as this checkout has it. */
+const readConformanceData = (path) => readFileSync(join(CONFORMANCE_DIR, path), "utf8");
 
 /**
  * The lanes whose harness digest is bound here. `files` are under conformance/src and `extra` is
@@ -197,13 +205,13 @@ export const HARNESS_LANES = {
   "fs-query-index": {
     fixture: "fs-query-index-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index.indexes.json"),
     guarded: ["conformance/fs-query-index.indexes.json"],
   },
   "fs-data-write-list": {
     fixture: "fs-data-write-list-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index.indexes.json"),
     guarded: ["conformance/fs-query-index.indexes.json"],
   },
   // The index-merge observation lane (lanes.mjs fs-query-index-merge): the same request layer,
@@ -211,7 +219,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge": {
     fixture: "fs-query-index-merge-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge.indexes.json"),
     guarded: ["conformance/fs-query-index-merge.indexes.json"],
   },
   // The second index-merge observation lane (lanes.mjs fs-query-index-merge2): the same request
@@ -219,7 +227,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge2": {
     fixture: "fs-query-index-merge2-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge2.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge2.indexes.json"),
     guarded: ["conformance/fs-query-index-merge2.indexes.json"],
   },
   // Observation 2b-1 of the index-merge shapes (lanes.mjs fs-query-index-merge3): the same request
@@ -227,7 +235,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge3": {
     fixture: "fs-query-index-merge3-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge3.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge3.indexes.json"),
     guarded: ["conformance/fs-query-index-merge3.indexes.json"],
   },
   // Observation 2b-2 of the index-merge shapes (lanes.mjs fs-query-index-merge4): the same request
@@ -235,7 +243,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge4": {
     fixture: "fs-query-index-merge4-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge4.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge4.indexes.json"),
     guarded: ["conformance/fs-query-index-merge4.indexes.json"],
   },
   // Observation 2b-3 of the index-merge shapes (lanes.mjs fs-query-index-merge5): the same request
@@ -243,7 +251,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge5": {
     fixture: "fs-query-index-merge5-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge5.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge5.indexes.json"),
     guarded: ["conformance/fs-query-index-merge5.indexes.json"],
   },
   // Observation 2b-4 of the index-merge shapes (lanes.mjs fs-query-index-merge6): the same request
@@ -251,7 +259,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge6": {
     fixture: "fs-query-index-merge6-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge6.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge6.indexes.json"),
     guarded: ["conformance/fs-query-index-merge6.indexes.json"],
   },
   // Observation 2b-5 of the index-merge shapes (lanes.mjs fs-query-index-merge7): the same request
@@ -259,7 +267,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge7": {
     fixture: "fs-query-index-merge7-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge7.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge7.indexes.json"),
     guarded: ["conformance/fs-query-index-merge7.indexes.json"],
   },
   // Observation 2b-6 of the index-merge shapes (lanes.mjs fs-query-index-merge8): the same request
@@ -267,7 +275,7 @@ export const HARNESS_LANES = {
   "fs-query-index-merge8": {
     fixture: "fs-query-index-merge8-production.json",
     files: ["fs-query-index/harness.mjs", "fs-query-index/session.mjs"],
-    extra: () => readFileSync(join(CONFORMANCE_DIR, "fs-query-index-merge8.indexes.json"), "utf8"),
+    extra: (readData = readConformanceData) => readData("fs-query-index-merge8.indexes.json"),
     guarded: ["conformance/fs-query-index-merge8.indexes.json"],
   },
   // FS-ENT-ORACLE: the pipeline lane's own copy of the query request layer (named database
@@ -465,17 +473,21 @@ const withFile = (file, run) => {
   }
 };
 
-/** A lane's extra inputs: data, not code, as a string (a function when it reads the tree). */
-const extraOf = (lane) => (typeof lane.extra === "function" ? lane.extra() : lane.extra);
+/**
+ * A lane's extra inputs: data, not code, as a string (a function when it reads data files, which
+ * it reads through `readData`: this checkout's by default, a revision's when a hop is verified).
+ */
+const extraOf = (lane, readData) =>
+  typeof lane.extra === "function" ? lane.extra(readData) : lane.extra;
 
 /** The historical digest of a lane's inputs (see the header). */
-export function rawDigest(lane, read) {
+export function rawDigest(lane, read, extra = extraOf(lane)) {
   const sources = lane.files.map((file) => read(file)).join("\n");
-  return sha256(lane.noExtraTail ? sources : `${sources}\n${extraOf(lane)}`);
+  return sha256(lane.noExtraTail ? sources : `${sources}\n${extra}`);
 }
 
 /** The digest of a lane's inputs as token streams, the extra inputs and the file names. */
-export function scheme2Digest(lane, read) {
+export function scheme2Digest(lane, read, extra = extraOf(lane)) {
   for (const file of lane.files)
     if (!/\.m?js$/.test(file))
       throw new Error(`${file}: only .mjs and .js are digested as tokens; put data in extra`);
@@ -483,7 +495,7 @@ export function scheme2Digest(lane, read) {
     file,
     tokens: sha256(JSON.stringify(withFile(file, () => sourceTokens(read(file))))),
   }));
-  return sha256(JSON.stringify({ scheme: 2, files, extra: extraOf(lane) }));
+  return sha256(JSON.stringify({ scheme: 2, files, extra }));
 }
 
 /** Reads a harness source from this checkout. */
@@ -492,6 +504,15 @@ export const treeReader = (file) => readFileSync(join(CONFORMANCE_DIR, "src", fi
 /** Reads a harness source as it was at `commit`. */
 export const gitReader = (commit) => (file) =>
   execFileSync("git", ["show", `${commit}:conformance/src/${file}`], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+/** Reads a data input (a path under conformance/) as it was at `commit`; a missing file throws. */
+export const gitDataReader = (commit) => (path) =>
+  execFileSync("git", ["show", `${commit}:conformance/${path}`], {
     cwd: REPO_ROOT,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
@@ -556,57 +577,125 @@ const HOP_KINDS = ["scheme", "unreached"];
 /** The prefix of the transport error session.mjs records when a response body cannot be read. */
 export const BODY_STAGE_PREFIX = "body:";
 
+/** What the recorder writes for a step whose dependency recorded nothing (harness.mjs). */
+const UNRESOLVED = /^step (\S+) recorded nothing at .+$/;
+/** The keys of a recorded program; `steps` and `second` hold answers, the rest is provenance. */
+const PROGRAM_KEYS = new Set([
+  "corpusDigest",
+  "harnessDigest",
+  "recordedAt",
+  "gitSha",
+  "steps",
+  "second",
+]);
+const ANSWER_SLOTS = ["steps", "second"];
+
+/**
+ * Why one recorded answer cannot be the result of a body-read failure: it has a numeric status
+ * (its body was read, or its fetch failed and says so with a transport error) or a numeric gRPC
+ * code. A status -1 row is a step whose dependency recorded nothing; it is accepted only with the
+ * evidence the recorder writes for it (`unresolved` naming another step of the same slot, and the
+ * `dependencyTransient` of that step), since a body failure never writes it.
+ */
+function answerProblem(stepId, row, slot) {
+  const error = row?.transportError;
+  if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
+    return `the body of the answer could not be read (${error})`;
+  if (row?.status === -1) {
+    const dependency = UNRESOLVED.exec(
+      typeof row.unresolved === "string" ? row.unresolved : "",
+    )?.[1];
+    if (dependency === undefined || dependency === stepId || slot[dependency] === undefined)
+      return "status -1 without the dependency evidence the recorder writes";
+    if (row.dependencyTransient !== isTransient(slot[dependency]))
+      return `status -1 whose dependencyTransient is not that of step ${dependency}`;
+    return undefined;
+  }
+  if (row?.status === 0)
+    return typeof error === "string" ? undefined : "status 0 without a transport error";
+  if (typeof row?.status === "number" || typeof row?.code === "number") return undefined;
+  return "neither a numeric status nor a numeric gRPC code";
+}
+
 /**
  * Why the rows of a FS-QUERY-INDEX fixture cannot have reached the body-read failure path of
- * session.mjs: every recorded step has a numeric status (its body was read, or its fetch failed
- * and says so) or a numeric gRPC code, a status 0 names its transport error, and no transport
- * error is a body-stage one. An empty fixture proves nothing and is refused.
+ * session.mjs: every recorded answer, in every answer slot of every program (`steps` and
+ * `second`), passes answerProblem, and a program has no other key than the known ones. An empty
+ * fixture proves nothing and is refused.
  */
 export function bodyReadStageProblems(fixture) {
   const problems = [];
-  let steps = 0;
-  for (const [programId, program] of Object.entries(fixture?.programs ?? {}))
-    for (const [stepId, step] of Object.entries(program?.steps ?? {})) {
-      steps += 1;
-      const at = `${programId}#${stepId}`;
-      const error = step?.transportError;
-      if (typeof error === "string" && error.startsWith(BODY_STAGE_PREFIX))
-        problems.push(`${at}: the body of the answer could not be read (${error})`);
-      else if (step?.status === 0 && typeof error !== "string")
-        problems.push(`${at}: status 0 without a transport error`);
-      else if (typeof step?.status !== "number" && typeof step?.code !== "number")
-        problems.push(`${at}: neither a numeric status nor a numeric gRPC code`);
-    }
-  if (steps === 0) problems.push("the fixture records no step");
+  let answers = 0;
+  for (const [programId, program] of Object.entries(fixture?.programs ?? {})) {
+    for (const key of Object.keys(program ?? {}))
+      if (!PROGRAM_KEYS.has(key)) problems.push(`${programId}: unexpected key ${key}`);
+    for (const slotName of ANSWER_SLOTS)
+      for (const [stepId, row] of Object.entries(program?.[slotName] ?? {})) {
+        answers += 1;
+        const problem = answerProblem(stepId, row, program[slotName]);
+        if (problem)
+          problems.push(
+            `${programId}#${stepId}${slotName === "steps" ? "" : ` (${slotName})`}: ${problem}`,
+          );
+      }
+  }
+  if (answers === 0) problems.push("the fixture records no answer");
   return problems;
 }
 
 /**
- * The closed table of conditions an "unreached" hop may name. `touches` is exactly what the fix
- * commit may change among the lane's inputs; `problems(fixture)` is empty when the recorded rows
- * show the changed path was not reached.
+ * The closed table of conditions an "unreached" hop may name. A condition is one approved change:
+ * the commit it was made at (`fix`), the commit before it, where the recorded digests reproduce
+ * (`base`), what it may change among a lane's inputs (`touches`) and the sha256 of its exact diff
+ * over those paths (`diffSha256`, from gitFixDelta). A hop naming any other fix, or a fix whose
+ * change hashes differently, is refused; a different fix needs a new reviewed entry.
+ * `problems(fixture)` is empty when the recorded rows show the changed path was not reached.
  */
 export const UNREACHED_CONDITIONS = {
   "fs-query-index-body-read-unreached": {
+    base: "e7b7a53a4fdf5eaa8206745f162da3c7bb81de8b",
+    fix: "0c7a9ee5649cea2fdd4f108b704ae4ac3d760b75",
+    diffSha256: "a83e25f247e9cb83b36f785815eb617c5adc8f67981eac6c652ad247ad59e0b2",
     touches: ["conformance/src/fs-query-index/session.mjs"],
     problems: bodyReadStageProblems,
   },
 };
 
-/** The parents and changed paths of one commit, from git. */
-export function gitFixInfo(commit, cwd = REPO_ROOT) {
+/**
+ * What changed between two commits: every changed path, and the sha256 of the diff over `paths`
+ * (fixed flags and no user configuration, so the text is the same on every machine).
+ */
+export function gitFixDelta(base, fix, paths, cwd = REPO_ROOT) {
   const git = (...args) =>
     execFileSync("git", args, {
       cwd,
+      env: {
+        PATH: process.env.PATH,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+        LC_ALL: "C",
+      },
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     });
-  const [, ...parents] = git("rev-list", "--parents", "-n", "1", commit).trim().split(" ");
-  const paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", commit)
+  const fixed = [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-renames",
+    "--full-index",
+    "--diff-algorithm=myers",
+    "--unified=3",
+    "--inter-hunk-context=0",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+  ];
+  const changed = git(...fixed, "--name-only", base, fix)
     .split("\n")
     .filter(Boolean);
-  return { parents, paths };
+  return { changed, diffSha256: sha256(git(...fixed, base, fix, "--", ...paths)) };
 }
 
 /** The current fixture of a lane. */
@@ -630,7 +719,8 @@ export function lineageProblems(
     shallow,
     current = treeReader,
     conditions = UNREACHED_CONDITIONS,
-    fixInfo = gitFixInfo,
+    fixDelta = gitFixDelta,
+    dataReader = gitDataReader,
     fixtureOf = treeFixture,
   },
 ) {
@@ -667,15 +757,13 @@ export function lineageProblems(
     if (problems.length > before || shallow) return;
     let atCommit;
     try {
-      const read = reader(hop.commit);
-      const sources = new Map(lane.files.map((file) => [file, read(file)]));
-      atCommit = (file) => sources.get(file);
+      atCommit = inputsAt(lane, hop.commit, { reader, dataReader });
     } catch (error) {
       return problems.push(
         `${at}: the sources at ${hop.commit} are not readable (${error.message})`,
       );
     }
-    if (rawDigest(lane, atCommit) !== hop.from)
+    if (rawDigest(lane, atCommit.read, atCommit.extra) !== hop.from)
       problems.push(`${at}: the recorded digest does not reproduce at ${hop.commit}`);
     if (scheme2Digest(lane, current) !== hop.to)
       problems.push(`${at}: the scheme-2 digest of the current tree is not the hop's`);
@@ -684,16 +772,30 @@ export function lineageProblems(
         ...unreachedProblems(at, hop, lane, {
           atCommit,
           reader,
-          current,
+          dataReader,
           condition: conditions[hop.condition],
-          fixInfo,
+          fixDelta,
           fixtureOf,
         }),
       );
-    else if (scheme2Digest(lane, atCommit) !== hop.to)
+    else if (scheme2Digest(lane, atCommit.read, atCommit.extra) !== hop.to)
       problems.push(`${at}: the scheme-2 digest at ${hop.commit} is not the hop's`);
   });
   return problems;
+}
+
+/**
+ * Every input of a lane's digest as it was at `revision`: the sources and the data its `extra`
+ * reads, each read at that revision. An input that is missing there throws.
+ */
+function inputsAt(lane, revision, { reader, dataReader }) {
+  const read = reader(revision);
+  const sources = new Map(lane.files.map((file) => [file, read(file)]));
+  for (const [file, text] of sources)
+    if (typeof text !== "string") throw new Error(`${file} is missing`);
+  const extra = extraOf(lane, dataReader(revision));
+  if (typeof extra !== "string") throw new Error("a data input is missing");
+  return { read: (file) => sources.get(file), extra };
 }
 
 /** The inputs of a lane's digest as repository paths (sources, data it reads, its fixture). */
@@ -704,40 +806,43 @@ const laneInputPaths = (lane) => [
 ];
 
 /**
- * What is wrong with an "unreached" hop beyond the checks every hop shares (see the header): the
- * hop's commit differs from the fix commit's parent by comments and whitespace only, the fix
- * commit has one parent and changes exactly the inputs its condition names, the fix commit's
- * scheme-2 digest is the hop's, and the condition holds for the lane's fixture.
+ * What is wrong with an "unreached" hop beyond the checks every hop shares (see the header): it
+ * names the condition's approved fix commit; the change from the condition's base to that commit
+ * hashes to the approved diff and touches exactly the inputs the condition names; the inputs at
+ * the hop's commit differ from those at the base by comments and whitespace only; the scheme-2
+ * digest at the fix commit is the hop's; and the condition holds for the lane's fixture.
  */
-function unreachedProblems(at, hop, lane, { atCommit, reader, condition, fixInfo, fixtureOf }) {
+function unreachedProblems(
+  at,
+  hop,
+  lane,
+  { atCommit, reader, dataReader, condition, fixDelta, fixtureOf },
+) {
+  if (hop.fix !== condition.fix)
+    return [`${at}: the fix commit ${hop.fix} is not the one the condition approves`];
   const problems = [];
-  let info;
   try {
-    info = fixInfo(hop.fix);
-  } catch (error) {
-    return [`${at}: the fix commit ${hop.fix} is not readable (${error.message})`];
-  }
-  if (info.parents.length !== 1)
-    return [`${at}: the fix commit ${hop.fix} must have exactly one parent`];
-  const inputs = new Set(laneInputPaths(lane));
-  const touched = info.paths.filter((path) => inputs.has(path)).toSorted();
-  const allowed = [...condition.touches].toSorted();
-  if (touched.join("\n") !== allowed.join("\n"))
-    problems.push(
-      `${at}: the fix commit changes the inputs [${touched}], the condition allows exactly [${allowed}]`,
-    );
-  try {
-    const parent = reader(info.parents[0]);
-    const atFix = reader(hop.fix);
-    const sources = (read) => new Map(lane.files.map((file) => [file, read(file)]));
-    const parentSources = sources(parent);
-    const fixSources = sources(atFix);
-    if (scheme2Digest(lane, atCommit) !== scheme2Digest(lane, (file) => parentSources.get(file)))
-      problems.push(`${at}: the sources changed between ${hop.commit} and the parent of the fix`);
-    if (scheme2Digest(lane, (file) => fixSources.get(file)) !== hop.to)
+    const delta = fixDelta(condition.base, condition.fix, condition.touches);
+    const inputs = new Set(laneInputPaths(lane));
+    const touched = delta.changed.filter((path) => inputs.has(path)).toSorted();
+    const allowed = [...condition.touches].toSorted();
+    if (touched.join("\n") !== allowed.join("\n"))
+      problems.push(
+        `${at}: the fix commit changes the inputs [${touched}], the condition allows exactly [${allowed}]`,
+      );
+    if (delta.diffSha256 !== condition.diffSha256)
+      problems.push(`${at}: the change to ${condition.touches} is not the approved one`);
+    const base = inputsAt(lane, condition.base, { reader, dataReader });
+    if (
+      scheme2Digest(lane, atCommit.read, atCommit.extra) !==
+      scheme2Digest(lane, base.read, base.extra)
+    )
+      problems.push(`${at}: the inputs changed between ${hop.commit} and the base of the fix`);
+    const fixed = inputsAt(lane, condition.fix, { reader, dataReader });
+    if (scheme2Digest(lane, fixed.read, fixed.extra) !== hop.to)
       problems.push(`${at}: the scheme-2 digest at the fix commit is not the hop's`);
   } catch (error) {
-    problems.push(`${at}: the sources around the fix commit are not readable (${error.message})`);
+    return [...problems, `${at}: the fix commit and its base are not readable (${error.message})`];
   }
   for (const problem of condition.problems(fixtureOf(lane)))
     problems.push(`${at}: condition ${hop.condition} fails: ${problem}`);
@@ -745,42 +850,39 @@ function unreachedProblems(at, hop, lane, { atCommit, reader, condition, fixInfo
 }
 
 /**
- * The "unreached" hops a fix commit calls for: one for every distinct harness digest the fixtures
+ * The "unreached" hops a condition calls for: one for every distinct harness digest the fixtures
  * of the lanes that read the condition's file record and the lineage does not have yet, at the
- * fix commit's parent (the recorded raw digest must reproduce there). The caller adds them to the
- * lineage; lineageProblems then checks every part of them.
+ * condition's base (the recorded raw digest must reproduce there, from the inputs at the base).
+ * The caller adds them to the lineage; lineageProblems then checks every part of them.
  */
 export function proposeUnreachedHops({
-  fix,
   condition,
   lanes = HARNESS_LANES,
   lineage = loadLineage(),
   reader = gitReader,
+  dataReader = gitDataReader,
   current = treeReader,
   conditions = UNREACHED_CONDITIONS,
-  fixInfo = gitFixInfo,
   fixtureOf = treeFixture,
 }) {
   if (!Object.hasOwn(conditions, condition))
     throw new Error(`condition ${condition} is not in the closed table`);
-  const { parents } = fixInfo(fix);
-  if (parents.length !== 1) throw new Error(`the fix commit ${fix} must have exactly one parent`);
-  const [parent] = parents;
-  const atParent = reader(parent);
+  const { base, fix, touches } = conditions[condition];
   const known = new Set(lineage.hops.map((hop) => `${hop.lane}/${hop.from}`));
   const hops = [];
   for (const [name, lane] of Object.entries(lanes)) {
     const inputs = laneInputPaths(lane);
-    if (!conditions[condition].touches.every((path) => inputs.includes(path))) continue;
+    if (!touches.every((path) => inputs.includes(path))) continue;
+    const atBase = inputsAt(lane, base, { reader, dataReader });
     for (const from of recordedDigests(name, fixtureOf(lane))) {
       if (known.has(`${name}/${from}`)) continue;
-      if (rawDigest(lane, atParent) !== from)
-        throw new Error(`${name}: the recorded digest ${from} does not reproduce at ${parent}`);
+      if (rawDigest(lane, atBase.read, atBase.extra) !== from)
+        throw new Error(`${name}: the recorded digest ${from} does not reproduce at ${base}`);
       hops.push({
         lane: name,
         from,
         to: scheme2Digest(lane, current),
-        commit: parent,
+        commit: base,
         kind: "unreached",
         fix,
         condition,
@@ -1020,7 +1122,13 @@ export function rewriteReport(
       if (problem) problems.push(`after the rewrite: ${problem}`);
     }
   }
-  if (changedLineage)
+  // A hop whose condition reads a fixture is checked again when that fixture is rewritten, even if
+  // the lineage file is not.
+  const changedConditionFixture = lineage.hops.some(
+    (hop) =>
+      hop.kind === "unreached" && lanes[hop.lane] && fixturePath(lanes[hop.lane]) in overrides,
+  );
+  if (changedLineage || changedConditionFixture)
     for (const problem of lineageProblems(lineage, {
       lanes,
       reader,
@@ -1085,15 +1193,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(JSON.stringify(result, null, 2));
     if (result.problems.length) process.exitCode = 1;
   } else if (process.argv[2] === "unreached-hops") {
-    // --fix <sha> --condition <name> [--write]: the hops the fix commit calls for, checked as the
-    // lineage gate checks them; with --write they are appended to harness-lineage.json.
+    // --condition <name> [--write]: the hops the condition calls for, checked as the lineage gate
+    // checks them; with --write they are appended to harness-lineage.json.
     const option = (name) => process.argv[process.argv.indexOf(name) + 1];
     const lineage = loadLineage();
-    const hops = proposeUnreachedHops({
-      fix: option("--fix"),
-      condition: option("--condition"),
-      lineage,
-    });
+    const hops = proposeUnreachedHops({ condition: option("--condition"), lineage });
     const next = { ...lineage, hops: [...lineage.hops, ...hops] };
     const found = lineageProblems(next, {
       lanes: HARNESS_LANES,
@@ -1107,7 +1211,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     else console.log(JSON.stringify(hops, null, 2));
   } else if (process.argv[2] !== "verify") {
     console.error(
-      "usage: harness-registry.mjs verify [--json] | paths | rewrite-check <overrides.json> [--head <sha>] | unreached-hops --fix <sha> --condition <name> [--write]",
+      "usage: harness-registry.mjs verify [--json] | paths | rewrite-check <overrides.json> [--head <sha>] | unreached-hops --condition <name> [--write]",
     );
     process.exitCode = 2;
   } else {
