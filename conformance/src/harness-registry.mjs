@@ -646,8 +646,8 @@ export function bodyReadStageProblems(fixture) {
 /**
  * The closed table of conditions an "unreached" hop may name. A condition is one approved change:
  * the commit it was made at (`fix`), the commit before it, where the recorded digests reproduce
- * (`base`), what it may change among a lane's inputs (`touches`) and the sha256 of its exact diff
- * over those paths (`diffSha256`, from gitFixDelta). A hop naming any other fix, or a fix whose
+ * (`base`), what it may change among a lane's inputs (`touches`) and the sha256 of its exact delta
+ * over those paths (`deltaSha256`, from gitFixDelta). A hop naming any other fix, or a fix whose
  * change hashes differently, is refused; a different fix needs a new reviewed entry.
  * `problems(fixture)` is empty when the recorded rows show the changed path was not reached.
  */
@@ -655,47 +655,37 @@ export const UNREACHED_CONDITIONS = {
   "fs-query-index-body-read-unreached": {
     base: "e7b7a53a4fdf5eaa8206745f162da3c7bb81de8b",
     fix: "0c7a9ee5649cea2fdd4f108b704ae4ac3d760b75",
-    diffSha256: "a83e25f247e9cb83b36f785815eb617c5adc8f67981eac6c652ad247ad59e0b2",
+    deltaSha256: "6a43fe4af37970c41f62ece5a4a16100c58f1ede7d30491f4466b5d5b8a8caa8",
     touches: ["conformance/src/fs-query-index/session.mjs"],
     problems: bodyReadStageProblems,
   },
 };
 
 /**
- * What changed between two commits: every changed path, and the sha256 of the diff over `paths`
- * (fixed flags and no user configuration, so the text is the same on every machine).
+ * What changed between two commits: every changed path, and the sha256 of the delta over `paths`,
+ * which is each path's content at the base and at the fix (null where it does not exist). Blobs,
+ * not diff text, so no git configuration can change the hash.
  */
 export function gitFixDelta(base, fix, paths, cwd = REPO_ROOT) {
   const git = (...args) =>
     execFileSync("git", args, {
       cwd,
-      env: {
-        PATH: process.env.PATH,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
-        LC_ALL: "C",
-      },
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     });
-  const fixed = [
-    "diff",
-    "--no-color",
-    "--no-ext-diff",
-    "--no-textconv",
-    "--no-renames",
-    "--full-index",
-    "--diff-algorithm=myers",
-    "--unified=3",
-    "--inter-hunk-context=0",
-    "--src-prefix=a/",
-    "--dst-prefix=b/",
-  ];
-  const changed = git(...fixed, "--name-only", base, fix)
-    .split("\n")
+  const changed = git("diff-tree", "-r", "--name-only", "-z", base, fix)
+    .split("\0")
     .filter(Boolean);
-  return { changed, diffSha256: sha256(git(...fixed, base, fix, "--", ...paths)) };
+  const blob = (revision, path) => {
+    try {
+      return git("show", `${revision}:${path}`);
+    } catch {
+      return null;
+    }
+  };
+  const delta = paths.map((path) => [path, blob(base, path), blob(fix, path)]);
+  return { changed, deltaSha256: sha256(JSON.stringify(delta)) };
 }
 
 /** The current fixture of a lane. */
@@ -830,7 +820,7 @@ function unreachedProblems(
       problems.push(
         `${at}: the fix commit changes the inputs [${touched}], the condition allows exactly [${allowed}]`,
       );
-    if (delta.diffSha256 !== condition.diffSha256)
+    if (delta.deltaSha256 !== condition.deltaSha256)
       problems.push(`${at}: the change to ${condition.touches} is not the approved one`);
     const base = inputsAt(lane, condition.base, { reader, dataReader });
     if (

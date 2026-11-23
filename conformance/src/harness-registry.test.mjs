@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -1018,14 +1026,14 @@ const CONDITIONS = {
   "no-failures": {
     base: BASE,
     fix: FIX,
-    diffSha256: DIFF_HASH,
+    deltaSha256: DIFF_HASH,
     touches: [A_PATH],
     problems: (fixture) => (fixture.failures ?? []).map((failure) => `failure ${failure}`),
   },
 };
-const delta = (changed = [A_PATH, "unrelated/file.txt"], diffSha256 = DIFF_HASH) => ({
+const delta = (changed = [A_PATH, "unrelated/file.txt"], deltaSha256 = DIFF_HASH) => ({
   changed,
-  diffSha256,
+  deltaSha256,
 });
 const unreachedHop = () => ({
   lane: "lane",
@@ -1229,6 +1237,44 @@ test("the data a hop's digest reads is read at the hop's commit", () => {
   assert.match(found.join("\n"), /recorded digest does not reproduce/);
 });
 
+test("the data read at the fix commit is the data the hop's scheme-2 digest was made from", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => (commit === FIX ? '{"other":1}\n' : dataAt(commit)(path)),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /at the fix commit is not the hop's/);
+});
+
+test("a scheme hop reads its data at its commit too", () => {
+  // Same sources and tokens, other data at the hop's commit than in this checkout.
+  const hop = {
+    lane: "lane",
+    from: rawDigest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+    to: scheme2Digest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+    commit: REC,
+    kind: "scheme",
+  };
+  const run = (dataReader) =>
+    lineageProblems(
+      { version: 1, hops: [hop] },
+      {
+        lanes: { lane: UNREACHED_LANE },
+        reader: treesReader,
+        dataReader,
+        shallow: false,
+        current: (file) => TREES[REC][file],
+      },
+    );
+  assert.deepEqual(run(dataAt), []);
+  // Today's data is DATA; at the commit it is something else, so the recorded digest and the
+  // scheme-2 digest the hop claims were not made from the commit's inputs.
+  const found = run(
+    (commit) => (path) => (commit === REC ? '{"other":1}\n' : dataAt(commit)(path)),
+  );
+  assert.match(found.join("\n"), /does not reproduce/);
+  assert.match(found.join("\n"), /scheme-2 digest at/);
+});
+
 test("an unreached hop in a shallow clone is a hard failure", () => {
   assert.match(unreachedProblems(unreachedHop(), { shallow: true }).join("\n"), /shallow/);
 });
@@ -1335,6 +1381,13 @@ test("the body-read condition accepts a -1 row only with the dependency evidence
   assert.deepEqual(check({ unresolved: "step dep recorded nothing" }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
   assert.deepEqual(check({ unresolved: "step ghost recorded nothing at x" }), [`p#row: ${none}`]);
+  // Not a string, even when its string form would match (an array of one string).
+  assert.deepEqual(check({ unresolved: ["step dep recorded nothing at x"] }), [`p#row: ${none}`]);
+  // A step that happens to be named "undefined" is not the dependency of an unreadable message.
+  assert.deepEqual(
+    check({ unresolved: "garbage" }, { undefined: dependency, dep: dependency, row }),
+    [`p#row: ${none}`],
+  );
   assert.deepEqual(check({ unresolved: "step row recorded nothing at x" }), [`p#row: ${none}`]);
   assert.deepEqual(check({ dependencyTransient: true }), [
     "p#row: status -1 whose dependencyTransient is not that of step dep",
@@ -1386,7 +1439,7 @@ test("the closed table names the one approved change the ten FS-QUERY-INDEX lane
   assert.deepEqual(condition.touches, ["conformance/src/fs-query-index/session.mjs"]);
   assert.equal(condition.problems, bodyReadStageProblems);
   for (const sha of [condition.base, condition.fix]) assert.match(sha, /^[0-9a-f]{40}$/);
-  assert.match(condition.diffSha256, /^[0-9a-f]{64}$/);
+  assert.match(condition.deltaSha256, /^[0-9a-f]{64}$/);
   const lanes = Object.entries(HARNESS_LANES).filter(([, lane]) =>
     lane.files.includes("fs-query-index/session.mjs"),
   );
@@ -1395,10 +1448,10 @@ test("the closed table names the one approved change the ten FS-QUERY-INDEX lane
 
 test("the approved change is what git holds: the same diff hash, and one input changed", () => {
   if (isShallowCheckout() && process.env.FIREEMU_REQUIRE_FULL_HISTORY !== "1") return;
-  const { base, fix, touches, diffSha256 } =
+  const { base, fix, touches, deltaSha256 } =
     UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"];
   const found = gitFixDelta(base, fix, touches);
-  assert.equal(found.diffSha256, diffSha256);
+  assert.equal(found.deltaSha256, deltaSha256);
   const [lane] = Object.values(HARNESS_LANES).filter((l) =>
     l.files.includes("fs-query-index/session.mjs"),
   );
@@ -1566,7 +1619,8 @@ test("a rewrite that changes only a lane's fixture is checked against the lineag
 });
 
 test("a rewrite of a fixture no unreached hop reads does not re-check the lineage", () => {
-  const fixturePath = "conformance/auth-account-production.json";
+  // auth-fs-cross is connected by a scheme hop, which does not read its fixture.
+  const fixturePath = "conformance/auth-fs-cross-production.json";
   const fixture = readFileSync(join(REPO_ROOT, fixturePath), "utf8");
   const report = rewriteReport({ [fixturePath]: fixture }, NO_GIT);
   assert.ok(!report.problems.some((problem) => /lineage after the rewrite/.test(problem)));
@@ -1574,7 +1628,7 @@ test("a rewrite of a fixture no unreached hop reads does not re-check the lineag
 
 // ---- the fix commit as git reports it --------------------------------------------------------------
 
-test("gitFixDelta reports the changed paths and a hash of the diff that no configuration changes", () => {
+test("gitFixDelta reports the changed paths and a hash of the delta that no configuration changes", () => {
   const dir = mkdtempSync(join(tmpdir(), "fix-delta-"));
   try {
     // A throwaway repository with no configuration of the machine in it.
@@ -1596,31 +1650,47 @@ test("gitFixDelta reports the changed paths and a hash of the diff that no confi
         stdio: ["ignore", "pipe", "pipe"],
       }).trim();
     git("init", "-q", "-b", "main");
+    const lines = (count, text) => `${text}\n`.repeat(count);
     writeFileSync(join(dir, "kept.txt"), "kept\n");
-    writeFileSync(join(dir, "old.txt"), "a long enough body to be a rename\n".repeat(5));
-    writeFileSync(join(dir, "input.mjs"), "export const a = 1;\n".repeat(20));
+    writeFileSync(join(dir, "old.txt"), lines(5, "a long enough body to be a rename"));
+    writeFileSync(join(dir, "input.mjs"), `${lines(20, "export const a = 1;")}\n${lines(2, "x")}`);
+    writeFileSync(join(dir, "ünï.txt"), "unicode name\n");
+    mkdirSync(join(dir, "sub", "dir"), { recursive: true });
+    writeFileSync(join(dir, "sub", "dir", "nested.txt"), "nested\n");
     git("add", ".");
     git("commit", "-q", "-m", "base");
     const base = git("rev-parse", "HEAD");
     git("mv", "old.txt", "new.txt");
     writeFileSync(join(dir, "kept.txt"), "kept again\n");
+    writeFileSync(join(dir, "ünï.txt"), "unicode name again\n");
     writeFileSync(
       join(dir, "input.mjs"),
-      `${"export const a = 1;\n".repeat(10)}export const b = 2;\n${"export const a = 1;\n".repeat(10)}`,
+      `${lines(10, "export const a = 1;")}export const b = 2;\n${lines(10, "export const a = 1;")}\n${lines(2, "x")}`,
     );
+    writeFileSync(join(dir, "added.txt"), "added\n");
+    writeFileSync(join(dir, "sub", "dir", "nested.txt"), "nested again\n");
     git("add", ".");
     git("commit", "-q", "-m", "fix");
     const fix = git("rev-parse", "HEAD");
     const found = gitFixDelta(base, fix, ["input.mjs"], dir);
-    assert.deepEqual(found.changed, ["input.mjs", "kept.txt", "new.txt", "old.txt"]);
-    assert.match(found.diffSha256, /^[0-9a-f]{64}$/);
-    // Only the named paths are hashed.
-    assert.notEqual(gitFixDelta(base, fix, ["kept.txt"], dir).diffSha256, found.diffSha256);
+    assert.deepEqual(found.changed, [
+      "added.txt",
+      "input.mjs",
+      "kept.txt",
+      "new.txt",
+      "old.txt",
+      "sub/dir/nested.txt",
+      "ünï.txt",
+    ]);
+    assert.match(found.deltaSha256, /^[0-9a-f]{64}$/);
+    // Only the named paths are hashed, and a path that did not exist at a revision is its own case.
+    for (const paths of [["kept.txt"], ["input.mjs", "kept.txt"], ["input.mjs", "added.txt"], []])
+      assert.notEqual(gitFixDelta(base, fix, paths, dir).deltaSha256, found.deltaSha256);
     assert.notEqual(
-      gitFixDelta(base, fix, ["input.mjs", "kept.txt"], dir).diffSha256,
-      found.diffSha256,
+      gitFixDelta(base, fix, ["added.txt"], dir).deltaSha256,
+      gitFixDelta(base, fix, ["gone.txt"], dir).deltaSha256,
     );
-    // Configuration that changes how git prints a diff does not change the hash.
+    // Configuration that changes how git prints or finds a diff does not change either result.
     for (const [key, value] of [
       ["diff.noprefix", "true"],
       ["diff.mnemonicPrefix", "true"],
@@ -1628,33 +1698,21 @@ test("gitFixDelta reports the changed paths and a hash of the diff that no confi
       ["diff.interHunkContext", "5"],
       ["diff.algorithm", "patience"],
       ["diff.renames", "copies"],
+      ["diff.suppressBlankEmpty", "true"],
+      ["diff.external", "false"],
+      ["color.ui", "always"],
+      ["core.quotepath", "true"],
       ["core.abbrev", "12"],
     ])
       git("config", key, value);
-    assert.equal(gitFixDelta(base, fix, ["input.mjs"], dir).diffSha256, found.diffSha256);
-    assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir).changed, found.changed);
-    // Nor does the user's own configuration file, which the process environment points at.
-    const globalConfig = join(dir, "global.gitconfig");
-    writeFileSync(
-      globalConfig,
-      "[diff]\n\tnoprefix = true\n\tcontext = 9\n\trenames = copies\n\talgorithm = histogram\n[core]\n\tabbrev = 12\n",
-    );
-    const saved = process.env.GIT_CONFIG_GLOBAL;
-    process.env.GIT_CONFIG_GLOBAL = globalConfig;
-    try {
-      assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir), found);
-    } finally {
-      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-      else process.env.GIT_CONFIG_GLOBAL = saved;
-    }
+    assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir), found);
     // A different change to the same file hashes differently.
     writeFileSync(join(dir, "input.mjs"), "export const a = 9;\n");
     git("commit", "-q", "-am", "other");
-    assert.notEqual(
-      gitFixDelta(base, git("rev-parse", "HEAD"), ["input.mjs"], dir).diffSha256,
-      found.diffSha256,
-    );
+    const other = gitFixDelta(base, git("rev-parse", "HEAD"), ["input.mjs"], dir);
+    assert.notEqual(other.deltaSha256, found.deltaSha256);
     assert.throws(() => gitFixDelta(base, "0".repeat(40), ["input.mjs"], dir));
+    assert.throws(() => gitFixDelta("0".repeat(40), fix, ["input.mjs"], dir));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1675,6 +1733,18 @@ test("the lane runner accepts a recorded digest the registry connects by lineage
   assert.equal(harnessDigestIsStale(saved, current), false);
   assert.equal(harnessDigestIsStale(current, current), false);
   assert.equal(harnessDigestIsStale("0".repeat(64), current), true);
+});
+
+test("the lane runner compares digests plainly for a lane the registry does not enroll", () => {
+  const script = `
+    const { harnessDigestIsStale } = await import(${JSON.stringify(new URL("./fs-query-index/run.mjs", import.meta.url).href)});
+    console.log(JSON.stringify([harnessDigestIsStale("a", "a"), harnessDigestIsStale("a", "b")]));`;
+  const { stdout } = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, FIREEMU_SANDBOX_LANE: "fs-ent-text" },
+    encoding: "utf8",
+  });
+  assert.equal(HARNESS_LANES["fs-ent-text"], undefined);
+  assert.deepEqual(JSON.parse(stdout), [false, true]);
 });
 
 test("the lane runner does not call a committed row of the shared layer stale, and calls a changed one stale", async () => {
