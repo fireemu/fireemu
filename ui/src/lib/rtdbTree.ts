@@ -59,6 +59,21 @@ const previewValue = (
   return { kind: "string", preview: String(value) };
 };
 
+const parseRtdbIntKey = (key: string): number | null => {
+  if (!/^(?:0|[1-9]\d{0,9})$/.test(key)) return null;
+  const n = Number(key);
+  return n <= 2147483647 ? n : null;
+};
+
+const compareRtdbKeys = (a: string, b: string): number => {
+  const ai = parseRtdbIntKey(a);
+  const bi = parseRtdbIntKey(b);
+  if (ai !== null && bi !== null) return ai - bi;
+  if (ai !== null) return -1;
+  if (bi !== null) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+};
+
 /** Parse raw RTDB JSON at `basePath` into navigable child rows (bounded to `maxEntries`). */
 export const parseRtdbTree = (
   rawJson: string,
@@ -75,8 +90,10 @@ export const parseRtdbTree = (
     return { entries: [], truncated: 0 };
   }
   const pairs: [string, unknown][] = Array.isArray(parsed)
-    ? parsed.map((v, i) => [String(i), v])
-    : Object.entries(parsed as Record<string, unknown>).toSorted(([a], [b]) => (a < b ? -1 : 1));
+    ? parsed.flatMap((v, i): [string, unknown][] => (v === null ? [] : [[String(i), v]]))
+    : Object.entries(parsed as Record<string, unknown>).toSorted(([a], [b]) =>
+        compareRtdbKeys(a, b),
+      );
   const shown = pairs.slice(0, maxEntries);
   return {
     entries: shown.map(([key, value]) => ({

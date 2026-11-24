@@ -60,21 +60,24 @@ export const decodeBase64Utf8 = (encoded: string | undefined): string => {
   }
 };
 
+const encodePubSubId = (id: string): string =>
+  encodeURIComponent(id).replace(/%2B/gi, "+").replace(/%7E/gi, "~").replace(/%25/gi, "%");
+
 export const listTopics = (project: string): ResultAsync<{ topics?: PubSubTopic[] }, ApiError> =>
   request("GET", `${projectBase(project)}/topics?pageSize=200`);
 
 export const createTopic = (project: string, topicId: string): ResultAsync<PubSubTopic, ApiError> =>
-  request("PUT", `${projectBase(project)}/topics/${encodeURIComponent(topicId)}`, {});
+  request("PUT", `${projectBase(project)}/topics/${encodePubSubId(topicId)}`, {});
 
 export const deleteTopic = (project: string, topicId: string): ResultAsync<Json, ApiError> =>
-  request("DELETE", `${projectBase(project)}/topics/${encodeURIComponent(topicId)}`);
+  request("DELETE", `${projectBase(project)}/topics/${encodePubSubId(topicId)}`);
 
 export const publishToTopic = (
   project: string,
   topicId: string,
   message: { data: string; attributes?: Record<string, string>; orderingKey?: string },
 ): ResultAsync<{ messageIds: string[] }, ApiError> =>
-  request("POST", `${projectBase(project)}/topics/${encodeURIComponent(topicId)}:publish`, {
+  request("POST", `${projectBase(project)}/topics/${encodePubSubId(topicId)}:publish`, {
     messages: [message],
   });
 
@@ -95,28 +98,23 @@ export const createSubscription = (
     enableMessageOrdering?: boolean;
   },
 ): ResultAsync<PubSubSubscription, ApiError> =>
-  request(
-    "PUT",
-    `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    body,
-  );
+  request("PUT", `${projectBase(project)}/subscriptions/${encodePubSubId(subscriptionId)}`, body);
 
 export const deleteSubscription = (
   project: string,
   subscriptionId: string,
 ): ResultAsync<Json, ApiError> =>
-  request("DELETE", `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}`);
+  request("DELETE", `${projectBase(project)}/subscriptions/${encodePubSubId(subscriptionId)}`);
 
 export const pullSubscription = (
   project: string,
   subscriptionId: string,
   maxMessages: number,
 ): ResultAsync<{ receivedMessages?: PubSubReceivedMessage[] }, ApiError> =>
-  request(
-    "POST",
-    `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}:pull`,
-    { maxMessages },
-  );
+  request("POST", `${projectBase(project)}/subscriptions/${encodePubSubId(subscriptionId)}:pull`, {
+    maxMessages,
+    returnImmediately: true,
+  });
 
 export const acknowledgeSubscription = (
   project: string,
@@ -125,7 +123,7 @@ export const acknowledgeSubscription = (
 ): ResultAsync<Json, ApiError> =>
   request(
     "POST",
-    `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}:acknowledge`,
+    `${projectBase(project)}/subscriptions/${encodePubSubId(subscriptionId)}:acknowledge`,
     { ackIds },
   );
 
@@ -134,11 +132,9 @@ export const seekSubscription = (
   subscriptionId: string,
   snapshot: string,
 ): ResultAsync<Json, ApiError> =>
-  request(
-    "POST",
-    `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}:seek`,
-    { snapshot },
-  );
+  request("POST", `${projectBase(project)}/subscriptions/${encodePubSubId(subscriptionId)}:seek`, {
+    snapshot,
+  });
 
 export const listPubSubSnapshots = (
   project: string,
@@ -150,7 +146,7 @@ export const createPubSubSnapshot = (
   snapshotId: string,
   subscription: string,
 ): ResultAsync<PubSubSnapshot, ApiError> =>
-  request("PUT", `${projectBase(project)}/snapshots/${encodeURIComponent(snapshotId)}`, {
+  request("PUT", `${projectBase(project)}/snapshots/${encodePubSubId(snapshotId)}`, {
     subscription,
   });
 
@@ -158,4 +154,4 @@ export const deletePubSubSnapshot = (
   project: string,
   snapshotId: string,
 ): ResultAsync<Json, ApiError> =>
-  request("DELETE", `${projectBase(project)}/snapshots/${encodeURIComponent(snapshotId)}`);
+  request("DELETE", `${projectBase(project)}/snapshots/${encodePubSubId(snapshotId)}`);

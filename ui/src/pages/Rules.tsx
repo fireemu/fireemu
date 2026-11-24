@@ -615,10 +615,28 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
                             "bg-danger-subtle text-danger": line.state === "unreached",
                           }}
                         >
-                          <span class="w-10 shrink-0 select-none text-right opacity-70">
+                          <span class="w-10 shrink-0 select-none text-right text-secondary">
                             {line.lineNumber}
                           </span>
-                          <span class="w-8 shrink-0 select-none text-right opacity-70">
+                          <span class="w-4 shrink-0 select-none text-center" aria-hidden="true">
+                            {line.state === "covered"
+                              ? "✓"
+                              : line.state === "partial"
+                                ? "◐"
+                                : line.state === "unreached"
+                                  ? "✗"
+                                  : ""}
+                          </span>
+                          <Show when={line.state !== "none"}>
+                            <span class="sr-only">
+                              {line.state === "covered"
+                                ? t("rules.covCovered")
+                                : line.state === "partial"
+                                  ? t("rules.covPartial")
+                                  : t("rules.covUnreached")}
+                            </span>
+                          </Show>
+                          <span class="w-14 shrink-0 select-none text-right">
                             {line.hitCount > 0
                               ? `×${line.hitCount}`
                               : line.state === "unreached"
@@ -766,9 +784,33 @@ const RulesDiagnosticsPanel: Component<{
 
 type RulesTab = "all" | "editors" | "requests" | "coverage";
 
+const RULES_TABS: readonly [
+  RulesTab,
+  "rules.viewAll" | "rules.viewEditors" | "rules.viewRequests" | "rules.viewCoverage",
+][] = [
+  ["all", "rules.viewAll"],
+  ["editors", "rules.viewEditors"],
+  ["requests", "rules.viewRequests"],
+  ["coverage", "rules.viewCoverage"],
+];
+
 const Rules: Component = () => {
   const scope = () => JSON.stringify([appState.session(), appState.project()]);
   const [tab, setTab] = createSignal<RulesTab>("all");
+  const onTabKeyDown = (event: KeyboardEvent) => {
+    const idx = RULES_TABS.findIndex(([id]) => id === tab());
+    let next = -1;
+    if (event.key === "ArrowRight") next = (idx + 1) % RULES_TABS.length;
+    else if (event.key === "ArrowLeft") next = (idx - 1 + RULES_TABS.length) % RULES_TABS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = RULES_TABS.length - 1;
+    if (next >= 0) {
+      event.preventDefault();
+      const target = RULES_TABS[next]![0];
+      setTab(target);
+      document.getElementById(`rules-tab-${target}`)?.focus();
+    }
+  };
   return (
     <div>
       <h1 class="page-title mb-4">{t("rules.title")}</h1>
@@ -781,59 +823,68 @@ const Rules: Component = () => {
         class="mb-4 flex overflow-x-auto border-b border-line-subtle"
         role="tablist"
         aria-label={t("rules.title")}
+        onKeyDown={onTabKeyDown}
       >
-        {(
-          [
-            ["all", t("rules.viewAll")],
-            ["editors", t("rules.viewEditors")],
-            ["requests", t("rules.viewRequests")],
-            ["coverage", t("rules.viewCoverage")],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            type="button"
-            role="tab"
-            class="tab shrink-0"
-            aria-selected={tab() === id}
-            data-testid={`rules-tab-${id}`}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+        <For each={RULES_TABS}>
+          {([id, labelKey]) => (
+            <button
+              type="button"
+              role="tab"
+              id={`rules-tab-${id}`}
+              class="tab shrink-0"
+              aria-selected={tab() === id}
+              aria-controls="rules-tabpanel"
+              tabIndex={tab() === id ? 0 : -1}
+              data-testid={`rules-tab-${id}`}
+              onClick={() => setTab(id)}
+            >
+              {t(labelKey)}
+            </button>
+          )}
+        </For>
       </div>
-      <Show when={scope()} keyed>
-        {(key) => {
-          const [session, project] = JSON.parse(key) as [string, string];
-          const [diagnosticRevision, setDiagnosticRevision] = createSignal(0);
-          return (
-            <>
-              <Show when={tab() === "all" || tab() === "editors"}>
-                <RulesEditor which="firestore" title={t("rules.firestore")} scope={key} />
-                <RulesEditor which="storage" title={t("rules.storage")} scope={key} />
-              </Show>
-              <Show when={tab() === "all" || tab() === "requests" || tab() === "coverage"}>
-                <Show
-                  when={session === "default"}
-                  fallback={<p>{t("rules.diagnosticsUnsupported")}</p>}
-                >
-                  <RulesDiagnosticsPanel
+      <div id="rules-tabpanel" role="tabpanel" aria-labelledby={`rules-tab-${tab()}`}>
+        <Show when={scope()} keyed>
+          {(key) => {
+            const [session, project] = JSON.parse(key) as [string, string];
+            const [diagnosticRevision, setDiagnosticRevision] = createSignal(0);
+            return (
+              <>
+                <Show when={tab() === "all" || tab() === "editors"}>
+                  <RulesEditor which="firestore" title={t("rules.firestore")} scope={key} />
+                  <RulesEditor which="storage" title={t("rules.storage")} scope={key} />
+                </Show>
+                <Show when={tab() === "all" || tab() === "requests" || tab() === "coverage"}>
+                  <Show
+                    when={session === "default"}
+                    fallback={<p>{t("rules.diagnosticsUnsupported")}</p>}
+                  >
+                    <RulesDiagnosticsPanel
+                      scope={key}
+                      session={session}
+                      onCleared={() => setDiagnosticRevision((n) => n + 1)}
+                    />
+                  </Show>
+                </Show>
+                <Show when={tab() === "all" || tab() === "requests"}>
+                  <RulesRequestsPanel
                     scope={key}
                     session={session}
-                    onCleared={() => setDiagnosticRevision((n) => n + 1)}
+                    revision={diagnosticRevision()}
                   />
                 </Show>
-              </Show>
-              <Show when={tab() === "all" || tab() === "requests"}>
-                <RulesRequestsPanel scope={key} session={session} revision={diagnosticRevision()} />
-              </Show>
-              <Show when={tab() === "all" || tab() === "coverage"}>
-                <RulesCoveragePanel scope={key} project={project} revision={diagnosticRevision()} />
-              </Show>
-            </>
-          );
-        }}
-      </Show>
+                <Show when={tab() === "all" || tab() === "coverage"}>
+                  <RulesCoveragePanel
+                    scope={key}
+                    project={project}
+                    revision={diagnosticRevision()}
+                  />
+                </Show>
+              </>
+            );
+          }}
+        </Show>
+      </div>
     </div>
   );
 };

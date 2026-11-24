@@ -149,3 +149,35 @@ export const getConfig = (project: string): ResultAsync<Json, ApiError> =>
 
 export const patchConfig = (project: string, config: unknown): ResultAsync<Json, ApiError> =>
   request("PATCH", `${emulator(project)}/config`, config);
+
+const base64Url = (input: string): string => {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+
+/**
+ * Exchanges an emulator custom token for a real ID token minted by the Auth emulator using the
+ * daemon's active signer and virtual clock.
+ */
+export const signInWithCustomToken = (
+  project: string,
+  uid: string,
+  clockIso?: string,
+): ResultAsync<{ idToken: string; refreshToken?: string; expiresIn?: string }, ApiError> => {
+  const parsedClock = clockIso ? Date.parse(clockIso) : NaN;
+  const now = Math.floor((Number.isFinite(parsedClock) ? parsedClock : Date.now()) / 1000);
+  const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
+  const payload = base64Url(
+    JSON.stringify({
+      uid,
+      iat: now,
+      exp: now + 3600,
+    }),
+  );
+  return request("POST", `${admin(project)}/accounts:signInWithCustomToken`, {
+    token: `${header}.${payload}.`,
+    returnSecureToken: true,
+  });
+};

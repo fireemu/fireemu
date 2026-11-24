@@ -622,14 +622,17 @@ const DocumentView: Component<{
       () => null,
       (e) => (e.status === 404 ? null : e.message),
     ) ?? null;
-  const parsedCurrentEdit = (root: string) =>
+  const parsedCurrentEdit = (root: string, original?: Record<string, FsValue>) =>
     editMode() === "json"
-      ? plainJsonToFsFields(jsonDraft()).mapErr((message) => ({ field: "JSON", message }))
+      ? plainJsonToFsFields(jsonDraft(), original).mapErr((message) => ({
+          field: "JSON",
+          message,
+        }))
       : parseFields(fields, root);
   const guard = createLeaveGuard(() => {
     const session = editSession();
     if (!editing() || !session) return false;
-    const parsed = parsedCurrentEdit(session.root);
+    const parsed = parsedCurrentEdit(session.root, session.fields);
     return parsed.isErr() || diffFields(session.fields, parsed.value).fieldPaths.length > 0;
   });
   const missing = () =>
@@ -685,7 +688,7 @@ const DocumentView: Component<{
       setJsonDraft(JSON.stringify(fsFieldsToPlainJson(parsed.value), null, 2));
       setEditMode("json");
     } else {
-      const parsed = plainJsonToFsFields(jsonDraft());
+      const parsed = plainJsonToFsFields(jsonDraft(), session.fields);
       if (parsed.isErr()) {
         setError(parsed.error);
         return;
@@ -699,7 +702,7 @@ const DocumentView: Component<{
     setError(null);
     const session = editSession();
     if (!session) return;
-    const parsed = parsedCurrentEdit(session.root);
+    const parsed = parsedCurrentEdit(session.root, session.fields);
     if (parsed.isErr()) {
       setError(
         editMode() === "json"
@@ -753,7 +756,7 @@ const DocumentView: Component<{
     if (editBusy()) return;
     const session = editSession();
     if (!session || props.root !== session.root || props.path !== session.path) return;
-    const parsedDraft = parsedCurrentEdit(session.root);
+    const parsedDraft = parsedCurrentEdit(session.root, session.fields);
     if (parsedDraft.isErr()) return;
     const draftChanges = diffFields(session.fields, parsedDraft.value);
     const operation = ++editOperation;

@@ -185,13 +185,18 @@ const ObjectDetail: Component<{
       setError(t("storage.metadataInvalid"));
       return;
     }
-    const clean: Record<string, string> = {};
+    const clean: Record<string, string | null> = {};
     for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof v !== "string") {
         setError(t("storage.metadataInvalid"));
         return;
       }
       clean[k] = v;
+    }
+    for (const existingKey of Object.keys(m()?.metadata ?? {})) {
+      if (!Object.hasOwn(clean, existingKey)) {
+        clean[existingKey] = null;
+      }
     }
     const r = await patchObjectMetadata(props.bucket, props.name, clean);
     r.match(

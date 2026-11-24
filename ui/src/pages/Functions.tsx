@@ -28,7 +28,7 @@ import {
   StatusBadge,
 } from "../components/common";
 import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
-import { listUsers, type UserInfo } from "../api/auth";
+import { listUsers, signInWithCustomToken, type UserInfo } from "../api/auth";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -52,33 +52,6 @@ type DrawerAction = { kind: "publish" | "invoke" | "enqueue"; key: string };
 
 const functionTargetKey = (project: string, f: FunctionInfo): string =>
   JSON.stringify([appState.session(), project, f.region, f.name, f.trigger]);
-
-const base64Url = (input: string): string => {
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-};
-
-const buildUnsignedEmulatorJwt = (user: UserInfo, project: string): string => {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
-  const payload = base64Url(
-    JSON.stringify({
-      iss: `https://securetoken.google.com/${project}`,
-      aud: project,
-      auth_time: now,
-      user_id: user.localId,
-      sub: user.localId,
-      iat: now,
-      exp: now + 3600,
-      ...(user.email ? { email: user.email } : {}),
-      email_verified: Boolean(user.emailVerified),
-      firebase: { identities: {}, sign_in_provider: "custom" },
-    }),
-  );
-  return `${header}.${payload}.`;
-};
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
@@ -439,10 +412,11 @@ const InvokeForm: Component<{
                 setAuthToken("");
                 return;
               }
-              const user = (authUsers() ?? []).find((u) => u.localId === uid);
-              if (user) {
-                setAuthToken(buildUnsignedEmulatorJwt(user, props.project ?? appState.project()));
-              }
+              const project = props.project ?? appState.project();
+              void signInWithCustomToken(project, uid, appState.clock()).match(
+                (res) => setAuthToken(res.idToken),
+                (err) => props.onError(err.message),
+              );
             }}
           >
             <option value="">{t("functions.invokeManualToken")}</option>
@@ -885,6 +859,9 @@ export const FunctionRows: Component<{
 const Functions: Component = () => {
   const [registeredFilter, setRegisteredFilter] = createSignal("");
   const [drawer, setDrawer] = createSignal<DrawerAction | null>(null);
+  const [drawerError, setDrawerError] = createSignal<string | null>(null);
+  let drawerOpener: HTMLElement | null = null;
+  let drawerCloseBtn: HTMLButtonElement | undefined;
   const [structuredLogs, setStructuredLogs] = createSignal(false);
   const [overview, { refetch }] = createResource(() => settle(functionsOverview()));
   // This global overview belongs to the Functions owner, independently of the top bar.
@@ -1167,11 +1144,38 @@ const Functions: Component = () => {
       (o()?.functions ?? []).find((f) => functionTargetKey(proj, f) === activeDrawer.key) ?? null
     );
   });
-  const toggleDrawer = (action: DrawerAction) => {
-    setDrawer((current) =>
-      current && current.kind === action.kind && current.key === action.key ? null : action,
-    );
+  const closeDrawer = (restoreFocus = false) => {
+    setDrawer(null);
+    setDrawerError(null);
+    if (restoreFocus && drawerOpener?.isConnected) {
+      drawerOpener.focus();
+    }
+    drawerOpener = null;
   };
+  const toggleDrawer = (action: DrawerAction) => {
+    setDrawerError(null);
+    setDrawer((current) => {
+      if (current && current.kind === action.kind && current.key === action.key) {
+        return null;
+      }
+      if (document.activeElement instanceof HTMLElement) {
+        drawerOpener = document.activeElement;
+      }
+      return action;
+    });
+  };
+  createEffect(() => {
+    if (!drawer() || !drawerFunction()) return;
+    queueMicrotask(() => drawerCloseBtn?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDrawer(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  });
   return (
     <div>
       <h1 class="page-title mb-4">{t("functions.title")}</h1>
@@ -1288,55 +1292,68 @@ const Functions: Component = () => {
                 const action = drawer()!;
                 const fnInfo = drawerFunction()!;
                 return (
-                  <aside
-                    class="fixed inset-y-0 right-0 z-40 w-full max-w-lg overflow-y-auto border-l border-line bg-surface p-4 shadow-xl"
-                    data-testid="functions-drawer"
-                    aria-label={t("functions.drawerTitle")}
-                  >
-                    <div class="mb-3 flex items-center justify-between gap-2 border-b border-line-subtle pb-2">
-                      <div class="min-w-0">
-                        <div class="text-xs uppercase tracking-wide text-muted">
-                          {t("functions.drawerTitle")}
+                  <div class="fixed inset-0 z-40 flex justify-end">
+                    <div
+                      class="fixed inset-0 bg-black/25"
+                      aria-hidden="true"
+                      onClick={() => closeDrawer(true)}
+                    />
+                    <aside
+                      role="dialog"
+                      aria-modal="true"
+                      aria-label={`${t("functions.drawerTitle")}: ${fnInfo.name}`}
+                      class="relative z-10 h-full w-full max-w-lg overflow-y-auto border-l border-line bg-surface p-4 shadow-xl"
+                      data-testid="functions-drawer"
+                    >
+                      <div class="mb-3 flex items-center justify-between gap-2 border-b border-line-subtle pb-2">
+                        <div class="min-w-0">
+                          <div class="text-xs uppercase tracking-wide text-muted">
+                            {t("functions.drawerTitle")}
+                          </div>
+                          <h3 class="mono truncate font-semibold">{fnInfo.name}</h3>
                         </div>
-                        <h3 class="mono truncate font-semibold">{fnInfo.name}</h3>
+                        <button
+                          ref={(el) => {
+                            drawerCloseBtn = el;
+                          }}
+                          type="button"
+                          class="btn btn-sm"
+                          data-testid="functions-drawer-close"
+                          onClick={() => closeDrawer(true)}
+                        >
+                          {t("app.close")}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        class="btn btn-sm"
-                        data-testid="functions-drawer-close"
-                        onClick={() => setDrawer(null)}
-                      >
-                        {t("app.close")}
-                      </button>
-                    </div>
-                    <Show when={action.kind === "publish" && fnInfo.trigger.kind === "pubsub"}>
-                      <PublishForm
-                        topic={(fnInfo.trigger as { topic: string }).topic}
-                        onDone={(count) => {
-                          setDrawer(null);
-                          setNotice(t("functions.published", { count }));
-                        }}
-                      />
-                    </Show>
-                    <Show when={action.kind === "invoke" && fnInfo.trigger.kind === "http"}>
-                      <InvokeForm
-                        f={fnInfo}
-                        project={o()?.project ?? appState.project()}
-                        functionsAddr={o()?.functionsAddr ?? null}
-                        onError={setError}
-                      />
-                    </Show>
-                    <Show when={action.kind === "enqueue" && fnInfo.trigger.kind === "tasks"}>
-                      <EnqueueForm
-                        f={fnInfo}
-                        onDone={() => {
-                          setDrawer(null);
-                          setNotice(t("functions.enqueued", { name: fnInfo.name }));
-                        }}
-                        onError={setError}
-                      />
-                    </Show>
-                  </aside>
+                      <ErrorBanner message={drawerError()} />
+                      <Show when={action.kind === "publish" && fnInfo.trigger.kind === "pubsub"}>
+                        <PublishForm
+                          topic={(fnInfo.trigger as { topic: string }).topic}
+                          onDone={(count) => {
+                            closeDrawer(true);
+                            setNotice(t("functions.published", { count }));
+                          }}
+                        />
+                      </Show>
+                      <Show when={action.kind === "invoke" && fnInfo.trigger.kind === "http"}>
+                        <InvokeForm
+                          f={fnInfo}
+                          project={o()?.project ?? appState.project()}
+                          functionsAddr={o()?.functionsAddr ?? null}
+                          onError={setDrawerError}
+                        />
+                      </Show>
+                      <Show when={action.kind === "enqueue" && fnInfo.trigger.kind === "tasks"}>
+                        <EnqueueForm
+                          f={fnInfo}
+                          onDone={() => {
+                            closeDrawer(true);
+                            setNotice(t("functions.enqueued", { name: fnInfo.name }));
+                          }}
+                          onError={setDrawerError}
+                        />
+                      </Show>
+                    </aside>
+                  </div>
                 );
               }}
             </Show>

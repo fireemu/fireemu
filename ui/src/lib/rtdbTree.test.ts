@@ -24,11 +24,14 @@ describe("rtdbTree", () => {
       ],
     });
 
-    const arr = parseRtdbTree('["hi",null]', "/");
+    const arr = parseRtdbTree('["hi",null,"yo"]', "/");
     expect(arr?.entries.map((e) => [e.key, e.path, e.kind])).toEqual([
       ["0", "/0", "string"],
-      ["1", "/1", "null"],
+      ["2", "/2", "string"],
     ]);
+
+    const intSorted = parseRtdbTree('{"10":"ten","2":"two","a":"alpha"}', "/");
+    expect(intSorted?.entries.map((e) => e.key)).toEqual(["2", "10", "a"]);
   });
 
   it("returns empty entries for primitives and null for invalid JSON", () => {

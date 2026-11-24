@@ -37,7 +37,7 @@ pub struct Reply {
     /// HTTP status code.
     pub status: u16,
     body: ReplyBody,
-    /// Optional ETag header value.
+    /// Optional `ETag` header value.
     pub etag: Option<String>,
 }
 

@@ -72,7 +72,7 @@ export const downloadObject = (
 export const patchObjectMetadata = (
   bucket: string,
   name: string,
-  metadata: Record<string, string>,
+  metadata: Record<string, string | null>,
 ): ResultAsync<ObjectInfo, ApiError> =>
   request<ObjectInfo>("PATCH", `${bucketUrl(bucket)}/o/${encodeURIComponent(name)}`, { metadata });
 

@@ -1082,6 +1082,20 @@ export const en = {
   "storage.metadataSaved": "Custom metadata saved.",
   "storage.metadataInvalid": "Custom metadata must be a JSON object of strings.",
   "storage.formatJsonPreview": "Pretty JSON",
+  "app.inactive": "not running",
+  "header.faultClearConfirm": "Clear the active fault plan for session {session}?",
+  "pubsub.resourceName": "Resource name",
+  "pubsub.attributesInvalid": "Attributes must be a JSON object of strings.",
+  "pubsub.ackDeadlineInvalid": "Ack deadline must be an integer between 10 and 600 seconds.",
+  "pubsub.maxDeliveryInvalid": "Max delivery attempts must be an integer between 5 and 100.",
+  "pubsub.filterPrefix": "filter: {value}",
+  "pubsub.dlqPrefix": "DLQ: {value}",
+  "remoteConfig.inAppDefault": "(in-app default)",
+  "remoteConfig.draftTag": "Unsaved draft",
+  "database.treeTruncated": "+{count} more keys (edit or query below)",
+  "rules.covCovered": "covered",
+  "rules.covPartial": "partial branch coverage",
+  "rules.covUnreached": "not reached",
 } as const;
 
 export type MessageKey = keyof typeof en;

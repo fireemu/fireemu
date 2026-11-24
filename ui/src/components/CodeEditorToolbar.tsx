@@ -1,4 +1,4 @@
-import { createSignal, Show, type Component } from "solid-js";
+import { createEffect, createSignal, Show, type Component } from "solid-js";
 import { t } from "../i18n";
 
 /**
@@ -13,10 +13,8 @@ export const formatJsonText = (raw: string): string | null => {
 };
 
 /**
- * Handles Tab indentation inside code textareas only when Shift is not held and the user
- * intentionally indents with Ctrl+M / Alt+Tab, OR optionally inserts 2 spaces when opted in.
- * To preserve keyboard navigation (e.g. Tab out of textareas for accessibility and E2E tests),
- * this helper binds `Ctrl+Shift+F` / `Cmd+Shift+F` for JSON formatting when `onFormat` is provided.
+ * Binds `Ctrl+Shift+F` / `Cmd+Shift+F` inside code textareas to invoke `onFormat`,
+ * leaving `Tab` unhandled so keyboard navigation out of textareas remains intact.
  */
 export const onCodeEditorKeyDown = (event: KeyboardEvent, onFormat?: () => void): void => {
   if (
@@ -34,11 +32,17 @@ export const onCodeEditorKeyDown = (event: KeyboardEvent, onFormat?: () => void)
 export const CodeEditorToolbar: Component<{
   value: string;
   onFormat?: (formatted: string) => void;
+  disabled?: boolean;
   testId?: string;
 }> = (props) => {
   const [formatError, setFormatError] = createSignal(false);
+  createEffect(() => {
+    void props.value;
+    setFormatError(false);
+  });
   const lineCount = () => (props.value ? props.value.split("\n").length : 0);
   const handleFormat = () => {
+    if (props.disabled) return;
     const formatted = formatJsonText(props.value);
     if (formatted === null) {
       setFormatError(true);
@@ -52,12 +56,15 @@ export const CodeEditorToolbar: Component<{
       <span>{t("editor.lines", { lines: lineCount() })}</span>
       <div class="flex items-center gap-2">
         <Show when={formatError()}>
-          <span class="text-danger">{t("editor.invalidJson")}</span>
+          <span role="alert" class="text-danger">
+            {t("editor.invalidJson")}
+          </span>
         </Show>
         <Show when={props.onFormat}>
           <button
             type="button"
             class="btn btn-sm"
+            disabled={props.disabled}
             data-testid={props.testId ? `${props.testId}-format` : undefined}
             onClick={handleFormat}
           >

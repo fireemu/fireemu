@@ -82,12 +82,15 @@ const store = createRoot(() => {
     () => sessions().find((s) => s.name === session())?.project ?? config().project,
   );
 
+  let faultEpoch = 0;
+
   /** Updates the header's active fault-plan indicator without affecting connection status. */
   const refreshFaultSummary = async (): Promise<void> => {
+    const mine = ++faultEpoch;
     const selected = session();
     try {
       const result = await getFaultPlan(selected);
-      if (selected !== session()) return;
+      if (mine !== faultEpoch || selected !== session()) return;
       result.match(
         (info) =>
           setFaultSummary({

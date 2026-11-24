@@ -52,6 +52,40 @@ describe("firestoreJson", () => {
     });
   });
 
+  it("preserves original special Firestore types when unchanged in JSON mode", () => {
+    const original = {
+      createdAt: { timestampValue: "2026-08-29T12:00:00Z" },
+      ref: { referenceValue: "projects/p/databases/(default)/documents/users/u1" },
+      blob: { bytesValue: "AQID" },
+      loc: { geoPointValue: { latitude: 35.6, longitude: 139.7 } },
+      bigInt: { integerValue: "9007199254740993" },
+      wholeDouble: { doubleValue: 5 },
+      nested: {
+        mapValue: {
+          fields: {
+            at: { timestampValue: "2026-08-29T12:00:00Z" },
+            title: { stringValue: "old" },
+          },
+        },
+      },
+    };
+    const plain = fsFieldsToPlainJson(original);
+    (plain.nested as Record<string, unknown>).title = "new";
+    const reparsed = plainJsonToFsFields(JSON.stringify(plain), original);
+    expect(reparsed.isOk()).toBe(true);
+    expect(reparsed._unsafeUnwrap()).toEqual({
+      ...original,
+      nested: {
+        mapValue: {
+          fields: {
+            at: { timestampValue: "2026-08-29T12:00:00Z" },
+            title: { stringValue: "new" },
+          },
+        },
+      },
+    });
+  });
+
   it("rejects non-object roots, empty keys, and nested arrays", () => {
     expect(plainJsonToFsFields("[1,2]").isErr()).toBe(true);
     expect(plainJsonToFsFields('{"": 1}').isErr()).toBe(true);

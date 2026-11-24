@@ -95,4 +95,17 @@ describe("PubSub page", () => {
     const ui = render(() => <PubSub />);
     await waitFor(() => expect(ui.getByTestId("pubsub-unavailable")).toBeTruthy());
   });
+
+  it("rejects out-of-range ackDeadlineSeconds with an error instead of silently clamping", async () => {
+    const ui = render(() => <PubSub />);
+    await waitFor(() => expect(ui.getByTestId("pubsub-topic-orders")).toBeTruthy());
+    fireEvent.click(ui.getByTestId("pubsub-tab-subscriptions"));
+    await waitFor(() => expect(ui.getByTestId("pubsub-new-sub-id")).toBeTruthy());
+
+    fireEvent.input(ui.getByTestId("pubsub-new-sub-id"), { target: { value: "bad-sub" } });
+    const ackInput = ui.getByLabelText("Ack deadline (seconds)") as HTMLInputElement;
+    fireEvent.input(ackInput, { target: { value: "5" } });
+    fireEvent.click(ui.getByTestId("pubsub-create-sub"));
+    await waitFor(() => expect(ui.getByRole("alert").textContent).toContain("10 and 600"));
+  });
 });

@@ -11,7 +11,7 @@ import {
   type Component,
 } from "solid-js";
 import { CommandPalette } from "./components/CommandPalette";
-import { AsyncButton, StatusBadge, type Tone } from "./components/common";
+import { ConfirmButton, ErrorBanner, StatusBadge, type Tone } from "./components/common";
 import { HeaderClock } from "./components/HeaderClock";
 import { openCommandPalette, openShortcutHelp } from "./components/overlays";
 import { Shortcuts } from "./components/Shortcuts";
@@ -151,6 +151,7 @@ const RUNTIME_NAV: NavItem[] = [
 /** The frame: sidebar navigation, a status bar with the clock, the routed page. */
 export const App: Component<RouteSectionProps> = (props) => {
   const [navigationOpen, setNavigationOpen] = createSignal(false);
+  const [faultError, setFaultError] = createSignal<string | null>(null);
   onMount(() => {
     void appState.refreshClock();
     const timer = window.setInterval(() => void appState.refreshClock(), 5000);
@@ -232,18 +233,23 @@ export const App: Component<RouteSectionProps> = (props) => {
         </button>
         <nav class="space-y-0.5" aria-label={t("nav.sectionOfficial")}>
           <For each={OFFICIAL_NAV}>
-            {(item) => (
-              <A
-                href={item.href}
-                class="nav-link"
-                classList={{ "opacity-65": item.active !== undefined && !item.active() }}
-                onClick={() => setNavigationOpen(false)}
-                end={item.href === "/"}
-              >
-                <item.icon />
-                {t(item.key)}
-              </A>
-            )}
+            {(item) => {
+              const inactive = () => item.active !== undefined && !item.active();
+              return (
+                <A
+                  href={item.href}
+                  class="nav-link"
+                  classList={{ "opacity-80": inactive() }}
+                  title={inactive() ? `${t(item.key)} (${t("app.inactive")})` : undefined}
+                  aria-description={inactive() ? t("app.inactive") : undefined}
+                  onClick={() => setNavigationOpen(false)}
+                  end={item.href === "/"}
+                >
+                  <item.icon />
+                  {t(item.key)}
+                </A>
+              );
+            }}
           </For>
         </nav>
         <div class="mt-5 mb-1 px-3 text-xs font-semibold tracking-wide text-muted uppercase">
@@ -336,18 +342,23 @@ export const App: Component<RouteSectionProps> = (props) => {
                     })}
                   </StatusBadge>
                 </A>
-                <AsyncButton
+                <ConfirmButton
                   class="btn btn-sm"
+                  label={t("header.faultClear")}
+                  question={t("header.faultClearConfirm", { session: appState.session() })}
                   testId="header-fault-clear"
-                  onClick={async () => {
+                  onConfirm={async () => {
+                    setFaultError(null);
                     const res = await clearFaultPlan(appState.session());
-                    if (res.isOk()) await appState.refreshFaultSummary();
+                    await res.match(
+                      async () => appState.refreshFaultSummary(),
+                      async (e) => setFaultError(e.message),
+                    );
                   }}
-                >
-                  {t("header.faultClear")}
-                </AsyncButton>
+                />
               </span>
             </Show>
+            <Show when={faultError()}>{(msg) => <ErrorBanner message={msg()} />}</Show>
           </div>
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span role="status" class="sr-only" data-testid="connection-status">

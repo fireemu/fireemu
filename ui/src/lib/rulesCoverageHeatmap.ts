@@ -38,12 +38,14 @@ export const buildCoverageHeatmap = (source: string, report: CoverageNode[]): He
         let hasTrue = false;
         let hasFalse = false;
         let allBool = true;
+        let exprHits = 0;
         for (const v of values) {
-          stats.hits += v.count;
+          exprHits += v.count;
           if (v.value.boolValue === true) hasTrue = true;
           else if (v.value.boolValue === false) hasFalse = true;
           else allBool = false;
         }
+        if (exprHits > stats.hits) stats.hits = exprHits;
         if (allBool && !(hasTrue && hasFalse)) {
           stats.singleBoolBranch = true;
         }

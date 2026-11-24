@@ -22,6 +22,7 @@ export const HeaderClock: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   let container: HTMLDivElement | undefined;
   let trigger: HTMLButtonElement | undefined;
+  let closeButton: HTMLButtonElement | undefined;
   const guard = appState.clockGuard;
   const frozen = () => appState.clockMode() === "frozen";
 
@@ -34,7 +35,8 @@ export const HeaderClock: Component = () => {
   createEffect(
     on(open, (isOpen) => {
       if (!isOpen) return;
-      const onPointerDown = (event: MouseEvent) => {
+      queueMicrotask(() => closeButton?.focus());
+      const onPointerDown = (event: PointerEvent) => {
         if (container && event.target instanceof Node && !container.contains(event.target)) {
           close(false);
         }
@@ -45,10 +47,10 @@ export const HeaderClock: Component = () => {
           close(true);
         }
       };
-      window.addEventListener("mousedown", onPointerDown);
+      window.addEventListener("pointerdown", onPointerDown);
       window.addEventListener("keydown", onKeyDown);
       onCleanup(() => {
-        window.removeEventListener("mousedown", onPointerDown);
+        window.removeEventListener("pointerdown", onPointerDown);
         window.removeEventListener("keydown", onKeyDown);
       });
     }),
@@ -108,7 +110,7 @@ export const HeaderClock: Component = () => {
         class="inline-flex items-center gap-1.5 rounded-control px-1.5 py-0.5 text-left transition-colors hover:bg-hover"
         aria-haspopup="dialog"
         aria-expanded={open()}
-        aria-label={t("header.clockOpen")}
+        title={t("header.clockOpen")}
         data-testid="header-clock-trigger"
         onClick={() => setOpen((was) => !was)}
       >
@@ -128,11 +130,18 @@ export const HeaderClock: Component = () => {
           role="dialog"
           aria-label={t("header.clockControls")}
           data-testid="clock-popover"
-          class="dialog absolute top-full left-0 z-30 mt-1.5 w-80 max-w-[90vw] p-3 text-sm"
+          class="dialog absolute top-full right-0 z-30 mt-1.5 w-80 max-w-[90vw] p-3 text-sm sm:right-auto sm:left-0"
         >
           <div class="mb-2 flex items-center justify-between gap-2">
             <span class="font-semibold text-content">{t("header.clockControls")}</span>
-            <button type="button" class="btn btn-sm" onClick={() => close(true)}>
+            <button
+              ref={(el) => {
+                closeButton = el;
+              }}
+              type="button"
+              class="btn btn-sm"
+              onClick={() => close(true)}
+            >
               {t("app.close")}
             </button>
           </div>

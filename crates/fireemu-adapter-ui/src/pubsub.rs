@@ -48,7 +48,8 @@ fn invalid(message: &str) -> UiResponse {
 fn valid_id(segment: &str) -> bool {
     !segment.is_empty()
         && segment.len() <= 255
-        && !segment.contains("..")
+        && segment != "."
+        && segment != ".."
         && !crate::has_control_chars(segment)
         && segment
             .bytes()
@@ -120,26 +121,20 @@ pub fn prepare(
     }
     let method = req.method.as_str();
     let admitted = match (parts[1], &parts[2..]) {
-        ("topics", []) => method == "GET",
+        ("topics" | "subscriptions" | "snapshots", []) => method == "GET",
         ("topics", [leaf]) => match leaf.split_once(':') {
             Some((id, "publish")) => valid_id(id) && method == "POST",
             Some(_) => false,
             None => valid_id(leaf) && matches!(method, "GET" | "PUT" | "PATCH" | "DELETE"),
         },
-        ("topics", [id, sub]) if matches!(*sub, "subscriptions" | "snapshots") => {
-            valid_id(id) && method == "GET"
-        }
-        ("subscriptions", []) => method == "GET",
+        ("topics", [id, "subscriptions" | "snapshots"]) => valid_id(id) && method == "GET",
         ("subscriptions", [leaf]) => match leaf.split_once(':') {
-            Some((id, op))
-                if matches!(op, "pull" | "acknowledge" | "modifyAckDeadline" | "seek") =>
-            {
+            Some((id, "pull" | "acknowledge" | "modifyAckDeadline" | "seek")) => {
                 valid_id(id) && method == "POST"
             }
             Some(_) => false,
             None => valid_id(leaf) && matches!(method, "GET" | "PUT" | "PATCH" | "DELETE"),
         },
-        ("snapshots", []) => method == "GET",
         ("snapshots", [leaf]) => {
             !leaf.contains(':') && valid_id(leaf) && matches!(method, "GET" | "PUT" | "DELETE")
         }
@@ -184,7 +179,7 @@ pub async fn route(state: &Arc<UiState>, rest: &str, req: &UiRequest) -> UiRespo
         headers.push(("authorization".to_owned(), format!("Bearer {token}")));
     }
     let result = match tokio::time::timeout(
-        Duration::from_secs(15),
+        Duration::from_secs(25),
         fireemu_adapter_functions::http::forward(
             &endpoint.loopback().to_string(),
             &req.method,

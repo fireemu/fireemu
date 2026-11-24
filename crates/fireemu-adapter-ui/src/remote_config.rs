@@ -1,7 +1,7 @@
 //! In-process front to this runtime's Remote Config template store.
 //!
 //! Shares the exact `TemplateStore` served on the HTTP listener so changes made via the
-//! Admin SDK and the Emulator UI observe the same versions and ETags.
+//! Admin SDK and the Emulator UI observe the same versions and `ETags`.
 
 use crate::{UiBody, UiRequest, UiResponse, UiState, MAX_JSON_BODY_BYTES};
 

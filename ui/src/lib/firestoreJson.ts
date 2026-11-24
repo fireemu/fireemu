@@ -4,6 +4,21 @@ import type { FsValue } from "./firestoreValue";
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const plainDeepEqual = (a: unknown, b: unknown): boolean => {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => plainDeepEqual(v, b[i]));
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    return (
+      ka.length === kb.length && ka.every((k) => Object.hasOwn(b, k) && plainDeepEqual(a[k], b[k]))
+    );
+  }
+  return false;
+};
+
 /** Convert a Firestore REST typed value to plain JSON for readable export or editing. */
 export const fsValueToPlain = (value: FsValue): unknown => {
   if ("nullValue" in value) return null;
@@ -38,11 +53,15 @@ export const fsFieldsToPlainJson = (
   return out;
 };
 
-/** Convert a plain JSON value into a Firestore REST typed value. */
+/** Convert a plain JSON value into a Firestore REST typed value, preserving `original` if unchanged. */
 export const plainJsonToFsValue = (
   value: unknown,
   insideArray = false,
+  original?: FsValue,
 ): Result<FsValue, string> => {
+  if (original !== undefined && plainDeepEqual(value, fsValueToPlain(original))) {
+    return ok(original);
+  }
   if (value === null) return ok({ nullValue: null });
   if (typeof value === "boolean") return ok({ booleanValue: value });
   if (typeof value === "string") return ok({ stringValue: value });
@@ -54,18 +73,22 @@ export const plainJsonToFsValue = (
   }
   if (Array.isArray(value)) {
     if (insideArray) return err("Firestore arrays cannot directly contain another array.");
+    const origItems =
+      original && "arrayValue" in original ? (original.arrayValue.values ?? []) : [];
     const values: FsValue[] = [];
     for (let i = 0; i < value.length; i++) {
-      const converted = plainJsonToFsValue(value[i], true);
+      const converted = plainJsonToFsValue(value[i], true, origItems[i]);
       if (converted.isErr()) return err(`[${i}]: ${converted.error}`);
       values.push(converted.value);
     }
     return ok({ arrayValue: { values } });
   }
   if (isPlainObject(value)) {
+    const origFields =
+      original && "mapValue" in original ? (original.mapValue.fields ?? {}) : undefined;
     const fields: Record<string, FsValue> = {};
     for (const [k, v] of Object.entries(value)) {
-      const converted = plainJsonToFsValue(v, false);
+      const converted = plainJsonToFsValue(v, false, origFields?.[k]);
       if (converted.isErr()) return err(`${k}: ${converted.error}`);
       fields[k] = converted.value;
     }
@@ -75,7 +98,10 @@ export const plainJsonToFsValue = (
 };
 
 /** Parse a JSON text string representing a document's top-level fields object into Firestore values. */
-export const plainJsonToFsFields = (raw: string): Result<Record<string, FsValue>, string> => {
+export const plainJsonToFsFields = (
+  raw: string,
+  original?: Record<string, FsValue>,
+): Result<Record<string, FsValue>, string> => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;
@@ -88,7 +114,7 @@ export const plainJsonToFsFields = (raw: string): Result<Record<string, FsValue>
   const fields: Record<string, FsValue> = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (!key) return err("Field names must not be empty.");
-    const converted = plainJsonToFsValue(value, false);
+    const converted = plainJsonToFsValue(value, false, original?.[key]);
     if (converted.isErr()) return err(`${key}: ${converted.error}`);
     fields[key] = converted.value;
   }

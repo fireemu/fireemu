@@ -101,4 +101,46 @@ describe("RemoteConfig page", () => {
     fireEvent.click(ui.getByTestId("rc-trigger-send"));
     await waitFor(() => expect(control.publishRemoteConfigUpdate).toHaveBeenCalled());
   });
+
+  it("refuses quick-add on invalid JSON without wiping draft and preserves conditionalValues on existing key", async () => {
+    const withCond = JSON.stringify(
+      {
+        parameters: {
+          welcome_text: {
+            valueType: "STRING",
+            defaultValue: { value: "Hello" },
+            conditionalValues: { ios: { value: "Hi iOS" } },
+          },
+        },
+        version: { versionNumber: "2" },
+      },
+      null,
+      2,
+    );
+    vi.mocked(rc.getRemoteConfigTemplate).mockReturnValue(
+      okAsync({ status: 200, body: withCond, etag: "etag-v2" }),
+    );
+    const ui = render(() => (
+      <Router>
+        <Route path="*" component={() => <RemoteConfig />} />
+      </Router>
+    ));
+    await waitFor(() => expect(ui.getByTestId("rc-template-editor")).toBeTruthy());
+    const editor = ui.getByTestId("rc-template-editor") as HTMLTextAreaElement;
+
+    // Update existing key preserves conditionalValues.
+    fireEvent.input(ui.getByTestId("rc-quick-key"), { target: { value: "welcome_text" } });
+    fireEvent.input(ui.getByTestId("rc-quick-value"), { target: { value: "Updated" } });
+    fireEvent.click(ui.getByTestId("rc-quick-add"));
+    expect(JSON.parse(editor.value).parameters.welcome_text.conditionalValues).toEqual({
+      ios: { value: "Hi iOS" },
+    });
+
+    // Invalid JSON draft is preserved when quick-add fails.
+    fireEvent.input(editor, { target: { value: "{ invalid" } });
+    fireEvent.input(ui.getByTestId("rc-quick-key"), { target: { value: "other" } });
+    fireEvent.click(ui.getByTestId("rc-quick-add"));
+    expect(editor.value).toBe("{ invalid");
+    expect(ui.getByRole("alert")).toBeTruthy();
+  });
 });

@@ -2753,3 +2753,52 @@ async fn pubsub_front_reports_unavailable_when_unconfigured() {
     .await;
     assert_eq!(status, 503, "{body}");
 }
+
+#[tokio::test]
+async fn remote_config_over_real_http_listener_forwards_if_match_and_enforces_etag() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn raw_http(addr: std::net::SocketAddr, req: &str) -> String {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    let s = state();
+    let token = s.control_token.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let serve_state = Arc::clone(&s);
+    let server_task = tokio::spawn(async move {
+        let _ = fireemu_adapter_ui::server::serve_ui(listener, serve_state).await;
+    });
+
+    let payload = r#"{"parameters":{"banner":{"defaultValue":{"value":"hi"}}}}"#;
+    let put_req = format!(
+        "PUT /ui/api/remoteconfig/v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIf-Match: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    let resp = raw_http(addr, &put_req).await;
+    assert!(resp.starts_with("HTTP/1.1 200 OK"), "unexpected response: {resp}");
+    let etag = resp
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            k.eq_ignore_ascii_case("etag").then(|| v.trim().to_owned())
+        })
+        .expect("etag header in response");
+
+    // Stale ETag over real HTTP returns 412 (proves If-Match reached Remote Config).
+    let stale_req = format!(
+        "PUT /ui/api/remoteconfig/v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIf-Match: {etag}-stale\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
+    let stale_resp = raw_http(addr, &stale_req).await;
+    assert!(
+        stale_resp.starts_with("HTTP/1.1 412"),
+        "expected 412 for stale ETag, got: {stale_resp}"
+    );
+
+    server_task.abort();
+}
