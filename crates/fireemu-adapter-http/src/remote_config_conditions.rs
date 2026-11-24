@@ -242,14 +242,18 @@ impl Parser {
 }
 
 /// A version the Admin SDK compares as the recorded `1.2.3`: one to five dot-separated runs of
-/// ASCII digits (its `compareSemanticVersions` splits on `.`, reads each part as a number and
+/// ASCII digits without a leading zero (its `compareSemanticVersions` splits on `.`, reads each part as a number and
 /// accepts at most five parts).
 fn plain_version(target: &str) -> bool {
     let parts: Vec<_> = target.split('.').collect();
     parts.len() <= 5
-        && parts
-            .iter()
-            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        && parts.iter().all(|part| {
+            // `0` alone, or digits without a leading zero (`02` keeps the earlier `{}`;
+            // ruling 6).
+            !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && (part.len() == 1 || !part.starts_with('0'))
+        })
 }
 
 /// A regular expression of the plain recorded form: an optional `^`, letters, digits, `_`, `-`,

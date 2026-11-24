@@ -1944,7 +1944,11 @@ mod tests {
                 proptest::collection::vec(text, 1..4)
             )
                 .prop_map(|(op, key, values)| Atom::Text { op, key, values }),
-            (any::<u8>(), "[a-z_]{1,8}", "[0-9]{1,3}(\\.[0-9]{1,3}){0,2}")
+            (
+                any::<u8>(),
+                "[a-z_]{1,8}",
+                "(0|[1-9][0-9]{0,2})(\\.(0|[1-9][0-9]{0,2})){0,4}"
+            )
                 .prop_map(|(op, key, target)| Atom::Semver { op, key, target }),
         ]
     }
@@ -2064,6 +2068,9 @@ mod tests {
             "version(app.customSignal['v']) < '1..2'",
             "version(app.customSignal['v']) < '1.2.3.4.5.6'",
             "version(app.customSignal['v']) < ''",
+            // Codex review r2 (ruling 6): a component with a leading zero.
+            "version(app.customSignal['v']) < '02.1.3'",
+            "version(app.customSignal['v']) < '1.00'",
         ] {
             for settings in [RemoteConfigSettings::default(), strict()] {
                 let stores = RemoteConfigStores::default();
@@ -2097,6 +2104,7 @@ mod tests {
             "app.customSignal['k'].matches(['a b.c-d_e'])",
             "version(app.customSignal['v']) < '1'",
             "version(app.customSignal['v']) < '1.2.3.4.5'",
+            "version(app.customSignal['v']) < '0.10.0'",
         ] {
             assert_ne!(
                 crate::remote_config_conditions::structured(expression),
@@ -2107,6 +2115,17 @@ mod tests {
     }
 
     proptest::proptest! {
+        #[test]
+        fn a_version_component_with_a_leading_zero_is_never_converted(
+            before in proptest::collection::vec("(0|[1-9][0-9]{0,2})", 0..2),
+            padded in "0[0-9]{1,3}",
+            after in proptest::collection::vec("(0|[1-9][0-9]{0,2})", 0..2),
+        ) {
+            let parts: Vec<String> = before.into_iter().chain([padded]).chain(after).collect();
+            let expression = format!("version(app.customSignal['v']) < '{}'", parts.join("."));
+            proptest::prop_assert_eq!(crate::remote_config_conditions::structured(&expression), json!({}));
+        }
+
         #[test]
         fn a_regex_target_outside_the_plain_form_is_never_converted(
             prefix in "[a-z]{0,3}",
