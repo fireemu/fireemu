@@ -1039,7 +1039,7 @@
     },
     "crates/fireemu-adapter-http/src/remote_config_http.rs": {
       "kind": "sha256",
-      "value": "98995f8b7ed882bed6cd53e960489f6498a427225593710d07012686d18924fe"
+      "value": "2419b8b66edccfa7770a0e302d4f6fb32582b6c829cdeddc5c3ad34e4f968122"
     },
     "crates/fireemu-adapter-http/src/remote_config_testdata/conditions_pict.tsv": {
       "kind": "sha256",

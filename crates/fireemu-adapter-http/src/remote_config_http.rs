@@ -502,8 +502,9 @@ pub(crate) fn dispatch(
                 }
             }
             // The data plane serves group parameters next to the top-level ones and no
-            // `parameterGroups` key (seq 59); production refuses a key used twice before a
-            // version exists.
+            // `parameterGroups` key (seq 59). A name used both in a group and at the top level is
+            // refused at validation, as before (unrecorded in production; ruling 4 item 4), so no
+            // merge rule is needed here.
             if let Some(Value::Object(groups)) = body.remove("parameterGroups") {
                 let parameters = body
                     .entry("parameters")
@@ -1989,5 +1990,42 @@ mod tests {
                 &json!({"microPercentLowerBound": 10_000_000, "microPercentUpperBound": 10_000_000})
             )
         );
+    }
+
+    /// Ruling 4 item 4: a group parameter named like a top-level one was not recorded in
+    /// production; Fireemu keeps its earlier answer (refused at validation, nothing published) in
+    /// both namespaces and profiles, so the flattened data plane never meets a collision.
+    #[test]
+    fn a_group_parameter_named_like_a_top_level_one_keeps_the_earlier_refusal() {
+        let body = json!({
+            "parameters": {"p": {"defaultValue": {"value": "top"}}},
+            "parameterGroups": {"g": {"parameters": {"p": {"defaultValue": {"value": "grouped"}}}}}
+        })
+        .to_string();
+        for settings in [RemoteConfigSettings::default(), strict()] {
+            for endpoint in ["remoteConfig", SERVER] {
+                let stores = RemoteConfigStores::default();
+                for query in ["validateOnly=true", ""] {
+                    let reply = request_with(
+                        &stores,
+                        &settings,
+                        endpoint,
+                        "PUT",
+                        query,
+                        body.as_bytes(),
+                        Some("*"),
+                    );
+                    assert_eq!(reply.status, 400, "{endpoint} {query}");
+                    let wire = json_body(&reply);
+                    assert_eq!(wire["error"]["status"], "INVALID_ARGUMENT");
+                    assert_eq!(
+                        wire["error"]["message"],
+                        "invalid or duplicate parameter name \"p\""
+                    );
+                }
+                assert_eq!(stores.client.current().number(), 0);
+                assert_eq!(stores.server.current().number(), 0);
+            }
+        }
     }
 }
