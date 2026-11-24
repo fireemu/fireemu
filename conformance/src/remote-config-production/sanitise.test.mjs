@@ -431,3 +431,13 @@ test("privacy checks decode nested encodings (ruling 5)", () => {
     /e-mail address/,
   );
 });
+
+test("privacy checks decode three nested layers (ruling 5)", () => {
+  const b64 = (text) => Buffer.from(text).toString("base64");
+  const pct = (text) =>
+    [...text].map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`).join("");
+  assert.throws(
+    () => sanitiseRun(withBody(JSON.stringify({ note: b64(pct(b64(NUMBER))) }))),
+    /project number/,
+  );
+});

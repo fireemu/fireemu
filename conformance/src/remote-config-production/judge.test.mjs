@@ -582,3 +582,24 @@ test("an event id of 0 is not a production id (ruling 5)", () => {
     "MISMATCH",
   );
 });
+
+test("escapes of a dropped history entry are not compared (ruling 5)", () => {
+  const history = (versions, escapes) =>
+    answer("h-client-history", `${CLIENT}:listVersions`, { versions }, { escapes });
+  const left = runOf({ client: "27", server: "6" }, [
+    history(
+      [
+        { versionNumber: "27", description: "a<b" },
+        { versionNumber: "28", description: "a<b" },
+      ],
+      { "value:/versions/0/description": [[1, "\\u003c"]] },
+    ),
+  ]);
+  const right = runOf({ client: "10", server: "20" }, [
+    history([{ versionNumber: "11", description: "a<b" }], {}),
+  ]);
+  assert.notEqual(
+    compareRuns(left, right, { kind: "production-vs-local" }).rows[0].status,
+    "MISMATCH",
+  );
+});
