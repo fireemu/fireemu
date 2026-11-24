@@ -7,7 +7,7 @@ import VerifiedAreaCount from '../../../../components/VerifiedAreaCount.astro';
 
 Fireemuは、実際のFirebaseプロジェクトに接続せず、ローカル環境やCI上でFirebaseアプリをテストするためのエミュレータです。
 
-Googleが提供するFirebase Local Emulator Suiteは、最も幅広いFirebaseプロダクトに対応した公式ツールです。App Hosting、Data Connect、Extensionsなどを使う開発では公式ツールが適しています。一方、Fireemuは対象範囲を絞り、自動テストやCIの結果を本番Firebaseの挙動に近づけることに注力しています。
+Googleが提供するFirebase Local Emulator Suiteは公式ツールで、Fireemuより多くのプロダクトに対応しています。App Hosting、Data Connect、Extensionsなどが必要な場合は、こちらが適しています。一方、Fireemuは対象範囲を絞り、自動テストやCIの結果を、文書化した範囲で本番Firebaseの挙動に近づけることに注力しています。
 
 ## Local Emulator Suiteとの比較
 
@@ -16,7 +16,7 @@ Googleが提供するFirebase Local Emulator Suiteは、最も幅広いFirebase�
 | 開発・保守 | Google | Fireemuプロジェクト |
 | 対応プロダクト | Firestore、Realtime Database、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Hosting、App Hosting、Data Connect、Extensions | Firestore、Authentication、Cloud Storage、Functions、Pub/Sub、Eventarc、Cloud Tasks、Realtime DatabaseおよびHosting（一部対応）、App Check。App HostingとData Connectは未対応、Extensionsは予定なし（[対応状況](../../#supported-products)） |
 | ランタイム | Node.js CLIに加え、Firestore・Realtime DatabaseはJava（`java -jar`）プロセスとして起動 | 単一のネイティブバイナリ（npm経由でインストール、Node.js 20以降が必要） |
-| 起動時間と待機メモリ（Firestoreのみ） | SDK利用可能まで3,043 ms、待機時メモリ390 MiB（PSS） | `emulator`プロファイル：140 ms、11 MiB。GitHub ActionsのLinuxランナー・JDK 21.0.8・コミット`f3b942c`での5組計測値（[計測条件](../../compatibility/performance/)） |
+| 起動時間と待機メモリ（Firestoreのみ） | SDK利用可能まで3,043 ms、待機時メモリ390 MiB（PSS） | `emulator`プロファイル：140 ms、11 MiB。GitHub ActionsのLinuxランナー・JDK 21.0.8・コミット`f3b942c`の`standard`1回の実行で計測した5組の中央値（[計測条件](../../compatibility/performance/)） |
 | 複合インデックス未定義のクエリ | そのまま実行される | `strict`（既定）：本番と同じく作成リンク付きで`FAILED_PRECONDITION`を返す。`firestore.missingIndexes = "report"`で実行しつつ警告出力も可能。`emulator`プロファイル：そのまま実行 |
 | TOTP多要素認証 | 電話（SMS）の第2要素に対応（他方式は`MFA provider not supported!`を返す） | 両プロファイルともプロジェクトのMFA設定でTOTP・SMSの両方に対応 |
 | App Check | スイートには含まれない | 両プロファイルともデバッグトークン交換とAuth・Firestore・Storage・callable関数での強制に対応（実機アテステーションは非対応。[詳細](../../products/app-check/)） |
@@ -27,33 +27,33 @@ Googleが提供するFirebase Local Emulator Suiteは、最も幅広いFirebase�
 
 Fireemuは、自動テストやCIで効果を発揮する検証と制御機能を備えています。
 
-- **本番に必要な設定のチェック**：`strict`プロファイルでは、`firestore.indexes.json`に定義されていない複合インデックスが必要なクエリを拒否し、デプロイ前に不足を見つけられます。
+- **本番に必要な設定のチェック**：既定の`strict`設定では、`firestore.indexes.json`に定義されていない複合インデックスが必要なクエリを拒否するため、不足しているインデックスをテストの段階で見つけられます。
 - **追加のFirebase機能**：TOTPによる多要素認証、デバッグトークンを使ったApp Checkの検証、`strict`での`beforeEmailSent`ブロッキング関数に対応しています。
 - **テスト時刻の制御**：仮想時計を停止・設定・進行できるため、実時間を待たずにトークン失効やスケジュール関数をテストできます。
 
 ## 本番の挙動を基準にする
 
-公式エミュレータと本番Firebaseで挙動が異なる場合、Fireemuの既定プロファイル（`strict`）は本番に合わせ、その差異を記録しています。ステータスコードやエラー文言も本番に揃えているため、アプリのエラー処理がデプロイ後と同じ条件で検証できます。
+公式エミュレータと本番Firebaseで挙動が異なる場合、Fireemuの既定プロファイル（`strict`）は文書化した範囲で本番に合わせ、その差異を記録しています。例外は後述の開発向けの既定値です。記録した応答ではステータスコードとエラー文言も本番に揃えているため、テストでアプリが扱うエラーは、デプロイ後に遭遇するエラーと同じです。
 
-各機能の挙動は、実際のFirebaseプロジェクトで記録した応答と照合しています。これまでに<VerifiedAreaCount />領域をこの方法で検証しました。検証済みの領域と条件数は[互換性の表](../../compatibility/)に、対象外や作業中の項目は[制限事項](../../compatibility/limitations/)に公開しています。
+各機能の挙動は、実際のFirebaseプロジェクトで記録した応答と照合しています。これまでに<VerifiedAreaCount />領域をこの方法で検証しました。検証済みの領域と条件数は[互換性の表](../../compatibility/)に、対象外や作業中の項目は[制限事項](../../compatibility/limitations/)に公開しています。両者が異なる場合にFireemuは本番に従いますが、本番と同等であるとは主張しません。
 
 ### 開発向けの既定値
 
-署名鍵の準備や署名付きモックトークンの発行、MFA・マルチテナンシーを有効にするAdmin API呼び出しなど、テストのたびに用意すると手間がかかる本番要件もあります。Fireemuではこれらを既定で緩め、設定なしですぐテストを動かせるようにしています。各項目はすべて文書化され個別に設定でき、`productionExact = true`を指定するとまとめて本番と同じ厳密な挙動に切り替えられます。詳細は[Fireemuが意図的に本番から外れる箇所](../../guides/profiles/#fireemuが意図的に本番から外れる箇所)を参照してください。
+署名鍵の準備や署名付きモックトークンの発行、MFA・マルチテナンシーを有効にするAdmin API呼び出しなど、テストのたびに用意すると手間がかかる本番要件もあります。Fireemuではこれらを既定で緩め、設定なしですぐテストを動かせるようにしています。各項目はすべて文書化され個別に設定でき、`strict`では`productionExact = true`を指定すると、それらをまとめて本番と同じ挙動に切り替えられます。詳細は[Fireemuが意図的に本番から外れる箇所](../../guides/profiles/#fireemuが意図的に本番から外れる箇所)を参照してください。
 
 ## テストとCIのための設計
 
 - **CI向けの単一コマンド**：`fireemu exec -- npm test`だけで、エミュレータ起動・環境変数設定・テスト実行・停止・終了コードの返却まで完結します。
 - **既存の`firebase.json`をそのまま利用**：Security Rules、インデックス、Functionsコードベース、ポート設定を起動時に読み込みます。
-- **Security Rulesの拒否理由を表示**：クライアントリクエストが拒否された際、どの`allow`条件が評価されて偽になったかを標準エラーに出力します。
+- **Security Rulesの拒否理由を表示**：エンドユーザーのリクエストが拒否されると、既定では、評価された`allow`条件とその結果を標準エラーに出力します。
 - **独立したテストワールド**：`fireemu/testing`を使うと、ポート・データ・ルール・Functions・仮想時計が分離された環境をテストごとに立ち上げ、結合テストを並列実行できます。
-- **軽量なネイティブバイナリ**：起動が速くメモリ消費も抑えられます（[パフォーマンス計測](../../compatibility/performance/)）。
+- **単一のネイティブバイナリ**：計測値とその条件は[パフォーマンス](../../compatibility/performance/)を参照してください。
 
 ## 対象外となる領域
 
-FireemuはGoogle Cloudの課金、実クォータ集計、IAM、組織ポリシー、リージョン間のネットワーク遅延、バックエンドのロールアウトを再現しません。また、ローカルでの処理速度は本番のレイテンシを示すものではありません。詳しくは[制限事項](../../compatibility/limitations/)を確認してください。
+FireemuはGoogle Cloudの課金、実クォータ集計、IAM、組織ポリシー、リージョンやネットワークによる差異、バックエンドのロールアウトを再現しません。また、ローカルでの処理速度は本番のレイテンシを示すものではありません。詳しくは[制限事項](../../compatibility/limitations/)を確認してください。
 
-## 本番プロジェクトでの確認
+## 専用のテストプロジェクトでの確認
 
 Fireemuは現在も開発を進めています。CIでFireemuのみに依存する前に、アプリが依存する重要なワークフローについては本番環境とは別の専用Firebaseテストプロジェクトでも同じテストを実行し、挙動を照らし合わせてください。
 

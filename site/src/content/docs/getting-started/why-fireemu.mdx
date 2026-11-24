@@ -7,7 +7,7 @@ import VerifiedAreaCount from '../../../components/VerifiedAreaCount.astro';
 
 Fireemu is a local emulator for testing Firebase applications on your machine and in CI without talking to a live Firebase project.
 
-Google's Firebase Local Emulator Suite is the official tool for local Firebase development. It supports the broadest set of Firebase products, and it is the right choice whenever you need products such as App Hosting, Data Connect, or Extensions. Fireemu has a narrower focus: fast, repeatable automated tests whose results match production Firebase as closely as possible.
+Google's Firebase Local Emulator Suite is the official tool for local Firebase development. It also supports App Hosting, Data Connect, and Extensions, and it is the right choice whenever you need one of them. Fireemu has a narrower focus: fast, repeatable automated tests whose results follow production Firebase within the documented scope.
 
 ## Compared with the Local Emulator Suite
 
@@ -16,7 +16,7 @@ Google's Firebase Local Emulator Suite is the official tool for local Firebase d
 | Maintained by | Google | The Fireemu project |
 | Products | Firestore, Realtime Database, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Hosting, App Hosting, Data Connect, Extensions | Firestore, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Realtime Database and Hosting (both partial), App Check. App Hosting and Data Connect are not yet supported, and Extensions is not planned ([status](../../#supported-products)) |
 | Runtime | Node.js CLI with Java (`java -jar`) processes for Firestore and Realtime Database | Single native binary installed through npm (Node.js 20+) |
-| Startup and idle memory (Firestore only) | 3,043 ms until SDK-ready; 390 MiB idle memory (PSS) | `emulator` profile: 140 ms; 11 MiB. Measured across 5 paired runs at commit `f3b942c` on a GitHub Actions Linux runner with JDK 21.0.8 ([benchmark details](../../compatibility/performance/)) |
+| Startup and idle memory (Firestore only) | 3,043 ms until SDK-ready; 390 MiB idle memory (PSS) | `emulator` profile: 140 ms; 11 MiB. Median of five measured pairs in one `standard` run at commit `f3b942c` on a GitHub Actions Linux runner with JDK 21.0.8 ([benchmark details](../../compatibility/performance/)) |
 | Query missing a composite index | Runs the query | `strict` (default): fails with `FAILED_PRECONDITION` and a console creation link, matching production. Set `firestore.missingIndexes = "report"` to run the query and log the missing index. `emulator` profile: runs the query. |
 | TOTP multi-factor auth | Supports phone (SMS) second factors; other factor types return `MFA provider not supported!` | Both profiles support TOTP and SMS through the project's MFA configuration |
 | App Check | Not included in the suite | Both profiles support debug-token exchange and enforcement for Auth, Firestore, Storage, and callable functions; no device attestation ([details](../../products/app-check/)) |
@@ -27,31 +27,31 @@ For more behavioral differences side-by-side with production, see the [compatibi
 
 Fireemu focuses on checks and test controls that pay off in automated suites and CI:
 
-- **Production configuration checks**: under `strict`, Firestore rejects queries whose composite index is missing from `firestore.indexes.json` rather than letting them pass locally and fail after deploy.
+- **Production configuration checks**: under the default `strict` settings, a Firestore query that needs a composite index missing from `firestore.indexes.json` is refused, so the gap shows up in your tests.
 - **Additional Firebase features**: TOTP multi-factor authentication, App Check debug-token enforcement, and `beforeEmailSent` blocking functions (under `strict`).
 - **Controllable test time**: freeze, set, or advance a virtual clock to test token expiry and scheduled functions without waiting on wall time.
 
 ## Production first
 
-When the official emulator and production Firebase behave differently, Fireemu's default `strict` profile follows production and documents the difference. Responses keep production's status codes and error wording so your app's error handling sees the same failures in tests as it will after deployment.
+When the official emulator and production Firebase behave differently, Fireemu's default `strict` profile follows production within the documented scope and records the difference. The exceptions are the development defaults described below. Recorded responses keep production's status codes and error wording, so the errors your app handles in tests are the errors it will meet after you deploy.
 
-Behavior is checked against recordings captured from real Firebase projects. <VerifiedAreaCount /> areas have been verified this way. The [compatibility tables](../../compatibility/) list each area and the exact conditions checked, and [Limitations](../../compatibility/limitations/) lists what is out of scope or still in progress.
+Behavior is checked against recordings captured from real Firebase projects. <VerifiedAreaCount /> areas have been verified this way. The [compatibility tables](../../compatibility/) list each area and the exact conditions checked, and [Limitations](../../compatibility/limitations/) lists what is out of scope or still in progress. Fireemu follows production where the two differ, but it does not claim to be equivalent to it.
 
 ### Development defaults
 
-Some production checks only add boilerplate in tests: signing keys, signed mock tokens, or Admin API calls to enable MFA or multi-tenancy before a test can run. Fireemu relaxes these specific checks by default in both profiles so suites work out of the box. Every relaxed default is documented and individually configurable, and `productionExact = true` switches all of them back to production behavior at once. See [Where Fireemu departs from production on purpose](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose).
+Some production checks only add boilerplate in tests: signing keys, signed mock tokens, or Admin API calls to enable MFA or multi-tenancy before a test can run. Fireemu relaxes these specific checks by default in both profiles so suites work out of the box. Every relaxed default is documented and individually configurable, and, in `strict`, `productionExact = true` switches all of them back to production behavior at once. See [Where Fireemu departs from production on purpose](../../guides/profiles/#where-fireemu-departs-from-production-on-purpose).
 
 ## Built for tests
 
 - **Single CI command**: `fireemu exec -- npm test` starts the emulators, injects the Firebase emulator environment variables, runs your command, stops cleanly, and returns its exit code.
 - **Uses your existing `firebase.json`**: Security Rules, indexes, Functions codebases, and ports are read from it on every start.
-- **Actionable Security Rules denials**: denied client requests print which `allow` conditions ran and what they evaluated to.
+- **Actionable Security Rules denials**: by default, each denial of an end-user request is printed with the `allow` conditions that were evaluated and their results.
 - **Isolated parallel worlds**: `fireemu/testing` spins up independent emulator instances with their own ports, data, rules, functions, and virtual clock.
-- **Low overhead**: packaged as a single native binary with fast startup and small memory usage ([benchmarks](../../compatibility/performance/)).
+- **A single native binary**: see [Performance](../../compatibility/performance/) for the measured numbers and their conditions.
 
 ## What it is not
 
-Fireemu does not model Google Cloud billing, real quota accounting, IAM, organization policies, regional network latency, or backend rollouts. Local throughput and latency do not predict production performance. See [Limitations](../../compatibility/limitations/).
+Fireemu does not model Google Cloud billing, real quota accounting, IAM, organization policies, regional or network differences, or backend rollouts. Local throughput and latency do not predict production performance. See [Limitations](../../compatibility/limitations/).
 
 ## Keep a production check
 

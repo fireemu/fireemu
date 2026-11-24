@@ -5,13 +5,13 @@ description: Choose between strict and emulator profiles, see which defaults int
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-A profile picks which behavior Fireemu targets: production Firebase (`strict`, the default) or Google's official emulator (`emulator`). In both profiles, a handful of setup-heavy defaults are relaxed so tests run without boilerplate; `productionExact` switches all of them back to production behavior.
+A profile picks which behavior Fireemu targets: production Firebase (`strict`, the default) or Google's official emulator (`emulator`). In both profiles, a handful of setup-heavy defaults are relaxed so tests run without boilerplate. In `strict`, `productionExact` switches all of them back to production behavior.
 
 ## Choose a profile
 
 | Profile | Behavior |
 |---|---|
-| `strict` (default) | Matches production Firebase behavior and constraints across the supported scope. Recommended for day-to-day testing and when migrating from the official emulator. |
+| `strict` (default) | Matches production Firebase behavior and constraints as closely as possible within the supported scope. Recommended for day-to-day testing and when migrating from the official emulator. |
 | `emulator` | Targets a pinned release of Google's official Local Emulator Suite (`firebase-tools` 15.28.2). Use it only as an extra target when checking alignment with the official emulator; you do not need it to migrate. |
 
 Because the `emulator` profile accepts some requests that production refuses, a suite that passes there can still fail after deploy. Stick with `strict` for your main tests.
