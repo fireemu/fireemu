@@ -41,11 +41,11 @@ export const FILES = {
 
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
-  [FILES.production]: "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
-  [FILES.localStrict]: "3a556dad509028f4aa7e5b72ad70f53566febe6e46f3467592dff1da1d44bc41",
-  [FILES.localEmulator]: "94ebbb7bd1db94b6156600e81c9142ec299877c5090ecef45366673132df0e2a",
-  [FILES.strict]: "eb5d7280a2fdd3c864e32e0bfc408622f547969c40a58330fdae898312963b46",
-  [FILES.emulator]: "1313a33fc657df2b7bdd93b3a016d23379cd7164858e71c9a0917a69e85b3d1a",
+  [FILES.production]: "3eb7fe1f98e3e5a2937c0d14ab694768f82a92f760da5fdfec3839cbb20fba67",
+  [FILES.localStrict]: "d54e63fdf2852b78aa5bda8c899d77c3383fc0449fd31ee3fd8cd04f975ba1a0",
+  [FILES.localEmulator]: "f58d3d4162c4db88e99666bd0ad114f00935df3b8a53567fd3199e5ffe346596",
+  [FILES.strict]: "7ae81cd9fb4afbc04f7ad5177992e911c259cc4b8c9a7dc6926416687019fa52",
+  [FILES.emulator]: "bac44198b40844e5f59c311a3d2135d8fb82f74f8a859759183858801ca40d64",
   [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
 };
 
@@ -53,6 +53,16 @@ export const PINS = {
 export const TRUST_INPUTS = [...Object.values(FILES), KNOWN].toSorted();
 export const RECORD_LOCK = "spec/compatibility/closure/record-digests.json";
 export const KNOWN_IDS = ["KD-MEMBER-ORDER"];
+/** The content of each known-difference rule, so a rule cannot widen behind its id (ruling 5). */
+export const KNOWN_RULES = [
+  {
+    id: "KD-MEMBER-ORDER",
+    rows: ["*"],
+    fields: [],
+    fieldSuffixes: [":member-order"],
+    appliesTo: ["production-vs-local"],
+  },
+];
 
 /** The closed list of cases of the recorder plan, in request order. */
 export const CASES = [
@@ -195,6 +205,15 @@ export function verifyEvidence({ list, read, pins = PINS }) {
   const knownIds = (known?.entries ?? []).map((entry) => entry.id);
   if (!isDeepStrictEqual(knownIds, KNOWN_IDS))
     problems.push(`${KNOWN}: the entries are not ${KNOWN_IDS.join(", ")}`);
+  const rules = (known?.entries ?? []).map(({ id, rows, fields, fieldSuffixes, appliesTo }) => ({
+    id,
+    rows,
+    fields,
+    fieldSuffixes,
+    appliesTo,
+  }));
+  if (knownIds.length === KNOWN_IDS.length && !isDeepStrictEqual(rules, KNOWN_RULES))
+    problems.push(`${KNOWN}: a rule's rows, fields or scope differ from the pinned rules`);
   problems.push(...fixtureProblems(FILES.production, files[FILES.production].bytes, "production"));
   problems.push(...fixtureProblems(FILES.localStrict, files[FILES.localStrict].bytes, "local"));
   problems.push(...fixtureProblems(FILES.localEmulator, files[FILES.localEmulator].bytes, "local"));

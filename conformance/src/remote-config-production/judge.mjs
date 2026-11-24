@@ -45,7 +45,8 @@ const BASELINE_CASES = new Set(["a-client", "a-server"]);
 /** The form of an event id: a decimal int32 by sign, anything else by length. */
 export function idForm(value) {
   if (typeof value !== "string") return value;
-  if (/^(?:0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= 2147483647n) return "id:int32-positive";
+  // Production's ids are positive, never 0 (coordinator ruling 5).
+  if (/^[1-9][0-9]*$/.test(value) && BigInt(value) <= 2147483647n) return "id:int32-positive";
   if (/^-[1-9][0-9]*$/.test(value) && BigInt(value) >= -2147483648n) return "id:int32-negative";
   return `id:other:${value.length}`;
 }
@@ -162,6 +163,23 @@ export function projectRow(row, baseline) {
   let body = history
     ? historyProjection(row.body, base)
     : (row.body ?? defaultsEntries(row.text, row.contentType));
+  // The history projection drops older entries, so the escapes move with the entries they belong
+  // to: `/versions/<i>` of the answer becomes `/versions/<j>` of the projection (ruling 5).
+  let escapes = row.escapes ?? {};
+  if (history && Array.isArray(row.body?.versions)) {
+    const kept = new Map();
+    row.body.versions.forEach((v, i) => {
+      if (BigInt(v.versionNumber) > BigInt(base)) kept.set(i, kept.size);
+    });
+    escapes = Object.fromEntries(
+      Object.entries(escapes).flatMap(([path, found]) => {
+        const match = /^(name|value):\/versions\/([0-9]+)(\/.*|$)/.exec(path);
+        if (!match) return [[path, found]];
+        const j = kept.get(Number(match[2]));
+        return j === undefined ? [] : [[`${match[1]}:/versions/${j}${match[3]}`, found]];
+      }),
+    );
+  }
   if (BASELINE_CASES.has(row.case) && body && typeof body === "object") {
     const { version: _version, ...rest } = body;
     body = rest;
@@ -173,7 +191,7 @@ export function projectRow(row, baseline) {
     etag: etagForm(row.etag, base),
     // The layout lengths of a whole history or baseline answer include what the run did not write.
     skeletonBytes: whole ? row.skeletonBytes : null,
-    escapes: projectedEscapes(row.escapes ?? {}, body),
+    escapes: projectedEscapes(escapes, body),
     bodyBytes: whole ? row.bodyBytes : null,
     body,
     bodyForm: form(body, base),
@@ -186,7 +204,10 @@ export function projectRow(row, baseline) {
 function projectedEscapes(escapes, body) {
   const resolves = (path) => {
     let node = body;
-    for (const part of path.replace(/@key$/, "").split("/").slice(1)) {
+    for (const part of path
+      .replace(/^(?:name|value):/, "")
+      .split("/")
+      .slice(1)) {
       const key = part.replaceAll("~1", "/").replaceAll("~0", "~");
       if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) return false;
       node = node[key];

@@ -99,6 +99,7 @@ test("idForm and etagForm keep the sign, the prefix kind and the validation tag"
   assert.equal(idForm("2147483648"), "id:other:10");
   assert.equal(idForm("-351892884"), "id:int32-negative");
   assert.equal(idForm("01"), "id:other:2");
+  assert.equal(idForm("0"), "id:other:1");
   assert.equal(etagForm(null, "1"), null);
   assert.equal(etagForm("etag-PROJECT_NUMBER-28", "27"), "project-number:version:1");
   assert.equal(etagForm("etag-PROJECT_NUMBER-0", "27"), "project-number:0");
@@ -380,16 +381,16 @@ test("escapes outside the compared body are not compared", () => {
       { escapes },
     );
   const left = runOf({ client: "27", server: "6" }, [
-    history({ "/versions/1/description": [[1, "\\u003c"]] }),
+    history({ "value:/versions/1/description": [[1, "\\u003c"]] }),
   ]);
   const right = runOf({ client: "27", server: "6" }, [history({})]);
   assert.equal(compareRuns(left, right, { kind: "production-vs-local" }).rows[0].status, "MATCH");
   const inside = runOf({ client: "27", server: "6" }, [
-    history({ "/versions/0/versionNumber": [[0, "\\u0032"]] }),
+    history({ "value:/versions/0/versionNumber": [[0, "\\u0032"]] }),
   ]);
   assert.deepEqual(
     compareRuns(inside, right, { kind: "production-vs-local" }).rows[0].differences,
-    ["escapes:/versions/0/versionNumber"],
+    ["escapes:value:/versions/0/versionNumber"],
   );
 });
 
@@ -530,4 +531,54 @@ test("the race pair is one row: one winner each side, refused losers, winners co
     }).rows[0].differences.includes("winner.body.version.versionNumber:value"),
   );
   assert.deepEqual(RACE, ["p7-race-a", "p7-race-b"]);
+});
+
+test("escapes follow the history entries the projection keeps (ruling 5)", () => {
+  const history = (versions, escapes) =>
+    answer("h-client-history", `${CLIENT}:listVersions`, { versions }, { escapes });
+  // A baseline entry at index 0 (dropped) and a retained entry at index 1 on one side; the
+  // retained entry first on the other.
+  const left = runOf({ client: "27", server: "6" }, [
+    history([{ versionNumber: "27" }, { versionNumber: "28", description: "a<b" }], {
+      "value:/versions/1/description": [[1, "\\u003c"]],
+    }),
+  ]);
+  const same = runOf({ client: "10", server: "20" }, [
+    history([{ versionNumber: "11", description: "a<b" }], {
+      "value:/versions/0/description": [[1, "\\u003c"]],
+    }),
+  ]);
+  const removed = runOf({ client: "10", server: "20" }, [
+    history([{ versionNumber: "11", description: "a<b" }], {}),
+  ]);
+  assert.notEqual(
+    compareRuns(left, same, { kind: "production-vs-local" }).rows[0].status,
+    "MISMATCH",
+  );
+  assert.deepEqual(
+    compareRuns(left, removed, { kind: "production-vs-local" }).rows[0].differences,
+    ["escapes:value:/versions/0/description"],
+  );
+});
+
+test("an event id of 0 is not a production id (ruling 5)", () => {
+  const versions = [{ namespace: "client", step: "c0", versionNumber: "28", updateTime: "t" }];
+  const event = (eventId) => ({
+    generation: 1,
+    eventId,
+    versionNumber: "28",
+    updateTime: "t",
+    data: {},
+    context: { eventId },
+  });
+  const run = (eventId) => ({
+    baseline: { client: { version: "27" }, server: { version: "6" } },
+    rows: [],
+    versions,
+    events: [event(eventId)],
+  });
+  assert.equal(
+    compareRuns(run("929360796"), run("0"), { kind: "production-vs-local" }).rows[0].status,
+    "MISMATCH",
+  );
 });

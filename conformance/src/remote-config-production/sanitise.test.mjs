@@ -358,20 +358,20 @@ test("sanitiseRun refuses private values in encoded forms and any numeric ETag l
 
 test("escapeMap records every escape by field and position", () => {
   assert.deepEqual(escapeMap('{"a": "percent \\u003c= 50", "b": ["\\"", "x"], "c\\u0026": 1}'), {
-    "/a": [[8, "\\u003c"]],
-    "/b/0": [[0, '\\"']],
-    "/c&@key": [[1, "\\u0026"]],
+    "value:/a": [[8, "\\u003c"]],
+    "value:/b/0": [[0, '\\"']],
+    "name:/c&": [[1, "\\u0026"]],
   });
   // The review's input: the same decoded text with the escape on another character.
   assert.notDeepEqual(
     escapeMap('{"e": "percent \\u003c= 50"}'),
     escapeMap('{"e": "\\u0070ercent <= 50"}'),
   );
-  assert.deepEqual(escapeMap('{"k/~": "\\n"}'), { "/k~1~0": [[0, "\\n"]] });
+  assert.deepEqual(escapeMap('{"k/~": "\\n"}'), { "value:/k~1~0": [[0, "\\n"]] });
   assert.throws(() => escapeMap('{"a": "x'), /unterminated/);
   assert.deepEqual(escapeMap('[["a", "\\u003c"], "\\u003e"]'), {
-    "/0/1": [[0, "\\u003c"]],
-    "/1": [[0, "\\u003e"]],
+    "value:/0/1": [[0, "\\u003c"]],
+    "value:/1": [[0, "\\u003e"]],
   });
 });
 
@@ -388,7 +388,7 @@ test("a member named __proto__ survives sanitising", () => {
 
 test("escape paths are masked like the members they name", () => {
   const fixture = sanitiseRun(withBody(`{"${PROJECT}": "a\\u003cb"}`));
-  assert.deepEqual(fixture.rows[1].escapes, { "/PROJECT_ID": [[1, "\\u003c"]] });
+  assert.deepEqual(fixture.rows[1].escapes, { "value:/PROJECT_ID": [[1, "\\u003c"]] });
 });
 
 test("a body that is not JSON is kept as masked text with its recorded lengths", () => {
@@ -406,4 +406,28 @@ test("a body that is not JSON is kept as masked text with its recorded lengths",
   }
   // A JSON body keeps no text field.
   assert.equal(Object.hasOwn(sanitiseRun(withBody("{}")).rows[1], "text"), false);
+});
+
+test("member-name and value escapes cannot overwrite each other (ruling 5)", () => {
+  // The review's two digest-consistent bodies.
+  const one = escapeMap('{"a@key":"\\u0078","\\u0061":"d","b@key":"y","\\u0062":"d"}');
+  const two = escapeMap('{"a@key":"x","\\u0061":"d","b@key":"\\u0079","\\u0062":"d"}');
+  assert.notDeepEqual(one, two);
+  assert.deepEqual(Object.keys(one).toSorted(), ["name:/a", "name:/b", "value:/a@key"]);
+});
+
+test("privacy checks decode nested encodings (ruling 5)", () => {
+  const encoded = [...Buffer.from(NUMBER).toString("base64")]
+    .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+    .join("");
+  assert.throws(() => sanitiseRun(withBody(JSON.stringify({ note: encoded }))), /project number/);
+  const twice = Buffer.from(Buffer.from(NUMBER).toString("base64")).toString("base64");
+  assert.throws(() => sanitiseRun(withBody(JSON.stringify({ note: twice }))), /project number/);
+  const percentInside = Buffer.from(
+    encodeURIComponent(`owner@corp.example.org`).replaceAll("@", "%40"),
+  ).toString("base64");
+  assert.throws(
+    () => sanitiseRun(withBody(JSON.stringify({ note: percentInside }))),
+    /e-mail address/,
+  );
 });

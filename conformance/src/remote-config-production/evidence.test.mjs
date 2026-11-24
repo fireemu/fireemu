@@ -312,3 +312,19 @@ test("fixtureProblems refuses private values in encoded forms", () => {
   }
   assert.deepEqual(fixtureProblems("x", headFiles()[FILES.production], "production"), []);
 });
+
+test("a known-difference rule cannot widen behind its id (ruling 5)", () => {
+  const files = headFiles();
+  const widened = JSON.parse(files[KNOWN]);
+  widened.entries[0].fieldSuffixes.push(":value");
+  const forged = { ...files, [KNOWN]: Buffer.from(JSON.stringify(widened, null, 2) + "\n") };
+  const recomputed = reforge(forged, FILES.localStrict, (f) => {
+    const row = f.rows.find((r) => r.case === "s-validate-20");
+    row.body.error.message = `X${row.body.error.message.slice(1)}`;
+  });
+  assert.ok(
+    verifyEvidence({ ...readers(recomputed.files), pins: recomputed.pins }).includes(
+      `${KNOWN}: a rule's rows, fields or scope differ from the pinned rules`,
+    ),
+  );
+});

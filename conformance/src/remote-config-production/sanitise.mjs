@@ -93,10 +93,11 @@ function maskUser(user, secrets) {
 const pointer = (key) => key.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /**
- * Where a raw JSON text writes a character as an escape: for every string (a member name at
- * `<path>@key`, a value at its JSON pointer), the position in the decoded string and the escape
- * as written, such as `[15, "\\u003c"]`. The judge compares these by field and position, so an
- * escape moved to another character or another field is a difference.
+ * Where a raw JSON text writes a character as an escape: for every string, under `name:<pointer>`
+ * for a member name and `value:<pointer>` for a string value (two spaces that cannot collide,
+ * coordinator ruling 5), the position in the decoded string and the escape as written, such as
+ * `[15, "\\u003c"]`. The judge compares these by field and position, so an escape moved to
+ * another character or another field is a difference.
  */
 export function escapeMap(raw) {
   const escapes = {};
@@ -104,7 +105,7 @@ export function escapeMap(raw) {
   const space = () => {
     while (i < raw.length && " \n\r\t".includes(raw[i])) i += 1;
   };
-  const string = (path) => {
+  const string = (at) => {
     i += 1;
     let decoded = "";
     const found = [];
@@ -121,8 +122,7 @@ export function escapeMap(raw) {
       }
     }
     i += 1;
-    if (found.length) escapes[path] = found;
-    return decoded;
+    return { decoded, found, at };
   };
   const value = (path) => {
     space();
@@ -132,14 +132,9 @@ export function escapeMap(raw) {
       while (raw[i] !== "}") {
         if (i >= raw.length) throw new Error("unterminated object in a JSON body");
         space();
-        const at = `${path}/`;
-        const before = Object.keys(escapes).length;
-        const key = string(`${at}@key`);
-        const keyed = `${at}${pointer(key)}`;
-        if (Object.keys(escapes).length > before) {
-          escapes[`${keyed}@key`] = escapes[`${at}@key`];
-          delete escapes[`${at}@key`];
-        }
+        const name = string(path);
+        const keyed = `${path}/${pointer(name.decoded)}`;
+        if (name.found.length) escapes[`name:${keyed}`] = name.found;
         space();
         i += 1; // ':'
         value(keyed);
@@ -162,7 +157,8 @@ export function escapeMap(raw) {
       }
       i += 1;
     } else if (raw[i] === '"') {
-      string(path);
+      const text = string(path);
+      if (text.found.length) escapes[`value:${path}`] = text.found;
     } else {
       while (i < raw.length && !",}] \n\r\t".includes(raw[i])) i += 1;
     }
@@ -286,18 +282,32 @@ export function sanitiseRun({ run, journal, events, result, files }) {
  * an address survives).
  */
 export function decodedForms(text) {
-  const forms = [text];
-  forms.push(
-    text.replace(/%[0-9A-Fa-f]{2}/g, (escape) =>
-      String.fromCharCode(parseInt(escape.slice(1), 16)),
-    ),
-  );
-  for (const token of text.match(/[A-Za-z0-9+/_-]{8,}={0,2}/g) ?? []) {
-    // Node's base64 decoder reads the base64url alphabet as well.
-    const bytes = Buffer.from(token, "base64");
-    forms.push(bytes.toString("latin1"));
+  // Decode repeatedly, each form both ways, until nothing new appears (coordinator ruling 5:
+  // percent inside base64, base64 inside percent, repeated); bounded in rounds and forms.
+  const seen = new Set([text]);
+  let frontier = [text];
+  for (let round = 0; round < 6 && frontier.length && seen.size < 50_000; round += 1) {
+    const next = [];
+    for (const form of frontier) {
+      const candidates = [
+        form.replace(/%[0-9A-Fa-f]{2}/g, (escape) =>
+          String.fromCharCode(parseInt(escape.slice(1), 16)),
+        ),
+        // Node's base64 decoder reads the base64url alphabet as well.
+        ...(form.match(/[A-Za-z0-9+/_-]{8,}={0,2}/g) ?? []).map((token) =>
+          Buffer.from(token, "base64").toString("latin1"),
+        ),
+      ];
+      for (const candidate of candidates) {
+        if (!seen.has(candidate)) {
+          seen.add(candidate);
+          next.push(candidate);
+        }
+      }
+    }
+    frontier = next;
   }
-  return forms;
+  return [...seen];
 }
 
 /** Throws when a fixture text still carries a private value, plainly or encoded. */
