@@ -127,6 +127,10 @@ fn state_with_hook(
     });
     Arc::new(UiState {
         database: None,
+        pubsub: None,
+        remote_config: Some(Arc::new(
+            fireemu_adapter_http::remote_config::TemplateStore::default(),
+        )),
         stream_limiter: Arc::new(fireemu_adapter_ui::sse::StreamLimiter::default()),
         control_token: TOKEN.to_owned(),
         info: RuntimeInfo {
@@ -136,6 +140,7 @@ fn state_with_hook(
             firestore_addr: "127.0.0.1:8080".to_owned(),
             http_addr: "127.0.0.1:9099".to_owned(),
             storage_addr: "127.0.0.1:9199".to_owned(),
+            pubsub_addr: None,
             functions_addr: None,
             functions_source: None,
             ui_addr: "127.0.0.1:4000".to_owned(),
@@ -2645,4 +2650,106 @@ async fn the_control_front_reads_an_empty_resume_as_an_object_and_refuses_null()
     .await;
     assert_eq!(status, 400, "{body}");
     assert!(body.to_string().contains("FAILED_PRECONDITION"), "{body}");
+}
+
+#[tokio::test]
+async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
+    let s = state();
+    let base = "/ui/api/remoteconfig/v1/projects/demo-app/remoteConfig";
+    let initial = handle(&s, &request("GET", base, &Value::Null)).await;
+    assert_eq!(initial.status, 200);
+    assert_eq!(initial.body_json(), Some(json!({})));
+
+    // Missing If-Match is refused with 400 FAILED_PRECONDITION.
+    let (status, _) = call(
+        &s,
+        request(
+            "PUT",
+            base,
+            &json!({"parameters": {"flag": {"defaultValue": {"value": "on"}}}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // Forced publish with `*` creates version 1 and returns an ETag.
+    let mut pub_req = request(
+        "PUT",
+        base,
+        &json!({
+            "parameters": {"flag": {"defaultValue": {"value": "on"}}},
+            "version": {"description": "first"}
+        }),
+    );
+    pub_req.headers.insert("if-match".to_owned(), "*".to_owned());
+    let published = handle(&s, &pub_req).await;
+    assert_eq!(published.status, 200);
+    let etag = published
+        .headers
+        .iter()
+        .find(|(k, _)| k == "etag")
+        .map(|(_, v)| v.clone())
+        .expect("published etag");
+    assert_eq!(published.body_json().unwrap()["version"]["versionNumber"], "1");
+
+    // Incremental update with matching ETag creates version 2.
+    let mut pub2 = request(
+        "PUT",
+        base,
+        &json!({"parameters": {"flag": {"defaultValue": {"value": "off"}}}}),
+    );
+    pub2.headers.insert("if-match".to_owned(), etag.clone());
+    let published2 = handle(&s, &pub2).await;
+    assert_eq!(published2.status, 200);
+    assert_eq!(published2.body_json().unwrap()["version"]["versionNumber"], "2");
+
+    // Stale ETag returns 412.
+    let mut stale = request("PUT", base, &json!({}));
+    stale.headers.insert("if-match".to_owned(), etag);
+    assert_eq!(handle(&s, &stale).await.status, 412);
+
+    // List versions and rollback to version 1.
+    let (status, versions) = call(
+        &s,
+        request("GET", &format!("{base}:listVersions"), &Value::Null),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(versions["versions"].as_array().unwrap().len(), 2);
+
+    let (status, rolled) = call(
+        &s,
+        request("POST", &format!("{base}:rollback"), &json!({"versionNumber": "1"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(rolled["version"]["versionNumber"], "3");
+    assert_eq!(rolled["parameters"]["flag"]["defaultValue"]["value"], "on");
+
+    // Non-default project is refused with 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/remoteconfig/v1/projects/other-project/remoteConfig",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn pubsub_front_reports_unavailable_when_unconfigured() {
+    let s = state();
+    let (status, body) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/pubsub/v1/projects/demo-app/topics",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 503, "{body}");
 }

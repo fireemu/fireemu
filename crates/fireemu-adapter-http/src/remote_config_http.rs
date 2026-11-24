@@ -13,12 +13,16 @@ use crate::remote_config::{
     MAX_RETAINED_VERSIONS,
 };
 
-pub(crate) struct Route<'a> {
+/// A matched Remote Config HTTP route.
+pub struct Route<'a> {
+    /// Target project ID.
     pub project: &'a str,
     action: &'a str,
 }
 
-pub(crate) fn route(path: &str) -> Option<Route<'_>> {
+/// Parses a Remote Config path under `/v1/projects/{project}/remoteConfig*`.
+#[must_use]
+pub fn route(path: &str) -> Option<Route<'_>> {
     let (project, action) = path.strip_prefix("/v1/projects/")?.split_once('/')?;
     match action {
         "remoteConfig" | "remoteConfig:listVersions" | "remoteConfig:rollback" => {
@@ -28,9 +32,12 @@ pub(crate) fn route(path: &str) -> Option<Route<'_>> {
     }
 }
 
-pub(crate) struct Reply {
+/// Rendered Remote Config HTTP response.
+pub struct Reply {
+    /// HTTP status code.
     pub status: u16,
     body: ReplyBody,
+    /// Optional ETag header value.
     pub etag: Option<String>,
 }
 
@@ -46,7 +53,9 @@ fn pretty_json(value: &Value) -> Vec<u8> {
 }
 
 impl Reply {
-    pub(crate) fn error(status: u16, message: &str, code: &str) -> Self {
+    /// Builds a JSON Google RPC error reply.
+    #[must_use]
+    pub fn error(status: u16, message: &str, code: &str) -> Self {
         Self {
             status,
             body: ReplyBody::Json(google_rpc(status, message, code)),
@@ -54,7 +63,9 @@ impl Reply {
         }
     }
 
-    pub(crate) fn into_wire(self) -> (u16, Bytes, Option<String>) {
+    /// Converts the reply into `(status, body_bytes, optional_etag)`.
+    #[must_use]
+    pub fn into_wire(self) -> (u16, Bytes, Option<String>) {
         let body = match self.body {
             ReplyBody::Json(value) => Bytes::from(pretty_json(&value)),
             ReplyBody::Rendered(body) => body,
@@ -344,7 +355,9 @@ fn store_error(error: Error) -> Reply {
     }
 }
 
-pub(crate) fn dispatch(
+/// Dispatches a matched Remote Config HTTP request against `store`.
+#[must_use]
+pub fn dispatch(
     store: &TemplateStore,
     route: &Route<'_>,
     method: &str,

@@ -638,7 +638,7 @@ fn is_remote_peer(peer: std::net::IpAddr) -> bool {
 
 /// Serves the Identity Toolkit surface on `listener` until the task is aborted.
 pub async fn serve(listener: TcpListener, state: Arc<AuthState>) -> std::io::Result<()> {
-    serve_inner(listener, state, None).await
+    serve_inner(listener, state, None, None).await
 }
 
 /// Serves the Identity Toolkit surface plus the control API.
@@ -647,15 +647,26 @@ pub async fn serve_with_control(
     state: Arc<AuthState>,
     control: Arc<ControlState>,
 ) -> std::io::Result<()> {
-    serve_inner(listener, state, Some(control)).await
+    let remote_config = Arc::new(TemplateStore::default());
+    serve_inner(listener, state, Some(control), Some(remote_config)).await
+}
+
+/// Serves the Identity Toolkit surface, control API and a shared Remote Config store.
+pub async fn serve_with_control_and_remote_config(
+    listener: TcpListener,
+    state: Arc<AuthState>,
+    control: Arc<ControlState>,
+    remote_config: Arc<TemplateStore>,
+) -> std::io::Result<()> {
+    serve_inner(listener, state, Some(control), Some(remote_config)).await
 }
 
 async fn serve_inner(
     listener: TcpListener,
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
+    remote_config: Option<Arc<TemplateStore>>,
 ) -> std::io::Result<()> {
-    let remote_config = control.as_ref().map(|_| Arc::new(TemplateStore::default()));
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking

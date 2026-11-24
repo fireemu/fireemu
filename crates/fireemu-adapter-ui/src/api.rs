@@ -15,6 +15,12 @@ pub async fn route(state: &Arc<UiState>, rest: &str, req: &UiRequest) -> UiRespo
     if let Some(action) = rest.strip_prefix("database/") {
         return crate::database::route(state, action, req).await;
     }
+    if let Some(path) = rest.strip_prefix("pubsub/") {
+        return crate::pubsub::route(state, path, req).await;
+    }
+    if let Some(path) = rest.strip_prefix("remoteconfig/") {
+        return crate::remote_config::route(state, path, req);
+    }
     if let Some(path) = rest.strip_prefix("firestore/") {
         return if path == "watch" {
             sse::firestore_watch(state, req)

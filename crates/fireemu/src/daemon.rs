@@ -1350,12 +1350,14 @@ async fn serve_suite(
             )
         );
     }
+    let remote_config = Arc::new(fireemu_adapter_http::remote_config::TemplateStore::default());
     spawn_server!(
         "HTTP",
-        fireemu_adapter_http::server::serve_with_control(
+        fireemu_adapter_http::server::serve_with_control_and_remote_config(
             http_listener,
             auth.clone(),
             control.clone(),
+            remote_config.clone(),
         )
     );
     if let Some(listener) = storage_listener {
@@ -1588,6 +1590,11 @@ async fn serve_suite(
                         .collect(),
                 }
             }),
+            pubsub: addrs.pubsub.map(|address| fireemu_adapter_ui::pubsub::PubSubEndpoint {
+                address,
+                bearer_token: cfg.pubsub_local_bearer_token.clone(),
+            }),
+            remote_config: Some(remote_config.clone()),
             cfg: &cfg,
             only: &only,
             control_token: control_token.clone(),

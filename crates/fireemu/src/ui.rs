@@ -79,6 +79,10 @@ pub struct Parts<'a> {
     pub storage: Arc<StorageState>,
     /// The actual RTDB listener and trusted instance ownership, when enabled.
     pub database: Option<fireemu_adapter_ui::database::DatabaseEndpoint>,
+    /// The actual Pub/Sub listener, when enabled.
+    pub pubsub: Option<fireemu_adapter_ui::pubsub::PubSubEndpoint>,
+    /// Shared Remote Config template store.
+    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::TemplateStore>>,
     /// Control API.
     pub control: Arc<ControlState>,
     /// Functions runtime, when configured.
@@ -119,8 +123,11 @@ pub fn state(parts: Parts<'_>) -> Arc<UiState> {
         })
         .collect(),
     });
+    let pubsub_addr = parts.pubsub.as_ref().map(|p| p.address.to_string());
     Arc::new(UiState {
         database: parts.database,
+        pubsub: parts.pubsub,
+        remote_config: parts.remote_config,
         stream_limiter: Arc::new(fireemu_adapter_ui::sse::StreamLimiter::default()),
         control_token: parts.control_token,
         info: RuntimeInfo {
@@ -130,6 +137,7 @@ pub fn state(parts: Parts<'_>) -> Arc<UiState> {
             firestore_addr: firestore.to_string(),
             http_addr: http.to_string(),
             storage_addr: storage.to_string(),
+            pubsub_addr,
             functions_addr: functions.map(|a| a.to_string()),
             functions_source: parts.cfg.functions_source.clone(),
             ui_addr: ui.to_string(),
