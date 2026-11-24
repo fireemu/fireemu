@@ -1,4 +1,12 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  type Component,
+} from "solid-js";
 import { useParams } from "@solidjs/router";
 import { appState } from "../state";
 import { t } from "../i18n";
@@ -222,7 +230,11 @@ const Editor: Component<{
               }}
             />
             <div class="mt-2 flex flex-wrap gap-2">
-              <AsyncButton disabled={pending()} onClick={data.refetch} testId="database-data-refresh">
+              <AsyncButton
+                disabled={pending()}
+                onClick={data.refetch}
+                testId="database-data-refresh"
+              >
                 {t("app.refresh")}
               </AsyncButton>
               <AsyncButton
@@ -446,11 +458,7 @@ const Scope: Component<{ session: string; project: string; initialPath: string }
                 <Show when={i() > 0}>
                   <span class="text-muted">/</span>
                 </Show>
-                <button
-                  type="button"
-                  class="link"
-                  onClick={() => navigateToPath(crumb.path)}
-                >
+                <button type="button" class="link" onClick={() => navigateToPath(crumb.path)}>
                   {crumb.label}
                 </button>
               </>

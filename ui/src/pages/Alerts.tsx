@@ -1,6 +1,7 @@
 import { createSignal, For, type Component } from "solid-js";
 import { t } from "../i18n";
 import { AsyncButton, ErrorBanner, Notice, Section } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import { publishAlert } from "../api/control";
 import { ALERT_TYPES, examplePayload } from "../lib/alertTypes";
 
@@ -76,7 +77,14 @@ const Alerts: Component = () => {
           value={appId()}
           onInput={(e) => setAppId(e.currentTarget.value)}
         />
-        <label class="label mt-3" for="alert-payload">
+        <div class="mt-3">
+          <CodeEditorToolbar
+            value={payload()}
+            onFormat={setPayload}
+            testId="alert-payload-format"
+          />
+        </div>
+        <label class="label" for="alert-payload">
           {t("alerts.payload")}
         </label>
         <textarea

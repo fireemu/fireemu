@@ -106,7 +106,9 @@ const Row: Component<RowProps> = (props) => {
             </Show>
           </Show>
         </span>
-        <Show when={props.showCopyActions || (props.onFilterValue && !container() && !props.indexed)}>
+        <Show
+          when={props.showCopyActions || (props.onFilterValue && !container() && !props.indexed)}
+        >
           <span class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Show when={props.showCopyActions}>
               <button

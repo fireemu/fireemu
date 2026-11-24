@@ -619,7 +619,11 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
                             {line.lineNumber}
                           </span>
                           <span class="w-8 shrink-0 select-none text-right opacity-70">
-                            {line.hitCount > 0 ? `×${line.hitCount}` : line.state === "unreached" ? "0" : ""}
+                            {line.hitCount > 0
+                              ? `×${line.hitCount}`
+                              : line.state === "unreached"
+                                ? "0"
+                                : ""}
                           </span>
                           <span class="whitespace-pre">{line.text}</span>
                         </div>

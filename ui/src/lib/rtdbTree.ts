@@ -39,7 +39,9 @@ const childPath = (basePath: string, key: string): string => {
   return normalized === "/" ? `/${key}` : `${normalized}/${key}`;
 };
 
-const previewValue = (value: unknown): { kind: RtdbChildKind; preview: string; childCount?: number } => {
+const previewValue = (
+  value: unknown,
+): { kind: RtdbChildKind; preview: string; childCount?: number } => {
   if (value === null) return { kind: "null", preview: "null" };
   if (Array.isArray(value)) {
     return { kind: "array", preview: `[${value.length}]`, childCount: value.length };

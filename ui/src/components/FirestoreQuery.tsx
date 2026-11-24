@@ -240,352 +240,356 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
       </div>
       <Show when={open()}>
         <p class="mt-1 text-sm text-muted">{t("firestore.queryHint")}</p>
-      <p class="mono my-2 break-all text-xs">{scopeLabel()}</p>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void execute();
-        }}
-      >
-        <label class="my-3 flex items-center gap-2 text-sm">
-          <span>{t("firestore.queryGroup")}</span>
-          <select
-            class="input"
-            value={draft.mode}
-            onChange={(event) => setDraft("mode", event.currentTarget.value as "AND" | "OR")}
-          >
-            <option value="AND">{t("firestore.queryAnd")}</option>
-            <option value="OR">{t("firestore.queryOr")}</option>
-          </select>
-        </label>
-        <For each={draft.filters}>
-          {(row, index) => (
-            <fieldset
-              class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
-              data-testid={`query-filter-${index()}`}
-            >
-              <legend class="px-1 text-sm">
-                {t("firestore.queryFilterRow", { row: index() + 1 })}
-              </legend>
-              <label class="grid gap-1 text-sm">
-                <span>{t("firestore.queryField")}</span>
-                <input
-                  class="input mono"
-                  value={row.field}
-                  onInput={(event) => updateFilter(index(), { field: event.currentTarget.value })}
-                />
-              </label>
-              <label class="grid gap-1 text-sm">
-                <span>{t("firestore.queryOperator")}</span>
-                <select
-                  class="input"
-                  value={row.op}
-                  onChange={(event) =>
-                    updateFilter(index(), { op: event.currentTarget.value as QueryOperator })
-                  }
-                >
-                  <For each={QUERY_OPERATORS}>
-                    {(operator) => <option value={operator}>{operator}</option>}
-                  </For>
-                </select>
-              </label>
-              <label class="grid gap-1 text-sm">
-                <span>{t("firestore.queryValueType")}</span>
-                <select
-                  class="input"
-                  value={row.type}
-                  onChange={(event) =>
-                    updateFilter(index(), { type: event.currentTarget.value as QueryValueType })
-                  }
-                >
-                  <For each={QUERY_TYPES}>
-                    {(type) => <option value={type}>{valueLabel(type)}</option>}
-                  </For>
-                </select>
-              </label>
-              <label class="grid min-w-48 flex-1 gap-1 text-sm">
-                <span>{t("firestore.queryValue")}</span>
-                <input
-                  class="input mono"
-                  disabled={row.type === "null"}
-                  value={row.text}
-                  onInput={(event) => updateFilter(index(), { text: event.currentTarget.value })}
-                />
-              </label>
-              <button
-                class="btn"
-                type="button"
-                aria-label={t("firestore.queryRemoveFilter", { row: index() + 1 })}
-                onClick={() => {
-                  setDraft("filters", (rows) => rows.filter((_, position) => position !== index()));
-                  queueMicrotask(() => addFilterButton?.focus());
-                }}
-              >
-                {t("app.delete")}
-              </button>
-            </fieldset>
-          )}
-        </For>
-        <button
-          ref={(element) => {
-            addFilterButton = element;
+        <p class="mono my-2 break-all text-xs">{scopeLabel()}</p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void execute();
           }}
-          class="btn mb-3"
-          type="button"
-          disabled={draft.filters.length >= 20}
-          onClick={() =>
-            setDraft("filters", (rows) => [
-              ...rows,
-              { field: "", op: "EQUAL", type: "string", text: "" },
-            ])
-          }
         >
-          {t("firestore.queryAddFilter")}
-        </button>
-        <p class="mb-3 text-xs text-muted">{t("firestore.queryValueHint")}</p>
-        <For each={draft.orders}>
-          {(row, index) => (
-            <fieldset
-              class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
-              data-testid={`query-order-${index()}`}
+          <label class="my-3 flex items-center gap-2 text-sm">
+            <span>{t("firestore.queryGroup")}</span>
+            <select
+              class="input"
+              value={draft.mode}
+              onChange={(event) => setDraft("mode", event.currentTarget.value as "AND" | "OR")}
             >
-              <legend class="px-1 text-sm">
-                {t("firestore.queryOrderRow", { row: index() + 1 })}
-              </legend>
-              <label class="grid gap-1 text-sm">
-                <span>{t("firestore.queryField")}</span>
-                <input
-                  class="input mono"
-                  value={row.field}
-                  onInput={(event) =>
-                    setDraft("orders", index(), "field", event.currentTarget.value)
-                  }
-                />
-              </label>
-              <label class="grid gap-1 text-sm">
-                <span>{t("firestore.queryDirection")}</span>
-                <select
-                  class="input"
-                  value={row.direction}
-                  onChange={(event) =>
-                    setDraft(
-                      "orders",
-                      index(),
-                      "direction",
-                      event.currentTarget.value as "ASCENDING" | "DESCENDING",
-                    )
-                  }
-                >
-                  <option value="ASCENDING">{t("firestore.queryAscending")}</option>
-                  <option value="DESCENDING">{t("firestore.queryDescending")}</option>
-                </select>
-              </label>
-              <button
-                class="btn"
-                type="button"
-                aria-label={t("firestore.queryRemoveOrder", { row: index() + 1 })}
-                onClick={() => {
-                  setDraft("orders", (rows) => rows.filter((_, position) => position !== index()));
-                  queueMicrotask(() => addOrderButton?.focus());
-                }}
-              >
-                {t("app.delete")}
-              </button>
-            </fieldset>
-          )}
-        </For>
-        <button
-          ref={(element) => {
-            addOrderButton = element;
-          }}
-          class="btn mb-3"
-          type="button"
-          disabled={draft.orders.length >= 20}
-          onClick={() =>
-            setDraft("orders", (rows) => [...rows, { field: "", direction: "ASCENDING" }])
-          }
-        >
-          {t("firestore.queryAddOrder")}
-        </button>
-        <div class="mb-3 flex flex-wrap items-end gap-2">
-          <label class="grid gap-1 text-sm">
-            <span>{t("firestore.queryLimit")}</span>
-            <input
-              class="input w-28"
-              type="number"
-              min="1"
-              max="1000"
-              step="1"
-              value={draft.limit}
-              onInput={(event) => setDraft("limit", event.currentTarget.value)}
-            />
+              <option value="AND">{t("firestore.queryAnd")}</option>
+              <option value="OR">{t("firestore.queryOr")}</option>
+            </select>
           </label>
-          <button class="btn btn-primary" type="submit" disabled={compiled().isErr()}>
-            {t("firestore.queryRun")}
-          </button>
+          <For each={draft.filters}>
+            {(row, index) => (
+              <fieldset
+                class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
+                data-testid={`query-filter-${index()}`}
+              >
+                <legend class="px-1 text-sm">
+                  {t("firestore.queryFilterRow", { row: index() + 1 })}
+                </legend>
+                <label class="grid gap-1 text-sm">
+                  <span>{t("firestore.queryField")}</span>
+                  <input
+                    class="input mono"
+                    value={row.field}
+                    onInput={(event) => updateFilter(index(), { field: event.currentTarget.value })}
+                  />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>{t("firestore.queryOperator")}</span>
+                  <select
+                    class="input"
+                    value={row.op}
+                    onChange={(event) =>
+                      updateFilter(index(), { op: event.currentTarget.value as QueryOperator })
+                    }
+                  >
+                    <For each={QUERY_OPERATORS}>
+                      {(operator) => <option value={operator}>{operator}</option>}
+                    </For>
+                  </select>
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>{t("firestore.queryValueType")}</span>
+                  <select
+                    class="input"
+                    value={row.type}
+                    onChange={(event) =>
+                      updateFilter(index(), { type: event.currentTarget.value as QueryValueType })
+                    }
+                  >
+                    <For each={QUERY_TYPES}>
+                      {(type) => <option value={type}>{valueLabel(type)}</option>}
+                    </For>
+                  </select>
+                </label>
+                <label class="grid min-w-48 flex-1 gap-1 text-sm">
+                  <span>{t("firestore.queryValue")}</span>
+                  <input
+                    class="input mono"
+                    disabled={row.type === "null"}
+                    value={row.text}
+                    onInput={(event) => updateFilter(index(), { text: event.currentTarget.value })}
+                  />
+                </label>
+                <button
+                  class="btn"
+                  type="button"
+                  aria-label={t("firestore.queryRemoveFilter", { row: index() + 1 })}
+                  onClick={() => {
+                    setDraft("filters", (rows) =>
+                      rows.filter((_, position) => position !== index()),
+                    );
+                    queueMicrotask(() => addFilterButton?.focus());
+                  }}
+                >
+                  {t("app.delete")}
+                </button>
+              </fieldset>
+            )}
+          </For>
           <button
-            class="btn"
+            ref={(element) => {
+              addFilterButton = element;
+            }}
+            class="btn mb-3"
             type="button"
-            disabled={compiled().isErr()}
-            onClick={() => void share()}
+            disabled={draft.filters.length >= 20}
+            onClick={() =>
+              setDraft("filters", (rows) => [
+                ...rows,
+                { field: "", op: "EQUAL", type: "string", text: "" },
+              ])
+            }
           >
-            {t("firestore.queryShare")}
+            {t("firestore.queryAddFilter")}
           </button>
-        </div>
-        <p class="mb-3 text-xs text-muted">{t("firestore.queryBounded")}</p>
-        <ErrorBanner message={invalid()} />
-        <Show when={compiled().isOk()}>
-          <details class="mb-3">
-            <summary class="cursor-pointer text-sm">{t("firestore.queryPreview")}</summary>
-            <pre class="mono max-h-64 overflow-auto code-block">
-              {JSON.stringify(
-                compiled().match(
-                  (value) => value,
-                  () => null,
-                ),
-                null,
-                2,
-              )}
-            </pre>
-          </details>
-          <details class="mb-3">
-            <summary class="cursor-pointer text-sm">{t("firestore.querySdk")}</summary>
-            <pre class="mono max-h-96 overflow-auto code-block" data-testid="query-sdk">
-              {compiled().match(querySdkSource, () => "")}
-            </pre>
-          </details>
-        </Show>
-      </form>
-      <ErrorBanner message={shareError()} />
-      <Notice message={notice()} />
-      <Show
-        when={execution()}
-        fallback={<p class="text-sm text-muted">{t("firestore.queryNoResults")}</p>}
-      >
-        {(attempt) => (
-          <>
-            <Show when={attempt().draft !== encodedDraft()}>
-              <p role="status" class="mb-2 text-sm text-warning" data-testid="query-stale">
-                {t("firestore.queryStale")}
-              </p>
-            </Show>
-            <details class="mb-3" data-testid="query-executed">
-              <summary class="cursor-pointer text-sm">{t("firestore.queryExecuted")}</summary>
-              <p class="mono my-2 text-xs">{attempt().scope}</p>
-              <pre class="mono max-h-64 overflow-auto text-xs">
-                {JSON.stringify(attempt().query, null, 2)}
+          <p class="mb-3 text-xs text-muted">{t("firestore.queryValueHint")}</p>
+          <For each={draft.orders}>
+            {(row, index) => (
+              <fieldset
+                class="mb-3 flex flex-wrap items-end gap-2 inset p-3"
+                data-testid={`query-order-${index()}`}
+              >
+                <legend class="px-1 text-sm">
+                  {t("firestore.queryOrderRow", { row: index() + 1 })}
+                </legend>
+                <label class="grid gap-1 text-sm">
+                  <span>{t("firestore.queryField")}</span>
+                  <input
+                    class="input mono"
+                    value={row.field}
+                    onInput={(event) =>
+                      setDraft("orders", index(), "field", event.currentTarget.value)
+                    }
+                  />
+                </label>
+                <label class="grid gap-1 text-sm">
+                  <span>{t("firestore.queryDirection")}</span>
+                  <select
+                    class="input"
+                    value={row.direction}
+                    onChange={(event) =>
+                      setDraft(
+                        "orders",
+                        index(),
+                        "direction",
+                        event.currentTarget.value as "ASCENDING" | "DESCENDING",
+                      )
+                    }
+                  >
+                    <option value="ASCENDING">{t("firestore.queryAscending")}</option>
+                    <option value="DESCENDING">{t("firestore.queryDescending")}</option>
+                  </select>
+                </label>
+                <button
+                  class="btn"
+                  type="button"
+                  aria-label={t("firestore.queryRemoveOrder", { row: index() + 1 })}
+                  onClick={() => {
+                    setDraft("orders", (rows) =>
+                      rows.filter((_, position) => position !== index()),
+                    );
+                    queueMicrotask(() => addOrderButton?.focus());
+                  }}
+                >
+                  {t("app.delete")}
+                </button>
+              </fieldset>
+            )}
+          </For>
+          <button
+            ref={(element) => {
+              addOrderButton = element;
+            }}
+            class="btn mb-3"
+            type="button"
+            disabled={draft.orders.length >= 20}
+            onClick={() =>
+              setDraft("orders", (rows) => [...rows, { field: "", direction: "ASCENDING" }])
+            }
+          >
+            {t("firestore.queryAddOrder")}
+          </button>
+          <div class="mb-3 flex flex-wrap items-end gap-2">
+            <label class="grid gap-1 text-sm">
+              <span>{t("firestore.queryLimit")}</span>
+              <input
+                class="input w-28"
+                type="number"
+                min="1"
+                max="1000"
+                step="1"
+                value={draft.limit}
+                onInput={(event) => setDraft("limit", event.currentTarget.value)}
+              />
+            </label>
+            <button class="btn btn-primary" type="submit" disabled={compiled().isErr()}>
+              {t("firestore.queryRun")}
+            </button>
+            <button
+              class="btn"
+              type="button"
+              disabled={compiled().isErr()}
+              onClick={() => void share()}
+            >
+              {t("firestore.queryShare")}
+            </button>
+          </div>
+          <p class="mb-3 text-xs text-muted">{t("firestore.queryBounded")}</p>
+          <ErrorBanner message={invalid()} />
+          <Show when={compiled().isOk()}>
+            <details class="mb-3">
+              <summary class="cursor-pointer text-sm">{t("firestore.queryPreview")}</summary>
+              <pre class="mono max-h-64 overflow-auto code-block">
+                {JSON.stringify(
+                  compiled().match(
+                    (value) => value,
+                    () => null,
+                  ),
+                  null,
+                  2,
+                )}
               </pre>
             </details>
-            <Show when={attempt().loading}>
-              <p role="status" data-testid="query-loading">
-                {t("firestore.queryRunning")}
-              </p>
-            </Show>
-            <Show when={attempt().error}>
-              {(error) => (
-                <div data-testid="query-error">
-                  <ErrorBanner message={failure(error())} />
-                </div>
-              )}
-            </Show>
-            <Show when={attempt().result}>
-              {(result) => (
-                <section data-testid="query-results" aria-label={t("firestore.queryResult")}>
-                  <h4 class="mb-2 font-semibold">{t("firestore.queryResult")}</h4>
-                  <p role="status" class="mb-2 text-sm">
-                    {t("firestore.queryCount", {
-                      count: result().documents.length,
-                      metadata: result().metadata.length,
-                    })}
-                  </p>
-                  <Show when={result().documents.length === 0}>
-                    <p class="my-2 text-sm">{t("firestore.queryEmpty")}</p>
-                  </Show>
-                  <ul class="mb-3 space-y-1">
-                    <For each={result().documents}>
-                      {(document) => (
-                        <li>
-                          <A
-                            class="mono text-sm link underline"
-                            aria-label={t("firestore.queryOpenDocument", {
-                              path: relativePath(document.name),
-                            })}
-                            href={firestoreHref(relativePath(document.name), props.db)}
-                          >
-                            {relativePath(document.name)}
-                          </A>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                  <details open>
-                    <summary class="cursor-pointer text-sm">{t("firestore.queryExact")}</summary>
-                    <pre class="mono my-2 max-h-80 overflow-auto code-block">
-                      {JSON.stringify(result().rows, null, 2)}
-                    </pre>
-                  </details>
-                </section>
-              )}
-            </Show>
-          </>
-        )}
-      </Show>
-      <section
-        class="mt-4 border-t border-line-subtle pt-3"
-        data-testid="query-indexes"
-        aria-label={t("firestore.queryIndexes")}
-      >
-        <h4 class="font-semibold">{t("firestore.queryIndexes")}</h4>
-        <p class="my-2 text-xs text-muted">{t("firestore.queryIndexHint")}</p>
-        <div class="mb-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            class="btn"
-            disabled={reportsLoading()}
-            onClick={() => void readIndexes()}
-          >
-            {t("firestore.queryLoadIndexes")}
-          </button>
-          <AsyncButton class="btn" testId="query-clear-indexes" onClick={clearIndexes}>
-            {t("firestore.queryClearIndexes")}
-          </AsyncButton>
-          <Show when={reports() && reports()!.missingIndexes.length > 0}>
-            <CopyButton
-              value={indexesJsonText(reports()!)}
-              subject={t("firestore.queryCopyIndexes")}
-              testId="query-copy-indexes"
-            />
+            <details class="mb-3">
+              <summary class="cursor-pointer text-sm">{t("firestore.querySdk")}</summary>
+              <pre class="mono max-h-96 overflow-auto code-block" data-testid="query-sdk">
+                {compiled().match(querySdkSource, () => "")}
+              </pre>
+            </details>
           </Show>
-        </div>
-        <Show when={reportsLoading()}>
-          <p role="status">{t("app.loading")}</p>
-        </Show>
-        <ErrorBanner message={reportError()} />
-        <Show when={reports()}>
-          {(value) => (
+        </form>
+        <ErrorBanner message={shareError()} />
+        <Notice message={notice()} />
+        <Show
+          when={execution()}
+          fallback={<p class="text-sm text-muted">{t("firestore.queryNoResults")}</p>}
+        >
+          {(attempt) => (
             <>
-              <Show when={value().truncated}>
-                <p role="status" class="my-2 text-sm">
-                  {t("firestore.queryIndexTruncated", { count: value().dropped })}
+              <Show when={attempt().draft !== encodedDraft()}>
+                <p role="status" class="mb-2 text-sm text-warning" data-testid="query-stale">
+                  {t("firestore.queryStale")}
                 </p>
               </Show>
-              <Show when={value().missingIndexes.length === 0}>
-                <p>{t("firestore.queryIndexEmpty")}</p>
+              <details class="mb-3" data-testid="query-executed">
+                <summary class="cursor-pointer text-sm">{t("firestore.queryExecuted")}</summary>
+                <p class="mono my-2 text-xs">{attempt().scope}</p>
+                <pre class="mono max-h-64 overflow-auto text-xs">
+                  {JSON.stringify(attempt().query, null, 2)}
+                </pre>
+              </details>
+              <Show when={attempt().loading}>
+                <p role="status" data-testid="query-loading">
+                  {t("firestore.queryRunning")}
+                </p>
               </Show>
-              <For each={value().missingIndexes}>
-                {(entry) => (
-                  <div class="my-2">
-                    <p class="text-sm">{entry.message}</p>
-                    <pre class="mono max-h-48 overflow-auto text-xs">
-                      {JSON.stringify(entry.index, null, 2)}
-                    </pre>
+              <Show when={attempt().error}>
+                {(error) => (
+                  <div data-testid="query-error">
+                    <ErrorBanner message={failure(error())} />
                   </div>
                 )}
-              </For>
+              </Show>
+              <Show when={attempt().result}>
+                {(result) => (
+                  <section data-testid="query-results" aria-label={t("firestore.queryResult")}>
+                    <h4 class="mb-2 font-semibold">{t("firestore.queryResult")}</h4>
+                    <p role="status" class="mb-2 text-sm">
+                      {t("firestore.queryCount", {
+                        count: result().documents.length,
+                        metadata: result().metadata.length,
+                      })}
+                    </p>
+                    <Show when={result().documents.length === 0}>
+                      <p class="my-2 text-sm">{t("firestore.queryEmpty")}</p>
+                    </Show>
+                    <ul class="mb-3 space-y-1">
+                      <For each={result().documents}>
+                        {(document) => (
+                          <li>
+                            <A
+                              class="mono text-sm link underline"
+                              aria-label={t("firestore.queryOpenDocument", {
+                                path: relativePath(document.name),
+                              })}
+                              href={firestoreHref(relativePath(document.name), props.db)}
+                            >
+                              {relativePath(document.name)}
+                            </A>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                    <details open>
+                      <summary class="cursor-pointer text-sm">{t("firestore.queryExact")}</summary>
+                      <pre class="mono my-2 max-h-80 overflow-auto code-block">
+                        {JSON.stringify(result().rows, null, 2)}
+                      </pre>
+                    </details>
+                  </section>
+                )}
+              </Show>
             </>
           )}
         </Show>
-      </section>
+        <section
+          class="mt-4 border-t border-line-subtle pt-3"
+          data-testid="query-indexes"
+          aria-label={t("firestore.queryIndexes")}
+        >
+          <h4 class="font-semibold">{t("firestore.queryIndexes")}</h4>
+          <p class="my-2 text-xs text-muted">{t("firestore.queryIndexHint")}</p>
+          <div class="mb-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="btn"
+              disabled={reportsLoading()}
+              onClick={() => void readIndexes()}
+            >
+              {t("firestore.queryLoadIndexes")}
+            </button>
+            <AsyncButton class="btn" testId="query-clear-indexes" onClick={clearIndexes}>
+              {t("firestore.queryClearIndexes")}
+            </AsyncButton>
+            <Show when={reports() && reports()!.missingIndexes.length > 0}>
+              <CopyButton
+                value={indexesJsonText(reports()!)}
+                subject={t("firestore.queryCopyIndexes")}
+                testId="query-copy-indexes"
+              />
+            </Show>
+          </div>
+          <Show when={reportsLoading()}>
+            <p role="status">{t("app.loading")}</p>
+          </Show>
+          <ErrorBanner message={reportError()} />
+          <Show when={reports()}>
+            {(value) => (
+              <>
+                <Show when={value().truncated}>
+                  <p role="status" class="my-2 text-sm">
+                    {t("firestore.queryIndexTruncated", { count: value().dropped })}
+                  </p>
+                </Show>
+                <Show when={value().missingIndexes.length === 0}>
+                  <p>{t("firestore.queryIndexEmpty")}</p>
+                </Show>
+                <For each={value().missingIndexes}>
+                  {(entry) => (
+                    <div class="my-2">
+                      <p class="text-sm">{entry.message}</p>
+                      <pre class="mono max-h-48 overflow-auto text-xs">
+                        {JSON.stringify(entry.index, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </For>
+              </>
+            )}
+          </Show>
+        </section>
       </Show>
     </section>
   );

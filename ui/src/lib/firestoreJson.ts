@@ -39,7 +39,10 @@ export const fsFieldsToPlainJson = (
 };
 
 /** Convert a plain JSON value into a Firestore REST typed value. */
-export const plainJsonToFsValue = (value: unknown, insideArray = false): Result<FsValue, string> => {
+export const plainJsonToFsValue = (
+  value: unknown,
+  insideArray = false,
+): Result<FsValue, string> => {
   if (value === null) return ok({ nullValue: null });
   if (typeof value === "boolean") return ok({ booleanValue: value });
   if (typeof value === "string") return ok({ stringValue: value });

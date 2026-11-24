@@ -18,10 +18,7 @@ export const formatJsonText = (raw: string): string | null => {
  * To preserve keyboard navigation (e.g. Tab out of textareas for accessibility and E2E tests),
  * this helper binds `Ctrl+Shift+F` / `Cmd+Shift+F` for JSON formatting when `onFormat` is provided.
  */
-export const onCodeEditorKeyDown = (
-  event: KeyboardEvent,
-  onFormat?: () => void,
-): void => {
+export const onCodeEditorKeyDown = (event: KeyboardEvent, onFormat?: () => void): void => {
   if (
     onFormat &&
     (event.metaKey || event.ctrlKey) &&

@@ -68,3 +68,13 @@ export const downloadObject = (
   requestBytes(
     `storage/download/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(name)}?alt=media`,
   );
+
+export const patchObjectMetadata = (
+  bucket: string,
+  name: string,
+  metadata: Record<string, string>,
+): ResultAsync<ObjectInfo, ApiError> =>
+  request<ObjectInfo>("PATCH", `${bucketUrl(bucket)}/o/${encodeURIComponent(name)}`, { metadata });
+
+export const objectDownloadUrl = (storageAddr: string, bucket: string, name: string): string =>
+  `http://${storageAddr}/download/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(name)}?alt=media`;

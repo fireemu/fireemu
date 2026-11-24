@@ -296,11 +296,7 @@ const PubSubScope: Component<{ project: string }> = (props) => {
                   onInput={(e) => setNewTopicId(e.currentTarget.value)}
                 />
               </label>
-              <AsyncButton
-                class="btn btn-primary"
-                onClick={addTopic}
-                testId="pubsub-create-topic"
-              >
+              <AsyncButton class="btn btn-primary" onClick={addTopic} testId="pubsub-create-topic">
                 {t("pubsub.createTopic")}
               </AsyncButton>
             </form>
@@ -454,9 +450,7 @@ const PubSubScope: Component<{ project: string }> = (props) => {
                   onChange={(e) => setNewSubTopic(e.currentTarget.value)}
                 >
                   <For each={topics()}>
-                    {(topic) => (
-                      <option value={topic.name}>{shortPubSubName(topic.name)}</option>
-                    )}
+                    {(topic) => <option value={topic.name}>{shortPubSubName(topic.name)}</option>}
                   </For>
                 </select>
               </label>

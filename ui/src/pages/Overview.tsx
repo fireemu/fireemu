@@ -325,6 +325,12 @@ const Overview: Component = () => {
               />
             )}
           </Show>
+          <Show
+            when={config().pubsubAddr}
+            fallback={<Field label={t("overview.pubsub")}>{t("overview.pubsubNone")}</Field>}
+          >
+            {(addr) => <Address label={t("overview.pubsub")} value={addr()} />}
+          </Show>
           <Address label={t("overview.control")} value={`http://${config().httpAddr}/v1/`} />
           <Address label={t("overview.ui")} value={`http://${config().uiAddr}/ui`} />
         </Section>

@@ -284,7 +284,14 @@ const InvokeForm: Component<{
     const project = props.project ?? appState.project();
     const base = `http://${addr}/${project}/${props.f.region}/${props.f.name}`;
     if (callable()) {
-      const parts = ["curl", "-X", "POST", shellQuote(base), "-H", shellQuote("Content-Type: application/json")];
+      const parts = [
+        "curl",
+        "-X",
+        "POST",
+        shellQuote(base),
+        "-H",
+        shellQuote("Content-Type: application/json"),
+      ];
       if (authToken().trim()) {
         parts.push("-H", shellQuote(`Authorization: Bearer ${authToken().trim()}`));
       }
@@ -469,11 +476,7 @@ const InvokeForm: Component<{
         </label>
       </Show>
       <div class="mt-3 flex flex-wrap items-center gap-2">
-        <AsyncButton
-          class="btn btn-primary"
-          onClick={send}
-          testId={`invoke-${props.f.name}-send`}
-        >
+        <AsyncButton class="btn btn-primary" onClick={send} testId={`invoke-${props.f.name}-send`}>
           {t("functions.invokeSend")}
         </AsyncButton>
         <CopyButton
@@ -1160,7 +1163,9 @@ const Functions: Component = () => {
     const activeDrawer = drawer();
     if (!activeDrawer) return null;
     const proj = o()?.project ?? appState.project();
-    return (o()?.functions ?? []).find((f) => functionTargetKey(proj, f) === activeDrawer.key) ?? null;
+    return (
+      (o()?.functions ?? []).find((f) => functionTargetKey(proj, f) === activeDrawer.key) ?? null
+    );
   });
   const toggleDrawer = (action: DrawerAction) => {
     setDrawer((current) =>
@@ -1673,10 +1678,7 @@ const Functions: Component = () => {
                 </pre>
               }
             >
-              <div
-                class="mono h-72 space-y-1 overflow-auto console"
-                data-testid="function-logs"
-              >
+              <div class="mono h-72 space-y-1 overflow-auto console" data-testid="function-logs">
                 <For each={filteredLines()}>
                   {(line) => {
                     const parsed = analyzeLogLine(line);

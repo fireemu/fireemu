@@ -274,11 +274,10 @@ export const FunctionsTimeline: Component<{
                       <td class="mono text-xs">{byKey().get(key)!.function}</td>
                       <td>{byKey().get(key)!.causal?.source ?? "—"}</td>
                       <td>
-                        <Show
-                          when={byKey().get(key)!.causal?.phases.at(-1)?.phase}
-                          fallback="—"
-                        >
-                          {(phase) => <StatusBadge tone={phaseTone(phase())}>{phase()}</StatusBadge>}
+                        <Show when={byKey().get(key)!.causal?.phases.at(-1)?.phase} fallback="—">
+                          {(phase) => (
+                            <StatusBadge tone={phaseTone(phase())}>{phase()}</StatusBadge>
+                          )}
                         </Show>
                       </td>
                     </tr>

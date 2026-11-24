@@ -60,15 +60,10 @@ export const decodeBase64Utf8 = (encoded: string | undefined): string => {
   }
 };
 
-export const listTopics = (
-  project: string,
-): ResultAsync<{ topics?: PubSubTopic[] }, ApiError> =>
+export const listTopics = (project: string): ResultAsync<{ topics?: PubSubTopic[] }, ApiError> =>
   request("GET", `${projectBase(project)}/topics?pageSize=200`);
 
-export const createTopic = (
-  project: string,
-  topicId: string,
-): ResultAsync<PubSubTopic, ApiError> =>
+export const createTopic = (project: string, topicId: string): ResultAsync<PubSubTopic, ApiError> =>
   request("PUT", `${projectBase(project)}/topics/${encodeURIComponent(topicId)}`, {});
 
 export const deleteTopic = (project: string, topicId: string): ResultAsync<Json, ApiError> =>
@@ -110,10 +105,7 @@ export const deleteSubscription = (
   project: string,
   subscriptionId: string,
 ): ResultAsync<Json, ApiError> =>
-  request(
-    "DELETE",
-    `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}`,
-  );
+  request("DELETE", `${projectBase(project)}/subscriptions/${encodeURIComponent(subscriptionId)}`);
 
 export const pullSubscription = (
   project: string,

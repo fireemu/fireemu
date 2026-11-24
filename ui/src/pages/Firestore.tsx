@@ -193,9 +193,7 @@ export const FieldsEditor: Component<{
                           placeholder={hint(f.type)}
                           disabled={props.disabled || f.type === "null"}
                           value={f.text}
-                          onInput={(e) =>
-                            update(i(), { text: e.currentTarget.value, dirty: true })
-                          }
+                          onInput={(e) => update(i(), { text: e.currentTarget.value, dirty: true })}
                         />
                         <Show when={f.type === "boolean"}>
                           <button

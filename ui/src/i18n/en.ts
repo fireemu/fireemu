@@ -1049,7 +1049,8 @@ export const en = {
   "rules.filterDeniedOnly": "Denied only",
   "rules.filterPath": "Filter by path, method or UID",
   "rules.heatmapTitle": "Source coverage overview",
-  "rules.heatmapLegend": "Line coverage: green = evaluated both true/false or hit, amber = single branch only, red = unreached.",
+  "rules.heatmapLegend":
+    "Line coverage: green = evaluated both true/false or hit, amber = single branch only, red = unreached.",
 
   // Functions UX enhancements
   "functions.drawerTitle": "Action panel",

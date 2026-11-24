@@ -277,9 +277,7 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
                 <h3 class="mb-2 font-semibold">{t("remoteConfig.parameters")}</h3>
                 <Show
                   when={parameters().length > 0}
-                  fallback={
-                    <p class="mb-3 text-sm text-muted">{t("remoteConfig.noParameters")}</p>
-                  }
+                  fallback={<p class="mb-3 text-sm text-muted">{t("remoteConfig.noParameters")}</p>}
                 >
                   <div class="table-scroll mb-3">
                     <table class="table" data-testid="rc-params-table">
@@ -486,9 +484,7 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
                         <tr data-testid={`rc-version-${v.versionNumber}`}>
                           <td class="mono font-medium">v{v.versionNumber}</td>
                           <td>
-                            <StatusBadge
-                              tone={v.updateType === "ROLLBACK" ? "warning" : "info"}
-                            >
+                            <StatusBadge tone={v.updateType === "ROLLBACK" ? "warning" : "info"}>
                               {v.updateType ?? "UPDATE"}
                             </StatusBadge>
                           </td>
