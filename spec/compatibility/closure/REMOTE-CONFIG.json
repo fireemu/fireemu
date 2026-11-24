@@ -35,6 +35,14 @@
       "status": "ANSWERED"
     }
   ],
+  "supportingRecordings": [
+    {
+      "alias": "rc-observe-v2.3",
+      "role": "Supporting evidence only (coordinator ruling 1, D1): the sanitised RC-OBSERVE-V2-3 recording of 2026-11-24, compared with local strict and emulator runs of the same recorder plan by conformance/src/remote-config-production/evidence.mjs. The two closure passes are separate recordings.",
+      "fixturePath": "conformance/remote-config-production/observe-v23-production.json",
+      "fixtureSha256": "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180"
+    }
+  ],
   "conditions": [
     {
       "conditionId": "REMOTE-CONFIG/template-read",

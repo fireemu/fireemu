@@ -3,8 +3,8 @@
   "comparison": "production-vs-local",
   "profile": "emulator",
   "inputs": {
-    "production": "be64286d41de670bf2438e5a7d740acf9a6a4550c3c90812f69b3d169f744a75",
-    "local": "2064f4d9daabdb79f03ee2caf6bd400a0042604036f29fe32c0f083abcc4072f",
+    "production": "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
+    "local": "031eb3cf6dd43db0c2b9e332d09ecfd24d7fc4afe1afb84fa2086ea1e45326a3",
     "knownDifferences": "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c"
   },
   "knownDifferences": [
@@ -14,7 +14,7 @@
     }
   ],
   "counts": {
-    "MATCH": 7,
+    "MATCH": 8,
     "MATCH_LAYOUT": 0,
     "KNOWN_DIFFERENCE": 0,
     "MISMATCH": 52,
@@ -79,7 +79,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -91,7 +91,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -103,7 +103,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -115,7 +115,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -149,7 +149,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -161,7 +161,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -206,7 +206,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -218,7 +218,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -252,7 +252,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -264,7 +264,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -276,7 +276,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -349,7 +349,17 @@
         "contentType",
         "etag",
         "skeletonBytes",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.conditions:length",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_false:missing-left",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_true:missing-left",
@@ -385,7 +395,17 @@
         "contentType",
         "etag",
         "skeletonBytes",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.conditions:length",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_false:missing-left",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_true:missing-left",
@@ -404,7 +424,17 @@
         "contentType",
         "etag",
         "skeletonBytes",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.conditions:length",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_false:missing-left",
         "body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_literal_true:missing-left",
@@ -682,6 +712,12 @@
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
+    },
+    {
+      "id": "event-ids",
+      "status": "MATCH",
+      "differences": [],
+      "knownDifferences": []
     },
     {
       "id": "event-id:c0",

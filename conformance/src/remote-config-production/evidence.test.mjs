@@ -13,6 +13,8 @@ import {
   FILES,
   KNOWN,
   PINS,
+  RECORD_LOCK,
+  TRUST_INPUTS,
   comparison,
   fixtureProblems,
   gitReaders,
@@ -26,7 +28,7 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 /** The pinned files as committed at HEAD, as an in-memory revision. */
 function headFiles() {
   const { read } = gitReaders("HEAD", ROOT);
-  return Object.fromEntries(Object.keys(PINS).map((path) => [path, read(path)]));
+  return Object.fromEntries([...Object.keys(PINS), RECORD_LOCK].map((path) => [path, read(path)]));
 }
 
 function readers(files) {
@@ -63,6 +65,15 @@ function reforge(files, path, change) {
       }),
     );
   return { files: out, pins: pinsOf(out) };
+}
+
+/** The same forger, who can also rewrite the closure record lock. */
+function reforgeWithLock(files, path, change) {
+  const forged = reforge(files, path, change);
+  const lock = json(forged.files[RECORD_LOCK]);
+  lock.records[FILES.production] = forged.pins[FILES.production];
+  forged.files[RECORD_LOCK] = bytesOf(lock);
+  return forged;
 }
 
 test("the committed evidence of HEAD is valid when read from git objects", () => {
@@ -130,7 +141,7 @@ test("forgery: re-pinned files still have to be complete, answered, sanitised an
     [(f) => void (f.rows[0].body.note = "12345678901"), /a number of 11 or more digits/],
   ];
   for (const [change, message] of cases) {
-    const forged = reforge(files, FILES.production, change);
+    const forged = reforgeWithLock(files, FILES.production, change);
     const problems = verifyEvidence({ ...readers(forged.files), pins: forged.pins });
     assert.ok(
       problems.some((p) => message.test(p)),
@@ -164,6 +175,7 @@ test("forgery: a re-pinned comparison that is not the recomputed one", () => {
     [KNOWN]: Buffer.from(JSON.stringify({ schemaVersion: 1, entries: [] })),
   };
   assert.deepEqual(verifyEvidence({ ...readers(known), pins: pinsOf(known) }), [
+    `${KNOWN}: the entries are not KD-MEMBER-ORDER`,
     `${FILES.strict}: differs from the recomputed comparison`,
     `${FILES.emulator}: differs from the recomputed comparison`,
   ]);
@@ -243,4 +255,60 @@ test("the committed comparisons carry the digests of their inputs", () => {
       PINS[path === FILES.strict ? FILES.localStrict : FILES.localEmulator],
     );
   }
+});
+
+// Coordinator ruling 3 (2026-11-24, review of 9bf6af99f).
+test("a re-pinned production fixture is refused by the record lock outside this module", () => {
+  const files = headFiles();
+  const forged = reforge(files, FILES.production, (f) => {
+    const row = f.rows.find((r) => r.case === "s-validate-20");
+    row.body.error.message = `X${row.body.error.message.slice(1)}`;
+  });
+  assert.deepEqual(verifyEvidence({ ...readers(forged.files), pins: forged.pins }), [
+    `${FILES.production}: its pin differs from ${RECORD_LOCK}`,
+  ]);
+  const lock = JSON.parse(files[RECORD_LOCK]);
+  assert.equal(lock.records[FILES.production], PINS[FILES.production]);
+});
+
+test("the closed table refuses a seventh pinned input and a changed list of known differences", () => {
+  assert.deepEqual(TRUST_INPUTS, Object.keys(PINS).toSorted());
+  assert.equal(TRUST_INPUTS.length, 6);
+  const files = headFiles();
+  const seventh = { ...files, [`${DIR}/extra.json`]: Buffer.from("{}") };
+  const problems = verifyEvidence({
+    ...readers(seventh),
+    pins: { ...pinsOf(seventh), [`${DIR}/extra.json`]: sha256(Buffer.from("{}")) },
+  });
+  assert.match(problems[0], /the pins are not the trust table's inputs/);
+  const emptied = {
+    ...files,
+    [KNOWN]: Buffer.from(JSON.stringify({ schemaVersion: 1, entries: [] })),
+  };
+  const recomputed = reforge(emptied, FILES.localStrict, () => {});
+  assert.ok(
+    verifyEvidence({ ...readers(recomputed.files), pins: recomputed.pins }).includes(
+      `${KNOWN}: the entries are not KD-MEMBER-ORDER`,
+    ),
+  );
+});
+
+test("fixtureProblems refuses private values in encoded forms", () => {
+  const fixture = JSON.parse(headFiles()[FILES.production]);
+  for (const [value, problem] of [
+    ["MTIzNDU2Nzg5MDEy", /a number of 11 or more digits/],
+    ["%31%32%33%34%35%36%37%38%39%30%31%32", /a number of 11 or more digits/],
+    ["owner%40corp.example.org", /an e-mail address/],
+    ["etag-1234-1", /a numeric ETag/],
+    [Buffer.from("projects/real-project/x").toString("base64"), /a project id other than/],
+  ]) {
+    const forged = structuredClone(fixture);
+    forged.rows[0].body.note = value;
+    const problems = fixtureProblems("x", Buffer.from(JSON.stringify(forged)), "production");
+    assert.ok(
+      problems.some((p) => problem.test(p)),
+      `${value}: ${problems.join("; ")}`,
+    );
+  }
+  assert.deepEqual(fixtureProblems("x", headFiles()[FILES.production], "production"), []);
 });

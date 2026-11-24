@@ -3,8 +3,8 @@
   "comparison": "production-vs-local",
   "profile": "strict",
   "inputs": {
-    "production": "be64286d41de670bf2438e5a7d740acf9a6a4550c3c90812f69b3d169f744a75",
-    "local": "53fd7f5441bdbc80a5449f10835ab2114817fa5dfe2b1e92e1bbe83fee3e8e26",
+    "production": "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
+    "local": "e18cd66eded7aad488a320c402350944f229896e3b604e548166e923c96b8310",
     "knownDifferences": "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c"
   },
   "knownDifferences": [
@@ -14,7 +14,7 @@
     }
   ],
   "counts": {
-    "MATCH": 7,
+    "MATCH": 8,
     "MATCH_LAYOUT": 0,
     "KNOWN_DIFFERENCE": 0,
     "MISMATCH": 52,
@@ -79,7 +79,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -91,7 +91,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -103,7 +103,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -115,7 +115,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -149,7 +149,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -161,7 +161,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -206,7 +206,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -218,7 +218,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -252,7 +252,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -264,7 +264,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -276,7 +276,7 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes"
+        "escapes:/conditions/0/expression"
       ],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
@@ -320,7 +320,17 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.version.updateTime:value"
       ],
       "knownDifferences": [
@@ -344,7 +354,17 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.version.updateTime:value"
       ],
       "knownDifferences": [
@@ -357,7 +377,17 @@
       "differences": [
         "contentType",
         "etag",
-        "unicodeEscapes",
+        "escapes:/conditions/13/expression",
+        "escapes:/conditions/14/expression",
+        "escapes:/conditions/17/expression",
+        "escapes:/conditions/18/expression",
+        "escapes:/conditions/19/expression",
+        "escapes:/conditions/2/expression",
+        "escapes:/conditions/3/expression",
+        "escapes:/conditions/4/expression",
+        "escapes:/conditions/5/expression",
+        "escapes:/conditions/8/expression",
+        "escapes:/conditions/9/expression",
         "body.version.updateTime:value"
       ],
       "knownDifferences": [
@@ -630,6 +660,12 @@
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
+    },
+    {
+      "id": "event-ids",
+      "status": "MATCH",
+      "differences": [],
+      "knownDifferences": []
     },
     {
       "id": "event-id:c0",

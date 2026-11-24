@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import { compareRuns } from "./judge.mjs";
-import { PLACEHOLDERS, readRun, sanitiseRun } from "./sanitise.mjs";
+import { PLACEHOLDERS, decodedForms, readRun, sanitiseRun } from "./sanitise.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const DIR = "conformance/remote-config-production";
@@ -38,13 +38,18 @@ export const FILES = {
 
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
-  [FILES.production]: "be64286d41de670bf2438e5a7d740acf9a6a4550c3c90812f69b3d169f744a75",
-  [FILES.localStrict]: "53fd7f5441bdbc80a5449f10835ab2114817fa5dfe2b1e92e1bbe83fee3e8e26",
-  [FILES.localEmulator]: "2064f4d9daabdb79f03ee2caf6bd400a0042604036f29fe32c0f083abcc4072f",
-  [FILES.strict]: "479386cf1823e1a100b08a25dd184b9cd2ce9d888d9cf1fe2670cdf0f509bed1",
-  [FILES.emulator]: "ace07771f2b59cdb3926c05a174e612cc662fd3fdb7a26501dd140068e3dc8bf",
+  [FILES.production]: "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
+  [FILES.localStrict]: "e18cd66eded7aad488a320c402350944f229896e3b604e548166e923c96b8310",
+  [FILES.localEmulator]: "031eb3cf6dd43db0c2b9e332d09ecfd24d7fc4afe1afb84fa2086ea1e45326a3",
+  [FILES.strict]: "d75360e5d8e0d659a4a3ec2c678542ca16097ca2cf5fe5e941e22b44719be96c",
+  [FILES.emulator]: "b388fd84595aae65f190be365a495fe659d0319ef9881633c5492d9044dff845",
   [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
 };
+
+/** The trust table's six inputs, the record lock and the known differences they must carry. */
+export const TRUST_INPUTS = [...Object.values(FILES), KNOWN].toSorted();
+export const RECORD_LOCK = "spec/compatibility/closure/record-digests.json";
+export const KNOWN_IDS = ["KD-MEMBER-ORDER"];
 
 /** The closed list of cases of the recorder plan, in request order. */
 export const CASES = [
@@ -120,16 +125,20 @@ export function fixtureProblems(name, bytes, target) {
   const cases = Array.isArray(fixture.rows) ? fixture.rows.map((row) => row.case) : [];
   if (!isDeepStrictEqual(cases, CASES))
     problems.push(`${name}: the rows are not the cases of the plan`);
-  const text = bytes.toString("utf8");
-  if (/etag-[0-9]{5,}-/.test(text)) problems.push(`${name}: a numeric ETag`);
-  if (/[0-9]{11,}/.test(text)) problems.push(`${name}: a number of 11 or more digits`);
-  const emails =
-    text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? [];
-  if (emails.some((email) => email !== PLACEHOLDERS.email))
-    problems.push(`${name}: an e-mail address`);
-  for (const match of text.matchAll(/projects\/([^/"\\?]+)/g))
-    if (match[1] !== PLACEHOLDERS.project)
-      problems.push(`${name}: a project id other than ${PLACEHOLDERS.project}`);
+  // Plain and encoded (percent-escaped, base64 or base64url) forms of the text.
+  const found = new Set();
+  for (const text of decodedForms(bytes.toString("utf8"))) {
+    if (/etag-[0-9]+-/.test(text)) found.add(`${name}: a numeric ETag`);
+    if (/[0-9]{11,}/.test(text)) found.add(`${name}: a number of 11 or more digits`);
+    const emails =
+      text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? [];
+    if (emails.some((email) => email !== PLACEHOLDERS.email))
+      found.add(`${name}: an e-mail address`);
+    for (const match of text.matchAll(/projects\/([^/"\\?]+)/g))
+      if (match[1] !== PLACEHOLDERS.project)
+        found.add(`${name}: a project id other than ${PLACEHOLDERS.project}`);
+  }
+  problems.push(...found);
   return problems;
 }
 
@@ -139,6 +148,21 @@ export function fixtureProblems(name, bytes, target) {
  */
 export function verifyEvidence({ list, read, pins = PINS }) {
   const problems = [];
+  // The closed table: exactly the trust table's inputs, whatever pins the caller supplies.
+  const inputs = Object.keys(pins).toSorted();
+  if (!isDeepStrictEqual(inputs, TRUST_INPUTS))
+    return [`the pins are not the trust table's inputs: ${inputs.join(", ")}`];
+  // Provenance: the production fixture's digest is also pinned outside this module, in the
+  // closure record lock, beside the coordinator's private manifest of the raw recording.
+  const lock = read(RECORD_LOCK);
+  let lockDigest = null;
+  try {
+    lockDigest = JSON.parse(lock).records[FILES.production] ?? null;
+  } catch {
+    lockDigest = null;
+  }
+  if (lockDigest !== pins[FILES.production])
+    problems.push(`${FILES.production}: its pin differs from ${RECORD_LOCK}`);
   const listed = list(DIR)
     .map((name) => `${DIR}/${name}`)
     .toSorted();
@@ -159,6 +183,15 @@ export function verifyEvidence({ list, read, pins = PINS }) {
     files[path] = { bytes };
   }
   if (problems.length) return problems;
+  let known = null;
+  try {
+    known = JSON.parse(files[KNOWN].bytes);
+  } catch {
+    known = null;
+  }
+  const knownIds = (known?.entries ?? []).map((entry) => entry.id);
+  if (!isDeepStrictEqual(knownIds, KNOWN_IDS))
+    problems.push(`${KNOWN}: the entries are not ${KNOWN_IDS.join(", ")}`);
   problems.push(...fixtureProblems(FILES.production, files[FILES.production].bytes, "production"));
   problems.push(...fixtureProblems(FILES.localStrict, files[FILES.localStrict].bytes, "local"));
   problems.push(...fixtureProblems(FILES.localEmulator, files[FILES.localEmulator].bytes, "local"));

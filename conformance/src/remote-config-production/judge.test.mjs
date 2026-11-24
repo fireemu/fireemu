@@ -69,17 +69,25 @@ test("form compares versions as offsets from the namespace baseline and times by
       "27",
     ),
     {
-      versionNumber: "version:3",
-      rollbackSource: "version:1",
-      updateTime: "time:6:Z",
-      description: "Rollback to version version:1",
-      nextPageToken: "version:-3",
-      other: "30",
+      versionNumber: "v:3",
+      rollbackSource: "v:1",
+      updateTime: "t:6:Z",
+      description: "r:1",
+      nextPageToken: "v:-3",
+      other: "s:30",
     },
   );
-  assert.equal(form({ rollbackSource: "0" }, "27").rollbackSource, "0");
-  assert.equal(form({ updateTime: "2026-01-01T00:00:00Z" }, "1").updateTime, "time:0:Z");
-  assert.equal(form({ nextPageToken: "etag-x-1" }, "1").nextPageToken, "etag-x-1");
+  assert.equal(form({ rollbackSource: "0" }, "27").rollbackSource, "s:0");
+  assert.equal(form({ updateTime: "2026-01-01T00:00:00Z" }, "1").updateTime, "t:0:Z");
+  assert.equal(form({ nextPageToken: "etag-x-1" }, "1").nextPageToken, "s:etag-x-1");
+  // A tag no input string can take: the literal text of a normalised form stays a string.
+  assert.equal(form({ updateTime: "t:6:Z" }, "1").updateTime, "s:t:6:Z");
+  // A version spelled with a leading zero is compared as written.
+  assert.equal(form({ versionNumber: "028" }, "27").versionNumber, "s:028");
+  assert.equal(
+    form({ description: "Rollback to version 028" }, "27").description,
+    "s:Rollback to version 028",
+  );
   assert.equal(namespaceOf(SERVER), "server");
   assert.equal(namespaceOf(CLIENT), "client");
 });
@@ -227,11 +235,11 @@ test("eventRows: one row per step and generation, the shared id, duplicates, and
   });
   assert.deepEqual(
     [...rows.keys()],
-    ["event:client:c0:g1", "event:client:c0:g2", "event-id:c0", "summary:g1"],
+    ["event:client:c0:g1", "event:client:c0:g2", "event-ids", "event-id:c0", "summary:g1"],
   );
   assert.deepEqual(rows.get("event-id:c0").value, { shared: true });
   assert.deepEqual(rows.get("summary:g1").value, { clientSteps: ["c0"], duplicates: 1 });
-  assert.deepEqual(rows.get("event:client:c0:g1").valueForm.data, { versionNumber: "version:1" });
+  assert.deepEqual(rows.get("event:client:c0:g1").valueForm.data, { versionNumber: "v:1" });
   const split = eventRows({
     baseline: { client: { version: "27" } },
     versions,
@@ -286,4 +294,93 @@ test("recorded answers: the strict refusals of the four recorded server forms ma
   assert.equal(production.rows[0].contentType, "application/json; charset=UTF-8");
   for (const id of ["event-id:c0", "event-id:c1", "event-id:c2", "event-id:c3", "event-id:c4"])
     assert.equal(rows[id].status, "MATCH", id);
+});
+
+// Coordinator ruling 3 (2026-11-24, review of 9bf6af99f): the review's false matches.
+const recorded = () => read(FILES.production);
+const rowOf = (run, id) => run.rows.find((row) => row.case === id);
+const verdictOf = (left, right, id) =>
+  compareRuns(left, right, { known: [MEMBER_ORDER], kind: "production-vs-local" }).rows.find(
+    (r) => r.id === id,
+  );
+
+test("an escape moved to another character of the same field is a difference", () => {
+  const production = recorded();
+  const moved = structuredClone(production);
+  const row = rowOf(moved, "s-validate-03");
+  const [path, [[index, sequence]]] = Object.entries(row.escapes).find(([, found]) =>
+    found.some(([, s]) => s === "\\u003c"),
+  );
+  assert.equal(sequence, "\\u003c");
+  row.escapes[path] = [[0, "\\u0070"]];
+  assert.ok(index > 0);
+  const result = verdictOf(production, moved, "s-validate-03");
+  assert.equal(result.status, "MISMATCH");
+  assert.deepEqual(result.differences, [`escapes:${path}`]);
+});
+
+test("an ETag version with a leading zero and a literal normalised form are differences", () => {
+  const production = recorded();
+  const padded = structuredClone(production);
+  rowOf(padded, "c0-publish").etag = "etag-PROJECT_NUMBER-028";
+  assert.deepEqual(verdictOf(production, padded, "c0-publish").differences, ["etag"]);
+  assert.equal(etagForm("etag-PROJECT_NUMBER-028", "27"), "noncanonical:14:028");
+  const literal = structuredClone(production);
+  rowOf(literal, "c0-publish").body.version.updateTime = "time:6:Z";
+  assert.equal(verdictOf(production, literal, "c0-publish").status, "MISMATCH");
+});
+
+test("a member named __proto__ is compared like any other", () => {
+  const production = recorded();
+  const withProto = (value) => {
+    const run = structuredClone(production);
+    rowOf(run, "c0-publish").body = JSON.parse(
+      `{"parameters":{"__proto__":{"defaultValue":{"value":"${value}"}}}}`,
+    );
+    return run;
+  };
+  const a = withProto("A");
+  assert.deepEqual(Object.keys(rowOf(a, "c0-publish").body.parameters), ["__proto__"]);
+  assert.equal(verdictOf(a, withProto("B"), "c0-publish").status, "MISMATCH");
+  assert.equal(verdictOf(a, withProto("A"), "c0-publish").status, "MATCH");
+});
+
+test("an event id reused by another publication breaks the recorded id relation", () => {
+  const production = recorded();
+  const reused = structuredClone(production);
+  const c0 = reused.versions.find((v) => v.step === "c0");
+  const c1 = reused.versions.find((v) => v.step === "c1");
+  const id = reused.events.find((e) => e.versionNumber === c0.versionNumber).eventId;
+  for (const event of reused.events.filter(
+    (e) => e.versionNumber === c1.versionNumber && e.updateTime === c1.updateTime,
+  )) {
+    event.eventId = id;
+    if (event.generation === 1) event.context.eventId = id;
+    else event.context.id = id;
+  }
+  const result = verdictOf(production, reused, "event-ids");
+  assert.equal(result.status, "MISMATCH");
+  assert.equal(verdictOf(production, production, "event-ids").status, "MATCH");
+});
+
+test("escapes outside the compared body are not compared", () => {
+  const history = (escapes) =>
+    answer(
+      "h-client-history",
+      `${CLIENT}:listVersions`,
+      { versions: [{ versionNumber: "28" }, { versionNumber: "27", description: "a<b" }] },
+      { escapes },
+    );
+  const left = runOf({ client: "27", server: "6" }, [
+    history({ "/versions/1/description": [[1, "\\u003c"]] }),
+  ]);
+  const right = runOf({ client: "27", server: "6" }, [history({})]);
+  assert.equal(compareRuns(left, right, { kind: "production-vs-local" }).rows[0].status, "MATCH");
+  const inside = runOf({ client: "27", server: "6" }, [
+    history({ "/versions/0/versionNumber": [[0, "\\u0032"]] }),
+  ]);
+  assert.deepEqual(
+    compareRuns(inside, right, { kind: "production-vs-local" }).rows[0].differences,
+    ["escapes:/versions/0/versionNumber"],
+  );
 });

@@ -64,23 +64,111 @@ export function maskText(text, secrets) {
 export function maskValue(value, secrets) {
   if (Array.isArray(value)) return value.map((item) => maskValue(item, secrets));
   if (value && typeof value === "object") {
-    const out = {};
-    for (const [key, item] of Object.entries(value)) {
-      out[maskText(key, secrets)] =
+    // Object.fromEntries defines own properties, so a member named __proto__ survives.
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        maskText(key, secrets),
         key === "updateUser" && item && typeof item === "object" && !Array.isArray(item)
           ? maskUser(item, secrets)
-          : maskValue(item, secrets);
-    }
-    return out;
+          : maskValue(item, secrets),
+      ]),
+    );
   }
   return typeof value === "string" ? maskText(value, secrets) : value;
 }
 
 function maskUser(user, secrets) {
-  const out = maskValue(user, secrets);
-  if (typeof user.name === "string" && user.name !== "") out.name = PLACEHOLDERS.name;
-  if (typeof user.imageUrl === "string" && user.imageUrl !== "") out.imageUrl = PLACEHOLDERS.image;
-  return out;
+  return Object.fromEntries(
+    Object.entries(maskValue(user, secrets)).map(([key, item]) => [
+      key,
+      key === "name" && typeof user.name === "string" && user.name !== ""
+        ? PLACEHOLDERS.name
+        : key === "imageUrl" && typeof user.imageUrl === "string" && user.imageUrl !== ""
+          ? PLACEHOLDERS.image
+          : item,
+    ]),
+  );
+}
+
+const pointer = (key) => key.replaceAll("~", "~0").replaceAll("/", "~1");
+
+/**
+ * Where a raw JSON text writes a character as an escape: for every string (a member name at
+ * `<path>@key`, a value at its JSON pointer), the position in the decoded string and the escape
+ * as written, such as `[15, "\\u003c"]`. The judge compares these by field and position, so an
+ * escape moved to another character or another field is a difference.
+ */
+export function escapeMap(raw) {
+  const escapes = {};
+  let i = 0;
+  const space = () => {
+    while (i < raw.length && " \n\r\t".includes(raw[i])) i += 1;
+  };
+  const string = (path) => {
+    i += 1;
+    let decoded = "";
+    const found = [];
+    while (raw[i] !== '"') {
+      if (i >= raw.length) throw new Error("unterminated string in a JSON body");
+      if (raw[i] === "\\") {
+        const sequence = raw[i + 1] === "u" ? raw.slice(i, i + 6) : raw.slice(i, i + 2);
+        found.push([decoded.length, sequence]);
+        decoded += JSON.parse(`"${sequence}"`);
+        i += sequence.length;
+      } else {
+        decoded += raw[i];
+        i += 1;
+      }
+    }
+    i += 1;
+    if (found.length) escapes[path] = found;
+    return decoded;
+  };
+  const value = (path) => {
+    space();
+    if (raw[i] === "{") {
+      i += 1;
+      space();
+      while (raw[i] !== "}") {
+        if (i >= raw.length) throw new Error("unterminated object in a JSON body");
+        space();
+        const at = `${path}/`;
+        const before = Object.keys(escapes).length;
+        const key = string(`${at}@key`);
+        const keyed = `${at}${pointer(key)}`;
+        if (Object.keys(escapes).length > before) {
+          escapes[`${keyed}@key`] = escapes[`${at}@key`];
+          delete escapes[`${at}@key`];
+        }
+        space();
+        i += 1; // ':'
+        value(keyed);
+        space();
+        if (raw[i] === ",") i += 1;
+        space();
+      }
+      i += 1;
+    } else if (raw[i] === "[") {
+      i += 1;
+      let index = 0;
+      space();
+      while (raw[i] !== "]") {
+        if (i >= raw.length) throw new Error("unterminated array in a JSON body");
+        value(`${path}/${index}`);
+        index += 1;
+        space();
+        if (raw[i] === ",") i += 1;
+        space();
+      }
+      i += 1;
+    } else if (raw[i] === '"') {
+      string(path);
+    } else {
+      while (i < raw.length && !",}] \n\r\t".includes(raw[i])) i += 1;
+    }
+  };
+  value("");
+  return escapes;
 }
 
 /**
@@ -148,7 +236,8 @@ export function sanitiseRun({ run, journal, events, result, files }) {
         status: answer.status,
         bodyBytes: answer.bytes,
         skeletonBytes: skeletonBytes(text),
-        unicodeEscapes: (text.match(/\\u[0-9a-fA-F]{4}/g) ?? []).length,
+        // maskValue masks the paths (member names) as well as the escapes' text.
+        escapes: maskValue(escapeMap(text), secrets),
         contentType: answer.contentType ?? null,
         contentEncoding: answer.contentEncoding ?? null,
         etag:
@@ -182,16 +271,38 @@ export function sanitiseRun({ run, journal, events, result, files }) {
   return fixture;
 }
 
-/** Throws when a fixture text still carries a private value. */
+/**
+ * The text and what it may carry encoded: the text with its percent-escapes decoded, and every token
+ * that could be base64 or base64url decoded as Latin-1 (one character per byte, so a digit run or
+ * an address survives).
+ */
+export function decodedForms(text) {
+  const forms = [text];
+  forms.push(
+    text.replace(/%[0-9A-Fa-f]{2}/g, (escape) =>
+      String.fromCharCode(parseInt(escape.slice(1), 16)),
+    ),
+  );
+  for (const token of text.match(/[A-Za-z0-9+/_-]{8,}={0,2}/g) ?? []) {
+    // Node's base64 decoder reads the base64url alphabet as well.
+    const bytes = Buffer.from(token, "base64");
+    forms.push(bytes.toString("latin1"));
+  }
+  return forms;
+}
+
+/** Throws when a fixture text still carries a private value, plainly or encoded. */
 export function assertSanitised(text, secrets) {
-  const found = [];
-  if (text.includes(secrets.project)) found.push("project id");
-  if (secrets.number && text.includes(secrets.number)) found.push("project number");
-  if (text.includes(secrets.run)) found.push("run id");
-  if (/etag-[0-9]{5,}-/.test(text)) found.push("numeric ETag");
-  const emails = (text.match(EMAIL) ?? []).filter((email) => email !== PLACEHOLDERS.email);
-  if (emails.length) found.push("e-mail address");
-  if (found.length) throw new Error(`fixture still carries: ${found.join(", ")}`);
+  const found = new Set();
+  for (const form of decodedForms(text)) {
+    if (form.includes(secrets.project)) found.add("project id");
+    if (secrets.number && form.includes(secrets.number)) found.add("project number");
+    if (form.includes(secrets.run)) found.add("run id");
+    if (/etag-[0-9]+-/.test(form)) found.add("numeric ETag");
+    const emails = (form.match(EMAIL) ?? []).filter((email) => email !== PLACEHOLDERS.email);
+    if (emails.length) found.add("e-mail address");
+  }
+  if (found.size) throw new Error(`fixture still carries: ${[...found].join(", ")}`);
 }
 
 /** Reads a run directory into the inputs of `sanitiseRun`. */

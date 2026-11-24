@@ -6,11 +6,14 @@
 //    is UNKNOWN, never a match and never a mismatch.
 //  - Compared per answer: status, Content-Type, Content-Encoding, the ETag by form (absent, or
 //    `etag-<prefix>-<version>` with the version as an offset from the run's baseline of its
-//    namespace), the layout length (`skeletonBytes`, measured by the sanitiser on the raw body), the
-//    count of \u escapes, and the decoded body: member names and their order, value types, and
-//    values. Volatile values are compared by form only:
+//    namespace, spelled without leading zeros), the layout length (`skeletonBytes`, measured by the
+//    sanitiser on the raw body), every escape the raw body wrote by field and position
+//    (`escapes`), and the decoded body: member names and their order, value types, and values.
+//    Every string is compared in a tagged form, so no input string equals a normalised one; volatile
+//    values are compared by form only:
 //      - version numbers (`versionNumber`, a non-zero `rollbackSource`, a numeric `nextPageToken`,
-//        the number in "Rollback to version n") as offsets from the baseline of the row's namespace;
+//        the number in "Rollback to version n") as offsets from the baseline of the row's namespace,
+//        when spelled without leading zeros (any other spelling is compared as written);
 //      - RFC 3339 times by form (UTC `Z`, the number of fraction digits), never by value.
 //    A form that agrees with different values is MATCH_LAYOUT; equal bodies, equal `bodyBytes`
 //    and equal headers are MATCH.
@@ -26,7 +29,9 @@
 //  - Known differences (`known-differences.json`) take named fields of named rows out of the
 //    comparison. A row whose only differences are known is KNOWN_DIFFERENCE, never MATCH.
 //  - Events are rows too: one per (client step, generation), compared on `data` and `context` the
-//    same way, plus one row per client step for whether its v1 and v2 events share their event id.
+//    same way, plus one row per client step for whether its v1 and v2 events share their event id,
+//    and one row (`event-ids`) for the equality relation of all event ids across steps and
+//    generations (shared within a version, distinct between versions).
 //    The per-generation summary of the recorder is compared field by field (`summary:g1`, `summary:g2`).
 
 export const STATUSES = ["MATCH", "MATCH_LAYOUT", "KNOWN_DIFFERENCE", "MISMATCH", "UNKNOWN"];
@@ -49,22 +54,26 @@ export const namespaceOf = (path) =>
   path.includes("/namespaces/firebase-server/") ? "server" : "client";
 
 /** The form of one value, with the version numbers of `namespace` as offsets from `base`. */
+const CANONICAL = /^(?:0|[1-9][0-9]*)$/;
+
 export function form(value, base, key = null) {
   if (Array.isArray(value)) return value.map((item) => form(item, base));
   if (value && typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, form(v, base, k)]));
   if (typeof value === "string") {
+    // An id member is read by idForm on both sides, so its form needs no tag.
     if (ID_KEYS.has(key)) return idForm(value);
     const time = TIME.exec(value);
-    if (time) return `time:${time[1]?.length ?? 0}:${time[2]}`;
+    if (time) return `t:${time[1]?.length ?? 0}:${time[2]}`;
     if (
       VERSION_KEYS.has(key) &&
-      /^[0-9]+$/.test(value) &&
+      CANONICAL.test(value) &&
       !(key === "rollbackSource" && value === "0")
     )
-      return `version:${BigInt(value) - BigInt(base)}`;
-    const rollback = /^Rollback to version ([0-9]+)$/.exec(value);
-    if (rollback) return `Rollback to version version:${BigInt(rollback[1]) - BigInt(base)}`;
+      return `v:${BigInt(value) - BigInt(base)}`;
+    const rollback = /^Rollback to version ((?:0|[1-9][0-9]*))$/.exec(value);
+    if (rollback) return `r:${BigInt(rollback[1]) - BigInt(base)}`;
+    return `s:${value}`;
   }
   return value;
 }
@@ -74,6 +83,7 @@ export function etagForm(tag, base) {
   if (tag === null || tag === undefined) return null;
   const match = /^etag-(.+)-([0-9]+)$/.exec(tag);
   if (!match) return `unrecognised:${tag.length}`;
+  if (!CANONICAL.test(match[2])) return `noncanonical:${match[1].length}:${match[2]}`;
   const prefix =
     match[1] === "PROJECT_NUMBER"
       ? "project-number"
@@ -129,26 +139,40 @@ export function projectRow(row, baseline) {
     etag: etagForm(row.etag, base),
     // The layout lengths of a whole history or baseline answer include what the run did not write.
     skeletonBytes: whole ? row.skeletonBytes : null,
-    unicodeEscapes: whole ? row.unicodeEscapes : null,
+    escapes: projectedEscapes(row.escapes ?? {}, body),
     bodyBytes: whole ? row.bodyBytes : null,
     body,
     bodyForm: form(body, base),
   };
 }
 
+/** The escapes of the fields the compared body still holds (JSON pointers, `@key` for a name). */
+function projectedEscapes(escapes, body) {
+  const resolves = (path) => {
+    let node = body;
+    for (const part of path.replace(/@key$/, "").split("/").slice(1)) {
+      const key = part.replaceAll("~1", "/").replaceAll("~0", "~");
+      if (node === null || typeof node !== "object" || !Object.hasOwn(node, key)) return false;
+      node = node[key];
+    }
+    return true;
+  };
+  return Object.fromEntries(
+    Object.entries(escapes)
+      .filter(([path]) => resolves(path))
+      .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
 const answered = (row) => row?.phase === "response-persisted";
 
 function compareAnswers(a, b) {
   const fields = [];
-  for (const key of [
-    "status",
-    "contentType",
-    "contentEncoding",
-    "etag",
-    "skeletonBytes",
-    "unicodeEscapes",
-  ])
+  for (const key of ["status", "contentType", "contentEncoding", "etag", "skeletonBytes"])
     if (a[key] !== b[key]) fields.push(key);
+  for (const path of new Set([...Object.keys(a.escapes), ...Object.keys(b.escapes)]))
+    if (JSON.stringify(a.escapes[path] ?? []) !== JSON.stringify(b.escapes[path] ?? []))
+      fields.push(`escapes:${path}`);
   fields.push(...diffValues(a.bodyForm, b.bodyForm));
   const layoutOnly = a.bodyBytes !== b.bodyBytes || diffValues(a.body, b.body).length > 0;
   return { fields, layoutOnly };
@@ -171,6 +195,18 @@ export function eventRows(run) {
       ids.set(key, { ...ids.get(key), [event.generation]: event.eventId });
     }
   }
+  // The equality relation of all ids: each (step, generation) by the first one with its id.
+  const keyed = run.events
+    .map((event) => ({ event, version: steps.get(`${event.versionNumber}|${event.updateTime}`) }))
+    .filter(({ version }) => version?.namespace === "client")
+    .map(({ event, version }) => [`${version.step}:g${event.generation}`, event.eventId])
+    .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const first = new Map();
+  const relation = keyed.map(([key, id]) => {
+    if (!first.has(id)) first.set(id, key);
+    return [key, first.get(id)];
+  });
+  if (relation.length) rows.set("event-ids", { value: relation, valueForm: relation });
   for (const [key, byGeneration] of ids)
     rows.set(key, {
       value: { shared: byGeneration[1] !== undefined && byGeneration[1] === byGeneration[2] },

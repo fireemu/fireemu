@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   PLACEHOLDERS,
   assertSanitised,
+  escapeMap,
   maskText,
   maskValue,
   sanitiseRun,
@@ -323,4 +324,69 @@ test("sanitiseRun refuses a run whose private value survives the masking (a JSON
     },
   });
   assert.throws(() => sanitiseRun(leaked), /fixture still carries: project number/);
+});
+
+// Coordinator ruling 3 (2026-11-24, review of 9bf6af99f).
+function withBody(text) {
+  return run({
+    tamper: ({ journal, files }) => {
+      const bytes = Buffer.from(text);
+      files["003.body"] = bytes;
+      Object.assign(journal[5], {
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    },
+  });
+}
+
+test("sanitiseRun refuses private values in encoded forms and any numeric ETag left", () => {
+  for (const [value, kind] of [
+    ["MTIzNDU2Nzg5MDEy", "project number"],
+    ["%31%32%33%34%35%36%37%38%39%30%31%32", "project number"],
+    ["owner%40corp.example.org", "e-mail address"],
+    [Buffer.from(`x ${PROJECT} y`).toString("base64url"), "project id"],
+    ["etag-1234-1", "numeric ETag"],
+  ]) {
+    assert.throws(
+      () => sanitiseRun(withBody(JSON.stringify({ note: value }))),
+      new RegExp(kind),
+      value,
+    );
+  }
+});
+
+test("escapeMap records every escape by field and position", () => {
+  assert.deepEqual(escapeMap('{"a": "percent \\u003c= 50", "b": ["\\"", "x"], "c\\u0026": 1}'), {
+    "/a": [[8, "\\u003c"]],
+    "/b/0": [[0, '\\"']],
+    "/c&@key": [[1, "\\u0026"]],
+  });
+  // The review's input: the same decoded text with the escape on another character.
+  assert.notDeepEqual(
+    escapeMap('{"e": "percent \\u003c= 50"}'),
+    escapeMap('{"e": "\\u0070ercent <= 50"}'),
+  );
+  assert.deepEqual(escapeMap('{"k/~": "\\n"}'), { "/k~1~0": [[0, "\\n"]] });
+  assert.throws(() => escapeMap('{"a": "x'), /unterminated/);
+  assert.deepEqual(escapeMap('[["a", "\\u003c"], "\\u003e"]'), {
+    "/0/1": [[0, "\\u003c"]],
+    "/1": [[0, "\\u003e"]],
+  });
+});
+
+test("a member named __proto__ survives sanitising", () => {
+  for (const value of ["A", "B"]) {
+    const fixture = sanitiseRun(
+      withBody(`{"parameters":{"__proto__":{"defaultValue":{"value":"${value}"}}}}`),
+    );
+    const parameters = fixture.rows[1].body.parameters;
+    assert.deepEqual(Object.keys(parameters), ["__proto__"]);
+    assert.equal(parameters["__proto__"].defaultValue.value, value);
+  }
+});
+
+test("escape paths are masked like the members they name", () => {
+  const fixture = sanitiseRun(withBody(`{"${PROJECT}": "a\\u003cb"}`));
+  assert.deepEqual(fixture.rows[1].escapes, { "/PROJECT_ID": [[1, "\\u003c"]] });
 });
