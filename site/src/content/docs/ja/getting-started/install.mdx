@@ -84,7 +84,7 @@ firestore.edition = "standard"
 
 JSONタブは同等の`fireemu.json`の書き方です（`init`が書き出すのはTOMLのみです）。
 
-`./firebase.json`が存在するか`--firebase-json <file>`を渡した場合、`init`は`firebaseJson = "firebase.json"`を自動で追記します。これにより、ポート・ルール・インデックス・Functionsコードベースがそのファイルから読み込まれます。
+プロンプトなし（`--yes`、`--no-interactive`、または端末なし）で`init`を実行し、`./firebase.json`が存在する場合は、`firebaseJson = "firebase.json"`でそのファイルを参照します。対話モードでは先に確認します。`--firebase-json <file>`を渡した場合、`firebaseJson`には指定したパスが入ります。ポート、Security Rules、インデックス、Functionsのコードベースは、そのファイルから読み込まれます。
 
 設定キーの一覧は[設定のスキーマ](../../reference/configuration/)を参照してください。`npx fireemu init --reference`を実行すると、全キーの解説コメント付きで`fireemu.reference.toml`を書き出せます（この参照用ファイルは実行時には読み込まれません）。
 

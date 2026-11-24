@@ -3,7 +3,7 @@ title: アプリを接続する
 description: Firebase Admin SDK、クライアントSDK、Security RulesユニットテストをFireemuに接続する方法です。
 ---
 
-FireemuはFirebase Local Emulator Suiteと同じプロトコルと既定ポートで待ち受けるため、SDK側の接続コードはそのまま使えます。
+FireemuはFirebase Local Emulator Suiteと同じプロトコルと既定ポートで待ち受けるため、対応しているサービスでは同じSDKのエミュレータ接続方法で接続できます。ポートとプロジェクトIDは、Fireemuの実行に合わせてください。
 
 ## サーバーコードとAdmin SDKを接続する
 
@@ -38,12 +38,12 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 
 今回の実行で起動しないエミュレータの環境変数は書き換えられません。シェルに既存のホスト変数が残っている場合はそのまま引き継がれ、警告が出ます。
 
-- `fireemu exec --plan -- <command>`で、コマンドに渡される環境変数の一覧を事前に確認できます。
+- `fireemu exec --plan -- <command>`で、Fireemuが設定するエミュレータ変数と、シェルから引き継ぐエミュレータ変数の扱いを事前に確認できます。
 - [`--deny-inherited-emulator-env`](../../reference/cli/#継承されたエミュレータ変数)を付けると、意図しない残存変数がある場合に起動前にエラーで止めます。
 
 ## クライアントSDKを接続する
 
-クライアントSDKの接続方法はLocal Emulator Suiteと同じです。プロジェクトIDはFireemuが使っているもの（`.firebaserc`のデフォルト、`fireemu.toml`の`daemon.authProject`、または`demo-app`）に揃えてください。
+クライアントSDKの接続方法はLocal Emulator Suiteと同じです。プロジェクトIDはFireemuが解決したものに揃えてください。優先順位は`--project`を含めて[プロジェクトID](#プロジェクトid)に記載しています。
 
 ```js
 import { initializeApp } from 'firebase/app';

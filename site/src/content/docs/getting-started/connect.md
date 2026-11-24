@@ -3,7 +3,7 @@ title: Connect your app
 description: Point the Firebase Admin SDK, client SDKs, and Security Rules unit tests at Fireemu.
 ---
 
-Fireemu speaks the same protocols and uses the same default ports as the Firebase Local Emulator Suite, so SDK connection code works without changes.
+Fireemu speaks the same protocols and uses the same default ports as the Firebase Local Emulator Suite, so for the supported services you connect with the same SDK emulator methods. Match the ports and the project ID of your Fireemu run.
 
 ## Connect server code and the Admin SDK
 
@@ -38,12 +38,12 @@ await getFirestore().doc('notes/n1').set({ text: 'hello' });
 
 Variables for emulators that were not started are left untouched. If your shell already defines a host variable for an unselected emulator, Fireemu keeps it and prints a warning.
 
-- Run `fireemu exec --plan -- <command>` to see the exact environment variables your command will receive.
+- Run `fireemu exec --plan -- <command>` to see which emulator variables Fireemu would set and how it would handle the ones your shell already carries.
 - Pass [`--deny-inherited-emulator-env`](../../reference/cli/#inherited-emulator-variables) to fail fast instead of inheriting leftover variables.
 
 ## Connect client SDKs
 
-Connect client SDKs in code the same way as with the Local Emulator Suite. Match the project ID Fireemu uses (the `.firebaserc` default, `daemon.authProject` in `fireemu.toml`, or `demo-app`).
+Connect client SDKs in code the same way as with the Local Emulator Suite. Match the project ID Fireemu resolved; [The project ID](#the-project-id) gives the order of precedence, including `--project`.
 
 ```js
 import { initializeApp } from 'firebase/app';

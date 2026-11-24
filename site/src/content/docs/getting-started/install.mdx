@@ -84,7 +84,7 @@ firestore.edition = "standard"
 
 The JSON tab shows the equivalent `fireemu.json` format (note that `init` only writes TOML).
 
-If `./firebase.json` exists or you pass `--firebase-json <file>`, `init` adds `firebaseJson = "firebase.json"` so ports, rules, indexes, and Functions codebases are loaded from it automatically.
+When `init` runs without prompts (`--yes`, `--no-interactive` or no terminal) and `./firebase.json` exists, it references that file with `firebaseJson = "firebase.json"`; an interactive run asks first. With `--firebase-json <file>`, `firebaseJson` holds the path you pass. Ports, Security Rules, indexes and Functions codebases are then read from that file.
 
 See the [configuration schema](../../reference/configuration/) for every available key, or run `npx fireemu init --reference` to generate a commented `fireemu.reference.toml` (Fireemu never loads the reference file).
 
