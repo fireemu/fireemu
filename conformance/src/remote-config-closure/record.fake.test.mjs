@@ -144,6 +144,7 @@ async function pass(t, { lost = [], status = {}, respond = () => null } = {}) {
       return Response.json({ cleanupPolicies: { "firebase-functions-cleanup": {} } });
     if (url.host === "cloudresourcemanager.googleapis.com") return Response.json({ bindings: [] });
     const forced = respond(url, init);
+    if (forced instanceof Response) return forced;
     if (forced) return new Response(forced === 304 ? null : "{}", { status: forced });
     return world.fetch(url, init);
   };
@@ -286,4 +287,29 @@ test("fake production: a complete 304 to the conditional read is an answer", asy
   assert.equal(result.stopped, null);
   assert.ok(sent.includes("v-before"));
   assert.deepEqual(result.unknown, []);
+});
+
+test("fake production: G rolls back only a namespace the pass wrote", async (t) => {
+  // The pass stops at p1 (lost) before any server write; G then reads a server template that is
+  // not empty (someone else's), which it must not roll back.
+  let serverReads = 0;
+  const { result, sent } = await pass(t, {
+    lost: ["p1-publish"],
+    respond: (url, init) =>
+      init.method === "GET" &&
+      url.pathname.endsWith("/namespaces/firebase-server/remoteConfig") &&
+      ++serverReads > 1
+        ? Response.json(
+            {
+              parameters: { foreign: { defaultValue: { value: "x" } } },
+              version: { versionNumber: "7" },
+            },
+            { headers: { etag: "etag-123456789012-7" } },
+          )
+        : null,
+  });
+  assert.equal(sent.includes("g-server-restore"), false);
+  assert.equal(sent.includes("g-client-restore"), true);
+  assert.equal(result.baseline.after.server.empty, false);
+  assert.equal(result.sandboxAtBaseline, false);
 });
