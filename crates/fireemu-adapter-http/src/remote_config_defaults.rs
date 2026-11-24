@@ -12,9 +12,11 @@
 //! - property list: the Apple DOCTYPE, tab-indented `<key>` and `<string>` pairs, a value with `<`
 //!   or `&` inside a CDATA section, no final newline.
 //!
-//! Not recorded: how `>`, `'`, `=` or control characters are written in each format, and the
-//! order of the entries, which Fireemu writes in its sorted member order (top-level parameters
-//! first, then each group's).
+//! - the entries in the template's own order: top-level parameters as written, then each group
+//!   as written with its parameters as written (2026-11-25 RC-CLOSURE-A passes; coordinator
+//!   ruling 6). A template whose order is unknown (the initial empty one) falls back to sorted.
+//!
+//! Not recorded: how `>`, `'`, `=` or control characters are written in each format.
 
 use std::fmt::Write as _;
 
@@ -47,6 +49,92 @@ impl Format {
             Self::Plist => "application/x-plist",
         }
     }
+}
+
+/// The parameter names of a template body in the order it writes them: top-level parameters,
+/// then each group's, groups in their order (serde sees an object's members in document order).
+/// `None` when the body is not an object of that shape; validation answers those.
+pub(crate) fn written_order(bytes: &[u8]) -> Option<Vec<String>> {
+    serde_json::from_slice::<Written>(bytes)
+        .ok()
+        .map(|written| {
+            let mut names = written.parameters.0;
+            names.extend(
+                written
+                    .parameter_groups
+                    .0
+                    .into_iter()
+                    .flat_map(|(_, group)| group.parameters.0),
+            );
+            names
+        })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Written {
+    #[serde(default)]
+    parameters: Keys,
+    #[serde(default)]
+    parameter_groups: Ordered<WrittenGroup>,
+}
+
+#[derive(serde::Deserialize)]
+struct WrittenGroup {
+    #[serde(default)]
+    parameters: Keys,
+}
+
+/// An object's member names in document order, values ignored.
+#[derive(Default)]
+struct Keys(Vec<String>);
+
+impl<'de> serde::Deserialize<'de> for Keys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ordered::<serde::de::IgnoredAny>::deserialize(deserializer)
+            .map(|ordered| Self(ordered.0.into_iter().map(|(key, _)| key).collect()))
+    }
+}
+
+/// An object's members in document order.
+struct Ordered<T>(Vec<(String, T)>);
+
+impl<T> Default for Ordered<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Ordered<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for Visitor<T> {
+            type Value = Ordered<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry::<String, T>()? {
+                    members.push(member);
+                }
+                Ok(Ordered(members))
+            }
+        }
+        deserializer.deserialize_map(Visitor(std::marker::PhantomData))
+    }
+}
+
+/// The default values of a template document in `order` (names not in it follow, sorted).
+pub(crate) fn defaults_in(document: &Value, order: &[String]) -> Vec<(String, String)> {
+    let mut entries = defaults(document);
+    let position = |name: &str| order.iter().position(|o| o == name).unwrap_or(usize::MAX);
+    // A stable sort keeps the sorted order among names the order does not hold.
+    entries.sort_by_key(|(name, _)| position(name));
+    entries
 }
 
 /// The default values of a template document, top-level parameters first.
@@ -243,6 +331,62 @@ mod tests {
             let decoded: serde_json::Map<String, Value> = serde_json::from_slice(&bytes).unwrap();
             proptest::prop_assert_eq!(decoded.get(&key).and_then(Value::as_str), Some(value.as_str()));
             proptest::prop_assert!(!bytes.contains(&b'<') && !bytes.contains(&b'&'));
+        }
+    }
+
+    #[test]
+    fn written_order_reads_members_as_written() {
+        let body = br#"{"version": {}, "parameterGroups": {"g2": {"parameters": {"x": {}}, "description": "d"},
+            "g1": {"parameters": {"w": {}, "a": {}}}}, "parameters": {"b": {}, "a2": {}}}"#;
+        assert_eq!(written_order(body).unwrap(), ["b", "a2", "x", "w", "a"]);
+        assert_eq!(written_order(b"{}").unwrap(), Vec::<String>::new());
+        assert_eq!(
+            written_order(br#"{"parameterGroups": {"g": {}}}"#).unwrap(),
+            Vec::<String>::new()
+        );
+        for bad in [
+            &b"{\"parameters\": []}"[..],
+            b"{\"parameterGroups\": {\"g\": 1}}",
+            b"not json",
+        ] {
+            assert_eq!(written_order(bad), None);
+        }
+    }
+
+    #[test]
+    fn defaults_in_orders_by_the_written_order_and_sorts_the_rest() {
+        let document = json!({"parameters": {"a": {"defaultValue": {"value": "1"}}, "b": {"defaultValue": {"value": "2"}}, "c": {}}});
+        let names = |order: &[&str]| {
+            let order: Vec<String> = order.iter().map(|s| (*s).to_owned()).collect();
+            defaults_in(&document, &order)
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&["c", "a", "b"]), ["c", "a", "b"]);
+        assert_eq!(names(&["b"]), ["b", "a", "c"]);
+        assert_eq!(names(&[]), ["a", "b", "c"]);
+    }
+
+    proptest::proptest! {
+        /// Any order of distinct names written in a body is the order of the defaults file.
+        #[test]
+        fn the_written_order_survives_into_the_file(names in proptest::collection::btree_set("[a-z][a-z0-9_]{0,8}", 1..12), seed in proptest::prelude::any::<u64>()) {
+            let mut names: Vec<String> = names.into_iter().collect();
+            // A deterministic shuffle from the seed.
+            let mut state = seed | 1;
+            for i in (1..names.len()).rev() {
+                state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+                let j = usize::try_from(state % (i as u64 + 1)).unwrap();
+                names.swap(i, j);
+            }
+            let members: Vec<String> = names.iter().map(|n| format!("{n:?}: {{\"defaultValue\": {{\"value\": \"v\"}}}}")).collect();
+            let body = format!("{{\"parameters\": {{{}}}}}", members.join(", "));
+            let order = written_order(body.as_bytes()).unwrap();
+            proptest::prop_assert_eq!(&order, &names);
+            let document: Value = serde_json::from_str(&body).unwrap();
+            let keys: Vec<String> = defaults_in(&document, &order).into_iter().map(|(k, _)| k).collect();
+            proptest::prop_assert_eq!(keys, names);
         }
     }
 }

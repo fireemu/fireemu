@@ -167,10 +167,13 @@ impl Draft {
 pub struct ClientTemplate {
     document: Value,
     description: Option<String>,
+    /// Parameter names in the order the published body wrote them (`downloadDefaults` follows
+    /// it); empty when unknown.
+    written_order: Vec<String>,
 }
 
 impl ClientTemplate {
-    fn validate(mut draft: Draft) -> Result<Self, Error> {
+    fn validate(mut draft: Draft, written_order: Vec<String>) -> Result<Self, Error> {
         // The refusals and messages recorded on 2026-11-21 (`validate-*`, `validation-edges-*`,
         // `validation-resume-*`); their order among several faults was not recorded.
         let refuse = |message: String| Err(invalid(format!("[VALIDATION_ERROR]: {message}")));
@@ -256,7 +259,13 @@ impl ClientTemplate {
                 ("parameterGroups".into(), Value::Object(groups)),
             ])),
             description: draft.version.and_then(|version| version.description),
+            written_order,
         })
+    }
+
+    /// Parameter names in the order the published body wrote them; empty when unknown.
+    pub(crate) fn written_order(&self) -> &[String] {
+        &self.written_order
     }
 
     /// Client template fields, with condition order preserved.
@@ -670,6 +679,7 @@ impl Default for TemplateStore {
             template: Arc::new(ClientTemplate {
                 document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
                 description: None,
+                written_order: Vec::new(),
             }),
             update_time: None,
             change: Change::Initial,
@@ -829,11 +839,13 @@ impl TemplateStore {
         check: &dyn Fn(&ClientTemplate) -> Result<(), Error>,
     ) -> Result<WriteResult, Error> {
         let seen = self.current();
-        self.write_seen(&seen, mode, if_match, input, now, check)
+        self.write_seen(&seen, mode, if_match, input, now, check, Vec::new())
     }
 
     /// [`Self::write_checked`] against the version `seen` when the request arrived: a tag that
     /// matched `seen` but no longer matches the head lost a concurrent write.
+    // The request's parts as the listener read them; grouping them would only move the list.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_seen(
         &self,
         seen: &Version,
@@ -842,6 +854,7 @@ impl TemplateStore {
         input: Value,
         now: LogicalInstant,
         check: &dyn Fn(&ClientTemplate) -> Result<(), Error>,
+        written_order: Vec<String>,
     ) -> Result<WriteResult, Error> {
         let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
@@ -849,7 +862,7 @@ impl TemplateStore {
         if !forced && if_match != seen.etag() {
             return Err(Error::PreconditionFailed);
         }
-        let template = ClientTemplate::validate(draft);
+        let template = ClientTemplate::validate(draft, written_order);
         let mut history = self.history.lock().expect("template store lock");
         let base = head(&history.versions);
         if !forced && if_match != base.etag() {

@@ -593,10 +593,12 @@ fn defaults_downloads_follow_the_recorded_answers() {
         at(&stores, &settings, CLIENT, "PUT", "", draft, Some("*"), now).status,
         200
     );
+    // Entries follow the template's own order (coordinator ruling 6; 2026-11-25 RC-CLOSURE-A:
+    // production wrote `fireemu_source`, `fireemu_count`, ... as published, not sorted).
     let wire = download(defaults, "format=JSON");
     assert_eq!(
         std::str::from_utf8(&wire.body).unwrap(),
-        "{\n  \"a\": \"\",\n  \"b\": \"2\"\n}"
+        "{\n  \"b\": \"2\",\n  \"a\": \"\"\n}"
     );
     assert_eq!(download(defaults, "format=JSON&format=XML").status, 400);
 }
@@ -625,7 +627,8 @@ fn the_loser_of_a_concurrent_write_is_detected_against_the_version_it_saw() {
             Some(&tag),
             two_conditions("a"),
             now,
-            &ok
+            &ok,
+            Vec::new(),
         ),
         Ok(WriteResult::Published(_))
     ));
@@ -636,6 +639,7 @@ fn the_loser_of_a_concurrent_write_is_detected_against_the_version_it_saw() {
         two_conditions("b"),
         now,
         &ok,
+        Vec::new(),
     );
     assert_eq!(
         lost.err(),
@@ -652,6 +656,7 @@ fn the_loser_of_a_concurrent_write_is_detected_against_the_version_it_saw() {
         two_conditions("c"),
         now,
         &ok,
+        Vec::new(),
     );
     assert_eq!(stale.err(), Some(Error::PreconditionFailed));
     // A draft that fails validation keeps the 412 too.
@@ -662,6 +667,7 @@ fn the_loser_of_a_concurrent_write_is_detected_against_the_version_it_saw() {
         json!({"parameters": {"bad key!": {}}}),
         now,
         &ok,
+        Vec::new(),
     );
     assert_eq!(invalid.err(), Some(Error::PreconditionFailed));
 }
@@ -1029,4 +1035,49 @@ fn unrecorded_client_expressions_keep_their_acceptance_in_both_profiles() {
             assert_eq!(reply.status, 200, "{expression}");
         }
     }
+}
+
+#[test]
+fn defaults_follow_the_written_order_through_groups_and_rollbacks() {
+    let stores = RemoteConfigStores::default();
+    let settings = RemoteConfigSettings::default();
+    let now = LogicalInstant::from_unix_seconds(T0);
+    let defaults = "/v1/projects/demo-config/remoteConfig:downloadDefaults";
+    let download =
+        |query: &str| at(&stores, &settings, defaults, "GET", query, b"", None, now).wire();
+    // Top-level parameters in their order, then each group in its order with its parameters in
+    // theirs; a rollback keeps the order of the version it restores.
+    let draft = br#"{"parameters": {"z": {"defaultValue": {"value": "1"}}, "m": {"defaultValue": {"value": "2"}}},
+        "parameterGroups": {"y": {"parameters": {"q": {"defaultValue": {"value": "3"}}, "c": {"defaultValue": {"value": "4"}}}},
+                            "b": {"parameters": {"k": {"defaultValue": {"value": "5"}}}}}}"#;
+    let published = at(&stores, &settings, CLIENT, "PUT", "", draft, Some("*"), now);
+    assert_eq!(published.status, 200);
+    let keys = |wire: &Wire| {
+        let text = std::str::from_utf8(&wire.body).unwrap().to_owned();
+        text.lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("<key>")
+                    .map(|k| k.trim_end_matches("</key>").to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(&download("format=XML")), ["z", "m", "q", "c", "k"]);
+    assert_eq!(keys(&download("format=PLIST")), ["z", "m", "q", "c", "k"]);
+    let version = body_of(&published)["version"]["versionNumber"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = br#"{"parameters": {"a": {"defaultValue": {"value": "1"}}}}"#;
+    assert_eq!(
+        at(&stores, &settings, CLIENT, "PUT", "", other, Some("*"), now).status,
+        200
+    );
+    let back = serde_json::to_vec(&json!({"versionNumber": version})).unwrap();
+    let rollback = format!("{CLIENT}:rollback");
+    assert_eq!(
+        at(&stores, &settings, &rollback, "POST", "", &back, None, now).status,
+        200
+    );
+    assert_eq!(keys(&download("format=XML")), ["z", "m", "q", "c", "k"]);
 }

@@ -577,7 +577,7 @@ fn history(
 /// empty file while it was empty; a server template with parameters was not recorded and is
 /// rendered as a client one.
 fn download_defaults(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
-    use crate::remote_config_defaults::{defaults, render, Format};
+    use crate::remote_config_defaults::{defaults_in, render, Format};
     let params = parameters(query, &["format"])?;
     let format = match params.get("format").map(String::as_str) {
         None | Some("" | "FORMAT_UNSPECIFIED") => {
@@ -596,7 +596,11 @@ fn download_defaults(store: &TemplateStore, query: &str) -> Result<Reply, Reply>
         })?,
     };
     let version = store.current();
-    let body = render(&defaults(version.template().document()), format);
+    let template = version.template();
+    let body = render(
+        &defaults_in(template.document(), template.written_order()),
+        format,
+    );
     Ok(Reply {
         status: 200,
         body: ReplyBody::File(Bytes::from(body), format.content_type()),
@@ -661,6 +665,7 @@ fn write(
             body,
             now,
             &check,
+            crate::remote_config_defaults::written_order(bytes).unwrap_or_default(),
         )
         .map_err(|error| match error {
             Error::PreconditionFailed => if_match
