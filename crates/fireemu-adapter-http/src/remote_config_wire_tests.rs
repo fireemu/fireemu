@@ -54,10 +54,11 @@ fn numbered() -> RemoteConfigStores {
 const CLIENT: &str = "/v1/projects/demo-config/remoteConfig";
 const HISTORY: &str = "/v1/projects/demo-config/remoteConfig:listVersions";
 
-/// Three client versions published at T0 + 1 s, + 2 s and + 3 s and 123 456 789 ns.
+/// Three client versions published at T0 + 1 s, + 2 s and + 3 s and 123 456 µs (whole
+/// microseconds, so a filter can name a version's time exactly).
 fn three_versions(stores: &RemoteConfigStores) -> [LogicalInstant; 3] {
     let times = [1, 2, 3].map(|second| {
-        LogicalInstant::from_nanos(i128::from(T0 + second) * 1_000_000_000 + 123_456_789)
+        LogicalInstant::from_nanos(i128::from(T0 + second) * 1_000_000_000 + 123_456_000)
     });
     for time in times {
         let reply = at(
@@ -801,5 +802,87 @@ fn stale_client_tags_are_refused_with_the_recorded_bodies() {
     assert_eq!(
         (reply.status, body_of(&reply)["error"]["code"].clone()),
         (412, json!(412))
+    );
+}
+
+#[test]
+fn near_misses_of_the_recorded_history_and_refusal_rules() {
+    let stores = RemoteConfigStores::default();
+    let [_, t2, _] = three_versions(&stores);
+    let settings = RemoteConfigSettings::default();
+    let now = LogicalInstant::from_unix_seconds(T0 + 10);
+    let list = |query: String| at(&stores, &settings, HISTORY, "GET", &query, b"", None, now);
+    // An exact time: start inclusive, end exclusive.
+    let exact = micros_rfc3339(t2).unwrap();
+    assert_eq!(listed(&list(format!("startTime={exact}"))), ["3", "2"]);
+    assert_eq!(listed(&list(format!("endTime={exact}"))), ["1"]);
+    assert_eq!(listed(&list("endVersionNumber=1".into())), ["1"]);
+    assert_eq!(listed(&list(format!("start_time={exact}"))), ["3", "2"]);
+    // Only a value without any zone is the transcoder's zone refusal.
+    for (raw, transcoder) in [
+        ("2026-13-01T00:00:00%2B09:00", false),
+        ("%2B09:00", false),
+        ("-09:00", false),
+        ("9:00", true),
+        ("19:00", true),
+        ("2026-01-01T12:34", true),
+        ("2026-01-01T00:00:00%2B0900", true),
+        ("2026-01-01T00:00:00%2B09-00", true),
+    ] {
+        let reply = list(format!("startTime={raw}"));
+        assert_eq!(reply.status, 400, "{raw}");
+        assert_eq!(
+            body_of(&reply)["error"].get("details").is_some(),
+            transcoder,
+            "{raw}"
+        );
+    }
+    // A version of digits and dashes that is no number keeps the earlier message.
+    let dashed = at(
+        &stores,
+        &settings,
+        CLIENT,
+        "GET",
+        "versionNumber=1-2",
+        b"",
+        None,
+        now,
+    );
+    assert_eq!(error_message(&dashed), "Invalid version number");
+}
+
+#[test]
+fn stale_tags_of_another_shape_and_one_condition_races() {
+    let settings = RemoteConfigSettings {
+        project_number: Some(NUMBER),
+        strict_concurrent_publish: true,
+        ..RemoteConfigSettings::default()
+    };
+    for tag in [
+        "etag-12a-3",
+        "etag-123456789012-",
+        "etag--3",
+        "etag-123456789012-3x",
+    ] {
+        let reply = stale_refusal(&settings, Namespace::Client, tag, 4).unwrap();
+        assert!(
+            body_of(&reply)["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("is not of the format"),
+            "{tag}"
+        );
+    }
+    let one = concurrent_refusal(
+        &settings,
+        Namespace::Client,
+        Error::ConcurrentPrecondition {
+            submitted: 1,
+            current: 1,
+        },
+    );
+    assert_eq!(
+        error_message(&one),
+        "[VALIDATION_ERROR]: Condition order size [1] does not match condition count [2] for project [ProjectKey{projectNumber=123456789012, namespace=firebase}]"
     );
 }

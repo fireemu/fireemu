@@ -4741,3 +4741,50 @@ fn admin_reads_proceed_while_a_reset_holds_the_barrier() {
     assert!(failures.is_empty(), "{failures:#?}");
     assert!(hook.calls.lock().unwrap().is_empty());
 }
+
+/// The listener serves the client template's current read under the project number, and a
+/// defaults file uncompressed with its own type even when the request accepts gzip
+/// (2026-11-21 `client-project-number`, `defaults-*`).
+#[tokio::test]
+async fn remote_config_listener_serves_the_number_route_and_uncompressed_defaults() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.remote_config.project_number = Some(123_456_789_012);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let get = |path: &'static str| async move {
+        let wire = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nAccept-Encoding: gzip\r\n\r\n");
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(wire.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        String::from_utf8_lossy(&response).to_ascii_lowercase()
+    };
+    let numbered = get("/v1/projects/123456789012/remoteConfig").await;
+    assert!(numbered.starts_with("http/1.1 200"), "{numbered}");
+    assert!(numbered.contains("content-type: application/json; charset=utf-8"));
+    let other = get("/v1/projects/123456789013/remoteConfig").await;
+    assert!(other.starts_with("http/1.1 404"), "{other}");
+    let defaults = get("/v1/projects/demo-app/remoteConfig:downloadDefaults?format=XML").await;
+    assert!(defaults.starts_with("http/1.1 200"), "{defaults}");
+    assert!(defaults.contains("content-type: application/xml\r\n"));
+    assert!(!defaults.contains("content-encoding"));
+    let refused = get("/v1/projects/demo-app/remoteConfig:downloadDefaults").await;
+    assert!(refused.contains("content-encoding: gzip"), "{refused}");
+    server.abort();
+    let _ = server.await;
+}

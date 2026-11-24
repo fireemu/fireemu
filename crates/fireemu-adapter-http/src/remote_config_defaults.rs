@@ -212,6 +212,17 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_cannot_be_a_cdata_section_is_escaped() {
+        let entries = vec![
+            ("k".to_owned(), "a<]]>b".to_owned()),
+            ("j".to_owned(), "x>y".to_owned()),
+        ];
+        let text = String::from_utf8(render(&entries, Format::Plist)).unwrap();
+        assert!(text.contains("\t<string>a&lt;]]>b</string>\n"), "{text}");
+        assert!(text.contains("\t<string>x>y</string>\n"), "{text}");
+    }
+
+    #[test]
     fn formats_parse_only_the_api_names() {
         assert_eq!(Format::parse("JSON"), Some(Format::Json));
         assert_eq!(Format::parse("XML"), Some(Format::Xml));

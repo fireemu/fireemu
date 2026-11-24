@@ -2610,7 +2610,9 @@ mod remote_config_tests {
             remote_config_event_id("demo-config", "firebase", u64::from(u32::MAX) + 1),
             "v4294967296",
         );
-        // Beyond 31 bits no positive int32 is left for a distinct id.
+        // The largest 31-bit version still has a numeric id; beyond it no positive int32 is left.
+        let last = remote_config_event_id("demo-config", "firebase", 0x7fff_ffff);
+        assert!(last.parse::<i32>().is_ok_and(|id| id >= 0), "{last}");
         assert_eq!(
             remote_config_event_id("demo-config", "firebase", 0x8000_0000),
             "v2147483648",
