@@ -19,6 +19,7 @@ export type RuntimeConfig = {
   firestoreAddr: string;
   httpAddr: string;
   storageAddr: string;
+  pubsubAddr: string | null;
   functionsAddr: string | null;
   functionsSource: string | null;
   uiAddr: string;
@@ -29,6 +30,10 @@ export type RuntimeConfig = {
   hosts: HostNames;
   functionsConfigured: boolean;
   appCheckEnabled: boolean;
+  pubsubEnabled?: boolean;
+  databaseEnabled?: boolean;
+  hostingServed?: boolean;
+  remoteConfigEnabled?: boolean;
   uiBundled: boolean;
   sessions: Session[];
   controlToken: string;
@@ -77,6 +82,7 @@ export const initialConfig = (): RuntimeConfig => {
     firestoreAddr: c.firestoreAddr ?? "",
     httpAddr: c.httpAddr ?? "",
     storageAddr: c.storageAddr ?? "",
+    pubsubAddr: c.pubsubAddr ?? null,
     functionsAddr: c.functionsAddr ?? null,
     functionsSource: c.functionsSource ?? null,
     uiAddr: c.uiAddr ?? "",
@@ -91,6 +97,10 @@ export const initialConfig = (): RuntimeConfig => {
     },
     functionsConfigured: c.functionsConfigured ?? false,
     appCheckEnabled: c.appCheckEnabled ?? false,
+    ...(c.pubsubEnabled !== undefined ? { pubsubEnabled: c.pubsubEnabled } : {}),
+    ...(c.databaseEnabled !== undefined ? { databaseEnabled: c.databaseEnabled } : {}),
+    ...(c.hostingServed !== undefined ? { hostingServed: c.hostingServed } : {}),
+    ...(c.remoteConfigEnabled !== undefined ? { remoteConfigEnabled: c.remoteConfigEnabled } : {}),
     uiBundled: c.uiBundled ?? true,
     sessions: c.sessions ?? [],
     controlToken: controlToken(),

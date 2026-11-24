@@ -97,6 +97,9 @@ it("lists pages, the other sessions and the actions, and filters as the query ch
     "Switch to session other (demo-b)Session",
     "Switch theme (now: System)Action",
     "Copy the .env lines for the selected sessionAction",
+    "Freeze virtual clockAction",
+    "Advance virtual clock by +1 hourAction",
+    "Advance virtual clock by +1 dayAction",
     "Show keyboard shortcutsAction",
   ]);
   fireEvent.input(input, { target: { value: "logs" } });

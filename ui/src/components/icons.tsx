@@ -91,6 +91,22 @@ export const IconRuntime = icon(() => (
     <path d="M9.500 2.500h5" />
   </>
 ));
+export const IconPubSub = icon(() => (
+  <>
+    <circle cx="5" cy="12" r="2.5" />
+    <circle cx="19" cy="6" r="2.5" />
+    <circle cx="19" cy="18" r="2.5" />
+    <path d="m7.3 11 9.4-4M7.3 13l9.4 4" />
+  </>
+));
+export const IconRemoteConfig = icon(() => (
+  <>
+    <path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0" />
+    <circle cx="16" cy="7" r="2" />
+    <circle cx="10" cy="12" r="2" />
+    <circle cx="18" cy="17" r="2" />
+  </>
+));
 export const IconSearch = icon(() => (
   <>
     <circle cx="11" cy="11" r="6.500" />
