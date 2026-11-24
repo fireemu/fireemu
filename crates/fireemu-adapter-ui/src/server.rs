@@ -30,6 +30,7 @@ const FORWARDED_HEADERS: &[&str] = &[
     "range",
     "x-upload-content-type",
     "accept",
+    "if-match",
 ];
 
 /// The largest body any UI route accepts (the storage routes), which is what is read and discarded after

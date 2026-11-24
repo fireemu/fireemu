@@ -149,3 +149,13 @@ export const getConfig = (project: string): ResultAsync<Json, ApiError> =>
 
 export const patchConfig = (project: string, config: unknown): ResultAsync<Json, ApiError> =>
   request("PATCH", `${emulator(project)}/config`, config);
+
+/**
+ * Mints an ID token for an existing Auth user via the privileged UI route using the daemon's
+ * active signer (unsigned or `session-rsa`) and virtual clock.
+ */
+export const mintIdToken = (
+  project: string,
+  localId: string,
+): ResultAsync<{ idToken: string; expiresIn: string; localId: string }, ApiError> =>
+  request("POST", `${emulator(project)}/accounts:mintIdToken`, { localId });

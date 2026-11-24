@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show, type Component } from "solid-js";
+import { createMemo, createResource, createSignal, For, Show, type Component } from "solid-js";
 import { t } from "../i18n";
 import { appState } from "../state";
 import {
@@ -13,9 +13,13 @@ import {
   SectionNav,
   StatusBadge,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import {
   type ClockMoveRequest,
+  type LimitCatalog,
+  type LimitEntry,
   assertQuiescent,
+  capabilities,
   captureSnapshot,
   clearFaultPlan,
   createSession,
@@ -24,6 +28,7 @@ import {
   deleteSnapshot,
   getFaultPlan,
   installFaultPlan,
+  limits,
   listSnapshots,
   resetSession,
   restoreSnapshot,
@@ -532,7 +537,10 @@ export const FaultPlanPanel: Component = () => {
     }
     const r = await installFaultPlan(session(), parsed);
     r.match(
-      () => void refetch(),
+      () => {
+        void refetch();
+        void appState.refreshFaultSummary();
+      },
       (e) => setError(e.message),
     );
   };
@@ -540,7 +548,10 @@ export const FaultPlanPanel: Component = () => {
     setError(null);
     const r = await clearFaultPlan(session());
     r.match(
-      () => void refetch(),
+      () => {
+        void refetch();
+        void appState.refreshFaultSummary();
+      },
       (e) => setError(e.message),
     );
   };
@@ -667,6 +678,7 @@ export const FaultPlanPanel: Component = () => {
           {t("runtime.recipeFill")}
         </button>
       </div>
+      <CodeEditorToolbar value={draft()} onFormat={setDraft} />
       <label class="label" for="fault-plan">
         {t("runtime.faultPlanJson")}
       </label>
@@ -1097,6 +1109,141 @@ const ResourcesPanel: Component = () => {
   );
 };
 
+const formatMaximum = (maximum: LimitEntry["maximum"]): string => {
+  if (maximum === null) return "—";
+  if (typeof maximum === "number") return String(maximum);
+  return `Spark: ${maximum.billingDisabled} / Blaze: ${maximum.billingEnabled}`;
+};
+
+const LimitsCapabilitiesPanel: Component = () => {
+  const [catalogs, setCatalogs] = createSignal<LimitCatalog[] | null>(null);
+  const [caps, setCaps] = createSignal<string | null>(null);
+  const [filter, setFilter] = createSignal("");
+  const [error, setError] = createSignal<string | null>(null);
+
+  const loadLimits = async () => {
+    setError(null);
+    const r = await limits();
+    r.match(
+      (res) => setCatalogs(res.catalogs ?? []),
+      (e) => setError(e.message),
+    );
+  };
+  const loadCaps = async () => {
+    setError(null);
+    const r = await capabilities();
+    r.match(
+      (res) => setCaps(JSON.stringify(res, null, 2)),
+      (e) => setError(e.message),
+    );
+  };
+
+  const filteredCatalogs = createMemo(() => {
+    const all = catalogs();
+    if (!all) return [];
+    const q = filter().trim().toLowerCase();
+    if (!q) return all;
+    return all
+      .map((c) => ({
+        ...c,
+        limits: c.limits.filter(
+          (item) =>
+            c.product.toLowerCase().includes(q) ||
+            c.id.toLowerCase().includes(q) ||
+            item.id.toLowerCase().includes(q) ||
+            item.boundary.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((c) => c.limits.length > 0);
+  });
+
+  return (
+    <Section
+      id="runtime-limits"
+      title={t("runtime.limits")}
+      actions={
+        <>
+          <AsyncButton class="btn" testId="runtime-limits-load" onClick={loadLimits}>
+            {t("runtime.limitsLoad")}
+          </AsyncButton>
+          <AsyncButton class="btn" testId="runtime-capabilities-load" onClick={loadCaps}>
+            {t("runtime.capabilitiesLoad")}
+          </AsyncButton>
+        </>
+      }
+    >
+      <p class="mb-3 text-sm text-secondary">{t("runtime.limitsIntro")}</p>
+      <ErrorBanner message={error()} />
+      <Show when={catalogs() !== null}>
+        <div class="mb-3">
+          <input
+            class="input w-80 max-w-full"
+            data-testid="runtime-limits-filter"
+            placeholder={t("runtime.limitsFilter")}
+            aria-label={t("runtime.limitsFilter")}
+            value={filter()}
+            onInput={(e) => setFilter(e.currentTarget.value)}
+          />
+        </div>
+        <For each={filteredCatalogs()}>
+          {(cat) => (
+            <div class="mb-4" data-testid={`limit-catalog-${cat.id}`}>
+              <h3 class="mb-1 text-sm font-semibold">
+                {cat.product} <span class="mono text-xs text-muted">({cat.edition})</span>
+              </h3>
+              <div class="table-scroll">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>{t("runtime.limitId")}</th>
+                      <th>{t("runtime.limitBoundary")}</th>
+                      <th class="text-right">{t("runtime.limitMaximum")}</th>
+                      <th>{t("runtime.limitUnit")}</th>
+                      <th>{t("runtime.limitImplemented")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={cat.limits}>
+                      {(entry) => (
+                        <tr>
+                          <td class="mono text-xs">{entry.id}</td>
+                          <td class="text-sm">{entry.boundary}</td>
+                          <td class="mono text-right text-xs">{formatMaximum(entry.maximum)}</td>
+                          <td class="mono text-xs">{entry.unit}</td>
+                          <td>
+                            <StatusBadge
+                              tone={entry.implemented === "enforced" ? "success" : "neutral"}
+                            >
+                              {entry.implemented}
+                            </StatusBadge>
+                          </td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </For>
+      </Show>
+      <Show when={caps() !== null}>
+        <details open class="mt-3">
+          <summary class="cursor-pointer text-sm font-medium">
+            {t("runtime.capabilitiesLoad")}
+          </summary>
+          <pre
+            class="code-block mono mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-xs"
+            data-testid="runtime-capabilities-json"
+          >
+            {caps()}
+          </pre>
+        </details>
+      </Show>
+    </Section>
+  );
+};
+
 const Runtime: Component = () => (
   <div>
     <h1 class="page-title mb-3">{t("runtime.title")}</h1>
@@ -1108,6 +1255,7 @@ const Runtime: Component = () => (
         { id: "runtime-snapshots", title: t("runtime.snapshots") },
         { id: "runtime-fault-plan", title: t("runtime.faultPlan") },
         { id: "runtime-resources", title: t("runtime.resources") },
+        { id: "runtime-limits", title: t("runtime.limits") },
       ]}
     />
     <div class="callout callout-info mb-4" role="note" data-testid="runtime-fireemu-only">
@@ -1124,6 +1272,7 @@ const Runtime: Component = () => (
       </div>
     </div>
     <ResourcesPanel />
+    <LimitsCapabilitiesPanel />
   </div>
 );
 

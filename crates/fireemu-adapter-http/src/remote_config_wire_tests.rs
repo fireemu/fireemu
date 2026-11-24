@@ -41,7 +41,7 @@ fn body_of(reply: &Reply) -> Value {
 }
 
 fn text_of(reply: Reply) -> String {
-    String::from_utf8(reply.into_wire().body.to_vec()).unwrap()
+    String::from_utf8(reply.wire().body.to_vec()).unwrap()
 }
 
 fn numbered() -> RemoteConfigStores {
@@ -531,9 +531,8 @@ fn defaults_downloads_follow_the_recorded_answers() {
     let stores = RemoteConfigStores::default();
     let settings = RemoteConfigSettings::default();
     let now = LogicalInstant::from_unix_seconds(T0);
-    let download = |path: &str, query: &str| {
-        at(&stores, &settings, path, "GET", query, b"", None, now).into_wire()
-    };
+    let download =
+        |path: &str, query: &str| at(&stores, &settings, path, "GET", query, b"", None, now).wire();
     let defaults = "/v1/projects/demo-config/remoteConfig:downloadDefaults";
     // An empty template is an empty, uncompressed file of each format's type.
     for (format, content_type) in [
@@ -583,7 +582,7 @@ fn defaults_downloads_follow_the_recorded_answers() {
         json!({"field": "format", "description": message})
     );
     // JSON refusals are JSON answers that may be compressed.
-    let wire = at(&stores, &settings, defaults, "GET", "", b"", None, now).into_wire();
+    let wire = at(&stores, &settings, defaults, "GET", "", b"", None, now).wire();
     assert_eq!(
         (wire.content_type, wire.compressible),
         ("application/json; charset=UTF-8", true)

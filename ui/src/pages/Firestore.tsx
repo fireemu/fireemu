@@ -25,8 +25,11 @@ import {
   StatusBadge,
 } from "../components/common";
 import { ValueTree } from "../components/ValueTree";
-import { buildValueTree } from "../lib/valueTree";
+import { buildValueTree, type ValueNode } from "../lib/valueTree";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import FirestoreQuery from "../components/FirestoreQuery";
+import { fsFieldsToPlainJson, plainJsonToFsFields } from "../lib/firestoreJson";
+import { defaultQuery, encodeSharedQuery, type QueryValueType } from "../lib/firestoreQuery";
 import { decodeSplat, firestoreHref, referenceHref } from "../lib/hrefs";
 import { createPagedList } from "../lib/pagedList";
 import {
@@ -39,6 +42,7 @@ import {
 import { selectReloadDocument } from "../lib/reloadedDocument";
 import { createLeaveGuard, LeavePrompt } from "../lib/unsaved";
 import { settle, subscribe } from "../api/client";
+import { expireFirestoreListeners, sweepFirestoreTtl } from "../api/control";
 import {
   createDocument,
   deleteCollection,
@@ -182,14 +186,50 @@ export const FieldsEditor: Component<{
                   <Show
                     when={f.type === "array" || f.type === "map"}
                     fallback={
-                      <input
-                        class="input mono"
-                        aria-label={t("firestore.fieldValue")}
-                        placeholder={hint(f.type)}
-                        disabled={props.disabled || f.type === "null"}
-                        value={f.text}
-                        onInput={(e) => update(i(), { text: e.currentTarget.value, dirty: true })}
-                      />
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <input
+                          class="input mono min-w-36 flex-1"
+                          aria-label={t("firestore.fieldValue")}
+                          placeholder={hint(f.type)}
+                          disabled={props.disabled || f.type === "null"}
+                          value={f.text}
+                          onInput={(e) => update(i(), { text: e.currentTarget.value, dirty: true })}
+                        />
+                        <Show when={f.type === "boolean"}>
+                          <button
+                            type="button"
+                            class="btn btn-sm"
+                            disabled={props.disabled}
+                            onClick={() => update(i(), { text: "true", dirty: true })}
+                          >
+                            true
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-sm"
+                            disabled={props.disabled}
+                            onClick={() => update(i(), { text: "false", dirty: true })}
+                          >
+                            false
+                          </button>
+                        </Show>
+                        <Show when={f.type === "timestamp"}>
+                          <button
+                            type="button"
+                            class="btn btn-sm"
+                            data-testid="field-timestamp-now"
+                            disabled={props.disabled}
+                            onClick={() =>
+                              update(i(), {
+                                text: appState.clock() || new Date().toISOString(),
+                                dirty: true,
+                              })
+                            }
+                          >
+                            {t("firestore.insertClockNow")}
+                          </button>
+                        </Show>
+                      </div>
                     }
                   >
                     <textarea
@@ -267,7 +307,10 @@ const CollectionList: Component<{
   db: string;
   version: number;
   testId: string;
+  activeId?: string | undefined;
+  asButtons?: boolean | undefined;
 }> = (props) => {
+  const navigate = useNavigate();
   const list = createPagedList((token) =>
     listCollectionIds(props.root, props.parent, token).map((page) => ({
       items: page.collectionIds ?? [],
@@ -298,16 +341,31 @@ const CollectionList: Component<{
     >
       <ul class="mono space-y-1" data-testid={props.testId}>
         <For each={list.items()}>
-          {(id) => (
-            <li>
-              <A
-                href={firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db)}
-                class="link"
-              >
-                {id}
-              </A>
-            </li>
-          )}
+          {(id) => {
+            const href = () => firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db);
+            return (
+              <li>
+                <Show
+                  when={props.asButtons}
+                  fallback={
+                    <A href={href()} class="link">
+                      {id}
+                    </A>
+                  }
+                >
+                  <button
+                    type="button"
+                    class="link w-full truncate text-left"
+                    classList={{ "font-semibold text-accent": props.activeId === id }}
+                    aria-current={props.activeId === id ? "page" : undefined}
+                    onClick={() => navigate(href())}
+                  >
+                    {id}
+                  </button>
+                </Show>
+              </li>
+            );
+          }}
         </For>
       </ul>
       <Show when={list.nextToken()}>
@@ -328,20 +386,56 @@ const NewDocumentForm: Component<{
 }> = (props) => {
   const [id, setId] = createSignal("");
   const [fields, setFields] = createFieldsStore([{ name: "", type: "string", text: "" }]);
+  const [mode, setMode] = createSignal<"fields" | "json">("fields");
+  const [jsonText, setJsonText] = createSignal("{\n  \n}");
   const [error, setError] = createSignal<string | null>(null);
+  const switchMode = (next: "fields" | "json") => {
+    setError(null);
+    if (next === mode()) return;
+    if (next === "json") {
+      const parsed = parseFields(
+        fields.filter((f) => f.name || f.text),
+        props.root,
+      );
+      if (parsed.isOk()) {
+        setJsonText(JSON.stringify(fsFieldsToPlainJson(parsed.value), null, 2));
+      }
+      setMode("json");
+    } else {
+      const parsed = plainJsonToFsFields(jsonText());
+      if (parsed.isErr()) {
+        setError(parsed.error);
+        return;
+      }
+      const editable = toEditable(parsed.value);
+      setFields(editable.length > 0 ? editable : [{ name: "", type: "string", text: "" }]);
+      setMode("fields");
+    }
+  };
   const save = async () => {
     setError(null);
-    const parsed = parseFields(
-      fields.filter((f) => f.name || f.text),
-      props.root,
-    );
-    if (parsed.isErr()) {
-      setError(
-        t("firestore.invalidValue", { field: parsed.error.field, message: parsed.error.message }),
+    let body: Record<string, FsValue>;
+    if (mode() === "json") {
+      const parsed = plainJsonToFsFields(jsonText());
+      if (parsed.isErr()) {
+        setError(parsed.error);
+        return;
+      }
+      body = parsed.value;
+    } else {
+      const parsed = parseFields(
+        fields.filter((f) => f.name || f.text),
+        props.root,
       );
-      return;
+      if (parsed.isErr()) {
+        setError(
+          t("firestore.invalidValue", { field: parsed.error.field, message: parsed.error.message }),
+        );
+        return;
+      }
+      body = parsed.value;
     }
-    const r = await createDocument(props.root, props.collection, id().trim(), parsed.value);
+    const r = await createDocument(props.root, props.collection, id().trim(), body);
     r.match(
       (doc) => props.onDone(relativePath(doc.name)),
       (e) => setError(e.message),
@@ -349,7 +443,29 @@ const NewDocumentForm: Component<{
   };
   return (
     <div class="card mb-4" data-testid="new-document">
-      <h3 class="mb-2 font-semibold">{t("firestore.addDocument")}</h3>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="font-semibold">{t("firestore.addDocument")}</h3>
+        <div class="flex gap-1">
+          <button
+            type="button"
+            class="btn btn-sm"
+            classList={{ "btn-primary": mode() === "fields" }}
+            data-testid="new-doc-mode-fields"
+            onClick={() => switchMode("fields")}
+          >
+            {t("firestore.fieldsEditor")}
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            classList={{ "btn-primary": mode() === "json" }}
+            data-testid="new-doc-mode-json"
+            onClick={() => switchMode("json")}
+          >
+            {t("firestore.jsonEditor")}
+          </button>
+        </div>
+      </div>
       <ErrorBanner message={error()} />
       <label class="mb-2 block text-sm">
         <span class="label">{t("firestore.documentId")}</span>
@@ -361,7 +477,20 @@ const NewDocumentForm: Component<{
           onInput={(e) => setId(e.currentTarget.value)}
         />
       </label>
-      <FieldsEditor fields={fields} setFields={setFields} />
+      <Show
+        when={mode() === "json"}
+        fallback={<FieldsEditor fields={fields} setFields={setFields} />}
+      >
+        <p class="mb-2 text-xs text-muted">{t("firestore.jsonEditorHint")}</p>
+        <CodeEditorToolbar value={jsonText()} onFormat={setJsonText} />
+        <textarea
+          class="input mono h-48"
+          data-testid="new-doc-json"
+          spellcheck={false}
+          value={jsonText()}
+          onInput={(e) => setJsonText(e.currentTarget.value)}
+        />
+      </Show>
       <div class="mt-3 flex gap-2">
         <AsyncButton class="btn btn-primary" onClick={save} testId="new-document-save">
           {t("app.save")}
@@ -472,7 +601,12 @@ const DocumentView: Component<{
     },
   );
   const [editing, setEditing] = createSignal(false);
+  const [editMode, setEditMode] = createSignal<"fields" | "json">("fields");
+  const [jsonDraft, setJsonDraft] = createSignal("{}");
+  const [jsonBaseline, setJsonBaseline] = createSignal<Record<string, FsValue>>({});
   const [fields, setFields] = createFieldsStore([]);
+  const [duplicating, setDuplicating] = createSignal(false);
+  const [duplicateId, setDuplicateId] = createSignal("");
   const [editSession, setEditSession] = createSignal<{
     root: string;
     path: string;
@@ -507,10 +641,17 @@ const DocumentView: Component<{
       () => null,
       (e) => (e.status === 404 ? null : e.message),
     ) ?? null;
+  const parsedCurrentEdit = (root: string, original?: Record<string, FsValue>) =>
+    editMode() === "json"
+      ? plainJsonToFsFields(jsonDraft(), jsonBaseline() ?? original).mapErr((message) => ({
+          field: "JSON",
+          message,
+        }))
+      : parseFields(fields, root);
   const guard = createLeaveGuard(() => {
     const session = editSession();
     if (!editing() || !session) return false;
-    const parsed = parseFields(fields, session.root);
+    const parsed = parsedCurrentEdit(session.root, session.fields);
     return parsed.isErr() || diffFields(session.fields, parsed.value).fieldPaths.length > 0;
   });
   const missing = () =>
@@ -526,6 +667,8 @@ const DocumentView: Component<{
     editGeneration += 1;
     editOperation += 1;
     setEditing(false);
+    setEditMode("fields");
+    setDuplicating(false);
     setEditSession(null);
     setConflict(false);
     setEditBusy(false);
@@ -537,6 +680,9 @@ const DocumentView: Component<{
     editGeneration += 1;
     editOperation += 1;
     setFields(toEditable(original));
+    setJsonBaseline(original);
+    setJsonDraft(JSON.stringify(fsFieldsToPlainJson(original), null, 2));
+    setEditMode("fields");
     setEditSession({
       root: props.root,
       path: props.path,
@@ -547,15 +693,45 @@ const DocumentView: Component<{
     setConflict(false);
     setEditing(true);
   };
+  const switchEditMode = (next: "fields" | "json") => {
+    setError(null);
+    const session = editSession();
+    if (!session || next === editMode()) return;
+    if (next === "json") {
+      const parsed = parseFields(fields, session.root);
+      if (parsed.isErr()) {
+        setError(
+          t("firestore.invalidValue", { field: parsed.error.field, message: parsed.error.message }),
+        );
+        return;
+      }
+      setJsonBaseline(parsed.value);
+      setJsonDraft(JSON.stringify(fsFieldsToPlainJson(parsed.value), null, 2));
+      setEditMode("json");
+    } else {
+      const parsed = plainJsonToFsFields(jsonDraft(), jsonBaseline());
+      if (parsed.isErr()) {
+        setError(parsed.error);
+        return;
+      }
+      setFields(toEditable(parsed.value));
+      setEditMode("fields");
+    }
+  };
   const save = async () => {
     if (editBusy()) return;
     setError(null);
     const session = editSession();
     if (!session) return;
-    const parsed = parseFields(fields, session.root);
+    const parsed = parsedCurrentEdit(session.root, session.fields);
     if (parsed.isErr()) {
       setError(
-        t("firestore.invalidValue", { field: parsed.error.field, message: parsed.error.message }),
+        editMode() === "json"
+          ? parsed.error.message
+          : t("firestore.invalidValue", {
+              field: parsed.error.field,
+              message: parsed.error.message,
+            }),
       );
       return;
     }
@@ -601,8 +777,7 @@ const DocumentView: Component<{
     if (editBusy()) return;
     const session = editSession();
     if (!session || props.root !== session.root || props.path !== session.path) return;
-    const draft = fields;
-    const parsedDraft = parseFields(draft, session.root);
+    const parsedDraft = parsedCurrentEdit(session.root, session.fields);
     if (parsedDraft.isErr()) return;
     const draftChanges = diffFields(session.fields, parsedDraft.value);
     const operation = ++editOperation;
@@ -657,10 +832,57 @@ const DocumentView: Component<{
       fields: latest.fields ?? {},
       updateTime: latest.updateTime!,
     });
-    setFields(toEditable(applyFieldDiff(latest.fields ?? {}, draftChanges)));
+    const merged = applyFieldDiff(latest.fields ?? {}, draftChanges);
+    setFields(toEditable(merged));
+    setJsonBaseline(merged);
+    setJsonDraft(JSON.stringify(fsFieldsToPlainJson(merged), null, 2));
     setConflict(false);
     setError(null);
     setNotice(t("firestore.draftReapplied"));
+  };
+  const duplicateDocument = async () => {
+    const selected = current();
+    if (!selected) return;
+    setError(null);
+    const col = parentPath(props.path);
+    const r = await createDocument(props.root, col, duplicateId().trim(), selected.fields ?? {});
+    r.match(
+      (created) => {
+        setDuplicating(false);
+        navigate(firestoreHref(relativePath(created.name), props.db));
+      },
+      (e) => setError(e.message),
+    );
+  };
+  const filterByFieldValue = (fieldPath: string, node: ValueNode) => {
+    const col = parentPath(props.path);
+    if (!col) return;
+    let qType: QueryValueType = "string";
+    let text = node.preview;
+    if (node.type === "number") {
+      qType = node.numberKind === "integer" ? "integer" : "double";
+    } else if (node.type === "boolean") {
+      qType = "boolean";
+    } else if (node.type === "null") {
+      qType = "null";
+      text = "";
+    } else if (node.type === "timestamp") {
+      qType = "timestamp";
+    } else if (node.type === "geopoint") {
+      qType = "geopoint";
+    } else if (node.type === "reference") {
+      qType = "reference";
+      text = node.reference ?? node.preview;
+    } else if (node.type === "bytes") {
+      qType = "bytes";
+    }
+    const queryDraft = {
+      ...defaultQuery(),
+      filters: [{ field: fieldPath, op: "EQUAL" as const, type: qType, text }],
+    };
+    const base = firestoreHref(col, props.db);
+    const sep = base.includes("?") ? "&" : "?";
+    navigate(`${base}${sep}query=${encodeURIComponent(encodeSharedQuery(queryDraft))}`);
   };
   const remove = async () => {
     const r = await deleteDocument(props.root, props.path);
@@ -687,6 +909,24 @@ const DocumentView: Component<{
               {t("firestore.edit")}
             </button>
           </Show>
+          <Show when={current()}>
+            <CopyButton
+              value={JSON.stringify(fsFieldsToPlainJson(current()?.fields), null, 2)}
+              subject={t("firestore.copyJson")}
+              testId="document-copy-json"
+            />
+            <button
+              type="button"
+              class="btn"
+              data-testid="document-duplicate"
+              onClick={() => {
+                setDuplicateId(`${lastSegment(props.path)}-copy`);
+                setDuplicating(!duplicating());
+              }}
+            >
+              {t("firestore.duplicateDocument")}
+            </button>
+          </Show>
           <button type="button" class="btn" onClick={() => setShowJson(!showJson())}>
             {t("firestore.jsonView")}
           </button>
@@ -702,6 +942,30 @@ const DocumentView: Component<{
           />
         </div>
       </div>
+      <Show when={duplicating()}>
+        <div class="inset mb-3 flex flex-wrap items-end gap-2 p-3" data-testid="duplicate-form">
+          <label class="flex-1 text-sm">
+            <span class="label">{t("firestore.documentId")}</span>
+            <input
+              class="input mono"
+              data-testid="duplicate-document-id"
+              placeholder={t("firestore.documentIdAuto")}
+              value={duplicateId()}
+              onInput={(e) => setDuplicateId(e.currentTarget.value)}
+            />
+          </label>
+          <AsyncButton
+            class="btn btn-primary"
+            testId="duplicate-document-save"
+            onClick={duplicateDocument}
+          >
+            {t("firestore.duplicateDocument")}
+          </AsyncButton>
+          <button type="button" class="btn" onClick={() => setDuplicating(false)}>
+            {t("app.cancel")}
+          </button>
+        </div>
+      </Show>
       <LeavePrompt guard={guard} subject={t("firestore.editorSubject", { path: props.path })} />
       <ErrorBanner message={error()} />
       <Notice message={notice()} />
@@ -741,12 +1005,50 @@ const DocumentView: Component<{
                 nodes={buildValueTree(current()?.fields)}
                 typeLabel={typeLabel}
                 referenceHref={(reference) => referenceHref(reference, props.root, props.db)}
+                showCopyActions
+                onFilterValue={filterByFieldValue}
                 testId="document-fields"
               />
             </Show>
           }
         >
-          <FieldsEditor fields={fields} setFields={setFields} disabled={editBusy()} />
+          <div class="mb-2 flex gap-1">
+            <button
+              type="button"
+              class="btn btn-sm"
+              classList={{ "btn-primary": editMode() === "fields" }}
+              data-testid="doc-edit-mode-fields"
+              disabled={editBusy()}
+              onClick={() => switchEditMode("fields")}
+            >
+              {t("firestore.fieldsEditor")}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              classList={{ "btn-primary": editMode() === "json" }}
+              data-testid="doc-edit-mode-json"
+              disabled={editBusy()}
+              onClick={() => switchEditMode("json")}
+            >
+              {t("firestore.jsonEditor")}
+            </button>
+          </div>
+          <Show
+            when={editMode() === "json"}
+            fallback={<FieldsEditor fields={fields} setFields={setFields} disabled={editBusy()} />}
+          >
+            <p class="mb-2 text-xs text-muted">{t("firestore.jsonEditorHint")}</p>
+            <CodeEditorToolbar value={jsonDraft()} onFormat={setJsonDraft} />
+            <textarea
+              class="input mono h-64"
+              data-testid="document-json-editor"
+              spellcheck={false}
+              disabled={editBusy()}
+              value={jsonDraft()}
+              onInput={(e) => setJsonDraft(e.currentTarget.value)}
+            />
+          </Show>
           <Show when={conflict()}>
             <button
               type="button"
@@ -851,6 +1153,14 @@ const CollectionView: Component<{
   const [notice, setNotice] = createSignal<string | null>(null);
   const [adding, setAdding] = createSignal(false);
   const [deleting, setDeleting] = createSignal<number | null>(null);
+  const [columnsInput, setColumnsInput] = createSignal("");
+  const pinnedColumns = createMemo(() =>
+    columnsInput()
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 5),
+  );
   const [pendingRowRevision, setPendingRowRevision] = createSignal(0);
   const pendingRowUpdates = new Set<string>();
   const load = async () => {
@@ -990,8 +1300,17 @@ const CollectionView: Component<{
       </Show>
       <ErrorBanner message={error()} />
       <Notice message={notice()} />
-      <FirestoreQuery root={props.root} collection={props.path} db={props.db} />
-      <h3 class="mb-3 text-base font-semibold">{t("firestore.documents")}</h3>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-base font-semibold">{t("firestore.documents")}</h3>
+        <input
+          class="input mono w-72 max-w-full"
+          data-testid="preview-columns-input"
+          aria-label={t("firestore.pinColumn")}
+          placeholder={t("firestore.pinColumn")}
+          value={columnsInput()}
+          onInput={(e) => setColumnsInput(e.currentTarget.value)}
+        />
+      </div>
       <Show when={adding()}>
         <NewDocumentForm
           root={props.root}
@@ -1015,6 +1334,7 @@ const CollectionView: Component<{
           <thead>
             <tr>
               <th>{t("firestore.documentId")}</th>
+              <For each={pinnedColumns()}>{(col) => <th class="mono">{col}</th>}</For>
               <th>{t("firestore.fields")}</th>
             </tr>
           </thead>
@@ -1030,6 +1350,16 @@ const CollectionView: Component<{
                       <span class="ml-2 text-xs text-muted">({t("firestore.missing")})</span>
                     </Show>
                   </td>
+                  <For each={pinnedColumns()}>
+                    {(col) => {
+                      const val = () => d.fields?.[col];
+                      return (
+                        <td class="mono break-all text-secondary">
+                          {val() ? summarize(val()!) : "—"}
+                        </td>
+                      );
+                    }}
+                  </For>
                   <td class="mono break-all text-secondary">
                     {Object.entries(d.fields ?? {})
                       .slice(0, 4)
@@ -1047,6 +1377,7 @@ const CollectionView: Component<{
           </AsyncButton>
         </Show>
       </FetchState>
+      <FirestoreQuery root={props.root} collection={props.path} db={props.db} />
     </div>
   );
 };
@@ -1180,31 +1511,70 @@ const Firestore: Component = () => {
 
   const up = () => navigate(firestoreHref(parentPath(path()), db()));
   const [jump, setJump] = createSignal("");
+  const [toolNotice, setToolNotice] = createSignal<string | null>(null);
+  const [toolError, setToolError] = createSignal<string | null>(null);
   const goTo = () => {
     const target = jump().split("/").filter(Boolean).join("/");
     navigate(firestoreHref(target, db()));
     setJump("");
   };
+  const runTtlSweep = async () => {
+    setToolNotice(null);
+    setToolError(null);
+    const r = await sweepFirestoreTtl(appState.session());
+    r.match(
+      (res) => {
+        setToolNotice(t("firestore.ttlSwept", { count: res.deletedDocumentCount }));
+        setCollectionVersion((v) => v + 1);
+      },
+      (e) => setToolError(e.message),
+    );
+  };
+  const runExpireListeners = async () => {
+    setToolNotice(null);
+    setToolError(null);
+    const r = await expireFirestoreListeners();
+    r.match(
+      (res) => setToolNotice(t("firestore.listenersExpired", { count: res.expired })),
+      (e) => setToolError(e.message),
+    );
+  };
   return (
     <div>
-      <div class="mb-3 flex flex-wrap items-center gap-3">
-        <h1 class="page-title">{t("firestore.title")}</h1>
-        <DatabasePicker
-          project={appState.project()}
-          session={appState.session()}
-          database={db()}
-          onSelect={(name) => setSearch({ db: name })}
-        />
-        <span class="text-sm text-muted">
-          {t("firestore.project")}: <span class="mono">{appState.project()}</span>
-        </span>
-        <span class="badge badge-accent" title={t("app.adminHint")} data-testid="admin-badge">
-          {t("app.admin")}
-        </span>
-        <StatusBadge tone={live() ? "success" : "neutral"} testId="live-badge">
-          {live() ? t("firestore.live") : t("firestore.liveOff")}
-        </StatusBadge>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-3">
+          <h1 class="page-title">{t("firestore.title")}</h1>
+          <DatabasePicker
+            project={appState.project()}
+            session={appState.session()}
+            database={db()}
+            onSelect={(name) => setSearch({ db: name })}
+          />
+          <span class="text-sm text-muted">
+            {t("firestore.project")}: <span class="mono">{appState.project()}</span>
+          </span>
+          <span class="badge badge-accent" title={t("app.adminHint")} data-testid="admin-badge">
+            {t("app.admin")}
+          </span>
+          <StatusBadge tone={live() ? "success" : "neutral"} testId="live-badge">
+            {live() ? t("firestore.live") : t("firestore.liveOff")}
+          </StatusBadge>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <AsyncButton class="btn btn-sm" testId="firestore-ttl-sweep" onClick={runTtlSweep}>
+            {t("firestore.ttlSweep")}
+          </AsyncButton>
+          <AsyncButton
+            class="btn btn-sm"
+            testId="firestore-expire-listeners"
+            onClick={runExpireListeners}
+          >
+            {t("firestore.expireListeners")}
+          </AsyncButton>
+        </div>
       </div>
+      <ErrorBanner message={toolError()} />
+      <Notice message={toolNotice()} />
       <div class="mb-3 flex flex-wrap items-center gap-2">
         <Breadcrumbs path={path()} db={db()} />
         <form
@@ -1227,34 +1597,52 @@ const Firestore: Component = () => {
           </button>
         </form>
       </div>
-      <div class="card">
-        <Show
-          when={path() !== ""}
-          fallback={<RootView root={root()} db={db()} version={collectionVersion()} />}
-        >
+      <div class={path() !== "" ? "xl:grid xl:grid-cols-[15rem_minmax(0,1fr)] xl:gap-4" : ""}>
+        <Show when={path() !== ""}>
+          <aside class="card mb-4 hidden xl:mb-0 xl:block" aria-label={t("firestore.collections")}>
+            <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+              {t("firestore.collections")}
+            </h2>
+            <CollectionList
+              root={root()}
+              parent=""
+              db={db()}
+              version={collectionVersion()}
+              activeId={path().split("/")[0]}
+              asButtons
+              testId="collections-rail"
+            />
+          </aside>
+        </Show>
+        <div class="card min-w-0">
           <Show
-            when={isDocumentPath(path())}
-            fallback={
-              <CollectionView
+            when={path() !== ""}
+            fallback={<RootView root={root()} db={db()} version={collectionVersion()} />}
+          >
+            <Show
+              when={isDocumentPath(path())}
+              fallback={
+                <CollectionView
+                  root={root()}
+                  path={path()}
+                  db={db()}
+                  version={collectionVersion()}
+                  rowUpdates={rowUpdates()}
+                  onDeleted={up}
+                />
+              }
+            >
+              <DocumentView
                 root={root()}
                 path={path()}
                 db={db()}
-                version={collectionVersion()}
-                rowUpdates={rowUpdates()}
+                version={documentVersion()}
+                subcollectionVersion={subcollectionVersion()}
                 onDeleted={up}
               />
-            }
-          >
-            <DocumentView
-              root={root()}
-              path={path()}
-              db={db()}
-              version={documentVersion()}
-              subcollectionVersion={subcollectionVersion()}
-              onDeleted={up}
-            />
+            </Show>
           </Show>
-        </Show>
+        </div>
       </div>
     </div>
   );

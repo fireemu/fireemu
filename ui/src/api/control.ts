@@ -217,6 +217,43 @@ export const assertQuiescent = (
 export const capabilities = (): ResultAsync<Json, ApiError> =>
   request("GET", "control/v1/capabilities");
 
+export type LimitEntry = {
+  id: string;
+  boundary: string;
+  unit: string;
+  maximum: number | { billingDisabled: number; billingEnabled: number } | null;
+  precision: string;
+  implemented: string;
+};
+
+export type LimitCatalog = {
+  id: string;
+  product: string;
+  edition: string;
+  officialLastUpdatedUtc: string;
+  limits: LimitEntry[];
+};
+
+export const limits = (): ResultAsync<{ catalogs: LimitCatalog[] }, ApiError> =>
+  request<{ catalogs: LimitCatalog[] }>("GET", "control/v1/limits");
+
+/** Runs one Firestore TTL expiry sweep over the selected session's project now. */
+export const sweepFirestoreTtl = (
+  session: string,
+): ResultAsync<{ deletedDocumentCount: number }, ApiError> =>
+  request("POST", `${base(session)}/firestore/ttl:sweep`, {});
+
+/** Ends every active end-user Firestore Listen stream now (simulates 1-hour expiry). */
+export const expireFirestoreListeners = (): ResultAsync<{ expired: number }, ApiError> =>
+  request("POST", "control/v1/firestore/listen:expire", {});
+
+/** Publishes a synthetic Remote Config update event to registered `onConfigUpdated` handlers. */
+export const publishRemoteConfigUpdate = (
+  session: string,
+  body: Record<string, unknown>,
+): ResultAsync<{ delivered?: number; count?: number } & Record<string, unknown>, ApiError> =>
+  request("POST", `${base(session)}/functions/remoteConfig:publish`, body);
+
 /**
  * Publishes a Firebase alert through the official Eventarc `/google/publishEvents` mechanism
  * (the UI front reaches it in process), firing every registered `onAlertPublished` handler for

@@ -13,14 +13,18 @@ use crate::remote_config::{
     TemplateStore, UpdateUser, Version, WriteMode, WriteResult, MAX_RETAINED_VERSIONS,
 };
 
-pub(crate) struct Route<'a> {
+/// A matched Remote Config HTTP route.
+pub struct Route<'a> {
+    /// Target project ID.
     pub project: &'a str,
     namespace: Result<Namespace, &'a str>,
     explicit_namespace: bool,
     action: &'a str,
 }
 
-pub(crate) fn route(path: &str) -> Option<Route<'_>> {
+/// Parses a Remote Config path under `/v1/projects/{project}/remoteConfig*`.
+#[must_use]
+pub fn route(path: &str) -> Option<Route<'_>> {
     let (project, action) = path.strip_prefix("/v1/projects/")?.split_once('/')?;
     let explicit_namespace = action.starts_with("namespaces/");
     let (namespace, action) = if let Some(rest) = action.strip_prefix("namespaces/") {
@@ -110,9 +114,12 @@ pub(crate) fn arrival_version(
         .map(|namespace| stores.get(namespace).current())
 }
 
-pub(crate) struct Reply {
+/// Rendered Remote Config HTTP response.
+pub struct Reply {
+    /// HTTP status code.
     pub status: u16,
     body: ReplyBody,
+    /// Optional `ETag` header value.
     pub etag: Option<String>,
 }
 
@@ -188,7 +195,9 @@ fn transcoder_refusal(message: &str, field: &str) -> Reply {
 }
 
 impl Reply {
-    pub(crate) fn error(status: u16, message: &str, code: &str) -> Self {
+    /// Builds a JSON Google RPC error reply.
+    #[must_use]
+    pub fn error(status: u16, message: &str, code: &str) -> Self {
         Self {
             status,
             body: ReplyBody::Json(google_rpc(status, message, code)),
@@ -196,7 +205,8 @@ impl Reply {
         }
     }
 
-    pub(crate) fn into_wire(self) -> Wire {
+    /// The reply as the listener writes it: status, body, ETag, content type and compression.
+    pub(crate) fn wire(self) -> Wire {
         const JSON: &str = "application/json; charset=UTF-8";
         let (body, content_type, compressible) = match self.body {
             ReplyBody::Json(value) => (Bytes::from(pretty_json(&value)), JSON, true),
@@ -212,10 +222,16 @@ impl Reply {
         }
     }
 
+    /// Converts the reply into `(status, body_bytes, optional_etag)`.
+    #[must_use]
+    pub fn into_wire(self) -> (u16, Bytes, Option<String>) {
+        let wire = self.wire();
+        (wire.status, wire.body, wire.etag)
+    }
+
     #[cfg(test)]
     pub(crate) fn into_tuple(self) -> (u16, Bytes, Option<String>) {
-        let wire = self.into_wire();
-        (wire.status, wire.body, wire.etag)
+        self.into_wire()
     }
 
     fn ok(body: Value, etag: Option<String>) -> Self {
@@ -810,7 +826,8 @@ fn store_error(error: Error) -> Reply {
 
 /// Whether a request can commit a version: a publish (`PUT` that is not validate-only) or a
 /// rollback (`POST`). A query that `dispatch` refuses commits nothing either way.
-pub(crate) fn commits(method: &str, query: &str) -> bool {
+#[must_use]
+pub fn commits(method: &str, query: &str) -> bool {
     match method {
         "POST" => true,
         "PUT" => parameters(query, &["validateOnly"])
@@ -819,10 +836,14 @@ pub(crate) fn commits(method: &str, query: &str) -> bool {
     }
 }
 
+/// Dispatches a matched Remote Config HTTP request against `stores` under `settings`.
 // One request's parts and the daemon's settings; grouping them would only move the list.
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
-pub(crate) fn dispatch(
+/// Answers one Remote Config request against the shared stores, with the template current at the
+/// call as the version the request saw (the Emulator UI front; the listener uses `dispatch_seen`).
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn dispatch(
     stores: &RemoteConfigStores,
     settings: &RemoteConfigSettings,
     route: &Route<'_>,

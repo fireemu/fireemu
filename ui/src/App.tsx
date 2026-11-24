@@ -2,6 +2,7 @@ import { A, type RouteSectionProps } from "@solidjs/router";
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createSignal,
   on,
@@ -11,7 +12,8 @@ import {
   type Component,
 } from "solid-js";
 import { CommandPalette } from "./components/CommandPalette";
-import { StatusBadge, type Tone } from "./components/common";
+import { ConfirmButton, ErrorBanner, StatusBadge, type Tone } from "./components/common";
+import { HeaderClock } from "./components/HeaderClock";
 import { openCommandPalette, openShortcutHelp } from "./components/overlays";
 import { Shortcuts } from "./components/Shortcuts";
 import {
@@ -23,6 +25,8 @@ import {
   IconFunctions,
   IconHosting,
   IconOverview,
+  IconPubSub,
+  IconRemoteConfig,
   IconRules,
   IconRuntime,
   IconMenu,
@@ -30,6 +34,7 @@ import {
   IconWarning,
   IconStorage,
 } from "./components/icons";
+import { clearFaultPlan } from "./api/control";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { t, type MessageKey } from "./i18n";
 import { requestScopeChange } from "./lib/unsaved";
@@ -42,6 +47,8 @@ type NavItem = {
   keywords?: string;
   /** The second key of the `g` navigation shortcut. */
   go: string;
+  /** Returns `false` when the daemon explicitly reported this service as unconfigured/inactive. */
+  active?: () => boolean;
 };
 
 // The official Emulator Suite products, then the fireemu-only deterministic runtime controls,
@@ -59,9 +66,16 @@ const OFFICIAL_NAV: NavItem[] = [
     go: "f",
     key: "nav.firestore",
     icon: IconFirestore,
-    keywords: "documents collections query",
+    keywords: "documents collections query ttl indexes",
   },
-  { href: "/database", go: "d", key: "database.title", icon: IconDatabase, keywords: "rtdb" },
+  {
+    href: "/database",
+    go: "d",
+    key: "database.title",
+    icon: IconDatabase,
+    keywords: "rtdb realtime tree",
+    active: () => appState.config().databaseEnabled !== false,
+  },
   { href: "/auth", go: "a", key: "nav.auth", icon: IconAuth, keywords: "users sign-in codes mfa" },
   {
     href: "/storage",
@@ -76,8 +90,32 @@ const OFFICIAL_NAV: NavItem[] = [
     key: "nav.functions",
     icon: IconFunctions,
     keywords: "logs triggers invoke schedule tasks pubsub",
+    active: () => appState.config().functionsConfigured,
   },
-  { href: "/hosting", go: "h", key: "nav.hosting", icon: IconHosting, keywords: "site rewrites" },
+  {
+    href: "/hosting",
+    go: "h",
+    key: "nav.hosting",
+    icon: IconHosting,
+    keywords: "site rewrites",
+    active: () => appState.config().hostingServed !== false,
+  },
+  {
+    href: "/pubsub",
+    go: "p",
+    key: "nav.pubsub",
+    icon: IconPubSub,
+    keywords: "topics subscriptions messages publish pull snapshots dead letter",
+    active: () => appState.config().pubsubEnabled !== false,
+  },
+  {
+    href: "/remote-config",
+    go: "m",
+    key: "nav.remoteConfig",
+    icon: IconRemoteConfig,
+    keywords: "templates parameters conditions versions rollback",
+    active: () => appState.config().remoteConfigEnabled !== false,
+  },
   {
     href: "/alerts",
     go: "l",
@@ -98,6 +136,7 @@ const OFFICIAL_NAV: NavItem[] = [
     key: "nav.appCheck",
     icon: IconAppCheck,
     keywords: "tokens attestation",
+    active: () => appState.config().appCheckEnabled,
   },
 ];
 const RUNTIME_NAV: NavItem[] = [
@@ -113,6 +152,16 @@ const RUNTIME_NAV: NavItem[] = [
 /** The frame: sidebar navigation, a status bar with the clock, the routed page. */
 export const App: Component<RouteSectionProps> = (props) => {
   const [navigationOpen, setNavigationOpen] = createSignal(false);
+  const [faultError, setFaultError] = createSignal<string | null>(null);
+  createEffect(() => {
+    void appState.session();
+    if (appState.faultSummary().rules === 0) setFaultError(null);
+  });
+  createEffect(
+    on(appState.session, () => {
+      setFaultError(null);
+    }),
+  );
   onMount(() => {
     void appState.refreshClock();
     const timer = window.setInterval(() => void appState.refreshClock(), 5000);
@@ -194,17 +243,23 @@ export const App: Component<RouteSectionProps> = (props) => {
         </button>
         <nav class="space-y-0.5" aria-label={t("nav.sectionOfficial")}>
           <For each={OFFICIAL_NAV}>
-            {(item) => (
-              <A
-                href={item.href}
-                class="nav-link"
-                onClick={() => setNavigationOpen(false)}
-                end={item.href === "/"}
-              >
-                <item.icon />
-                {t(item.key)}
-              </A>
-            )}
+            {(item) => {
+              const inactive = () => item.active !== undefined && !item.active();
+              return (
+                <A
+                  href={item.href}
+                  class="nav-link"
+                  classList={{ "opacity-80": inactive() }}
+                  title={inactive() ? `${t(item.key)} (${t("app.inactive")})` : undefined}
+                  aria-description={inactive() ? t("app.inactive") : undefined}
+                  onClick={() => setNavigationOpen(false)}
+                  end={item.href === "/"}
+                >
+                  <item.icon />
+                  {t(item.key)}
+                </A>
+              );
+            }}
           </For>
         </nav>
         <div class="mt-5 mb-1 px-3 text-xs font-semibold tracking-wide text-muted uppercase">
@@ -244,16 +299,16 @@ export const App: Component<RouteSectionProps> = (props) => {
       <div class="flex min-w-0 flex-1 flex-col">
         {/* Where every action lands: the target the pages act on, and whether the daemon answers. */}
         <header
-          class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-b border-line-subtle bg-surface/90 px-4 py-2 text-xs backdrop-blur lg:px-6"
+          class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-6 gap-y-1.5 border-b border-line-subtle bg-surface/95 px-4 py-2.5 text-sm backdrop-blur lg:px-6"
           data-testid="context-bar"
         >
           {/* Two groups that wrap as units: where actions land, and whether the daemon answers. */}
-          <div class="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+          <div class="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
             {/* The scope label shows on wide screens only; screen readers always get it. */}
             <span class="sr-only font-semibold text-secondary 2xl:not-sr-only">
               {t("header.local")}
             </span>
-            <label class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+            <label class="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               <span class="label">{t("overview.session")}</span>
               <select
                 class="input input-sm mono min-w-0 max-w-full w-auto"
@@ -277,31 +332,47 @@ export const App: Component<RouteSectionProps> = (props) => {
                 </For>
               </select>
             </label>
-            <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+            <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               <span class="label">{t("overview.project")}</span>
               <span class="mono break-all" data-testid="header-project">
                 {appState.project()}
               </span>
             </span>
-            <span class="flex min-w-0 max-w-full flex-wrap items-center gap-1">
-              <span class="label">{t("overview.clock")}</span>
-              <span class="mono whitespace-nowrap" data-testid="clock">
-                {appState.clock()}
-              </span>
-              <StatusBadge
-                tone={appState.clockMode() === "frozen" ? "paused" : "neutral"}
-                testId="clock-mode"
-                title={
-                  appState.clockMode() === "frozen"
-                    ? t("overview.clockFrozen")
-                    : t("overview.clockRealtime")
-                }
+            <HeaderClock />
+            <Show when={appState.faultSummary().rules > 0}>
+              <span
+                class="inline-flex flex-wrap items-center gap-1.5"
+                data-testid="header-fault-indicator"
               >
-                {appState.clockMode() === "frozen"
-                  ? t("header.clockFrozen")
-                  : t("header.clockRealtime")}
-              </StatusBadge>
-            </span>
+                <A href="/runtime" class="no-underline">
+                  <StatusBadge tone="warning" testId="header-fault-badge">
+                    {t("header.faultActive", {
+                      rules: appState.faultSummary().rules,
+                      fired: appState.faultSummary().fired,
+                    })}
+                  </StatusBadge>
+                </A>
+                <ConfirmButton
+                  class="btn btn-sm"
+                  label={t("header.faultClear")}
+                  question={t("header.faultClearConfirm", { session: appState.session() })}
+                  testId="header-fault-clear"
+                  onConfirm={async () => {
+                    setFaultError(null);
+                    const cleared = appState.session();
+                    const res = await clearFaultPlan(cleared);
+                    // A late answer for a session no longer shown must not paint its error
+                    // (or refresh the indicator) in the session now selected.
+                    if (cleared !== appState.session()) return;
+                    await res.match(
+                      async () => appState.refreshFaultSummary(),
+                      async (e) => setFaultError(e.message),
+                    );
+                  }}
+                />
+              </span>
+            </Show>
+            <Show when={faultError()}>{(msg) => <ErrorBanner message={msg()} />}</Show>
           </div>
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span role="status" class="sr-only" data-testid="connection-status">

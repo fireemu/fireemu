@@ -92,10 +92,16 @@ Retain the tool version, source commit, selection diff, reviewed list, test argu
 - Safety: only `schedule` and `workflow_dispatch` start the workflow (never `pull_request` or `pull_request_target`), the token is `contents: read`, there are no secrets, no job saves a cache, and one scheduled run goes at a time. `scripts/heavy-verification-contract.rb` pins all of this.
 - GitHub starts a schedule only from the default branch, so nothing runs until the workflow is merged there. GitHub also disables scheduled workflows of a repository without activity for 60 days; a push or a manual run re-enables them.
 
-## UI: verify mutant execution
+## UI: targeted-mutation
 
-Run `pnpm -C ui mutation:sanity` before trusting a UI mutation campaign. It uses the normal Stryker configuration and runner, selects the scope-transition guard by an exact source anchor, and requires every selected mutant to be killed. A missing or ambiguous anchor, empty selection, survivor, timeout, or infrastructure error fails the command. Results are written to `ui/test-results/mutation-sanity.json`; the exit status is checked against the current in-memory results, not an old report.
+Run `pnpm -C ui mutation:sanity` before trusting a UI mutation campaign. It runs `targeted-mutation` against the scope-transition guard selected by an exact source anchor in `src/lib/unsaved.tsx`, and requires a clean evaluated run where every selected mutant is killed. A missing or ambiguous anchor, empty selection, survivor, unreached edit, timeout, extraction diagnostic, or runner error fails the command. Results are written to `ui/test-results/mutation-sanity.json`; the exit status is checked against the current in-memory report, not an old file.
 
-The sanity command deliberately exercises a small known behavior-changing slice. It does not claim mutation coverage for the whole UI. Run `pnpm -C ui mutation` for the configured full selection, or use `pnpm -C ui exec stryker run --mutate <source-file>` for a reviewed focused campaign. A successful initial test run alone is not evidence that mutant tests executed.
+The sanity command deliberately exercises a small known behavior-changing slice. It does not claim mutation coverage for the whole UI. Run `pnpm -C ui mutation` for the configured `src/lib` and core `src/api` selection, or pass arguments through for a focused campaign, for example:
 
-The earlier Vitest runner failure was not reproduced with the current locked dependencies: the normal runner killed the scope-transition mutants. Keep the runner and dependency versions pinned through the lockfile, and rerun the sanity command after upgrades rather than assuming the historical workaround is still necessary.
+```sh
+pnpm -C ui mutation -- src/lib/firestoreJson.ts --test src/lib/firestoreJson.test.ts --suggest-assertions
+pnpm -C ui mutation -- --since "$(git merge-base origin/main HEAD)" --undo-changes
+pnpm -C ui mutation -- src/lib/rtdbTree.ts --test src/lib/rtdbTree.test.ts --mutators full
+```
+
+Keep `targeted-mutation` pinned through `ui/pnpm-lock.yaml`, and rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.

@@ -10,6 +10,7 @@ import {
   Show,
   type Component,
 } from "solid-js";
+import { freezeClock, moveClock, resumeClock } from "../api/control";
 import { t } from "../i18n";
 import {
   filterCommands,
@@ -76,6 +77,28 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
       action: "copy-env",
     },
     {
+      id: "clock-toggle",
+      title:
+        appState.clockMode() === "frozen" ? t("palette.clockResume") : t("palette.clockFreeze"),
+      group: t("palette.groupActions"),
+      keywords: "clock freeze resume pause time",
+      action: "clock-toggle",
+    },
+    {
+      id: "clock-plus-1h",
+      title: t("palette.clockPlus1h"),
+      group: t("palette.groupActions"),
+      keywords: "clock advance hour time",
+      action: "clock-plus-1h",
+    },
+    {
+      id: "clock-plus-1d",
+      title: t("palette.clockPlus1d"),
+      group: t("palette.groupActions"),
+      keywords: "clock advance day time",
+      action: "clock-plus-1d",
+    },
+    {
       id: "shortcuts",
       title: t("palette.showShortcuts"),
       group: t("palette.groupActions"),
@@ -113,7 +136,22 @@ export const CommandPalette: Component<{ links: PaletteLink[] }> = (props) => {
     const action = command.action ?? "";
     if (action === "theme") cycleTheme();
     else if (action === "shortcuts") openShortcutHelp();
-    else if (action === "copy-env") {
+    else if (action === "clock-toggle") {
+      void appState.clockGuard.run(async () => {
+        appState.invalidatePolls();
+        const r = await (appState.clockMode() === "frozen"
+          ? resumeClock(appState.session(), false, false)
+          : freezeClock(appState.session()));
+        r.map(appState.applyClockMutation);
+      });
+    } else if (action === "clock-plus-1h" || action === "clock-plus-1d") {
+      const seconds = action === "clock-plus-1h" ? 3600 : 86400;
+      void appState.clockGuard.run(async () => {
+        appState.invalidatePolls();
+        const r = await moveClock(appState.session(), { action: "advance", move: { seconds } });
+        r.map(appState.applyClockMutation);
+      });
+    } else if (action === "copy-env") {
       const config = appState.config();
       void navigator.clipboard
         ?.writeText(dotenvSnippet({ ...config, project: appState.project() }))

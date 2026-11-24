@@ -7,7 +7,31 @@ import type {
 } from "../api/functions";
 import { t } from "../i18n";
 import { buildTimeline } from "../lib/functionsTimeline";
-import { Section } from "./common";
+import { Section, StatusBadge } from "./common";
+
+const phaseTone = (phase: string | undefined): "success" | "danger" | "warning" | "neutral" => {
+  if (!phase) return "neutral";
+  const lower = phase.toLowerCase();
+  if (
+    lower.includes("fail") ||
+    lower.includes("error") ||
+    lower.includes("dead") ||
+    lower.includes("timeout") ||
+    lower.includes("reject")
+  )
+    return "danger";
+  if (
+    lower.includes("retry") ||
+    lower.includes("wait") ||
+    lower.includes("pending") ||
+    lower.includes("delay") ||
+    lower.includes("register")
+  )
+    return "warning";
+  if (lower.includes("succeed") || lower.includes("ok") || lower.includes("complete"))
+    return "success";
+  return "neutral";
+};
 
 export const FunctionsTimeline: Component<{
   project: string;
@@ -249,7 +273,13 @@ export const FunctionsTimeline: Component<{
                       </td>
                       <td class="mono text-xs">{byKey().get(key)!.function}</td>
                       <td>{byKey().get(key)!.causal?.source ?? "—"}</td>
-                      <td>{byKey().get(key)!.causal?.phases.at(-1)?.phase ?? "—"}</td>
+                      <td>
+                        <Show when={byKey().get(key)!.causal?.phases.at(-1)?.phase} fallback="—">
+                          {(phase) => (
+                            <StatusBadge tone={phaseTone(phase())}>{phase()}</StatusBadge>
+                          )}
+                        </Show>
+                      </td>
                     </tr>
                   )}
                 </For>
@@ -324,8 +354,9 @@ export const FunctionsTimeline: Component<{
             <ol class="mb-3 list-inside list-decimal text-sm" data-testid="timeline-phases">
               <For each={selectedPhases()}>
                 {(p) => (
-                  <li>
-                    <span class="mono">{p.phase}</span> · {t("functions.attempt")} {p.attempt} ·{" "}
+                  <li class="my-0.5">
+                    <StatusBadge tone={phaseTone(p.phase)}>{p.phase}</StatusBadge> ·{" "}
+                    {t("functions.attempt")} {p.attempt} ·{" "}
                     {p.at ?? t("functions.timelineUnknownTime")}
                   </li>
                 )}
@@ -343,8 +374,9 @@ export const FunctionsTimeline: Component<{
               <ol class="mb-3 list-inside list-decimal text-sm" data-testid="timeline-outcomes">
                 <For each={outcomes()}>
                   {(r) => (
-                    <li>
-                      {t("functions.attempt")} {r.attempt} · <span class="mono">{r.outcome}</span>
+                    <li class="my-0.5">
+                      {t("functions.attempt")} {r.attempt} ·{" "}
+                      <StatusBadge tone={phaseTone(r.outcome)}>{r.outcome}</StatusBadge>
                     </li>
                   )}
                 </For>

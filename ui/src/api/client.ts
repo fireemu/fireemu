@@ -230,6 +230,7 @@ export const requestText = (
   path: string,
   body?: string,
   inspectErrors = false,
+  extraHeaders?: Record<string, string>,
 ): ResultAsync<TextReply, ApiError> =>
   ResultAsync.fromPromise(
     (async (): Promise<Result<TextReply, ApiError>> => {
@@ -238,12 +239,22 @@ export const requestText = (
         headers: {
           ...authHeaders(),
           ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...extraHeaders,
         },
         body: body ?? null,
       });
       const text = await response.text();
-      if (!response.ok && !inspectErrors)
-        return err({ status: response.status, message: text || `HTTP ${response.status}` });
+      if (!response.ok && !inspectErrors) {
+        let message = text || `HTTP ${response.status}`;
+        try {
+          const parsed: unknown = JSON.parse(text);
+          const extracted = messageOf(response.status, parsed);
+          if (extracted !== `HTTP ${response.status}`) message = extracted;
+        } catch {
+          /* Keep plain text body when not JSON. */
+        }
+        return err({ status: response.status, message });
+      }
       return ok({ status: response.status, body: text, etag: response.headers.get("etag") });
     })(),
     (e): ApiError => ({ status: 0, message: e instanceof Error ? e.message : String(e) }),

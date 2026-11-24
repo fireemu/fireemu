@@ -1,6 +1,6 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { initialConfig, type RuntimeConfig, type Session } from "./config";
-import { sessionInfo, listSessions, type ClockInfo } from "./api/control";
+import { sessionInfo, listSessions, getFaultPlan, type ClockInfo } from "./api/control";
 import { createSubmitGuard } from "./lib/submitGuard";
 
 /** App-wide reactive state: the runtime configuration, the clock, the sessions. */
@@ -56,6 +56,10 @@ const store = createRoot(() => {
   let pollEpoch = 0;
   let completedEpoch = 0;
   const [lastConnectedAt, setLastConnectedAt] = createSignal<string | null>(null);
+  const [faultSummary, setFaultSummary] = createSignal<{ rules: number; fired: number }>({
+    rules: 0,
+    fired: 0,
+  });
   const setSession = (name: string) => {
     if (name === session()) return;
     setSelectedSession(name);
@@ -67,6 +71,7 @@ const store = createRoot(() => {
     setLastConnectedAt(null);
     setClock("");
     setLiveClockMode(null);
+    setFaultSummary({ rules: 0, fired: 0 });
   };
   /** Whether the last poll of the daemon answered (null until the first one). */
   const [connected, setConnected] = createSignal<boolean | null>(null);
@@ -76,6 +81,30 @@ const store = createRoot(() => {
   const project = createMemo(
     () => sessions().find((s) => s.name === session())?.project ?? config().project,
   );
+
+  let faultEpoch = 0;
+
+  /** Updates the header's active fault-plan indicator without affecting connection status. */
+  const refreshFaultSummary = async (): Promise<void> => {
+    const mine = ++faultEpoch;
+    const selected = session();
+    try {
+      const result = await getFaultPlan(selected);
+      if (mine !== faultEpoch || selected !== session()) return;
+      result.match(
+        (info) =>
+          setFaultSummary({
+            rules: info.plan?.rules.length ?? 0,
+            fired: info.fired.length,
+          }),
+        () => {
+          /* Older daemons or mocked tests may not answer faultPlan. */
+        },
+      );
+    } catch {
+      /* Ignore transient errors from optional indicator reads. */
+    }
+  };
 
   /** Re-reads the clock (and the session list) from the daemon. */
   const refreshClock = async (): Promise<void> => {
@@ -89,7 +118,10 @@ const store = createRoot(() => {
     completedEpoch = mine;
     info.map((i) => setClockInfo(i.clock));
     const answered = info.isOk() && list.isOk();
-    if (answered) setLastConnectedAt(new Date().toISOString());
+    if (answered) {
+      setLastConnectedAt(new Date().toISOString());
+      void refreshFaultSummary();
+    }
     setConnected(answered);
   };
 
@@ -111,6 +143,8 @@ const store = createRoot(() => {
     project,
     connected,
     lastConnectedAt,
+    faultSummary,
+    refreshFaultSummary,
     refreshClock,
   };
 });

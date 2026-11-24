@@ -38,10 +38,19 @@ fn state_with(app_check: Option<Arc<AppCheckState>>) -> Arc<UiState> {
 }
 
 /// [`state_with`] with a Functions hook in the control API.
-#[allow(clippy::too_many_lines)]
 fn state_with_hook(
     app_check: Option<Arc<AppCheckState>>,
     functions: Option<Arc<dyn fireemu_adapter_http::control::FunctionsHook>>,
+) -> Arc<UiState> {
+    state_full(app_check, functions, None)
+}
+
+/// [`state_with_hook`] with the session admission barrier in the control API.
+#[allow(clippy::too_many_lines)]
+fn state_full(
+    app_check: Option<Arc<AppCheckState>>,
+    functions: Option<Arc<dyn fireemu_adapter_http::control::FunctionsHook>>,
+    barrier: Option<Arc<fireemu_core_session::barrier::AdmissionBarrier>>,
 ) -> Arc<UiState> {
     let gateway = Gateway {
         enforce_limits: true,
@@ -108,7 +117,7 @@ fn state_with_hook(
         require_control_token: false,
         remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
-        barrier: None,
+        barrier,
         snapshot_hooks: Vec::new(),
         snapshots: Mutex::new(BTreeMap::new()),
         faults: Some(Arc::new(fireemu_core_session::fault::FaultRegistry::new())),
@@ -128,6 +137,10 @@ fn state_with_hook(
     });
     Arc::new(UiState {
         database: None,
+        pubsub: None,
+        remote_config: Some(Arc::new(
+            fireemu_adapter_http::remote_config::RemoteConfigStores::default(),
+        )),
         stream_limiter: Arc::new(fireemu_adapter_ui::sse::StreamLimiter::default()),
         control_token: TOKEN.to_owned(),
         info: RuntimeInfo {
@@ -137,6 +150,7 @@ fn state_with_hook(
             firestore_addr: "127.0.0.1:8080".to_owned(),
             http_addr: "127.0.0.1:9099".to_owned(),
             storage_addr: "127.0.0.1:9199".to_owned(),
+            pubsub_addr: None,
             functions_addr: None,
             functions_source: None,
             ui_addr: "127.0.0.1:4000".to_owned(),
@@ -2646,4 +2660,336 @@ async fn the_control_front_reads_an_empty_resume_as_an_object_and_refuses_null()
     .await;
     assert_eq!(status, 400, "{body}");
     assert!(body.to_string().contains("FAILED_PRECONDITION"), "{body}");
+}
+
+#[tokio::test]
+async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
+    let s = state();
+    let base = "/ui/api/remoteconfig/v1/projects/demo-app/remoteConfig";
+    let initial = handle(&s, &request("GET", base, &Value::Null)).await;
+    assert_eq!(initial.status, 200);
+    assert_eq!(initial.body_json(), Some(json!({})));
+
+    // Missing If-Match is refused with 400 FAILED_PRECONDITION.
+    let (status, _) = call(
+        &s,
+        request(
+            "PUT",
+            base,
+            &json!({"parameters": {"flag": {"defaultValue": {"value": "on"}}}}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 400);
+
+    // Forced publish with `*` creates version 1 and returns an ETag.
+    let mut pub_req = request(
+        "PUT",
+        base,
+        &json!({
+            "parameters": {"flag": {"defaultValue": {"value": "on"}}},
+            "version": {"description": "first"}
+        }),
+    );
+    pub_req
+        .headers
+        .insert("if-match".to_owned(), "*".to_owned());
+    let published = handle(&s, &pub_req).await;
+    assert_eq!(published.status, 200);
+    let etag = published
+        .headers
+        .iter()
+        .find(|(k, _)| k == "etag")
+        .map(|(_, v)| v.clone())
+        .expect("published etag");
+    assert_eq!(
+        published.body_json().unwrap()["version"]["versionNumber"],
+        "1"
+    );
+
+    // Incremental update with matching ETag creates version 2.
+    let mut pub2 = request(
+        "PUT",
+        base,
+        &json!({"parameters": {"flag": {"defaultValue": {"value": "off"}}}}),
+    );
+    pub2.headers.insert("if-match".to_owned(), etag.clone());
+    let published2 = handle(&s, &pub2).await;
+    assert_eq!(published2.status, 200);
+    assert_eq!(
+        published2.body_json().unwrap()["version"]["versionNumber"],
+        "2"
+    );
+
+    // Stale ETag returns 412.
+    let mut stale = request("PUT", base, &json!({}));
+    stale.headers.insert("if-match".to_owned(), etag);
+    assert_eq!(handle(&s, &stale).await.status, 412);
+
+    // List versions and rollback to version 1.
+    let (status, versions) = call(
+        &s,
+        request("GET", &format!("{base}:listVersions"), &Value::Null),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(versions["versions"].as_array().unwrap().len(), 2);
+
+    let (status, rolled) = call(
+        &s,
+        request(
+            "POST",
+            &format!("{base}:rollback"),
+            &json!({"versionNumber": "1"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(rolled["version"]["versionNumber"], "3");
+    assert_eq!(rolled["parameters"]["flag"]["defaultValue"]["value"], "on");
+
+    // Non-default project is refused with 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/remoteconfig/v1/projects/other-project/remoteConfig",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn pubsub_front_reports_unavailable_when_unconfigured() {
+    let s = state();
+    let (status, body) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/pubsub/v1/projects/demo-app/topics",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 503, "{body}");
+}
+
+#[tokio::test]
+async fn remote_config_over_real_http_listener_forwards_if_match_and_enforces_etag() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn raw_http(addr: std::net::SocketAddr, req: &str) -> String {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).await.unwrap();
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    let s = state();
+    let token = s.control_token.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let serve_state = Arc::clone(&s);
+    let server_task = tokio::spawn(async move {
+        let _ = fireemu_adapter_ui::server::serve_ui(listener, serve_state).await;
+    });
+
+    let payload = r#"{"parameters":{"banner":{"defaultValue":{"value":"hi"}}}}"#;
+    let put_req = format!(
+        "PUT /ui/api/remoteconfig/v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIf-Match: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    let resp = raw_http(addr, &put_req).await;
+    assert!(
+        resp.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {resp}"
+    );
+    let etag = resp
+        .lines()
+        .find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            k.eq_ignore_ascii_case("etag").then(|| v.trim().to_owned())
+        })
+        .expect("etag header in response");
+
+    // Stale ETag over real HTTP returns 412 (proves If-Match reached Remote Config).
+    let stale_req = format!(
+        "PUT /ui/api/remoteconfig/v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIf-Match: {etag}-stale\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+    );
+    let stale_resp = raw_http(addr, &stale_req).await;
+    assert!(
+        stale_resp.starts_with("HTTP/1.1 412"),
+        "expected 412 for stale ETag, got: {stale_resp}"
+    );
+
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn auth_mint_id_token_issues_verifiable_token_and_rejects_unknown_user_or_project() {
+    let s = state();
+    let (status, created) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/identitytoolkit.googleapis.com/v1/projects/demo-app/accounts",
+            &json!({"email": "alice@example.com", "password": "secret-password"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{created}");
+    let uid = created["localId"].as_str().expect("localId");
+
+    let (status, minted) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &json!({"localId": uid}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{minted}");
+    let token = minted["idToken"].as_str().expect("idToken");
+    assert_eq!(minted["localId"], uid);
+    {
+        let now = s.auth.clock.lock().unwrap().snapshot().instant;
+        let store = s.auth.store.lock().unwrap();
+        let verified =
+            fireemu_core_auth::jwt::verify_id_token(token, &store, now).expect("valid token");
+        assert_eq!(verified.uid, uid);
+    }
+
+    // Unknown user returns 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &json!({"localId": "does-not-exist"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+
+    // Unknown project returns 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/other-project/accounts:mintIdToken",
+            &json!({"localId": uid}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+
+    // Non-POST returns 405.
+    let (status, _) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 405);
+}
+
+/// A Remote Config commit made through the console takes the session admission like the same
+/// commit over HTTP: it waits while a reset holds the barrier and changes nothing before the
+/// reset is over, while reads and validate-only requests are never queued behind it.
+#[test]
+fn remote_config_front_commits_wait_for_a_reset_but_reads_and_validation_do_not() {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    let barrier = Arc::new(fireemu_core_session::barrier::AdmissionBarrier::new());
+    let s = state_full(None, None, Some(barrier.clone()));
+    let base = "/ui/api/remoteconfig/v1/projects/demo-app/remoteConfig";
+    let rest = "v1/projects/demo-app/remoteConfig";
+    let with_precondition = |method: &str, target: &str, body: &Value| {
+        let mut req = request(method, target, body);
+        req.headers.insert("if-match".to_owned(), "*".to_owned());
+        req
+    };
+    // Runs one console request on its own thread so a request blocked by the barrier cannot
+    // stall the test; the timeout only bounds a regression.
+    let run = |rest: &'static str, req: UiRequest| {
+        let s = s.clone();
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            let reply = fireemu_adapter_ui::remote_config::route(&s, rest, &req);
+            let _ = sender.send((reply.status, reply.body_json()));
+        });
+        receiver
+    };
+
+    let held = barrier.exclusive();
+    let mut failures = Vec::new();
+    for (name, rest, req) in [
+        ("read", rest, request("GET", base, &Value::Null)),
+        (
+            "list versions",
+            "v1/projects/demo-app/remoteConfig:listVersions",
+            request("GET", &format!("{base}:listVersions"), &Value::Null),
+        ),
+        (
+            "validate only",
+            rest,
+            with_precondition("PUT", &format!("{base}?validateOnly=true"), &json!({})),
+        ),
+    ] {
+        let rest: &'static str = rest;
+        match run(rest, req).recv_timeout(Duration::from_secs(10)) {
+            Ok((200, _)) => {}
+            other => failures.push(format!("{name}: {other:?}")),
+        }
+    }
+    // A publish and a rollback queue behind the reset and have changed nothing while it holds.
+    let publish = run(
+        rest,
+        with_precondition(
+            "PUT",
+            base,
+            &json!({"parameters": {"flag": {"defaultValue": {"value": "on"}}}}),
+        ),
+    );
+    let rollback = run(
+        "v1/projects/demo-app/remoteConfig:rollback",
+        request(
+            "POST",
+            &format!("{base}:rollback"),
+            &json!({"versionNumber": "1"}),
+        ),
+    );
+    let publish_waits = matches!(
+        publish.recv_timeout(Duration::from_millis(400)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    let rollback_waits = matches!(
+        rollback.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    let during = run(rest, request("GET", base, &Value::Null))
+        .recv_timeout(Duration::from_secs(10))
+        .ok()
+        .and_then(|(_, body)| body);
+    drop(held);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(publish_waits, "the publish ran during the reset");
+    assert!(rollback_waits, "the rollback ran during the reset");
+    assert_eq!(during, Some(json!({})), "a commit landed during the reset");
+
+    // After the reset the queued publish commits; the rollback finds no version 1 to restore
+    // or one, depending on the order the two were admitted, and either way answers.
+    let (published, _) = publish
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the publish completes after the reset");
+    assert_eq!(published, 200);
+    assert!(rollback.recv_timeout(Duration::from_secs(10)).is_ok());
 }

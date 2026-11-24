@@ -34,6 +34,8 @@ pub mod api;
 pub mod assets;
 pub mod database;
 pub mod functions_actions;
+pub mod pubsub;
+pub mod remote_config;
 pub mod server;
 pub mod sse;
 
@@ -118,6 +120,8 @@ pub struct RuntimeInfo {
     pub http_addr: String,
     /// Storage listener.
     pub storage_addr: String,
+    /// Pub/Sub listener, when Pub/Sub runs.
+    pub pubsub_addr: Option<String>,
     /// Functions listener, when a codebase is loaded.
     pub functions_addr: Option<String>,
     /// Functions source directory.
@@ -144,6 +148,10 @@ pub struct RuntimeInfo {
 pub struct UiState {
     /// The selected RTDB listener and trusted instance ownership, absent when disabled.
     pub database: Option<database::DatabaseEndpoint>,
+    /// The selected Pub/Sub listener, absent when disabled.
+    pub pubsub: Option<pubsub::PubSubEndpoint>,
+    /// Shared Remote Config template stores, when attached.
+    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>>,
     /// Connection budget shared by this runtime's event streams.
     pub stream_limiter: Arc<sse::StreamLimiter>,
     /// The control token browser pages must present.
@@ -333,6 +341,7 @@ pub fn config_json(state: &UiState) -> Value {
         "firestoreAddr": info.firestore_addr,
         "httpAddr": info.http_addr,
         "storageAddr": info.storage_addr,
+        "pubsubAddr": info.pubsub_addr,
         "functionsAddr": info.functions_addr,
         "functionsSource": info.functions_source,
         "uiAddr": info.ui_addr,
@@ -347,6 +356,10 @@ pub fn config_json(state: &UiState) -> Value {
         },
         "functionsConfigured": state.functions.is_some(),
         "appCheckEnabled": state.app_check.is_some(),
+        "pubsubEnabled": state.pubsub.is_some(),
+        "databaseEnabled": state.database.is_some(),
+        "hostingServed": info.hosting.is_some(),
+        "remoteConfigEnabled": state.remote_config.is_some(),
         "uiBundled": assets::bundled(),
         "sessions": sessions,
         "controlToken": state.control_token,

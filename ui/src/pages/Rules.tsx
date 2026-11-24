@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createSignal,
   For,
   Show,
@@ -17,7 +18,9 @@ import {
   FetchState,
   Notice,
   Section,
+  StatusBadge,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import {
   dropRules,
   getRules,
@@ -31,6 +34,7 @@ import {
   type RuleCoverage,
 } from "../api/control";
 import { coverageRows, coverageSummary, sourceRange } from "../lib/coverage";
+import { buildCoverageHeatmap } from "../lib/rulesCoverageHeatmap";
 import { createLeaveGuard, LeavePrompt } from "../lib/unsaved";
 import { settle } from "../api/client";
 import { createScopedFetch } from "../lib/rules-state";
@@ -128,6 +132,7 @@ const RulesEditor: Component<{ which: "firestore" | "storage"; title: string; sc
         <Show when={info.loading()}>
           <p role="status">{t("rules.refreshing")}</p>
         </Show>
+        <CodeEditorToolbar value={source()} />
         <label class="label" for={`rules-${props.which}`}>
           {dirty() ? t("rules.draftSource") : t("rules.currentSource")}
         </label>
@@ -274,6 +279,8 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
   );
   const [selected, setSelected] = createSignal<string | null>(null);
   const [position, setPosition] = createSignal<Position | null>(null);
+  const [deniedOnly, setDeniedOnly] = createSignal(false);
+  const [filterQuery, setFilterQuery] = createSignal("");
   const interval = createPreviousInterval(list.data);
   createEffect(() => {
     const revision = props.revision;
@@ -286,6 +293,19 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
       });
   });
   const requests = () => list.data()?.requests ?? [];
+  const filteredRequests = createMemo(() => {
+    const q = filterQuery().trim().toLowerCase();
+    return requests().filter((r) => {
+      if (deniedOnly() && r.allowed) return false;
+      if (!q) return true;
+      return (
+        r.path.toLowerCase().includes(q) ||
+        r.method.toLowerCase().includes(q) ||
+        r.service.toLowerCase().includes(q) ||
+        (r.uid?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  });
   const identity = (r: RulesRequest) =>
     JSON.stringify([props.scope, r.service, list.data()?.generation ?? null, r.sequence]);
   const current = () => requests().find((r) => identity(r) === selected());
@@ -323,6 +343,25 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
         </Show>
         <Show when={list.data()?.loaded} fallback={<p>{t("rules.notLoaded")}</p>}>
           <Show when={requests().length > 0} fallback={<p>{t("rules.requestsNone")}</p>}>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <label class="flex items-center gap-1.5 text-sm">
+                <input
+                  type="checkbox"
+                  data-testid="rules-filter-denied"
+                  checked={deniedOnly()}
+                  onChange={(e) => setDeniedOnly(e.currentTarget.checked)}
+                />
+                {t("rules.filterDeniedOnly")}
+              </label>
+              <input
+                class="input w-64 max-w-full"
+                data-testid="rules-filter-query"
+                placeholder={t("rules.filterPath")}
+                aria-label={t("rules.filterPath")}
+                value={filterQuery()}
+                onInput={(e) => setFilterQuery(e.currentTarget.value)}
+              />
+            </div>
             <table class="table" data-testid="rules-requests">
               <thead>
                 <tr>
@@ -334,7 +373,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                 </tr>
               </thead>
               <tbody>
-                <For each={requests()}>
+                <For each={filteredRequests()}>
                   {(r) => (
                     <tr>
                       <td class="mono">
@@ -343,9 +382,9 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                       <td class="mono">{r.path}</td>
                       <td class="mono">{r.uid ?? "-"}</td>
                       <td>
-                        <span class="badge">
+                        <StatusBadge tone={r.allowed ? "success" : "danger"}>
                           {r.allowed ? t("rules.allowed") : t("rules.denied")}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td>
                         <button
@@ -558,6 +597,60 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
               testId="rules-coverage"
               identity={t("rules.coverageIdentity", { file: file()?.name ?? "?" })}
             />
+            <Show when={file()}>
+              {(f) => (
+                <details class="mt-4" data-testid="rules-coverage-heatmap">
+                  <summary class="cursor-pointer text-sm font-medium">
+                    {t("rules.heatmapTitle")}
+                  </summary>
+                  <p class="my-1 text-xs text-muted">{t("rules.heatmapLegend")}</p>
+                  <div class="mono max-h-80 overflow-auto rounded-control border border-line-subtle bg-sunken text-xs">
+                    <For each={buildCoverageHeatmap(f().content, cov.data()!.report)}>
+                      {(line) => (
+                        <div
+                          class="flex gap-2 px-2 py-0.5"
+                          classList={{
+                            "bg-success-subtle text-success": line.state === "covered",
+                            "bg-warning-subtle text-warning": line.state === "partial",
+                            "bg-danger-subtle text-danger": line.state === "unreached",
+                          }}
+                        >
+                          <span class="w-10 shrink-0 select-none text-right text-secondary">
+                            {line.lineNumber}
+                          </span>
+                          <span class="w-4 shrink-0 select-none text-center" aria-hidden="true">
+                            {line.state === "covered"
+                              ? "✓"
+                              : line.state === "partial"
+                                ? "◐"
+                                : line.state === "unreached"
+                                  ? "✗"
+                                  : ""}
+                          </span>
+                          <Show when={line.state !== "none"}>
+                            <span class="sr-only">
+                              {line.state === "covered"
+                                ? t("rules.covCovered")
+                                : line.state === "partial"
+                                  ? t("rules.covPartial")
+                                  : t("rules.covUnreached")}
+                            </span>
+                          </Show>
+                          <span class="w-14 shrink-0 select-none text-right">
+                            {line.hitCount > 0
+                              ? `×${line.hitCount}`
+                              : line.state === "unreached"
+                                ? "0"
+                                : ""}
+                          </span>
+                          <span class="whitespace-pre">{line.text}</span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </details>
+              )}
+            </Show>
           </Show>
         </Show>
       </FetchState>
@@ -689,8 +782,35 @@ const RulesDiagnosticsPanel: Component<{
   );
 };
 
+type RulesTab = "all" | "editors" | "requests" | "coverage";
+
+const RULES_TABS: readonly [
+  RulesTab,
+  "rules.viewAll" | "rules.viewEditors" | "rules.viewRequests" | "rules.viewCoverage",
+][] = [
+  ["all", "rules.viewAll"],
+  ["editors", "rules.viewEditors"],
+  ["requests", "rules.viewRequests"],
+  ["coverage", "rules.viewCoverage"],
+];
+
 const Rules: Component = () => {
   const scope = () => JSON.stringify([appState.session(), appState.project()]);
+  const [tab, setTab] = createSignal<RulesTab>("all");
+  const onTabKeyDown = (event: KeyboardEvent) => {
+    const idx = RULES_TABS.findIndex(([id]) => id === tab());
+    let next = -1;
+    if (event.key === "ArrowRight") next = (idx + 1) % RULES_TABS.length;
+    else if (event.key === "ArrowLeft") next = (idx - 1 + RULES_TABS.length) % RULES_TABS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = RULES_TABS.length - 1;
+    if (next >= 0) {
+      event.preventDefault();
+      const target = RULES_TABS[next]![0];
+      setTab(target);
+      document.getElementById(`rules-tab-${target}`)?.focus();
+    }
+  };
   return (
     <div>
       <h1 class="page-title mb-4">{t("rules.title")}</h1>
@@ -699,30 +819,72 @@ const Rules: Component = () => {
           {t("rules.enforcedOff")}
         </div>
       </Show>
-      <Show when={scope()} keyed>
-        {(key) => {
-          const [session, project] = JSON.parse(key) as [string, string];
-          const [diagnosticRevision, setDiagnosticRevision] = createSignal(0);
-          return (
-            <>
-              <RulesEditor which="firestore" title={t("rules.firestore")} scope={key} />
-              <RulesEditor which="storage" title={t("rules.storage")} scope={key} />
-              <Show
-                when={session === "default"}
-                fallback={<p>{t("rules.diagnosticsUnsupported")}</p>}
-              >
-                <RulesDiagnosticsPanel
-                  scope={key}
-                  session={session}
-                  onCleared={() => setDiagnosticRevision((n) => n + 1)}
-                />
-              </Show>
-              <RulesRequestsPanel scope={key} session={session} revision={diagnosticRevision()} />
-              <RulesCoveragePanel scope={key} project={project} revision={diagnosticRevision()} />
-            </>
-          );
-        }}
-      </Show>
+      <div
+        class="mb-4 flex overflow-x-auto border-b border-line-subtle"
+        role="tablist"
+        aria-label={t("rules.title")}
+        onKeyDown={onTabKeyDown}
+      >
+        <For each={RULES_TABS}>
+          {([id, labelKey]) => (
+            <button
+              type="button"
+              role="tab"
+              id={`rules-tab-${id}`}
+              class="tab shrink-0"
+              aria-selected={tab() === id}
+              aria-controls="rules-tabpanel"
+              tabIndex={tab() === id ? 0 : -1}
+              data-testid={`rules-tab-${id}`}
+              onClick={() => setTab(id)}
+            >
+              {t(labelKey)}
+            </button>
+          )}
+        </For>
+      </div>
+      <div id="rules-tabpanel" role="tabpanel" aria-labelledby={`rules-tab-${tab()}`}>
+        <Show when={scope()} keyed>
+          {(key) => {
+            const [session, project] = JSON.parse(key) as [string, string];
+            const [diagnosticRevision, setDiagnosticRevision] = createSignal(0);
+            return (
+              <>
+                <Show when={tab() === "all" || tab() === "editors"}>
+                  <RulesEditor which="firestore" title={t("rules.firestore")} scope={key} />
+                  <RulesEditor which="storage" title={t("rules.storage")} scope={key} />
+                </Show>
+                <Show when={tab() === "all" || tab() === "requests" || tab() === "coverage"}>
+                  <Show
+                    when={session === "default"}
+                    fallback={<p>{t("rules.diagnosticsUnsupported")}</p>}
+                  >
+                    <RulesDiagnosticsPanel
+                      scope={key}
+                      session={session}
+                      onCleared={() => setDiagnosticRevision((n) => n + 1)}
+                    />
+                  </Show>
+                </Show>
+                <Show when={tab() === "all" || tab() === "requests"}>
+                  <RulesRequestsPanel
+                    scope={key}
+                    session={session}
+                    revision={diagnosticRevision()}
+                  />
+                </Show>
+                <Show when={tab() === "all" || tab() === "coverage"}>
+                  <RulesCoveragePanel
+                    scope={key}
+                    project={project}
+                    revision={diagnosticRevision()}
+                  />
+                </Show>
+              </>
+            );
+          }}
+        </Show>
+      </div>
     </div>
   );
 };

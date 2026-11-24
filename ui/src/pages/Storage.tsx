@@ -1,6 +1,7 @@
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   createEffect,
+  createMemo,
   createResource,
   createSignal,
   For,
@@ -17,6 +18,7 @@ import { appState } from "../state";
 import {
   AsyncButton,
   ConfirmButton,
+  CopyButton,
   ErrorBanner,
   FetchState,
   Field,
@@ -24,6 +26,7 @@ import {
   RelativeTime,
   Spinner,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import { decodeSplat, storageHref } from "../lib/hrefs";
 import { createPagedList } from "../lib/pagedList";
 import {
@@ -32,6 +35,8 @@ import {
   getObject,
   listBuckets,
   listObjects,
+  objectDownloadUrl,
+  patchObjectMetadata,
   uploadObject,
   type ObjectInfo,
 } from "../api/storage";
@@ -51,6 +56,7 @@ const formatSize = (size: string): string => {
  */
 const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props) => {
   const kind = () => previewKind(props.object.contentType, Number(props.object.size));
+  const [prettyJson, setPrettyJson] = createSignal(false);
   // Fetches can overlap; only the latest may show its image or revoke the one shown.
   const urls = createPreviewUrls();
   onCleanup(urls.dispose);
@@ -64,19 +70,48 @@ const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props)
       const result = await downloadObject(bucket, name);
       if (result.isErr()) {
         urls.adopt(token, null);
-        return { error: result.error.message, text: null, url: null };
+        return {
+          error: result.error.message,
+          text: null,
+          pretty: null as string | null,
+          url: null,
+        };
       }
       if (wanted === "text") {
         const text = await result.value.blob.text();
+        let pretty: string | null = null;
+        try {
+          pretty = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          pretty = null;
+        }
         urls.adopt(token, null);
-        return { error: null, text, url: null };
+        return { error: null, text, pretty, url: null };
       }
-      return { error: null, text: null, url: urls.adopt(token, result.value.blob) };
+      return {
+        error: null,
+        text: null,
+        pretty: null as string | null,
+        url: urls.adopt(token, result.value.blob),
+      };
     },
   );
   return (
     <div data-testid="object-preview">
-      <div class="label mb-1">{t("storage.preview")}</div>
+      <div class="mb-1 flex items-center justify-between gap-2">
+        <div class="label">{t("storage.preview")}</div>
+        <Show when={content()?.pretty !== null && content()?.pretty !== undefined}>
+          <button
+            type="button"
+            class="btn btn-sm"
+            classList={{ "btn-primary": prettyJson() }}
+            data-testid="object-preview-pretty"
+            onClick={() => setPrettyJson(!prettyJson())}
+          >
+            {t("storage.formatJsonPreview")}
+          </button>
+        </Show>
+      </div>
       <Show when={kind() !== "none"} fallback={<p class="hint">{t("storage.previewNone")}</p>}>
         <Show when={content()} fallback={<Spinner />}>
           {(loaded) => (
@@ -87,7 +122,7 @@ const ObjectPreview: Component<{ bucket: string; object: ObjectInfo }> = (props)
                   class="mono max-h-96 overflow-auto code-block break-all whitespace-pre-wrap"
                   data-testid="object-preview-text"
                 >
-                  {loaded().text}
+                  {prettyJson() && loaded().pretty !== null ? loaded().pretty : loaded().text}
                 </pre>
               </Show>
               <Show when={loaded().url}>
@@ -114,11 +149,14 @@ const ObjectDetail: Component<{
   onClose: () => void;
   onDeleted: () => void;
 }> = (props) => {
-  const [meta] = createResource(
+  const [meta, { refetch }] = createResource(
     () => [props.bucket, props.name] as const,
     ([b, n]) => settle(getObject(b, n)),
   );
   const [error, setError] = createSignal<string | null>(null);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const [editingMeta, setEditingMeta] = createSignal(false);
+  const [metaDraft, setMetaDraft] = createSignal("{}");
   const download = async () => {
     const r = await downloadObject(props.bucket, props.name);
     r.match(
@@ -133,12 +171,54 @@ const ObjectDetail: Component<{
       (e) => setError(e.message),
     );
   };
+  const saveMetadata = async () => {
+    setError(null);
+    setNotice(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(metaDraft() || "{}");
+    } catch {
+      setError(t("storage.metadataInvalid"));
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setError(t("storage.metadataInvalid"));
+      return;
+    }
+    const clean: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v !== "string") {
+        setError(t("storage.metadataInvalid"));
+        return;
+      }
+      clean[k] = v;
+    }
+    for (const existingKey of Object.keys(m()?.metadata ?? {})) {
+      if (!Object.hasOwn(clean, existingKey)) {
+        clean[existingKey] = null;
+      }
+    }
+    const r = await patchObjectMetadata(props.bucket, props.name, clean);
+    r.match(
+      () => {
+        setEditingMeta(false);
+        setNotice(t("storage.metadataSaved"));
+        void refetch();
+      },
+      (e) => setError(e.message),
+    );
+  };
   const m = () => meta()?.unwrapOr(null) ?? null;
   return (
     <div class="card mb-4" data-testid="object-detail">
-      <div class="mb-2 flex items-center justify-between gap-2">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 class="mono font-semibold break-all">{props.name}</h3>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          <CopyButton
+            value={objectDownloadUrl(appState.config().storageAddr, props.bucket, props.name)}
+            subject={t("storage.copyUrl")}
+            testId="object-copy-url"
+          />
           <AsyncButton class="btn" onClick={download} testId="object-download">
             {t("storage.download")}
           </AsyncButton>
@@ -160,6 +240,7 @@ const ObjectDetail: Component<{
         </div>
       </div>
       <ErrorBanner message={error() ?? errorOf(meta())} />
+      <Notice message={notice()} />
       <Show when={m()} fallback={<Spinner />}>
         {(o) => (
           <div class="grid gap-2 md:grid-cols-2">
@@ -181,9 +262,46 @@ const ObjectDetail: Component<{
               {o().crc32c ?? ""}
             </Field>
             <div class="md:col-span-2">
-              <Field label={t("storage.customMetadata")} mono>
-                {JSON.stringify(o().metadata ?? {}, null, 2)}
-              </Field>
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <div class="label">{t("storage.customMetadata")}</div>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  data-testid="object-edit-metadata"
+                  onClick={() => {
+                    setMetaDraft(JSON.stringify(o().metadata ?? {}, null, 2));
+                    setEditingMeta(!editingMeta());
+                  }}
+                >
+                  {editingMeta() ? t("app.cancel") : t("storage.editMetadata")}
+                </button>
+              </div>
+              <Show
+                when={editingMeta()}
+                fallback={
+                  <pre class="mono code-block text-xs">
+                    {JSON.stringify(o().metadata ?? {}, null, 2)}
+                  </pre>
+                }
+              >
+                <CodeEditorToolbar value={metaDraft()} onFormat={setMetaDraft} />
+                <textarea
+                  class="input mono h-28"
+                  data-testid="object-metadata-editor"
+                  spellcheck={false}
+                  value={metaDraft()}
+                  onInput={(e) => setMetaDraft(e.currentTarget.value)}
+                />
+                <div class="mt-2">
+                  <AsyncButton
+                    class="btn btn-primary"
+                    testId="object-metadata-save"
+                    onClick={saveMetadata}
+                  >
+                    {t("app.save")}
+                  </AsyncButton>
+                </div>
+              </Show>
             </div>
             <div class="md:col-span-2">
               <ObjectPreview bucket={props.bucket} object={o()} />
@@ -228,6 +346,16 @@ const Storage: Component = () => {
   const [notice, setNotice] = createSignal<string | null>(null);
   const [selected, setSelected] = createSignal<string | null>(null);
   const [fileInput, setFileInput] = createSignal<HTMLInputElement>();
+  const [uploadSubpath, setUploadSubpath] = createSignal("");
+  const [objectFilter, setObjectFilter] = createSignal("");
+  const filteredFolders = createMemo(() => {
+    const q = objectFilter().trim().toLowerCase();
+    return q ? folders().filter((f) => f.toLowerCase().includes(q)) : folders();
+  });
+  const filteredObjects = createMemo(() => {
+    const q = objectFilter().trim().toLowerCase();
+    return q ? objects().filter((o) => o.name.toLowerCase().includes(q)) : objects();
+  });
 
   createEffect(
     on(
@@ -265,7 +393,13 @@ const Storage: Component = () => {
   });
   const uploadFiles = (files: File[]): void => {
     if (files.length === 0) return;
-    const job = { bucket: bucket(), prefix: prefix(), files };
+    const extra = uploadSubpath()
+      .split("/")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("/");
+    const targetPrefix = extra ? `${prefix()}${extra}/` : prefix();
+    const job = { bucket: bucket(), prefix: targetPrefix, files };
     if (uploads.add(job) === "queued") {
       const count = files.length;
       setNotice(t(count === 1 ? "storage.uploadQueuedOne" : "storage.uploadQueued", { count }));
@@ -355,7 +489,15 @@ const Storage: Component = () => {
       >
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 class="text-base font-semibold">{t("storage.objects")}</h2>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              class="input mono w-44"
+              data-testid="upload-subpath"
+              placeholder={t("storage.uploadSubpath")}
+              aria-label={t("storage.uploadSubpath")}
+              value={uploadSubpath()}
+              onInput={(e) => setUploadSubpath(e.currentTarget.value)}
+            />
             <input
               ref={setFileInput}
               type="file"
@@ -376,9 +518,19 @@ const Storage: Component = () => {
             </button>
           </div>
         </div>
-        <p class="mb-2 text-xs text-secondary">
-          {t("storage.uploadPrefix")}. {t("storage.dropHint")}
-        </p>
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-secondary">
+            {t("storage.uploadPrefix")}. {t("storage.dropHint")}
+          </p>
+          <input
+            class="input w-64 max-w-full"
+            data-testid="storage-filter"
+            placeholder={t("storage.filterObjects")}
+            aria-label={t("storage.filterObjects")}
+            value={objectFilter()}
+            onInput={(e) => setObjectFilter(e.currentTarget.value)}
+          />
+        </div>
         <ErrorBanner message={error()} />
         <Notice message={notice()} />
         <Show when={selected()}>
@@ -412,7 +564,7 @@ const Storage: Component = () => {
               </tr>
             </thead>
             <tbody>
-              <For each={folders()}>
+              <For each={filteredFolders()}>
                 {(f) => (
                   <tr>
                     <td class="mono">
@@ -426,7 +578,7 @@ const Storage: Component = () => {
                   </tr>
                 )}
               </For>
-              <For each={objects()}>
+              <For each={filteredObjects()}>
                 {(o) => (
                   <tr data-testid={`object-row-${o.name}`}>
                     <td class="mono">

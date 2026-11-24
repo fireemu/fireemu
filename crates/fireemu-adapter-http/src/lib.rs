@@ -11,7 +11,7 @@ pub mod remote_config;
 mod remote_config_client_conditions;
 mod remote_config_conditions;
 mod remote_config_defaults;
-mod remote_config_http;
+pub mod remote_config_http;
 pub mod saml;
 pub mod server;
 pub mod signing;

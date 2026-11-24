@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { Router } from "@solidjs/router";
-import { errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { App } from "./App";
 import { appState } from "./state";
 import { routes } from "./routes";
@@ -11,6 +11,8 @@ vi.mock("./api/control", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api/control")>()),
   sessionInfo: vi.fn(),
   listSessions: vi.fn(),
+  getFaultPlan: vi.fn(),
+  clearFaultPlan: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -68,4 +70,46 @@ it("announces connection transitions without announcing each successful poll", a
   expect(status.textContent).toContain("Last");
   await appState.refreshClock();
   expect(status.textContent).toContain("Control API responding");
+});
+
+it("ignores a clear-plan failure that arrives after switching to another session", async () => {
+  vi.mocked(control.listSessions).mockImplementation(() =>
+    okAsync({
+      sessions: [
+        { name: "default", project: "demo-a" },
+        { name: "other", project: "demo-b" },
+      ],
+    }),
+  );
+  appState.setSessions([
+    { name: "default", project: "demo-a" },
+    { name: "other", project: "demo-b" },
+  ]);
+  vi.mocked(control.getFaultPlan).mockImplementation((session: string) =>
+    okAsync({
+      plan: session === "default" ? { rules: [{}] } : null,
+      fired: [],
+    } as never),
+  );
+  let rejectClear!: () => void;
+  vi.mocked(control.clearFaultPlan).mockImplementation(() =>
+    ResultAsync.fromPromise(
+      new Promise<never>((_, bad) => {
+        rejectClear = () => bad(new Error("clear failed"));
+      }),
+      () => ({ status: 500, message: "clear failed" }),
+    ),
+  );
+  const ui = render(() => <Router root={App}>{routes}</Router>);
+  await appState.refreshFaultSummary();
+  await waitFor(() => expect(ui.getByTestId("header-fault-clear")).toBeTruthy());
+  fireEvent.click(ui.getByTestId("header-fault-clear"));
+  fireEvent.click(ui.getByTestId("header-fault-clear-confirm"));
+  await waitFor(() => expect(control.clearFaultPlan).toHaveBeenCalledWith("default"));
+  appState.setSession("other");
+  await appState.refreshFaultSummary();
+  await waitFor(() => expect(ui.queryByTestId("header-fault-indicator")).toBeNull());
+  rejectClear();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(ui.queryByText("clear failed")).toBeNull();
 });

@@ -19,6 +19,7 @@ import type { FunctionLog, FunctionsOverview } from "../api/functions";
 import { appState } from "../state";
 import {
   AsyncButton,
+  CopyButton,
   ErrorBanner,
   FetchState,
   Notice,
@@ -26,6 +27,8 @@ import {
   Section,
   StatusBadge,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
+import { listUsers, mintIdToken, type UserInfo } from "../api/auth";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -41,8 +44,16 @@ import {
 import { buildCallableInvoke, buildEnqueue, buildRequestInvoke } from "../lib/invoke";
 import { mergeFunctionLogs } from "../lib/functionsTimeline";
 import { formatLogLine } from "../lib/logFormat";
+import { analyzeLogLine } from "../lib/logHighlight";
 import { matchesLog, type LevelFilter } from "../lib/logFilter";
 import { runtimeLabel } from "../lib/functionRuntime";
+
+type DrawerAction = { kind: "publish" | "invoke" | "enqueue"; key: string };
+
+const functionTargetKey = (project: string, f: FunctionInfo): string =>
+  JSON.stringify([appState.session(), project, f.region, f.name, f.trigger]);
+
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
 const LEVEL_OPTIONS: { value: LevelFilter; key: Parameters<typeof t>[0] }[] = [
   { value: "all", key: "functions.levelAll" },
@@ -135,17 +146,18 @@ const PublishForm: Component<{ topic: string; onDone: (count: number) => void }>
     );
   };
   return (
-    <div class="mt-2 inset p-2" data-testid={`publish-${props.topic}`}>
+    <div class="mt-2 inset p-3" data-testid={`publish-${props.topic}`}>
       <ErrorBanner message={error()} />
+      <CodeEditorToolbar value={message()} onFormat={setMessage} />
       <label class="block text-sm">
         <span class="label">{t("functions.message")}</span>
         <textarea
-          class="input mono h-16"
+          class="input mono h-24"
           value={message()}
           onInput={(e) => setMessage(e.currentTarget.value)}
         />
       </label>
-      <label class="mt-1 block text-sm">
+      <label class="mt-2 block text-sm">
         <span class="label">{t("functions.attributes")}</span>
         <input
           class="input mono"
@@ -154,7 +166,7 @@ const PublishForm: Component<{ topic: string; onDone: (count: number) => void }>
         />
       </label>
       <AsyncButton
-        class="btn btn-primary mt-2"
+        class="btn btn-primary mt-3"
         onClick={publish}
         testId={`publish-${props.topic}-send`}
       >
@@ -194,20 +206,131 @@ const InvokeResult: Component<{ response: InvokeResponse }> = (props) => (
   </div>
 );
 
+type InvokeHistoryEntry = {
+  id: number;
+  label: string;
+  data: string;
+  authToken: string;
+  /** The Auth user the picker showed, or "" for a manually entered token. */
+  pickedUid: string;
+  appCheckToken: string;
+  method: string;
+  path: string;
+  query: string;
+  headers: string;
+  body: string;
+  status?: number;
+};
+
 /** Invokes an HTTP or callable function, showing the response the port returns. */
-const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> = (props) => {
+export const InvokeForm: Component<{
+  f: FunctionInfo;
+  project?: string;
+  functionsAddr?: string | null;
+  onError: (m: string) => void;
+}> = (props) => {
   const callable = () => props.f.trigger.kind === "http" && props.f.trigger.callable;
   const [data, setData] = createSignal('{"a": 1, "b": 2}');
   const [authToken, setAuthToken] = createSignal("");
   const [appCheckToken, setAppCheckToken] = createSignal("");
+  const [authUsers, setAuthUsers] = createSignal<UserInfo[] | null>(null);
+  const [pickedUid, setPickedUid] = createSignal("");
+  const [tokenExchanging, setTokenExchanging] = createSignal(false);
+  // The user the current `authToken` was minted for; "" for a manual token. Send is allowed
+  // only while the picker shows the user the token belongs to.
+  const [mintedFor, setMintedFor] = createSignal("");
+  let tokenExchangeSeq = 0;
+  const identityReady = () => !pickedUid() || (!tokenExchanging() && mintedFor() === pickedUid());
+
+  /** Shows `uid` in the picker and mints its token; a late answer for another user is dropped. */
+  const selectUser = (uid: string) => {
+    const seq = ++tokenExchangeSeq;
+    setPickedUid(uid);
+    setAuthToken("");
+    setMintedFor("");
+    if (!uid) {
+      setTokenExchanging(false);
+      return;
+    }
+    setTokenExchanging(true);
+    const project = props.project ?? appState.project();
+    void mintIdToken(project, uid).match(
+      (res) => {
+        if (seq !== tokenExchangeSeq) return;
+        setTokenExchanging(false);
+        setAuthToken(res.idToken);
+        setMintedFor(uid);
+      },
+      (err) => {
+        if (seq !== tokenExchangeSeq) return;
+        setTokenExchanging(false);
+        props.onError(err.message);
+      },
+    );
+  };
   const [method, setMethod] = createSignal("POST");
   const [path, setPath] = createSignal("");
   const [query, setQuery] = createSignal("");
   const [headers, setHeaders] = createSignal("");
   const [body, setBody] = createSignal("");
   const [response, setResponse] = createSignal<InvokeResponse | null>(null);
+  const [history, setHistory] = createSignal<InvokeHistoryEntry[]>([]);
+  let nextHistoryId = 1;
+
+  const loadAuthUsers = async () => {
+    if (authUsers() !== null) return;
+    const project = props.project ?? appState.project();
+    const r = await listUsers(project);
+    r.match(
+      (page) => setAuthUsers(page.users ?? []),
+      () => setAuthUsers([]),
+    );
+  };
+
+  const curlCommand = () => {
+    const addr = props.functionsAddr ?? appState.config().functionsAddr ?? "127.0.0.1:5001";
+    const project = props.project ?? appState.project();
+    const base = `http://${addr}/${project}/${props.f.region}/${props.f.name}`;
+    if (callable()) {
+      const parts = [
+        "curl",
+        "-X",
+        "POST",
+        shellQuote(base),
+        "-H",
+        shellQuote("Content-Type: application/json"),
+      ];
+      if (authToken().trim()) {
+        parts.push("-H", shellQuote(`Authorization: Bearer ${authToken().trim()}`));
+      }
+      if (appCheckToken().trim()) {
+        parts.push("-H", shellQuote(`X-Firebase-AppCheck: ${appCheckToken().trim()}`));
+      }
+      let wrapped = `{"data":${data().trim() || "{}"}}`;
+      try {
+        wrapped = JSON.stringify({ data: JSON.parse(data()) });
+      } catch {
+        /* keep raw fallback */
+      }
+      parts.push("-d", shellQuote(wrapped));
+      return parts.join(" ");
+    }
+    const suffix = path().trim() ? `/${path().trim().replace(/^\/+/, "")}` : "";
+    const qs = query().trim() ? `?${query().trim().replace(/^\?+/, "")}` : "";
+    const parts = ["curl", "-X", method(), shellQuote(`${base}${suffix}${qs}`)];
+    for (const line of headers().split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) parts.push("-H", shellQuote(trimmed));
+    }
+    if (body() && method() !== "GET") {
+      parts.push("-d", shellQuote(body()));
+    }
+    return parts.join(" ");
+  };
 
   const send = async () => {
+    if (!identityReady()) return;
+    props.onError("");
     const built = callable()
       ? buildCallableInvoke({
           data: data(),
@@ -225,15 +348,31 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
       props.onError(built.error);
       return;
     }
+    const entry: InvokeHistoryEntry = {
+      id: nextHistoryId++,
+      label: callable() ? data().slice(0, 40) : `${method()} /${path()}`,
+      data: data(),
+      authToken: authToken(),
+      pickedUid: pickedUid(),
+      appCheckToken: appCheckToken(),
+      method: method(),
+      path: path(),
+      query: query(),
+      headers: headers(),
+      body: body(),
+    };
     const r = await invokeFunction(props.f.name, built.value);
     r.match(
-      (res) => setResponse(res),
+      (res) => {
+        setResponse(res);
+        setHistory((prev) => [{ ...entry, status: res.status }, ...prev].slice(0, 5));
+      },
       (e) => props.onError(e.message),
     );
   };
 
   return (
-    <div class="mt-2 inset p-2" data-testid={`invoke-${props.f.name}`}>
+    <div class="mt-2 inset p-3" data-testid={`invoke-${props.f.name}`}>
       <Show
         when={callable()}
         fallback={
@@ -251,7 +390,7 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
                 </For>
               </select>
             </label>
-            <label class="mt-1 block text-sm">
+            <label class="mt-2 block text-sm">
               <span class="label">{t("functions.invokePath")}</span>
               <input
                 class="input mono"
@@ -259,7 +398,7 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
                 onInput={(e) => setPath(e.currentTarget.value)}
               />
             </label>
-            <label class="mt-1 block text-sm">
+            <label class="mt-2 block text-sm">
               <span class="label">{t("functions.invokeQuery")}</span>
               <input
                 class="input mono"
@@ -267,7 +406,7 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
                 onInput={(e) => setQuery(e.currentTarget.value)}
               />
             </label>
-            <label class="mt-1 block text-sm">
+            <label class="mt-2 block text-sm">
               <span class="label">{t("functions.invokeHeaders")}</span>
               <textarea
                 class="input mono h-16"
@@ -275,10 +414,10 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
                 onInput={(e) => setHeaders(e.currentTarget.value)}
               />
             </label>
-            <label class="mt-1 block text-sm">
+            <label class="mt-2 block text-sm">
               <span class="label">{t("functions.invokeBody")}</span>
               <textarea
-                class="input mono h-16"
+                class="input mono h-20"
                 value={body()}
                 onInput={(e) => setBody(e.currentTarget.value)}
               />
@@ -286,24 +425,54 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
           </>
         }
       >
+        <CodeEditorToolbar value={data()} onFormat={setData} />
         <label class="block text-sm">
           <span class="label">{t("functions.invokeData")}</span>
           <textarea
-            class="input mono h-16"
+            class="input mono h-24"
             data-testid={`invoke-${props.f.name}-data`}
             value={data()}
             onInput={(e) => setData(e.currentTarget.value)}
           />
         </label>
-        <label class="mt-1 block text-sm">
+        <label class="mt-2 block text-sm">
+          <span class="label">{t("functions.invokePickUser")}</span>
+          <select
+            class="input"
+            data-testid="invoke-user-picker"
+            value={pickedUid()}
+            onFocus={() => void loadAuthUsers()}
+            onClick={() => void loadAuthUsers()}
+            onChange={(e) => selectUser(e.currentTarget.value)}
+          >
+            <option value="">{t("functions.invokeManualToken")}</option>
+            <Show when={pickedUid() && !(authUsers() ?? []).some((u) => u.localId === pickedUid())}>
+              <option value={pickedUid()}>{pickedUid()}</option>
+            </Show>
+            <For each={authUsers() ?? []}>
+              {(u) => (
+                <option value={u.localId}>
+                  {u.email ? `${u.email} (${u.localId})` : u.localId}
+                </option>
+              )}
+            </For>
+          </select>
+        </label>
+        <label class="mt-2 block text-sm">
           <span class="label">{t("functions.invokeAuthToken")}</span>
           <input
             class="input mono"
             value={authToken()}
-            onInput={(e) => setAuthToken(e.currentTarget.value)}
+            onInput={(e) => {
+              tokenExchangeSeq += 1;
+              setTokenExchanging(false);
+              setPickedUid("");
+              setMintedFor("");
+              setAuthToken(e.currentTarget.value);
+            }}
           />
         </label>
-        <label class="mt-1 block text-sm">
+        <label class="mt-2 block text-sm">
           <span class="label">{t("functions.invokeAppCheckToken")}</span>
           <input
             class="input mono"
@@ -312,14 +481,59 @@ const InvokeForm: Component<{ f: FunctionInfo; onError: (m: string) => void }> =
           />
         </label>
       </Show>
-      <AsyncButton
-        class="btn btn-primary mt-2"
-        onClick={send}
-        testId={`invoke-${props.f.name}-send`}
-      >
-        {t("functions.invokeSend")}
-      </AsyncButton>
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <AsyncButton
+          class="btn btn-primary"
+          disabled={!identityReady()}
+          onClick={send}
+          testId={`invoke-${props.f.name}-send`}
+        >
+          {t("functions.invokeSend")}
+        </AsyncButton>
+        <CopyButton
+          value={curlCommand()}
+          subject={t("functions.invokeCopyCurl")}
+          testId="invoke-copy-curl"
+        />
+      </div>
       <Show when={response()}>{(res) => <InvokeResult response={res()} />}</Show>
+      <Show when={history().length > 0}>
+        <div class="mt-3 border-t border-line-subtle pt-2">
+          <div class="label">{t("functions.invokeHistory")}</div>
+          <ul class="space-y-1 text-xs">
+            <For each={history()}>
+              {(item) => (
+                <li class="flex items-center justify-between gap-2">
+                  <span class="mono truncate">
+                    {item.status !== undefined ? `[${item.status}] ` : ""}
+                    {item.label}
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-sm"
+                    onClick={() => {
+                      setData(item.data);
+                      // Show the replayed identity and mint its token again, so the picker and
+                      // the token sent always belong to the same user.
+                      void loadAuthUsers();
+                      selectUser(item.pickedUid);
+                      if (!item.pickedUid) setAuthToken(item.authToken);
+                      setAppCheckToken(item.appCheckToken);
+                      setMethod(item.method);
+                      setPath(item.path);
+                      setQuery(item.query);
+                      setHeaders(item.headers);
+                      setBody(item.body);
+                    }}
+                  >
+                    {t("functions.invokeReplay")}
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
     </div>
   );
 };
@@ -346,11 +560,12 @@ const EnqueueForm: Component<{
     );
   };
   return (
-    <div class="mt-2 inset p-2" data-testid={`enqueue-${props.f.name}`}>
+    <div class="mt-2 inset p-3" data-testid={`enqueue-${props.f.name}`}>
+      <CodeEditorToolbar value={data()} onFormat={setData} />
       <label class="block text-sm">
         <span class="label">{t("functions.enqueueData")}</span>
         <textarea
-          class="input mono h-16"
+          class="input mono h-24"
           data-testid={`enqueue-${props.f.name}-data`}
           value={data()}
           onInput={(e) => setData(e.currentTarget.value)}
@@ -383,12 +598,14 @@ const EnqueueForm: Component<{
 
 const FunctionRow: Component<{
   f: FunctionInfo;
+  targetKey: string;
   project: string;
   functionsAddr: string | null;
   /** Whether the selected session is the one the functions belong to; actions are disabled otherwise. */
   active: boolean;
   /** Filtered out by the search box: kept mounted (an open form survives) but not shown. */
   hidden?: boolean | undefined;
+  onOpenAction?: ((action: DrawerAction) => void) | undefined;
   onNotice: (m: string) => void;
   onError: (m: string) => void;
   onRefresh: () => Promise<void>;
@@ -397,6 +614,10 @@ const FunctionRow: Component<{
   const [invoking, setInvoking] = createSignal(false);
   const [enqueuing, setEnqueuing] = createSignal(false);
   const trigger = () => props.f.trigger;
+  const openOrToggle = (kind: DrawerAction["kind"], fallback: () => void) => {
+    if (props.onOpenAction) props.onOpenAction({ kind, key: props.targetKey });
+    else fallback();
+  };
   return (
     <tr data-testid={`function-row-${props.f.name}`} hidden={props.hidden}>
       <td class="mono font-medium">{props.f.name}</td>
@@ -431,7 +652,7 @@ const FunctionRow: Component<{
             http://{appState.config().functionsAddr}/{props.project}/{props.f.region}/{props.f.name}
           </div>
         </Show>
-        <Show when={publishing() && trigger().kind === "pubsub"}>
+        <Show when={!props.onOpenAction && publishing() && trigger().kind === "pubsub"}>
           <PublishForm
             topic={(trigger() as { topic: string }).topic}
             onDone={(count) => {
@@ -440,10 +661,15 @@ const FunctionRow: Component<{
             }}
           />
         </Show>
-        <Show when={invoking() && trigger().kind === "http"}>
-          <InvokeForm f={props.f} onError={props.onError} />
+        <Show when={!props.onOpenAction && invoking() && trigger().kind === "http"}>
+          <InvokeForm
+            f={props.f}
+            project={props.project}
+            functionsAddr={props.functionsAddr}
+            onError={props.onError}
+          />
         </Show>
-        <Show when={enqueuing() && trigger().kind === "tasks"}>
+        <Show when={!props.onOpenAction && enqueuing() && trigger().kind === "tasks"}>
           <EnqueueForm
             f={props.f}
             onDone={() => {
@@ -563,7 +789,7 @@ const FunctionRow: Component<{
               class="btn"
               disabled={!props.active}
               data-testid={`publish-${props.f.name}`}
-              onClick={() => setPublishing(!publishing())}
+              onClick={() => openOrToggle("publish", () => setPublishing(!publishing()))}
             >
               {t("functions.publish")}
             </button>
@@ -582,7 +808,7 @@ const FunctionRow: Component<{
                 class="btn"
                 disabled={!props.active}
                 data-testid={`invoke-${props.f.name}-toggle`}
-                onClick={() => setInvoking(!invoking())}
+                onClick={() => openOrToggle("invoke", () => setInvoking(!invoking()))}
               >
                 {t("functions.invoke")}
               </button>
@@ -615,7 +841,7 @@ const FunctionRow: Component<{
               class="btn"
               disabled={!props.active}
               data-testid={`enqueue-${props.f.name}-toggle`}
-              onClick={() => setEnqueuing(!enqueuing())}
+              onClick={() => openOrToggle("enqueue", () => setEnqueuing(!enqueuing()))}
             >
               {t("functions.enqueue")}
             </button>
@@ -632,6 +858,7 @@ export const FunctionRows: Component<{
   functionsAddr?: string | null;
   /** Whether the selected session owns the functions; actions are disabled otherwise. */
   active?: boolean;
+  onOpenAction?: ((action: DrawerAction) => void) | undefined;
   onNotice: (m: string) => void;
   onError: (m: string) => void;
   onRefresh?: () => Promise<void>;
@@ -642,22 +869,18 @@ export const FunctionRows: Component<{
   // `nextRun` is deliberately excluded so advancing the clock updates a row without discarding
   // an open invoke or enqueue form.
   const byTarget = createMemo(
-    () =>
-      new Map(
-        props.functions.map((f) => [
-          JSON.stringify([appState.session(), props.project, f.region, f.name, f.trigger]),
-          f,
-        ]),
-      ),
+    () => new Map(props.functions.map((f) => [functionTargetKey(props.project, f), f])),
   );
   return (
     <For each={[...byTarget().keys()]}>
       {(key) => (
         <FunctionRow
           f={byTarget().get(key)!}
+          targetKey={key}
           project={props.project}
           functionsAddr={props.functionsAddr ?? null}
           active={props.active ?? true}
+          onOpenAction={props.onOpenAction}
           hidden={
             !matchesFunction(
               byTarget().get(key)!,
@@ -676,6 +899,11 @@ export const FunctionRows: Component<{
 
 const Functions: Component = () => {
   const [registeredFilter, setRegisteredFilter] = createSignal("");
+  const [drawer, setDrawer] = createSignal<DrawerAction | null>(null);
+  const [drawerError, setDrawerError] = createSignal<string | null>(null);
+  let drawerOpener: HTMLElement | null = null;
+  let drawerCloseBtn: HTMLButtonElement | undefined;
+  const [structuredLogs, setStructuredLogs] = createSignal(false);
   const [overview, { refetch }] = createResource(() => settle(functionsOverview()));
   // This global overview belongs to the Functions owner, independently of the top bar.
   const [lastOverview, setLastOverview] = createSignal<FunctionsOverview | null>(null);
@@ -949,24 +1177,56 @@ const Functions: Component = () => {
     const selected = appState.sessions().find((sess) => sess.name === appState.session());
     return selected !== undefined && selected.project === owner.project;
   };
+  const drawerFunction = createMemo(() => {
+    const activeDrawer = drawer();
+    if (!activeDrawer) return null;
+    const proj = o()?.project ?? appState.project();
+    return (
+      (o()?.functions ?? []).find((f) => functionTargetKey(proj, f) === activeDrawer.key) ?? null
+    );
+  });
+  const closeDrawer = (restoreFocus = false) => {
+    setDrawer(null);
+    setDrawerError(null);
+    if (restoreFocus && drawerOpener?.isConnected) {
+      drawerOpener.focus();
+    }
+    drawerOpener = null;
+  };
+  const toggleDrawer = (action: DrawerAction) => {
+    setDrawerError(null);
+    setDrawer((current) => {
+      if (current && current.kind === action.kind && current.key === action.key) {
+        return null;
+      }
+      if (document.activeElement instanceof HTMLElement) {
+        drawerOpener = document.activeElement;
+      }
+      return action;
+    });
+  };
+  const openDrawerKey = createMemo(() =>
+    drawer() && drawerFunction() ? `${drawer()!.kind}:${drawer()!.key}` : null,
+  );
+  createEffect(
+    on(openDrawerKey, (key) => {
+      if (!key) return;
+      queueMicrotask(() => drawerCloseBtn?.focus());
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeDrawer(true);
+        }
+      };
+      window.addEventListener("keydown", onKeyDown);
+      onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+    }),
+  );
   return (
     <div>
       <h1 class="page-title mb-4">{t("functions.title")}</h1>
       <ErrorBanner message={error() ?? (o() ? errorOf(overview()) : null)} />
       <Notice message={notice()} />
-      <div class="mb-3 flex flex-wrap items-center gap-3">
-        <label class="text-sm">
-          <input
-            type="checkbox"
-            checked={includeSearch()}
-            onChange={(e) => setIncludeSearch(e.currentTarget.checked)}
-          />{" "}
-          {t("functions.includeSearch")}
-        </label>
-        <AsyncButton class="btn" onClick={shareFilters}>
-          {t("functions.shareFilters")}
-        </AsyncButton>
-      </div>
       <Show when={fnFilter() && o() && !functionNames().includes(fnFilter())}>
         <p role="status">{t("functions.unknownFilter", { name: fnFilter() })}</p>
       </Show>
@@ -1037,37 +1297,108 @@ const Functions: Component = () => {
             >
               {o()?.source ?? ""}
             </p>
-            <div class="table-scroll">
-              <table class="table" data-testid="function-table">
-                <thead>
-                  <tr>
-                    <th>{t("functions.name")}</th>
-                    <th>{t("functions.region")}</th>
-                    <th>{t("functions.runtime")}</th>
-                    <th>{t("functions.trigger")}</th>
-                    <th>{t("functions.timeout")}</th>
-                    <th>{t("functions.retry")}</th>
-                    <th>{t("functions.concurrency")}</th>
-                    <th class="sticky-actions">
-                      <span class="sr-only">{t("functions.actions")}</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <FunctionRows
-                    functions={o()?.functions ?? []}
-                    project={o()?.project ?? appState.project()}
-                    functionsAddr={o()?.functionsAddr ?? null}
-                    active={active()}
-                    filter={registeredFilter()}
-                    onNotice={setNotice}
-                    onError={setError}
-                    onRefresh={async () => {
-                      await refetch();
-                    }}
-                  />
-                </tbody>
-              </table>
+            <div
+              class={
+                openDrawerKey()
+                  ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_26rem] xl:items-start"
+                  : ""
+              }
+            >
+              <div class="table-scroll min-w-0">
+                <table class="table" data-testid="function-table">
+                  <thead>
+                    <tr>
+                      <th>{t("functions.name")}</th>
+                      <th>{t("functions.region")}</th>
+                      <th>{t("functions.runtime")}</th>
+                      <th>{t("functions.trigger")}</th>
+                      <th>{t("functions.timeout")}</th>
+                      <th>{t("functions.retry")}</th>
+                      <th>{t("functions.concurrency")}</th>
+                      <th class="sticky-actions">
+                        <span class="sr-only">{t("functions.actions")}</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <FunctionRows
+                      functions={o()?.functions ?? []}
+                      project={o()?.project ?? appState.project()}
+                      functionsAddr={o()?.functionsAddr ?? null}
+                      active={active()}
+                      filter={registeredFilter()}
+                      onOpenAction={toggleDrawer}
+                      onNotice={setNotice}
+                      onError={setError}
+                      onRefresh={async () => {
+                        await refetch();
+                      }}
+                    />
+                  </tbody>
+                </table>
+              </div>
+              <Show when={openDrawerKey()} keyed>
+                {(_drawerKey) => {
+                  const action = drawer()!;
+                  const fnInfo = drawerFunction()!;
+                  return (
+                    <aside
+                      role="region"
+                      aria-label={`${t("functions.drawerTitle")}: ${fnInfo.name}`}
+                      class="card border-line bg-surface shadow-sm"
+                      data-testid="functions-drawer"
+                    >
+                      <div class="mb-3 flex items-center justify-between gap-2 border-b border-line-subtle pb-2">
+                        <div class="min-w-0">
+                          <div class="text-xs uppercase tracking-wide text-muted">
+                            {t("functions.drawerTitle")}
+                          </div>
+                          <h3 class="mono truncate font-semibold">{fnInfo.name}</h3>
+                        </div>
+                        <button
+                          ref={(el) => {
+                            drawerCloseBtn = el;
+                          }}
+                          type="button"
+                          class="btn btn-sm"
+                          data-testid="functions-drawer-close"
+                          onClick={() => closeDrawer(true)}
+                        >
+                          {t("app.close")}
+                        </button>
+                      </div>
+                      <ErrorBanner message={drawerError()} />
+                      <Show when={action.kind === "publish" && fnInfo.trigger.kind === "pubsub"}>
+                        <PublishForm
+                          topic={(fnInfo.trigger as { topic: string }).topic}
+                          onDone={(count) => {
+                            closeDrawer(true);
+                            setNotice(t("functions.published", { count }));
+                          }}
+                        />
+                      </Show>
+                      <Show when={action.kind === "invoke" && fnInfo.trigger.kind === "http"}>
+                        <InvokeForm
+                          f={fnInfo}
+                          project={o()?.project ?? appState.project()}
+                          functionsAddr={o()?.functionsAddr ?? null}
+                          onError={(m) => setDrawerError(m || null)}
+                        />
+                      </Show>
+                      <Show when={action.kind === "enqueue" && fnInfo.trigger.kind === "tasks"}>
+                        <EnqueueForm
+                          f={fnInfo}
+                          onDone={() => {
+                            closeDrawer(true);
+                            setNotice(t("functions.enqueued", { name: fnInfo.name }));
+                          }}
+                          onError={(m) => setDrawerError(m || null)}
+                        />
+                      </Show>
+                    </aside>
+                  );
+                }}
+              </Show>
             </div>
           </Section>
           <FunctionsTimeline
@@ -1312,6 +1643,26 @@ const Functions: Component = () => {
                   />
                   {t("functions.formatJson")}
                 </label>
+                <label class="flex items-center gap-1 text-sm whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={structuredLogs()}
+                    onChange={(e) => setStructuredLogs(e.currentTarget.checked)}
+                    data-testid="log-structured-toggle"
+                  />
+                  {t("functions.logsColorized")}
+                </label>
+                <label class="flex items-center gap-1 text-sm whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={includeSearch()}
+                    onChange={(e) => setIncludeSearch(e.currentTarget.checked)}
+                  />
+                  {t("functions.includeSearch")}
+                </label>
+                <AsyncButton class="btn" onClick={shareFilters}>
+                  {t("functions.shareFilters")}
+                </AsyncButton>
                 <StatusBadge tone={connected() ? "success" : "neutral"}>
                   {connected() ? t("firestore.live") : t("firestore.liveOff")}
                 </StatusBadge>
@@ -1359,29 +1710,69 @@ const Functions: Component = () => {
                 <span data-testid="log-following">{t("functions.logsFollowing")}</span>
               </Show>
             </div>
-            <pre
-              ref={setLogBox}
-              class="mono h-72 overflow-auto whitespace-pre-wrap console"
-              data-testid="function-logs"
-              onScroll={(e) => {
-                const box = e.currentTarget;
-                if (atBottom(box)) {
-                  setFollowing(true);
-                  setUnseen(0);
-                } else {
-                  setFollowing(false);
-                }
-              }}
+            <Show
+              when={structuredLogs() && filteredLines().length > 0}
+              fallback={
+                <pre
+                  ref={setLogBox}
+                  class="mono h-72 overflow-auto whitespace-pre-wrap console"
+                  data-testid="function-logs"
+                  onScroll={(e) => {
+                    const box = e.currentTarget;
+                    if (atBottom(box)) {
+                      setFollowing(true);
+                      setUnseen(0);
+                    } else {
+                      setFollowing(false);
+                    }
+                  }}
+                >
+                  <Show
+                    when={filteredLines().length > 0}
+                    fallback={
+                      lines().length > 0 ? t("functions.noMatchingLogs") : t("functions.noLogs")
+                    }
+                  >
+                    {filteredLogOutput()}
+                  </Show>
+                </pre>
+              }
             >
-              <Show
-                when={filteredLines().length > 0}
-                fallback={
-                  lines().length > 0 ? t("functions.noMatchingLogs") : t("functions.noLogs")
-                }
-              >
-                {filteredLogOutput()}
-              </Show>
-            </pre>
+              <div class="mono h-72 space-y-1 overflow-auto console" data-testid="function-logs">
+                <For each={filteredLines()}>
+                  {(line) => {
+                    const parsed = analyzeLogLine(line);
+                    return (
+                      <div
+                        class="rounded px-1.5 py-0.5"
+                        classList={{
+                          "bg-danger-subtle text-danger": parsed.severity === "error",
+                          "bg-warning-subtle text-warning": parsed.severity === "warn",
+                          "text-info": parsed.severity === "info",
+                          "text-muted": parsed.severity === "debug",
+                        }}
+                      >
+                        <Show
+                          when={parsed.jsonPayload}
+                          fallback={<div class="whitespace-pre-wrap break-all">{parsed.raw}</div>}
+                        >
+                          {(pretty) => (
+                            <details>
+                              <summary class="cursor-pointer whitespace-pre-wrap break-all">
+                                {parsed.raw}
+                              </summary>
+                              <pre class="mt-1 overflow-auto rounded bg-surface p-2 text-xs text-ink">
+                                {pretty()}
+                              </pre>
+                            </details>
+                          )}
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
           </Section>
         </Show>
       </FetchState>

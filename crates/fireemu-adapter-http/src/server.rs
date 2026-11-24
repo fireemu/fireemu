@@ -462,7 +462,7 @@ async fn remote_config_response(
         etag,
         content_type,
         compressible,
-    } = reply.into_wire();
+    } = reply.wire();
     let mut response = with_cors(Response::builder().status(status), origin)
         .header("content-type", content_type)
         .header("cache-control", "no-store")
@@ -671,9 +671,48 @@ fn is_remote_peer(peer: std::net::IpAddr) -> bool {
     !peer.to_canonical().is_loopback()
 }
 
+/// Builds the Remote Config histories served by this daemon, wiring the client namespace to the
+/// Functions event queue when a Functions runtime is attached to `control`.
+#[must_use]
+pub fn remote_config_stores(control: &ControlState) -> Arc<RemoteConfigStores> {
+    let number = control.remote_config.project_number;
+    Arc::new(control.functions.as_ref().map_or_else(
+        || RemoteConfigStores {
+            client: TemplateStore::default().with_project_number(number),
+            server: TemplateStore::default().with_project_number(number),
+        },
+        |functions| {
+            let functions = functions.clone();
+            let user = control.remote_config.update_user.clone();
+            RemoteConfigStores {
+                client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
+                    let metadata = remote_config_http::version_fields(
+                        version,
+                        user.as_ref(),
+                        remote_config_http::Surface::Version,
+                    );
+                    let publication =
+                        functions
+                            .reserve_remote_config_version(&metadata)
+                            .map_err(|error| match error {
+                                PublishEventError::Capacity => RemoteConfigError::EventCapacity,
+                                PublishEventError::Invalid | PublishEventError::Unavailable => {
+                                    RemoteConfigError::EventUnavailable
+                                }
+                            })?;
+                    Ok(Box::new(move || publication.publish()))
+                }))
+                .with_project_number(number),
+                // Production did not record events for server-namespace commits.
+                server: TemplateStore::default().with_project_number(number),
+            }
+        },
+    ))
+}
+
 /// Serves the Identity Toolkit surface on `listener` until the task is aborted.
 pub async fn serve(listener: TcpListener, state: Arc<AuthState>) -> std::io::Result<()> {
-    serve_inner(listener, state, None).await
+    serve_inner(listener, state, None, None).await
 }
 
 /// Serves the Identity Toolkit surface plus the control API.
@@ -682,48 +721,27 @@ pub async fn serve_with_control(
     state: Arc<AuthState>,
     control: Arc<ControlState>,
 ) -> std::io::Result<()> {
-    serve_inner(listener, state, Some(control)).await
+    let remote_config = remote_config_stores(&control);
+    serve_inner(listener, state, Some(control), Some(remote_config)).await
+}
+
+/// Serves the Identity Toolkit surface, control API and shared Remote Config stores (built by
+/// [`remote_config_stores`]).
+pub async fn serve_with_control_and_remote_config(
+    listener: TcpListener,
+    state: Arc<AuthState>,
+    control: Arc<ControlState>,
+    remote_config: Arc<RemoteConfigStores>,
+) -> std::io::Result<()> {
+    serve_inner(listener, state, Some(control), Some(remote_config)).await
 }
 
 async fn serve_inner(
     listener: TcpListener,
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
+    remote_config: Option<Arc<RemoteConfigStores>>,
 ) -> std::io::Result<()> {
-    let remote_config = control.as_ref().map(|control| {
-        let number = control.remote_config.project_number;
-        Arc::new(control.functions.as_ref().map_or_else(
-            || RemoteConfigStores {
-                client: TemplateStore::default().with_project_number(number),
-                server: TemplateStore::default().with_project_number(number),
-            },
-            |functions| {
-                let functions = functions.clone();
-                let user = control.remote_config.update_user.clone();
-                RemoteConfigStores {
-                    client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
-                        let metadata = remote_config_http::version_fields(
-                            version,
-                            user.as_ref(),
-                            remote_config_http::Surface::Version,
-                        );
-                        let publication = functions
-                            .reserve_remote_config_version(&metadata)
-                            .map_err(|error| match error {
-                                PublishEventError::Capacity => RemoteConfigError::EventCapacity,
-                                PublishEventError::Invalid | PublishEventError::Unavailable => {
-                                    RemoteConfigError::EventUnavailable
-                                }
-                            })?;
-                        Ok(Box::new(move || publication.publish()))
-                    }))
-                    .with_project_number(number),
-                    // Production did not record events for server-namespace commits.
-                    server: TemplateStore::default().with_project_number(number),
-                }
-            },
-        ))
-    });
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking

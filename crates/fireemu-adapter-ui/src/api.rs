@@ -6,6 +6,7 @@ use fireemu_adapter_grpc::rest::RestRequest;
 use fireemu_adapter_http::identity_toolkit::RequestHeaders;
 use fireemu_adapter_http::storage::StorageRequest;
 use fireemu_core_functions::manifest::Trigger;
+use fireemu_core_types::determinism::Clock;
 use serde_json::{json, Value};
 
 use crate::{sse, UiBody, UiRequest, UiResponse, UiState, MAX_JSON_BODY_BYTES};
@@ -14,6 +15,12 @@ use crate::{sse, UiBody, UiRequest, UiResponse, UiState, MAX_JSON_BODY_BYTES};
 pub async fn route(state: &Arc<UiState>, rest: &str, req: &UiRequest) -> UiResponse {
     if let Some(action) = rest.strip_prefix("database/") {
         return crate::database::route(state, action, req).await;
+    }
+    if let Some(path) = rest.strip_prefix("pubsub/") {
+        return crate::pubsub::route(state, path, req).await;
+    }
+    if let Some(path) = rest.strip_prefix("remoteconfig/") {
+        return crate::remote_config::route(state, path, req);
     }
     if let Some(path) = rest.strip_prefix("firestore/") {
         return if path == "watch" {
@@ -191,6 +198,13 @@ fn firestore(state: &UiState, path: &str, req: &UiRequest) -> UiResponse {
 /// Identity Toolkit as owner: `auth/identitytoolkit.googleapis.com/v1/projects/{p}/...` and
 /// `auth/emulator/v1/projects/{p}/...`.
 fn auth(state: &UiState, path: &str, req: &UiRequest) -> UiResponse {
+    if let Some(project) = path
+        .strip_prefix("emulator/v1/projects/")
+        .and_then(|rest| rest.strip_suffix("/accounts:mintIdToken"))
+        .filter(|project| !project.is_empty() && !project.contains('/'))
+    {
+        return mint_id_token(state, project, req);
+    }
     if !path.starts_with("identitytoolkit.googleapis.com/v1/projects/")
         && !path.starts_with("emulator/v1/projects/")
     {
@@ -228,6 +242,85 @@ fn auth(state: &UiState, path: &str, req: &UiRequest) -> UiResponse {
         &body,
     );
     UiResponse::json(response.status, &response.body)
+}
+
+/// Privileged Emulator UI route: mints an ID token for an existing Auth user in `project`
+/// using the daemon's active signer (`alg: none` or `session-rsa`) and virtual clock.
+fn mint_id_token(state: &UiState, project: &str, req: &UiRequest) -> UiResponse {
+    if req.method != "POST" {
+        return UiResponse::error(405, "METHOD_NOT_ALLOWED");
+    }
+    let known = state
+        .control
+        .sessions
+        .lock()
+        .is_ok_and(|s| s.values().any(|p| p == project));
+    if !known {
+        return UiResponse::error(
+            404,
+            &format!("NOT_FOUND : no session owns project {project:?}"),
+        );
+    }
+    let body = match json_body(req) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let Some(raw_uid) = body
+        .get("localId")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    else {
+        return UiResponse::error(400, "INVALID_ARGUMENT : localId is required");
+    };
+    let store_arc = if let Some(registry) = &state.auth.registry {
+        registry.store_for(project).or_else(|| {
+            (project == state.control.default_project).then(|| Arc::clone(&state.auth.store))
+        })
+    } else if project == state.control.default_project {
+        Some(Arc::clone(&state.auth.store))
+    } else {
+        None
+    };
+    let Some(store_arc) = store_arc else {
+        return UiResponse::error(404, "USER_NOT_FOUND");
+    };
+    let at = {
+        let Ok(mut clock) = state.auth.clock.lock() else {
+            return UiResponse::error(500, "INTERNAL : clock unavailable");
+        };
+        if let Some(wall_clock) = &state.auth.wall_clock {
+            let wall_now = wall_clock.now();
+            if wall_now > clock.now() {
+                let _ = clock.advance_to(wall_now);
+            }
+        }
+        clock.now()
+    };
+    let (claims, signer) = {
+        let Ok(store) = store_arc.lock() else {
+            return UiResponse::error(500, "INTERNAL : auth store unavailable");
+        };
+        let Some(user) = store.user_by_id(raw_uid) else {
+            return UiResponse::error(404, "USER_NOT_FOUND");
+        };
+        if user.disabled {
+            return UiResponse::error(400, "USER_DISABLED");
+        }
+        let uid = user.local_id.clone();
+        let Ok(claims) = store.id_token_claims(&uid, None, at) else {
+            return UiResponse::error(404, "USER_NOT_FOUND");
+        };
+        (claims, store.signer_arc())
+    };
+    let id_token = fireemu_core_auth::jwt::encode_with(&claims, signer.as_deref());
+    UiResponse::json(
+        200,
+        &json!({
+            "idToken": id_token,
+            "expiresIn": "3600",
+            "localId": raw_uid,
+        }),
+    )
 }
 
 /// The buckets of one session project (`?project=`, the default project otherwise): its
