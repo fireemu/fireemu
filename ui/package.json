@@ -16,7 +16,7 @@
     "e2e": "playwright test",
     "size": "node scripts/size-report.mjs",
     "size:test": "node --test scripts/*.test.mjs",
-    "mutation": "stryker run",
+    "mutation": "node scripts/mutation.mjs",
     "mutation:sanity": "node scripts/mutation-sanity.mjs"
   },
   "dependencies": {
@@ -27,14 +27,13 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@solidjs/testing-library": "^0.8.10",
-    "@stryker-mutator/core": "^10.0.0",
-    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.4.0",
     "jsdom": "^30.0.1",
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "tailwindcss": "^4.3.3",
+    "targeted-mutation": "^0.1.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.4",
     "vite-plugin-solid": "^2.11.14",

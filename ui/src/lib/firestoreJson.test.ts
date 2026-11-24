@@ -88,8 +88,76 @@ describe("firestoreJson", () => {
 
   it("rejects non-object roots, empty keys, and nested arrays", () => {
     expect(plainJsonToFsFields("[1,2]").isErr()).toBe(true);
+    expect(plainJsonToFsFields("null").isErr()).toBe(true);
     expect(plainJsonToFsFields('{"": 1}').isErr()).toBe(true);
     expect(plainJsonToFsFields('{"bad": [[1]]}').isErr()).toBe(true);
     expect(plainJsonToFsFields("{bad").isErr()).toBe(true);
+  });
+
+  it("handles empty maps/arrays, type changes, new keys, and reordered array elements", () => {
+    expect(
+      fsFieldsToPlainJson({
+        emptyArr: { arrayValue: {} },
+        emptyMap: { mapValue: {} },
+      }),
+    ).toEqual({ emptyArr: [], emptyMap: {} });
+    expect(fsFieldsToPlainJson(undefined)).toEqual({});
+
+    const original = {
+      list: {
+        arrayValue: {
+          values: [
+            { timestampValue: "2026-08-29T12:00:00Z" },
+            { doubleValue: 5 },
+            { stringValue: "keep" },
+          ],
+        },
+      },
+      wasStringNowArray: { stringValue: "old" },
+      wasStringNowMap: { stringValue: "old" },
+      emptyMap: { mapValue: {} },
+      deepArr: {
+        arrayValue: {
+          values: [
+            { mapValue: { fields: { a: { integerValue: "1" }, b: { integerValue: "2" } } } },
+          ],
+        },
+      },
+    };
+    const reparsed = plainJsonToFsFields(
+      JSON.stringify({
+        list: ["inserted", 5, "2026-08-29T12:00:00Z", "keep"],
+        wasStringNowArray: ["x"],
+        wasStringNowMap: { added: true },
+        emptyMap: { fresh: 1 },
+        deepArr: [{ a: 1, b: 2 }, { a: 1 }],
+        brandNew: "hello",
+      }),
+      original,
+    );
+    expect(reparsed.isOk()).toBe(true);
+    const out = reparsed._unsafeUnwrap();
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(out.list).toEqual({
+      arrayValue: {
+        values: [
+          { stringValue: "inserted" },
+          { doubleValue: 5 },
+          { timestampValue: "2026-08-29T12:00:00Z" },
+          { stringValue: "keep" },
+        ],
+      },
+    });
+    expect(out.wasStringNowArray).toEqual({ arrayValue: { values: [{ stringValue: "x" }] } });
+    expect(out.wasStringNowMap).toEqual({
+      mapValue: { fields: { added: { booleanValue: true } } },
+    });
+    const mapField = out.wasStringNowMap;
+    expect(mapField && "mapValue" in mapField).toBe(true);
+    if (mapField && "mapValue" in mapField) {
+      expect(Object.getPrototypeOf(mapField.mapValue.fields)).toBe(Object.prototype);
+    }
+    expect(out.emptyMap).toEqual({ mapValue: { fields: { fresh: { integerValue: "1" } } } });
+    expect(out.brandNew).toEqual({ stringValue: "hello" });
   });
 });
