@@ -33,7 +33,7 @@ Make sure every service your tests need is on the [supported services list](../.
 
 ## When a test fails under `strict`
 
-Tests that pass on the official emulator and fail under `strict` usually point to constraints your app will also hit in production. Rather than switching the whole profile to `emulator` (which turns off production checks across all services), fix the app or test, or adjust only the specific setting below.
+A test that passed on the official emulator but fails under `strict` can expose a production constraint your app would also meet after deployment. Check the failure, then fix the app or test, or adjust only the specific setting below. Avoid switching the whole profile to `emulator`, which follows the official emulator's behavior instead of production's.
 
 ### Unsigned emulator ID tokens
 
@@ -53,10 +53,10 @@ Just as in production, declare each named Firestore database in the `firestore` 
 
 Firestore checks queries against the indexes declared in `firestore.indexes.json` (referenced from `firebase.json`), matching production:
 
-- Queries missing an index fail with `FAILED_PRECONDITION` and a console link to create it.
-- Single-field entries in `compositeIndexes` fail at load time, just as `firebase deploy` rejects them; use `fieldOverrides` instead.
-- If you want tests to keep running while you backfill missing indexes, set `firestore.missingIndexes = "report"`. Queries execute normally and each missing index is printed once per database to stderr along with the `firestore.indexes.json` snippet. `productionExact` does not override this setting.
-- For `OR` queries that need multiple branch indexes, supplementary diagnostics on stderr list every missing branch index together so you can add them in one pass (deduplicated with a bounded cache). Under `strict`, the SDK error still includes the first creation link; under `emulator`, the query runs.
+- Under `strict` with the default `firestore.missingIndexes = "refuse"`, queries missing an index fail with `FAILED_PRECONDITION` and a console link to create it.
+- Under `strict`, an ordinary composite index with a single field in `indexes` is rejected when the file loads, as `firebase deploy` rejects it; use `fieldOverrides` instead. Forms production accepts, such as `(__name__ DESC)`, are accepted.
+- If you want tests to keep running while you backfill missing indexes, set `firestore.missingIndexes = "report"`. Queries execute normally and each missing index is printed once per database to stderr, with production's refusal text and the `firestore.indexes.json` entry to add. `productionExact` does not override this setting.
+- For `OR` queries that need multiple branch indexes, supplementary diagnostics on stderr list every missing branch index together so you can add them in one pass (deduplicated with a bounded cache). Under `strict` with `"refuse"`, the SDK error still includes the first creation link; under the `emulator` profile, the query runs.
 
 ### Settings that mirror your production project
 
@@ -70,7 +70,7 @@ If your production Firebase project uses non-default settings, configure those d
 
 ## Differences from the official CLI
 
-- **Failed `--export-on-exit`**: if export fails after the test command succeeds, Fireemu exits 1 instead of warning and exiting 0, so CI jobs that depend on exported data do not silently pass.
+- **Failed `--export-on-exit`**: if export fails after the test command succeeds, Fireemu exits 1, whereas the official CLI only warns and exits 0, so CI jobs that depend on exported data do not silently pass.
 - **File ownership checks on Unix**: auto-discovered `fireemu.toml` and `firebase.json` files are loaded only when owned by a trusted user ([file ownership checks](../../guides/configuration/#file-ownership-checks)).
 - **Projects without Security Rules**: under `strict`, a project with no rules loaded refuses client requests, matching a production project without a rules release ([Security Rules](../../guides/security-rules/)).
 
