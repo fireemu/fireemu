@@ -345,7 +345,7 @@ export class Functions {
 
 /** The requests a run may make beyond its fixed paths, granted as the provider names them. */
 export function newGrants() {
-  return { signed: new Set(), source: null, managed: new Set() };
+  return { signed: new Set(), source: null, managed: new Set(), pageTokens: new Set() };
 }
 
 /** Handler rows from Cloud Logging entries (jsonPayload, as recorded; a textPayload is parsed too). */

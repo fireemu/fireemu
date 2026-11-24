@@ -307,13 +307,21 @@ function cloudWorld({ rc, serverEvents = false, faults = {}, never = new Set() }
       if (never.has(o.kind)) return reply(200, { name: o.name, done: false });
       return reply(200, { name: o.name, done: true, ...(o.error ? { error: o.error } : {}) });
     }
-    if (rest === `projects/${PROJECT}/locations/-/functions`)
-      return reply(200, {
-        functions: [...fns.values()]
-          .filter((f) => f.status === "ACTIVE")
-          .map((f) => ({ name: f.name }))
-          .concat([{ name: `${loc}/functions/existing` }]),
-      });
+    if (rest === `projects/${PROJECT}/locations/-/functions`) {
+      const all = [...fns.values()]
+        .filter((f) => f.status === "ACTIVE")
+        .map((f) => ({ name: f.name }))
+        .concat([{ name: `${loc}/functions/existing` }]);
+      // With world.pageToken set, the list answers in two pages, the first ending with that opaque
+      // token (as the provider chooses it).
+      if (!world.pageToken) return reply(200, { functions: all });
+      const token = url.searchParams.get("pageToken");
+      world.pageTokensSeen = [...(world.pageTokensSeen ?? []), token];
+      if (token === null)
+        return reply(200, { functions: all.slice(0, 1), nextPageToken: world.pageToken });
+      if (token !== world.pageToken) return reply(400, { error: { status: "INVALID_ARGUMENT" } });
+      return reply(200, { functions: all.slice(1) });
+    }
     if (init.method === "POST" && rest === `${loc}/functions`) {
       const body = JSON.parse(init.body);
       const required =
@@ -473,6 +481,7 @@ test("allow list: exactly the packet's method and path pairs, with the run's own
   grants.signed.add(signed);
   grants.managed.add(trigger);
   grants.managed.add(service);
+  grants.pageTokens.add("abc");
   const allowed = [
     [`${RC}remoteConfig`],
     [`${RC}namespaces/firebase-server/remoteConfig`],
@@ -554,6 +563,80 @@ test("allow list: exactly the packet's method and path pairs, with the run's own
     [`https://evil.example/v1/projects/${PROJECT}/remoteConfig`],
   ];
   for (const [u, m, o] of refused) assert.equal(ok(u, m, o), false, `${m ?? "GET"} ${u}`);
+  // Each fixed form is bound to its host (ruling 2): every permitted form, sent to every other API
+  // host, is refused.
+  const hosts = [
+    "firebaseremoteconfig.googleapis.com",
+    "cloudfunctions.googleapis.com",
+    "logging.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "serviceusage.googleapis.com",
+    "eventarc.googleapis.com",
+    "run.googleapis.com",
+    "storage.googleapis.com",
+  ];
+  let moved = 0;
+  for (const [u, m, o] of allowed) {
+    const original = new URL(u);
+    for (const h of hosts) {
+      if (h === original.host) continue;
+      const elsewhere = new URL(u);
+      elsewhere.host = h;
+      assert.equal(allow(elsewhere, m ?? "GET", o), false, `${m ?? "GET"} ${elsewhere.href}`);
+      moved += 1;
+    }
+  }
+  assert.ok(moved > 200);
+  // The named examples of the Codex v2 report.
+  for (const [u, m] of [
+    [`${GCFU}/v1/projects/${PROJECT}/remoteConfig`],
+    [`${GCFU}/v2/entries:list`, "POST"],
+    [`${GCFU}/v1/projects/${PROJECT}:getIamPolicy`, "POST"],
+    [`${GCFU}/v1/${loc}/repositories/gcf-artifacts`],
+    [`https://logging.googleapis.com/v1/${loc}/functions:generateUploadUrl`, "POST"],
+    [`https://artifactregistry.googleapis.com/v2/${loc}/functions/${N.gen2}`, "DELETE"],
+    [`https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT}/remoteConfig`, "PUT"],
+  ])
+    assert.equal(ok(u, m), false, `${m ?? "GET"} ${u}`);
+});
+
+test("page tokens are opaque: only a token the previous answer returned, encoded once", () => {
+  const grants = newGrants();
+  const allow = productionAllow({ project: PROJECT, number: NUMBER, names: N, grants });
+  const list = `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/-/functions`;
+  const token = "a!b(c)d*e'f=g%h i";
+  const once = `${list}?pageSize=100&pageToken=${encodeURIComponent(token)}`;
+  assert.equal(allow(new URL(once), "GET"), false, "not yet returned");
+  grants.pageTokens.add(token);
+  assert.equal(allow(new URL(once), "GET"), true);
+  const twice = `${list}?pageSize=100&pageToken=${encodeURIComponent(encodeURIComponent(token))}`;
+  assert.equal(allow(new URL(twice), "GET"), false, "encoded twice");
+  assert.equal(allow(new URL(`${list}?pageSize=100&pageToken=`), "GET"), false, "empty");
+  assert.equal(allow(new URL(`${once}&x=1`), "GET"), false, "extra parameter");
+  assert.equal(
+    allow(new URL(`${list}?pageToken=${encodeURIComponent(token)}&pageSize=100`), "GET"),
+    false,
+    "order",
+  );
+  assert.equal(
+    allow(new URL(once.replace("pageSize=100", "pageSize=50")), "GET"),
+    false,
+    "page size",
+  );
+  assert.equal(allow(new URL(once), "DELETE"), false);
+});
+
+test("a paged functions list follows an opaque token with ! ( ) * ' = and % in it", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  cloud.pageToken = "p!(q)*r'=s%t";
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.equal(result.stopped, null, JSON.stringify(result.open));
+  assert.equal(result.complete, true);
+  assert.ok(cloud.pageTokensSeen.filter((t) => t === cloud.pageToken).length >= 2);
+  assert.equal(result.baseline.functionsEqual, true);
 });
 
 test("transport: unknown answers are journaled unknown, never settled", async () => {

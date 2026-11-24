@@ -82,35 +82,44 @@ export function productionAllow({ project, number, names, grants }) {
   const fn1 = `/v1${loc}/functions/${names.gen1}`;
   const fn2 = `/v2${loc}/functions/${names.gen2}`;
   const exact = new Set([
-    `GET ${client}`,
-    `GET ${server}`,
-    `PUT ${client}`,
-    `PUT ${server}`,
-    `PUT ${server}?validateOnly=true`,
-    `POST ${client}:rollback`,
-    `POST ${server}:rollback`,
-    `GET ${client}:listVersions?pageSize=8`,
-    `GET ${server}:listVersions?pageSize=8`,
-    `GET ${rc}namespaces/firebase-server/serverRemoteConfig`,
-    `POST /v1${loc}/functions:generateUploadUrl`,
-    `POST /v2${loc}/functions:generateUploadUrl`,
-    `POST /v1${loc}/functions`,
-    `POST /v2${loc}/functions?functionId=${names.gen2}`,
-    `GET ${fn1}`,
-    `GET ${fn2}`,
-    `DELETE ${fn1}`,
-    `DELETE ${fn2}`,
-    `GET /v2/projects/${p}/locations/-/functions?pageSize=100`,
-    `POST /v2/entries:list`,
-    `POST /v1/projects/${p}:getIamPolicy`,
-    `GET /v1${loc}/repositories/gcf-artifacts`,
+    `GET firebaseremoteconfig.googleapis.com${client}`,
+    `GET firebaseremoteconfig.googleapis.com${server}`,
+    `PUT firebaseremoteconfig.googleapis.com${client}`,
+    `PUT firebaseremoteconfig.googleapis.com${server}`,
+    `PUT firebaseremoteconfig.googleapis.com${server}?validateOnly=true`,
+    `POST firebaseremoteconfig.googleapis.com${client}:rollback`,
+    `POST firebaseremoteconfig.googleapis.com${server}:rollback`,
+    `GET firebaseremoteconfig.googleapis.com${client}:listVersions?pageSize=8`,
+    `GET firebaseremoteconfig.googleapis.com${server}:listVersions?pageSize=8`,
+    `GET firebaseremoteconfig.googleapis.com${rc}namespaces/firebase-server/serverRemoteConfig`,
+    `POST cloudfunctions.googleapis.com/v1${loc}/functions:generateUploadUrl`,
+    `POST cloudfunctions.googleapis.com/v2${loc}/functions:generateUploadUrl`,
+    `POST cloudfunctions.googleapis.com/v1${loc}/functions`,
+    `POST cloudfunctions.googleapis.com/v2${loc}/functions?functionId=${names.gen2}`,
+    `GET cloudfunctions.googleapis.com${fn1}`,
+    `GET cloudfunctions.googleapis.com${fn2}`,
+    `DELETE cloudfunctions.googleapis.com${fn1}`,
+    `DELETE cloudfunctions.googleapis.com${fn2}`,
+    `GET cloudfunctions.googleapis.com/v2/projects/${p}/locations/-/functions?pageSize=100`,
+    `POST logging.googleapis.com/v2/entries:list`,
+    `POST cloudresourcemanager.googleapis.com/v1/projects/${p}:getIamPolicy`,
+    `GET artifactregistry.googleapis.com/v1${loc}/repositories/gcf-artifacts`,
   ]);
-  const host = {
-    "firebaseremoteconfig.googleapis.com": (k) => k.includes(` ${rc}`),
-    "cloudfunctions.googleapis.com": (k) => / \/v[12]\//.test(k),
-    "logging.googleapis.com": (k) => k === "POST /v2/entries:list",
-    "cloudresourcemanager.googleapis.com": (k) => k.endsWith(":getIamPolicy"),
-    "artifactregistry.googleapis.com": (k) => k.includes("/repositories/"),
+  // A page token is opaque: only a token a previous list answer returned as nextPageToken, encoded
+  // once with encodeURIComponent, whatever its characters (ruling 2).
+  const pageQuery = (url) => {
+    const keys = [...url.searchParams.keys()];
+    const token = url.searchParams.get("pageToken");
+    return (
+      keys.length === 2 &&
+      keys[0] === "pageSize" &&
+      keys[1] === "pageToken" &&
+      Boolean(token) &&
+      grants.pageTokens.has(token) &&
+      // the form fetch sends: encodeURIComponent once, then the URL serializer (which also
+      // escapes ' in a query)
+      url.search === new URL(`?pageSize=100&pageToken=${encodeURIComponent(token)}`, url).search
+    );
   };
   const services = `/v1/projects/${p}/services:batchGet`;
   const servicesQuery = `?${new URLSearchParams(SERVICES.map((s) => ["names", `projects/${p}/services/${s}`]))}`;
@@ -119,8 +128,8 @@ export function productionAllow({ project, number, names, grants }) {
     // A signed upload goes only to a URL this run was issued, byte for byte.
     if (signed) return method === "PUT" && grants.signed.has(url.href);
     const path = url.pathname;
-    const key = `${method} ${path}${url.search}`;
-    if (exact.has(key)) return host[url.host]?.(key) === true;
+    // Every fixed form is bound to its API host: a form of one host is refused on every other.
+    if (exact.has(`${method} ${url.host}${path}${url.search}`)) return true;
     switch (url.host) {
       case "cloudfunctions.googleapis.com":
         return (
@@ -130,9 +139,7 @@ export function productionAllow({ project, number, names, grants }) {
                 `^/v2/projects/(${p}|${number})/locations/${REGION}/operations/[A-Za-z0-9_-]+$`,
               ).test(path)) &&
             url.search === "") ||
-          (method === "GET" &&
-            path === `/v2/projects/${p}/locations/-/functions` &&
-            /^\?pageSize=100&pageToken=[A-Za-z0-9%_.~-]+$/.test(url.search))
+          (method === "GET" && path === `/v2/projects/${p}/locations/-/functions` && pageQuery(url))
         );
       case "serviceusage.googleapis.com":
         return method === "GET" && path === services && url.search === servicesQuery;
@@ -297,7 +304,12 @@ export async function observe(ctx) {
       const iam = await t.send("a-iam", g.iam, { method: "POST", body: {} });
       if (iam.status !== 200) throw new Stop("project IAM unreadable");
       result.baseline.iamBefore = canonicalBindings(iam.json);
-      result.baseline.functionsBefore = await listFunctions(t, g.functions, "a-functions");
+      result.baseline.functionsBefore = await listFunctions(
+        t,
+        g.functions,
+        "a-functions",
+        prod.functions.grants,
+      );
       const own = [prod.functions.names.gen1, prod.functions.names.gen2];
       if (
         result.baseline.functionsBefore.some((n) => own.some((o) => n.endsWith(`/functions/${o}`)))
@@ -496,6 +508,7 @@ export async function observe(ctx) {
           t,
           prod.google.functions,
           "g-functions",
+          prod.functions.grants,
         );
         result.baseline.functionsEqual =
           JSON.stringify(result.baseline.functionsAfter) ===
@@ -608,7 +621,12 @@ export async function readBack(ctx, resources = null) {
       out.source = (await t.send("a2-source", object)).status;
     });
   await step("a2-functions", async () => {
-    out.functionsList = await listFunctions(t, prod.google.functions, "a2-functions");
+    out.functionsList = await listFunctions(
+      t,
+      prod.google.functions,
+      "a2-functions",
+      prod.functions.grants,
+    );
   });
   await step("a2-iam", async () => {
     const iam = await t.send("a2-iam", prod.google.iam, { method: "POST", body: {} });
@@ -634,7 +652,7 @@ export async function readBack(ctx, resources = null) {
   return out;
 }
 
-async function listFunctions(t, url, prefix) {
+async function listFunctions(t, url, prefix, grants) {
   const found = [];
   let token = "";
   for (let page = 0; page < 3; page += 1) {
@@ -646,6 +664,7 @@ async function listFunctions(t, url, prefix) {
     found.push(...(r.json.functions ?? []).map((fn) => fn.name));
     token = r.json.nextPageToken ?? "";
     if (!token) return found.sort();
+    grants.pageTokens.add(token);
   }
   throw new Error(`${prefix}: more than three pages of functions`);
 }
