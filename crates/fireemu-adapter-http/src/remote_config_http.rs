@@ -1610,6 +1610,12 @@ mod tests {
             "percent('s') <= 5",
             "percent",
             "maybe",
+            // Codex review r1 (ruling 5): an empty operand or an empty NOT keeps the earlier answer.
+            "percent('s') <= 5 ||",
+            "|| percent('s') <= 5",
+            "!()",
+            "!(maybe)",
+            "percent('s') <= 5 || device.os == 'ios'",
         ] {
             assert_eq!(
                 crate::remote_config_conditions::strict_refusal("c", expression),
@@ -1881,6 +1887,21 @@ mod tests {
                     ("notContains", "STRING_DOES_NOT_CONTAIN"),
                     ("matches", "STRING_CONTAINS_REGEX"),
                 ][usize::from(*op % 4)];
+                // A regex target is converted only in the plain recorded form.
+                let values: Vec<String> = if method == "matches" {
+                    values
+                        .iter()
+                        .map(|v| {
+                            v.chars()
+                                .filter(|c| {
+                                    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' ' | '.')
+                                })
+                                .collect()
+                        })
+                        .collect()
+                } else {
+                    values.clone()
+                };
                 let list = values
                     .iter()
                     .map(|v| format!("'{v}'"))
@@ -2026,6 +2047,74 @@ mod tests {
                 assert_eq!(stores.client.current().number(), 0);
                 assert_eq!(stores.server.current().number(), 0);
             }
+        }
+    }
+
+    /// Codex review r1 (ruling 5): inputs whose shape differs from the recorded ones keep the
+    /// earlier answer in both profiles, accepted and served as `{}`.
+    #[test]
+    fn off_record_conditions_keep_the_earlier_answer_in_both_profiles() {
+        for expression in [
+            "percent('s') <= 5 ||",
+            "!()",
+            "app.customSignal['k'].matches(['['])",
+            "app.customSignal['k'].matches(['^a', 'b('])",
+            "app.customSignal['k'].matches(['a+'])",
+            "version(app.customSignal['v']) < '2.invalid'",
+            "version(app.customSignal['v']) < '1..2'",
+            "version(app.customSignal['v']) < '1.2.3.4.5.6'",
+            "version(app.customSignal['v']) < ''",
+        ] {
+            for settings in [RemoteConfigSettings::default(), strict()] {
+                let stores = RemoteConfigStores::default();
+                let body =
+                    json!({"conditions": [{"name": "c", "expression": expression}]}).to_string();
+                for query in ["validateOnly=true", ""] {
+                    let reply = request_with(
+                        &stores,
+                        &settings,
+                        SERVER,
+                        "PUT",
+                        query,
+                        body.as_bytes(),
+                        Some("*"),
+                    );
+                    assert_eq!(reply.status, 200, "{expression} {query}");
+                }
+                let data = json_body(&request_with(
+                    &stores, &settings, DATA_PLANE, "GET", "", b"", None,
+                ));
+                assert_eq!(
+                    data["conditions"],
+                    json!([{"name": "c", "condition": {}}]),
+                    "{expression}"
+                );
+            }
+        }
+        // The plain recorded forms still convert: `^ab$`, and versions of one to five parts.
+        for expression in [
+            "app.customSignal['k'].matches(['^ab$'])",
+            "app.customSignal['k'].matches(['a b.c-d_e'])",
+            "version(app.customSignal['v']) < '1'",
+            "version(app.customSignal['v']) < '1.2.3.4.5'",
+        ] {
+            assert_ne!(
+                crate::remote_config_conditions::structured(expression),
+                json!({}),
+                "{expression}"
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn a_regex_target_outside_the_plain_form_is_never_converted(
+            prefix in "[a-z]{0,3}",
+            special in "[\\[\\]()*+?{}|\\\\/]",
+            suffix in "[a-z]{0,3}",
+        ) {
+            let expression = format!("app.customSignal['k'].matches(['{prefix}{special}{suffix}'])");
+            proptest::prop_assert_eq!(crate::remote_config_conditions::structured(&expression), json!({}));
         }
     }
 }

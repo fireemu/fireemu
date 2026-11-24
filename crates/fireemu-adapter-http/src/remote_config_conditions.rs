@@ -125,7 +125,7 @@ impl Parser {
                     _ => "SEMANTIC_VERSION_GREATER_EQUAL",
                 };
                 let target = self.string()?;
-                Some(signal_atom(operator, &key, &[target]))
+                plain_version(&target).then(|| signal_atom(operator, &key, &[target]))
             }
             // Anything else must be a custom signal (`signal` checks for `app`).
             _ => {
@@ -153,6 +153,12 @@ impl Parser {
                         }
                     }
                     self.punct(")")?;
+                    // A regex target is converted only in the plain recorded form (`^ab$`): one the
+                    // SDK's `new RegExp` always compiles and every dialect reads alike (ruling 5).
+                    if operator == "STRING_CONTAINS_REGEX" && !values.iter().all(|v| plain_regex(v))
+                    {
+                        return None;
+                    }
                     Some(signal_atom(operator, &key, &values))
                 } else {
                     let operator = match self.comparison()? {
@@ -235,6 +241,26 @@ impl Parser {
     }
 }
 
+/// A version the Admin SDK compares as the recorded `1.2.3`: one to five dot-separated runs of
+/// ASCII digits (its `compareSemanticVersions` splits on `.`, reads each part as a number and
+/// accepts at most five parts).
+fn plain_version(target: &str) -> bool {
+    let parts: Vec<_> = target.split('.').collect();
+    parts.len() <= 5
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A regular expression of the plain recorded form: an optional `^`, letters, digits, `_`, `-`,
+/// space and `.`, and an optional `$`.
+fn plain_regex(target: &str) -> bool {
+    let body = target.strip_prefix('^').unwrap_or(target);
+    let body = body.strip_suffix('$').unwrap_or(body);
+    body.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b' ' | b'.'))
+}
+
 fn signal_atom(operator: &str, key: &str, values: &[String]) -> Value {
     json!({"customSignal": {
         "customSignalOperator": operator,
@@ -243,48 +269,48 @@ fn signal_atom(operator: &str, key: &str, values: &[String]) -> Value {
     }})
 }
 
+/// The atoms of a recorded `&&` chain, or `None` when `tokens` is not one.
+fn chain(tokens: &[Token]) -> Option<Vec<Value>> {
+    let mut parser = Parser {
+        tokens: tokens.to_vec(),
+        at: 0,
+    };
+    let mut atoms = vec![parser.atom()?];
+    while parser.peek().is_some() {
+        parser.punct("&&")?;
+        atoms.push(parser.atom()?);
+    }
+    Some(atoms)
+}
+
 /// The structured condition for `expression`, or `{}` when the form was never recorded.
 pub(crate) fn structured(expression: &str) -> Value {
-    let translate = || {
-        let mut parser = Parser {
-            tokens: lex(expression)?,
-            at: 0,
-        };
-        let mut atoms = vec![parser.atom()?];
-        while parser.peek().is_some() {
-            parser.punct("&&")?;
-            atoms.push(parser.atom()?);
-        }
-        Some(atoms)
-    };
-    translate().map_or_else(
+    lex(expression).as_deref().and_then(chain).map_or_else(
         || json!({}),
         |atoms| json!({"orCondition": {"conditions": [{"andCondition": {"conditions": atoms}}]}}),
     )
 }
 
 /// The strict profile's refusal of a server condition, with production's recorded message
-/// (RC-OBSERVE-V2-3 seq 54-57): two `||` terms, a whole-expression `!(...)`, `true` or `false`.
-/// Other positions of these operators were not recorded and are not refused.
+/// (RC-OBSERVE-V2-3 seq 54-57), for the recorded shapes only: `a || b` whose two operands are each
+/// a recorded atom or chain, `!(a)` around one, and the whole literal `true` or `false`. Any other
+/// text (an empty operand, a third term, a nested position) keeps the earlier answer: accepted and
+/// served as `{}` (ruling 5).
 pub(crate) fn strict_refusal(name: &str, expression: &str) -> Option<String> {
     let tokens = lex(expression)?;
-    let mut depth = 0_i32;
-    let mut terms = 1;
-    for token in &tokens {
-        match token {
-            Token::Punct("(" | "[") => depth += 1,
-            Token::Punct(")" | "]") => depth -= 1,
-            Token::Punct("||") if depth == 0 => terms += 1,
-            _ => {}
-        }
-    }
-    if terms == 2 {
-        return Some(format!(
-            "[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [{name}], found 2"
-        ));
+    if let Some(at) = tokens.iter().position(|token| *token == Token::Punct("||")) {
+        return (chain(&tokens[..at]).is_some() && chain(&tokens[at + 1..]).is_some()).then(|| {
+            format!(
+                "[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [{name}], found 2"
+            )
+        });
     }
     let atom = match tokens.as_slice() {
-        [Token::Punct("!"), Token::Punct("("), rest @ ..] if closes_last(rest) => "NOT",
+        [Token::Punct("!"), Token::Punct("("), inner @ .., Token::Punct(")")]
+            if chain(inner).is_some() =>
+        {
+            "NOT"
+        }
         [Token::Ident(word)] if word == "true" => "ALWAYS_TRUE",
         [Token::Ident(word)] if word == "false" => "ALWAYS_FALSE",
         _ => return None,
@@ -292,21 +318,4 @@ pub(crate) fn strict_refusal(name: &str, expression: &str) -> Option<String> {
     Some(format!(
         "[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: {atom} condition is not allowed here @ {name}.OR[0].AND[0].{atom}"
     ))
-}
-
-/// Whether the parenthesis opened just before `rest` closes at its last token, so that `!(...)`
-/// is the whole expression.
-fn closes_last(rest: &[Token]) -> bool {
-    let mut depth = 1_i32;
-    for (index, token) in rest.iter().enumerate() {
-        match token {
-            Token::Punct("(") => depth += 1,
-            Token::Punct(")") => depth -= 1,
-            _ => {}
-        }
-        if depth == 0 {
-            return index + 1 == rest.len();
-        }
-    }
-    false
 }
