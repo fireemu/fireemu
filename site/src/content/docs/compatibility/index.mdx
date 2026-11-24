@@ -1,6 +1,6 @@
 ---
 title: Compatibility tables
-description: Check which products and APIs Fireemu supports, which areas are verified against production Firebase, and how it compares with the official emulator.
+description: See which Firebase products and APIs Fireemu supports, which areas are verified against production, and how profiles compare.
 tableOfContents:
   maxHeadingLevel: 2
 ---
@@ -9,51 +9,51 @@ import ProductTable from '../../../components/ProductTable.astro';
 import ProductionAreas from '../../../components/ProductionAreas.astro';
 import CapabilityTable from '../../../components/CapabilityTable.astro';
 
-These tables are generated from the records in the repository when the site is built: the [compatibility contract](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), the [production verification records](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure) and the [capability manifest](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json).
+These tables are generated directly from the repository when the site builds: the [compatibility contract](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), the [production verification records](https://github.com/fireemu/fireemu/tree/main/spec/compatibility/closure), and the [capability manifest](https://github.com/fireemu/fireemu/blob/main/crates/fireemu/src/capabilities.json).
 
-Check support for the specific APIs and conditions your application uses; a product name alone does not tell you.
+Always check the specific APIs and conditions your app relies on rather than judging by product name alone.
 
 ## Products
 
-Every product in the Local Emulator Suite of `firebase-tools` 15.28.2, the official emulator release Fireemu is compared with, and the surfaces Fireemu adds.
+All products shipped in Google's Local Emulator Suite (`firebase-tools` 15.28.2, the pinned comparison baseline) alongside the surfaces Fireemu adds.
 
 <ProductTable />
 
 ### Compatibility claim
 
-Fireemu is compatible with the Local Emulator Suite products that firebase-tools 15.28.2 ships and that Fireemu serves with parity (Cloud Firestore, Firebase Authentication, Cloud Storage for Firebase, Cloud Functions, Cloud Pub/Sub and Eventarc, with Security Rules on the Firestore and Storage surfaces), under the `emulator` compatibility profile and the evidence recorded in [`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json). It makes no complete-suite and no unqualified superset claim, because:
+Under the `emulator` profile and the evidence recorded in [`spec/compatibility/contract.json`](https://github.com/fireemu/fireemu/blob/main/spec/compatibility/contract.json), Fireemu claims compatibility with the Local Emulator Suite products it serves with parity in `firebase-tools` 15.28.2: Cloud Firestore, Firebase Authentication, Cloud Storage for Firebase, Cloud Functions, Cloud Pub/Sub, and Eventarc, including Security Rules on Firestore and Storage. It makes no complete-suite or unqualified superset claim because:
 
-- the Realtime Database and Firebase Hosting are served without a parity claim against the official emulator (an open gap; both are verified against production for recorded cases);
+- Realtime Database and Firebase Hosting are served without a parity claim against the official emulator (both are verified against production for recorded cases);
 - App Hosting and Data Connect are deferred;
 - Firebase Extensions is not planned.
 
 ## Fireemu, the official emulator and production
 
-The differences that most often change a test result. Fireemu's column is the default `strict` profile.
+These are the behavioral differences most likely to change a test outcome. The Fireemu column reflects the default `strict` profile.
 
 | Behavior | Production | Official emulator | Fireemu |
 |---|---|---|---|
-| Query without its composite index | Refused | Runs | Refused; runs and reports the missing index with `firestore.missingIndexes: "report"` |
-| Firestore client request to a project without Security Rules | Refused | Allowed | Refused |
-| TOTP multi-factor authentication | Supported | Not available | Supported, through the project's MFA configuration |
-| Request naming a tenant that does not exist | Refused | Creates the tenant | Refused |
+| Query missing a composite index | Refused | Runs | Refused (`firestore.missingIndexes = "report"` runs the query and reports the missing index) |
+| Firestore client request to a project with no Security Rules | Refused | Allowed | Refused |
+| TOTP multi-factor authentication | Supported | Not available | Supported via project MFA configuration |
+| Request naming a non-existent tenant | Refused | Creates the tenant | Refused |
 | `beforeEmailSent` blocking function | Runs | Not run | Runs |
-| App Check | Supported | Not available | Debug tokens; no attestation providers or replay protection |
-| Scheduled functions | Run on Cloud Scheduler's schedule | Not run on a schedule | Run on a virtual clock you control |
+| App Check | Supported | Not available | Debug tokens (no real attestation or replay protection) |
+| Scheduled functions | Run on Cloud Scheduler | Not run on a schedule | Run on a virtual clock you control |
 | Unsigned mock ID tokens in Security Rules | Refused | Accepted | Accepted by default; refused with `productionExact` |
 | Declared Storage upload checksums | Verified | Not verified | Verified |
 
 ## Production verification
 
-Fireemu compares its answers with recordings taken from real Firebase projects.
+Fireemu checks its responses against recordings captured from real Firebase projects.
 
-- **Verified against production.** Every condition in the area's frozen inventory matches the recordings, or differs only in a reviewed and documented way (a known difference).
-- **In progress.** The area is still being worked on. Its counts describe recorded conditions, not verification of the whole area.
+- **Verified against production**: every condition in the area's frozen inventory matches the production recording, or differs only in a reviewed and documented known difference.
+- **In progress**: work is still underway; counts reflect recorded conditions rather than full verification of the area.
 
 <ProductionAreas />
 
 ## Capability manifest
 
-The capability manifest records, for each feature, what is implemented and what is not. `npx fireemu capabilities` prints it for the profile your configuration selects.
+The capability manifest lists what is implemented and what is not for each feature. Run `npx fireemu capabilities` to inspect the manifest for your active profile.
 
 <CapabilityTable />

@@ -1,64 +1,63 @@
 ---
 title: Performance
-description: Read the measured startup time, memory and throughput against the official Firestore emulator, and apply them to your own test suite.
+description: Measured startup time, memory footprint, and Firestore throughput alongside the official Firestore emulator, plus how to benchmark changes.
 ---
 
-Fireemu is compared with the official Firestore emulator using the same SDK workloads. Both run one after the other on the same GitHub Actions Linux runner, with Fireemu using the `emulator` profile. The benchmark also checks the results of each operation.
+We benchmark Fireemu and Google's official Firestore emulator on the same SDK workloads, running back-to-back on the same GitHub Actions Linux runner with Fireemu in the `emulator` profile. Every operation's output is verified during the run.
 
 ## Results
 
-These results come from one `standard` run at commit `f3b942c`, comparing against the Firestore emulator that `firebase-tools` 15.28.2 runs, with JDK 21.0.8. Ratios are calculated from five measured pairs; absolute values depend on the environment.
+Measured from a single `standard` tier run at commit `f3b942c` against the Firestore emulator bundled with `firebase-tools` 15.28.2 on JDK 21.0.8. Ratios come from five paired trials; absolute numbers vary by hardware and runner load.
 
-| Metric | Official emulator | Fireemu | Comparison |
+| Metric | Official emulator | Fireemu | Ratio |
 |---|---:|---:|---:|
-| Startup until the SDK can use Firestore | 3,043 ms | 140 ms | 21.6× faster |
-| Idle memory with an empty database (PSS) | 390 MiB | 11 MiB | About 1/34 the memory |
-| Peak memory during a trial (cgroup) | 849 MiB | 79 MiB | About 1/10.7 the memory |
+| Startup until SDK-ready (Firestore) | 3,043 ms | 140 ms | 21.6× faster |
+| Idle memory with empty database (PSS) | 390 MiB | 11 MiB | ~1/34 memory |
+| Peak memory during trial (cgroup) | 849 MiB | 79 MiB | ~1/10.7 memory |
 | Firestore throughput across 22 workloads | — | — | 1.1× to 5.2× higher |
 
-The 95% confidence interval for the startup-time ratio is [21.4, 21.8]. For the peak-memory ratio (official emulator divided by Fireemu) it is [10.2, 11.1].
+The 95% confidence interval is [21.4, 21.8] for the startup ratio and [10.2, 11.1] for peak memory (official emulator divided by Fireemu).
 
-See [benchmark.yml](https://github.com/fireemu/fireemu/blob/main/.github/workflows/benchmark.yml) for the workflow and [`tools/bench/`](https://github.com/fireemu/fireemu/tree/main/tools/bench) for the benchmark.
+See [benchmark.yml](https://github.com/fireemu/fireemu/blob/main/.github/workflows/benchmark.yml) and [`tools/bench/`](https://github.com/fireemu/fireemu/tree/main/tools/bench) for the harness and raw scripts.
 
 ## Applying results to a test suite
 
-Use measured startup and loaded-memory values to estimate only the portion of your own workflow that starts these engines. Fill this template from one validated run and your own process counts:
+Use these numbers only to estimate the emulator startup and memory portion of your workflow. Fill in the template below from a validated run and your own process counts:
 
 | Quantity | Baseline | Candidate |
 |---|---:|---:|
-| SDK-usable startup, seconds | measured milliseconds / 1000 | measured milliseconds / 1000 |
-| Loaded idle PSS, MiB per engine | measured bytes / 1048576 | measured bytes / 1048576 |
-| Fresh engine starts in your job | observed count | observed count |
-| Concurrent engines at the observed plateau | observed count | observed count |
+| SDK-usable startup (seconds) | measured ms / 1000 | measured ms / 1000 |
+| Loaded idle PSS (MiB per engine) | measured bytes / 1048576 | measured bytes / 1048576 |
+| Fresh engine starts per job | observed count | observed count |
+| Concurrent engines at steady state | observed count | observed count |
 
-- **Sequential starts.** The startup contribution is the measured seconds per start multiplied by the observed start count.
-- **A stable concurrent plateau.** The engine memory contribution is measured MiB multiplied by the observed concurrent engine count.
+- **Sequential starts**: multiply measured seconds per start by the number of fresh starts.
+- **Concurrent engines**: multiply idle PSS (MiB) by the peak concurrent engine count.
 
-Report these contributions separately from dependency installation, builds, SDK setup and test execution. They do not establish whole-job CI savings; measure the complete job to make that claim.
+Report emulator time separately from dependency installation, builds, SDK setup, and test code. Engine benchmarks alone do not prove end-to-end CI savings; measure the full job if you need total wall-time numbers.
 
 ## For contributors: comparing a change
 
-This section is for people changing Fireemu itself. The Linux runner also accepts a caller-supplied baseline Fireemu binary. Both binaries use the same compatibility profile, fixture shape, service selection and SDK installation. Each paired trial starts a fresh process. The manifest records absolute binary paths, SHA-256 digests, versions and harness hashes. Binary changes during a run, invalid results or unsuccessful cleanup invalidate the comparison.
+Contributors modifying Fireemu can compare two Fireemu binaries directly on Linux using the same profile, fixture shape, services, and SDK install. Each paired trial launches fresh processes, and the manifest records binary paths, SHA-256 digests, versions, and harness hashes. Any binary change mid-run, invalid result, or failed cleanup invalidates the run.
 
 ```sh
 python3 tools/bench/bench.py --fireemu /path/to/candidate/fireemu --baseline-fireemu /path/to/baseline/fireemu --sdk-root conformance --tier standard --profile emulator --out .bench-candidate
 python3 tools/bench/report.py .bench-candidate
 ```
 
-The default remains the official emulator versus Fireemu, with report schema version 2. Binary comparisons use schema version 3, explicit `baseline-fireemu`/`candidate-fireemu` labels and `baseline_*`/`candidate_*` measurement fields. Use at least five measured fresh-process pairs for a performance claim. An identical binary comparison is a useful control; an interval containing 1 does not establish an improvement.
+Official-vs-Fireemu runs default to report schema v2; Fireemu-vs-Fireemu runs use schema v3 with `baseline-fireemu`/`candidate-fireemu` labels and `baseline_*`/`candidate_*` fields. Use at least five paired fresh-process runs before claiming a speedup. Running an identical binary against itself is a useful sanity check; a confidence interval containing 1 does not show an improvement.
 
 ### Fixture shapes
 
-`--fixture-shape tiny` selects scalar documents; `--fixture-shape wide-map` selects 32 nested map fields. The default fixture retains its existing payload. Query oracle fields and full SDK readback validation apply to every shape. Compare each shape separately.
+`--fixture-shape tiny` uses scalar documents and `--fixture-shape wide-map` uses 32 nested map fields, while the default fixture keeps its standard payload. Query oracle fields and full SDK readback checks run for every shape. Always compare matching shapes separately.
 
 ### Mixed services
 
-`--mixed-services` loads Auth, Storage and Firestore in both the isolated and overlapping phases. It performs 8 validated operations per class with concurrency 2, a fixed seed, a 64 KiB Storage upload/readback/delete operation and actual Auth configuration, Hub registry and Firestore read probes. The report retains separate class latency and throughput distributions.
+`--mixed-services` loads Auth, Storage, and Firestore across isolated and overlapping phases. It runs 8 validated operations per class at concurrency 2 with a fixed seed, a 64 KiB Storage upload/readback/delete cycle, and live Auth config, Hub registry, and Firestore read probes, keeping per-class latency and throughput distributions separate.
 
-- A mixed trial requires observed overlap between Storage and another service. This establishes overlap at the client boundary, not simultaneous execution inside the server.
-- Storage operation latency includes upload, readback and delete; it cannot separate queue time, execution time or lock wait.
-- Existing 16-handler/2-Glob-slot limits remain the measurement baseline.
-- Cancellation permit recovery requires runtime tests, and RSS/PSS belong to the complete loaded engine.
-- For official comparisons, pre-download the pinned Storage emulator with `pnpm -C conformance exec firebase setup:emulators:storage`.
-- Startup readiness also validates each loaded service.
-- No Functions runner participates.
+- Mixed trials require observed overlap between Storage and another service at the client boundary (this does not prove simultaneous server-side execution).
+- Storage latency covers upload, readback, and delete together; it does not split out queue time, execution time, or lock wait.
+- The 16-handler / 2-Glob-slot limits remain the measurement baseline.
+- Cancellation permit recovery is covered by runtime tests, and RSS/PSS reflect the complete loaded engine.
+- For official comparisons, pre-download the pinned Storage emulator via `pnpm -C conformance exec firebase setup:emulators:storage`.
+- Startup readiness probes every loaded service; the Functions runner does not participate.

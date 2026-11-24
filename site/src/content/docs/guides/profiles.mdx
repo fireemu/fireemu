@@ -1,20 +1,20 @@
 ---
 title: Profiles and productionExact
-description: Choose between the strict and emulator profiles, see where the defaults differ from production on purpose, and switch them to production behavior with productionExact.
+description: Choose between strict and emulator profiles, see which defaults intentionally differ from production, and switch to strict production checks with productionExact.
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-A profile selects whose behavior Fireemu follows: production Firebase (`strict`, the default) or the official emulator (`emulator`). Some defaults differ from production on purpose in both profiles, so tests run without setup. `productionExact` switches them to production's behavior.
+A profile picks which behavior Fireemu targets: production Firebase (`strict`, the default) or Google's official emulator (`emulator`). In both profiles, a handful of setup-heavy defaults are relaxed so tests run without boilerplate; `productionExact` switches all of them back to production behavior.
 
 ## Choose a profile
 
 | Profile | Behavior |
 |---|---|
-| `strict` | Matches production Firebase behavior and constraints as closely as possible within the supported scope. The default, and recommended, including when migrating from the official emulator. |
-| `emulator` | Targets the behavior of a pinned version of the official emulator (`firebase-tools` 15.28.2). Use it only to check alignment with the official emulator, for example as an extra test target; it is not needed for a migration. |
+| `strict` (default) | Matches production Firebase behavior and constraints across the supported scope. Recommended for day-to-day testing and when migrating from the official emulator. |
+| `emulator` | Targets a pinned release of Google's official Local Emulator Suite (`firebase-tools` 15.28.2). Use it only as an extra target when checking alignment with the official emulator; you do not need it to migrate. |
 
-The `emulator` profile accepts behavior that production refuses, so a test can pass there and fail against production. Use `strict` for your tests.
+Because the `emulator` profile accepts some requests that production refuses, a suite that passes there can still fail after deploy. Stick with `strict` for your main tests.
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -41,19 +41,19 @@ profile = "strict"
 
 ## Choose a setup
 
-- **Most projects:** `strict` with the development defaults. Your tests run without keys or setup calls, and still meet production's validation, refusals and error shapes.
-- **Before a release, or in a separate CI job:** `strict` with [`productionExact: true`](#where-fireemu-departs-from-production-on-purpose), to catch what the development defaults let through, such as an unsigned token.
-- **Checking the official emulator:** `emulator`, as an additional target only.
+- **Most projects**: `strict` with the development defaults. Tests run without signing keys or setup API calls while still hitting production validation, refusals, and error shapes.
+- **Pre-release or extra CI job**: `strict` with [`productionExact = true`](#where-fireemu-departs-from-production-on-purpose) to catch anything the development defaults allow through, such as unsigned mock tokens.
+- **Checking against the official emulator**: `emulator` as a secondary target only.
 
 ## Where Fireemu departs from production on purpose
 
-Fireemu's goal is to match production. Some production behaviors only add setup to a test: production needs signed tokens and signing keys, a feature enabled through an Admin API call, or an hour of waiting. Copying them exactly would make Fireemu harder to use in CI and on a developer's machine without catching more bugs.
+Some production requirements only add ceremony to local tests: signing keys, signed mock tokens, Admin API calls to turn on a feature, or waiting an hour for a timeout. Enforcing them by default would slow down everyday testing without catching real app bugs.
 
-For these behaviors, the default in both profiles is a development default that works without setup. Each one has its own setting and is listed in the table below, so every such difference from production is a documented choice.
+Fireemu keeps documented development defaults for these cases in both profiles, each with its own configuration key.
 
 ### Turn on production behavior with productionExact
 
-To get production's behavior for all of them at once, set `productionExact` to `true` (`strict` profile only). An explicit setting still decides over it:
+Set `productionExact = true` (`strict` profile only) to restore production behavior for all of those defaults at once. Explicit keys still take precedence:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">

@@ -5,20 +5,20 @@ description: Set up fireemu.toml and firebase.json, and find out which files a r
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Fireemu reads two kinds of files:
+Fireemu reads two configuration files:
 
-- **`fireemu.toml`** holds Fireemu's own settings, such as the [profile](../profiles/), Authentication project configuration and the clock. It contains `schemaVersion = 1`. You can write the same settings as JSON in `fireemu.json`; a directory that has both is refused (see [Which files are loaded](#which-files-are-loaded)). See the [configuration schema](../../reference/configuration/).
-- **`firebase.json`** is the file the Firebase CLI uses. Fireemu reads ports, Security Rules, indexes and Functions codebases from it, every time it starts.
+- **`fireemu.toml`**: Fireemu-specific settings such as the [compatibility profile](../profiles/), Authentication project config, and virtual clock. It requires `schemaVersion = 1`. JSON (`fireemu.json`) is also accepted, though having both files in the same directory is an error ([Which files are loaded](#which-files-are-loaded)). See the [configuration schema](../../reference/configuration/).
+- **`firebase.json`**: your existing Firebase CLI config. Fireemu reads ports, Security Rules, indexes, and Functions codebases from it on every start.
 
 ## Use both files
 
-Keep Fireemu-specific settings in `fireemu.toml` rather than in `firebase.json`. To use both, name the `firebase.json` in `fireemu.toml`:
+Keep Fireemu-specific settings in `fireemu.toml` instead of editing `firebase.json`, and point `fireemu.toml` at your `firebase.json`:
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
 
 ```toml
-#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json
 # Configuration schema version: 1.
 schemaVersion = 1
 # Compatibility profile: "strict" or "emulator".
@@ -142,7 +142,7 @@ Fireemu validates against its bundled schema and does not fetch the annotation U
 
 TOML files use the same JSON Schema, validation and defaults as JSON files.
 
-- Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json` (the tag of the version you run) to select the schema in Taplo or Even Better TOML.
+- Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (the tag of the version you run) to select the schema in Taplo or Even Better TOML.
 - Quote timestamp values. TOML datetimes are refused with the key name because the schema has no datetime type.
 
 TOML has no `null`. For every nullable setting below, omit the key in its containing table; for nullable array items, omit the item. Keep the containing table or array when its presence is intentional. Empty arrays and empty tables retain their existing meaning.

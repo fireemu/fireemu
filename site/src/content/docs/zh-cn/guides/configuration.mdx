@@ -18,7 +18,7 @@ Fireemu 读取两类文件：
 <TabItem label="TOML">
 
 ```toml
-#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json
 # 配置 schema 版本：1。
 schemaVersion = 1
 # 兼容性 profile："strict" 或 "emulator"。
@@ -142,7 +142,7 @@ Fireemu 依据其内置的 schema 进行验证，不会获取注解中的 URL。
 
 TOML 文件使用与 JSON 文件相同的 JSON Schema、验证和默认值。
 
-- 在文件开头写上 `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json`（你所运行版本的标签），即可在 Taplo 或 Even Better TOML 中选择该 schema。
+- 在文件开头写上 `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`（你所运行版本的标签），即可在 Taplo 或 Even Better TOML 中选择该 schema。
 - 给时间戳值加引号。TOML datetime 会被拒绝并给出键名，因为 schema 中没有 datetime 类型。
 
 TOML 没有 `null`。对于下列每个可为 null 的设置，在其所在的表中省略该键；对于可为 null 的数组项，省略该项。当所在的表或数组的存在是有意为之时，请保留它。空数组和空表保持其原有含义。

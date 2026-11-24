@@ -1,9 +1,9 @@
 ---
 title: Limitations
-description: Check what Fireemu does not support and what no local emulator can reproduce before you rely on a local result.
+description: Check what Fireemu does not support yet and what no local emulator can model before relying on local test results.
 ---
 
-Fireemu does not yet reproduce every feature and behavior of production Firebase. These are the main limitations; the list is not exhaustive. Check individual APIs in the [capability manifest](../#capability-manifest), or run:
+Fireemu does not reproduce every feature of production Firebase. This page summarizes the main boundaries; for individual APIs, see the [capability manifest](../#capability-manifest) or run:
 
 ```sh
 npx fireemu capabilities
@@ -11,79 +11,78 @@ npx fireemu capabilities
 
 ## Unsupported products
 
-App Hosting and Data Connect are not currently supported. Firebase Extensions support is not planned.
+App Hosting and Data Connect are not currently supported. Firebase Extensions is not planned.
 
 ## Partially supported products
 
-- **Realtime Database.** Served and verified against production for its recorded cases only (see [Production verification](../#production-verification)). Broader production compatibility is unverified, and there is no parity claim against the official emulator. Details: [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) and the list below.
+- **Realtime Database**: served and verified against production only for recorded cases ([Production verification](../#production-verification)). Broader production coverage is unverified, and there is no parity claim against the official emulator. See [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator) and the notes below.
 
 ## Unsupported features
 
 ### Cloud Firestore
 
-- The Enterprise Pipeline API supports a limited subset of read operations (see [Enterprise pipelines](../../products/firestore/#enterprise-pipelines)).
-- Enterprise text search provides finite local lexical search and explicit build controls. Analysis and ranking are approximations; `productionExact` refuses unobserved search semantics.
+- The Enterprise Pipeline API implements a limited subset of read operations ([Enterprise pipelines](../../products/firestore/#enterprise-pipelines)).
+- Enterprise text search runs a local lexical engine with explicit index build controls. Tokenization and ranking are approximations, and `productionExact` refuses unobserved search semantics.
 
 ### Authentication
 
-- Sign-in flows that talk to external identity providers, hosted authorization-code exchange and live key discovery and rotation are not supported.
-- Local configured signed OIDC/SAML verification is supported by the strict signed-assertion path, using `auth.idpSigners` public keys or the SAML provider's configured certificates.
-- Finite SAML checks cover present status, destination, issuer, audience and validity fields, and responses to known daemon-issued requests. Absent fields, unparseable times and other unrecorded combinations remain unobserved.
+- Sign-in flows that communicate with external identity providers, hosted authorization-code exchange, and live key discovery/rotation are not supported.
+- Local signed OIDC/SAML verification works on the strict signed-assertion path using `auth.idpSigners` public keys or the SAML provider's configured certificates.
+- SAML checks cover present status, destination, issuer, audience, and validity fields, plus responses to daemon-issued requests. Missing fields, unparseable timestamps, and other unrecorded combinations remain unobserved.
 
 ### Cloud Storage
 
-- Verifying the signature of a signed URL or a POST policy (their expiry and conditions are checked).
-- Object ACLs other than `allUsers` read, IAM and bucket-level public access.
-- Object composition (`compose`) and notification configuration.
-- **Recorded Storage CORS under `strict`.** `conformance/storage-strictness-obs/recordings/run-2.json` records JSON API metadata, media, bucket, list and UBLA ACL-error responses, upload preflights, resumable initiation, cancellation and cancelled-session reads with absent, empty and configured bucket CORS. Strict uses the recorded CORS values without requiring `productionExact`; the emulator profile retains its existing behavior. Mixed-case requested-header preservation, UBLA PATCH/toggle behavior and applying the expose lists to other responses are unrecorded assumptions. Creation accepts the recorded region and disabled soft-delete hints without modeling those services. Local tests cover UBLA export/import and empty created buckets. See [Bucket CORS](../../products/storage/#bucket-cors).
+- Verifying signatures on signed URLs or POST policies (expiry and policy conditions are checked; V4 signed-URL keys can be registered separately via `storage.signedUrlKeys`).
+- Object ACLs other than `allUsers` read, IAM, and bucket-level public access.
+- Object composition (`compose`) and bucket notification configuration.
+- **Storage CORS under `strict`**: `strict` applies the CORS behavior recorded in `conformance/storage-strictness-obs/recordings/run-2.json` (covering absent, empty, and configured bucket CORS across JSON API metadata/media/bucket/list/UBLA errors, preflights, resumable uploads, and cancellations) without requiring `productionExact`; the `emulator` profile keeps its existing behavior. Mixed-case requested-header preservation, UBLA PATCH/toggles, and applying expose headers to other responses remain unrecorded. Bucket creation accepts recorded region and disabled soft-delete hints without modeling those services; local tests cover UBLA export/import and empty created buckets. See [Bucket CORS](../../products/storage/#bucket-cors).
 
 ### Realtime Database
 
-- Verified against production for its recorded cases only (see [Production verification](../#production-verification)); broader production compatibility is unverified, and there is no parity claim against the official emulator. Comparison is limited to recorded official-emulator cases.
-- The listed unsupported syntax and evaluation cases (regular-expression constructs, case mappings and the other differences listed there) are refused when rules load or produce rule errors. `query.endBefore`, `query.isOrderByChild()`, the `OrderByKey`, `OrderByValue` and `OrderByPriority` names, `http.encodeURL()`, method reads without a call and ternary callees load and evaluate as production was recorded doing.
-- The eight recorded patterns refused by the official emulator's determinization resource limit are also rejected when Fireemu loads rules, including in unevaluated expression branches. This does not establish complete regular-expression or production equivalence.
-- Functions trigger delivery has been observed for a limited set of recorded handlers and writes; broader cases remain unverified.
-- Behavior taken from the official emulator where production has not been observed may change.
+- Verified against production only for recorded cases ([Production verification](../#production-verification)), with no parity claim against the official emulator; official-emulator comparison is limited to recorded cases.
+- Documented unsupported rules syntax and evaluation edge cases (including certain regex constructs and case mappings) are rejected at load time or produce rule errors. `query.endBefore`, `query.isOrderByChild()`, `OrderByKey`/`OrderByValue`/`OrderByPriority`, `http.encodeURL()`, method reads without a call, and ternary callees match recorded production behavior.
+- The eight regex patterns rejected by the official emulator's determinization limit are also rejected when rules load (including inside unevaluated branches). This does not imply full regex or production equivalence.
+- Functions trigger delivery is verified only for a limited set of recorded handlers and writes.
+- Behavior adopted from the official emulator where production has not been observed may change as recordings are added.
 
 See [Realtime Database](../../products/realtime-database/#differences-from-the-official-emulator).
 
 ### Cloud Functions
 
-- Triggers for products Fireemu does not deliver events for, such as Data Connect (deferred). A Remote Config client-template publish or rollback through Fireemu's local template administration delivers the event shape recorded in production on 2026-11-21 to v1 and v2 handlers. A server-template publish delivers no event, because production's behavior there is unrecorded, and duplicate delivery and ordering guarantees are unrecorded.
-- Dart codebases, and protobuf CloudEvents ingress other than Firestore events. Firestore events reach the Python SDK as protobuf, and Node 2nd-gen functions as protobuf under `strict`.
-- The exact shape of Storage archive events remains unrecorded.
-- Python codebases serve HTTP, callable, Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, scheduled, task-queue and Auth blocking functions. They see real time only (no virtual clock), reload application source changes while ignoring edits to their `venv` and Python bytecode caches, and run on macOS and Linux only. Restart Fireemu after changing installed dependencies. Their callables' App Check tokens are verified by the Python SDK against the App Check emulator's keys (no limited-use consumption, and an explicit App Check configuration refuses to start). See [Cloud Functions (Python)](../../products/functions-python/).
+- Event triggers for products Fireemu does not deliver events for, such as Data Connect (deferred). Publishing or rolling back a Remote Config client template through local template administration delivers the event shape recorded in production on 2026-11-21 to v1 and v2 handlers. Publishing a server template delivers no event (production behavior is unrecorded), and duplicate-delivery/ordering guarantees are unrecorded.
+- Dart codebases, and general protobuf CloudEvents ingress outside Firestore events (Firestore events reach Python SDK handlers as protobuf, and Node.js 2nd-gen handlers as protobuf under `strict`).
+- Exact payload shape of Storage archive events remains unrecorded.
+- Python codebases support HTTP, callable, Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, scheduled, task-queue, and Auth blocking functions on macOS and Linux only. They run on real time (no virtual clock) and reload app source files while ignoring `venv` and bytecode caches; restart Fireemu after changing installed packages. Callable App Check tokens are verified by the Python SDK against the App Check emulator's keys (no limited-use consumption, and explicit App Check config refuses startup). See [Cloud Functions (Python)](../../products/functions-python/).
 
 ### Cloud Pub/Sub
 
-- Schemas, BigQuery and Cloud Storage subscription delivery, exactly-once delivery and message transforms.
-- `UpdateTopic` supports only the `labels` and, in the emulator profile, `message_storage_policy` and `kms_key_name` update masks; `DetachSubscription` is not implemented.
-- `messageStoragePolicy` is stored as sent and never checked against Google Cloud's regions; the `strict` profile refuses it.
-- Topic key names and tags are stored as sent and never validated in the emulator profile; the strict profile refuses them.
+- Schemas, BigQuery/Cloud Storage subscription delivery, exactly-once delivery, and message transforms.
+- `UpdateTopic` supports only `labels` (plus `message_storage_policy` and `kms_key_name` in the `emulator` profile); `DetachSubscription` is not implemented.
+- In the `emulator` profile, `messageStoragePolicy`, topic key names, and tags are stored as sent without validation against Google Cloud regions; `strict` refuses them.
 
 ### App Check
 
-- Attestation through Play Integrity, App Attest, DeviceCheck or reCAPTCHA, and replay protection with limited-use tokens. Local testing with debug tokens is supported.
+- Real-device attestation (Play Integrity, App Attest, DeviceCheck, reCAPTCHA) and limited-use token replay protection. Local debug tokens are supported.
 
 ## Local control limitations
 
-- Sessions share clocks, rules, Functions and the admission barrier.
-- Snapshots are held in memory for the daemon lifetime; they do not capture outstanding Functions work.
-- `awaitIdle` does not wait for Text Index work or provide causal fences across sessions.
+- Sessions within one daemon share the virtual clock, Security Rules, Functions, and admission barrier.
+- In-memory snapshots last only for the daemon's lifetime and do not capture in-flight Functions work.
+- `awaitIdle` does not wait for Enterprise text-index builds or establish causal fences across sessions.
 
 ## Differences no local emulator removes
 
-A successful local operation does not guarantee the same result in production. Fireemu does not reproduce real quota accounting, billing, IAM, organization policies, regional or network differences, or service rollouts. Local performance does not predict production latency or throughput.
+A passing local test does not guarantee identical behavior in production. Fireemu does not reproduce real quota accounting, billing, IAM, organization policies, regional/network differences, or service rollouts, and local performance does not predict production latency or throughput.
 
-Security Rules and API behavior are implemented from documentation and from observations of Firebase's actual behavior. Changes in Firebase, or conditions that have not been tested, may introduce differences that have not been recorded yet.
+Security Rules and API behavior are implemented from documentation and production recordings. Upstream Firebase changes or untested edge cases can still introduce unrecorded differences.
 
 ## Local limits
 
-Some limits exist only in Fireemu, to bound memory use: the [Firestore history limits](../../products/firestore/#transactions-and-history) and the optional [Storage stored-byte limit](../../products/storage/#limit-the-stored-bytes).
+Fireemu adds a few local-only bounds to keep memory predictable: [Firestore history limits](../../products/firestore/#transactions-and-history) and the optional [Storage stored-byte limit](../../products/storage/#limit-the-stored-bytes).
 
 ## Changes between versions
 
-Configuration and behavior may change between releases. See the [CHANGELOG](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md).
+Configuration keys and runtime behavior may change between releases. See the [CHANGELOG](https://github.com/fireemu/fireemu/blob/main/CHANGELOG.md).
 
 ## Related
 

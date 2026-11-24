@@ -1,78 +1,78 @@
 ---
 title: Local Emulator Suiteから移行する
-description: プロジェクトをfirebase emulators:execからFireemuに移し、strictプロファイルで失敗するテストに対処します。
+description: firebase emulators:execからの移行手順と、strictプロファイルでテストが失敗したときの対処方法です。
 ---
 
-Fireemuは既存の`firebase.json`を読み込み、同じデフォルトポートで動作し、公式のコマンド名も受け付けます。そのため、ほとんどのプロジェクトはコマンドを1つ変えるだけで移行できます。
+Fireemuは既存の`firebase.json`をそのまま読み込み、同じ既定ポートで動作し、Firebase CLI互換のコマンド名も受け付けます。そのため、多くのプロジェクトは実行コマンドを1か所差し替えるだけで移行できます。
 
 ## 始める前に
 
-使っているプロダクトが[対応プロダクトの一覧](../../#supported-products)に含まれているか確認してください。Local Emulator SuiteはApp Hosting、Data Connect、Extensionsにも対応していますが、Fireemuは対応しておらず、Realtime Databaseは部分的な対応です。
+利用しているサービスが[対応サービスの一覧](../../#supported-products)に含まれているか確認してください。公式のLocal Emulator SuiteはApp Hosting、Data Connect、Extensionsにも対応していますが、Fireemuでは未対応で、Realtime Databaseも一部対応にとどまります。
 
 ## コマンドを切り替える
 
-1. Fireemuをインストールし、`firebase.json`を参照する`fireemu.toml`を作成します。
+1. Fireemuをインストールし、`firebase.json`を参照する`fireemu.toml`を生成します。
 
    ```sh
    npm install --save-dev fireemu
    npx fireemu init --firebase-json firebase.json
    ```
 
-   デフォルトの`profile = "strict"`のままにします。
+   プロファイルは既定の`profile = "strict"`のままにしておきます。
 
-2. コマンドを置き換えます。
+2. npmスクリプトやCIの実行コマンドを置き換えます。
 
    | 変更前 | 変更後 |
    |---|---|
    | `firebase emulators:exec "npm test"` | `fireemu exec -- npm test` |
    | `firebase emulators:start` | `fireemu up` |
 
-   `fireemu emulators:exec`と`fireemu emulators:start`も使えます。また、`exec`は公式の引用符付きスクリプト形式も受け付けます。
+   `fireemu emulators:exec`や`fireemu emulators:start`もエイリアスとして使え、引用符で囲んだスクリプト文字列形式もそのまま渡せます。
 
 3. テストを実行します。
 
 ## `strict`でテストが失敗するとき
 
-公式エミュレータでは通っていたテストが`strict`で失敗する場合、多くは、アプリケーションが本番でも遭遇する動作が表に出ています。テストまたはアプリケーションを修正するか、下記の個別の設定だけを緩めてください。プロファイル全体を`emulator`に切り替えることは避けてください。
+公式エミュレータでは通っていたテストが`strict`で失敗する場合、本番環境でも実際に引っかかる制約を先に検出しているケースが大半です。プロファイル全体を`emulator`へ切り替えると全サービスで本番チェックが無効になるため、アプリやテストを修正するか、必要な個別設定だけを調整するのがおすすめです。
 
 ### 署名なしのエミュレータIDトークン
 
-`@firebase/rules-unit-testing`の`authenticatedContext()`とクライアントSDKの`mockUserToken`は、`strict`でもデフォルトで動作します。
+`@firebase/rules-unit-testing`の`authenticatedContext()`とクライアントSDKの`mockUserToken`は、`strict`でも既定で動作します。
 
-- `auth.allowUnsignedIdTokens`を`false`にすると、Security Rulesの対象でのそれらのフォールバックが無効になり、本番がそれらを拒否する動作をテストできます。
-- 拒否のテストでは、SDKヘルパーのデフォルトである`iat: 0` / `exp: 3600`を使い、有効期限後の時刻にクロックを設定します。通常の検証を通るFireemu発行のトークンは、引き続き受け付けられます。
-- `auth.idTokenSigning = "session-rsa"`を使うと、署名なしのIDトークンはすべて拒否されます。
+- `auth.allowUnsignedIdTokens = false`にすると、Security Rulesでのモックトークンフォールバックが無効になり、本番と同じく署名なしトークンが拒否される挙動を検証できます。
+- 拒否ケースのテストでは、SDKヘルパー既定の`iat: 0` / `exp: 3600`に対し、有効期限後の時刻へ時計を進めてください。通常の検証を通るFireemu発行トークンは引き続き受け付けられます。
+- `auth.idTokenSigning = "session-rsa"`を指定すると、すべての署名なしIDトークンを拒否します。
 
-[署名なしのモックIDトークン](../../products/auth/#署名なしのモックidトークン)を参照してください。
+詳しくは[署名なしのモックIDトークン](../../products/auth/#署名なしのモックidトークン)を参照してください。
 
 ### 名前付きデータベース
 
-本番で作成が必要なのと同じように、名前付きデータベースはそれぞれ`firebase.json`の`firestore`配列で`rules`ファイルと`indexes`ファイルとともに宣言するか、Admin APIで作成してください。実行時に作成されたデータベースには、ルールを読み込むまでSecurity Rulesがありません([Firestore](../../products/firestore/#名前付きデータベース)を参照)。
+本番と同じく、名前付きデータベースは`firebase.json`の`firestore`配列に`rules`と`indexes`とあわせて宣言するか、Admin APIで作成してください。実行時に作成したデータベースは、ルールを読み込むまでSecurity Rulesが未設定の状態になります（[Firestoreの名前付きデータベース](../../products/firestore/#名前付きデータベース)）。
 
 ### 複合インデックス
 
-クエリは、本番と同様に、宣言されたインデックスに対して検査されます。クエリに必要なインデックスは、`firebase.json`から参照される`firestore.indexes.json`で宣言してください。
+クエリは本番と同じルールで、`firebase.json`が参照する`firestore.indexes.json`と照合されます。
 
-- インデックスが存在しないクエリは、本番と同様に、インデックスへのリンクを添えた`FAILED_PRECONDITION`で拒否されます。
-- 単一フィールドの複合インデックスは、`firebase deploy`が拒否するのと同様に、ファイルの読み込み時に拒否されます。`fieldOverrides`を使ってください。
-- インデックスを追加している間もそのようなクエリを実行し続けるには、`firestore.missingIndexes`を`"report"`に設定します。クエリは実行され、不足している各インデックスが、データベースごとに1回、標準エラー出力に報告されます。報告には本番の拒否メッセージと`firestore.indexes.json`のエントリが含まれます。`productionExact`はこのキーを変更しません。
-- ORクエリでは、標準エラー出力の補足的な診断が、不足している分岐のインデックスをすべて重複なく列挙するため、それらの定義をまとめて追加できます。`strict`は引き続き、最初のインデックス作成リンクを含む既存のSDKエラーを返し、`emulator`プロファイルは引き続きそのクエリを実行します。繰り返される提案は重複排除され、診断キャッシュには上限があります。
+- 必要なインデックスが未定義のクエリは、作成リンク付きで`FAILED_PRECONDITION`になります。
+- 単一フィールドの複合インデックス定義は、`firebase deploy`と同様にファイル読み込み時に拒否されます。代わりに`fieldOverrides`を使ってください。
+- インデックスを段階的に追加したい間は、`firestore.missingIndexes = "report"`を設定します。クエリ自体は通しつつ、不足しているインデックスごとにデータベース単位で1回、本番の拒否文言と`firestore.indexes.json`用エントリを標準エラーへ出力します。この設定は`productionExact`では上書きされません。
+- 複数ブランチのインデックスが必要なORクエリでは、不足している全ブランチの定義を標準エラーの補足診断でまとめて出力します（重複排除・上限付きキャッシュあり）。`strict`ではSDKエラーに最初の作成リンクが返り、`emulator`プロファイルではクエリが実行されます。
 
 ### 本番プロジェクトを反映する設定
 
-プロファイルを切り替えるのではなく、本番プロジェクトに合わせてこれらを設定してください。
+本番プロジェクト側で既定と異なる設定にしている場合は、プロファイルを変えずに該当項目だけ合わせてください。
 
 | 設定 | `strict`での動作 |
 |---|---|
-| `auth.improvedEmailPrivacy` | メール列挙保護で、新しい本番プロジェクトではオンです。本番プロジェクトでオフにしている場合にのみ`false`にしてください。その場合、サインインは公式のAuthエミュレータと同様に`EMAIL_NOT_FOUND`と`INVALID_PASSWORD`を返します。 |
-| `auth.mfa` | プロジェクトの多要素認証の設定です。`strict`ではSMSとTOTPが有効な状態で始まり、`productionExact`では新しい本番プロジェクトと同様に多要素認証がオフの状態で始まります。[Authentication](../../products/auth/#多要素認証)を参照してください。 |
-| `firestore.enforceLimits` | 本番では常にStandardエディションのクエリ制限が適用されます。`false`にすると本番が拒否するクエリが通るため、特別な理由がない限りオンのままにしてください。`strict`では、クエリ制限だけを切り替えます。 |
+| `auth.improvedEmailPrivacy` | メール列挙保護です。新しい本番プロジェクトに合わせて既定でオンになっています。本番でオフにしている場合のみ`false`にしてください（サインイン時に`EMAIL_NOT_FOUND`や`INVALID_PASSWORD`が返るようになります）。 |
+| `auth.mfa` | 多要素認証の設定です。テストしやすいよう`strict`ではSMS・TOTPが既定で有効になっており、`productionExact`では新規本番プロジェクトと同じくオフで始まります（[Authenticationの多要素認証](../../products/auth/#多要素認証)）。 |
+| `firestore.enforceLimits` | 本番で常に適用されるStandardエディションのクエリ制限です。特別な事情がない限りオンのままにしてください。`strict`ではこのキーはクエリ制限だけを制御します。 |
 
 ## 公式CLIとの違い
 
-- `--export-on-exit`が失敗した場合、コマンド自体が成功していても、実行は終了コード1で終了します。公式CLIは警告を出して終了コード0で終了するだけです。Fireemuは、保存されたデータに依存するCIジョブがそのデータなしに成功することがないよう、この点で異なります。
-- Unixでは、見つかった`fireemu.toml`または`firebase.json`は、所有者が信頼できる場合にのみ読み込まれます。[設定ファイル](../../guides/configuration/#ファイル所有者のチェック)を参照してください。
-- `strict`では、Security Rulesのないプロジェクトは、ルールをリリースしていない本番プロジェクトと同様に動作し、クライアントのリクエストは拒否されます。[Security Rules](../../guides/security-rules/)を参照してください。
+- **`--export-on-exit`失敗時の終了コード**：テストコマンドが成功してもエクスポートに失敗した場合は終了コード1で終わります（公式CLIは警告を出して0で終了します）。保存データに依存するCIジョブが気づかず成功するのを防ぐためです。
+- **Unixでのファイル所有者チェック**：自動探索で見つけた`fireemu.toml`や`firebase.json`は、信頼できるユーザーが所有している場合のみ読み込みます（[ファイル所有者のチェック](../../guides/configuration/#ファイル所有者のチェック)）。
+- **Security Rules未設定時の挙動**：`strict`では、ルールを読み込んでいないプロジェクトはルール未デプロイの本番プロジェクトと同じくクライアントからのリクエストを拒否します（[Security Rules](../../guides/security-rules/)）。
 
 ## 関連項目
 
