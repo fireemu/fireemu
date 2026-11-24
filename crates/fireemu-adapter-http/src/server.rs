@@ -654,33 +654,35 @@ fn is_remote_peer(peer: std::net::IpAddr) -> bool {
 /// Functions event queue when a Functions runtime is attached to `control`.
 #[must_use]
 pub fn remote_config_stores(control: &ControlState) -> Arc<RemoteConfigStores> {
-    Arc::new(control.functions.as_ref().map_or_else(
-        RemoteConfigStores::default,
-        |functions| {
-            let functions = functions.clone();
-            let user = control.remote_config.update_user.clone();
-            RemoteConfigStores {
-                client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
-                    let metadata = remote_config_http::version_fields(
-                        version,
-                        user.as_ref(),
-                        remote_config_http::Surface::Version,
-                    );
-                    let publication = functions
-                        .reserve_remote_config_version(&metadata)
-                        .map_err(|error| match error {
-                            PublishEventError::Capacity => RemoteConfigError::EventCapacity,
-                            PublishEventError::Invalid | PublishEventError::Unavailable => {
-                                RemoteConfigError::EventUnavailable
-                            }
-                        })?;
-                    Ok(Box::new(move || publication.publish()))
-                })),
-                // Production did not record events for server-namespace commits.
-                server: TemplateStore::default(),
-            }
-        },
-    ))
+    Arc::new(
+        control
+            .functions
+            .as_ref()
+            .map_or_else(RemoteConfigStores::default, |functions| {
+                let functions = functions.clone();
+                let user = control.remote_config.update_user.clone();
+                RemoteConfigStores {
+                    client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
+                        let metadata = remote_config_http::version_fields(
+                            version,
+                            user.as_ref(),
+                            remote_config_http::Surface::Version,
+                        );
+                        let publication = functions
+                            .reserve_remote_config_version(&metadata)
+                            .map_err(|error| match error {
+                                PublishEventError::Capacity => RemoteConfigError::EventCapacity,
+                                PublishEventError::Invalid | PublishEventError::Unavailable => {
+                                    RemoteConfigError::EventUnavailable
+                                }
+                            })?;
+                        Ok(Box::new(move || publication.publish()))
+                    })),
+                    // Production did not record events for server-namespace commits.
+                    server: TemplateStore::default(),
+                }
+            }),
+    )
 }
 
 /// Serves the Identity Toolkit surface on `listener` until the task is aborted.

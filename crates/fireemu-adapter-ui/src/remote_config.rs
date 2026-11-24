@@ -38,7 +38,13 @@ pub fn route(state: &UiState, rest: &str, req: &UiRequest) -> UiResponse {
     // A commit reserves, appends and enqueues its version under admission, exactly as the HTTP
     // listener does, so a reset cannot interleave with it.
     let _admitted = fireemu_adapter_http::remote_config_http::commits(&req.method, &req.query)
-        .then(|| state.control.barrier.as_ref().map(|barrier| barrier.admit()))
+        .then(|| {
+            state
+                .control
+                .barrier
+                .as_ref()
+                .map(|barrier| barrier.admit())
+        })
         .flatten();
     let reply = fireemu_adapter_http::remote_config_http::dispatch(
         store,

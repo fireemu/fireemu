@@ -51,9 +51,9 @@ fn valid_id(segment: &str) -> bool {
         && segment != "."
         && segment != ".."
         && !crate::has_control_chars(segment)
-        && segment
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'+' | b'%'))
+        && segment.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'+' | b'%')
+        })
 }
 
 fn validate_query(query: &str) -> Result<(), UiResponse> {
@@ -192,7 +192,10 @@ pub async fn route(state: &Arc<UiState>, rest: &str, req: &UiRequest) -> UiRespo
     {
         Ok(Ok(response)) => response,
         Ok(Err(message)) => {
-            return UiResponse::error(502, &format!("BAD_GATEWAY : Pub/Sub transport failed: {message}"));
+            return UiResponse::error(
+                502,
+                &format!("BAD_GATEWAY : Pub/Sub transport failed: {message}"),
+            );
         }
         Err(_) => {
             return UiResponse::error(504, "DEADLINE_EXCEEDED : Pub/Sub request timed out");
@@ -243,9 +246,13 @@ mod tests {
     fn admits_supported_pubsub_routes_and_rejects_unknown_or_cross_project_paths() {
         let s = sessions();
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics", &req("GET", "pageSize=20"))
-                .unwrap()
-                .target,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics",
+                &req("GET", "pageSize=20")
+            )
+            .unwrap()
+            .target,
             "/v1/projects/demo-app/topics?pageSize=20"
         );
         assert_eq!(
@@ -255,21 +262,33 @@ mod tests {
             "/v1/projects/demo-app/topics/jobs"
         );
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics/jobs:publish", &req("POST", ""))
-                .unwrap()
-                .target,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics/jobs:publish",
+                &req("POST", "")
+            )
+            .unwrap()
+            .target,
             "/v1/projects/demo-app/topics/jobs:publish"
         );
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/subscriptions/worker:pull", &req("POST", ""))
-                .unwrap()
-                .target,
+            prepare(
+                &s,
+                "v1/projects/demo-app/subscriptions/worker:pull",
+                &req("POST", "")
+            )
+            .unwrap()
+            .target,
             "/v1/projects/demo-app/subscriptions/worker:pull"
         );
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/subscriptions/worker:acknowledge", &req("POST", ""))
-                .unwrap()
-                .target,
+            prepare(
+                &s,
+                "v1/projects/demo-app/subscriptions/worker:acknowledge",
+                &req("POST", "")
+            )
+            .unwrap()
+            .target,
             "/v1/projects/demo-app/subscriptions/worker:acknowledge"
         );
         assert_eq!(
@@ -288,9 +307,13 @@ mod tests {
         );
         // IAM / arbitrary verbs refused.
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics/jobs:setIamPolicy", &req("POST", ""))
-                .unwrap_err()
-                .status,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics/jobs:setIamPolicy",
+                &req("POST", "")
+            )
+            .unwrap_err()
+            .status,
             404
         );
         // Traversal and unsupported query params refused.
@@ -301,16 +324,24 @@ mod tests {
             404
         );
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics", &req("GET", "access_token=bad"))
-                .unwrap_err()
-                .status,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics",
+                &req("GET", "access_token=bad")
+            )
+            .unwrap_err()
+            .status,
             400
         );
         // Wrong method refused.
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics/jobs:publish", &req("GET", ""))
-                .unwrap_err()
-                .status,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics/jobs:publish",
+                &req("GET", "")
+            )
+            .unwrap_err()
+            .status,
             404
         );
     }
@@ -327,9 +358,13 @@ mod tests {
             413
         );
         assert_eq!(
-            prepare(&s, "v1/projects/demo-app/topics/bad\x00name", &req("GET", ""))
-                .unwrap_err()
-                .status,
+            prepare(
+                &s,
+                "v1/projects/demo-app/topics/bad\x00name",
+                &req("GET", "")
+            )
+            .unwrap_err()
+            .status,
             400
         );
     }

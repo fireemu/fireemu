@@ -1590,10 +1590,12 @@ async fn serve_suite(
                         .collect(),
                 }
             }),
-            pubsub: addrs.pubsub.map(|address| fireemu_adapter_ui::pubsub::PubSubEndpoint {
-                address,
-                bearer_token: cfg.pubsub_local_bearer_token.clone(),
-            }),
+            pubsub: addrs
+                .pubsub
+                .map(|address| fireemu_adapter_ui::pubsub::PubSubEndpoint {
+                    address,
+                    bearer_token: cfg.pubsub_local_bearer_token.clone(),
+                }),
             remote_config: Some(remote_config.clone()),
             cfg: &cfg,
             only: &only,

@@ -2682,7 +2682,9 @@ async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
             "version": {"description": "first"}
         }),
     );
-    pub_req.headers.insert("if-match".to_owned(), "*".to_owned());
+    pub_req
+        .headers
+        .insert("if-match".to_owned(), "*".to_owned());
     let published = handle(&s, &pub_req).await;
     assert_eq!(published.status, 200);
     let etag = published
@@ -2691,7 +2693,10 @@ async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
         .find(|(k, _)| k == "etag")
         .map(|(_, v)| v.clone())
         .expect("published etag");
-    assert_eq!(published.body_json().unwrap()["version"]["versionNumber"], "1");
+    assert_eq!(
+        published.body_json().unwrap()["version"]["versionNumber"],
+        "1"
+    );
 
     // Incremental update with matching ETag creates version 2.
     let mut pub2 = request(
@@ -2702,7 +2707,10 @@ async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
     pub2.headers.insert("if-match".to_owned(), etag.clone());
     let published2 = handle(&s, &pub2).await;
     assert_eq!(published2.status, 200);
-    assert_eq!(published2.body_json().unwrap()["version"]["versionNumber"], "2");
+    assert_eq!(
+        published2.body_json().unwrap()["version"]["versionNumber"],
+        "2"
+    );
 
     // Stale ETag returns 412.
     let mut stale = request("PUT", base, &json!({}));
@@ -2720,7 +2728,11 @@ async fn remote_config_front_reads_publishes_lists_versions_and_rolls_back() {
 
     let (status, rolled) = call(
         &s,
-        request("POST", &format!("{base}:rollback"), &json!({"versionNumber": "1"})),
+        request(
+            "POST",
+            &format!("{base}:rollback"),
+            &json!({"versionNumber": "1"}),
+        ),
     )
     .await;
     assert_eq!(status, 200);
@@ -2782,7 +2794,10 @@ async fn remote_config_over_real_http_listener_forwards_if_match_and_enforces_et
         payload.len()
     );
     let resp = raw_http(addr, &put_req).await;
-    assert!(resp.starts_with("HTTP/1.1 200 OK"), "unexpected response: {resp}");
+    assert!(
+        resp.starts_with("HTTP/1.1 200 OK"),
+        "unexpected response: {resp}"
+    );
     let etag = resp
         .lines()
         .find_map(|line| {
