@@ -82,21 +82,11 @@ const SERVICES = [
 
 /** Whether `value` is an RFC 3339 UTC time of a real calendar instant (fraction of 0 to 9 digits). */
 export function validTime(value) {
-  const m =
-    /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]{1,9})?Z$/.exec(
-      value,
-    );
-  if (!m) return false;
-  const [year, month, day, hour, minute, second] = m.slice(1).map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day &&
-    date.getUTCHours() === hour &&
-    date.getUTCMinutes() === minute &&
-    date.getUTCSeconds() === second
-  );
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z$/.test(value))
+    return false;
+  // A field out of its range moves the instant (02-30 becomes 03-02), so the round trip differs.
+  const date = new Date(`${value.slice(0, 19)}Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 19) === value.slice(0, 19);
 }
 
 /**

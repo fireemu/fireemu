@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { Transport, Unknown } from "../remote-config-observe/transport.mjs";
-import { newHistoryGrants, observe, templateUrls } from "./record.mjs";
+import { closureForms, newHistoryGrants, observe, templateUrls } from "./record.mjs";
 
 const PROJECT = "synthetic-sandbox";
 const NUMBER = "123456789012";
@@ -147,8 +147,15 @@ async function pass(t, { lost = [], status = {}, respond = () => null } = {}) {
     if (forced) return new Response(forced === 304 ? null : "{}", { status: forced });
     return world.fetch(url, init);
   };
+  // History requests go through the pass's own grants, as in production (ruling 7 item 1).
+  const history = newHistoryGrants();
+  const forms = closureForms({ project: PROJECT, number: NUMBER, history });
+  const allow = (url, method) =>
+    !url.pathname.endsWith("/remoteConfig:listVersions") ||
+    url.search === "?pageSize=8" ||
+    forms(url, method);
   const transport = new LossyTransport(
-    { out, allow: () => true, token: () => "t", maxRequests: 400, timeoutMs: 1000, fetchImpl },
+    { out, allow, token: () => "t", maxRequests: 400, timeoutMs: 1000, fetchImpl },
     new Set(lost),
   );
   const functions = {
@@ -169,7 +176,7 @@ async function pass(t, { lost = [], status = {}, respond = () => null } = {}) {
   };
   const { result } = await observe({
     transport,
-    history: newHistoryGrants(),
+    history,
     urls: templateUrls(RC, PROJECT, NUMBER),
     runId: "261125000000abc",
     timing: { paceMs: 0, readyMs: 0, windowReads: 2, windowMs: 0, timeoutMs: 1000 },
