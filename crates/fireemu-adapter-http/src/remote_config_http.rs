@@ -205,7 +205,7 @@ impl Reply {
         }
     }
 
-    /// The reply as the listener writes it: status, body, ETag, content type and compression.
+    /// The reply as the listener writes it: status, body, `ETag`, content type and compression.
     pub(crate) fn wire(self) -> Wire {
         const JSON: &str = "application/json; charset=UTF-8";
         let (body, content_type, compressible) = match self.body {
@@ -837,10 +837,9 @@ pub fn commits(method: &str, query: &str) -> bool {
 }
 
 /// Dispatches a matched Remote Config HTTP request against `stores` under `settings`.
-// One request's parts and the daemon's settings; grouping them would only move the list.
-#[allow(clippy::too_many_arguments)]
 /// Answers one Remote Config request against the shared stores, with the template current at the
 /// call as the version the request saw (the Emulator UI front; the listener uses `dispatch_seen`).
+// One request's parts and the daemon's settings; grouping them would only move the list.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn dispatch(
