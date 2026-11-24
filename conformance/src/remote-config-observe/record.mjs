@@ -1,0 +1,639 @@
+// Remote Config observation recorder (REMOTE-CONFIG parent, items unrecorded after
+// work/remote-config-server). One run against one target:
+//
+//   node src/remote-config-observe/record.mjs --target local --base <control apiBaseUrl>
+//     --project <id> --events-file <jsonl the local handlers append to> --out <new dir>
+//   node src/remote-config-observe/record.mjs --target production --send-production --out <new dir>
+//
+// local reads FIREEMU_CONTROL_TOKEN; production reads FIREEMU_SANDBOX_PROJECT_NUMBER and takes the
+// caller's ADC token from gcloud. Production is sent only with --send-production, which only the
+// packet's launch script passes; no test passes it.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  CANDIDATES,
+  PRODUCTION_PROJECT,
+  REGION,
+  candidateTemplate,
+  clientTemplate,
+  isEmptyTemplate,
+  names as runNames,
+  normalise,
+  serverTemplate,
+  summarise,
+} from "./plan.mjs";
+import { Functions, GCF } from "./functions.mjs";
+import { Transport, Unknown } from "./transport.mjs";
+
+// Request cap of a production run: baseline 8, deploys 2 x 44 + 1 log read, server 24 + 6,
+// client 6, history 2, window 10, cleanup 103 (Gen2 51, Gen1 43, source 3, IAM 1, list 3, two final
+// template reads), restoration 4 (a rollback and a read per namespace). The run stops at the cap.
+export const MAX_REQUESTS = 252;
+export const PRODUCTION_TIMING = {
+  paceMs: 2000,
+  readyMs: 120_000,
+  windowReads: 10,
+  windowMs: 30_000,
+  timeoutMs: 30_000,
+};
+export const LOCAL_TIMING = {
+  paceMs: 0,
+  readyMs: 0,
+  windowReads: 5,
+  windowMs: 1000,
+  timeoutMs: 10_000,
+};
+const RC_API = "https://firebaseremoteconfig.googleapis.com/v1/";
+const SERVICES = [
+  "firebaseremoteconfig.googleapis.com",
+  "cloudfunctions.googleapis.com",
+  "cloudbuild.googleapis.com",
+  "artifactregistry.googleapis.com",
+  "run.googleapis.com",
+  "eventarc.googleapis.com",
+  "logging.googleapis.com",
+];
+
+export function templateUrls(base, project) {
+  const root = new URL(`projects/${project}/`, base);
+  return {
+    client: new URL("remoteConfig", root).href,
+    server: new URL("namespaces/firebase-server/remoteConfig", root).href,
+    dataPlane: new URL("namespaces/firebase-server/serverRemoteConfig", root).href,
+  };
+}
+
+/** The closed set of production requests. */
+export function productionAllow({ project, number, names }) {
+  const p = project;
+  const own = new Set([names.gen1, names.gen2]);
+  const ids = `(${p}|${number})`;
+  const loc = `/projects/${p}/locations/${REGION}`;
+  return (url, method, { signed } = {}) => {
+    if (url.protocol !== "https:") return false;
+    const path = url.pathname;
+    if (signed) return method === "PUT" && url.host === "storage.googleapis.com";
+    switch (url.host) {
+      case "firebaseremoteconfig.googleapis.com":
+        return ["GET", "PUT", "POST"].includes(method) && path.startsWith(`/v1/projects/${p}/`);
+      case "cloudfunctions.googleapis.com": {
+        const m = /^\/v([12])(\/.*)$/.exec(path);
+        if (!m) return false;
+        const rest = m[2];
+        if (method === "DELETE") return [...own].some((n) => rest === `${loc}/functions/${n}`);
+        if (method === "GET")
+          return (
+            rest.startsWith(`${loc}/functions/`) ||
+            (m[1] === "2" && rest === `/projects/${p}/locations/-/functions`) ||
+            (m[1] === "1" && /^\/operations\/[A-Za-z0-9_.-]+$/.test(rest)) ||
+            (m[1] === "2" &&
+              new RegExp(`^/projects/${ids}/locations/${REGION}/operations/[A-Za-z0-9_-]+$`).test(
+                rest,
+              ))
+          );
+        if (method === "POST")
+          return rest === `${loc}/functions` || rest === `${loc}/functions:generateUploadUrl`;
+        return false;
+      }
+      case "storage.googleapis.com":
+        return (
+          ["GET", "DELETE"].includes(method) &&
+          path.startsWith(
+            `/storage/v1/b/gcf-v2-uploads-${number}.${REGION}.cloudfunctions.appspot.com/o/`,
+          )
+        );
+      case "logging.googleapis.com":
+        return method === "POST" && path === "/v2/entries:list";
+      case "cloudresourcemanager.googleapis.com":
+        return method === "POST" && path === `/v1/projects/${p}:getIamPolicy`;
+      case "serviceusage.googleapis.com":
+        return method === "GET" && path === `/v1/projects/${p}/services:batchGet`;
+      case "artifactregistry.googleapis.com":
+        return method === "GET" && path === `/v1${loc}/repositories/gcf-artifacts`;
+      case "eventarc.googleapis.com":
+        return (
+          method === "GET" &&
+          new RegExp(`^/v1/projects/${ids}/locations/[a-z0-9-]+/triggers/`).test(path)
+        );
+      case "run.googleapis.com":
+        return (
+          method === "GET" &&
+          new RegExp(`^/v2/projects/${ids}/locations/${REGION}/services/`).test(path)
+        );
+      default:
+        return false;
+    }
+  };
+}
+
+/** Local runs reach only the loopback control listener. */
+export function localAllow(base) {
+  const origin = new URL(base);
+  return (url, method, { signed } = {}) =>
+    !signed &&
+    url.origin === origin.origin &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+    ["GET", "PUT", "POST"].includes(method);
+}
+
+class Stop extends Error {}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const canonicalBindings = (policy) =>
+  JSON.stringify(
+    (policy?.bindings ?? [])
+      .map((b) => [b.role, [...(b.members ?? [])].sort(), b.condition ?? null])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+
+/**
+ * Runs the observation. `ctx`: {transport, urls, runId, timing, wait, events(caseId) -> rows,
+ * production?: {project, functions, google: {services, repository, iam, functions}}}.
+ */
+export async function observe(ctx) {
+  const { transport: t, urls, runId, timing, wait = sleep } = ctx;
+  const prod = ctx.production ?? null;
+  const result = {
+    runId,
+    target: prod ? "production" : "local",
+    stopped: null,
+    open: [],
+    baseline: {},
+  };
+  const versions = [];
+  const validations = [];
+  const sent = { client: false, server: false };
+  const rows = new Map();
+  let base = {};
+  let dataPlane = null;
+  let wildcard = null;
+  const history = {};
+  let lastWrite = 0;
+
+  const read = async (caseId, url) => {
+    const r = await t.send(caseId, url);
+    if (r.status !== 200 || !r.etag) throw new Error(`${caseId}: template read ${r.status}`);
+    return r;
+  };
+  // A write in one namespace. An unknown answer stops the forward program; restoration below
+  // reads the namespace and never treats an absence as settling it.
+  const write = async (caseId, namespace, url, method, body, ifMatch, { creates = true } = {}) => {
+    const gap = lastWrite + timing.paceMs - Date.now();
+    if (gap > 0) await wait(gap);
+    sent[namespace] = true;
+    try {
+      return await t.send(caseId, url, { method, body, ifMatch });
+    } catch (error) {
+      if (error instanceof Unknown && creates)
+        result.open.push(`${caseId}: unknown ${namespace} write (A2 reads ${namespace})`);
+      throw error;
+    } finally {
+      lastWrite = Date.now();
+    }
+  };
+  const created = (namespace, step, r) => {
+    if (r.status !== 200 || !r.json.version?.versionNumber)
+      throw new Stop(`${step}: ${namespace} write answered ${r.status}`);
+    const v = r.json.version;
+    const row = {
+      namespace,
+      step,
+      versionNumber: String(v.versionNumber),
+      updateTime: v.updateTime ?? null,
+      updateType: v.updateType ?? null,
+      etag: r.etag,
+    };
+    versions.push(row);
+    return row;
+  };
+  const collect = async (caseId) => {
+    for (const row of await ctx.events(caseId)) rows.set(row.insertId ?? JSON.stringify(row), row);
+  };
+
+  try {
+    // ---- A. baseline (read-only) ----
+    const client0 = await read("a-client", urls.client);
+    const server0 = await read("a-server", urls.server);
+    base = {
+      client: {
+        version: client0.json.version?.versionNumber ?? null,
+        empty: isEmptyTemplate(client0.json),
+        etag: client0.etag,
+      },
+      server: {
+        version: server0.json.version?.versionNumber ?? null,
+        empty: isEmptyTemplate(server0.json),
+        etag: server0.etag,
+      },
+    };
+    result.baseline.before = base;
+    if (!base.client.empty || !base.server.empty || !base.client.version || !base.server.version)
+      throw new Stop("templates are not at the published empty baseline");
+    if (prod) {
+      const g = prod.google;
+      const services = await t.send("a-services", g.services);
+      const states = Object.fromEntries(
+        (services.json.services ?? []).map((s) => [s.config?.name ?? s.name, s.state]),
+      );
+      result.baseline.services = states;
+      if (services.status !== 200 || !SERVICES.every((s) => states[s] === "ENABLED"))
+        throw new Stop("a required API is not ENABLED");
+      const repo = await t.send("a-repository", g.repository);
+      result.baseline.repository = {
+        status: repo.status,
+        cleanupPolicies: Object.keys(repo.json.cleanupPolicies ?? {}),
+      };
+      if (repo.status !== 200)
+        throw new Stop("gcf-artifacts is missing (a deploy would create it)");
+      const iam = await t.send("a-iam", g.iam, { method: "POST", body: {} });
+      if (iam.status !== 200) throw new Stop("project IAM unreadable");
+      result.baseline.iamBefore = canonicalBindings(iam.json);
+      result.baseline.functionsBefore = await listFunctions(t, g.functions, "a-functions");
+      const own = [prod.functions.names.gen1, prod.functions.names.gen2];
+      if (
+        result.baseline.functionsBefore.some((n) => own.some((o) => n.endsWith(`/functions/${o}`)))
+      )
+        throw new Stop("a fresh function name already exists");
+
+      // ---- B. deploy, one at a time ----
+      for (const generation of [1, 2])
+        if (!(await prod.functions.deploy(generation)))
+          throw new Stop(`gen${generation} deploy did not complete`);
+      await wait(timing.readyMs); // Gen2 trigger readiness (2026-11-21: events arrived after 100 s)
+      await collect("b-logs-baseline");
+      if (rows.size) throw new Stop("rows with this run's marker before any publish");
+    }
+
+    // ---- C0. control: one client publish before the server phase ----
+    let clientTag = base.client.etag;
+    const c0 = created(
+      "client",
+      "c0",
+      await write(
+        "c0-publish",
+        "client",
+        urls.client,
+        "PUT",
+        clientTemplate("c0", runId),
+        clientTag,
+      ),
+    );
+    clientTag = c0.etag;
+
+    // ---- S. server namespace ----
+    const accepted = [];
+    for (const [i, candidate] of CANDIDATES.entries()) {
+      const caseId = `s-validate-${String(i).padStart(2, "0")}`;
+      let r;
+      try {
+        r = await write(
+          caseId,
+          "server",
+          `${urls.server}?validateOnly=true`,
+          "PUT",
+          candidateTemplate(candidate),
+          base.server.etag,
+          { creates: false },
+        );
+      } catch (error) {
+        if (!(error instanceof Unknown)) throw error;
+        // A validate-only request creates nothing: it is recorded unknown and the run goes on.
+        validations.push({ name: candidate.name, status: "unknown" });
+        continue;
+      }
+      validations.push({
+        name: candidate.name,
+        status: r.status,
+        error: r.json.error?.status ?? null,
+        message: r.json.error?.message ?? null,
+      });
+      if (r.status === 200) accepted.push(candidate);
+    }
+    let serverTag = base.server.etag;
+    const s1 = created(
+      "server",
+      "s1",
+      await write(
+        "s1-publish",
+        "server",
+        urls.server,
+        "PUT",
+        serverTemplate(accepted, { description: `fireemu rc-observe ${runId} s1` }),
+        serverTag,
+      ),
+    );
+    serverTag = s1.etag;
+    const plane = await t.send("s2-data-plane", urls.dataPlane);
+    dataPlane = plane.status === 200 ? plane.json : null;
+    result.dataPlaneStatus = plane.status;
+    await read("s3-server-admin", urls.server);
+    // Item 7: wildcard If-Match on the server namespace, on a version without a description.
+    const s4 = await write(
+      "s4-wildcard",
+      "server",
+      urls.server,
+      "PUT",
+      serverTemplate(accepted, { top: "wildcard" }),
+      "*",
+    );
+    wildcard = {
+      status: s4.status,
+      error: s4.json.error?.status ?? null,
+      message: s4.json.error?.message ?? null,
+    };
+    if (s4.status === 200) created("server", "s4", s4);
+    created(
+      "server",
+      "s5",
+      await write("s5-rollback", "server", `${urls.server}:rollback`, "POST", {
+        versionNumber: String(base.server.version),
+      }),
+    );
+    const s6 = await read("s6-server", urls.server);
+    if (!isEmptyTemplate(s6.json))
+      throw new Stop("server rollback did not restore the empty template");
+
+    // ---- C. client chain (ordering, duplicates, the version without a description) ----
+    for (const step of ["c1", "c2", "c3"]) {
+      const v = created(
+        "client",
+        step,
+        await write(
+          `${step}-publish`,
+          "client",
+          urls.client,
+          "PUT",
+          clientTemplate(step, runId),
+          clientTag,
+        ),
+      );
+      clientTag = v.etag;
+    }
+    created(
+      "client",
+      "c4",
+      await write("c4-rollback", "client", `${urls.client}:rollback`, "POST", {
+        versionNumber: String(base.client.version),
+      }),
+    );
+    const c5 = await read("c5-client", urls.client);
+    if (!isEmptyTemplate(c5.json))
+      throw new Stop("client rollback did not restore the empty template");
+
+    // ---- H. version metadata (updateUser) ----
+    for (const [namespace, url] of [
+      ["client", urls.client],
+      ["server", urls.server],
+    ]) {
+      const h = await t.send(`h-${namespace}-history`, `${url}:listVersions?pageSize=8`);
+      history[namespace] = h.status === 200 ? h.json : null;
+    }
+
+    // ---- F. delivery window ----
+    for (let i = 0; i < timing.windowReads; i += 1) {
+      await wait(timing.windowMs);
+      await collect(`f-events-${i}`);
+    }
+  } catch (error) {
+    result.stopped =
+      error instanceof Stop || error instanceof Unknown ? error.message : `error: ${error.message}`;
+  } finally {
+    // ---- G. restoration and cleanup ----
+    result.baseline.after = {};
+    for (const [namespace, url] of [
+      ["client", urls.client],
+      ["server", urls.server],
+    ]) {
+      try {
+        let r = await t.send(`g-${namespace}`, url);
+        if (
+          r.status === 200 &&
+          !isEmptyTemplate(r.json) &&
+          sent[namespace] &&
+          base[namespace]?.version
+        ) {
+          const back = await write(`g-${namespace}-restore`, namespace, `${url}:rollback`, "POST", {
+            versionNumber: String(base[namespace].version),
+          });
+          if (back.status === 200) created(namespace, "restore", back);
+          r = await t.send(`g-${namespace}-after-restore`, url);
+        }
+        result.baseline.after[namespace] = {
+          status: r.status,
+          empty: r.status === 200 && isEmptyTemplate(r.json),
+          version: r.json.version?.versionNumber ?? null,
+        };
+      } catch (error) {
+        result.open.push(`g-${namespace}: ${error.message}`);
+      }
+    }
+    if (prod) {
+      const f = prod.functions;
+      for (const step of [() => f.remove(2), () => f.remove(1), () => f.removeSource()]) {
+        try {
+          await step();
+        } catch (error) {
+          result.open.push(`cleanup: ${error.message}`);
+        }
+      }
+      result.open.push(...f.open);
+      for (const [generation, s] of Object.entries(f.state))
+        if (s.pending) result.open.push(`gen${generation}: create not settled`);
+      try {
+        const iam = await t.send("g-iam", prod.google.iam, { method: "POST", body: {} });
+        result.baseline.iamEqual =
+          iam.status === 200 && canonicalBindings(iam.json) === result.baseline.iamBefore;
+        result.baseline.functionsAfter = await listFunctions(
+          t,
+          prod.google.functions,
+          "g-functions",
+        );
+        result.baseline.functionsEqual =
+          JSON.stringify(result.baseline.functionsAfter) ===
+          JSON.stringify(result.baseline.functionsBefore);
+      } catch (error) {
+        result.open.push(`g-baseline: ${error.message}`);
+      }
+    }
+  }
+  const after = result.baseline.after;
+  result.sandboxAtBaseline =
+    Boolean(after.client?.empty && after.server?.empty) &&
+    (!prod || (result.baseline.iamEqual === true && result.baseline.functionsEqual === true)) &&
+    result.open.length === 0;
+  result.unknown = [...t.unknown];
+  result.requests = t.count;
+  result.versions = versions;
+  const events = [...rows.values()].map((row, i) => normalise(row, i));
+  result.summary = summarise({
+    events,
+    versions,
+    history,
+    dataPlane,
+    wildcard,
+    validations,
+    open: result.open,
+  });
+  result.complete =
+    result.stopped === null && result.sandboxAtBaseline && result.unknown.length === 0;
+  return { result, events };
+}
+
+async function listFunctions(t, url, prefix) {
+  const found = [];
+  let token = "";
+  for (let page = 0; page < 3; page += 1) {
+    const r = await t.send(
+      `${prefix}-${page}`,
+      `${url}?pageSize=100${token ? `&pageToken=${encodeURIComponent(token)}` : ""}`,
+    );
+    if (r.status !== 200) throw new Error(`${prefix}: functions list ${r.status}`);
+    found.push(...(r.json.functions ?? []).map((fn) => fn.name));
+    token = r.json.nextPageToken ?? "";
+    if (!token) return found.sort();
+  }
+  throw new Error(`${prefix}: more than three pages of functions`);
+}
+
+/** Rows the local firebase-functions handlers appended (one JSON object per line). */
+export function readLocalEvents(file) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line, i) => ({ ...JSON.parse(line), insertId: `local-${i}` }));
+}
+
+export function newRunId(now = new Date()) {
+  const stamp = now
+    .toISOString()
+    .replace(/[-:TZ.]/g, "")
+    .slice(2, 14);
+  return `${stamp}${Math.floor(Math.random() * 46656)
+    .toString(36)
+    .padStart(3, "0")}`;
+}
+
+function parse(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === "--send-production") args.send = true;
+    else if (["--target", "--base", "--project", "--events-file", "--out"].includes(a))
+      args[a.slice(2)] = argv[++i];
+    else throw new Error(`unknown argument ${a}`);
+  }
+  return args;
+}
+
+export async function main(argv, env = process.env) {
+  const args = parse(argv);
+  if (!args.out) throw new Error("--out is required");
+  const out = resolve(args.out);
+  if (existsSync(out)) throw new Error("--out must not exist");
+  const runId = newRunId();
+  let ctx;
+  if (args.target === "local") {
+    if (args.send) throw new Error("--send-production is for the production target only");
+    if (!args.base || !args.project || !args["events-file"] || !env.FIREEMU_CONTROL_TOKEN)
+      throw new Error("local needs --base, --project, --events-file and FIREEMU_CONTROL_TOKEN");
+    mkdirSync(out, { recursive: true, mode: 0o700 });
+    const token = env.FIREEMU_CONTROL_TOKEN;
+    const transport = new Transport({
+      out,
+      allow: localAllow(args.base),
+      token: () => token,
+      maxRequests: MAX_REQUESTS,
+      timeoutMs: LOCAL_TIMING.timeoutMs,
+    });
+    ctx = {
+      transport,
+      urls: templateUrls(args.base, args.project),
+      runId,
+      timing: LOCAL_TIMING,
+      events: async () => readLocalEvents(args["events-file"]),
+    };
+  } else if (args.target === "production") {
+    if (args.send !== true) throw new Error("production needs --send-production");
+    const number = env.FIREEMU_SANDBOX_PROJECT_NUMBER;
+    if (!/^[1-9][0-9]{5,}$/.test(number ?? ""))
+      throw new Error("FIREEMU_SANDBOX_PROJECT_NUMBER is required");
+    for (const v of ["GOOGLE_APPLICATION_CREDENTIALS", "FIREBASE_TOKEN"])
+      if (env[v]) throw new Error(`${v} must be unset`);
+    mkdirSync(out, { recursive: true, mode: 0o700 });
+    const project = PRODUCTION_PROJECT;
+    const n = runNames(runId);
+    let cached = null;
+    const token = () => {
+      if (!cached || Date.now() - cached.at > 30 * 60_000)
+        cached = {
+          at: Date.now(),
+          value: execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
+            encoding: "utf8",
+          }).trim(),
+        };
+      return cached.value;
+    };
+    const transport = new Transport({
+      out,
+      allow: productionAllow({ project, number, names: n }),
+      token,
+      maxRequests: MAX_REQUESTS,
+      timeoutMs: PRODUCTION_TIMING.timeoutMs,
+      userProject: project,
+    });
+    const functions = new Functions({ transport, project, number, names: n, runId });
+    const started = new Date().toISOString();
+    const services = new URL(
+      `https://serviceusage.googleapis.com/v1/projects/${project}/services:batchGet`,
+    );
+    for (const s of SERVICES)
+      services.searchParams.append("names", `projects/${project}/services/${s}`);
+    ctx = {
+      transport,
+      urls: templateUrls(RC_API, project),
+      runId,
+      timing: PRODUCTION_TIMING,
+      events: async (caseId) => (await functions.logs(caseId, started)).rows,
+      production: {
+        functions,
+        google: {
+          services: services.href,
+          repository: `https://artifactregistry.googleapis.com/v1/projects/${project}/locations/${REGION}/repositories/gcf-artifacts`,
+          iam: `https://cloudresourcemanager.googleapis.com/v1/projects/${project}:getIamPolicy`,
+          functions: `${GCF}/v2/projects/${project}/locations/-/functions`,
+        },
+      },
+    };
+  } else throw new Error("--target must be local or production");
+  writeFileSync(
+    join(out, "run.json"),
+    JSON.stringify({ runId, target: args.target, startedAt: new Date().toISOString() }) + "\n",
+  );
+  const { result, events } = await observe(ctx);
+  writeFileSync(join(out, "events.json"), JSON.stringify(events, null, 2) + "\n");
+  writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
+  console.log(
+    JSON.stringify({
+      runId,
+      complete: result.complete,
+      stopped: result.stopped,
+      requests: result.requests,
+      unknown: result.unknown,
+      open: result.open,
+      sandboxAtBaseline: result.sandboxAtBaseline,
+    }),
+  );
+  return result.complete ? 0 : 1;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href)
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (error) => {
+      console.error(error.message);
+      process.exit(2);
+    },
+  );
