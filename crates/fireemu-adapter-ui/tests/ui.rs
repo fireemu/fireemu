@@ -38,10 +38,19 @@ fn state_with(app_check: Option<Arc<AppCheckState>>) -> Arc<UiState> {
 }
 
 /// [`state_with`] with a Functions hook in the control API.
-#[allow(clippy::too_many_lines)]
 fn state_with_hook(
     app_check: Option<Arc<AppCheckState>>,
     functions: Option<Arc<dyn fireemu_adapter_http::control::FunctionsHook>>,
+) -> Arc<UiState> {
+    state_full(app_check, functions, None)
+}
+
+/// [`state_with_hook`] with the session admission barrier in the control API.
+#[allow(clippy::too_many_lines)]
+fn state_full(
+    app_check: Option<Arc<AppCheckState>>,
+    functions: Option<Arc<dyn fireemu_adapter_http::control::FunctionsHook>>,
+    barrier: Option<Arc<fireemu_core_session::barrier::AdmissionBarrier>>,
 ) -> Arc<UiState> {
     let gateway = Gateway {
         enforce_limits: true,
@@ -108,7 +117,7 @@ fn state_with_hook(
         require_control_token: false,
         remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
-        barrier: None,
+        barrier,
         snapshot_hooks: Vec::new(),
         snapshots: Mutex::new(BTreeMap::new()),
         faults: Some(Arc::new(fireemu_core_session::fault::FaultRegistry::new())),
@@ -2889,4 +2898,98 @@ async fn auth_mint_id_token_issues_verifiable_token_and_rejects_unknown_user_or_
     )
     .await;
     assert_eq!(status, 405);
+}
+
+/// A Remote Config commit made through the console takes the session admission like the same
+/// commit over HTTP: it waits while a reset holds the barrier and changes nothing before the
+/// reset is over, while reads and validate-only requests are never queued behind it.
+#[test]
+fn remote_config_front_commits_wait_for_a_reset_but_reads_and_validation_do_not() {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    let barrier = Arc::new(fireemu_core_session::barrier::AdmissionBarrier::new());
+    let s = state_full(None, None, Some(barrier.clone()));
+    let base = "/ui/api/remoteconfig/v1/projects/demo-app/remoteConfig";
+    let rest = "v1/projects/demo-app/remoteConfig";
+    let with_precondition = |method: &str, target: &str, body: &Value| {
+        let mut req = request(method, target, body);
+        req.headers.insert("if-match".to_owned(), "*".to_owned());
+        req
+    };
+    // Runs one console request on its own thread so a request blocked by the barrier cannot
+    // stall the test; the timeout only bounds a regression.
+    let run = |rest: &'static str, req: UiRequest| {
+        let s = s.clone();
+        let (sender, receiver) = channel();
+        std::thread::spawn(move || {
+            let reply = fireemu_adapter_ui::remote_config::route(&s, rest, &req);
+            let _ = sender.send((reply.status, reply.body_json()));
+        });
+        receiver
+    };
+
+    let held = barrier.exclusive();
+    let mut failures = Vec::new();
+    for (name, rest, req) in [
+        ("read", rest, request("GET", base, &Value::Null)),
+        (
+            "list versions",
+            "v1/projects/demo-app/remoteConfig:listVersions",
+            request("GET", &format!("{base}:listVersions"), &Value::Null),
+        ),
+        (
+            "validate only",
+            rest,
+            with_precondition("PUT", &format!("{base}?validateOnly=true"), &json!({})),
+        ),
+    ] {
+        let rest: &'static str = rest;
+        match run(rest, req).recv_timeout(Duration::from_secs(10)) {
+            Ok((200, _)) => {}
+            other => failures.push(format!("{name}: {other:?}")),
+        }
+    }
+    // A publish and a rollback queue behind the reset and have changed nothing while it holds.
+    let publish = run(
+        rest,
+        with_precondition(
+            "PUT",
+            base,
+            &json!({"parameters": {"flag": {"defaultValue": {"value": "on"}}}}),
+        ),
+    );
+    let rollback = run(
+        "v1/projects/demo-app/remoteConfig:rollback",
+        request(
+            "POST",
+            &format!("{base}:rollback"),
+            &json!({"versionNumber": "1"}),
+        ),
+    );
+    let publish_waits = matches!(
+        publish.recv_timeout(Duration::from_millis(400)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    let rollback_waits = matches!(
+        rollback.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    );
+    let during = run(rest, request("GET", base, &Value::Null))
+        .recv_timeout(Duration::from_secs(10))
+        .ok()
+        .and_then(|(_, body)| body);
+    drop(held);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert!(publish_waits, "the publish ran during the reset");
+    assert!(rollback_waits, "the rollback ran during the reset");
+    assert_eq!(during, Some(json!({})), "a commit landed during the reset");
+
+    // After the reset the queued publish commits; the rollback finds no version 1 to restore
+    // or one, depending on the order the two were admitted, and either way answers.
+    let (published, _) = publish
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the publish completes after the reset");
+    assert_eq!(published, 200);
+    assert!(rollback.recv_timeout(Duration::from_secs(10)).is_ok());
 }
