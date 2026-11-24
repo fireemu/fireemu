@@ -69,6 +69,32 @@ pub(crate) fn number_addresses_project(
         && !route.explicit_namespace
 }
 
+/// Production's answer to a template read without any credential (2026-11-21 `RC-READ-05`: 401
+/// `CREDENTIALS_MISSING`, 664 bytes). Only that read was recorded; other routes and a credential
+/// that is present but wrong keep the listener's own 401.
+pub(crate) fn missing_credentials(route: &Route<'_>, method: &str) -> Option<Reply> {
+    (method == "GET" && route.action == "remoteConfig").then(|| Reply {
+        status: 401,
+        body: ReplyBody::Json(json!({
+            "error": {
+                "code": 401,
+                "message": "Request is missing required authentication credential. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.",
+                "status": "UNAUTHENTICATED",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "CREDENTIALS_MISSING",
+                    "domain": "googleapis.com",
+                    "metadata": {
+                        "method": "google.firebase.remoteconfig.v1.RemoteConfigService.GetRemoteConfig",
+                        "service": "firebaseremoteconfig.googleapis.com",
+                    },
+                }],
+            }
+        })),
+        etag: None,
+    })
+}
+
 pub(crate) struct Reply {
     pub status: u16,
     body: ReplyBody,

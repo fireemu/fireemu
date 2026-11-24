@@ -4788,3 +4788,56 @@ async fn remote_config_listener_serves_the_number_route_and_uncompressed_default
     server.abort();
     let _ = server.await;
 }
+
+/// A template read with no credential gets production's 401 body (2026-11-21 `RC-READ-05`); a
+/// wrong credential and other routes keep the listener's own 401.
+#[tokio::test]
+async fn remote_config_read_without_a_credential_is_refused_as_production_refuses_it() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state(Arc::new(AtomicUsize::new(0)))),
+    ));
+    let send = |method: &'static str, path: &'static str, auth: &'static str| async move {
+        let wire = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{auth}Content-Length: 0\r\n\r\n");
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(wire.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let end = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let status = String::from_utf8_lossy(&response[9..12]).to_string();
+        let body: Value = serde_json::from_slice(&response[end + 4..]).unwrap();
+        (status, body)
+    };
+    let (status, body) = send("GET", "/v1/projects/demo-app/remoteConfig", "").await;
+    assert_eq!(status, "401");
+    assert_eq!(body["error"]["details"][0]["reason"], "CREDENTIALS_MISSING");
+    assert_eq!(
+        body["error"]["details"][0]["metadata"]["method"],
+        "google.firebase.remoteconfig.v1.RemoteConfigService.GetRemoteConfig"
+    );
+    let own = "Remote Config administration requires the local control capability";
+    for (method, path, auth) in [
+        ("GET", "/v1/projects/demo-app/remoteConfig", "Authorization: Bearer wrong\r\n"),
+        ("PUT", "/v1/projects/demo-app/remoteConfig", ""),
+        ("GET", "/v1/projects/demo-app/remoteConfig:listVersions", ""),
+    ] {
+        let (status, body) = send(method, path, auth).await;
+        assert_eq!(status, "401", "{method} {path}");
+        assert_eq!(body["error"]["message"], own, "{method} {path}");
+    }
+    server.abort();
+    let _ = server.await;
+}

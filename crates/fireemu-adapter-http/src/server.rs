@@ -393,9 +393,14 @@ async fn remote_config_response(
         .next()
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    let reply = if auth.next().is_some()
-        || !control::token_matches(presented, &control.control_token)
-    {
+    let recorded_refusal = headers
+        .get(hyper::header::AUTHORIZATION)
+        .is_none()
+        .then(|| remote_config_http::missing_credentials(route, parts.method.as_str()))
+        .flatten();
+    let reply = if let Some(refusal) = recorded_refusal {
+        refusal
+    } else if auth.next().is_some() || !control::token_matches(presented, &control.control_token) {
         Reply::error(
             401,
             "Remote Config administration requires the local control capability",

@@ -1,6 +1,6 @@
 # Local Remote Config templates
 
-The daemon's loopback control listener supports reading, validating, publishing, listing and rolling back client and server templates for its configured project. Use its control capability as the bearer token. A Test World starts with an empty client template and owns its version history until the daemon stops. `world.reset()` starts a new daemon with an empty history.
+The daemon's loopback control listener supports reading, validating, publishing, listing and rolling back client and server templates for its configured project. Use its control capability as the bearer token. A template read with no `Authorization` header at all is refused with production's 401 `CREDENTIALS_MISSING` body; a wrong token and the other routes get the listener's own 401. A Test World starts with an empty client template and owns its version history until the daemon stops. `world.reset()` starts a new daemon with an empty history.
 
 ```js
 import { withTestWorld } from 'fireemu/testing';
