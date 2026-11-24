@@ -92,7 +92,7 @@ Fireemu ships with two compatibility profiles:
 | Profile | Purpose |
 |---|---|
 | `strict` (default) | Follows production Firebase behavior and constraints as closely as possible within the supported scope. Recommended for day-to-day testing and when migrating from the official emulator. |
-| `emulator` | Tracks a pinned version of Google's official Local Emulator Suite (`firebase-tools` 15.28.2). Useful as a secondary target when checking alignment with the official emulator. |
+| `emulator` | Tracks a pinned version of Google's official Local Emulator Suite (`firebase-tools` 15.28.2). Useful as a secondary target when checking alignment with the official emulator; you do not need it to migrate. |
 
 Some production setup adds friction to local tests, such as signing keys, signed mock tokens, or enabling MFA and multi-tenancy through Admin API calls. Both profiles keep sensible development defaults for these, each with its own config key. In `strict`, `productionExact = true` turns production behavior back on for all of them (the `emulator` profile rejects it), and explicit settings still take precedence. See [Profiles and productionExact](https://fireemu.github.io/fireemu/guides/profiles/).
 
