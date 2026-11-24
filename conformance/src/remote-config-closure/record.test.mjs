@@ -204,3 +204,68 @@ test("the request cap covers the local corpus with the recorded production overh
   // requests RC-OBSERVE-V2-3 made around its corpus (101 total, 42 Remote Config).
   assert.ok(167 + (101 - 42) + 4 * 11 <= MAX_REQUESTS);
 });
+
+test("the transport sends the closure request options and keeps text bodies only when asked", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { Transport, Unknown } = await import("../remote-config-observe/transport.mjs");
+  const out = mkdtempSync(join(tmpdir(), "rc-closure-transport-"));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const seen = [];
+  const reply = { status: 200, body: "<x/>" };
+  const transport = new Transport({
+    out,
+    allow: () => true,
+    token: () => "secret",
+    maxRequests: 20,
+    timeoutMs: 1000,
+    fetchImpl: async (url, init) => {
+      seen.push(init.headers);
+      return new Response(reply.body, {
+        status: reply.status,
+        headers: { "content-type": "application/xml" },
+      });
+    },
+  });
+  await assert.rejects(transport.send("plain", "https://example.test/x"), Unknown);
+  assert.equal(seen.at(-1).authorization, "Bearer secret");
+  assert.equal(seen.at(-1)["accept-encoding"], "gzip");
+  assert.equal(seen.at(-1)["if-none-match"], undefined);
+  const text = await transport.send("text", "https://example.test/x", {
+    textBody: true,
+    credentials: false,
+    gzip: false,
+    ifNoneMatch: "etag-1-2",
+  });
+  assert.equal(text.json, null);
+  assert.equal(text.text, "<x/>");
+  assert.equal(seen.at(-1).authorization, undefined);
+  assert.equal(seen.at(-1)["accept-encoding"], "identity");
+  assert.equal(seen.at(-1)["if-none-match"], "etag-1-2");
+  reply.status = 400;
+  await assert.rejects(
+    transport.send("text-refused", "https://example.test/x", { textBody: true }),
+    Unknown,
+  );
+  reply.status = 299;
+  reply.body = "<y/>";
+  assert.equal(
+    (await transport.send("text-299", "https://example.test/x", { textBody: true })).json,
+    null,
+  );
+  reply.status = 200;
+  reply.body = "{}";
+  assert.deepEqual(
+    (await transport.send("json", "https://example.test/x", { textBody: true })).json,
+    {},
+  );
+  const { readFileSync } = await import("node:fs");
+  const journal = readFileSync(join(out, "journal.jsonl"), "utf8");
+  assert.ok(
+    journal.includes('"credentials":false') &&
+      journal.includes('"gzip":false') &&
+      journal.includes('"ifNoneMatch":"etag-1-2"'),
+  );
+  assert.ok(!journal.includes("secret"));
+});
