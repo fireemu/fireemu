@@ -1172,7 +1172,7 @@ test("A2 near misses: a source object still readable, a failed list read, a sour
   assert.equal(still.source, 200);
   assert.equal(still.atBaseline, false);
   const listKey = `GET cloudfunctions.googleapis.com /v2/projects/${PROJECT}/locations/-/functions`;
-  const failed = await readBack(
+  const clean = await readBack(
     world((c) => {
       c.faults = undefined;
     }).ctx,
