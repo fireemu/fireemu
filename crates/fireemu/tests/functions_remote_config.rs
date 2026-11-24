@@ -100,6 +100,7 @@ fn control(runtime: Arc<FunctionsRuntime>, clock: Arc<Mutex<VirtualClock>>) -> C
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
         barrier: None,
         snapshot_hooks: vec![],
@@ -540,10 +541,11 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
     let _ = server.await;
 
     assert_eq!(rows.len(), 6);
-    for (version, v1_id, v2_id, source) in [
-        (forced, "1179521134", "641564555", "0"),
-        (conditional, "-468215107", "-2073758376", "0"),
-        (rollback, "48170188", "1655466793", "1"),
+    // One id per version, carried by both generations (RC-OBSERVE-V2-3).
+    for (version, id, source) in [
+        (forced, "1714029973", "0"),
+        (conditional, "-999059642", "0"),
+        (rollback, "582684983", "1"),
     ] {
         let row = |generation| {
             let row = rows
@@ -566,7 +568,7 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
         assert_eq!(v1["attempt"], 1);
         assert_eq!(v1["data"], version);
         let context = json!({
-            "eventId": v1_id,
+            "eventId": id,
             "eventType": "google.firebase.remoteconfig.update",
             "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": "projects/demo-app"},
             "timestamp": time,
@@ -596,7 +598,7 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
         assert_eq!(
             Value::Object(context),
             json!({
-                "id": v2_id,
+                "id": id,
                 "project": "demo-app",
                 "source": "//firebaseremoteconfig.googleapis.com/projects/demo-app",
                 "specversion": "1.0",

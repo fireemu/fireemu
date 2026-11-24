@@ -118,8 +118,12 @@
     "crates/fireemu-adapter-http/src/lib.rs",
     "crates/fireemu-adapter-http/src/oidc.rs",
     "crates/fireemu-adapter-http/src/remote_config.rs",
+    "crates/fireemu-adapter-http/src/remote_config_conditions.rs",
     "crates/fireemu-adapter-http/src/remote_config_http.rs",
+    "crates/fireemu-adapter-http/src/remote_config_testdata/conditions_pict.tsv",
     "crates/fireemu-adapter-http/src/remote_config_testdata/pict.tsv",
+    "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_dataplane.json",
+    "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_template.json",
     "crates/fireemu-adapter-http/src/remote_config_testdata/server_dataplane.json",
     "crates/fireemu-adapter-http/src/saml.rs",
     "crates/fireemu-adapter-http/src/server.rs",
@@ -343,7 +347,7 @@
     },
     "crates/fireemu-adapter-functions/src/events.rs": {
       "kind": "sha256",
-      "value": "886d60feebc162531df0b2b46dd924ffcde9d3e37be4103f0b369cf2c61a0378"
+      "value": "a33ed4261ce4f8653a8f356a6abd2a5f217d07574142cd0100ffaf90483697cc"
     },
     "crates/fireemu-adapter-functions/src/http.rs": {
       "kind": "sha256",
@@ -603,7 +607,7 @@
     },
     "crates/fireemu-adapter-http/src/control.rs": {
       "kind": "sha256",
-      "value": "64c1958e2d6479757276efaa9ea3a90b2191d65b54c1c7aba25ac9cf842d51b3"
+      "value": "c3a722bda348d92ca6ef3e3b3cd77f8e532c98dcb3e3332b54f21359b6fedc5b"
     },
     "crates/fireemu-adapter-http/src/identity_framing.rs": {
       "kind": "sha256",
@@ -675,7 +679,7 @@
     },
     "crates/fireemu-adapter-http/src/lib.rs": {
       "kind": "sha256",
-      "value": "f31027d011707e2cc0a1eacef6095ffc71ea02e89245f198b782c27d4a349b03"
+      "value": "02c0641e8d71d89c2e8d7596163502ae8d4719c3cf21a4fa9be1e4cf05be6b78"
     },
     "crates/fireemu-adapter-http/src/oidc.rs": {
       "kind": "sha256",
@@ -683,15 +687,31 @@
     },
     "crates/fireemu-adapter-http/src/remote_config.rs": {
       "kind": "sha256",
-      "value": "127cde00532e9793008a8e2f441b7196f0bb89989ded2bb0c69aad40b0282e60"
+      "value": "cc08ce775242d6671ad943a61074a220fd4a9811aef67e35dbf12719464c483b"
+    },
+    "crates/fireemu-adapter-http/src/remote_config_conditions.rs": {
+      "kind": "sha256",
+      "value": "07e05bde938faf2ddad3e3ea6b7caf4c6aa12280de0c12d04a751013c1d6f1a3"
     },
     "crates/fireemu-adapter-http/src/remote_config_http.rs": {
       "kind": "sha256",
-      "value": "a8d5a117190de91d3d8b5fc916ef2a02f7bb723953ccada5a333d0c5d6766c5e"
+      "value": "98995f8b7ed882bed6cd53e960489f6498a427225593710d07012686d18924fe"
+    },
+    "crates/fireemu-adapter-http/src/remote_config_testdata/conditions_pict.tsv": {
+      "kind": "sha256",
+      "value": "1de2700a4c3a9fc88b47e682d4b22e44a76cbb0f6e7bceb2d12b0d25bea16ade"
     },
     "crates/fireemu-adapter-http/src/remote_config_testdata/pict.tsv": {
       "kind": "sha256",
       "value": "951ec9d4006d65675f59adc247f0fbaa5239890917326b8437fc53c6efb2e332"
+    },
+    "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_dataplane.json": {
+      "kind": "json-semantic",
+      "value": "412bd7811aa9a0b13c26ef93ab8171f36fe6c1e97bc694049c89dab13ac0e8cc"
+    },
+    "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_template.json": {
+      "kind": "json-semantic",
+      "value": "f938263d4ca6376ac8667d7883ac3db1aa6075893e2ff12ebf99affdb284c2b6"
     },
     "crates/fireemu-adapter-http/src/remote_config_testdata/server_dataplane.json": {
       "kind": "json-semantic",
@@ -703,7 +723,7 @@
     },
     "crates/fireemu-adapter-http/src/server.rs": {
       "kind": "sha256",
-      "value": "19ca3365ff2a140f2db47f4ec1957ea992cb18b5a5685e99be51efbdff414a28"
+      "value": "b7eb6adbcd630c8268a674a10440c91942215cffddd03cacdbf20a73aad4073e"
     },
     "crates/fireemu-adapter-http/src/signing.rs": {
       "kind": "sha256",

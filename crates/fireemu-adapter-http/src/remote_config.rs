@@ -403,6 +403,26 @@ impl Version {
     }
 }
 
+/// Local Remote Config behaviour that depends on the daemon's configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoteConfigSettings {
+    /// Refuse the server conditions production refused (strict profile only).
+    pub strict_server_conditions: bool,
+    /// The identity reported as `updateUser`; `None` omits the field everywhere.
+    pub update_user: Option<UpdateUser>,
+}
+
+/// A configured `updateUser` identity (`remoteConfig.updateUser`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateUser {
+    /// Reported on every surface.
+    pub email: String,
+    /// Reported in version history only (empty when not configured).
+    pub name: String,
+    /// Reported in version history only (empty when not configured).
+    pub image_url: String,
+}
+
 /// Remote Config template namespaces supported by local administration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Namespace {
@@ -585,6 +605,19 @@ impl TemplateStore {
         input: Value,
         now: LogicalInstant,
     ) -> Result<WriteResult, Error> {
+        self.write_checked(mode, if_match, input, now, &|_| Ok(()))
+    }
+
+    /// [`Self::write`] with `check` run on the validated template after the preconditions, for
+    /// refusals that depend on the caller's configuration (the strict profile's server conditions).
+    pub fn write_checked(
+        &self,
+        mode: WriteMode,
+        if_match: Option<&str>,
+        input: Value,
+        now: LogicalInstant,
+        check: &dyn Fn(&ClientTemplate) -> Result<(), Error>,
+    ) -> Result<WriteResult, Error> {
         let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
         let forced = if_match == "*";
@@ -598,6 +631,7 @@ impl TemplateStore {
             return Err(Error::PreconditionFailed);
         }
         let template = template?;
+        check(&template)?;
         if mode == WriteMode::Validate {
             return Ok(WriteResult::Validated {
                 template,

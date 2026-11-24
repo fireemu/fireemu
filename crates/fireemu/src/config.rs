@@ -1390,6 +1390,9 @@ pub struct RuntimeConfig {
     pub scheduler_max_catch_up_runs: usize,
     /// Default time zone of schedules without one (`scheduler.defaultTimeZone`).
     pub scheduler_default_time_zone: Option<String>,
+    /// The identity Remote Config reports as `updateUser` (`remoteConfig.updateUser`); `None`
+    /// omits the field, as production would never show a user the caller did not configure.
+    pub remote_config_update_user: Option<fireemu_adapter_http::remote_config::UpdateUser>,
     /// Catch-up policy of schedules (`scheduler.catchUp`: all, latest, none).
     pub scheduler_catch_up: String,
     /// Overlap policy of schedules (`scheduler.overlap`: allow, skip, queue, reject, skip-in-flight). Unset, the
@@ -2168,6 +2171,7 @@ impl Default for RuntimeConfig {
                 fireemu_core_pubsub::subscription::DEFAULT_PUSH_MINIMUM_REDELIVERY_INTERVAL_MILLIS,
             scheduler_max_catch_up_runs: 1000,
             scheduler_default_time_zone: None,
+            remote_config_update_user: None,
             scheduler_overlap: None,
             scheduler_catch_up: "all".to_owned(),
             id_token_signing: fireemu_core_auth::jwt::SigningMode::UnsignedEmulator,
@@ -2748,6 +2752,9 @@ impl RuntimeConfig {
             "pubsub.pushMinimumRedeliveryIntervalMillis" => Some(json!(self.pubsub_push_minimum_redelivery_interval_millis)),
             "pubsub.restNegativeCache" => Some(json!(self.pubsub_rest_negative_cache.as_config_str())),
             "scheduler.defaultTimeZone" => Some(json!(self.scheduler_default_time_zone)),
+            "remoteConfig.updateUser.email" => Some(json!(self.remote_config_update_user.as_ref().map(|user| &user.email))),
+            "remoteConfig.updateUser.name" => Some(json!(self.remote_config_update_user.as_ref().map(|user| &user.name))),
+            "remoteConfig.updateUser.imageUrl" => Some(json!(self.remote_config_update_user.as_ref().map(|user| &user.image_url))),
             "scheduler.catchUp" => Some(json!(self.scheduler_catch_up)),
             "scheduler.maxCatchUpRuns" => Some(json!(self.scheduler_max_catch_up_runs)),
             "scheduler.overlap" => Some(json!(self.scheduler_overlap)),
@@ -2840,6 +2847,12 @@ pub(crate) const DATABASE_KEYS: [&str; 1] = ["defaultAccess"];
 
 /// The keys of the `hosting` section.
 pub(crate) const HOSTING_KEYS: [&str; 2] = ["cacheControl", "clientCountry"];
+
+/// The keys of the `remoteConfig` section.
+pub(crate) const REMOTE_CONFIG_KEYS: [&str; 1] = ["updateUser"];
+
+/// The keys of `remoteConfig.updateUser`.
+const REMOTE_CONFIG_UPDATE_USER_KEYS: [&str; 3] = ["email", "name", "imageUrl"];
 
 /// The keys of the `scheduler` section.
 pub(crate) const SCHEDULER_KEYS: [&str; 5] = [
@@ -4814,6 +4827,7 @@ pub(crate) const KNOWN_TOP_LEVEL: &[&str] = &[
     "eventarc",
     "scheduler",
     "functions",
+    "remoteConfig",
     "trace",
     "daemon",
 ];
@@ -5631,6 +5645,69 @@ impl RuntimeConfig {
         }
         cfg.eventarc_oauth_credentials = Some(catalog);
         Ok(())
+    }
+
+    /// Reads the `remoteConfig` section: an optional `updateUser` identity, reported as
+    /// production reports the calling user (`{email}` on versions and v1 events, with name and
+    /// image in history). Each value is a bounded string without control characters.
+    fn parse_remote_config(
+        section: &Value,
+    ) -> Result<Option<fireemu_adapter_http::remote_config::UpdateUser>, ConfigError> {
+        let section = section
+            .as_object()
+            .ok_or_else(|| ConfigError("remoteConfig must be an object".to_owned()))?;
+        for key in section.keys() {
+            if !REMOTE_CONFIG_KEYS.contains(&key.as_str()) {
+                return Err(ConfigError(format!("remoteConfig: unknown key {key:?}")));
+            }
+        }
+        let Some(user) = section.get("updateUser") else {
+            return Ok(None);
+        };
+        let user = user
+            .as_object()
+            .ok_or_else(|| ConfigError("remoteConfig.updateUser must be an object".to_owned()))?;
+        for key in user.keys() {
+            if !REMOTE_CONFIG_UPDATE_USER_KEYS.contains(&key.as_str()) {
+                return Err(ConfigError(format!(
+                    "remoteConfig.updateUser: unknown key {key:?}"
+                )));
+            }
+        }
+        let text = |key: &str, required: bool| -> Result<String, ConfigError> {
+            let invalid = || {
+                ConfigError(format!(
+                    "remoteConfig.updateUser.{key} must be a string of 1 to 512 characters without control characters"
+                ))
+            };
+            match user.get(key) {
+                None if required => Err(ConfigError(format!(
+                    "remoteConfig.updateUser.{key} is required"
+                ))),
+                None => Ok(String::new()),
+                Some(value) => {
+                    let text = value.as_str().ok_or_else(invalid)?;
+                    if text.is_empty()
+                        || text.chars().count() > 512
+                        || text.chars().any(char::is_control)
+                    {
+                        return Err(invalid());
+                    }
+                    Ok(text.to_owned())
+                }
+            }
+        };
+        let email = text("email", true)?;
+        if !email.contains('@') {
+            return Err(ConfigError(
+                "remoteConfig.updateUser.email must be an email address".to_owned(),
+            ));
+        }
+        Ok(Some(fireemu_adapter_http::remote_config::UpdateUser {
+            email,
+            name: text("name", false)?,
+            image_url: text("imageUrl", false)?,
+        }))
     }
 
     /// Reads the `hosting` section. The production values change what the strict profile answers,
@@ -6713,6 +6790,9 @@ impl RuntimeConfig {
                 .as_object()
                 .ok_or_else(|| ConfigError("scheduler must be an object".to_owned()))?;
             Self::parse_scheduler(scheduler, &mut cfg)?;
+        }
+        if let Some(remote_config) = obj.get("remoteConfig") {
+            cfg.remote_config_update_user = Self::parse_remote_config(remote_config)?;
         }
         if let Some(auth) = obj.get("auth") {
             let auth = auth
@@ -9152,6 +9232,58 @@ mod tests {
                 "only wall is named as declared but not implemented: {bad}: {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn remote_config_update_user_is_optional_bounded_and_closed() {
+        use fireemu_adapter_http::remote_config::UpdateUser;
+        let parse = |mut document: Value| {
+            document["schemaVersion"] = json!(1);
+            RuntimeConfig::from_json(&document)
+        };
+        assert_eq!(parse(json!({})).unwrap().remote_config_update_user, None);
+        assert_eq!(
+            parse(json!({"remoteConfig": {}}))
+                .unwrap()
+                .remote_config_update_user,
+            None
+        );
+        assert_eq!(
+            parse(json!({"remoteConfig": {"updateUser": {"email": "dev@example.com"}}}))
+                .unwrap()
+                .remote_config_update_user,
+            Some(UpdateUser {
+                email: "dev@example.com".into(),
+                name: String::new(),
+                image_url: String::new()
+            })
+        );
+        assert_eq!(
+            parse(json!({"remoteConfig": {"updateUser": {"email": "dev@example.com", "name": "Dev", "imageUrl": "https://example.com/i.png"}}}))
+                .unwrap()
+                .remote_config_update_user,
+            Some(UpdateUser { email: "dev@example.com".into(), name: "Dev".into(), image_url: "https://example.com/i.png".into() })
+        );
+        for bad in [
+            json!({"remoteConfig": []}),
+            json!({"remoteConfig": {"other": 1}}),
+            json!({"remoteConfig": {"updateUser": "dev@example.com"}}),
+            json!({"remoteConfig": {"updateUser": {}}}),
+            json!({"remoteConfig": {"updateUser": {"email": ""}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "no-at-sign"}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "a@b", "name": ""}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "a@b\u{0}"}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "a@b", "imageUrl": "x\ny"}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "a@b", "name": 7}}}),
+            json!({"remoteConfig": {"updateUser": {"email": "a@b", "photo": "x"}}}),
+            json!({"remoteConfig": {"updateUser": {"email": format!("{}@b", "a".repeat(511))}}}),
+        ] {
+            assert!(parse(bad.clone()).is_err(), "{bad}");
+        }
+        assert!(parse(
+            json!({"remoteConfig": {"updateUser": {"email": format!("{}@b", "a".repeat(510))}}})
+        )
+        .is_ok());
     }
 
     #[test]

@@ -506,6 +506,8 @@ pub struct ControlState {
     /// listener's network namespace (`kubectl port-forward`, a sidecar proxy) delivers another
     /// host's client as a loopback peer.
     pub require_control_token: bool,
+    /// Local Remote Config behaviour chosen by the daemon configuration (profile, updateUser).
+    pub remote_config: crate::remote_config::RemoteConfigSettings,
     /// Time zones for calendar moves of the clock (`duration`, `to`, `timeZone`). `None`
     /// knows only `UTC` and has no configured default.
     pub calendar_zones: Option<CalendarZones>,
