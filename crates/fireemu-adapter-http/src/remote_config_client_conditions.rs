@@ -577,7 +577,7 @@ mod tests {
         assert!(installation_id("c000000000000000000000"));
         for id in [
             "synthetic-not-valid",
-            "a00000000000000000000",
+            "a000000000000000000000",
             "c0000000000000000000000",
             "c00000000000000000000!",
         ] {
@@ -588,7 +588,150 @@ mod tests {
         assert_eq!(micro("0.000001"), Some(1));
     }
 
+    /// Near misses of every rule: each answer is pinned, so a rule that matches too much or too
+    /// little changes one of them. Positions production was not recorded at keep accepting.
+    #[test]
+    fn near_misses_of_the_recorded_rules() {
+        let column = |c: usize, reason: &str| {
+            Some(format!(
+                "[VALIDATION_ERROR]: at line 1, column {c}. {reason}"
+            ))
+        };
+        let atom = |kind: &str, reason: &str| {
+            Some(format!("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: {reason} @ c.OR[0].AND[0].{kind}"))
+        };
+        let or = Some("[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [c], found 2".to_owned());
+        let start = "Was expecting one of: '(' '!' 'true' 'false' 'app' 'dateTime' 'device' 'percent' 'version'";
+        let cases: Vec<(&str, Option<String>)> = vec![
+            // Words with underscores, numbers, strings.
+            ("_percent <= 101", column(1, start)),
+            ("percent_x <= 101", column(1, start)),
+            ("percent <= -x", None),
+            ("percent <= '-1'", None),
+            ("percent foo 101", None),
+            (
+                "device.country in [\"xyz\"]",
+                atom("COUNTRIES", "Invalid country code 'xyz'"),
+            ),
+            ("device.country in ['jp", None),
+            (
+                "percent between 60 and 1",
+                atom(
+                    "PERCENT",
+                    "Invalid micro percent range (60000000, 1000000].",
+                ),
+            ),
+            (
+                "percent between 10.000001 and 10",
+                atom(
+                    "PERCENT",
+                    "Invalid micro percent range (10000001, 10000000].",
+                ),
+            ),
+            ("percent between 10 and 10", None),
+            // The top-level split ignores brackets, parentheses and text.
+            ("(percent > 0 || percent > 1)", None),
+            ("(percent > 0) || percent > 1", or.clone()),
+            (
+                "app.customSignal['('].exactlyMatches(['a']) || percent > 1",
+                or.clone(),
+            ),
+            (
+                "app.customSignal[')'].exactlyMatches(['a']) || percent > 1",
+                or,
+            ),
+            ("app.customSignal['||'].exactlyMatches(['a'])", None),
+            // Parentheses around a whole atom only.
+            (
+                "(percent <= 101)",
+                column(13, "A percent value is out of range"),
+            ),
+            ("(percent <= 101 x", None),
+            ("(", None),
+            ("()", None),
+            // app.build and app.version.
+            ("app", None),
+            ("app.build", None),
+            ("device.build >= 1", None),
+            ("app x build >= 1", None),
+            ("app.build.exactlyMatches('123')", None),
+            ("app.build.>=['123']", None),
+            ("app.build.>=(123)", None),
+            ("app.build.>=", None),
+            ("app.build , >= ('1')", None),
+            // firstOpenTimestamp and dateTime.
+            ("app.firstOpenTimestamp", None),
+            ("app.firstOpenTimestamp.exactlyMatches(['x'])", None),
+            ("dateTime", None),
+            ("dateTime.x", None),
+            // Installation ids, countries, regular expressions.
+            ("app.firebaseInstallationId", None),
+            ("app.firebaseInstallationId == 'bad'", None),
+            (
+                "app.firebaseInstallationId in ['c-00000000000000000000']",
+                None,
+            ),
+            ("device.country", None),
+            ("device.country == 'xyz'", None),
+            (
+                "device.country in ['1x']",
+                atom("COUNTRIES", "Invalid country code '1x'"),
+            ),
+            ("app.version.matches", None),
+            ("app.customSignal['x'].matches(['['])", None),
+        ];
+        for (expression, expected) in cases {
+            assert_eq!(
+                client_refusal("c", expression, Some(zones)),
+                expected,
+                "{expression}"
+            );
+        }
+    }
+
+    /// Near misses at the lengths and boundaries of the rules.
+    #[test]
+    fn boundary_near_misses_of_the_recorded_rules() {
+        let column = |c: usize, reason: &str| {
+            Some(format!(
+                "[VALIDATION_ERROR]: at line 1, column {c}. {reason}"
+            ))
+        };
+        let word_key = format!("app.customSignal[{}] >= 1", "k".repeat(251));
+        let cases: Vec<(&str, Option<String>)> = vec![
+            ("device.country in ['xyz", None),
+            ("device.os == '||'", None),
+            ("app.build >=", column(11, "Was expecting: '.'")),
+            ("app.build.>=('1'", column(14, "Was expecting: '['")),
+            ("app.build.>=(", None),
+            (
+                "app.firstOpenTimestamp >=",
+                column(24, "Was expecting one of: '<=' '>'"),
+            ),
+            ("dateTime <=", column(10, "Was expecting one of: '<' '>='")),
+            // A custom-signal key must be a string literal to be measured.
+            (word_key.as_str(), None),
+        ];
+        for (expression, expected) in cases {
+            assert_eq!(
+                client_refusal("c", expression, Some(zones)),
+                expected,
+                "{expression}"
+            );
+        }
+    }
+
     proptest::proptest! {
+        #[test]
+        fn arbitrary_token_sequences_never_panic(parts in proptest::collection::vec(proptest::sample::select(vec![
+            "app", ".", "build", "version", "firstOpenTimestamp", "firebaseInstallationId", "customSignal", "device", "country",
+            "dateTime", "percent", "between", "and", "in", "matches", "(", ")", "[", "]", "'x'", "'['", ",", "&&", "||", "!",
+            "<", "<=", ">", ">=", "==", "1", "-1", "101", "0.0000001",
+        ]), 0..12)) {
+            let _ = client_refusal("c", &parts.join(" "), Some(zones));
+            let _ = client_refusal("c", &parts.concat(), Some(zones));
+        }
+
         #[test]
         fn percent_values_within_range_and_precision_are_accepted(whole in 0_u32..100, fraction in 0_u32..1_000_000, digits in 0_usize..=6) {
             let value = if digits == 0 { whole.to_string() } else { format!("{whole}.{:0width$}", fraction % 10_u32.pow(u32::try_from(digits).unwrap()), width = digits) };
