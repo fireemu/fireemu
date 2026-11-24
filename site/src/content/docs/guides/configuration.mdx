@@ -142,7 +142,7 @@ Fireemu validates against its bundled schema and does not fetch the annotation U
 
 TOML files use the same JSON Schema, validation and defaults as JSON files.
 
-- Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (the tag of the version you run) to select the schema in Taplo or Even Better TOML.
+- Start a file with `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (`v0.64.0` is an example; use the tag of the version you run) to select the schema in Taplo or Even Better TOML.
 - Quote timestamp values. TOML datetimes are refused with the key name because the schema has no datetime type.
 
 TOML has no `null`. For every nullable setting below, omit the key in its containing table; for nullable array items, omit the item. Keep the containing table or array when its presence is intentional. Empty arrays and empty tables retain their existing meaning.

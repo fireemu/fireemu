@@ -53,7 +53,7 @@ firebaseJson = "firebase.json"
    - `firebaseJson`キーは設定ファイルからの相対パスとして解決されます。`firebaseJson`の指定がない場合、同じディレクトリにある`firebase.json`は自動では読み込まれません（起動出力にもその旨が表示されます）。
    - 親ディレクトリにある`fireemu.toml`・`fireemu.json`は対象外です（記載パスがカレントディレクトリ基準のため）。
    - Fireemu設定内のファイルパス（`rules.source`、`storage.rules`、`functions.source`、`firestore.indexFile`など）は設定ファイルの場所にかかわらず作業ディレクトリ基準で解決されます。設定ファイル自身のディレクトリ基準になるのは`firebaseJson`と、`firebase.json`内に書かれたパスだけです。
-3. **最も近い`firebase.json`**：カレントディレクトリにFireemu設定がなければ、Firebase CLIと同じくカレントディレクトリから親ディレクトリへ遡って最初に見つかった`firebase.json`を読み込みます。内部パスと同じディレクトリにある`.firebaserc`は、その`firebase.json`のディレクトリ基準で解決されます。
+3. **最も近い`firebase.json`**：カレントディレクトリにFireemu設定がなければ、Firebase CLIと同じくカレントディレクトリから親ディレクトリへ遡って最初に見つかった`firebase.json`を読み込みます。`firebase.json`内のパスと、その隣にある`.firebaserc`は、その`firebase.json`のディレクトリを基準に読み込まれます。
 4. **組み込みの既定値**：いずれもなければ組み込みの既定値で起動し、Security Rulesは読み込まれません。
 
 `--no-config-discovery`を付けると手順2と3の自動探索を無効にできます。実際に読み込まれたファイルは起動出力の`config:`行に表示されます。
@@ -142,7 +142,7 @@ Fireemuは同梱のスキーマに対して検証し、注釈のURLを取得し�
 
 TOMLファイルは、JSONファイルと同じJSON Schema、検証、デフォルトを使います。
 
-- ファイルの先頭を`#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`(実行しているバージョンのタグ)で始めると、TaploまたはEven Better TOMLでスキーマが選択されます。
+- ファイルの先頭を`#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`(`v0.64.0`は例です。実行しているバージョンのタグを使ってください)で始めると、TaploまたはEven Better TOMLでスキーマが選択されます。
 - タイムスタンプの値は引用符で囲んでください。スキーマにdatetime型がないため、TOMLのdatetimeはキー名とともに拒否されます。
 
 TOMLには`null`がありません。以下のnull許容の設定すべてで、そのキーを含むテーブルでキーを省略してください。null許容の配列要素では、その要素を省略します。存在自体に意味がある場合は、含むテーブルや配列は残してください。空の配列と空のテーブルは、既存の意味を保ちます。

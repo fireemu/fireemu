@@ -142,7 +142,7 @@ Fireemu valida contra su esquema incluido y no descarga la URL de la anotación.
 
 Los archivos TOML usan el mismo JSON Schema, validación y valores predeterminados que los archivos JSON.
 
-- Empieza un archivo con `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (el tag de la versión que ejecutas) para seleccionar el esquema en Taplo o Even Better TOML.
+- Empieza un archivo con `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (`v0.64.0` es un ejemplo; usa el tag de la versión que ejecutas) para seleccionar el esquema en Taplo o Even Better TOML.
 - Pon entre comillas los valores de marca de tiempo. Los datetimes de TOML se rechazan indicando el nombre de la clave porque el esquema no tiene un tipo datetime.
 
 TOML no tiene `null`. Para cada ajuste anulable de abajo, omite la clave en su tabla contenedora; para los elementos anulables de un array, omite el elemento. Conserva la tabla o el array contenedor cuando su presencia sea intencionada. Los arrays vacíos y las tablas vacías conservan su significado existente.

@@ -142,7 +142,7 @@ Fireemu는 내장된 스키마로 검증하며 주석의 URL을 가져오지 않
 
 TOML 파일은 JSON 파일과 같은 JSON Schema, 검증, 기본값을 사용합니다.
 
-- Taplo나 Even Better TOML에서 스키마를 선택하려면 파일을 `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`(실행 중인 버전의 태그)으로 시작하십시오.
+- Taplo나 Even Better TOML에서 스키마를 선택하려면 파일을 `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`(`v0.64.0`은 예시입니다. 실행 중인 버전의 태그를 사용하십시오)으로 시작하십시오.
 - 타임스탬프 값은 따옴표로 감싸십시오. 스키마에 datetime 타입이 없으므로 TOML datetime은 키 이름과 함께 거부됩니다.
 
 TOML에는 `null`이 없습니다. 아래의 null 허용 설정은 모두 포함하는 테이블에서 키를 생략하고, null 허용 배열 항목은 항목을 생략하십시오. 존재 자체가 의도된 경우에는 포함하는 테이블이나 배열을 유지하십시오. 빈 배열과 빈 테이블의 기존 의미는 그대로입니다.
