@@ -240,18 +240,20 @@ export class Functions {
   /** Records and grants the Gen2 trigger and service a function read names (first read wins). */
   manage(s, fn) {
     if (s.managed?.length) return;
-    const keys = [fn.eventTrigger?.trigger, fn.serviceConfig?.service].filter(Boolean);
-    const scope = new RegExp(
-      `^projects/(${this.project}|${this.number})/locations/(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`,
-    );
-    // A name outside the expected shape is never granted or read; it is an open item for A2, and
-    // the function itself is still deleted (ruling 2, item 5).
-    for (const key of keys)
-      if (!scope.test(key))
-        this.open.push(
-          `gen2: managed name outside the expected shape (${key.includes("/triggers/") ? "trigger" : "service"}); not read`,
-        );
-    s.managed = keys.filter((key) => scope.test(key));
+    // Each field is checked for its type and its kind: the trigger field must name a trigger and
+    // the service field a service, in the run's project and region. An invalid value is never
+    // granted or read; it is an open item for A2, and the function itself is still deleted
+    // (ruling 2 item 5, ruling 3 item 2). Nothing here throws.
+    const fields = [
+      ["trigger", fn?.eventTrigger?.trigger],
+      ["service", fn?.serviceConfig?.service],
+    ];
+    s.managed = [];
+    for (const [kind, value] of fields) {
+      if (value === undefined) continue;
+      if (managedKind(value, this.project, this.number) === kind) s.managed.push(value);
+      else this.open.push(`gen2: managed ${kind} field is not a ${kind} of this project; not read`);
+    }
     for (const key of s.managed) this.grants.managed.add(key);
   }
 
@@ -348,9 +350,19 @@ export class Functions {
   }
 }
 
+/** "trigger" or "service" for a managed name of the run's project and region, otherwise null. */
+export function managedKind(value, project, number) {
+  if (typeof value !== "string") return null;
+  const own = `projects/(${project}|${number})/locations/`;
+  if (new RegExp(`^${own}global/triggers/[A-Za-z0-9_.-]+$`).test(value)) return "trigger";
+  if (new RegExp(`^${own}${REGION}/services/[A-Za-z0-9_.-]+$`).test(value)) return "service";
+  return null;
+}
+
 /** The requests a run may make beyond its fixed paths, granted as the provider names them. */
 export function newGrants() {
-  return { signed: new Set(), source: null, managed: new Set(), pageTokens: new Set() };
+  // pageToken: only the latest list answer's non-empty nextPageToken, admitted once.
+  return { signed: new Set(), source: null, managed: new Set(), pageToken: null };
 }
 
 /** Handler rows from Cloud Logging entries (jsonPayload, as recorded; a textPayload is parsed too). */

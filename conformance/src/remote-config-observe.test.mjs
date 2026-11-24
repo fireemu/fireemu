@@ -314,13 +314,21 @@ function cloudWorld({ rc, serverEvents = false, faults = {}, never = new Set() }
         .concat([{ name: `${loc}/functions/existing` }]);
       // With world.pageToken set, the list answers in two pages, the first ending with that opaque
       // token (as the provider chooses it).
-      if (!world.pageToken) return reply(200, { functions: all });
+      // world.pageTokens (or one world.pageToken) splits the answer into pages, each but the last
+      // ending with the next token; world.onPage sees every page request.
+      const tokens = world.pageTokens ?? (world.pageToken ? [world.pageToken] : []);
+      if (!tokens.length) return reply(200, { functions: all });
       const token = url.searchParams.get("pageToken");
       world.pageTokensSeen = [...(world.pageTokensSeen ?? []), token];
-      if (token === null)
-        return reply(200, { functions: all.slice(0, 1), nextPageToken: world.pageToken });
-      if (token !== world.pageToken) return reply(400, { error: { status: "INVALID_ARGUMENT" } });
-      return reply(200, { functions: all.slice(1) });
+      world.onPage?.(token);
+      const page = token === null ? 0 : tokens.indexOf(token) + 1;
+      if (page === 0 && token !== null)
+        return reply(400, { error: { status: "INVALID_ARGUMENT" } });
+      const rows = page < tokens.length ? all.slice(page, page + 1) : all.slice(page);
+      return reply(200, {
+        functions: rows,
+        ...(page < tokens.length ? { nextPageToken: tokens[page] } : {}),
+      });
     }
     if (init.method === "POST" && rest === `${loc}/functions`) {
       const body = JSON.parse(init.body);
@@ -483,7 +491,7 @@ test("allow list: exactly the packet's method and path pairs, with the run's own
   grants.signed.add(signed);
   grants.managed.add(trigger);
   grants.managed.add(service);
-  grants.pageTokens.add("abc");
+  grants.pageToken = "abc";
   const allowed = [
     [`${RC}remoteConfig`],
     [`${RC}namespaces/firebase-server/remoteConfig`],
@@ -603,30 +611,32 @@ test("allow list: exactly the packet's method and path pairs, with the run's own
     assert.equal(ok(u, m), false, `${m ?? "GET"} ${u}`);
 });
 
-test("page tokens are opaque: only a token the previous answer returned, encoded once", () => {
+test("page tokens are opaque: only the latest token, once, encoded once", () => {
   const grants = newGrants();
   const allow = productionAllow({ project: PROJECT, number: NUMBER, names: N, grants });
   const list = `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/-/functions`;
   const token = "a!b(c)d*e'f=g%h i";
   const once = `${list}?pageSize=100&pageToken=${encodeURIComponent(token)}`;
   assert.equal(allow(new URL(once), "GET"), false, "not yet returned");
-  grants.pageTokens.add(token);
-  assert.equal(allow(new URL(once), "GET"), true);
-  const twice = `${list}?pageSize=100&pageToken=${encodeURIComponent(encodeURIComponent(token))}`;
-  assert.equal(allow(new URL(twice), "GET"), false, "encoded twice");
-  assert.equal(allow(new URL(`${list}?pageSize=100&pageToken=`), "GET"), false, "empty");
-  assert.equal(allow(new URL(`${once}&x=1`), "GET"), false, "extra parameter");
-  assert.equal(
-    allow(new URL(`${list}?pageToken=${encodeURIComponent(token)}&pageSize=100`), "GET"),
-    false,
-    "order",
-  );
-  assert.equal(
-    allow(new URL(once.replace("pageSize=100", "pageSize=50")), "GET"),
-    false,
-    "page size",
-  );
+  // Each near miss is tried while the token is still granted.
+  const refusedWhileGranted = [
+    [
+      `${list}?pageSize=100&pageToken=${encodeURIComponent(encodeURIComponent(token))}`,
+      "encoded twice",
+    ],
+    [`${list}?pageSize=100&pageToken=`, "empty"],
+    [`${once}&x=1`, "extra parameter"],
+    [`${list}?pageToken=${encodeURIComponent(token)}&pageSize=100`, "order"],
+    [once.replace("pageSize=100", "pageSize=50"), "page size"],
+  ];
+  for (const [u, why] of refusedWhileGranted) {
+    grants.pageToken = token;
+    assert.equal(allow(new URL(u), "GET"), false, why);
+  }
   assert.equal(allow(new URL(once), "DELETE"), false);
+  grants.pageToken = token;
+  assert.equal(allow(new URL(once), "GET"), true);
+  assert.equal(allow(new URL(once), "GET"), false, "admitted once");
 });
 
 test("a paged functions list follows an opaque token with ! ( ) * ' = and % in it", async () => {
@@ -1287,7 +1297,7 @@ test("A2 near misses: a source object still readable, a failed list read, a sour
   assert.equal(outside.atBaseline, false);
 });
 
-test("a function read naming a trigger outside the expected shape grants nothing and opens an item", () => {
+test("managed fields are checked for type and kind without throwing; invalid values open items", () => {
   const grants = newGrants();
   const transport = new Transport({
     out: scratch(),
@@ -1305,33 +1315,79 @@ test("a function read naming a trigger outside the expected shape grants nothing
     runId: RUN,
     grants,
   });
-  const s = {};
-  f.manage(s, {
-    eventTrigger: { trigger: "projects/other/locations/global/triggers/t" },
-    serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
-  });
-  assert.equal(grants.managed.size, 1);
-  assert.deepEqual(s.managed, [`projects/${PROJECT}/locations/us-central1/services/s`]);
-  assert.match(f.open.join(), /managed name outside the expected shape \(trigger\)/);
+  const service = `projects/${PROJECT}/locations/us-central1/services/s`;
+  const cases = [
+    [
+      { eventTrigger: { trigger: 12345 }, serviceConfig: { service } },
+      [service],
+      /managed trigger field is not a trigger/,
+    ],
+    [
+      { eventTrigger: { trigger: service }, serviceConfig: { service } },
+      [service],
+      /managed trigger field is not a trigger/,
+    ],
+    [
+      {
+        eventTrigger: { trigger: "projects/other/locations/global/triggers/t" },
+        serviceConfig: { service },
+      },
+      [service],
+      /trigger field/,
+    ],
+    [
+      {
+        eventTrigger: { trigger: `projects/${PROJECT}/locations/us-central1/triggers/t` },
+        serviceConfig: { service },
+      },
+      [service],
+      /trigger field/,
+    ],
+    [
+      {
+        eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
+        serviceConfig: { service: `projects/${PROJECT}/locations/global/triggers/t` },
+      },
+      [`projects/${NUMBER}/locations/global/triggers/t`],
+      /managed service field is not a service/,
+    ],
+    [
+      {
+        eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
+        serviceConfig: { service: ["x"] },
+      },
+      [`projects/${NUMBER}/locations/global/triggers/t`],
+      /service field/,
+    ],
+  ];
+  for (const [fn, granted, message] of cases) {
+    f.open = [];
+    const s = {};
+    assert.doesNotThrow(() => f.manage(s, fn));
+    assert.deepEqual(s.managed, granted, JSON.stringify(fn));
+    assert.match(f.open.join(), message);
+  }
   const g = {};
+  f.open = [];
   f.manage(g, {
     eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
-    serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
+    serviceConfig: { service },
   });
   assert.equal(g.managed.length, 2);
+  assert.deepEqual(f.open, []);
 });
 
-test("the Gen2 function is deleted even when its trigger name has an unexpected shape", async () => {
+test("a numeric trigger field: the Gen2 function is still deleted and the field is open", async () => {
   const rc = remoteConfigWorld();
   const cloud = cloudWorld({ rc });
-  cloud.triggerName = "projects/elsewhere/locations/global/triggers/t1";
+  cloud.triggerName = 12345;
   const { ctx } = productionContext({ rc, cloud });
   const { result } = await observe(ctx);
   const deleteKey = `DELETE cloudfunctions.googleapis.com /v2/projects/${PROJECT}/locations/us-central1/functions/${N.gen2}`;
   assert.equal(cloud.requests.filter((r) => r === deleteKey).length, 1);
   assert.equal(cloud.fns.size, 0);
   assert.ok(
-    result.open.some((o) => o.includes("managed name outside the expected shape (trigger)")),
+    result.open.some((o) => o.includes("managed trigger field is not a trigger")),
     JSON.stringify(result.open),
   );
   assert.equal(
@@ -1339,6 +1395,76 @@ test("the Gen2 function is deleted even when its trigger name has an unexpected 
     false,
   );
   assert.ok(cloud.requests.some((r) => r.startsWith("GET run.googleapis.com")));
-  assert.equal(result.sandboxAtBaseline, false);
   assert.equal(result.complete, false);
+});
+
+test("a service name in the trigger field is not granted as a service, stays open, and A2 is not at baseline", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  const service = `projects/${PROJECT}/locations/us-central1/services/s1`;
+  cloud.triggerName = service;
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.deepEqual(result.resources.managed, [service]);
+  assert.ok(result.open.some((o) => o.includes("managed trigger field is not a trigger")));
+  assert.equal(
+    cloud.requests.filter((r) => r.startsWith("GET run.googleapis.com")).length >= 1,
+    true,
+  );
+  const after = cloudWorld({ rc });
+  after.sourceGone = true;
+  const back = await readBack(productionContext({ rc, cloud: after }).ctx, result.resources);
+  assert.equal(back.managedKnown, false);
+  assert.equal(back.atBaseline, false);
+});
+
+test("A2 closes only after one trigger and one service read back absent", async () => {
+  const rc = remoteConfigWorld();
+  const { ctx } = productionContext({ rc });
+  const { result } = await observe(ctx);
+  const world = () => {
+    const c = cloudWorld({ rc });
+    c.sourceGone = true;
+    return productionContext({ rc, cloud: c });
+  };
+  assert.equal((await readBack(world().ctx, result.resources)).atBaseline, true);
+  const triggers = result.resources.managed.filter((k) => k.includes("/triggers/"));
+  const twoTriggers = {
+    ...result.resources,
+    managed: [...triggers, triggers[0].replace("t1", "t2")],
+  };
+  assert.equal((await readBack(world().ctx, twoTriggers)).atBaseline, false);
+  const runKey = `GET run.googleapis.com /v2/${result.resources.managed.find((k) => k.includes("/services/"))}`;
+  const presentCloud = cloudWorld({ rc, faults: { [runKey]: [() => reply(200, { name: "s1" })] } });
+  presentCloud.sourceGone = true;
+  const stillThere = await readBack(
+    productionContext({ rc, cloud: presentCloud }).ctx,
+    result.resources,
+  );
+  assert.equal(stillThere.atBaseline, false);
+});
+
+test("only the latest page token is admitted: a superseded one is refused on page 3, the last one after the end", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  cloud.pageTokens = ["A!(1)", "B*'=%2"];
+  const { ctx, transport } = productionContext({ rc, cloud });
+  const list = `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/-/functions`;
+  const page = (t) => new URL(`${list}?pageSize=100&pageToken=${encodeURIComponent(t)}`);
+  const checks = [];
+  cloud.onPage = (token) => {
+    if (token === cloud.pageTokens[1])
+      checks.push(["A while fetching page 3", transport.allow(page(cloud.pageTokens[0]), "GET")]);
+  };
+  const { result } = await observe(ctx);
+  assert.equal(result.complete, true, JSON.stringify(result.open));
+  assert.ok(checks.length >= 2);
+  for (const [name, admitted] of checks) assert.equal(admitted, false, name);
+  assert.equal(
+    transport.allow(page(cloud.pageTokens[1]), "GET"),
+    false,
+    "B after the terminal page",
+  );
+  assert.equal(transport.allow(page(cloud.pageTokens[0]), "GET"), false);
+  assert.equal(result.baseline.functionsEqual, true);
 });

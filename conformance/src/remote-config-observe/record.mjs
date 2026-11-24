@@ -24,7 +24,7 @@ import {
   serverTemplate,
   summarise,
 } from "./plan.mjs";
-import { Functions, GCF, newGrants } from "./functions.mjs";
+import { Functions, GCF, managedKind, newGrants } from "./functions.mjs";
 import { Transport, Unknown } from "./transport.mjs";
 
 // Request cap of a production run: baseline 8, deploys 2 x 44 + 1 log read, server 24 + 6,
@@ -105,16 +105,18 @@ export function productionAllow({ project, number, names, grants }) {
     `POST cloudresourcemanager.googleapis.com/v1/projects/${p}:getIamPolicy`,
     `GET artifactregistry.googleapis.com/v1${loc}/repositories/gcf-artifacts`,
   ]);
-  // A page token is opaque: only a token a previous list answer returned as nextPageToken (never
-  // empty: listFunctions grants only non-empty tokens), encoded once with encodeURIComponent,
+  // A page token is opaque: only the latest list answer's nextPageToken (never empty: listFunctions
+  // grants only a non-empty token and clears it on every answer), admitted once, encoded once with encodeURIComponent,
   // whatever its characters (ruling 2). The whole query must equal that form, as fetch sends it
   // (the URL serializer also escapes ' in a query), so no other parameter or order passes.
   const pageQuery = (url) => {
     const token = url.searchParams.get("pageToken");
-    return (
-      grants.pageTokens.has(token) &&
-      url.search === new URL(`?pageSize=100&pageToken=${encodeURIComponent(token)}`, url).search
-    );
+    const admitted =
+      token !== null &&
+      token === grants.pageToken &&
+      url.search === new URL(`?pageSize=100&pageToken=${encodeURIComponent(token)}`, url).search;
+    if (admitted) grants.pageToken = null; // admitted once (ruling 3 item 1)
+    return admitted;
   };
   const services = `/v1/projects/${p}/services:batchGet`;
   const servicesQuery = `?${new URLSearchParams(SERVICES.map((s) => ["names", `projects/${p}/services/${s}`]))}`;
@@ -593,16 +595,18 @@ export async function readBack(ctx, resources = null) {
       ).status;
     });
   const grants = prod.functions.grants;
-  const own = `projects/(${prod.functions.project}|${prod.functions.number})/locations/`;
+  const kinds = {};
   for (const [i, key] of (resources?.managed ?? []).entries())
     await step(`a2-managed-${i}`, async () => {
-      if (!new RegExp(`^${own}(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`).test(key))
-        throw new Error("managed resource outside the read-back scope");
+      const kind = managedKind(key, prod.functions.project, prod.functions.number);
+      if (!kind) throw new Error("managed resource outside the read-back scope");
       grants.managed.add(key);
-      const origin = key.includes("/triggers/")
-        ? "https://eventarc.googleapis.com/v1/"
-        : "https://run.googleapis.com/v2/";
+      const origin =
+        kind === "trigger"
+          ? "https://eventarc.googleapis.com/v1/"
+          : "https://run.googleapis.com/v2/";
       out.managed[key] = (await t.send(`a2-managed-${i}`, origin + key)).status;
+      kinds[kind] = [...(kinds[kind] ?? []), out.managed[key]];
     });
   if (resources?.source)
     await step("a2-source", async () => {
@@ -631,7 +635,13 @@ export async function readBack(ctx, resources = null) {
   out.unknown = [...t.unknown];
   // A Gen2 create that never named its trigger and service leaves them unread: not at baseline.
   const gen2Attempted = resources?.functions?.gen2?.attempted === true;
-  const managedKnown = !gen2Attempted || (resources?.managed ?? []).length === 2;
+  // Gen2 closes only after one trigger and one service read back, both absent (ruling 3 item 2).
+  const managedKnown =
+    !gen2Attempted ||
+    (kinds.trigger?.length === 1 &&
+      kinds.service?.length === 1 &&
+      kinds.trigger[0] === 404 &&
+      kinds.service[0] === 404);
   out.managedKnown = managedKnown;
   out.atBaseline =
     out.errors.length === 0 &&
@@ -658,8 +668,9 @@ async function listFunctions(t, url, prefix, grants) {
     if (r.status !== 200) throw new Error(`${prefix}: functions list ${r.status}`);
     found.push(...(r.json.functions ?? []).map((fn) => fn.name));
     token = r.json.nextPageToken ?? "";
+    grants.pageToken = null; // a used or superseded token is never admitted again
     if (!token) return found.sort();
-    grants.pageTokens.add(token);
+    grants.pageToken = token;
   }
   throw new Error(`${prefix}: more than three pages of functions`);
 }
