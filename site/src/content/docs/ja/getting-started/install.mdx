@@ -1,28 +1,28 @@
 ---
 title: インストールと実行
-description: npmからFireemuをインストールし、fireemu.tomlを作成して、エミュレータを起動し、そのエミュレータに対してテストを実行します。
+description: npmからFireemuをインストールし、fireemu.tomlを作成してエミュレータ起動やテスト実行を行う手順です。
 ---
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-npmパッケージ`fireemu`をインストールし、`fireemu.toml`を作成してから、エミュレータを起動するか、エミュレータに対してコマンドを実行します。
+`fireemu`パッケージを開発依存として追加し、`fireemu.toml`を作成すれば、すぐエミュレータの起動やテスト実行を始められます。
 
 ## 始める前に
 
-- **Node.js 20以降**(パッケージの`engines`フィールドは`>=20`です)。`fireemu`ランチャーとFunctionsランナーを実行します。
-- **対応プラットフォーム。** パッケージはお使いのプラットフォーム向けのビルド済みバイナリをインストールします。Javaなどのランタイムは不要です。
+- **Node.js 20以降**（パッケージの`engines`は`>=20`）：`fireemu`ランチャーとNode.js用Functionsランナーの実行に必要です。
+- **対応プラットフォーム**：OSとアーキテクチャに合ったビルド済みバイナリが自動で入ります。Javaランタイムは不要です。
 
 | OS | アーキテクチャ |
 |---|---|
 | macOS 13以降 | Apple silicon、Intel |
-| Linux(Alpineやdistrolessなどglibcまたはmuslのどのディストリビューションでも) | x86-64、arm64 |
+| Linux（Alpine・distrolessを含むglibc/musl環境） | x86-64、arm64 |
 | Windows 10以降 | x86-64 |
 
-Cloud Functionsを実行するには、コードベースに`firebase-functions` v6またはv7も必要です。Pythonのコードベースでは、Python 3.10から3.14と、`firebase-functions`を入れた専用の`venv`が代わりに必要です(macOSとLinux。[Cloud Functions](../../products/functions-python/)を参照)。
+Node.jsのCloud Functionsを動かすには、コードベースに`firebase-functions` v6またはv7が必要です。Pythonコードベースの場合は、Python 3.10〜3.14と`firebase-functions`を導入した専用`venv`を用意してください（macOS/Linux対応。詳しくは[Cloud Functions（Python）](../../products/functions-python/)を参照）。
 
 ## インストール
 
-Fireemuをプロジェクトの開発依存として追加します。
+プロジェクトの開発依存にFireemuを追加します。
 
 ```sh
 npm install --save-dev fireemu
@@ -34,17 +34,17 @@ npm install --save-dev fireemu
 npx fireemu init
 ```
 
-`init`は、カレントディレクトリに`fireemu.toml`を作成します。対話モードでは、どの[互換性プロファイル](../../guides/profiles/)を使うか(デフォルトの`strict`を推奨します)と、既存の`firebase.json`を再利用するかを尋ねます。再利用する場合、Fireemuはファイルをコピーせず参照します。Security Rules、インデックス、Functionsのコードベース、ポートは、Fireemuが起動するたびにそのファイルから読み込まれます。
+`init`はカレントディレクトリに`fireemu.toml`を作成します。対話形式で使用する[互換性プロファイル](../../guides/profiles/)（既定の`strict`を推奨）と、既存の`firebase.json`を参照するかどうかを確認します。参照を選んでもコピーは作らず、起動のたびに`firebase.json`からSecurity Rules・インデックス・Functionsコードベース・ポート設定を直接読み込みます。
 
-CIやスクリプトでは、非対話形式を使います。
+CIやスクリプトでは対話を省略できます。
 
 ```sh
 npx fireemu init --yes
 ```
 
-既存の`fireemu.toml`は、`--force`を指定しない限り上書きされません。既存の`fireemu.json`は保持されます。`fireemu.toml`を作成する前に削除してください。
+既存の`fireemu.toml`は`--force`を付けない限り上書きされません。`fireemu.json`が残っている場合は、先に削除してから作成してください。
 
-`npx fireemu init --yes`は、次のファイルをそのまま書き出します(各行の説明のため、ここではコメントを追加しています)。
+`npx fireemu init --yes`は次の内容を生成します（説明用のコメントを添えています）。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
@@ -82,11 +82,11 @@ firestore.edition = "standard"
 </TabItem>
 </Tabs>
 
-JSONタブは同等の`fireemu.json`で、`init`はこれを書き出しません。
+JSONタブは同等の`fireemu.json`の書き方です（`init`が書き出すのはTOMLのみです）。
 
-`./firebase.json`が存在する場合(または`--firebase-json <file>`を指定した場合)、`init`はそれを参照し、`firebaseJson = "firebase.json"`の1行を追加します。これにより、ポート、Security Rules、インデックス、Functionsのコードベースがそのファイルから読み込まれます。
+プロンプトなし（`--yes`、`--no-interactive`、または端末なし）で`init`を実行し、`./firebase.json`が存在する場合は、`firebaseJson = "firebase.json"`でそのファイルを参照します。対話モードでは先に確認します。`--firebase-json <file>`を渡した場合、`firebaseJson`には指定したパスが入ります。ポート、Security Rules、インデックス、Functionsのコードベースは、そのファイルから読み込まれます。
 
-すべてのキーは[設定スキーマ](../../reference/configuration/)に一覧があります。`npx fireemu init --reference`は、すべてのキーを説明する`fireemu.reference.toml`も書き出します。このファイルは読み込まれません。
+設定キーの一覧は[設定のスキーマ](../../reference/configuration/)を参照してください。`npx fireemu init --reference`を実行すると、全キーの解説コメント付きで`fireemu.reference.toml`を書き出せます（この参照用ファイルは実行時には読み込まれません）。
 
 ## エミュレータを起動する
 
@@ -94,58 +94,58 @@ JSONタブは同等の`fireemu.json`で、`init`はこれを書き出しませ�
 npx fireemu up
 ```
 
-`up`は、`Ctrl+C`を押すまでエミュレータを実行し続けます。`http://127.0.0.1:4000/ui/`で[Emulator UI](../../guides/ui/)を開くと、データを確認・管理できます。
+`up`は`Ctrl+C`で止めるまでエミュレータを起動したままにします。ブラウザで`http://127.0.0.1:4000/ui/`を開くと[Emulator UI](../../guides/ui/)からデータの閲覧・編集や仮想時計の操作ができます。
 
-起動時の出力の最初の数行には、読み込まれた設定ファイルの名前と、FirestoreとStorageについてSecurity Rulesが読み込まれているかどうかが表示されます。
+起動時の出力冒頭には、読み込んだ設定ファイルと、Firestore/StorageのSecurity Rulesが有効になっているかが表示されます。
 
 ## エミュレータに対してコマンドを実行する
 
-テストスイートなど、コマンドの実行中だけエミュレータを動かすには`exec`を使います。
+テストスイートなど、特定コマンドの実行中だけエミュレータを動かしたいときは`exec`を使います。
 
 ```sh
 npx fireemu exec -- npm test
 ```
 
-`exec`は次の4つを行います。
+`exec`は次の流れで動作します。
 
-1. エミュレータを起動します。
-2. すべてのリスナーの準備ができたら、Firebase SDKのエミュレータ環境変数を設定してコマンドを1回実行します([アプリを接続する](../connect/)を参照)。
-3. コマンドが終了したら、すべてを停止します。
-4. コマンドの終了ステータスで終了します。
+1. 対象のエミュレータを起動します。
+2. すべてのリスナーの準備が完了すると、Firebase SDKのエミュレータ用環境変数を設定してコマンドを実行します（[アプリを接続する](../connect/)を参照）。
+3. コマンドが終わったらエミュレータをすべて停止します。
+4. 実行したコマンドの終了コードをそのまま返します。
 
-Unixでは、`SIGINT`と`SIGTERM`がコマンドに転送されます。`exec`は、`--ui`を付けない限りUIを起動しません。
+Unix環境では`SIGINT`と`SIGTERM`が子コマンドへ転送されます。`exec`では`--ui`を付けない限りEmulator UIは起動しません。
 
-公式のコマンド名もエイリアスとして使えます。
+Firebase CLIと同じコマンド名もエイリアスとして使えます。
 
 ```sh
 npx fireemu emulators:start
 npx fireemu emulators:exec -- npm test
 ```
 
-## サービスを選ぶ
+## 起動するサービスを選ぶ
 
-Firestore、Authentication、Storage、App Checkはデフォルトで起動します。そのほかのサービスは、設定されている場合にのみ起動します。
+既定ではFirestore、Authentication、Storage、App Checkが起動します。その他のサービスは設定がある場合に起動します。
 
-| サービス | 起動する条件 |
+| サービス | 自動起動する条件 |
 |---|---|
-| Functions(およびEventarcとCloud Tasks) | コードベースが設定されている |
+| Functions（Eventarc・Cloud Tasksを含む） | コードベースが設定されている |
 | Pub/Sub | `emulators.pubsub`、`daemon.pubsubPort`、`--pubsub-port`のいずれかが設定されている |
 | Realtime Database | `emulators.database`、`daemon.databasePort`、`--database-port`のいずれかが設定されている |
-| Hosting | `firebase.json`に`hosting.public`ディレクトリがある |
+| Hosting | `firebase.json`に`hosting.public`ディレクトリが設定されている |
 
-`--only`で、どのサービスを起動するかを正確に指定できます。
+`--only`で起動するサービスを明示的に絞ることもできます。
 
 ```sh
 npx fireemu up --only auth,firestore,storage
 npx fireemu exec --only firestore -- npm test
 
-# One Functions codebase
+# 特定のFunctionsコードベースだけ起動
 npx fireemu up --only functions:<codebase>
 ```
 
 ## デフォルトポート
 
-FireemuはLocal Emulator Suiteと同じデフォルトポートを使います。`firebase.json`またはコマンドラインで指定したポートが優先されます。
+FireemuはFirebase Local Emulator Suiteと同じ既定ポートを使います。`firebase.json`やコマンドラインオプションで指定したポートが優先されます。
 
 | サービス | ポート | オプション |
 |---|---|---|
@@ -164,17 +164,17 @@ FireemuはLocal Emulator Suiteと同じデフォルトポートを使います�
 
 ## ヘルプを見る
 
-すべてのコマンドは、オプションを説明するヘルプを備えています。
+各サブコマンドのオプション一覧は`--help`で確認できます。
 
 ```sh
 npx fireemu --help
 npx fireemu exec --help
 ```
 
-エミュレータが起動しない場合は、`npx fireemu doctor`を実行してください。[トラブルシューティング](../../guides/troubleshooting/)を参照してください。
+起動しないときは`npx fireemu doctor`を実行し、[トラブルシューティング](../../guides/troubleshooting/)も参照してください。
 
 ## 関連項目
 
-- エミュレータに[アプリを接続する](../connect/)。
-- すでに`firebase emulators:exec`を使っている場合は、[Local Emulator Suiteから移行する](../migrate/)。
+- [アプリを接続する](../connect/)
+- [Local Emulator Suiteから移行する](../migrate/)
 - [CLIリファレンス](../../reference/cli/)

@@ -18,7 +18,7 @@ Halten Sie Fireemu-spezifische Einstellungen in `fireemu.toml` statt in `firebas
 <TabItem label="TOML">
 
 ```toml
-#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json
 # Configuration schema version: 1.
 schemaVersion = 1
 # Compatibility profile: "strict" or "emulator".
@@ -142,7 +142,7 @@ Fireemu validiert gegen sein mitgeliefertes Schema und ruft die URL der Annotati
 
 TOML-Dateien verwenden dasselbe JSON Schema, dieselbe Validierung und dieselben Standardwerte wie JSON-Dateien.
 
-- Beginnen Sie eine Datei mit `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json` (dem Tag der Version, die Sie ausführen), um das Schema in Taplo oder Even Better TOML auszuwählen.
+- Beginnen Sie eine Datei mit `#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json` (`v0.64.0` ist ein Beispiel; verwenden Sie den Tag der Version, die Sie ausführen), um das Schema in Taplo oder Even Better TOML auszuwählen.
 - Setzen Sie Zeitstempelwerte in Anführungszeichen. TOML-Datetimes werden mit dem Schlüsselnamen abgelehnt, weil das Schema keinen Datetime-Typ hat.
 
 TOML kennt kein `null`. Lassen Sie bei jeder nullbaren Einstellung unten den Schlüssel in seiner umgebenden Tabelle weg; bei nullbaren Array-Elementen lassen Sie das Element weg. Behalten Sie die umgebende Tabelle oder das umgebende Array, wenn ihr Vorhandensein beabsichtigt ist. Leere Arrays und leere Tabellen behalten ihre bisherige Bedeutung.

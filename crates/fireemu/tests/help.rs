@@ -406,15 +406,19 @@ fn the_profile_documentation_recommends_strict_including_for_migrations() {
         "{description}"
     );
     let readme = include_str!("../../../README.md");
-    assert!(readme.contains("Recommended, including when migrating from the official emulator"));
-    assert!(readme.contains("it is not needed for a migration"));
+    assert!(readme.contains(
+        "Recommended for day-to-day testing and when migrating from the official emulator"
+    ));
+    assert!(readme.contains("you do not need it to migrate"));
     let profiles = include_str!("../../../site/src/content/docs/guides/profiles.mdx");
-    assert!(profiles.contains("recommended, including when migrating from the official emulator"));
-    assert!(profiles.contains("it is not needed for a migration"));
+    assert!(profiles.contains(
+        "Recommended for day-to-day testing and when migrating from the official emulator"
+    ));
+    assert!(profiles.contains("you do not need it to migrate"));
     // The migration guide moved from the README to the documentation site.
     let migration = include_str!("../../../site/src/content/docs/getting-started/migrate.md");
     assert!(migration.contains("title: Migrate from the Local Emulator Suite"));
-    assert!(migration.contains("Keep `profile = \"strict\"`, the default."));
+    assert!(migration.contains("Leave `profile = \"strict\"` (the default) as is."));
     // The settings the migration guide names as single-behavior relaxations exist in the schema.
     for (section, key) in [
         ("firestore", "enforceLimits"),

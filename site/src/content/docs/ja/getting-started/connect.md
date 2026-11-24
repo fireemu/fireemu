@@ -1,13 +1,13 @@
 ---
 title: アプリを接続する
-description: Firebase Admin SDK、クライアントSDK、Security RulesのユニットテストをFireemuのエミュレータに向けます。
+description: Firebase Admin SDK、クライアントSDK、Security RulesユニットテストをFireemuに接続する方法です。
 ---
 
-FireemuはLocal Emulator Suiteと同じプロトコルとデフォルトポートで動作するため、同じ方法で接続できます。
+FireemuはFirebase Local Emulator Suiteと同じプロトコルと既定ポートで待ち受けるため、対応しているサービスでは同じSDKのエミュレータ接続方法で接続できます。ポートとプロジェクトIDは、Fireemuの実行に合わせてください。
 
 ## サーバーコードとAdmin SDKを接続する
 
-Firebase Admin SDKとGoogle Cloudクライアントライブラリは、エミュレータの環境変数を読み取ります。`fireemu exec`は、実行するコマンドに対してこれらを設定します。
+Firebase Admin SDKとGoogle Cloudクライアントライブラリは環境変数からエミュレータを認識します。`fireemu exec`経由でコマンドを実行すると、これらの変数が自動で設定されます。
 
 ```sh
 npx fireemu exec -- node ./scripts/seed.mjs
@@ -17,33 +17,33 @@ npx fireemu exec -- node ./scripts/seed.mjs
 |---|---|
 | `FIRESTORE_EMULATOR_HOST` | Firestoreの`host:port` |
 | `FIREBASE_AUTH_EMULATOR_HOST` | Authenticationの`host:port` |
-| `FIREBASE_STORAGE_EMULATOR_HOST`, `STORAGE_EMULATOR_HOST` | Storageの`host:port`と`http://host:port` |
-| `GCLOUD_PROJECT`, `GOOGLE_CLOUD_PROJECT` | プロジェクトID |
-| `FIREEMU_CONTROL_URL`, `FIREEMU_CONTROL_TOKEN` | FireemuのコントロールAPI。`fireemu/testing`が使います |
+| `FIREBASE_STORAGE_EMULATOR_HOST`、`STORAGE_EMULATOR_HOST` | Storageの`host:port`および`http://host:port` |
+| `GCLOUD_PROJECT`、`GOOGLE_CLOUD_PROJECT` | プロジェクトID |
+| `FIREEMU_CONTROL_URL`、`FIREEMU_CONTROL_TOKEN` | FireemuコントロールAPI（`fireemu/testing`が使用） |
 
-ほかのエミュレータ(Realtime Database、Pub/Sub、Eventarc、Cloud Tasks、App Check、Hub)の変数は、設定条件とともに[環境変数](../../reference/environment-variables/)に一覧があります。
+Realtime Database、Pub/Sub、Eventarc、Cloud Tasks、App Check、Hubの環境変数は[環境変数](../../reference/environment-variables/)を参照してください。
 
-`exec`の下では、Admin SDKに接続用のコードは不要です。
+`exec`経由で実行する場合、Admin SDK側に特別な接続コードは不要です。
 
 ```js
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
-// Under `fireemu exec`, the Admin SDK finds the emulators from the environment.
+// `fireemu exec`経由では、Admin SDKが環境変数からエミュレータを自動認識します。
 initializeApp({ projectId: process.env.GCLOUD_PROJECT });
 await getFirestore().doc('notes/n1').set({ text: 'hello' });
 ```
 
 ### シェルにすでにある変数
 
-選択されていないエミュレータの変数は、環境にあったままの状態で残ります。実行で起動しないエミュレータについて、シェルがすでに持っている変数はそのまま残り、警告が出ます。
+今回の実行で起動しないエミュレータの環境変数は書き換えられません。シェルに既存のホスト変数が残っている場合はそのまま引き継がれ、警告が出ます。
 
-- `fireemu exec --plan -- <command>`は、コマンドから見える内容を一覧表示します。
-- [`--deny-inherited-emulator-env`](../../reference/cli/#継承されたエミュレータ変数)を指定すると、そのような実行は開始前に失敗します。
+- `fireemu exec --plan -- <command>`で、Fireemuが設定するエミュレータ変数と、シェルから引き継ぐエミュレータ変数の扱いを事前に確認できます。
+- [`--deny-inherited-emulator-env`](../../reference/cli/#継承されたエミュレータ変数)を付けると、意図しない残存変数がある場合に起動前にエラーで止めます。
 
 ## クライアントSDKを接続する
 
-クライアントSDKは、Local Emulator Suiteと同様にコードで接続します。Fireemuが実行時に使うプロジェクトIDを使ってください。`.firebaserc`のデフォルト、なければ`fireemu.toml`の`daemon.authProject`、それもなければ`demo-app`です。
+クライアントSDKの接続方法はLocal Emulator Suiteと同じです。プロジェクトIDはFireemuが解決したものに揃えてください。優先順位は`--project`を含めて[プロジェクトID](#プロジェクトid)に記載しています。
 
 ```js
 import { initializeApp } from 'firebase/app';
@@ -64,27 +64,27 @@ connectStorageEmulator(getStorage(app), '127.0.0.1', 9199);
 connectFunctionsEmulator(getFunctions(app), '127.0.0.1', 5001);
 ```
 
-デフォルトポートは[インストールと実行](../install/#デフォルトポート)に一覧があります。接続方法が異なるプロダクトが2つあります。
+ポート一覧は[デフォルトポート](../install/#デフォルトポート)を参照してください。次の2サービスのみ接続方法が異なります。
 
-- **Realtime Database。** クライアントに専用の`databaseURL`が必要です。[Realtime Database](../../products/realtime-database/#接続)を参照してください。
-- **Hosting。** 通常のHTTPで、SDKの設定は不要です([Firebase Hosting](../../products/hosting/))。
+- **Realtime Database**：クライアント設定に`databaseURL`が必要です（[Realtime Database](../../products/realtime-database/#接続)）。
+- **Hosting**：通常のHTTPでアクセスでき、SDK設定は不要です（[Firebase Hosting](../../products/hosting/)）。
 
 ## Security Rulesのユニットテストを実行する
 
-`@firebase/rules-unit-testing`はFireemuで動作します。
+`@firebase/rules-unit-testing`もそのまま動作します。
 
-- 署名なしのモックIDトークン(`authenticatedContext()`)は、`strict`プロファイルでも、デフォルトで受け付けられます。
-- FirestoreとStorageのルールを読み込むためのルートと、Firestoreをクリアするためのルート(`testEnv.clearFirestore()`)に対応しています。
-- `withFunctionTriggersDisabled`に対応しています。ブラウザのメタデータ(`Origin`、`Sec-Fetch-Site`)を送らないクライアントからであれば、Hubはトークンなしで`PUT /functions/disableBackgroundTriggers`と`enableBackgroundTriggers`を受け付けます。
+- `authenticatedContext()`が生成する署名なしモックIDトークンは、`strict`プロファイルでも既定で受け付けられます。
+- Firestore・Storageルールの動的読み込みと`testEnv.clearFirestore()`に対応しています。
+- `withFunctionTriggersDisabled`も動作します。ブラウザ由来のヘッダー（`Origin`、`Sec-Fetch-Site`）を持たないクライアントからの`PUT /functions/disableBackgroundTriggers` / `enableBackgroundTriggers`を、コントロールトークンなしで受け付けます。
 
-[Security Rules](../../guides/security-rules/)を参照してください。
+拒否ログやモックトークンの制御については[Security Rules](../../guides/security-rules/)を参照してください。
 
 ## プロジェクトID
 
-Fireemuは、次のうち最初に設定されているものからプロジェクトIDを決めます。
+プロジェクトIDは次の優先順で決まります。
 
-1. コマンドラインの`--project`(`-P`)。IDまたは`.firebaserc`のエイリアスを指定します。
-2. 読み込まれた`firebase.json`の隣にある`.firebaserc`のデフォルトプロジェクト。
+1. コマンドラインの`--project`（`-P`）で指定したIDまたは`.firebaserc`エイリアス。
+2. 読み込まれた`firebase.json`と同じディレクトリにある`.firebaserc`のデフォルトプロジェクト。
 3. `fireemu.toml`の`daemon.authProject`。
 4. `demo-app`。
 
