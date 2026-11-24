@@ -179,7 +179,6 @@ export function eventRows(run) {
   for (const generation of ["1", "2"]) {
     const summary = run.summary?.generations?.[generation];
     if (summary) {
-      // receivedAt-based ordering and counts are compared; the event ids themselves are not values.
       // The local baseline publishes deliver events too, so the counts of all and of unmatched
       // events are not compared; duplicates, steps, order and the value sets are.
       const { duplicates, events: _events, unmatched: _unmatched, ...rest } = summary;
