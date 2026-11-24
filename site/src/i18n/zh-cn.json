@@ -38,7 +38,7 @@
 	"landing.title": "Fireemu — 针对与生产环境行为一致的 Firebase 进行测试",
 	"landing.description": "面向自动化测试和 CI 的非官方本地 Firebase 模拟器，以文档记录范围内的生产环境 Firebase 行为为目标。",
 	"landing.h1": "针对与生产环境行为一致的 Firebase 进行测试",
-	"landing.lede": "面向测试和 CI 的单二进制非官方本地 Firebase 模拟器。默认采用生产环境的校验规则和错误格式，让你在部署前就能在本地发现问题。",
+	"landing.lede": "面向测试和 CI 的单二进制非官方本地 Firebase 模拟器。默认在文档记录的范围内采用生产环境的校验规则和错误格式，让你在部署前就能在本地发现更多问题。",
 	"landing.install": "安装并运行",
 	"landing.exploreCompat": "查看兼容性",
 	"landing.caveat": "默认使用 <code>strict</code> 配置。",

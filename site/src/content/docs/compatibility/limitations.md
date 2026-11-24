@@ -22,7 +22,7 @@ App Hosting and Data Connect are not currently supported. Firebase Extensions is
 ### Cloud Firestore
 
 - The Enterprise Pipeline API implements a limited subset of read operations ([Enterprise pipelines](../../products/firestore/#enterprise-pipelines)).
-- Enterprise text search supports a bounded set of local lexical queries with explicit index build controls. Analysis and numeric scores are approximate, ordering follows the recorded cases, and `productionExact` refuses unobserved search semantics.
+- Enterprise text search supports a bounded set of local lexical queries with explicit index build controls. Analysis and numeric scores are approximate, score ordering follows the recorded production orders, and `productionExact` refuses unobserved search semantics.
 
 ### Authentication
 

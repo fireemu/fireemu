@@ -16,7 +16,7 @@ Google's Firebase Local Emulator Suite is the official tool for local Firebase d
 | Maintained by | Google | The Fireemu project |
 | Products | Firestore, Realtime Database, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Hosting, App Hosting, Data Connect, Extensions | Firestore, Authentication, Cloud Storage, Functions, Pub/Sub, Eventarc, Cloud Tasks, Realtime Database and Hosting (both partial), App Check. App Hosting and Data Connect are not yet supported, and Extensions is not planned ([status](../../#supported-products)) |
 | Runtime | Node.js CLI with Java (`java -jar`) processes for Firestore and Realtime Database | Single native binary installed through npm (Node.js 20+) |
-| Startup and idle memory (Firestore only) | 3,043 ms until SDK-ready; 390 MiB idle memory (PSS) | `emulator` profile: 140 ms; 11 MiB. Median of five measured pairs in one `standard` run at commit `f3b942c` on a GitHub Actions Linux runner with JDK 21.0.8 ([benchmark details](../../compatibility/performance/)) |
+| Startup and idle memory with an empty database (Firestore only) | 3,043 ms until SDK-ready; 390 MiB idle memory (PSS) | `emulator` profile: 140 ms; 11 MiB. Median of five measured pairs in one `standard` run at commit `f3b942c` on a GitHub Actions Linux runner with JDK 21.0.8 ([benchmark details](../../compatibility/performance/)) |
 | Query missing a composite index | Runs the query | `strict` (default): fails with `FAILED_PRECONDITION` and a console creation link, matching production. Set `firestore.missingIndexes = "report"` to run the query and log the missing index. `emulator` profile: runs the query. |
 | TOTP multi-factor auth | Supports phone (SMS) second factors; other factor types return `MFA provider not supported!` | Both profiles support TOTP and SMS through the project's MFA configuration |
 | App Check | Not included in the suite | Both profiles support debug-token exchange and enforcement for Auth, Firestore, Storage, and callable functions; no device attestation ([details](../../products/app-check/)) |
@@ -33,9 +33,9 @@ Fireemu focuses on checks and test controls that pay off in automated suites and
 
 ## Production first
 
-When the official emulator and production Firebase behave differently, Fireemu's default `strict` profile follows production within the documented scope and records the difference. The exceptions are the development defaults described below. Recorded responses keep production's status codes and error wording, so the errors your app handles in tests are the errors it will meet after you deploy.
+When the official emulator and production Firebase behave differently, Fireemu's default `strict` profile follows production within the documented scope and records the difference. The exceptions are the development defaults described below. Recorded responses keep production's status codes and error wording, so for the recorded cases the errors your app handles in tests match the ones production returns.
 
-Behavior is checked against recordings captured from real Firebase projects. <VerifiedAreaCount /> areas have been verified this way. The [compatibility tables](../../compatibility/) list each area and the exact conditions checked, and [Limitations](../../compatibility/limitations/) lists what is out of scope or still in progress. Fireemu follows production where the two differ, but it does not claim to be equivalent to it.
+Behavior is checked against recordings captured from real Firebase projects, for the recorded cases only. <VerifiedAreaCount /> areas have been verified this way. The [compatibility tables](../../compatibility/) list each area, the exact conditions checked and the reviewed known differences, and [Limitations](../../compatibility/limitations/) lists what is out of scope or still in progress. Fireemu follows production where the two differ, but it does not claim to be equivalent to it.
 
 ### Development defaults
 

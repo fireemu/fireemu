@@ -22,7 +22,7 @@ App HostingとData Connectは現在未対応です。Firebase Extensionsは対�
 ### Cloud Firestore
 
 - Enterprise Pipeline APIは読み取り操作の限られたサブセットのみ対応しています（[Enterpriseパイプライン](../../products/firestore/#enterpriseパイプライン)）。
-- Enterpriseのテキスト検索は、有限のローカル語彙検索と明示的なビルド制御を提供します。解析と数値スコアは近似で、順序は記録したケースに従います。`productionExact`は、観測されていない検索のセマンティクスを拒否します。
+- Enterpriseのテキスト検索は、有限のローカル語彙検索と明示的なビルド制御を提供します。解析と数値スコアは近似で、スコア順の並びは本番で記録した順序に従います。`productionExact`は、観測されていない検索のセマンティクスを拒否します。
 
 ### Authentication
 
