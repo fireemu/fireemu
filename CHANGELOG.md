@@ -8,6 +8,42 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Emulator UI: a Pub/Sub page lists, creates and deletes topics, subscriptions and snapshots, publishes messages, pulls and acknowledges them, and seeks a subscription. It reaches the Pub/Sub listener only through project-scoped topic, subscription and snapshot routes of the sessions' own projects.
+- Emulator UI: a Remote Config page shows the default project's template (parameters, conditions, version history and ETag), validates and publishes a template, rolls back to a version, and sends a synthetic update event to `onConfigUpdated` handlers. It shares the template store of the HTTP listener, so versions and ETags match what the Admin SDK sees.
+- Emulator UI: the header gains quick virtual-clock controls (+1 minute, +15 minutes, +1 hour, +1 day) and an active fault-plan indicator with a clear action; the command palette can freeze, resume and advance the virtual clock.
+- Emulator UI: the Runtime page can load the enforced limits catalog and the capability manifest, and the Firestore page can run a TTL sweep and expire active Listen streams.
+- Emulator UI: Firestore documents can be edited as plain JSON, duplicated, and copied as JSON, value or field path; the query panel can copy and clear missing-index reports. The Realtime Database page shows a data tree, and Storage objects can have their custom metadata edited.
+- Emulator UI: the Auth page filters users by status and MFA, advances the virtual clock for the next TOTP window, edits the project's Auth emulator configuration, and mints an ID token for an existing user through a privileged route; the Rules page has a coverage view and filters for denied requests; the Functions page keeps an invocation history, can pick an Auth user for a call, copies a `curl` command and shows structured logs.
+- Remote Config: the server-template data plane (`serverRemoteConfig`) now serves every condition form recorded in production on 2026-11-24 in the structured shape the Admin SDK evaluates: percent `<=`, `>` and `between` (with a seed, and `percent <= n` without one), custom-signal string matches (`exactlyMatches`, `contains`, `notContains`, `matches`), numeric and semantic-version comparisons, and `&&` chains. Other expressions still become an empty condition.
+- Remote Config: a new optional `remoteConfig.updateUser` setting reports a configured identity as production reports the calling user: `{email}` on published and read versions and in v1 events, `{email, name: "", imageUrl: ""}` in v2 events, and the email, name and image in version history. Without it `updateUser` stays omitted.
+
+### Changed
+
+- Remote Config: the server data plane lists the parameters of parameter groups next to the top-level parameters and no longer serves `parameterGroups`, as production does.
+- Remote Config: the v1 and the v2 event of one published or rolled-back version now carry the same event id, as recorded in production.
+- Remote Config, strict profile: a server-template publish or validation whose condition is a two-term `||`, a whole `!(...)`, `true` or `false` is refused with production's 400 `INVALID_ARGUMENT` message. The emulator profile keeps accepting these and serves them as empty conditions.
+
+### Fixed
+
+- Test World retirement on macOS no longer fails with `kill EPERM` when the operating system refuses a process-group signal while the group is exiting; retirement still waits for the process tree to close.
+
+## [0.65.0] - 2026-11-23
+
+### Added
+
+- Remote Config: the loopback control listener serves the `firebase-server` namespace (`/v1/projects/{p}/namespaces/firebase-server/remoteConfig`) with its own version history, as recorded in production on 2026-11-21: an unpublished server template reads as `{}` with an ETag, server publishes leave the client template unchanged, and an unknown namespace is refused with 400. The explicit client form `namespaces/firebase` is served too.
+- Remote Config: `namespaces/firebase-server/serverRemoteConfig` serves the published server template in the shape the Node Admin SDK's `getServerTemplate()` reads, so `initServerTemplate().load()` and `evaluate()` work against Fireemu with `FIREBASE_REMOTE_CONFIG_URL_BASE` set to the control listener. Conditions are converted to the recorded structured form for the two recorded expression forms (custom-signal exact match and `percent(seed) <= n`); other expressions become an empty condition, which the SDK evaluates as false.
+- Remote Config: a client-template publish or rollback through the local administration delivers the event shape recorded in production to v1 and v2 Remote Config functions; validate-only and refused requests deliver nothing. Server-template publishes deliver no event (unrecorded in production). See `docs/remote-config.md`.
+
+### Fixed
+
+- Firestore: Standard queries with two equality filters and an array-contains filter can use the recorded two-carrier, descending-prefix and collection-group carrier configurations. A collection equality plus array-contains can also use an explicit equality index for descending document-name order. Explain reports the recorded merge order under production rules.
+- Firestore, strict profile: missing-index errors now match the recorded collection queries with an opposite-direction equality index, an ascending-name array carrier, a group-only ordered composite, or a contains-only index on a path also filtered by equality.
+- Firestore REST: a UTC `timestampValue` ending in whole second `:60Z` advances to the first second of the next minute in writes and query filters.
+- Firestore Admin: a composite index ending in an array-contains field lists its implied `__name__` field as ascending.
+
 ## [0.64.0] - 2026-11-22
 
 ### Added
@@ -1522,7 +1558,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.64.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.65.0...HEAD
+[0.65.0]: https://github.com/fireemu/fireemu/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/fireemu/fireemu/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/fireemu/fireemu/compare/v0.62.0...v0.63.0
 [0.62.0]: https://github.com/fireemu/fireemu/compare/v0.61.0...v0.62.0

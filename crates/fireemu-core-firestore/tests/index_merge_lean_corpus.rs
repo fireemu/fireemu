@@ -246,7 +246,7 @@ struct CorpusCase {
     expect: String,
     /// The Lean base (4fcd8a7a3) answer, rendered like `expect` but led by `base`.
     base: String,
-    /// The stage-B guard the Lean head says fires: `none`, `a`, `b` or `c`.
+    /// The stage-B guard selected by the Lean head.
     guard: String,
 }
 
@@ -343,7 +343,7 @@ fn parse_corpus() -> Corpus {
     Corpus { configs, cases }
 }
 
-fn corpus_decision(corpus: &Corpus, c: &CorpusCase) -> IndexDecision {
+fn corpus_decision(corpus: &Corpus, c: &CorpusCase, ctx: PlanningContext) -> IndexDecision {
     let filters = match c.source.as_str() {
         "" | "count" | "sharedArray" => c
             .filters
@@ -378,7 +378,6 @@ fn corpus_decision(corpus: &Corpus, c: &CorpusCase) -> IndexDecision {
     };
     let q = build_query(&c.collection, c.group, filters, &c.orders);
     let set = &corpus.configs[c.config];
-    let ctx = context(&c.ctx.0, &c.ctx.1);
     if c.source == "count" {
         validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], set, &ctx)
     } else {
@@ -396,7 +395,8 @@ fn every_corpus_case_matches_the_lean_model() {
     );
     let mut failures = Vec::new();
     for c in &corpus.cases {
-        let actual = render_decision(&corpus_decision(&corpus, c));
+        let decision = corpus_decision(&corpus, c, context(&c.ctx.0, &c.ctx.1));
+        let actual = render_decision(&decision);
         if actual != c.expect {
             failures.push(format!(
                 "case {} {}:\n  lean: {}\n  rust: {actual}",
@@ -435,7 +435,8 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
         );
         match c.guard.as_str() {
             "none" => {
-                let actual = render_decision(&corpus_decision(&corpus, c));
+                let actual =
+                    render_decision(&corpus_decision(&corpus, c, context(&c.ctx.0, &c.ctx.1)));
                 if actual != c.base {
                     failures.push(format!(
                         "case {} {}:
@@ -445,9 +446,21 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
                     ));
                 }
             }
-            "a" | "b" | "c" | "reverse" | "shared" | "carrier" => {
+            "a" | "b" | "c" | "reverse" | "shared" | "carrier" | "groupOrdered" | "arrayFirst" => {
+                let base = match corpus_decision(&corpus, c, context("production", "enterprise")) {
+                    IndexDecision::FullScanAllowed { plan } if c.ctx.0 == "report" => {
+                        IndexDecision::AssumedIndex {
+                            requirement: plan.missing_index,
+                        }
+                    }
+                    IndexDecision::FullScanAllowed { plan } => IndexDecision::MissingRequired {
+                        requirement: plan.missing_index,
+                    },
+                    decision => decision,
+                };
+                assert_eq!(render_decision(&base), c.base, "{}", c.label);
                 assert!(
-                    (!c.group || matches!(c.guard.as_str(), "a" | "c"))
+                    (!c.group || matches!(c.guard.as_str(), "a" | "b" | "c" | "arrayFirst"))
                         && c.ctx.1 == "standard"
                         && c.ctx.0 != "emulator",
                     "case {} {}: guard {} off the gate",
@@ -475,7 +488,16 @@ fn every_corpus_case_without_a_guard_matches_the_base_model() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    for guard in ["a", "b", "c", "reverse", "shared", "carrier"] {
+    for guard in [
+        "a",
+        "b",
+        "c",
+        "reverse",
+        "shared",
+        "carrier",
+        "groupOrdered",
+        "arrayFirst",
+    ] {
         assert!(
             counts.get(guard).is_some_and(|n| *n > 0),
             "no case for guard {guard}"
@@ -491,11 +513,11 @@ fn every_recorded_production_verdict_matches_the_planner() {
         .iter()
         .filter(|c| c.production.is_some())
         .collect();
-    assert_eq!(rows.len(), 131, "production rows in the corpus");
+    assert_eq!(rows.len(), 249, "production rows in the corpus");
     for c in rows {
         let (verdict, row) = c.production.as_ref().expect("production row");
         assert_eq!(
-            served(&corpus_decision(&corpus, c)),
+            served(&corpus_decision(&corpus, c, context(&c.ctx.0, &c.ctx.1))),
             *verdict,
             "production row {row}"
         );
@@ -726,7 +748,7 @@ fn composite_serves_alone(
     alone.set_default_single_field_indexes(&coll("qx"), Vec::new());
     alone.add_composite(member.clone());
     matches!(
-        decide(&shape_query(s, eq, contains), &alone, &standard()),
+        decide(&shape_query(s, eq, contains), &alone, &context("production", "enterprise")),
         IndexDecision::UseIndex { index } if &index == member
     )
 }
@@ -734,7 +756,82 @@ fn composite_serves_alone(
 /// The recorded merge shapes within this generator's plain equality and contains language.
 fn recorded_shape(s: &Shape, q: &Query) -> bool {
     order_shapes()[s.order].0.is_empty()
-        && (!s.group || (s.eq.len() == 1 && name_direction(q) == Direction::Descending))
+        && (!s.group
+            || (s.order == 0 && s.eq.len() == 2)
+            || (s.eq.len() == 1 && name_direction(q) == Direction::Descending))
+}
+
+/// Compare the generator's catalog with the production fixtures after renaming equality roles.
+fn matches_serving_row(s: &Shape, set: &IndexSet) -> bool {
+    static CATALOGS: std::sync::LazyLock<std::collections::BTreeMap<String, IndexSet>> =
+        std::sync::LazyLock::new(|| {
+            let corpus = parse_corpus();
+            corpus
+                .cases
+                .iter()
+                .filter(|c| {
+                    c.production.is_some()
+                        && matches!(
+                            c.collection.as_str(),
+                            "iw2" | "iwd" | "ip1" | "igy" | "igx" | "icm"
+                        )
+                })
+                .map(|c| (c.collection.clone(), corpus.configs[c.config].clone()))
+                .collect()
+        });
+    let ids: &[&str] = match (s.contains, s.eq.len(), s.order, s.group) {
+        (true, 2, 0, false) => &["iw2", "iwd", "ip1", "igy"],
+        (true, 2, 0, true) => &["igx"],
+        (true, 1, 2, false) => &["icm"],
+        _ => return false,
+    };
+    let signature = |set: &IndexSet, collection: &str, eq: &[&str]| {
+        let mut fields: Vec<_> = eq.iter().map(|f| fp(f)).collect();
+        fields.push(fp("tags"));
+        if s.order == 2 {
+            fields.push(fp("__name__"));
+        }
+        let collection = coll(collection);
+        let modes: Vec<_> = fields
+            .iter()
+            .map(|f| {
+                let mut modes: Vec<_> = set
+                    .single_field_modes(&collection, f)
+                    .into_iter()
+                    .map(|(scope, mode)| {
+                        (scope == IndexQueryScope::CollectionGroup, render_mode(mode))
+                    })
+                    .collect();
+                modes.sort_unstable();
+                modes
+            })
+            .collect();
+        let mut composites: Vec<_> = set
+            .composites()
+            .iter()
+            .filter(|i| i.collection_group == collection)
+            .filter_map(|i| {
+                let members: Option<Vec<_>> = i
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        let role = if f.path.is_document_name() {
+                            fields.len()
+                        } else {
+                            fields.iter().position(|p| *p == f.path)?
+                        };
+                        Some((role, render_mode(f.mode)))
+                    })
+                    .collect();
+                Some((i.query_scope == IndexQueryScope::CollectionGroup, members?))
+            })
+            .collect();
+        composites.sort_unstable();
+        (modes, composites)
+    };
+    let actual = signature(set, "qx", &s.eq);
+    ids.iter()
+        .any(|id| actual == signature(&CATALOGS[*id], id, &["a", "b"][..s.eq.len()]))
 }
 
 /// The declarative merge condition (`IM.MergeSpec`): at least two wanted fields, no explicit
@@ -747,7 +844,8 @@ fn recorded_shape(s: &Shape, q: &Query) -> bool {
 /// descending, the contains index and the descending automatic index of every equality field
 /// (production F3); (b) ascending, one composite serving some equalities and the array filter
 /// on its own and the ascending automatic index of every other equality field (production F1),
-/// only when that composite is the single collection-scoped carrier with an ascending prefix.
+/// Observation 2b adds the configured descending-name equality member and the plain
+/// two-equality carrier cases. Other ascending shapes still require a unique ascending carrier.
 fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     let q = shape_query(s, &s.eq, s.contains);
     let wanted = s.eq.len() + usize::from(s.contains);
@@ -805,8 +903,14 @@ fn merge_spec(s: &Shape, set: &IndexSet) -> bool {
     if !(recorded_shape(s, &q) && s.contains && name_only) {
         return false;
     }
+    if matches_serving_row(s, set) {
+        return true;
+    }
     if nm == IndexFieldMode::Descending {
         return enabled("tags", IndexFieldMode::Contains) && s.eq.iter().all(|f| enabled(f, nm));
+    }
+    if s.group {
+        return false;
     }
     let carriers = carrier_prefixes(s, set);
     let [prefix] = carriers.as_slice() else {
@@ -884,7 +988,16 @@ fn member_cover(s: &Shape, set: &IndexSet, member: &IndexDefinition) -> BTreeSet
     // A configured composite that leads with equality fields is a composite member (a
     // composite can also equal an automatic index, which then counts as either); when the
     // array field follows them it serves the array filter too.
-    if set.composites().contains(member) && !leading.is_empty() {
+    // The descending-prefix carrier reports its implied ASC name explicitly in Explain.
+    let implicit_carrier = matches!(&member.fields[..], [prefix, array, name]
+        if prefix.mode == IndexFieldMode::Descending && array.mode == IndexFieldMode::Contains
+            && name.path.is_document_name() && name.mode == IndexFieldMode::Ascending)
+        && set.composites().iter().any(|i| {
+            i.collection_group == member.collection_group
+                && i.query_scope == member.query_scope
+                && i.fields == member.fields[..2]
+        });
+    if (set.composites().contains(member) || implicit_carrier) && !leading.is_empty() {
         let carries = member
             .fields
             .get(leading.len())
@@ -987,7 +1100,7 @@ proptest! {
     }
 
     /// `IM.decide_mono`: adding a composite or enabling a single-field mode never turns a
-    /// served query into a refused one.
+    /// served base query into a refused one. A recorded override can lose its catalog match.
     #[test]
     fn adding_indexes_never_refuses_a_served_query(
         s in shape_strategy(),
@@ -1005,15 +1118,18 @@ proptest! {
             let mut more = composites.clone();
             more.insert(position.min(more.len()), extra);
             let extended = index_set(&more, &overrides);
-            // A second qualifying carrier can disable (b). Mode additions never do.
+            // A second qualifying carrier can disable the earlier single-carrier rule.
             let adding_second_carrier =
                 matches!(before, IndexDecision::MergeIndexes { .. })
                 && s.contains && !s.group && recorded_shape(&s, &q)
                 && name_direction(&q) == Direction::Ascending
                 && carrier_prefixes(&s, &set).len() == 1
                 && carrier_prefixes(&s, &extended).len() == 2;
-            if !adding_second_carrier {
-                prop_assert!(served(&decide(&q, &extended, &standard())));
+            let after = decide(&q, &extended, &standard());
+            if !served(&after) {
+                prop_assert!((adding_second_carrier && only_name_ordered(&q)) || matches_serving_row(&s, &set));
+                prop_assert!(!merge_spec(&s, &extended));
+                prop_assert!(matches!(after, IndexDecision::MissingRequired { .. }), "unexpected {after:?}");
             }
             let mut enabled = overrides.clone();
             let name = ["a", "b", "c", "tags", "e"][field];
@@ -1022,7 +1138,13 @@ proptest! {
                 modes.push(enable);
             }
             enabled[field] = Some(modes);
-            prop_assert!(served(&decide(&q, &index_set(&composites, &enabled), &standard())));
+            let enabled = index_set(&composites, &enabled);
+            let after = decide(&q, &enabled, &standard());
+            if !served(&after) {
+                prop_assert!(matches_serving_row(&s, &set));
+                prop_assert!(!merge_spec(&s, &enabled));
+                prop_assert!(matches!(after, IndexDecision::MissingRequired { .. }), "unexpected {after:?}");
+            }
         }
     }
 
@@ -1228,8 +1350,8 @@ fn the_index_merge_observation_verdicts() {
 }
 
 /// A composite carrying the array field joins a merge only in the recorded shape: nothing but
-/// `__name__` ordered, ascending (F1). With `__name__` descending, or with an explicit order on
-/// another field, production's answer is not recorded and the merge stays refused, as before.
+/// `__name__` ordered, ascending (F1). A descending name or an explicit order on
+/// an additional field keeps the refusal.
 #[test]
 fn a_composite_carrying_the_array_field_joins_only_in_the_recorded_shape() {
     let qx = coll("qx");
@@ -1269,8 +1391,7 @@ fn a_composite_carrying_the_array_field_joins_only_in_the_recorded_shape() {
 
 /// The refusal of a single equality ordered by `__name__` in the direction of a disabled mode
 /// is production's: the report policy serves it as an assumed index, the emulator policy
-/// serves it by the enabled mode as before. The opposite direction (ascending requested, only
-/// the descending mode enabled) has no recorded verdict and is served as before.
+/// serves it by the enabled mode. Both directions were recorded at collection scope.
 #[test]
 fn the_disabled_name_direction_refusal_is_production_only() {
     let qx = coll("qx");
@@ -1292,19 +1413,31 @@ fn the_disabled_name_direction_refusal_is_production_only() {
             index: parse_index("qx C a:asc,__name__:desc")
         }
     );
-    // Unrecorded neighbour: ascending requested with only the descending mode enabled.
     let mut desc_only = IndexSet::default();
-    desc_only.set_single_field_indexes(
-        &qx,
-        &fp("a"),
-        vec![(IndexQueryScope::Collection, IndexFieldMode::Descending)],
+    modes_only(
+        &mut desc_only,
+        "a",
+        &[IndexFieldMode::Descending],
+        IndexQueryScope::Collection,
     );
-    let name_asc = [(FieldPath::document_name(), Direction::Ascending)];
-    let neighbour = build_query("qx", false, vec![filter("eq", "a", "qx")], &name_asc);
-    assert!(matches!(
-        decide(&neighbour, &desc_only, &context("production", "standard")),
-        IndexDecision::UseIndex { .. }
-    ));
+    for orders in [
+        vec![],
+        vec![(FieldPath::document_name(), Direction::Ascending)],
+    ] {
+        let query = build_query("qx", false, vec![filter("eq", "a", "qx")], &orders);
+        assert_eq!(
+            decide(&query, &desc_only, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,__name__:asc"),
+            }
+        );
+        assert_eq!(
+            decide(&query, &desc_only, &context("emulator", "standard")),
+            IndexDecision::UseIndex {
+                index: parse_index("qx C a:desc,__name__:asc"),
+            }
+        );
+    }
 }
 
 /// A composite that repeats an equality field is a merge of one member (`IM.one_member_merge`).
@@ -1383,8 +1516,8 @@ fn modes_only(set: &mut IndexSet, field: &str, modes: &[IndexFieldMode], scope: 
     );
 }
 
-/// Rows 8 and 9 separate the shared path's filter kinds when all three modes exist. Sparse
-/// configurations keep the base decision.
+/// Rows 8 and 9 separate the shared path's filter kinds. Merge8 records the missing
+/// equality member when only the contains mode is enabled.
 #[test]
 fn observation_2a_p5_uses_separate_shared_path_members_when_available() {
     let c = IndexQueryScope::Collection;
@@ -1397,20 +1530,39 @@ fn observation_2a_p5_uses_separate_shared_path_members_when_available() {
     };
     let name_asc = [(FieldPath::document_name(), Direction::Ascending)];
     let name_desc = [(FieldPath::document_name(), Direction::Descending)];
-    // (i) Only `a ASC` and `tags CONTAINS`, `__name__` ascending: the contains member covers
-    // the path `tags`.
     let mut set = IndexSet::default();
-    modes_only(&mut set, "a", &[IndexFieldMode::Ascending], c);
     modes_only(&mut set, "tags", &[IndexFieldMode::Contains], c);
-    let q = qx_query(filters(), &name_asc, false);
-    assert_eq!(
-        decide(&q, &set, &standard()),
-        IndexDecision::MergeIndexes {
-            indexes: vec![
-                parse_index("qx C a:asc,__name__:asc"),
-                parse_index("qx C tags:contains,__name__:asc"),
-            ]
+    for mode in [IndexFieldMode::Ascending, IndexFieldMode::Descending] {
+        modes_only(&mut set, "a", &[mode], c);
+        for (atoms, suggestion) in [
+            (filters(), "qx C tags:contains,a:asc,tags:asc,__name__:asc"),
+            (
+                vec![eq_tags_array(), filter("contains", "tags", "qx")],
+                "qx C tags:contains,tags:asc,__name__:asc",
+            ),
+        ] {
+            let q = qx_query(atoms, &name_asc, false);
+            assert_eq!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MissingRequired {
+                    requirement: parse_index(suggestion)
+                }
+            );
         }
+    }
+    let shared = vec![eq_tags_array(), filter("contains", "tags", "qx")];
+    let q = qx_query(shared.clone(), &[], false);
+    let base = IndexDecision::UseIndex {
+        index: parse_index("qx C tags:contains,__name__:asc"),
+    };
+    assert_eq!(decide(&q, &set, &standard()), base);
+    assert_eq!(
+        decide(
+            &qx_query(shared, &name_asc, false),
+            &set,
+            &context("emulator", "standard")
+        ),
+        base
     );
     // The descending mirror (`a DESC` and `tags CONTAINS`) was refused and stays refused.
     let mut desc = IndexSet::default();
@@ -1535,8 +1687,7 @@ fn observation_2a_p1_pict_matches_automatic_name_direction() {
                 shape,
                 "eq" | "orderDesc" | "orderAscName" | "in1" | "or2" | "isNull" | "count"
             );
-        let prohibited_desc_fallback =
-            enabled == "descOnly" && name == "asc" && group && shape == "eq";
+        let prohibited_desc_fallback = enabled == "descOnly" && name == "asc" && shape == "eq";
         let refusal =
             (prohibited_asc_fallback || prohibited_desc_fallback) && composite == "absent";
         let suggestion = parse_index(&format!("qx {index_scope} a:asc,__name__:{name}"));
@@ -1719,7 +1870,13 @@ fn obs2_merge_members(shape: &str, scope: &str, catalog: &str) -> Option<Vec<Ind
     if (shape == "descAny" && scope == "group") || catalog == "sharedCarrier" {
         return None;
     }
-    if matches!(catalog, "carrierExempt" | "carrierEnabled" | "mixedExempt") {
+    if matches!(catalog, "carrierExempt" | "carrierEnabled") {
+        return Some(vec![
+            parse_index("qx C a:asc,tags:contains"),
+            parse_index("qx C b:asc,__name__:asc"),
+        ]);
+    }
+    if catalog == "mixedExempt" {
         return Some(vec![
             parse_index("qx C a:asc,tags:contains"),
             parse_index("qx C b:asc,__name__:asc"),
@@ -1806,21 +1963,18 @@ fn observation_2a_p1_refuses_group_and_equality_orders_under_production_rules() 
     );
 }
 
-/// Merge (b) keeps its collection-scope and carrier boundaries. Observation 2a adds
-/// the cases pinned by the PICT replay and leaves unrecorded member orders unchanged.
+/// Group members serve the plain two-equality query. Other forms retain their recorded boundaries and member order.
 #[test]
 fn the_merges_keep_their_recorded_boundaries_and_member_order() {
     let name_desc = [(FieldPath::document_name(), Direction::Descending)];
     let g = IndexQueryScope::CollectionGroup;
-    // (b) at collection-group scope: refused.
+    // The group query uses both members at group scope.
     let mut group_f1 = IndexSet::default();
     modes_only(&mut group_f1, "a", &[], g);
     modes_only(&mut group_f1, "tags", &[], g);
-    // `b ASC` at group scope, so that only the scope guard refuses (Codex round 2, Should 1).
-    modes_only(&mut group_f1, "b", &[IndexFieldMode::Ascending], g);
-    let mut composite = parse_index("qx G a:asc,tags:contains");
-    composite.query_scope = g;
-    group_f1.add_composite(composite);
+    // The other equality has ascending indexes at collection and group scope.
+    group_f1.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
+    group_f1.add_composite(parse_index("qx G a:asc,tags:contains"));
     let q = qx_query(
         vec![
             filter("eq", "a", "qx"),
@@ -1830,8 +1984,32 @@ fn the_merges_keep_their_recorded_boundaries_and_member_order() {
         &[],
         true,
     );
-    assert!(matches!(
+    assert_eq!(
         decide(&q, &group_f1, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx G a:asc,tags:contains"),
+                parse_index("qx G b:asc,__name__:asc")
+            ]
+        }
+    );
+    let descending = q.clone().with_order(OrderClause {
+        field: FieldPath::document_name(),
+        direction: Direction::Descending,
+    });
+    assert_eq!(
+        decide(&descending, &group_f1, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx G tags:contains,a:asc,b:asc,__name__:desc")
+        }
+    );
+    assert!(matches!(
+        validate_aggregation_query(
+            &q,
+            &[Aggregation::Count { up_to: None }],
+            &group_f1,
+            &standard()
+        ),
         IndexDecision::MissingRequired { .. }
     ));
     // Multi-element array-contains-any was not recorded.
@@ -2124,20 +2302,46 @@ fn merge_b_keeps_to_the_recorded_query() {
     ));
 }
 
-/// Merge (a) uses automatic members only, on Standard, for the recorded query (ruling 10
-/// item 3, Codex round 2 Must 3; Opus round 2 Should 2).
+/// The recorded collection descending-name merge accepts an explicitly configured equality member.
 #[test]
 fn merge_a_keeps_to_the_recorded_query() {
     let joined = || vec![filter("eq", "a", "qx"), filter("contains", "tags", "qx")];
-    // Exempt `a` with a configured `(a ASC, __name__ DESC)`: refused, as before.
+    // Merge6: the contains member precedes the configured equality member.
     let mut composite = IndexSet::default();
     modes_only(&mut composite, "a", &[], IndexQueryScope::Collection);
     composite.add_composite(parse_index("qx C a:asc,__name__:desc"));
     let q = qx_query(joined(), &name_desc(), false);
-    assert!(matches!(
+    assert_eq!(
         decide(&q, &composite, &standard()),
-        IndexDecision::MissingRequired { .. }
-    ));
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C tags:contains,__name__:desc"),
+                parse_index("qx C a:asc,__name__:desc")
+            ]
+        }
+    );
+    let asc = qx_query(
+        joined(),
+        &[(FieldPath::document_name(), Direction::Ascending)],
+        false,
+    );
+    assert_eq!(
+        decide(&asc, &composite, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C tags:contains,a:asc,__name__:asc")
+        }
+    );
+    let any = qx_query(
+        vec![filter("eq", "a", "qx"), filter("containsany", "tags", "qx")],
+        &name_desc(),
+        false,
+    );
+    assert_eq!(
+        decide(&any, &composite, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,tags:contains,__name__:desc")
+        }
+    );
     // Enterprise with the built-in modes: the full scan, as before.
     assert!(matches!(
         decide(
@@ -2320,11 +2524,10 @@ fn observation_2a_p6_enabling_contains_preserves_the_carrier_merge() {
     assert_eq!(decide(&q, &set, &standard()), expected);
 }
 
-/// Merge (b) takes its carrier only as recorded: a collection-scoped composite, and only when
-/// exactly one configured composite qualifies (coordinator ruling 12). A collection-group
-/// carrier, or two carriers, keep the pre-stage-B refusal (unrecorded).
+/// Merge3 records both ascending carriers. Merge7 and merge8 serve a collection F1
+/// with a group carrier, without recording an Explain member list for it.
 #[test]
-fn merge_b_needs_exactly_one_collection_scoped_carrier() {
+fn merge_b_serves_with_two_collection_carriers_or_one_group_carrier() {
     let f1 = || {
         qx_query(
             vec![
@@ -2340,19 +2543,63 @@ fn merge_b_needs_exactly_one_collection_scoped_carrier() {
     let mut group_carrier = IndexSet::default();
     modes_only(&mut group_carrier, "a", &[], c);
     modes_only(&mut group_carrier, "tags", &[], c);
-    let mut composite = parse_index("qx G a:asc,tags:contains");
-    composite.query_scope = IndexQueryScope::CollectionGroup;
-    group_carrier.add_composite(composite);
-    assert!(matches!(
-        decide(&f1(), &group_carrier, &standard()),
-        IndexDecision::MissingRequired { .. }
-    ));
-    // `(b ASC, tags CONTAINS)` is a second carrier (it would not complete: `a` is exempt), and
-    // neither serves the query alone.
+    group_carrier.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
+    group_carrier.add_composite(parse_index("qx G a:asc,tags:contains"));
+    assert!(served(&decide(&f1(), &group_carrier, &standard())));
+    assert_eq!(
+        validate_aggregation_query(
+            &f1(),
+            &[Aggregation::Count { up_to: None }],
+            &group_carrier,
+            &standard()
+        ),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc")
+        }
+    );
+    // Restoring either exempt field in merge8's igy catalog keeps the base refusal.
+    for field in ["a", "tags"] {
+        let mut restored = group_carrier.clone();
+        restored.clear_single_field_override(&coll("qx"), &fp(field));
+        assert_eq!(
+            decide(&f1(), &restored, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc")
+            }
+        );
+    }
     let mut two = f1_set();
+    assert!(served(&decide(&f1(), &two, &standard())));
     two.add_composite(parse_index("qx C b:asc,tags:contains"));
     assert!(matches!(
         decide(&f1(), &two, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    modes_only(&mut two, "b", &[], c);
+    let plan = IndexDecision::MergeIndexes {
+        indexes: vec![
+            parse_index("qx C b:asc,tags:contains"),
+            parse_index("qx C a:asc,tags:contains"),
+        ],
+    };
+    for ctx in [standard(), context("report", "standard")] {
+        assert_eq!(decide(&f1(), &two, &ctx), plan);
+        assert_eq!(
+            validate_aggregation_query(&f1(), &[Aggregation::Count { up_to: None }], &two, &ctx),
+            plan
+        );
+    }
+    let desc = f1().with_order(OrderClause {
+        field: FieldPath::document_name(),
+        direction: Direction::Descending,
+    });
+    assert!(matches!(
+        decide(&desc, &two, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    let any = obs2_merge_query("noOrderAny", false);
+    assert!(matches!(
+        decide(&any, &two, &standard()),
         IndexDecision::MissingRequired { .. }
     ));
     // A composite carrying every equality serves the query alone (the base answer).
@@ -2372,7 +2619,7 @@ fn merge_b_needs_exactly_one_collection_scoped_carrier() {
 /// collection-scoped configuration would complete (b) and (a) through the collection-scoped
 /// lookups keeps the pre-stage-B refusal (Codex round 3, Should 1).
 #[test]
-fn a_collection_group_query_never_reaches_the_overrides() {
+fn collection_members_do_not_serve_the_group_merge() {
     let f1 = qx_query(
         vec![
             filter("eq", "a", "qx"),
@@ -2397,13 +2644,10 @@ fn a_collection_group_query_never_reaches_the_overrides() {
     ));
 }
 
-/// The carrier of merge (b) has ascending prefix fields, as the recorded `(a ASC, tags
-/// CONTAINS)`; a descending prefix field keeps the pre-stage-B refusal (Codex round 4,
-/// coordinator ruling 13; unrecorded). An explicit trailing `__name__ ASC` is the recorded
-/// index itself (production lists it so); a trailing `__name__ DESC` never serves the ascending
-/// query.
+/// A descending-prefix carrier joins on its ascending name, even with an ascending
+/// carrier on the same field. Descending name cannot reverse the implicit suffix.
 #[test]
-fn merge_b_needs_an_ascending_carrier() {
+fn merge_b_prefers_the_descending_prefix_and_requires_its_name_direction() {
     let q = qx_query(
         vec![
             filter("eq", "a", "qx"),
@@ -2413,33 +2657,89 @@ fn merge_b_needs_an_ascending_carrier() {
         &[],
         false,
     );
-    let with = |composite: &str| {
+    let desc = parse_index("qx C a:desc,tags:contains");
+    for mixed in [false, true] {
         let mut set = IndexSet::default();
         modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
         modes_only(&mut set, "tags", &[], IndexQueryScope::Collection);
-        set.add_composite(parse_index(composite));
-        decide(&q, &set, &standard())
-    };
-    for composite in [
-        "qx C a:desc,tags:contains,__name__:asc",
-        "qx C a:desc,tags:contains",
-        "qx C a:asc,tags:contains,__name__:desc",
-    ] {
-        assert!(
-            matches!(with(composite), IndexDecision::MissingRequired { .. }),
-            "{composite}"
-        );
-    }
-    let explicit = "qx C a:asc,tags:contains,__name__:asc";
-    assert_eq!(
-        with(explicit),
-        IndexDecision::MergeIndexes {
-            indexes: vec![
-                parse_index(explicit),
-                parse_index("qx C b:asc,__name__:asc")
-            ]
+        if mixed {
+            set.add_composite(parse_index("qx C a:asc,tags:contains"));
         }
-    );
+        set.add_composite(desc.clone());
+        assert_eq!(
+            decide(&q, &set, &standard()),
+            IndexDecision::MergeIndexes {
+                indexes: vec![
+                    parse_index("qx C a:desc,tags:contains,__name__:asc"),
+                    parse_index("qx C b:asc,__name__:asc")
+                ]
+            }
+        );
+        let count = validate_aggregation_query(
+            &q,
+            &[Aggregation::Count { up_to: None }],
+            &set,
+            &standard(),
+        );
+        let expected_count = if mixed {
+            IndexDecision::MergeIndexes {
+                indexes: vec![
+                    parse_index("qx C a:asc,tags:contains"),
+                    parse_index("qx C b:asc,__name__:asc"),
+                ],
+            }
+        } else {
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc"),
+            }
+        };
+        assert_eq!(count, expected_count);
+        let reverse = obs2_merge_query("descPlain", false);
+        assert_eq!(
+            decide(&reverse, &set, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C tags:contains,a:asc,__name__:desc")
+            }
+        );
+        assert!(matches!(
+            decide(&reverse, &set, &context("emulator", "standard")),
+            IndexDecision::UseIndex { .. }
+        ));
+        let two_desc = q.clone().with_order(OrderClause {
+            field: FieldPath::document_name(),
+            direction: Direction::Descending,
+        });
+        assert!(matches!(
+            decide(&two_desc, &set, &standard()),
+            IndexDecision::MissingRequired { .. }
+        ));
+        let base = decide(&reverse, &set, &context("emulator", "standard"));
+        set.add_composite(parse_index("qx C a:desc,tags:contains,__name__:desc"));
+        assert_eq!(decide(&reverse, &set, &standard()), base);
+    }
+    for (carrier, expected) in [
+        ("qx C a:asc,tags:contains,__name__:asc", true),
+        ("qx C a:asc,tags:contains,__name__:desc", false),
+        ("qx C a:desc,tags:contains,__name__:asc", false),
+    ] {
+        let mut set = IndexSet::default();
+        modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+        modes_only(&mut set, "tags", &[], IndexQueryScope::Collection);
+        set.add_composite(parse_index(carrier));
+        if expected {
+            assert_eq!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MergeIndexes {
+                    indexes: vec![parse_index(carrier), parse_index("qx C b:asc,__name__:asc")]
+                }
+            );
+        } else {
+            assert!(matches!(
+                decide(&q, &set, &standard()),
+                IndexDecision::MissingRequired { .. }
+            ));
+        }
+    }
 }
 
 /// Accepted generalisations of (b) (coordinator ruling 13 addition; candidates for the second
@@ -2494,5 +2794,341 @@ fn merge_b_accepted_generalisations_are_pinned() {
         IndexDecision::MergeIndexes {
             indexes: vec![wide, parse_index("qx C c:asc,__name__:asc")]
         }
+    );
+}
+
+#[test]
+fn group_ordered_composite_refuses_only_the_recorded_collection_reads() {
+    let group = parse_index("qx G a:asc,__name__:desc");
+    let mut set = IndexSet::default();
+    modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+    set.add_composite(group.clone());
+    for (filters, order) in [
+        (vec![filter("eq", "a", "qx")], name_desc().to_vec()),
+        (
+            vec![],
+            vec![
+                (fp("a"), Direction::Ascending),
+                (fp("__name__"), Direction::Descending),
+            ],
+        ),
+    ] {
+        let q = qx_query(filters.clone(), &order, false);
+        assert_eq!(
+            decide(&q, &set, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C a:asc,__name__:desc")
+            }
+        );
+        let base = IndexDecision::UseIndex {
+            index: group.clone(),
+        };
+        assert_eq!(decide(&q, &set, &context("emulator", "standard")), base);
+        assert_eq!(
+            decide(&qx_query(filters, &order, true), &set, &standard()),
+            base
+        );
+        assert_eq!(
+            validate_aggregation_query(
+                &q,
+                &[Aggregation::Count { up_to: None }],
+                &set,
+                &standard()
+            ),
+            base
+        );
+    }
+}
+
+#[test]
+fn wide_carrier_refusal_suggests_the_array_field_first() {
+    let mut set = IndexSet::default();
+    for field in ["a", "b", "tags"] {
+        modes_only(&mut set, field, &[], IndexQueryScope::Collection);
+    }
+    set.add_composite(parse_index("qx C a:asc,b:asc,tags:contains"));
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("eq", "c", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &name_desc(),
+        false,
+    );
+    assert_eq!(
+        decide(&q, &set, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C tags:contains,a:asc,b:asc,c:asc,__name__:desc")
+        }
+    );
+    let capped = validate_aggregation_query(
+        &q,
+        &[Aggregation::Count { up_to: Some(1) }],
+        &set,
+        &standard(),
+    );
+    assert_eq!(
+        capped,
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,b:asc,c:asc,tags:contains,__name__:desc")
+        }
+    );
+}
+
+#[test]
+fn shared_ascending_refusal_is_collection_only_and_ignores_unrelated_composites() {
+    // fs-query-index-merge8/shapes/shared-path-ascending-only#shared-path-name-asc
+    let mut set = IndexSet::default();
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), modes("C:contains,G:contains"));
+    set.add_composite(parse_index("qx C a:asc,b:asc"));
+    for (group, expected) in [
+        (
+            false,
+            IndexDecision::MissingRequired {
+                requirement: parse_index("qx C tags:contains,tags:asc,__name__:asc"),
+            },
+        ),
+        (
+            true,
+            IndexDecision::UseIndex {
+                index: parse_index("qx G tags:contains,__name__:asc"),
+            },
+        ),
+    ] {
+        let q = qx_query(
+            vec![eq_tags_array(), filter("contains", "tags", "qx")],
+            &[(fp("__name__"), Direction::Ascending)],
+            group,
+        );
+        assert_eq!(decide(&q, &set, &standard()), expected);
+    }
+}
+
+#[test]
+fn shared_ascending_refusal_leaves_a_count_at_its_base_answer() {
+    // fs-query-index-merge8/shapes/shared-path-ascending-only#shared-path-name-asc is a plain
+    // query; a count of the same shape is unrecorded and keeps the base answer (served).
+    let mut set = IndexSet::default();
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), modes("C:contains"));
+    let q = qx_query(
+        vec![eq_tags_array(), filter("contains", "tags", "qx")],
+        &[(fp("__name__"), Direction::Ascending)],
+        false,
+    );
+    assert!(matches!(
+        decide(&q, &set, &standard()),
+        IndexDecision::MissingRequired { .. }
+    ));
+    let count =
+        validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], &set, &standard());
+    assert!(
+        !matches!(count, IndexDecision::MissingRequired { .. }),
+        "{count:?}"
+    );
+}
+
+#[test]
+fn descending_member_refusal_requires_a_read_and_both_exemptions() {
+    // fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains-name-desc
+    let q = obs2_merge_query("descPlain", false);
+    let mut set = IndexSet::default();
+    let scope = IndexQueryScope::Collection;
+    modes_only(&mut set, "a", &[], scope);
+    modes_only(&mut set, "tags", &[], scope);
+    let index = parse_index("qx C a:desc,tags:contains");
+    set.add_composite(index.clone());
+    let expected = IndexDecision::UseIndex { index };
+    assert_eq!(
+        validate_aggregation_query(&q, &[Aggregation::Count { up_to: None }], &set, &standard()),
+        expected
+    );
+    modes_only(&mut set, "tags", &[IndexFieldMode::Contains], scope);
+    assert_eq!(decide(&q, &set, &standard()), expected);
+}
+
+#[test]
+fn unordered_pair_carrier_excludes_counts_with_singleton_array_contains_any() {
+    // Change the membership operator in fs-query-index-merge3/shapes/carrier-contains-automatic#count-a-b-and-contains.
+    let mut set = IndexSet::default();
+    modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+    set.add_composite(parse_index("qx C a:asc,tags:contains"));
+    assert_eq!(
+        validate_aggregation_query(
+            &obs2_merge_query("noOrderAny", false),
+            &[Aggregation::Count { up_to: None }],
+            &set,
+            &standard(),
+        ),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx C a:asc,b:asc,tags:contains,__name__:asc")
+        }
+    );
+}
+
+#[test]
+fn group_carrier_with_a_descending_alternative_keeps_the_base_refusal() {
+    // Merge7 recorded one group carrier. Neither carrier alone covers the base requirement.
+    let mut set = IndexSet::default();
+    set.add_composite(parse_index("qx G a:asc,tags:contains"));
+    set.add_composite(parse_index("qx G a:desc,tags:contains"));
+    modes_only(
+        &mut set,
+        "b",
+        &[IndexFieldMode::Ascending],
+        IndexQueryScope::CollectionGroup,
+    );
+    assert_eq!(
+        decide(&obs2_merge_query("twoEqContains", true), &set, &standard()),
+        IndexDecision::MissingRequired {
+            requirement: parse_index("qx G a:asc,b:asc,tags:contains,__name__:asc")
+        }
+    );
+}
+
+#[test]
+fn another_collection_id_preserves_the_recorded_group_plan() {
+    let mut set = IndexSet::default();
+    let carrier = parse_index("qx G a:asc,tags:contains");
+    set.add_composite(carrier.clone());
+    set.add_composite(parse_index("other G c:asc,e:asc"));
+    set.set_single_field_indexes(&coll("qx"), &fp("a"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
+    assert_eq!(
+        decide(&obs2_merge_query("twoEqContains", true), &set, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![carrier, parse_index("qx G b:asc,__name__:asc")]
+        }
+    );
+}
+
+#[test]
+fn extra_group_carrier_with_an_unnamed_suffix_refuses_q9_and_q11() {
+    let mut set = IndexSet::default();
+    set.add_composite(parse_index("qx G a:asc,tags:contains"));
+    set.add_composite(parse_index("qx G b:asc,tags:contains,c:asc"));
+    set.set_single_field_indexes(&coll("qx"), &fp("a"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("tags"), vec![]);
+    set.set_single_field_indexes(&coll("qx"), &fp("b"), modes("C:asc,G:asc"));
+    for (group, requirement) in [
+        (true, "qx G a:asc,b:asc,tags:contains,__name__:asc"),
+        (false, "qx C a:asc,b:asc,tags:contains,__name__:asc"),
+    ] {
+        assert_eq!(
+            decide(&obs2_merge_query("twoEqContains", group), &set, &standard()),
+            IndexDecision::MissingRequired {
+                requirement: parse_index(requirement)
+            }
+        );
+    }
+}
+
+#[test]
+fn shared_path_with_builtin_equality_modes_keeps_the_base_merge() {
+    let mut set = IndexSet::default();
+    modes_only(
+        &mut set,
+        "tags",
+        &[IndexFieldMode::Contains],
+        IndexQueryScope::Collection,
+    );
+    let query = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            field_filter(
+                "tags",
+                FieldOp::Equal,
+                Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
+            ),
+            filter("contains", "tags", "qx"),
+        ],
+        &[(fp("__name__"), Direction::Ascending)],
+        false,
+    );
+    assert_eq!(
+        decide(&query, &set, &standard()),
+        IndexDecision::MergeIndexes {
+            indexes: vec![
+                parse_index("qx C a:asc,__name__:asc"),
+                parse_index("qx C tags:contains,__name__:asc")
+            ]
+        }
+    );
+}
+
+#[test]
+fn reverse_automatic_array_first_requires_a_missing_plan() {
+    // Add a serving composite to fs-query-index-merge6/shapes/composite-member#a-and-contains-name-asc.
+    let mut set = IndexSet::default();
+    modes_only(&mut set, "a", &[], IndexQueryScope::Collection);
+    set.add_composite(parse_index("qx C a:asc,__name__:desc"));
+    let index = parse_index("qx C a:asc,tags:contains,__name__:asc");
+    set.add_composite(index.clone());
+    assert_eq!(
+        decide(&obs2_merge_query("oneEqNameAsc", false), &set, &standard()),
+        IndexDecision::UseIndex { index }
+    );
+}
+
+#[test]
+fn wide_carrier_array_first_checks_member_mode_prefix_and_remainder() {
+    // Vary one condition of fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains-name-desc.
+    let q = qx_query(
+        vec![
+            filter("eq", "a", "qx"),
+            filter("eq", "b", "qx"),
+            filter("eq", "c", "qx"),
+            filter("contains", "tags", "qx"),
+        ],
+        &name_desc(),
+        false,
+    );
+    let equality_first = IndexDecision::MissingRequired {
+        requirement: parse_index("qx C a:asc,b:asc,c:asc,tags:contains,__name__:desc"),
+    };
+    let exempt: &[&str] = &["a", "b", "tags"];
+    let carrier = "qx C a:asc,b:asc,tags:contains";
+    for (index, fields) in [
+        ("qx C a:asc,b:asc,tags:asc", exempt),
+        ("qx C a:asc,tags:contains", exempt),
+        ("qx C a:desc,b:asc,tags:contains", exempt),
+        (carrier, &["b", "tags"]),
+        (carrier, &["a", "b", "c", "tags"]),
+    ] {
+        let mut set = IndexSet::default();
+        for field in fields {
+            modes_only(&mut set, field, &[], IndexQueryScope::Collection);
+        }
+        set.add_composite(parse_index(index));
+        assert_eq!(
+            decide(&q, &set, &standard()),
+            equality_first,
+            "{index} {fields:?}"
+        );
+    }
+}
+
+#[test]
+fn group_pair_array_first_requires_a_missing_plan() {
+    // Add a serving composite to fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-name-desc.
+    let q = obs2_merge_query("twoEqContains", true).with_order(OrderClause {
+        field: fp("__name__"),
+        direction: Direction::Descending,
+    });
+    let mut set = IndexSet::default();
+    modes_only(
+        &mut set,
+        "b",
+        &[IndexFieldMode::Ascending],
+        IndexQueryScope::CollectionGroup,
+    );
+    set.add_composite(parse_index("qx G a:asc,tags:contains"));
+    let index = parse_index("qx G a:asc,b:asc,tags:contains,__name__:desc");
+    set.add_composite(index.clone());
+    assert_eq!(
+        decide(&q, &set, &standard()),
+        IndexDecision::UseIndex { index }
     );
 }

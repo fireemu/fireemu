@@ -44,6 +44,7 @@ import { promisify } from "node:util";
 
 import { CONFORMANCE_DIR, REPO_ROOT } from "../config.mjs";
 import { resolveFireemuBinary } from "../evidence.mjs";
+import { checkVerifiedFixtureDigest, HARNESS_LANES } from "../harness-registry.mjs";
 import { assertCompleteFixture, loadCommittedFixture, scanFixture } from "./fixture-scan.mjs";
 import { LANES, selectLane } from "./lanes.mjs";
 import { isMainModule } from "./main-module.mjs";
@@ -114,6 +115,27 @@ export async function harnessDigest() {
   );
   const indexes = INDEXES ? await readFile(INDEXES, "utf8") : "";
   return sha256(`${sources.join("\n")}\n${indexes}`);
+}
+
+/**
+ * Whether a recorded harness digest no longer binds this lane: the registry's verdict (today's raw
+ * or scheme-2 digest, or a hop of the lineage that passes the release gate's verification), and plain equality with `current` for a
+ * lane the registry does not enroll.
+ */
+export function harnessDigestIsStale(saved, current) {
+  const enrolled = HARNESS_LANES[LANE.id];
+  return enrolled
+    ? checkVerifiedFixtureDigest(LANE.id, enrolled, saved).state === "stale"
+    : saved !== current;
+}
+
+/** Whether a saved program's rows are stale for today's corpus program and harness. */
+export function rowIsStale(saved, program, harness) {
+  return (
+    saved !== undefined &&
+    (saved.corpusDigest !== programDigest(program) ||
+      harnessDigestIsStale(saved.harnessDigest, harness))
+  );
 }
 
 /** Per recording: every step once; the harness gets its own budget for wipes and seeds. */
@@ -1072,9 +1094,7 @@ async function check() {
   const rows = [];
   for (const program of selected) {
     const saved = fixture.programs[program.id];
-    const stale =
-      saved !== undefined &&
-      (saved.corpusDigest !== programDigest(program) || saved.harnessDigest !== harness);
+    const stale = rowIsStale(saved, program, harness);
     for (const step of program.steps) {
       const production = saved?.steps?.[step.id];
       const alternative = saved?.second?.[step.id];

@@ -908,6 +908,24 @@
         }
       }
     },
+    "remoteConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Remote Config behaviour of the local administration (control listener).",
+      "properties": {
+        "updateUser": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["email"],
+          "description": "The identity reported as updateUser, as production reports the calling user: {email} on published and read versions and in v1 events, {email, name: \"\", imageUrl: \"\"} in v2 events, and email, name and imageUrl in version history. Absent (the default): updateUser is omitted everywhere.",
+          "properties": {
+            "email": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "@", "description": "The reported email address."},
+            "name": {"type": "string", "minLength": 1, "maxLength": 512, "description": "The name shown in version history (empty when omitted)."},
+            "imageUrl": {"type": "string", "minLength": 1, "maxLength": 512, "description": "The image URL shown in version history (empty when omitted)."}
+          }
+        }
+      }
+    },
     "hosting": {
       "type": "object",
       "additionalProperties": false,

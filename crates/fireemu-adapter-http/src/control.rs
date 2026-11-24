@@ -107,6 +107,16 @@ pub enum PublishEventError {
     Unavailable,
 }
 
+/// Reserved deliveries for a Remote Config version. Dropping it cancels delivery.
+pub trait RemoteConfigPublication: Send {
+    /// Publishes the reserved deliveries after the version has been appended.
+    fn publish(self: Box<Self>);
+}
+
+impl RemoteConfigPublication for () {
+    fn publish(self: Box<Self>) {}
+}
+
 /// The functions runtime as the control API sees it (spec 10.5 `await-idle`, 11.2 clock
 /// operations, manual schedule runs).
 pub trait FunctionsHook: Send + Sync {
@@ -163,6 +173,13 @@ pub trait FunctionsHook: Send + Sync {
     /// Injects one caller-described Remote Config update; no template is persisted.
     fn publish_remote_config(&self, _body: &Value) -> Result<usize, PublishEventError> {
         Err(PublishEventError::Unavailable)
+    }
+    /// Reserves deliveries for a proposed Remote Config admin version.
+    fn reserve_remote_config_version(
+        &self,
+        _version: &Value,
+    ) -> Result<Box<dyn RemoteConfigPublication>, PublishEventError> {
+        Ok(Box::new(()))
     }
     /// The project the functions belong to (the Pub/Sub REST path must name it).
     fn project(&self) -> String;
@@ -489,6 +506,8 @@ pub struct ControlState {
     /// listener's network namespace (`kubectl port-forward`, a sidecar proxy) delivers another
     /// host's client as a loopback peer.
     pub require_control_token: bool,
+    /// Local Remote Config behaviour chosen by the daemon configuration (profile, updateUser).
+    pub remote_config: crate::remote_config::RemoteConfigSettings,
     /// Time zones for calendar moves of the clock (`duration`, `to`, `timeZone`). `None`
     /// knows only `UTC` and has no configured default.
     pub calendar_zones: Option<CalendarZones>,

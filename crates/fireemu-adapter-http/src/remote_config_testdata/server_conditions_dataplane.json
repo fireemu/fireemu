@@ -1,0 +1,576 @@
+{
+  "conditions": [
+    {
+      "name": "fireemu_obs_percent_between",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "percent": {
+                      "percentOperator": "BETWEEN",
+                      "seed": "fireemu_obs",
+                      "microPercentRange": {
+                        "microPercentLowerBound": 10000000,
+                        "microPercentUpperBound": 60000000
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_percent_between_fraction",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "percent": {
+                      "percentOperator": "BETWEEN",
+                      "seed": "fireemu_obs",
+                      "microPercentRange": {
+                        "microPercentLowerBound": 500000,
+                        "microPercentUpperBound": 99250000
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_percent_greater",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "percent": {
+                      "percentOperator": "GREATER_THAN",
+                      "microPercent": 50000000,
+                      "seed": "fireemu_obs"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_percent_unseeded",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "percent": {
+                      "percentOperator": "LESS_OR_EQUAL",
+                      "microPercent": 50000000
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_lt",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_LESS_THAN",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_le",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_LESS_EQUAL",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_eq",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_EQUAL",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_ne",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_NOT_EQUAL",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_gt",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_GREATER_THAN",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_numeric_ge",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "NUMERIC_GREATER_EQUAL",
+                      "customSignalKey": "fireemu_n",
+                      "targetCustomSignalValues": [
+                        "5"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_string_contains",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "STRING_CONTAINS",
+                      "customSignalKey": "fireemu_s",
+                      "targetCustomSignalValues": [
+                        "ab"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_string_not_contains",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "STRING_DOES_NOT_CONTAIN",
+                      "customSignalKey": "fireemu_s",
+                      "targetCustomSignalValues": [
+                        "ab"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_string_regex",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "STRING_CONTAINS_REGEX",
+                      "customSignalKey": "fireemu_s",
+                      "targetCustomSignalValues": [
+                        "^ab$"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_lt",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_LESS_THAN",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_le",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_LESS_EQUAL",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_eq",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_EQUAL",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_ne",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_NOT_EQUAL",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_gt",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_GREATER_THAN",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_semver_ge",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "SEMANTIC_VERSION_GREATER_EQUAL",
+                      "customSignalKey": "fireemu_v",
+                      "targetCustomSignalValues": [
+                        "1.2.3"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fireemu_obs_and",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "STRING_EXACTLY_MATCHES",
+                      "customSignalKey": "fireemu_s",
+                      "targetCustomSignalValues": [
+                        "a"
+                      ]
+                    }
+                  },
+                  {
+                    "percent": {
+                      "percentOperator": "LESS_OR_EQUAL",
+                      "microPercent": 50000000,
+                      "seed": "fireemu_obs"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "fireemu_obs_top": {
+      "defaultValue": {
+        "value": "default"
+      },
+      "conditionalValues": {
+        "fireemu_obs_percent_between": {
+          "value": "value-fireemu_obs_percent_between"
+        },
+        "fireemu_obs_percent_between_fraction": {
+          "value": "value-fireemu_obs_percent_between_fraction"
+        },
+        "fireemu_obs_percent_greater": {
+          "value": "value-fireemu_obs_percent_greater"
+        },
+        "fireemu_obs_percent_unseeded": {
+          "value": "value-fireemu_obs_percent_unseeded"
+        },
+        "fireemu_obs_numeric_lt": {
+          "value": "value-fireemu_obs_numeric_lt"
+        },
+        "fireemu_obs_numeric_le": {
+          "value": "value-fireemu_obs_numeric_le"
+        },
+        "fireemu_obs_numeric_eq": {
+          "value": "value-fireemu_obs_numeric_eq"
+        },
+        "fireemu_obs_numeric_ne": {
+          "value": "value-fireemu_obs_numeric_ne"
+        },
+        "fireemu_obs_numeric_gt": {
+          "value": "value-fireemu_obs_numeric_gt"
+        },
+        "fireemu_obs_numeric_ge": {
+          "value": "value-fireemu_obs_numeric_ge"
+        },
+        "fireemu_obs_string_contains": {
+          "value": "value-fireemu_obs_string_contains"
+        },
+        "fireemu_obs_string_not_contains": {
+          "value": "value-fireemu_obs_string_not_contains"
+        },
+        "fireemu_obs_string_regex": {
+          "value": "value-fireemu_obs_string_regex"
+        },
+        "fireemu_obs_semver_lt": {
+          "value": "value-fireemu_obs_semver_lt"
+        },
+        "fireemu_obs_semver_le": {
+          "value": "value-fireemu_obs_semver_le"
+        },
+        "fireemu_obs_semver_eq": {
+          "value": "value-fireemu_obs_semver_eq"
+        },
+        "fireemu_obs_semver_ne": {
+          "value": "value-fireemu_obs_semver_ne"
+        },
+        "fireemu_obs_semver_gt": {
+          "value": "value-fireemu_obs_semver_gt"
+        },
+        "fireemu_obs_semver_ge": {
+          "value": "value-fireemu_obs_semver_ge"
+        },
+        "fireemu_obs_and": {
+          "value": "value-fireemu_obs_and"
+        }
+      }
+    },
+    "fireemu_obs_number": {
+      "defaultValue": {
+        "value": "12.5"
+      }
+    },
+    "fireemu_obs_json": {
+      "defaultValue": {
+        "value": "{\"a\":1}"
+      },
+      "conditionalValues": {
+        "fireemu_obs_percent_between": {
+          "value": "{\"a\":2}"
+        }
+      }
+    }
+  },
+  "version": {
+    "versionNumber": "7",
+    "isLegacy": true
+  }
+}

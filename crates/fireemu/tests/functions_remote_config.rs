@@ -1,4 +1,4 @@
-//! Real SDK handlers reached through the capability-protected local control action.
+//! Real SDK handlers reached by injected events and committed Remote Config versions.
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -7,10 +7,12 @@ use fireemu_adapter_functions::http::FunctionsHttpProfile;
 use fireemu_adapter_functions::manifest_json::parse_manifest;
 use fireemu_adapter_functions::runner::{Runner, SpawnSpec};
 use fireemu_adapter_functions::runtime::{
-    CodebaseSpec, FunctionsConfig, FunctionsRuntime, SourceEventAdmissionError,
+    CodebaseSpec, EventBatchReservation, FunctionsConfig, FunctionsRuntime,
+    SourceEventAdmissionError,
 };
 use fireemu_adapter_http::control::{
-    handle_with, ControlState, FunctionsHook, PublishEventError, RunScheduleError,
+    handle_with, ControlState, FunctionsHook, PublishEventError, RemoteConfigPublication,
+    RunScheduleError,
 };
 use fireemu_adapter_http::identity_toolkit::RequestHeaders;
 use fireemu_core_rules::runtime::RulesetSlot;
@@ -21,6 +23,15 @@ use fireemu_core_types::time::{LogicalDuration, LogicalInstant};
 use serde_json::{json, Value};
 
 struct Hook(Arc<FunctionsRuntime>);
+
+struct Publication(EventBatchReservation);
+
+impl RemoteConfigPublication for Publication {
+    fn publish(self: Box<Self>) {
+        self.0.publish();
+    }
+}
+
 impl FunctionsHook for Hook {
     fn on_clock_changed(&self) {
         self.0.on_clock_changed();
@@ -57,6 +68,21 @@ impl FunctionsHook for Hook {
                 SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
             })
     }
+    fn reserve_remote_config_version(
+        &self,
+        version: &Value,
+    ) -> Result<Box<dyn RemoteConfigPublication>, PublishEventError> {
+        let reservation =
+            self.0
+                .reserve_remote_config_version(version)
+                .map_err(|error| match error {
+                    SourceEventAdmissionError::InvalidEvent
+                    | SourceEventAdmissionError::PayloadTooLarge => PublishEventError::Invalid,
+                    SourceEventAdmissionError::Capacity => PublishEventError::Capacity,
+                    SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
+                })?;
+        Ok(Box::new(Publication(reservation)))
+    }
 }
 
 fn control(runtime: Arc<FunctionsRuntime>, clock: Arc<Mutex<VirtualClock>>) -> ControlState {
@@ -74,6 +100,7 @@ fn control(runtime: Arc<FunctionsRuntime>, clock: Arc<Mutex<VirtualClock>>) -> C
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
         barrier: None,
         snapshot_hooks: vec![],
@@ -341,5 +368,243 @@ async fn remote_config_control_delivers_real_sdk_events_in_both_profiles() {
         }
         runtime.shutdown().await;
         dispatch.await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+#[ignore = "requires own tools/sdk-smoke npm ci dependencies"]
+async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
+    use fireemu_adapter_http::identity_toolkit::AuthState;
+    use fireemu_core_auth::{mfa::TotpPolicy, store::AuthStore};
+    use fireemu_core_types::determinism::SplitMix64;
+    use http_body_util::{BodyExt, Full};
+    use hyper::{body::Bytes, Request};
+    use hyper_util::rt::TokioIo;
+
+    const PATH: &str = "/v1/projects/demo-app/remoteConfig";
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runner = Arc::new(
+        Runner::spawn_spec(&SpawnSpec {
+            command: vec![
+                "node".into(),
+                root.join("tools/runner-node/index.mjs")
+                    .display()
+                    .to_string(),
+                "--source".into(),
+                root.join("tools/sdk-smoke/functions-project/fixtures/remote-config")
+                    .display()
+                    .to_string(),
+            ],
+            cwd: None,
+            env: vec![
+                ("GCLOUD_PROJECT".into(), "demo-app".into()),
+                ("FIREEMU_HTTP_PROFILE".into(), "strict".into()),
+                (
+                    "REMOTE_CONFIG_READ_URL".into(),
+                    format!("http://{addr}{PATH}"),
+                ),
+                (
+                    "REMOTE_CONFIG_READ_TOKEN".into(),
+                    "fixture-capability".into(),
+                ),
+            ],
+            hello_timeout: Duration::from_secs(15),
+        })
+        .await
+        .unwrap(),
+    );
+    let manifest = parse_manifest(runner.hello().manifest.as_ref().unwrap()).unwrap();
+    assert_eq!(manifest.functions.len(), 2);
+    let clock = Arc::new(Mutex::new(VirtualClock::new(
+        LogicalInstant::from_unix_seconds(1_788_004_860),
+    )));
+    let runtime = FunctionsRuntime::with_codebases(
+        vec![CodebaseSpec {
+            function: None,
+            name: "default".into(),
+            manifest,
+            runner,
+            spawn: None,
+            cleanup_dir: None,
+        }],
+        FunctionsConfig::for_tests(1, "test-secret".into()),
+        clock.clone(),
+        FunctionsHttpProfile::Strict,
+    )
+    .unwrap();
+    runtime.set_background_triggers(true);
+    let dispatch = tokio::spawn(runtime.clone().dispatch_loop());
+    let auth = AuthState {
+        store: Arc::new(Mutex::new(AuthStore::new(
+            "demo-app",
+            SplitMix64::new(5),
+            TotpPolicy::default(),
+        ))),
+        clock: clock.clone(),
+        wall_clock: None,
+        totp_extension_enabled: false,
+        reveal_totp_codes: true,
+        barrier: None,
+        events: None,
+        notices: None,
+        blocking: None,
+        operation_gate: Arc::new(Mutex::new(())),
+        control_token: None,
+        registry: None,
+        allow_routed_projects: false,
+        stateless_refresh_tokens: true,
+        idp_continuations: fireemu_adapter_http::identity_toolkit::IdpContinuationPolicy::Disabled,
+        query_limits: fireemu_adapter_http::identity_toolkit::AuthQueryLimits::EmulatorUnbounded,
+        client_api_key: fireemu_adapter_http::identity_toolkit::ClientApiKeyPolicy::Optional,
+        fake_custom_token_expiry:
+            fireemu_adapter_http::identity_toolkit::FakeCustomTokenExpiry::Ignore,
+        custom_token_trust: None,
+        allow_unsigned_custom_tokens: true,
+        caller_times: fireemu_adapter_http::CallerTimes::default(),
+        idp_assertions: fireemu_adapter_http::identity_toolkit::IdpAssertionPolicy::Fixture,
+        app_check: None,
+        app_check_policy: None,
+        tenancy: None,
+    };
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(auth),
+        Arc::new(control(runtime.clone(), clock)),
+    ));
+    let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let (mut client, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    let connection = tokio::spawn(connection);
+    let mut etag = hyper::header::HeaderValue::from_static("*");
+    for (method, path, body) in [
+        ("PUT", PATH.to_owned(), r#"{"version":{"description":"d"}}"#),
+        ("PUT", PATH.to_owned(), "{}"),
+        (
+            "POST",
+            format!("{PATH}:rollback"),
+            r#"{"versionNumber":"1"}"#,
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", addr.to_string())
+            .header("authorization", "Bearer fixture-capability")
+            .header("content-type", "application/json")
+            .header("accept-encoding", "gzip");
+        if method == "PUT" {
+            request = request.header("if-match", &etag);
+        }
+        let request = request
+            .body(Full::new(Bytes::from_static(body.as_bytes())))
+            .unwrap();
+        let response = tokio::time::timeout(Duration::from_secs(5), client.send_request(request))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        etag = response.headers()["etag"].clone();
+        response.into_body().collect().await.unwrap();
+    }
+    drop(client);
+    tokio::time::timeout(Duration::from_secs(5), connection)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let time = "2026-08-29T12:01:00Z";
+    let forced = json!({
+        "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
+        "updateType": "FORCED_UPDATE", "description": "d",
+    });
+    let conditional = json!({
+        "versionNumber": "2", "updateTime": time, "updateOrigin": "REST_API",
+        "updateType": "INCREMENTAL_UPDATE",
+    });
+    let rollback = json!({
+        "versionNumber": "3", "updateTime": time, "updateOrigin": "REST_API",
+        "updateType": "ROLLBACK", "description": "Rollback to version 1", "rollbackSource": "1",
+    });
+    wait_rows(&runtime, 6).await;
+    runtime.await_idle(Duration::from_secs(10)).await.unwrap();
+    let rows = observed(&runtime);
+    runtime.shutdown().await;
+    dispatch.await.unwrap();
+    server.abort();
+    let _ = server.await;
+
+    assert_eq!(rows.len(), 6);
+    // One id per version, carried by both generations (RC-OBSERVE-V2-3).
+    for (version, id, source) in [
+        (forced, "1714029973", "0"),
+        (conditional, "-999059642", "0"),
+        (rollback, "582684983", "1"),
+    ] {
+        let row = |generation| {
+            let row = rows
+                .iter()
+                .find(|row| {
+                    row["generation"] == generation
+                        && row["data"]["versionNumber"] == version["versionNumber"]
+                })
+                .unwrap();
+            let read = row["readVersion"].as_str().unwrap().parse::<u64>().unwrap();
+            let delivered = version["versionNumber"]
+                .as_str()
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+            assert!(read >= delivered, "{row}");
+            row
+        };
+        let v1 = row(1);
+        assert_eq!(v1["attempt"], 1);
+        assert_eq!(v1["data"], version);
+        let context = json!({
+            "eventId": id,
+            "eventType": "google.firebase.remoteconfig.update",
+            "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": "projects/demo-app"},
+            "timestamp": time,
+        });
+        for (key, value) in context.as_object().unwrap() {
+            assert_eq!(&v1["context"][key], value, "{key}");
+        }
+
+        let v2 = row(2);
+        assert_eq!(v2["attempt"], 1);
+        assert_eq!(
+            v2["data"],
+            json!({
+                "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+                "versionNumber": version["versionNumber"],
+                "updateTime": time,
+                "updateOrigin": "REST_API",
+                "updateType": version["updateType"],
+                "description": version["description"].as_str().unwrap_or_default(),
+                "rollbackSource": source,
+            })
+        );
+        let mut context = v2["context"].as_object().unwrap().clone();
+        // The SDK exposes these v1 compatibility accessors on its v2 event.
+        context.remove("context");
+        context.remove("version");
+        assert_eq!(
+            Value::Object(context),
+            json!({
+                "id": id,
+                "project": "demo-app",
+                "source": "//firebaseremoteconfig.googleapis.com/projects/demo-app",
+                "specversion": "1.0",
+                "time": time,
+                "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+            })
+        );
     }
 }

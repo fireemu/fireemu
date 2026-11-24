@@ -1,17 +1,34 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { CONFORMANCE_DIR, REPO_ROOT } from "./config.mjs";
 import {
+  BODY_STAGE_PREFIX,
+  bodyReadStageProblems,
   checkFixtureDigest,
+  checkVerifiedFixtureDigest,
+  createLineageSnapshot,
+  corpusOfLane,
+  extraOf,
+  gitDataReader,
   enrollmentProblems,
   frozenPaths,
   fixturesWithHarnessDigest,
+  gitFixDelta,
+  importClosure,
   gitReader,
   bindingProblems,
   HARNESS_LANES,
@@ -19,9 +36,13 @@ import {
   KNOWN_UNCONNECTED,
   laneStatus,
   lineageProblems,
+  pipelineBodyReadStageProblems,
   loadLineage,
+  proposeUnreachedHops,
   rawDigest,
+  readPinnedFramingSummary,
   recordedDigests,
+  releaseLineageProblems,
   registryPaths,
   rewriteReport,
   scheme2Digest,
@@ -29,9 +50,11 @@ import {
   tokensInReportOrder,
   treeReader,
   unconnectedProblems,
+  UNREACHED_CONDITIONS,
   verifyOutcome,
   waivedDigestProblems,
   WAIVED_FIXTURES,
+  withFramingStatuses,
 } from "./harness-registry.mjs";
 
 const digestOf = (text) => scheme2Digest({ files: ["a.mjs"], extra: "" }, () => text);
@@ -715,6 +738,12 @@ test("the waived fixtures are exactly these, so a new waiver is a visible edit h
     "fs-query-index",
     "fs-query-index-merge",
     "fs-query-index-merge2",
+    "fs-query-index-merge3",
+    "fs-query-index-merge4",
+    "fs-query-index-merge5",
+    "fs-query-index-merge6",
+    "fs-query-index-merge7",
+    "fs-query-index-merge8",
     "fs-rules",
     "pubsub-resource-names",
     "securetoken-body",
@@ -973,4 +1002,2104 @@ test("the federation waiver says what its digests are", () => {
   const federation = WAIVED_FIXTURES.find((w) => w.fixture === "auth-federation-production.json");
   assert.match(federation.reason, /per-recording approval binding/);
   assert.match(federation.reason, /nothing compares it/);
+});
+
+// ---- "unreached" hops ----------------------------------------------------------------------------
+
+// A lane with two sources and a data input, read at a revision through `dataReader`.
+const UNREACHED_LANE = {
+  files: ["a.mjs", "b.mjs"],
+  extra: ({ data }) => data("lane.indexes.json"),
+  fixture: "lane-production.json",
+  guarded: ["conformance/lane.indexes.json"],
+};
+const REC = "1".repeat(40);
+const BASE = "2".repeat(40);
+const FIX = "3".repeat(40);
+const B_TEXT = "export const b = 1;\n";
+const DATA = '{"indexes":[]}\n';
+const TREES = {
+  // The recorded state, the base of the fix (a comment-only edit), the fix (today's tree).
+  [REC]: { "a.mjs": "// recorded\nconst a = 1;\n", "b.mjs": B_TEXT },
+  [BASE]: { "a.mjs": "// edited\nconst a = 1;\n", "b.mjs": B_TEXT },
+  [FIX]: { "a.mjs": "const a = 1;\ntry { a; } catch {}\n", "b.mjs": B_TEXT },
+};
+const DATA_AT = { [REC]: DATA, [BASE]: DATA, [FIX]: DATA };
+const treesReader = (commit) => (file) => {
+  if (!TREES[commit]) throw new Error(`bad object ${commit}`);
+  return TREES[commit][file];
+};
+const dataAt = (commit) => (path) => (path === "lane.indexes.json" ? DATA_AT[commit] : undefined);
+const A_PATH = "conformance/src/a.mjs";
+const DIFF_HASH = "d".repeat(64);
+const CONDITIONS = {
+  "no-failures": {
+    base: BASE,
+    fix: FIX,
+    deltaSha256: DIFF_HASH,
+    touches: [A_PATH],
+    problems: (fixture) => (fixture.failures ?? []).map((failure) => `failure ${failure}`),
+  },
+};
+const delta = (changed = [A_PATH, "unrelated/file.txt"], deltaSha256 = DIFF_HASH) => ({
+  changed,
+  deltaSha256,
+});
+const unreachedHop = () => ({
+  lane: "lane",
+  from: rawDigest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+  to: scheme2Digest(UNREACHED_LANE, (file) => TREES[FIX][file], DATA),
+  commit: REC,
+  kind: "unreached",
+  fix: FIX,
+  condition: "no-failures",
+});
+const unreachedProblems = (hop, overrides = {}) =>
+  lineageProblems(
+    { version: 1, hops: [hop] },
+    {
+      lanes: { lane: UNREACHED_LANE },
+      reader: treesReader,
+      dataReader: dataAt,
+      shallow: false,
+      current: (file) => TREES[FIX][file],
+      currentInputs: { data: () => DATA },
+      conditions: CONDITIONS,
+      fixDelta: () => delta(),
+      fixtureOf: () => ({ failures: [] }),
+      ...overrides,
+    },
+  );
+// lineageProblems reads today's data through the lane's default reader, which is this checkout's.
+
+test("an unreached hop is sound when every part of its check holds", () => {
+  assert.deepEqual(unreachedProblems(unreachedHop()), []);
+});
+
+test("an unreached hop needs its fix commit and a condition from the closed table", () => {
+  assert.match(unreachedProblems({ ...unreachedHop(), fix: "abc" }).join("\n"), /fix is not/);
+  assert.match(
+    unreachedProblems({ ...unreachedHop(), condition: "anything" }).join("\n"),
+    /closed table/,
+  );
+  assert.match(
+    unreachedProblems({ ...unreachedHop(), condition: "__proto__" }).join("\n"),
+    /closed table/,
+  );
+  const { fix: _fix, ...withoutFix } = unreachedHop();
+  assert.match(unreachedProblems(withoutFix).join("\n"), /fix is not/);
+  assert.match(unreachedProblems({ ...unreachedHop(), extra: 1 }).join("\n"), /unexpected/);
+});
+
+test("an unreached hop that names another fix commit than the condition approves is refused", () => {
+  // A well-formed SHA that is not the approved one, whatever its history looks like.
+  const found = unreachedProblems({ ...unreachedHop(), fix: "4".repeat(40) });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /is not the one the condition approves/);
+});
+
+test("an unreached hop is refused when the change is not the approved one", () => {
+  // Same commit, same touched file, same tokens before and after: another delta hashes differently.
+  const found = unreachedProblems(unreachedHop(), {
+    fixDelta: () => delta(undefined, "e".repeat(64)),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /is not the approved one/);
+});
+
+test("fix and condition belong to unreached hops only", () => {
+  const scheme = { ...goodHop(), fix: FIX, condition: "no-failures" };
+  assert.match(problems([scheme]).join("\n"), /unexpected fix, condition/);
+});
+
+test("an unreached hop is refused when the recorded digest does not reproduce at its commit", () => {
+  assert.match(
+    unreachedProblems({ ...unreachedHop(), from: "9".repeat(64) }).join("\n"),
+    /recorded digest does not reproduce/,
+  );
+});
+
+test("an unreached hop is refused when the condition fails for the lane's fixture", () => {
+  const found = unreachedProblems(unreachedHop(), { fixtureOf: () => ({ failures: ["p#s"] }) });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /condition no-failures fails: failure p#s/);
+});
+
+test("an unreached hop is refused when the fix changes another input, or none of its own", () => {
+  const changes = (...paths) => ({ fixDelta: () => delta(paths) });
+  assert.match(
+    unreachedProblems(unreachedHop(), changes(A_PATH, "conformance/src/b.mjs")).join("\n"),
+    /changes the inputs \[conformance\/src\/a\.mjs,conformance\/src\/b\.mjs\]/,
+  );
+  assert.match(
+    unreachedProblems(unreachedHop(), changes(A_PATH, "conformance/lane-production.json")).join(
+      "\n",
+    ),
+    /changes the inputs/,
+  );
+  assert.match(
+    unreachedProblems(unreachedHop(), changes("conformance/src/b.mjs")).join("\n"),
+    /changes the inputs \[conformance\/src\/b\.mjs\], the condition allows exactly \[conformance\/src\/a\.mjs\]/,
+  );
+  assert.match(unreachedProblems(unreachedHop(), changes()).join("\n"), /allows exactly/);
+});
+
+test("an unreached hop is refused when the fix changes a data input of the lane's digest", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    fixDelta: () => delta([A_PATH, "conformance/lane.indexes.json"]),
+  });
+  assert.equal(found.length, 1);
+  assert.match(
+    found[0],
+    /changes the inputs \[conformance\/lane\.indexes\.json,conformance\/src\/a\.mjs\]/,
+  );
+});
+
+test("an unreached hop is refused when the delta of the fix cannot be read", () => {
+  assert.match(
+    unreachedProblems(unreachedHop(), {
+      fixDelta: () => {
+        throw new Error("bad object");
+      },
+    }).join("\n"),
+    /fix commit and its base are not readable/,
+  );
+});
+
+test("an unreached hop is refused when more than comments changed before the base of the fix", () => {
+  const trees = { ...TREES, [BASE]: { "a.mjs": "const a = 2;\n", "b.mjs": B_TEXT } };
+  const found = unreachedProblems(unreachedHop(), {
+    reader: (commit) => (file) => trees[commit][file],
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /changed between .* and the base of the fix/);
+});
+
+test("an unreached hop is refused when the data changed before the base of the fix", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) =>
+      commit === BASE ? '{"indexes":[1]}\n' : dataAt(commit)(path),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /changed between .* and the base of the fix/);
+});
+
+test("an unreached hop is refused when the tree changed again after the fix", () => {
+  const later = (file) =>
+    file === "a.mjs" ? "const a = 1;\ntry { a; } catch {}\nlater();\n" : B_TEXT;
+  const found = unreachedProblems(unreachedHop(), { current: later });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /current tree is not the hop's/);
+});
+
+test("an unreached hop is refused when the fix commit's tokens are not the hop's", () => {
+  const trees = { ...TREES, [FIX]: { "a.mjs": "const a = 3;\n", "b.mjs": B_TEXT } };
+  const found = unreachedProblems(unreachedHop(), {
+    reader: (commit) => (file) => trees[commit][file],
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /at the fix commit is not the hop's/);
+});
+
+test("an unreached hop is refused when the history around the fix is not readable", () => {
+  assert.match(
+    unreachedProblems(unreachedHop(), {
+      reader: (commit) => {
+        if (commit === BASE) throw new Error("bad object");
+        return treesReader(commit);
+      },
+    }).join("\n"),
+    /fix commit and its base are not readable/,
+  );
+});
+
+test("a hop is refused when a data input does not exist at the revision it is read at", () => {
+  // At the hop's commit: the recorded digest reproduced from this checkout's data, not the commit's.
+  for (const missingAt of [REC, BASE, FIX]) {
+    const found = unreachedProblems(unreachedHop(), {
+      dataReader: (commit) => (path) => (commit === missingAt ? undefined : dataAt(commit)(path)),
+    });
+    assert.equal(found.length, 1, missingAt);
+    assert.match(found[0], /are not readable|data input is missing/, missingAt);
+  }
+  const throwing = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => {
+      if (commit === REC) throw new Error("path does not exist");
+      return dataAt(commit)(path);
+    },
+  });
+  assert.match(throwing.join("\n"), /sources at .* are not readable \(path does not exist\)/);
+});
+
+test("a hop is refused when a source does not exist at its commit", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    reader: (commit) => (file) =>
+      commit === REC && file === "b.mjs" ? undefined : treesReader(commit)(file),
+  });
+  assert.match(found.join("\n"), /b\.mjs is missing/);
+});
+
+test("the data a hop's digest reads is read at the hop's commit", () => {
+  // The recorded digest was made from other data than the commit holds: it does not reproduce.
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => (commit === REC ? '{"other":1}\n' : dataAt(commit)(path)),
+  });
+  assert.match(found.join("\n"), /recorded digest does not reproduce/);
+});
+
+test("the data read at the fix commit is the data the hop's scheme-2 digest was made from", () => {
+  const found = unreachedProblems(unreachedHop(), {
+    dataReader: (commit) => (path) => (commit === FIX ? '{"other":1}\n' : dataAt(commit)(path)),
+  });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /at the fix commit is not the hop's/);
+});
+
+test("a scheme hop reads its data at its commit too", () => {
+  // Same sources and tokens, other data at the hop's commit than in this checkout.
+  const hop = {
+    lane: "lane",
+    from: rawDigest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+    to: scheme2Digest(UNREACHED_LANE, (file) => TREES[REC][file], DATA),
+    commit: REC,
+    kind: "scheme",
+  };
+  const run = (dataReader) =>
+    lineageProblems(
+      { version: 1, hops: [hop] },
+      {
+        lanes: { lane: UNREACHED_LANE },
+        reader: treesReader,
+        dataReader,
+        shallow: false,
+        current: (file) => TREES[REC][file],
+        currentInputs: { data: () => DATA },
+      },
+    );
+  assert.deepEqual(run(dataAt), []);
+  // Today's data is DATA; at the commit it is something else, so the recorded digest and the
+  // scheme-2 digest the hop claims were not made from the commit's inputs.
+  const found = run(
+    (commit) => (path) => (commit === REC ? '{"other":1}\n' : dataAt(commit)(path)),
+  );
+  assert.match(found.join("\n"), /does not reproduce/);
+  assert.match(found.join("\n"), /scheme-2 digest at/);
+});
+
+test("an unreached hop in a shallow clone is a hard failure", () => {
+  assert.match(unreachedProblems(unreachedHop(), { shallow: true }).join("\n"), /shallow/);
+});
+
+test("an unreached hop connects the recorded digest of its lane and no other", () => {
+  const hop = unreachedHop();
+  const state = (name, saved) =>
+    checkFixtureDigest(name, { ...UNREACHED_LANE, extra: DATA }, saved, {
+      read: (file) => TREES[FIX][file],
+      lineage: [hop],
+    }).state;
+  assert.equal(state("lane", hop.from), "lineage");
+  assert.equal(state("other", hop.from), "stale");
+});
+
+// ---- the body-read condition ---------------------------------------------------------------------
+
+const fixtureOfSteps = (...steps) => ({
+  programs: { p: { steps: Object.fromEntries(steps.map((step, i) => [`s${i}`, step])) } },
+});
+
+test("the body-read condition holds when every answer has a status or a gRPC code", () => {
+  assert.deepEqual(
+    bodyReadStageProblems(
+      fixtureOfSteps(
+        { status: 200, body: [] },
+        { status: 400, body: {} },
+        { status: 0, transportError: "TimeoutError" },
+        { transport: "grpc", code: 0, body: [] },
+        { code: 5 },
+      ),
+    ),
+    [],
+  );
+});
+
+test("the body-read condition fails for a body-stage transport error, whatever else holds", () => {
+  const found = bodyReadStageProblems(
+    fixtureOfSteps(
+      { status: 200 },
+      { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` },
+    ),
+  );
+  assert.deepEqual(found, ["p#s1: the body of the answer could not be read (body:TimeoutError)"]);
+  // The marker is the prefix, so a fetch-stage code that merely contains it does not trip it.
+  assert.deepEqual(
+    bodyReadStageProblems(fixtureOfSteps({ status: 0, transportError: "nobody:error" })),
+    [],
+  );
+});
+
+test("the body-read condition fails closed for an answer it cannot classify", () => {
+  assert.match(
+    bodyReadStageProblems(fixtureOfSteps({ status: 0 })).join("\n"),
+    /status 0 without a transport error/,
+  );
+  assert.match(
+    bodyReadStageProblems(fixtureOfSteps({ body: [] })).join("\n"),
+    /neither a numeric status nor a numeric gRPC code/,
+  );
+  assert.match(
+    bodyReadStageProblems(fixtureOfSteps({ status: "200" })).join("\n"),
+    /neither a numeric status/,
+  );
+  assert.match(bodyReadStageProblems(fixtureOfSteps(null)).join("\n"), /neither a numeric/);
+  for (const empty of [{}, { programs: {} }, { programs: { p: { steps: {} } } }, undefined])
+    assert.match(bodyReadStageProblems(empty).join("\n"), /records no answer/);
+});
+
+test("the body-read condition visits the second answer of a program too", () => {
+  const program = {
+    steps: { s: { status: 200 } },
+    second: { s: { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` } },
+  };
+  assert.deepEqual(bodyReadStageProblems({ programs: { p: program } }), [
+    "p#s (second): the body of the answer could not be read (body:TimeoutError)",
+  ]);
+  assert.deepEqual(
+    bodyReadStageProblems({ programs: { p: { ...program, second: { s: { status: 200 } } } } }),
+    [],
+  );
+});
+
+test("the body-read condition refuses a program with a key it does not know", () => {
+  const found = bodyReadStageProblems({
+    programs: { p: { steps: { s: { status: 200 } }, third: { s: { status: 0 } } } },
+  });
+  assert.deepEqual(found, ["p: unexpected key third"]);
+});
+
+// A fixture program and the corpus program it was recorded from, for the -1 rows.
+const sha = (text) => createHash("sha256").update(text).digest("hex");
+const REF = { $from: "dep", path: "nextPageToken" };
+const unresolvedRow = {
+  status: -1,
+  unresolved: "step dep recorded nothing at nextPageToken",
+  dependencyTransient: false,
+};
+const scenario = ({ steps, refs = [REF], digest, corpusSteps, change = {} }) => {
+  const rows = { ...steps };
+  rows.row = { ...(rows.row ?? unresolvedRow), ...change };
+  const program = {
+    id: "p",
+    steps: corpusSteps ?? [{ id: "dep" }, { id: "row", query: [["pageToken", refs]] }],
+  };
+  const fixture = {
+    programs: { p: { corpusDigest: digest ?? sha(JSON.stringify(program)), steps: rows } },
+  };
+  return bodyReadStageProblems(fixture, { p: program });
+};
+const DEP = { status: 200, body: [{}] };
+
+test("the body-read condition accepts a -1 row only when the fixture proves its request could not be built", () => {
+  const check = (change, steps = { dep: DEP }, refs) => scenario({ steps, change, refs });
+  assert.deepEqual(check({}), []);
+  const none = "status -1 without the dependency evidence the recorder writes";
+  assert.deepEqual(check({ unresolved: undefined }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: 7 }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "step dep recorded nothing" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: "TimeoutError: the body timed out" }), [`p#row: ${none}`]);
+  assert.deepEqual(check({ unresolved: ["step dep recorded nothing at nextPageToken"] }), [
+    `p#row: ${none}`,
+  ]);
+  // The whole message is the recorder's: text before it or after a line break is not.
+  assert.deepEqual(check({ unresolved: "Error: step dep recorded nothing at nextPageToken" }), [
+    `p#row: ${none}`,
+  ]);
+  assert.deepEqual(check({ unresolved: "step dep recorded nothing at nextPageToken\nmore" }), [
+    `p#row: ${none}`,
+  ]);
+  // The predecessor must be an earlier step of the slot, by its own key.
+  const notEarlier = (name) =>
+    `p#row: status -1 names ${name}, which is not an earlier step of its slot`;
+  for (const name of ["ghost", "row", "constructor", "__proto__", "toString", "hasOwnProperty"])
+    assert.deepEqual(
+      check({ unresolved: `step ${name} recorded nothing at nextPageToken` }, { dep: DEP }, [
+        { $from: name, path: "nextPageToken" },
+      ]),
+      [notEarlier(name)],
+    );
+  assert.deepEqual(
+    scenario({ steps: { row: unresolvedRow, dep: DEP }, refs: [REF] }).join("\n"),
+    notEarlier("dep"),
+  );
+  // The recorder's own flag for the predecessor.
+  const flag = "p#row: status -1 whose dependencyTransient is not that of step dep";
+  assert.deepEqual(check({ dependencyTransient: true }), [flag]);
+  assert.deepEqual(check({ dependencyTransient: undefined }), [flag]);
+  // A predecessor that recorded the path means the request was built and reached fetch.
+  const recorded = (body) => check({}, { dep: { status: 200, body } });
+  assert.deepEqual(recorded({ nextPageToken: "<page-token>" }), [
+    "p#row: status -1 references nextPageToken, which step dep did record",
+  ]);
+  assert.deepEqual(recorded({ nextPageToken: "" }), []);
+  assert.deepEqual(recorded({ documents: [] }), []);
+  assert.deepEqual(check({}, { dep: { status: 200 } }), []);
+  const nested = { unresolved: "step dep recorded nothing at a.b" };
+  const nestedRef = [{ $from: "dep", path: "a.b" }];
+  assert.deepEqual(check(nested, { dep: { status: 200, body: { a: { b: 1 } } } }, nestedRef), [
+    "p#row: status -1 references a.b, which step dep did record",
+  ]);
+  assert.deepEqual(check(nested, { dep: { status: 200, body: { a: null } } }, nestedRef), []);
+  // A predecessor whose fetch failed recorded nothing; a gRPC predecessor cannot prove it.
+  assert.deepEqual(
+    check({ dependencyTransient: true }, { dep: { status: 0, transportError: "ECONNRESET" } }),
+    [],
+  );
+  assert.deepEqual(check({}, { dep: { code: 0, body: [] } }), [
+    "p#row: status -1 after step dep, which is not a REST answer",
+  ]);
+  // A predecessor that is itself such a row has its own transience and its own proof.
+  const chainedRefs = [
+    { id: "first" },
+    { id: "dep", query: [["pageToken", [{ $from: "first", path: "t" }]]] },
+    { id: "row", query: [["pageToken", [{ $from: "dep", path: "t" }]]] },
+  ];
+  const chain = (first) =>
+    scenario({
+      steps: {
+        first,
+        dep: {
+          status: -1,
+          unresolved: "step first recorded nothing at t",
+          dependencyTransient: false,
+        },
+      },
+      corpusSteps: chainedRefs,
+      change: { unresolved: "step dep recorded nothing at t" },
+    });
+  assert.deepEqual(chain(DEP), []);
+  assert.deepEqual(chain({ status: 200, body: { t: "x" } }), [
+    "p#dep: status -1 references t, which step first did record",
+  ]);
+});
+
+test("a -1 row needs the failed step's own corpus request to reference the named step and path", () => {
+  const missing =
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference";
+  const check = (options) => scenario({ steps: { dep: DEP }, ...options });
+  assert.deepEqual(check({}), []);
+  // The step never references it (the body failure of a request that carried no page token).
+  assert.deepEqual(check({ refs: [] }), [missing]);
+  assert.deepEqual(check({ corpusSteps: [{ id: "dep" }, { id: "row" }] }), [missing]);
+  // It references another step, or another path of the named one.
+  assert.deepEqual(check({ refs: [{ $from: "other", path: "nextPageToken" }] }), [missing]);
+  assert.deepEqual(check({ refs: [{ $from: "dep", path: "other" }] }), [missing]);
+  // The reference may sit anywhere in the request, beside others.
+  assert.deepEqual(
+    check({
+      corpusSteps: [
+        { id: "dep" },
+        { id: "row", body: { a: [{ b: { $from: "x", path: "y" } }, REF] } },
+      ],
+    }),
+    [],
+  );
+  // Only the request's own references count, never inherited ones.
+  const inherited = Object.create(REF);
+  assert.deepEqual(
+    check({ corpusSteps: [{ id: "dep" }, { id: "row", query: [["pageToken", inherited]] }] }),
+    [missing],
+  );
+  // The corpus step is the fixture's own: the same program by id, hashing to the saved digest.
+  assert.deepEqual(check({ digest: "0".repeat(64) }), [missing]);
+  const program = { id: "p", steps: [{ id: "dep" }, { id: "row", query: [REF] }] };
+  const fixture = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  assert.deepEqual(bodyReadStageProblems(fixture, { p: program }), []);
+  assert.deepEqual(bodyReadStageProblems(fixture, {}), [missing]);
+  assert.deepEqual(bodyReadStageProblems(fixture), [missing]);
+  assert.deepEqual(bodyReadStageProblems(fixture, { other: program }), [missing]);
+  assert.deepEqual(
+    bodyReadStageProblems(fixture, {
+      p: { ...program, steps: [{ id: "dep" }, { id: "row", query: [REF] }, { id: "extra" }] },
+    }),
+    [missing],
+  );
+  // A step id of the corpus that is not the row's.
+  assert.deepEqual(check({ corpusSteps: [{ id: "dep" }, { id: "other", query: [REF] }] }), [
+    missing,
+  ]);
+});
+
+test("a -1 proof reads only the fields the request builder resolves, and only a REST predecessor", () => {
+  const ref = { $from: "dep", path: "nextPageToken" };
+  const check = (rowStep, depStep = { id: "dep" }, steps = { dep: DEP }) =>
+    scenario({ steps, corpusSteps: [depStep, { id: "row", ...rowStep }] });
+  const missing =
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference";
+  // REST: query and body are resolved, body only when no rawBody is sent instead.
+  assert.deepEqual(check({ query: [["pageToken", ref]] }), []);
+  assert.deepEqual(check({ body: { a: [ref] } }), []);
+  assert.deepEqual(check({ rawBody: "{}", body: { a: ref } }), [missing]);
+  assert.deepEqual(check({ rawBody: "{}", query: [["pageToken", ref]] }), []);
+  assert.deepEqual(check({ path: "x", collectionId: "c", parent: ref }), [missing]);
+  // gRPC: only body is resolved, never query.
+  assert.deepEqual(check({ transport: "grpc", body: { pageToken: ref } }), []);
+  assert.deepEqual(check({ transport: "grpc", query: [["pageToken", ref]] }), [missing]);
+  assert.deepEqual(check({ transport: "grpc", rawBody: "{}", body: ref }), []);
+  // References nested in $time and $array are still references.
+  assert.deepEqual(check({ body: { t: { $time: { ...ref, addSeconds: 1 } } } }), []);
+  assert.deepEqual(check({ body: { $array: { count: 2, item: { v: ref } } } }), []);
+  // The predecessor is a REST step by the corpus, whatever status the fixture gives it.
+  const notRest = "p#row: status -1 after step dep, which is not a REST answer";
+  const query = { query: [["pageToken", ref]] };
+  assert.deepEqual(check(query, { id: "dep", transport: "grpc" }), [notRest]);
+  assert.deepEqual(check(query, { id: "dep", transport: "rest" }), []);
+  assert.deepEqual(
+    scenario({ steps: { dep: DEP }, corpusSteps: [{ id: "other" }, { id: "row", ...query }] }),
+    [notRest],
+  );
+});
+
+test("the forgeries of the review are refused on the real fixture: a gRPC predecessor and an ignored body", async () => {
+  const { PROGRAMS } = await import("./fs-list/corpus.mjs");
+  const corpus = Object.fromEntries(PROGRAMS.map((program) => [program.id, program]));
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-data-write-list-production.json"), "utf8"),
+  );
+  const grpcId = "fs-data-write-list/grpc/list-documents";
+  const forged = structuredClone(fixture);
+  forged.programs[grpcId].steps["page-size-2"] = { status: 200, body: {} };
+  forged.programs[grpcId].steps["page-2"] = {
+    status: -1,
+    unresolved: "step page-size-2 recorded nothing at nextPageToken",
+    dependencyTransient: false,
+  };
+  assert.deepEqual(bodyReadStageProblems(forged, corpus), [
+    `${grpcId}#page-2: status -1 after step page-size-2, which is not a REST answer`,
+  ]);
+  // A digest-matched corpus step whose reference sits in a body that rawBody makes the builder ignore.
+  const ref = { $from: "dep", path: "nextPageToken" };
+  const program = {
+    id: "p",
+    steps: [
+      { id: "dep" },
+      { id: "row", rpc: "commit", rawBody: '{"writes":[]}', body: { a: ref } },
+    ],
+  };
+  const ignored = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  assert.deepEqual(bodyReadStageProblems(ignored, { p: program }), [
+    "p#row: status -1 names dep at nextPageToken, which the request of step row does not reference",
+  ]);
+});
+
+test("the recorded -1 rows of the checked-in fixtures all carry that evidence, and forging one is refused", async () => {
+  const { PROGRAMS } = await import("./fs-list/corpus.mjs");
+  const corpus = Object.fromEntries(PROGRAMS.map((program) => [program.id, program]));
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-data-write-list-production.json"), "utf8"),
+  );
+  assert.deepEqual(bodyReadStageProblems(fixture, corpus), []);
+  const rows = Object.entries(fixture.programs).flatMap(([id, program]) =>
+    Object.entries(program.steps)
+      .filter(([, row]) => row.status === -1)
+      .map(([stepId]) => [id, stepId]),
+  );
+  assert.equal(rows.length, 5);
+  for (const [id, stepId] of rows) {
+    const forged = structuredClone(fixture);
+    delete forged.programs[id].steps[stepId].unresolved;
+    assert.match(
+      bodyReadStageProblems(forged, corpus).join("\n"),
+      /without the dependency evidence/,
+    );
+    // Without the corpus nothing proves it.
+    assert.match(bodyReadStageProblems(fixture).join("\n"), /does not reference/);
+  }
+  const interleaved = "fs-data-write-list/list-documents/missing-interleaved";
+  const forge = (stepId, unresolved) => {
+    const forged = structuredClone(fixture);
+    forged.programs[interleaved].steps[stepId] = {
+      status: -1,
+      unresolved,
+      dependencyTransient: false,
+    };
+    return bodyReadStageProblems(forged, corpus);
+  };
+  // A forged -1 after a real page that did record its token is refused: its predecessor recorded it.
+  assert.ok(fixture.programs[interleaved].steps["page-size-1"].body.nextPageToken);
+  assert.deepEqual(
+    forge("page-size-1-next", "step page-size-1 recorded nothing at nextPageToken"),
+    [
+      `${interleaved}#page-size-1-next: status -1 references nextPageToken, which step page-size-1 did record`,
+    ],
+  );
+  // A body failure of a request that carries no page token, with a message that imitates one whose
+  // named step really lacks the token (the review's replay of show-missing-page-size-2).
+  assert.ok(!("nextPageToken" in fixture.programs[interleaved].steps["page-size-1-next"].body));
+  assert.deepEqual(
+    forge("show-missing-page-size-2", "step page-size-1-next recorded nothing at nextPageToken"),
+    [
+      `${interleaved}#show-missing-page-size-2: status -1 names page-size-1-next at nextPageToken, which the request of step show-missing-page-size-2 does not reference`,
+    ],
+  );
+  // A body-stage failure in the second answer of a real program is found too.
+  const [secondId] = Object.entries(fixture.programs).find(([, program]) => program.second) ?? [];
+  const forged = structuredClone(fixture);
+  const [stepId] = Object.keys(forged.programs[secondId].second);
+  forged.programs[secondId].second[stepId] = {
+    status: 0,
+    transportError: `${BODY_STAGE_PREFIX}TimeoutError`,
+  };
+  assert.match(
+    bodyReadStageProblems(forged, corpus).join("\n"),
+    /\(second\): the body of the answer/,
+  );
+});
+
+/** Each approved change: its session copy, the lanes that read it and its fixture check. */
+const APPROVED = {
+  "fs-query-index-body-read-unreached": {
+    session: "fs-query-index/session.mjs",
+    lanes: 10,
+    problems: bodyReadStageProblems,
+  },
+  "fs-ent-pipeline-body-read-unreached": {
+    session: "fs-ent-pipeline/session.mjs",
+    lanes: 2,
+    problems: pipelineBodyReadStageProblems,
+  },
+};
+
+test("the closed table names the approved change of each copy of the request layer", () => {
+  assert.deepEqual(Object.keys(UNREACHED_CONDITIONS), Object.keys(APPROVED));
+  for (const [name, { session, lanes: count, problems }] of Object.entries(APPROVED)) {
+    const condition = UNREACHED_CONDITIONS[name];
+    assert.deepEqual(condition.touches, [`conformance/src/${session}`]);
+    assert.equal(condition.problems, problems);
+    for (const sha of [condition.base, condition.fix]) assert.match(sha, /^[0-9a-f]{40}$/);
+    assert.match(condition.deltaSha256, /^[0-9a-f]{64}$/);
+    const lanes = Object.entries(HARNESS_LANES).filter(([, lane]) => lane.files.includes(session));
+    assert.equal(lanes.length, count, name);
+  }
+  // The pipeline fix is its own commit, made on top of the shared one.
+  assert.equal(
+    UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"].fix,
+    "8eac9e9a56ddcb723a27d900c0bb97aead225e05",
+  );
+});
+
+test("the approved change is what git holds: the same diff hash, and one input changed", () => {
+  if (isShallowCheckout() && process.env.FIREEMU_REQUIRE_FULL_HISTORY !== "1") return;
+  for (const [name, { session }] of Object.entries(APPROVED)) {
+    const { base, fix, touches, deltaSha256 } = UNREACHED_CONDITIONS[name];
+    const found = gitFixDelta(base, fix, touches);
+    assert.equal(found.deltaSha256, deltaSha256, name);
+    const lane = Object.values(HARNESS_LANES).find((l) => l.files.includes(session));
+    assert.ok(found.changed.includes(touches[0]), name);
+    assert.ok(!found.changed.includes(`conformance/src/${lane.files[0]}`), name);
+  }
+});
+
+// ---- the pipeline lanes' compact framing rows --------------------------------------------------------
+
+const readConformanceJson = (path) => JSON.parse(readFileSync(join(CONFORMANCE_DIR, path), "utf8"));
+const FRAMING_SMALL = "fs-ent-pipeline/o8a/framing-small";
+const PIPELINE_CONDITION = UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"];
+/** The pipeline condition for `lane` with the given summary (and compact list) in place of the pinned one. */
+const pipelineProblems = (
+  fixture,
+  summary,
+  { lane = "fs-ent-pipeline", compact, corpus = {} } = {},
+) =>
+  pipelineBodyReadStageProblems(fixture, corpus, {
+    lane,
+    condition: compact ? { compactPrograms: { [lane]: compact } } : PIPELINE_CONDITION,
+    readSummary: typeof summary === "function" ? summary : () => summary,
+  });
+
+test("the pipeline condition holds for both recorded pipeline fixtures, with the compact rows answered by the framing summary", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  const summary = readConformanceJson("fs-ent-pipeline-framing.json");
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}, { lane: "fs-ent-pipeline" }), []);
+  assert.deepEqual(pipelineProblems(fixture, summary), []);
+  assert.deepEqual(
+    pipelineBodyReadStageProblems(
+      readConformanceJson("fs-ent-pipeline-regex-production.json"),
+      {},
+      {
+        lane: "fs-ent-pipeline-regex",
+      },
+    ),
+    [],
+  );
+  // Without the summary the compact rows prove nothing: each one, and each program's extra key, is
+  // refused. Two compact programs with 34 answers between them.
+  const without = bodyReadStageProblems(fixture, {});
+  assert.equal(without.length, 36);
+  assert.equal(
+    without.filter((problem) => /unexpected key compactFramingVersion/.test(problem)).length,
+    2,
+  );
+  // The summary answers every compact row with a numeric status or gRPC code, and nothing else.
+  const { fixture: expanded, problems } = withFramingStatuses(
+    fixture,
+    summary,
+    PIPELINE_CONDITION.compactPrograms["fs-ent-pipeline"],
+  );
+  assert.deepEqual(problems, []);
+  const rows = expanded.programs[FRAMING_SMALL];
+  assert.equal(Object.hasOwn(rows, "compactFramingVersion"), false);
+  assert.deepEqual(rows.steps["f5-rest"], summary.programs[FRAMING_SMALL].steps["f5-rest"]);
+  assert.deepEqual(
+    rows.second["f500-rest"],
+    summary.programs[FRAMING_SMALL].steps["f500-rest"].second,
+  );
+  assert.deepEqual(Object.keys(rows.second), Object.keys(fixture.programs[FRAMING_SMALL].second));
+  // Every other program is the fixture's own object.
+  for (const [id, program] of Object.entries(fixture.programs))
+    if (!Object.hasOwn(program, "compactFramingVersion"))
+      assert.equal(expanded.programs[id], program, id);
+});
+
+test("a compact framing program counts only when the summary of the same recording answers its rows one to one", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  const summary = readConformanceJson("fs-ent-pipeline-framing.json");
+  const check = (changeFixture = () => {}, changeSummary = () => {}) => {
+    const f = structuredClone(fixture);
+    const s = structuredClone(summary);
+    changeFixture(f.programs[FRAMING_SMALL], f);
+    changeSummary(s.programs[FRAMING_SMALL], s);
+    return pipelineProblems(f, s)
+      .filter((problem) => problem.startsWith(FRAMING_SMALL))
+      .join("\n");
+  };
+  const unanswered = (found) => assert.match(found, /unexpected key compactFramingVersion/);
+  assert.equal(check(), "");
+  // Another compact version is not read at all; it is refused for its key.
+  unanswered(check((p) => (p.compactFramingVersion = 2)));
+  // The summary is missing: another version, or no entry for the program.
+  for (const found of [
+    check(undefined, (_p, s) => (s.version = 2)),
+    check(undefined, (_p, s) => delete s.programs[FRAMING_SMALL]),
+  ]) {
+    assert.match(found, /framing-small: the framing summary has no entry for this program/);
+    unanswered(found);
+  }
+  // A digest mismatch, or no digest on either side.
+  for (const found of [
+    check(undefined, (p) => (p.corpusDigest = "0".repeat(64))),
+    check(
+      (p) => delete p.corpusDigest,
+      (p) => delete p.corpusDigest,
+    ),
+  ]) {
+    assert.match(found, /framing-small: the framing summary is of another corpus program/);
+    unanswered(found);
+  }
+  // One to one, both ways and in both slots: a missing entry, an extra entry, an extra compact row,
+  // a second answer the compact program does not have, and one it has that the summary lacks.
+  for (const found of [
+    check(undefined, (p) => delete p.steps["f5-rest"]),
+    check(undefined, (p) => (p.steps.extra = p.steps["f5-rest"])),
+    check((p) => (p.steps.extra = p.steps["f5-rest"])),
+    check((p) => (p.steps.constructor = p.steps["f5-rest"])),
+    check(undefined, (p) => (p.steps["f5-rest"].second = p.steps["f5-rest"])),
+    check(undefined, (p) => delete p.steps["f500-rest"].second),
+    check((p) => delete p.second["f500-rest"]),
+    // A summary program whose steps are not an object answers nothing, and does not throw.
+    check(undefined, (p) => (p.steps = null)),
+    check(undefined, (p) => (p.steps = "f5-rest")),
+  ]) {
+    assert.match(
+      found,
+      /framing-small: the framing summary does not answer the compact rows one to one/,
+    );
+    unanswered(found);
+  }
+  // A summary entry counts only as an answered row: a numeric status other than 0 and -1, or a
+  // numeric gRPC code, and no transport error or unresolved dependency, in either slot.
+  const notAnswered = (step) =>
+    new RegExp(`framing-small#${step}: the framing summary entry is not an answered row`);
+  for (const [step, entry] of [
+    ["f5-rest", { transport: "rest", status: 0, transportError: "ECONNRESET" }],
+    ["f5-grpc", { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` }],
+    ["f5-rest", { status: 200, transportError: "x" }],
+    ["f5-rest", { status: 0 }],
+    ["f5-rest", { status: -1, unresolved: "step a recorded nothing at b" }],
+    ["f5-rest", { status: -1 }],
+    ["f5-rest", { status: 200, unresolved: "x" }],
+    ["f5-rest", { transport: "rest", results: 5 }],
+    ["f5-rest", { status: "200" }],
+    ["f5-rest", null],
+  ])
+    assert.match(
+      check(undefined, (p) => (p.steps[step] = entry)),
+      notAnswered(step),
+      JSON.stringify(entry),
+    );
+  assert.match(
+    check(undefined, (p) => (p.steps["f500-rest"].second = { status: 0, transportError: "x" })),
+    /framing-small#f500-rest \(second\): the framing summary entry is not an answered row/,
+  );
+  // A gRPC code of any number is an answer, as recorded.
+  assert.equal(
+    check(undefined, (p) => (p.steps["f5-grpc"] = { code: 13 })),
+    "",
+  );
+  // A key the summary program should not have.
+  assert.match(
+    check(undefined, (p) => (p.third = {})),
+    /framing-small: the framing summary has unexpected keys third/,
+  );
+});
+
+test("every combination of compact version, summary, corpus digest and answer in either slot", () => {
+  const compactRow = { kind: "read", results: 1 };
+  const answers = { ok: { status: 200 }, unknown: { status: 0 }, absent: undefined };
+  let cases = 0;
+  for (const version of [undefined, 1, 2])
+    for (const summaryVersion of [1, 2])
+      for (const listed of [true, false])
+        for (const digest of ["match", "mismatch", "missing"])
+          for (const answer of Object.keys(answers))
+            for (const slot of ["steps", "second"]) {
+              cases += 1;
+              const program = {
+                ...(digest === "missing" ? {} : { corpusDigest: "a".repeat(64) }),
+                ...(version === undefined ? {} : { compactFramingVersion: version }),
+                steps: { s: compactRow },
+                ...(slot === "second" ? { second: { s: compactRow } } : {}),
+              };
+              const entry =
+                slot === "steps"
+                  ? answers[answer]
+                  : { status: 200, ...(answers[answer] ? { second: answers[answer] } : {}) };
+              const summary = {
+                version: summaryVersion,
+                programs: listed
+                  ? {
+                      p: {
+                        ...(digest === "match" ? { corpusDigest: "a".repeat(64) } : {}),
+                        ...(digest === "mismatch" ? { corpusDigest: "b".repeat(64) } : {}),
+                        steps: entry === undefined ? {} : { s: entry },
+                      },
+                    }
+                  : {},
+              };
+              const read = version === 1 && summaryVersion === 1 && listed && digest === "match";
+              const found = pipelineProblems({ programs: { p: program } }, summary, {
+                compact: ["p"],
+              });
+              const label = JSON.stringify({
+                version,
+                summaryVersion,
+                listed,
+                digest,
+                answer,
+                slot,
+              });
+              assert.equal(found.length === 0, read && answer === "ok", label);
+              // A program the summary does not answer keeps its compact key, and is refused for it.
+              if (!read && version !== undefined)
+                assert.ok(found.includes("p: unexpected key compactFramingVersion"), label);
+            }
+  assert.equal(cases, 216);
+});
+
+test("the pipeline condition proves a -1 row from the corpus it is given, as the shared one does", () => {
+  const program = {
+    id: "p",
+    steps: [{ id: "dep" }, { id: "row", query: [["pageToken", [REF]]] }],
+  };
+  const fixture = {
+    programs: {
+      p: { corpusDigest: sha(JSON.stringify(program)), steps: { dep: DEP, row: unresolvedRow } },
+    },
+  };
+  const summary = { version: 1, programs: {} };
+  assert.deepEqual(pipelineProblems(fixture, summary, { compact: [], corpus: { p: program } }), []);
+  assert.match(
+    pipelineProblems(fixture, summary, { compact: [] }).join("\n"),
+    /does not reference/,
+  );
+});
+
+test("a pipeline condition whose framing summary cannot be read is a problem, not a throw", () => {
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  for (const summary of [undefined, null, 7, "x", {}, { version: 1 }])
+    assert.match(
+      pipelineProblems(fixture, summary).join("\n"),
+      /unexpected key compactFramingVersion/,
+    );
+  assert.deepEqual(
+    pipelineProblems(fixture, () => {
+      throw new Error("gone");
+    }),
+    ["the framing summary cannot be read: gone"],
+  );
+});
+
+test("the framing summary is read from the HEAD blob, must be the working tree's bytes and hash to the pin", () => {
+  const path = "fs-ent-pipeline-framing.json";
+  const bytes = readFileSync(join(CONFORMANCE_DIR, path), "utf8");
+  const pin = PIPELINE_CONDITION.summarySha256;
+  assert.equal(sha(bytes), pin);
+  assert.deepEqual(readPinnedFramingSummary(pin), JSON.parse(bytes));
+  const read = (committed, worktree = committed) =>
+    readPinnedFramingSummary(pin, {
+      committed: (p) => (assert.equal(p, path), committed),
+      worktree: (p) => (assert.equal(p, path), worktree),
+    });
+  assert.deepEqual(read(bytes), JSON.parse(bytes));
+  // The review's same-shape summary: one status changed, every id and count kept.
+  const altered = bytes.replace('"status": 200', '"status": 418');
+  assert.notEqual(altered, bytes);
+  assert.throws(() => read(altered), /is not the recorded summary/);
+  // A working tree copy that differs from HEAD, whichever side holds the recorded bytes.
+  assert.throws(() => read(bytes, altered), /differs between HEAD and the working tree/);
+  assert.throws(() => read(altered, bytes), /differs between HEAD and the working tree/);
+  // The condition reads the summary through this check, against its own pin, by default.
+  const fixture = readConformanceJson("fs-ent-pipeline-production.json");
+  assert.deepEqual(pipelineBodyReadStageProblems(fixture, {}, { lane: "fs-ent-pipeline" }), []);
+  assert.match(
+    pipelineBodyReadStageProblems(
+      fixture,
+      {},
+      {
+        lane: "fs-ent-pipeline",
+        condition: { ...PIPELINE_CONDITION, summarySha256: "0".repeat(64) },
+      },
+    )[0],
+    /the framing summary cannot be read: .*is not the recorded summary 0+$/,
+  );
+});
+
+/** The two pipeline hops, verified by the release verifier with a changed fixture or summary. */
+function pipelineHopProblems({ fixtures = {}, summary } = {}) {
+  const lineage = loadLineage();
+  const hops = lineage.hops.filter(
+    (hop) => hop.condition === "fs-ent-pipeline-body-read-unreached",
+  );
+  assert.equal(hops.length, 2);
+  const readSummary =
+    summary === undefined
+      ? undefined
+      : () =>
+          readPinnedFramingSummary(PIPELINE_CONDITION.summarySha256, {
+            committed: () => summary,
+            worktree: () => summary,
+          });
+  const conditions = {
+    ...UNREACHED_CONDITIONS,
+    "fs-ent-pipeline-body-read-unreached": {
+      ...PIPELINE_CONDITION,
+      problems: (fixture, corpus, options) =>
+        pipelineBodyReadStageProblems(fixture, corpus, { ...options, readSummary }),
+    },
+  };
+  const inputs = {
+    conditions,
+    fixtureOf: (lane) => fixtures[lane.fixture] ?? readConformanceJson(lane.fixture),
+  };
+  const verified = { ...lineage, hops };
+  const problems = releaseLineageProblems(verified, { shallow: false, ...inputs });
+  // The lane runner's snapshot runs the same verifier once, and reads every row stale on a problem.
+  const snapshot = createLineageSnapshot(
+    () => verified,
+    (l) => releaseLineageProblems(l, { shallow: false, ...inputs }),
+  );
+  const states = ["fs-ent-pipeline", "fs-ent-pipeline-regex"].map(
+    (name) =>
+      checkVerifiedFixtureDigest(name, HARNESS_LANES[name], hops[0].from, { snapshot }).state,
+  );
+  return { problems, states };
+}
+
+test("the review's reproductions are refused by the release verifier and the lane runner", () => {
+  if (isShallowCheckout()) return;
+  const clean = pipelineHopProblems();
+  assert.deepEqual(clean, { problems: [], states: ["lineage", "lineage"] });
+  const production = readConformanceJson("fs-ent-pipeline-production.json");
+  const regex = readConformanceJson("fs-ent-pipeline-regex-production.json");
+  const summaryText = readFileSync(join(CONFORMANCE_DIR, "fs-ent-pipeline-framing.json"), "utf8");
+  const summaryJson = JSON.parse(summaryText);
+  const withSummary = (change) => {
+    const s = structuredClone(summaryJson);
+    change(s.programs[FRAMING_SMALL]);
+    return JSON.stringify(s);
+  };
+  const withFixture = (change, fixture = production) => {
+    const f = structuredClone(fixture);
+    change(f);
+    return f;
+  };
+  const refused = (label, run, pattern) => {
+    const { problems, states } = run;
+    assert.match(problems.join("\n"), pattern, label);
+    assert.deepEqual(states, ["stale", "stale"], label);
+  };
+  // Must 1: a summary-only extra in each slot, a fixture-only missing row, a compact program in the
+  // regex fixture, and a listed compact program the fixture lacks.
+  refused(
+    "summary extra step",
+    pipelineHopProblems({
+      summary: withSummary((p) => (p.steps["made-up-step"] = p.steps["f5-rest"])),
+    }),
+    /is not the recorded summary/,
+  );
+  const unpinned = (change) => {
+    // The same change, past the byte pin: what the closed matching refuses on its own.
+    const s = structuredClone(summaryJson);
+    change(s.programs[FRAMING_SMALL]);
+    return pipelineProblems(production, s).join("\n");
+  };
+  assert.match(
+    unpinned((p) => (p.steps["made-up-step"] = p.steps["f5-rest"])),
+    /not answer the compact rows one to one/,
+  );
+  assert.match(
+    unpinned((p) => (p.steps["f5-rest"].second = p.steps["f5-rest"])),
+    /not answer the compact rows one to one/,
+  );
+  refused(
+    "fixture missing row",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture(
+          (f) => delete f.programs[FRAMING_SMALL].steps["f5-rest"],
+        ),
+      },
+    }),
+    /not answer the compact rows one to one/,
+  );
+  refused(
+    "compact program copied into the regex fixture",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-regex-production.json": withFixture(
+          (f) => (f.programs[FRAMING_SMALL] = production.programs[FRAMING_SMALL]),
+          regex,
+        ),
+      },
+    }),
+    /framing-small: a compact program the condition does not name/,
+  );
+  // A compact program the condition does not name is not answered: it keeps its compact key.
+  assert.match(
+    pipelineProblems(
+      withFixture((f) => (f.programs[FRAMING_SMALL] = production.programs[FRAMING_SMALL]), regex),
+      summaryJson,
+      { lane: "fs-ent-pipeline-regex" },
+    ).join("\n"),
+    /framing-small: unexpected key compactFramingVersion/,
+  );
+  // A listed program that is no longer compact is a listed compact program the fixture lacks.
+  assert.match(
+    pipelineProblems(
+      withFixture(
+        (f) => delete f.programs["fs-ent-pipeline/o8a/framing-large"].compactFramingVersion,
+      ),
+      summaryJson,
+    ).join("\n"),
+    /framing-large: the condition names a compact program the fixture does not have/,
+  );
+  refused(
+    "listed compact program missing",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture(
+          (f) => delete f.programs["fs-ent-pipeline/o8a/framing-large"],
+        ),
+      },
+    }),
+    /framing-large: the condition names a compact program the fixture does not have/,
+  );
+  // Round 2: two answer ids merged into one key that sorts and joins to the same text, in each slot.
+  for (const [slotName, ids] of [
+    ["steps", ["f5-grpc", "f5-rest"]],
+    ["second", ["f500-grpc", "f500-rest"]],
+  ])
+    refused(
+      `merged ${slotName} key`,
+      pipelineHopProblems({
+        fixtures: {
+          "fs-ent-pipeline-production.json": withFixture((f) => {
+            const slot = f.programs[FRAMING_SMALL][slotName];
+            for (const id of ids) {
+              assert.ok(Object.hasOwn(slot, id), id);
+              delete slot[id];
+            }
+            slot[ids.join("\n")] = { status: 418 };
+          }),
+        },
+      }),
+      /framing-small: the framing summary does not answer the compact rows one to one/,
+    );
+  // Must 2: a transport error in the summary (past the pin, and as bytes that fail the pin).
+  assert.match(
+    unpinned((p) => (p.steps["f5-rest"] = { status: 0, transportError: "ECONNRESET" })),
+    /f5-rest: the framing summary entry is not an answered row/,
+  );
+  // Must 3: same-shape summary bytes with one status changed.
+  refused(
+    "altered summary bytes",
+    pipelineHopProblems({ summary: summaryText.replace('"status": 200', '"status": 418') }),
+    /is not the recorded summary/,
+  );
+  // Must 4: a compact row that carries a failure, or an unproven -1, is judged as a full row.
+  refused(
+    "compact row with a body-stage error",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture((f) =>
+          Object.assign(f.programs[FRAMING_SMALL].steps["f5-rest"], {
+            status: 0,
+            transportError: `${BODY_STAGE_PREFIX}TimeoutError`,
+          }),
+        ),
+      },
+    }),
+    /framing-small#f5-rest: the body of the answer could not be read/,
+  );
+  refused(
+    "compact row with an unproven -1",
+    pipelineHopProblems({
+      fixtures: {
+        "fs-ent-pipeline-production.json": withFixture((f) =>
+          Object.assign(f.programs[FRAMING_SMALL].steps["f5-grpc"], {
+            status: -1,
+            unresolved: "step f5-rest recorded nothing at nextPageToken",
+            dependencyTransient: false,
+          }),
+        ),
+      },
+    }),
+    /framing-small#f5-grpc: status -1 names f5-rest/,
+  );
+  // A row that is not an object is never a compact row, and does not throw.
+  for (const row of [null, "x", 7])
+    assert.match(
+      pipelineProblems(
+        withFixture((f) => (f.programs[FRAMING_SMALL].steps["f5-rest"] = row)),
+        summaryJson,
+      ).join("\n"),
+      /framing-small#f5-rest: neither a numeric status/,
+      String(row),
+    );
+  // Each field of an answer keeps a row from being replaced.
+  for (const key of ["status", "code", "transportError", "unresolved", "dependencyTransient"])
+    assert.match(
+      pipelineProblems(
+        withFixture((f) => (f.programs[FRAMING_SMALL].steps["f5-rest"][key] = "x")),
+        summaryJson,
+      ).join("\n"),
+      /framing-small#f5-rest: /,
+      key,
+    );
+});
+
+test("the closed condition table cannot be changed in the process", () => {
+  const condition = UNREACHED_CONDITIONS["fs-ent-pipeline-body-read-unreached"];
+  const before = JSON.stringify(UNREACHED_CONDITIONS);
+  for (const change of [
+    () => (UNREACHED_CONDITIONS.other = {}),
+    () => delete UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"],
+    () => (condition.summarySha256 = "0".repeat(64)),
+    () => (condition.fix = "0".repeat(40)),
+    () => condition.compactPrograms["fs-ent-pipeline"].pop(),
+    () =>
+      (condition.compactPrograms["fs-ent-pipeline-regex"][0] = "fs-ent-pipeline/o8a/framing-small"),
+    () => (condition.compactPrograms.other = []),
+    () => UNREACHED_CONDITIONS["fs-query-index-body-read-unreached"].touches.push("x"),
+  ])
+    assert.throws(change, TypeError);
+  assert.equal(JSON.stringify(UNREACHED_CONDITIONS), before);
+  assert.equal(condition.problems, pipelineBodyReadStageProblems);
+});
+
+test("the condition names each pipeline lane's compact programs and pins the summary of the recording", () => {
+  assert.deepEqual(PIPELINE_CONDITION.compactPrograms, {
+    "fs-ent-pipeline": ["fs-ent-pipeline/o8a/framing-small", "fs-ent-pipeline/o8a/framing-large"],
+    "fs-ent-pipeline-regex": [],
+  });
+  const recorded = JSON.parse(
+    readFileSync(join(REPO_ROOT, "spec/compatibility/closure/record-digests.json"), "utf8"),
+  ).records["conformance/fs-ent-pipeline-framing.json"];
+  assert.equal(PIPELINE_CONDITION.summarySha256, recorded);
+  // A lane the condition has no list for is refused.
+  assert.deepEqual(
+    pipelineBodyReadStageProblems({ programs: {} }, {}, { lane: "fs-query-index" }),
+    ["lane fs-query-index has no list of compact programs in the condition"],
+  );
+  assert.match(
+    pipelineBodyReadStageProblems({ programs: {} }, {}, { lane: "__proto__" })[0],
+    /has no list/,
+  );
+});
+
+test("the pipeline lane guards its framing summary against a rewrite", () => {
+  assert.deepEqual(HARNESS_LANES["fs-ent-pipeline"].guarded, [
+    "conformance/fs-ent-pipeline-framing.json",
+  ]);
+  const path = "conformance/fs-ent-pipeline-framing.json";
+  const report = rewriteReport({ [path]: readFileSync(join(REPO_ROOT, path), "utf8") }, NO_GIT);
+  assert.match(
+    report.problems.join("\n"),
+    /fs-ent-pipeline-framing\.json: a rewrite changes an input/,
+  );
+});
+
+// ---- generating the hops -------------------------------------------------------------------------
+
+const GENERATED = {
+  lane1: { ...UNREACHED_LANE, fixture: "one.json" },
+  lane2: { ...UNREACHED_LANE, fixture: "two.json" },
+  other: { files: ["b.mjs"], extra: "", fixture: "other.json" },
+};
+const rawAtBase = (name) => rawDigest(GENERATED[name], (file) => TREES[BASE][file], DATA);
+const fixtures = {
+  "one.json": { programs: { p: { harnessDigest: rawAtBase("lane1") } } },
+  "two.json": { programs: { p: { harnessDigest: rawAtBase("lane2") } } },
+  "other.json": { programs: { p: { harnessDigest: "b".repeat(64) } } },
+};
+const propose = (overrides = {}) =>
+  proposeUnreachedHops({
+    condition: "no-failures",
+    lanes: GENERATED,
+    lineage: { version: 1, hops: [] },
+    reader: treesReader,
+    dataReader: dataAt,
+    current: (file) => TREES[FIX][file],
+    currentInputs: { data: () => DATA },
+    conditions: CONDITIONS,
+    fixtureOf: (lane) => fixtures[lane.fixture],
+    ...overrides,
+  });
+
+test("the generator proposes one hop per recorded digest of each lane that reads the fixed file", () => {
+  const hops = propose();
+  assert.deepEqual(
+    hops.map((hop) => hop.lane),
+    ["lane1", "lane2"],
+  );
+  for (const hop of hops) {
+    assert.equal(hop.kind, "unreached");
+    assert.equal(hop.fix, FIX);
+    assert.equal(hop.commit, BASE);
+    assert.equal(hop.condition, "no-failures");
+    assert.equal(
+      hop.to,
+      scheme2Digest(GENERATED[hop.lane], (file) => TREES[FIX][file], DATA),
+    );
+  }
+  assert.equal(hops[0].from, rawAtBase("lane1"));
+  // A lane with two distinct recorded digests gets a hop for each.
+  const two = propose({
+    fixtureOf: (lane) =>
+      lane.fixture === "two.json"
+        ? {
+            programs: {
+              p: { harnessDigest: rawAtBase("lane2") },
+              q: { harnessDigest: rawAtBase("lane1") },
+            },
+          }
+        : fixtures[lane.fixture],
+    lanes: { lane2: GENERATED.lane2 },
+  });
+  assert.equal(two.length, 1);
+});
+
+test("the generator refuses a recorded digest that does not reproduce at the base", () => {
+  assert.throws(
+    () =>
+      propose({
+        fixtureOf: (lane) =>
+          lane.fixture === "two.json"
+            ? { programs: { p: { harnessDigest: "a".repeat(64) } } }
+            : fixtures[lane.fixture],
+      }),
+    /lane2: the recorded digest a+ does not reproduce/,
+  );
+  // The data the digest read is the base's, not this checkout's.
+  assert.throws(
+    () =>
+      propose({
+        dataReader: (commit) => (path) => (commit === BASE ? "{}" : dataAt(commit)(path)),
+      }),
+    /does not reproduce/,
+  );
+});
+
+test("the generator skips a hop the lineage already has, and refuses an unknown condition", () => {
+  const once = propose();
+  assert.deepEqual(propose({ lineage: { version: 1, hops: once } }), []);
+  assert.deepEqual(propose({ lineage: { version: 1, hops: [once[0]] } }), [once[1]]);
+  assert.throws(() => propose({ condition: "nope" }), /closed table/);
+  assert.throws(() => propose({ condition: "__proto__" }), /closed table/);
+});
+
+test("the checked-in unreached hops are exactly what the generator proposes for their condition", () => {
+  const lineage = loadLineage();
+  const unreached = lineage.hops.filter((hop) => hop.kind === "unreached");
+  assert.equal(unreached.length, 12, "one hop for each recorded harness digest of twelve lanes");
+  for (const condition of new Set(unreached.map((hop) => hop.condition))) {
+    const mine = unreached.filter((hop) => hop.condition === condition);
+    const without = { ...lineage, hops: lineage.hops.filter((hop) => !mine.includes(hop)) };
+    assert.deepEqual(proposeUnreachedHops({ condition, lineage: without }), mine);
+    for (const hop of mine) assert.equal(hop.fix, UNREACHED_CONDITIONS[condition].fix);
+  }
+});
+
+test("every recorded harness digest of the twelve lanes is connected without a waiver", () => {
+  for (const [name, lane] of Object.entries(HARNESS_LANES)) {
+    if (!Object.values(APPROVED).some(({ session }) => lane.files.includes(session))) continue;
+    const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+    for (const saved of recordedDigests(name, fixture))
+      assert.notEqual(checkFixtureDigest(name, lane, saved).state, "stale", `${name} ${saved}`);
+  }
+  assert.equal(
+    WAIVED_FIXTURES.some((waived) =>
+      /query-index|data-write-list|ent-pipeline/.test(waived.fixture),
+    ),
+    false,
+  );
+});
+
+test("a real hop moved to a commit that lacks the lane's index file is refused", () => {
+  // 9ef5974b3 predates fs-query-index-merge8.indexes.json: the recorded digest reproduced from this
+  // checkout's copy of the file before the data was read at the hop's commit.
+  const commit = "9ef5974b3d726f95bf7126ac6b0c6ba42442b093";
+  if (isShallowCheckout()) return;
+  try {
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: REPO_ROOT });
+  } catch {
+    return;
+  }
+  const lineage = loadLineage();
+  const hops = lineage.hops.map((hop) =>
+    hop.lane === "fs-query-index-merge8" ? { ...hop, commit } : hop,
+  );
+  const found = lineageProblems(
+    { ...lineage, hops },
+    { lanes: HARNESS_LANES, reader: gitReader, shallow: false },
+  );
+  assert.match(found.join("\n"), /fs-query-index-merge8\.indexes\.json|are not readable/);
+});
+
+// ---- rewrites of a condition's fixture -------------------------------------------------------------
+
+test("a rewrite that changes only a lane's fixture is checked against the lineage's conditions", () => {
+  const fixturePath = "conformance/fs-query-index-production.json";
+  const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
+  const [program] = Object.values(fixture.programs);
+  const [stepId] = Object.keys(program.steps);
+  program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
+  // The lineage file itself is not in the rewrite.
+  const report = rewriteReport({ [fixturePath]: JSON.stringify(fixture) });
+  assert.match(
+    report.problems.join("\n"),
+    /lineage after the rewrite: hop \d+: condition fs-query-index-body-read-unreached fails/,
+  );
+  // With the lineage file in the rewrite too, the same refusal.
+  const lineage = readFileSync(join(REPO_ROOT, "conformance/harness-lineage.json"), "utf8");
+  assert.match(
+    rewriteReport({
+      "conformance/harness-lineage.json": lineage,
+      [fixturePath]: JSON.stringify(fixture),
+    }).problems.join("\n"),
+    /condition fs-query-index-body-read-unreached fails/,
+  );
+});
+
+test("a rewrite of a pipeline fixture is checked against the pipeline condition", () => {
+  for (const name of ["fs-ent-pipeline-production.json", "fs-ent-pipeline-regex-production.json"]) {
+    const fixturePath = `conformance/${name}`;
+    const fixture = JSON.parse(readFileSync(join(REPO_ROOT, fixturePath), "utf8"));
+    const [program] = Object.values(fixture.programs);
+    const [stepId] = Object.keys(program.steps);
+    program.steps[stepId] = { status: 0, transportError: `${BODY_STAGE_PREFIX}TimeoutError` };
+    assert.match(
+      rewriteReport({ [fixturePath]: JSON.stringify(fixture) }).problems.join("\n"),
+      /lineage after the rewrite: hop \d+: condition fs-ent-pipeline-body-read-unreached fails/,
+      name,
+    );
+  }
+});
+
+test("a rewrite of a fixture no unreached hop reads does not re-check the lineage", () => {
+  // auth-fs-cross is connected by a scheme hop, which does not read its fixture.
+  const fixturePath = "conformance/auth-fs-cross-production.json";
+  const fixture = readFileSync(join(REPO_ROOT, fixturePath), "utf8");
+  const report = rewriteReport({ [fixturePath]: fixture }, NO_GIT);
+  assert.ok(!report.problems.some((problem) => /lineage after the rewrite/.test(problem)));
+});
+
+// ---- the fix commit as git reports it --------------------------------------------------------------
+
+test("gitFixDelta reports the changed paths and a hash of the delta that no configuration changes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "fix-delta-"));
+  try {
+    // A throwaway repository with no configuration of the machine in it.
+    const env = {
+      PATH: process.env.PATH,
+      HOME: dir,
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    };
+    const git = (...args) =>
+      execFileSync("git", args, {
+        cwd: dir,
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    git("init", "-q", "-b", "main");
+    const lines = (count, text) => `${text}\n`.repeat(count);
+    writeFileSync(join(dir, "kept.txt"), "kept\n");
+    writeFileSync(join(dir, "old.txt"), lines(5, "a long enough body to be a rename"));
+    writeFileSync(join(dir, "input.mjs"), `${lines(20, "export const a = 1;")}\n${lines(2, "x")}`);
+    writeFileSync(join(dir, "ünï.txt"), "unicode name\n");
+    mkdirSync(join(dir, "sub", "dir"), { recursive: true });
+    writeFileSync(join(dir, "sub", "dir", "nested.txt"), "nested\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "base");
+    const base = git("rev-parse", "HEAD");
+    git("mv", "old.txt", "new.txt");
+    writeFileSync(join(dir, "kept.txt"), "kept again\n");
+    writeFileSync(join(dir, "ünï.txt"), "unicode name again\n");
+    writeFileSync(
+      join(dir, "input.mjs"),
+      `${lines(10, "export const a = 1;")}export const b = 2;\n${lines(10, "export const a = 1;")}\n${lines(2, "x")}`,
+    );
+    writeFileSync(join(dir, "added.txt"), "added\n");
+    writeFileSync(join(dir, "sub", "dir", "nested.txt"), "nested again\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "fix");
+    const fix = git("rev-parse", "HEAD");
+    const found = gitFixDelta(base, fix, ["input.mjs"], dir);
+    assert.deepEqual(found.changed, [
+      "added.txt",
+      "input.mjs",
+      "kept.txt",
+      "new.txt",
+      "old.txt",
+      "sub/dir/nested.txt",
+      "ünï.txt",
+    ]);
+    assert.match(found.deltaSha256, /^[0-9a-f]{64}$/);
+    // Only the named paths are hashed, and a path that did not exist at a revision is its own case.
+    for (const paths of [["kept.txt"], ["input.mjs", "kept.txt"], ["input.mjs", "added.txt"], []])
+      assert.notEqual(gitFixDelta(base, fix, paths, dir).deltaSha256, found.deltaSha256);
+    assert.notEqual(
+      gitFixDelta(base, fix, ["added.txt"], dir).deltaSha256,
+      gitFixDelta(base, fix, ["gone.txt"], dir).deltaSha256,
+    );
+    // Configuration that changes how git prints or finds a diff does not change either result.
+    for (const [key, value] of [
+      ["diff.noprefix", "true"],
+      ["diff.mnemonicPrefix", "true"],
+      ["diff.context", "9"],
+      ["diff.interHunkContext", "5"],
+      ["diff.algorithm", "patience"],
+      ["diff.renames", "copies"],
+      ["diff.suppressBlankEmpty", "true"],
+      ["diff.external", "false"],
+      ["color.ui", "always"],
+      ["core.quotepath", "true"],
+      ["core.abbrev", "12"],
+    ])
+      git("config", key, value);
+    assert.deepEqual(gitFixDelta(base, fix, ["input.mjs"], dir), found);
+    // A different change to the same file hashes differently.
+    writeFileSync(join(dir, "input.mjs"), "export const a = 9;\n");
+    git("commit", "-q", "-am", "other");
+    const other = gitFixDelta(base, git("rev-parse", "HEAD"), ["input.mjs"], dir);
+    assert.notEqual(other.deltaSha256, found.deltaSha256);
+    assert.throws(() => gitFixDelta(base, "0".repeat(40), ["input.mjs"], dir));
+    assert.throws(() => gitFixDelta("0".repeat(40), fix, ["input.mjs"], dir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- the lane runner's stale check ------------------------------------------------------------------
+
+test("the lane runner accepts a recorded digest the registry connects by lineage, and refuses an unknown one", async () => {
+  const { harnessDigest, harnessDigestIsStale } = await import("./fs-query-index/run.mjs");
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-query-index-production.json"), "utf8"),
+  );
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  const current = await harnessDigest();
+  // The runner's own raw digest of today's sources is not the recorded one: the lineage connects it.
+  assert.notEqual(saved, current);
+  assert.equal(laneStatus("fs-query-index", HARNESS_LANES["fs-query-index"]).state, "lineage");
+  assert.equal(harnessDigestIsStale(saved, current), false);
+  assert.equal(harnessDigestIsStale(current, current), false);
+  assert.equal(harnessDigestIsStale("0".repeat(64), current), true);
+});
+
+test("the lane runner compares digests plainly for a lane the registry does not enroll", () => {
+  const script = `
+    const { harnessDigestIsStale } = await import(${JSON.stringify(new URL("./fs-query-index/run.mjs", import.meta.url).href)});
+    console.log(JSON.stringify([harnessDigestIsStale("a", "a"), harnessDigestIsStale("a", "b")]));`;
+  const { stdout } = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, FIREEMU_SANDBOX_LANE: "fs-ent-text" },
+    encoding: "utf8",
+  });
+  assert.equal(HARNESS_LANES["fs-ent-text"], undefined);
+  assert.deepEqual(JSON.parse(stdout), [false, true]);
+});
+
+test("the lane runner does not call a committed row of the shared layer stale, and calls a changed one stale", async () => {
+  const { harnessDigest, rowIsStale } = await import("./fs-query-index/run.mjs");
+  const { PROGRAMS } = await import("./fs-query-index/corpus.mjs");
+  const fixture = JSON.parse(
+    readFileSync(join(CONFORMANCE_DIR, "fs-query-index-production.json"), "utf8"),
+  );
+  const current = await harnessDigest();
+  for (const [id, saved] of Object.entries(fixture.programs)) {
+    const program = PROGRAMS.find((candidate) => candidate.id === id);
+    assert.equal(rowIsStale(saved, program, current), false, id);
+    assert.equal(rowIsStale({ ...saved, harnessDigest: "0".repeat(64) }, program, current), true);
+    assert.equal(rowIsStale({ ...saved, corpusDigest: "0".repeat(64) }, program, current), true);
+    assert.equal(rowIsStale(undefined, program, current), false);
+  }
+  // check() decides staleness through that function, not through a second comparison.
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/fs-query-index/run.mjs"), "utf8");
+  assert.match(source, /const stale = rowIsStale\(saved, program, harness\);/);
+  assert.doesNotMatch(source, /saved\.harnessDigest !== harness/);
+});
+
+// ---- module exports are the revision's only when their sources are identical -----------------------
+
+const MODULES = {
+  "src/m.mjs":
+    'import { y } from "./sub/y.mjs";\nimport fs from "node:fs";\nimport pkg from "pkg";\nexport * from "./z.mjs";\nexport const X = { n: 1 };\n',
+  "src/sub/y.mjs": 'export const y = 1;\nawait import("../w.mjs");\nexport { v } from "./v.mjs";\n',
+  "src/z.mjs": "export const Z = 2;\n",
+  "src/w.mjs": "export {};\n",
+  "src/sub/v.mjs": 'export const v = 3;\nimport "./y.mjs";\n',
+  "src/unrelated.mjs": "export const U = 1;\n",
+};
+const CLOSURE = ["m.mjs", "sub/v.mjs", "sub/y.mjs", "w.mjs", "z.mjs"];
+
+test("the files a module comes from are itself and everything it imports by a relative specifier", () => {
+  // Each file is read once, so a cycle ends at once (a second read of any file fails the test).
+  const reads = new Set();
+  assert.deepEqual(
+    importClosure("sub/y.mjs", (path) => {
+      assert.ok(!reads.has(path), `${path} was read twice`);
+      reads.add(path);
+      return MODULES[path];
+    }),
+    ["sub/v.mjs", "sub/y.mjs", "w.mjs"],
+  );
+  assert.deepEqual(
+    importClosure("m.mjs", (path) => MODULES[path]),
+    CLOSURE,
+  );
+  // Static, re-exported, side-effect and literal dynamic imports; cycles end; bare and node: are not sources.
+  assert.deepEqual(
+    importClosure("w.mjs", (path) => MODULES[path]),
+    ["w.mjs"],
+  );
+  // A dynamic import that is not a string literal cannot be followed, so it refuses.
+  for (const source of [
+    'const p = "./dep.mjs"; await import(p);',
+    'await import("./" + "dep.mjs");',
+    "await import(`./dep.mjs`);",
+    'await import(await Promise.resolve("./dep.mjs"));',
+  ])
+    assert.throws(
+      () => importClosure("c.mjs", (path) => (path === "src/c.mjs" ? source : "export {};")),
+      /computed specifier/,
+      source,
+    );
+  // A JSON module is a leaf: listed, compared as bytes, never parsed and never followed.
+  const withJson = (path) =>
+    ({
+      "src/j.mjs":
+        'import a from "./sub/dep.json" with { type: "json" };\nawait import("./other.json");\nimport b from "./attr.data" with { type: "json" };\n',
+      "src/sub/dep.json": '{"not": "javascript" ',
+      "src/other.json": "not even json",
+      "src/attr.data": "also not javascript",
+    })[path];
+  assert.deepEqual(importClosure("j.mjs", withJson), [
+    "attr.data",
+    "j.mjs",
+    "other.json",
+    "sub/dep.json",
+  ]);
+  assert.deepEqual(
+    importClosure("z.mjs", (path) => MODULES[path]),
+    ["z.mjs"],
+  );
+  assert.throws(() => importClosure("gone.mjs", (path) => MODULES[path]));
+  assert.throws(() =>
+    importClosure("m.mjs", (path) => (path === "src/z.mjs" ? undefined : MODULES[path])),
+  );
+  const real = importClosure("auth-fs-cross/corpus.mjs", (path) =>
+    readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+  );
+  assert.ok(real.includes("auth-fs-cross/programs.mjs") && real.includes("fs-rules/harness.mjs"));
+});
+
+const EXPORT_LANE = {
+  files: ["a.mjs", "b.mjs"],
+  extra: ({ exported }) => JSON.stringify(exported("m.mjs", "X")),
+  fixture: "lane-production.json",
+};
+const TODAY_X = JSON.stringify({ n: 1 });
+const todayInputs = {
+  data: (path) => MODULES[path] ?? DATA,
+  committed: (path) => MODULES[path] ?? DATA,
+  exported: (module, name) => (module === "m.mjs" && name === "X" ? { n: 1 } : undefined),
+};
+const exportHop = (kind) => ({
+  lane: "lane",
+  from: rawDigest(EXPORT_LANE, (file) => TREES[REC][file], TODAY_X),
+  to: scheme2Digest(EXPORT_LANE, (file) => TREES[kind === "scheme" ? REC : FIX][file], TODAY_X),
+  commit: REC,
+  kind,
+  ...(kind === "unreached" ? { fix: FIX, condition: "no-failures" } : {}),
+});
+/** `changed` maps a revision to the files whose content differs there from this checkout's. */
+const exportProblems = (hop, changed = {}, overrides = {}) =>
+  lineageProblems(
+    { version: 1, hops: [hop] },
+    {
+      lanes: { lane: EXPORT_LANE },
+      reader: treesReader,
+      dataReader: (commit) => (path) =>
+        Object.hasOwn(changed[commit] ?? {}, path) ? changed[commit][path] : todayInputs.data(path),
+      shallow: false,
+      current: (file) => TREES[hop.kind === "scheme" ? REC : FIX][file],
+      currentInputs: todayInputs,
+      conditions: CONDITIONS,
+      fixDelta: () => delta(),
+      fixtureOf: () => ({ failures: [] }),
+      ...overrides,
+    },
+  );
+
+test("a hop's module exports count for its revision only when every source they come from is identical there", () => {
+  for (const kind of ["scheme", "unreached"]) {
+    assert.deepEqual(exportProblems(exportHop(kind)), [], kind);
+    const revisions = kind === "scheme" ? [REC] : [REC, BASE, FIX];
+    for (const commit of revisions)
+      for (const file of CLOSURE) {
+        const path = `src/${file}`;
+        for (const there of [`${MODULES[path]}// edited\n`, undefined]) {
+          const found = exportProblems(exportHop(kind), { [commit]: { [path]: there } });
+          assert.equal(found.length, 1, `${kind} ${commit} ${file}`);
+          assert.match(
+            found[0],
+            new RegExp(`${file.replace(".", "\\.")} is not the same at ${commit}`),
+          );
+        }
+      }
+    // A file the module does not come from may differ.
+    assert.deepEqual(
+      exportProblems(exportHop(kind), { [REC]: { "src/unrelated.mjs": "export const U = 2;\n" } }),
+      [],
+    );
+  }
+});
+
+test("a module's closure is read from HEAD and the working tree must still hold HEAD's bytes", () => {
+  const escaped = (file) => file.replace(".", "\\.");
+  for (const kind of ["scheme", "unreached"]) {
+    for (const file of CLOSURE) {
+      const path = `src/${file}`;
+      const worktreeOnly = exportProblems(
+        exportHop(kind),
+        {},
+        {
+          currentInputs: {
+            ...todayInputs,
+            data: (p) => (p === path ? `${MODULES[p]}// local\n` : todayInputs.data(p)),
+          },
+        },
+      );
+      assert.equal(worktreeOnly.length, 1, `${kind} ${file}`);
+      assert.match(
+        worktreeOnly[0],
+        new RegExp(`${escaped(file)} differs between HEAD and the working tree`),
+      );
+      // The revision is compared with HEAD's bytes, not with the working tree's.
+      const headOnly = exportProblems(
+        exportHop(kind),
+        {},
+        {
+          currentInputs: {
+            ...todayInputs,
+            committed: (p) => (p === path ? `${MODULES[p]}// head\n` : todayInputs.committed(p)),
+          },
+        },
+      );
+      assert.ok(headOnly.length >= 1, `${kind} ${file}`);
+      assert.match(
+        headOnly.join("\n"),
+        new RegExp(`${escaped(file)} (is not the same at|differs between)`),
+      );
+    }
+  }
+});
+
+test("a rewrite of a file a registered module export comes from is checked against HEAD", () => {
+  if (isShallowCheckout()) return;
+  const path = "conformance/src/auth-fs-cross/programs.mjs";
+  const text = readFileSync(join(REPO_ROOT, path), "utf8");
+  const found = rewriteReport({ [path]: `${text}// local\n` }).problems.join("\n");
+  assert.match(
+    found,
+    /lineage after the rewrite: hop 0: .*programs\.mjs differs between HEAD and the working tree/,
+  );
+  assert.deepEqual(rewriteReport({ [path]: text }).problems, []);
+  // A file no registered export comes from does not make a rewrite re-check the lineage.
+  const unrelated = rewriteReport(
+    { "conformance/src/auth-fs-cross/run.mjs": "// anything\n" },
+    NO_GIT,
+  );
+  assert.ok(!unrelated.problems.some((problem) => /lineage after the rewrite/.test(problem)));
+});
+
+test("a JSON module a hop's export imports counts as bytes, identical or refused", () => {
+  const modules = {
+    "src/m.mjs": 'import dep from "./dep.json" with { type: "json" };\nexport const X = dep;\n',
+    "src/dep.json": '{"n": 1}\n',
+  };
+  const inputs = {
+    ...todayInputs,
+    data: (p) => modules[p] ?? DATA,
+    committed: (p) => modules[p] ?? DATA,
+  };
+  const run = (changed) =>
+    exportProblems(exportHop("scheme"), changed, {
+      currentInputs: inputs,
+      dataReader: (commit) => (path) =>
+        Object.hasOwn(changed[commit] ?? {}, path) ? changed[commit][path] : inputs.data(path),
+    });
+  assert.deepEqual(run({}), []);
+  const found = run({ [REC]: { "src/dep.json": '{"n": 2}\n' } });
+  assert.equal(found.length, 1);
+  assert.match(found[0], /dep\.json is not the same at/);
+  assert.match(
+    run({ [REC]: { "src/dep.json": undefined } }).join("\n"),
+    /dep\.json is not the same at/,
+  );
+});
+
+test("a computed dynamic import in a module an export comes from refuses the hop", () => {
+  const modules = {
+    "src/m.mjs": 'const p = "./dep.mjs";\nexport const X = (await import(p)).X;\n',
+  };
+  const inputs = {
+    ...todayInputs,
+    data: (p) => modules[p] ?? DATA,
+    committed: (p) => modules[p] ?? DATA,
+  };
+  const found = exportProblems(
+    exportHop("scheme"),
+    {},
+    {
+      currentInputs: inputs,
+      dataReader: () => inputs.data,
+    },
+  );
+  assert.equal(found.length, 1);
+  assert.match(found[0], /computed specifier/);
+});
+
+test("the data a hop's digest reads is not a module source: it is the revision's own", () => {
+  const found = exportProblems(exportHop("scheme"), {
+    [REC]: { "src/m.mjs": "export const X = 1;\n" },
+  });
+  assert.equal(found.length, 1);
+});
+
+test("every export a lane reads is the module's own export in this checkout, by own name only", async () => {
+  for (const [name, lane] of Object.entries(HARNESS_LANES)) {
+    if (typeof lane.extra !== "function" || name === "auth-config-sdk") continue;
+    const asked = [];
+    extraOf(lane, {
+      data: (path) => readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+      exported: (module, exportName) => {
+        asked.push([module, exportName]);
+        return {};
+      },
+      sdkVersions: () => ({}),
+    });
+    for (const [module, exportName] of asked) {
+      const imported = await import(`./${module}`);
+      assert.deepEqual(
+        extraOf({ extra: ({ exported }) => exported(module, exportName) }),
+        imported[exportName],
+        `${name} ${module}`,
+      );
+    }
+  }
+  const read = (module, name) => extraOf({ extra: ({ exported }) => exported(module, name) });
+  for (const [module, name] of [
+    ["auth-account/authorized-domains.mjs", "NOPE"],
+    ["auth-account/authorized-domains.mjs", "toString"],
+    ["auth-account/authorized-domains.mjs", "constructor"],
+    ["no/such/module.mjs", "AUTHORIZED_DOMAINS"],
+    ["toString", "AUTHORIZED_DOMAINS"],
+    ["__proto__", "x"],
+  ])
+    assert.throws(() => read(module, name), /no export .* is registered/, `${module} ${name}`);
+});
+
+test("the installed SDK versions cannot be read at a revision, so such a lane's hop is refused", () => {
+  const lane = { ...EXPORT_LANE, extra: ({ sdkVersions }) => JSON.stringify(sdkVersions()) };
+  const found = lineageProblems(
+    { version: 1, hops: [{ ...exportHop("scheme"), from: "9".repeat(64) }] },
+    {
+      lanes: { lane },
+      reader: treesReader,
+      dataReader: dataAt,
+      shallow: false,
+      current: (file) => TREES[REC][file],
+      currentInputs: { sdkVersions: () => ({}) },
+    },
+  );
+  assert.match(found.join("\n"), /installed SDK versions cannot be read at a revision/);
+});
+
+test("the committed auth-fs-cross scheme hop passes, and is refused when a source its principals come from differs", () => {
+  if (isShallowCheckout()) return;
+  const hop = loadLineage().hops.find((h) => h.kind === "scheme");
+  const run = (dataReader) =>
+    lineageProblems(
+      { version: 1, hops: [hop] },
+      { lanes: HARNESS_LANES, reader: gitReader, shallow: false, dataReader },
+    );
+  assert.deepEqual(run(gitDataReader), []);
+  for (const file of importClosure("auth-fs-cross/corpus.mjs", (path) =>
+    readFileSync(join(CONFORMANCE_DIR, path), "utf8"),
+  )) {
+    const found = run(
+      (commit) => (path) =>
+        path === `src/${file}` ? "export const edited = 1;\n" : gitDataReader(commit)(path),
+    );
+    assert.match(
+      found.join("\n"),
+      new RegExp(`${file.replace(".", "\\.")} is not the same at`),
+      file,
+    );
+  }
+});
+
+// ---- the lane runner accepts a lineage digest only when the whole lineage verifies ---------------------
+
+const RUNNER_LANE = { ...EXPORT_LANE, extra: DATA };
+const RUNNER_HOP = () => ({
+  ...exportHop("scheme"),
+  from: "7".repeat(64),
+  to: scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
+});
+const snapshotOf = (hops, problems) =>
+  createLineageSnapshot(
+    () => ({ version: 1, hops }),
+    () => problems,
+  );
+const runnerState = (snapshot, saved = RUNNER_HOP().from) =>
+  checkVerifiedFixtureDigest("lane", RUNNER_LANE, saved, {
+    read: (f) => TREES[REC][f],
+    snapshot,
+  }).state;
+
+test("a lineage digest counts for a lane runner only when the whole lineage file verifies", () => {
+  assert.equal(runnerState(snapshotOf([RUNNER_HOP()], [])), "lineage");
+  // Any problem leaves no hop, so every lineage-connected row is stale.
+  assert.equal(runnerState(snapshotOf([RUNNER_HOP()], ["refused"])), "stale");
+  // Other states are not the lineage's business.
+  const none = snapshotOf([RUNNER_HOP()], ["refused"]);
+  assert.equal(
+    runnerState(
+      none,
+      rawDigest(RUNNER_LANE, (f) => TREES[REC][f]),
+    ),
+    "raw",
+  );
+  assert.equal(
+    runnerState(
+      none,
+      scheme2Digest(RUNNER_LANE, (f) => TREES[REC][f]),
+    ),
+    "scheme2",
+  );
+  assert.equal(runnerState(none, "6".repeat(64)), "stale");
+});
+
+test("the runner reads the lineage once and does every lookup on the object it validated", () => {
+  let reads = 0;
+  let verifies = 0;
+  const hop = RUNNER_HOP();
+  const snapshot = createLineageSnapshot(
+    () => {
+      reads += 1;
+      // Whatever a later read would give, the first one is the only one used.
+      return reads === 1
+        ? { version: 1, hops: [hop] }
+        : { version: 2, hops: [{ ...hop, from: "5".repeat(64) }] };
+    },
+    () => ((verifies += 1), []),
+  );
+  assert.equal(runnerState(snapshot), "lineage");
+  assert.equal(runnerState(snapshot), "lineage");
+  assert.equal(runnerState(snapshot, "5".repeat(64)), "stale");
+  assert.deepEqual([reads, verifies], [1, 1]);
+  assert.strictEqual(snapshot(), snapshot());
+  // The snapshot's hops are the only ones: a lineage handed in by the caller is ignored.
+  assert.equal(
+    checkVerifiedFixtureDigest("lane", RUNNER_LANE, hop.from, {
+      read: (f) => TREES[REC][f],
+      lineage: [],
+      snapshot,
+    }).state,
+    "lineage",
+  );
+});
+
+test("a malformed hop or an unreadable lineage is a lineage problem for the runner, never a throw", () => {
+  const real = loadLineage();
+  for (const bad of [null, 7, "hop", [], undefined]) {
+    const hops = [...real.hops, bad];
+    assert.match(
+      releaseLineageProblems({ ...real, hops }).join("\n"),
+      /hop \d+: the hop is not an object/,
+    );
+    assert.match(
+      rewriteReport(
+        {
+          "conformance/harness-lineage.json": JSON.stringify({
+            ...real,
+            hops: [...real.hops, bad ?? null],
+          }),
+        },
+        NO_GIT,
+      ).problems.join("\n"),
+      /the hop is not an object/,
+    );
+  }
+  const lane = HARNESS_LANES["fs-query-index"];
+  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  const state = (snapshot) =>
+    checkVerifiedFixtureDigest("fs-query-index", lane, saved, { snapshot }).state;
+  const real2 = (hops) => createLineageSnapshot(() => ({ ...real, hops }));
+  assert.equal(state(real2(real.hops)), "lineage");
+  assert.equal(state(real2([...real.hops, null])), "stale");
+  assert.equal(state(createLineageSnapshot(() => null)), "stale");
+  assert.equal(state(createLineageSnapshot(() => ({ version: 1, hops: "no" }))), "stale");
+  const unreadable = createLineageSnapshot(() => {
+    throw new Error("no such file");
+  });
+  assert.equal(state(unreadable), "stale");
+  assert.match(unreadable().problems.join("\n"), /cannot be checked: no such file/);
+});
+
+test("the runner's verification is the release verifier's: version, duplicates, other hops and a shallow clone", () => {
+  if (isShallowCheckout()) return;
+  const lane = HARNESS_LANES["fs-query-index"];
+  const fixture = JSON.parse(readFileSync(join(CONFORMANCE_DIR, lane.fixture), "utf8"));
+  const [saved] = recordedDigests("fs-query-index", fixture);
+  const state = (lineage, options = {}) =>
+    checkVerifiedFixtureDigest("fs-query-index", lane, saved, {
+      snapshot: createLineageSnapshot(
+        () => lineage,
+        (l) => releaseLineageProblems(l, { shallow: false, ...options }),
+      ),
+    }).state;
+  const real = loadLineage();
+  assert.equal(checkVerifiedFixtureDigest("fs-query-index", lane, saved).state, "lineage");
+  assert.equal(state(real), "lineage");
+  assert.equal(state({ ...real, version: 2 }), "stale");
+  const hop = real.hops.find((h) => h.lane === "fs-query-index");
+  assert.equal(state({ ...real, hops: [...real.hops, hop] }), "stale");
+  // Another hop the release verifier refuses makes the whole file refused, whatever connects this row.
+  const bad = { ...real.hops.find((h) => h.lane === "fs-query-index-merge"), fix: "4".repeat(40) };
+  assert.equal(
+    state({ ...real, hops: real.hops.map((h) => (h.lane === bad.lane ? bad : h)) }),
+    "stale",
+  );
+  assert.equal(
+    state({
+      ...real,
+      hops: real.hops.map((h) => (h === hop ? { ...hop, fix: "4".repeat(40) } : h)),
+    }),
+    "stale",
+  );
+  assert.equal(state(real, { shallow: true }), "stale");
+  // The endpoint lookup alone would have accepted a forged hop.
+  const forged = real.hops.map((h) => (h === hop ? { ...hop, fix: "4".repeat(40) } : h));
+  assert.equal(
+    checkFixtureDigest("fs-query-index", lane, saved, { lineage: forged }).state,
+    "lineage",
+  );
+});
+
+test("the release verifier checks the whole lineage file: version, duplicates, every hop and a shallow clone", () => {
+  if (isShallowCheckout()) return;
+  const real = loadLineage();
+  assert.deepEqual(releaseLineageProblems(), []);
+  assert.deepEqual(releaseLineageProblems(real, { shallow: false }), []);
+  assert.match(releaseLineageProblems({ ...real, version: 2 }).join("\n"), /not \{ version: 1/);
+  assert.match(
+    releaseLineageProblems({ ...real, hops: [...real.hops, real.hops[1]] }).join("\n"),
+    /duplicate hop/,
+  );
+  // Every lane's hop is checked, not only the one a row is connected by.
+  for (const lane of ["fs-query-index-merge8", "auth-fs-cross"]) {
+    const hops = real.hops.map((hop) =>
+      hop.lane === lane ? { ...hop, commit: "1".repeat(40) } : hop,
+    );
+    assert.match(releaseLineageProblems({ ...real, hops }).join("\n"), /are not readable/, lane);
+  }
+  assert.match(releaseLineageProblems(real, { shallow: true }).join("\n"), /shallow clone/);
+  // With no lineage given it is the checked-in file.
+  assert.match(releaseLineageProblems(undefined, { shallow: true }).join("\n"), /shallow clone/);
+  // The git history is read through the reader it is given.
+  assert.match(
+    releaseLineageProblems(real, {
+      reader: () => () => {
+        throw new Error("no history");
+      },
+    }).join("\n"),
+    /no history/,
+  );
+});
+
+test("the corpus of a lane is looked up by its own name", () => {
+  assert.ok(Object.keys(corpusOfLane("fs-data-write-list")).length > 0);
+  for (const name of ["fs-query-index", "constructor", "toString", "__proto__"])
+    assert.deepEqual(corpusOfLane(name), {}, name);
+});
+
+test("the registry's default verification for a lane runner is the release verifier, once per process", () => {
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/harness-registry.mjs"), "utf8");
+  assert.match(source, /const lineageSnapshot = createLineageSnapshot\(\);/);
+  assert.match(
+    source,
+    /export function createLineageSnapshot\(read = loadLineage, verify = releaseLineageProblems\)/,
+  );
+});
+
+test("the lane runner asks for the verified state, never the endpoint lookup", () => {
+  const source = readFileSync(join(CONFORMANCE_DIR, "src/fs-query-index/run.mjs"), "utf8");
+  assert.match(source, /checkVerifiedFixtureDigest\(LANE\.id, enrolled, saved\)/);
+  assert.doesNotMatch(source, /\bcheckFixtureDigest\b/);
 });

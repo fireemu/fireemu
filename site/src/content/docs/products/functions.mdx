@@ -195,7 +195,7 @@ A schedule runs on Fireemu's virtual clock. Unless you pin a start time with `da
 
 To run a scheduled function or release a delayed task without waiting:
 
-| | Scheduled function | Task-queue function (tasks waiting for their `scheduleTime`) |
+| Aspect | Scheduled function | Task-queue function (tasks waiting for their `scheduleTime`) |
 |---|---|---|
 | Emulator UI, Functions page | Run it immediately, or advance the clock to its next occurrence | The waiting tasks, with their due time and a **Run now** button |
 | Control API | `POST /v1/sessions/default/functions/{name}:run` | The same route releases all waiting tasks; with `{"task": "<task id>"}` it releases one (404 for an unknown id) |
@@ -362,7 +362,7 @@ Under `strict`, a task sent to such a queue, or a request to a callable that the
 
 - **Realtime Database, 2nd generation.** Local Realtime Database instances are in `us-central1`, so a 2nd-gen database trigger in another region does not fire, and a warning at load says so.
 - **Products Fireemu does not deliver events for.** Triggers for products such as Data Connect (deferred) cannot run. By default discovery refuses a codebase that exports one (`functions.unservedTriggers = "refuse"`); set it to `"report"` to report each one and load the rest. The Functions page of the [Emulator UI](../../guides/ui/) and `GET /v1/sessions/default/functions` on the control API list every ignored export with the reason.
-- **Remote Config.** Handlers run only through the local injection action, and its production event shape is unobserved.
+- **Remote Config.** A client-template publish or rollback through the local template administration delivers the event shape recorded in production on 2026-11-21 to v1 and v2 handlers; validate-only and refused requests deliver nothing. A server-template publish delivers no event (unrecorded in production). The local injection action still delivers caller-supplied metadata.
 - **Storage archive events.** They fire only for a bucket whose versioning was turned on (`PATCH /storage/v1/b/{bucket}` with `{"versioning":{"enabled":true}}`), and their shape is unrecorded.
 - **`beforeEmailSent`.** It runs under `strict` only.
 

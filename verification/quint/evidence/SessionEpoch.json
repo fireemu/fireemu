@@ -82,7 +82,7 @@
     },
     "crates/fireemu-core-session/src/barrier.rs": {
       "kind": "sha256",
-      "value": "7ac719c2ff1ee5300c544d4bc568956726c829b6766b765ab2e9fa3001a54b52"
+      "value": "fd53ce1e83cae98db6ec48394490a4627ce1da5fc8c8003b96d999e2a6df3145"
     },
     "crates/fireemu-core-session/src/calendar.rs": {
       "kind": "sha256",
@@ -198,7 +198,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "0da7658a776e2209d305396d4b29b4f92a5692466dc5ac3e948004f0401075a0"
+      "value": "8cd7be5d47f47f2f8cfc54b6966da78617de6dfb7c6d081f5eb46f5a08a8644b"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",

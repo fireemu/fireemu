@@ -22,7 +22,7 @@ general aggregation requirements, vector search, the refusals of `Query::canonic
 ## Layout
 
 The planner is a base decision with overrides on top: the head answer is the base answer except
-where one of three recorded rules fires.
+where a recorded merge, plan replacement or refusal applies.
 
 - `IndexMerge/Model.lean`: the base planner, the decision at 4fcd8a7a3 before the index-merge
   observation's rules (`decideBase`): the Rust functions, one definition each, with field paths
@@ -37,16 +37,16 @@ where one of three recorded rules fires.
   `merged_mono`, `decide_mono`, `automatic_mono`, `merged_perm`, `decide_served_perm`,
   `reqOf_wf`, `not_exempt_of_hasMode` and the greedy-cover lemmas.
 - `IndexMerge/HeadTheorems.lean`: `head_eq_base_outside_guards`, `head_eq_base_off_gate`,
-  `head_eq_base_emulator`, `head_eq_base_enterprise`, `head_eq_base_group_outside_refusal`, `head_override`, `recorded_refusal_iff_not_automatic_equality_serves`, `first_attempt_kept`, `base_merge_kept`, `recorded_kinds` and `head_merge_kinds`.
+  `head_eq_base_emulator`, `head_eq_base_enterprise`, `head_eq_base_group_outside_guards`, `head_override`, `recorded_refusal_iff_not_automatic_equality_serves`, `first_attempt_kept`, `base_merge_kept`, `recorded_kinds` and `head_merge_kinds`.
 - `IndexMerge/Counterexamples.lean`: for the base, `spec_implies_broad` and the counterexamples
   `broad_composite_with_array_field`, `broad_opposite_direction_automatic`,
   `broad_contains_with_descending_name`, `broad_not_complete`, `members_depend_on_order`,
   `one_member_merge`, `repeated_single_equality_refused`; for the head, the recorded shapes
   `head_f1`, `head_f3`, `head_f2_refused`, `head_single_equality_refused`, and their
   neighbours `head_single_equality_neighbours`, `head_f1_descending_refused`,
-  `head_group_merges_a_and_refuses_b`, `head_contains_any_merges`, `head_enterprise_base`,
-  `head_two_carriers_base`, `head_group_carrier_base`, `head_b_with_automatic_contains`,
-  `head_b_descending_carrier_base`, `head_b_explicit_name_carrier`,
+  `head_group_merges_a_and_b`, `head_contains_any_merges`, `head_enterprise_base`,
+  `head_two_carriers`, `head_group_carrier`, `head_b_with_automatic_contains`,
+  `head_b_descending_carrier`, `head_b_explicit_name_carrier`,
   `first_attempt_conflation` and `carried_array_field_with_equality_refused`.
 - `IndexMerge/Production.lean`: 101 recorded production verdicts (59 rows of
   `conformance/fs-query-index-production.json`, 18 expectations of
@@ -54,12 +54,12 @@ where one of three recorded rules fires.
   `conformance/fs-query-index-merge-production.json`: 21 queries and 3 plans); a `#guard` fails
   the build if the head decision contradicts any of them, including the member sets of the 18
   served plan rows, and a second pins the five rows the base decision alone contradicts (the
-  shapes (a), (b) and (c) and the two served plans). Separate guards check the 13 observation 2a equality-refusal and control rows and 17 merge and control rows. The latter compare the recorded plan order directly.
+  shapes (a), (b) and (c) and the two served plans). Separate guards check the 13 observation 2a equality-refusal and control rows and 17 merge and control rows. The latter compare the recorded plan order directly. Observation 2b adds 118 labeled query and plan rows. All nine served Explain plans pin the full ordered indexes, including scope and name direction.
 - `IndexMerge/Corpus.lean`, `Main.lean`: configurations, names, the corpus format and the
   generator (production rows, the coverage ledger's pairwise rows, a product of query shapes with
   six configurations, the guard shapes and their neighbours, and 3000 deterministic random
   cases). Every case states the head answer (`expect`), the base answer (`base`) and the
-  override that fires (`guard none|a|b|c|reverse|shared|carrier`).
+  override that fires (`guard none|a|b|c|reverse|shared|carrier|groupOrdered|arrayFirst`).
 - `IndexMerge/Axioms.lean`: a build-time guard that the theorems depend only on Lean's standard
   axioms (no `sorry`).
 
@@ -77,19 +77,17 @@ greedy loop covers the union of all candidates whatever their order. The members
 members in the sense of the specification (`merged_sound`), and more indexes never refuse a
 served query (`decide_mono`).
 
-The head and base agree whenever no override fires (`head_eq_base_outside_guards`). The proof quantifies over the query, index catalog, policy, edition and equality source. The recorded merges apply to collection queries with a plain conjunction. They can replace a refusal with a merge whose members cover the equality and array filter kinds (`recorded_kinds`, `head_merge_kinds`). Refusal (c), the unserved merge guards and the already-served plan replacements each have their own shape conditions. The proofs preserve any base merge outside the plan replacements; the new plans identify their exact automatic source plans.
+The head and base agree whenever no override fires (`head_eq_base_outside_guards`). The proof quantifies over the query, index catalog, policy, edition and equality source. The recorded shapes distinguish collection and group scope, membership operator, order and count. They can replace a refusal with a merge whose members cover the equality and array filter kinds (`recorded_kinds`, `completion_kinds`, `head_merge_kinds`). Refusal (c), the unserved merge guards and the already-served plan replacements each have their own shape conditions. The proofs preserve a base merge outside the plan replacements and array-first refusals.
 
 ## Findings
 
-The index-merge observation (`conformance/fs-query-index-merge-production.json`, recorded
-2026-11-19) settled the three shapes the base refuses or serves against production; the head
-overrides exactly those:
+The first index-merge observation recorded three shapes where the base and production disagree. Observations 2a and 2b extend the corresponding guards.
 
 1. (b), F1. The unique collection composite that carries the array field after an ascending equality prefix, such as `(a ASC, tags CONTAINS)`, joins the remaining ascending equality members. The carrier must serve its prefix and the array filter on its own. An enabled automatic contains index no longer disables the carrier. For the implicit-order automatic plan, the absence of any related carrier permits the recorded reversal. One related carrier permits the recorded replacement only when it qualifies. An off-axis carrier or multiple related carriers keep the exact base plan and order (`unqualified_carrier_keeps_implicit_plan`, `multiple_related_carriers_keep_implicit_plan`). A unique qualifying carrier can still remove a refusal when another related carrier falls outside the recorded scope, prefix or suffix.
-2. (c) began with the observation that only `a`'s ascending mode was enabled for `a == x ORDER BY __name__ DESC`. The base reported `(a ASC, __name__ DESC)` as serving and production refused. The rule now includes the observation 2a shapes in the table below. A serving composite and Enterprise preserve the base result (`head_single_equality_neighbours`).
+2. (c) began with the observation that only `a`'s ascending mode was enabled for `a == x ORDER BY __name__ DESC`. The base reported `(a ASC, __name__ DESC)` as serving and production refused. The rule now includes the observation 2a shapes in the table below. A serving composite prevents the automatic refusal. Merge6 separately checks the group-only composite for the two recorded collection shapes.
 3. (a), F3. The contains index precedes the automatic descending equality members. Observation 2a records a plain group query and a collection query with singleton array-contains-any. Group scope uses group modes for every member.
-4. Enterprise, unrecorded membership forms and descending-name queries without all the applicable modes keep their baseline result.
-5. The base covers by path. The recorded shared-path override adds a separate contains member when the exact baseline contains the two ordered members and the contains mode exists. Sparse configurations retain the base path coverage (`first_attempt_conflation`). A query with only the shared field keeps the base single-index result.
+4. Enterprise keeps the base result. Missing modes in a descending-name query can still admit a configured equality member or require the array-first suggestion described below.
+5. The base covers by path. The recorded shared-path override adds a separate contains member when the exact baseline contains the two ordered members and the contains mode exists. Merge8 refuses explicit ascending name order when the shared field has only collection CONTAINS and no related composite, and any second equality field has exactly one collection mode, ASC or DESC. The query with just the shared field also meets this guard. With both directions on the second field, `first_attempt_conflation` retains the base merge.
 6. The base's completeness against the single-index rule fails (`broad_not_complete`); the
    members chosen depend on the order composites were added in, whether a query is served does
    not (`members_depend_on_order`, `decide_served_perm`); a composite that repeats a field, such
@@ -98,7 +96,7 @@ overrides exactly those:
 
 ## Observation 2a equality refusals
 
-For an equality-only requirement on the recorded axes, an automatic ordered mode can serve only if its direction agrees with the effective `__name__` direction (`AutomaticEqualityServes`). The proof `recorded_refusal_iff_not_automatic_equality_serves` connects the implementation guard to the declarative rule when the base chose an automatic scan and no composite serves. The collection-scope descending cases also apply at group scope under ruling 3. The recording directly exercised the plain group equality. Only that plain group equality applies to the ascending mirror. The collection-scope mirror, other operators and other aggregation shapes stay at the base decision.
+For an equality-only requirement on the recorded axes, an automatic ordered mode can serve only if its direction agrees with the effective `__name__` direction (`AutomaticEqualityServes`). The proof `recorded_refusal_iff_not_automatic_equality_serves` connects the implementation guard to the declarative rule when the base chose an automatic scan and no composite serves. The collection-scope descending cases also apply at group scope under ruling 3. The recording directly exercised the plain group equality. Merge3 records the ascending mirror for a plain equality at collection scope. Other operators and aggregations still require their own recorded shape.
 
 | Row | Canonical query shape and effective name direction | Available automatic mode in scope | Production verdict |
 | --- | --- | --- | --- |
@@ -134,7 +132,30 @@ Rows refer to `conformance/fs-query-index-merge2-production.json`. The Rust PICT
 | 44 | Group equality and contains with ascending name, only group DESC and group CONTAINS available | Refused |
 | 45, 46 | Group equality and contains with descending name, group DESC and group CONTAINS available | Group automatic merge (a) |
 
-Rows 1–3 and 8–9 settle the matching automatic plan-order and shared-path portions of S4. Row 46 also pins the group merge order. Row 32 establishes a different member set once the unique carrier is present. S4 remains in force for the other shapes. Unobserved plans keep their member order, and the base proof and corpus still describe the algorithm at 4fcd8a7a3.
+Rows 1–3 and 8–9 settle the matching automatic plan-order and shared-path portions of S4. Row 46 also pins the group merge order. Row 32 establishes a different member set once the unique carrier is present. S4 remains in force for the other shapes. Outside the recorded guards, the head retains the base member order. The base proof and corpus describe the algorithm at 4fcd8a7a3.
+
+## Observation 2b
+
+F1 below means `a == 1 AND b == 1 AND tags ARRAY_CONTAINS 1` with implicit name order. The table groups query, count, Explain and control rows by fixture program. Each case in `obs2bRows` carries its exact fixture label. A missing-index suggestion puts membership first only for the shapes and catalogs in `arrayFirst`.
+
+| Fixture and program | Recorded answers |
+| --- | --- |
+| merge3 · two-carriers | F1 and its count serve. Explain lists the `b` carrier then the `a` carrier. Each carrier serves its own equality plus membership. Descending-name F1, membership alone, ordering by `a DESC` and ordering by `b ASC` are refused. |
+| merge3 · carrier-contains-automatic | F1, its count and the single-equality membership query serve. Explain uses the `a` carrier then automatic `b ASC`. Membership alone serves. Descending-name F1 and ordering by `a DESC` are refused. |
+| merge3 · descending-only | Plain equality with implicit or explicit ascending name is refused, including Explain. Adding equality on `b` also refuses ascending name and its Explain. Both equality shapes serve descending name. Ordering by `a` serves only DESC. |
+| merge4 · asc-and-desc-carriers | F1 serves. Explain selects the descending prefix on `a`, joining on ascending name, then `b ASC`. Descending-name F1 and its Explain are refused. The single-equality membership query serves implicit order and refuses descending name. Membership alone and ordering by `a DESC` are refused. |
+| merge4 · carrier-tags-ordered-only | F1 serves with the ascending carrier then `b ASC`. The single-equality membership query and ordering by `tags ASC` serve. Descending-name F1, membership alone and ordering by `a DESC` are refused. |
+| merge5 · group-contains-only | F1 serves with the collection carrier then `b ASC`. The single-equality membership query serves. Membership alone serves at group scope. Collection membership alone, descending-name F1 and ordering by `a DESC` are refused. |
+| merge5 · two-field-prefix | With equalities on `a,b,c`, the ascending `a,b` carrier joins `c ASC`. Descending name is refused with membership first in the suggestion. The carrier serves F1 alone. Membership alone and ordering by either exempt prefix field are refused. |
+| merge6 · collection-composite-group-query and group-composite-collection-query | With `a` exempt, both the plain equality by descending name and the unfiltered ordering by `a ASC, __name__ DESC` serve in the configured composite's scope. Both are refused across scopes, including Explain on the ordering. |
+| merge6 · composite-member | The descending-name membership query serves. Explain lists `tags CONTAINS, __name__ DESC` then the configured `a ASC, __name__ DESC`. Ascending name is refused with membership first. Equality alone and membership alone both serve descending name. |
+| merge7 · descending-prefix-carrier | The lone descending prefix gives the same F1 plan and descending-name refusals as merge4's mixed catalog. The single-equality membership query serves implicit order. Membership alone and ordering by `a DESC` are refused. |
+| merge7 · group-carrier | Group F1 serves with the group carrier then group `b ASC`. Descending-name group F1 is refused with membership first. Collection F1 and the single-equality group membership query serve. Group membership alone and ordering by `a DESC` are refused. Ordering by `b ASC` serves in both scopes. |
+| merge8 · group-carrier-collection-readiness | Collection F1 and the single-equality group membership query serve. Collection membership alone and ordering by `a DESC` are refused. Neither this program nor merge7 records an Explain plan for collection F1 with the group carrier. |
+| merge8 · shared-path-ascending-only and shared-path-descending-only | With only `tags CONTAINS`, the shared array equality plus membership and equality on `a` is refused for both name directions, including Explain. Removing `a` still refuses explicit ascending name. Membership alone serves, ordering by `tags ASC` is refused, and ordering by `a` serves only its configured direction. |
+| merge3 · leap-second and merge5 · second-60-writes | All eight equality/range queries and both stored-value equality queries serve. The projection retains the indexed field and uses the same requirement for all range comparisons. Timestamp parsing and the returned documents are outside the model. The two commits and two document GETs have no query-index decision. |
+
+The recordings establish the collection-with-group-carrier verdict, the two-carrier count verdict, and the explicit Explain plans identified above. The member lists for those collection reads and counts follow the Rust planner. Other carrier tie orders, wider prefixes or more remaining fields, explicit name-suffix variants, and count or membership-operator variants beyond the listed rows lack direct plan evidence. A base merge with multiple related carriers keeps its existing order under the implicit F1 shape. Enterprise and emulator behavior follow the off-gate proofs.
 
 ## Commands
 

@@ -442,6 +442,10 @@ fn rust_automatic_overlap_repeated_order_and_stage_b_refusal() {
             "finding/head-composite-prevents-refusal",
             "use:items/C/a:asc,__name__:desc",
         ),
+        (
+            "obs2/collection-descending-only",
+            "missing:items/C/a:asc,__name__:asc",
+        ),
         ("capacity/101", "fullscan:"),
     ] {
         let row = cases

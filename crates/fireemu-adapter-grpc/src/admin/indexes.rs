@@ -450,7 +450,7 @@ impl IndexRegistry {
 }
 
 /// The index with the `__name__` field production adds when the definition names none: after
-/// the last field, in the direction of the last ordered field (ascending otherwise), or, for a
+/// the last field, descending only if that field is descending, or, for a
 /// vector index, ascending just before the vector field.
 #[must_use]
 pub fn with_implied_name(definition: &IndexDefinition) -> IndexDefinition {
@@ -470,15 +470,15 @@ pub fn with_implied_name(definition: &IndexDefinition) -> IndexDefinition {
         out.fields.insert(vector, name(IndexFieldMode::Ascending));
         return out;
     }
-    let direction = out
+    let direction = if out
         .fields
-        .iter()
-        .rev()
-        .find_map(|f| match f.mode {
-            IndexFieldMode::Ascending | IndexFieldMode::Descending => Some(f.mode),
-            _ => None,
-        })
-        .unwrap_or(IndexFieldMode::Ascending);
+        .last()
+        .is_some_and(|f| f.mode == IndexFieldMode::Descending)
+    {
+        IndexFieldMode::Descending
+    } else {
+        IndexFieldMode::Ascending
+    };
     out.fields.push(name(direction));
     out
 }
@@ -597,10 +597,29 @@ mod tests {
     }
 
     #[test]
-    fn the_implied_name_field_follows_the_last_ordered_field() {
-        let implied = with_implied_name(&definition());
+    fn the_implied_name_field_follows_the_last_configured_field() {
+        let mut qn = definition();
+        qn.fields[0].path = FieldPath::parse("g").unwrap();
+        qn.fields[1].path = FieldPath::parse("n").unwrap();
+        let implied = with_implied_name(&qn);
         let last = implied.fields.last().unwrap();
         assert!(last.path.is_document_name());
         assert_eq!(last.mode, IndexFieldMode::Descending);
+
+        let mut carrier = definition();
+        carrier.fields[0].mode = IndexFieldMode::Descending;
+        carrier.fields[1] = IndexField {
+            path: FieldPath::parse("tags").unwrap(),
+            mode: IndexFieldMode::Contains,
+        };
+        let shown = with_implied_name(&carrier);
+        assert_eq!(&shown.fields[..2], &carrier.fields);
+        assert_eq!(
+            shown.fields[2],
+            IndexField {
+                path: FieldPath::document_name(),
+                mode: IndexFieldMode::Ascending
+            }
+        );
     }
 }

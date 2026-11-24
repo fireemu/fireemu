@@ -1350,7 +1350,7 @@ async fn serve_suite(
             )
         );
     }
-    let remote_config = Arc::new(fireemu_adapter_http::remote_config::TemplateStore::default());
+    let remote_config = fireemu_adapter_http::server::remote_config_stores(&control);
     spawn_server!(
         "HTTP",
         fireemu_adapter_http::server::serve_with_control_and_remote_config(

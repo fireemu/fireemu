@@ -5,20 +5,20 @@ description: fireemu.tomlとfirebase.jsonを設定し、実行時にどのファ
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-Fireemuは2種類のファイルを読み込みます。
+Fireemuは次の2種類の設定ファイルを読み込みます。
 
-- **`fireemu.toml`** は、[プロファイル](../profiles/)、Authenticationのプロジェクト設定、クロックなど、Fireemu自身の設定を保持します。`schemaVersion = 1`を含みます。同じ設定をJSONとして`fireemu.json`に書くこともできます。両方があるディレクトリは拒否されます([読み込まれるファイル](#読み込まれるファイル)を参照)。[設定スキーマ](../../reference/configuration/)を参照してください。
-- **`firebase.json`** は、Firebase CLIが使うファイルです。Fireemuは、起動のたびに、ポート、Security Rules、インデックス、Functionsコードベースをここから読み取ります。
+- **`fireemu.toml`**：[互換性プロファイル](../profiles/)、Authenticationのプロジェクト設定、仮想時計など、Fireemu固有の設定を記述します（`schemaVersion = 1`が必須）。JSON形式の`fireemu.json`も使えますが、同じディレクトリに両方を置くとエラーになります（[読み込まれるファイル](#読み込まれるファイル)）。全キーの一覧は[設定のスキーマ](../../reference/configuration/)を参照してください。
+- **`firebase.json`**：既存のFirebase CLI用設定ファイルです。ポート、Security Rules、インデックス、Functionsコードベースを起動のたびに読み込みます。
 
 ## 両方のファイルを使う
 
-Fireemu固有の設定は、`firebase.json`ではなく`fireemu.toml`に置いてください。両方を使うには、`fireemu.toml`で`firebase.json`を指定します。
+Fireemu固有の設定は`firebase.json`に混ぜず`fireemu.toml`へ分け、`fireemu.toml`から`firebase.json`を参照させてください。
 
 <Tabs syncKey="config-format">
 <TabItem label="TOML">
 
 ```toml
-#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json
+#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json
 # Configuration schema version: 1.
 schemaVersion = 1
 # Compatibility profile: "strict" or "emulator".
@@ -45,27 +45,27 @@ firebaseJson = "firebase.json"
 
 ## 読み込まれるファイル
 
-`up`、`exec`、`emulators:start`、`emulators:exec`は、次の順序で設定ファイルを選びます。
+`up`、`exec`、`emulators:start`、`emulators:exec`は次の優先順で設定ファイルを選びます。
 
-1. **明示的なフラグ。** `--config <file>`と`--firebase-json <file>`は、指定されたファイルだけを読み込み、探索は行いません。`--config`は、`.toml`のパス(大文字小文字を区別せず、`.TOML`を含む)をTOMLとして、それ以外の拡張子をすべてJSONとして解析します。TOML設定には`schemaVersion = 1`が必要で、JSONのみである`firebase.json`として読み込まれることはありません。`--firebase-json`は常にJSONを読み込みます。
-2. **カレントディレクトリのFireemu設定。** そうでなければ、カレントディレクトリにある単一の`fireemu.toml`または`fireemu.json`が、`--config`で渡されたかのように読み込まれます。
-   - 両方のファイルがある場合、起動は拒否されます。一方を削除するか、`--config`でファイルを選択してください。
-   - 読み込んだファイルからの相対で解決される`firebaseJson`エントリが、読み込む`firebase.json`を指定します。`firebaseJson`エントリのない`fireemu.toml`の隣にある`firebase.json`は読み込まれず、起動時の出力にその旨が表示されます。
-   - 親ディレクトリにある`fireemu.toml`や`fireemu.json`は、その中のパスがカレントディレクトリからの相対であるため、使われません。
-   - 正規ファイル内の相対パス(`rules.source`、`storage.rules`、`functions.source`、`firestore.indexFile`など、ファイルを指す設定)は、ファイルがどのディレクトリにあっても、作業ディレクトリから読み取られます。`firebaseJson`と`firebase.json`内のパスだけが、そのファイル自身のディレクトリから読み取られます。
-3. **最も近い`firebase.json`。** そうでなければ、最も近い`firebase.json`が、`--firebase-json`で渡されたかのように読み込まれます。Firebase CLIが見つけるのと同様に、カレントディレクトリにあるもの、なければ親ディレクトリで最初に見つかったものです。そのパスと、隣にある`.firebaserc`は、そのディレクトリから読み取られます。
-4. **組み込みのデフォルト。** そうでなければ、組み込みのデフォルトが適用され、Security Rulesは読み込まれません。
+1. **明示的なフラグ**：`--config <file>`や`--firebase-json <file>`を指定すると、自動探索を行わず指定ファイルだけを読み込みます。`--config`は拡張子が`.toml`（大文字小文字を区別しない）ならTOML、それ以外はJSONとして解釈します。TOML設定には`schemaVersion = 1`が必要で、JSON専用の`firebase.json`としては扱われません。`--firebase-json`は常にJSONとして読み込みます。
+2. **カレントディレクトリのFireemu設定**：フラグ未指定の場合、カレントディレクトリにある`fireemu.toml`または`fireemu.json`を`--config`相当として読み込みます。
+   - 両方のファイルが存在する場合は起動エラーになります。片方を削除するか、`--config`で明示してください。
+   - `firebaseJson`キーは設定ファイルからの相対パスとして解決されます。`firebaseJson`の指定がない場合、同じディレクトリにある`firebase.json`は自動では読み込まれません（起動出力にもその旨が表示されます）。
+   - 親ディレクトリにある`fireemu.toml`・`fireemu.json`は対象外です（記載パスがカレントディレクトリ基準のため）。
+   - Fireemu設定内のファイルパス（`rules.source`、`storage.rules`、`functions.source`、`firestore.indexFile`など）は設定ファイルの場所にかかわらず作業ディレクトリ基準で解決されます。設定ファイル自身のディレクトリ基準になるのは`firebaseJson`と、`firebase.json`内に書かれたパスだけです。
+3. **最も近い`firebase.json`**：カレントディレクトリにFireemu設定がなければ、Firebase CLIと同じくカレントディレクトリから親ディレクトリへ遡って最初に見つかった`firebase.json`を読み込みます。`firebase.json`内のパスと、その隣にある`.firebaserc`は、その`firebase.json`のディレクトリを基準に読み込まれます。
+4. **組み込みの既定値**：いずれもなければ組み込みの既定値で起動し、Security Rulesは読み込まれません。
 
-`--no-config-discovery`は、手順2と3をスキップします。起動時の出力の`config:`行に、読み込まれたファイルが示されます。
+`--no-config-discovery`を付けると手順2と3の自動探索を無効にできます。実際に読み込まれたファイルは起動出力の`config:`行に表示されます。
 
-探索には次の効果があります。
+自動探索が有効な場合、次の設定が反映されます。
 
-- プロジェクトIDは、探索された`firebase.json`の隣にある`.firebaserc`から取得されます。
-- そのエミュレータのポート、Hub、UI、単一プロジェクトの設定が適用されます。
-- `functions`エントリがあると、Functionsランタイムが起動します。
-- `fireemu capabilities`は、探索された`fireemu.toml`のプロファイルも報告します。
+- 見つかった`firebase.json`と同じディレクトリにある`.firebaserc`からプロジェクトIDを取得します。
+- エミュレータのポート、Hub、UI、単一プロジェクト設定が適用されます。
+- `functions`エントリがあればFunctionsランタイムも起動します。
+- `fireemu capabilities`でも、見つかった`fireemu.toml`のプロファイルが反映されます。
 
-テストの隣にある`firebase.json`が無視されていた従来の動作に依存していた場合は、`--no-config-discovery`を渡してください。
+テストと同じディレクトリにある`firebase.json`を無視していた以前の挙動が必要な場合は、`--no-config-discovery`を指定してください。
 
 ## 相対パス
 
@@ -142,7 +142,7 @@ Fireemuは同梱のスキーマに対して検証し、注釈のURLを取得し�
 
 TOMLファイルは、JSONファイルと同じJSON Schema、検証、デフォルトを使います。
 
-- ファイルの先頭を`#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.49.0/spec/config/fireemu.schema.json`(実行しているバージョンのタグ)で始めると、TaploまたはEven Better TOMLでスキーマが選択されます。
+- ファイルの先頭を`#:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json`(`v0.64.0`は例です。実行しているバージョンのタグを使ってください)で始めると、TaploまたはEven Better TOMLでスキーマが選択されます。
 - タイムスタンプの値は引用符で囲んでください。スキーマにdatetime型がないため、TOMLのdatetimeはキー名とともに拒否されます。
 
 TOMLには`null`がありません。以下のnull許容の設定すべてで、そのキーを含むテーブルでキーを省略してください。null許容の配列要素では、その要素を省略します。存在自体に意味がある場合は、含むテーブルや配列は残してください。空の配列と空のテーブルは、既存の意味を保ちます。

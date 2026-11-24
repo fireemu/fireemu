@@ -4194,6 +4194,12 @@ impl fireemu_adapter_grpc::local::CommitPublication for FunctionsCommitPublicati
     }
 }
 
+impl fireemu_adapter_http::control::RemoteConfigPublication for FunctionsCommitPublication {
+    fn publish(self: Box<Self>) {
+        fireemu_adapter_grpc::local::CommitPublication::publish(self);
+    }
+}
+
 impl fireemu_adapter_grpc::local::AtomicChangeSink for FunctionsChangeSink {
     fn reserve(
         &self,
@@ -7952,6 +7958,27 @@ impl FunctionsHook for Hook {
                 SourceEventAdmissionError::Capacity => PublishEventError::Capacity,
                 SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
             })
+    }
+
+    fn reserve_remote_config_version(
+        &self,
+        version: &serde_json::Value,
+    ) -> Result<
+        Box<dyn fireemu_adapter_http::control::RemoteConfigPublication>,
+        fireemu_adapter_http::control::PublishEventError,
+    > {
+        use fireemu_adapter_functions::runtime::SourceEventAdmissionError;
+        use fireemu_adapter_http::control::PublishEventError;
+        let reservation =
+            self.0
+                .reserve_remote_config_version(version)
+                .map_err(|error| match error {
+                    SourceEventAdmissionError::InvalidEvent
+                    | SourceEventAdmissionError::PayloadTooLarge => PublishEventError::Invalid,
+                    SourceEventAdmissionError::Capacity => PublishEventError::Capacity,
+                    SourceEventAdmissionError::Unavailable => PublishEventError::Unavailable,
+                })?;
+        Ok(Box::new(FunctionsCommitPublication(Some(reservation))))
     }
 
     fn validate_clock_target(

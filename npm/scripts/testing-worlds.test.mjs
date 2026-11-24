@@ -637,6 +637,22 @@ test('a command retirement failure still stops the daemon and permits cleanup re
   await assert.rejects(stat(world.directory),{code:'ENOENT'});
 });
 
+test('a process-group signal answered with EPERM still retires the world once the tree closes', {...native,timeout:30_000}, async(t)=>{
+  if(process.platform==='win32')return t.skip('Unix process groups only');
+  const world=await createTestWorld(options);
+  const descriptor=JSON.parse(await readFile(join(world.directory,'generation-1','ready.json'),'utf8'));
+  const kill=process.kill;
+  let refused=0;
+  // macOS answers EPERM while the group's members exit; deliver the signal, then report EPERM once.
+  process.kill=(pid,signal)=>{const result=kill.call(process,pid,signal);if(pid<0&&refused===0){refused+=1;throw Object.assign(Error('kill EPERM'),{code:'EPERM'});}return result;};
+  t.after(()=>{process.kill=kill;});
+  await world.dispose();
+  process.kill=kill;
+  assert.equal(refused,1);
+  assert.throws(()=>process.kill(descriptor.pid,0),{code:'ESRCH'});
+  await assert.rejects(stat(world.directory),{code:'ENOENT'});
+});
+
 async function installFixtureExpress(source) {
   // Support the bundled runner's HTTP app without an SDK installation.
     await mkdir(join(source,'node_modules','express'),{recursive:true});
@@ -1262,15 +1278,18 @@ test('Remote Config admin handles observed client template transitions', native,
       req.on('error', reject);
     });
     assert.deepEqual(repeatedCoding, [200, undefined]);
-    if (process.env.FIREEMU_TEST_SDK_MODULES) {
-      await t.test('Admin SDK reads and validates using the local capability', async () => {
+    await t.test(
+      'Admin SDK reads and validates using the local capability',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
         const child = await world.run(process.execPath, ['-e', `
           const assert = require('node:assert/strict');
           const { createRequire } = require('node:module');
           const { join } = require('node:path');
           const load = createRequire(join(process.env.SDK_MODULES, '..', 'package.json'));
-          const { initializeApp, deleteApp } = load('firebase-admin/app');
+          const { initializeApp, deleteApp, SDK_VERSION } = load('firebase-admin/app');
           const { getRemoteConfig } = load('firebase-admin/remote-config');
+          assert.equal(SDK_VERSION, '14.3.0');
           const app = initializeApp({
             projectId: process.env.RC_PROJECT,
             credential: { getAccessToken: async () => ({ access_token: process.env.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) }
@@ -1298,8 +1317,8 @@ test('Remote Config admin handles observed client template transitions', native,
           FIREBASE_REMOTE_CONFIG_URL_BASE: new URL(world.endpoints.control.apiBaseUrl).origin,
         } });
         assert.equal(child.code, 0, child.stderr);
-      });
-    }
+      },
+    );
 
     const marker = { parameters: { probe: { defaultValue: { value: 'local' } } } };
     const dry = await request('?validate_only=true', { method: 'PUT', match: first.etag, body: marker });
@@ -1345,5 +1364,116 @@ test('Remote Config admin handles observed client template transitions', native,
     assert.deepEqual(page.body.versions.map(version => version.versionNumber), ['1']);
     await world.reset();
     assert.deepEqual(await request(), { status: 200, etag: null, body: {} });
+  });
+});
+
+test('Remote Config admin serves server templates to the Admin SDK', native, async t => {
+  await withTestWorld({ ...options, services: ['auth'] }, async world => {
+    const base = world.endpoints.control.apiBaseUrl;
+    const server = new URL(`projects/${world.projectId}/namespaces/firebase-server/remoteConfig`, base);
+    const client = new URL(`projects/${world.projectId}/namespaces/firebase/remoteConfig`, base);
+    const headers = { 'accept-encoding': 'gzip', authorization: `Bearer ${world.environment.FIREEMU_CONTROL_TOKEN}` };
+    const initial = await fetch(server, { headers });
+    assert.equal(initial.status, 200);
+    assert.equal(initial.headers.get('content-encoding'), 'gzip');
+    assert.match(initial.headers.get('etag'), /^etag-/);
+    assert.deepEqual(await initial.json(), {});
+
+    const sdkModules = process.env.FIREEMU_TEST_SDK_MODULES;
+    const sdkEnv = {
+      SDK_MODULES: sdkModules,
+      RC_PROJECT: world.projectId,
+      FIREBASE_REMOTE_CONFIG_URL_BASE: new URL(base).origin,
+    };
+    const sdkSetup = `
+      const assert = require('node:assert/strict');
+      const { createRequire } = require('node:module');
+      const { join } = require('node:path');
+      const load = createRequire(join(process.env.SDK_MODULES, '..', 'package.json'));
+      const { initializeApp, deleteApp, SDK_VERSION } = load('firebase-admin/app');
+      const { getRemoteConfig } = load('firebase-admin/remote-config');
+      assert.equal(SDK_VERSION, '14.3.0');
+      const app = initializeApp({
+        projectId: process.env.RC_PROJECT,
+        credential: { getAccessToken: async () => ({ access_token: process.env.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) }
+      });
+    `;
+    await t.test(
+      'Admin SDK sees an unpublished server template as not found',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
+        const child = await world.run(process.execPath, ['-e', `${sdkSetup}
+          (async () => {
+            try {
+              await assert.rejects(getRemoteConfig(app).getServerTemplate(), { code: 'remote-config/not-found' });
+            } finally { await deleteApp(app); }
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+        `], { env: sdkEnv });
+        assert.equal(child.code, 0, child.stderr);
+      },
+    );
+
+    const draft = String.raw`{"version":{"description":"Fireemu RC server coverage seed"},"conditions":[{"name":"audited","expression":"app.customSignal['fireemu_tier'].exactlyMatches(['premium'])"},{"name":"always","expression":"percent('fireemu_server') <= 100"}],"parameters":{"fireemu_text":{"defaultValue":{"value":"seed"},"valueType":"STRING","conditionalValues":{"audited":{"value":"matched"},"always":{"value":"fallback"}}},"fireemu_bool":{"defaultValue":{"value":"true"},"valueType":"BOOLEAN","conditionalValues":{"audited":{"value":"false"}}},"fireemu_number":{"defaultValue":{"value":"9.5"},"valueType":"NUMBER","conditionalValues":{"audited":{"value":"2.25"}}},"fireemu_json":{"defaultValue":{"value":"{\"outside\":1}"},"valueType":"JSON","conditionalValues":{"audited":{"value":"{\"inside\":2}"}}}}}`;
+    const publishHeaders = { ...headers, 'content-type': 'application/json' };
+    const published = await fetch(server, {
+      method: 'PUT', headers: { ...publishHeaders, 'if-match': initial.headers.get('etag') }, body: draft,
+    });
+    assert.equal(published.status, 200);
+    assert.equal((await published.json()).version.versionNumber, '1');
+
+    const clientInitial = await fetch(client, { headers });
+    assert.equal(clientInitial.status, 200);
+    assert.equal(clientInitial.headers.get('etag'), null);
+    assert.deepEqual(await clientInitial.json(), {});
+
+    const clientPublished = await fetch(client, {
+      method: 'PUT', headers: { ...publishHeaders, 'if-match': '*' }, body: '{}',
+    });
+    assert.equal(clientPublished.status, 200);
+    assert.match(clientPublished.headers.get('etag'), /^etag-/);
+    assert.equal((await clientPublished.json()).version.versionNumber, '1');
+    const refused = await fetch(server, {
+      method: 'PUT', headers: { ...publishHeaders, 'if-match': clientPublished.headers.get('etag') }, body: '{}',
+    });
+    assert.equal(refused.status, 412);
+    assert.equal((await refused.json()).error.status, 'FAILED_PRECONDITION');
+
+    await t.test(
+      'Admin SDK evaluates the local server template',
+      { skip: process.env.FIREEMU_TEST_SDK_MODULES ? false : 'FIREEMU_TEST_SDK_MODULES is not set' },
+      async () => {
+        const child = await world.run(process.execPath, ['-e', `${sdkSetup}
+          (async () => {
+            try {
+              const admin = getRemoteConfig(app);
+              const options = { defaultConfig: { fireemu_local: 17 } };
+              const fetched = await admin.getServerTemplate(options);
+              const initialized = admin.initServerTemplate(options);
+              await initialized.load();
+              for (const template of [fetched, initialized]) {
+                for (const [input, values] of [
+                  [{ randomizationId: 'fireemu-stable-01', fireemu_tier: 'premium' }, ['matched', false, 2.25, { inside: 2 }]],
+                  [{ randomizationId: 'fireemu-stable-01', fireemu_tier: 'regular' }, ['fallback', true, 9.5, { outside: 1 }]],
+                  [{}, ['seed', true, 9.5, { outside: 1 }]],
+                ]) {
+                  const config = template.evaluate(input);
+                  assert.deepEqual([
+                    config.getString('fireemu_text'),
+                    config.getBoolean('fireemu_bool'),
+                    config.getNumber('fireemu_number'),
+                    JSON.parse(config.getString('fireemu_json')),
+                    config.getNumber('fireemu_local'),
+                    config.getValue('fireemu_local').getSource(),
+                    config.getString('fixtured_absent'),
+                    config.getValue('fixtured_absent').getSource(),
+                  ], [...values, 17, 'default', '', 'static']);
+                }
+              }
+            } finally { await deleteApp(app); }
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+        `], { env: sdkEnv });
+        assert.equal(child.code, 0, child.stderr);
+      },
+    );
   });
 });

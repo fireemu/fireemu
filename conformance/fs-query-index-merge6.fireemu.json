@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "profile": "strict",
+  "productionExact": true,
+  "firestore": {
+    "edition": "standard",
+    "apiMode": "native",
+    "rules": "conformance/firestore-probe.rules",
+    "indexFile": "conformance/fs-query-index-merge6.indexes.json",
+    "databaseCreateTime": "2026-09-23T23:01:49.496838Z"
+  }
+}

@@ -57,15 +57,39 @@ site-search > button[data-open-modal] {
 	background: var(--fe-surface);
 	color: var(--fe-fg-muted);
 }
+@media (max-width: 49.9375rem) {
+	header.header .sl-flex:has(> site-search) {
+		gap: 0.5rem;
+		align-items: center;
+	}
+	site-search > button[data-open-modal] {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		padding: 0;
+		color: var(--fe-fg-secondary);
+	}
+	site-search > button[data-open-modal]:hover {
+		border-color: var(--fe-fg);
+		color: var(--fe-fg);
+	}
+}
 @media (min-width: 50rem) {
 	site-search > button[data-open-modal] {
 		min-height: 2.75rem;
-		max-width: 22.5rem;
+		max-width: 15rem;
 		font-size: 1rem;
 	}
 	site-search > button[data-open-modal]:hover {
 		border-color: var(--fe-fg);
 		color: var(--fe-fg);
+	}
+}
+@media (min-width: 75rem) {
+	site-search > button[data-open-modal] {
+		max-width: 22.5rem;
 	}
 }
 site-search > button[data-open-modal] kbd {
@@ -254,11 +278,16 @@ h1#_top {
 	color: var(--fe-accent);
 }
 
+.sl-markdown-content > p:not(:where(.not-content *)) {
+	text-wrap: pretty;
+}
+
 .sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
-	background: var(--fe-code-bg);
+	background: var(--fe-inline-code-bg);
+	border: 1px solid var(--fe-inline-code-border);
 	color: var(--fe-code-fg);
 	font-size: max(var(--fe-text-min), 0.9em);
-	padding: 0.1em 0.35em;
+	padding: 0.05em 0.35em;
 	overflow-wrap: break-word;
 }
 
@@ -277,6 +306,7 @@ h1#_top {
 	color: var(--fe-fg-muted);
 	font-size: var(--fe-text-min);
 	font-weight: 500;
+	text-wrap: balance;
 }
 .sl-markdown-content tr:nth-child(2n):not(:where(.not-content *)) {
 	background: transparent;
@@ -557,11 +587,14 @@ footer .meta a {
 	background: var(--fe-surface);
 }
 
-/* On a phone a table scrolls sideways inside its own box; its columns keep a readable width
-   instead of being squeezed to a few characters. */
+/* On a phone a table scrolls sideways inside its own box; keep the label column compact so the
+   comparison columns stay visible without hogging half the screen. */
 @media (max-width: 50rem) {
 	.sl-markdown-content :is(td, th):not(:where(.not-content *)) {
 		min-width: 9rem;
+	}
+	.sl-markdown-content :is(td, th):first-child:not(:where(.not-content *)) {
+		min-width: 6.5rem;
 	}
 	.sl-markdown-content :is(td, th):not(:where(.not-content *)):has(> code:only-child),
 	.sl-markdown-content td.capability {
@@ -569,16 +602,32 @@ footer .meta a {
 	}
 }
 
-/* The generated compatibility tables span the text column, so their Details column has room. */
+.fe-table-wrap {
+	overflow-x: auto;
+	max-width: 100%;
+}
+
+/* The generated compatibility tables span the text column inside a scroll container so narrow desktop
+   widths never overflow, while wide screens keep metadata columns on single lines. */
 @media (min-width: 50rem) {
 	.sl-markdown-content table:has(.status) {
 		display: table;
 		width: 100%;
 	}
+	.sl-markdown-content table:has(.status) tbody td:nth-child(3) {
+		white-space: nowrap;
+	}
+}
+@media (min-width: 80rem) {
+	.sl-markdown-content table:has(.status) thead th,
+	.sl-markdown-content table:has(.status) tbody td:nth-child(4) {
+		white-space: nowrap;
+	}
 }
 
 @media (min-width: 50rem) {
-	.fe-mobile-lang {
+	.fe-mobile-lang,
+	.fe-mobile-theme {
 		display: none !important;
 	}
 }
@@ -595,9 +644,15 @@ header .header-nav .label:lang(ja) {
 	transform: translateY(1px);
 }
 
-/* Spanish and German section labels are longer: below 80rem they would crowd the search box or push the header's last
-   button off the screen, so the section links give way there earlier (as all languages do below 72rem). */
+/* Spanish and German section labels are longer: docs pages (with sidebar width in the header grid)
+   collapse below 80rem, while sidebar-free landing pages stay expanded down to 72rem. */
 @media (max-width: 79.9375rem) {
+	:root[data-has-sidebar] header .header-nav:lang(es) a:not(.external):not(:first-child),
+	:root[data-has-sidebar] header .header-nav:lang(de) a:not(.external):not(:first-child) {
+		display: none;
+	}
+}
+@media (max-width: 71.9375rem) {
 	header .header-nav:lang(es) a:not(.external):not(:first-child),
 	header .header-nav:lang(de) a:not(.external):not(:first-child) {
 		display: none;

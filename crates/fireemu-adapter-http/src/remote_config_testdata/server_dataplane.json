@@ -1,0 +1,99 @@
+{
+  "conditions": [
+    {
+      "name": "audited",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "customSignal": {
+                      "customSignalOperator": "STRING_EXACTLY_MATCHES",
+                      "customSignalKey": "fireemu_tier",
+                      "targetCustomSignalValues": [
+                        "premium"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "always",
+      "condition": {
+        "orCondition": {
+          "conditions": [
+            {
+              "andCondition": {
+                "conditions": [
+                  {
+                    "percent": {
+                      "percentOperator": "LESS_OR_EQUAL",
+                      "microPercent": 100000000,
+                      "seed": "fireemu_server"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "parameters": {
+    "fireemu_text": {
+      "defaultValue": {
+        "value": "seed"
+      },
+      "conditionalValues": {
+        "audited": {
+          "value": "matched"
+        },
+        "always": {
+          "value": "fallback"
+        }
+      }
+    },
+    "fireemu_bool": {
+      "defaultValue": {
+        "value": "true"
+      },
+      "conditionalValues": {
+        "audited": {
+          "value": "false"
+        }
+      }
+    },
+    "fireemu_number": {
+      "defaultValue": {
+        "value": "9.5"
+      },
+      "conditionalValues": {
+        "audited": {
+          "value": "2.25"
+        }
+      }
+    },
+    "fireemu_json": {
+      "defaultValue": {
+        "value": "{\"outside\":1}"
+      },
+      "conditionalValues": {
+        "audited": {
+          "value": "{\"inside\":2}"
+        }
+      }
+    }
+  },
+  "version": {
+    "versionNumber": "3",
+    "isLegacy": true
+  }
+}

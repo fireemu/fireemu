@@ -18651,6 +18651,105 @@ endconfig
 config 2749
 composite other C a:desc,tags:contains,__name__:asc
 endconfig
+config 2750
+override it1 a -
+composite it1 C a:asc,tags:contains
+endconfig
+config 2751
+override imd a C:desc
+endconfig
+config 2752
+override iw2 a -
+override iw2 b -
+override iw2 tags -
+composite iw2 C a:asc,tags:contains
+composite iw2 C b:asc,tags:contains
+endconfig
+config 2753
+override iwd a -
+override iwd tags -
+composite iwd C a:asc,tags:contains
+composite iwd C a:desc,tags:contains
+endconfig
+config 2754
+override io1 a -
+override io1 tags C:asc,C:desc
+composite io1 C a:asc,tags:contains
+endconfig
+config 2755
+override ig2 a -
+override ig2 tags G:contains
+composite ig2 C a:asc,tags:contains
+endconfig
+config 2756
+override i2p a -
+override i2p b -
+override i2p tags -
+composite i2p C a:asc,b:asc,tags:contains
+endconfig
+config 2757
+override irv a -
+composite irv C a:asc,__name__:desc
+endconfig
+config 2758
+override icm a -
+composite icm C a:asc,__name__:desc
+endconfig
+config 2759
+override ig1 a -
+composite ig1 G a:asc,__name__:desc
+endconfig
+config 2760
+override ip1 a -
+override ip1 tags -
+composite ip1 C a:desc,tags:contains
+endconfig
+config 2761
+override igx a -
+override igx tags -
+override igx b C:asc,G:asc
+composite igx G a:asc,tags:contains
+endconfig
+config 2762
+override igy a -
+override igy tags -
+override igy b C:asc,G:asc
+composite igy G a:asc,tags:contains
+endconfig
+config 2763
+override is1 a C:asc
+override is1 tags C:contains
+endconfig
+config 2764
+override is2 a C:desc
+override is2 tags C:contains
+endconfig
+config 2765
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+composite qx G a:desc,tags:contains
+endconfig
+config 2766
+override qx b C:asc,G:asc
+override qx tags -
+composite qx G a:asc,tags:contains
+endconfig
+config 2767
+override qx tags C:contains
+endconfig
+config 2768
+override qx a G:asc
+override qx tags -
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+endconfig
+config 2769
+override qx a -
+override qx tags -
+override qx b C:asc,G:asc
+composite qx G a:asc,tags:contains
+composite qx C b:asc,tags:contains
+endconfig
 case 0 fs-query-index/index-selection/automatic-and-merge#single-equality
 uses 0
 query qx C
@@ -47454,9 +47553,9 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ desc
-expect missing qx C a:asc,tags:contains,__name__:desc
+expect merge qx C tags:contains,__name__:desc ; qx C a:asc,__name__:desc
 base missing qx C a:asc,tags:contains,__name__:desc
-guard none
+guard a
 end
 case 2539 shape/a/three-equalities
 uses 3
@@ -79627,9 +79726,9 @@ ctx production standard
 filter eq a
 filter contains tags
 order __name__ desc
-expect use qx C a:asc,tags:contains
+expect missing qx C tags:contains,a:asc,__name__:desc
 base use qx C a:asc,tags:contains
-guard none
+guard arrayFirst
 end
 case 5441 random/2893
 uses 2646
@@ -81254,4 +81353,1396 @@ filter contains tags
 expect merge qx C tags:contains,__name__:asc ; qx C b:asc,__name__:asc ; qx C a:asc,__name__:asc
 base merge qx C a:asc,__name__:asc ; qx C b:asc,__name__:asc ; qx C tags:contains,__name__:asc
 guard reverse
+end
+case 5585 fs-query-index-merge3/read-only/leap-second#p7-leap-eq
+uses 3
+query ilp C
+ctx production standard
+filter eq t
+production served fs-query-index-merge3/read-only/leap-second#p7-leap-eq
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5586 fs-query-index-merge3/read-only/leap-second#p7-leap-ge
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-leap-ge
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5587 fs-query-index-merge3/read-only/leap-second#p7-leap-le
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-leap-le
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5588 fs-query-index-merge3/read-only/leap-second#p7-leap-gt
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-leap-gt
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5589 fs-query-index-merge3/read-only/leap-second#p7-leap-lt
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-leap-lt
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5590 fs-query-index-merge3/read-only/leap-second#p7-second-60-eq
+uses 3
+query ilp C
+ctx production standard
+filter eq t
+production served fs-query-index-merge3/read-only/leap-second#p7-second-60-eq
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5591 fs-query-index-merge3/read-only/leap-second#p7-second-60-ge
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-second-60-ge
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5592 fs-query-index-merge3/read-only/leap-second#p7-second-60-le
+uses 3
+query ilp C
+ctx production standard
+filter gt t
+production served fs-query-index-merge3/read-only/leap-second#p7-second-60-le
+expect use ilp C t:asc,__name__:asc
+base use ilp C t:asc,__name__:asc
+guard none
+end
+case 5593 fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains
+uses 2750
+query it1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains
+expect merge it1 C a:asc,tags:contains ; it1 C b:asc,__name__:asc
+base missing it1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5594 fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains-plan
+uses 2750
+query it1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains-plan
+expect merge it1 C a:asc,tags:contains ; it1 C b:asc,__name__:asc
+base missing it1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5595 fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains-name-desc
+uses 2750
+query it1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge3/shapes/carrier-contains-automatic#a-b-and-contains-name-desc
+expect missing it1 C a:asc,b:asc,tags:contains,__name__:desc
+base missing it1 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5596 fs-query-index-merge3/shapes/carrier-contains-automatic#count-a-b-and-contains
+uses 2750
+query it1 C
+ctx production standard
+source count
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/carrier-contains-automatic#count-a-b-and-contains
+expect merge it1 C a:asc,tags:contains ; it1 C b:asc,__name__:asc
+base missing it1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5597 fs-query-index-merge3/shapes/carrier-contains-automatic#a-and-contains
+uses 2750
+query it1 C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge3/shapes/carrier-contains-automatic#a-and-contains
+expect use it1 C a:asc,tags:contains
+base use it1 C a:asc,tags:contains
+guard none
+end
+case 5598 fs-query-index-merge3/shapes/carrier-contains-automatic#contains
+uses 2750
+query it1 C
+ctx production standard
+filter contains tags
+production served fs-query-index-merge3/shapes/carrier-contains-automatic#contains
+expect use it1 C tags:contains,__name__:asc
+base use it1 C tags:contains,__name__:asc
+guard none
+end
+case 5599 fs-query-index-merge3/shapes/carrier-contains-automatic#order-a-desc
+uses 2750
+query it1 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge3/shapes/carrier-contains-automatic#order-a-desc
+expect missing it1 C a:desc,__name__:desc
+base missing it1 C a:desc,__name__:desc
+guard none
+end
+case 5600 fs-query-index-merge3/shapes/descending-only#a-name-asc
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+order __name__ asc
+production refused fs-query-index-merge3/shapes/descending-only#a-name-asc
+expect missing imd C a:asc,__name__:asc
+base use imd C a:desc,__name__:asc
+guard c
+end
+case 5601 fs-query-index-merge3/shapes/descending-only#a
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+production refused fs-query-index-merge3/shapes/descending-only#a
+expect missing imd C a:asc,__name__:asc
+base use imd C a:desc,__name__:asc
+guard c
+end
+case 5602 fs-query-index-merge3/shapes/descending-only#a-name-asc-plan
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+order __name__ asc
+production refused fs-query-index-merge3/shapes/descending-only#a-name-asc-plan
+expect missing imd C a:asc,__name__:asc
+base use imd C a:desc,__name__:asc
+guard c
+end
+case 5603 fs-query-index-merge3/shapes/descending-only#a-name-desc
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+order __name__ desc
+production served fs-query-index-merge3/shapes/descending-only#a-name-desc
+expect use imd C a:desc,__name__:desc
+base use imd C a:desc,__name__:desc
+guard none
+end
+case 5604 fs-query-index-merge3/shapes/descending-only#a-and-b-name-asc
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+filter eq b
+order __name__ asc
+production refused fs-query-index-merge3/shapes/descending-only#a-and-b-name-asc
+expect missing imd C a:asc,b:asc,__name__:asc
+base missing imd C a:asc,b:asc,__name__:asc
+guard none
+end
+case 5605 fs-query-index-merge3/shapes/descending-only#a-and-b-name-asc-plan
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+filter eq b
+order __name__ asc
+production refused fs-query-index-merge3/shapes/descending-only#a-and-b-name-asc-plan
+expect missing imd C a:asc,b:asc,__name__:asc
+base missing imd C a:asc,b:asc,__name__:asc
+guard none
+end
+case 5606 fs-query-index-merge3/shapes/descending-only#a-and-b-name-desc
+uses 2751
+query imd C
+ctx production standard
+filter eq a
+filter eq b
+order __name__ desc
+production served fs-query-index-merge3/shapes/descending-only#a-and-b-name-desc
+expect merge imd C a:desc,__name__:desc ; imd C b:desc,__name__:desc
+base merge imd C a:desc,__name__:desc ; imd C b:desc,__name__:desc
+guard none
+end
+case 5607 fs-query-index-merge3/shapes/descending-only#order-a-asc
+uses 2751
+query imd C
+ctx production standard
+order a asc
+production refused fs-query-index-merge3/shapes/descending-only#order-a-asc
+expect missing imd C a:asc,__name__:asc
+base missing imd C a:asc,__name__:asc
+guard none
+end
+case 5608 fs-query-index-merge3/shapes/descending-only#order-a-desc
+uses 2751
+query imd C
+ctx production standard
+order a desc
+production served fs-query-index-merge3/shapes/descending-only#order-a-desc
+expect use imd C a:desc,__name__:desc
+base use imd C a:desc,__name__:desc
+guard none
+end
+case 5609 fs-query-index-merge3/shapes/two-carriers#a-b-and-contains
+uses 2752
+query iw2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/two-carriers#a-b-and-contains
+expect merge iw2 C b:asc,tags:contains ; iw2 C a:asc,tags:contains
+base missing iw2 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5610 fs-query-index-merge3/shapes/two-carriers#a-b-and-contains-plan
+uses 2752
+query iw2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/two-carriers#a-b-and-contains-plan
+expect merge iw2 C b:asc,tags:contains ; iw2 C a:asc,tags:contains
+base missing iw2 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5611 fs-query-index-merge3/shapes/two-carriers#a-b-and-contains-name-desc
+uses 2752
+query iw2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge3/shapes/two-carriers#a-b-and-contains-name-desc
+expect missing iw2 C a:asc,b:asc,tags:contains,__name__:desc
+base missing iw2 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5612 fs-query-index-merge3/shapes/two-carriers#count-a-b-and-contains
+uses 2752
+query iw2 C
+ctx production standard
+source count
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/two-carriers#count-a-b-and-contains
+expect merge iw2 C b:asc,tags:contains ; iw2 C a:asc,tags:contains
+base missing iw2 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5613 fs-query-index-merge3/shapes/two-carriers#a-and-contains
+uses 2752
+query iw2 C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge3/shapes/two-carriers#a-and-contains
+expect use iw2 C a:asc,tags:contains
+base use iw2 C a:asc,tags:contains
+guard none
+end
+case 5614 fs-query-index-merge3/shapes/two-carriers#b-and-contains
+uses 2752
+query iw2 C
+ctx production standard
+filter eq b
+filter contains tags
+production served fs-query-index-merge3/shapes/two-carriers#b-and-contains
+expect use iw2 C b:asc,tags:contains
+base use iw2 C b:asc,tags:contains
+guard none
+end
+case 5615 fs-query-index-merge3/shapes/two-carriers#contains
+uses 2752
+query iw2 C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge3/shapes/two-carriers#contains
+expect missing iw2 C tags:contains,__name__:asc
+base missing iw2 C tags:contains,__name__:asc
+guard none
+end
+case 5616 fs-query-index-merge3/shapes/two-carriers#order-a-desc
+uses 2752
+query iw2 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge3/shapes/two-carriers#order-a-desc
+expect missing iw2 C a:desc,__name__:desc
+base missing iw2 C a:desc,__name__:desc
+guard none
+end
+case 5617 fs-query-index-merge3/shapes/two-carriers#order-b-asc
+uses 2752
+query iw2 C
+ctx production standard
+order b asc
+production refused fs-query-index-merge3/shapes/two-carriers#order-b-asc
+expect missing iw2 C b:asc,__name__:asc
+base missing iw2 C b:asc,__name__:asc
+guard none
+end
+case 5618 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains
+expect merge iwd C a:desc,tags:contains,__name__:asc ; iwd C b:asc,__name__:asc
+base missing iwd C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5619 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-plan
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-plan
+expect merge iwd C a:desc,tags:contains,__name__:asc ; iwd C b:asc,__name__:asc
+base missing iwd C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5620 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-name-desc
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-name-desc
+expect missing iwd C a:asc,b:asc,tags:contains,__name__:desc
+base missing iwd C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5621 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-name-desc-plan
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge4/shapes/asc-and-desc-carriers#a-b-and-contains-name-desc-plan
+expect missing iwd C a:asc,b:asc,tags:contains,__name__:desc
+base missing iwd C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5622 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-and-contains
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge4/shapes/asc-and-desc-carriers#a-and-contains
+expect use iwd C a:asc,tags:contains
+base use iwd C a:asc,tags:contains
+guard none
+end
+case 5623 fs-query-index-merge4/shapes/asc-and-desc-carriers#a-and-contains-name-desc
+uses 2753
+query iwd C
+ctx production standard
+filter eq a
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge4/shapes/asc-and-desc-carriers#a-and-contains-name-desc
+expect missing iwd C tags:contains,a:asc,__name__:desc
+base use iwd C a:asc,tags:contains
+guard arrayFirst
+end
+case 5624 fs-query-index-merge4/shapes/asc-and-desc-carriers#contains
+uses 2753
+query iwd C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge4/shapes/asc-and-desc-carriers#contains
+expect missing iwd C tags:contains,__name__:asc
+base missing iwd C tags:contains,__name__:asc
+guard none
+end
+case 5625 fs-query-index-merge4/shapes/asc-and-desc-carriers#order-a-desc
+uses 2753
+query iwd C
+ctx production standard
+order a desc
+production refused fs-query-index-merge4/shapes/asc-and-desc-carriers#order-a-desc
+expect missing iwd C a:desc,__name__:desc
+base missing iwd C a:desc,__name__:desc
+guard none
+end
+case 5626 fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains
+uses 2754
+query io1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains
+expect merge io1 C a:asc,tags:contains ; io1 C b:asc,__name__:asc
+base missing io1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5627 fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains-plan
+uses 2754
+query io1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains-plan
+expect merge io1 C a:asc,tags:contains ; io1 C b:asc,__name__:asc
+base missing io1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5628 fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains-name-desc
+uses 2754
+query io1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-b-and-contains-name-desc
+expect missing io1 C a:asc,b:asc,tags:contains,__name__:desc
+base missing io1 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5629 fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-and-contains
+uses 2754
+query io1 C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge4/shapes/carrier-tags-ordered-only#a-and-contains
+expect use io1 C a:asc,tags:contains
+base use io1 C a:asc,tags:contains
+guard none
+end
+case 5630 fs-query-index-merge4/shapes/carrier-tags-ordered-only#contains
+uses 2754
+query io1 C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge4/shapes/carrier-tags-ordered-only#contains
+expect missing io1 C tags:contains,__name__:asc
+base missing io1 C tags:contains,__name__:asc
+guard none
+end
+case 5631 fs-query-index-merge4/shapes/carrier-tags-ordered-only#order-tags-asc
+uses 2754
+query io1 C
+ctx production standard
+order tags asc
+production served fs-query-index-merge4/shapes/carrier-tags-ordered-only#order-tags-asc
+expect use io1 C tags:asc,__name__:asc
+base use io1 C tags:asc,__name__:asc
+guard none
+end
+case 5632 fs-query-index-merge4/shapes/carrier-tags-ordered-only#order-a-desc
+uses 2754
+query io1 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge4/shapes/carrier-tags-ordered-only#order-a-desc
+expect missing io1 C a:desc,__name__:desc
+base missing io1 C a:desc,__name__:desc
+guard none
+end
+case 5633 fs-query-index-merge5/read-only/second-60-writes#p7-query-stored-leap
+uses 3
+query ilw C
+ctx production standard
+filter eq t
+production served fs-query-index-merge5/read-only/second-60-writes#p7-query-stored-leap
+expect use ilw C t:asc,__name__:asc
+base use ilw C t:asc,__name__:asc
+guard none
+end
+case 5634 fs-query-index-merge5/read-only/second-60-writes#p7-query-stored-second-60
+uses 3
+query ilw C
+ctx production standard
+filter eq t
+production served fs-query-index-merge5/read-only/second-60-writes#p7-query-stored-second-60
+expect use ilw C t:asc,__name__:asc
+base use ilw C t:asc,__name__:asc
+guard none
+end
+case 5635 fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains
+uses 2755
+query ig2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains
+expect merge ig2 C a:asc,tags:contains ; ig2 C b:asc,__name__:asc
+base missing ig2 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5636 fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains-plan
+uses 2755
+query ig2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains-plan
+expect merge ig2 C a:asc,tags:contains ; ig2 C b:asc,__name__:asc
+base missing ig2 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5637 fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains-name-desc
+uses 2755
+query ig2 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge5/shapes/group-contains-only#a-b-and-contains-name-desc
+expect missing ig2 C a:asc,b:asc,tags:contains,__name__:desc
+base missing ig2 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5638 fs-query-index-merge5/shapes/group-contains-only#a-and-contains
+uses 2755
+query ig2 C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge5/shapes/group-contains-only#a-and-contains
+expect use ig2 C a:asc,tags:contains
+base use ig2 C a:asc,tags:contains
+guard none
+end
+case 5639 fs-query-index-merge5/shapes/group-contains-only#contains
+uses 2755
+query ig2 C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge5/shapes/group-contains-only#contains
+expect missing ig2 C tags:contains,__name__:asc
+base missing ig2 C tags:contains,__name__:asc
+guard none
+end
+case 5640 fs-query-index-merge5/shapes/group-contains-only#group-contains
+uses 2755
+query ig2 G
+ctx production standard
+filter contains tags
+production served fs-query-index-merge5/shapes/group-contains-only#group-contains
+expect use ig2 G tags:contains,__name__:asc
+base use ig2 G tags:contains,__name__:asc
+guard none
+end
+case 5641 fs-query-index-merge5/shapes/group-contains-only#order-a-desc
+uses 2755
+query ig2 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge5/shapes/group-contains-only#order-a-desc
+expect missing ig2 C a:desc,__name__:desc
+base missing ig2 C a:desc,__name__:desc
+guard none
+end
+case 5642 fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains
+uses 2756
+query i2p C
+ctx production standard
+filter eq a
+filter eq b
+filter eq c
+filter contains tags
+production served fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains
+expect merge i2p C a:asc,b:asc,tags:contains ; i2p C c:asc,__name__:asc
+base missing i2p C a:asc,b:asc,c:asc,tags:contains,__name__:asc
+guard b
+end
+case 5643 fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains-plan
+uses 2756
+query i2p C
+ctx production standard
+filter eq a
+filter eq b
+filter eq c
+filter contains tags
+production served fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains-plan
+expect merge i2p C a:asc,b:asc,tags:contains ; i2p C c:asc,__name__:asc
+base missing i2p C a:asc,b:asc,c:asc,tags:contains,__name__:asc
+guard b
+end
+case 5644 fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains-name-desc
+uses 2756
+query i2p C
+ctx production standard
+filter eq a
+filter eq b
+filter eq c
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge5/shapes/two-field-prefix#a-b-c-and-contains-name-desc
+expect missing i2p C tags:contains,a:asc,b:asc,c:asc,__name__:desc
+base missing i2p C a:asc,b:asc,c:asc,tags:contains,__name__:desc
+guard arrayFirst
+end
+case 5645 fs-query-index-merge5/shapes/two-field-prefix#a-b-and-contains
+uses 2756
+query i2p C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge5/shapes/two-field-prefix#a-b-and-contains
+expect use i2p C a:asc,b:asc,tags:contains
+base use i2p C a:asc,b:asc,tags:contains
+guard none
+end
+case 5646 fs-query-index-merge5/shapes/two-field-prefix#contains
+uses 2756
+query i2p C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge5/shapes/two-field-prefix#contains
+expect missing i2p C tags:contains,__name__:asc
+base missing i2p C tags:contains,__name__:asc
+guard none
+end
+case 5647 fs-query-index-merge5/shapes/two-field-prefix#order-a-desc
+uses 2756
+query i2p C
+ctx production standard
+order a desc
+production refused fs-query-index-merge5/shapes/two-field-prefix#order-a-desc
+expect missing i2p C a:desc,__name__:desc
+base missing i2p C a:desc,__name__:desc
+guard none
+end
+case 5648 fs-query-index-merge5/shapes/two-field-prefix#order-b-asc
+uses 2756
+query i2p C
+ctx production standard
+order b asc
+production refused fs-query-index-merge5/shapes/two-field-prefix#order-b-asc
+expect missing i2p C b:asc,__name__:asc
+base missing i2p C b:asc,__name__:asc
+guard none
+end
+case 5649 fs-query-index-merge6/shapes/collection-composite-group-query#group-order-a-asc-name-desc
+uses 2757
+query irv G
+ctx production standard
+order a asc
+order __name__ desc
+production refused fs-query-index-merge6/shapes/collection-composite-group-query#group-order-a-asc-name-desc
+expect missing irv G a:asc,__name__:desc
+base missing irv G a:asc,__name__:desc
+guard none
+end
+case 5650 fs-query-index-merge6/shapes/collection-composite-group-query#group-order-a-asc-name-desc-plan
+uses 2757
+query irv G
+ctx production standard
+order a asc
+order __name__ desc
+production refused fs-query-index-merge6/shapes/collection-composite-group-query#group-order-a-asc-name-desc-plan
+expect missing irv G a:asc,__name__:desc
+base missing irv G a:asc,__name__:desc
+guard none
+end
+case 5651 fs-query-index-merge6/shapes/collection-composite-group-query#order-a-asc-name-desc
+uses 2757
+query irv C
+ctx production standard
+order a asc
+order __name__ desc
+production served fs-query-index-merge6/shapes/collection-composite-group-query#order-a-asc-name-desc
+expect use irv C a:asc,__name__:desc
+base use irv C a:asc,__name__:desc
+guard none
+end
+case 5652 fs-query-index-merge6/shapes/collection-composite-group-query#group-a-name-desc
+uses 2757
+query irv G
+ctx production standard
+filter eq a
+order __name__ desc
+production refused fs-query-index-merge6/shapes/collection-composite-group-query#group-a-name-desc
+expect missing irv G a:asc,__name__:desc
+base missing irv G a:asc,__name__:desc
+guard none
+end
+case 5653 fs-query-index-merge6/shapes/collection-composite-group-query#a-name-desc
+uses 2757
+query irv C
+ctx production standard
+filter eq a
+order __name__ desc
+production served fs-query-index-merge6/shapes/collection-composite-group-query#a-name-desc
+expect use irv C a:asc,__name__:desc
+base use irv C a:asc,__name__:desc
+guard none
+end
+case 5654 fs-query-index-merge6/shapes/composite-member#a-and-contains-name-desc
+uses 2758
+query icm C
+ctx production standard
+filter eq a
+filter contains tags
+order __name__ desc
+production served fs-query-index-merge6/shapes/composite-member#a-and-contains-name-desc
+expect merge icm C tags:contains,__name__:desc ; icm C a:asc,__name__:desc
+base missing icm C a:asc,tags:contains,__name__:desc
+guard a
+end
+case 5655 fs-query-index-merge6/shapes/composite-member#a-and-contains-name-desc-plan
+uses 2758
+query icm C
+ctx production standard
+filter eq a
+filter contains tags
+order __name__ desc
+production served fs-query-index-merge6/shapes/composite-member#a-and-contains-name-desc-plan
+expect merge icm C tags:contains,__name__:desc ; icm C a:asc,__name__:desc
+base missing icm C a:asc,tags:contains,__name__:desc
+guard a
+end
+case 5656 fs-query-index-merge6/shapes/composite-member#a-and-contains-name-asc
+uses 2758
+query icm C
+ctx production standard
+filter eq a
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge6/shapes/composite-member#a-and-contains-name-asc
+expect missing icm C tags:contains,a:asc,__name__:asc
+base missing icm C a:asc,tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5657 fs-query-index-merge6/shapes/composite-member#a-name-desc
+uses 2758
+query icm C
+ctx production standard
+filter eq a
+order __name__ desc
+production served fs-query-index-merge6/shapes/composite-member#a-name-desc
+expect use icm C a:asc,__name__:desc
+base use icm C a:asc,__name__:desc
+guard none
+end
+case 5658 fs-query-index-merge6/shapes/composite-member#contains-name-desc
+uses 2758
+query icm C
+ctx production standard
+filter contains tags
+order __name__ desc
+production served fs-query-index-merge6/shapes/composite-member#contains-name-desc
+expect use icm C tags:contains,__name__:desc
+base use icm C tags:contains,__name__:desc
+guard none
+end
+case 5659 fs-query-index-merge6/shapes/group-composite-collection-query#order-a-asc-name-desc
+uses 2759
+query ig1 C
+ctx production standard
+order a asc
+order __name__ desc
+production refused fs-query-index-merge6/shapes/group-composite-collection-query#order-a-asc-name-desc
+expect missing ig1 C a:asc,__name__:desc
+base use ig1 G a:asc,__name__:desc
+guard groupOrdered
+end
+case 5660 fs-query-index-merge6/shapes/group-composite-collection-query#order-a-asc-name-desc-plan
+uses 2759
+query ig1 C
+ctx production standard
+order a asc
+order __name__ desc
+production refused fs-query-index-merge6/shapes/group-composite-collection-query#order-a-asc-name-desc-plan
+expect missing ig1 C a:asc,__name__:desc
+base use ig1 G a:asc,__name__:desc
+guard groupOrdered
+end
+case 5661 fs-query-index-merge6/shapes/group-composite-collection-query#group-order-a-asc-name-desc
+uses 2759
+query ig1 G
+ctx production standard
+order a asc
+order __name__ desc
+production served fs-query-index-merge6/shapes/group-composite-collection-query#group-order-a-asc-name-desc
+expect use ig1 G a:asc,__name__:desc
+base use ig1 G a:asc,__name__:desc
+guard none
+end
+case 5662 fs-query-index-merge6/shapes/group-composite-collection-query#a-name-desc
+uses 2759
+query ig1 C
+ctx production standard
+filter eq a
+order __name__ desc
+production refused fs-query-index-merge6/shapes/group-composite-collection-query#a-name-desc
+expect missing ig1 C a:asc,__name__:desc
+base use ig1 G a:asc,__name__:desc
+guard groupOrdered
+end
+case 5663 fs-query-index-merge6/shapes/group-composite-collection-query#group-a-name-desc
+uses 2759
+query ig1 G
+ctx production standard
+filter eq a
+order __name__ desc
+production served fs-query-index-merge6/shapes/group-composite-collection-query#group-a-name-desc
+expect use ig1 G a:asc,__name__:desc
+base use ig1 G a:asc,__name__:desc
+guard none
+end
+case 5664 fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains
+expect merge ip1 C a:desc,tags:contains,__name__:asc ; ip1 C b:asc,__name__:asc
+base missing ip1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5665 fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-plan
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-plan
+expect merge ip1 C a:desc,tags:contains,__name__:asc ; ip1 C b:asc,__name__:asc
+base missing ip1 C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5666 fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-name-desc
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-name-desc
+expect missing ip1 C a:asc,b:asc,tags:contains,__name__:desc
+base missing ip1 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5667 fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-name-desc-plan
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge7/shapes/descending-prefix-carrier#a-b-and-contains-name-desc-plan
+expect missing ip1 C a:asc,b:asc,tags:contains,__name__:desc
+base missing ip1 C a:asc,b:asc,tags:contains,__name__:desc
+guard none
+end
+case 5668 fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains
+expect use ip1 C a:desc,tags:contains
+base use ip1 C a:desc,tags:contains
+guard none
+end
+case 5669 fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains-name-desc
+uses 2760
+query ip1 C
+ctx production standard
+filter eq a
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge7/shapes/descending-prefix-carrier#a-and-contains-name-desc
+expect missing ip1 C tags:contains,a:asc,__name__:desc
+base use ip1 C a:desc,tags:contains
+guard arrayFirst
+end
+case 5670 fs-query-index-merge7/shapes/descending-prefix-carrier#contains
+uses 2760
+query ip1 C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge7/shapes/descending-prefix-carrier#contains
+expect missing ip1 C tags:contains,__name__:asc
+base missing ip1 C tags:contains,__name__:asc
+guard none
+end
+case 5671 fs-query-index-merge7/shapes/descending-prefix-carrier#order-a-desc
+uses 2760
+query ip1 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge7/shapes/descending-prefix-carrier#order-a-desc
+expect missing ip1 C a:desc,__name__:desc
+base missing ip1 C a:desc,__name__:desc
+guard none
+end
+case 5672 fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains
+uses 2761
+query igx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains
+expect merge igx G a:asc,tags:contains ; igx G b:asc,__name__:asc
+base missing igx G a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5673 fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-plan
+uses 2761
+query igx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-plan
+expect merge igx G a:asc,tags:contains ; igx G b:asc,__name__:asc
+base missing igx G a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5674 fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-name-desc
+uses 2761
+query igx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge7/shapes/group-carrier#group-a-b-and-contains-name-desc
+expect missing igx G tags:contains,a:asc,b:asc,__name__:desc
+base missing igx G a:asc,b:asc,tags:contains,__name__:desc
+guard arrayFirst
+end
+case 5675 fs-query-index-merge7/shapes/group-carrier#a-b-and-contains
+uses 2761
+query igx C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge7/shapes/group-carrier#a-b-and-contains
+expect merge igx G a:asc,tags:contains ; igx C b:asc,__name__:asc
+base missing igx C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5676 fs-query-index-merge7/shapes/group-carrier#group-a-and-contains
+uses 2761
+query igx G
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge7/shapes/group-carrier#group-a-and-contains
+expect use igx G a:asc,tags:contains
+base use igx G a:asc,tags:contains
+guard none
+end
+case 5677 fs-query-index-merge7/shapes/group-carrier#group-contains
+uses 2761
+query igx G
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge7/shapes/group-carrier#group-contains
+expect missing igx G tags:contains,__name__:asc
+base missing igx G tags:contains,__name__:asc
+guard none
+end
+case 5678 fs-query-index-merge7/shapes/group-carrier#group-order-b-asc
+uses 2761
+query igx G
+ctx production standard
+order b asc
+production served fs-query-index-merge7/shapes/group-carrier#group-order-b-asc
+expect use igx G b:asc,__name__:asc
+base use igx G b:asc,__name__:asc
+guard none
+end
+case 5679 fs-query-index-merge7/shapes/group-carrier#order-b-asc
+uses 2761
+query igx C
+ctx production standard
+order b asc
+production served fs-query-index-merge7/shapes/group-carrier#order-b-asc
+expect use igx C b:asc,__name__:asc
+base use igx C b:asc,__name__:asc
+guard none
+end
+case 5680 fs-query-index-merge7/shapes/group-carrier#group-order-a-desc
+uses 2761
+query igx G
+ctx production standard
+order a desc
+production refused fs-query-index-merge7/shapes/group-carrier#group-order-a-desc
+expect missing igx G a:desc,__name__:desc
+base missing igx G a:desc,__name__:desc
+guard none
+end
+case 5681 fs-query-index-merge8/shapes/group-carrier-collection-readiness#a-b-and-contains
+uses 2762
+query igy C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+production served fs-query-index-merge8/shapes/group-carrier-collection-readiness#a-b-and-contains
+expect merge igy G a:asc,tags:contains ; igy C b:asc,__name__:asc
+base missing igy C a:asc,b:asc,tags:contains,__name__:asc
+guard b
+end
+case 5682 fs-query-index-merge8/shapes/group-carrier-collection-readiness#contains
+uses 2762
+query igy C
+ctx production standard
+filter contains tags
+production refused fs-query-index-merge8/shapes/group-carrier-collection-readiness#contains
+expect missing igy C tags:contains,__name__:asc
+base missing igy C tags:contains,__name__:asc
+guard none
+end
+case 5683 fs-query-index-merge8/shapes/group-carrier-collection-readiness#order-a-desc
+uses 2762
+query igy C
+ctx production standard
+order a desc
+production refused fs-query-index-merge8/shapes/group-carrier-collection-readiness#order-a-desc
+expect missing igy C a:desc,__name__:desc
+base missing igy C a:desc,__name__:desc
+guard none
+end
+case 5684 fs-query-index-merge8/shapes/group-carrier-collection-readiness#group-a-and-contains
+uses 2762
+query igy G
+ctx production standard
+filter eq a
+filter contains tags
+production served fs-query-index-merge8/shapes/group-carrier-collection-readiness#group-a-and-contains
+expect use igy G a:asc,tags:contains
+base use igy G a:asc,tags:contains
+guard none
+end
+case 5685 fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-asc
+uses 2763
+query is1 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-asc
+expect missing is1 C tags:contains,a:asc,tags:asc,__name__:asc
+base merge is1 C a:asc,__name__:asc ; is1 C tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5686 fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-desc
+uses 2763
+query is1 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-desc
+expect missing is1 C a:asc,tags:asc,tags:contains,__name__:desc
+base missing is1 C a:asc,tags:asc,tags:contains,__name__:desc
+guard none
+end
+case 5687 fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-asc-plan
+uses 2763
+query is1 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-asc-plan
+expect missing is1 C tags:contains,a:asc,tags:asc,__name__:asc
+base merge is1 C a:asc,__name__:asc ; is1 C tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5688 fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-desc-plan
+uses 2763
+query is1 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#a-and-shared-path-name-desc-plan
+expect missing is1 C a:asc,tags:asc,tags:contains,__name__:desc
+base missing is1 C a:asc,tags:asc,tags:contains,__name__:desc
+guard none
+end
+case 5689 fs-query-index-merge8/shapes/shared-path-ascending-only#shared-path-name-asc
+uses 2763
+query is1 C
+ctx production standard
+source sharedArray
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#shared-path-name-asc
+expect missing is1 C tags:contains,tags:asc,__name__:asc
+base use is1 C tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5690 fs-query-index-merge8/shapes/shared-path-ascending-only#contains
+uses 2763
+query is1 C
+ctx production standard
+filter contains tags
+production served fs-query-index-merge8/shapes/shared-path-ascending-only#contains
+expect use is1 C tags:contains,__name__:asc
+base use is1 C tags:contains,__name__:asc
+guard none
+end
+case 5691 fs-query-index-merge8/shapes/shared-path-ascending-only#order-tags-asc
+uses 2763
+query is1 C
+ctx production standard
+order tags asc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#order-tags-asc
+expect missing is1 C tags:asc,__name__:asc
+base missing is1 C tags:asc,__name__:asc
+guard none
+end
+case 5692 fs-query-index-merge8/shapes/shared-path-ascending-only#order-a-asc
+uses 2763
+query is1 C
+ctx production standard
+order a asc
+production served fs-query-index-merge8/shapes/shared-path-ascending-only#order-a-asc
+expect use is1 C a:asc,__name__:asc
+base use is1 C a:asc,__name__:asc
+guard none
+end
+case 5693 fs-query-index-merge8/shapes/shared-path-ascending-only#order-a-desc
+uses 2763
+query is1 C
+ctx production standard
+order a desc
+production refused fs-query-index-merge8/shapes/shared-path-ascending-only#order-a-desc
+expect missing is1 C a:desc,__name__:desc
+base missing is1 C a:desc,__name__:desc
+guard none
+end
+case 5694 fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-asc
+uses 2764
+query is2 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-asc
+expect missing is2 C tags:contains,a:asc,tags:asc,__name__:asc
+base missing is2 C a:asc,tags:asc,tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5695 fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-desc
+uses 2764
+query is2 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-desc
+expect missing is2 C a:asc,tags:asc,tags:contains,__name__:desc
+base missing is2 C a:asc,tags:asc,tags:contains,__name__:desc
+guard none
+end
+case 5696 fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-asc-plan
+uses 2764
+query is2 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-asc-plan
+expect missing is2 C tags:contains,a:asc,tags:asc,__name__:asc
+base missing is2 C a:asc,tags:asc,tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5697 fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-desc-plan
+uses 2764
+query is2 C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ desc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#a-and-shared-path-name-desc-plan
+expect missing is2 C a:asc,tags:asc,tags:contains,__name__:desc
+base missing is2 C a:asc,tags:asc,tags:contains,__name__:desc
+guard none
+end
+case 5698 fs-query-index-merge8/shapes/shared-path-descending-only#shared-path-name-asc
+uses 2764
+query is2 C
+ctx production standard
+source sharedArray
+filter eq tags
+filter contains tags
+order __name__ asc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#shared-path-name-asc
+expect missing is2 C tags:contains,tags:asc,__name__:asc
+base use is2 C tags:contains,__name__:asc
+guard arrayFirst
+end
+case 5699 fs-query-index-merge8/shapes/shared-path-descending-only#contains
+uses 2764
+query is2 C
+ctx production standard
+filter contains tags
+production served fs-query-index-merge8/shapes/shared-path-descending-only#contains
+expect use is2 C tags:contains,__name__:asc
+base use is2 C tags:contains,__name__:asc
+guard none
+end
+case 5700 fs-query-index-merge8/shapes/shared-path-descending-only#order-tags-asc
+uses 2764
+query is2 C
+ctx production standard
+order tags asc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#order-tags-asc
+expect missing is2 C tags:asc,__name__:asc
+base missing is2 C tags:asc,__name__:asc
+guard none
+end
+case 5701 fs-query-index-merge8/shapes/shared-path-descending-only#order-a-asc
+uses 2764
+query is2 C
+ctx production standard
+order a asc
+production refused fs-query-index-merge8/shapes/shared-path-descending-only#order-a-asc
+expect missing is2 C a:asc,__name__:asc
+base missing is2 C a:asc,__name__:asc
+guard none
+end
+case 5702 fs-query-index-merge8/shapes/shared-path-descending-only#order-a-desc
+uses 2764
+query is2 C
+ctx production standard
+order a desc
+production served fs-query-index-merge8/shapes/shared-path-descending-only#order-a-desc
+expect use is2 C a:desc,__name__:desc
+base use is2 C a:desc,__name__:desc
+guard none
+end
+case 5703 shape/b/group-with-descending-alternative
+uses 2765
+query qx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx G a:asc,b:asc,tags:contains,__name__:asc
+base missing qx G a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5704 shape/b/group-carrier-with-builtin-equality
+uses 2766
+query qx C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
+base missing qx C a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5705 shape/shared-path/builtin-equality-tags-contains
+uses 2767
+query qx C
+ctx production standard
+source sharedArray
+filter eq a
+filter eq tags
+filter contains tags
+order __name__ asc
+expect merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
+base merge qx C a:asc,__name__:asc ; qx C tags:contains,__name__:asc
+guard none
+end
+case 5706 shape/b/group-with-equality-enabled-at-group-scope
+uses 2768
+query qx G
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx G a:asc,b:asc,tags:contains,__name__:asc
+base missing qx G a:asc,b:asc,tags:contains,__name__:asc
+guard none
+end
+case 5707 shape/b/group-carrier-with-extra-collection-carrier
+uses 2769
+query qx C
+ctx production standard
+filter eq a
+filter eq b
+filter contains tags
+expect missing qx C a:asc,b:asc,tags:contains,__name__:asc
+base missing qx C a:asc,b:asc,tags:contains,__name__:asc
+guard none
 end

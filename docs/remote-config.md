@@ -1,6 +1,6 @@
-# Local Remote Config client templates
+# Local Remote Config templates
 
-The daemon's loopback control listener supports reading, validating, publishing, listing and rolling back client templates for its configured project. Use its control capability as the bearer token. A Test World starts with an empty client template and owns its version history until the daemon stops. `world.reset()` starts a new daemon with an empty history.
+The daemon's loopback control listener supports reading, validating, publishing, listing and rolling back client and server templates for its configured project. Use its control capability as the bearer token. A Test World starts with an empty client template and owns its version history until the daemon stops. `world.reset()` starts a new daemon with an empty history.
 
 ```js
 import { withTestWorld } from 'fireemu/testing';
@@ -34,4 +34,39 @@ An unpublished client template answers with an empty object and no `ETag`. Reque
 
 Read a published version with `?versionNumber=n` and history with `:listVersions`. A zero or negative version selects the current template. An unavailable positive version returns an empty object. When the history response includes `nextPageToken`, pass it back as `pageToken`. An omitted or zero `pageSize` uses the default of 300. Larger sizes are capped at 300. Send `POST :rollback` with `{"versionNumber":"1"}` to copy the contents of version 1 into a new version. History retains up to 300 versions in memory.
 
-This interface covers client-template administration. The [Remote Config compatibility record](../spec/compatibility/closure/REMOTE-CONFIG.json) tracks server templates, SDK data-plane fetching and delivery on publication. Use the existing capability-protected [Functions event injection](functions-export-inventory.md) when a test needs a caller-supplied Remote Config event.
+## Namespaces
+
+`projects/{project}/remoteConfig` and `projects/{project}/namespaces/firebase/remoteConfig` address the client template. `projects/{project}/namespaces/firebase-server/remoteConfig` addresses the server template, with the same actions (`:listVersions`, `:rollback`, `validateOnly`). The two namespaces keep separate contents, version numbers, ETags and history: a server publish leaves the client template unchanged, and a tag of one namespace is refused with 412 by the other. Another namespace name is refused with 400 `INVALID_ARGUMENT`. Unlike the client template, an unpublished server template reads as `{}` together with an `ETag` (on gzip requests), and that tag can be used in `If-Match` for the first publish. Production showed these differences on 2026-11-21.
+
+## Server templates for the Admin SDK
+
+`GET projects/{project}/namespaces/firebase-server/serverRemoteConfig` serves the current server template in the shape the Node Admin SDK reads: conditions in their structured form, parameters without `valueType`, and `version` holding only `versionNumber` and `isLegacy`. Before the first server publish it answers 404 `NOT_FOUND`, which the SDK reports as `remote-config/not-found`. Point the SDK at the control listener with `FIREBASE_REMOTE_CONFIG_URL_BASE` and give it the control token as its access token:
+
+```js
+process.env.FIREBASE_REMOTE_CONFIG_URL_BASE = new URL(world.endpoints.control.apiBaseUrl).origin;
+const app = initializeApp({
+  projectId: world.projectId,
+  credential: { getAccessToken: async () => ({ access_token: world.environment.FIREEMU_CONTROL_TOKEN, expires_in: 3600 }) },
+});
+const template = await getRemoteConfig(app).getServerTemplate({ defaultConfig: { limit: 10 } });
+const config = template.evaluate({ randomizationId: 'user-1', tier: 'premium' });
+```
+
+Fireemu does not evaluate server conditions; the SDK does. Fireemu converts the condition expressions recorded in production (2026-11-21 and 2026-11-24) into their structured form, one `orCondition` holding one `andCondition` with the atoms in source order:
+
+- `percent('seed') <= n`, `percent('seed') > n`, `percent('seed') between a and b` and the unseeded `percent <= n`, with percentages from 0 to 100 and up to six decimals, served in micro-percent;
+- `app.customSignal['key'].exactlyMatches([...])`, `.contains([...])`, `.notContains([...])` and `.matches([...])` with single-quoted strings;
+- `app.customSignal['key'] < n` (also `<=`, `==`, `!=`, `>`, `>=`) with an integer, and `version(app.customSignal['key']) < '1.2.3'` (the same six comparisons);
+- any `&&` chain of these.
+
+Any other expression becomes an empty condition, which the SDK evaluates as false. In the strict profile, a server publish or validation whose condition is a two-term `||` whose operands each parse as one of the supported atoms or `&&` chains above, a whole `!(...)` around such an operand, `true` or `false` is refused with production's 400 `INVALID_ARGUMENT` message (after the `If-Match` check); the emulator profile accepts these, as before, and serves them as empty conditions. The data plane lists the parameters of parameter groups next to the top-level parameters, without `valueType` and without the group, as production does; the admin reads keep the groups. A regular-expression target is converted only in its plain recorded form (an optional `^`, letters, digits, `_`, `-`, space and `.`, an optional `$`), and a semantic-version target only as one to five dot-separated numbers without leading zeros (`0` alone is a number); other targets serve an empty condition, as before. Fireemu writes JSON members in sorted key order, while production keeps its own order (for example `percentOperator` before `microPercent`); the values and the body length are the same, and JSON readers such as the Admin SDK do not depend on member order.
+
+## Functions triggered by a publish
+
+A successful client-template publish or rollback delivers one event per new version, with one event id shared by its v1 and v2 events as in production, to the registered v1 (`functions.remoteConfig.onUpdate`) and v2 (`onConfigUpdated`) handlers of the default session. The event carries the version's `versionNumber` (a string), `updateTime`, `updateOrigin`, `updateType` (`INCREMENTAL_UPDATE`, `FORCED_UPDATE` or `ROLLBACK`), `description` and, for a rollback, `rollbackSource`, in the envelope shapes recorded in production: the v1 context `eventId`, `eventType`, `resource` and `timestamp`, and the v2 CloudEvent attributes `id`, `project`, `source`, `specversion`, `time` and `type`. In the v2 data `rollbackSource` is `"0"` for a publish, as recorded. Validate-only requests and refused publishes or rollbacks deliver nothing.
+
+Delivery follows the ordinary Functions background delivery rules, the same path as the injection action below: events of one namespace are admitted in version order, and retries follow each function's retry policy. In a production recording of five chained publishes (2026-11-24), each version reached each handler once and in order; that bounded observation is no guarantee, so do not rely on either. A server-template publish delivers no event, as production delivered none within five minutes while client events reached the same handlers. If the Functions event queue is full, a client publish or rollback returns 429 `RESOURCE_EXHAUSTED` and leaves the current template, its ETag and history unchanged. A publish or rollback in either namespace also leaves them unchanged and returns 500 `INTERNAL` if the local clock is outside the RFC 3339 range.
+
+The control token carries no user principal, so by default Fireemu omits `updateUser`. To report one, set `remoteConfig.updateUser` in the Fireemu configuration (`{"email": "dev@example.com", "name": "Dev", "imageUrl": "https://example.com/dev.png"}`; `name` and `imageUrl` are optional). Fireemu then reports it in production's shapes: `{"email": ...}` on published and read versions and in v1 event data, `{"email": ..., "name": "", "imageUrl": ""}` in v2 event data, and email, name and image in version history. The v2 `@type` is `type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData`, `project` is the project id, and a version without a description has `description: ""` in v2 data and none in v1 data, as recorded.
+
+Use the existing capability-protected [Functions event injection](functions-export-inventory.md) when a test needs a caller-supplied Remote Config event. The [Remote Config compatibility record](../spec/compatibility/closure/REMOTE-CONFIG.json) tracks SDK client fetching, real-time delivery and the production comparisons still to come.

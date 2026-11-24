@@ -150,8 +150,8 @@ pub struct UiState {
     pub database: Option<database::DatabaseEndpoint>,
     /// The selected Pub/Sub listener, absent when disabled.
     pub pubsub: Option<pubsub::PubSubEndpoint>,
-    /// Shared Remote Config template store, when attached.
-    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::TemplateStore>>,
+    /// Shared Remote Config template stores, when attached.
+    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>>,
     /// Connection budget shared by this runtime's event streams.
     pub stream_limiter: Arc<sse::StreamLimiter>,
     /// The control token browser pages must present.

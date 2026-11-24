@@ -293,7 +293,9 @@ def recorded : List (Case × Bool) :=
        atoms := [(["n"], .eq)], overrides := [.set ["n"] [(.group, ascending)]] }, false),
     ({
        label := "production/group-array-contains-without-group-index", collection := "qg",
-       scope := .group, atoms := tagsOnly }, false)
+       scope := .group, atoms := tagsOnly }, false),
+    ({ label := "obs2/collection-descending-only", atoms := plainEq, order := [(name, .asc)],
+       overrides := [.set a [(.collection, .ordered .desc)]] }, false)
   ]
 
 #guard recorded.all fun (c, served) =>
@@ -303,7 +305,7 @@ def recorded : List (Case × Bool) :=
 #guard (recorded.filter fun (c, served) =>
   (decideBase c.requirement c.lookup c.collection c.scope c.composites c.policy c.edition
     c.baseMerge).isIndexed != served).map (·.1.label) ==
-  ["production/ascending-only/a-alone-name-desc"]
+  ["production/ascending-only/a-alone-name-desc", "obs2/collection-descending-only"]
 
 def examples : List Case :=
   let primaryDesc := [(name, Direction.desc)]
@@ -392,9 +394,6 @@ def examples : List Case :=
     {
       label := "obs2/47-group-descending-only", atoms := plainEq, order := [(name, .asc)],
       scope := .group, overrides := [.set a [(.group, descending)]] },
-    {
-      label := "obs2/collection-descending-only", atoms := plainEq, order := [(name, .asc)],
-      overrides := [.set a [(.collection, descending)]] },
     {
       label := "aggregate-insert-and-dedup", atoms := plainEq ++ tagsOnly, order := [(["n"], .desc)],
       aggregations := [("avg", ["z"]), ("sum", a), ("avg", tags), ("sum", ["n"]),

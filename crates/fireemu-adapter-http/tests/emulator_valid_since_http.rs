@@ -99,6 +99,7 @@ fn set_clock(state: &AuthState, seconds: i64) {
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
         barrier: None,
         snapshot_hooks: Vec::new(),

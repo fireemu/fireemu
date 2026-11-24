@@ -230,7 +230,7 @@ Any other string never matches, and the exchange answers 403.
 
 With Storage `enforced`, server-side code that uses the Admin SDK or `gcloud` (a client library, not a browser) still has to reach Storage without a token. Production does not apply App Check to that traffic: the Admin SDK authenticates with a service account over OAuth, and enforcement covers the Firebase Storage API the client SDKs call. The emulator has no OAuth, so `appCheck.storageServerRequests` decides how it recognises that traffic:
 
-| | `"loopback"` (default) | `"capability"` |
+| Aspect | `"loopback"` (default) | `"capability"` |
 |---|---|---|
 | Admitted without a token | A Cloud Storage JSON API request from a loopback peer to a loopback `Host`, with no browser evidence and no client SDK credential ([details](#how-loopback-recognises-a-request)) | Only a request that carries the per-run capability `fireemu exec` puts in the userinfo of `STORAGE_EMULATOR_HOST` (`http://fireemu:<capability>@host:port`) |
 | `STORAGE_EMULATOR_HOST` | The plain `http://host:port`, which every `@google-cloud/storage` and `firebase-admin` version accepts | With the capability. `@google-cloud/storage` 8.1 and later (`firebase-admin` 14.4 and later) refuse a URL with embedded credentials |

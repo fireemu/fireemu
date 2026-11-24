@@ -29,9 +29,11 @@ function supervise(command,args,options){
   });
   return {child,exited,result:()=>result,output:()=>output,errorOutput:()=>errorOutput};
 }
+// macOS answers EPERM to a process-group signal while the group's members are exiting. The wait
+// below still requires the tree to close, so EPERM is treated like ESRCH.
 async function stop(process,timeout=5000){
   if(!process||process.result())return;
-  const signal=kind=>{if(process.result())return;try{if(globalThis.process.platform==='win32')process.child.kill(kind);else globalThis.process.kill(-process.child.pid,kind);}catch(error){if(error.code!=='ESRCH')throw error;}};
+  const signal=kind=>{if(process.result())return;try{if(globalThis.process.platform==='win32')process.child.kill(kind);else globalThis.process.kill(-process.child.pid,kind);}catch(error){if(error.code!=='ESRCH'&&error.code!=='EPERM')throw error;}};
   process.child.stdin?.end();
   signal('SIGTERM');
   let timer;

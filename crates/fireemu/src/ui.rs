@@ -81,8 +81,8 @@ pub struct Parts<'a> {
     pub database: Option<fireemu_adapter_ui::database::DatabaseEndpoint>,
     /// The actual Pub/Sub listener, when enabled.
     pub pubsub: Option<fireemu_adapter_ui::pubsub::PubSubEndpoint>,
-    /// Shared Remote Config template store.
-    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::TemplateStore>>,
+    /// Shared Remote Config template stores.
+    pub remote_config: Option<Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>>,
     /// Control API.
     pub control: Arc<ControlState>,
     /// Functions runtime, when configured.

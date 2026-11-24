@@ -2283,9 +2283,84 @@ fn database_delta(before: &Value, after: &Value) -> Value {
     Value::Object(delta)
 }
 
+/// One id per (project, namespace, version), carried by both the v1 and the v2 event of that
+/// version as production does (RC-OBSERVE-V2-3: v28 929360796 on both). Ids are unique within a
+/// (project, namespace) stream; client and server ids may coincide, and only the client namespace
+/// emits events.
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+fn remote_config_event_id(project: &str, namespace: &str, number: u64) -> String {
+    let Ok(version) = u32::try_from(number) else {
+        // There is no recorded format for these versions. The prefix keeps them unique.
+        return format!("v{number}");
+    };
+    let key = seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32;
+    // The xorshift, odd multiplication and XOR with the key are all invertible.
+    let id = (version ^ (version >> 16)).wrapping_mul(0x9e37_79b1) ^ key;
+    (id as i32).to_string()
+}
+
+/// Renders the recorded v1 and v2 event shapes from an admin version.
+pub fn remote_config_version_events(
+    project: &str,
+    namespace: &str,
+    version: &Value,
+) -> Result<(Value, Value), &'static str> {
+    let number = version["versionNumber"]
+        .as_str()
+        .and_then(|number| number.parse::<u64>().ok())
+        .ok_or("invalid Remote Config version number")?;
+    let time = version["updateTime"]
+        .as_str()
+        .ok_or("missing Remote Config update time")?;
+    let mut data = Map::from_iter(
+        ["versionNumber", "updateTime", "updateOrigin", "updateType"]
+            .map(|key| (key.to_owned(), version[key].clone())),
+    );
+    for key in ["description", "rollbackSource", "updateUser"] {
+        if let Some(value) = version.get(key) {
+            data.insert(key.to_owned(), value.clone());
+        }
+    }
+    let id = remote_config_event_id(project, namespace, number);
+    let v1 = json!({
+        "context": {
+            "eventId": id,
+            "eventType": "google.firebase.remoteconfig.update",
+            "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": format!("projects/{project}")},
+            "timestamp": time,
+        },
+        "data": data,
+    });
+    // v2 data reports the user with empty name and image (RC-OBSERVE-V2-3), whatever history says.
+    if let Some(email) = version.pointer("/updateUser/email") {
+        data.insert(
+            "updateUser".into(),
+            json!({"email": email, "name": "", "imageUrl": ""}),
+        );
+    }
+    // RC-OBSERVE-V2-3 recorded this value on every v2 event.
+    data.insert(
+        "@type".into(),
+        json!("type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData"),
+    );
+    // A version without a description has `""` in v2 data (RC-OBSERVE-V2-3, v29).
+    data.entry("description").or_insert_with(|| json!(""));
+    data.entry("rollbackSource").or_insert_with(|| json!("0"));
+    let v2 = json!({
+        "id": id,
+        // The project id, not its number (RC-OBSERVE-V2-3).
+        "project": project,
+        "source": format!("//firebaseremoteconfig.googleapis.com/projects/{project}"),
+        "specversion": "1.0",
+        "time": time,
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "data": data,
+    });
+    Ok((v1, v2))
+}
+
 /// Validates local fixture metadata against the published Functions SDK types, without
-/// filling absent fields. The caller supplies envelope identity and time: production's
-/// Remote Config envelopes have not been observed. This is not a template publishing API.
+/// filling absent fields. The caller supplies envelope identity and time.
 #[allow(clippy::too_many_lines)]
 pub fn remote_config_events(
     project: &str,
@@ -2405,6 +2480,200 @@ pub fn remote_config_events(
 mod remote_config_tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn committed_remote_config_versions_match_recorded_payloads() {
+        let time = "2026-11-21T08:12:31.348152Z";
+        // One id per version, shared by v1 and v2 (RC-OBSERVE-V2-3).
+        for (id, version, v2_description, v2_source) in [
+            (
+                "-631551824",
+                json!({
+                    "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
+                    "updateType": "INCREMENTAL_UPDATE", "description": "d",
+                }),
+                "d",
+                "0",
+            ),
+            (
+                "2013446755",
+                json!({
+                    "versionNumber": "2", "updateTime": time, "updateOrigin": "REST_API",
+                    "updateType": "FORCED_UPDATE",
+                }),
+                "",
+                "0",
+            ),
+            (
+                "-1630905326",
+                json!({
+                    "versionNumber": "3", "updateTime": time, "updateOrigin": "REST_API",
+                    "updateType": "ROLLBACK", "description": "Rollback to version 1",
+                    "rollbackSource": "1",
+                }),
+                "Rollback to version 1",
+                "1",
+            ),
+        ] {
+            let (v1, v2) =
+                remote_config_version_events("demo-config", "firebase", &version).unwrap();
+            assert_eq!(
+                v1,
+                json!({
+                    "context": {
+                        "eventId": id,
+                        "eventType": "google.firebase.remoteconfig.update",
+                        "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": "projects/demo-config"},
+                        "timestamp": time,
+                    },
+                    "data": version,
+                }),
+            );
+            assert_eq!(
+                v2,
+                json!({
+                    "id": id,
+                    "project": "demo-config",
+                    "source": "//firebaseremoteconfig.googleapis.com/projects/demo-config",
+                    "specversion": "1.0",
+                    "time": time,
+                    "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+                    "data": {
+                        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+                        "versionNumber": version["versionNumber"],
+                        "updateTime": time,
+                        "updateOrigin": "REST_API",
+                        "updateType": version["updateType"],
+                        "description": v2_description,
+                        "rollbackSource": v2_source,
+                    },
+                }),
+            );
+        }
+    }
+
+    /// RC-OBSERVE-V2-3: the v1 and the v2 event of one version carry the same id (v28
+    /// 929360796, v29 312875307, …), and production's updateUser is `{email}` in v1 data and
+    /// `{email, name: "", imageUrl: ""}` in v2 data.
+    #[test]
+    fn the_v1_and_v2_events_of_a_version_share_one_id_and_the_recorded_update_user_shapes() {
+        let time = "2026-11-21T08:12:31.348152Z";
+        let mut ids = std::collections::BTreeSet::new();
+        for number in 1..=50_u32 {
+            let version = json!({
+                "versionNumber": number.to_string(), "updateTime": time, "updateOrigin": "REST_API",
+                "updateType": "INCREMENTAL_UPDATE",
+            });
+            let (v1, v2) =
+                remote_config_version_events("demo-config", "firebase", &version).unwrap();
+            assert_eq!(v1["context"]["eventId"], v2["id"]);
+            assert!(ids.insert(v2["id"].as_str().unwrap().to_owned()));
+            assert!(v1["data"].get("updateUser").is_none());
+            assert!(v2["data"].get("updateUser").is_none());
+        }
+        let version = json!({
+            "versionNumber": "7", "updateTime": time, "updateOrigin": "REST_API",
+            "updateType": "INCREMENTAL_UPDATE", "updateUser": {"email": "tester@example.com"},
+        });
+        let (v1, v2) = remote_config_version_events("demo-config", "firebase", &version).unwrap();
+        assert_eq!(
+            v1["data"]["updateUser"],
+            json!({"email": "tester@example.com"})
+        );
+        assert_eq!(
+            v2["data"]["updateUser"],
+            json!({"email": "tester@example.com", "name": "", "imageUrl": ""})
+        );
+    }
+
+    #[test]
+    fn committed_remote_config_ids_distinguish_previously_colliding_versions() {
+        for (a, b) in [
+            (2740, 56384),
+            (8184, 44818),
+            // Equal under `x | (x >> 16)`, distinct under the invertible `x ^ (x >> 16)`.
+            (65536, 65537),
+        ] {
+            assert_ne!(
+                remote_config_event_id("demo-config", "firebase", a),
+                remote_config_event_id("demo-config", "firebase", b),
+            );
+        }
+        assert_eq!(
+            remote_config_event_id("demo-config", "firebase", u64::from(u32::MAX) + 1),
+            "v4294967296",
+        );
+    }
+
+    #[test]
+    fn committed_remote_config_events_require_an_update_time() {
+        for version in [
+            json!({"versionNumber": "1"}),
+            json!({"versionNumber": "1", "updateTime": null}),
+        ] {
+            assert!(remote_config_version_events("demo-config", "firebase", &version).is_err());
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn committed_remote_config_ids_are_unique_per_version(
+            project in "demo-[a-z0-9-]{1,20}",
+            a in 1..=u32::MAX,
+            b in 1..=u32::MAX,
+        ) {
+            prop_assume!(a != b);
+            let first = remote_config_event_id(&project, "firebase", u64::from(a));
+            let second = remote_config_event_id(&project, "firebase", u64::from(b));
+            prop_assert!(first.parse::<i32>().is_ok());
+            prop_assert!(second.parse::<i32>().is_ok());
+            prop_assert_ne!(first, second);
+        }
+
+        #[test]
+        fn committed_remote_config_version_keys_and_strings(
+            number in 1..=u32::MAX,
+            description in prop::option::of(".{0,80}"),
+            rollback in prop::option::of(1..=u32::MAX),
+        ) {
+            let number = number.to_string();
+            let time = "2026-11-21T08:12:31.348152Z";
+            let mut version = json!({
+                "versionNumber": number, "updateTime": time, "updateOrigin": "REST_API",
+                "updateType": if rollback.is_some() { "ROLLBACK" } else { "INCREMENTAL_UPDATE" },
+            });
+            let mut v1_fields = vec!["versionNumber", "updateTime", "updateOrigin", "updateType"];
+            if let Some(description) = description {
+                version["description"] = json!(description);
+                v1_fields.push("description");
+            }
+            if let Some(source) = rollback {
+                version["rollbackSource"] = json!(source.to_string());
+                v1_fields.push("rollbackSource");
+            }
+            let (v1, v2) = remote_config_version_events("demo-config", "firebase", &version).unwrap();
+            for (object, fields) in [
+                (&v1, ["context", "data"].as_slice()),
+                (&v1["context"], &["eventId", "eventType", "resource", "timestamp"]),
+                (&v1["context"]["resource"], &["service", "name"]),
+                (&v1["data"], &v1_fields),
+                (&v2, &["id", "project", "source", "specversion", "time", "type", "data"]),
+                (&v2["data"], &["@type", "versionNumber", "updateTime", "updateOrigin", "updateType", "description", "rollbackSource"]),
+            ] {
+                prop_assert_eq!(object.as_object().unwrap().len(), fields.len());
+                prop_assert!(fields.iter().all(|field| object.get(*field).is_some()));
+            }
+            for value in [
+                &v1["context"]["timestamp"], &v1["data"]["updateTime"],
+                &v2["time"], &v2["data"]["updateTime"],
+            ] {
+                prop_assert_eq!(value.as_str(), Some(time));
+            }
+            for value in [&v1["data"]["versionNumber"], &v2["data"]["versionNumber"]] {
+                prop_assert_eq!(value.as_str(), Some(number.as_str()));
+            }
+        }
+    }
 
     fn publication() -> Value {
         json!({

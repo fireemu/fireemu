@@ -536,13 +536,19 @@ jobs:
       - run: node --test npm/scripts/types-consumer.test.mjs
       - run: node --test npm/scripts/types-exports.test.mjs
       - run: cargo build --release --locked -p fireemu
+      - run: pnpm -C conformance install --frozen-lockfile
       - name: Test World Rules, Hosting, and Remote Config with the release daemon
         env:
           FIREEMU_TEST_BINARY: ${{ github.workspace }}/target/release/fireemu
+          FIREEMU_TEST_SDK_MODULES: ${{ github.workspace }}/conformance/node_modules
         run: >-
           node --test
-          --test-name-pattern='a database world resets to the Rules|Hosting readiness follows|parallel Hosting worlds|Remote Config admin'
+          --test-name-pattern='a database world resets to the Rules|Hosting readiness follows|parallel Hosting worlds|Remote Config admin|answered with EPERM'
           npm/scripts/testing-worlds.test.mjs
+      - name: Test World control and clock settling with the release daemon
+        env:
+          FIREEMU_TEST_BINARY: ${{ github.workspace }}/target/release/fireemu
+        run: node --test npm/scripts/control.test.mjs npm/scripts/testing-clock-settle.test.mjs
       - run: node npm/scripts/pack-local.mjs
       - run: node npm/scripts/verify-install.mjs --dist npm/dist
 

@@ -208,6 +208,11 @@ pub struct SingleFieldExemption {
 }
 
 type SingleFieldModes = Vec<(IndexQueryScope, IndexFieldMode)>;
+const BUILTIN_MODES: &[(IndexQueryScope, IndexFieldMode)] = &[
+    (IndexQueryScope::Collection, IndexFieldMode::Ascending),
+    (IndexQueryScope::Collection, IndexFieldMode::Descending),
+    (IndexQueryScope::Collection, IndexFieldMode::Contains),
+];
 type SingleFieldOverrides = BTreeMap<(String, Vec<String>), SingleFieldModes>;
 
 /// Positions in the composite list, per collection group, in list order.
@@ -323,11 +328,7 @@ impl IndexSet {
                 return modes.clone();
             }
             if key.1.pop().is_none() {
-                return vec![
-                    (IndexQueryScope::Collection, IndexFieldMode::Ascending),
-                    (IndexQueryScope::Collection, IndexFieldMode::Descending),
-                    (IndexQueryScope::Collection, IndexFieldMode::Contains),
-                ];
+                return BUILTIN_MODES.to_vec();
             }
         }
     }
@@ -929,11 +930,17 @@ struct RecordedShape {
 enum EqualityRefusal {
     DescendingName,
     EitherName,
+    OrderedGroupComposite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecordedMerge {
     Descending,
+    DescendingMember,
+    GroupDescendingPair,
+    DescendingTriple,
+    CountPair,
+    SharedAscending,
     Carrier,
     CarrierOrReverseAutomatic,
     ReverseAutomatic,
@@ -1014,25 +1021,32 @@ fn recorded_merge_shape(query: &Query, aggregations: &[Aggregation]) -> Option<R
         return None;
     }
     if let Some(is_array) = equalities.get(field) {
-        return (*is_array
-            && !group
-            && !count
-            && !any
-            && equalities_count == 2
-            && explicit_name.is_some())
-        .then_some(RecordedMerge::SharedArrayPath);
+        if !*is_array || group || count || any {
+            return None;
+        }
+        return match (explicit_name, equalities_count) {
+            (Some(Direction::Ascending), 1 | 2) => Some(RecordedMerge::SharedAscending),
+            (Some(Direction::Descending), 2) => Some(RecordedMerge::SharedArrayPath),
+            _ => None,
+        };
     }
     match explicit_name {
-        Some(Direction::Descending) => {
-            (!count && (!group || !any) && ((!group && !any) || equalities_count == 1))
-                .then_some(RecordedMerge::Descending)
+        Some(Direction::Descending) if !count => match (group, any, equalities_count) {
+            (false, false, 1) => Some(RecordedMerge::DescendingMember),
+            (false, false, 3) => Some(RecordedMerge::DescendingTriple),
+            (true, false, 2) => Some(RecordedMerge::GroupDescendingPair),
+            (false, false, _) | (true, false, 1) | (false, true, 1) => {
+                Some(RecordedMerge::Descending)
+            }
+            _ => None,
+        },
+        None if !count && !any && equalities_count == 2 => {
+            Some(RecordedMerge::CarrierOrReverseAutomatic)
         }
         _ if group => None,
-        None if (count || any) && !(count && any) && equalities_count == 2 => {
-            Some(RecordedMerge::Carrier)
-        }
+        None if count && !any && equalities_count == 2 => Some(RecordedMerge::CountPair),
+        None if any && !count && equalities_count == 2 => Some(RecordedMerge::Carrier),
         _ if count || any => None,
-        None if equalities_count == 2 => Some(RecordedMerge::CarrierOrReverseAutomatic),
         Some(Direction::Ascending) if equalities_count == 1 => {
             Some(RecordedMerge::ReverseAutomatic)
         }
@@ -1055,12 +1069,21 @@ fn ordinary_equality_field(filter: &FilterExpr) -> Option<&FieldPath> {
     }
 }
 
-/// The query shapes from observation 2a. The plain equality admits the mirrored case at
-/// group scope. The other shapes only admit the descending-name case.
+/// Plain equality admits the mirrored automatic refusal in both scopes. Observation 2b
+/// also distinguishes the ordered collection read served only by a group composite.
 fn recorded_equality_refusal(
     query: &Query,
     aggregations: &[Aggregation],
 ) -> Option<EqualityRefusal> {
+    if query.filter.is_none()
+        && !query.scope.all_descendants()
+        && aggregations.is_empty()
+        && matches!(&query.order_by[..], [field, name] if !field.field.is_document_name()
+            && field.direction == Direction::Ascending && name.field.is_document_name()
+            && name.direction == Direction::Descending)
+    {
+        return Some(EqualityRefusal::OrderedGroupComposite);
+    }
     let filter = query.filter.as_ref()?;
     let name_only = query
         .order_by
@@ -1123,8 +1146,8 @@ fn conjunction_atoms<'a>(
     }
 }
 
-/// Refusal (c) overrides only a mismatched automatic mode when no composite serves the
-/// equality-only requirement. The base prefers the requested mode when it is available.
+/// The recorded single-field refusals cover a mismatched automatic mode (c) or a
+/// collection read supported only by the group-scoped ordered composite (Q7).
 fn refuses_single_equality(
     req: &Requirement,
     set: &IndexSet,
@@ -1134,11 +1157,28 @@ fn refuses_single_equality(
     base: &IndexDefinition,
 ) -> bool {
     let requested = requested_name_direction(req);
-    let recorded = match (requested, shape.equality_refusal) {
-        (Direction::Descending, Some(_)) => true,
-        (Direction::Ascending, Some(EqualityRefusal::EitherName)) => group,
-        _ => false,
-    };
+    // A collection equality or unfiltered ordering cannot use just a group (field ASC, name DESC).
+    if !group
+        && requested == Direction::Descending
+        && matches!(
+            shape.equality_refusal,
+            Some(EqualityRefusal::EitherName | EqualityRefusal::OrderedGroupComposite)
+        )
+        && matches!(&base.fields[..], [field, name] if field.mode == IndexFieldMode::Ascending
+            && name.path.is_document_name() && name.mode == IndexFieldMode::Descending
+            && set.is_exempt(collection, &field.path, false))
+        && base.query_scope == IndexQueryScope::CollectionGroup
+    {
+        return set
+            .composites_for(collection)
+            .filter(|i| composite_serves(i, req, collection, group))
+            .all(|i| i == base);
+    }
+    let recorded = matches!(
+        (requested, shape.equality_refusal),
+        (Direction::Descending, Some(_))
+            | (Direction::Ascending, Some(EqualityRefusal::EitherName))
+    );
     recorded
         && req.equality.len() == 1
         && req.contains.is_none()
@@ -1170,15 +1210,128 @@ enum RecordedMergeOutcome {
     MembersForUnserved(Vec<IndexDefinition>),
 }
 
-/// Build the recorded merge from the automatic members (a) or the unique ascending
-/// collection carrier and the remaining automatic members (b). The caller gates the
-/// canonical query form and scope; the coverage here is by filter kind.
+struct RelevantConfiguration<'a> {
+    composites: Vec<&'a IndexDefinition>,
+    modes: Vec<SingleFieldModes>,
+}
+
+impl<'a> RelevantConfiguration<'a> {
+    /// Compare every composite on the collection and both scopes' modes for each named field.
+    fn for_fields(set: &'a IndexSet, collection: &CollectionId, fields: &[&FieldPath]) -> Self {
+        let composites = set.composites_for(collection).collect();
+        let modes = fields
+            .iter()
+            .map(|f| set.single_field_modes(collection, f))
+            .collect();
+        Self { composites, modes }
+    }
+
+    /// Recorded composites and mode entries are distinct. Ignore catalog insertion order
+    /// while comparing each composite's scope and ordered fields exactly.
+    fn matches(
+        &self,
+        composites: &[&IndexDefinition],
+        modes: &[&[(IndexQueryScope, IndexFieldMode)]],
+    ) -> bool {
+        self.composites.len() == composites.len()
+            && composites.iter().all(|i| self.composites.contains(i))
+            && self.modes.len() == modes.len()
+            && self.modes.iter().zip(modes).all(|(actual, expected)| {
+                actual.len() == expected.len() && expected.iter().all(|mode| actual.contains(mode))
+            })
+    }
+}
+
+/// Complete an otherwise unserved recorded query. The two-equality plain query admits
+/// the additional carriers from observation 2b. The count admits the two ascending carriers.
 fn recorded_merge(
     req: &Requirement,
     set: &IndexSet,
     collection: &CollectionId,
     group: bool,
+    case: RecordedMerge,
 ) -> Option<Vec<IndexDefinition>> {
+    use IndexFieldMode::{Ascending, Contains, Descending};
+    if matches!(
+        case,
+        RecordedMerge::GroupDescendingPair
+            | RecordedMerge::SharedArrayPath
+            | RecordedMerge::SharedAscending
+            | RecordedMerge::ReverseAutomatic
+    ) {
+        return None;
+    }
+    let contains = req.contains.as_ref()?;
+    if case == RecordedMerge::DescendingMember {
+        let equality = &req.equality[0];
+        let name = FieldPath::document_name();
+        let member = single_field_index(collection, false, equality, Ascending, Descending);
+        let catalog =
+            RelevantConfiguration::for_fields(set, collection, &[equality, contains, &name]);
+        if catalog.matches(&[&member], &[&[], BUILTIN_MODES, BUILTIN_MODES]) {
+            return Some(vec![
+                single_field_index(collection, false, contains, Contains, Descending),
+                member,
+            ]);
+        }
+    }
+    if matches!(
+        case,
+        RecordedMerge::CarrierOrReverseAutomatic | RecordedMerge::CountPair
+    ) {
+        use IndexQueryScope::{Collection, CollectionGroup};
+        let [e1, e2] = req.equality.as_slice() else {
+            return None;
+        };
+        let carrier = |scope, field: &FieldPath, mode| IndexDefinition {
+            collection_group: collection.clone(),
+            query_scope: scope,
+            fields: vec![
+                IndexField {
+                    path: field.clone(),
+                    mode,
+                },
+                IndexField {
+                    path: contains.clone(),
+                    mode: Contains,
+                },
+            ],
+        };
+        let asc = carrier(Collection, e1, Ascending);
+        let second = carrier(Collection, e2, Ascending);
+        let catalog = RelevantConfiguration::for_fields(set, collection, &[e1, e2, contains]);
+        if !group && catalog.matches(&[&asc, &second], &[&[], &[], &[]]) {
+            return Some(vec![second, asc]);
+        }
+        if case == RecordedMerge::CarrierOrReverseAutomatic {
+            let mut desc = carrier(Collection, e1, Descending);
+            let group_carrier = carrier(CollectionGroup, e1, Ascending);
+            let remainder = || single_field_index(collection, group, e2, Ascending, Ascending);
+            let modes = [&[][..], BUILTIN_MODES, &[]];
+            if !group
+                && (catalog.matches(&[&asc, &desc], &modes) || catalog.matches(&[&desc], &modes))
+            {
+                desc.fields.push(IndexField {
+                    path: FieldPath::document_name(),
+                    mode: Ascending,
+                });
+                return Some(vec![desc, remainder()]);
+            }
+            if catalog.matches(
+                &[&group_carrier],
+                &[
+                    &[],
+                    &[(Collection, Ascending), (CollectionGroup, Ascending)],
+                    &[],
+                ],
+            ) {
+                return Some(vec![group_carrier, remainder()]);
+            }
+        }
+        if group {
+            return None;
+        }
+    }
     match recorded_merge_outcome(req, set, collection, group) {
         RecordedMergeOutcome::Members(members)
         | RecordedMergeOutcome::MembersForUnserved(members) => Some(members),
@@ -1269,7 +1422,7 @@ fn recorded_merge_outcome(
             has_unqualified_carrier = true;
             continue;
         }
-        // The recorded row shows one carrier. Several are outside the plan guards.
+        // The earlier plan replacement requires a unique ascending collection carrier.
         if carrier.replace((served, index)).is_some() {
             return RecordedMergeOutcome::Unavailable;
         }
@@ -1315,7 +1468,10 @@ fn recorded_plan(
         .map(|field| automatic(field, name_mode))
         .collect();
     match case {
-        RecordedMerge::SharedArrayPath => {
+        RecordedMerge::SharedArrayPath | RecordedMerge::SharedAscending => {
+            if req.equality.len() != 2 {
+                return None;
+            }
             let contains = req.contains.as_ref()?;
             if ordered != base
                 || !has_single_field_mode(
@@ -1491,8 +1647,8 @@ enum DisjunctDecision {
     Missing(IndexDefinition),
 }
 
-/// Apply the recorded overrides to the pre-stage-B decision. Refusal (c) affects only
-/// automatic single-field scans; the merge rules preserve single-index priority.
+/// Apply the recorded overrides to the pre-stage-B decision. Each added refusal
+/// identifies the recorded catalog as well as the canonical query shape.
 fn decide_disjunct(
     req: &Requirement,
     indexes: &IndexSet,
@@ -1513,21 +1669,91 @@ fn decide_disjunct(
     let Some(case) = shape.merge else {
         return base;
     };
-    let members = match &base {
-        DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_)
-            if matches!(
-                case,
-                RecordedMerge::Descending
-                    | RecordedMerge::Carrier
-                    | RecordedMerge::CarrierOrReverseAutomatic
-            ) =>
-        {
-            recorded_merge(req, indexes, collection, group)
+    // These refusals, including the already refused neighbours, suggest the array field first.
+    // Keep the original requirement and its display order for all other configurations.
+    if let Some(array) = &req.contains {
+        use IndexFieldMode::{Ascending, Contains, Descending};
+        let missing = matches!(
+            base,
+            DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_)
+        );
+        let array_first = match (case, req.equality.as_slice()) {
+            (RecordedMerge::DescendingMember, [field])
+                if indexes.is_exempt(collection, field, false)
+                    && indexes.is_exempt(collection, array, false) =>
+            {
+                matches!(base, DisjunctDecision::Scan(PlannedScan::Index(_)))
+                    && indexes
+                        .composites_for(collection)
+                        .filter(|i| composite_serves(i, req, collection, false))
+                        .all(|i| {
+                            i.query_scope == IndexQueryScope::Collection && i.fields.len() == 2
+                        })
+            }
+            (RecordedMerge::SharedAscending, fields) => {
+                fields.iter().all(|field| {
+                    let mut modes = indexes.single_field_modes(collection, field);
+                    modes.retain(|(scope, _)| *scope == IndexQueryScope::Collection);
+                    matches!(
+                        (field == array, modes.as_slice()),
+                        (true, [(_, Contains)]) | (false, [(_, Ascending | Descending)])
+                    )
+                }) && !indexes
+                    .composites_for(collection)
+                    .any(|i| i.fields.iter().any(|f| f.path == *array))
+            }
+            (RecordedMerge::ReverseAutomatic, [field]) if missing => {
+                indexes.is_exempt(collection, field, false)
+                    && has_single_field_mode(indexes, collection, array, false, Contains)
+                    && indexes.composites().contains(&single_field_index(
+                        collection, false, field, Ascending, Descending,
+                    ))
+            }
+            (RecordedMerge::GroupDescendingPair | RecordedMerge::DescendingTriple, fields)
+                if missing =>
+            {
+                indexes.is_exempt(collection, array, group)
+                    && indexes.composites_for(collection).any(|i| {
+                        let Some((member, prefix)) = i.fields.split_last() else {
+                            return false;
+                        };
+                        i.query_scope == scope_for(group)
+                            && member.path == *array
+                            && member.mode == Contains
+                            && prefix.len() + 1 == fields.len()
+                            && prefix.iter().all(|f| {
+                                f.mode == Ascending
+                                    && fields.contains(&f.path)
+                                    && indexes.is_exempt(collection, &f.path, group)
+                            })
+                            && fields.iter().any(|f| {
+                                !prefix.iter().any(|p| p.path == *f)
+                                    && has_single_field_mode(
+                                        indexes, collection, f, group, Ascending,
+                                    )
+                            })
+                    })
+            }
+            _ => false,
+        };
+        if array_first {
+            let mut decision = unserved(req, collection, group, ctx);
+            if let DisjunctDecision::Assumed(index) | DisjunctDecision::Missing(index) =
+                &mut decision
+            {
+                index.fields[..=req.equality.len()].rotate_right(1);
+            }
+            return decision;
         }
-        DisjunctDecision::Scan(PlannedScan::Merge(members)) => {
+    }
+    let members = match &base {
+        DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_) => {
+            recorded_merge(req, indexes, collection, group, case)
+        }
+        DisjunctDecision::Scan(PlannedScan::Merge(members)) if !group => {
             recorded_plan(req, indexes, collection, case, members)
         }
-        _ => None,
+        DisjunctDecision::Scan(_) => None,
     };
     match members {
         Some(members) => DisjunctDecision::Scan(PlannedScan::Merge(members)),
@@ -2015,9 +2241,8 @@ mod performance_tests {
     }
 }
 
-/// The stage-B layer changes the pre-stage-B answer only under its gate and only by its two
-/// overrides (the Rust side of `IM.head_eq_base_outside_guards`, `IM.head_eq_base_emulator` and
-/// `IM.first_attempt_kept`).
+/// Check the complete base answer outside the recorded guards, including the member order.
+/// The emulator and Enterprise keep their base answers for every generated query.
 #[cfg(test)]
 mod stage_b_layer_tests {
     use super::*;
@@ -2048,6 +2273,11 @@ mod stage_b_layer_tests {
                 field,
                 op: FieldOp::Equal,
                 value,
+            },
+            10 if !field.is_document_name() => FilterExpr::Field {
+                field,
+                op: FieldOp::Equal,
+                value: array,
             },
             3 => FilterExpr::Field {
                 field,
@@ -2088,9 +2318,9 @@ mod stage_b_layer_tests {
 
     fn query_strategy() -> impl Strategy<Value = Query> {
         (
-            proptest::collection::vec((0u8..10, 0usize..5), 0..4),
+            proptest::collection::vec((0u8..11, 0usize..5), 0..5),
             proptest::bool::weighted(0.15),
-            0usize..5,
+            0usize..6,
             proptest::bool::weighted(0.2),
         )
             .prop_filter_map("canonical", |(atoms, or, order, group)| {
@@ -2113,7 +2343,11 @@ mod stage_b_layer_tests {
                     1 => &[("__name__", Direction::Ascending)],
                     2 => &[("__name__", Direction::Descending)],
                     3 => &[("e", Direction::Ascending)],
-                    _ => &[("a", Direction::Descending)],
+                    4 => &[("a", Direction::Descending)],
+                    _ => &[
+                        ("a", Direction::Ascending),
+                        ("__name__", Direction::Descending),
+                    ],
                 };
                 for (f, d) in orders {
                     q = q.with_order(OrderClause {
@@ -2195,6 +2429,213 @@ mod stage_b_layer_tests {
     }
 
     proptest! {
+        #[test]
+        fn one_changed_relevant_entry_preserves_the_base_or_an_independent_recorded_rule(
+            edit in 0..5usize,
+            pick in 0..12usize,
+            mode in 0..4usize,
+            at_group in any::<bool>(),
+        ) {
+            use IndexFieldMode::{Ascending, Contains, Descending};
+            let collection = CollectionId::try_new("qx").unwrap();
+            let carrier = |field, mode, group| IndexDefinition {
+                collection_group: collection.clone(),
+                query_scope: scope_for(group),
+                fields: vec![
+                    IndexField {
+                        path: path(field),
+                        mode,
+                    },
+                    IndexField {
+                        path: path("tags"),
+                        mode: Contains,
+                    },
+                ],
+            };
+            let asc = carrier("a", Ascending, false);
+            let desc = carrier("a", Descending, false);
+            let member = single_field_index(&collection, false, &path("a"), Ascending, Descending);
+            let ctx = PlanningContext {
+                edition: FirestoreEdition::Standard,
+                api_mode: FirestoreApiMode::Native,
+                policy: IndexValidationPolicy::Production,
+            };
+            for (row, group, count, composites) in [
+                (
+                    1,
+                    false,
+                    false,
+                    vec![asc.clone(), carrier("b", Ascending, false)],
+                ),
+                (
+                    1,
+                    false,
+                    true,
+                    vec![asc.clone(), carrier("b", Ascending, false)],
+                ),
+                (4, false, false, vec![asc.clone(), desc.clone()]),
+                (8, false, false, vec![member.clone()]),
+                (9, true, false, vec![carrier("a", Ascending, true)]),
+                (10, false, false, vec![desc.clone()]),
+                (11, false, false, vec![carrier("a", Ascending, true)]),
+            ] {
+                let mut set = IndexSet::default();
+                // Reverse the fixture order to check that it cannot select the plan order.
+                for index in composites.iter().rev() {
+                    set.add_composite(index.clone());
+                }
+                set.set_single_field_indexes(&collection, &path("a"), vec![]);
+                if row != 8 {
+                    set.set_single_field_indexes(&collection, &path("tags"), vec![]);
+                }
+                if row == 1 {
+                    set.set_single_field_indexes(&collection, &path("b"), vec![]);
+                } else if matches!(row, 9 | 11) {
+                    set.set_single_field_indexes(
+                        &collection,
+                        &path("b"),
+                        vec![(scope_for(true), Ascending), (scope_for(false), Ascending)],
+                    );
+                }
+                let explicit_name = row == 8;
+                let mut q = Query::new(if group {
+                    QueryScope::collection_group(collection.clone())
+                } else {
+                    QueryScope::collection(None, collection.clone())
+                });
+                let mut filters = vec![atom(0, 0)];
+                if !explicit_name {
+                    filters.push(atom(0, 1));
+                }
+                filters.push(atom(3, 2));
+                q = q.with_filter(FilterExpr::And(filters));
+                if explicit_name {
+                    q = q.with_order(OrderClause {
+                        field: FieldPath::document_name(),
+                        direction: Direction::Descending,
+                    });
+                }
+                let q = q.canonicalize().unwrap();
+                let req = requirement_for(&q.dnf()[0], &q.effective_order_by());
+                let shape = RecordedShape::of(
+                    &q,
+                    if count {
+                        &[Aggregation::Count { up_to: None }]
+                    } else {
+                        &[]
+                    },
+                );
+                let original = decide_disjunct(&req, &set, &collection, group, ctx, shape);
+                prop_assert!(matches!(
+                    original,
+                    DisjunctDecision::Scan(PlannedScan::Merge(_))
+                ));
+
+                for extra_scope in [IndexQueryScope::Collection, IndexQueryScope::CollectionGroup] {
+                    for fields in [
+                        &[("a", Ascending), ("tags", Contains), ("c", Ascending)][..],
+                        &[("b", Ascending), ("tags", Contains), ("c", Ascending)],
+                        &[("c", Ascending), ("d", Ascending)],
+                    ] {
+                        let mut changed = set.clone();
+                        changed.add_composite(IndexDefinition {
+                            collection_group: collection.clone(),
+                            query_scope: extra_scope,
+                            fields: fields.iter().map(|&(f, mode)| IndexField {
+                                path: path(f),
+                                mode,
+                            }).collect(),
+                        });
+                        let base = decide_disjunct_base(&req, &changed, &collection, group, ctx);
+                        let head = decide_disjunct(&req, &changed, &collection, group, ctx, shape);
+                        let expected = if row == 4 {
+                            // The pinned head completes this refusal with the earlier ascending carrier.
+                            prop_assert!(matches!(base, DisjunctDecision::Missing(_)));
+                            DisjunctDecision::Scan(PlannedScan::Merge(vec![
+                                asc.clone(),
+                                single_field_index(&collection, false, &path("b"), Ascending, Ascending),
+                            ]))
+                        } else {
+                            base
+                        };
+                        prop_assert_eq!(head, expected, "Q{} count={} {:?} {:?}", row, count, extra_scope, fields);
+                    }
+                }
+                let selected = &composites[pick % composites.len()];
+                match edit {
+                    0 => {
+                        let fields = if explicit_name {
+                            ["a", "tags", "__name__"]
+                        } else {
+                            ["a", "b", "tags"]
+                        };
+                        let field = path(fields[pick % fields.len()]);
+                        let mut modes = set.single_field_modes(&collection, &field);
+                        let entry = (
+                            scope_for(at_group),
+                            [
+                                Ascending,
+                                Descending,
+                                Contains,
+                                IndexFieldMode::Vector { dimension: 4 },
+                            ][mode],
+                        );
+                        if modes.contains(&entry) {
+                            modes.retain(|m| m != &entry);
+                        } else {
+                            modes.push(entry);
+                        }
+                        set.set_single_field_indexes(&collection, &field, modes);
+                    }
+                    1 => {
+                        set.add_composite(if row == 10 && !at_group {
+                            asc.clone()
+                        } else {
+                            required_index(&req, &collection, at_group)
+                        });
+                    }
+                    2 => {
+                        set.remove_composite(selected);
+                    }
+                    3 | 4 => {
+                        set.remove_composite(selected);
+                        let mut changed = selected.clone();
+                        if edit == 3 {
+                            changed.fields[0].mode = if changed.fields[0].mode == Ascending {
+                                Descending
+                            } else {
+                                Ascending
+                            };
+                        } else {
+                            changed.query_scope =
+                                scope_for(changed.query_scope == IndexQueryScope::Collection);
+                        }
+                        set.add_composite(changed);
+                    }
+                    _ => unreachable!(),
+                }
+                let base = decide_disjunct_base(&req, &set, &collection, group, ctx);
+                let head = decide_disjunct(&req, &set, &collection, group, ctx, shape);
+                // Removing Q4's ascending carrier yields Q10; adding it to Q10 yields Q4.
+                if (row == 4 && edit == 2 && selected == &asc) || (row == 10 && edit == 1 && !at_group) {
+                    prop_assert_eq!(head, original);
+                } else if !group && matches!(base, DisjunctDecision::Missing(_)) {
+                    // Observation 2a still completes its own eligible collection reads.
+                    match recorded_merge_outcome(&req, &set, &collection, false) {
+                        RecordedMergeOutcome::Members(ms)
+                        | RecordedMergeOutcome::MembersForUnserved(ms) => {
+                            prop_assert_eq!(head, DisjunctDecision::Scan(PlannedScan::Merge(ms)));
+                        }
+                        _ => prop_assert_eq!(head, base),
+                    }
+                } else {
+                    prop_assert_eq!(head, base);
+                }
+            }
+        }
+    }
+
+    proptest! {
         #![proptest_config(ProptestConfig::with_cases(2048))]
 
         #[test]
@@ -2229,25 +2670,56 @@ mod stage_b_layer_tests {
                 }
                 prop_assert!(ctx.policy.production_rules());
                 prop_assert_eq!(ctx.edition, FirestoreEdition::Standard);
-                match (&base, &head) {
+                match (&base, &head, &req.contains) {
+                    (_, DisjunctDecision::Assumed(index) | DisjunctDecision::Missing(index), Some(array)) => {
+                        prop_assert!(!aggregate);
+                        prop_assert_eq!(query.dnf().len(), 1);
+                        match shape.merge {
+                            Some(RecordedMerge::DescendingMember) => {
+                                prop_assert!(!group && req.equality.len() == 1);
+                                prop_assert!(set.is_exempt(collection, array, false));
+                                prop_assert!(set.is_exempt(collection, &req.equality[0], false));
+                                prop_assert!(matches!(base, DisjunctDecision::Scan(PlannedScan::Index(_))));
+                            }
+                            Some(RecordedMerge::SharedAscending) => {
+                                prop_assert!(!group && req.equality.contains(array));
+                                prop_assert_eq!(requested_name_direction(&req), Direction::Ascending);
+                            }
+                            Some(RecordedMerge::GroupDescendingPair | RecordedMerge::DescendingTriple | RecordedMerge::ReverseAutomatic) => {
+                                prop_assert!(matches!(base, DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_)));
+                            }
+                            _ => prop_assert!(false, "unrecorded array refusal"),
+                        }
+                        let mut suggested = required_index(&req, collection, group);
+                        suggested.fields[..=req.equality.len()].rotate_right(1);
+                        prop_assert_eq!(index, &suggested);
+                        prop_assert_eq!(matches!(head, DisjunctDecision::Assumed(_)), ctx.policy.assumes_missing_indexes());
+                    }
                     // (c): the base used an automatic index with the opposite name direction.
-                    (DisjunctDecision::Scan(PlannedScan::Index(index)), _) => {
+                    (DisjunctDecision::Scan(PlannedScan::Index(index)), _, _) => {
                         prop_assert!(refuses_single_equality(&req, &set, collection, group, shape, index));
-                        prop_assert_eq!(req.equality.len(), 1);
-                        let asc = requested_name_direction(&req) == Direction::Ascending;
-                        prop_assert!(!asc || group);
-                        let opposite = if asc { IndexFieldMode::Descending } else { IndexFieldMode::Ascending };
-                        prop_assert_eq!(index.fields.first().map(|f| f.mode), Some(opposite));
+                        if index.query_scope == IndexQueryScope::CollectionGroup && !group {
+                            prop_assert!(!aggregate && req.equality.len() <= 1);
+                            prop_assert_eq!(requested_name_direction(&req), Direction::Descending);
+                            prop_assert!(set.is_exempt(collection, &index.fields[0].path, false));
+                        } else {
+                            prop_assert_eq!(req.equality.len(), 1);
+                            let asc = requested_name_direction(&req) == Direction::Ascending;
+                            let opposite = if asc { IndexFieldMode::Descending } else { IndexFieldMode::Ascending };
+                            prop_assert_eq!(index.fields.first().map(|f| f.mode), Some(opposite));
+                            prop_assert!(!asc || shape.equality_refusal == Some(EqualityRefusal::EitherName));
+                        }
                         prop_assert_eq!(head, unserved(&req, collection, group, ctx));
                     }
                     // (a) or (b): a refused collection disjunct becomes a recorded merge.
-                    (DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_), DisjunctDecision::Scan(PlannedScan::Merge(members))) => {
+                    (DisjunctDecision::Missing(_) | DisjunctDecision::Assumed(_), DisjunctDecision::Scan(PlannedScan::Merge(members)), _) => {
                         prop_assert!(matches!(shape.merge, Some(RecordedMerge::Descending
+                            | RecordedMerge::DescendingMember | RecordedMerge::DescendingTriple | RecordedMerge::CountPair
                             | RecordedMerge::Carrier | RecordedMerge::CarrierOrReverseAutomatic)));
                         prop_assert_eq!(query.dnf().len(), 1);
-                        prop_assert_eq!(Some(members.clone()), recorded_merge(&req, &set, collection, group));
+                        prop_assert_eq!(Some(members.clone()), recorded_merge(&req, &set, collection, group, shape.merge.unwrap()));
                     }
-                    (DisjunctDecision::Scan(PlannedScan::Merge(before)), DisjunctDecision::Scan(PlannedScan::Merge(after))) => {
+                    (DisjunctDecision::Scan(PlannedScan::Merge(before)), DisjunctDecision::Scan(PlannedScan::Merge(after)), _) => {
                         prop_assert!(!group && !aggregate);
                         prop_assert_eq!(query.dnf().len(), 1);
                         let recorded = shape.merge.and_then(|case| recorded_plan(&req, &set, collection, case, before));

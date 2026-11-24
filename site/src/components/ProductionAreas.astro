@@ -11,6 +11,7 @@ const products = [...new Set(rows.map((row) => row.product))];
 {products.map((product) => (
 	<>
 		<h3>{product}</h3>
+		<div class="fe-table-wrap">
 		<table>
 			<thead>
 				<tr><th>{t('table.area')}</th><th>{t('table.status')}</th><th>{t('table.conditionsVerified')}</th></tr>
@@ -42,5 +43,6 @@ const products = [...new Set(rows.map((row) => row.product))];
 				))}
 			</tbody>
 		</table>
+		</div>
 	</>
 ))}

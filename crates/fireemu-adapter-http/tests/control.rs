@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use fireemu_adapter_http::control::{
-    handle, handle_with, ControlState, ResourceHook, SnapshotHook, SnapshotPart, TransitionFailure,
-    MAX_SNAPSHOTS_PER_SESSION,
+    handle, handle_with, ControlState, PublishEventError, RemoteConfigPublication, ResourceHook,
+    SnapshotHook, SnapshotPart, TransitionFailure, MAX_SNAPSHOTS_PER_SESSION,
 };
 use fireemu_adapter_http::identity_toolkit::RequestHeaders;
 use fireemu_core_rules::runtime::RulesetSlot;
+use fireemu_core_session::barrier::AdmissionBarrier;
 use fireemu_core_session::clock::VirtualClock;
 use fireemu_core_session::tenancy::Scope;
 use fireemu_core_types::edition::FirestoreEdition;
@@ -36,6 +37,7 @@ fn state(counter: Arc<AtomicUsize>) -> ControlState {
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
         barrier: None,
         snapshot_hooks: Vec::new(),
@@ -431,20 +433,79 @@ fn fault_plans_are_validated_installed_reported_and_removed() {
     assert!(r.body["plan"].is_null());
 }
 
-struct FakeFunctions(Mutex<Vec<(String, Vec<Value>)>>);
+type FunctionCalls = Vec<(String, Vec<Value>)>;
+
+#[derive(Default)]
+struct FakeFunctions {
+    calls: Arc<Mutex<FunctionCalls>>,
+    refusal: Mutex<Option<PublishEventError>>,
+    cancelled: Arc<AtomicUsize>,
+    reset_barrier: Option<Arc<AdmissionBarrier>>,
+    reset_refused: Mutex<Option<bool>>,
+    /// Whether a reset was refused while the publication was enqueued.
+    publish_refused: Arc<Mutex<Option<bool>>>,
+}
+
+struct FakeRemoteConfigPublication {
+    calls: Arc<Mutex<FunctionCalls>>,
+    cancelled: Arc<AtomicUsize>,
+    version: Option<Value>,
+    reset_barrier: Option<Arc<AdmissionBarrier>>,
+    publish_refused: Arc<Mutex<Option<bool>>>,
+}
+
+impl RemoteConfigPublication for FakeRemoteConfigPublication {
+    fn publish(mut self: Box<Self>) {
+        if let Some(barrier) = &self.reset_barrier {
+            *self.publish_refused.lock().unwrap() = Some(barrier.try_exclusive().is_none());
+        }
+        self.calls.lock().unwrap().push((
+            "remoteConfigVersion".into(),
+            vec![self.version.take().unwrap()],
+        ));
+    }
+}
+
+impl Drop for FakeRemoteConfigPublication {
+    fn drop(&mut self) {
+        if self.version.is_some() {
+            self.cancelled.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
 
 impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
+    fn reserve_remote_config_version(
+        &self,
+        version: &Value,
+    ) -> Result<Box<dyn RemoteConfigPublication>, PublishEventError> {
+        let publication = Box::new(FakeRemoteConfigPublication {
+            calls: self.calls.clone(),
+            cancelled: self.cancelled.clone(),
+            version: Some(version.clone()),
+            reset_barrier: self.reset_barrier.clone(),
+            publish_refused: self.publish_refused.clone(),
+        });
+        if let Some(barrier) = &self.reset_barrier {
+            *self.reset_refused.lock().unwrap() = Some(barrier.try_exclusive().is_none());
+        }
+        if let Some(error) = *self.refusal.lock().unwrap() {
+            // Simulate rejecting admission after obtaining a provisional publication.
+            return Err(error);
+        }
+        Ok(publication)
+    }
+
     fn publish_remote_config(
         &self,
         body: &Value,
     ) -> Result<usize, fireemu_adapter_http::control::PublishEventError> {
-        use fireemu_adapter_http::control::PublishEventError;
         match body["failure"].as_str() {
             Some("invalid") => Err(PublishEventError::Invalid),
             Some("capacity") => Err(PublishEventError::Capacity),
             Some("unavailable") => Err(PublishEventError::Unavailable),
             _ => {
-                self.0
+                self.calls
                     .lock()
                     .unwrap()
                     .push(("remoteConfig".into(), vec![body.clone()]));
@@ -497,7 +558,7 @@ impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
         topic: &str,
         messages: &[Value],
     ) -> Result<Vec<String>, fireemu_adapter_http::control::PublishMessagesError> {
-        self.0
+        self.calls
             .lock()
             .unwrap()
             .push((topic.to_owned(), messages.to_vec()));
@@ -510,7 +571,7 @@ impl fireemu_adapter_http::control::FunctionsHook for FakeFunctions {
 
 #[test]
 fn pubsub_publish_routes_check_the_project_and_the_message_shape() {
-    let published = Arc::new(FakeFunctions(Mutex::new(Vec::new())));
+    let published = Arc::new(FakeFunctions::default());
     let mut s = state(Arc::new(AtomicUsize::new(0)));
     s.functions = Some(published.clone());
     let ok =
@@ -565,7 +626,7 @@ fn pubsub_publish_routes_check_the_project_and_the_message_shape() {
         &json!({"messages": [{"json": {"a": 1}}]}),
     );
     assert_eq!(r.status, 200);
-    let calls = published.0.lock().unwrap();
+    let calls = published.calls.lock().unwrap();
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[2].1[0]["data"], "eyJhIjoxfQ==");
 }
@@ -2929,7 +2990,7 @@ fn the_clock_routes_notify_functions_on_success_only_and_count_rewinds() {
 #[test]
 fn a_manual_run_route_without_a_name_is_not_found() {
     let mut s = state(Arc::new(AtomicUsize::new(0)));
-    s.functions = Some(Arc::new(FakeFunctions(Mutex::new(Vec::new()))));
+    s.functions = Some(Arc::new(FakeFunctions::default()));
     let nameless = handle(
         &s,
         "POST",
@@ -2957,7 +3018,7 @@ fn a_manual_run_route_without_a_name_is_not_found() {
 #[test]
 fn a_manual_run_refused_for_capacity_answers_resource_exhausted() {
     let mut s = state(Arc::new(AtomicUsize::new(0)));
-    s.functions = Some(Arc::new(FakeFunctions(Mutex::new(Vec::new()))));
+    s.functions = Some(Arc::new(FakeFunctions::default()));
     let run = |name: &str| {
         handle(
             &s,
@@ -2993,7 +3054,7 @@ fn a_manual_run_refused_for_capacity_answers_resource_exhausted() {
 #[test]
 fn run_on_a_task_queue_releases_the_waiting_tasks() {
     let mut s = state(Arc::new(AtomicUsize::new(0)));
-    s.functions = Some(Arc::new(FakeFunctions(Mutex::new(Vec::new()))));
+    s.functions = Some(Arc::new(FakeFunctions::default()));
     let run = |body: Value| {
         handle(
             &s,
@@ -3692,7 +3753,7 @@ fn remote_config_publication_always_requires_the_control_capability() {
 #[test]
 fn remote_config_control_scopes_calls_and_preserves_refusal_status() {
     let mut state = state(Arc::new(AtomicUsize::new(0)));
-    let hook = Arc::new(FakeFunctions(Mutex::new(Vec::new())));
+    let hook = Arc::new(FakeFunctions::default());
     state.functions = Some(hook.clone());
     state.sessions.lock().unwrap().extend([
         ("other".into(), "demo-other".into()),
@@ -3717,26 +3778,26 @@ fn remote_config_control_scopes_calls_and_preserves_refusal_status() {
             &body,
         );
         assert_eq!(response.status, status, "{}", response.body);
-        assert!(hook.0.lock().unwrap().is_empty());
+        assert!(hook.calls.lock().unwrap().is_empty());
     }
     let path = "/v1/sessions/default/functions/remoteConfig:publish?fixture=1";
     assert_eq!(
         handle_with(&state, "POST", path, &RequestHeaders::default(), &body).status,
         403
     );
-    assert!(hook.0.lock().unwrap().is_empty());
+    assert!(hook.calls.lock().unwrap().is_empty());
     for (failure, status) in [("invalid", 400), ("capacity", 429), ("unavailable", 503)] {
         assert_eq!(
             handle_with(&state, "POST", path, &token, &json!({"failure": failure})).status,
             status
         );
-        assert!(hook.0.lock().unwrap().is_empty());
+        assert!(hook.calls.lock().unwrap().is_empty());
     }
     let response = handle_with(&state, "POST", path, &token, &body);
     assert_eq!(response.status, 200);
     assert_eq!(response.body, json!({"deliveries": 2}));
     assert_eq!(
-        *hook.0.lock().unwrap(),
+        *hook.calls.lock().unwrap(),
         [("remoteConfig".into(), vec![body])]
     );
 }
@@ -3785,7 +3846,7 @@ fn remote_config_wire_auth() -> fireemu_adapter_http::identity_toolkit::AuthStat
 async fn remote_config_wire_authentication_precedes_json_parsing() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut state = state(Arc::new(AtomicUsize::new(0)));
-    let hook = Arc::new(FakeFunctions(Mutex::new(Vec::new())));
+    let hook = Arc::new(FakeFunctions::default());
     state.functions = Some(hook.clone());
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -3822,10 +3883,485 @@ async fn remote_config_wire_authentication_precedes_json_parsing() {
             "{response}"
         );
     }
-    assert!(hook.0.lock().unwrap().is_empty());
+    assert!(hook.calls.lock().unwrap().is_empty());
     tokio::net::TcpListener::bind(addr)
         .await
         .expect("the test listener was released");
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn admin_publish_delivers_only_committed_client_versions() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const LEGACY: &str = "/v1/projects/demo-app/remoteConfig";
+    const CLIENT: &str = "/v1/projects/demo-app/namespaces/firebase/remoteConfig";
+    const SERVER: &str = "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig";
+    const SERVER_READ: &str = "/v1/projects/demo-app/namespaces/firebase-server/serverRemoteConfig";
+    const TIME: &str = "2026-08-29T12:01:00Z";
+
+    for client in [LEGACY, CLIENT] {
+        let mut state = state(Arc::new(AtomicUsize::new(0)));
+        let hook = Arc::new(FakeFunctions::default());
+        state.functions = Some(hook.clone());
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+            listener,
+            Arc::new(remote_config_wire_auth()),
+            Arc::new(state),
+        ));
+        let request = |method: &str,
+                       path: String,
+                       body: &str,
+                       etag: Option<&str>,
+                       authorized: bool| {
+            let etag = etag.map_or_else(String::new, |tag| format!("If-Match: {tag}\r\n"));
+            let token = if authorized { "test-token" } else { "wrong" };
+            // The Remote Config wire response returns ETag only with gzip.
+            let gzip = if method == "GET" {
+                "Accept-Encoding: gzip\r\n"
+            } else {
+                ""
+            };
+            let wire = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{etag}{gzip}\r\n{body}", body.len());
+            async move {
+                let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+                stream.write_all(wire.as_bytes()).await.unwrap();
+                let mut response = Vec::new();
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    stream.read_to_end(&mut response),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                let end = response
+                    .windows(4)
+                    .position(|part| part == b"\r\n\r\n")
+                    .unwrap();
+                let head = std::str::from_utf8(&response[..end]).unwrap();
+                let status = head
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .parse::<u16>()
+                    .unwrap();
+                let etag = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("etag: "))
+                    .map(str::to_owned);
+                let body = if gzip.is_empty() {
+                    serde_json::from_slice(&response[end + 4..]).unwrap()
+                } else {
+                    Value::Null
+                };
+                (status, etag, body, response.split_off(end + 4))
+            }
+        };
+        let committed = [
+            json!({
+                "versionNumber": "1", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "FORCED_UPDATE", "description": "d",
+            }),
+            json!({
+                "versionNumber": "2", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "INCREMENTAL_UPDATE",
+            }),
+            json!({
+                "versionNumber": "3", "updateTime": TIME, "updateOrigin": "REST_API",
+                "updateType": "ROLLBACK", "description": "Rollback to version 1", "rollbackSource": "1",
+            }),
+        ].map(|version| ("remoteConfigVersion".to_owned(), vec![version]));
+
+        let commit =
+            async |method: &str, path: String, body: &str, tag: Option<&str>, index: usize| {
+                let history = format!("{client}:listVersions");
+                let before = request("GET", client.into(), "", None, true).await;
+                let history_before = request("GET", history.clone(), "", None, true).await;
+                let cancelled = hook.cancelled.load(Ordering::SeqCst);
+                for (attempt, (failure, status, code, message)) in [
+                    (
+                        PublishEventError::Capacity,
+                        429,
+                        "RESOURCE_EXHAUSTED",
+                        "the functions event queue is at capacity",
+                    ),
+                    (
+                        PublishEventError::Invalid,
+                        503,
+                        "UNAVAILABLE",
+                        "the functions runtime cannot admit events",
+                    ),
+                    (
+                        PublishEventError::Unavailable,
+                        503,
+                        "UNAVAILABLE",
+                        "the functions runtime cannot admit events",
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    *hook.refusal.lock().unwrap() = Some(failure);
+                    let (actual, _, response, _) =
+                        request(method, path.clone(), body, tag, true).await;
+                    assert_eq!(actual, status, "{response}");
+                    assert_eq!(response["error"]["status"], code);
+                    assert_eq!(response["error"]["message"], message);
+                    assert_eq!(request("GET", client.into(), "", None, true).await, before);
+                    assert_eq!(
+                        request("GET", history.clone(), "", None, true).await,
+                        history_before
+                    );
+                    assert_eq!(*hook.calls.lock().unwrap(), committed[..index]);
+                    assert_eq!(
+                        hook.cancelled.load(Ordering::SeqCst),
+                        cancelled + attempt + 1
+                    );
+                }
+                *hook.refusal.lock().unwrap() = None;
+                let (status, _, response, _) = request(method, path, body, tag, true).await;
+                assert_eq!(status, 200, "{response}");
+                assert_eq!(response["version"], committed[index].1[0]);
+                assert_eq!(*hook.calls.lock().unwrap(), committed[..=index]);
+                assert_eq!(hook.cancelled.load(Ordering::SeqCst), cancelled + 3);
+            };
+
+        commit(
+            "PUT",
+            client.into(),
+            r#"{"version":{"description":"d"}}"#,
+            Some("*"),
+            0,
+        )
+        .await;
+        let (status, etag, _, _) = request("GET", client.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.calls.lock().unwrap(), committed[..1]);
+        let etag = etag.unwrap();
+
+        for (method, path, body, tag, authorized, expected) in [
+            (
+                "PUT",
+                format!("{client}?validateOnly=true"),
+                "{}",
+                Some(etag.as_str()),
+                true,
+                200,
+            ),
+            ("PUT", client.into(), "{}", Some("\"stale\""), true, 412),
+            ("PUT", client.into(), "{}", None, true, 400),
+            (
+                "PUT",
+                client.into(),
+                r#"{"conditions":[{}]}"#,
+                Some("*"),
+                true,
+                400,
+            ),
+            (
+                "POST",
+                format!("{client}:rollback"),
+                r#"{"versionNumber":"99"}"#,
+                None,
+                true,
+                404,
+            ),
+            ("PUT", client.into(), "{}", Some("*"), false, 401),
+            (
+                "PUT",
+                client.replace("demo-app", "demo-other"),
+                "{}",
+                Some("*"),
+                true,
+                404,
+            ),
+        ] {
+            let (status, _, body, _) = request(method, path.clone(), body, tag, authorized).await;
+            assert_eq!(status, expected, "{method} {path}: {body}");
+            assert_eq!(
+                *hook.calls.lock().unwrap(),
+                committed[..1],
+                "{method} {path}"
+            );
+            assert_eq!(hook.cancelled.load(Ordering::SeqCst), 3, "{method} {path}");
+        }
+
+        commit("PUT", client.into(), "{}", Some(&etag), 1).await;
+        commit(
+            "POST",
+            format!("{client}:rollback"),
+            r#"{"versionNumber":"1"}"#,
+            None,
+            2,
+        )
+        .await;
+
+        let (status, _, _, _) = request("GET", SERVER_READ.into(), "", None, true).await;
+        assert_eq!(status, 404);
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+        let (status, _, body, _) = request("PUT", SERVER.into(), "{}", Some("*"), true).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["versionNumber"], "1");
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+        let (status, etag, _, _) = request("GET", SERVER.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+        let (status, _, body, _) = request("PUT", SERVER.into(), "{}", etag.as_deref(), true).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["updateType"], "INCREMENTAL_UPDATE");
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+        let (status, _, body, _) = request(
+            "POST",
+            format!("{SERVER}:rollback"),
+            r#"{"versionNumber":"1"}"#,
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["version"]["updateType"], "ROLLBACK");
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+
+        for path in [LEGACY, CLIENT, SERVER] {
+            for suffix in ["", "?versionNumber=1", "?versionNumber=99", ":listVersions"] {
+                let (status, _, _, _) =
+                    request("GET", format!("{path}{suffix}"), "", None, true).await;
+                assert_eq!(status, 200, "{path}{suffix}");
+                assert_eq!(*hook.calls.lock().unwrap(), committed, "{path}{suffix}");
+            }
+        }
+        let (status, _, _, _) = request("GET", SERVER_READ.into(), "", None, true).await;
+        assert_eq!(status, 200);
+        assert_eq!(*hook.calls.lock().unwrap(), committed);
+        assert_eq!(hook.cancelled.load(Ordering::SeqCst), 9);
+        server.abort();
+        let _ = server.await;
+    }
+}
+
+#[tokio::test]
+async fn admin_publish_waits_for_reset_during_reservation() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    for (query, published) in [("?validateOnly=true", false), ("", true)] {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("PUT /v1/projects/demo-app/remoteConfig{query} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+        assert_eq!(
+            *hook.reset_refused.lock().unwrap(),
+            published.then_some(true)
+        );
+        assert_eq!(
+            *hook.publish_refused.lock().unwrap(),
+            published.then_some(true)
+        );
+        assert_eq!(hook.calls.lock().unwrap().len(), usize::from(published));
+    }
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn admin_publish_waits_for_reset_during_reservation_namespaced() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!("PUT /v1/projects/demo-app/namespaces/firebase/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+    assert_eq!(*hook.reset_refused.lock().unwrap(), Some(true));
+    assert_eq!(*hook.publish_refused.lock().unwrap(), Some(true));
+    assert_eq!(hook.calls.lock().unwrap().len(), 1);
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn admin_rollback_waits_for_reset_during_reservation() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions {
+        reset_barrier: Some(barrier.clone()),
+        ..FakeFunctions::default()
+    });
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+
+    for (method, suffix, etag, body) in [
+        ("PUT", "", "If-Match: *\r\n", "{}"),
+        ("POST", ":rollback", "", r#"{"versionNumber":"1"}"#),
+    ] {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("{method} /v1/projects/demo-app/remoteConfig{suffix} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\n{etag}Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+
+        assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+        assert_eq!(hook.reset_refused.lock().unwrap().take(), Some(true));
+        assert_eq!(hook.publish_refused.lock().unwrap().take(), Some(true));
+        let mut calls = hook.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        calls.clear();
+    }
+    assert!(barrier.try_exclusive().is_some());
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admin_publish_observes_concurrent_commits_in_version_order() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const N: usize = 8;
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    let hook = Arc::new(FakeFunctions::default());
+    state.functions = Some(hook.clone());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let put = move |etag: String| async move {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!("PUT /v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nAccept-Encoding: gzip\r\nIf-Match: {etag}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let end = response
+            .windows(4)
+            .position(|part| part == b"\r\n\r\n")
+            .unwrap();
+        let head = std::str::from_utf8(&response[..end]).unwrap();
+        let status = head
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse::<u16>()
+            .unwrap();
+        let etag = head
+            .lines()
+            .find_map(|line| line.strip_prefix("etag: "))
+            .map(str::to_owned);
+        (status, etag)
+    };
+    let (status, etag) = put("*".to_owned()).await;
+    assert_eq!(status, 200);
+    assert_eq!(hook.calls.lock().unwrap().len(), 1);
+
+    let etag = etag.unwrap();
+    for (tag, expected_successes) in [(etag, 1), ("*".into(), N)] {
+        let previous_calls = hook.calls.lock().unwrap().len();
+        let start = Arc::new(tokio::sync::Barrier::new(N));
+        let mut tasks = Vec::new();
+        for _ in 0..N {
+            let tag = tag.clone();
+            let start = start.clone();
+            tasks.push(tokio::spawn(async move {
+                start.wait().await;
+                put(tag).await.0
+            }));
+        }
+        let mut successes = 0;
+        for task in tasks {
+            match task.await.unwrap() {
+                200 => successes += 1,
+                412 => {}
+                status => panic!("unexpected publish status {status}"),
+            }
+        }
+        assert_eq!(successes, expected_successes);
+        assert_eq!(
+            hook.calls.lock().unwrap().len(),
+            previous_calls + expected_successes
+        );
+    }
+    let versions: Vec<_> = hook
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, versions)| {
+            versions[0]["versionNumber"]
+                .as_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(versions, (1..=N + 2).collect::<Vec<_>>());
+    server.abort();
+    let _ = server.await;
 }
 
 /// A hook whose publish answers a fixed refusal.
@@ -4110,4 +4646,98 @@ fn a_sync_uses_one_wall_reading() {
         LogicalInstant::from_nanos(last),
         "no lag behind the wall clock"
     );
+}
+
+/// Reads and validate-only requests take no session admission: with a reset holding the
+/// barrier exclusively (the state in which a pending reset blocks new admissions), each still
+/// answers. The server runs on its own runtime and the client on a plain thread, so a
+/// regression that blocks a worker cannot stall the test; the receive timeout only bounds such
+/// a regression and synchronises nothing. The reset is released before a failure is reported.
+#[test]
+fn admin_reads_proceed_while_a_reset_holds_the_barrier() {
+    use std::io::{Read, Write};
+
+    let barrier = Arc::new(AdmissionBarrier::new());
+    let hook = Arc::new(FakeFunctions::default());
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.barrier = Some(barrier.clone());
+    state.functions = Some(hook.clone());
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind(("127.0.0.1", 0)))
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = runtime.spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let reset = barrier.exclusive();
+    let mut failures = Vec::new();
+    for (method, path, body, expected) in [
+        ("GET", "/v1/projects/demo-app/remoteConfig", "", "200"),
+        (
+            "GET",
+            "/v1/projects/demo-app/remoteConfig?versionNumber=1",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/remoteConfig:listVersions",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig",
+            "",
+            "200",
+        ),
+        (
+            "GET",
+            "/v1/projects/demo-app/namespaces/firebase-server/serverRemoteConfig",
+            "",
+            "404",
+        ),
+        (
+            "PUT",
+            "/v1/projects/demo-app/remoteConfig?validateOnly=true",
+            "{}",
+            "200",
+        ),
+        (
+            "PUT",
+            "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig?validate_only=true",
+            "{}",
+            "200",
+        ),
+    ] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let request = format!("{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(addr).unwrap();
+            stream.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+            let _ = sender.send(response);
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(response) if response.starts_with(&format!("HTTP/1.1 {expected} ")) => {}
+            Ok(response) => failures.push(format!("{method} {path}: {response}")),
+            Err(_) => {
+                failures.push(format!("{method} {path} waited for the reset"));
+                break;
+            }
+        }
+    }
+    drop(reset);
+    server.abort();
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert!(hook.calls.lock().unwrap().is_empty());
 }

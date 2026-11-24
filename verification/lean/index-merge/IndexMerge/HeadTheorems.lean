@@ -1,4 +1,4 @@
-import IndexMerge.Head
+import IndexMerge.HeadPinned
 import IndexMerge.Theorems
 
 /-!
@@ -10,7 +10,7 @@ import IndexMerge.Theorems
   `head_eq_base_group_outside_guards`: for the emulator policy, on Enterprise and at
   collection-group scope outside the recorded refusal and merge guards.
 - `head_override`: what each override answers.
-- `first_attempt_kept`: the head keeps a serving base merge outside the plan replacement guards.
+- `first_attempt_kept`: the head keeps a serving base merge outside the plan replacements and array-first refusals.
 - `recorded_kinds`, `head_merge_kinds`: a merge the recorded rules add covers every equality by
   a member with that field in an ordered mode and the array filter by a member with that field
   in contains mode.
@@ -20,40 +20,26 @@ namespace IM
 
 /-! ## Head and base agree outside the guards -/
 
-/-- When none of the overrides (c), (a), (b) fires, the head answer is the base answer. -/
+/-- Equality includes the selected members, their order and the exact missing-index suggestion. -/
 theorem head_eq_base_outside_guards (q : Query) (s : ISet) (p : Policy) (e : Edition)
-    (source : QuerySource)
-    (ha : guardOf q s p e source ≠ .a) (hb : guardOf q s p e source ≠ .b)
-    (hc : guardOf q s p e source ≠ .c) (hr : guardOf q s p e source ≠ .reverse)
-    (hs : guardOf q s p e source ≠ .shared) (ht : guardOf q s p e source ≠ .carrier) :
+    (source : QuerySource) (h : guardOf q s p e source = .none) :
     decideHead q s p e source = decideBase q s p e := by
-  unfold decideHead
-  unfold guardOf at ha hb hc hr hs ht
-  cases hg : gate p e
-  · simp
-  · simp only [hg, Bool.not_true, Bool.false_eq_true, ite_false] at ha hb hc hr hs ht ⊢
-    cases hd : decideBase q s p e with
-    | use i =>
-      simp only [hd] at hc ⊢
-      split
-      · rename_i hr
-        simp [hr] at hc
-      · rfl
-    | merge ms =>
-      simp only [hd] at hr hs ht ⊢
-      cases hp : recordedPlan q s source ms with
-      | none => rfl
-      | some change => cases change <;> simp [hp, PlanChange.guard] at hr hs ht
-    | missing i | assumed i =>
-      cases hm : mergeGate q source
-      · simp
-      · simp only [hd, hm, ite_true] at ha hb ⊢
-        cases hr : recordedMerge (reqOf q) s q.coll q.group with
-        | none => rfl
-        | some ms =>
-          simp only [hr] at ha hb
-          split at ha <;> simp_all
-    | fullScan i => rfl
+  unfold decideHead guardOf at *
+  cases hg : gate p e <;> simp [hg] at h ⊢
+  cases hf : arrayFirst q s source (decideBase q s p e) <;> simp [hf] at h ⊢
+  cases hd : decideBase q s p e with
+  | use i =>
+    cases hc : refusesSingleEquality q s i source <;> cases ho : refusesGroupOrdered q s i source <;>
+      simp_all
+  | merge ms =>
+    cases hp : recordedPlan q s source ms with
+    | none => simp [hp]
+    | some change => cases change <;> simp [hd, hp, PlanChange.guard] at h
+  | missing i | assumed i =>
+    cases hm : mergeGate q source <;> simp [hd, hm] at h ⊢
+    cases hc : recordedCompletion q s source <;> simp [hc] at h ⊢
+    split at h <;> contradiction
+  | fullScan => rfl
 
 theorem guardOf_off_gate {q : Query} {s : ISet} {p : Policy} {e : Edition}
     (source : QuerySource) (h : gate p e = false) : guardOf q s p e source = .none := by
@@ -80,15 +66,17 @@ theorem head_eq_base_enterprise (q : Query) (s : ISet) (p : Policy)
 theorem head_eq_base_group_outside_guards
     (q : Query) (s : ISet) (p : Policy) (e : Edition) (source : QuerySource)
     (hg : q.group = true) (ha : guardOf q s p e source ≠ .a)
-    (hb : guardOf q s p e source ≠ .b) (hc : guardOf q s p e source ≠ .c) :
+    (hb : guardOf q s p e source ≠ .b) (hc : guardOf q s p e source ≠ .c)
+    (hf : guardOf q s p e source ≠ .arrayFirst) :
     decideHead q s p e source = decideBase q s p e := by
-  apply head_eq_base_outside_guards q s p e source ha hb hc
-  all_goals
-    unfold guardOf
-    cases gate p e <;> cases decideBase q s p e <;> simp [recordedPlan, hg]
-    all_goals split <;> (try simp_all)
-    all_goals split <;> (try simp_all)
-    all_goals split <;> simp_all
+  apply head_eq_base_outside_guards
+  unfold guardOf at *
+  dsimp only at *
+  split <;> simp_all
+  split <;> simp_all
+  cases hd : decideBase q s p e <;> simp_all [refusesGroupOrdered]
+  all_goals repeat first | split <;> simp_all | contradiction
+  simp [recordedPlan, hg]
 
 /-- With the recorded canonical shape, one equality requirement, and the base's automatic
 mode unopposed by a serving composite, the override is the negation of the direction rule. -/
@@ -107,33 +95,27 @@ theorem recorded_refusal_iff_not_automatic_equality_serves
 /-- What each override answers. -/
 theorem head_override (q : Query) (s : ISet) (p : Policy) (e : Edition)
     (source : QuerySource) :
-    (guardOf q s p e source = .c →
+    ((guardOf q s p e source = .c ∨ guardOf q s p e source = .groupOrdered) →
       decideHead q s p e source = unservedDecision (reqOf q) q.coll q.group p e) ∧
+    (guardOf q s p e source = .arrayFirst →
+      decideHead q s p e source = unservedDecision (reqOf q) q.coll q.group p e true) ∧
     (guardOf q s p e source = .a ∨ guardOf q s p e source = .b →
-      ∃ ms, recordedMerge (reqOf q) s q.coll q.group = some ms ∧
-        decideHead q s p e source = .merge ms) := by
+      ∃ ms, recordedCompletion q s source = some ms ∧ decideHead q s p e source = .merge ms) := by
   unfold decideHead guardOf
-  cases hg : gate p e
-  · simp
-  · simp only [Bool.not_true, Bool.false_eq_true, ite_false]
-    cases hd : decideBase q s p e with
-    | use i =>
-      simp only
-      split <;> simp
-    | merge ms =>
-      cases hp : recordedPlan q s source ms with
-      | none => simp [hp]
-      | some change => cases change <;> simp [hp, PlanChange.guard]
-    | missing i | assumed i =>
-      cases mergeGate q source
-      · simp
-      · simp only [ite_true]
-        cases hr : recordedMerge (reqOf q) s q.coll q.group with
-        | none => simp
-        | some ms =>
-          simp only
-          split <;> simp
-    | fullScan i => simp
+  cases gate p e <;> simp
+  cases arrayFirst q s source (decideBase q s p e) <;> simp
+  cases hd : decideBase q s p e with
+  | use i =>
+    cases hc : refusesSingleEquality q s i source <;> cases ho : refusesGroupOrdered q s i source <;> simp [hc, ho]
+  | merge ms =>
+    cases hp : recordedPlan q s source ms with
+    | none => simp [hp]
+    | some change => cases change <;> simp [hp, PlanChange.guard]
+  | missing i | assumed i =>
+    cases mergeGate q source <;> simp
+    cases recordedCompletion q s source <;> simp
+    split <;> simp
+  | fullScan => simp
 
 /-! ## The first attempt is kept -/
 
@@ -141,10 +123,11 @@ theorem wantedCount_one {r : Req} (h1 : r.eq.length = 1) (hc : r.contains = none
     wantedCount r = 1 := by
   simp [wantedCount, h1, hc]
 
-/-- Where the base merge serves and no recorded plan replacement applies, the head keeps it. -/
+/-- The head keeps a serving merge outside the recorded plan replacements and array-first refusals. -/
 theorem first_attempt_kept (q : Query) (s : ISet) (p : Policy) (e : Edition)
     (source : QuerySource)
     (hm : (mergedIndexesFor (reqOf q) s q.coll q.group).isSome = true)
+    (hf : arrayFirst q s source (decideBase q s p e) = false)
     (hplan : ∀ ms, recordedPlan q s source ms = none) :
     decideHead q s p e source = decideBase q s p e := by
   cases hg : gate p e
@@ -153,19 +136,31 @@ theorem first_attempt_kept (q : Query) (s : ISet) (p : Policy) (e : Edition)
       simp only [gate, Bool.and_eq_true] at hg
       exact hg.1
     unfold decideHead
-    simp only [hg, Bool.not_true, Bool.false_eq_true, ite_false]
+    simp only [hg, Bool.not_true, Bool.false_eq_true, ite_false, hf]
     cases hd : decideBase q s p e with
     | use i =>
       simp only
       split
       · rename_i hr
         exfalso
-        simp only [refusesSingleEquality, Bool.and_eq_true, beq_iff_eq,
-          Option.isNone_iff_eq_none] at hr
-        obtain ⟨⟨⟨⟨⟨⟨_, hlen⟩, hcon⟩, _⟩, _⟩, _⟩, _⟩ := hr
-        have hw := wantedCount_one hlen hcon
-        rw [merged_refuses_few (by omega)] at hm
-        simp at hm
+        rcases Bool.or_eq_true_iff.mp hr with hr | hr
+        · simp only [refusesSingleEquality, Bool.and_eq_true, beq_iff_eq,
+            Option.isNone_iff_eq_none] at hr
+          obtain ⟨⟨⟨⟨⟨⟨_, hlen⟩, hcon⟩, _⟩, _⟩, _⟩, _⟩ := hr
+          have hw := wantedCount_one hlen hcon
+          rw [merged_refuses_few (by omega)] at hm
+          simp at hm
+        · unfold refusesGroupOrdered at hr
+          simp only [Bool.and_eq_true, Bool.or_eq_true, Query.singleEquality,
+            List.isEmpty_iff] at hr
+          obtain ⟨⟨⟨_, hq⟩, _⟩, _⟩ := hr
+          have hw : wantedCount (reqOf q) ≤ 1 := by
+            rcases hq with ⟨⟨_, he⟩, _⟩ | ⟨he, _⟩
+            · split at he <;> simp_all [wantedCount, reqOf, eqFields, containsField, addUniq]
+              split <;> simp
+            · simp [wantedCount, reqOf, eqFields, containsField, he]
+          rw [merged_refuses_few (by omega)] at hm
+          simp at hm
       · rfl
     | merge ms => simp [hplan ms]
     | missing i | assumed i =>
@@ -178,13 +173,14 @@ theorem first_attempt_kept (q : Query) (s : ISet) (p : Policy) (e : Edition)
         simp [hp, hms]
     | fullScan i => rfl
 
-/-- A base merge keeps its members and order outside the plan replacement guards. -/
+/-- A base merge keeps its members and order outside the plan replacements and array-first refusals. -/
 theorem base_merge_kept (q : Query) (s : ISet) (p : Policy) (e : Edition) (ms : List Index)
     (source : QuerySource) (h : decideBase q s p e = .merge ms)
+    (hf : arrayFirst q s source (.merge ms) = false)
     (hp : recordedPlan q s source ms = none) :
     decideHead q s p e source = .merge ms := by
   unfold decideHead
-  cases gate p e <;> simp [h, hp]
+  cases gate p e <;> simp [h, hp, hf]
 
 /-- Two or more related carriers preserve any served base merge for the implicit-order
 carrier shape, including the base member order. -/
@@ -197,6 +193,8 @@ theorem multiple_related_carriers_keep_implicit_plan
     (hbase : decideBase q s p e = .merge ms) :
     decideHead q s p e .plain = .merge ms := by
   apply base_merge_kept q s p e ms .plain hbase
+  · simp [arrayFirst, horder, hcontains]
+    split <;> simp
   simp [recordedPlan, horder, hgroup, hcontains, hcarriers]
   exact fun _ two _ => two
 
@@ -213,6 +211,8 @@ theorem unqualified_carrier_keeps_implicit_plan
     (hbase : decideBase q s p e = .merge ms) :
     decideHead q s p e .plain = .merge ms := by
   apply base_merge_kept q s p e ms .plain hbase
+  · simp [arrayFirst, horder, hcontains]
+    split <;> simp
   simp [recordedPlan, recordedMerge, horder, hgroup, hcontains, hname, hrelated, hqualified]
   exact fun _ two _ => two
 
@@ -298,6 +298,149 @@ theorem recorded_kinds {r : Req} {s : ISet} {coll : Nat} {group : Bool} {ms : Li
               List.mem_of_getElem? hcond.1.2.2, rfl, rfl⟩
         · contradiction
 
+/-- A different relevant configuration excludes this particular row even when another row applies. -/
+theorem different_catalog_excludes_row (q : Query) (s : ISet) (source : QuerySource)
+    (row : ServingCatalog × List Index) (different : relevantCatalog q s ≠ row.1) :
+    (servingRows q source).find? (fun candidate => relevantCatalog q s == candidate.1) ≠ some row := by
+  intro found
+  have matched := List.find?_some found
+  exact different (by simpa using matched)
+
+/-- A configuration mismatch rules out every applicable serving row, including rows sharing the same query. -/
+theorem completion_outside_serving_catalogs (q : Query) (s : ISet) (source : QuerySource)
+    (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1) :
+    recordedCompletion q s source = earlierCompletion q s := by
+  have h : (servingRows q source).find? (fun row => relevantCatalog q s == row.1) = none := by
+    apply List.find?_eq_none.mpr
+    simpa using different
+  simp [recordedCompletion, h]
+
+/-- Outside the serving catalogs, only a separately applicable earlier rule or strict refusal can change the base. -/
+theorem head_eq_base_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1)
+    (earlier : earlierCompletion q s = none)
+    (refusal : arrayFirst q s source (decideBase q s p e) = false)
+    (single : ∀ i, decideBase q s p e = .use i →
+      (refusesSingleEquality q s i source || refusesGroupOrdered q s i source) = false)
+    (plan : ∀ ms, decideBase q s p e = .merge ms → recordedPlan q s source ms = none) :
+    decideHead q s p e source = decideBase q s p e := by
+  unfold decideHead
+  simp only [refusal, Bool.false_eq_true, ite_false]
+  split
+  · rfl
+  cases hd : decideBase q s p e <;>
+    simp_all [completion_outside_serving_catalogs q s source different]
+
+/-- Outside the six serving configurations, the only changes to the pinned decision are the production-rules refusals. Q5 and Q12 use the membership-first suggestion, Q7 refuses a group ordered index, and Q2 extends the ascending single-equality refusal to collection queries. -/
+theorem head_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1) :
+    decideHead q s p e source =
+      if gate p e && arrayFirst q s source (decideBase q s p e) then
+        unservedDecision (reqOf q) q.coll q.group p e true
+      else if gate p e && (match decideBase q s p e with
+          | .use i => refusesGroupOrdered q s i source ||
+              (!q.group && nameDirOf (reqOf q).order == .asc && refusesSingleEquality q s i source)
+          | _ => false) then
+        unservedDecision (reqOf q) q.coll q.group p e
+      else Pinned.decideHead q s p e source := by
+  have completion :
+      (if mergeGate q source then recordedCompletion q s source else none) =
+      (if Pinned.mergeGate q source then Pinned.recordedMerge (reqOf q) s q.coll q.group else none) := by
+    rw [completion_outside_serving_catalogs q s source different]
+    cases hg : q.group with
+    | false => simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg]; rfl
+    | true =>
+      have noCarrier (t : Field) : carryingComposites (reqOf q) s q.coll true t = [] := by
+        apply List.filter_eq_nil_iff.mpr
+        intro i _
+        cases hs : i.scope <;> simp [compositeServes, hs]
+      cases hd : nameDirOf (reqOf q).order with
+      | asc =>
+        have noMerge : recordedMerge (reqOf q) s q.coll true = none := by
+          unfold recordedMerge
+          split
+          · rfl
+          · cases (reqOf q).contains <;> simp [hd, noCarrier]
+        simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg, hd, noMerge]
+      | desc =>
+        by_cases hn : (reqOf q).eq.length = 2 <;>
+          simp [earlierCompletion, mergeGate, Pinned.mergeGate, hg, hd, hn] <;> rfl
+  unfold decideHead Pinned.decideHead
+  simp only [show Pinned.gate = gate from rfl, show Pinned.recordedPlan = recordedPlan from rfl,
+    show Pinned.PlanChange.members = PlanChange.members from rfl]
+  cases gate p e <;> simp
+  cases arrayFirst q s source (decideBase q s p e) <;> simp
+  cases decideBase q s p e with
+  | use i =>
+    have single : Pinned.refusesSingleEquality q s i source =
+        (if !q.group && nameDirOf (reqOf q).order == .asc then false else refusesSingleEquality q s i source) := by
+      cases hgroup : q.group <;> cases hd : nameDirOf (reqOf q).order <;>
+        simp [Pinned.refusesSingleEquality, refusesSingleEquality, Pinned.Query.equalityRefusal,
+          Query.equalityRefusal, hgroup, hd] <;> rfl
+    simp only [single]
+    cases q.group <;> cases nameDirOf (reqOf q).order <;> cases refusesSingleEquality q s i source <;>
+      cases refusesGroupOrdered q s i source <;> rfl
+  | merge | fullScan => rfl
+  | missing i | assumed i =>
+    cases hn : mergeGate q source <;> cases hp : Pinned.mergeGate q source <;>
+      simp [hn, hp] at completion ⊢ <;>
+      cases hc : Pinned.recordedMerge (reqOf q) s q.coll q.group <;> simp_all
+
+/-- A differing decision outside the recorded serving configurations is missing under Production or assumed under ProductionReport, always on Standard. -/
+theorem strict_refusal_outside_serving_catalogs (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (different : ∀ row ∈ servingRows q source, relevantCatalog q s ≠ row.1)
+    (changed : decideHead q s p e source ≠ Pinned.decideHead q s p e source) :
+    p.productionRules = true ∧ e = .standard ∧ ∃ i,
+      decideHead q s p e source = (if p.assumes then .assumed i else .missing i) := by
+  have answer := head_outside_serving_catalogs q s p e source different
+  have refusal : gate p e = true ∧ ∃ first : Bool,
+      decideHead q s p e source = unservedDecision (reqOf q) q.coll q.group p e first := by
+    split at answer
+    · rename_i h
+      exact ⟨(Bool.and_eq_true_iff.mp h).1, true, answer⟩
+    · cases hg : gate p e with
+      | false => exact (changed (by simpa [hg] using answer)).elim
+      | true =>
+        refine ⟨rfl, false, ?_⟩
+        split at answer <;> split at answer <;> first | exact answer | exact (changed answer).elim
+  obtain ⟨active, first, result⟩ := refusal
+  obtain ⟨production, rfl⟩ : p.productionRules = true ∧ e = .standard := by simpa [gate] using active
+  refine ⟨production, rfl, ?_⟩
+  rw [result]
+  unfold unservedDecision
+  exact ⟨_, by cases p.assumes <;> rfl⟩
+
+/-- Outside Standard's production rules all four refusal exceptions disappear, even on a serving catalog. -/
+theorem head_eq_pinned_off_gate (q : Query) (s : ISet) (p : Policy) (e : Edition)
+    (source : QuerySource) (offGate : p.productionRules = false ∨ e = .enterprise) :
+    decideHead q s p e source = Pinned.decideHead q s p e source := by
+  rcases offGate with hp | rfl <;> simp_all [decideHead, Pinned.decideHead, gate, Pinned.gate]
+
+theorem completion_kinds {q : Query} {s : ISet} {source : QuerySource} {ms : List Index}
+    (h : recordedCompletion q s source = some ms) :
+    (∀ f ∈ (reqOf q).eq, ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = f ∧ fld.mode.ordered = true) ∧
+      (∀ t, (reqOf q).contains = some t →
+        ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = t ∧ fld.mode = .contains) := by
+  unfold recordedCompletion at h
+  rcases Option.or_eq_some_iff.mp h with found | ⟨_, old⟩
+  · obtain ⟨row, hrow, rfl⟩ := Option.map_eq_some_iff.mp found
+    have hm := List.mem_of_find?_eq_some hrow
+    unfold servingRows at hm
+    split at hm <;> try dsimp only at hm
+    · split at hm <;> simp_all [singleFieldIndex, Mode.ordered]
+    · split at hm
+      · simp at hm
+      · simp only [List.mem_append] at hm
+        rcases hm with (hm | hm) | hm <;> split at hm <;>
+          simp_all [singleFieldIndex, Mode.ordered]
+        rcases hm with rfl | rfl <;> simp
+    · simp at hm
+  · unfold earlierCompletion at old
+    dsimp only at old
+    split at old
+    · contradiction
+    · exact recorded_kinds old
+
 /-- A head merge is the base merge, the result of a recorded plan replacement of that merge,
 or a recorded merge with coverage by kind. -/
 theorem head_merge_kinds (q : Query) (s : ISet) (p : Policy) (e : Edition) (ms : List Index)
@@ -305,7 +448,7 @@ theorem head_merge_kinds (q : Query) (s : ISet) (p : Policy) (e : Edition) (ms :
     decideBase q s p e = .merge ms ∨
       (∃ before change, decideBase q s p e = .merge before ∧
         recordedPlan q s source before = some change ∧ change.members = ms) ∨
-      (recordedMerge (reqOf q) s q.coll q.group = some ms ∧
+      (recordedCompletion q s source = some ms ∧
         (∀ f ∈ (reqOf q).eq, ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = f ∧ fld.mode.ordered = true) ∧
         (∀ t, (reqOf q).contains = some t →
           ∃ m ∈ ms, ∃ fld ∈ m.fields, fld.path = t ∧ fld.mode = .contains)) := by
@@ -314,6 +457,11 @@ theorem head_merge_kinds (q : Query) (s : ISet) (p : Policy) (e : Edition) (ms :
   · simp only [hg, Bool.not_false, ite_true] at h
     exact Or.inl h
   · simp only [hg, Bool.not_true, Bool.false_eq_true, ite_false] at h
+    split at h
+    · simp only [unservedDecision, ite_true] at h
+      split at h
+      · contradiction
+      · cases e <;> contradiction
     cases hd : decideBase q s p e with
     | use i =>
       rw [hd] at h
@@ -338,12 +486,12 @@ theorem head_merge_kinds (q : Query) (s : ISet) (p : Policy) (e : Edition) (ms :
       cases hm : mergeGate q source
       · simp [hd, hm] at h
       · simp only [hd, hm, ite_true] at h
-        cases hr : recordedMerge (reqOf q) s q.coll q.group with
+        cases hr : recordedCompletion q s source with
         | none => rw [hr] at h; cases h
         | some ms' =>
           rw [hr] at h
           cases h
-          exact Or.inr (Or.inr ⟨by simp, recorded_kinds hr⟩)
+          exact Or.inr (Or.inr ⟨by simp, completion_kinds hr⟩)
     | fullScan i =>
       rw [hd] at h
       cases h

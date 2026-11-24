@@ -106,6 +106,7 @@ fn state_with_hook(
         firestore_listen_expiry: None,
         firestore_missing_indexes: None,
         require_control_token: false,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings::default(),
         calendar_zones: None,
         barrier: None,
         snapshot_hooks: Vec::new(),
@@ -129,7 +130,7 @@ fn state_with_hook(
         database: None,
         pubsub: None,
         remote_config: Some(Arc::new(
-            fireemu_adapter_http::remote_config::TemplateStore::default(),
+            fireemu_adapter_http::remote_config::RemoteConfigStores::default(),
         )),
         stream_limiter: Arc::new(fireemu_adapter_ui::sse::StreamLimiter::default()),
         control_token: TOKEN.to_owned(),

@@ -4530,6 +4530,12 @@ fn control_state(
         // Exposed listeners can sit behind a forwarder that connects from loopback, so the peer
         // address alone does not prove a local caller: every control request needs the token.
         require_control_token: cfg.allow_non_loopback_hosts,
+        remote_config: fireemu_adapter_http::remote_config::RemoteConfigSettings {
+            // The strict profile refuses the server conditions production refused; the emulator
+            // profile keeps accepting them (RC-OBSERVE-V2-3, ruling 4).
+            strict_server_conditions: cfg.profile == config::CompatibilityProfile::Strict,
+            update_user: cfg.remote_config_update_user.clone(),
+        },
         // Calendar moves of the clock read zones as schedules do, from the bundled database.
         calendar_zones: Some(fireemu_adapter_http::control::CalendarZones {
             default_time_zone: cfg.scheduler_default_time_zone.clone(),
