@@ -105,19 +105,14 @@ export function productionAllow({ project, number, names, grants }) {
     `POST cloudresourcemanager.googleapis.com/v1/projects/${p}:getIamPolicy`,
     `GET artifactregistry.googleapis.com/v1${loc}/repositories/gcf-artifacts`,
   ]);
-  // A page token is opaque: only a token a previous list answer returned as nextPageToken, encoded
-  // once with encodeURIComponent, whatever its characters (ruling 2).
+  // A page token is opaque: only a token a previous list answer returned as nextPageToken (never
+  // empty: listFunctions grants only non-empty tokens), encoded once with encodeURIComponent,
+  // whatever its characters (ruling 2). The whole query must equal that form, as fetch sends it
+  // (the URL serializer also escapes ' in a query), so no other parameter or order passes.
   const pageQuery = (url) => {
-    const keys = [...url.searchParams.keys()];
     const token = url.searchParams.get("pageToken");
     return (
-      keys.length === 2 &&
-      keys[0] === "pageSize" &&
-      keys[1] === "pageToken" &&
-      Boolean(token) &&
       grants.pageTokens.has(token) &&
-      // the form fetch sends: encodeURIComponent once, then the URL serializer (which also
-      // escapes ' in a query)
       url.search === new URL(`?pageSize=100&pageToken=${encodeURIComponent(token)}`, url).search
     );
   };
