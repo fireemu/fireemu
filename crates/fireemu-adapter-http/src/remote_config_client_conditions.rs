@@ -575,6 +575,8 @@ mod tests {
             ("!(device.os == '&&')", atom("NOT", "NOT condition is not allowed here")),
             // The recorded forms with other values.
             ("_percent <= 101", column(1, start)),
+            ("unknown.thing == '&&'", column(1, start)),
+            ("unknown.thing == '||'", column(1, start)),
             ("percent_x <= 101", column(1, start)),
             ("percent <= 150", column(12, "A percent value is out of range")),
             ("percent > -5", column(11, "Percent value cannot be negative")),
