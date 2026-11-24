@@ -11,12 +11,16 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 ### Added
 
 - Remote Config: the server-template data plane (`serverRemoteConfig`) now serves every condition form recorded in production on 2026-11-24 in the structured shape the Admin SDK evaluates: percent `<=`, `>` and `between` (with a seed, and `percent <= n` without one), custom-signal string matches (`exactlyMatches`, `contains`, `notContains`, `matches`), numeric and semantic-version comparisons, and `&&` chains. Other expressions still become an empty condition.
+- Remote Config: `:downloadDefaults` serves a template's defaults as the JSON, XML or property-list file production serves, and `:listVersions` takes production's `endVersionNumber`, `startTime` and `endTime` filters with its refusals.
+- Remote Config: the client template's current read is also served under the project number (`projects/<number>/remoteConfig`), as production serves it.
 - Remote Config: a new optional `remoteConfig.updateUser` setting reports a configured identity as production reports the calling user: `{email}` on published and read versions and in v1 events, `{email, name: "", imageUrl: ""}` in v2 events, and the email, name and image in version history. Without it `updateUser` stays omitted.
 
 ### Changed
 
 - Remote Config: the server data plane lists the parameters of parameter groups next to the top-level parameters and no longer serves `parameterGroups`, as production does.
 - Remote Config: the v1 and the v2 event of one published or rolled-back version now carry the same event id, as recorded in production.
+- Remote Config: answers follow what production recorded on 2026-11-21 and 2026-11-24, in both profiles: ETags are `etag-<project number>-<version>` (a validation tag `etag-<project number>-0`), history tokens are the next version number, times carry six fraction digits, `<` and `>` are written as `\u003c` and `\u003e`, the `Content-Type` is `application/json; charset=UTF-8`, event ids are positive, and validation, stale-tag and transcoder refusals carry production's messages, including production's template limits (3,000 parameters, 2,000 conditions, 256-character names, a 1,024-character description).
+- Remote Config, strict profile: the loser of two concurrent client publications with one ETag gets production's 400 `Condition order size ...` answer when both drafts hold the same number of conditions; the emulator profile keeps the 412.
 - Remote Config, strict profile: a server-template publish or validation whose condition is a two-term `||`, a whole `!(...)`, `true` or `false` is refused with production's 400 `INVALID_ARGUMENT` message. The emulator profile keeps accepting these and serves them as empty conditions.
 
 ### Fixed

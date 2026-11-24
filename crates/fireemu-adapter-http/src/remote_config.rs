@@ -12,6 +12,12 @@ use serde_json::{json, Map, Value};
 /// Local retention bound, including the current version.
 pub const MAX_RETAINED_VERSIONS: usize = 300;
 
+/// Production's template limits, each recorded at the limit and one over it (2026-11-21).
+const MAX_PARAMETERS: usize = 3000;
+const MAX_CONDITIONS: usize = 2000;
+const MAX_NAME_CHARS: usize = 256;
+const MAX_DESCRIPTION_CHARS: usize = 1024;
+
 type Parameters = BTreeMap<String, Map<String, Value>>;
 
 #[derive(Default, Deserialize)]
@@ -36,11 +42,72 @@ struct DraftVersion {
     description: Option<String>,
 }
 
+/// The refusals production's JSON transcoder answered before the template reached validation
+/// (2026-11-21 `unknown-field`, `parameters-not-object`, `groups-not-object`, `kind-invalid`,
+/// `pair-07` to `pair-14` bad type). A parameter's index is its position in Fireemu's sorted
+/// parameter map, which is the request order only for sorted requests (member order is a
+/// documented difference); group parameters and conditional values keep the earlier refusal.
+fn transcoder_checks(input: &Map<String, Value>) -> Result<(), Error> {
+    let refusal = |message: String, field: String| Err(Error::Transcoder { message, field });
+    for key in input.keys() {
+        if !["conditions", "parameters", "parameterGroups", "version"].contains(&key.as_str()) {
+            return refusal(
+                format!("Invalid JSON payload received. Unknown name {} at 'remote_config': Cannot find field.", Value::String(key.clone())),
+                "remote_config".into(),
+            );
+        }
+    }
+    for field in ["parameters", "parameterGroups"] {
+        if input.get(field).is_some_and(Value::is_array) {
+            return refusal(
+                format!("Invalid value at 'remote_config' (Map), Cannot bind a list to map for field '{field}'."),
+                "remote_config".into(),
+            );
+        }
+    }
+    let parameters = input
+        .get("parameters")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten();
+    for (index, parameter) in parameters.map(|(_, parameter)| parameter).enumerate() {
+        if let Some(kind) = parameter.get("valueType").and_then(Value::as_str) {
+            if ![
+                "PARAMETER_VALUE_TYPE_UNSPECIFIED",
+                "STRING",
+                "BOOLEAN",
+                "NUMBER",
+                "JSON",
+            ]
+            .contains(&kind)
+            {
+                let field = format!("remote_config.parameters[{index}].value.value_type");
+                return refusal(
+                    format!("Invalid value at '{field}' (type.googleapis.com/google.firebase.remoteconfig.v1.RemoteConfigParameter.ParameterValueType), {}", Value::String(kind.into())),
+                    field,
+                );
+            }
+        }
+        if let Some(value) = parameter
+            .pointer("/defaultValue/value")
+            .filter(|value| value.is_number() || value.is_boolean())
+        {
+            let field = format!("remote_config.parameters[{index}].value.default_value.value");
+            return refusal(
+                format!("Invalid value at '{field}' (TYPE_STRING), {value}"),
+                field,
+            );
+        }
+    }
+    Ok(())
+}
+
 impl Draft {
     fn parse(input: Value) -> Result<Self, Error> {
-        if !input.is_object() {
+        let Some(object) = input.as_object() else {
             return Err(invalid("template must be an object"));
-        }
+        };
+        transcoder_checks(object)?;
         if input
             .get("version")
             .is_some_and(|version| !version.is_object())
@@ -104,12 +171,49 @@ pub struct ClientTemplate {
 
 impl ClientTemplate {
     fn validate(mut draft: Draft) -> Result<Self, Error> {
+        // The refusals and messages recorded on 2026-11-21 (`validate-*`, `validation-edges-*`,
+        // `validation-resume-*`); their order among several faults was not recorded.
+        let refuse = |message: String| Err(invalid(format!("[VALIDATION_ERROR]: {message}")));
+        if let Some(description) = draft.version.as_ref().and_then(|v| v.description.as_ref()) {
+            if description.chars().count() > MAX_DESCRIPTION_CHARS {
+                return refuse(format!("DESCRIPTION_EXCEEDS_MAXIMUM_SIZE Template version description is larger than the maximum size {MAX_DESCRIPTION_CHARS}."));
+            }
+        }
+        let parameter_count = draft.parameters.len()
+            + draft
+                .parameter_groups
+                .values()
+                .map(|group| group.parameters.len())
+                .sum::<usize>();
+        if parameter_count > MAX_PARAMETERS {
+            return refuse(format!("PARAM_COUNT_TOO_LARGE The template has {parameter_count} parameters. The maximum number allowed is {MAX_PARAMETERS}."));
+        }
+        if draft.conditions.len() > MAX_CONDITIONS {
+            return refuse(format!("CONDITION_COUNT_TOO_LARGE The template has {} conditions. The maximum number allowed is {MAX_CONDITIONS}.", draft.conditions.len()));
+        }
         let mut conditions = BTreeSet::new();
         for condition in &draft.conditions {
+            let name = condition
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if name.is_empty() {
+                return refuse("INVALID_CONDITION_NAME Invalid condition name: []".into());
+            }
+            if name.chars().count() > MAX_NAME_CHARS {
+                return refuse(format!("INVALID_CONDITION_NAME Condition name '{name}' exceeds the maximum length of {MAX_NAME_CHARS} characters"));
+            }
             let name = required_string(condition, "name")?;
             required_string(condition, "expression")?;
             if !conditions.insert(name) {
-                return Err(invalid(format!("duplicate condition {name:?}")));
+                return refuse(format!(
+                    "DUPLICATE_CONDITION_NAME Duplicate condition name: {name}"
+                ));
+            }
+        }
+        for name in draft.parameter_groups.keys() {
+            if name.chars().count() > MAX_NAME_CHARS {
+                return refuse(format!("KEY_TOO_LONG Group name {name} is larger than the maximum name size {MAX_NAME_CHARS}"));
             }
         }
 
@@ -122,10 +226,14 @@ impl ClientTemplate {
             .flatten();
         let mut names = BTreeSet::new();
         for (name, definition) in parameters {
-            if !valid_parameter_name(name) || !names.insert(name) {
-                return Err(invalid(format!(
-                    "invalid or duplicate parameter name {name:?}"
-                )));
+            if name.chars().count() > MAX_NAME_CHARS {
+                return refuse(format!("KEY_TOO_LONG Parameter key {name} is larger than the maximum key size {MAX_NAME_CHARS}"));
+            }
+            if !valid_parameter_name(name) {
+                return refuse(format!("INVALID_KEY Invalid parameter key: [{name}]"));
+            }
+            if !names.insert(name) {
+                return refuse(format!("DUPLICATE_KEY Duplicate parameter key: {name}"));
             }
             validate_parameter(name, definition, &conditions)?;
         }
@@ -231,6 +339,15 @@ impl ValueType {
         }
     }
 
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::String => "STRING",
+            Self::Boolean => "BOOLEAN",
+            Self::Number => "NUMBER",
+            Self::Json => "JSON",
+        }
+    }
+
     fn matches(&self, value: &str) -> bool {
         match self {
             Self::String => true,
@@ -258,7 +375,19 @@ fn validate_parameter(
     if default.as_object().is_some_and(Map::is_empty) {
         *default = json!({"value": ""});
     }
-    if !valid_value(default, &value_type) {
+    let mismatch = |value: &Value| {
+        let literal = value.get("value").and_then(Value::as_str)?;
+        (!value_type.matches(literal)).then(|| {
+            invalid(format!(
+                "[VALIDATION_ERROR]: PARAM_VALUE_TYPE_MISMATCH Parameter [{name}] is of type {}, which does not match value [{literal}]",
+                value_type.name()
+            ))
+        })
+    };
+    if let Some(error) = mismatch(default) {
+        return Err(error);
+    }
+    if !valid_value(default, &ValueType::String) {
         return Err(invalid(format!(
             "parameter {name:?} has an invalid defaultValue"
         )));
@@ -267,8 +396,22 @@ fn validate_parameter(
         .get("conditionalValues")
         .and_then(Value::as_object)
     {
+        let unknown: Vec<&str> = references
+            .keys()
+            .map(String::as_str)
+            .filter(|condition| !conditions.contains(condition))
+            .collect();
+        if !unknown.is_empty() {
+            return Err(invalid(format!(
+                "[VALIDATION_ERROR]: [{}] are not valid condition names. All keys in all conditional value maps must be valid condition names.",
+                unknown.join(", ")
+            )));
+        }
         for (condition, value) in references {
-            if !conditions.contains(condition.as_str()) || !valid_value(value, &value_type) {
+            if let Some(error) = mismatch(value) {
+                return Err(error);
+            }
+            if !valid_value(value, &ValueType::String) {
                 return Err(invalid(format!(
                     "parameter {name:?} has an invalid value for condition {condition:?}"
                 )));
@@ -308,8 +451,26 @@ pub enum Error {
     MissingPrecondition,
     /// The supplied `ETag` did not identify the current version.
     PreconditionFailed,
+    /// The supplied `ETag` identified the current version when the request arrived, but another
+    /// publication committed first: the loser of two concurrent writes with one `ETag`. It
+    /// carries the condition counts production's refusal names (2026-11-21 race: `Condition order
+    /// size [2] does not match condition count [4]`).
+    ConcurrentPrecondition {
+        /// Conditions of the refused draft.
+        submitted: usize,
+        /// Conditions of the version that committed first.
+        current: usize,
+    },
     /// The proposed document did not satisfy the supported structural contract.
     InvalidTemplate(String),
+    /// Production's JSON transcoder refused the request body before validation: its message and
+    /// the field it names.
+    Transcoder {
+        /// The refusal's message (also the field violation's description).
+        message: String,
+        /// The field violation's field.
+        field: String,
+    },
     /// The requested published version was absent or has been evicted.
     UnknownVersion,
     /// The version counter cannot advance.
@@ -329,7 +490,8 @@ pub enum WriteResult {
     Validated {
         /// Normalized author-owned content.
         template: ClientTemplate,
-        /// Tag of the current version when the draft was checked.
+        /// The tag of the validate-only answer: production's `etag-<project number>-0`, or the
+        /// current version's tag with `-0` appended for a store without a project number.
         base_etag: String,
     },
     /// The committed version.
@@ -358,6 +520,7 @@ pub enum Change {
 pub struct Version {
     number: u64,
     store_id: u128,
+    project_number: Option<u64>,
     template: Arc<ClientTemplate>,
     update_time: Option<LogicalInstant>,
     change: Change,
@@ -370,17 +533,35 @@ impl Version {
         self.number
     }
 
-    /// Opaque precondition token scoped to the owning store.
+    /// Precondition token of this version. A published version of a store that knows its
+    /// project number has production's form, `etag-<project number>-<version>`
+    /// (RC-OBSERVE-V2-3 seq 1, 2, 33, 58); the unpublished state, whose production value was not
+    /// recorded, and a store without a project number keep an opaque store-scoped form.
     #[must_use]
     pub fn etag(&self) -> String {
-        self.etag_for(self.number)
+        match self.project_number {
+            Some(number) if self.change != Change::Initial => {
+                format!("etag-{number}-{}", self.number)
+            }
+            _ => self.store_etag(self.number),
+        }
     }
 
+    /// The tag of a validate-only answer: production's `etag-<project number>-0`
+    /// (RC-OBSERVE-V2-3 seq 34-53), or this version's tag with `-0` appended without a number.
+    pub(crate) fn validation_etag(&self) -> String {
+        self.project_number.map_or_else(
+            || format!("{}-0", self.etag()),
+            |number| format!("etag-{number}-0"),
+        )
+    }
+
+    /// The tag of an unavailable version's empty answer, whose production value was not recorded.
     pub(crate) fn empty_etag(&self) -> String {
-        self.etag_for(0)
+        self.store_etag(0)
     }
 
-    fn etag_for(&self, number: u64) -> String {
+    fn store_etag(&self, number: u64) -> String {
         format!("etag-fireemu-{:032x}-{number}", self.store_id)
     }
 
@@ -408,8 +589,15 @@ impl Version {
 pub struct RemoteConfigSettings {
     /// Refuse the server conditions production refused (strict profile only).
     pub strict_server_conditions: bool,
+    /// Answer the loser of two concurrent client publications with production's 400 (strict
+    /// profile only).
+    pub strict_concurrent_publish: bool,
     /// The identity reported as `updateUser`; `None` omits the field everywhere.
     pub update_user: Option<UpdateUser>,
+    /// The project number: production's `ETag`s carry it, and production serves the client
+    /// template's current read under it (2026-11-21 `client-project-number`). `None` keeps the
+    /// opaque tags and answers the number as an unknown project.
+    pub project_number: Option<u64>,
 }
 
 /// A configured `updateUser` identity (`remoteConfig.updateUser`).
@@ -474,6 +662,7 @@ impl Default for TemplateStore {
         let initial = Version {
             number: 0,
             store_id: u128::from_be_bytes(id),
+            project_number: None,
             template: Arc::new(ClientTemplate {
                 document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
                 description: None,
@@ -520,6 +709,25 @@ impl TemplateStore {
         }
     }
 
+    /// Tags this store's published versions with production's `etag-<project number>-<version>`.
+    #[must_use]
+    pub fn with_project_number(self, project_number: Option<u64>) -> Self {
+        {
+            let mut history = self.history.lock().expect("template store lock");
+            let initial = head(&history.versions);
+            let tagged = Version {
+                number: initial.number,
+                store_id: initial.store_id,
+                project_number,
+                template: initial.template.clone(),
+                update_time: initial.update_time,
+                change: initial.change,
+            };
+            history.versions = VecDeque::from([Arc::new(tagged)]);
+        }
+        self
+    }
+
     /// The current version, or the store's empty initial state.
     #[must_use]
     pub fn current(&self) -> Arc<Version> {
@@ -550,28 +758,26 @@ impl TemplateStore {
             .collect()
     }
 
+    /// One page of the retained published versions that `keep` admits, newest first, starting at
+    /// version `from` (inclusive) when given, and the number of the next admitted version when
+    /// one is left: production's `nextPageToken` (RC-OBSERVE-V2-3 seq 69, 2026-11-21 history).
     pub(crate) fn history_page(
         &self,
         limit: usize,
-        after: Option<&str>,
-    ) -> Option<(Vec<Arc<Version>>, bool)> {
+        from: Option<u64>,
+        keep: &dyn Fn(&Version) -> bool,
+    ) -> (Vec<Arc<Version>>, Option<u64>) {
         let history = self.history.lock().expect("template store lock");
-        let versions = &history.versions;
-        let end = if let Some(token) = after {
-            let (_, number) = token.rsplit_once('-')?;
-            let index = published_index(versions, number.parse().ok()?)?;
-            if versions[index].etag() != token {
-                return None;
-            }
-            index
-        } else {
-            versions.len()
-        };
-        let first_published =
-            usize::from(versions.front().is_some_and(|version| version.number == 0));
-        let first = end.saturating_sub(limit).max(first_published);
-        let page = versions.range(first..end).rev().cloned().collect();
-        Some((page, first > first_published))
+        let mut admitted = history
+            .versions
+            .iter()
+            .rev()
+            .filter(|version| version.number > 0)
+            .filter(|version| from.is_none_or(|from| version.number <= from))
+            .filter(|version| keep(version));
+        let page: Vec<_> = admitted.by_ref().take(limit).cloned().collect();
+        let next = admitted.next().map(|version| version.number);
+        (page, next)
     }
 
     pub(crate) fn render_current(
@@ -618,18 +824,45 @@ impl TemplateStore {
         now: LogicalInstant,
         check: &dyn Fn(&ClientTemplate) -> Result<(), Error>,
     ) -> Result<WriteResult, Error> {
+        let seen = self.current();
+        self.write_seen(&seen, mode, if_match, input, now, check)
+    }
+
+    /// [`Self::write_checked`] against the version `seen` when the request arrived: a tag that
+    /// matched `seen` but no longer matches the head lost a concurrent write.
+    pub(crate) fn write_seen(
+        &self,
+        seen: &Version,
+        mode: WriteMode,
+        if_match: Option<&str>,
+        input: Value,
+        now: LogicalInstant,
+        check: &dyn Fn(&ClientTemplate) -> Result<(), Error>,
+    ) -> Result<WriteResult, Error> {
         let draft = Draft::parse(input)?;
         let if_match = if_match.ok_or(Error::MissingPrecondition)?;
         let forced = if_match == "*";
-        if !forced && if_match != self.current().etag() {
+        if !forced && if_match != seen.etag() {
             return Err(Error::PreconditionFailed);
         }
         let template = ClientTemplate::validate(draft);
         let mut history = self.history.lock().expect("template store lock");
-        let base_etag = head(&history.versions).etag();
-        if !forced && if_match != base_etag {
-            return Err(Error::PreconditionFailed);
+        let base = head(&history.versions);
+        if !forced && if_match != base.etag() {
+            let count = |template: &ClientTemplate| {
+                template.document()["conditions"]
+                    .as_array()
+                    .map_or(0, Vec::len)
+            };
+            return Err(match &template {
+                Ok(submitted) => Error::ConcurrentPrecondition {
+                    submitted: count(submitted),
+                    current: count(base.template()),
+                },
+                Err(_) => Error::PreconditionFailed,
+            });
         }
+        let base_etag = base.validation_etag();
         let template = template?;
         check(&template)?;
         if mode == WriteMode::Validate {
@@ -674,6 +907,7 @@ impl TemplateStore {
         let version = Arc::new(Version {
             number,
             store_id: current.store_id,
+            project_number: current.project_number,
             template,
             update_time: Some(now),
             change,

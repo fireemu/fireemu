@@ -401,7 +401,13 @@ async fn remote_config_response(
             "Remote Config administration requires the local control capability",
             "UNAUTHENTICATED",
         )
-    } else if route.project != control.default_project {
+    } else if route.project != control.default_project
+        && !remote_config_http::number_addresses_project(
+            route,
+            parts.method.as_str(),
+            control.remote_config.project_number,
+        )
+    {
         Reply::error(404, "Remote Config project not found", "NOT_FOUND")
     } else {
         let mut etags = headers.get_all(hyper::header::IF_MATCH).iter();
@@ -441,9 +447,15 @@ async fn remote_config_response(
             }
         }
     };
-    let (status, mut body, etag) = reply.into_wire();
+    let remote_config_http::Wire {
+        status,
+        mut body,
+        etag,
+        content_type,
+        compressible,
+    } = reply.into_wire();
     let mut response = with_cors(Response::builder().status(status), origin)
-        .header("content-type", "application/json; charset=utf-8")
+        .header("content-type", content_type)
         .header("cache-control", "no-store")
         .header("vary", "accept-encoding");
     let encodings = headers
@@ -452,7 +464,7 @@ async fn remote_config_response(
         .filter_map(|value| value.to_str().ok())
         .collect::<Vec<_>>()
         .join(",");
-    if crate::identity_framing::accepts_gzip(Some(&encodings)) {
+    if compressible && crate::identity_framing::accepts_gzip(Some(&encodings)) {
         body = crate::identity_framing::gzip_stored(&body).into();
         response = response.header("content-encoding", "gzip");
         if let Some(etag) = etag {
@@ -669,36 +681,40 @@ async fn serve_inner(
     state: Arc<AuthState>,
     control: Option<Arc<ControlState>>,
 ) -> std::io::Result<()> {
-    let remote_config =
-        control.as_ref().map(|control| {
-            Arc::new(control.functions.as_ref().map_or_else(
-                RemoteConfigStores::default,
-                |functions| {
-                    let functions = functions.clone();
-                    let user = control.remote_config.update_user.clone();
-                    RemoteConfigStores {
-                        client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
-                            let metadata = remote_config_http::version_fields(
-                                version,
-                                user.as_ref(),
-                                remote_config_http::Surface::Version,
-                            );
-                            let publication = functions
-                                .reserve_remote_config_version(&metadata)
-                                .map_err(|error| match error {
-                                    PublishEventError::Capacity => RemoteConfigError::EventCapacity,
-                                    PublishEventError::Invalid | PublishEventError::Unavailable => {
-                                        RemoteConfigError::EventUnavailable
-                                    }
-                                })?;
-                            Ok(Box::new(move || publication.publish()))
-                        })),
-                        // Production did not record events for server-namespace commits.
-                        server: TemplateStore::default(),
-                    }
-                },
-            ))
-        });
+    let remote_config = control.as_ref().map(|control| {
+        let number = control.remote_config.project_number;
+        Arc::new(control.functions.as_ref().map_or_else(
+            || RemoteConfigStores {
+                client: TemplateStore::default().with_project_number(number),
+                server: TemplateStore::default().with_project_number(number),
+            },
+            |functions| {
+                let functions = functions.clone();
+                let user = control.remote_config.update_user.clone();
+                RemoteConfigStores {
+                    client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
+                        let metadata = remote_config_http::version_fields(
+                            version,
+                            user.as_ref(),
+                            remote_config_http::Surface::Version,
+                        );
+                        let publication = functions
+                            .reserve_remote_config_version(&metadata)
+                            .map_err(|error| match error {
+                                PublishEventError::Capacity => RemoteConfigError::EventCapacity,
+                                PublishEventError::Invalid | PublishEventError::Unavailable => {
+                                    RemoteConfigError::EventUnavailable
+                                }
+                            })?;
+                        Ok(Box::new(move || publication.publish()))
+                    }))
+                    .with_project_number(number),
+                    // Production did not record events for server-namespace commits.
+                    server: TemplateStore::default().with_project_number(number),
+                }
+            },
+        ))
+    });
     let blocking_auth_slots = state.blocking.as_ref().map(|blocking| {
         Arc::new(Semaphore::new(
             blocking

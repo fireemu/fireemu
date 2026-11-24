@@ -111,7 +111,7 @@ fn write_matrix_changes_history_only_for_a_valid_publication() {
                         };
                         assert_eq!(template.document()["conditions"][0]["name"], "second");
                         assert_eq!(template.description(), Some("Test publish"));
-                        assert_eq!(base_etag, etag);
+                        assert_eq!(base_etag, format!("{etag}-0"));
                     }
                     (_, true, WriteMode::Publish) => {
                         let Ok(WriteResult::Published(version)) = result else {
@@ -182,7 +182,7 @@ fn rejects_malformed_documents_and_duplicate_definitions() {
         assert!(
             matches!(
                 store.write(WriteMode::Validate, Some("*"), input.clone(), NOW),
-                Err(Error::InvalidTemplate(_))
+                Err(Error::InvalidTemplate(_) | Error::Transcoder { .. })
             ),
             "{input}"
         );
@@ -269,7 +269,7 @@ fn malformed_draft_fields_are_rejected_before_the_write_precondition() {
                 assert!(
                     matches!(
                         store.write(mode, tag, draft.clone(), NOW),
-                        Err(Error::InvalidTemplate(_))
+                        Err(Error::InvalidTemplate(_) | Error::Transcoder { .. })
                     ),
                     "{mode:?} {tag:?} {draft}"
                 );
@@ -358,7 +358,8 @@ fn two_writers_with_one_etag_commit_exactly_one_document() {
                 assert!(Arc::ptr_eq(&store.current(), &version));
                 successes += 1;
             }
-            Err(Error::PreconditionFailed) => (),
+            // The loser either saw the winner's version (stale) or lost under the lock.
+            Err(Error::PreconditionFailed | Error::ConcurrentPrecondition { .. }) => (),
             other => panic!("unexpected write outcome: {other:?}"),
         }
     }
@@ -546,7 +547,7 @@ proptest! {
                 "validate" => {
                     let result = store.write(WriteMode::Validate, Some(&etag), proposal.clone(), NOW);
                     prop_assert!(matches!(result, Ok(WriteResult::Validated { template, base_etag })
-                        if template.document() == &proposal && base_etag == etag), "step {step}: {operation}");
+                        if template.document() == &proposal && base_etag == format!("{etag}-0")), "step {step}: {operation}");
                 }
                 "rollback-known" | "rollback-unknown" => {
                     let index = if operation == "rollback-known" {

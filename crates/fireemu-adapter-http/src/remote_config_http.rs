@@ -16,11 +16,13 @@ use crate::remote_config::{
 pub(crate) struct Route<'a> {
     pub project: &'a str,
     namespace: Result<Namespace, &'a str>,
+    explicit_namespace: bool,
     action: &'a str,
 }
 
 pub(crate) fn route(path: &str) -> Option<Route<'_>> {
     let (project, action) = path.strip_prefix("/v1/projects/")?.split_once('/')?;
+    let explicit_namespace = action.starts_with("namespaces/");
     let (namespace, action) = if let Some(rest) = action.strip_prefix("namespaces/") {
         let (namespace, action) = rest.split_once('/')?;
         let namespace = match namespace {
@@ -36,15 +38,35 @@ pub(crate) fn route(path: &str) -> Option<Route<'_>> {
         "serverRemoteConfig" if namespace == Ok(Namespace::Server) => Some(Route {
             project,
             namespace,
+            explicit_namespace,
             action,
         }),
-        "remoteConfig" | "remoteConfig:listVersions" | "remoteConfig:rollback" => Some(Route {
+        "remoteConfig"
+        | "remoteConfig:listVersions"
+        | "remoteConfig:rollback"
+        | "remoteConfig:downloadDefaults" => Some(Route {
             project,
             namespace,
+            explicit_namespace,
             action,
         }),
         _ => None,
     }
+}
+
+/// Whether a request names the project by its number in the one form production was recorded
+/// serving under the number: the client template's current read without a namespace
+/// (2026-11-21 `client-project-number`, 200 with the template). Other routes keep answering the
+/// number as an unknown project.
+pub(crate) fn number_addresses_project(
+    route: &Route<'_>,
+    method: &str,
+    number: Option<u64>,
+) -> bool {
+    number.is_some_and(|number| route.project == number.to_string())
+        && method == "GET"
+        && route.action == "remoteConfig"
+        && !route.explicit_namespace
 }
 
 pub(crate) struct Reply {
@@ -56,12 +78,72 @@ pub(crate) struct Reply {
 enum ReplyBody {
     Json(Value),
     Rendered(Bytes),
+    /// A defaults file: its own content type, never compressed (2026-11-21 `defaults-*`: identity
+    /// although the request accepted gzip).
+    File(Bytes, &'static str),
 }
 
+/// One answer as the listener writes it.
+pub(crate) struct Wire {
+    pub status: u16,
+    pub body: Bytes,
+    pub etag: Option<String>,
+    /// `Content-Type`; production's JSON answers spell the charset `UTF-8`.
+    pub content_type: &'static str,
+    /// Whether the body may be gzip-encoded for a client that accepts it.
+    pub compressible: bool,
+}
+
+/// Production's JSON layout: two-space indentation, a final newline, and `<` and `>` written as
+/// `\u003c` and `\u003e` (RC-OBSERVE-V2-3 and 2026-11-21: in templates, the data plane and error
+/// messages; `&`, `'` and `=` stay as they are). Neither character occurs outside a string in
+/// JSON, so escaping the serialized bytes changes only string contents.
 fn pretty_json(value: &Value) -> Vec<u8> {
-    let mut body = serde_json::to_vec_pretty(value).unwrap_or_default();
+    let plain = serde_json::to_vec_pretty(value).unwrap_or_default();
+    let mut body = Vec::with_capacity(plain.len() + 1);
+    for byte in plain {
+        match byte {
+            b'<' => body.extend_from_slice(b"\\u003c"),
+            b'>' => body.extend_from_slice(b"\\u003e"),
+            byte => body.push(byte),
+        }
+    }
     body.push(b'\n');
     body
+}
+
+/// A time as production writes Remote Config times: UTC with exactly six fraction digits
+/// (every `updateTime`, v1 `timestamp` and v2 `time` recorded on 2026-11-21 and in
+/// RC-OBSERVE-V2-3, including values ending in zero); finer digits are truncated.
+pub(crate) fn micros_rfc3339(time: LogicalInstant) -> Option<String> {
+    let nanos = time.to_rfc3339().ok()?;
+    let (seconds, fraction) = nanos
+        .strip_suffix('Z')?
+        .split_once('.')
+        .unwrap_or((nanos.strip_suffix('Z')?, ""));
+    let mut digits = fraction.to_owned();
+    digits.truncate(6);
+    Some(format!("{seconds}.{digits:0<6}Z"))
+}
+
+/// The transcoder's refusal of a query value it cannot convert, with its field violation
+/// (2026-11-21 `client-version-invalid`, `history-time-invalid`).
+fn transcoder_refusal(message: &str, field: &str) -> Reply {
+    Reply {
+        status: 400,
+        body: ReplyBody::Json(json!({
+            "error": {
+                "code": 400,
+                "message": message,
+                "status": "INVALID_ARGUMENT",
+                "details": [{
+                    "@type": "type.googleapis.com/google.rpc.BadRequest",
+                    "fieldViolations": [{"field": field, "description": message}],
+                }],
+            }
+        })),
+        etag: None,
+    }
 }
 
 impl Reply {
@@ -73,12 +155,26 @@ impl Reply {
         }
     }
 
-    pub(crate) fn into_wire(self) -> (u16, Bytes, Option<String>) {
-        let body = match self.body {
-            ReplyBody::Json(value) => Bytes::from(pretty_json(&value)),
-            ReplyBody::Rendered(body) => body,
+    pub(crate) fn into_wire(self) -> Wire {
+        const JSON: &str = "application/json; charset=UTF-8";
+        let (body, content_type, compressible) = match self.body {
+            ReplyBody::Json(value) => (Bytes::from(pretty_json(&value)), JSON, true),
+            ReplyBody::Rendered(body) => (body, JSON, true),
+            ReplyBody::File(body, content_type) => (body, content_type, false),
         };
-        (self.status, body, self.etag)
+        Wire {
+            status: self.status,
+            body,
+            etag: self.etag,
+            content_type,
+            compressible,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_tuple(self) -> (u16, Bytes, Option<String>) {
+        let wire = self.into_wire();
+        (wire.status, wire.body, wire.etag)
     }
 
     fn ok(body: Value, etag: Option<String>) -> Self {
@@ -108,6 +204,9 @@ fn parameters(query: &str, allowed: &[&str]) -> Result<BTreeMap<String, String>,
             "validate_only" => "validateOnly",
             "page_size" => "pageSize",
             "page_token" => "pageToken",
+            "end_version_number" => "endVersionNumber",
+            "start_time" => "startTime",
+            "end_time" => "endTime",
             name => name,
         };
         if !allowed.contains(&name) || result.contains_key(name) {
@@ -167,10 +266,7 @@ pub(crate) fn version_fields(
     if let Some(description) = description {
         output["description"] = json!(description);
     }
-    if let Some(time) = version
-        .update_time()
-        .and_then(|time| time.to_rfc3339().ok())
-    {
+    if let Some(time) = version.update_time().and_then(micros_rfc3339) {
         output["updateTime"] = json!(time);
     }
     if let Change::Rollback { source } = change {
@@ -234,9 +330,24 @@ fn read(
     let requested = params
         .get("versionNumber")
         .map(|value| {
-            value
-                .parse::<i64>()
-                .map_err(|_| invalid("Invalid version number"))
+            value.parse::<i64>().map_err(|_| {
+                // Recorded for a value that is not a number; an out-of-range number was refused
+                // with 400 too, in an unrecorded wording, and keeps the earlier message.
+                if value
+                    .bytes()
+                    .any(|byte| !byte.is_ascii_digit() && byte != b'-')
+                {
+                    transcoder_refusal(
+                        &format!(
+                            "Invalid value at 'version_number' (TYPE_INT64), {}",
+                            Value::String(value.clone())
+                        ),
+                        "version_number",
+                    )
+                } else {
+                    invalid("Invalid version number")
+                }
+            })
         })
         .transpose()?;
     let requested = requested
@@ -269,31 +380,168 @@ fn read(
     })
 }
 
-fn history(store: &TemplateStore, query: &str, user: Option<&UpdateUser>) -> Result<Reply, Reply> {
-    let params = parameters(query, &["pageSize", "pageToken"])?;
+/// Production keeps 90 days of history; an `endTime` earlier than this before the request was
+/// refused (2026-11-21 `history-time-exclude`: the bound was the request time less 91 days).
+const HISTORY_WINDOW_SECONDS: i128 = 91 * 24 * 60 * 60;
+
+fn history_time(
+    params: &BTreeMap<String, String>,
+    name: &str,
+    field: &str,
+) -> Result<Option<LogicalInstant>, Reply> {
+    let Some(raw) = params.get(name) else {
+        return Ok(None);
+    };
+    LogicalInstant::parse_rfc3339(raw).map(Some).map_err(|_| {
+        let zoned = raw.ends_with('Z')
+            || raw.len() >= 6 && {
+                let zone = &raw.as_bytes()[raw.len() - 6..];
+                matches!(zone[0], b'+' | b'-') && zone[3] == b':'
+            };
+        if zoned {
+            // Other malformed times were not recorded.
+            invalid(&format!("Invalid {field}"))
+        } else {
+            let message = format!("Invalid value at '{field}' (type.googleapis.com/google.protobuf.Timestamp), Field '{field}', Illegal timestamp format; timestamps must end with 'Z' or have a valid timezone offset.");
+            transcoder_refusal(&message, field)
+        }
+    })
+}
+
+fn echo(time: LogicalInstant) -> String {
+    time.to_rfc3339_protobuf().unwrap_or_default()
+}
+
+fn history(
+    store: &TemplateStore,
+    query: &str,
+    user: Option<&UpdateUser>,
+    now: LogicalInstant,
+) -> Result<Reply, Reply> {
+    let params = parameters(
+        query,
+        &[
+            "pageSize",
+            "pageToken",
+            "endVersionNumber",
+            "startTime",
+            "endTime",
+        ],
+    )?;
     let limit = params
         .get("pageSize")
         .map(|raw| {
-            raw.parse::<i32>()
-                .ok()
-                .and_then(|size| usize::try_from(size).ok())
-                .ok_or_else(|| invalid("Invalid page size"))
+            let size = raw
+                .parse::<i32>()
+                .map_err(|_| invalid("Invalid page size"))?;
+            usize::try_from(size).map_err(|_| {
+                invalid(&format!(
+                    "[VALIDATION_ERROR]: Page size must be non-negative, but was {size}."
+                ))
+            })
         })
         .transpose()?
         .filter(|size| *size > 0)
         .unwrap_or(MAX_RETAINED_VERSIONS)
         .min(MAX_RETAINED_VERSIONS);
-    let (page, has_more) = store
-        .history_page(limit, params.get("pageToken").map(String::as_str))
-        .ok_or_else(|| invalid("Invalid or expired page token"))?;
-    let Some(last) = page.last() else {
-        return Ok(Reply::ok(json!({}), None));
+    // The token is the number of the next version to list (RC-OBSERVE-V2-3 seq 69: "24").
+    let from = params
+        .get("pageToken")
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            token
+                .parse::<u64>()
+                .ok()
+                .filter(|_| token.bytes().all(|b| b.is_ascii_digit()))
+                .ok_or_else(|| {
+                    invalid(&format!(
+                        "[VALIDATION_ERROR]: PageToken [{token}] is not properly formatted."
+                    ))
+                })
+        })
+        .transpose()?;
+    let end_version = params
+        .get("endVersionNumber")
+        .map(|raw| {
+            let number = raw.parse::<i64>().map_err(|_| invalid("Invalid end version number"))?;
+            u64::try_from(number).map_err(|_| {
+                invalid(&format!(
+                    "[VALIDATION_ERROR]: End version number must be at least 0 [{number} specified]."
+                ))
+            })
+        })
+        .transpose()?
+        .filter(|number| *number > 0);
+    let start = history_time(&params, "startTime", "start_time")?;
+    let end = history_time(&params, "endTime", "end_time")?;
+    if let (Some(start), Some(end)) = (start, end) {
+        if start >= end {
+            return Err(invalid(&format!(
+                "[VALIDATION_ERROR]: start_time [{}] must be before end_time [{}].",
+                echo(start),
+                echo(end)
+            )));
+        }
+    }
+    if let Some(end) = end {
+        let earliest =
+            LogicalInstant::from_nanos(now.as_nanos() - HISTORY_WINDOW_SECONDS * 1_000_000_000);
+        if end < earliest {
+            return Err(invalid(&format!(
+                "[VALIDATION_ERROR]: end_time must be no earlier than {} [{} specified].",
+                micros_rfc3339(earliest).unwrap_or_default(),
+                echo(end)
+            )));
+        }
+    }
+    // startTime is inclusive and endTime exclusive (2026-11-21 history-start-v2, -end-v2 and
+    // their 1 µs neighbours).
+    let keep = |version: &Version| {
+        end_version.is_none_or(|limit| version.number() <= limit)
+            && version.update_time().is_some_and(|time| {
+                start.is_none_or(|start| time >= start) && end.is_none_or(|end| time < end)
+            })
     };
+    let (page, next) = store.history_page(limit, from, &keep);
+    if page.is_empty() {
+        return Ok(Reply::ok(json!({}), None));
+    }
     let mut body = json!({"versions": page.iter().map(|entry| version_fields(entry, user, Surface::History)).collect::<Vec<_>>()});
-    if has_more {
-        body["nextPageToken"] = json!(last.etag());
+    if let Some(next) = next {
+        body["nextPageToken"] = json!(next.to_string());
     }
     Ok(Reply::ok(body, None))
+}
+
+/// `remoteConfig:downloadDefaults` (2026-11-21 `defaults-*`). The server namespace answered an
+/// empty file while it was empty; a server template with parameters was not recorded and is
+/// rendered as a client one.
+fn download_defaults(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
+    use crate::remote_config_defaults::{defaults, render, Format};
+    let params = parameters(query, &["format"])?;
+    let format = match params.get("format").map(String::as_str) {
+        None | Some("" | "FORMAT_UNSPECIFIED") => {
+            return Err(invalid(
+                "[VALIDATION_ERROR]: The message's format field is unspecified or unrecognized.",
+            ))
+        }
+        Some(value) => Format::parse(value).ok_or_else(|| {
+            transcoder_refusal(
+                &format!(
+                    "Invalid value at 'format' (type.googleapis.com/google.firebase.remoteconfig.v1.DownloadDefaultsRequest.Format), {}",
+                    Value::String(value.to_owned())
+                ),
+                "format",
+            )
+        })?,
+    };
+    let version = store.current();
+    let body = render(&defaults(version.template().document()), format);
+    Ok(Reply {
+        status: 200,
+        body: ReplyBody::File(Bytes::from(body), format.content_type()),
+        etag: None,
+    })
 }
 
 fn write(
@@ -331,8 +579,12 @@ fn write(
     };
     match store
         .write_checked(mode, if_match, body, now, &check)
-        .map_err(store_error)?
-    {
+        .map_err(|error| match error {
+            Error::PreconditionFailed => if_match
+                .and_then(|tag| stale_refusal(settings, namespace, tag, store.current().number()))
+                .unwrap_or_else(|| store_error(Error::PreconditionFailed)),
+            error => concurrent_refusal(settings, namespace, error),
+        })? {
         WriteResult::Validated {
             template,
             base_etag,
@@ -346,10 +598,7 @@ fn write(
             };
             body.retain(|_, value| visible(value));
             body.insert("version".to_owned(), version);
-            Ok(Reply::ok(
-                Value::Object(body),
-                Some(format!("{base_etag}-0")),
-            ))
+            Ok(Reply::ok(Value::Object(body), Some(base_etag)))
         }
         WriteResult::Published(version) => {
             Ok(published(&version, false, settings.update_user.as_ref()))
@@ -393,6 +642,69 @@ fn rollback(
     Ok(published(&version, false, user))
 }
 
+/// Production's refusal of an `If-Match` that does not name the current client version: HTTP 412
+/// with a body whose code is 400 (2026-11-21 `pair-02` for a tag of another form, Web campaign
+/// `client-publish-stale` for an older version). The server namespace, a tag naming another
+/// project number and a store without a project number keep the earlier 412.
+fn stale_refusal(
+    settings: &RemoteConfigSettings,
+    namespace: Namespace,
+    tag: &str,
+    current: u64,
+) -> Option<Reply> {
+    let number = settings.project_number?;
+    if namespace != Namespace::Client {
+        return None;
+    }
+    let message = match tag
+        .strip_prefix("etag-")
+        .and_then(|rest| rest.split_once('-'))
+        .filter(|(project, version)| {
+            [project, version]
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        }) {
+        None => format!(
+            "[VERSION_MISMATCH]: The provided ETag [{tag}] is not of the format \"etag-<project number>-<version number>\"."
+        ),
+        Some((project, version)) if project == number.to_string() => format!(
+            "[VERSION_MISMATCH]: Expected version {version}, found {current} for project: ProjectKey{{projectNumber={number}, namespace=firebase}}"
+        ),
+        Some(_) => return None,
+    };
+    Some(Reply {
+        status: 412,
+        body: ReplyBody::Json(json!({
+            "error": {"code": 400, "message": message, "status": "FAILED_PRECONDITION"}
+        })),
+        etag: None,
+    })
+}
+
+/// The strict profile answers the loser of two concurrent client publications with one `ETag`
+/// as production did (2026-11-21 race: both drafts had two conditions; the loser got this 400,
+/// the winner 200). Other counts, the server namespace and the emulator profile keep the 412.
+fn concurrent_refusal(
+    settings: &RemoteConfigSettings,
+    namespace: Namespace,
+    error: Error,
+) -> Reply {
+    match (error, settings.project_number) {
+        (Error::ConcurrentPrecondition { submitted, current }, Some(number))
+            if settings.strict_concurrent_publish
+                && namespace == Namespace::Client
+                && submitted > 0
+                && submitted == current =>
+        {
+            invalid(&format!(
+                "[VALIDATION_ERROR]: Condition order size [{submitted}] does not match condition count [{}] for project [ProjectKey{{projectNumber={number}, namespace=firebase}}]",
+                submitted + current
+            ))
+        }
+        (error, _) => store_error(error),
+    }
+}
+
 fn store_error(error: Error) -> Reply {
     match error {
         Error::MissingPrecondition => Reply::error(
@@ -400,12 +712,13 @@ fn store_error(error: Error) -> Reply {
             "[VERSION_MISMATCH]: No If-Match header found in ConditionRequestContext or HTTP headers on UpdateRemoteConfig call",
             "FAILED_PRECONDITION",
         ),
-        Error::PreconditionFailed => Reply::error(
+        Error::PreconditionFailed | Error::ConcurrentPrecondition { .. } => Reply::error(
             412,
             "The Remote Config ETag does not match",
             "FAILED_PRECONDITION",
         ),
         Error::InvalidTemplate(message) => invalid(&message),
+        Error::Transcoder { message, field } => transcoder_refusal(&message, &field),
         Error::UnknownVersion => missing(),
         Error::VersionExhausted => {
             Reply::error(500, "Remote Config version number exhausted", "INTERNAL")
@@ -503,7 +816,7 @@ pub(crate) fn dispatch(
             }
             // The data plane serves group parameters next to the top-level ones and no
             // `parameterGroups` key (seq 59). A name used both in a group and at the top level is
-            // refused at validation, as before (unrecorded in production; ruling 4 item 4), so no
+            // refused at validation with production's DUPLICATE_KEY (2026-11-21 pair-09), so no
             // merge rule is needed here.
             if let Some(Value::Object(groups)) = body.remove("parameterGroups") {
                 let parameters = body
@@ -530,8 +843,9 @@ pub(crate) fn dispatch(
         }
         ("remoteConfig", "GET") => read(store, namespace, query, user),
         ("remoteConfig", "PUT") => write(store, namespace, settings, query, bytes, if_match, now),
-        ("remoteConfig:listVersions", "GET") => history(store, query, user),
+        ("remoteConfig:listVersions", "GET") => history(store, query, user, now),
         ("remoteConfig:rollback", "POST") => rollback(store, user, query, bytes, now),
+        ("remoteConfig:downloadDefaults", "GET") => download_defaults(store, query),
         _ => return Reply::error(405, "Method not allowed", "METHOD_NOT_ALLOWED"),
     };
     result.unwrap_or_else(|reply| reply)
@@ -545,7 +859,9 @@ mod tests {
     fn json_body(reply: &Reply) -> Value {
         match &reply.body {
             ReplyBody::Json(value) => value.clone(),
-            ReplyBody::Rendered(bytes) => serde_json::from_slice(bytes).unwrap(),
+            ReplyBody::Rendered(bytes) | ReplyBody::File(bytes, _) => {
+                serde_json::from_slice(bytes).unwrap()
+            }
         }
     }
 
@@ -558,7 +874,7 @@ mod tests {
             "the local clock is outside the RFC 3339 range",
             "INTERNAL",
         )
-        .into_wire();
+        .into_tuple();
         for endpoint in ["remoteConfig", "namespaces/firebase-server/remoteConfig"] {
             let first = request(&stores, endpoint, "PUT", "", b"{}", Some("*"));
             assert_eq!(first.status, 200);
@@ -582,7 +898,7 @@ mod tests {
                     tag,
                     now,
                 );
-                assert_eq!(reply.into_wire(), expected);
+                assert_eq!(reply.into_tuple(), expected);
             }
         }
     }
@@ -611,7 +927,7 @@ mod tests {
     #[test]
     fn latest_get_reuses_rendered_bytes_only_within_its_version() {
         let stores = RemoteConfigStores::default();
-        let latest = || request(&stores, "remoteConfig", "GET", "", b"", None).into_wire();
+        let latest = || request(&stores, "remoteConfig", "GET", "", b"", None).into_tuple();
         let publish = |value: &[u8]| request(&stores, "remoteConfig", "PUT", "", value, Some("*"));
         assert_eq!(
             publish(br#"{"parameters":{"p":{"defaultValue":{"value":"one"}}}}"#).status,
@@ -635,7 +951,7 @@ mod tests {
         assert_ne!(first_tag, after_tag);
         assert_ne!(first, after);
         let (_, historical, historical_tag) =
-            request(&stores, "remoteConfig", "GET", "versionNumber=1", b"", None).into_wire();
+            request(&stores, "remoteConfig", "GET", "versionNumber=1", b"", None).into_tuple();
         assert_eq!(first, historical);
         assert_eq!(first_tag, historical_tag);
     }
@@ -870,7 +1186,7 @@ mod tests {
         let explicit = "namespaces/firebase/remoteConfig";
         for endpoint in [legacy, explicit] {
             assert_eq!(
-                request(&stores, endpoint, "GET", "", b"", None).into_wire(),
+                request(&stores, endpoint, "GET", "", b"", None).into_tuple(),
                 (200, Bytes::from_static(b"{}\n"), None)
             );
         }
@@ -879,8 +1195,8 @@ mod tests {
         assert_eq!(second.status, 200);
         assert_eq!(json_body(&second)["version"]["versionNumber"], "2");
         assert_eq!(
-            request(&stores, legacy, "GET", "", b"", None).into_wire(),
-            request(&stores, explicit, "GET", "", b"", None).into_wire()
+            request(&stores, legacy, "GET", "", b"", None).into_tuple(),
+            request(&stores, explicit, "GET", "", b"", None).into_tuple()
         );
 
         let rollback = request(
@@ -907,7 +1223,7 @@ mod tests {
             json_body(&legacy_history)["versions"][0]["versionNumber"],
             "3"
         );
-        assert_eq!(legacy_history.into_wire(), explicit_history.into_wire());
+        assert_eq!(legacy_history.into_tuple(), explicit_history.into_tuple());
         assert!(stores.server.history().is_empty());
     }
 
@@ -930,7 +1246,7 @@ mod tests {
             let endpoint = format!("namespaces/unknown-ns/{action}");
             let reply = request(&stores, &endpoint, method, "", b"{}", None);
             assert_eq!(
-                reply.into_wire(),
+                reply.into_tuple(),
                 (400, expected.clone(), None),
                 "{method} {endpoint}"
             );
@@ -962,20 +1278,20 @@ mod tests {
         let server_doc = br#"{"parameters":{"p":{"defaultValue":{"value":"server"}}}}"#;
         let client_publish = request(&stores, client, "PUT", "", client_doc, Some("*"));
         assert_eq!(client_publish.status, 200);
-        let client_before = request(&stores, client, "GET", "", b"", None).into_wire();
+        let client_before = request(&stores, client, "GET", "", b"", None).into_tuple();
         assert_eq!(client_before.2.as_deref(), client_publish.etag.as_deref());
 
         let initial_tag = stores.server.current().etag();
         assert_eq!(
-            request(&stores, server, "GET", "", b"", None).into_wire(),
+            request(&stores, server, "GET", "", b"", None).into_tuple(),
             (200, Bytes::from_static(b"{}\n"), Some(initial_tag.clone()))
         );
         assert_eq!(
-            request(&stores, server, "GET", "versionNumber=1", b"", None).into_wire(),
+            request(&stores, server, "GET", "versionNumber=1", b"", None).into_tuple(),
             (200, Bytes::from_static(b"{}\n"), None)
         );
         assert_eq!(
-            request(&stores, list, "GET", "", b"", None).into_wire(),
+            request(&stores, list, "GET", "", b"", None).into_tuple(),
             (200, Bytes::from_static(b"{}\n"), None)
         );
 
@@ -987,11 +1303,11 @@ mod tests {
         assert_eq!(body["parameters"]["p"]["defaultValue"]["value"], "server");
         assert_ne!(server_publish.etag, client_publish.etag);
         assert_eq!(
-            request(&stores, client, "GET", "", b"", None).into_wire(),
+            request(&stores, client, "GET", "", b"", None).into_tuple(),
             client_before
         );
 
-        let server_before = request(&stores, server, "GET", "", b"", None).into_wire();
+        let server_before = request(&stores, server, "GET", "", b"", None).into_tuple();
         for (endpoint, foreign_tag) in [
             (client, &server_publish.etag),
             (server, &client_publish.etag),
@@ -1004,11 +1320,11 @@ mod tests {
             );
         }
         assert_eq!(
-            request(&stores, client, "GET", "", b"", None).into_wire(),
+            request(&stores, client, "GET", "", b"", None).into_tuple(),
             client_before
         );
         assert_eq!(
-            request(&stores, server, "GET", "", b"", None).into_wire(),
+            request(&stores, server, "GET", "", b"", None).into_tuple(),
             server_before
         );
         assert_eq!(stores.client.history().len(), 1);
@@ -1021,7 +1337,7 @@ mod tests {
         let server = "namespaces/firebase-server/remoteConfig";
         let first = request(&stores, server, "PUT", "", b"{}", Some("*"));
         assert_eq!(first.status, 200);
-        let before = request(&stores, server, "GET", "", b"", None).into_wire();
+        let before = request(&stores, server, "GET", "", b"", None).into_tuple();
         for tag in [Some("*"), first.etag.as_deref()] {
             let validated = request(
                 &stores,
@@ -1055,10 +1371,10 @@ mod tests {
                 json_body(&server_error)["error"]["status"],
                 "INVALID_ARGUMENT"
             );
-            assert_eq!(server_error.into_wire(), client_error.into_wire());
+            assert_eq!(server_error.into_tuple(), client_error.into_tuple());
         }
         assert_eq!(
-            request(&stores, server, "GET", "", b"", None).into_wire(),
+            request(&stores, server, "GET", "", b"", None).into_tuple(),
             before
         );
         assert_eq!(stores.server.history().len(), 1);
@@ -1086,7 +1402,7 @@ mod tests {
         );
         let missing = request(&stores, server, "GET", "versionNumber=99", b"", None);
         assert_eq!(
-            missing.into_wire(),
+            missing.into_tuple(),
             (
                 200,
                 Bytes::from_static(b"{}\n"),
@@ -1127,8 +1443,8 @@ mod tests {
         assert_eq!(body["version"]["updateType"], "ROLLBACK");
         assert_eq!(body["version"]["rollbackSource"], "1");
         assert_eq!(body["version"]["description"], "Rollback to version 1");
-        let before = request(&stores, server, "GET", "", b"", None).into_wire();
-        let history_before = request(&stores, list, "GET", "", b"", None).into_wire();
+        let before = request(&stores, server, "GET", "", b"", None).into_tuple();
+        let history_before = request(&stores, list, "GET", "", b"", None).into_tuple();
         let refused = request(
             &stores,
             rollback,
@@ -1140,11 +1456,11 @@ mod tests {
         assert_eq!(refused.status, 404);
         assert_eq!(json_body(&refused)["error"]["status"], "NOT_FOUND");
         assert_eq!(
-            request(&stores, server, "GET", "", b"", None).into_wire(),
+            request(&stores, server, "GET", "", b"", None).into_tuple(),
             before
         );
         assert_eq!(
-            request(&stores, list, "GET", "", b"", None).into_wire(),
+            request(&stores, list, "GET", "", b"", None).into_tuple(),
             history_before
         );
         assert!(stores.client.history().is_empty());
@@ -1170,7 +1486,7 @@ mod tests {
         // body (2040 bytes) used LF.
         let fixture =
             include_str!("remote_config_testdata/server_dataplane.json").replace("\r\n", "\n");
-        let (status, body, etag) = read().into_wire();
+        let (status, body, etag) = read().into_tuple();
         assert_eq!(status, 200);
         assert_eq!(etag.as_deref(), Some(tag.as_str()));
         assert_eq!(
@@ -1182,7 +1498,7 @@ mod tests {
 
         let empty = publish(b"{}", &tag);
         assert_eq!(empty.status, 200);
-        let (status, body, etag) = read().into_wire();
+        let (status, body, etag) = read().into_tuple();
         assert_eq!(status, 200);
         assert_eq!(etag, empty.etag);
         assert_eq!(body.len(), 70);
@@ -1472,7 +1788,9 @@ mod tests {
     fn strict() -> RemoteConfigSettings {
         RemoteConfigSettings {
             strict_server_conditions: true,
+            strict_concurrent_publish: true,
             update_user: None,
+            project_number: None,
         }
     }
 
@@ -1502,7 +1820,7 @@ mod tests {
             assert_eq!(reply.status, 200);
             assert_eq!(json_body(&reply)["version"]["versionNumber"], "7");
             let (status, body, _) =
-                request_with(&stores, &settings, DATA_PLANE, "GET", "", b"", None).into_wire();
+                request_with(&stores, &settings, DATA_PLANE, "GET", "", b"", None).into_tuple();
             assert_eq!(status, 200);
             assert_eq!(
                 serde_json::from_slice::<Value>(&body).unwrap(),
@@ -1553,7 +1871,7 @@ mod tests {
                     body.as_bytes(),
                     Some(&tag),
                 )
-                .into_wire();
+                .into_tuple();
                 assert_eq!(status, 400, "{name}");
                 assert_eq!(etag, None);
                 let wire: Value = serde_json::from_slice(&wire).unwrap();
@@ -1649,7 +1967,9 @@ mod tests {
                 row.split('\t').collect::<Vec<_>>().try_into().unwrap();
             let settings = RemoteConfigSettings {
                 strict_server_conditions: profile == "strict",
+                strict_concurrent_publish: profile == "strict",
                 update_user: None,
+                project_number: None,
             };
             let stores = RemoteConfigStores::default();
             let endpoint = if namespace == "server" {
@@ -1722,6 +2042,8 @@ mod tests {
     fn configured_update_user_has_the_recorded_shape_on_each_surface() {
         let settings = RemoteConfigSettings {
             strict_server_conditions: false,
+            strict_concurrent_publish: false,
+            project_number: None,
             update_user: Some(UpdateUser {
                 email: "tester@example.com".into(),
                 name: "Tester".into(),
@@ -2017,11 +2339,11 @@ mod tests {
         );
     }
 
-    /// Ruling 4 item 4: a group parameter named like a top-level one was not recorded in
-    /// production; Fireemu keeps its earlier answer (refused at validation, nothing published) in
-    /// both namespaces and profiles, so the flattened data plane never meets a collision.
+    /// A group parameter named like a top-level one: production refused it with `DUPLICATE_KEY`
+    /// (2026-11-21 `pair-09`, `pair-10`, the `duplicate-parameter` draft), so the flattened data
+    /// plane never meets a collision. Ruling 4 item 4 had taken it as unrecorded.
     #[test]
-    fn a_group_parameter_named_like_a_top_level_one_keeps_the_earlier_refusal() {
+    fn a_group_parameter_named_like_a_top_level_one_is_refused_as_recorded() {
         let body = json!({
             "parameters": {"p": {"defaultValue": {"value": "top"}}},
             "parameterGroups": {"g": {"parameters": {"p": {"defaultValue": {"value": "grouped"}}}}}
@@ -2045,7 +2367,7 @@ mod tests {
                     assert_eq!(wire["error"]["status"], "INVALID_ARGUMENT");
                     assert_eq!(
                         wire["error"]["message"],
-                        "invalid or duplicate parameter name \"p\""
+                        "[VALIDATION_ERROR]: DUPLICATE_KEY Duplicate parameter key: p"
                     );
                 }
                 assert_eq!(stores.client.current().number(), 0);
@@ -2137,3 +2459,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "remote_config_wire_tests.rs"]
+mod wire_tests;

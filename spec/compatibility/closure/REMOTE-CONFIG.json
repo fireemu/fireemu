@@ -38,12 +38,14 @@
   "conditions": [
     {
       "conditionId": "REMOTE-CONFIG/template-read",
-      "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects.",
+      "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects. Includes the defaults download in JSON, XML and property-list form (coordinator ruling D7).",
       "status": "PLANNED",
       "localEvidence": [
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
-        "crates/fireemu-adapter-http/src/remote_config_http.rs"
+        "crates/fireemu-adapter-http/src/remote_config_http.rs",
+        "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs",
+        "crates/fireemu-adapter-http/src/remote_config_defaults.rs"
       ],
       "productionEvidence": []
     },
@@ -53,7 +55,9 @@
       "status": "PLANNED",
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
-        "npm/scripts/testing-worlds.test.mjs"
+        "npm/scripts/testing-worlds.test.mjs",
+        "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs",
+        "crates/fireemu-adapter-http/src/remote_config.rs"
       ],
       "productionEvidence": []
     },
@@ -63,7 +67,8 @@
       "status": "PLANNED",
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
-        "npm/scripts/testing-worlds.test.mjs"
+        "npm/scripts/testing-worlds.test.mjs",
+        "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs"
       ],
       "productionEvidence": []
     },
@@ -74,7 +79,8 @@
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
         "npm/scripts/testing-worlds.test.mjs",
-        "crates/fireemu-adapter-http/src/remote_config_http.rs"
+        "crates/fireemu-adapter-http/src/remote_config_http.rs",
+        "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs"
       ],
       "productionEvidence": []
     },

@@ -1432,8 +1432,15 @@ test('Remote Config admin serves server templates to the Admin SDK', native, asy
     assert.equal(clientPublished.status, 200);
     assert.match(clientPublished.headers.get('etag'), /^etag-/);
     assert.equal((await clientPublished.json()).version.versionNumber, '1');
-    const refused = await fetch(server, {
+    // Tags have production's form, etag-<project number>-<version> in both namespaces, so a client
+    // tag names a server version of the same number; version 2 of the client is not the server's.
+    assert.equal(clientPublished.headers.get('etag'), published.headers.get('etag'));
+    const clientSecond = await fetch(client, {
       method: 'PUT', headers: { ...publishHeaders, 'if-match': clientPublished.headers.get('etag') }, body: '{}',
+    });
+    assert.equal(clientSecond.status, 200);
+    const refused = await fetch(server, {
+      method: 'PUT', headers: { ...publishHeaders, 'if-match': clientSecond.headers.get('etag') }, body: '{}',
     });
     assert.equal(refused.status, 412);
     assert.equal((await refused.json()).error.status, 'FAILED_PRECONDITION');

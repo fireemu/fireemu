@@ -3898,7 +3898,7 @@ async fn admin_publish_delivers_only_committed_client_versions() {
     const CLIENT: &str = "/v1/projects/demo-app/namespaces/firebase/remoteConfig";
     const SERVER: &str = "/v1/projects/demo-app/namespaces/firebase-server/remoteConfig";
     const SERVER_READ: &str = "/v1/projects/demo-app/namespaces/firebase-server/serverRemoteConfig";
-    const TIME: &str = "2026-08-29T12:01:00Z";
+    const TIME: &str = "2026-08-29T12:01:00.000000Z";
 
     for client in [LEGACY, CLIENT] {
         let mut state = state(Arc::new(AtomicUsize::new(0)));

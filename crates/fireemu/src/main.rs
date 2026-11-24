@@ -4534,7 +4534,21 @@ fn control_state(
             // The strict profile refuses the server conditions production refused; the emulator
             // profile keeps accepting them (RC-OBSERVE-V2-3, ruling 4).
             strict_server_conditions: cfg.profile == config::CompatibilityProfile::Strict,
+            // The race loser's recorded 400 (2026-11-21); the emulator profile keeps the 412.
+            strict_concurrent_publish: cfg.profile == config::CompatibilityProfile::Strict,
             update_user: cfg.remote_config_update_user.clone(),
+            // Production's ETags carry the project number (RC-OBSERVE-V2-3); the configured
+            // `daemon.authProjectNumbers` entry, else the number Fireemu derives for the project.
+            project_number: Some(
+                cfg.auth_project_numbers
+                    .get(&cfg.auth_project)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        fireemu_adapter_functions::eventarc_channels::project_number(
+                            &cfg.auth_project,
+                        )
+                    }),
+            ),
         },
         // Calendar moves of the clock read zones as schedules do, from the bundled database.
         calendar_zones: Some(fireemu_adapter_http::control::CalendarZones {

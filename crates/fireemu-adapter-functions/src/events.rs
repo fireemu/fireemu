@@ -2288,15 +2288,22 @@ fn database_delta(before: &Value, after: &Value) -> Value {
 /// (project, namespace) stream; client and server ids may coincide, and only the client namespace
 /// emits events.
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+/// Production's event ids are positive decimal int32 values (RC-OBSERVE-V2-3: 312875307 to
+/// 1894198058), so the id is a permutation of the version number within 31 bits.
 fn remote_config_event_id(project: &str, namespace: &str, number: u64) -> String {
-    let Ok(version) = u32::try_from(number) else {
+    const MASK: u32 = 0x7fff_ffff;
+    let Some(version) = u32::try_from(number)
+        .ok()
+        .filter(|version| *version <= MASK)
+    else {
         // There is no recorded format for these versions. The prefix keeps them unique.
         return format!("v{number}");
     };
-    let key = seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32;
-    // The xorshift, odd multiplication and XOR with the key are all invertible.
-    let id = (version ^ (version >> 16)).wrapping_mul(0x9e37_79b1) ^ key;
-    (id as i32).to_string()
+    let key = (seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32) & MASK;
+    // Within 31 bits the xorshift, the odd multiplication and the XOR with the key are all
+    // invertible, so distinct versions keep distinct ids.
+    let id = ((version ^ (version >> 16)).wrapping_mul(0x9e37_79b1) & MASK) ^ key;
+    id.to_string()
 }
 
 /// Renders the recorded v1 and v2 event shapes from an admin version.
@@ -2487,7 +2494,7 @@ mod remote_config_tests {
         // One id per version, shared by v1 and v2 (RC-OBSERVE-V2-3).
         for (id, version, v2_description, v2_source) in [
             (
-                "-631551824",
+                "1515931824",
                 json!({
                     "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "INCREMENTAL_UPDATE", "description": "d",
@@ -2505,7 +2512,7 @@ mod remote_config_tests {
                 "0",
             ),
             (
-                "-1630905326",
+                "516578322",
                 json!({
                     "versionNumber": "3", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "ROLLBACK", "description": "Rollback to version 1",
@@ -2603,6 +2610,11 @@ mod remote_config_tests {
             remote_config_event_id("demo-config", "firebase", u64::from(u32::MAX) + 1),
             "v4294967296",
         );
+        // Beyond 31 bits no positive int32 is left for a distinct id.
+        assert_eq!(
+            remote_config_event_id("demo-config", "firebase", 0x8000_0000),
+            "v2147483648",
+        );
     }
 
     #[test]
@@ -2619,14 +2631,17 @@ mod remote_config_tests {
         #[test]
         fn committed_remote_config_ids_are_unique_per_version(
             project in "demo-[a-z0-9-]{1,20}",
-            a in 1..=u32::MAX,
-            b in 1..=u32::MAX,
+            a in 1..=0x7fff_ffff_u32,
+            b in 1..=0x7fff_ffff_u32,
         ) {
             prop_assume!(a != b);
             let first = remote_config_event_id(&project, "firebase", u64::from(a));
             let second = remote_config_event_id(&project, "firebase", u64::from(b));
-            prop_assert!(first.parse::<i32>().is_ok());
-            prop_assert!(second.parse::<i32>().is_ok());
+            // Positive decimal int32, as production's ids (RC-OBSERVE-V2-3).
+            for id in [&first, &second] {
+                prop_assert!(id.parse::<i32>().is_ok_and(|id| id >= 0), "{id}");
+                prop_assert!(!id.starts_with('-') && (id == "0" || !id.starts_with('0')));
+            }
             prop_assert_ne!(first, second);
         }
 
