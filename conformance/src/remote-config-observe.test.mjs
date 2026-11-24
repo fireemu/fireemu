@@ -1442,6 +1442,18 @@ test("A2 closes only after one trigger and one service read back absent", async 
     result.resources,
   );
   assert.equal(stillThere.atBaseline, false);
+  const triggerKey = `GET eventarc.googleapis.com /v1/${triggers[0]}`;
+  const triggerCloud = cloudWorld({
+    rc,
+    faults: { [triggerKey]: [() => reply(200, { name: "t1" })] },
+  });
+  triggerCloud.sourceGone = true;
+  const triggerThere = await readBack(
+    productionContext({ rc, cloud: triggerCloud }).ctx,
+    result.resources,
+  );
+  assert.equal(triggerThere.managed[triggers[0]], 200);
+  assert.equal(triggerThere.atBaseline, false);
 });
 
 test("only the latest page token is admitted: a superseded one is refused on page 3, the last one after the end", async () => {
