@@ -563,13 +563,26 @@ fn write(
     // The strict profile refuses the server conditions production refused (seq 54-57), after the
     // preconditions; the emulator profile keeps accepting them and serves them as `{}`.
     let check = |template: &ClientTemplate| {
-        if namespace != Namespace::Server || !settings.strict_server_conditions {
-            return Ok(());
-        }
         let conditions = template.document()["conditions"]
             .as_array()
             .cloned()
             .unwrap_or_default();
+        // The strict profile refuses the client conditions production refused (2026-11-21).
+        if namespace == Namespace::Client && settings.strict_client_conditions {
+            return conditions.iter().try_for_each(|condition| {
+                let name = condition["name"].as_str().unwrap_or_default();
+                let expression = condition["expression"].as_str().unwrap_or_default();
+                crate::remote_config_client_conditions::client_refusal(
+                    name,
+                    expression,
+                    settings.time_zone_known,
+                )
+                .map_or(Ok(()), |message| Err(Error::InvalidTemplate(message)))
+            });
+        }
+        if namespace != Namespace::Server || !settings.strict_server_conditions {
+            return Ok(());
+        }
         conditions.iter().try_for_each(|condition| {
             let name = condition["name"].as_str().unwrap_or_default();
             let expression = condition["expression"].as_str().unwrap_or_default();
@@ -1791,6 +1804,7 @@ mod tests {
             strict_concurrent_publish: true,
             update_user: None,
             project_number: None,
+            ..RemoteConfigSettings::default()
         }
     }
 
@@ -1970,6 +1984,7 @@ mod tests {
                 strict_concurrent_publish: profile == "strict",
                 update_user: None,
                 project_number: None,
+                ..RemoteConfigSettings::default()
             };
             let stores = RemoteConfigStores::default();
             let endpoint = if namespace == "server" {
@@ -2044,6 +2059,8 @@ mod tests {
             strict_server_conditions: false,
             strict_concurrent_publish: false,
             project_number: None,
+            strict_client_conditions: false,
+            time_zone_known: None,
             update_user: Some(UpdateUser {
                 email: "tester@example.com".into(),
                 name: "Tester".into(),

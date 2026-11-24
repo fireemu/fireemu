@@ -4536,6 +4536,12 @@ fn control_state(
             strict_server_conditions: cfg.profile == config::CompatibilityProfile::Strict,
             // The race loser's recorded 400 (2026-11-21); the emulator profile keeps the 412.
             strict_concurrent_publish: cfg.profile == config::CompatibilityProfile::Strict,
+            // The client condition refusals recorded on 2026-11-21; the emulator profile keeps
+            // accepting every expression.
+            strict_client_conditions: cfg.profile == config::CompatibilityProfile::Strict,
+            time_zone_known: Some(|zone: &str| {
+                fireemu_adapter_functions::zone::calendar_zone(zone).is_ok()
+            }),
             update_user: cfg.remote_config_update_user.clone(),
             // Production's ETags carry the project number (RC-OBSERVE-V2-3); the configured
             // `daemon.authProjectNumbers` entry, else the number Fireemu derives for the project.

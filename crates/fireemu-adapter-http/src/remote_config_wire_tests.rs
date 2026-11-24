@@ -886,3 +886,73 @@ fn stale_tags_of_another_shape_and_one_condition_races() {
         "[VALIDATION_ERROR]: Condition order size [1] does not match condition count [2] for project [ProjectKey{projectNumber=123456789012, namespace=firebase}]"
     );
 }
+
+#[test]
+fn strict_refuses_the_recorded_client_conditions_after_the_precondition_and_emulator_accepts() {
+    let strict = RemoteConfigSettings {
+        strict_client_conditions: true,
+        time_zone_known: Some(|zone| zone == "Asia/Tokyo"),
+        ..RemoteConfigSettings::default()
+    };
+    let draft = |expression: &str| {
+        serde_json::to_vec(
+            &json!({"conditions": [{"name": "fireemu_match", "expression": expression}]}),
+        )
+        .unwrap()
+    };
+    let now = LogicalInstant::from_unix_seconds(T0);
+    for (settings, refused) in [(&strict, true), (&RemoteConfigSettings::default(), false)] {
+        let stores = RemoteConfigStores::default();
+        for query in ["validateOnly=true", ""] {
+            let reply = at(
+                &stores,
+                settings,
+                CLIENT,
+                "PUT",
+                query,
+                &draft("percent <= -1"),
+                Some("*"),
+                now,
+            );
+            if refused {
+                assert_eq!(reply.status, 400);
+                assert_eq!(
+                    error_message(&reply),
+                    "[VALIDATION_ERROR]: at line 1, column 12. Percent value cannot be negative"
+                );
+            } else {
+                assert_eq!(reply.status, 200);
+            }
+        }
+        // The precondition is checked first.
+        let stale = at(
+            &stores,
+            settings,
+            CLIENT,
+            "PUT",
+            "",
+            &draft("percent <= -1"),
+            Some("stale"),
+            now,
+        );
+        assert_eq!(stale.status, 412);
+        assert_eq!(stores.client.current().number(), u64::from(!refused));
+    }
+    // The server namespace keeps its own recorded rules.
+    let stores = RemoteConfigStores::default();
+    let server = "/v1/projects/demo-config/namespaces/firebase-server/remoteConfig";
+    assert_eq!(
+        at(
+            &stores,
+            &strict,
+            server,
+            "PUT",
+            "",
+            &draft("percent <= -1"),
+            Some("*"),
+            now
+        )
+        .status,
+        200
+    );
+}

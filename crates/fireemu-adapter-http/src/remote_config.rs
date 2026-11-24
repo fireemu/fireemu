@@ -585,13 +585,17 @@ impl Version {
 }
 
 /// Local Remote Config behaviour that depends on the daemon's configuration.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct RemoteConfigSettings {
     /// Refuse the server conditions production refused (strict profile only).
     pub strict_server_conditions: bool,
     /// Answer the loser of two concurrent client publications with production's 400 (strict
     /// profile only).
     pub strict_concurrent_publish: bool,
+    /// Refuse the client conditions production refused (strict profile only).
+    pub strict_client_conditions: bool,
+    /// Whether a time zone name is known, for the client `dateTime` refusal; `None` skips it.
+    pub time_zone_known: Option<fn(&str) -> bool>,
     /// The identity reported as `updateUser`; `None` omits the field everywhere.
     pub update_user: Option<UpdateUser>,
     /// The project number: production's `ETag`s carry it, and production serves the client
