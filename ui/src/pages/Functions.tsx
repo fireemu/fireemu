@@ -211,6 +211,8 @@ type InvokeHistoryEntry = {
   label: string;
   data: string;
   authToken: string;
+  /** The Auth user the picker showed, or "" for a manually entered token. */
+  pickedUid: string;
   appCheckToken: string;
   method: string;
   path: string;
@@ -221,7 +223,7 @@ type InvokeHistoryEntry = {
 };
 
 /** Invokes an HTTP or callable function, showing the response the port returns. */
-const InvokeForm: Component<{
+export const InvokeForm: Component<{
   f: FunctionInfo;
   project?: string;
   functionsAddr?: string | null;
@@ -234,7 +236,38 @@ const InvokeForm: Component<{
   const [authUsers, setAuthUsers] = createSignal<UserInfo[] | null>(null);
   const [pickedUid, setPickedUid] = createSignal("");
   const [tokenExchanging, setTokenExchanging] = createSignal(false);
+  // The user the current `authToken` was minted for; "" for a manual token. Send is allowed
+  // only while the picker shows the user the token belongs to.
+  const [mintedFor, setMintedFor] = createSignal("");
   let tokenExchangeSeq = 0;
+  const identityReady = () => !pickedUid() || (!tokenExchanging() && mintedFor() === pickedUid());
+
+  /** Shows `uid` in the picker and mints its token; a late answer for another user is dropped. */
+  const selectUser = (uid: string) => {
+    const seq = ++tokenExchangeSeq;
+    setPickedUid(uid);
+    setAuthToken("");
+    setMintedFor("");
+    if (!uid) {
+      setTokenExchanging(false);
+      return;
+    }
+    setTokenExchanging(true);
+    const project = props.project ?? appState.project();
+    void mintIdToken(project, uid).match(
+      (res) => {
+        if (seq !== tokenExchangeSeq) return;
+        setTokenExchanging(false);
+        setAuthToken(res.idToken);
+        setMintedFor(uid);
+      },
+      (err) => {
+        if (seq !== tokenExchangeSeq) return;
+        setTokenExchanging(false);
+        props.onError(err.message);
+      },
+    );
+  };
   const [method, setMethod] = createSignal("POST");
   const [path, setPath] = createSignal("");
   const [query, setQuery] = createSignal("");
@@ -296,6 +329,7 @@ const InvokeForm: Component<{
   };
 
   const send = async () => {
+    if (!identityReady()) return;
     props.onError("");
     const built = callable()
       ? buildCallableInvoke({
@@ -319,6 +353,7 @@ const InvokeForm: Component<{
       label: callable() ? data().slice(0, 40) : `${method()} /${path()}`,
       data: data(),
       authToken: authToken(),
+      pickedUid: pickedUid(),
       appCheckToken: appCheckToken(),
       method: method(),
       path: path(),
@@ -408,33 +443,12 @@ const InvokeForm: Component<{
             value={pickedUid()}
             onFocus={() => void loadAuthUsers()}
             onClick={() => void loadAuthUsers()}
-            onChange={(e) => {
-              const uid = e.currentTarget.value;
-              const seq = ++tokenExchangeSeq;
-              setPickedUid(uid);
-              setAuthToken("");
-              if (!uid) {
-                setTokenExchanging(false);
-                return;
-              }
-              setTokenExchanging(true);
-              const project = props.project ?? appState.project();
-              void mintIdToken(project, uid).match(
-                (res) => {
-                  if (seq !== tokenExchangeSeq) return;
-                  setTokenExchanging(false);
-                  setAuthToken(res.idToken);
-                },
-                (err) => {
-                  if (seq !== tokenExchangeSeq) return;
-                  setTokenExchanging(false);
-                  setAuthToken("");
-                  props.onError(err.message);
-                },
-              );
-            }}
+            onChange={(e) => selectUser(e.currentTarget.value)}
           >
             <option value="">{t("functions.invokeManualToken")}</option>
+            <Show when={pickedUid() && !(authUsers() ?? []).some((u) => u.localId === pickedUid())}>
+              <option value={pickedUid()}>{pickedUid()}</option>
+            </Show>
             <For each={authUsers() ?? []}>
               {(u) => (
                 <option value={u.localId}>
@@ -453,6 +467,7 @@ const InvokeForm: Component<{
               tokenExchangeSeq += 1;
               setTokenExchanging(false);
               setPickedUid("");
+              setMintedFor("");
               setAuthToken(e.currentTarget.value);
             }}
           />
@@ -469,7 +484,7 @@ const InvokeForm: Component<{
       <div class="mt-3 flex flex-wrap items-center gap-2">
         <AsyncButton
           class="btn btn-primary"
-          disabled={tokenExchanging()}
+          disabled={!identityReady()}
           onClick={send}
           testId={`invoke-${props.f.name}-send`}
         >
@@ -498,7 +513,11 @@ const InvokeForm: Component<{
                     class="btn btn-sm"
                     onClick={() => {
                       setData(item.data);
-                      setAuthToken(item.authToken);
+                      // Show the replayed identity and mint its token again, so the picker and
+                      // the token sent always belong to the same user.
+                      void loadAuthUsers();
+                      selectUser(item.pickedUid);
+                      if (!item.pickedUid) setAuthToken(item.authToken);
                       setAppCheckToken(item.appCheckToken);
                       setMethod(item.method);
                       setPath(item.path);
