@@ -635,13 +635,10 @@ export async function readBack(ctx, resources = null) {
   out.unknown = [...t.unknown];
   // A Gen2 create that never named its trigger and service leaves them unread: not at baseline.
   const gen2Attempted = resources?.functions?.gen2?.attempted === true;
-  // Gen2 closes only after one trigger and one service read back, both absent (ruling 3 item 2).
+  // Gen2 closes only after exactly one trigger and one service were read back (ruling 3 item 2);
+  // that both answered 404 is required below with every managed read.
   const managedKnown =
-    !gen2Attempted ||
-    (kinds.trigger?.length === 1 &&
-      kinds.service?.length === 1 &&
-      kinds.trigger[0] === 404 &&
-      kinds.service[0] === 404);
+    !gen2Attempted || (kinds.trigger?.length === 1 && kinds.service?.length === 1);
   out.managedKnown = managedKnown;
   out.atBaseline =
     out.errors.length === 0 &&
