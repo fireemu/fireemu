@@ -555,6 +555,24 @@ mod tests {
             ("app.firebaseInstallationId in ['c-00000000000000000000']", None),
             ("!percent", None),
             ("", None),
+            // Near misses of the shapes: a first token that is not a word, a list without its
+            // brackets, a NOT without its parentheses, nested parentheses, a chain of NOTs.
+            ("'x' <= 101", None),
+            ("5 > percent", None),
+            ("device.country in ('xyz']", None),
+            ("device.country in ['xyz')", None),
+            ("!percent)", None),
+            ("!(percent > 0", None),
+            ("((percent > 0))", None),
+            ("!(percent > 0) && !(percent > 1)", None),
+            ("!(percent > 0) || !(percent > 1)", None),
+            ("!(device.os == '(') || !(percent > 1)", None),
+            // Separators and brackets inside parentheses or strings do not split the expression.
+            ("!()", atom("NOT", "NOT condition is not allowed here")),
+            ("!(percent > 0 || percent <= 100)", atom("NOT", "NOT condition is not allowed here")),
+            ("!(percent > 0 && percent <= 100)", atom("NOT", "NOT condition is not allowed here")),
+            ("!(device.os == ')' || percent > 0)", atom("NOT", "NOT condition is not allowed here")),
+            ("!(device.os == '&&')", atom("NOT", "NOT condition is not allowed here")),
             // The recorded forms with other values.
             ("_percent <= 101", column(1, start)),
             ("percent_x <= 101", column(1, start)),

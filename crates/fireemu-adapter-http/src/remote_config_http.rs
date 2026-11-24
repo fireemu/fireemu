@@ -500,7 +500,7 @@ fn history(
             token
                 .parse::<u64>()
                 .ok()
-                .filter(|number| *number > 0 && !token.starts_with('0'))
+                .filter(|_| !token.starts_with('0'))
                 .ok_or_else(|| invalid("Invalid or expired page token"))
         })
         .transpose()?;
