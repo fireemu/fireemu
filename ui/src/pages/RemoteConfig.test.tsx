@@ -151,4 +151,79 @@ describe("RemoteConfig page", () => {
     fireEvent.click(ui.getByTestId("rc-discard-draft"));
     await waitFor(() => expect(editor.value).toContain("welcome_text"));
   });
+
+  describe("preconditions", () => {
+    const UNPUBLISHED = { status: 200, body: "{}\n", etag: null };
+    const PUBLISHED_B = {
+      status: 200,
+      etag: "etag-v1",
+      body: JSON.stringify({
+        parameters: { b: { defaultValue: { value: "remote" } } },
+        version: { versionNumber: "1" },
+      }),
+    };
+    const DRAFT_A = JSON.stringify({ parameters: { a: { defaultValue: { value: "local" } } } });
+    const mountPage = () =>
+      render(() => (
+        <Router>
+          <Route path="*" component={() => <RemoteConfig />} />
+        </Router>
+      ));
+    const sentIfMatch = () => vi.mocked(rc.publishRemoteConfigTemplate).mock.calls.map((c) => c[2]);
+
+    it("refuses to publish a draft started on an unpublished template once another client published", async () => {
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValueOnce(okAsync(UNPUBLISHED));
+      const ui = mountPage();
+      const editor = (await waitFor(() =>
+        ui.getByTestId("rc-template-editor"),
+      )) as HTMLTextAreaElement;
+      fireEvent.input(editor, { target: { value: DRAFT_A } });
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValue(okAsync(PUBLISHED_B));
+      fireEvent.click(ui.getByTestId("rc-publish"));
+      await waitFor(() => expect(ui.getByRole("alert")).toBeTruthy());
+      expect(rc.publishRemoteConfigTemplate).not.toHaveBeenCalled();
+    });
+
+    it("does not let a stale draft inherit the ETag a refresh loads", async () => {
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValueOnce(okAsync(UNPUBLISHED));
+      const ui = mountPage();
+      const editor = (await waitFor(() =>
+        ui.getByTestId("rc-template-editor"),
+      )) as HTMLTextAreaElement;
+      fireEvent.input(editor, { target: { value: DRAFT_A } });
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValue(okAsync(PUBLISHED_B));
+      fireEvent.click(ui.getByTestId("rc-refresh"));
+      await waitFor(() => expect(ui.getByTestId("rc-etag").textContent).toBe("etag-v1"));
+      expect(editor.value).toBe(DRAFT_A);
+      fireEvent.click(ui.getByTestId("rc-publish"));
+      await waitFor(() => expect(ui.getByRole("alert")).toBeTruthy());
+      expect(rc.publishRemoteConfigTemplate).not.toHaveBeenCalled();
+    });
+
+    it("sends the draft's own base ETag, never the one a refresh loaded or a wildcard", async () => {
+      const ui = mountPage();
+      const editor = (await waitFor(() =>
+        ui.getByTestId("rc-template-editor"),
+      )) as HTMLTextAreaElement;
+      fireEvent.input(editor, { target: { value: DRAFT_A } });
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValue(okAsync(PUBLISHED_B));
+      fireEvent.click(ui.getByTestId("rc-refresh"));
+      await waitFor(() => expect(ui.getByTestId("rc-etag").textContent).toBe("etag-v1"));
+      fireEvent.click(ui.getByTestId("rc-publish"));
+      await waitFor(() => expect(rc.publishRemoteConfigTemplate).toHaveBeenCalled());
+      expect(sentIfMatch()).toEqual(["etag-fireemu-2"]);
+    });
+
+    it("publishes a first template when it is still unpublished at the moment of publishing", async () => {
+      vi.mocked(rc.getRemoteConfigTemplate).mockReturnValue(okAsync(UNPUBLISHED));
+      const ui = mountPage();
+      const editor = (await waitFor(() =>
+        ui.getByTestId("rc-template-editor"),
+      )) as HTMLTextAreaElement;
+      fireEvent.input(editor, { target: { value: DRAFT_A } });
+      fireEvent.click(ui.getByTestId("rc-publish"));
+      await waitFor(() => expect(rc.publishRemoteConfigTemplate).toHaveBeenCalled());
+      expect(sentIfMatch()).toEqual(["*"]);
+    });
+  });
 });

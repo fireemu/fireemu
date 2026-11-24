@@ -126,23 +126,32 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
     await Promise.all([refetchTpl(), refetchVersions()]);
   };
 
-  const resolveIfMatch = (): string | null => {
+  /**
+   * The precondition for a write: the ETag the shown template (or the draft's own base) was
+   * read at, never a wildcard unless Force publish is checked. The one exception is the first
+   * publish of an unpublished template, whose only precondition is `*`: it is sent only after
+   * a fresh read shows the template is still unpublished, so a version another client
+   * published meanwhile is never replaced silently.
+   */
+  const resolveIfMatch = async (): Promise<string | null> => {
     if (forcePublish()) return "*";
-    const base = draft() !== null ? (draftBaseEtag() ?? currentEtag()) : currentEtag();
+    const base = draft() !== null ? draftBaseEtag() : currentEtag();
     if (base) return base;
-    // Unpublished empty template has no ETag yet; "*" creates version 1.
-    if (!parsedServer()?.version?.versionNumber) return "*";
+    const fresh = await getRemoteConfigTemplate(defaultProject());
+    const stillUnpublished = fresh.match(
+      (reply) => !reply.etag && !parseTemplate(reply.body)?.version?.versionNumber,
+      () => false,
+    );
+    if (stillUnpublished) return "*";
+    setError(t("remoteConfig.firstPublishStale"));
     return null;
   };
 
   const validate = async () => {
     setError(null);
     setNotice(null);
-    const ifMatch = resolveIfMatch();
-    if (!ifMatch) {
-      setError(t("remoteConfig.etagMissing"));
-      return;
-    }
+    const ifMatch = await resolveIfMatch();
+    if (!ifMatch) return;
     const res = await validateRemoteConfigTemplate(defaultProject(), source(), ifMatch);
     res.match(
       () => setNotice(t("remoteConfig.validated")),
@@ -153,11 +162,8 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
   const publish = async () => {
     setError(null);
     setNotice(null);
-    const ifMatch = resolveIfMatch();
-    if (!ifMatch) {
-      setError(t("remoteConfig.etagMissing"));
-      return;
-    }
+    const ifMatch = await resolveIfMatch();
+    if (!ifMatch) return;
     const res = await publishRemoteConfigTemplate(defaultProject(), source(), ifMatch);
     res.match(
       (reply) => {

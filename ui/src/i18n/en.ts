@@ -1093,7 +1093,8 @@ export const en = {
   "remoteConfig.inAppDefault": "(in-app default)",
   "remoteConfig.draftTag": "Unsaved draft",
   "remoteConfig.discardDraft": "Discard draft",
-  "remoteConfig.etagMissing": "No template ETag is available; refresh or enable Force publish.",
+  "remoteConfig.firstPublishStale":
+    "This template is no longer unpublished, or its state could not be read. Refresh and apply your changes to the current template, or enable Force publish.",
   "remoteConfig.triggerObjectOnly": "Trigger payload must be a JSON object.",
   "database.treeTruncated": "+{count} more keys (edit or query below)",
   "rules.covCovered": "covered",
