@@ -22,20 +22,20 @@ App HostingとData Connectは現在未対応です。Firebase Extensionsは対�
 ### Cloud Firestore
 
 - Enterprise Pipeline APIは読み取り操作の限られたサブセットのみ対応しています（[Enterpriseパイプライン](../../products/firestore/#enterpriseパイプライン)）。
-- Enterpriseのテキスト検索は、明示的なビルド制御を持つローカルの語彙検索エンジンです。トークン化とスコア順位は近似であり、`productionExact`では未観測の検索セマンティクスを拒否します。
+- Enterpriseのテキスト検索は、有限のローカル語彙検索と明示的なビルド制御を提供します。解析と数値スコアは近似で、順序は記録したケースに従います。`productionExact`は、観測されていない検索のセマンティクスを拒否します。
 
 ### Authentication
 
 - 外部IDプロバイダーと実際に通信するサインインフロー、ホスト型の認可コード交換、ライブの鍵検出・ローテーションには対応していません。
 - ローカルで設定した署名付きOIDC/SAMLアサーションの検証には、`strict`の署名付きアサーション経路（`auth.idpSigners`の公開鍵またはSAMLプロバイダー設定の証明書）で対応しています。
-- SAMLの検証は、ステータス・宛先・発行者・オーディエンス・有効期間が存在する場合と、デーモン発行リクエストへの応答を対象とします。フィールド欠落、解析不能な時刻、その他未記録の組み合わせは未観測です。
+- SAMLの検証は、ステータス・宛先・発行者・オーディエンス・有効期間が存在する場合と、`createAuthUri`が直近1時間以内に発行したセッションIDを指定するサインインでの`InResponseTo`の検査を対象とします。フィールド欠落、解析不能な時刻、その他未記録の組み合わせは未観測です。
 
 ### Cloud Storage
 
-- 署名付きURLやPOSTポリシーの署名検証（有効期限と条件は検証されます。V4署名付きURLの鍵は`storage.signedUrlKeys`で別途登録可能）。
+- V2署名付きURLまたはPOSTポリシーの署名の検証（有効期限と条件は検査されます）。V4署名付きURLの署名は、`strict`で`storage.signedUrlKeys`に登録した鍵に対してのみ検証されます。
 - `allUsers`の読み取り以外のオブジェクトACL、IAM、バケット単位の公開アクセス。
 - オブジェクト合成（`compose`）およびバケット通知の設定。
-- **`strict`でのStorage CORS**：`strict`では`productionExact`なしで、`conformance/storage-strictness-obs/recordings/run-2.json`に記録されたCORS挙動（CORS未設定・空設定・設定済みバケットに対するJSON APIのメタデータ/メディア/バケット/一覧/UBLAエラー、プリフライト、レジューマブルアップロード、キャンセル）を適用します（`emulator`プロファイルは従来どおり）。大文字小文字混在の要求ヘッダー保持、UBLAのPATCH/切り替え、他レスポンスへのexposeヘッダー適用は未記録です。バケット作成時は記録済みのリージョンと無効化ソフト削除ヒントを受け付けますが、それらサービス自体はモデル化しません。ローカルテストではUBLAのエクスポート/インポートと空バケット作成をカバーしています（[バケットCORS](../../products/storage/#バケットのcors)）。
+- **`strict`でのStorage CORS**：`strict`では`productionExact`なしで、`conformance/storage-strictness-obs/recordings/run-2.json`に記録されたCORS挙動（CORS未設定・空設定・設定済みバケットに対するJSON APIのメタデータ、メディア、バケット、一覧、UBLAのACLエラーの応答、アップロードのプリフライト、レジューマブルアップロードの開始、キャンセル、キャンセル済みセッションの読み取り）を適用します（`emulator`プロファイルは従来どおり）。大文字小文字混在の要求ヘッダー保持、UBLAのPATCH/切り替え、他レスポンスへのexposeヘッダー適用は未記録です。バケット作成時は記録済みのリージョンと無効化ソフト削除ヒントを受け付けますが、それらサービス自体はモデル化しません。ローカルテストではUBLAのエクスポート/インポートと空バケット作成をカバーしています（[バケットCORS](../../products/storage/#バケットのcors)）。
 
 ### Realtime Database
 
@@ -50,7 +50,7 @@ App HostingとData Connectは現在未対応です。Firebase Extensionsは対�
 ### Cloud Functions
 
 - Fireemuがイベントを配信しないプロダクト（延期中のData Connectなど）のトリガー。ローカルのテンプレート管理でRemote Configのクライアントテンプレートを公開・ロールバックすると、2026-11-21に本番で記録した形のイベントをv1/v2ハンドラーへ配信します。サーバーテンプレートの公開では本番挙動が未記録のためイベントを配信せず、重複配信や順序保証も未記録です。
-- Dartコードベース、およびFirestoreイベント以外の汎用protobuf CloudEvents受信（FirestoreイベントはPython SDKへprotobufで、Node第2世代関数へは`strict`下でprotobufで届きます）。
+- Dartコードベース、およびFirestoreイベント以外のprotobuf CloudEventsの受信（FirestoreイベントはPython SDKへprotobufで、Node第2世代関数へは`strict`下でprotobufで届きます）。
 - Storageアーカイブイベントの正確なペイロード形式は未記録です。
 - PythonコードベースはmacOS/Linux限定で、HTTP・callable・Firestore・Pub/Sub・Storage・Eventarc・Realtime Database・スケジュール・タスクキュー・Authブロッキング関数に対応します。実時間で動作し（仮想時計は非対応）、`venv`とバイトコードキャッシュを除きアプリソースの変更を自動再読み込みします。依存パッケージを変更した場合はFireemuを再起動してください。callableのApp CheckトークンはPython SDKがApp Checkエミュレータの鍵で検証します（限定使用トークンの消費は非対応、明示的なApp Check設定がある場合は起動を拒否）。詳しくは[Cloud Functions（Python）](../../products/functions-python/)を参照してください。
 
@@ -58,17 +58,18 @@ App HostingとData Connectは現在未対応です。Firebase Extensionsは対�
 
 - スキーマ、BigQuery/Cloud Storageへのサブスクリプション配信、exactly-once配信、メッセージ変換。
 - `UpdateTopic`は`labels`のみ対応（`emulator`プロファイルでは`message_storage_policy`と`kms_key_name`も受け付けます）。`DetachSubscription`は未実装です。
-- `emulator`プロファイルでは`messageStoragePolicy`・トピック鍵名・タグをGoogle Cloudリージョン検証なしでそのまま保存します。`strict`ではこれらを拒否します。
+- `messageStoragePolicy`は送信されたとおりに保存され、Google Cloudのリージョンとの照合は行われません。`strict`プロファイルはこれを拒否します。
+- トピックの鍵名とタグは、`emulator`プロファイルでは送信されたとおりに保存され、検証されません。`strict`プロファイルはこれらを拒否します。
 
 ### App Check
 
-- 実機アテステーション（Play Integrity、App Attest、DeviceCheck、reCAPTCHA）および限定使用トークンのリプレイ保護。ローカルのデバッグトークンには対応しています。
+- アテステーションプロバイダー（Play Integrity、App Attest、DeviceCheck、reCAPTCHA）との連携、および限定使用トークンのリプレイ保護。ローカルのデバッグトークンには対応しています。
 
 ## ローカル制御の制限
 
 - 1つのデーモン内のセッション同士は、仮想時計・Security Rules・Functions・受付バリアを共有します。
-- メモリ上のスナップショットはデーモン稼働中のみ保持され、実行中のFunctions処理は含まれません。
-- `awaitIdle`はEnterpriseテキストインデックスの構築完了を待たず、セッション間の因果的なフェンスも設けません。
+- メモリ上のスナップショットはデーモン稼働中のみ保持され、未完了のFunctions処理は含まれません。
+- `awaitIdle`はText Indexの処理を待たず、セッション間の因果的なフェンスも設けません。
 
 ## どのローカルエミュレータでも解消できない違い
 

@@ -22,20 +22,20 @@ App Hosting and Data Connect are not currently supported. Firebase Extensions is
 ### Cloud Firestore
 
 - The Enterprise Pipeline API implements a limited subset of read operations ([Enterprise pipelines](../../products/firestore/#enterprise-pipelines)).
-- Enterprise text search runs a local lexical engine with explicit index build controls. Tokenization and ranking are approximations, and `productionExact` refuses unobserved search semantics.
+- Enterprise text search supports a bounded set of local lexical queries with explicit index build controls. Analysis and numeric scores are approximate, ordering follows the recorded cases, and `productionExact` refuses unobserved search semantics.
 
 ### Authentication
 
 - Sign-in flows that communicate with external identity providers, hosted authorization-code exchange, and live key discovery/rotation are not supported.
 - Local signed OIDC/SAML verification works on the strict signed-assertion path using `auth.idpSigners` public keys or the SAML provider's configured certificates.
-- SAML checks cover present status, destination, issuer, audience, and validity fields, plus responses to daemon-issued requests. Missing fields, unparseable timestamps, and other unrecorded combinations remain unobserved.
+- SAML checks cover present status, destination, issuer, audience, and validity fields, plus the `InResponseTo` check on sign-ins that name a session ID issued by `createAuthUri` within the last hour. Missing fields, unparseable timestamps, and other unrecorded combinations remain unobserved.
 
 ### Cloud Storage
 
-- Verifying signatures on signed URLs or POST policies (expiry and policy conditions are checked; V4 signed-URL keys can be registered separately via `storage.signedUrlKeys`).
+- Verifying the signature of a V2 signed URL or a POST policy (their expiry and conditions are checked). V4 signed-URL signatures are verified only against keys registered in `storage.signedUrlKeys`, under `strict`.
 - Object ACLs other than `allUsers` read, IAM, and bucket-level public access.
 - Object composition (`compose`) and bucket notification configuration.
-- **Storage CORS under `strict`**: `strict` applies the CORS behavior recorded in `conformance/storage-strictness-obs/recordings/run-2.json` (covering absent, empty, and configured bucket CORS across JSON API metadata/media/bucket/list/UBLA errors, preflights, resumable uploads, and cancellations) without requiring `productionExact`; the `emulator` profile keeps its existing behavior. Mixed-case requested-header preservation, UBLA PATCH/toggles, and applying expose headers to other responses remain unrecorded. Bucket creation accepts recorded region and disabled soft-delete hints without modeling those services; local tests cover UBLA export/import and empty created buckets. See [Bucket CORS](../../products/storage/#bucket-cors).
+- **Storage CORS under `strict`**: `strict` applies the CORS behavior recorded in `conformance/storage-strictness-obs/recordings/run-2.json` (covering absent, empty, and configured bucket CORS across JSON API metadata, media, bucket, list and UBLA ACL-error responses, upload preflights, resumable initiation, cancellation and cancelled-session reads) without requiring `productionExact`; the `emulator` profile keeps its existing behavior. Mixed-case requested-header preservation, UBLA PATCH/toggles, and applying expose headers to other responses remain unrecorded. Bucket creation accepts recorded region and disabled soft-delete hints without modeling those services; local tests cover UBLA export/import and empty created buckets. See [Bucket CORS](../../products/storage/#bucket-cors).
 
 ### Realtime Database
 
@@ -50,7 +50,7 @@ See [Realtime Database](../../products/realtime-database/#differences-from-the-o
 ### Cloud Functions
 
 - Event triggers for products Fireemu does not deliver events for, such as Data Connect (deferred). Publishing or rolling back a Remote Config client template through local template administration delivers the event shape recorded in production on 2026-11-21 to v1 and v2 handlers. Publishing a server template delivers no event (production behavior is unrecorded), and duplicate-delivery/ordering guarantees are unrecorded.
-- Dart codebases, and general protobuf CloudEvents ingress outside Firestore events (Firestore events reach Python SDK handlers as protobuf, and Node.js 2nd-gen handlers as protobuf under `strict`).
+- Dart codebases, and protobuf CloudEvents ingress other than Firestore events (Firestore events reach Python SDK handlers as protobuf, and Node.js 2nd-gen handlers as protobuf under `strict`).
 - Exact payload shape of Storage archive events remains unrecorded.
 - Python codebases support HTTP, callable, Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, scheduled, task-queue, and Auth blocking functions on macOS and Linux only. They run on real time (no virtual clock) and reload app source files while ignoring `venv` and bytecode caches; restart Fireemu after changing installed packages. Callable App Check tokens are verified by the Python SDK against the App Check emulator's keys (no limited-use consumption, and explicit App Check config refuses startup). See [Cloud Functions (Python)](../../products/functions-python/).
 
@@ -58,17 +58,18 @@ See [Realtime Database](../../products/realtime-database/#differences-from-the-o
 
 - Schemas, BigQuery/Cloud Storage subscription delivery, exactly-once delivery, and message transforms.
 - `UpdateTopic` supports only `labels` (plus `message_storage_policy` and `kms_key_name` in the `emulator` profile); `DetachSubscription` is not implemented.
-- In the `emulator` profile, `messageStoragePolicy`, topic key names, and tags are stored as sent without validation against Google Cloud regions; `strict` refuses them.
+- `messageStoragePolicy` is stored as sent and never checked against Google Cloud's regions; the `strict` profile refuses it.
+- Topic key names and tags are stored as sent and never validated in the `emulator` profile; the `strict` profile refuses them.
 
 ### App Check
 
-- Real-device attestation (Play Integrity, App Attest, DeviceCheck, reCAPTCHA) and limited-use token replay protection. Local debug tokens are supported.
+- Attestation provider integrations (Play Integrity, App Attest, DeviceCheck, reCAPTCHA) and limited-use token replay protection. Local debug tokens are supported.
 
 ## Local control limitations
 
 - Sessions within one daemon share the virtual clock, Security Rules, Functions, and admission barrier.
-- In-memory snapshots last only for the daemon's lifetime and do not capture in-flight Functions work.
-- `awaitIdle` does not wait for Enterprise text-index builds or establish causal fences across sessions.
+- In-memory snapshots last only for the daemon's lifetime and do not capture outstanding Functions work.
+- `awaitIdle` does not wait for Text Index work or establish causal fences across sessions.
 
 ## Differences no local emulator removes
 
