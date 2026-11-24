@@ -481,6 +481,42 @@ export async function observe(ctx) {
   return { result, events };
 }
 
+/**
+ * The A2 read-back (read-only, at most 8 requests): both templates, the run's two function names,
+ * the functions list and the project IAM policy. It settles nothing by itself: the coordinator reads
+ * it against the run's open items, at least 10 minutes after the run's last request.
+ */
+export async function readBack(ctx) {
+  const { transport: t, urls, production: prod } = ctx;
+  const out = { runId: ctx.runId, templates: {}, functions: {} };
+  for (const [namespace, url] of [
+    ["client", urls.client],
+    ["server", urls.server],
+  ]) {
+    const r = await t.send(`a2-${namespace}`, url);
+    out.templates[namespace] = {
+      status: r.status,
+      empty: r.status === 200 && isEmptyTemplate(r.json),
+      version: r.json.version?.versionNumber ?? null,
+    };
+  }
+  for (const generation of [1, 2])
+    out.functions[`gen${generation}`] = (
+      await t.send(`a2-gen${generation}`, prod.functions.url(generation))
+    ).status;
+  out.functionsList = await listFunctions(t, prod.google.functions, "a2-functions");
+  const iam = await t.send("a2-iam", prod.google.iam, { method: "POST", body: {} });
+  out.iam = { status: iam.status, bindings: canonicalBindings(iam.json) };
+  out.atBaseline =
+    out.templates.client.empty &&
+    out.templates.server.empty &&
+    out.functions.gen1 === 404 &&
+    out.functions.gen2 === 404;
+  out.requests = t.count;
+  out.unknown = [...t.unknown];
+  return out;
+}
+
 async function listFunctions(t, url, prefix) {
   const found = [];
   let token = "";
@@ -521,7 +557,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--send-production") args.send = true;
-    else if (["--target", "--base", "--project", "--events-file", "--out"].includes(a))
+    else if (["--target", "--base", "--project", "--events-file", "--out", "--a2-of"].includes(a))
       args[a.slice(2)] = argv[++i];
     else throw new Error(`unknown argument ${a}`);
   }
@@ -533,7 +569,11 @@ export async function main(argv, env = process.env) {
   if (!args.out) throw new Error("--out is required");
   const out = resolve(args.out);
   if (existsSync(out)) throw new Error("--out must not exist");
-  const runId = newRunId();
+  // The A2 read-back of an earlier production run reuses its run id (and so its function names).
+  const runId = args["a2-of"]
+    ? JSON.parse(readFileSync(join(resolve(args["a2-of"]), "run.json"), "utf8")).runId
+    : newRunId();
+  if (args["a2-of"] && args.target !== "production") throw new Error("--a2-of is production only");
   let ctx;
   if (args.target === "local") {
     if (args.send) throw new Error("--send-production is for the production target only");
@@ -608,6 +648,17 @@ export async function main(argv, env = process.env) {
       },
     };
   } else throw new Error("--target must be local or production");
+  if (args["a2-of"]) {
+    writeFileSync(
+      join(out, "run.json"),
+      JSON.stringify({ runId, a2Of: resolve(args["a2-of"]), startedAt: new Date().toISOString() }) +
+        "\n",
+    );
+    const back = await readBack(ctx);
+    writeFileSync(join(out, "a2.json"), JSON.stringify(back, null, 2) + "\n");
+    console.log(JSON.stringify(back));
+    return back.atBaseline ? 0 : 1;
+  }
   writeFileSync(
     join(out, "run.json"),
     JSON.stringify({ runId, target: args.target, startedAt: new Date().toISOString() }) + "\n",

@@ -958,3 +958,21 @@ test("an event of a version this run did not create is unmatched, even with the 
   assert.equal(s.generations["1"].unmatched, 1);
   assert.deepEqual(s.generations["1"].serverSteps, []);
 });
+
+test("the A2 read-back reads both templates, both names, the list and IAM, and sends nothing else", async () => {
+  const rc = remoteConfigWorld();
+  const { ctx, cloud, transport } = productionContext({ rc });
+  const { readBack } = await import("./remote-config-observe/record.mjs");
+  const back = await readBack(ctx);
+  assert.equal(back.atBaseline, true);
+  assert.deepEqual(back.functions, { gen1: 404, gen2: 404 });
+  assert.equal(transport.count, 6);
+  assert.equal(
+    [...rc.requests, ...cloud.requests].filter(
+      (r) => !r.startsWith("GET") && !r.includes(":getIamPolicy"),
+    ).length,
+    0,
+  );
+  rc.ns.server.template = { parameters: { a: {} } };
+  assert.equal((await readBack(productionContext({ rc }).ctx)).atBaseline, false);
+});
