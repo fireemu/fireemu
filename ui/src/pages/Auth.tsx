@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createResource,
   createSignal,
   For,
@@ -14,6 +15,7 @@ import { appState } from "../state";
 import {
   AsyncButton,
   ConfirmButton,
+  CopyButton,
   CopyField,
   ErrorBanner,
   Notice,
@@ -22,15 +24,19 @@ import {
   Spinner,
   StatusBadge,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
+import { moveClock } from "../api/control";
 import {
   createUser,
   deleteAllUsers,
   deleteUser,
+  getConfig,
   listOobCodes,
   listTotpCodes,
   listUsers,
   listVerificationCodes,
   lookupUser,
+  patchConfig,
   updateUser,
   type UserInfo,
   type UserUpdate,
@@ -55,8 +61,9 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
   const [phone, setPhone] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
   const [uid, setUid] = createSignal("");
+  const [emailVerified, setEmailVerified] = createSignal(false);
   const guard = createLeaveGuard(() =>
-    Boolean(email() || password() || phone() || displayName() || uid()),
+    Boolean(email() || password() || phone() || displayName() || uid() || emailVerified()),
   );
   const [error, setError] = createSignal<string | null>(null);
   const save = async () => {
@@ -67,6 +74,7 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
       ...(phone() ? { phoneNumber: phone() } : {}),
       ...(displayName() ? { displayName: displayName() } : {}),
       ...(uid() ? { localId: uid() } : {}),
+      ...(emailVerified() ? { emailVerified: true } : {}),
     };
     const r = await createUser(props.project, user);
     r.match(
@@ -125,6 +133,15 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
             value={uid()}
             onInput={(e) => setUid(e.currentTarget.value)}
           />
+        </label>
+        <label class="flex items-center gap-2 pt-4 text-sm">
+          <input
+            type="checkbox"
+            data-testid="new-user-verified"
+            checked={emailVerified()}
+            onChange={(e) => setEmailVerified(e.currentTarget.checked)}
+          />
+          {t("auth.emailVerifiedCreate")}
         </label>
       </div>
       <div class="mt-3 flex gap-2">
@@ -372,7 +389,81 @@ const AuthScope: Component<{ project: string }> = (props) => {
     loadGeneration += 1;
   });
   const [query, setQuery] = createSignal("");
+  const [localFilter, setLocalFilter] = createSignal("");
+  const [statusFilter, setStatusFilter] = createSignal<"all" | "active" | "disabled" | "mfa">(
+    "all",
+  );
   const [users, setUsers] = createSignal<UserInfo[]>([]);
+  const [configText, setConfigText] = createSignal<string | null>(null);
+  const [configBusy, setConfigBusy] = createSignal(false);
+  const [configError, setConfigError] = createSignal<string | null>(null);
+  const [configNotice, setConfigNotice] = createSignal<string | null>(null);
+  const filteredUsers = createMemo(() => {
+    const q = localFilter().trim().toLowerCase();
+    const st = statusFilter();
+    return users().filter((u) => {
+      if (st === "active" && u.disabled) return false;
+      if (st === "disabled" && !u.disabled) return false;
+      if (st === "mfa" && (u.mfaInfo?.length ?? 0) === 0) return false;
+      if (!q) return true;
+      return (
+        u.localId.toLowerCase().includes(q) ||
+        (u.email?.toLowerCase().includes(q) ?? false) ||
+        (u.displayName?.toLowerCase().includes(q) ?? false) ||
+        (u.phoneNumber?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  });
+  const loadConfig = async () => {
+    setConfigError(null);
+    setConfigNotice(null);
+    setConfigBusy(true);
+    const r = await getConfig(project());
+    if (!active) return;
+    setConfigBusy(false);
+    r.match(
+      (cfg) => setConfigText(JSON.stringify(cfg, null, 2)),
+      (e) => setConfigError(e.message),
+    );
+  };
+  const saveConfig = async () => {
+    if (configText() === null) return;
+    setConfigError(null);
+    setConfigNotice(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(configText()!);
+    } catch (e) {
+      setConfigError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    setConfigBusy(true);
+    const r = await patchConfig(project(), parsed);
+    if (!active) return;
+    setConfigBusy(false);
+    r.match(
+      (cfg) => {
+        setConfigText(JSON.stringify(cfg, null, 2));
+        setConfigNotice(t("auth.configSaved"));
+      },
+      (e) => setConfigError(e.message),
+    );
+  };
+  const advanceForTotp = (seconds: number) =>
+    appState.clockGuard.run(async () => {
+      setError(null);
+      setNotice(null);
+      appState.invalidatePolls();
+      const r = await moveClock(appState.session(), { action: "advance", move: { seconds } });
+      r.match(
+        (c) => {
+          appState.applyClockMutation(c);
+          setNotice(t("auth.totpAdvanced", { seconds }));
+          void refetchTotpCodes();
+        },
+        (e) => setError(e.message),
+      );
+    });
   const [nextToken, setNextToken] = createSignal<string | undefined>(undefined);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -519,6 +610,30 @@ const AuthScope: Component<{ project: string }> = (props) => {
             when={users().length > 0}
             fallback={<p class="text-sm text-muted">{t("auth.noUsers")}</p>}
           >
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <input
+                class="input min-w-0 flex-1 sm:max-w-xs"
+                data-testid="user-local-filter"
+                placeholder={t("auth.filterLocal")}
+                aria-label={t("auth.filterLocal")}
+                value={localFilter()}
+                onInput={(e) => setLocalFilter(e.currentTarget.value)}
+              />
+              <select
+                class="input w-44"
+                data-testid="user-status-filter"
+                aria-label={t("auth.filterStatus")}
+                value={statusFilter()}
+                onChange={(e) =>
+                  setStatusFilter(e.currentTarget.value as "all" | "active" | "disabled" | "mfa")
+                }
+              >
+                <option value="all">{t("auth.filterAll")}</option>
+                <option value="active">{t("auth.filterActive")}</option>
+                <option value="disabled">{t("auth.filterDisabled")}</option>
+                <option value="mfa">{t("auth.filterMfa")}</option>
+              </select>
+            </div>
             <div
               class="max-w-full overflow-x-auto"
               role="region"
@@ -540,7 +655,7 @@ const AuthScope: Component<{ project: string }> = (props) => {
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={users()}>
+                  <For each={filteredUsers()}>
                     {(u) => (
                       <tr
                         class={u.disabled ? "opacity-60" : ""}
@@ -634,9 +749,12 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         <td>{c.email}</td>
                         <td class="text-xs">{c.requestType}</td>
                         <td class="mono break-all">
-                          <a href={c.oobLink} class="link" target="_blank" rel="noreferrer">
-                            {c.oobCode}
-                          </a>
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <a href={c.oobLink} class="link" target="_blank" rel="noreferrer">
+                              {c.oobCode}
+                            </a>
+                            <CopyButton value={c.oobCode} subject={t("auth.oobCode")} />
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -696,16 +814,39 @@ const AuthScope: Component<{ project: string }> = (props) => {
                               ? t("auth.totpPending")
                               : (c.displayName ?? c.mfaEnrollmentId)}
                           </td>
-                          <td class="mono">{c.code}</td>
+                          <td class="mono">
+                            <div class="flex items-center gap-1.5">
+                              <span>{c.code}</span>
+                              <CopyButton value={c.code} subject={t("auth.oobCode")} />
+                            </div>
+                          </td>
                           <td>
-                            {c.alreadyUsed
-                              ? t("auth.totpAlreadyUsed", {
-                                  seconds:
-                                    c.advanceSeconds ?? c.periodSeconds ?? c.secondsRemaining,
-                                })
-                              : c.clockRunning === false
-                                ? t("auth.totpClockStill")
-                                : `${c.secondsRemaining}s`}
+                            <Show
+                              when={c.alreadyUsed}
+                              fallback={
+                                c.clockRunning === false
+                                  ? t("auth.totpClockStill")
+                                  : `${c.secondsRemaining}s`
+                              }
+                            >
+                              {(() => {
+                                const secs =
+                                  c.advanceSeconds ?? c.periodSeconds ?? c.secondsRemaining;
+                                return (
+                                  <div class="flex flex-wrap items-center gap-1.5">
+                                    <span>{t("auth.totpAlreadyUsed", { seconds: secs })}</span>
+                                    <AsyncButton
+                                      class="btn btn-sm"
+                                      disabled={appState.clockGuard.pending()}
+                                      testId={`totp-advance-${c.uid}`}
+                                      onClick={() => advanceForTotp(secs)}
+                                    >
+                                      {t("auth.advanceTotp", { seconds: secs })}
+                                    </AsyncButton>
+                                  </div>
+                                );
+                              })()}
+                            </Show>
                           </td>
                         </tr>
                       )}
@@ -742,7 +883,12 @@ const AuthScope: Component<{ project: string }> = (props) => {
                     {(c) => (
                       <tr>
                         <td class="mono">{c.phoneNumber}</td>
-                        <td class="mono">{c.code}</td>
+                        <td class="mono">
+                          <div class="flex items-center gap-1.5">
+                            <span>{c.code}</span>
+                            <CopyButton value={c.code} subject={t("auth.oobCode")} />
+                          </div>
+                        </td>
                         <td class="mono break-all text-xs">{c.sessionInfo}</td>
                       </tr>
                     )}
@@ -753,6 +899,53 @@ const AuthScope: Component<{ project: string }> = (props) => {
           </Show>
         </Section>
       </div>
+      <Section
+        title={t("auth.config")}
+        actions={
+          <>
+            <AsyncButton
+              class="btn"
+              disabled={configBusy()}
+              testId="auth-config-load"
+              onClick={loadConfig}
+            >
+              {configText() === null ? t("app.refresh") : t("app.refresh")}
+            </AsyncButton>
+            <Show when={configText() !== null}>
+              <AsyncButton
+                class="btn btn-primary"
+                disabled={configBusy()}
+                testId="auth-config-save"
+                onClick={saveConfig}
+              >
+                {t("app.save")}
+              </AsyncButton>
+            </Show>
+          </>
+        }
+      >
+        <p class="mb-2 text-sm text-secondary">{t("auth.configHint")}</p>
+        <ErrorBanner message={configError()} />
+        <Notice message={configNotice()} />
+        <Show when={configText() !== null}>
+          <CodeEditorToolbar
+            value={configText()!}
+            onFormat={setConfigText}
+            testId="auth-config-format"
+          />
+          <label class="label" for="auth-config-json">
+            {t("auth.configJson")}
+          </label>
+          <textarea
+            id="auth-config-json"
+            data-testid="auth-config-json"
+            class="input mono h-48"
+            spellcheck={false}
+            value={configText()!}
+            onInput={(e) => setConfigText(e.currentTarget.value)}
+          />
+        </Show>
+      </Section>
     </div>
   );
 };
