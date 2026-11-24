@@ -10,7 +10,14 @@ import {
   historyQueries,
   validationDrafts,
 } from "./corpus.mjs";
-import { MAX_REQUESTS, closureForms, main, summarise, templateUrls } from "./record.mjs";
+import {
+  MAX_REQUESTS,
+  closureForms,
+  main,
+  raceWinner,
+  summarise,
+  templateUrls,
+} from "./record.mjs";
 
 // A synthetic project and number (never a sandbox value).
 const PROJECT = "synthetic-sandbox";
@@ -65,6 +72,9 @@ test("closureForms admits exactly the corpus's Remote Config forms on the API ho
     ["GET", client, "https://example.com/v1/"],
     ["GET", client, "http://firebaseremoteconfig.googleapis.com/v1/"],
     ["GET", client, "https://firebaseremoteconfig.googleapis.com:8443/v1/"],
+    ["GET", client, "https://user@firebaseremoteconfig.googleapis.com/v1/"],
+    ["PUT", `${client}?versionNumber=27`],
+    ["POST", `${client}:listVersions?pageSize=2`],
   ])
     assert.ok(!allow(new URL(path, base ?? RC), method), `${method} ${path} ${base ?? ""}`);
 });
@@ -101,6 +111,11 @@ test("historyQueries moves a time by one microsecond across second boundaries", 
   assert.deepEqual(queries["h-start-plus"], { startTime: "2026-11-25T00:00:01.000001Z" });
   assert.deepEqual(queries["h-end-minus"], { endTime: "2026-11-25T00:00:00.999999Z" });
   assert.deepEqual(queries["h-end-version"], { endVersionNumber: "31" });
+  // A recorded time may have fewer than six fraction digits.
+  const short = Object.fromEntries(
+    historyQueries({ times: ["t", "2026-11-25T00:00:01.5Z", "t"], end: "1" }),
+  );
+  assert.deepEqual(short["h-start-plus"], { startTime: "2026-11-25T00:00:01.500001Z" });
   assert.deepEqual(queries["h-window"], {
     startTime: "2026-11-25T00:00:00.999999Z",
     endTime: "2026-11-25T00:00:01.500000Z",
@@ -268,4 +283,44 @@ test("the transport sends the closure request options and keeps text bodies only
       journal.includes('"ifNoneMatch":"etag-1-2"'),
   );
   assert.ok(!journal.includes("secret"));
+});
+
+test("raceWinner: exactly one accepted publication, an unknown answer opened", () => {
+  const ok = { status: "fulfilled", value: { status: 200, json: {} } };
+  const refused = { status: "fulfilled", value: { status: 400, json: {} } };
+  assert.equal(raceWinner([ok, refused], []), ok.value);
+  assert.equal(raceWinner([refused, ok], []), ok.value);
+  assert.throws(() => raceWinner([ok, ok], []), /2 publications accepted/);
+  assert.throws(() => raceWinner([refused, refused], []), /0 publications accepted/);
+  const open = [];
+  assert.throws(
+    () => raceWinner([refused, { status: "rejected", reason: new Error("unknown") }], open),
+    /unknown/,
+  );
+  assert.deepEqual(open, ["p7-race-b: unknown client write (A2 reads client)"]);
+});
+
+test("summarise counts unmatched events and the publication order", () => {
+  const versions = [
+    { namespace: "client", step: "p1", versionNumber: "28", updateTime: "t1" },
+    { namespace: "client", step: "p5", versionNumber: "29", updateTime: "t2" },
+  ];
+  const event = (versionNumber, updateTime, eventId) => ({
+    generation: 1,
+    versionNumber,
+    updateTime,
+    eventId,
+  });
+  const out = summarise({
+    events: [event("29", "t2", "2"), event("28", "t1", "1"), event("99", "t9", "9")],
+    versions,
+  });
+  assert.equal(out.generations[1].unmatched, 1);
+  assert.equal(out.generations[1].inPublicationOrder, false);
+  assert.deepEqual(out.generations[1].clientSteps, ["p5", "p1"]);
+  assert.equal(
+    summarise({ events: [event("28", "t1", "1"), event("29", "t2", "2")], versions }).generations[1]
+      .inPublicationOrder,
+    true,
+  );
 });

@@ -135,6 +135,22 @@ export function templateUrls(base, project, number) {
 
 class Stop extends Error {}
 
+/**
+ * The accepted publication of the two concurrent ones (Promise.allSettled results): an unknown
+ * answer is opened and stops the pass, and anything but exactly one 200 stops it.
+ */
+export function raceWinner(settled, open) {
+  for (const [i, outcome] of settled.entries()) {
+    if (outcome.status === "rejected") {
+      open.push(`p7-${i ? "race-b" : "race-a"}: unknown client write (A2 reads client)`);
+      throw outcome.reason;
+    }
+  }
+  const winners = settled.map((outcome) => outcome.value).filter((r) => r.status === 200);
+  if (winners.length !== 1) throw new Stop(`race: ${winners.length} publications accepted`);
+  return winners[0];
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const canonicalBindings = (policy) =>
   JSON.stringify(
@@ -383,15 +399,7 @@ export async function observe(ctx) {
       ),
     );
     lastWrite = Date.now();
-    for (const [i, settled] of race.entries()) {
-      if (settled.status === "rejected") {
-        result.open.push(`p7-${i ? "race-b" : "race-a"}: unknown client write (A2 reads client)`);
-        throw settled.reason;
-      }
-    }
-    const winners = race.map((s) => s.value).filter((r) => r.status === 200);
-    if (winners.length !== 1) throw new Stop(`race: ${winners.length} publications accepted`);
-    const won = created("client", "p7", winners[0]);
+    const won = created("client", "p7", raceWinner(race, result.open));
     const current = await read("p8-current", urls.client);
     if (current.etag !== won.etag)
       throw new Stop("race: the current version is not the accepted one");

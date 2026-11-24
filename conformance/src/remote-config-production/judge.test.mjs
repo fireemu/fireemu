@@ -512,6 +512,14 @@ test("the race pair is one row: one winner each side, refused losers, winners co
     compareRuns(production, other, { kind: "production-vs-local" }).rows[0].differences,
     ["loser"],
   );
+  const conflict = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    refusal("race-b", 409, "FAILED_PRECONDITION"),
+  ]);
+  assert.deepEqual(
+    compareRuns(production, conflict, { kind: "production-vs-local" }).rows[0].differences,
+    ["loser"],
+  );
   const wrongVersion = runOf({ client: "10", server: "20" }, [
     publish("race-a", "14"),
     refusal("race-b", 400, "INVALID_ARGUMENT"),
