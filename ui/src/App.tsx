@@ -359,7 +359,11 @@ export const App: Component<RouteSectionProps> = (props) => {
                   testId="header-fault-clear"
                   onConfirm={async () => {
                     setFaultError(null);
-                    const res = await clearFaultPlan(appState.session());
+                    const cleared = appState.session();
+                    const res = await clearFaultPlan(cleared);
+                    // A late answer for a session no longer shown must not paint its error
+                    // (or refresh the indicator) in the session now selected.
+                    if (cleared !== appState.session()) return;
                     await res.match(
                       async () => appState.refreshFaultSummary(),
                       async (e) => setFaultError(e.message),
