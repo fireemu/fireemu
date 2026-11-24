@@ -184,3 +184,13 @@ export const loadMissingIndexes = (
       dropped: body.dropped,
     });
   });
+
+export const clearMissingIndexes = (session: string): ResultAsync<{ cleared: number }, ApiError> =>
+  queryRequest(
+    "DELETE",
+    `control/v1/sessions/${encodeURIComponent(session)}/firestore/missingIndexes`,
+  ).andThen((body) => {
+    if (!object(body) || typeof body.cleared !== "number")
+      return malformed("invalid missing-index clear response");
+    return ok({ cleared: body.cleared });
+  });

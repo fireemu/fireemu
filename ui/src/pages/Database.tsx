@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { appState } from "../state";
 import { t } from "../i18n";
@@ -10,8 +10,10 @@ import {
   Notice,
   Section,
 } from "../components/common";
+import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import { createLeaveGuard, LeavePrompt, requestScopeChange } from "../lib/unsaved";
 import { createScopedFetch } from "../lib/rules-state";
+import { parseRtdbTree, rtdbBreadcrumbs } from "../lib/rtdbTree";
 import { settle, type TextReply } from "../api/client";
 import {
   databaseInstances,
@@ -24,10 +26,17 @@ import {
   type DatabaseScope,
 } from "../api/database";
 
-const Editor: Component<{ scope: DatabaseScope; path: string }> = (props) => {
+type DatabaseTab = "all" | "data" | "rules" | "probe";
+
+const Editor: Component<{
+  scope: DatabaseScope;
+  path: string;
+  onNavigatePath: (nextPath: string) => void;
+}> = (props) => {
   const key = () => JSON.stringify([props.scope, props.path]);
   const data = createScopedFetch(key, () => settle(databaseRead(props.scope, props.path)));
   const rules = createScopedFetch(key, () => settle(databaseRules(props.scope)));
+  const [tab, setTab] = createSignal<DatabaseTab>("all");
   const [draft, setDraft] = createSignal<string | null>(null);
   const [rulesDraft, setRulesDraft] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
@@ -49,6 +58,7 @@ const Editor: Component<{ scope: DatabaseScope; path: string }> = (props) => {
   const guard = createLeaveGuard(dirty);
   const source = () => draft() ?? data.data()?.body ?? "null";
   const rulesSource = () => rulesDraft() ?? rules.data()?.body ?? "{}";
+  const tree = createMemo(() => parseRtdbTree(data.data()?.body ?? "null", props.path));
   const mutate = async (which: "data" | "rules", operation: DataMethod) => {
     if (pending()) return;
     const submitted = which === "rules" ? rulesSource() : source();
@@ -115,143 +125,243 @@ const Editor: Component<{ scope: DatabaseScope; path: string }> = (props) => {
       <LeavePrompt guard={guard} subject={t("database.draft")} />
       <ErrorBanner message={error()} />
       <Notice message={notice()} />
-      <Section title={t("database.data")}>
-        <p class="mb-2 text-sm">{t("database.adminHint")}</p>
-        <FetchState
-          loading={data.loading() && data.data() === undefined}
-          error={data.data() === undefined ? data.error() : null}
-          stale={data.data() !== undefined ? data.error() : null}
-          onRetry={data.refetch}
-        >
-          <Show when={data.loading()}>
-            <p role="status">{t("database.refreshing")}</p>
-          </Show>
-          <label class="label" for="database-source">
-            {t("database.json")}
-          </label>
-          <textarea
-            id="database-source"
-            class="input mono h-56"
-            spellcheck={false}
-            value={source()}
-            onInput={(event) => {
-              revision++;
-              setDraft(event.currentTarget.value);
-            }}
-          />
-          <div class="mt-2 flex flex-wrap gap-2">
-            <AsyncButton disabled={pending()} onClick={data.refetch} testId="database-data-refresh">
-              {t("app.refresh")}
-            </AsyncButton>
-            <AsyncButton
-              disabled={pending()}
-              onClick={() => mutate("data", "PUT")}
-              testId="database-save"
-            >
-              {t("database.replace")}
-            </AsyncButton>
-            <AsyncButton
-              disabled={pending()}
-              onClick={() => mutate("data", "PATCH")}
-              testId="database-patch"
-            >
-              {t("database.patch")}
-            </AsyncButton>
-            <ConfirmButton
-              label={t("app.delete")}
-              question={t("database.deleteConfirm")}
-              onConfirm={() => mutate("data", "DELETE")}
-              testId="database-delete"
+      <div
+        class="my-3 flex overflow-x-auto border-b border-line-subtle"
+        role="tablist"
+        aria-label={t("database.title")}
+      >
+        {(
+          [
+            ["all", t("database.viewAll")],
+            ["data", t("database.data")],
+            ["rules", t("database.rules")],
+            ["probe", t("database.requests")],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            type="button"
+            role="tab"
+            class="tab shrink-0"
+            aria-selected={tab() === id}
+            data-testid={`database-tab-${id}`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <Show when={tab() === "all" || tab() === "data"}>
+        <Section title={t("database.data")}>
+          <p class="mb-2 text-sm text-secondary">{t("database.adminHint")}</p>
+          <FetchState
+            loading={data.loading() && data.data() === undefined}
+            error={data.data() === undefined ? data.error() : null}
+            stale={data.data() !== undefined ? data.error() : null}
+            onRetry={data.refetch}
+          >
+            <Show when={data.loading()}>
+              <p role="status">{t("database.refreshing")}</p>
+            </Show>
+            <Show when={tree()}>
+              {(summary) => (
+                <div class="inset mb-3 p-3" data-testid="database-tree">
+                  <div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
+                    {t("database.tree")}
+                  </div>
+                  <Show
+                    when={summary().entries.length > 0}
+                    fallback={<p class="text-sm text-muted">{t("database.treeEmpty")}</p>}
+                  >
+                    <ul class="space-y-1 text-sm">
+                      <For each={summary().entries}>
+                        {(entry) => (
+                          <li class="flex flex-wrap items-baseline gap-2 rounded px-1.5 py-1 hover:bg-hover">
+                            <button
+                              type="button"
+                              class="link mono font-medium"
+                              aria-label={t("database.openChild", { path: entry.path })}
+                              data-testid={`database-tree-child-${entry.key}`}
+                              onClick={() => props.onNavigatePath(entry.path)}
+                            >
+                              {entry.key}
+                            </button>
+                            <span class="type-chip">{entry.kind}</span>
+                            <span class="mono break-all text-secondary">{entry.preview}</span>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                    <Show when={summary().truncated > 0}>
+                      <p class="mt-2 text-xs text-muted">
+                        +{summary().truncated} more keys (edit or query below)
+                      </p>
+                    </Show>
+                  </Show>
+                </div>
+              )}
+            </Show>
+            <CodeEditorToolbar
+              value={source()}
+              onFormat={(formatted) => {
+                revision++;
+                setDraft(formatted);
+              }}
+              testId="database-data-format"
             />
+            <label class="label" for="database-source">
+              {t("database.json")}
+            </label>
+            <textarea
+              id="database-source"
+              class="input mono h-56"
+              spellcheck={false}
+              value={source()}
+              onInput={(event) => {
+                revision++;
+                setDraft(event.currentTarget.value);
+              }}
+            />
+            <div class="mt-2 flex flex-wrap gap-2">
+              <AsyncButton disabled={pending()} onClick={data.refetch} testId="database-data-refresh">
+                {t("app.refresh")}
+              </AsyncButton>
+              <AsyncButton
+                disabled={pending()}
+                onClick={() => mutate("data", "PUT")}
+                testId="database-save"
+              >
+                {t("database.replace")}
+              </AsyncButton>
+              <AsyncButton
+                disabled={pending()}
+                onClick={() => mutate("data", "PATCH")}
+                testId="database-patch"
+              >
+                {t("database.patch")}
+              </AsyncButton>
+              <ConfirmButton
+                label={t("app.delete")}
+                question={t("database.deleteConfirm")}
+                onConfirm={() => mutate("data", "DELETE")}
+                testId="database-delete"
+              />
+            </div>
+          </FetchState>
+        </Section>
+      </Show>
+      <Show when={tab() === "all" || tab() === "rules"}>
+        <Section title={t("database.rules")}>
+          <FetchState
+            loading={rules.loading() && rules.data() === undefined}
+            error={rules.data() === undefined ? rules.error() : null}
+            stale={rules.data() !== undefined ? rules.error() : null}
+            onRetry={rules.refetch}
+          >
+            <CodeEditorToolbar
+              value={rulesSource()}
+              onFormat={(formatted) => {
+                rulesRevision++;
+                setRulesDraft(formatted);
+              }}
+              testId="database-rules-format"
+            />
+            <label class="label" for="database-rules">
+              {t("database.rulesSource")}
+            </label>
+            <textarea
+              id="database-rules"
+              class="input mono h-48"
+              spellcheck={false}
+              value={rulesSource()}
+              onInput={(event) => {
+                rulesRevision++;
+                setRulesDraft(event.currentTarget.value);
+              }}
+            />
+            <div class="mt-2 flex gap-2">
+              <AsyncButton
+                disabled={pending()}
+                onClick={rules.refetch}
+                testId="database-rules-refresh"
+              >
+                {t("app.refresh")}
+              </AsyncButton>
+              <AsyncButton
+                disabled={pending()}
+                onClick={() => mutate("rules", "PUT")}
+                testId="database-rules-save"
+              >
+                {t("database.replaceRules")}
+              </AsyncButton>
+            </div>
+          </FetchState>
+        </Section>
+      </Show>
+      <Show when={tab() === "all" || tab() === "probe"}>
+        <Section title={t("database.requests")}>
+          <p class="mb-2 text-sm text-secondary">{t("database.anonymousHint")}</p>
+          <div class="mb-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="label" for="database-method">
+                {t("database.method")}
+              </label>
+              <select
+                id="database-method"
+                class="input"
+                value={method()}
+                onChange={(event) => setMethod(event.currentTarget.value as DataMethod)}
+              >
+                <For each={["GET", "PUT", "PATCH", "DELETE"] as const}>
+                  {(value) => <option>{value}</option>}
+                </For>
+              </select>
+            </div>
+            <div>
+              <label class="label" for="database-query">
+                {t("database.query")}
+              </label>
+              <input
+                id="database-query"
+                class="input mono"
+                value={query()}
+                onInput={(event) => setQuery(event.currentTarget.value)}
+              />
+            </div>
           </div>
-        </FetchState>
-      </Section>
-      <Section title={t("database.rules")}>
-        <FetchState
-          loading={rules.loading() && rules.data() === undefined}
-          error={rules.data() === undefined ? rules.error() : null}
-          stale={rules.data() !== undefined ? rules.error() : null}
-          onRetry={rules.refetch}
-        >
-          <label class="label" for="database-rules">
-            {t("database.rulesSource")}
+          <CodeEditorToolbar
+            value={probeSource()}
+            onFormat={setProbeSource}
+            testId="database-probe-format"
+          />
+          <label class="label" for="database-request-source">
+            {t("database.requestBody")}
           </label>
           <textarea
-            id="database-rules"
-            class="input mono h-48"
-            spellcheck={false}
-            value={rulesSource()}
-            onInput={(event) => {
-              rulesRevision++;
-              setRulesDraft(event.currentTarget.value);
-            }}
+            id="database-request-source"
+            class="input mono h-24"
+            value={probeSource()}
+            onInput={(event) => setProbeSource(event.currentTarget.value)}
           />
-          <div class="mt-2 flex gap-2">
-            <AsyncButton
-              disabled={pending()}
-              onClick={rules.refetch}
-              testId="database-rules-refresh"
-            >
-              {t("app.refresh")}
-            </AsyncButton>
-            <AsyncButton
-              disabled={pending()}
-              onClick={() => mutate("rules", "PUT")}
-              testId="database-rules-save"
-            >
-              {t("database.replaceRules")}
+          <div class="mt-2">
+            <AsyncButton onClick={run} testId="database-request-run">
+              {t("database.run")}
             </AsyncButton>
           </div>
-        </FetchState>
-      </Section>
-      <Section title={t("database.requests")}>
-        <p>{t("database.anonymousHint")}</p>
-        <label class="label" for="database-method">
-          {t("database.method")}
-        </label>
-        <select
-          id="database-method"
-          class="input"
-          value={method()}
-          onChange={(event) => setMethod(event.currentTarget.value as DataMethod)}
-        >
-          <For each={["GET", "PUT", "PATCH", "DELETE"] as const}>
-            {(value) => <option>{value}</option>}
-          </For>
-        </select>
-        <label class="label" for="database-query">
-          {t("database.query")}
-        </label>
-        <input
-          id="database-query"
-          class="input mono"
-          value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-        />
-        <label class="label" for="database-request-source">
-          {t("database.requestBody")}
-        </label>
-        <textarea
-          id="database-request-source"
-          class="input mono h-24"
-          value={probeSource()}
-          onInput={(event) => setProbeSource(event.currentTarget.value)}
-        />
-        <AsyncButton onClick={run} testId="database-request-run">
-          {t("database.run")}
-        </AsyncButton>
-        <Show when={probe()}>
-          {(response) => (
-            <div data-testid="database-response">
-              <p role="status">HTTP {response().status}</p>
-              <Show when={response().etag}>
-                <p>ETag: {response().etag}</p>
-              </Show>
-              <pre class="mono whitespace-pre-wrap">{response().body}</pre>
-            </div>
-          )}
-        </Show>
-      </Section>
+          <Show when={probe()}>
+            {(response) => (
+              <div class="mt-3" data-testid="database-response">
+                <p role="status" class="text-sm font-medium">
+                  HTTP {response().status}
+                </p>
+                <Show when={response().etag}>
+                  <p class="mono text-xs text-muted">ETag: {response().etag}</p>
+                </Show>
+                <pre class="code-block mono mt-1 whitespace-pre-wrap">{response().body}</pre>
+              </div>
+            )}
+          </Show>
+        </Section>
+      </Show>
     </>
   );
 };
@@ -264,6 +374,12 @@ const Scope: Component<{ session: string; project: string; initialPath: string }
   const [namespace, setNamespace] = createSignal("");
   const [path, setPath] = createSignal(props.initialPath || "/");
   const [pathDraft, setPathDraft] = createSignal(path());
+  const navigateToPath = (nextPath: string) => {
+    requestScopeChange(() => {
+      setPath(nextPath);
+      setPathDraft(nextPath);
+    });
+  };
   createEffect(() => {
     const names = instances.data()?.instances ?? [];
     if (!names.some((item) => item.name === namespace())) setNamespace(names[0]?.name ?? "");
@@ -276,42 +392,72 @@ const Scope: Component<{ session: string; project: string; initialPath: string }
       empty={instances.data()?.instances.length === 0}
       emptyMessage={t("database.noInstances")}
     >
-      <label class="label" for="database-instance">
-        {t("database.instance")}
-      </label>
-      <select
-        id="database-instance"
-        class="input"
-        value={namespace()}
-        onChange={(event) => {
-          const next = event.currentTarget.value;
-          event.currentTarget.value = namespace();
-          requestScopeChange(() => setNamespace(next));
-        }}
-      >
-        <For each={instances.data()?.instances ?? []}>
-          {(instance) => <option value={instance.name}>{instance.name}</option>}
-        </For>
-      </select>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          requestScopeChange(() => setPath(pathDraft()));
-        }}
-      >
-        <label class="label" for="database-path">
-          {t("database.path")}
-        </label>
-        <input
-          id="database-path"
-          class="input mono"
-          value={pathDraft()}
-          onInput={(event) => setPathDraft(event.currentTarget.value)}
-        />
-        <button type="submit" class="btn">
-          {t("database.open")}
-        </button>
-      </form>
+      <div class="card mb-4 space-y-3">
+        <div class="grid gap-3 md:grid-cols-2">
+          <div>
+            <label class="label" for="database-instance">
+              {t("database.instance")}
+            </label>
+            <select
+              id="database-instance"
+              class="input"
+              value={namespace()}
+              onChange={(event) => {
+                const next = event.currentTarget.value;
+                event.currentTarget.value = namespace();
+                requestScopeChange(() => setNamespace(next));
+              }}
+            >
+              <For each={instances.data()?.instances ?? []}>
+                {(instance) => <option value={instance.name}>{instance.name}</option>}
+              </For>
+            </select>
+          </div>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              requestScopeChange(() => setPath(pathDraft()));
+            }}
+          >
+            <label class="label" for="database-path">
+              {t("database.path")}
+            </label>
+            <div class="flex gap-2">
+              <input
+                id="database-path"
+                class="input mono flex-1"
+                value={pathDraft()}
+                onInput={(event) => setPathDraft(event.currentTarget.value)}
+              />
+              <button type="submit" class="btn">
+                {t("database.open")}
+              </button>
+            </div>
+          </form>
+        </div>
+        <nav
+          class="mono flex flex-wrap items-center gap-1 text-sm"
+          aria-label={t("database.tree")}
+          data-testid="database-breadcrumbs"
+        >
+          <For each={rtdbBreadcrumbs(path(), t("database.treeRoot"))}>
+            {(crumb, i) => (
+              <>
+                <Show when={i() > 0}>
+                  <span class="text-muted">/</span>
+                </Show>
+                <button
+                  type="button"
+                  class="link"
+                  onClick={() => navigateToPath(crumb.path)}
+                >
+                  {crumb.label}
+                </button>
+              </>
+            )}
+          </For>
+        </nav>
+      </div>
       <Show when={namespace() && JSON.stringify([namespace(), path()])} keyed>
         {(target) => {
           const [selected, location] = JSON.parse(target) as [string, string];
@@ -319,6 +465,7 @@ const Scope: Component<{ session: string; project: string; initialPath: string }
             <Editor
               scope={{ session: props.session, project: props.project, namespace: selected }}
               path={location}
+              onNavigatePath={navigateToPath}
             />
           );
         }}

@@ -12,6 +12,7 @@ import {
 } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import {
+  clearMissingIndexes,
   loadMissingIndexes,
   runQuery,
   type MissingIndexReports,
@@ -34,7 +35,7 @@ import {
 } from "../lib/firestoreQuery";
 import { relativePath } from "../lib/firestoreValue";
 import { firestoreHref } from "../lib/hrefs";
-import { ErrorBanner, Notice } from "./common";
+import { AsyncButton, CopyButton, ErrorBanner, Notice } from "./common";
 
 type Execution = {
   scope: string;
@@ -82,6 +83,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
   const [reports, setReports] = createSignal<MissingIndexReports | null>(null);
   const [reportError, setReportError] = createSignal<string | null>(null);
   const [reportsLoading, setReportsLoading] = createSignal(false);
+  const [open, setOpen] = createSignal(true);
   const drafts = new Map<string, ReturnType<typeof defaultQuery>>();
   let previousScope: string | undefined;
   let queryId = 0;
@@ -174,6 +176,26 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
       setReportError(t("firestore.queryIndexUnavailable", { message: failure(error) })),
     );
   };
+  const clearIndexes = async () => {
+    setReportError(null);
+    setNotice(null);
+    const result = await clearMissingIndexes(appState.session());
+    result.match(
+      (res) => {
+        setReports(null);
+        setNotice(t("firestore.queryIndexesCleared", { count: res.cleared }));
+      },
+      (error) => setReportError(t("firestore.queryIndexUnavailable", { message: failure(error) })),
+    );
+  };
+  const indexesJsonText = (value: MissingIndexReports): string => {
+    const dbName = props.root.replace(/\/documents$/, "");
+    const payload = value.indexesJson[dbName] ?? {
+      indexes: value.missingIndexes.map((entry) => entry.index),
+      fieldOverrides: [],
+    };
+    return JSON.stringify(payload, null, 2);
+  };
   const share = async () => {
     setNotice(null);
     setShareError(null);
@@ -198,14 +220,26 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
 
   return (
     <section
-      class="my-5 border-y border-line-subtle py-4"
+      class="my-5 border-t border-line-subtle pt-4"
       data-testid="query-panel"
       aria-labelledby="firestore-query-heading"
     >
-      <h3 id="firestore-query-heading" class="text-base font-semibold">
-        {t("firestore.queryTitle")}
-      </h3>
-      <p class="mt-1 text-sm text-muted">{t("firestore.queryHint")}</p>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 id="firestore-query-heading" class="text-base font-semibold">
+          {t("firestore.queryTitle")}
+        </h3>
+        <button
+          type="button"
+          class="btn btn-sm"
+          data-testid="query-panel-toggle"
+          aria-expanded={open()}
+          onClick={() => setOpen(!open())}
+        >
+          {open() ? t("app.close") : t("firestore.queryToggle")}
+        </button>
+      </div>
+      <Show when={open()}>
+        <p class="mt-1 text-sm text-muted">{t("firestore.queryHint")}</p>
       <p class="mono my-2 break-all text-xs">{scopeLabel()}</p>
       <form
         onSubmit={(event) => {
@@ -503,14 +537,26 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
       >
         <h4 class="font-semibold">{t("firestore.queryIndexes")}</h4>
         <p class="my-2 text-xs text-muted">{t("firestore.queryIndexHint")}</p>
-        <button
-          type="button"
-          class="btn mb-2"
-          disabled={reportsLoading()}
-          onClick={() => void readIndexes()}
-        >
-          {t("firestore.queryLoadIndexes")}
-        </button>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            class="btn"
+            disabled={reportsLoading()}
+            onClick={() => void readIndexes()}
+          >
+            {t("firestore.queryLoadIndexes")}
+          </button>
+          <AsyncButton class="btn" testId="query-clear-indexes" onClick={clearIndexes}>
+            {t("firestore.queryClearIndexes")}
+          </AsyncButton>
+          <Show when={reports() && reports()!.missingIndexes.length > 0}>
+            <CopyButton
+              value={indexesJsonText(reports()!)}
+              subject={t("firestore.queryCopyIndexes")}
+              testId="query-copy-indexes"
+            />
+          </Show>
+        </div>
         <Show when={reportsLoading()}>
           <p role="status">{t("app.loading")}</p>
         </Show>
@@ -540,6 +586,7 @@ const FirestoreQuery: Component<{ root: string; collection: string; db: string }
           )}
         </Show>
       </section>
+      </Show>
     </section>
   );
 };
