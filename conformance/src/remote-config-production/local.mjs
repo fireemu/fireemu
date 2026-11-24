@@ -24,11 +24,21 @@ export const SETUP = [
   ...Array(20).fill("namespaces/firebase-server/remoteConfig"),
 ];
 
+/**
+ * The recorder of each corpus: RC-OBSERVE-V2-3, or RC-CLOSURE-A, which also reads the template
+ * under the project number, so the daemon is given a synthetic one (`daemon.authProjectNumbers`).
+ */
+export const RECORDERS = {
+  observe: "conformance/src/remote-config-observe/record.mjs",
+  closure: "conformance/src/remote-config-closure/record.mjs",
+};
+export const LOCAL_PROJECT_NUMBER = "123456789012";
+
 export function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
     const key = argv[i]?.replace(/^--/, "");
-    if (!["binary", "functions-source", "profile", "out", "events-file"].includes(key))
+    if (!["binary", "functions-source", "profile", "out", "events-file", "corpus"].includes(key))
       throw new Error(`unknown argument ${argv[i]}`);
     args[key] = argv[i + 1];
   }
@@ -36,6 +46,8 @@ export function parseArgs(argv) {
     if (!args[key]) throw new Error(`--${key} is required`);
   if (!["strict", "emulator"].includes(args.profile))
     throw new Error("--profile is strict or emulator");
+  args.corpus ??= "observe";
+  if (!Object.hasOwn(RECORDERS, args.corpus)) throw new Error("--corpus is observe or closure");
   if (existsSync(args.out) || existsSync(args["events-file"]))
     throw new Error("--out and --events-file must not exist");
   return args;
@@ -62,7 +74,7 @@ export function handlers() {
 export async function runLocal(args) {
   const { withTestWorld } = await import(pathToFileURL(join(ROOT, "npm/fireemu/testing.mjs")).href);
   const { main } = await import(
-    pathToFileURL(join(ROOT, "conformance/src/remote-config-observe/record.mjs")).href
+    pathToFileURL(join(ROOT, RECORDERS[args.corpus ?? "observe"])).href
   );
   const source = args["functions-source"] ? resolve(args["functions-source"]) : handlers();
   const eventsFile = resolve(args["events-file"]);
@@ -77,6 +89,9 @@ export async function runLocal(args) {
       config: {
         schemaVersion: 1,
         profile: args.profile,
+        ...(args.corpus === "closure"
+          ? { daemon: { authProjectNumbers: { "demo-rc-observe": LOCAL_PROJECT_NUMBER } } }
+          : {}),
         remoteConfig: {
           updateUser: {
             email: PLACEHOLDERS.email,
@@ -116,7 +131,16 @@ export async function runLocal(args) {
           "--out",
           resolve(args.out),
         ],
-        { ...process.env, FIREEMU_CONTROL_TOKEN: token },
+        {
+          ...process.env,
+          FIREEMU_CONTROL_TOKEN: token,
+          ...(args.corpus === "closure"
+            ? { FIREEMU_LOCAL_PROJECT_NUMBER: LOCAL_PROJECT_NUMBER }
+            : {}),
+        },
+        // The closure corpus filters history by update time, so the virtual clock moves 1.25 s
+        // before each write and the versions get distinct times.
+        { tick: () => world.clock.advance(1250) },
       );
     },
   );

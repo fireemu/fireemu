@@ -44,15 +44,28 @@ export class Transport {
   async send(
     caseId,
     url,
-    { method = "GET", body, ifMatch, signed = false, raw, contentLengthRange = false } = {},
+    {
+      method = "GET",
+      body,
+      ifMatch,
+      signed = false,
+      raw,
+      contentLengthRange = false,
+      credentials = true,
+      gzip = true,
+      ifNoneMatch,
+      textBody = false,
+    } = {},
   ) {
     if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(caseId)) throw new Error(`invalid case id ${caseId}`);
     const target = new URL(url);
     if (!this.allow(target, method, { signed }))
       throw new Error(`${caseId}: request not permitted`);
     if (this.count >= this.maxRequests) throw new Error(`${caseId}: request cap reached`);
-    const headers = { "accept-encoding": "gzip" };
-    if (!signed) {
+    // `gzip: false` asks for identity, `credentials: false` sends no Authorization (the recorded
+    // unauthenticated read), `textBody: true` keeps a 2xx body that is not JSON (a defaults file).
+    const headers = gzip ? { "accept-encoding": "gzip" } : { "accept-encoding": "identity" };
+    if (!signed && credentials) {
       headers.authorization = `Bearer ${await this.token()}`;
       if (this.userProject) headers["x-goog-user-project"] = this.userProject;
     }
@@ -67,11 +80,22 @@ export class Transport {
       headers["content-type"] = "application/json";
     }
     if (ifMatch !== undefined) headers["if-match"] = ifMatch;
+    if (ifNoneMatch !== undefined) headers["if-none-match"] = ifNoneMatch;
     this.count += 1;
     const seq = this.count;
     // A signed URL's query is a credential: journal the path only.
     const shown = signed ? `${target.origin}${target.pathname}` : target.href;
-    this.journal({ seq, case: caseId, phase: "before-send", method, url: shown, ifMatch });
+    this.journal({
+      seq,
+      case: caseId,
+      phase: "before-send",
+      method,
+      url: shown,
+      ifMatch,
+      ...(credentials ? {} : { credentials: false }),
+      ...(gzip ? {} : { gzip: false }),
+      ...(ifNoneMatch === undefined ? {} : { ifNoneMatch }),
+    });
     let response;
     let bytes;
     try {
@@ -113,7 +137,9 @@ export class Transport {
       try {
         json = JSON.parse(text);
       } catch {
-        return this.fail(seq, caseId, "unreadable body", status);
+        if (!(textBody && status >= 200 && status < 300))
+          return this.fail(seq, caseId, "unreadable body", status);
+        json = null;
       }
     }
     return { status, etag, json, bytes: bytes.length, text };

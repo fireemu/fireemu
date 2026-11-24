@@ -73,9 +73,41 @@ export function form(value, base, key = null) {
       return `v:${BigInt(value) - BigInt(base)}`;
     const rollback = /^Rollback to version ((?:0|[1-9][0-9]*))$/.exec(value);
     if (rollback) return `r:${BigInt(rollback[1]) - BigInt(base)}`;
-    return `s:${value}`;
+    return `s:${embedded(value, base)}`;
   }
   return value;
+}
+
+/**
+ * A message with the volatile values production embeds in it: RFC 3339 times by form (the history
+ * refusals echo the request's bounds and the retention edge), and the two version numbers of the
+ * stale-tag refusal as offsets. Brackets that no recorded message contains mark them.
+ */
+function embedded(text, base) {
+  return text
+    .replace(
+      /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?Z/g,
+      (_, fraction) => `\u27e8t:${fraction?.length ?? 0}\u27e9`,
+    )
+    .replace(
+      /^(\[VERSION_MISMATCH\]: Expected version )((?:0|[1-9][0-9]*)), found ((?:0|[1-9][0-9]*))/,
+      (_, head, expected, found) =>
+        `${head}\u27e8v:${BigInt(expected) - BigInt(base)}\u27e9, found \u27e8v:${BigInt(found) - BigInt(base)}\u27e9`,
+    );
+}
+
+/**
+ * The entries of a defaults file production served as XML or a property list, in file order, so
+ * the judge compares them like members (order, keys, values); its JSON form is a body already.
+ */
+export function defaultsEntries(text, contentType) {
+  const pattern = /application\/xml/.test(contentType ?? "")
+    ? /<entry>\s*<key>([^<]*)<\/key>\s*(?:<value>([^<]*)<\/value>|<value\/>)/g
+    : /application\/x-plist/.test(contentType ?? "")
+      ? /<key>([^<]*)<\/key>\s*<string>((?:<!\[CDATA\[[\s\S]*?\]\]>|[^<])*)<\/string>/g
+      : null;
+  if (!pattern || text === undefined || text === null) return null;
+  return Object.fromEntries([...text.matchAll(pattern)].map((m) => [m[1], m[2] ?? ""]));
 }
 
 /** The form of an ETag: absent, or its prefix kind and version offset (a validation tag keeps -0). */
@@ -127,7 +159,9 @@ export function projectRow(row, baseline) {
   const base = baseline[namespaceOf(row.path)].version;
   const history = HISTORY.test(row.path);
   const whole = !history && !BASELINE_CASES.has(row.case);
-  let body = history ? historyProjection(row.body, base) : row.body;
+  let body = history
+    ? historyProjection(row.body, base)
+    : (row.body ?? defaultsEntries(row.text, row.contentType));
   if (BASELINE_CASES.has(row.case) && body && typeof body === "object") {
     const { version: _version, ...rest } = body;
     body = rest;
@@ -143,6 +177,8 @@ export function projectRow(row, baseline) {
     bodyBytes: whole ? row.bodyBytes : null,
     body,
     bodyForm: form(body, base),
+    // A body that is not JSON nor a defaults file is compared as its text.
+    text: body === null || body === undefined ? (row.text ?? null) : null,
   };
 }
 
@@ -168,7 +204,7 @@ const answered = (row) => row?.phase === "response-persisted";
 
 function compareAnswers(a, b) {
   const fields = [];
-  for (const key of ["status", "contentType", "contentEncoding", "etag", "skeletonBytes"])
+  for (const key of ["status", "contentType", "contentEncoding", "etag", "skeletonBytes", "text"])
     if (a[key] !== b[key]) fields.push(key);
   for (const path of new Set([...Object.keys(a.escapes), ...Object.keys(b.escapes)]))
     if (JSON.stringify(a.escapes[path] ?? []) !== JSON.stringify(b.escapes[path] ?? []))
@@ -261,6 +297,10 @@ export function compareRuns(left, right, { known = [], kind }) {
   const order = [...new Set([...left.rows.map((r) => r.case), ...right.rows.map((r) => r.case)])];
   const rows = [];
   for (const id of order) {
+    if (RACE.includes(id)) {
+      if (id === RACE[0]) rows.push(raceVerdict(left, right, known, kind));
+      continue;
+    }
     const ra = a.get(id);
     const rb = b.get(id);
     if (!answered(ra) || !answered(rb)) {
@@ -301,6 +341,46 @@ export function compareRuns(left, right, { known = [], kind }) {
     STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]),
   );
   return { rows, counts };
+}
+
+/**
+ * The race of two concurrent publications with one tag (corpus `p7-race-a`, `p7-race-b`): which of
+ * the two wins, and whether the loser is refused before or after the winner commits, depend on the
+ * timing of the two requests, which no recording fixes. The pair is compared as one row: each side
+ * has exactly one accepted publication, the winners are compared as answers with the label of the
+ * draft ("race-a" or "race-b") as the only value taken out, and each loser is a 400 or 412
+ * refusal with FAILED_PRECONDITION or INVALID_ARGUMENT (recorded on 2026-11-21: 400
+ * INVALID_ARGUMENT; a sequential loser: 412 FAILED_PRECONDITION).
+ */
+export const RACE = ["p7-race-a", "p7-race-b"];
+function raceVerdict(left, right, known, kind) {
+  const id = "p7-race";
+  const side = (run) => {
+    const pair = RACE.map((caseId) => run.rows.find((row) => row.case === caseId));
+    if (!pair.every(answered)) return null;
+    const winners = pair.filter((row) => row.status === 200);
+    const losers = pair.filter((row) => row.status !== 200);
+    if (winners.length !== 1) return null;
+    const label = winners[0].case.slice("p7-".length);
+    const strip = (value) => JSON.parse(JSON.stringify(value).replaceAll(label, "race-X"));
+    return { winner: { ...winners[0], body: strip(winners[0].body) }, loser: losers[0] };
+  };
+  const [sa, sb] = [side(left), side(right)];
+  if (!sa || !sb)
+    return { id, status: "UNKNOWN", reason: "race-outcome", differences: [], knownDifferences: [] };
+  const fields = [];
+  for (const loser of [sa.loser, sb.loser]) {
+    const refused =
+      [400, 412].includes(loser.status) &&
+      ["FAILED_PRECONDITION", "INVALID_ARGUMENT"].includes(loser.body?.error?.status);
+    if (!refused) fields.push("loser");
+  }
+  const winner = compareAnswers(
+    projectRow(sa.winner, left.baseline),
+    projectRow(sb.winner, right.baseline),
+  );
+  fields.push(...winner.fields.map((field) => `winner.${field}`));
+  return verdict(id, fields, winner.layoutOnly, known, kind);
 }
 
 function verdict(id, fields, layoutOnly, known, kind) {

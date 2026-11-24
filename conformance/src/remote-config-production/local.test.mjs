@@ -25,7 +25,10 @@ test("parseArgs requires the binary, profile, out and events file, and new paths
     profile: "strict",
     out: "/nonexistent/out",
     "events-file": "/nonexistent/e",
+    corpus: "observe",
   });
+  assert.equal(parseArgs([...args, "--corpus", "closure"]).corpus, "closure");
+  assert.throws(() => parseArgs([...args, "--corpus", "other"]), /--corpus is observe or closure/);
   assert.throws(() => parseArgs(args.slice(2)), /--binary is required/);
   assert.throws(
     () => parseArgs([...args.slice(0, 3), "production", ...args.slice(4)]),

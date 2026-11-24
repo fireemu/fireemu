@@ -232,17 +232,26 @@ export function sanitiseRun({ run, journal, events, result, files }) {
         throw new Error(`${answer.file} is not ${answer.bytes} bytes`);
       if (createHash("sha256").update(raw).digest("hex") !== answer.sha256)
         throw new Error(`${answer.file} does not match its journal digest`);
+      // A body that is not JSON (a defaults file, an empty defaults body) is kept as masked text.
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = undefined;
+      }
+      const json = parsed !== undefined;
       Object.assign(row, {
         status: answer.status,
         bodyBytes: answer.bytes,
-        skeletonBytes: skeletonBytes(text),
+        skeletonBytes: json ? skeletonBytes(text) : answer.bytes,
         // maskValue masks the paths (member names) as well as the escapes' text.
-        escapes: maskValue(escapeMap(text), secrets),
+        escapes: json ? maskValue(escapeMap(text), secrets) : {},
         contentType: answer.contentType ?? null,
         contentEncoding: answer.contentEncoding ?? null,
         etag:
           answer.etag === undefined || answer.etag === null ? null : maskText(answer.etag, secrets),
-        body: maskValue(JSON.parse(text), secrets),
+        body: json ? maskValue(parsed, secrets) : null,
+        ...(json ? {} : { text: maskText(text, secrets) }),
       });
     }
     rows.push(row);

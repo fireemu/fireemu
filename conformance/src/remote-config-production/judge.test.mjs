@@ -11,6 +11,8 @@ import {
   form,
   idForm,
   namespaceOf,
+  RACE,
+  defaultsEntries,
 } from "./judge.mjs";
 
 const ROOT = new URL("../../../", import.meta.url);
@@ -389,4 +391,135 @@ test("escapes outside the compared body are not compared", () => {
     compareRuns(inside, right, { kind: "production-vs-local" }).rows[0].differences,
     ["escapes:/versions/0/versionNumber"],
   );
+});
+
+// RC-CLOSURE-A judge rules.
+test("messages compare their embedded times by form and the stale-tag versions as offsets", () => {
+  assert.equal(
+    form(
+      {
+        message:
+          "[VALIDATION_ERROR]: start_time [2026-11-21T01:53:19.585555Z] must be before end_time [2026-11-21T01:53:19.585555Z].",
+      },
+      "1",
+    ).message,
+    "s:[VALIDATION_ERROR]: start_time [\u27e8t:6\u27e9] must be before end_time [\u27e8t:6\u27e9].",
+  );
+  assert.equal(
+    form(
+      {
+        message:
+          "end_time must be no earlier than 2026-08-22T07:28:37.612323Z [2000-01-01T00:00:00Z specified].",
+      },
+      "1",
+    ).message,
+    "s:end_time must be no earlier than \u27e8t:6\u27e9 [\u27e8t:0\u27e9 specified].",
+  );
+  assert.equal(
+    form({ message: "[VERSION_MISMATCH]: Expected version 30, found 33 for project: x" }, "27")
+      .message,
+    "s:[VERSION_MISMATCH]: Expected version \u27e8v:3\u27e9, found \u27e8v:6\u27e9 for project: x",
+  );
+  assert.equal(
+    form({ message: "[VERSION_MISMATCH]: Expected version 030, found 33" }, "27").message,
+    "s:[VERSION_MISMATCH]: Expected version 030, found 33",
+  );
+});
+
+test("defaults files are compared by their entries in order", () => {
+  const xml =
+    '<?xml version="1.0" encoding="UTF-8"?><defaults>\n  <entry>\n    <key>b</key>\n    <value>2</value>\n  </entry>\n  <entry>\n    <key>a</key>\n    <value/>\n  </entry>\n</defaults>';
+  assert.deepEqual(Object.entries(defaultsEntries(xml, "application/xml")), [
+    ["b", "2"],
+    ["a", ""],
+  ]);
+  const plist =
+    "<dict>\n\t<key>b</key>\n\t<string><![CDATA[<&]]></string>\n\t<key>a</key>\n\t<string></string>\n</dict>";
+  assert.deepEqual(Object.entries(defaultsEntries(plist, "application/x-plist")), [
+    ["b", "<![CDATA[<&]]>"],
+    ["a", ""],
+  ]);
+  assert.equal(defaultsEntries("x", "application/json"), null);
+  const row = (text, contentType) => ({
+    case: "d-xml",
+    path: CLIENT,
+    phase: "response-persisted",
+    status: 200,
+    bodyBytes: text.length,
+    skeletonBytes: text.length,
+    escapes: {},
+    contentType,
+    contentEncoding: null,
+    etag: null,
+    body: null,
+    text,
+  });
+  const swapped = xml
+    .replace("<key>b</key>\n    <value>2</value>", "<key>a</key>\n    <value/>")
+    .replace(
+      "<key>a</key>\n    <value/>\n  </entry>\n</defaults>",
+      "<key>b</key>\n    <value>2</value>\n  </entry>\n</defaults>",
+    );
+  const result = compareRuns(
+    runOf({ client: "1", server: "1" }, [row(xml, "application/xml")]),
+    runOf({ client: "1", server: "1" }, [row(swapped, "application/xml")]),
+    { known: [MEMBER_ORDER], kind: "production-vs-local" },
+  );
+  assert.deepEqual(result.rows[0].knownDifferences, ["KD-TEST-ORDER"]);
+  const empty = compareRuns(
+    runOf({ client: "1", server: "1" }, [row("", "application/json")]),
+    runOf({ client: "1", server: "1" }, [row("x", "application/json")]),
+    { kind: "production-vs-local" },
+  );
+  assert.ok(empty.rows[0].differences.includes("text"));
+});
+
+test("the race pair is one row: one winner each side, refused losers, winners compared without the label", () => {
+  const publish = (label, version) =>
+    answer(`p7-${label}`, CLIENT, {
+      parameters: { fireemu_source: { defaultValue: { value: `${label}-default` } } },
+      version: { versionNumber: version },
+    });
+  const refusal = (label, status, code) =>
+    answer(`p7-${label}`, CLIENT, { error: { code: 400, status: code, message: "m" } }, { status });
+  const production = runOf({ client: "27", server: "6" }, [
+    publish("race-a", "30"),
+    refusal("race-b", 400, "INVALID_ARGUMENT"),
+  ]);
+  const local = runOf({ client: "10", server: "20" }, [
+    refusal("race-a", 412, "FAILED_PRECONDITION"),
+    publish("race-b", "13"),
+  ]);
+  const rows = compareRuns(production, local, { kind: "production-vs-local" }).rows;
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["p7-race"],
+  );
+  assert.equal(rows[0].status, "MATCH_LAYOUT");
+  const both = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    publish("race-b", "14"),
+  ]);
+  assert.equal(
+    compareRuns(production, both, { kind: "production-vs-local" }).rows[0].status,
+    "UNKNOWN",
+  );
+  const other = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    refusal("race-b", 404, "NOT_FOUND"),
+  ]);
+  assert.deepEqual(
+    compareRuns(production, other, { kind: "production-vs-local" }).rows[0].differences,
+    ["loser"],
+  );
+  const wrongVersion = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "14"),
+    refusal("race-b", 400, "INVALID_ARGUMENT"),
+  ]);
+  assert.ok(
+    compareRuns(production, wrongVersion, {
+      kind: "production-vs-local",
+    }).rows[0].differences.includes("winner.body.version.versionNumber:value"),
+  );
+  assert.deepEqual(RACE, ["p7-race-a", "p7-race-b"]);
 });

@@ -654,7 +654,7 @@ export async function readBack(ctx, resources = null) {
   return out;
 }
 
-async function listFunctions(t, url, prefix, grants) {
+export async function listFunctions(t, url, prefix, grants) {
   const found = [];
   let token = "";
   for (let page = 0; page < 3; page += 1) {

@@ -390,3 +390,20 @@ test("escape paths are masked like the members they name", () => {
   const fixture = sanitiseRun(withBody(`{"${PROJECT}": "a\\u003cb"}`));
   assert.deepEqual(fixture.rows[1].escapes, { "/PROJECT_ID": [[1, "\\u003c"]] });
 });
+
+test("a body that is not JSON is kept as masked text with its recorded lengths", () => {
+  for (const text of [
+    `<?xml version="1.0"?><defaults><entry><key>${PROJECT}</key><value/></entry></defaults>`,
+    "",
+  ]) {
+    const fixture = sanitiseRun(withBody(text));
+    const row = fixture.rows[1];
+    assert.equal(row.body, null);
+    assert.equal(row.text, text.split(PROJECT).join("PROJECT_ID"));
+    assert.equal(row.bodyBytes, Buffer.byteLength(text));
+    assert.equal(row.skeletonBytes, Buffer.byteLength(text));
+    assert.deepEqual(row.escapes, {});
+  }
+  // A JSON body keeps no text field.
+  assert.equal(Object.hasOwn(sanitiseRun(withBody("{}")).rows[1], "text"), false);
+});
