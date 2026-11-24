@@ -4,14 +4,15 @@
 //   node src/remote-config-production/local.mjs --binary <fireemu> [--functions-source <dir>]
 //     --profile strict|emulator --out <new run dir> --events-file <new jsonl>
 //
-// Without --functions-source, the v1 and v2 Remote Config handlers of
-// tools/sdk-smoke/functions-project/fixtures/remote-config/index.js are copied to a new directory
-// under conformance/.runs/, where they resolve conformance's pinned firebase-functions 7.3.2. Before the recorder starts, empty client and server templates are published
+// Without --functions-source, the raw v1 and v2 Remote Config handlers of functions/index.cjs
+// (the same layer as production's functions-framework handlers, no SDK) are copied to a new
+// temporary directory outside the repository. Before the recorder starts, empty client and server templates are published
 // (the production baseline: both namespaces published and empty), ten client and twenty server
 // versions, so the version numbers the run creates in the two namespaces stay disjoint, as they
 // were in production (events carry no namespace). The configured `remoteConfig.updateUser` is the
 // sanitised identity, so the masked production values and the local values are the same text.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -40,13 +41,15 @@ export function parseArgs(argv) {
   return args;
 }
 
-/** A new directory under conformance/.runs/ with the committed handlers. */
+/**
+ * A new directory with the committed raw handlers, outside the repository: the handlers need no
+ * package, and the Test World snapshot copies the node_modules of a source's ancestors, which
+ * under conformance/ is the whole SDK installation.
+ */
 export function handlers() {
-  const runs = join(ROOT, "conformance/.runs");
-  mkdirSync(runs, { recursive: true });
-  const dir = mkdtempSync(join(runs, "remote-config-functions-"));
+  const dir = mkdtempSync(join(tmpdir(), "remote-config-functions-"));
   copyFileSync(
-    join(ROOT, "tools/sdk-smoke/functions-project/fixtures/remote-config/index.js"),
+    join(ROOT, "conformance/src/remote-config-production/functions/index.cjs"),
     join(dir, "index.js"),
   );
   writeFileSync(

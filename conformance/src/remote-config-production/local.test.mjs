@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -34,14 +35,16 @@ test("parseArgs requires the binary, profile, out and events file, and new paths
   assert.throws(() => parseArgs([...args.slice(0, 5), ROOT, ...args.slice(6)]), /must not exist/);
 });
 
-test("handlers copies the committed Remote Config handlers under conformance/.runs", (t) => {
+test("handlers copies the committed raw Remote Config handlers outside the repository", (t) => {
   const dir = handlers();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  assert.ok(dir.startsWith(join(ROOT, "conformance/.runs/remote-config-functions-")));
+  assert.ok(dir.startsWith(join(tmpdir(), "remote-config-functions-")));
+  // Not under conformance/, whose node_modules the Test World snapshot would copy.
+  assert.ok(!dir.startsWith(join(ROOT, "conformance")));
   assert.equal(
     readFileSync(join(dir, "index.js"), "utf8"),
     readFileSync(
-      join(ROOT, "tools/sdk-smoke/functions-project/fixtures/remote-config/index.js"),
+      join(ROOT, "conformance/src/remote-config-production/functions/index.cjs"),
       "utf8",
     ),
   );

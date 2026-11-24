@@ -27,7 +27,10 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const DIR = "conformance/remote-config-production";
 export const KNOWN = "conformance/src/remote-config-production/known-differences.json";
 
-/** The RC-OBSERVE-V2-3 recording (2026-11-24) and two local runs of the same recorder plan. */
+/**
+ * The RC-OBSERVE-V2-3 recording (2026-11-24) and two local runs of the same recorder plan with the
+ * same raw handlers (functions/index.cjs; coordinator ruling 4).
+ */
 export const FILES = {
   production: `${DIR}/observe-v23-production.json`,
   localStrict: `${DIR}/observe-v23-local-strict.json`,
@@ -39,10 +42,10 @@ export const FILES = {
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
   [FILES.production]: "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
-  [FILES.localStrict]: "e18cd66eded7aad488a320c402350944f229896e3b604e548166e923c96b8310",
-  [FILES.localEmulator]: "031eb3cf6dd43db0c2b9e332d09ecfd24d7fc4afe1afb84fa2086ea1e45326a3",
-  [FILES.strict]: "d75360e5d8e0d659a4a3ec2c678542ca16097ca2cf5fe5e941e22b44719be96c",
-  [FILES.emulator]: "b388fd84595aae65f190be365a495fe659d0319ef9881633c5492d9044dff845",
+  [FILES.localStrict]: "3a556dad509028f4aa7e5b72ad70f53566febe6e46f3467592dff1da1d44bc41",
+  [FILES.localEmulator]: "94ebbb7bd1db94b6156600e81c9142ec299877c5090ecef45366673132df0e2a",
+  [FILES.strict]: "eb5d7280a2fdd3c864e32e0bfc408622f547969c40a58330fdae898312963b46",
+  [FILES.emulator]: "1313a33fc657df2b7bdd93b3a016d23379cd7164858e71c9a0917a69e85b3d1a",
   [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
 };
 

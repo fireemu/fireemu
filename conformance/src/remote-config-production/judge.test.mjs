@@ -288,10 +288,16 @@ test("recorded answers: the strict refusals of the four recorded server forms ma
   );
   for (const id of ["s-validate-20", "s-validate-21", "s-validate-22", "s-validate-23"]) {
     assert.equal(production.rows.find((r) => r.case === id).status, 400, id);
-    assert.deepEqual(rows[id].differences, ["contentType"], id);
+    assert.deepEqual(rows[id].differences, [], id);
   }
-  // The recorded charset is upper case; fireemu answers lower case (a stage 2 finding).
+  // Stage 2 (rulings 2 and 4): strict differs from the recording only by member order, and the
+  // raw handlers observe the same envelope layer as production's.
   assert.equal(production.rows[0].contentType, "application/json; charset=UTF-8");
+  const statuses = new Set(Object.values(rows).map((row) => row.status));
+  assert.deepEqual([...statuses].toSorted(), ["KNOWN_DIFFERENCE", "MATCH"]);
+  for (const row of Object.values(rows))
+    if (row.status === "KNOWN_DIFFERENCE")
+      assert.deepEqual(row.knownDifferences, ["KD-TEST-ORDER"], row.id);
   for (const id of ["event-id:c0", "event-id:c1", "event-id:c2", "event-id:c3", "event-id:c4"])
     assert.equal(rows[id].status, "MATCH", id);
 });

@@ -4,7 +4,7 @@
   "profile": "strict",
   "inputs": {
     "production": "29740d542e19fbb9305e4f47d18cfbd2d3123826565cbaaa48b470ea6b770180",
-    "local": "e18cd66eded7aad488a320c402350944f229896e3b604e548166e923c96b8310",
+    "local": "3a556dad509028f4aa7e5b72ad70f53566febe6e46f3467592dff1da1d44bc41",
     "knownDifferences": "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c"
   },
   "knownDifferences": [
@@ -14,649 +14,413 @@
     }
   ],
   "counts": {
-    "MATCH": 8,
+    "MATCH": 14,
     "MATCH_LAYOUT": 0,
-    "KNOWN_DIFFERENCE": 0,
-    "MISMATCH": 52,
+    "KNOWN_DIFFERENCE": 46,
+    "MISMATCH": 0,
     "UNKNOWN": 0
   },
   "rows": [
     {
       "id": "a-client",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "a-server",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "c0-publish",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-00",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-01",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-02",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-03",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-04",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-05",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-06",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-07",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-08",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-09",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-10",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-11",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-12",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-13",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-14",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-15",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-16",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-17",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-18",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-19",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/0/expression"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s-validate-20",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "s-validate-21",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "s-validate-22",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "s-validate-23",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType"
-      ],
+      "status": "MATCH",
+      "differences": [],
       "knownDifferences": []
     },
     {
       "id": "s1-publish",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/13/expression",
-        "escapes:/conditions/14/expression",
-        "escapes:/conditions/17/expression",
-        "escapes:/conditions/18/expression",
-        "escapes:/conditions/19/expression",
-        "escapes:/conditions/2/expression",
-        "escapes:/conditions/3/expression",
-        "escapes:/conditions/4/expression",
-        "escapes:/conditions/5/expression",
-        "escapes:/conditions/8/expression",
-        "escapes:/conditions/9/expression",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s2-data-plane",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s3-server-admin",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/13/expression",
-        "escapes:/conditions/14/expression",
-        "escapes:/conditions/17/expression",
-        "escapes:/conditions/18/expression",
-        "escapes:/conditions/19/expression",
-        "escapes:/conditions/2/expression",
-        "escapes:/conditions/3/expression",
-        "escapes:/conditions/4/expression",
-        "escapes:/conditions/5/expression",
-        "escapes:/conditions/8/expression",
-        "escapes:/conditions/9/expression",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s4-wildcard",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "escapes:/conditions/13/expression",
-        "escapes:/conditions/14/expression",
-        "escapes:/conditions/17/expression",
-        "escapes:/conditions/18/expression",
-        "escapes:/conditions/19/expression",
-        "escapes:/conditions/2/expression",
-        "escapes:/conditions/3/expression",
-        "escapes:/conditions/4/expression",
-        "escapes:/conditions/5/expression",
-        "escapes:/conditions/8/expression",
-        "escapes:/conditions/9/expression",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s5-rollback",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "s6-server",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "c1-publish",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "c2-publish",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "c3-publish",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "c4-rollback",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "c5-client",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "h-client-history",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "body.versions[0].updateTime:value",
-        "body.versions[1].updateTime:value",
-        "body.versions[2].updateTime:value",
-        "body.versions[3].updateTime:value",
-        "body.versions[4].updateTime:value",
-        "body.nextPageToken:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "h-server-history",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "body.versions[0].updateTime:value",
-        "body.versions[1].updateTime:value",
-        "body.versions[2].updateTime:value",
-        "body.nextPageToken:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "g-client",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "g-server",
-      "status": "MISMATCH",
-      "differences": [
-        "contentType",
-        "etag",
-        "body.version.updateTime:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c0:g2",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.context:missing-left",
-        "event.context.version:missing-left",
-        "event.context.id:value",
-        "event.context.time:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c0:g1",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.params:missing-left",
-        "event.context.eventId:value",
-        "event.context.timestamp:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c1:g2",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.context:missing-left",
-        "event.context.version:missing-left",
-        "event.context.time:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c1:g1",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.params:missing-left",
-        "event.context.timestamp:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c2:g2",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.context:missing-left",
-        "event.context.version:missing-left",
-        "event.context.time:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c2:g1",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.params:missing-left",
-        "event.context.timestamp:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c3:g2",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.context:missing-left",
-        "event.context.version:missing-left",
-        "event.context.id:value",
-        "event.context.time:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c3:g1",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.params:missing-left",
-        "event.context.eventId:value",
-        "event.context.timestamp:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c4:g2",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.context:missing-left",
-        "event.context.version:missing-left",
-        "event.context.time:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
     },
     {
       "id": "event:client:c4:g1",
-      "status": "MISMATCH",
-      "differences": [
-        "event.data.updateTime:value",
-        "event.context.params:missing-left",
-        "event.context.timestamp:value"
-      ],
+      "status": "KNOWN_DIFFERENCE",
+      "differences": [],
       "knownDifferences": [
         "KD-MEMBER-ORDER"
       ]
