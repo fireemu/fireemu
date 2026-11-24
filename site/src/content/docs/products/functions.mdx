@@ -195,7 +195,7 @@ A schedule runs on Fireemu's virtual clock. Unless you pin a start time with `da
 
 To run a scheduled function or release a delayed task without waiting:
 
-| | Scheduled function | Task-queue function (tasks waiting for their `scheduleTime`) |
+| Aspect | Scheduled function | Task-queue function (tasks waiting for their `scheduleTime`) |
 |---|---|---|
 | Emulator UI, Functions page | Run it immediately, or advance the clock to its next occurrence | The waiting tasks, with their due time and a **Run now** button |
 | Control API | `POST /v1/sessions/default/functions/{name}:run` | The same route releases all waiting tasks; with `{"task": "<task id>"}` it releases one (404 for an unknown id) |

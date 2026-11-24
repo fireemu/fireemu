@@ -230,7 +230,7 @@ printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
 
 Storage가 `enforced`일 때도, Admin SDK나 `gcloud`(브라우저가 아닌 클라이언트 라이브러리)를 사용하는 서버 측 코드는 토큰 없이 Storage에 접근할 수 있어야 합니다. 프로덕션은 이 트래픽에 App Check를 적용하지 않습니다. Admin SDK는 OAuth를 통해 서비스 계정으로 인증하며, 적용 대상은 클라이언트 SDK가 호출하는 Firebase Storage API입니다. 에뮬레이터에는 OAuth가 없으므로 `appCheck.storageServerRequests`가 이 트래픽을 어떻게 인식할지 결정합니다.
 
-| | `"loopback"` (기본값) | `"capability"` |
+| 항목 | `"loopback"` (기본값) | `"capability"` |
 |---|---|---|
 | 토큰 없이 허용되는 요청 | 루프백 피어에서 루프백 `Host`로 오는, 브라우저 증거가 없고 클라이언트 SDK 자격 증명이 없는 Cloud Storage JSON API 요청([세부 사항](#how-loopback-recognises-a-request)) | `fireemu exec`가 `STORAGE_EMULATOR_HOST`의 userinfo(`http://fireemu:<capability>@host:port`)에 넣어 주는 실행별 capability를 가진 요청만 |
 | `STORAGE_EMULATOR_HOST` | 일반적인 `http://host:port`이며, 모든 `@google-cloud/storage`와 `firebase-admin` 버전이 받아들입니다 | capability가 포함됩니다. `@google-cloud/storage` 8.1 이상(`firebase-admin` 14.4 이상)은 자격 증명이 포함된 URL을 거부합니다 |

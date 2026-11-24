@@ -195,7 +195,7 @@ FULL 视图、活动/重试观测、无效视图、未知名称的 GET 回答以
 
 要在不等待的情况下运行定时函数或释放延迟任务：
 
-| | 定时函数 | 任务队列函数（等待其 `scheduleTime` 的任务） |
+| 对比项 | 定时函数 | 任务队列函数（等待其 `scheduleTime` 的任务） |
 |---|---|---|
 | Emulator UI 的 Functions 页面 | 立即运行，或将时钟推进到下一次执行 | 等待中的任务，带其到期时间和 **Run now** 按钮 |
 | 控制 API | `POST /v1/sessions/default/functions/{name}:run` | 同一路由释放所有等待中的任务；带 `{"task": "<task id>"}` 时释放单个任务（未知 ID 返回 404） |

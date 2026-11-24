@@ -7,6 +7,7 @@ const { locale, t } = pageLocale(Astro.url, import.meta.env.BASE_URL);
 const rows = productSurfaceRows((await loadRepositoryData()).contract);
 ---
 
+<div class="fe-table-wrap">
 <table>
 	<thead>
 		<tr><th>{t('table.productOrSurface')}</th><th>{t('table.fireemu')}</th><th>{t('table.defaultPort')}</th><th>{t('table.inSuite')}</th></tr>
@@ -22,3 +23,4 @@ const rows = productSurfaceRows((await loadRepositoryData()).contract);
 		))}
 	</tbody>
 </table>
+</div>

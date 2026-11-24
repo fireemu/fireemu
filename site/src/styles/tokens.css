@@ -33,6 +33,8 @@
 	--fe-info-bg: oklch(29% 0.018 245);
 	--fe-code-bg: oklch(18.3% 0.01 247);
 	--fe-code-fg: oklch(95.3% 0.007 245);
+	--fe-inline-code-bg: oklch(26.5% 0.012 247);
+	--fe-inline-code-border: oklch(34% 0.014 247);
 	--fe-selection-bg: oklch(34% 0.027 78);
 	--fe-selection-fg: oklch(95.3% 0.007 245);
 
@@ -73,6 +75,8 @@
 	--fe-info-bg: oklch(95.5% 0.018 245);
 	--fe-code-bg: oklch(93.4% 0.008 245);
 	--fe-code-fg: oklch(25.5% 0.007 250);
+	--fe-inline-code-bg: oklch(93.4% 0.008 245);
+	--fe-inline-code-border: oklch(84% 0.008 245);
 	--fe-selection-bg: oklch(92.4% 0.044 84);
 	--fe-selection-fg: oklch(25.5% 0.007 250);
 }
@@ -119,7 +123,7 @@
 	--sl-color-bg: var(--fe-bg);
 	--sl-color-bg-nav: var(--fe-bg);
 	--sl-color-bg-sidebar: var(--fe-bg);
-	--sl-color-bg-inline-code: var(--fe-code-bg);
+	--sl-color-bg-inline-code: var(--fe-inline-code-bg);
 	--sl-color-bg-accent: var(--fe-action-bg);
 	--sl-color-hairline-light: var(--fe-border);
 	--sl-color-hairline: var(--fe-border);

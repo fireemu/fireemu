@@ -230,7 +230,7 @@ Cualquier otra cadena nunca coincide, y el intercambio responde 403.
 
 Con Storage en `enforced`, el código de servidor que usa el Admin SDK o `gcloud` (una biblioteca cliente, no un navegador) todavía tiene que llegar a Storage sin un token. Producción no aplica App Check a ese tráfico: el Admin SDK se autentica con una cuenta de servicio mediante OAuth, y la aplicación cubre la API de Firebase Storage que llaman los SDK cliente. El emulador no tiene OAuth, así que `appCheck.storageServerRequests` decide cómo reconoce ese tráfico:
 
-| | `"loopback"` (predeterminado) | `"capability"` |
+| Aspecto | `"loopback"` (predeterminado) | `"capability"` |
 |---|---|---|
 | Admitido sin token | Una solicitud a la API JSON de Cloud Storage desde un peer loopback a un `Host` loopback, sin evidencia de navegador y sin credencial de SDK cliente ([detalles](#how-loopback-recognises-a-request)) | Solo una solicitud que lleve la capacidad por ejecución que `fireemu exec` coloca en el userinfo de `STORAGE_EMULATOR_HOST` (`http://fireemu:<capability>@host:port`) |
 | `STORAGE_EMULATOR_HOST` | El `http://host:port` simple, que aceptan todas las versiones de `@google-cloud/storage` y `firebase-admin` | Con la capacidad. `@google-cloud/storage` 8.1 y posteriores (`firebase-admin` 14.4 y posteriores) rechazan una URL con credenciales incrustadas |

@@ -35,7 +35,7 @@
 	"status.Implemented": "実装済み",
 	"status.Partial": "一部",
 	"status.Not supported": "非対応",
-	"landing.title": "Fireemu — Firebaseの「本番だけ失敗」を、ローカルで見つける",
+	"landing.title": "Firebaseの「本番だけ失敗」を、ローカルで見つける",
 	"landing.description": "Fireemuは、本番の挙動に近づけた非公式のローカルFirebaseエミュレータです。本番で初めて分かる失敗を、ローカルのテストとCIで先に見つけられます。",
 	"landing.h1": "Firebaseの「本番だけ失敗」を、ローカルで見つける。",
 	"landing.lede": "テストとCI向けに作られた、単一バイナリの非公式ローカルFirebaseエミュレータです。既定で本番に近い検証とエラー形式を使うため、デプロイ前にローカルで不具合に気づけます。",
