@@ -50,10 +50,10 @@ import {
 
 export { A2_MAX_REQUESTS };
 
-// Request cap of a production pass, phase bounds as packet section 3: baseline 8 + deploys 89 and
-// one log read + reads 11 + validation 81 + publication and defaults 16 + history 17 + rollbacks
-// and version reads 4 + server 31 + client restoration 3 + window 10 + cleanup 107 = 378. The
-// transport refuses every request past the cap.
+// Request cap of a production pass, phase bounds as packet section 3: baseline 8 + deploys 89
+// (the log read included) + reads 11 + validation 81 + publication and defaults 16 + history 17 +
+// rollbacks and version reads 4 + server 31 + client restoration 3 + window 10 + cleanup 107 = 377.
+// The transport refuses every request past the cap.
 export const MAX_REQUESTS = 400;
 export const PRODUCTION_TIMING = {
   paceMs: 2500,
@@ -171,6 +171,9 @@ export function raceWinner(settled, open) {
   for (const i of rejected)
     open.push(`p7-${i ? "race-b" : "race-a"}: unknown client write (A2 reads client)`);
   if (rejected.length) throw settled[rejected[0]].reason;
+  // A 429 on either publication stops the forward program, as for every creating write (ruling 8).
+  const limited = settled.findIndex((outcome) => outcome.value.status === 429);
+  if (limited >= 0) throw new Stop(`p7-${limited ? "race-b" : "race-a"}: 429`);
   const winners = settled.map((outcome) => outcome.value).filter((r) => r.status === 200);
   if (winners.length !== 1) throw new Stop(`race: ${winners.length} publications accepted`);
   return winners[0];

@@ -313,3 +313,45 @@ test("fake production: G rolls back only a namespace the pass wrote", async (t) 
   assert.equal(result.baseline.after.server.empty, false);
   assert.equal(result.sandboxAtBaseline, false);
 });
+
+test("fake production: a 429 on either race publication stops before p8 (ruling 8)", async (t) => {
+  for (const limited of [1, 2]) {
+    // The race PUTs are the only client publications sent together; count the unvalidated client
+    // PUTs: p1, p2, p3, p4, p5, p6a, p6b, then the two race publications (8th and 9th).
+    let puts = 0;
+    const { result, sent } = await pass(t, {
+      respond: (url, init) =>
+        init.method === "PUT" &&
+        url.pathname.endsWith(`/v1/projects/${PROJECT}/remoteConfig`) &&
+        url.search === "" &&
+        ++puts === 7 + limited
+          ? 429
+          : null,
+    });
+    const caseId = limited === 1 ? "p7-race-a" : "p7-race-b";
+    assert.equal(result.stopped, `${caseId}: 429`, caseId);
+    assert.equal(sent.includes("p8-current"), false, caseId);
+    assert.deepEqual(result.open, [], caseId);
+    // G restores the client namespace the pass wrote.
+    assert.ok(sent.includes("g-client-restore"), caseId);
+    assert.equal(result.baseline.after.client.empty, true, caseId);
+    assert.equal(result.complete, false, caseId);
+  }
+});
+
+test("fake production: an unknown race publication beside a 429 stays open", async (t) => {
+  let puts = 0;
+  const { result } = await pass(t, {
+    lost: ["p7-race-a"],
+    respond: (url, init) =>
+      init.method === "PUT" &&
+      url.pathname.endsWith(`/v1/projects/${PROJECT}/remoteConfig`) &&
+      url.search === "" &&
+      ++puts === 9
+        ? 429
+        : null,
+  });
+  assert.deepEqual(result.open, ["p7-race-a: unknown client write (A2 reads client)"]);
+  assert.match(result.stopped, /p7-race-a: unknown answer/);
+  assert.equal(result.baseline.after.client.empty, true);
+});
