@@ -410,6 +410,7 @@ async fn remote_config_response(
         && !remote_config_http::number_addresses_project(
             route,
             parts.method.as_str(),
+            query,
             control.remote_config.project_number,
         )
     {
@@ -420,6 +421,8 @@ async fn remote_config_response(
         if etags.next().is_some() {
             Reply::error(400, "Duplicate If-Match header", "INVALID_ARGUMENT")
         } else {
+            // The version the request saw on arrival, before its body is read (ruling 5).
+            let seen = remote_config_http::arrival_version(store, route);
             match fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await {
                 Err(_) => Reply::error(
                     413,
@@ -438,7 +441,7 @@ async fn remote_config_response(
                     let _admitted = remote_config_http::commits(parts.method.as_str(), query)
                         .then(|| control.barrier.as_ref().map(|barrier| barrier.admit()))
                         .flatten();
-                    remote_config_http::dispatch(
+                    remote_config_http::dispatch_seen(
                         store,
                         &control.remote_config,
                         route,
@@ -447,6 +450,7 @@ async fn remote_config_response(
                         &bytes,
                         etag,
                         now,
+                        seen.as_deref(),
                     )
                 }
             }

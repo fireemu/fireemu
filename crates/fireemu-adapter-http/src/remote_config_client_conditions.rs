@@ -98,130 +98,42 @@ fn lex(expression: &str) -> Option<Vec<Token>> {
     Some(tokens)
 }
 
-const COMPARISONS: [&str; 7] = ["<", "<=", "==", "!=", ">", ">=", "="];
+/// The shape of an expression: each token's text, with a number as `#` and a string as `'`.
+fn shape(tokens: &[Token]) -> Vec<&str> {
+    tokens
+        .iter()
+        .map(|token| match token.kind {
+            Kind::Number => "#",
+            Kind::Text => "'",
+            Kind::Word | Kind::Symbol => token.text.as_str(),
+        })
+        .collect()
+}
 
-/// The top-level `&&` atoms of the tokens between `||`s, with the number of `||` terms.
-fn split<'a>(tokens: &'a [Token], separator: &str) -> Vec<&'a [Token]> {
-    let mut parts = Vec::new();
-    let mut depth = 0_i32;
-    let mut start = 0;
-    for (i, token) in tokens.iter().enumerate() {
-        match token.text.as_str() {
-            "(" | "[" if token.kind == Kind::Symbol => depth += 1,
-            ")" | "]" if token.kind == Kind::Symbol => depth -= 1,
-            text if depth == 0 && token.kind == Kind::Symbol && text == separator => {
-                parts.push(&tokens[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&tokens[start..]);
-    parts
+/// Whether `shape` is `prefix` followed by a bracketed list of strings and `suffix`.
+fn list_shape(shape: &[&str], prefix: &[&str], suffix: &[&str]) -> bool {
+    let Some(rest) = shape.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some(list) = rest.strip_suffix(suffix) else {
+        return false;
+    };
+    list.len() >= 3
+        && list[0] == "["
+        && list[list.len() - 1] == "]"
+        && list[1..list.len() - 1]
+            .iter()
+            .enumerate()
+            .all(|(i, part)| *part == if i % 2 == 0 { "'" } else { "," })
+        && list.len() % 2 == 1
 }
 
 fn parse_error(column: usize, reason: &str) -> String {
     format!("[VALIDATION_ERROR]: at line 1, column {column}. {reason}")
 }
 
-fn atom_error(name: &str, index: usize, atom: &str, reason: &str) -> String {
-    format!("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: {reason} @ {name}.OR[0].AND[{index}].{atom}")
-}
-
-/// The text of the tokens, for matching an atom's head.
-fn words(tokens: &[Token]) -> Vec<&str> {
-    tokens.iter().map(|token| token.text.as_str()).collect()
-}
-
-/// The parser error of one atom, if production's grammar stops inside it.
-fn atom_parse_error(atom: &[Token]) -> Option<String> {
-    let atom = strip_parens(atom);
-    let first = atom.first()?;
-    let start = [
-        "(", "!", "true", "false", "app", "dateTime", "device", "percent", "version",
-    ];
-    if !start.contains(&first.text.as_str()) {
-        return Some(parse_error(
-            first.column,
-            "Was expecting one of: '(' '!' 'true' 'false' 'app' 'dateTime' 'device' 'percent' 'version'",
-        ));
-    }
-    let text = words(atom);
-    // `app.build` and `app.version` take a method (2026-11-21 app-build-number, app-version-semver).
-    if text.len() >= 4
-        && text[0] == "app"
-        && text[1] == "."
-        && ["build", "version"].contains(&text[2])
-    {
-        if COMPARISONS.contains(&text[3]) {
-            return Some(parse_error(atom[3].column, "Was expecting: '.'"));
-        }
-        // A method takes a list (app-build-numeric-method, app-version-semver-method).
-        if text.len() >= 7
-            && text[3] == "."
-            && COMPARISONS.contains(&text[4])
-            && text[5] == "("
-            && atom[6].kind == Kind::Text
-        {
-            return Some(parse_error(atom[6].column, "Was expecting: '['"));
-        }
-    }
-    if text.len() >= 4
-        && text[..3] == ["app", ".", "firstOpenTimestamp"]
-        && COMPARISONS.contains(&text[3])
-        && !["<=", ">"].contains(&text[3])
-    {
-        return Some(parse_error(
-            atom[3].column,
-            "Was expecting one of: '<=' '>'",
-        ));
-    }
-    if text.len() >= 2
-        && text[0] == "dateTime"
-        && COMPARISONS.contains(&text[1])
-        && !["<", ">="].contains(&text[1])
-    {
-        return Some(parse_error(
-            atom[1].column,
-            "Was expecting one of: '<' '>='",
-        ));
-    }
-    if text.first() == Some(&"percent") {
-        for value in percent_values(atom) {
-            if let Some(reason) = percent_value_error(&value.text) {
-                return Some(parse_error(value.column, reason));
-            }
-        }
-    }
-    None
-}
-
-fn strip_parens(mut atom: &[Token]) -> &[Token] {
-    while atom.len() >= 2 && atom[0].text == "(" && atom[atom.len() - 1].text == ")" {
-        atom = &atom[1..atom.len() - 1];
-    }
-    atom
-}
-
-/// The number tokens of a `percent` atom: after its comparison, or the two bounds of `between`.
-fn percent_values(atom: &[Token]) -> Vec<&Token> {
-    let mut rest = &atom[1..];
-    if rest.first().is_some_and(|token| token.text == "(") {
-        rest = rest.get(3..).unwrap_or_default();
-    }
-    match rest.first().map(|token| token.text.as_str()) {
-        Some("between") => rest
-            .iter()
-            .filter(|token| token.kind == Kind::Number)
-            .take(2)
-            .collect(),
-        Some(op) if COMPARISONS.contains(&op) => rest
-            .get(1)
-            .filter(|t| t.kind == Kind::Number)
-            .into_iter()
-            .collect(),
-        _ => Vec::new(),
-    }
+fn atom_error(name: &str, atom: &str, reason: &str) -> String {
+    format!("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: {reason} @ {name}.OR[0].AND[0].{atom}")
 }
 
 fn percent_value_error(value: &str) -> Option<&'static str> {
@@ -274,130 +186,148 @@ fn balanced(pattern: &str) -> bool {
     !in_class && stack.is_empty()
 }
 
-type Check = Option<(&'static str, String)>;
-
-/// The text literals of an atom from token `from` on.
-fn texts(atom: &[Token], from: usize) -> Vec<&str> {
-    atom.get(from..)
-        .unwrap_or_default()
-        .iter()
-        .filter(|token| token.kind == Kind::Text)
-        .map(|token| token.text.as_str())
-        .collect()
-}
-
-fn percent_range(atom: &[Token], text: &[&str]) -> Check {
-    if text.first() != Some(&"percent") || !text.contains(&"between") {
-        return None;
+/// The parser error production gave for one of the recorded expression forms, each a whole
+/// expression of one condition (no `&&`, no outer parentheses).
+fn parse_failure(tokens: &[Token], shape: &[&str]) -> Option<String> {
+    let first = tokens.first()?;
+    let start = [
+        "(", "!", "true", "false", "app", "dateTime", "device", "percent", "version",
+    ];
+    if first.kind == Kind::Word && !start.contains(&first.text.as_str()) {
+        // `unknown.thing = no` (2026-11-21 invalid-expression).
+        return Some(parse_error(
+            1,
+            "Was expecting one of: '(' '!' 'true' 'false' 'app' 'dateTime' 'device' 'percent' 'version'",
+        ));
     }
-    let [low, high] = percent_values(atom)[..] else {
-        return None;
-    };
-    let (low, high) = (micro(&low.text)?, micro(&high.text)?);
-    (low > high).then(|| {
-        (
-            "PERCENT",
-            format!("Invalid micro percent range ({low}, {high}]."),
-        )
-    })
-}
-
-fn installation_ids(atom: &[Token], text: &[&str]) -> Check {
-    if text.len() < 4 || text[..3] != ["app", ".", "firebaseInstallationId"] || text[3] != "in" {
-        return None;
+    match shape {
+        // `app.build >= 123`, `app.version >= '1.2.3'` (app-build-number, app-version-semver).
+        ["app", ".", "build" | "version", ">=", "#" | "'"] => {
+            Some(parse_error(tokens[3].column, "Was expecting: '.'"))
+        }
+        // `app.build.>=('123')` (app-build-numeric-method, app-version-semver-method).
+        ["app", ".", "build" | "version", ".", ">=", "(", "'", ")"] => {
+            Some(parse_error(tokens[6].column, "Was expecting: '['"))
+        }
+        // `app.firstOpenTimestamp >= ('…')` (first-open-time).
+        ["app", ".", "firstOpenTimestamp", ">=", "(", "'", ")"] => Some(parse_error(
+            tokens[3].column,
+            "Was expecting one of: '<=' '>'",
+        )),
+        // `dateTime <= dateTime('…'[, '…'])` (device-date-time, -no-zone, -invalid-zone).
+        ["dateTime", "<=", "dateTime", "(", "'", ")"]
+        | ["dateTime", "<=", "dateTime", "(", "'", ",", "'", ")"] => Some(parse_error(
+            tokens[1].column,
+            "Was expecting one of: '<' '>='",
+        )),
+        // `percent <= n`, `percent > n` (percent-negative, -above-max, -fraction-overprecision).
+        ["percent", "<=" | ">", "#"] => {
+            percent_value_error(&tokens[2].text).map(|reason| parse_error(tokens[2].column, reason))
+        }
+        _ => None,
     }
-    let ids = texts(atom, 4);
-    if ids.len() > 50 {
-        let reason = format!(
-            "Too many target firebase installation ids (50 allowed, {} found)",
-            ids.len()
-        );
-        return Some(("FIREBASE_INSTALLATION_ID", reason));
-    }
-    let invalid: Vec<&str> = ids.into_iter().filter(|id| !installation_id(id)).collect();
-    (!invalid.is_empty()).then(|| {
-        (
-            "FIREBASE_INSTALLATION_ID",
-            format!(
-                "Invalid firebase installation ids : [{}]",
-                invalid.join(", ")
-            ),
-        )
-    })
 }
 
-fn custom_signal(atom: &[Token], text: &[&str]) -> Check {
-    let at = text
-        .windows(4)
-        .position(|w| w == ["app", ".", "customSignal", "["])?;
-    let key = atom.get(at + 4).filter(|token| token.kind == Kind::Text)?;
-    let length = key.text.chars().count();
-    (length > 250).then(|| {
-        (
-            "CUSTOM_SIGNAL",
-            format!("Custom signal name too long (max 250, found {length})"),
-        )
-    })
-}
-
-fn country(atom: &[Token], text: &[&str]) -> Check {
-    if text.len() < 4 || text[..3] != ["device", ".", "country"] || text[3] != "in" {
-        return None;
-    }
-    let code = texts(atom, 4)
-        .into_iter()
-        .find(|code| !(code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic())))?;
-    Some(("COUNTRIES", format!("Invalid country code '{code}'")))
-}
-
-fn time_zone(atom: &[Token], text: &[&str], zone_known: Option<fn(&str) -> bool>) -> Check {
-    if text.first() != Some(&"dateTime") {
-        return None;
-    }
-    let known = zone_known?;
-    let [_, zone] = texts(atom, 1)[..] else {
-        return None;
-    };
-    (!known(zone)).then(|| ("TIME", format!("Invalid time zone: '{zone}'")))
-}
-
-fn app_version_pattern(atom: &[Token], text: &[&str]) -> Check {
-    if text.len() < 5 || text[..5] != ["app", ".", "version", ".", "matches"] {
-        return None;
-    }
-    let pattern = texts(atom, 5)
-        .into_iter()
-        .find(|pattern| !balanced(pattern))?;
-    Some((
-        "APP_VERSION",
-        format!("Invalid app version regex target value: {pattern}"),
-    ))
-}
-
-/// The atom check of one parsed atom at `index` of the top-level `&&` chain.
-fn atom_check(
+/// The condition check production gave for one of the recorded expression forms.
+fn atom_failure(
     name: &str,
-    index: usize,
-    atom: &[Token],
+    tokens: &[Token],
+    shape: &[&str],
     zone_known: Option<fn(&str) -> bool>,
 ) -> Option<String> {
-    let atom = strip_parens(atom);
-    let text = words(atom);
-    let found = if text.first() == Some(&"!") {
-        Some(("NOT", "NOT condition is not allowed here".to_owned()))
-    } else {
-        percent_range(atom, &text)
-            .or_else(|| installation_ids(atom, &text))
-            .or_else(|| custom_signal(atom, &text))
-            .or_else(|| country(atom, &text))
-            .or_else(|| time_zone(atom, &text, zone_known))
-            .or_else(|| app_version_pattern(atom, &text))
+    let texts = || {
+        tokens
+            .iter()
+            .filter(|token| token.kind == Kind::Text)
+            .map(|token| token.text.as_str())
+            .collect::<Vec<_>>()
     };
-    found.map(|(kind, reason)| atom_error(name, index, kind, &reason))
+    // `!(percent > 0)` (negation): a whole expression under NOT.
+    if shape.len() >= 3 && shape[0] == "!" && shape[1] == "(" && shape[shape.len() - 1] == ")" {
+        return Some(atom_error(name, "NOT", "NOT condition is not allowed here"));
+    }
+    if let ["percent", "between", "#", "and", "#"] = shape {
+        let (low, high) = (micro(&tokens[2].text)?, micro(&tokens[4].text)?);
+        return (low > high).then(|| {
+            atom_error(
+                name,
+                "PERCENT",
+                &format!("Invalid micro percent range ({low}, {high}]."),
+            )
+        });
+    }
+    if list_shape(shape, &["app", ".", "firebaseInstallationId", "in"], &[]) {
+        let ids = texts();
+        if ids.len() > 50 {
+            return Some(atom_error(
+                name,
+                "FIREBASE_INSTALLATION_ID",
+                &format!(
+                    "Too many target firebase installation ids (50 allowed, {} found)",
+                    ids.len()
+                ),
+            ));
+        }
+        let invalid: Vec<&str> = ids.into_iter().filter(|id| !installation_id(id)).collect();
+        return (!invalid.is_empty()).then(|| {
+            atom_error(
+                name,
+                "FIREBASE_INSTALLATION_ID",
+                &format!(
+                    "Invalid firebase installation ids : [{}]",
+                    invalid.join(", ")
+                ),
+            )
+        });
+    }
+    if let ["app", ".", "customSignal", "[", "'", "]", ">=", "#"] = shape {
+        let length = tokens[4].text.chars().count();
+        return (length > 250).then(|| {
+            atom_error(
+                name,
+                "CUSTOM_SIGNAL",
+                &format!("Custom signal name too long (max 250, found {length})"),
+            )
+        });
+    }
+    if list_shape(shape, &["device", ".", "country", "in"], &[]) {
+        let code = texts()
+            .into_iter()
+            .find(|code| !(code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic())))?;
+        return Some(atom_error(
+            name,
+            "COUNTRIES",
+            &format!("Invalid country code '{code}'"),
+        ));
+    }
+    if let ["dateTime", "<", "dateTime", "(", "'", ",", "'", ")"] = shape {
+        let zone = tokens[6].text.as_str();
+        return (!zone_known?(zone))
+            .then(|| atom_error(name, "TIME", &format!("Invalid time zone: '{zone}'")));
+    }
+    if list_shape(shape, &["app", ".", "version", ".", "matches", "("], &[")"]) {
+        let pattern = texts().into_iter().find(|pattern| !balanced(pattern))?;
+        return Some(atom_error(
+            name,
+            "APP_VERSION",
+            &format!("Invalid app version regex target value: {pattern}"),
+        ));
+    }
+    None
 }
 
-/// Production's refusal of a client condition, or `None` when production's recorded rules
-/// accept it (or it was not recorded).
+/// Whether two `||` terms are each one of the recorded percent conditions (`percent > 0 || percent
+/// <= 100`, 2026-11-21 disjunction).
+fn recorded_or(terms: &[&[Token]]) -> bool {
+    terms.len() == 2
+        && terms.iter().all(|term| {
+            matches!(shape(term).as_slice(), ["percent", "<=" | ">", "#"])
+                && percent_value_error(&term[2].text).is_none()
+        })
+}
+
+/// Production's refusal of a client condition in one of the forms recorded on 2026-11-21, or
+/// `None`: every other expression keeps the earlier acceptance (coordinator ruling 5).
 pub(crate) fn client_refusal(
     name: &str,
     expression: &str,
@@ -405,23 +335,36 @@ pub(crate) fn client_refusal(
 ) -> Option<String> {
     let tokens = lex(expression)?;
     let terms = split(&tokens, "||");
-    for term in &terms {
-        for atom in split(term, "&&") {
-            if let Some(error) = atom_parse_error(atom) {
-                return Some(error);
+    if terms.len() > 1 {
+        return recorded_or(&terms).then(|| {
+            format!("[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [{name}], found 2")
+        });
+    }
+    if split(&tokens, "&&").len() > 1 {
+        return None;
+    }
+    let shape = shape(&tokens);
+    parse_failure(&tokens, &shape).or_else(|| atom_failure(name, &tokens, &shape, zone_known))
+}
+
+/// The top-level parts of the tokens between `separator`s, ignoring brackets and parentheses.
+fn split<'a>(tokens: &'a [Token], separator: &str) -> Vec<&'a [Token]> {
+    let mut parts = Vec::new();
+    let mut depth = 0_i32;
+    let mut start = 0;
+    for (i, token) in tokens.iter().enumerate() {
+        match token.text.as_str() {
+            "(" | "[" if token.kind == Kind::Symbol => depth += 1,
+            ")" | "]" if token.kind == Kind::Symbol => depth -= 1,
+            text if depth == 0 && token.kind == Kind::Symbol && text == separator => {
+                parts.push(&tokens[start..i]);
+                start = i + 1;
             }
+            _ => {}
         }
     }
-    if terms.len() > 1 {
-        return Some(format!(
-            "[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [{name}], found {}",
-            terms.len()
-        ));
-    }
-    split(&tokens, "&&")
-        .into_iter()
-        .enumerate()
-        .find_map(|(index, atom)| atom_check(name, index, atom, zone_known))
+    parts.push(&tokens[start..]);
+    parts
 }
 
 #[cfg(test)]
@@ -518,33 +461,6 @@ mod tests {
     }
 
     #[test]
-    fn atoms_are_indexed_in_the_and_chain_and_named_by_the_condition() {
-        assert_eq!(
-            client_refusal("c", "percent <= 10 && device.country in ['xyz']", Some(zones)).as_deref(),
-            Some("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: Invalid country code 'xyz' @ c.OR[0].AND[1].COUNTRIES")
-        );
-        assert_eq!(
-            client_refusal("c", "percent > 0 && percent <= 101", None).as_deref(),
-            Some("[VALIDATION_ERROR]: at line 1, column 27. A percent value is out of range")
-        );
-        // Without a zone database the zone is not checked.
-        assert_eq!(
-            client_refusal(
-                "c",
-                "dateTime < dateTime('2026-01-01T00:00:00', 'Fireemu/Invalid')",
-                None
-            ),
-            None
-        );
-        assert_eq!(client_refusal("c", "percent between 0.5 and 0.25", None).as_deref(), Some("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: Invalid micro percent range (500000, 250000]. @ c.OR[0].AND[0].PERCENT"));
-        assert_eq!(
-            client_refusal("c", "percent('s') <= 100.0000001", None).as_deref(),
-            Some("[VALIDATION_ERROR]: at line 1, column 17. A percent value is out of range")
-        );
-        assert_eq!(client_refusal("c", "app.firebaseInstallationId in ['bad-1', 'cAAAAAAAAAAAAAAAAAAAAA', 'bad-2']", None).as_deref(), Some("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: Invalid firebase installation ids : [bad-1, bad-2] @ c.OR[0].AND[0].FIREBASE_INSTALLATION_ID"));
-    }
-
-    #[test]
     fn analytics_and_app_registry_conditions_are_not_judged() {
         for expression in [
             "app.id == 'fireemu.nonexistent.app'",
@@ -588,10 +504,11 @@ mod tests {
         assert_eq!(micro("0.000001"), Some(1));
     }
 
-    /// Near misses of every rule: each answer is pinned, so a rule that matches too much or too
-    /// little changes one of them. Positions production was not recorded at keep accepting.
+    /// Every expression outside the recorded forms keeps the earlier acceptance (coordinator
+    /// ruling 5), including the review's three inputs; the recorded forms with other values
+    /// still get production's answer.
     #[test]
-    fn near_misses_of_the_recorded_rules() {
+    fn only_the_recorded_forms_are_refused() {
         let column = |c: usize, reason: &str| {
             Some(format!(
                 "[VALIDATION_ERROR]: at line 1, column {c}. {reason}"
@@ -600,85 +517,60 @@ mod tests {
         let atom = |kind: &str, reason: &str| {
             Some(format!("[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: {reason} @ c.OR[0].AND[0].{kind}"))
         };
-        let or = Some("[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [c], found 2".to_owned());
         let start = "Was expecting one of: '(' '!' 'true' 'false' 'app' 'dateTime' 'device' 'percent' 'version'";
+        let word_key = format!("app.customSignal[{}] >= 1", "k".repeat(251));
+        let long_key = format!("app.customSignal['{}'] <= 1", "k".repeat(251));
         let cases: Vec<(&str, Option<String>)> = vec![
-            // Words with underscores, numbers, strings.
+            // The review's inputs (coordinator ruling 5 item 2).
+            ("percent != -1", None),
+            ("percent <= -1e-6", None),
+            ("(percent <= -1)", None),
+            // Seeded, chained, parenthesised and other-operator variants were not recorded.
+            ("percent('s') <= 101", None),
+            ("percent > 0 && percent <= 101", None),
+            ("percent <= 10 && device.country in ['xyz']", None),
+            ("percent >= 101", None),
+            ("percent < -1", None),
+            ("percent('s') between 60 and 10", None),
+            ("(percent > 0) || percent > 1", None),
+            ("percent > 0 || percent <= 100 || percent > 1", None),
+            ("percent > 0 || percent <= 101", None),
+            ("percent > 0 || device.os == 'ios'", None),
+            ("app.build > 123", None),
+            ("app.build >=", None),
+            ("app.build.>=('1'", None),
+            ("app.build.<=('1')", None),
+            ("app.firstOpenTimestamp >=", None),
+            ("app.firstOpenTimestamp == ('2026-01-01T00:00:00')", None),
+            ("dateTime <=", None),
+            ("dateTime > dateTime('2026-12-31T23:59:59')", None),
+            ("dateTime < dateTime('2026-12-31T23:59:59')", None),
+            ("app.customSignal['x'].matches(['['])", None),
+            (word_key.as_str(), None),
+            (long_key.as_str(), None),
+            ("device.country == 'xyz'", None),
+            ("device.country in ['jp", None),
+            ("device.os == '||'", None),
+            ("app.firebaseInstallationId == 'bad'", None),
+            ("app.firebaseInstallationId in ['c-00000000000000000000']", None),
+            ("!percent", None),
+            ("", None),
+            // The recorded forms with other values.
             ("_percent <= 101", column(1, start)),
             ("percent_x <= 101", column(1, start)),
-            ("percent <= -x", None),
-            ("percent <= '-1'", None),
-            ("percent foo 101", None),
-            (
-                "device.country in [\"xyz\"]",
-                atom("COUNTRIES", "Invalid country code 'xyz'"),
-            ),
-            ("device.country in ['jp", None),
-            (
-                "percent between 60 and 1",
-                atom(
-                    "PERCENT",
-                    "Invalid micro percent range (60000000, 1000000].",
-                ),
-            ),
-            (
-                "percent between 10.000001 and 10",
-                atom(
-                    "PERCENT",
-                    "Invalid micro percent range (10000001, 10000000].",
-                ),
-            ),
+            ("percent <= 150", column(12, "A percent value is out of range")),
+            ("percent > -5", column(11, "Percent value cannot be negative")),
+            ("percent <= 0.12345678", column(12, "A percent value has more than 6 significant digits after the decimal point")),
+            ("percent between 60 and 1", atom("PERCENT", "Invalid micro percent range (60000000, 1000000].")),
+            ("percent between 10.000001 and 10", atom("PERCENT", "Invalid micro percent range (10000001, 10000000].")),
             ("percent between 10 and 10", None),
-            // The top-level split ignores brackets, parentheses and text.
-            ("(percent > 0 || percent > 1)", None),
-            ("(percent > 0) || percent > 1", or.clone()),
-            (
-                "app.customSignal['('].exactlyMatches(['a']) || percent > 1",
-                or.clone(),
-            ),
-            (
-                "app.customSignal[')'].exactlyMatches(['a']) || percent > 1",
-                or,
-            ),
-            ("app.customSignal['||'].exactlyMatches(['a'])", None),
-            // Parentheses around a whole atom only.
-            (
-                "(percent <= 101)",
-                column(13, "A percent value is out of range"),
-            ),
-            ("(percent <= 101 x", None),
-            ("(", None),
-            ("()", None),
-            // app.build and app.version.
-            ("app", None),
-            ("app.build", None),
-            ("device.build >= 1", None),
-            ("app x build >= 1", None),
-            ("app.build.exactlyMatches('123')", None),
-            ("app.build.>=['123']", None),
-            ("app.build.>=(123)", None),
-            ("app.build.>=", None),
-            ("app.build , >= ('1')", None),
-            // firstOpenTimestamp and dateTime.
-            ("app.firstOpenTimestamp", None),
-            ("app.firstOpenTimestamp.exactlyMatches(['x'])", None),
-            ("dateTime", None),
-            ("dateTime.x", None),
-            // Installation ids, countries, regular expressions.
-            ("app.firebaseInstallationId", None),
-            ("app.firebaseInstallationId == 'bad'", None),
-            (
-                "app.firebaseInstallationId in ['c-00000000000000000000']",
-                None,
-            ),
-            ("device.country", None),
-            ("device.country == 'xyz'", None),
-            (
-                "device.country in ['1x']",
-                atom("COUNTRIES", "Invalid country code '1x'"),
-            ),
-            ("app.version.matches", None),
-            ("app.customSignal['x'].matches(['['])", None),
+            ("percent > 1 || percent <= 2", Some("[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [c], found 2".to_owned())),
+            ("app.version >= '2.0'", column(13, "Was expecting: '.'")),
+            ("device.country in [\"xyz\"]", atom("COUNTRIES", "Invalid country code 'xyz'")),
+            ("device.country in ['jp', '1x']", atom("COUNTRIES", "Invalid country code '1x'")),
+            ("app.firebaseInstallationId in ['bad-1', 'cAAAAAAAAAAAAAAAAAAAAA', 'bad-2']", atom("FIREBASE_INSTALLATION_ID", "Invalid firebase installation ids : [bad-1, bad-2]")),
+            ("!(app.build.exactlyMatches(['1']))", atom("NOT", "NOT condition is not allowed here")),
+            ("app.version.matches(['^1', '('])", atom("APP_VERSION", "Invalid app version regex target value: (")),
         ];
         for (expression, expected) in cases {
             assert_eq!(
@@ -687,37 +579,46 @@ mod tests {
                 "{expression}"
             );
         }
+        // Without a zone database the zone is not checked.
+        assert_eq!(
+            client_refusal(
+                "c",
+                "dateTime < dateTime('2026-01-01T00:00:00', 'Fireemu/Invalid')",
+                None
+            ),
+            None
+        );
     }
 
-    /// Near misses at the lengths and boundaries of the rules.
     #[test]
-    fn boundary_near_misses_of_the_recorded_rules() {
-        let column = |c: usize, reason: &str| {
-            Some(format!(
-                "[VALIDATION_ERROR]: at line 1, column {c}. {reason}"
-            ))
+    fn list_shapes_follow_the_bracketed_strings() {
+        let shape_of = |text: &str| -> Vec<String> {
+            shape(&lex(text).unwrap())
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
         };
-        let word_key = format!("app.customSignal[{}] >= 1", "k".repeat(251));
-        let cases: Vec<(&str, Option<String>)> = vec![
-            ("device.country in ['xyz", None),
-            ("device.os == '||'", None),
-            ("app.build >=", column(11, "Was expecting: '.'")),
-            ("app.build.>=('1'", column(14, "Was expecting: '['")),
-            ("app.build.>=(", None),
-            (
-                "app.firstOpenTimestamp >=",
-                column(24, "Was expecting one of: '<=' '>'"),
-            ),
-            ("dateTime <=", column(10, "Was expecting one of: '<' '>='")),
-            // A custom-signal key must be a string literal to be measured.
-            (word_key.as_str(), None),
-        ];
-        for (expression, expected) in cases {
-            assert_eq!(
-                client_refusal("c", expression, Some(zones)),
-                expected,
-                "{expression}"
-            );
+        let check = |text: &str| {
+            list_shape(
+                &shape_of(text)
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                &["device", ".", "country", "in"],
+                &[],
+            )
+        };
+        assert!(check("device.country in ['a']"));
+        assert!(check("device.country in ['a', 'b']"));
+        for text in [
+            "device.country in []",
+            "device.country in ['a',]",
+            "device.country in ['a' 'b']",
+            "device.country in ['a', 1]",
+            "device.country in ['a'",
+            "device.country in 'a'",
+        ] {
+            assert!(!check(text), "{text}");
         }
     }
 

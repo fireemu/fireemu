@@ -56,15 +56,17 @@ pub(crate) fn route(path: &str) -> Option<Route<'_>> {
 
 /// Whether a request names the project by its number in the one form production was recorded
 /// serving under the number: the client template's current read without a namespace
-/// (2026-11-21 `client-project-number`, 200 with the template). Other routes keep answering the
-/// number as an unknown project.
+/// (2026-11-21 `client-project-number`, 200 with the template), with no query (coordinator ruling 5).
+/// Other routes and queries keep answering the number as an unknown project.
 pub(crate) fn number_addresses_project(
     route: &Route<'_>,
     method: &str,
+    query: &str,
     number: Option<u64>,
 ) -> bool {
     number.is_some_and(|number| route.project == number.to_string())
         && method == "GET"
+        && query.is_empty()
         && route.action == "remoteConfig"
         && !route.explicit_namespace
 }
@@ -93,6 +95,19 @@ pub(crate) fn missing_credentials(route: &Route<'_>, method: &str) -> Option<Rep
         })),
         etag: None,
     })
+}
+
+/// The version a write is checked against: the current version of the route's namespace when the
+/// request arrived, before its body is read (coordinator ruling 5: a slow body does not change
+/// whether a concurrent publication lost the race). `None` for an unknown namespace.
+pub(crate) fn arrival_version(
+    stores: &RemoteConfigStores,
+    route: &Route<'_>,
+) -> Option<std::sync::Arc<Version>> {
+    route
+        .namespace
+        .ok()
+        .map(|namespace| stores.get(namespace).current())
 }
 
 pub(crate) struct Reply {
@@ -475,15 +490,18 @@ fn history(
         .get("pageToken")
         .filter(|token| !token.is_empty())
         .map(|token| {
+            if !token.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(invalid(&format!(
+                    "[VALIDATION_ERROR]: PageToken [{token}] is not properly formatted."
+                )));
+            }
+            // Only the canonical positive form was recorded; `0` and leading zeros keep the
+            // earlier refusal (coordinator ruling 5).
             token
                 .parse::<u64>()
                 .ok()
-                .filter(|_| token.bytes().all(|b| b.is_ascii_digit()))
-                .ok_or_else(|| {
-                    invalid(&format!(
-                        "[VALIDATION_ERROR]: PageToken [{token}] is not properly formatted."
-                    ))
-                })
+                .filter(|number| *number > 0 && !token.starts_with('0'))
+                .ok_or_else(|| invalid("Invalid or expired page token"))
         })
         .transpose()?;
     let end_version = params
@@ -570,6 +588,8 @@ fn download_defaults(store: &TemplateStore, query: &str) -> Result<Reply, Reply>
     })
 }
 
+// One write's parts and the daemon's settings, as `dispatch` passes them.
+#[allow(clippy::too_many_arguments)]
 fn write(
     store: &TemplateStore,
     namespace: Namespace,
@@ -578,6 +598,7 @@ fn write(
     bytes: &[u8],
     if_match: Option<&str>,
     now: LogicalInstant,
+    seen: Option<&Version>,
 ) -> Result<Reply, Reply> {
     let params = parameters(query, &["validateOnly"])?;
     let mode = match params.get("validateOnly").map(String::as_str) {
@@ -617,7 +638,14 @@ fn write(
         })
     };
     match store
-        .write_checked(mode, if_match, body, now, &check)
+        .write_seen(
+            seen.unwrap_or(&store.current()),
+            mode,
+            if_match,
+            body,
+            now,
+            &check,
+        )
         .map_err(|error| match error {
             Error::PreconditionFailed => if_match
                 .and_then(|tag| stale_refusal(settings, namespace, tag, store.current().number()))
@@ -793,6 +821,7 @@ pub(crate) fn commits(method: &str, query: &str) -> bool {
 
 // One request's parts and the daemon's settings; grouping them would only move the list.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn dispatch(
     stores: &RemoteConfigStores,
     settings: &RemoteConfigSettings,
@@ -802,6 +831,24 @@ pub(crate) fn dispatch(
     bytes: &[u8],
     if_match: Option<&str>,
     now: LogicalInstant,
+) -> Reply {
+    dispatch_seen(
+        stores, settings, route, method, query, bytes, if_match, now, None,
+    )
+}
+
+/// [`dispatch`] with the version the request saw when it arrived (`arrival_version`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dispatch_seen(
+    stores: &RemoteConfigStores,
+    settings: &RemoteConfigSettings,
+    route: &Route<'_>,
+    method: &str,
+    query: &str,
+    bytes: &[u8],
+    if_match: Option<&str>,
+    now: LogicalInstant,
+    seen: Option<&Version>,
 ) -> Reply {
     let namespace = match route.namespace {
         Ok(namespace) => namespace,
@@ -881,7 +928,9 @@ pub(crate) fn dispatch(
             Ok(Reply::ok(Value::Object(body), etag))
         }
         ("remoteConfig", "GET") => read(store, namespace, query, user),
-        ("remoteConfig", "PUT") => write(store, namespace, settings, query, bytes, if_match, now),
+        ("remoteConfig", "PUT") => write(
+            store, namespace, settings, query, bytes, if_match, now, seen,
+        ),
         ("remoteConfig:listVersions", "GET") => history(store, query, user, now),
         ("remoteConfig:rollback", "POST") => rollback(store, user, query, bytes, now),
         ("remoteConfig:downloadDefaults", "GET") => download_defaults(store, query),

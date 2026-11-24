@@ -2302,8 +2302,14 @@ fn remote_config_event_id(project: &str, namespace: &str, number: u64) -> String
     let key = (seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32) & MASK;
     // Within 31 bits the xorshift, the odd multiplication and the XOR with the key are all
     // invertible, so distinct versions keep distinct ids.
-    let id = ((version ^ (version >> 16)).wrapping_mul(0x9e37_79b1) & MASK) ^ key;
-    id.to_string()
+    let permute = |v: u32| ((v ^ (v >> 16)).wrapping_mul(0x9e37_79b1) & MASK) ^ key;
+    // Version 0 is never published, so its image is free: it replaces a 0, which production's
+    // positive ids never are (coordinator ruling 5), and the ids stay distinct and positive.
+    match permute(version) {
+        0 => permute(0),
+        id => id,
+    }
+    .to_string()
 }
 
 /// Renders the recorded v1 and v2 event shapes from an admin version.
@@ -2612,7 +2618,10 @@ mod remote_config_tests {
         );
         // The largest 31-bit version still has a numeric id; beyond it no positive int32 is left.
         let last = remote_config_event_id("demo-config", "firebase", 0x7fff_ffff);
-        assert!(last.parse::<i32>().is_ok_and(|id| id >= 0), "{last}");
+        assert!(last.parse::<i32>().is_ok_and(|id| id > 0), "{last}");
+        // The version the review found mapping to 0 (project demo-zero-4312) gets a positive id.
+        let zero = remote_config_event_id("demo-zero-4312", "firebase", 67_154);
+        assert!(zero.parse::<i32>().is_ok_and(|id| id > 0), "{zero}");
         assert_eq!(
             remote_config_event_id("demo-config", "firebase", 0x8000_0000),
             "v2147483648",
@@ -2641,7 +2650,7 @@ mod remote_config_tests {
             let second = remote_config_event_id(&project, "firebase", u64::from(b));
             // Positive decimal int32, as production's ids (RC-OBSERVE-V2-3).
             for id in [&first, &second] {
-                prop_assert!(id.parse::<i32>().is_ok_and(|id| id >= 0), "{id}");
+                prop_assert!(id.parse::<i32>().is_ok_and(|id| id > 0), "{id}");
                 prop_assert!(!id.starts_with('-') && (id == "0" || !id.starts_with('0')));
             }
             prop_assert_ne!(first, second);

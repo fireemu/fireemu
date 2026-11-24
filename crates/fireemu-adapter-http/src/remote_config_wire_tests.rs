@@ -258,6 +258,23 @@ fn history_tokens_are_the_next_version_number() {
             )
         );
     }
+    for token in ["0", "01", "99999999999999999999"] {
+        let refused = at(
+            &stores,
+            &settings,
+            HISTORY,
+            "GET",
+            &format!("pageToken={token}"),
+            b"",
+            None,
+            now,
+        );
+        assert_eq!(
+            error_message(&refused),
+            "Invalid or expired page token",
+            "{token}"
+        );
+    }
     let negative = at(
         &stores,
         &settings,
@@ -425,58 +442,86 @@ fn only_the_recorded_route_is_served_under_the_project_number() {
         (
             "/v1/projects/123456789012/remoteConfig",
             "GET",
+            "",
             number,
             true,
         ),
         (
             "/v1/projects/123456789012/remoteConfig",
-            "PUT",
+            "GET",
+            "versionNumber=1",
             number,
             false,
         ),
-        ("/v1/projects/123456789012/remoteConfig", "GET", None, false),
+        (
+            "/v1/projects/123456789012/remoteConfig",
+            "GET",
+            "x=1",
+            number,
+            false,
+        ),
+        (
+            "/v1/projects/123456789012/remoteConfig",
+            "PUT",
+            "",
+            number,
+            false,
+        ),
+        (
+            "/v1/projects/123456789012/remoteConfig",
+            "GET",
+            "",
+            None,
+            false,
+        ),
         (
             "/v1/projects/123456789013/remoteConfig",
             "GET",
+            "",
             number,
             false,
         ),
         (
             "/v1/projects/123456789012/namespaces/firebase/remoteConfig",
             "GET",
+            "",
             number,
             false,
         ),
         (
             "/v1/projects/123456789012/namespaces/firebase-server/remoteConfig",
             "GET",
+            "",
             number,
             false,
         ),
         (
             "/v1/projects/123456789012/remoteConfig:listVersions",
             "GET",
+            "",
             number,
             false,
         ),
         (
             "/v1/projects/123456789012/remoteConfig:rollback",
             "POST",
+            "",
             number,
             false,
         ),
         (
             "/v1/projects/demo-config/remoteConfig",
             "GET",
+            "",
             number,
             false,
         ),
     ];
-    for (path, method, number, expected) in cases {
+    for (path, method, query, number, expected) in cases {
         assert_eq!(
-            number_addresses_project(&route(path).unwrap(), method, number),
+            number_addresses_project(&route(path).unwrap(), method, query, number),
             expected,
-            "{path} {method}"
+            "{path}?{query} {method}"
         );
     }
 }
@@ -955,4 +1000,34 @@ fn strict_refuses_the_recorded_client_conditions_after_the_precondition_and_emul
         .status,
         200
     );
+}
+
+#[test]
+fn unrecorded_client_expressions_keep_their_acceptance_in_both_profiles() {
+    let strict = RemoteConfigSettings {
+        strict_client_conditions: true,
+        ..RemoteConfigSettings::default()
+    };
+    let now = LogicalInstant::from_unix_seconds(T0);
+    // Coordinator ruling 5 item 2: the review's three inputs.
+    for expression in ["percent != -1", "percent <= -1e-6", "(percent <= -1)"] {
+        for settings in [&strict, &RemoteConfigSettings::default()] {
+            let stores = RemoteConfigStores::default();
+            let draft = serde_json::to_vec(
+                &json!({"conditions": [{"name": "c", "expression": expression}]}),
+            )
+            .unwrap();
+            let reply = at(
+                &stores,
+                settings,
+                CLIENT,
+                "PUT",
+                "validateOnly=true",
+                &draft,
+                Some("*"),
+                now,
+            );
+            assert_eq!(reply.status, 200, "{expression}");
+        }
+    }
 }

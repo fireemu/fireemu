@@ -4830,7 +4830,11 @@ async fn remote_config_read_without_a_credential_is_refused_as_production_refuse
     );
     let own = "Remote Config administration requires the local control capability";
     for (method, path, auth) in [
-        ("GET", "/v1/projects/demo-app/remoteConfig", "Authorization: Bearer wrong\r\n"),
+        (
+            "GET",
+            "/v1/projects/demo-app/remoteConfig",
+            "Authorization: Bearer wrong\r\n",
+        ),
         ("PUT", "/v1/projects/demo-app/remoteConfig", ""),
         ("GET", "/v1/projects/demo-app/remoteConfig:listVersions", ""),
     ] {
@@ -4838,6 +4842,95 @@ async fn remote_config_read_without_a_credential_is_refused_as_production_refuse
         assert_eq!(status, "401", "{method} {path}");
         assert_eq!(body["error"]["message"], own, "{method} {path}");
     }
+    server.abort();
+    let _ = server.await;
+}
+
+/// The race loser is decided by the version current when its request arrived, before its body is
+/// read (coordinator ruling 5): a body that finishes after the winner commits still gets the
+/// strict race refusal recorded on 2026-11-21, not the stale-tag answer.
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn remote_config_race_loser_is_decided_on_arrival_even_with_a_slow_body() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut state = state(Arc::new(AtomicUsize::new(0)));
+    state.remote_config.project_number = Some(123_456_789_012);
+    state.remote_config.strict_concurrent_publish = true;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state),
+    ));
+    let draft = |label: &str| {
+        json!({
+            "conditions": [
+                {"name": "c_a", "expression": "percent <= 10"},
+                {"name": "c_b", "expression": "percent <= 20"},
+            ],
+            "parameters": {"p": {"defaultValue": {"value": label}, "conditionalValues": {"c_a": {"value": "a"}, "c_b": {"value": "b"}}}},
+        })
+        .to_string()
+    };
+    let head = |tag: &str, length: usize| {
+        format!("PUT /v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nContent-Type: application/json\r\nAccept-Encoding: gzip\r\nIf-Match: {tag}\r\nContent-Length: {length}\r\n\r\n")
+    };
+    let finish = |mut stream: tokio::net::TcpStream| async move {
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let text = String::from_utf8_lossy(&response).to_string();
+        let status = text[9..12].to_owned();
+        let etag = text
+            .lines()
+            .find_map(|line| line.strip_prefix("etag: "))
+            .map(str::to_owned);
+        (status, etag)
+    };
+    let publish = |tag: String, body: String| async move {
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(format!("{}{body}", head(&tag, body.len())).as_bytes())
+            .await
+            .unwrap();
+        finish(stream).await
+    };
+    let (status, first) = publish("*".into(), draft("first")).await;
+    assert_eq!(status, "200");
+    let first = first.unwrap();
+    assert_eq!(first, "etag-123456789012-1");
+    // B sends its headers with the current tag, and its body only after A has committed.
+    let slow_body = draft("slow");
+    let mut slow = tokio::net::TcpStream::connect(addr).await.unwrap();
+    slow.write_all(head(&first, slow_body.len()).as_bytes())
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let (status, _) = publish(first.clone(), draft("fast")).await;
+    assert_eq!(status, "200");
+    slow.write_all(slow_body.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        slow.read_to_end(&mut response),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let text = String::from_utf8_lossy(&response);
+    assert!(text.starts_with("HTTP/1.1 400"), "{text}");
+    // A tag that was already stale on arrival is the stale-tag refusal.
+    let (status, _) = publish(first, draft("late")).await;
+    assert_eq!(status, "412");
     server.abort();
     let _ = server.await;
 }
