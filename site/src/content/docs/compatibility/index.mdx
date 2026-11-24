@@ -1,6 +1,6 @@
 ---
 title: Compatibility tables
-description: See which Firebase products and APIs Fireemu supports, which areas are verified against production, and how profiles compare.
+description: See which Firebase products and APIs Fireemu supports, which areas are verified against production, and how it compares with the official emulator.
 tableOfContents:
   maxHeadingLevel: 2
 ---
@@ -39,7 +39,7 @@ These are the behavioral differences most likely to change a test outcome. The F
 | Request naming a non-existent tenant | Refused | Creates the tenant | Refused |
 | `beforeEmailSent` blocking function | Runs | Not run | Runs |
 | App Check | Supported | Not available | Debug tokens (no real attestation or replay protection) |
-| Scheduled functions | Run on Cloud Scheduler | Not run on a schedule | Run on a virtual clock you control |
+| Scheduled functions | Triggered on the Cloud Scheduler schedule | Not run on a schedule | Run on a virtual clock you control |
 | Unsigned mock ID tokens in Security Rules | Refused | Accepted | Accepted by default; refused with `productionExact` |
 | Declared Storage upload checksums | Verified | Not verified | Verified |
 

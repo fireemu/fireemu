@@ -1,6 +1,6 @@
 ---
 title: 互換性の表
-description: Fireemuが対応するプロダクトとAPI、本番Firebaseと照合済みの領域、およびプロファイルごとの挙動差を一覧で確認できます。
+description: Fireemuが対応するプロダクトとAPI、本番Firebaseと照合済みの領域、および公式エミュレータとの比較を一覧で確認できます。
 tableOfContents:
   maxHeadingLevel: 2
 ---
@@ -39,7 +39,7 @@ import CapabilityTable from '../../../../components/CapabilityTable.astro';
 | 存在しないテナントを指定したリクエスト | 拒否される | テナントを自動作成 | 拒否される |
 | `beforeEmailSent`ブロッキング関数 | 実行される | 実行されない | 実行される |
 | App Check | 対応 | 非対応 | デバッグトークンに対応（実機アテステーション・リプレイ保護はなし） |
-| スケジュール関数 | Cloud Schedulerで実行 | スケジュール実行なし | 制御可能な仮想時計で実行 |
+| スケジュール関数 | Cloud Schedulerのスケジュールで起動される | スケジュール実行なし | 制御可能な仮想時計で実行 |
 | Security Rulesでの署名なしモックIDトークン | 拒否される | 受け付けられる | 既定では受け付け、`productionExact`で拒否 |
 | Storageアップロード時の申告チェックサム | 検証される | 検証されない | 検証される |
 
@@ -47,7 +47,7 @@ import CapabilityTable from '../../../../components/CapabilityTable.astro';
 
 Fireemuは実際のFirebaseプロジェクトから取得した記録と自身の応答を照合しています。
 
-- **本番検証済み**：その領域の固定インベントリに含まれる全条件が記録と一致するか、レビュー済みの既知の差異のみに収まっている状態です。
+- **本番検証済み**：その領域の固定インベントリに含まれる全条件が記録と一致するか、レビュー済みで文書化された既知の差異のみに収まっている状態です。
 - **作業中**：現在進行中の領域です。件数は記録済みの条件数を示し、領域全体の完了を意味するものではありません。
 
 <ProductionAreas />
