@@ -195,7 +195,7 @@ Una programación se ejecuta sobre el reloj virtual de Fireemu. A menos que fije
 
 Para ejecutar una función programada o liberar una tarea retrasada sin esperar:
 
-| | Función programada | Función de cola de tareas (tareas que esperan su `scheduleTime`) |
+| Aspecto | Función programada | Función de cola de tareas (tareas que esperan su `scheduleTime`) |
 |---|---|---|
 | UI del emulador, página Functions | Ejecútala de inmediato, o adelanta el reloj hasta su siguiente ocurrencia | Las tareas en espera, con su hora de vencimiento y un botón **Run now** |
 | API de control | `POST /v1/sessions/default/functions/{name}:run` | La misma ruta libera todas las tareas en espera; con `{"task": "<task id>"}` libera una (404 para un id desconocido) |

@@ -72,6 +72,13 @@ for (const file of pages(dist)) {
 	const html = readFileSync(file, 'utf8');
 	const pageUrl = new URL(`${base}/${relative(dist, file).replace(/index\.html$/, '')}`, 'http://site');
 	const from = relative(dist, file);
+	const titles = [...html.matchAll(/<title>([^<]*)<\/title>/gi)].map((m) => m[1]);
+	const isLanding = from === 'index.html' || localeCodes.some((l) => from === `${l}/index.html`);
+	if (titles.length !== 1) {
+		broken.push(`${from}: expected 1 <title>, found ${titles.length}`);
+	} else if (isLanding && (titles[0].match(/\bfireemu\b/gi) ?? []).length > 1) {
+		broken.push(`${from}: duplicate "Fireemu" in landing <title>: ${titles[0]}`);
+	}
 	for (const [, asset] of html.matchAll(/<(?:link|script|img)\s[^>]*?(?:href|src)="([^"]+)"/g)) {
 		const raw = asset.replaceAll('&amp;', '&');
 		if (/^(https?:|data:|\/\/)/.test(raw)) continue;

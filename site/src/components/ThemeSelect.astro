@@ -52,7 +52,11 @@ const options = [
 			for (const button of this.querySelectorAll<HTMLButtonElement>('[data-theme-value]')) {
 				button.addEventListener('click', () => {
 					apply(button.dataset.themeValue as Theme);
-					button.closest('details')?.removeAttribute('open');
+					const details = button.closest('details');
+					if (details) {
+						details.open = false;
+						details.querySelector('summary')?.focus();
+					}
 				});
 			}
 		}

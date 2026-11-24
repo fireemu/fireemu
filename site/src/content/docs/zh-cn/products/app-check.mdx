@@ -230,7 +230,7 @@ printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
 
 当 Storage 为 `enforced` 时，使用 Admin SDK 或 `gcloud` 的服务器端代码（客户端库，而非浏览器）仍需要在没有令牌的情况下访问 Storage。生产环境不对这类流量应用 App Check：Admin SDK 通过 OAuth 用服务账号进行身份验证，而强制执行覆盖的是客户端 SDK 调用的 Firebase Storage API。模拟器没有 OAuth，因此由 `appCheck.storageServerRequests` 决定如何识别这类流量：
 
-| | `"loopback"`（默认） | `"capability"` |
+| 对比项 | `"loopback"`（默认） | `"capability"` |
 |---|---|---|
 | 无需令牌即可放行 | 从 loopback 对端发往 loopback `Host`、没有浏览器痕迹且没有客户端 SDK 凭据的 Cloud Storage JSON API 请求（[详情](#how-loopback-recognises-a-request)） | 仅放行带有 `fireemu exec` 放在 `STORAGE_EMULATOR_HOST` userinfo 中的每次运行 capability（`http://fireemu:<capability>@host:port`）的请求 |
 | `STORAGE_EMULATOR_HOST` | 普通的 `http://host:port`，所有 `@google-cloud/storage` 和 `firebase-admin` 版本都接受 | 带 capability。`@google-cloud/storage` 8.1 及更高版本（`firebase-admin` 14.4 及更高版本）会拒绝内嵌凭据的 URL |

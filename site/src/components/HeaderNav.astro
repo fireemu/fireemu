@@ -56,8 +56,17 @@ const current = currentNavSlug(rest);
 		font-weight: 600;
 		box-shadow: inset 0 -3px 0 var(--fe-brand);
 	}
-	/* The section links give way first; the sidebar (or the landing page itself) reaches the same pages. */
+	/* The section links give way first; the sidebar (or the landing page itself) reaches the same pages.
+	   Docs pages reserve the left sidebar width in the header grid, so they collapse earlier than the landing page. */
 	@media (max-width: 71.9375rem) {
+		.header-nav {
+			gap: 1rem;
+		}
+		:global(:root[data-has-sidebar]) .header-nav a:not(.external):not(:first-child) {
+			display: none;
+		}
+	}
+	@media (max-width: 61.9375rem) {
 		.header-nav a:not(.external):not(:first-child) {
 			display: none;
 		}

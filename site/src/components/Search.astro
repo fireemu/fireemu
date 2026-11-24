@@ -1,17 +1,29 @@
 ---
-// Starlight's search, plus the language picker on narrow screens: Starlight shows the picker only
-// in the wide header and in the docs' mobile menu, and the landing page has no mobile menu.
+// Starlight's search, plus compact mobile controls on narrow screens.
+// Pages with a sidebar already place the theme picker inside Starlight's mobile drawer;
+// pages without a sidebar (landing page, 404) render ThemeSelect here so mobile users can still switch themes.
 import Default from '@astrojs/starlight/components/Search.astro';
 import LanguageSelect from './LanguageSelect.astro';
+import ThemeSelect from './ThemeSelect.astro';
+
+const showMobileTheme = !Astro.locals.starlightRoute?.hasSidebar;
 ---
 
 <Default />
+{
+	showMobileTheme && (
+		<div class="fe-mobile-theme md:sl-hidden print:hidden">
+			<ThemeSelect />
+		</div>
+	)
+}
 <div class="fe-mobile-lang md:sl-hidden print:hidden">
 	<LanguageSelect />
 </div>
 
 <style>
-	.fe-mobile-lang {
+	.fe-mobile-lang,
+	.fe-mobile-theme {
 		display: flex;
 		align-items: center;
 	}

@@ -35,7 +35,7 @@
 	"status.Implemented": "Implementiert",
 	"status.Partial": "Teilweise",
 	"status.Not supported": "Nicht unterstützt",
-	"landing.title": "Fireemu — Testen gegen Firebase, wie es sich in der Produktion verhält",
+	"landing.title": "Testen gegen Firebase, wie es sich in der Produktion verhält",
 	"landing.description": "Ein inoffizieller lokaler Firebase-Emulator für automatisierte Tests und CI, der sich am dokumentierten Produktionsverhalten von Firebase orientiert.",
 	"landing.h1": "Testen gegen Firebase, wie es sich in der Produktion verhält",
 	"landing.lede": "Ein inoffizieller Firebase-Emulator als einzelne native Binärdatei für Tests und CI. Standardmäßig orientieren sich die Prüfungen und Fehlerformate im dokumentierten Umfang an der Produktion, sodass mehr Probleme schon lokal vor dem Deployment auffallen.",

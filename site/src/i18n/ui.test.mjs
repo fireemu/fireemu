@@ -46,3 +46,9 @@ test('translation helpers fill placeholders and keep unknown statuses', () => {
 	assert.equal(statusLabel('ja', 'Something new'), 'Something new');
 	assert.throws(() => useTranslations('es')('no.such.key'));
 });
+
+test('landing title omits the site name so Starlight does not duplicate Fireemu in <title>', () => {
+	for (const [code, dict] of Object.entries(dictionaries)) {
+		assert.doesNotMatch(dict['landing.title'], /(^|[—|]\s*)Fireemu\s*$|^Fireemu\b/i, `${code} landing.title`);
+	}
+});

@@ -195,7 +195,7 @@ Ein Zeitplan läuft auf der virtuellen Uhr von Fireemu. Sofern Sie keine Startze
 
 So führen Sie eine geplante Funktion aus oder geben eine verzögerte Aufgabe frei, ohne zu warten:
 
-| | Geplante Funktion | Task-Queue-Funktion (Aufgaben, die auf ihre `scheduleTime` warten) |
+| Bereich | Geplante Funktion | Task-Queue-Funktion (Aufgaben, die auf ihre `scheduleTime` warten) |
 |---|---|---|
 | Emulator UI, Seite „Functions“ | Sofort ausführen oder die Uhr zu ihrem nächsten Vorkommen vorstellen | Die wartenden Aufgaben, mit ihrer Fälligkeitszeit und einer Schaltfläche **Run now** |
 | Steuer-API | `POST /v1/sessions/default/functions/{name}:run` | Dieselbe Route gibt alle wartenden Aufgaben frei; mit `{"task": "<task id>"}` gibt sie eine frei (404 bei einer unbekannten ID) |

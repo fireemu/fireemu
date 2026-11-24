@@ -230,7 +230,7 @@ printf %s "$DEBUG_TOKEN" | shasum -a 256 | cut -d' ' -f1
 
 Storageが`enforced`の場合でも、Admin SDKや`gcloud`を使うサーバーサイドのコード（ブラウザーではなくクライアントライブラリ）は、トークンなしでStorageに到達できなければなりません。本番では、そのトラフィックにApp Checkは適用されません。Admin SDKはOAuthを介してサービスアカウントで認証し、強制の対象はクライアントSDKが呼び出すFirebase Storage APIです。エミュレーターにはOAuthがないため、`appCheck.storageServerRequests`が、そのトラフィックをどう識別するかを決めます。
 
-| | `"loopback"`（デフォルト） | `"capability"` |
+| 項目 | `"loopback"`（デフォルト） | `"capability"` |
 |---|---|---|
 | トークンなしで許可されるもの | ループバックのピアからループバックの`Host`へのCloud Storage JSON APIリクエストで、ブラウザーの証拠もクライアントSDKの認証情報もないもの（[詳細](#how-loopback-recognises-a-request)） | `fireemu exec`が`STORAGE_EMULATOR_HOST`のユーザー情報部分（`http://fireemu:<capability>@host:port`）に入れる、実行ごとのcapabilityを持つリクエストのみ |
 | `STORAGE_EMULATOR_HOST` | プレーンな`http://host:port`。`@google-cloud/storage`と`firebase-admin`のすべてのバージョンが受け付けます | capability付き。`@google-cloud/storage` 8.1以降（`firebase-admin` 14.4以降）は、認証情報が埋め込まれたURLを拒否します |
