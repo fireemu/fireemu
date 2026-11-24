@@ -637,6 +637,22 @@ test('a command retirement failure still stops the daemon and permits cleanup re
   await assert.rejects(stat(world.directory),{code:'ENOENT'});
 });
 
+test('a process-group signal answered with EPERM still retires the world once the tree closes', {...native,timeout:30_000}, async(t)=>{
+  if(process.platform==='win32')return t.skip('Unix process groups only');
+  const world=await createTestWorld(options);
+  const descriptor=JSON.parse(await readFile(join(world.directory,'generation-1','ready.json'),'utf8'));
+  const kill=process.kill;
+  let refused=0;
+  // macOS answers EPERM while the group's members exit; deliver the signal, then report EPERM once.
+  process.kill=(pid,signal)=>{const result=kill.call(process,pid,signal);if(pid<0&&refused===0){refused+=1;throw Object.assign(Error('kill EPERM'),{code:'EPERM'});}return result;};
+  t.after(()=>{process.kill=kill;});
+  await world.dispose();
+  process.kill=kill;
+  assert.equal(refused,1);
+  assert.throws(()=>process.kill(descriptor.pid,0),{code:'ESRCH'});
+  await assert.rejects(stat(world.directory),{code:'ENOENT'});
+});
+
 async function installFixtureExpress(source) {
   // Support the bundled runner's HTTP app without an SDK installation.
     await mkdir(join(source,'node_modules','express'),{recursive:true});

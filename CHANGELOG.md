@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Fixed
+
+- Test World retirement on macOS no longer fails with `kill EPERM` when the operating system refuses a process-group signal while the group is exiting; retirement still waits for the process tree to close.
+
 ## [0.65.0] - 2026-11-23
 
 ### Added
