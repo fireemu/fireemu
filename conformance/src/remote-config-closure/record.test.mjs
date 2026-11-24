@@ -14,6 +14,8 @@ import {
   MAX_REQUESTS,
   closureForms,
   main,
+  newHistoryGrants,
+  validTime,
   raceWinner,
   summarise,
   templateUrls,
@@ -41,19 +43,19 @@ test("closureForms admits exactly the corpus's Remote Config forms on the API ho
     ["GET", `${client}?versionNumber=invalid`],
     ["PUT", `${client}?validateOnly=true`],
     ...DEFAULTS.map(([, path]) => ["GET", `projects/${PROJECT}/${path}`]),
-    ["GET", `${client}:listVersions?pageSize=2`],
-    ["GET", `${client}:listVersions?pageSize=2&pageToken=31`],
-    ["GET", `${client}:listVersions?endVersionNumber=-1`],
-    ["GET", `${client}:listVersions?startTime=2026-11-25T01%3A02%3A03.456789Z`],
-    [
-      "GET",
-      `${client}:listVersions?startTime=2026-11-25T01%3A02%3A03.456789Z&endTime=2026-11-25T01%3A02%3A04.000001Z`,
-    ],
-    ["GET", `${client}:listVersions?endTime=2000-01-01T00%3A00%3A00Z`],
-    ["GET", `${client}:listVersions?startTime=invalid`],
-    ["GET", `${client}:listVersions?pageToken=fireemu-invalid`],
   ])
     assert.ok(allow(url(path), method), `${method} ${path}`);
+  // History queries are granted by the pass as it plans them (ruling 7): none is admitted unplanned.
+  for (const search of [
+    "pageSize=2",
+    "pageSize=2&pageToken=31",
+    "endVersionNumber=-1",
+    "startTime=2026-11-25T01%3A02%3A03.456789Z",
+    "endTime=2000-01-01T00%3A00%3A00Z",
+    "startTime=invalid",
+    "pageToken=fireemu-invalid",
+  ])
+    assert.equal(allow(url(`${client}:listVersions?${search}`), "GET"), false, search);
   for (const [method, path, base] of [
     ["GET", `projects/other-project/remoteConfig`],
     ["GET", `projects/123456789013/remoteConfig`],
@@ -121,15 +123,92 @@ test("historyQueries moves a time by one microsecond across second boundaries", 
     endTime: "2026-11-25T00:00:01.500000Z",
   });
   assert.equal(Object.keys(queries).length, 16);
-  // Every query the corpus builds is admitted.
-  for (const query of Object.values(queries))
-    assert.ok(
-      allow(
-        url(`projects/${PROJECT}/remoteConfig:listVersions?${new URLSearchParams(query)}`),
-        "GET",
-      ),
-      JSON.stringify(query),
+  // A time on a whole second has no fraction (ruling 7, note N4).
+  const whole = Object.fromEntries(
+    historyQueries({ times: ["t", "2026-11-25T00:00:14Z", "t"], end: "1" }),
+  );
+  assert.deepEqual(whole["h-start-plus"], { startTime: "2026-11-25T00:00:14.000001Z" });
+  assert.deepEqual(whole["h-end-minus"], { endTime: "2026-11-25T00:00:13.999999Z" });
+  // Every query the corpus builds is admitted once it is planned, and only once.
+  const history = newHistoryGrants();
+  const planned = closureForms({ project: PROJECT, number: NUMBER, history });
+  const listed = (query) =>
+    url(`projects/${PROJECT}/remoteConfig:listVersions?${new URLSearchParams(query)}`);
+  for (const query of Object.values(queries)) {
+    assert.equal(planned(listed(query), "GET"), false, JSON.stringify(query));
+    history.plan(`?${new URLSearchParams(query)}`);
+  }
+  for (const query of Object.values(queries)) {
+    assert.ok(planned(listed(query), "GET"), JSON.stringify(query));
+    assert.equal(planned(listed(query), "GET"), false, `replayed ${JSON.stringify(query)}`);
+  }
+});
+
+test("history grants: only planned, valid times, the received token once (ruling 7 item 1)", () => {
+  const history = newHistoryGrants();
+  const allow = closureForms({ project: PROJECT, number: NUMBER, history });
+  const list = (search) => url(`projects/${PROJECT}/remoteConfig:listVersions${search}`);
+  // A numeric token, a planned-looking time and an impossible time are refused unplanned.
+  for (const search of [
+    "?pageSize=2&pageToken=31",
+    "?startTime=2026-11-25T01%3A02%3A03.456789Z",
+    "?startTime=2026-02-30T01%3A02%3A03Z",
+    "?pageSize=2",
+  ])
+    assert.equal(allow(list(search), "GET"), false, search);
+  // An impossible time cannot be planned.
+  for (const time of [
+    "2026-02-30T00:00:00Z",
+    "2026-11-25T24:00:00Z",
+    "2026-11-25T00:60:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-11-25T00:00:00.1234567890Z",
+    "2026-11-25 00:00:00Z",
+  ])
+    assert.throws(
+      () => history.plan(`?${new URLSearchParams({ startTime: time })}`),
+      /RFC 3339/,
+      time,
     );
+  history.plan("?startTime=invalid");
+  assert.ok(allow(list("?startTime=invalid"), "GET"));
+  // The next page: only the token granted, once, and not a different number.
+  history.plan(`?${new URLSearchParams({ pageSize: "2", pageToken: "31" })}`);
+  assert.equal(allow(list("?pageSize=2&pageToken=30"), "GET"), false);
+  assert.ok(allow(list("?pageSize=2&pageToken=31"), "GET"));
+  assert.equal(allow(list("?pageSize=2&pageToken=31"), "GET"), false);
+  // Granted queries are bound to the host and method.
+  history.plan("?pageSize=2");
+  assert.equal(allow(list("?pageSize=2"), "POST"), false);
+  assert.equal(
+    allow(
+      new URL(
+        `projects/${PROJECT}/remoteConfig:listVersions?pageSize=2`,
+        "https://example.com/v1/",
+      ),
+      "GET",
+    ),
+    false,
+  );
+  assert.ok(allow(list("?pageSize=2"), "GET"));
+});
+
+test("validTime: real calendar instants in RFC 3339 UTC only", () => {
+  for (const time of [
+    "2026-11-25T00:00:00Z",
+    "2024-02-29T23:59:59.999999Z",
+    "2026-11-25T01:02:03.1Z",
+  ])
+    assert.ok(validTime(time), time);
+  for (const time of [
+    "2025-02-29T00:00:00Z",
+    "2026-04-31T00:00:00Z",
+    "2026-11-25T00:00:00",
+    "2026-11-25T00:00:00+00:00",
+    "invalid",
+    "",
+  ])
+    assert.equal(validTime(time), false, time);
 });
 
 test("main never sends to production without the flag, and local needs its number", async () => {
@@ -323,4 +402,42 @@ test("summarise counts unmatched events and the publication order", () => {
       .inPublicationOrder,
     true,
   );
+});
+
+test("the request cap is taken before the first await: two concurrent sends at one slot (ruling 7 item 3)", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { Transport } = await import("../remote-config-observe/transport.mjs");
+  const out = mkdtempSync(join(tmpdir(), "rc-closure-cap-"));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  let fetched = 0;
+  const transport = new Transport({
+    out,
+    allow: () => true,
+    // The token is asynchronous, as the ADC token read is a yield point.
+    token: async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return "t";
+    },
+    maxRequests: 3,
+    timeoutMs: 1000,
+    fetchImpl: async () => {
+      fetched += 1;
+      return Response.json({});
+    },
+  });
+  await transport.send("one", "https://example.test/a");
+  await transport.send("two", "https://example.test/a");
+  const both = await Promise.allSettled([
+    transport.send("three", "https://example.test/a"),
+    transport.send("four", "https://example.test/a"),
+  ]);
+  assert.deepEqual(
+    both.map((o) => o.status),
+    ["fulfilled", "rejected"],
+  );
+  assert.match(both[1].reason.message, /four: request cap reached/);
+  assert.equal(transport.count, 3);
+  assert.equal(fetched, 3);
 });

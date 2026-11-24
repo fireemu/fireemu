@@ -135,6 +135,7 @@ export function productionAllow({ project, number, names, grants }) {
               new RegExp(
                 `^/v2/projects/(${p}|${number})/locations/${REGION}/operations/[A-Za-z0-9_-]+$`,
               ).test(path)) &&
+            grants.operations.has(path.slice(1)) &&
             url.search === "") ||
           (method === "GET" && path === `/v2/projects/${p}/locations/-/functions` && pageQuery(url))
         );

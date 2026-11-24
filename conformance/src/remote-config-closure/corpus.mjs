@@ -212,7 +212,7 @@ export function historyQueries({ times: [t1, t2, t3], end }) {
     const [whole, fraction] = time.replace("Z", "").split(".");
     const micros =
       BigInt(Date.parse(`${whole}Z`)) * 1000n +
-      BigInt(fraction.padEnd(6, "0").slice(0, 6)) +
+      BigInt((fraction ?? "").padEnd(6, "0").slice(0, 6)) +
       BigInt(delta);
     const ms = micros / 1000n;
     const iso = new Date(Number(ms)).toISOString().replace(/\.\d{3}Z$/, "");

@@ -55,6 +55,7 @@ export class Transport {
       gzip = true,
       ifNoneMatch,
       textBody = false,
+      notModified = false,
     } = {},
   ) {
     if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(caseId)) throw new Error(`invalid case id ${caseId}`);
@@ -62,8 +63,13 @@ export class Transport {
     if (!this.allow(target, method, { signed }))
       throw new Error(`${caseId}: request not permitted`);
     if (this.count >= this.maxRequests) throw new Error(`${caseId}: request cap reached`);
+    // The slot is taken before the first await, so concurrent sends can never pass the cap
+    // together (RC-CLOSURE-A ruling 7 item 3).
+    this.count += 1;
+    const seq = this.count;
     // `gzip: false` asks for identity, `credentials: false` sends no Authorization (the recorded
-    // unauthenticated read), `textBody: true` keeps a 2xx body that is not JSON (a defaults file).
+    // unauthenticated read), `textBody: true` keeps a 2xx body that is not JSON (a defaults file),
+    // `notModified: true` takes a 304 as an answer (the conditional read).
     const headers = gzip ? { "accept-encoding": "gzip" } : { "accept-encoding": "identity" };
     if (!signed && credentials) {
       headers.authorization = `Bearer ${await this.token()}`;
@@ -81,8 +87,6 @@ export class Transport {
     }
     if (ifMatch !== undefined) headers["if-match"] = ifMatch;
     if (ifNoneMatch !== undefined) headers["if-none-match"] = ifNoneMatch;
-    this.count += 1;
-    const seq = this.count;
     // A signed URL's query is a credential: journal the path only.
     const shown = signed ? `${target.origin}${target.pathname}` : target.href;
     this.journal({
@@ -127,6 +131,9 @@ export class Transport {
       file,
     });
     const status = response.status;
+    // `notModified: true` (a conditional read) takes a 304 as a complete answer with no body.
+    if (notModified && status === 304)
+      return { status, etag, json: null, bytes: bytes.length, text: "" };
     if (status < 200 || (status >= 300 && status < 400) || status >= 500)
       return this.fail(seq, caseId, `status ${status}`, status);
     const text = bytes.toString("utf8");

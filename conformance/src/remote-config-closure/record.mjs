@@ -50,9 +50,10 @@ import {
 
 export { A2_MAX_REQUESTS };
 
-// Request cap of a production pass: baseline 6 + deploys 89 + reads 11 + validation 80 +
-// publication 18 + history 18 + rollbacks 4 + server 30 + window 10 + cleanup 107 = 373, with
-// margin for a Functions poll more than recorded. The pass stops at the cap.
+// Request cap of a production pass, phase bounds as packet section 3: baseline 8 + deploys 89 and
+// one log read + reads 11 + validation 81 + publication and defaults 16 + history 17 + rollbacks
+// and version reads 4 + server 31 + client restoration 3 + window 10 + cleanup 107 = 378. The
+// transport refuses every request past the cap.
 export const MAX_REQUESTS = 400;
 export const PRODUCTION_TIMING = {
   paceMs: 2500,
@@ -79,13 +80,48 @@ const SERVICES = [
   "logging.googleapis.com",
 ];
 
-const TIME = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}%3A[0-9]{2}%3A[0-9]{2}(?:\\.[0-9]{1,9})?Z";
-const NUMBER = "(?:0|-1|[1-9][0-9]{0,11})";
-/** The history query forms of corpus.historyQueries, as URLSearchParams writes them. */
-const HISTORY_QUERY = new RegExp(
-  `^\\?(?:pageSize=(?:2|0|-1)|pageSize=2&pageToken=[1-9][0-9]{0,11}|pageToken=fireemu-invalid|` +
-    `endVersionNumber=${NUMBER}|startTime=(?:${TIME}|invalid)|endTime=${TIME}|startTime=${TIME}&endTime=${TIME})$`,
-);
+/** Whether `value` is an RFC 3339 UTC time of a real calendar instant (fraction of 0 to 9 digits). */
+export function validTime(value) {
+  const m =
+    /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]{1,9})?Z$/.exec(
+      value,
+    );
+  if (!m) return false;
+  const [year, month, day, hour, minute, second] = m.slice(1).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
+  );
+}
+
+/**
+ * The history requests a pass may make, granted as it plans them (RC-CLOSURE-A ruling 7 item 1):
+ * each planned query once, its times only the values the pass generated and only valid RFC 3339
+ * times (`startTime=invalid` is the planned invalid value), and the next page only with the token
+ * the pass's own page answer returned, once.
+ */
+export function newHistoryGrants() {
+  const queries = new Set();
+  return {
+    queries,
+    /** Grants one planned query (URLSearchParams form); refuses an invalid time. */
+    plan(search) {
+      for (const [key, value] of new URLSearchParams(search))
+        if ((key === "startTime" || key === "endTime") && value !== "invalid" && !validTime(value))
+          throw new Error(`history: ${key} ${value} is not a valid RFC 3339 time`);
+      queries.add(search);
+    },
+    /** Admits a planned query once. */
+    take(search) {
+      return queries.delete(search);
+    },
+  };
+}
 
 /**
  * The Remote Config forms the corpus adds to the RC-OBSERVE-V2-3 allow list, bound to the API host:
@@ -93,7 +129,7 @@ const HISTORY_QUERY = new RegExp(
  * reads, client validation, the defaults downloads, the history queries of the pass and the client
  * history page of the server namespace.
  */
-export function closureForms({ project, number }) {
+export function closureForms({ project, number, history = newHistoryGrants() }) {
   const rc = `/v1/projects/${project}/`;
   const client = `${rc}remoteConfig`;
   const exact = new Set([
@@ -118,7 +154,7 @@ export function closureForms({ project, number }) {
       /^\?(?:versionNumber|version_number)=[1-9][0-9]{0,11}$/.test(url.search)
     )
       return true;
-    return url.pathname === `${client}:listVersions` && HISTORY_QUERY.test(url.search);
+    return url.pathname === `${client}:listVersions` && history.take(url.search);
   };
 }
 
@@ -136,16 +172,15 @@ export function templateUrls(base, project, number) {
 class Stop extends Error {}
 
 /**
- * The accepted publication of the two concurrent ones (Promise.allSettled results): an unknown
+ * The accepted publication of the two concurrent ones (Promise.allSettled results): every unknown
  * answer is opened and stops the pass, and anything but exactly one 200 stops it.
  */
 export function raceWinner(settled, open) {
-  for (const [i, outcome] of settled.entries()) {
-    if (outcome.status === "rejected") {
-      open.push(`p7-${i ? "race-b" : "race-a"}: unknown client write (A2 reads client)`);
-      throw outcome.reason;
-    }
-  }
+  // Every unknown race publication is opened before the pass stops (ruling 7 item 2).
+  const rejected = settled.flatMap((outcome, i) => (outcome.status === "rejected" ? [i] : []));
+  for (const i of rejected)
+    open.push(`p7-${i ? "race-b" : "race-a"}: unknown client write (A2 reads client)`);
+  if (rejected.length) throw settled[rejected[0]].reason;
   const winners = settled.map((outcome) => outcome.value).filter((r) => r.status === 200);
   if (winners.length !== 1) throw new Stop(`race: ${winners.length} publications accepted`);
   return winners[0];
@@ -192,8 +227,9 @@ export async function observe(ctx) {
   const write = async (caseId, namespace, url, method, body, ifMatch, { creates = true } = {}) => {
     await pace();
     if (creates) sent[namespace] = true;
+    let r;
     try {
-      return await t.send(caseId, url, { method, body, ifMatch });
+      r = await t.send(caseId, url, { method, body, ifMatch });
     } catch (error) {
       if (error instanceof Unknown && creates)
         result.open.push(`${caseId}: unknown ${namespace} write (A2 reads ${namespace})`);
@@ -201,6 +237,9 @@ export async function observe(ctx) {
     } finally {
       lastWrite = Date.now();
     }
+    // A 429 on a write that creates stops the forward program (packet section 3; ruling 7 item 4).
+    if (creates && r.status === 429) throw new Stop(`${caseId}: 429`);
+    return r;
   };
   const created = (namespace, step, r) => {
     if (r.status !== 200 || !r.json.version?.versionNumber)
@@ -304,7 +343,7 @@ export async function observe(ctx) {
       await t.send(caseId, url, {
         ...(form.gzip === false ? { gzip: false } : {}),
         ...(form.credentials === false ? { credentials: false } : {}),
-        ...(form.ifNoneMatch ? { ifNoneMatch: base.client.etag } : {}),
+        ...(form.ifNoneMatch ? { ifNoneMatch: base.client.etag, notModified: true } : {}),
       });
     }
 
@@ -409,15 +448,21 @@ export async function observe(ctx) {
     const times = [p5, p6a, p6b].map((v) => v.updateTime);
     if (times.some((time) => typeof time !== "string"))
       throw new Stop("a version has no updateTime");
-    for (const [caseId, query] of historyQueries({ times, end: p6a.versionNumber })) {
-      const r = await t.send(caseId, `${urls.client}:listVersions?${new URLSearchParams(query)}`);
+    const history = ctx.history ?? newHistoryGrants();
+    const queries = historyQueries({ times, end: p6a.versionNumber }).map(([caseId, query]) => [
+      caseId,
+      `?${new URLSearchParams(query)}`,
+    ]);
+    for (const [, search] of queries) history.plan(search);
+    for (const [caseId, search] of queries) {
+      const r = await t.send(caseId, `${urls.client}:listVersions${search}`);
       if (caseId === "h-page") {
         const token = r.json.nextPageToken;
-        if (r.status === 200 && /^[1-9][0-9]{0,11}$/.test(token ?? ""))
-          await t.send(
-            "h-next",
-            `${urls.client}:listVersions?${new URLSearchParams({ pageSize: "2", pageToken: token })}`,
-          );
+        if (r.status === 200 && /^[1-9][0-9]{0,11}$/.test(token ?? "")) {
+          const next = `?${new URLSearchParams({ pageSize: "2", pageToken: token })}`;
+          history.plan(next);
+          await t.send("h-next", `${urls.client}:listVersions${next}`);
+        }
       }
     }
     // ---- K. rollbacks and version reads ----
@@ -711,7 +756,8 @@ export async function main(argv, env = process.env, hooks = {}) {
       return cached.value;
     };
     const observeForms = observeAllow({ project, number, names: n, grants });
-    const forms = closureForms({ project, number });
+    const history = newHistoryGrants();
+    const forms = closureForms({ project, number, history });
     const transport = new Transport({
       out,
       allow: (url, method, options) =>
@@ -731,6 +777,7 @@ export async function main(argv, env = process.env, hooks = {}) {
     const functionsList = `${GCF}/v2/projects/${project}/locations/-/functions`;
     ctx = {
       transport,
+      history,
       urls: templateUrls(RC_API, project, number),
       runId,
       timing: PRODUCTION_TIMING,

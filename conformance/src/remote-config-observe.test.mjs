@@ -487,6 +487,14 @@ test("allow list: exactly the packet's method and path pairs, with the run's own
   assert.equal(ok(own, "DELETE"), false);
   assert.equal(ok(signed, "PUT", { signed: true }), false);
   assert.equal(ok(`https://eventarc.googleapis.com/v1/${trigger}`), false);
+  // An operation is polled only after this run's create or delete returned it (RC-CLOSURE-A ruling 7).
+  assert.equal(ok(`${GCFU}/v1/operations/abc_1`), false);
+  assert.equal(ok(`${GCFU}/v2/projects/${NUMBER}/locations/us-central1/operations/op-1`), false);
+  grants.operations.add("v1/operations/abc_1");
+  grants.operations.add(`v2/projects/${NUMBER}/locations/us-central1/operations/op-1`);
+  assert.equal(ok(`${GCFU}/v1/operations/abc_2`), false);
+  assert.equal(ok(`${GCFU}/v2/operations/abc_1`), false);
+  assert.equal(ok(`${GCFU}/v1/projects/${NUMBER}/locations/us-central1/operations/op-1`), false);
   grants.source = { bucket, object: "src.zip" };
   grants.signed.add(signed);
   grants.managed.add(trigger);

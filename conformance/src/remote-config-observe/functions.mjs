@@ -191,6 +191,8 @@ export class Functions {
             `^projects/(${this.project}|${this.number})/locations/${REGION}/operations/[A-Za-z0-9_-]+$`,
           );
     if (!pattern.test(name ?? "")) throw new Error(`${prefix}: unexpected operation name`);
+    // Only an operation this run's own create or delete returned may be polled (ruling 7 item 1).
+    this.grants.operations.add(`v${generation}/${name}`);
     for (let i = 0; i < POLLS; i += 1) {
       const op = await this.t.send(`${prefix}-poll-${i}`, `${GCF}/v${generation}/${name}`);
       if (op.status !== 200 || op.json.name !== name) throw new Error(`${prefix}: operation read`);
@@ -362,7 +364,14 @@ export function managedKind(value, project, number) {
 /** The requests a run may make beyond its fixed paths, granted as the provider names them. */
 export function newGrants() {
   // pageToken: only the latest list answer's non-empty nextPageToken, admitted once.
-  return { signed: new Set(), source: null, managed: new Set(), pageToken: null };
+  // operations: `v<generation>/<name>` of the operations this run's creates and deletes returned.
+  return {
+    signed: new Set(),
+    source: null,
+    managed: new Set(),
+    pageToken: null,
+    operations: new Set(),
+  };
 }
 
 /** Handler rows from Cloud Logging entries (jsonPayload, as recorded; a textPayload is parsed too). */
