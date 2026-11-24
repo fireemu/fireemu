@@ -244,10 +244,15 @@ export class Functions {
     const scope = new RegExp(
       `^projects/(${this.project}|${this.number})/locations/(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`,
     );
+    // A name outside the expected shape is never granted or read; it is an open item for A2, and
+    // the function itself is still deleted (ruling 2, item 5).
     for (const key of keys)
-      if (!scope.test(key)) throw new Error(`managed resource outside the read-back scope`);
-    s.managed = keys;
-    for (const key of keys) this.grants.managed.add(key);
+      if (!scope.test(key))
+        this.open.push(
+          `gen2: managed name outside the expected shape (${key.includes("/triggers/") ? "trigger" : "service"}); not read`,
+        );
+    s.managed = keys.filter((key) => scope.test(key));
+    for (const key of s.managed) this.grants.managed.add(key);
   }
 
   /** Removes one generation if this run attempted it. Never re-sends an unknown DELETE. */

@@ -371,7 +371,9 @@ function cloudWorld({ rc, serverEvents = false, faults = {}, never = new Set() }
       labels: fn.labels,
       ...(generation === 2
         ? {
-            eventTrigger: { trigger: `projects/${PROJECT}/locations/global/triggers/t1` },
+            eventTrigger: {
+              trigger: world.triggerName ?? `projects/${PROJECT}/locations/global/triggers/t1`,
+            },
             serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s1` },
           }
         : {}),
@@ -1285,7 +1287,7 @@ test("A2 near misses: a source object still readable, a failed list read, a sour
   assert.equal(outside.atBaseline, false);
 });
 
-test("a function read naming a trigger outside the project is refused before any read of it", () => {
+test("a function read naming a trigger outside the expected shape grants nothing and opens an item", () => {
   const grants = newGrants();
   const transport = new Transport({
     out: scratch(),
@@ -1303,17 +1305,40 @@ test("a function read naming a trigger outside the project is refused before any
     runId: RUN,
     grants,
   });
-  assert.throws(
-    () => f.manage({}, { eventTrigger: { trigger: "projects/other/locations/global/triggers/t" } }),
-    /outside the read-back scope/,
+  const s = {};
+  f.manage(s, {
+    eventTrigger: { trigger: "projects/other/locations/global/triggers/t" },
+    serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
+  });
+  assert.equal(grants.managed.size, 1);
+  assert.deepEqual(s.managed, [`projects/${PROJECT}/locations/us-central1/services/s`]);
+  assert.match(f.open.join(), /managed name outside the expected shape \(trigger\)/);
+  const g = {};
+  f.manage(g, {
+    eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
+    serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
+  });
+  assert.equal(g.managed.length, 2);
+});
+
+test("the Gen2 function is deleted even when its trigger name has an unexpected shape", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  cloud.triggerName = "projects/elsewhere/locations/global/triggers/t1";
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  const deleteKey = `DELETE cloudfunctions.googleapis.com /v2/projects/${PROJECT}/locations/us-central1/functions/${N.gen2}`;
+  assert.equal(cloud.requests.filter((r) => r === deleteKey).length, 1);
+  assert.equal(cloud.fns.size, 0);
+  assert.ok(
+    result.open.some((o) => o.includes("managed name outside the expected shape (trigger)")),
+    JSON.stringify(result.open),
   );
-  assert.equal(grants.managed.size, 0);
-  f.manage(
-    {},
-    {
-      eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
-      serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
-    },
+  assert.equal(
+    cloud.requests.some((r) => r.startsWith("GET eventarc.googleapis.com")),
+    false,
   );
-  assert.equal(grants.managed.size, 2);
+  assert.ok(cloud.requests.some((r) => r.startsWith("GET run.googleapis.com")));
+  assert.equal(result.sandboxAtBaseline, false);
+  assert.equal(result.complete, false);
 });
