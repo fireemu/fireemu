@@ -160,7 +160,16 @@ export function matchEvents(events, versions) {
 }
 
 /** The extraction the packet reports per item. Absence is only reported with its control. */
-export function summarise({ events, versions, history, dataPlane, wildcard, validations, open }) {
+export function summarise({
+  events,
+  versions,
+  history,
+  dataPlane,
+  wildcard,
+  validations,
+  open,
+  truncated = false,
+}) {
   const matched = matchEvents(events, versions);
   // Events carry no namespace: a server answer is attributable only when the two namespaces' new
   // version numbers are disjoint (production: client 27, server 6 at the last read).
@@ -168,7 +177,7 @@ export function summarise({ events, versions, history, dataPlane, wildcard, vali
     new Set(versions.filter((v) => v.namespace === ns).map((v) => v.versionNumber));
   const serverNumbers = numbers("server");
   const overlap = [...numbers("client")].some((n) => serverNumbers.has(n));
-  const out = { versionRangesOverlap: overlap, generations: {} };
+  const out = { versionRangesOverlap: overlap, logTruncated: truncated, generations: {} };
   for (const generation of [1, 2]) {
     const own = matched.filter((e) => e.generation === generation);
     const client = own.filter((e) => e.match?.namespace === "client");
@@ -185,8 +194,15 @@ export function summarise({ events, versions, history, dataPlane, wildcard, vali
       serverSteps: server.map((e) => e.match.step),
       // Item 1: a server answer is evidence only when the control publish before the server phase
       // was delivered to the same handler.
-      serverDelivery:
-        !control || overlap ? "not-evidence" : server.length ? "delivered" : "none-within-window",
+      // A truncated log read is unknown: it never reads as an absence.
+      serverDelivery: truncated
+        ? "unknown-truncated-log-read"
+        : !control || overlap
+          ? "not-evidence"
+          : server.length
+            ? "delivered"
+            : "none-within-window",
+      logComplete: !truncated,
       duplicates: [...ids].filter(([, n]) => n > 1).map(([eventId, count]) => ({ eventId, count })),
       // Item 2: arrival order of the client versions against their publication order.
       inPublicationOrder: isSorted(client.map((e) => versionIndex(versions, e.match))),

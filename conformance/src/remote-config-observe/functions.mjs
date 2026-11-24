@@ -39,6 +39,7 @@ export function sourceArchive() {
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0021, 12); // DOS date 1980-01-01
     local.writeUInt32LE(crc, 14);
     local.writeUInt32LE(data.length, 18);
     local.writeUInt32LE(data.length, 22);
@@ -47,6 +48,7 @@ export function sourceArchive() {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0021, 14);
     central.writeUInt32LE(crc, 16);
     central.writeUInt32LE(data.length, 20);
     central.writeUInt32LE(data.length, 24);
@@ -78,11 +80,12 @@ export class Functions {
    * @param {string} o.runId
    * @param {(ms: number) => Promise<void>} [o.wait]
    */
-  constructor({ transport, project, number, names, runId, wait = sleep }) {
-    Object.assign(this, { t: transport, project, number, names, runId, wait });
+  constructor({ transport, project, number, names, runId, grants = newGrants(), wait = sleep }) {
+    Object.assign(this, { t: transport, project, number, names, runId, grants, wait });
     this.parent = `projects/${project}/locations/${REGION}`;
     // Per generation: created = create operation read done without error and function ACTIVE;
-    // pending = create sent but not settled; open = reasons the run cannot settle in-run.
+    // pending = create sent but not settled; refused = create answered a complete 4xx (no
+    // operation); open = reasons the run cannot settle in-run.
     this.state = { 1: {}, 2: {} };
     this.source2 = null;
     this.open = [];
@@ -147,7 +150,16 @@ export class Functions {
     if (signed.protocol !== "https:" || signed.host !== "storage.googleapis.com")
       throw new Error("unexpected upload host");
     let target = g.json.uploadUrl;
-    if (generation === 2) {
+    if (generation === 1) {
+      // Recorded 2026-11-21: `/uploads-<digits>.<region>.cloudfunctions.appspot.com/<uuid>.zip`
+      // with a V2 signature (GoogleAccessId, Expires, Signature).
+      const [, bucket, object] = decodeURIComponent(signed.pathname).split("/");
+      if (
+        !/^[a-z0-9][a-z0-9._-]{5,150}$/.test(bucket ?? "") ||
+        !/^[A-Za-z0-9_-]+\.zip$/.test(object ?? "")
+      )
+        throw new Error("unexpected Gen1 upload locator");
+    } else {
       const storage = g.json.storageSource ?? {};
       const bucket = `gcf-v2-uploads-${this.number}.${REGION}.cloudfunctions.appspot.com`;
       if (storage.bucket !== bucket || typeof storage.object !== "string" || !storage.object)
@@ -155,12 +167,17 @@ export class Functions {
       if (decodeURIComponent(signed.pathname) !== `/${bucket}/${storage.object}`)
         throw new Error("signed URL does not match the source object");
       this.source2 = { ...storage };
+      this.grants.source = { ...storage };
       target = storage;
     }
+    this.grants.signed.add(g.json.uploadUrl);
+    // The Gen1 upload sends the length-range header, as the one recorded successful Gen1 upload
+    // did (2026-11-21); the Gen2 upload sends none, as recorded.
     const put = await this.t.send(`gen${generation}-upload`, g.json.uploadUrl, {
       method: "PUT",
       raw: sourceArchive(),
       signed: true,
+      contentLengthRange: generation === 1,
     });
     if (put.status !== 200) throw new Error(`gen${generation} source upload refused`);
     return target;
@@ -196,7 +213,8 @@ export class Functions {
       body: this.config(generation, upload),
     });
     if (created.status !== 200) {
-      s.pending = false; // a complete 4xx: nothing was created
+      s.pending = false;
+      s.refused = created.status; // a complete 4xx and no operation: nothing was created
       return false;
     }
     const done = await this.operation(generation, created.json.name, `gen${generation}-create`);
@@ -215,11 +233,21 @@ export class Functions {
     )
       throw new Error(`gen${generation} did not become ACTIVE with the run label`);
     s.created = true;
-    if (generation === 2)
-      s.managed = [read.json.eventTrigger?.trigger, read.json.serviceConfig?.service].filter(
-        Boolean,
-      );
+    if (generation === 2) this.manage(s, read.json);
     return true;
+  }
+
+  /** Records and grants the Gen2 trigger and service a function read names (first read wins). */
+  manage(s, fn) {
+    if (s.managed?.length) return;
+    const keys = [fn.eventTrigger?.trigger, fn.serviceConfig?.service].filter(Boolean);
+    const scope = new RegExp(
+      `^projects/(${this.project}|${this.number})/locations/(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`,
+    );
+    for (const key of keys)
+      if (!scope.test(key)) throw new Error(`managed resource outside the read-back scope`);
+    s.managed = keys;
+    for (const key of keys) this.grants.managed.add(key);
   }
 
   /** Removes one generation if this run attempted it. Never re-sends an unknown DELETE. */
@@ -229,12 +257,16 @@ export class Functions {
     const tag = `gen${generation}`;
     const read = await this.t.send(`${tag}-cleanup-read`, this.url(generation));
     if (read.status === 404) {
+      // A create refused with a complete 4xx created nothing: its 404 is the expected read.
       // Neither an unconfirmed create nor a confirmed one settles on an absence in the run.
-      this.open.push(`${tag}: absent before the run's own DELETE (A2 read settles it)`);
+      if (!s.refused)
+        this.open.push(`${tag}: absent before the run's own DELETE (A2 read settles it)`);
       return;
     }
     if (read.status !== 200 || read.json.labels?.["fireemu-rc-observe"] !== this.runId)
       throw new Error(`${tag}: cleanup would touch an unowned function`);
+    // A Gen2 create that never read ACTIVE names its trigger and service here.
+    if (generation === 2) this.manage(s, read.json);
     let deleted;
     try {
       deleted = await this.t.send(`${tag}-delete`, this.url(generation), { method: "DELETE" });
@@ -257,12 +289,6 @@ export class Functions {
     const after = await this.t.send(`${tag}-after-delete`, this.url(generation));
     if (after.status !== 404) this.open.push(`${tag}: still readable after its own DELETE`);
     for (const [i, key] of (s.managed ?? []).entries()) {
-      if (
-        !new RegExp(
-          `^projects/(${this.project}|${this.number})/locations/(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`,
-        ).test(key)
-      )
-        throw new Error(`${tag}: managed resource outside the read-back scope`);
       const origin = key.includes("/triggers/") ? EVENTARC : RUN;
       let gone = false;
       for (let n = 0; n < 4 && !gone; n += 1) {
@@ -293,9 +319,13 @@ export class Functions {
       this.open.push("gen2 source still readable after its own DELETE");
   }
 
-  /** Every handler row this run's marker logged since `since`, oldest first. */
+  /**
+   * Every handler row this run's marker logged since `since`, oldest first, from the run's two
+   * function resources only (build logs, which also name the run, are excluded). `truncated` means
+   * the page did not hold every matching entry.
+   */
   async logs(caseId, since) {
-    const filter = `timestamp >= "${since}" AND (jsonPayload.fireemuRcObserve="${this.runId}" OR textPayload:"${this.runId}")`;
+    const filter = `timestamp >= "${since}" AND jsonPayload.fireemuRcObserve="${this.runId}" AND (resource.labels.function_name="${this.names.gen1}" OR resource.labels.service_name="${this.names.gen2}")`;
     const r = await this.t.send(caseId, LOGGING, {
       method: "POST",
       body: {
@@ -313,7 +343,12 @@ export class Functions {
   }
 }
 
-/** Handler rows from Cloud Logging entries (Gen2 jsonPayload, Gen1 textPayload). */
+/** The requests a run may make beyond its fixed paths, granted as the provider names them. */
+export function newGrants() {
+  return { signed: new Set(), source: null, managed: new Set() };
+}
+
+/** Handler rows from Cloud Logging entries (jsonPayload, as recorded; a textPayload is parsed too). */
 export function logRows(entries, runId) {
   const rows = [];
   for (const entry of entries) {

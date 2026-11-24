@@ -24,13 +24,15 @@ import {
   serverTemplate,
   summarise,
 } from "./plan.mjs";
-import { Functions, GCF } from "./functions.mjs";
+import { Functions, GCF, newGrants } from "./functions.mjs";
 import { Transport, Unknown } from "./transport.mjs";
 
 // Request cap of a production run: baseline 8, deploys 2 x 44 + 1 log read, server 24 + 6,
 // client 6, history 2, window 10, cleanup 103 (Gen2 51, Gen1 43, source 3, IAM 1, list 3, two final
 // template reads), restoration 4 (a rollback and a read per namespace). The run stops at the cap.
+// An A2 read-back makes at most A2_MAX_REQUESTS.
 export const MAX_REQUESTS = 252;
+export const A2_MAX_REQUESTS = 11;
 export const PRODUCTION_TIMING = {
   paceMs: 2000,
   readyMs: 120_000,
@@ -65,62 +67,100 @@ export function templateUrls(base, project) {
   };
 }
 
-/** The closed set of production requests. */
-export function productionAllow({ project, number, names }) {
+/**
+ * The closed set of production requests: exactly the method, path and query pairs of packet
+ * section 3, with the run's own function names (never crossed between generations), and the
+ * provider-named resources the run learned (`grants`: the signed upload URLs it was issued, its Gen2
+ * source object, the Gen2 trigger and service its own function names).
+ */
+export function productionAllow({ project, number, names, grants }) {
   const p = project;
-  const own = new Set([names.gen1, names.gen2]);
-  const ids = `(${p}|${number})`;
   const loc = `/projects/${p}/locations/${REGION}`;
+  const rc = `/v1/projects/${p}/`;
+  const client = `${rc}remoteConfig`;
+  const server = `${rc}namespaces/firebase-server/remoteConfig`;
+  const fn1 = `/v1${loc}/functions/${names.gen1}`;
+  const fn2 = `/v2${loc}/functions/${names.gen2}`;
+  const exact = new Set([
+    `GET ${client}`,
+    `GET ${server}`,
+    `PUT ${client}`,
+    `PUT ${server}`,
+    `PUT ${server}?validateOnly=true`,
+    `POST ${client}:rollback`,
+    `POST ${server}:rollback`,
+    `GET ${client}:listVersions?pageSize=8`,
+    `GET ${server}:listVersions?pageSize=8`,
+    `GET ${rc}namespaces/firebase-server/serverRemoteConfig`,
+    `POST /v1${loc}/functions:generateUploadUrl`,
+    `POST /v2${loc}/functions:generateUploadUrl`,
+    `POST /v1${loc}/functions`,
+    `POST /v2${loc}/functions?functionId=${names.gen2}`,
+    `GET ${fn1}`,
+    `GET ${fn2}`,
+    `DELETE ${fn1}`,
+    `DELETE ${fn2}`,
+    `GET /v2/projects/${p}/locations/-/functions?pageSize=100`,
+    `POST /v2/entries:list`,
+    `POST /v1/projects/${p}:getIamPolicy`,
+    `GET /v1${loc}/repositories/gcf-artifacts`,
+  ]);
+  const host = {
+    "firebaseremoteconfig.googleapis.com": (k) => k.includes(` ${rc}`),
+    "cloudfunctions.googleapis.com": (k) => / \/v[12]\//.test(k),
+    "logging.googleapis.com": (k) => k === "POST /v2/entries:list",
+    "cloudresourcemanager.googleapis.com": (k) => k.endsWith(":getIamPolicy"),
+    "artifactregistry.googleapis.com": (k) => k.includes("/repositories/"),
+  };
+  const services = `/v1/projects/${p}/services:batchGet`;
+  const servicesQuery = `?${new URLSearchParams(SERVICES.map((s) => ["names", `projects/${p}/services/${s}`]))}`;
   return (url, method, { signed } = {}) => {
-    if (url.protocol !== "https:") return false;
+    if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
+    // A signed upload goes only to a URL this run was issued, byte for byte.
+    if (signed) return method === "PUT" && grants.signed.has(url.href);
     const path = url.pathname;
-    if (signed) return method === "PUT" && url.host === "storage.googleapis.com";
+    const key = `${method} ${path}${url.search}`;
+    if (exact.has(key)) return host[url.host]?.(key) === true;
     switch (url.host) {
-      case "firebaseremoteconfig.googleapis.com":
-        return ["GET", "PUT", "POST"].includes(method) && path.startsWith(`/v1/projects/${p}/`);
-      case "cloudfunctions.googleapis.com": {
-        const m = /^\/v([12])(\/.*)$/.exec(path);
-        if (!m) return false;
-        const rest = m[2];
-        if (method === "DELETE") return [...own].some((n) => rest === `${loc}/functions/${n}`);
-        if (method === "GET")
-          return (
-            rest.startsWith(`${loc}/functions/`) ||
-            (m[1] === "2" && rest === `/projects/${p}/locations/-/functions`) ||
-            (m[1] === "1" && /^\/operations\/[A-Za-z0-9_.-]+$/.test(rest)) ||
-            (m[1] === "2" &&
-              new RegExp(`^/projects/${ids}/locations/${REGION}/operations/[A-Za-z0-9_-]+$`).test(
-                rest,
-              ))
-          );
-        if (method === "POST")
-          return rest === `${loc}/functions` || rest === `${loc}/functions:generateUploadUrl`;
-        return false;
-      }
-      case "storage.googleapis.com":
+      case "cloudfunctions.googleapis.com":
         return (
-          ["GET", "DELETE"].includes(method) &&
-          path.startsWith(
-            `/storage/v1/b/gcf-v2-uploads-${number}.${REGION}.cloudfunctions.appspot.com/o/`,
-          )
+          (method === "GET" &&
+            (/^\/v1\/operations\/[A-Za-z0-9_.-]+$/.test(path) ||
+              new RegExp(
+                `^/v2/projects/(${p}|${number})/locations/${REGION}/operations/[A-Za-z0-9_-]+$`,
+              ).test(path)) &&
+            url.search === "") ||
+          (method === "GET" &&
+            path === `/v2/projects/${p}/locations/-/functions` &&
+            /^\?pageSize=100&pageToken=[A-Za-z0-9%_.~-]+$/.test(url.search))
         );
-      case "logging.googleapis.com":
-        return method === "POST" && path === "/v2/entries:list";
-      case "cloudresourcemanager.googleapis.com":
-        return method === "POST" && path === `/v1/projects/${p}:getIamPolicy`;
       case "serviceusage.googleapis.com":
-        return method === "GET" && path === `/v1/projects/${p}/services:batchGet`;
-      case "artifactregistry.googleapis.com":
-        return method === "GET" && path === `/v1${loc}/repositories/gcf-artifacts`;
+        return method === "GET" && path === services && url.search === servicesQuery;
+      case "storage.googleapis.com": {
+        const src = grants.source;
+        if (!src) return false;
+        const object = `/storage/v1/b/${src.bucket}/o/${encodeURIComponent(src.object)}`;
+        return (
+          path === object &&
+          ((method === "GET" && url.search === "") ||
+            (method === "DELETE" && /^\?ifGenerationMatch=[0-9]+$/.test(url.search)))
+        );
+      }
       case "eventarc.googleapis.com":
         return (
           method === "GET" &&
-          new RegExp(`^/v1/projects/${ids}/locations/[a-z0-9-]+/triggers/`).test(path)
+          url.search === "" &&
+          path.startsWith("/v1/") &&
+          grants.managed.has(path.slice(4)) &&
+          path.includes("/triggers/")
         );
       case "run.googleapis.com":
         return (
           method === "GET" &&
-          new RegExp(`^/v2/projects/${ids}/locations/${REGION}/services/`).test(path)
+          url.search === "" &&
+          path.startsWith("/v2/") &&
+          grants.managed.has(path.slice(4)) &&
+          path.includes("/services/")
         );
       default:
         return false;
@@ -208,8 +248,12 @@ export async function observe(ctx) {
     versions.push(row);
     return row;
   };
+  const logReads = [];
+  // A truncated read is an unknown: the window's answer is then not evidence (ruling 1, S1).
   const collect = async (caseId) => {
-    for (const row of await ctx.events(caseId)) rows.set(row.insertId ?? JSON.stringify(row), row);
+    const read = await ctx.events(caseId);
+    logReads.push({ case: caseId, rows: read.rows.length, truncated: read.truncated });
+    for (const row of read.rows) rows.set(row.insertId ?? JSON.stringify(row), row);
   };
 
   try {
@@ -247,6 +291,9 @@ export async function observe(ctx) {
       };
       if (repo.status !== 200)
         throw new Stop("gcf-artifacts is missing (a deploy would create it)");
+      // The accepted residue (the Gen2 build image) rests on this policy (ruling 1, S5).
+      if (!result.baseline.repository.cleanupPolicies.includes("firebase-functions-cleanup"))
+        throw new Stop("gcf-artifacts has no firebase-functions-cleanup policy");
       const iam = await t.send("a-iam", g.iam, { method: "POST", body: {} });
       if (iam.status !== 200) throw new Stop("project IAM unreadable");
       result.baseline.iamBefore = canonicalBindings(iam.json);
@@ -475,45 +522,115 @@ export async function observe(ctx) {
     wildcard,
     validations,
     open: result.open,
+    truncated: logReads.some((r) => r.truncated),
   });
+  result.logReads = logReads;
+  // What A2 needs to read back whatever state the creates ended in (ruling 1, S3).
+  if (prod)
+    result.resources = {
+      functions: Object.fromEntries(
+        Object.entries(prod.functions.state).map(([g, st]) => [`gen${g}`, { ...st }]),
+      ),
+      managed: [...prod.functions.grants.managed],
+      source: prod.functions.grants.source,
+    };
   result.complete =
-    result.stopped === null && result.sandboxAtBaseline && result.unknown.length === 0;
+    result.stopped === null &&
+    result.sandboxAtBaseline &&
+    result.unknown.length === 0 &&
+    !logReads.some((r) => r.truncated);
   return { result, events };
 }
 
 /**
- * The A2 read-back (read-only, at most 8 requests): both templates, the run's two function names,
- * the functions list and the project IAM policy. It settles nothing by itself: the coordinator reads
- * it against the run's open items, at least 10 minutes after the run's last request.
+ * The A2 read-back (read-only, at most 11 requests): both templates, the run's two function names,
+ * the Gen2 trigger, service and source object the run recorded, the functions list and the project
+ * IAM policy. Any failure is recorded in the answer (never thrown), and the answer is then not at
+ * baseline. It settles nothing by itself: the coordinator reads it against the run's open items, at
+ * least 10 minutes after the run's last request.
  */
-export async function readBack(ctx) {
+export async function readBack(ctx, resources = null) {
   const { transport: t, urls, production: prod } = ctx;
-  const out = { runId: ctx.runId, templates: {}, functions: {} };
+  const out = {
+    runId: ctx.runId,
+    templates: {},
+    functions: {},
+    managed: {},
+    source: null,
+    errors: [],
+  };
+  const step = async (name, run) => {
+    try {
+      await run();
+    } catch (error) {
+      out.errors.push(`${name}: ${error.message}`);
+    }
+  };
   for (const [namespace, url] of [
     ["client", urls.client],
     ["server", urls.server],
-  ]) {
-    const r = await t.send(`a2-${namespace}`, url);
-    out.templates[namespace] = {
-      status: r.status,
-      empty: r.status === 200 && isEmptyTemplate(r.json),
-      version: r.json.version?.versionNumber ?? null,
-    };
-  }
+  ])
+    await step(`a2-${namespace}`, async () => {
+      const r = await t.send(`a2-${namespace}`, url);
+      out.templates[namespace] = {
+        status: r.status,
+        empty: r.status === 200 && isEmptyTemplate(r.json),
+        version: r.json.version?.versionNumber ?? null,
+      };
+    });
   for (const generation of [1, 2])
-    out.functions[`gen${generation}`] = (
-      await t.send(`a2-gen${generation}`, prod.functions.url(generation))
-    ).status;
-  out.functionsList = await listFunctions(t, prod.google.functions, "a2-functions");
-  const iam = await t.send("a2-iam", prod.google.iam, { method: "POST", body: {} });
-  out.iam = { status: iam.status, bindings: canonicalBindings(iam.json) };
-  out.atBaseline =
-    out.templates.client.empty &&
-    out.templates.server.empty &&
-    out.functions.gen1 === 404 &&
-    out.functions.gen2 === 404;
+    await step(`a2-gen${generation}`, async () => {
+      out.functions[`gen${generation}`] = (
+        await t.send(`a2-gen${generation}`, prod.functions.url(generation))
+      ).status;
+    });
+  const grants = prod.functions.grants;
+  const own = `projects/(${prod.functions.project}|${prod.functions.number})/locations/`;
+  for (const [i, key] of (resources?.managed ?? []).entries())
+    await step(`a2-managed-${i}`, async () => {
+      if (!new RegExp(`^${own}(global|${REGION})/(triggers|services)/[A-Za-z0-9_.-]+$`).test(key))
+        throw new Error("managed resource outside the read-back scope");
+      grants.managed.add(key);
+      const origin = key.includes("/triggers/")
+        ? "https://eventarc.googleapis.com/v1/"
+        : "https://run.googleapis.com/v2/";
+      out.managed[key] = (await t.send(`a2-managed-${i}`, origin + key)).status;
+    });
+  if (resources?.source)
+    await step("a2-source", async () => {
+      if (
+        resources.source.bucket !==
+        `gcf-v2-uploads-${prod.functions.number}.${REGION}.cloudfunctions.appspot.com`
+      )
+        throw new Error("source object outside the sandbox upload bucket");
+      grants.source = resources.source;
+      const object = `https://storage.googleapis.com/storage/v1/b/${resources.source.bucket}/o/${encodeURIComponent(resources.source.object)}`;
+      out.source = (await t.send("a2-source", object)).status;
+    });
+  await step("a2-functions", async () => {
+    out.functionsList = await listFunctions(t, prod.google.functions, "a2-functions");
+  });
+  await step("a2-iam", async () => {
+    const iam = await t.send("a2-iam", prod.google.iam, { method: "POST", body: {} });
+    out.iam = { status: iam.status, bindings: canonicalBindings(iam.json) };
+  });
   out.requests = t.count;
   out.unknown = [...t.unknown];
+  // A Gen2 create that never named its trigger and service leaves them unread: not at baseline.
+  const gen2Attempted = resources?.functions?.gen2?.attempted === true;
+  const managedKnown = !gen2Attempted || (resources?.managed ?? []).length === 2;
+  out.managedKnown = managedKnown;
+  out.atBaseline =
+    out.errors.length === 0 &&
+    out.unknown.length === 0 &&
+    resources !== null &&
+    out.templates.client?.empty === true &&
+    out.templates.server?.empty === true &&
+    out.functions.gen1 === 404 &&
+    out.functions.gen2 === 404 &&
+    managedKnown &&
+    Object.values(out.managed).every((status) => status === 404) &&
+    (resources.source === null || out.source === 404);
   return out;
 }
 
@@ -593,7 +710,7 @@ export async function main(argv, env = process.env) {
       urls: templateUrls(args.base, args.project),
       runId,
       timing: LOCAL_TIMING,
-      events: async () => readLocalEvents(args["events-file"]),
+      events: async () => ({ rows: readLocalEvents(args["events-file"]), truncated: false }),
     };
   } else if (args.target === "production") {
     if (args.send !== true) throw new Error("production needs --send-production");
@@ -605,6 +722,7 @@ export async function main(argv, env = process.env) {
     mkdirSync(out, { recursive: true, mode: 0o700 });
     const project = PRODUCTION_PROJECT;
     const n = runNames(runId);
+    const grants = newGrants();
     let cached = null;
     const token = () => {
       if (!cached || Date.now() - cached.at > 30 * 60_000)
@@ -618,13 +736,13 @@ export async function main(argv, env = process.env) {
     };
     const transport = new Transport({
       out,
-      allow: productionAllow({ project, number, names: n }),
+      allow: productionAllow({ project, number, names: n, grants }),
       token,
-      maxRequests: MAX_REQUESTS,
+      maxRequests: args["a2-of"] ? A2_MAX_REQUESTS : MAX_REQUESTS,
       timeoutMs: PRODUCTION_TIMING.timeoutMs,
       userProject: project,
     });
-    const functions = new Functions({ transport, project, number, names: n, runId });
+    const functions = new Functions({ transport, project, number, names: n, runId, grants });
     const started = new Date().toISOString();
     const services = new URL(
       `https://serviceusage.googleapis.com/v1/projects/${project}/services:batchGet`,
@@ -636,7 +754,7 @@ export async function main(argv, env = process.env) {
       urls: templateUrls(RC_API, project),
       runId,
       timing: PRODUCTION_TIMING,
-      events: async (caseId) => (await functions.logs(caseId, started)).rows,
+      events: (caseId) => functions.logs(caseId, started),
       production: {
         functions,
         google: {
@@ -654,7 +772,15 @@ export async function main(argv, env = process.env) {
       JSON.stringify({ runId, a2Of: resolve(args["a2-of"]), startedAt: new Date().toISOString() }) +
         "\n",
     );
-    const back = await readBack(ctx);
+    let resources = null;
+    try {
+      resources =
+        JSON.parse(readFileSync(join(resolve(args["a2-of"]), "result.json"), "utf8")).resources ??
+        null;
+    } catch {
+      // No result.json (a crashed run): A2 reads what it can and is not at baseline.
+    }
+    const back = await readBack(ctx, resources);
     writeFileSync(join(out, "a2.json"), JSON.stringify(back, null, 2) + "\n");
     console.log(JSON.stringify(back));
     return back.atBaseline ? 0 : 1;

@@ -41,7 +41,11 @@ export class Transport {
   /**
    * @returns {Promise<{status: number, etag: string|null, json: any, bytes: number, text: string}>}
    */
-  async send(caseId, url, { method = "GET", body, ifMatch, signed = false, raw } = {}) {
+  async send(
+    caseId,
+    url,
+    { method = "GET", body, ifMatch, signed = false, raw, contentLengthRange = false } = {},
+  ) {
     if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(caseId)) throw new Error(`invalid case id ${caseId}`);
     const target = new URL(url);
     if (!this.allow(target, method, { signed }))
@@ -56,8 +60,8 @@ export class Transport {
     if (raw !== undefined) {
       payload = raw;
       headers["content-type"] = "application/zip";
-      if (signed && target.pathname.includes("gcf-upload"))
-        headers["x-goog-content-length-range"] = "0,104857600";
+      // Chosen by the caller from the request's role (the Gen1 upload), never from the URL.
+      if (contentLengthRange) headers["x-goog-content-length-range"] = "0,104857600";
     } else if (body !== undefined) {
       payload = JSON.stringify(body);
       headers["content-type"] = "application/json";

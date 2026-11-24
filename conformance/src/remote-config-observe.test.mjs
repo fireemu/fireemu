@@ -11,13 +11,19 @@ import {
   normalise,
   summarise,
 } from "./remote-config-observe/plan.mjs";
-import { Functions, logRows, sourceArchive } from "./remote-config-observe/functions.mjs";
+import {
+  Functions,
+  logRows,
+  newGrants,
+  sourceArchive,
+} from "./remote-config-observe/functions.mjs";
 import { Transport, Unknown } from "./remote-config-observe/transport.mjs";
 import {
   LOCAL_TIMING,
   main,
   observe,
   productionAllow,
+  readBack,
   templateUrls,
 } from "./remote-config-observe/record.mjs";
 
@@ -240,18 +246,36 @@ function cloudWorld({ rc, serverEvents = false, faults = {}, never = new Set() }
     if (url.host === "artifactregistry.googleapis.com")
       return reply(200, {
         name: "gcf-artifacts",
-        cleanupPolicies: { "firebase-functions-cleanup": {} },
+        cleanupPolicies: world.policies ?? { "firebase-functions-cleanup": {} },
       });
     if (url.host === "cloudresourcemanager.googleapis.com")
       return reply(200, {
         bindings: [{ role: "roles/owner", members: ["user:owner@example.com"] }],
         etag: "BwX",
       });
-    if (url.host === "logging.googleapis.com") return reply(200, { entries });
+    if (url.host === "logging.googleapis.com") {
+      world.filters = [...(world.filters ?? []), JSON.parse(init.body).filter];
+      return reply(200, { entries, ...(world.truncate ? { nextPageToken: "more" } : {}) });
+    }
     if (url.host === "eventarc.googleapis.com" || url.host === "run.googleapis.com")
       return reply(404, { error: { status: "NOT_FOUND" } });
     if (url.host === "storage.googleapis.com") {
-      if (init.method === "PUT") return reply(200, "", { "content-type": "text/plain" });
+      if (init.method === "PUT") {
+        // The recorded Gen1 upload sent the length-range header and the Gen2 upload did not; a
+        // V2-signed URL refuses a PUT whose extension headers differ from the signed ones.
+        const gen1 = url.pathname.startsWith("/uploads-");
+        const range = init.headers["x-goog-content-length-range"];
+        world.uploads = [...(world.uploads ?? []), { gen1, range: range ?? null }];
+        if (gen1 ? range !== "0,104857600" : range !== undefined)
+          return reply(403, "<Error><Code>SignatureDoesNotMatch</Code></Error>", {
+            "content-type": "application/xml",
+          });
+        if (init.headers.authorization || init.headers["x-goog-user-project"])
+          return reply(400, "<Error><Code>InvalidArgument</Code></Error>", {
+            "content-type": "application/xml",
+          });
+        return reply(200, "", { "content-type": "text/plain" });
+      }
       if (init.method === "DELETE") {
         world.sourceGone = true;
         return reply(204);
@@ -267,7 +291,9 @@ function cloudWorld({ rc, serverEvents = false, faults = {}, never = new Set() }
       return generation === 1
         ? reply(200, {
             uploadUrl:
-              "https://storage.googleapis.com/gcf-upload-us-central1-abc/src.zip?GoogleAccessId=x&Signature=y",
+              // The recorded 2026-11-21 shape, sanitised: bucket uploads-<digits>, a UUID object,
+              // a V2 signature.
+              `https://storage.googleapis.com/uploads-${NUMBER}.us-central1.cloudfunctions.appspot.com/0f3423c5-4562-4632-8138-9af3c0000000.zip?GoogleAccessId=sa%40example.iam.gserviceaccount.com&Expires=1800000000&Signature=c2ln`,
           })
         : reply(200, {
             uploadUrl: `https://storage.googleapis.com/gcf-v2-uploads-${NUMBER}.us-central1.cloudfunctions.appspot.com/src.zip?X-Goog-Signature=y`,
@@ -357,9 +383,10 @@ function productionContext({
     if (url.host === "firebaseremoteconfig.googleapis.com") return rc.handle(url, init);
     return cloud.handle(url, init);
   };
+  const grants = newGrants();
   const transport = new Transport({
     out,
-    allow: productionAllow({ project: PROJECT, number: NUMBER, names: N }),
+    allow: productionAllow({ project: PROJECT, number: NUMBER, names: N, grants }),
     token: () => "tok",
     maxRequests,
     timeoutMs: 1000,
@@ -372,6 +399,7 @@ function productionContext({
     number: NUMBER,
     names: N,
     runId: RUN,
+    grants,
     wait: async () => {},
   });
   const services = new URL(
@@ -398,7 +426,7 @@ function productionContext({
       runId: RUN,
       timing: { ...LOCAL_TIMING, windowReads: 2 },
       wait: async () => {},
-      events: async (caseId) => (await functions.logs(caseId, "2026-11-24T00:00:00Z")).rows,
+      events: (caseId) => functions.logs(caseId, "2026-11-24T00:00:00Z"),
       production: {
         functions,
         google: {
@@ -412,78 +440,120 @@ function productionContext({
   };
 }
 
-test("allow list: only the sandbox, the run's own functions and the upload bucket", () => {
-  const allow = productionAllow({ project: PROJECT, number: NUMBER, names: N });
+test("allow list: exactly the packet's method and path pairs, with the run's own names", () => {
+  const grants = newGrants();
+  const allow = productionAllow({ project: PROJECT, number: NUMBER, names: N, grants });
   const ok = (u, m = "GET", o) => allow(new URL(u), m, o);
-  const fn = `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/us-central1/functions/`;
-  assert.equal(
-    ok(`https://firebaseremoteconfig.googleapis.com/v1/projects/${PROJECT}/remoteConfig`, "PUT"),
-    true,
+  const RC = `https://firebaseremoteconfig.googleapis.com/v1/projects/${PROJECT}/`;
+  const GCFU = "https://cloudfunctions.googleapis.com";
+  const loc = `projects/${PROJECT}/locations/us-central1`;
+  const bucket = `gcf-v2-uploads-${NUMBER}.us-central1.cloudfunctions.appspot.com`;
+  const own = `https://storage.googleapis.com/storage/v1/b/${bucket}/o/src.zip`;
+  const signed = `https://storage.googleapis.com/uploads-${NUMBER}.us-central1.cloudfunctions.appspot.com/a.zip?GoogleAccessId=x&Expires=1&Signature=s`;
+  const trigger = `projects/${PROJECT}/locations/global/triggers/t1`;
+  const service = `projects/${PROJECT}/locations/us-central1/services/s1`;
+  const services = new URL(
+    `https://serviceusage.googleapis.com/v1/projects/${PROJECT}/services:batchGet`,
   );
-  assert.equal(
-    ok(
+  for (const s of [
+    "firebaseremoteconfig",
+    "cloudfunctions",
+    "cloudbuild",
+    "artifactregistry",
+    "run",
+    "eventarc",
+    "logging",
+  ])
+    services.searchParams.append("names", `projects/${PROJECT}/services/${s}.googleapis.com`);
+  // Before the run learns its provider-named resources, none of them is permitted.
+  assert.equal(ok(own, "DELETE"), false);
+  assert.equal(ok(signed, "PUT", { signed: true }), false);
+  assert.equal(ok(`https://eventarc.googleapis.com/v1/${trigger}`), false);
+  grants.source = { bucket, object: "src.zip" };
+  grants.signed.add(signed);
+  grants.managed.add(trigger);
+  grants.managed.add(service);
+  const allowed = [
+    [`${RC}remoteConfig`],
+    [`${RC}namespaces/firebase-server/remoteConfig`],
+    [`${RC}remoteConfig`, "PUT"],
+    [`${RC}namespaces/firebase-server/remoteConfig`, "PUT"],
+    [`${RC}namespaces/firebase-server/remoteConfig?validateOnly=true`, "PUT"],
+    [`${RC}remoteConfig:rollback`, "POST"],
+    [`${RC}namespaces/firebase-server/remoteConfig:rollback`, "POST"],
+    [`${RC}remoteConfig:listVersions?pageSize=8`],
+    [`${RC}namespaces/firebase-server/remoteConfig:listVersions?pageSize=8`],
+    [`${RC}namespaces/firebase-server/serverRemoteConfig`],
+    [`${GCFU}/v1/${loc}/functions:generateUploadUrl`, "POST"],
+    [`${GCFU}/v2/${loc}/functions:generateUploadUrl`, "POST"],
+    [`${GCFU}/v1/${loc}/functions`, "POST"],
+    [`${GCFU}/v2/${loc}/functions?functionId=${N.gen2}`, "POST"],
+    [`${GCFU}/v1/${loc}/functions/${N.gen1}`],
+    [`${GCFU}/v2/${loc}/functions/${N.gen2}`],
+    [`${GCFU}/v1/${loc}/functions/${N.gen1}`, "DELETE"],
+    [`${GCFU}/v2/${loc}/functions/${N.gen2}`, "DELETE"],
+    [`${GCFU}/v1/operations/abc_1`],
+    [`${GCFU}/v2/projects/${NUMBER}/locations/us-central1/operations/op-1`],
+    [`${GCFU}/v2/projects/${PROJECT}/locations/-/functions?pageSize=100`],
+    [`${GCFU}/v2/projects/${PROJECT}/locations/-/functions?pageSize=100&pageToken=abc`],
+    [own],
+    [`${own}?ifGenerationMatch=17`, "DELETE"],
+    [signed, "PUT", { signed: true }],
+    [`https://eventarc.googleapis.com/v1/${trigger}`],
+    [`https://run.googleapis.com/v2/${service}`],
+    ["https://logging.googleapis.com/v2/entries:list", "POST"],
+    [`https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT}:getIamPolicy`, "POST"],
+    [services.href],
+    [`https://artifactregistry.googleapis.com/v1/${loc}/repositories/gcf-artifacts`],
+  ];
+  for (const [u, m, o] of allowed) assert.equal(ok(u, m, o), true, `${m ?? "GET"} ${u}`);
+  const refused = [
+    // The Codex report's examples (2026-11-24 pins review).
+    [`${RC}namespaces/firebase-server/serverRemoteConfig`, "PUT"],
+    [`${RC}namespaces/other/remoteConfig`, "PUT"],
+    [`${GCFU}/v2/${loc}/functions/existing`],
+    [`https://run.googleapis.com/v2/projects/${PROJECT}/locations/us-central1/services/other`],
+    [`${GCFU}/v2/${loc}/functions/${N.gen1}`, "DELETE"],
+    [`${GCFU}/v1/${loc}/functions/${N.gen2}`, "DELETE"],
+    // The Opus review's near misses.
+    [
+      `https://storage.googleapis.com/storage/v1/b/${bucket}/o/other.zip?ifGenerationMatch=1`,
+      "DELETE",
+    ],
+    [`${RC}remoteConfig:listVersions?pageSize=8`, "POST"],
+    // Other forms outside the list.
+    [`${RC}remoteConfig?validateOnly=true`, "PUT"],
+    [`${RC}remoteConfig:listVersions?pageSize=300`],
+    [`${RC}remoteConfig`, "DELETE"],
+    [
       "https://firebaseremoteconfig.googleapis.com/v1/projects/fireemu-oracle-sbx/remoteConfig",
       "PUT",
-    ),
-    false,
-  );
-  assert.equal(
-    ok(
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/fireemu-oracle-query-x/remoteConfig",
-    ),
-    false,
-  );
-  assert.equal(
-    ok(`https://firebaseremoteconfig.googleapis.com/v1/projects/${PROJECT}/remoteConfig`, "DELETE"),
-    false,
-  );
-  assert.equal(ok(fn + N.gen2, "DELETE"), true);
-  assert.equal(ok(fn + "existing", "DELETE"), false);
-  assert.equal(ok(fn.replace("/v2/", "/v1/") + N.gen1, "DELETE"), true);
-  assert.equal(ok(fn.replace("us-central1", "us-east1") + N.gen2, "DELETE"), false);
-  assert.equal(
-    ok(
-      `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/us-central1/functions`,
-      "POST",
-    ),
-    true,
-  );
-  assert.equal(
-    ok(
-      `https://cloudfunctions.googleapis.com/v2/projects/${PROJECT}/locations/us-central1/functions/x:setIamPolicy`,
-      "POST",
-    ),
-    false,
-  );
-  assert.equal(
-    ok(
-      `https://storage.googleapis.com/storage/v1/b/gcf-v2-uploads-${NUMBER}.us-central1.cloudfunctions.appspot.com/o/src.zip`,
-      "DELETE",
-    ),
-    true,
-  );
-  assert.equal(
-    ok(`https://storage.googleapis.com/storage/v1/b/other-bucket/o/src.zip`, "DELETE"),
-    false,
-  );
-  assert.equal(
-    ok("https://storage.googleapis.com/x/y.zip?Signature=s", "PUT", { signed: true }),
-    true,
-  );
-  assert.equal(ok("https://evil.example/x.zip", "PUT", { signed: true }), false);
-  assert.equal(ok("http://logging.googleapis.com/v2/entries:list", "POST"), false);
-  assert.equal(ok("https://logging.googleapis.com/v2/entries:write", "POST"), false);
-  assert.equal(
-    ok(`https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT}:setIamPolicy`, "POST"),
-    false,
-  );
-  assert.equal(
-    ok(
+    ],
+    [`${GCFU}/v2/${loc}/functions?functionId=other`, "POST"],
+    [`${GCFU}/v2/${loc}/functions`, "POST"],
+    [`${GCFU}/v2/${loc}/functions/${N.gen2}:setIamPolicy`, "POST"],
+    [`${GCFU}/v2/${loc.replace("us-central1", "us-east1")}/functions/${N.gen2}`, "DELETE"],
+    [`${GCFU}/v2/projects/${PROJECT}/locations/-/functions`],
+    [`${own}?ifGenerationMatch=17&x=1`, "DELETE"],
+    [own, "PUT"],
+    ["https://storage.googleapis.com/x/y.zip?Signature=s", "PUT", { signed: true }],
+    [signed, "GET", { signed: true }],
+    [`https://eventarc.googleapis.com/v1/projects/${PROJECT}/locations/global/triggers/other`],
+    [`https://eventarc.googleapis.com/v1/${trigger}`, "DELETE"],
+    ["https://logging.googleapis.com/v2/entries:write", "POST"],
+    ["http://logging.googleapis.com/v2/entries:list", "POST"],
+    [`https://cloudresourcemanager.googleapis.com/v1/projects/${PROJECT}:setIamPolicy`, "POST"],
+    [
+      `https://serviceusage.googleapis.com/v1/projects/${PROJECT}/services:batchGet?names=projects/${PROJECT}/services/x`,
+    ],
+    [
       `https://serviceusage.googleapis.com/v1/projects/${PROJECT}/services/run.googleapis.com:enable`,
       "POST",
-    ),
-    false,
-  );
+    ],
+    [`https://artifactregistry.googleapis.com/v1/${loc}/repositories/other`],
+    [`https://evil.example/v1/projects/${PROJECT}/remoteConfig`],
+  ];
+  for (const [u, m, o] of refused) assert.equal(ok(u, m, o), false, `${m ?? "GET"} ${u}`);
 });
 
 test("transport: unknown answers are journaled unknown, never settled", async () => {
@@ -959,24 +1029,126 @@ test("an event of a version this run did not create is unmatched, even with the 
   assert.deepEqual(s.generations["1"].serverSteps, []);
 });
 
-test("the A2 read-back reads both templates, both names, the list and IAM, and sends nothing else", async () => {
+test("A2 reads the templates, both names, the recorded trigger, service and source, the list and IAM", async () => {
   const rc = remoteConfigWorld();
-  const { ctx, cloud, transport } = productionContext({ rc });
-  const { readBack } = await import("./remote-config-observe/record.mjs");
-  const back = await readBack(ctx);
-  assert.equal(back.atBaseline, true);
+  const run = productionContext({ rc });
+  const { result } = await observe(run.ctx);
+  assert.equal(result.resources.managed.length, 2);
+  assert.equal(result.resources.source.object, "src.zip");
+  // Later worlds start where the run left the provider: its source object deleted.
+  const after = () => {
+    const cloud = cloudWorld({ rc });
+    cloud.sourceGone = true;
+    return productionContext({ rc, cloud });
+  };
+  const writesBefore = rc.requests.filter((r) => !r.startsWith("GET")).length;
+  const a2 = after();
+  const back = await readBack(a2.ctx, structuredClone(result.resources));
+  assert.equal(back.atBaseline, true, JSON.stringify(back));
   assert.deepEqual(back.functions, { gen1: 404, gen2: 404 });
-  assert.equal(transport.count, 6);
+  assert.deepEqual(Object.values(back.managed), [404, 404]);
+  assert.equal(back.source, 404);
+  assert.ok(a2.transport.count <= 11);
   assert.equal(
-    [...rc.requests, ...cloud.requests].filter(
-      (r) => !r.startsWith("GET") && !r.includes(":getIamPolicy"),
-    ).length,
+    [...a2.cloud.requests].filter((r) => !r.startsWith("GET") && !r.includes(":getIamPolicy"))
+      .length,
     0,
   );
-  const leftover = productionContext({ rc });
+  assert.equal(rc.requests.filter((r) => !r.startsWith("GET")).length, writesBefore);
+  // A function still there, a template not empty, or unknown resources: not at baseline.
+  const leftover = after();
   const name = `projects/${PROJECT}/locations/us-central1/functions/${N.gen2}`;
   leftover.cloud.fns.set(name, { name, generation: 2, status: "ACTIVE", labels: N.label });
-  assert.equal((await readBack(leftover.ctx)).atBaseline, false);
+  assert.equal((await readBack(leftover.ctx, result.resources)).atBaseline, false);
+  assert.equal((await readBack(after().ctx, null)).atBaseline, false);
+  const noManaged = { ...result.resources, managed: [] };
+  const missing = await readBack(after().ctx, noManaged);
+  assert.equal(missing.managedKnown, false);
+  assert.equal(missing.atBaseline, false);
+  const outside = { ...result.resources, managed: ["projects/other/locations/global/triggers/t1"] };
+  const refused = await readBack(after().ctx, outside);
+  assert.equal(refused.atBaseline, false);
+  assert.match(refused.errors.join(), /outside the read-back scope/);
   rc.ns.server.template = { parameters: { a: {} } };
-  assert.equal((await readBack(productionContext({ rc }).ctx)).atBaseline, false);
+  assert.equal((await readBack(after().ctx, result.resources)).atBaseline, false);
+});
+
+test("an unknown answer in A2 is recorded in its answer, never thrown, and not at baseline", async () => {
+  const rc = remoteConfigWorld();
+  const { ctx } = productionContext({ rc });
+  const { result } = await observe(ctx);
+  const key = `GET cloudfunctions.googleapis.com /v1/projects/${PROJECT}/locations/us-central1/functions/${N.gen1}`;
+  const a2 = productionContext({
+    rc,
+    cloud: cloudWorld({ rc, faults: { [key]: [() => reply(503, {})] } }),
+  });
+  const back = await readBack(a2.ctx, result.resources);
+  assert.equal(back.atBaseline, false);
+  assert.deepEqual(back.unknown, ["a2-gen1"]);
+  assert.ok(back.iam, "A2 goes on reading after an unknown answer");
+});
+
+test("the Gen1 upload sends the length-range header for the recorded URL shape; Gen2 sends none", async () => {
+  const { ctx, cloud, out } = productionContext();
+  await observe(ctx);
+  assert.deepEqual(cloud.uploads, [
+    { gen1: true, range: "0,104857600" },
+    { gen1: false, range: null },
+  ]);
+  const text = readFileSync(join(out, "journal.jsonl"), "utf8");
+  assert.equal(text.includes("Signature=c2ln"), false);
+});
+
+test("a truncated log read is unknown: no server answer, run not complete", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  cloud.truncate = true;
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.equal(result.summary.generations["1"].serverDelivery, "unknown-truncated-log-read");
+  assert.equal(result.summary.logTruncated, true);
+  assert.equal(result.complete, false);
+  assert.ok(result.logReads.every((r) => r.truncated));
+  for (const filter of cloud.filters) {
+    assert.match(filter, new RegExp(`resource.labels.function_name="${N.gen1}"`));
+    assert.match(filter, new RegExp(`resource.labels.service_name="${N.gen2}"`));
+    assert.equal(filter.includes("textPayload"), false);
+  }
+});
+
+test("a create refused with a complete 4xx is closable: 404 is expected and nothing is open", async () => {
+  const rc = remoteConfigWorld();
+  const key = `POST cloudfunctions.googleapis.com /v2/projects/${PROJECT}/locations/us-central1/functions`;
+  const cloud = cloudWorld({
+    rc,
+    faults: { [key]: [() => reply(400, { error: { status: "INVALID_ARGUMENT" } })] },
+  });
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.match(result.stopped, /gen2 deploy did not complete/);
+  assert.equal(result.resources.functions.gen2.refused, 400);
+  assert.deepEqual(result.open, []);
+  assert.equal(result.sandboxAtBaseline, true);
+});
+
+test("a Gen2 create that never reads done names its trigger and service at cleanup, which reads them", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc, never: new Set(["create2"]) });
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.equal(result.resources.managed.length, 2);
+  assert.ok(cloud.requests.some((r) => r.startsWith("GET eventarc.googleapis.com")));
+  assert.ok(cloud.requests.some((r) => r.startsWith("GET run.googleapis.com")));
+  assert.ok(result.open.includes("gen2: create not settled"));
+});
+
+test("a repository without the firebase-functions-cleanup policy stops before any write", async () => {
+  const rc = remoteConfigWorld();
+  const cloud = cloudWorld({ rc });
+  cloud.policies = { other: {} };
+  const { ctx } = productionContext({ rc, cloud });
+  const { result } = await observe(ctx);
+  assert.match(result.stopped, /firebase-functions-cleanup/);
+  assert.equal(rc.requests.filter((r) => !r.startsWith("GET")).length, 0);
+  assert.equal(cloud.requests.filter((r) => r.startsWith("POST cloudfunctions")).length, 0);
 });
