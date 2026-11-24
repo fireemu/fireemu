@@ -1152,3 +1152,85 @@ test("a repository without the firebase-functions-cleanup policy stops before an
   assert.equal(rc.requests.filter((r) => !r.startsWith("GET")).length, 0);
   assert.equal(cloud.requests.filter((r) => r.startsWith("POST cloudfunctions")).length, 0);
 });
+
+test("A2 near misses: a source object still readable, a failed list read, a source outside the bucket", async () => {
+  const rc = remoteConfigWorld();
+  const run = productionContext({ rc });
+  const { result } = await observe(run.ctx);
+  const world = (setup = () => {}) => {
+    const cloud = cloudWorld({ rc });
+    cloud.sourceGone = true;
+    setup(cloud);
+    return productionContext({ rc, cloud });
+  };
+  const still = await readBack(
+    world((c) => {
+      c.sourceGone = false;
+    }).ctx,
+    result.resources,
+  );
+  assert.equal(still.source, 200);
+  assert.equal(still.atBaseline, false);
+  const listKey = `GET cloudfunctions.googleapis.com /v2/projects/${PROJECT}/locations/-/functions`;
+  const failed = await readBack(
+    world((c) => {
+      c.faults = undefined;
+    }).ctx,
+    result.resources,
+  );
+  assert.equal(clean.atBaseline, true);
+  const refusedList = cloudWorld({
+    rc,
+    faults: { [listKey]: [() => reply(403, { error: { status: "PERMISSION_DENIED" } })] },
+  });
+  refusedList.sourceGone = true;
+  const listed = await readBack(
+    productionContext({ rc, cloud: refusedList }).ctx,
+    result.resources,
+  );
+  assert.deepEqual(listed.unknown, []);
+  assert.match(listed.errors.join(), /functions list 403/);
+  assert.equal(listed.atBaseline, false);
+  const elsewhere = { ...result.resources, source: { bucket: "other-bucket", object: "src.zip" } };
+  const ctx = world();
+  const outside = await readBack(ctx.ctx, elsewhere);
+  assert.match(outside.errors.join(), /outside the sandbox upload bucket/);
+  assert.equal(
+    ctx.cloud.requests.some((r) => r.includes("other-bucket")),
+    false,
+  );
+  assert.equal(outside.atBaseline, false);
+});
+
+test("a function read naming a trigger outside the project is refused before any read of it", () => {
+  const grants = newGrants();
+  const transport = new Transport({
+    out: scratch(),
+    allow: () => true,
+    token: () => "t",
+    maxRequests: 1,
+    timeoutMs: 10,
+    fetchImpl: async () => reply(200, {}),
+  });
+  const f = new Functions({
+    transport,
+    project: PROJECT,
+    number: NUMBER,
+    names: N,
+    runId: RUN,
+    grants,
+  });
+  assert.throws(
+    () => f.manage({}, { eventTrigger: { trigger: "projects/other/locations/global/triggers/t" } }),
+    /outside the read-back scope/,
+  );
+  assert.equal(grants.managed.size, 0);
+  f.manage(
+    {},
+    {
+      eventTrigger: { trigger: `projects/${NUMBER}/locations/global/triggers/t` },
+      serviceConfig: { service: `projects/${PROJECT}/locations/us-central1/services/s` },
+    },
+  );
+  assert.equal(grants.managed.size, 2);
+});
