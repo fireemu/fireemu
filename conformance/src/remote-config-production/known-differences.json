@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "note": "Differences between a production recording and fireemu that are known and not aligned. Each entry names its rows and fields; a difference outside an entry is a MISMATCH.",
+  "entries": [
+    {
+      "id": "KD-MEMBER-ORDER",
+      "rows": ["*"],
+      "fields": [],
+      "fieldSuffixes": [":member-order"],
+      "appliesTo": ["production-vs-local"],
+      "reason": "Fireemu writes JSON members in sorted key order; production keeps its own order (for example percentOperator before microPercent, and conditions, parameters, version at the top of the data plane). Member names, values and the layout length are still compared; only the order is not. Documented in docs/remote-config.md.",
+      "authority": "rc-observe coordinator ruling 5 (2026-11-24T06:52Z): record it as a documented difference, no serializer change"
+    }
+  ]
+}

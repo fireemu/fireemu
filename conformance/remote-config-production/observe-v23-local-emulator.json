@@ -1,0 +1,4896 @@
+{
+  "schemaVersion": 1,
+  "kind": "remote-config-observation-rows",
+  "target": "local",
+  "requests": 42,
+  "infrastructureRequests": 0,
+  "baseline": {
+    "client": {
+      "version": "10",
+      "empty": true
+    },
+    "server": {
+      "version": "20",
+      "empty": true
+    }
+  },
+  "complete": true,
+  "open": [],
+  "rows": [
+    {
+      "seq": 1,
+      "case": "a-client",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 219,
+      "skeletonBytes": 160,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-10",
+      "body": {
+        "version": {
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "10"
+        }
+      }
+    },
+    {
+      "seq": 2,
+      "case": "a-server",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 219,
+      "skeletonBytes": 160,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "body": {
+        "version": {
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "20"
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "case": "c0-publish",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-10",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 424,
+      "skeletonBytes": 315,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-11",
+      "body": {
+        "parameters": {
+          "fireemu_obs_client": {
+            "defaultValue": {
+              "value": "c0"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "description": "fireemu rc-observe RUN_ID c0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "11"
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "case": "s-validate-00",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 425,
+      "skeletonBytes": 338,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') between 10 and 60",
+            "name": "fireemu_obs_percent_between"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_percent_between": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 5,
+      "case": "s-validate-01",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 447,
+      "skeletonBytes": 347,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') between 0.5 and 99.25",
+            "name": "fireemu_obs_percent_between_fraction"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_percent_between_fraction": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 6,
+      "case": "s-validate-02",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 412,
+      "skeletonBytes": 338,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') > 50",
+            "name": "fireemu_obs_percent_greater"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_percent_greater": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 7,
+      "case": "s-validate-03",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 400,
+      "skeletonBytes": 339,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent <= 50",
+            "name": "fireemu_obs_percent_unseeded"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_percent_unseeded": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 8,
+      "case": "s-validate-04",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 408,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] < 5",
+            "name": "fireemu_obs_numeric_lt"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_lt": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 9,
+      "case": "s-validate-05",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 409,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] <= 5",
+            "name": "fireemu_obs_numeric_le"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_le": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 10,
+      "case": "s-validate-06",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 409,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] == 5",
+            "name": "fireemu_obs_numeric_eq"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_eq": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 11,
+      "case": "s-validate-07",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 409,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] != 5",
+            "name": "fireemu_obs_numeric_ne"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_ne": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 12,
+      "case": "s-validate-08",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 408,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] > 5",
+            "name": "fireemu_obs_numeric_gt"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_gt": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 13,
+      "case": "s-validate-09",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 409,
+      "skeletonBytes": 333,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_n'] >= 5",
+            "name": "fireemu_obs_numeric_ge"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_numeric_ge": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 14,
+      "case": "s-validate-10",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 431,
+      "skeletonBytes": 338,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_s'].contains(['ab'])",
+            "name": "fireemu_obs_string_contains"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_string_contains": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 15,
+      "case": "s-validate-11",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 442,
+      "skeletonBytes": 342,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_s'].notContains(['ab'])",
+            "name": "fireemu_obs_string_not_contains"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_string_not_contains": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 16,
+      "case": "s-validate-12",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 426,
+      "skeletonBytes": 335,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_s'].matches(['^ab$'])",
+            "name": "fireemu_obs_string_regex"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_string_regex": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 17,
+      "case": "s-validate-13",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 421,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) < '1.2.3'",
+            "name": "fireemu_obs_semver_lt"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_lt": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 18,
+      "case": "s-validate-14",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 422,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) <= '1.2.3'",
+            "name": "fireemu_obs_semver_le"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_le": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 19,
+      "case": "s-validate-15",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 422,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) == '1.2.3'",
+            "name": "fireemu_obs_semver_eq"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_eq": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 20,
+      "case": "s-validate-16",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 422,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) != '1.2.3'",
+            "name": "fireemu_obs_semver_ne"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_ne": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 21,
+      "case": "s-validate-17",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 421,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) > '1.2.3'",
+            "name": "fireemu_obs_semver_gt"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_gt": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 22,
+      "case": "s-validate-18",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 422,
+      "skeletonBytes": 332,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "version(app.customSignal['fireemu_v']) >= '1.2.3'",
+            "name": "fireemu_obs_semver_ge"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_semver_ge": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 23,
+      "case": "s-validate-19",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 444,
+      "skeletonBytes": 326,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) && percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_and"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_and": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 24,
+      "case": "s-validate-20",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 442,
+      "skeletonBytes": 325,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) || percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_or"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_or": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 25,
+      "case": "s-validate-21",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 392,
+      "skeletonBytes": 326,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "!(percent('fireemu_obs') <= 50)",
+            "name": "fireemu_obs_not"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_not": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 26,
+      "case": "s-validate-22",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 383,
+      "skeletonBytes": 335,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "true",
+            "name": "fireemu_obs_literal_true"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_literal_true": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 27,
+      "case": "s-validate-23",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "validateOnly=true",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 386,
+      "skeletonBytes": 336,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20-0",
+      "body": {
+        "conditions": [
+          {
+            "expression": "false",
+            "name": "fireemu_obs_literal_false"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_probe": {
+            "conditionalValues": {
+              "fireemu_obs_literal_false": {
+                "value": "matched"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {}
+      }
+    },
+    {
+      "seq": 28,
+      "case": "s1-publish",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-20",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 6241,
+      "skeletonBytes": 3858,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-21",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') between 10 and 60",
+            "name": "fireemu_obs_percent_between"
+          },
+          {
+            "expression": "percent('fireemu_obs') between 0.5 and 99.25",
+            "name": "fireemu_obs_percent_between_fraction"
+          },
+          {
+            "expression": "percent('fireemu_obs') > 50",
+            "name": "fireemu_obs_percent_greater"
+          },
+          {
+            "expression": "percent <= 50",
+            "name": "fireemu_obs_percent_unseeded"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] < 5",
+            "name": "fireemu_obs_numeric_lt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] <= 5",
+            "name": "fireemu_obs_numeric_le"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] == 5",
+            "name": "fireemu_obs_numeric_eq"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] != 5",
+            "name": "fireemu_obs_numeric_ne"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] > 5",
+            "name": "fireemu_obs_numeric_gt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] >= 5",
+            "name": "fireemu_obs_numeric_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].contains(['ab'])",
+            "name": "fireemu_obs_string_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].notContains(['ab'])",
+            "name": "fireemu_obs_string_not_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].matches(['^ab$'])",
+            "name": "fireemu_obs_string_regex"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) < '1.2.3'",
+            "name": "fireemu_obs_semver_lt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) <= '1.2.3'",
+            "name": "fireemu_obs_semver_le"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) == '1.2.3'",
+            "name": "fireemu_obs_semver_eq"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) != '1.2.3'",
+            "name": "fireemu_obs_semver_ne"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) > '1.2.3'",
+            "name": "fireemu_obs_semver_gt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) >= '1.2.3'",
+            "name": "fireemu_obs_semver_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) && percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_and"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) || percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_or"
+          },
+          {
+            "expression": "!(percent('fireemu_obs') <= 50)",
+            "name": "fireemu_obs_not"
+          },
+          {
+            "expression": "true",
+            "name": "fireemu_obs_literal_true"
+          },
+          {
+            "expression": "false",
+            "name": "fireemu_obs_literal_false"
+          }
+        ],
+        "parameterGroups": {
+          "fireemu_obs_group": {
+            "description": "Fireemu observation group",
+            "parameters": {
+              "fireemu_obs_json": {
+                "conditionalValues": {
+                  "fireemu_obs_percent_between": {
+                    "value": "{\"a\":2}"
+                  }
+                },
+                "defaultValue": {
+                  "value": "{\"a\":1}"
+                },
+                "valueType": "JSON"
+              },
+              "fireemu_obs_number": {
+                "defaultValue": {
+                  "value": "12.5"
+                },
+                "valueType": "NUMBER"
+              }
+            }
+          }
+        },
+        "parameters": {
+          "fireemu_obs_top": {
+            "conditionalValues": {
+              "fireemu_obs_and": {
+                "value": "value-fireemu_obs_and"
+              },
+              "fireemu_obs_literal_false": {
+                "value": "value-fireemu_obs_literal_false"
+              },
+              "fireemu_obs_literal_true": {
+                "value": "value-fireemu_obs_literal_true"
+              },
+              "fireemu_obs_not": {
+                "value": "value-fireemu_obs_not"
+              },
+              "fireemu_obs_numeric_eq": {
+                "value": "value-fireemu_obs_numeric_eq"
+              },
+              "fireemu_obs_numeric_ge": {
+                "value": "value-fireemu_obs_numeric_ge"
+              },
+              "fireemu_obs_numeric_gt": {
+                "value": "value-fireemu_obs_numeric_gt"
+              },
+              "fireemu_obs_numeric_le": {
+                "value": "value-fireemu_obs_numeric_le"
+              },
+              "fireemu_obs_numeric_lt": {
+                "value": "value-fireemu_obs_numeric_lt"
+              },
+              "fireemu_obs_numeric_ne": {
+                "value": "value-fireemu_obs_numeric_ne"
+              },
+              "fireemu_obs_or": {
+                "value": "value-fireemu_obs_or"
+              },
+              "fireemu_obs_percent_between": {
+                "value": "value-fireemu_obs_percent_between"
+              },
+              "fireemu_obs_percent_between_fraction": {
+                "value": "value-fireemu_obs_percent_between_fraction"
+              },
+              "fireemu_obs_percent_greater": {
+                "value": "value-fireemu_obs_percent_greater"
+              },
+              "fireemu_obs_percent_unseeded": {
+                "value": "value-fireemu_obs_percent_unseeded"
+              },
+              "fireemu_obs_semver_eq": {
+                "value": "value-fireemu_obs_semver_eq"
+              },
+              "fireemu_obs_semver_ge": {
+                "value": "value-fireemu_obs_semver_ge"
+              },
+              "fireemu_obs_semver_gt": {
+                "value": "value-fireemu_obs_semver_gt"
+              },
+              "fireemu_obs_semver_le": {
+                "value": "value-fireemu_obs_semver_le"
+              },
+              "fireemu_obs_semver_lt": {
+                "value": "value-fireemu_obs_semver_lt"
+              },
+              "fireemu_obs_semver_ne": {
+                "value": "value-fireemu_obs_semver_ne"
+              },
+              "fireemu_obs_string_contains": {
+                "value": "value-fireemu_obs_string_contains"
+              },
+              "fireemu_obs_string_not_contains": {
+                "value": "value-fireemu_obs_string_not_contains"
+              },
+              "fireemu_obs_string_regex": {
+                "value": "value-fireemu_obs_string_regex"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "description": "fireemu rc-observe RUN_ID s1",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "21"
+        }
+      }
+    },
+    {
+      "seq": 29,
+      "case": "s2-data-plane",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/serverRemoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 15617,
+      "skeletonBytes": 13708,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-21",
+      "body": {
+        "conditions": [
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "percent": {
+                            "microPercentRange": {
+                              "microPercentLowerBound": 10000000,
+                              "microPercentUpperBound": 60000000
+                            },
+                            "percentOperator": "BETWEEN",
+                            "seed": "fireemu_obs"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_percent_between"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "percent": {
+                            "microPercentRange": {
+                              "microPercentLowerBound": 500000,
+                              "microPercentUpperBound": 99250000
+                            },
+                            "percentOperator": "BETWEEN",
+                            "seed": "fireemu_obs"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_percent_between_fraction"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "percent": {
+                            "microPercent": 50000000,
+                            "percentOperator": "GREATER_THAN",
+                            "seed": "fireemu_obs"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_percent_greater"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "percent": {
+                            "microPercent": 50000000,
+                            "percentOperator": "LESS_OR_EQUAL"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_percent_unseeded"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_LESS_THAN",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_lt"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_LESS_EQUAL",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_le"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_EQUAL",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_eq"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_NOT_EQUAL",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_ne"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_GREATER_THAN",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_gt"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_n",
+                            "customSignalOperator": "NUMERIC_GREATER_EQUAL",
+                            "targetCustomSignalValues": [
+                              "5"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_numeric_ge"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_s",
+                            "customSignalOperator": "STRING_CONTAINS",
+                            "targetCustomSignalValues": [
+                              "ab"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_string_contains"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_s",
+                            "customSignalOperator": "STRING_DOES_NOT_CONTAIN",
+                            "targetCustomSignalValues": [
+                              "ab"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_string_not_contains"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_s",
+                            "customSignalOperator": "STRING_CONTAINS_REGEX",
+                            "targetCustomSignalValues": [
+                              "^ab$"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_string_regex"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_LESS_THAN",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_lt"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_LESS_EQUAL",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_le"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_EQUAL",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_eq"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_NOT_EQUAL",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_ne"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_GREATER_THAN",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_gt"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_v",
+                            "customSignalOperator": "SEMANTIC_VERSION_GREATER_EQUAL",
+                            "targetCustomSignalValues": [
+                              "1.2.3"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_semver_ge"
+          },
+          {
+            "condition": {
+              "orCondition": {
+                "conditions": [
+                  {
+                    "andCondition": {
+                      "conditions": [
+                        {
+                          "customSignal": {
+                            "customSignalKey": "fireemu_s",
+                            "customSignalOperator": "STRING_EXACTLY_MATCHES",
+                            "targetCustomSignalValues": [
+                              "a"
+                            ]
+                          }
+                        },
+                        {
+                          "percent": {
+                            "microPercent": 50000000,
+                            "percentOperator": "LESS_OR_EQUAL",
+                            "seed": "fireemu_obs"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "fireemu_obs_and"
+          },
+          {
+            "condition": {},
+            "name": "fireemu_obs_or"
+          },
+          {
+            "condition": {},
+            "name": "fireemu_obs_not"
+          },
+          {
+            "condition": {},
+            "name": "fireemu_obs_literal_true"
+          },
+          {
+            "condition": {},
+            "name": "fireemu_obs_literal_false"
+          }
+        ],
+        "parameters": {
+          "fireemu_obs_json": {
+            "conditionalValues": {
+              "fireemu_obs_percent_between": {
+                "value": "{\"a\":2}"
+              }
+            },
+            "defaultValue": {
+              "value": "{\"a\":1}"
+            }
+          },
+          "fireemu_obs_number": {
+            "defaultValue": {
+              "value": "12.5"
+            }
+          },
+          "fireemu_obs_top": {
+            "conditionalValues": {
+              "fireemu_obs_and": {
+                "value": "value-fireemu_obs_and"
+              },
+              "fireemu_obs_literal_false": {
+                "value": "value-fireemu_obs_literal_false"
+              },
+              "fireemu_obs_literal_true": {
+                "value": "value-fireemu_obs_literal_true"
+              },
+              "fireemu_obs_not": {
+                "value": "value-fireemu_obs_not"
+              },
+              "fireemu_obs_numeric_eq": {
+                "value": "value-fireemu_obs_numeric_eq"
+              },
+              "fireemu_obs_numeric_ge": {
+                "value": "value-fireemu_obs_numeric_ge"
+              },
+              "fireemu_obs_numeric_gt": {
+                "value": "value-fireemu_obs_numeric_gt"
+              },
+              "fireemu_obs_numeric_le": {
+                "value": "value-fireemu_obs_numeric_le"
+              },
+              "fireemu_obs_numeric_lt": {
+                "value": "value-fireemu_obs_numeric_lt"
+              },
+              "fireemu_obs_numeric_ne": {
+                "value": "value-fireemu_obs_numeric_ne"
+              },
+              "fireemu_obs_or": {
+                "value": "value-fireemu_obs_or"
+              },
+              "fireemu_obs_percent_between": {
+                "value": "value-fireemu_obs_percent_between"
+              },
+              "fireemu_obs_percent_between_fraction": {
+                "value": "value-fireemu_obs_percent_between_fraction"
+              },
+              "fireemu_obs_percent_greater": {
+                "value": "value-fireemu_obs_percent_greater"
+              },
+              "fireemu_obs_percent_unseeded": {
+                "value": "value-fireemu_obs_percent_unseeded"
+              },
+              "fireemu_obs_semver_eq": {
+                "value": "value-fireemu_obs_semver_eq"
+              },
+              "fireemu_obs_semver_ge": {
+                "value": "value-fireemu_obs_semver_ge"
+              },
+              "fireemu_obs_semver_gt": {
+                "value": "value-fireemu_obs_semver_gt"
+              },
+              "fireemu_obs_semver_le": {
+                "value": "value-fireemu_obs_semver_le"
+              },
+              "fireemu_obs_semver_lt": {
+                "value": "value-fireemu_obs_semver_lt"
+              },
+              "fireemu_obs_semver_ne": {
+                "value": "value-fireemu_obs_semver_ne"
+              },
+              "fireemu_obs_string_contains": {
+                "value": "value-fireemu_obs_string_contains"
+              },
+              "fireemu_obs_string_not_contains": {
+                "value": "value-fireemu_obs_string_not_contains"
+              },
+              "fireemu_obs_string_regex": {
+                "value": "value-fireemu_obs_string_regex"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            }
+          }
+        },
+        "version": {
+          "isLegacy": true,
+          "versionNumber": "21"
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "case": "s3-server-admin",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 6241,
+      "skeletonBytes": 3858,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-21",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') between 10 and 60",
+            "name": "fireemu_obs_percent_between"
+          },
+          {
+            "expression": "percent('fireemu_obs') between 0.5 and 99.25",
+            "name": "fireemu_obs_percent_between_fraction"
+          },
+          {
+            "expression": "percent('fireemu_obs') > 50",
+            "name": "fireemu_obs_percent_greater"
+          },
+          {
+            "expression": "percent <= 50",
+            "name": "fireemu_obs_percent_unseeded"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] < 5",
+            "name": "fireemu_obs_numeric_lt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] <= 5",
+            "name": "fireemu_obs_numeric_le"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] == 5",
+            "name": "fireemu_obs_numeric_eq"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] != 5",
+            "name": "fireemu_obs_numeric_ne"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] > 5",
+            "name": "fireemu_obs_numeric_gt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] >= 5",
+            "name": "fireemu_obs_numeric_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].contains(['ab'])",
+            "name": "fireemu_obs_string_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].notContains(['ab'])",
+            "name": "fireemu_obs_string_not_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].matches(['^ab$'])",
+            "name": "fireemu_obs_string_regex"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) < '1.2.3'",
+            "name": "fireemu_obs_semver_lt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) <= '1.2.3'",
+            "name": "fireemu_obs_semver_le"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) == '1.2.3'",
+            "name": "fireemu_obs_semver_eq"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) != '1.2.3'",
+            "name": "fireemu_obs_semver_ne"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) > '1.2.3'",
+            "name": "fireemu_obs_semver_gt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) >= '1.2.3'",
+            "name": "fireemu_obs_semver_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) && percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_and"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) || percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_or"
+          },
+          {
+            "expression": "!(percent('fireemu_obs') <= 50)",
+            "name": "fireemu_obs_not"
+          },
+          {
+            "expression": "true",
+            "name": "fireemu_obs_literal_true"
+          },
+          {
+            "expression": "false",
+            "name": "fireemu_obs_literal_false"
+          }
+        ],
+        "parameterGroups": {
+          "fireemu_obs_group": {
+            "description": "Fireemu observation group",
+            "parameters": {
+              "fireemu_obs_json": {
+                "conditionalValues": {
+                  "fireemu_obs_percent_between": {
+                    "value": "{\"a\":2}"
+                  }
+                },
+                "defaultValue": {
+                  "value": "{\"a\":1}"
+                },
+                "valueType": "JSON"
+              },
+              "fireemu_obs_number": {
+                "defaultValue": {
+                  "value": "12.5"
+                },
+                "valueType": "NUMBER"
+              }
+            }
+          }
+        },
+        "parameters": {
+          "fireemu_obs_top": {
+            "conditionalValues": {
+              "fireemu_obs_and": {
+                "value": "value-fireemu_obs_and"
+              },
+              "fireemu_obs_literal_false": {
+                "value": "value-fireemu_obs_literal_false"
+              },
+              "fireemu_obs_literal_true": {
+                "value": "value-fireemu_obs_literal_true"
+              },
+              "fireemu_obs_not": {
+                "value": "value-fireemu_obs_not"
+              },
+              "fireemu_obs_numeric_eq": {
+                "value": "value-fireemu_obs_numeric_eq"
+              },
+              "fireemu_obs_numeric_ge": {
+                "value": "value-fireemu_obs_numeric_ge"
+              },
+              "fireemu_obs_numeric_gt": {
+                "value": "value-fireemu_obs_numeric_gt"
+              },
+              "fireemu_obs_numeric_le": {
+                "value": "value-fireemu_obs_numeric_le"
+              },
+              "fireemu_obs_numeric_lt": {
+                "value": "value-fireemu_obs_numeric_lt"
+              },
+              "fireemu_obs_numeric_ne": {
+                "value": "value-fireemu_obs_numeric_ne"
+              },
+              "fireemu_obs_or": {
+                "value": "value-fireemu_obs_or"
+              },
+              "fireemu_obs_percent_between": {
+                "value": "value-fireemu_obs_percent_between"
+              },
+              "fireemu_obs_percent_between_fraction": {
+                "value": "value-fireemu_obs_percent_between_fraction"
+              },
+              "fireemu_obs_percent_greater": {
+                "value": "value-fireemu_obs_percent_greater"
+              },
+              "fireemu_obs_percent_unseeded": {
+                "value": "value-fireemu_obs_percent_unseeded"
+              },
+              "fireemu_obs_semver_eq": {
+                "value": "value-fireemu_obs_semver_eq"
+              },
+              "fireemu_obs_semver_ge": {
+                "value": "value-fireemu_obs_semver_ge"
+              },
+              "fireemu_obs_semver_gt": {
+                "value": "value-fireemu_obs_semver_gt"
+              },
+              "fireemu_obs_semver_le": {
+                "value": "value-fireemu_obs_semver_le"
+              },
+              "fireemu_obs_semver_lt": {
+                "value": "value-fireemu_obs_semver_lt"
+              },
+              "fireemu_obs_semver_ne": {
+                "value": "value-fireemu_obs_semver_ne"
+              },
+              "fireemu_obs_string_contains": {
+                "value": "value-fireemu_obs_string_contains"
+              },
+              "fireemu_obs_string_not_contains": {
+                "value": "value-fireemu_obs_string_not_contains"
+              },
+              "fireemu_obs_string_regex": {
+                "value": "value-fireemu_obs_string_regex"
+              }
+            },
+            "defaultValue": {
+              "value": "default"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "description": "fireemu rc-observe RUN_ID s1",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "21"
+        }
+      }
+    },
+    {
+      "seq": 31,
+      "case": "s4-wildcard",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": "*",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 6177,
+      "skeletonBytes": 3835,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-22",
+      "body": {
+        "conditions": [
+          {
+            "expression": "percent('fireemu_obs') between 10 and 60",
+            "name": "fireemu_obs_percent_between"
+          },
+          {
+            "expression": "percent('fireemu_obs') between 0.5 and 99.25",
+            "name": "fireemu_obs_percent_between_fraction"
+          },
+          {
+            "expression": "percent('fireemu_obs') > 50",
+            "name": "fireemu_obs_percent_greater"
+          },
+          {
+            "expression": "percent <= 50",
+            "name": "fireemu_obs_percent_unseeded"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] < 5",
+            "name": "fireemu_obs_numeric_lt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] <= 5",
+            "name": "fireemu_obs_numeric_le"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] == 5",
+            "name": "fireemu_obs_numeric_eq"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] != 5",
+            "name": "fireemu_obs_numeric_ne"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] > 5",
+            "name": "fireemu_obs_numeric_gt"
+          },
+          {
+            "expression": "app.customSignal['fireemu_n'] >= 5",
+            "name": "fireemu_obs_numeric_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].contains(['ab'])",
+            "name": "fireemu_obs_string_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].notContains(['ab'])",
+            "name": "fireemu_obs_string_not_contains"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].matches(['^ab$'])",
+            "name": "fireemu_obs_string_regex"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) < '1.2.3'",
+            "name": "fireemu_obs_semver_lt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) <= '1.2.3'",
+            "name": "fireemu_obs_semver_le"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) == '1.2.3'",
+            "name": "fireemu_obs_semver_eq"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) != '1.2.3'",
+            "name": "fireemu_obs_semver_ne"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) > '1.2.3'",
+            "name": "fireemu_obs_semver_gt"
+          },
+          {
+            "expression": "version(app.customSignal['fireemu_v']) >= '1.2.3'",
+            "name": "fireemu_obs_semver_ge"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) && percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_and"
+          },
+          {
+            "expression": "app.customSignal['fireemu_s'].exactlyMatches(['a']) || percent('fireemu_obs') <= 50",
+            "name": "fireemu_obs_or"
+          },
+          {
+            "expression": "!(percent('fireemu_obs') <= 50)",
+            "name": "fireemu_obs_not"
+          },
+          {
+            "expression": "true",
+            "name": "fireemu_obs_literal_true"
+          },
+          {
+            "expression": "false",
+            "name": "fireemu_obs_literal_false"
+          }
+        ],
+        "parameterGroups": {
+          "fireemu_obs_group": {
+            "description": "Fireemu observation group",
+            "parameters": {
+              "fireemu_obs_json": {
+                "conditionalValues": {
+                  "fireemu_obs_percent_between": {
+                    "value": "{\"a\":2}"
+                  }
+                },
+                "defaultValue": {
+                  "value": "{\"a\":1}"
+                },
+                "valueType": "JSON"
+              },
+              "fireemu_obs_number": {
+                "defaultValue": {
+                  "value": "12.5"
+                },
+                "valueType": "NUMBER"
+              }
+            }
+          }
+        },
+        "parameters": {
+          "fireemu_obs_top": {
+            "conditionalValues": {
+              "fireemu_obs_and": {
+                "value": "value-fireemu_obs_and"
+              },
+              "fireemu_obs_literal_false": {
+                "value": "value-fireemu_obs_literal_false"
+              },
+              "fireemu_obs_literal_true": {
+                "value": "value-fireemu_obs_literal_true"
+              },
+              "fireemu_obs_not": {
+                "value": "value-fireemu_obs_not"
+              },
+              "fireemu_obs_numeric_eq": {
+                "value": "value-fireemu_obs_numeric_eq"
+              },
+              "fireemu_obs_numeric_ge": {
+                "value": "value-fireemu_obs_numeric_ge"
+              },
+              "fireemu_obs_numeric_gt": {
+                "value": "value-fireemu_obs_numeric_gt"
+              },
+              "fireemu_obs_numeric_le": {
+                "value": "value-fireemu_obs_numeric_le"
+              },
+              "fireemu_obs_numeric_lt": {
+                "value": "value-fireemu_obs_numeric_lt"
+              },
+              "fireemu_obs_numeric_ne": {
+                "value": "value-fireemu_obs_numeric_ne"
+              },
+              "fireemu_obs_or": {
+                "value": "value-fireemu_obs_or"
+              },
+              "fireemu_obs_percent_between": {
+                "value": "value-fireemu_obs_percent_between"
+              },
+              "fireemu_obs_percent_between_fraction": {
+                "value": "value-fireemu_obs_percent_between_fraction"
+              },
+              "fireemu_obs_percent_greater": {
+                "value": "value-fireemu_obs_percent_greater"
+              },
+              "fireemu_obs_percent_unseeded": {
+                "value": "value-fireemu_obs_percent_unseeded"
+              },
+              "fireemu_obs_semver_eq": {
+                "value": "value-fireemu_obs_semver_eq"
+              },
+              "fireemu_obs_semver_ge": {
+                "value": "value-fireemu_obs_semver_ge"
+              },
+              "fireemu_obs_semver_gt": {
+                "value": "value-fireemu_obs_semver_gt"
+              },
+              "fireemu_obs_semver_le": {
+                "value": "value-fireemu_obs_semver_le"
+              },
+              "fireemu_obs_semver_lt": {
+                "value": "value-fireemu_obs_semver_lt"
+              },
+              "fireemu_obs_semver_ne": {
+                "value": "value-fireemu_obs_semver_ne"
+              },
+              "fireemu_obs_string_contains": {
+                "value": "value-fireemu_obs_string_contains"
+              },
+              "fireemu_obs_string_not_contains": {
+                "value": "value-fireemu_obs_string_not_contains"
+              },
+              "fireemu_obs_string_regex": {
+                "value": "value-fireemu_obs_string_regex"
+              }
+            },
+            "defaultValue": {
+              "value": "wildcard"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "22"
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "case": "s5-rollback",
+      "method": "POST",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig:rollback",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-23",
+      "body": {
+        "version": {
+          "description": "Rollback to version 20",
+          "rollbackSource": "20",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "23"
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "case": "s6-server",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-23",
+      "body": {
+        "version": {
+          "description": "Rollback to version 20",
+          "rollbackSource": "20",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "23"
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "case": "c1-publish",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-11",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 364,
+      "skeletonBytes": 292,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-12",
+      "body": {
+        "parameters": {
+          "fireemu_obs_client": {
+            "defaultValue": {
+              "value": "c1"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "12"
+        }
+      }
+    },
+    {
+      "seq": 35,
+      "case": "c2-publish",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-12",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 424,
+      "skeletonBytes": 315,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-13",
+      "body": {
+        "parameters": {
+          "fireemu_obs_client": {
+            "defaultValue": {
+              "value": "c2"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "description": "fireemu rc-observe RUN_ID c2",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "13"
+        }
+      }
+    },
+    {
+      "seq": 36,
+      "case": "c3-publish",
+      "method": "PUT",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-13",
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 424,
+      "skeletonBytes": 315,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-14",
+      "body": {
+        "parameters": {
+          "fireemu_obs_client": {
+            "defaultValue": {
+              "value": "c3"
+            },
+            "valueType": "STRING"
+          }
+        },
+        "version": {
+          "description": "fireemu rc-observe RUN_ID c3",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "14"
+        }
+      }
+    },
+    {
+      "seq": 37,
+      "case": "c4-rollback",
+      "method": "POST",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig:rollback",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-15",
+      "body": {
+        "version": {
+          "description": "Rollback to version 10",
+          "rollbackSource": "10",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "15"
+        }
+      }
+    },
+    {
+      "seq": 38,
+      "case": "c5-client",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-15",
+      "body": {
+        "version": {
+          "description": "Rollback to version 10",
+          "rollbackSource": "10",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "15"
+        }
+      }
+    },
+    {
+      "seq": 39,
+      "case": "h-client-history",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig:listVersions",
+      "query": "pageSize=8",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 2825,
+      "skeletonBytes": 1838,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": null,
+      "body": {
+        "nextPageToken": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-8",
+        "versions": [
+          {
+            "description": "Rollback to version 10",
+            "rollbackSource": "10",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "ROLLBACK",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "15"
+          },
+          {
+            "description": "fireemu rc-observe RUN_ID c3",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "INCREMENTAL_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "14"
+          },
+          {
+            "description": "fireemu rc-observe RUN_ID c2",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "INCREMENTAL_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "13"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "INCREMENTAL_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "12"
+          },
+          {
+            "description": "fireemu rc-observe RUN_ID c0",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "INCREMENTAL_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "11"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "10"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "9"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "8"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 40,
+      "case": "h-server-history",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig:listVersions",
+      "query": "pageSize=8",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 2689,
+      "skeletonBytes": 1788,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": null,
+      "body": {
+        "nextPageToken": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-16",
+        "versions": [
+          {
+            "description": "Rollback to version 20",
+            "rollbackSource": "20",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "ROLLBACK",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "23"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "22"
+          },
+          {
+            "description": "fireemu rc-observe RUN_ID s1",
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "INCREMENTAL_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "21"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "20"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "19"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "18"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "17"
+          },
+          {
+            "updateOrigin": "REST_API",
+            "updateTime": "2026-01-01T00:00:00Z",
+            "updateType": "FORCED_UPDATE",
+            "updateUser": {
+              "email": "user@example.com",
+              "imageUrl": "https://example.com/user.png",
+              "name": "Example User"
+            },
+            "versionNumber": "16"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 41,
+      "case": "g-client",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-15",
+      "body": {
+        "version": {
+          "description": "Rollback to version 10",
+          "rollbackSource": "10",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "15"
+        }
+      }
+    },
+    {
+      "seq": 42,
+      "case": "g-server",
+      "method": "GET",
+      "path": "/v1/projects/PROJECT_ID/namespaces/firebase-server/remoteConfig",
+      "query": "",
+      "ifMatch": null,
+      "phase": "response-persisted",
+      "status": 200,
+      "bodyBytes": 287,
+      "skeletonBytes": 209,
+      "unicodeEscapes": 0,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": "gzip",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-23",
+      "body": {
+        "version": {
+          "description": "Rollback to version 20",
+          "rollbackSource": "20",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com"
+          },
+          "versionNumber": "23"
+        }
+      }
+    }
+  ],
+  "versions": [
+    {
+      "namespace": "client",
+      "step": "c0",
+      "versionNumber": "11",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "INCREMENTAL_UPDATE",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-11"
+    },
+    {
+      "namespace": "server",
+      "step": "s1",
+      "versionNumber": "21",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "INCREMENTAL_UPDATE",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-21"
+    },
+    {
+      "namespace": "server",
+      "step": "s4",
+      "versionNumber": "22",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "FORCED_UPDATE",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-22"
+    },
+    {
+      "namespace": "server",
+      "step": "s5",
+      "versionNumber": "23",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "ROLLBACK",
+      "etag": "etag-fireemu-9f167c70280fff3dfef2455310cbd437-23"
+    },
+    {
+      "namespace": "client",
+      "step": "c1",
+      "versionNumber": "12",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "INCREMENTAL_UPDATE",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-12"
+    },
+    {
+      "namespace": "client",
+      "step": "c2",
+      "versionNumber": "13",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "INCREMENTAL_UPDATE",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-13"
+    },
+    {
+      "namespace": "client",
+      "step": "c3",
+      "versionNumber": "14",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "INCREMENTAL_UPDATE",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-14"
+    },
+    {
+      "namespace": "client",
+      "step": "c4",
+      "versionNumber": "15",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "updateType": "ROLLBACK",
+      "etag": "etag-fireemu-9dd903d51e26654f04af1559a8de0839-15"
+    }
+  ],
+  "events": [
+    {
+      "generation": 2,
+      "order": 0,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-60804061",
+      "versionNumber": "1",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "1"
+      },
+      "context": {
+        "id": "-60804061",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-60804061",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "1"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 1,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-60804061",
+      "versionNumber": "1",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "1"
+      },
+      "context": {
+        "eventId": "-60804061",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 2,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1580842736",
+      "versionNumber": "2",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "2"
+      },
+      "context": {
+        "id": "1580842736",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "1580842736",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "2"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 3,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1580842736",
+      "versionNumber": "2",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "2"
+      },
+      "context": {
+        "eventId": "1580842736",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 4,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1192157055",
+      "versionNumber": "3",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "3"
+      },
+      "context": {
+        "id": "-1192157055",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-1192157055",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "3"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 5,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1192157055",
+      "versionNumber": "3",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "3"
+      },
+      "context": {
+        "eventId": "-1192157055",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 6,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "445295446",
+      "versionNumber": "4",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "4"
+      },
+      "context": {
+        "id": "445295446",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "445295446",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "4"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 7,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "445295446",
+      "versionNumber": "4",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "4"
+      },
+      "context": {
+        "eventId": "445295446",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 8,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1967271399",
+      "versionNumber": "5",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "5"
+      },
+      "context": {
+        "id": "1967271399",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "1967271399",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "5"
+        }
+      }
+    },
+    {
+      "generation": 2,
+      "order": 9,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-686057548",
+      "versionNumber": "6",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "6"
+      },
+      "context": {
+        "id": "-686057548",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-686057548",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "6"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 10,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1967271399",
+      "versionNumber": "5",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "5"
+      },
+      "context": {
+        "eventId": "1967271399",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 1,
+      "order": 11,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-686057548",
+      "versionNumber": "6",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "6"
+      },
+      "context": {
+        "eventId": "-686057548",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 1,
+      "order": 12,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "835919429",
+      "versionNumber": "7",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "7"
+      },
+      "context": {
+        "eventId": "835919429",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 13,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "835919429",
+      "versionNumber": "7",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "7"
+      },
+      "context": {
+        "id": "835919429",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "835919429",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "7"
+        }
+      }
+    },
+    {
+      "generation": 2,
+      "order": 14,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1813217254",
+      "versionNumber": "8",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "8"
+      },
+      "context": {
+        "id": "-1813217254",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-1813217254",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "8"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 15,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1813217254",
+      "versionNumber": "8",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "8"
+      },
+      "context": {
+        "eventId": "-1813217254",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 16,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-308016469",
+      "versionNumber": "9",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "9"
+      },
+      "context": {
+        "id": "-308016469",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-308016469",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "9"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 17,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-308016469",
+      "versionNumber": "9",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "9"
+      },
+      "context": {
+        "eventId": "-308016469",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 18,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1283296632",
+      "versionNumber": "10",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "10"
+      },
+      "context": {
+        "id": "1283296632",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "1283296632",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "FORCED_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "10"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 19,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1283296632",
+      "versionNumber": "10",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "FORCED_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "10"
+      },
+      "context": {
+        "eventId": "1283296632",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 20,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1372227831",
+      "versionNumber": "11",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "fireemu rc-observe RUN_ID c0",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "11"
+      },
+      "context": {
+        "id": "-1372227831",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-1372227831",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "fireemu rc-observe RUN_ID c0",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "11"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 21,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-1372227831",
+      "versionNumber": "11",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "description": "fireemu rc-observe RUN_ID c0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "11"
+      },
+      "context": {
+        "eventId": "-1372227831",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 22,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "147782110",
+      "versionNumber": "12",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "12"
+      },
+      "context": {
+        "id": "147782110",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "147782110",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "12"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 23,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "147782110",
+      "versionNumber": "12",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "12"
+      },
+      "context": {
+        "eventId": "147782110",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 24,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1787191407",
+      "versionNumber": "13",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "fireemu rc-observe RUN_ID c2",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "13"
+      },
+      "context": {
+        "id": "1787191407",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "1787191407",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "fireemu rc-observe RUN_ID c2",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "13"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 25,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "1787191407",
+      "versionNumber": "13",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "description": "fireemu rc-observe RUN_ID c2",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "13"
+      },
+      "context": {
+        "eventId": "1787191407",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 26,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-983569860",
+      "versionNumber": "14",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "fireemu rc-observe RUN_ID c3",
+        "rollbackSource": "0",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "14"
+      },
+      "context": {
+        "id": "-983569860",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "-983569860",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "fireemu rc-observe RUN_ID c3",
+          "rollbackSource": "0",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "INCREMENTAL_UPDATE",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "14"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 27,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "-983569860",
+      "versionNumber": "14",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "description": "fireemu rc-observe RUN_ID c3",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "14"
+      },
+      "context": {
+        "eventId": "-983569860",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    },
+    {
+      "generation": 2,
+      "order": 28,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "655846605",
+      "versionNumber": "15",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+        "description": "Rollback to version 10",
+        "rollbackSource": "10",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "ROLLBACK",
+        "updateUser": {
+          "email": "user@example.com",
+          "imageUrl": "",
+          "name": ""
+        },
+        "versionNumber": "15"
+      },
+      "context": {
+        "id": "655846605",
+        "project": "PROJECT_ID",
+        "source": "//firebaseremoteconfig.googleapis.com/projects/PROJECT_ID",
+        "specversion": "1.0",
+        "time": "2026-01-01T00:00:00Z",
+        "type": "google.firebase.remoteconfig.remoteConfig.v1.updated",
+        "context": {
+          "eventId": "655846605",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "eventType": "google.firebase.remoteconfig.update",
+          "resource": {
+            "service": "firebaseremoteconfig.googleapis.com",
+            "name": ""
+          },
+          "params": {}
+        },
+        "version": {
+          "@type": "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData",
+          "description": "Rollback to version 10",
+          "rollbackSource": "10",
+          "updateOrigin": "REST_API",
+          "updateTime": "2026-01-01T00:00:00Z",
+          "updateType": "ROLLBACK",
+          "updateUser": {
+            "email": "user@example.com",
+            "imageUrl": "",
+            "name": ""
+          },
+          "versionNumber": "15"
+        }
+      }
+    },
+    {
+      "generation": 1,
+      "order": 29,
+      "receivedAt": null,
+      "logTimestamp": null,
+      "eventId": "655846605",
+      "versionNumber": "15",
+      "updateTime": "2026-01-01T00:00:00Z",
+      "data": {
+        "description": "Rollback to version 10",
+        "rollbackSource": "10",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:00:00Z",
+        "updateType": "ROLLBACK",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "15"
+      },
+      "context": {
+        "eventId": "655846605",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:00:00Z",
+        "params": {}
+      }
+    }
+  ],
+  "summary": {
+    "versionRangesOverlap": false,
+    "logTruncated": false,
+    "generations": {
+      "1": {
+        "events": 15,
+        "unmatched": 10,
+        "ambiguous": 0,
+        "clientSteps": [
+          "c0",
+          "c1",
+          "c2",
+          "c3",
+          "c4"
+        ],
+        "serverSteps": [],
+        "serverDelivery": "none-within-window",
+        "logComplete": true,
+        "duplicates": [],
+        "inPublicationOrder": true,
+        "typeValues": [],
+        "projectValues": [],
+        "descriptionWithout": [
+          {
+            "present": false
+          }
+        ],
+        "updateUserKeys": [
+          "[\"email\"]"
+        ],
+        "updateUserEqualsHistory": true
+      },
+      "2": {
+        "events": 15,
+        "unmatched": 10,
+        "ambiguous": 0,
+        "clientSteps": [
+          "c0",
+          "c1",
+          "c2",
+          "c3",
+          "c4"
+        ],
+        "serverSteps": [],
+        "serverDelivery": "none-within-window",
+        "logComplete": true,
+        "duplicates": [],
+        "inPublicationOrder": true,
+        "typeValues": [
+          "type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData"
+        ],
+        "projectValues": [
+          "PROJECT_ID"
+        ],
+        "descriptionWithout": [
+          {
+            "present": true,
+            "value": ""
+          }
+        ],
+        "updateUserKeys": [
+          "[\"email\",\"imageUrl\",\"name\"]"
+        ],
+        "updateUserEqualsHistory": true
+      }
+    },
+    "historyUpdateUserKeys": {
+      "client": [
+        "[\"email\",\"imageUrl\",\"name\"]"
+      ],
+      "server": [
+        "[\"email\",\"imageUrl\",\"name\"]"
+      ]
+    },
+    "dataPlane": {
+      "conditions": [
+        {
+          "name": "fireemu_obs_percent_between",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "percent": {
+                          "microPercentRange": {
+                            "microPercentLowerBound": "number",
+                            "microPercentUpperBound": "number"
+                          },
+                          "percentOperator": "string:BETWEEN",
+                          "seed": "string:fireemu_obs"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_percent_between_fraction",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "percent": {
+                          "microPercentRange": {
+                            "microPercentLowerBound": "number",
+                            "microPercentUpperBound": "number"
+                          },
+                          "percentOperator": "string:BETWEEN",
+                          "seed": "string:fireemu_obs"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_percent_greater",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "percent": {
+                          "microPercent": "number",
+                          "percentOperator": "string:GREATER_THAN",
+                          "seed": "string:fireemu_obs"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_percent_unseeded",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "percent": {
+                          "microPercent": "number",
+                          "percentOperator": "string:LESS_OR_EQUAL"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_lt",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_LESS_THAN",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_le",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_LESS_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_eq",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_ne",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_NOT_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_gt",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_GREATER_THAN",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_numeric_ge",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_n",
+                          "customSignalOperator": "string:NUMERIC_GREATER_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:5"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_string_contains",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_s",
+                          "customSignalOperator": "string:STRING_CONTAINS",
+                          "targetCustomSignalValues": [
+                            "string:ab"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_string_not_contains",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_s",
+                          "customSignalOperator": "string:STRING_DOES_NOT_CONTAIN",
+                          "targetCustomSignalValues": [
+                            "string:ab"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_string_regex",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_s",
+                          "customSignalOperator": "string:STRING_CONTAINS_REGEX",
+                          "targetCustomSignalValues": [
+                            "string:^ab$"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_lt",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_LESS_THAN",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_le",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_LESS_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_eq",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_ne",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_NOT_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_gt",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_GREATER_THAN",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_semver_ge",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_v",
+                          "customSignalOperator": "string:SEMANTIC_VERSION_GREATER_EQUAL",
+                          "targetCustomSignalValues": [
+                            "string:1.2.3"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_and",
+          "shape": {
+            "orCondition": {
+              "conditions": [
+                {
+                  "andCondition": {
+                    "conditions": [
+                      {
+                        "customSignal": {
+                          "customSignalKey": "string:fireemu_s",
+                          "customSignalOperator": "string:STRING_EXACTLY_MATCHES",
+                          "targetCustomSignalValues": [
+                            "string:a"
+                          ]
+                        }
+                      },
+                      {
+                        "percent": {
+                          "microPercent": "number",
+                          "percentOperator": "string:LESS_OR_EQUAL",
+                          "seed": "string:fireemu_obs"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "fireemu_obs_or",
+          "shape": {}
+        },
+        {
+          "name": "fireemu_obs_not",
+          "shape": {}
+        },
+        {
+          "name": "fireemu_obs_literal_true",
+          "shape": {}
+        },
+        {
+          "name": "fireemu_obs_literal_false",
+          "shape": {}
+        }
+      ],
+      "parameterGroups": null,
+      "groupParameters": {}
+    },
+    "wildcard": {
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    "validations": [
+      {
+        "name": "fireemu_obs_percent_between",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_percent_between_fraction",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_percent_greater",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_percent_unseeded",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_lt",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_le",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_eq",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_ne",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_gt",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_numeric_ge",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_string_contains",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_string_not_contains",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_string_regex",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_lt",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_le",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_eq",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_ne",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_gt",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_semver_ge",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_and",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_or",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_not",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_literal_true",
+        "status": 200,
+        "error": null,
+        "message": null
+      },
+      {
+        "name": "fireemu_obs_literal_false",
+        "status": 200,
+        "error": null,
+        "message": null
+      }
+    ],
+    "open": []
+  }
+}

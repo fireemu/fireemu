@@ -3,6 +3,7 @@
   "ignorePatterns": [
     "node_modules",
     "fixtures",
+    "remote-config-production/*.json",
     "hosting-fixtures",
     ".runs",
     "pnpm-lock.yaml",

@@ -1,0 +1,255 @@
+// The committed Remote Config observation fixtures, their comparisons and the check that binds them.
+//
+//   node src/remote-config-production/evidence.mjs write --production <run dir>
+//     --local-strict <run dir> --local-emulator <run dir>
+//       sanitises the three runs into conformance/remote-config-production/ (new files only), writes
+//       the two comparisons, and prints the sha256 of each file for PINS
+//   node src/remote-config-production/evidence.mjs check [--rev <git revision>] [--repo <dir>]
+//       verifies the files of the revision (default HEAD) of the repository (default this one),
+//       read as git blobs
+//
+// The check reads every input from git objects, never from the working tree: the directory listing
+// must be exactly the pinned files (no extra and no missing file), each file must have its pinned
+// sha256, every fixture must be a complete, fully answered and sanitised run whose rows are exactly
+// the cases of the plan (CASES, in order), and each comparison
+// must equal the comparison recomputed from the pinned fixtures and the pinned known differences.
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+
+import { compareRuns } from "./judge.mjs";
+import { PLACEHOLDERS, readRun, sanitiseRun } from "./sanitise.mjs";
+
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+export const DIR = "conformance/remote-config-production";
+export const KNOWN = "conformance/src/remote-config-production/known-differences.json";
+
+/** The RC-OBSERVE-V2-3 recording (2026-11-24) and two local runs of the same recorder plan. */
+export const FILES = {
+  production: `${DIR}/observe-v23-production.json`,
+  localStrict: `${DIR}/observe-v23-local-strict.json`,
+  localEmulator: `${DIR}/observe-v23-local-emulator.json`,
+  strict: `${DIR}/observe-v23-strict-vs-production.json`,
+  emulator: `${DIR}/observe-v23-emulator-vs-production.json`,
+};
+
+/** The closed table: every file of DIR, and the known differences, with its sha256. */
+export const PINS = {
+  [FILES.production]: "be64286d41de670bf2438e5a7d740acf9a6a4550c3c90812f69b3d169f744a75",
+  [FILES.localStrict]: "53fd7f5441bdbc80a5449f10835ab2114817fa5dfe2b1e92e1bbe83fee3e8e26",
+  [FILES.localEmulator]: "2064f4d9daabdb79f03ee2caf6bd400a0042604036f29fe32c0f083abcc4072f",
+  [FILES.strict]: "479386cf1823e1a100b08a25dd184b9cd2ce9d888d9cf1fe2670cdf0f509bed1",
+  [FILES.emulator]: "ace07771f2b59cdb3926c05a174e612cc662fd3fdb7a26501dd140068e3dc8bf",
+  [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
+};
+
+/** The closed list of cases of the recorder plan, in request order. */
+export const CASES = [
+  "a-client",
+  "a-server",
+  "c0-publish",
+  ...Array.from({ length: 24 }, (_, i) => `s-validate-${String(i).padStart(2, "0")}`),
+  "s1-publish",
+  "s2-data-plane",
+  "s3-server-admin",
+  "s4-wildcard",
+  "s5-rollback",
+  "s6-server",
+  "c1-publish",
+  "c2-publish",
+  "c3-publish",
+  "c4-rollback",
+  "c5-client",
+  "h-client-history",
+  "h-server-history",
+  "g-client",
+  "g-server",
+];
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+/** The comparison document of one local profile against the production fixture. */
+export function comparison({ profile, production, local, known }) {
+  const entries = JSON.parse(known.bytes).entries;
+  const result = compareRuns(JSON.parse(production.bytes), JSON.parse(local.bytes), {
+    known: entries,
+    kind: "production-vs-local",
+  });
+  return {
+    kind: "remote-config-comparison-v1",
+    comparison: "production-vs-local",
+    profile,
+    inputs: {
+      production: sha256(production.bytes),
+      local: sha256(local.bytes),
+      knownDifferences: sha256(known.bytes),
+    },
+    knownDifferences: entries
+      .filter((entry) => entry.appliesTo.includes("production-vs-local"))
+      .map((entry) => ({
+        id: entry.id,
+        rows: result.rows.filter((row) => row.knownDifferences.includes(entry.id)).length,
+      })),
+    counts: result.counts,
+    rows: result.rows,
+  };
+}
+
+const render = (value) => JSON.stringify(value, null, 2) + "\n";
+
+/** Problems of one fixture: incomplete, unanswered rows, or a value that is not sanitised. */
+export function fixtureProblems(name, bytes, target) {
+  const problems = [];
+  let fixture;
+  try {
+    fixture = JSON.parse(bytes);
+  } catch {
+    return [`${name}: not JSON`];
+  }
+  if (fixture.kind !== "remote-config-observation-rows") problems.push(`${name}: wrong kind`);
+  if (fixture.target !== target) problems.push(`${name}: target is not ${target}`);
+  if (fixture.complete !== true) problems.push(`${name}: the run was not complete`);
+  if (!Array.isArray(fixture.open) || fixture.open.length)
+    problems.push(`${name}: the run left open items`);
+  for (const row of fixture.rows ?? [])
+    if (row.phase !== "response-persisted" || typeof row.status !== "number")
+      problems.push(`${name}: ${row.case} is not an answered row`);
+  const cases = Array.isArray(fixture.rows) ? fixture.rows.map((row) => row.case) : [];
+  if (!isDeepStrictEqual(cases, CASES))
+    problems.push(`${name}: the rows are not the cases of the plan`);
+  const text = bytes.toString("utf8");
+  if (/etag-[0-9]{5,}-/.test(text)) problems.push(`${name}: a numeric ETag`);
+  if (/[0-9]{11,}/.test(text)) problems.push(`${name}: a number of 11 or more digits`);
+  const emails =
+    text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? [];
+  if (emails.some((email) => email !== PLACEHOLDERS.email))
+    problems.push(`${name}: an e-mail address`);
+  for (const match of text.matchAll(/projects\/([^/"\\?]+)/g))
+    if (match[1] !== PLACEHOLDERS.project)
+      problems.push(`${name}: a project id other than ${PLACEHOLDERS.project}`);
+  return problems;
+}
+
+/**
+ * Verifies the evidence. `list(dir)` returns the file names of a directory and `read(path)` the
+ * bytes of a file (or null), both of one git revision. Returns the list of problems (empty: valid).
+ */
+export function verifyEvidence({ list, read, pins = PINS }) {
+  const problems = [];
+  const listed = list(DIR)
+    .map((name) => `${DIR}/${name}`)
+    .toSorted();
+  const pinned = Object.keys(pins)
+    .filter((path) => path.startsWith(`${DIR}/`))
+    .toSorted();
+  for (const path of listed) if (!pinned.includes(path)) problems.push(`${path}: not pinned`);
+  for (const path of pinned)
+    if (!listed.includes(path)) problems.push(`${path}: pinned but absent`);
+  const files = {};
+  for (const [path, digest] of Object.entries(pins)) {
+    const bytes = read(path);
+    if (bytes === null) {
+      problems.push(`${path}: unreadable`);
+      continue;
+    }
+    if (sha256(bytes) !== digest) problems.push(`${path}: sha256 differs from its pin`);
+    files[path] = { bytes };
+  }
+  if (problems.length) return problems;
+  problems.push(...fixtureProblems(FILES.production, files[FILES.production].bytes, "production"));
+  problems.push(...fixtureProblems(FILES.localStrict, files[FILES.localStrict].bytes, "local"));
+  problems.push(...fixtureProblems(FILES.localEmulator, files[FILES.localEmulator].bytes, "local"));
+  for (const [profile, local, path] of [
+    ["strict", FILES.localStrict, FILES.strict],
+    ["emulator", FILES.localEmulator, FILES.emulator],
+  ]) {
+    const expected = comparison({
+      profile,
+      production: files[FILES.production],
+      local: files[local],
+      known: files[KNOWN],
+    });
+    let committed;
+    try {
+      committed = JSON.parse(files[path].bytes);
+    } catch {
+      problems.push(`${path}: not JSON`);
+      continue;
+    }
+    if (!isDeepStrictEqual(committed, expected))
+      problems.push(`${path}: differs from the recomputed comparison`);
+  }
+  return problems;
+}
+
+/** git-object readers for one revision. */
+export function gitReaders(rev = "HEAD", cwd = ROOT) {
+  const git = (args) => execFileSync("git", ["-C", cwd, ...args], { maxBuffer: 64 * 1024 * 1024 });
+  return {
+    list: (dir) =>
+      git(["ls-tree", "--name-only", `${rev}:${dir}`])
+        .toString("utf8")
+        .split("\n")
+        .filter(Boolean),
+    read: (path) => {
+      try {
+        return git(["cat-file", "blob", `${rev}:${path}`]);
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+function write(args) {
+  const outputs = [
+    FILES.production,
+    FILES.localStrict,
+    FILES.localEmulator,
+    FILES.strict,
+    FILES.emulator,
+  ];
+  for (const path of outputs) if (existsSync(join(ROOT, path))) throw new Error(`${path} exists`);
+  const bytes = {};
+  for (const [path, dir] of [
+    [FILES.production, args.production],
+    [FILES.localStrict, args["local-strict"]],
+    [FILES.localEmulator, args["local-emulator"]],
+  ])
+    bytes[path] = Buffer.from(render(sanitiseRun(readRun(dir))));
+  const known = { bytes: readFileSync(join(ROOT, KNOWN)) };
+  for (const [profile, local, path] of [
+    ["strict", FILES.localStrict, FILES.strict],
+    ["emulator", FILES.localEmulator, FILES.emulator],
+  ])
+    bytes[path] = Buffer.from(
+      render(
+        comparison({
+          profile,
+          production: { bytes: bytes[FILES.production] },
+          local: { bytes: bytes[local] },
+          known,
+        }),
+      ),
+    );
+  mkdirSync(join(ROOT, DIR), { recursive: true });
+  for (const path of outputs) writeFileSync(join(ROOT, path), bytes[path], { flag: "wx" });
+  for (const path of [...outputs, KNOWN])
+    console.log(`${path} ${sha256(readFileSync(join(ROOT, path)))}`);
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const [command, ...rest] = process.argv.slice(2);
+  const args = {};
+  for (let i = 0; i < rest.length; i += 2) args[rest[i].replace(/^--/, "")] = rest[i + 1];
+  if (command === "write") write(args);
+  else if (command === "check") {
+    const problems = verifyEvidence(gitReaders(args.rev ?? "HEAD", args.repo ?? ROOT));
+    for (const problem of problems) console.error(problem);
+    process.exitCode = problems.length ? 1 : 0;
+    if (!problems.length) console.log("remote-config-production evidence: valid");
+  } else throw new Error("usage: evidence.mjs write ... | check [--rev <revision>]");
+}
