@@ -103,9 +103,15 @@ const PubSubScope: Component<{ project: string }> = (props) => {
           setError(t("pubsub.attributesInvalid"));
           return;
         }
-        attributes = Object.fromEntries(
-          Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
-        );
+        const attrs: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          if (typeof v !== "string") {
+            setError(t("pubsub.attributesInvalid"));
+            return;
+          }
+          attrs[k] = v;
+        }
+        attributes = attrs;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         return;
@@ -530,8 +536,12 @@ const PubSubScope: Component<{ project: string }> = (props) => {
                     value={effectiveSubTopic()}
                     onChange={(e) => setNewSubTopic(e.currentTarget.value)}
                   >
-                    <For each={topics()}>
-                      {(topic) => <option value={topic.name}>{shortPubSubName(topic.name)}</option>}
+                    <For each={topics().map((item) => item.name)}>
+                      {(name) => (
+                        <option value={name} selected={name === effectiveSubTopic()}>
+                          {shortPubSubName(name)}
+                        </option>
+                      )}
                     </For>
                   </select>
                 </label>
@@ -756,9 +766,11 @@ const PubSubScope: Component<{ project: string }> = (props) => {
                             value={effectiveSeekSnap()}
                             onChange={(e) => setSeekTargetSnap(e.currentTarget.value)}
                           >
-                            <For each={snaps()}>
-                              {(snap) => (
-                                <option value={snap.name}>{shortPubSubName(snap.name)}</option>
+                            <For each={snaps().map((item) => item.name)}>
+                              {(name) => (
+                                <option value={name} selected={name === effectiveSeekSnap()}>
+                                  {shortPubSubName(name)}
+                                </option>
                               )}
                             </For>
                           </select>
@@ -865,8 +877,12 @@ const PubSubScope: Component<{ project: string }> = (props) => {
                     value={effectiveSnapSub()}
                     onChange={(e) => setNewSnapSub(e.currentTarget.value)}
                   >
-                    <For each={subs()}>
-                      {(sub) => <option value={sub.name}>{shortPubSubName(sub.name)}</option>}
+                    <For each={subs().map((item) => item.name)}>
+                      {(name) => (
+                        <option value={name} selected={name === effectiveSnapSub()}>
+                          {shortPubSubName(name)}
+                        </option>
+                      )}
                     </For>
                   </select>
                 </label>

@@ -307,7 +307,10 @@ const CollectionList: Component<{
   db: string;
   version: number;
   testId: string;
+  activeId?: string | undefined;
+  asButtons?: boolean | undefined;
 }> = (props) => {
+  const navigate = useNavigate();
   const list = createPagedList((token) =>
     listCollectionIds(props.root, props.parent, token).map((page) => ({
       items: page.collectionIds ?? [],
@@ -338,16 +341,31 @@ const CollectionList: Component<{
     >
       <ul class="mono space-y-1" data-testid={props.testId}>
         <For each={list.items()}>
-          {(id) => (
-            <li>
-              <A
-                href={firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db)}
-                class="link"
-              >
-                {id}
-              </A>
-            </li>
-          )}
+          {(id) => {
+            const href = () => firestoreHref(props.parent ? `${props.parent}/${id}` : id, props.db);
+            return (
+              <li>
+                <Show
+                  when={props.asButtons}
+                  fallback={
+                    <A href={href()} class="link">
+                      {id}
+                    </A>
+                  }
+                >
+                  <button
+                    type="button"
+                    class="link w-full truncate text-left"
+                    classList={{ "font-semibold text-accent": props.activeId === id }}
+                    aria-current={props.activeId === id ? "page" : undefined}
+                    onClick={() => navigate(href())}
+                  >
+                    {id}
+                  </button>
+                </Show>
+              </li>
+            );
+          }}
         </For>
       </ul>
       <Show when={list.nextToken()}>
@@ -585,6 +603,7 @@ const DocumentView: Component<{
   const [editing, setEditing] = createSignal(false);
   const [editMode, setEditMode] = createSignal<"fields" | "json">("fields");
   const [jsonDraft, setJsonDraft] = createSignal("{}");
+  const [jsonBaseline, setJsonBaseline] = createSignal<Record<string, FsValue>>({});
   const [fields, setFields] = createFieldsStore([]);
   const [duplicating, setDuplicating] = createSignal(false);
   const [duplicateId, setDuplicateId] = createSignal("");
@@ -624,7 +643,7 @@ const DocumentView: Component<{
     ) ?? null;
   const parsedCurrentEdit = (root: string, original?: Record<string, FsValue>) =>
     editMode() === "json"
-      ? plainJsonToFsFields(jsonDraft(), original).mapErr((message) => ({
+      ? plainJsonToFsFields(jsonDraft(), jsonBaseline() ?? original).mapErr((message) => ({
           field: "JSON",
           message,
         }))
@@ -661,6 +680,7 @@ const DocumentView: Component<{
     editGeneration += 1;
     editOperation += 1;
     setFields(toEditable(original));
+    setJsonBaseline(original);
     setJsonDraft(JSON.stringify(fsFieldsToPlainJson(original), null, 2));
     setEditMode("fields");
     setEditSession({
@@ -685,10 +705,11 @@ const DocumentView: Component<{
         );
         return;
       }
+      setJsonBaseline(parsed.value);
       setJsonDraft(JSON.stringify(fsFieldsToPlainJson(parsed.value), null, 2));
       setEditMode("json");
     } else {
-      const parsed = plainJsonToFsFields(jsonDraft(), session.fields);
+      const parsed = plainJsonToFsFields(jsonDraft(), jsonBaseline());
       if (parsed.isErr()) {
         setError(parsed.error);
         return;
@@ -813,6 +834,7 @@ const DocumentView: Component<{
     });
     const merged = applyFieldDiff(latest.fields ?? {}, draftChanges);
     setFields(toEditable(merged));
+    setJsonBaseline(merged);
     setJsonDraft(JSON.stringify(fsFieldsToPlainJson(merged), null, 2));
     setConflict(false);
     setError(null);
@@ -1586,6 +1608,8 @@ const Firestore: Component = () => {
               parent=""
               db={db()}
               version={collectionVersion()}
+              activeId={path().split("/")[0]}
+              asButtons
               testId="collections-rail"
             />
           </aside>

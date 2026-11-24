@@ -87,6 +87,9 @@
   --fe-line-lg: 1.625rem;
   --fe-line-xl: 1.875rem;
   --fe-line-2xl: 2.125rem;
+  --fe-line-tight: 1.35;
+  --fe-line-normal: 1.5;
+  --fe-line-relaxed: 1.6;
   --fe-weight-regular: 400;
   --fe-weight-medium: 500;
   --fe-weight-semibold: 600;

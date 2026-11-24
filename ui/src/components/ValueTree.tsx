@@ -115,7 +115,7 @@ const Row: Component<RowProps> = (props) => {
                 type="button"
                 class="btn btn-sm"
                 title={t("firestore.copyValue")}
-                aria-label={`${t("firestore.copyValue")} ${props.fieldPath}`}
+                aria-label={`${t("app.copy")} ${props.fieldPath}`}
                 onClick={() => copyText("val", props.node.reference ?? props.node.preview)}
               >
                 {copied() === "val" ? t("app.copied") : t("app.copy")}
@@ -135,7 +135,7 @@ const Row: Component<RowProps> = (props) => {
                 type="button"
                 class="btn btn-sm"
                 title={t("firestore.filterByValue")}
-                aria-label={`${t("firestore.filterByValue")} ${props.fieldPath}`}
+                aria-label={`Query ${props.fieldPath}`}
                 onClick={() => props.onFilterValue?.(props.fieldPath, props.node)}
               >
                 {t("firestore.filterByValue")}

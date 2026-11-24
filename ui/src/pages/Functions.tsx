@@ -28,7 +28,7 @@ import {
   StatusBadge,
 } from "../components/common";
 import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
-import { listUsers, signInWithCustomToken, type UserInfo } from "../api/auth";
+import { listUsers, mintIdToken, type UserInfo } from "../api/auth";
 import { awaitIdle, publishMessage, runSchedule, runTasks, setClock } from "../api/control";
 import { errorOf, settle } from "../api/client";
 import {
@@ -233,6 +233,8 @@ const InvokeForm: Component<{
   const [appCheckToken, setAppCheckToken] = createSignal("");
   const [authUsers, setAuthUsers] = createSignal<UserInfo[] | null>(null);
   const [pickedUid, setPickedUid] = createSignal("");
+  const [tokenExchanging, setTokenExchanging] = createSignal(false);
+  let tokenExchangeSeq = 0;
   const [method, setMethod] = createSignal("POST");
   const [path, setPath] = createSignal("");
   const [query, setQuery] = createSignal("");
@@ -294,6 +296,7 @@ const InvokeForm: Component<{
   };
 
   const send = async () => {
+    props.onError("");
     const built = callable()
       ? buildCallableInvoke({
           data: data(),
@@ -407,15 +410,27 @@ const InvokeForm: Component<{
             onClick={() => void loadAuthUsers()}
             onChange={(e) => {
               const uid = e.currentTarget.value;
+              const seq = ++tokenExchangeSeq;
               setPickedUid(uid);
+              setAuthToken("");
               if (!uid) {
-                setAuthToken("");
+                setTokenExchanging(false);
                 return;
               }
+              setTokenExchanging(true);
               const project = props.project ?? appState.project();
-              void signInWithCustomToken(project, uid, appState.clock()).match(
-                (res) => setAuthToken(res.idToken),
-                (err) => props.onError(err.message),
+              void mintIdToken(project, uid).match(
+                (res) => {
+                  if (seq !== tokenExchangeSeq) return;
+                  setTokenExchanging(false);
+                  setAuthToken(res.idToken);
+                },
+                (err) => {
+                  if (seq !== tokenExchangeSeq) return;
+                  setTokenExchanging(false);
+                  setAuthToken("");
+                  props.onError(err.message);
+                },
               );
             }}
           >
@@ -435,6 +450,8 @@ const InvokeForm: Component<{
             class="input mono"
             value={authToken()}
             onInput={(e) => {
+              tokenExchangeSeq += 1;
+              setTokenExchanging(false);
               setPickedUid("");
               setAuthToken(e.currentTarget.value);
             }}
@@ -450,7 +467,12 @@ const InvokeForm: Component<{
         </label>
       </Show>
       <div class="mt-3 flex flex-wrap items-center gap-2">
-        <AsyncButton class="btn btn-primary" onClick={send} testId={`invoke-${props.f.name}-send`}>
+        <AsyncButton
+          class="btn btn-primary"
+          disabled={tokenExchanging()}
+          onClick={send}
+          testId={`invoke-${props.f.name}-send`}
+        >
           {t("functions.invokeSend")}
         </AsyncButton>
         <CopyButton
@@ -1164,18 +1186,23 @@ const Functions: Component = () => {
       return action;
     });
   };
-  createEffect(() => {
-    if (!drawer() || !drawerFunction()) return;
-    queueMicrotask(() => drawerCloseBtn?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeDrawer(true);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
-  });
+  const openDrawerKey = createMemo(() =>
+    drawer() && drawerFunction() ? `${drawer()!.kind}:${drawer()!.key}` : null,
+  );
+  createEffect(
+    on(openDrawerKey, (key) => {
+      if (!key) return;
+      queueMicrotask(() => drawerCloseBtn?.focus());
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeDrawer(true);
+        }
+      };
+      window.addEventListener("keydown", onKeyDown);
+      onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+    }),
+  );
   return (
     <div>
       <h1 class="page-title mb-4">{t("functions.title")}</h1>
@@ -1251,58 +1278,55 @@ const Functions: Component = () => {
             >
               {o()?.source ?? ""}
             </p>
-            <div class="table-scroll">
-              <table class="table" data-testid="function-table">
-                <thead>
-                  <tr>
-                    <th>{t("functions.name")}</th>
-                    <th>{t("functions.region")}</th>
-                    <th>{t("functions.runtime")}</th>
-                    <th>{t("functions.trigger")}</th>
-                    <th>{t("functions.timeout")}</th>
-                    <th>{t("functions.retry")}</th>
-                    <th>{t("functions.concurrency")}</th>
-                    <th class="sticky-actions">
-                      <span class="sr-only">{t("functions.actions")}</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <FunctionRows
-                    functions={o()?.functions ?? []}
-                    project={o()?.project ?? appState.project()}
-                    functionsAddr={o()?.functionsAddr ?? null}
-                    active={active()}
-                    filter={registeredFilter()}
-                    onOpenAction={toggleDrawer}
-                    onNotice={setNotice}
-                    onError={setError}
-                    onRefresh={async () => {
-                      await refetch();
-                    }}
-                  />
-                </tbody>
-              </table>
-            </div>
-            <Show
-              when={drawer() && drawerFunction() ? `${drawer()!.kind}:${drawer()!.key}` : null}
-              keyed
+            <div
+              class={
+                openDrawerKey()
+                  ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_26rem] xl:items-start"
+                  : ""
+              }
             >
-              {(_drawerKey) => {
-                const action = drawer()!;
-                const fnInfo = drawerFunction()!;
-                return (
-                  <div class="fixed inset-0 z-40 flex justify-end">
-                    <div
-                      class="fixed inset-0 bg-black/25"
-                      aria-hidden="true"
-                      onClick={() => closeDrawer(true)}
+              <div class="table-scroll min-w-0">
+                <table class="table" data-testid="function-table">
+                  <thead>
+                    <tr>
+                      <th>{t("functions.name")}</th>
+                      <th>{t("functions.region")}</th>
+                      <th>{t("functions.runtime")}</th>
+                      <th>{t("functions.trigger")}</th>
+                      <th>{t("functions.timeout")}</th>
+                      <th>{t("functions.retry")}</th>
+                      <th>{t("functions.concurrency")}</th>
+                      <th class="sticky-actions">
+                        <span class="sr-only">{t("functions.actions")}</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <FunctionRows
+                      functions={o()?.functions ?? []}
+                      project={o()?.project ?? appState.project()}
+                      functionsAddr={o()?.functionsAddr ?? null}
+                      active={active()}
+                      filter={registeredFilter()}
+                      onOpenAction={toggleDrawer}
+                      onNotice={setNotice}
+                      onError={setError}
+                      onRefresh={async () => {
+                        await refetch();
+                      }}
                     />
+                  </tbody>
+                </table>
+              </div>
+              <Show when={openDrawerKey()} keyed>
+                {(_drawerKey) => {
+                  const action = drawer()!;
+                  const fnInfo = drawerFunction()!;
+                  return (
                     <aside
-                      role="dialog"
-                      aria-modal="true"
+                      role="region"
                       aria-label={`${t("functions.drawerTitle")}: ${fnInfo.name}`}
-                      class="relative z-10 h-full w-full max-w-lg overflow-y-auto border-l border-line bg-surface p-4 shadow-xl"
+                      class="card border-line bg-surface shadow-sm"
                       data-testid="functions-drawer"
                     >
                       <div class="mb-3 flex items-center justify-between gap-2 border-b border-line-subtle pb-2">
@@ -1339,7 +1363,7 @@ const Functions: Component = () => {
                           f={fnInfo}
                           project={o()?.project ?? appState.project()}
                           functionsAddr={o()?.functionsAddr ?? null}
-                          onError={setDrawerError}
+                          onError={(m) => setDrawerError(m || null)}
                         />
                       </Show>
                       <Show when={action.kind === "enqueue" && fnInfo.trigger.kind === "tasks"}>
@@ -1349,14 +1373,14 @@ const Functions: Component = () => {
                             closeDrawer(true);
                             setNotice(t("functions.enqueued", { name: fnInfo.name }));
                           }}
-                          onError={setDrawerError}
+                          onError={(m) => setDrawerError(m || null)}
                         />
                       </Show>
                     </aside>
-                  </div>
-                );
-              }}
-            </Show>
+                  );
+                }}
+              </Show>
+            </div>
           </Section>
           <FunctionsTimeline
             project={o()?.project ?? ""}

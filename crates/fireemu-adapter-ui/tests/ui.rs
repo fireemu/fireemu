@@ -2802,3 +2802,75 @@ async fn remote_config_over_real_http_listener_forwards_if_match_and_enforces_et
 
     server_task.abort();
 }
+
+#[tokio::test]
+async fn auth_mint_id_token_issues_verifiable_token_and_rejects_unknown_user_or_project() {
+    let s = state();
+    let (status, created) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/identitytoolkit.googleapis.com/v1/projects/demo-app/accounts",
+            &json!({"email": "alice@example.com", "password": "secret-password"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{created}");
+    let uid = created["localId"].as_str().expect("localId");
+
+    let (status, minted) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &json!({"localId": uid}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 200, "{minted}");
+    let token = minted["idToken"].as_str().expect("idToken");
+    assert_eq!(minted["localId"], uid);
+    {
+        let now = s.auth.clock.lock().unwrap().snapshot().instant;
+        let store = s.auth.store.lock().unwrap();
+        let verified =
+            fireemu_core_auth::jwt::verify_id_token(token, &store, now).expect("valid token");
+        assert_eq!(verified.uid, uid);
+    }
+
+    // Unknown user returns 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &json!({"localId": "does-not-exist"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+
+    // Unknown project returns 404.
+    let (status, _) = call(
+        &s,
+        request(
+            "POST",
+            "/ui/api/auth/emulator/v1/projects/other-project/accounts:mintIdToken",
+            &json!({"localId": uid}),
+        ),
+    )
+    .await;
+    assert_eq!(status, 404);
+
+    // Non-POST returns 405.
+    let (status, _) = call(
+        &s,
+        request(
+            "GET",
+            "/ui/api/auth/emulator/v1/projects/demo-app/accounts:mintIdToken",
+            &Value::Null,
+        ),
+    )
+    .await;
+    assert_eq!(status, 405);
+}

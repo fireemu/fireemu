@@ -60,9 +60,9 @@ const previewValue = (
 };
 
 const parseRtdbIntKey = (key: string): number | null => {
-  if (!/^(?:0|[1-9]\d{0,9})$/.test(key)) return null;
+  if (!/^(?:0|-?[1-9]\d{0,9})$/.test(key)) return null;
   const n = Number(key);
-  return n <= 2147483647 ? n : null;
+  return n >= -2147483648 && n <= 2147483647 ? n : null;
 };
 
 const compareRtdbKeys = (a: string, b: string): number => {

@@ -75,9 +75,24 @@ export const plainJsonToFsValue = (
     if (insideArray) return err("Firestore arrays cannot directly contain another array.");
     const origItems =
       original && "arrayValue" in original ? (original.arrayValue.values ?? []) : [];
+    const origPlain = origItems.map(fsValueToPlain);
+    const usedOrig = new Set<number>();
     const values: FsValue[] = [];
     for (let i = 0; i < value.length; i++) {
-      const converted = plainJsonToFsValue(value[i], true, origItems[i]);
+      let matched: FsValue | undefined;
+      if (i < origItems.length && !usedOrig.has(i) && plainDeepEqual(value[i], origPlain[i])) {
+        usedOrig.add(i);
+        matched = origItems[i];
+      } else {
+        const found = origPlain.findIndex(
+          (candidate, idx) => !usedOrig.has(idx) && plainDeepEqual(value[i], candidate),
+        );
+        if (found >= 0) {
+          usedOrig.add(found);
+          matched = origItems[found];
+        }
+      }
+      const converted = plainJsonToFsValue(value[i], true, matched);
       if (converted.isErr()) return err(`[${i}]: ${converted.error}`);
       values.push(converted.value);
     }
@@ -86,13 +101,14 @@ export const plainJsonToFsValue = (
   if (isPlainObject(value)) {
     const origFields =
       original && "mapValue" in original ? (original.mapValue.fields ?? {}) : undefined;
-    const fields: Record<string, FsValue> = {};
+    const fields: Record<string, FsValue> = Object.create(null) as Record<string, FsValue>;
     for (const [k, v] of Object.entries(value)) {
-      const converted = plainJsonToFsValue(v, false, origFields?.[k]);
+      const origChild = origFields && Object.hasOwn(origFields, k) ? origFields[k] : undefined;
+      const converted = plainJsonToFsValue(v, false, origChild);
       if (converted.isErr()) return err(`${k}: ${converted.error}`);
       fields[k] = converted.value;
     }
-    return ok({ mapValue: { fields } });
+    return ok({ mapValue: { fields: { ...fields } } });
   }
   return err("Unsupported JSON value.");
 };
@@ -111,12 +127,13 @@ export const plainJsonToFsFields = (
   if (!isPlainObject(parsed)) {
     return err("Document JSON must be a JSON object.");
   }
-  const fields: Record<string, FsValue> = {};
+  const fields: Record<string, FsValue> = Object.create(null) as Record<string, FsValue>;
   for (const [key, value] of Object.entries(parsed)) {
     if (!key) return err("Field names must not be empty.");
-    const converted = plainJsonToFsValue(value, false, original?.[key]);
+    const origField = original && Object.hasOwn(original, key) ? original[key] : undefined;
+    const converted = plainJsonToFsValue(value, false, origField);
     if (converted.isErr()) return err(`${key}: ${converted.error}`);
     fields[key] = converted.value;
   }
-  return ok(fields);
+  return ok({ ...fields });
 };

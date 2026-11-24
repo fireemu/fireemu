@@ -142,5 +142,13 @@ describe("RemoteConfig page", () => {
     fireEvent.click(ui.getByTestId("rc-quick-add"));
     expect(editor.value).toBe("{ invalid");
     expect(ui.getByRole("alert")).toBeTruthy();
+
+    // Null parameter entries in JSON draft do not crash the live preview table.
+    fireEvent.input(editor, { target: { value: '{"parameters":{"bad":null}}' } });
+    await waitFor(() => expect(ui.getByTestId("rc-params-table").textContent).toContain("bad"));
+
+    // Discard draft restores the fetched server template.
+    fireEvent.click(ui.getByTestId("rc-discard-draft"));
+    await waitFor(() => expect(editor.value).toContain("welcome_text"));
   });
 });

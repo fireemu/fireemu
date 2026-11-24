@@ -93,8 +93,27 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
 
   const parsedServer = createMemo(() => parseTemplate(serverSource()));
   const parsedDraft = createMemo(() => parseTemplate(source()) ?? parsedServer());
-  const parameters = createMemo(() => Object.entries(parsedDraft()?.parameters ?? {}));
-  const conditions = createMemo(() => parsedDraft()?.conditions ?? []);
+  const parameters = createMemo(() => {
+    const raw = parsedDraft()?.parameters;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+    return Object.entries(raw).flatMap(([name, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return [[name, {} as NonNullable<RemoteConfigTemplate["parameters"]>[string]] as const];
+      }
+      return [[name, value] as const];
+    });
+  });
+  const conditions = createMemo(() => {
+    const raw = parsedDraft()?.conditions;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (c): c is { name: string; expression: string } =>
+        Boolean(c) &&
+        typeof c === "object" &&
+        typeof c.name === "string" &&
+        typeof c.expression === "string",
+    );
+  });
   const versions = () => versionsRes()?.unwrapOr({ versions: [] }).versions ?? [];
 
   const unavailable = () =>
@@ -107,16 +126,24 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
     await Promise.all([refetchTpl(), refetchVersions()]);
   };
 
-  const resolveIfMatch = (): string => {
+  const resolveIfMatch = (): string | null => {
     if (forcePublish()) return "*";
     const base = draft() !== null ? (draftBaseEtag() ?? currentEtag()) : currentEtag();
-    return base ?? "*";
+    if (base) return base;
+    // Unpublished empty template has no ETag yet; "*" creates version 1.
+    if (!parsedServer()?.version?.versionNumber) return "*";
+    return null;
   };
 
   const validate = async () => {
     setError(null);
     setNotice(null);
-    const res = await validateRemoteConfigTemplate(defaultProject(), source(), resolveIfMatch());
+    const ifMatch = resolveIfMatch();
+    if (!ifMatch) {
+      setError(t("remoteConfig.etagMissing"));
+      return;
+    }
+    const res = await validateRemoteConfigTemplate(defaultProject(), source(), ifMatch);
     res.match(
       () => setNotice(t("remoteConfig.validated")),
       (e) => setError(e.message),
@@ -126,7 +153,12 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
   const publish = async () => {
     setError(null);
     setNotice(null);
-    const res = await publishRemoteConfigTemplate(defaultProject(), source(), resolveIfMatch());
+    const ifMatch = resolveIfMatch();
+    if (!ifMatch) {
+      setError(t("remoteConfig.etagMissing"));
+      return;
+    }
+    const res = await publishRemoteConfigTemplate(defaultProject(), source(), ifMatch);
     res.match(
       (reply) => {
         const next = parseTemplate(reply.body);
@@ -196,7 +228,7 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
       return;
     }
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      setError("Trigger payload must be a JSON object");
+      setError(t("remoteConfig.triggerObjectOnly"));
       return;
     }
     const res = await publishRemoteConfigUpdate(
@@ -357,11 +389,20 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
                                     : (param.defaultValue?.value ?? "")}
                                 </td>
                                 <td class="mono text-xs text-secondary">
-                                  {Object.entries(param.conditionalValues ?? {})
-                                    .map(
-                                      ([cond, v]) =>
-                                        `${cond}: ${v.useInAppDefault ? t("remoteConfig.inAppDefault") : (v.value ?? "")}`,
-                                    )
+                                  {Object.entries(
+                                    param.conditionalValues &&
+                                      typeof param.conditionalValues === "object" &&
+                                      !Array.isArray(param.conditionalValues)
+                                      ? param.conditionalValues
+                                      : {},
+                                  )
+                                    .map(([cond, v]) => {
+                                      const entry =
+                                        v && typeof v === "object"
+                                          ? (v as { value?: string; useInAppDefault?: boolean })
+                                          : null;
+                                      return `${cond}: ${entry?.useInAppDefault ? t("remoteConfig.inAppDefault") : (entry?.value ?? "")}`;
+                                    })
                                     .join(", ") || "—"}
                                 </td>
                               </tr>
@@ -498,6 +539,20 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
                   >
                     {t("remoteConfig.validate")}
                   </AsyncButton>
+                  <Show when={dirty()}>
+                    <button
+                      type="button"
+                      class="btn"
+                      data-testid="rc-discard-draft"
+                      onClick={() => {
+                        setDraft(null);
+                        setDraftBaseEtag(null);
+                        setError(null);
+                      }}
+                    >
+                      {t("remoteConfig.discardDraft")}
+                    </button>
+                  </Show>
                   <label class="flex items-center gap-1.5 text-sm">
                     <input
                       type="checkbox"
@@ -594,6 +649,7 @@ const RemoteConfigScope: Component<{ project: string; isDefault: boolean }> = (p
               <p class="hint mb-3">{t("remoteConfig.triggerHint")}</p>
               <CodeEditorToolbar
                 value={triggerBody()}
+                disabled={!props.isDefault}
                 onFormat={setTriggerBody}
                 testId="rc-trigger"
               />

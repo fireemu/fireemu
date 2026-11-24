@@ -108,4 +108,15 @@ describe("PubSub page", () => {
     fireEvent.click(ui.getByTestId("pubsub-create-sub"));
     await waitFor(() => expect(ui.getByRole("alert").textContent).toContain("10 and 600"));
   });
+
+  it("rejects non-string attribute values when publishing a message", async () => {
+    const ui = render(() => <PubSub />);
+    await waitFor(() => expect(ui.getByTestId("pubsub-topic-orders")).toBeTruthy());
+    fireEvent.click(ui.getByTestId("pubsub-publish-open-orders"));
+    const attrsInput = ui.getByTestId("pubsub-publish-attributes") as HTMLInputElement;
+    fireEvent.input(attrsInput, { target: { value: '{"count": 1}' } });
+    fireEvent.click(ui.getByTestId("pubsub-publish-send"));
+    await waitFor(() => expect(ui.getByRole("alert").textContent).toContain("object of strings"));
+    expect(pubsub.publishToTopic).not.toHaveBeenCalled();
+  });
 });

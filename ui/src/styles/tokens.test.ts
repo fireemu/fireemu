@@ -32,6 +32,13 @@ it("every token the dark theme overrides exists in the light defaults", () => {
   }
 });
 
+it("every custom property referenced in styles.css is defined in tokens.css", () => {
+  const light = declarations(tokens, ":root");
+  for (const [, name] of styles.matchAll(/var\((--fe-[\w-]+)\)/g)) {
+    expect(light.has(name!), name).toBe(true);
+  }
+});
+
 it("button hover and pressed fills apply only to enabled buttons", () => {
   for (const rule of [".btn", ".btn-primary", ".btn-danger"]) {
     const start = styles.indexOf(`  ${rule} {`);

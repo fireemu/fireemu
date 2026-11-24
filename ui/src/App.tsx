@@ -2,6 +2,7 @@ import { A, type RouteSectionProps } from "@solidjs/router";
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createSignal,
   on,
@@ -152,6 +153,15 @@ const RUNTIME_NAV: NavItem[] = [
 export const App: Component<RouteSectionProps> = (props) => {
   const [navigationOpen, setNavigationOpen] = createSignal(false);
   const [faultError, setFaultError] = createSignal<string | null>(null);
+  createEffect(() => {
+    void appState.session();
+    if (appState.faultSummary().rules === 0) setFaultError(null);
+  });
+  createEffect(
+    on(appState.session, () => {
+      setFaultError(null);
+    }),
+  );
   onMount(() => {
     void appState.refreshClock();
     const timer = window.setInterval(() => void appState.refreshClock(), 5000);
