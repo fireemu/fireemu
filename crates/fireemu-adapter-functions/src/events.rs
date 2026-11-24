@@ -2283,15 +2283,17 @@ fn database_delta(before: &Value, after: &Value) -> Value {
     Value::Object(delta)
 }
 
-/// IDs are unique within a (project, namespace, generation) stream only.
-/// IDs can coincide across v1 and v2 or client and server because each handler sees one generation and only the client namespace emits events.
+/// One id per (project, namespace, version), carried by both the v1 and the v2 event of that
+/// version as production does (RC-OBSERVE-V2-3: v28 929360796 on both). Ids are unique within a
+/// (project, namespace) stream; client and server ids may coincide, and only the client namespace
+/// emits events.
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-fn remote_config_event_id(project: &str, namespace: &str, generation: &str, number: u64) -> String {
+fn remote_config_event_id(project: &str, namespace: &str, number: u64) -> String {
     let Ok(version) = u32::try_from(number) else {
         // There is no recorded format for these versions. The prefix keeps them unique.
         return format!("v{number}");
     };
-    let key = seeded_stream(&format!("remote-config/{project}/{namespace}/{generation}"))() as u32;
+    let key = seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32;
     // The xorshift, odd multiplication and XOR with the key are all invertible.
     let id = (version ^ (version >> 16)).wrapping_mul(0x9e37_79b1) ^ key;
     (id as i32).to_string()
@@ -2314,31 +2316,39 @@ pub fn remote_config_version_events(
         ["versionNumber", "updateTime", "updateOrigin", "updateType"]
             .map(|key| (key.to_owned(), version[key].clone())),
     );
-    for key in ["description", "rollbackSource"] {
+    for key in ["description", "rollbackSource", "updateUser"] {
         if let Some(value) = version.get(key) {
             data.insert(key.to_owned(), value.clone());
         }
     }
+    let id = remote_config_event_id(project, namespace, number);
     let v1 = json!({
         "context": {
-            "eventId": remote_config_event_id(project, namespace, "v1", number),
+            "eventId": id,
             "eventType": "google.firebase.remoteconfig.update",
             "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": format!("projects/{project}")},
             "timestamp": time,
         },
         "data": data,
     });
-    // Production recorded the @type key but did not capture its value.
+    // v2 data reports the user with empty name and image (RC-OBSERVE-V2-3), whatever history says.
+    if let Some(email) = version.pointer("/updateUser/email") {
+        data.insert(
+            "updateUser".into(),
+            json!({"email": email, "name": "", "imageUrl": ""}),
+        );
+    }
+    // RC-OBSERVE-V2-3 recorded this value on every v2 event.
     data.insert(
         "@type".into(),
         json!("type.googleapis.com/google.events.firebase.remoteconfig.v1.RemoteConfigEventData"),
     );
-    // The empty description default was not recorded.
+    // A version without a description has `""` in v2 data (RC-OBSERVE-V2-3, v29).
     data.entry("description").or_insert_with(|| json!(""));
     data.entry("rollbackSource").or_insert_with(|| json!("0"));
     let v2 = json!({
-        "id": remote_config_event_id(project, namespace, "v2", number),
-        // Production recorded the project key but did not capture its value.
+        "id": id,
+        // The project id, not its number (RC-OBSERVE-V2-3).
         "project": project,
         "source": format!("//firebaseremoteconfig.googleapis.com/projects/{project}"),
         "specversion": "1.0",
@@ -2474,10 +2484,10 @@ mod remote_config_tests {
     #[test]
     fn committed_remote_config_versions_match_recorded_payloads() {
         let time = "2026-11-21T08:12:31.348152Z";
-        for (v1_id, v2_id, version, v2_description, v2_source) in [
+        // One id per version, shared by v1 and v2 (RC-OBSERVE-V2-3).
+        for (id, version, v2_description, v2_source) in [
             (
-                "1013266333",
-                "-1793030364",
+                "-631551824",
                 json!({
                     "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "INCREMENTAL_UPDATE", "description": "d",
@@ -2486,8 +2496,7 @@ mod remote_config_tests {
                 "0",
             ),
             (
-                "-1640186546",
-                "930680311",
+                "2013446755",
                 json!({
                     "versionNumber": "2", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "FORCED_UPDATE",
@@ -2496,8 +2505,7 @@ mod remote_config_tests {
                 "0",
             ),
             (
-                "2029265727",
-                "-776891514",
+                "-1630905326",
                 json!({
                     "versionNumber": "3", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "ROLLBACK", "description": "Rollback to version 1",
@@ -2513,7 +2521,7 @@ mod remote_config_tests {
                 v1,
                 json!({
                     "context": {
-                        "eventId": v1_id,
+                        "eventId": id,
                         "eventType": "google.firebase.remoteconfig.update",
                         "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": "projects/demo-config"},
                         "timestamp": time,
@@ -2524,7 +2532,7 @@ mod remote_config_tests {
             assert_eq!(
                 v2,
                 json!({
-                    "id": v2_id,
+                    "id": id,
                     "project": "demo-config",
                     "source": "//firebaseremoteconfig.googleapis.com/projects/demo-config",
                     "specversion": "1.0",
@@ -2544,22 +2552,55 @@ mod remote_config_tests {
         }
     }
 
+    /// RC-OBSERVE-V2-3: the v1 and the v2 event of one version carry the same id (v28
+    /// 929360796, v29 312875307, …), and production's updateUser is `{email}` in v1 data and
+    /// `{email, name: "", imageUrl: ""}` in v2 data.
+    #[test]
+    fn the_v1_and_v2_events_of_a_version_share_one_id_and_the_recorded_update_user_shapes() {
+        let time = "2026-11-21T08:12:31.348152Z";
+        let mut ids = std::collections::BTreeSet::new();
+        for number in 1..=50_u32 {
+            let version = json!({
+                "versionNumber": number.to_string(), "updateTime": time, "updateOrigin": "REST_API",
+                "updateType": "INCREMENTAL_UPDATE",
+            });
+            let (v1, v2) =
+                remote_config_version_events("demo-config", "firebase", &version).unwrap();
+            assert_eq!(v1["context"]["eventId"], v2["id"]);
+            assert!(ids.insert(v2["id"].as_str().unwrap().to_owned()));
+            assert!(v1["data"].get("updateUser").is_none());
+            assert!(v2["data"].get("updateUser").is_none());
+        }
+        let version = json!({
+            "versionNumber": "7", "updateTime": time, "updateOrigin": "REST_API",
+            "updateType": "INCREMENTAL_UPDATE", "updateUser": {"email": "tester@example.com"},
+        });
+        let (v1, v2) = remote_config_version_events("demo-config", "firebase", &version).unwrap();
+        assert_eq!(
+            v1["data"]["updateUser"],
+            json!({"email": "tester@example.com"})
+        );
+        assert_eq!(
+            v2["data"]["updateUser"],
+            json!({"email": "tester@example.com", "name": "", "imageUrl": ""})
+        );
+    }
+
     #[test]
     fn committed_remote_config_ids_distinguish_previously_colliding_versions() {
-        for (generation, a, b) in [
-            ("v2", 2740, 56384),
-            ("v1", 8184, 44818),
+        for (a, b) in [
+            (2740, 56384),
+            (8184, 44818),
             // Equal under `x | (x >> 16)`, distinct under the invertible `x ^ (x >> 16)`.
-            ("v1", 65536, 65537),
-            ("v2", 65536, 65537),
+            (65536, 65537),
         ] {
             assert_ne!(
-                remote_config_event_id("demo-config", "firebase", generation, a),
-                remote_config_event_id("demo-config", "firebase", generation, b),
+                remote_config_event_id("demo-config", "firebase", a),
+                remote_config_event_id("demo-config", "firebase", b),
             );
         }
         assert_eq!(
-            remote_config_event_id("demo-config", "firebase", "v2", u64::from(u32::MAX) + 1),
+            remote_config_event_id("demo-config", "firebase", u64::from(u32::MAX) + 1),
             "v4294967296",
         );
     }
@@ -2576,19 +2617,17 @@ mod remote_config_tests {
 
     proptest! {
         #[test]
-        fn committed_remote_config_ids_are_unique_per_generation(
+        fn committed_remote_config_ids_are_unique_per_version(
             project in "demo-[a-z0-9-]{1,20}",
             a in 1..=u32::MAX,
             b in 1..=u32::MAX,
         ) {
             prop_assume!(a != b);
-            for generation in ["v1", "v2"] {
-                let first = remote_config_event_id(&project, "firebase", generation, u64::from(a));
-                let second = remote_config_event_id(&project, "firebase", generation, u64::from(b));
-                prop_assert!(first.parse::<i32>().is_ok());
-                prop_assert!(second.parse::<i32>().is_ok());
-                prop_assert_ne!(first, second);
-            }
+            let first = remote_config_event_id(&project, "firebase", u64::from(a));
+            let second = remote_config_event_id(&project, "firebase", u64::from(b));
+            prop_assert!(first.parse::<i32>().is_ok());
+            prop_assert!(second.parse::<i32>().is_ok());
+            prop_assert_ne!(first, second);
         }
 
         #[test]

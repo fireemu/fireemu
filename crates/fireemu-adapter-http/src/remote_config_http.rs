@@ -9,8 +9,8 @@ use fireemu_core_types::time::LogicalInstant;
 use serde_json::{json, Map, Value};
 
 use crate::remote_config::{
-    Change, ClientTemplate, Error, Namespace, RemoteConfigStores, TemplateStore, Version,
-    WriteMode, WriteResult, MAX_RETAINED_VERSIONS,
+    Change, ClientTemplate, Error, Namespace, RemoteConfigSettings, RemoteConfigStores,
+    TemplateStore, UpdateUser, Version, WriteMode, WriteResult, MAX_RETAINED_VERSIONS,
 };
 
 pub(crate) struct Route<'a> {
@@ -136,7 +136,19 @@ fn visible(value: &Value) -> bool {
     !value.as_object().is_some_and(Map::is_empty) && !value.as_array().is_some_and(Vec::is_empty)
 }
 
-pub(crate) fn version_fields(version: &Version) -> Value {
+/// Where version metadata is shown: `updateUser` carries the email only on a version, and the
+/// name and image too in history (RC-OBSERVE-V2-3 seq 1, 33, 64-70).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Surface {
+    Version,
+    History,
+}
+
+pub(crate) fn version_fields(
+    version: &Version,
+    user: Option<&UpdateUser>,
+    surface: Surface,
+) -> Value {
     let change = version.change();
     let mut output = json!({
         "versionNumber": version.number().to_string(),
@@ -164,6 +176,14 @@ pub(crate) fn version_fields(version: &Version) -> Value {
     if let Change::Rollback { source } = change {
         output["rollbackSource"] = json!(source.to_string());
     }
+    if let Some(user) = user {
+        output["updateUser"] = match surface {
+            Surface::Version => json!({"email": user.email}),
+            Surface::History => {
+                json!({"email": user.email, "name": user.name, "imageUrl": user.image_url})
+            }
+        };
+    }
     output
 }
 
@@ -175,7 +195,7 @@ fn insert_default_types(parameters: &mut Value) {
     }
 }
 
-fn published_body(version: &Version, reading: bool) -> Value {
+fn published_body(version: &Version, reading: bool, user: Option<&UpdateUser>) -> Value {
     let mut body = visible_fields(version.template());
     if reading {
         if let Some(parameters) = body.get_mut("parameters") {
@@ -193,95 +213,23 @@ fn published_body(version: &Version, reading: bool) -> Value {
             }
         }
     }
-    body.insert("version".to_owned(), version_fields(version));
+    body.insert(
+        "version".to_owned(),
+        version_fields(version, user, Surface::Version),
+    );
     Value::Object(body)
 }
 
-fn published(version: &Version, reading: bool) -> Reply {
-    Reply::ok(published_body(version, reading), Some(version.etag()))
+fn published(version: &Version, reading: bool, user: Option<&UpdateUser>) -> Reply {
+    Reply::ok(published_body(version, reading, user), Some(version.etag()))
 }
 
-/// Translates the two recorded server condition forms. Unrecorded expressions become an empty
-/// condition, which the Admin SDK evaluates as false.
-fn server_condition(expression: &str) -> Value {
-    let translate = || {
-        if expression.contains(['\\', '"']) {
-            return None;
-        }
-        let whitespace = |c| matches!(c, ' ' | '\t'..='\r');
-        let matches_tokens = |text: &str, tokens: &[&str]| {
-            tokens
-                .iter()
-                .try_fold(text, |rest, token| {
-                    rest.trim_start_matches(whitespace).strip_prefix(*token)
-                })
-                .is_some_and(|rest| rest.trim_matches(whitespace).is_empty())
-        };
-        let mut parts = expression.split('\'');
-        let prefix = parts.next()?;
-        let key = parts.next()?;
-        let tail = parts.next()?;
-        let leaf = if matches_tokens(prefix, &["percent", "("]) {
-            let number = tail
-                .trim_start_matches(whitespace)
-                .strip_prefix(')')?
-                .trim_start_matches(whitespace)
-                .strip_prefix("<=")?
-                .trim_matches(whitespace);
-            let (whole, fraction) = number.split_once('.').unwrap_or((number, "0"));
-            if fraction.len() > 6
-                || !whole
-                    .bytes()
-                    .chain(fraction.bytes())
-                    .all(|b| b.is_ascii_digit())
-            {
-                return None;
-            }
-            let whole = whole.parse::<u32>().ok()?;
-            if whole > 100 {
-                return None;
-            }
-            let scale = (fraction.len()..6).fold(1, |scale, _| scale * 10);
-            let micro = whole * 1_000_000 + fraction.parse::<u32>().ok()? * scale;
-            if micro > 100_000_000 {
-                return None;
-            }
-            json!({"percent": {
-                "percentOperator": "LESS_OR_EQUAL",
-                "microPercent": micro,
-                "seed": key
-            }})
-        } else if matches_tokens(prefix, &["app", ".", "customSignal", "["])
-            && matches_tokens(tail, &["]", ".", "exactlyMatches", "(", "["])
-        {
-            let mut values = Vec::new();
-            loop {
-                values.push(parts.next()?);
-                let separator = parts.next()?;
-                if matches_tokens(separator, &["]", ")"]) {
-                    break;
-                }
-                if separator.trim_matches(whitespace) != "," {
-                    return None;
-                }
-            }
-            json!({"customSignal": {
-                "customSignalOperator": "STRING_EXACTLY_MATCHES",
-                "customSignalKey": key,
-                "targetCustomSignalValues": values
-            }})
-        } else {
-            return None;
-        };
-        parts.next().is_none().then_some(leaf)
-    };
-    translate().map_or_else(
-        || json!({}),
-        |leaf| json!({"orCondition": {"conditions": [{"andCondition": {"conditions": [leaf]}}]}}),
-    )
-}
-
-fn read(store: &TemplateStore, namespace: Namespace, query: &str) -> Result<Reply, Reply> {
+fn read(
+    store: &TemplateStore,
+    namespace: Namespace,
+    query: &str,
+    user: Option<&UpdateUser>,
+) -> Result<Reply, Reply> {
     let params = parameters(query, &["versionNumber"])?;
     let requested = params
         .get("versionNumber")
@@ -301,7 +249,7 @@ fn read(store: &TemplateStore, namespace: Namespace, query: &str) -> Result<Repl
         } else {
             store.version(number).map_or_else(
                 || Reply::ok(json!({}), Some(current.empty_etag())),
-                |version| published(&version, true),
+                |version| published(&version, true, user),
             )
         });
     }
@@ -310,7 +258,7 @@ fn read(store: &TemplateStore, namespace: Namespace, query: &str) -> Result<Repl
         if version.change() == Change::Initial {
             Bytes::from_static(b"{}\n")
         } else {
-            Bytes::from(pretty_json(&published_body(version, true)).into_boxed_slice())
+            Bytes::from(pretty_json(&published_body(version, true, user)).into_boxed_slice())
         }
     });
     Ok(Reply {
@@ -321,7 +269,7 @@ fn read(store: &TemplateStore, namespace: Namespace, query: &str) -> Result<Repl
     })
 }
 
-fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
+fn history(store: &TemplateStore, query: &str, user: Option<&UpdateUser>) -> Result<Reply, Reply> {
     let params = parameters(query, &["pageSize", "pageToken"])?;
     let limit = params
         .get("pageSize")
@@ -341,8 +289,7 @@ fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
     let Some(last) = page.last() else {
         return Ok(Reply::ok(json!({}), None));
     };
-    let mut body =
-        json!({"versions": page.iter().map(|entry| version_fields(entry)).collect::<Vec<_>>()});
+    let mut body = json!({"versions": page.iter().map(|entry| version_fields(entry, user, Surface::History)).collect::<Vec<_>>()});
     if has_more {
         body["nextPageToken"] = json!(last.etag());
     }
@@ -351,6 +298,8 @@ fn history(store: &TemplateStore, query: &str) -> Result<Reply, Reply> {
 
 fn write(
     store: &TemplateStore,
+    namespace: Namespace,
+    settings: &RemoteConfigSettings,
     query: &str,
     bytes: &[u8],
     if_match: Option<&str>,
@@ -363,8 +312,25 @@ fn write(
         Some(_) => return Err(invalid("validateOnly must be a boolean")),
     };
     let body = serde_json::from_slice(bytes).map_err(|_| invalid("Invalid JSON payload"))?;
+    // The strict profile refuses the server conditions production refused (seq 54-57), after the
+    // preconditions; the emulator profile keeps accepting them and serves them as `{}`.
+    let check = |template: &ClientTemplate| {
+        if namespace != Namespace::Server || !settings.strict_server_conditions {
+            return Ok(());
+        }
+        let conditions = template.document()["conditions"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        conditions.iter().try_for_each(|condition| {
+            let name = condition["name"].as_str().unwrap_or_default();
+            let expression = condition["expression"].as_str().unwrap_or_default();
+            crate::remote_config_conditions::strict_refusal(name, expression)
+                .map_or(Ok(()), |message| Err(Error::InvalidTemplate(message)))
+        })
+    };
     match store
-        .write(mode, if_match, body, now)
+        .write_checked(mode, if_match, body, now, &check)
         .map_err(store_error)?
     {
         WriteResult::Validated {
@@ -385,12 +351,15 @@ fn write(
                 Some(format!("{base_etag}-0")),
             ))
         }
-        WriteResult::Published(version) => Ok(published(&version, false)),
+        WriteResult::Published(version) => {
+            Ok(published(&version, false, settings.update_user.as_ref()))
+        }
     }
 }
 
 fn rollback(
     store: &TemplateStore,
+    user: Option<&UpdateUser>,
     query: &str,
     bytes: &[u8],
     now: LogicalInstant,
@@ -421,7 +390,7 @@ fn rollback(
             .map_err(|_| invalid("Invalid rollback version"))?,
     };
     let version = store.rollback(number, now).map_err(store_error)?;
-    Ok(published(&version, false))
+    Ok(published(&version, false, user))
 }
 
 fn store_error(error: Error) -> Reply {
@@ -470,8 +439,11 @@ pub(crate) fn commits(method: &str, query: &str) -> bool {
     }
 }
 
+// One request's parts and the daemon's settings; grouping them would only move the list.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch(
     stores: &RemoteConfigStores,
+    settings: &RemoteConfigSettings,
     route: &Route<'_>,
     method: &str,
     query: &str,
@@ -488,6 +460,7 @@ pub(crate) fn dispatch(
         }
     };
     let store = stores.get(namespace);
+    let user = settings.update_user.as_ref();
     let result = match (route.action, method) {
         ("serverRemoteConfig", "GET") => {
             if let Err(reply) = parameters(query, &[]) {
@@ -524,29 +497,29 @@ pub(crate) fn dispatch(
                         .expect("validated expression");
                     *condition = json!({
                         "name": condition["name"],
-                        "condition": server_condition(expression)
+                        "condition": crate::remote_config_conditions::structured(expression)
                     });
                 }
             }
-            let remove_value_types = |parameters: &mut Value| {
-                if let Some(parameters) = parameters.as_object_mut() {
-                    for parameter in parameters.values_mut().filter_map(Value::as_object_mut) {
-                        parameter.remove("valueType");
+            // The data plane serves group parameters next to the top-level ones and no
+            // `parameterGroups` key (seq 59). A name used both in a group and at the top level is
+            // refused at validation, as before (unrecorded in production; ruling 4 item 4), so no
+            // merge rule is needed here.
+            if let Some(Value::Object(groups)) = body.remove("parameterGroups") {
+                let parameters = body
+                    .entry("parameters")
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .expect("validated parameters object");
+                for group in groups.into_values() {
+                    if let Some(Value::Object(grouped)) = group.get("parameters").cloned() {
+                        parameters.extend(grouped);
                     }
                 }
-            };
-            if let Some(parameters) = body.get_mut("parameters") {
-                remove_value_types(parameters);
             }
-            if let Some(groups) = body
-                .get_mut("parameterGroups")
-                .and_then(Value::as_object_mut)
-            {
-                for parameters in groups
-                    .values_mut()
-                    .filter_map(|group| group.get_mut("parameters"))
-                {
-                    remove_value_types(parameters);
+            if let Some(parameters) = body.get_mut("parameters").and_then(Value::as_object_mut) {
+                for parameter in parameters.values_mut().filter_map(Value::as_object_mut) {
+                    parameter.remove("valueType");
                 }
             }
             body.insert(
@@ -555,10 +528,10 @@ pub(crate) fn dispatch(
             );
             Ok(Reply::ok(Value::Object(body), etag))
         }
-        ("remoteConfig", "GET") => read(store, namespace, query),
-        ("remoteConfig", "PUT") => write(store, query, bytes, if_match, now),
-        ("remoteConfig:listVersions", "GET") => history(store, query),
-        ("remoteConfig:rollback", "POST") => rollback(store, query, bytes, now),
+        ("remoteConfig", "GET") => read(store, namespace, query, user),
+        ("remoteConfig", "PUT") => write(store, namespace, settings, query, bytes, if_match, now),
+        ("remoteConfig:listVersions", "GET") => history(store, query, user),
+        ("remoteConfig:rollback", "POST") => rollback(store, user, query, bytes, now),
         _ => return Reply::error(405, "Method not allowed", "METHOD_NOT_ALLOWED"),
     };
     result.unwrap_or_else(|reply| reply)
@@ -567,6 +540,7 @@ pub(crate) fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_config_conditions::structured as server_condition;
 
     fn json_body(reply: &Reply) -> Value {
         match &reply.body {
@@ -598,7 +572,16 @@ mod tests {
                 ),
             ] {
                 let path = format!("/v1/projects/demo-config/{endpoint}{suffix}");
-                let reply = dispatch(&stores, &route(&path).unwrap(), method, "", body, tag, now);
+                let reply = dispatch(
+                    &stores,
+                    &RemoteConfigSettings::default(),
+                    &route(&path).unwrap(),
+                    method,
+                    "",
+                    body,
+                    tag,
+                    now,
+                );
                 assert_eq!(reply.into_wire(), expected);
             }
         }
@@ -615,6 +598,7 @@ mod tests {
         let path = format!("/v1/projects/demo-config/{endpoint}");
         dispatch(
             stores,
+            &RemoteConfigSettings::default(),
             &route(&path).unwrap(),
             method,
             query,
@@ -1242,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn server_data_plane_preserves_group_metadata_and_only_removes_parameter_value_types() {
+    fn server_data_plane_flattens_groups_and_only_removes_parameter_value_types() {
         let stores = RemoteConfigStores::default();
         let reply = request(
             &stores,
@@ -1274,12 +1258,9 @@ mod tests {
             json_body(&data),
             json!({
                 "conditions": [{"name":"unknown","condition":{}}],
-                "parameterGroups": {
-                    "sample": {
-                        "description": "Group metadata",
-                        "parameters": {"p": {"defaultValue":{"value":"true"},"description":"Parameter metadata"}}
-                    }
-                },
+                // RC-OBSERVE-V2-3 seq 59: group parameters are served at the top level and the
+                // group itself is not.
+                "parameters": {"p": {"defaultValue":{"value":"true"},"description":"Parameter metadata"}},
                 "version": {"versionNumber":"1","isLegacy":true}
             })
         );
@@ -1301,7 +1282,8 @@ mod tests {
             r#"percent('s"eed') <= 100"#,
             r"percent('s\eed') <= 100",
             "percent('s'eed') <= 100",
-            "app.customSignal['k'].exactlyMatches(['a']) && percent('s') <= 5",
+            // A `&&` chain is recorded since RC-OBSERVE-V2-3 (seq 59): see
+            // recorded_condition_families_convert_to_the_recorded_structure.
             "app.customSignal['k'].exactlyMatches(['a',])",
             // The tail is the recorded one; the signal accessor before the key is not.
             "app.userProperty['k'].exactlyMatches(['a'])",
@@ -1459,6 +1441,699 @@ mod tests {
             }
             assert_eq!(other.current().etag(), other_tag, "{row}");
             assert!(other.history().is_empty(), "{row}");
+        }
+    }
+
+    fn request_with(
+        stores: &RemoteConfigStores,
+        settings: &RemoteConfigSettings,
+        endpoint: &str,
+        method: &str,
+        query: &str,
+        body: &[u8],
+        if_match: Option<&str>,
+    ) -> Reply {
+        let path = format!("/v1/projects/demo-config/{endpoint}");
+        dispatch(
+            stores,
+            settings,
+            &route(&path).unwrap(),
+            method,
+            query,
+            body,
+            if_match,
+            LogicalInstant::from_unix_seconds(1_765_000_000),
+        )
+    }
+
+    const SERVER: &str = "namespaces/firebase-server/remoteConfig";
+    const DATA_PLANE: &str = "namespaces/firebase-server/serverRemoteConfig";
+
+    fn strict() -> RemoteConfigSettings {
+        RemoteConfigSettings {
+            strict_server_conditions: true,
+            update_user: None,
+        }
+    }
+
+    /// The recorded server template of RC-OBSERVE-V2-3 (seq 60, its version metadata removed),
+    /// published as version 7 as it was there, served as the recorded data plane (seq 59).
+    #[test]
+    fn server_data_plane_matches_the_recorded_conditions_and_flattened_groups() {
+        let template = include_str!("remote_config_testdata/server_conditions_template.json");
+        let fixture = include_str!("remote_config_testdata/server_conditions_dataplane.json")
+            .replace("\r\n", "\n");
+        for settings in [RemoteConfigSettings::default(), strict()] {
+            let stores = RemoteConfigStores::default();
+            let mut tag = "*".to_owned();
+            for _ in 0..6 {
+                let reply = request_with(&stores, &settings, SERVER, "PUT", "", b"{}", Some(&tag));
+                tag = reply.etag.unwrap();
+            }
+            let reply = request_with(
+                &stores,
+                &settings,
+                SERVER,
+                "PUT",
+                "",
+                template.as_bytes(),
+                Some(&tag),
+            );
+            assert_eq!(reply.status, 200);
+            assert_eq!(json_body(&reply)["version"]["versionNumber"], "7");
+            let (status, body, _) =
+                request_with(&stores, &settings, DATA_PLANE, "GET", "", b"", None).into_wire();
+            assert_eq!(status, 200);
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                serde_json::from_str::<Value>(&fixture).unwrap()
+            );
+            // The recorded body is 14958 bytes; member order differs (serde_json sorts keys),
+            // the layout does not.
+            assert_eq!(fixture.len(), 14958);
+            assert_eq!(body.len(), fixture.len());
+        }
+    }
+
+    #[test]
+    fn strict_refuses_the_recorded_server_conditions_after_the_precondition() {
+        // RC-OBSERVE-V2-3 seq 54-57: validate-only answers of 201, 228, 253 and 256 bytes.
+        let cases = [
+            ("fireemu_obs_or", "app.customSignal['fireemu_s'].exactlyMatches(['a']) || percent('fireemu_obs') <= 50", "[VALIDATION_ERROR]: Expected exactly one term in OR condition for condition with name [fireemu_obs_or], found 2", 201),
+            ("fireemu_obs_not", "!(percent('fireemu_obs') <= 50)", "[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: NOT condition is not allowed here @ fireemu_obs_not.OR[0].AND[0].NOT", 228),
+            ("fireemu_obs_literal_true", "true", "[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: ALWAYS_TRUE condition is not allowed here @ fireemu_obs_literal_true.OR[0].AND[0].ALWAYS_TRUE", 253),
+            ("fireemu_obs_literal_false", "false", "[VALIDATION_ERROR]: CONDITION_ATOMS_FAIL_VALIDATION Validation error: ALWAYS_FALSE condition is not allowed here @ fireemu_obs_literal_false.OR[0].AND[0].ALWAYS_FALSE", 256),
+        ];
+        for (name, expression, message, bytes) in cases {
+            let body = json!({
+                "conditions": [{"name": name, "expression": expression}],
+                "parameters": {"fireemu_obs_probe": {"defaultValue": {"value": "default"}, "conditionalValues": {name: {"value": "matched"}}, "valueType": "STRING"}}
+            })
+            .to_string();
+            let stores = RemoteConfigStores::default();
+            let first = request_with(&stores, &strict(), SERVER, "PUT", "", b"{}", Some("*"));
+            let tag = first.etag.unwrap();
+            for query in ["validateOnly=true", ""] {
+                let stale = request_with(
+                    &stores,
+                    &strict(),
+                    SERVER,
+                    "PUT",
+                    query,
+                    body.as_bytes(),
+                    Some("stale"),
+                );
+                assert_eq!(stale.status, 412, "{name}");
+                let (status, wire, etag) = request_with(
+                    &stores,
+                    &strict(),
+                    SERVER,
+                    "PUT",
+                    query,
+                    body.as_bytes(),
+                    Some(&tag),
+                )
+                .into_wire();
+                assert_eq!(status, 400, "{name}");
+                assert_eq!(etag, None);
+                let wire: Value = serde_json::from_slice(&wire).unwrap();
+                assert_eq!(wire["error"]["message"], message, "{name}");
+                assert_eq!(wire["error"]["status"], "INVALID_ARGUMENT");
+                assert_eq!(pretty_json(&wire).len(), bytes, "{name}");
+                assert_eq!(stores.server.current().number(), 1, "{name}");
+            }
+            // The emulator profile keeps accepting it and serves the condition as `{}`.
+            let lenient = RemoteConfigStores::default();
+            let defaults = RemoteConfigSettings::default();
+            let first = request_with(&lenient, &defaults, SERVER, "PUT", "", b"{}", Some("*"));
+            let published = request_with(
+                &lenient,
+                &defaults,
+                SERVER,
+                "PUT",
+                "",
+                body.as_bytes(),
+                first.etag.as_deref(),
+            );
+            assert_eq!(published.status, 200, "{name}");
+            let data = json_body(&request_with(
+                &lenient, &defaults, DATA_PLANE, "GET", "", b"", None,
+            ));
+            assert_eq!(
+                data["conditions"],
+                json!([{"name": name, "condition": {}}]),
+                "{name}"
+            );
+            // The client namespace is not refused in either profile.
+            let client = request_with(
+                &stores,
+                &strict(),
+                "remoteConfig",
+                "PUT",
+                "",
+                body.as_bytes(),
+                Some("*"),
+            );
+            assert_eq!(client.status, 200, "{name}");
+        }
+    }
+
+    #[test]
+    fn strict_refuses_only_the_recorded_positions() {
+        for expression in [
+            "percent('s') <= 5 || percent('s') <= 6 || percent('s') <= 7",
+            "percent('s') <= 5 && true",
+            "!(percent('s') <= 5) && percent('s') <= 6",
+            "(true)",
+            "app.customSignal['k'].exactlyMatches(['a||b'])",
+            "(percent('s') <= 5 || percent('s') <= 6)",
+            "percent('s') <= 5",
+            "percent",
+            "maybe",
+            // Codex review r1 (ruling 5): an empty operand or an empty NOT keeps the earlier answer.
+            "percent('s') <= 5 ||",
+            "|| percent('s') <= 5",
+            "!()",
+            "!(maybe)",
+            "percent('s') <= 5 || device.os == 'ios'",
+        ] {
+            assert_eq!(
+                crate::remote_config_conditions::strict_refusal("c", expression),
+                None,
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn pict_rows_follow_the_recorded_server_condition_rules() {
+        let expression = |class: &str| match class {
+            "percent-le" => "percent('s') <= 12.5",
+            "percent-gt" => "percent('s') > 50",
+            "percent-between" => "percent('s') between 10 and 60",
+            "percent-unseeded" => "percent <= 50",
+            "numeric" => "app.customSignal['n'] >= 5",
+            "string" => "app.customSignal['k'].contains(['ab'])",
+            "semver" => "version(app.customSignal['v']) < '1.2.3'",
+            "and-chain" => "app.customSignal['k'].exactlyMatches(['a']) && percent('s') <= 50",
+            "or-two" => "percent('s') <= 5 || percent('s') <= 6",
+            "not" => "!(percent('s') <= 50)",
+            "literal-true" => "true",
+            "literal-false" => "false",
+            "unrecorded" => "device.os == 'ios'",
+            _ => panic!("class {class}"),
+        };
+        let table = include_str!("remote_config_testdata/conditions_pict.tsv");
+        for row in table.lines().skip(1) {
+            let [namespace, profile, class, mode, groups]: [&str; 5] =
+                row.split('\t').collect::<Vec<_>>().try_into().unwrap();
+            let settings = RemoteConfigSettings {
+                strict_server_conditions: profile == "strict",
+                update_user: None,
+            };
+            let stores = RemoteConfigStores::default();
+            let endpoint = if namespace == "server" {
+                SERVER
+            } else {
+                "remoteConfig"
+            };
+            let mut body = json!({
+                "conditions": [{"name": "c", "expression": expression(class)}],
+                "parameters": {"top": {"defaultValue": {"value": "d"}, "conditionalValues": {"c": {"value": "v"}}}}
+            });
+            if groups == "grouped" {
+                body["parameterGroups"] = json!({"g": {"description": "G", "parameters": {"inner": {"defaultValue": {"value": "1"}, "valueType": "NUMBER"}}}});
+            }
+            let query = if mode == "validate" {
+                "validateOnly=true"
+            } else {
+                ""
+            };
+            let reply = request_with(
+                &stores,
+                &settings,
+                endpoint,
+                "PUT",
+                query,
+                body.to_string().as_bytes(),
+                Some("*"),
+            );
+            let refused = namespace == "server"
+                && profile == "strict"
+                && matches!(class, "or-two" | "not" | "literal-true" | "literal-false");
+            assert_eq!(reply.status, if refused { 400 } else { 200 }, "{row}");
+            let store = if namespace == "server" {
+                &stores.server
+            } else {
+                &stores.client
+            };
+            let published = !refused && mode == "publish";
+            assert_eq!(store.current().number(), u64::from(published), "{row}");
+            if !(published && namespace == "server") {
+                continue;
+            }
+            let data = json_body(&request_with(
+                &stores, &settings, DATA_PLANE, "GET", "", b"", None,
+            ));
+            let recorded = !matches!(
+                class,
+                "or-two" | "not" | "literal-true" | "literal-false" | "unrecorded"
+            );
+            assert_eq!(
+                data["conditions"][0]["condition"] != json!({}),
+                recorded,
+                "{row}"
+            );
+            assert!(data.get("parameterGroups").is_none(), "{row}");
+            assert_eq!(
+                data["parameters"]["top"],
+                json!({"defaultValue": {"value": "d"}, "conditionalValues": {"c": {"value": "v"}}}),
+                "{row}"
+            );
+            assert_eq!(
+                data["parameters"].get("inner").cloned(),
+                (groups == "grouped").then(|| json!({"defaultValue": {"value": "1"}})),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn configured_update_user_has_the_recorded_shape_on_each_surface() {
+        let settings = RemoteConfigSettings {
+            strict_server_conditions: false,
+            update_user: Some(UpdateUser {
+                email: "tester@example.com".into(),
+                name: "Tester".into(),
+                image_url: "https://example.com/a.png".into(),
+            }),
+        };
+        for endpoint in ["remoteConfig", SERVER] {
+            let stores = RemoteConfigStores::default();
+            let published = request_with(&stores, &settings, endpoint, "PUT", "", b"{}", Some("*"));
+            assert_eq!(
+                json_body(&published)["version"]["updateUser"],
+                json!({"email": "tester@example.com"})
+            );
+            let rollback = request_with(
+                &stores,
+                &settings,
+                &format!("{endpoint}:rollback"),
+                "POST",
+                "",
+                br#"{"versionNumber":"1"}"#,
+                None,
+            );
+            assert_eq!(
+                json_body(&rollback)["version"]["updateUser"],
+                json!({"email": "tester@example.com"})
+            );
+            for query in ["", "versionNumber=1"] {
+                let read = request_with(&stores, &settings, endpoint, "GET", query, b"", None);
+                assert_eq!(
+                    json_body(&read)["version"]["updateUser"],
+                    json!({"email": "tester@example.com"}),
+                    "{query}"
+                );
+            }
+            let history = json_body(&request_with(
+                &stores,
+                &settings,
+                &format!("{endpoint}:listVersions"),
+                "GET",
+                "",
+                b"",
+                None,
+            ));
+            for version in history["versions"].as_array().unwrap() {
+                assert_eq!(
+                    version["updateUser"],
+                    json!({"email": "tester@example.com", "name": "Tester", "imageUrl": "https://example.com/a.png"})
+                );
+            }
+            // Validation creates no version and names no user, as before.
+            let validated = request_with(
+                &stores,
+                &settings,
+                endpoint,
+                "PUT",
+                "validateOnly=true",
+                b"{}",
+                Some("*"),
+            );
+            assert!(json_body(&validated)["version"].get("updateUser").is_none());
+            // Without the setting no surface carries the field.
+            let plain = RemoteConfigStores::default();
+            let defaults = RemoteConfigSettings::default();
+            let published = request_with(&plain, &defaults, endpoint, "PUT", "", b"{}", Some("*"));
+            assert!(json_body(&published)["version"].get("updateUser").is_none());
+            let history = json_body(&request_with(
+                &plain,
+                &defaults,
+                &format!("{endpoint}:listVersions"),
+                "GET",
+                "",
+                b"",
+                None,
+            ));
+            assert!(history["versions"][0].get("updateUser").is_none());
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    enum Atom {
+        Percent {
+            op: u8,
+            seed: bool,
+            a: u32,
+            b: u32,
+        },
+        Numeric {
+            op: u8,
+            key: String,
+            n: u32,
+        },
+        Text {
+            op: u8,
+            key: String,
+            values: Vec<String>,
+        },
+        Semver {
+            op: u8,
+            key: String,
+            target: String,
+        },
+    }
+
+    fn decimal(micro: u32) -> String {
+        let fraction = format!("{:06}", micro % 1_000_000);
+        let fraction = fraction.trim_end_matches('0');
+        if fraction.is_empty() {
+            (micro / 1_000_000).to_string()
+        } else {
+            format!("{}.{fraction}", micro / 1_000_000)
+        }
+    }
+
+    const COMPARISONS: [(&str, &str); 6] = [
+        ("<", "LESS_THAN"),
+        ("<=", "LESS_EQUAL"),
+        ("==", "EQUAL"),
+        ("!=", "NOT_EQUAL"),
+        (">", "GREATER_THAN"),
+        (">=", "GREATER_EQUAL"),
+    ];
+
+    /// The expression text and the structured atom production served for it (seq 59).
+    fn render(atom: &Atom) -> (String, Value) {
+        match atom {
+            Atom::Percent { op, seed, a, b } => {
+                let (lower, upper) = ((*a).min(*b), (*a).max(*b));
+                let head = if *seed {
+                    "percent('s')".to_owned()
+                } else {
+                    "percent".to_owned()
+                };
+                let (text, mut value) = match (op % 3, seed) {
+                    (1, true) => (
+                        format!("{head} > {}", decimal(*a)),
+                        json!({"percentOperator": "GREATER_THAN", "microPercent": a}),
+                    ),
+                    (2, true) => (
+                        format!("{head} between {} and {}", decimal(lower), decimal(upper)),
+                        json!({"percentOperator": "BETWEEN", "microPercentRange": {"microPercentLowerBound": lower, "microPercentUpperBound": upper}}),
+                    ),
+                    _ => (
+                        format!("{head} <= {}", decimal(*a)),
+                        json!({"percentOperator": "LESS_OR_EQUAL", "microPercent": a}),
+                    ),
+                };
+                if *seed {
+                    value["seed"] = json!("s");
+                }
+                (text, json!({"percent": value}))
+            }
+            Atom::Numeric { op, key, n } => {
+                let (symbol, name) = COMPARISONS[usize::from(*op % 6)];
+                (
+                    format!("app.customSignal['{key}'] {symbol} {n}"),
+                    json!({"customSignal": {"customSignalOperator": format!("NUMERIC_{name}"), "customSignalKey": key, "targetCustomSignalValues": [n.to_string()]}}),
+                )
+            }
+            Atom::Text { op, key, values } => {
+                let (method, name) = [
+                    ("exactlyMatches", "STRING_EXACTLY_MATCHES"),
+                    ("contains", "STRING_CONTAINS"),
+                    ("notContains", "STRING_DOES_NOT_CONTAIN"),
+                    ("matches", "STRING_CONTAINS_REGEX"),
+                ][usize::from(*op % 4)];
+                // A regex target is converted only in the plain recorded form.
+                let values: Vec<String> = if method == "matches" {
+                    values
+                        .iter()
+                        .map(|v| {
+                            v.chars()
+                                .filter(|c| {
+                                    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ' ' | '.')
+                                })
+                                .collect()
+                        })
+                        .collect()
+                } else {
+                    values.clone()
+                };
+                let list = values
+                    .iter()
+                    .map(|v| format!("'{v}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    format!("app.customSignal['{key}'].{method}([{list}])"),
+                    json!({"customSignal": {"customSignalOperator": name, "customSignalKey": key, "targetCustomSignalValues": values}}),
+                )
+            }
+            Atom::Semver { op, key, target } => {
+                let (symbol, name) = COMPARISONS[usize::from(*op % 6)];
+                (
+                    format!("version(app.customSignal['{key}']) {symbol} '{target}'"),
+                    json!({"customSignal": {"customSignalOperator": format!("SEMANTIC_VERSION_{name}"), "customSignalKey": key, "targetCustomSignalValues": [target]}}),
+                )
+            }
+        }
+    }
+
+    fn atoms() -> impl proptest::strategy::Strategy<Value = Atom> {
+        use proptest::prelude::*;
+        let text = "[A-Za-z0-9_ ,.^$|&!()-]{0,8}";
+        prop_oneof![
+            (
+                any::<u8>(),
+                any::<bool>(),
+                0..=100_000_000_u32,
+                0..=100_000_000_u32
+            )
+                .prop_map(|(op, seed, a, b)| Atom::Percent { op, seed, a, b }),
+            (any::<u8>(), "[a-z_]{1,8}", any::<u32>()).prop_map(|(op, key, n)| Atom::Numeric {
+                op,
+                key,
+                n
+            }),
+            (
+                any::<u8>(),
+                "[a-z_]{1,8}",
+                proptest::collection::vec(text, 1..4)
+            )
+                .prop_map(|(op, key, values)| Atom::Text { op, key, values }),
+            (
+                any::<u8>(),
+                "[a-z_]{1,8}",
+                "(0|[1-9][0-9]{0,2})(\\.(0|[1-9][0-9]{0,2})){0,4}"
+            )
+                .prop_map(|(op, key, target)| Atom::Semver { op, key, target }),
+        ]
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn recorded_condition_families_convert_to_the_recorded_structure(
+            chain in proptest::collection::vec(atoms(), 1..5)
+        ) {
+            let rendered: Vec<_> = chain.iter().map(render).collect();
+            let text = rendered.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join(" && ");
+            let expected: Vec<_> = rendered.into_iter().map(|(_, v)| v).collect();
+            proptest::prop_assert_eq!(
+                crate::remote_config_conditions::structured(&text),
+                json!({"orCondition": {"conditions": [{"andCondition": {"conditions": expected}}]}})
+            );
+            proptest::prop_assert_eq!(crate::remote_config_conditions::strict_refusal("c", &text), None);
+        }
+    }
+
+    #[test]
+    fn unrecorded_condition_forms_stay_empty() {
+        for expression in [
+            "percent > 50",
+            "percent between 10 and 60",
+            "percent('s') between 60 and 10",
+            "percent('s') between 10.000001 and 10",
+            "percent('s') within 10 and 60",
+            "percent('s') <= 5.",
+            "percent('s') <= 5.1.2",
+            "percent('s') <= 101",
+            "percent('s') <= 4294",
+            "percent('s') <= 4295",
+            "percent('s') <= 99999999999",
+            "_app.customSignal['k'].contains(['a'])",
+            "application.customSignal['k'].contains(['a'])",
+            "percent('s') >= 50",
+            "app.customSignal['n'] >= 5.5",
+            "app.customSignal['n'] >= '5'",
+            "version(app.customSignal['v']) < 1",
+            "app.customSignal['k'].contains([])",
+            "app.customSignal['k'].startsWith(['a'])",
+            "percent('s') <= 5 &&",
+            "&& percent('s') <= 5",
+            "percent('s') <= 5 & percent('s') <= 6",
+            "(percent('s') <= 5)",
+            "percent('s') <= 5 || percent('s') <= 6",
+            "!(percent('s') <= 5)",
+            "true",
+            "false",
+        ] {
+            assert_eq!(
+                crate::remote_config_conditions::structured(expression),
+                json!({}),
+                "{expression}"
+            );
+        }
+        // Equal bounds are a range of one micro-percent value.
+        assert_eq!(
+            crate::remote_config_conditions::structured("percent('s') between 10 and 10").pointer(
+                "/orCondition/conditions/0/andCondition/conditions/0/percent/microPercentRange"
+            ),
+            Some(
+                &json!({"microPercentLowerBound": 10_000_000, "microPercentUpperBound": 10_000_000})
+            )
+        );
+    }
+
+    /// Ruling 4 item 4: a group parameter named like a top-level one was not recorded in
+    /// production; Fireemu keeps its earlier answer (refused at validation, nothing published) in
+    /// both namespaces and profiles, so the flattened data plane never meets a collision.
+    #[test]
+    fn a_group_parameter_named_like_a_top_level_one_keeps_the_earlier_refusal() {
+        let body = json!({
+            "parameters": {"p": {"defaultValue": {"value": "top"}}},
+            "parameterGroups": {"g": {"parameters": {"p": {"defaultValue": {"value": "grouped"}}}}}
+        })
+        .to_string();
+        for settings in [RemoteConfigSettings::default(), strict()] {
+            for endpoint in ["remoteConfig", SERVER] {
+                let stores = RemoteConfigStores::default();
+                for query in ["validateOnly=true", ""] {
+                    let reply = request_with(
+                        &stores,
+                        &settings,
+                        endpoint,
+                        "PUT",
+                        query,
+                        body.as_bytes(),
+                        Some("*"),
+                    );
+                    assert_eq!(reply.status, 400, "{endpoint} {query}");
+                    let wire = json_body(&reply);
+                    assert_eq!(wire["error"]["status"], "INVALID_ARGUMENT");
+                    assert_eq!(
+                        wire["error"]["message"],
+                        "invalid or duplicate parameter name \"p\""
+                    );
+                }
+                assert_eq!(stores.client.current().number(), 0);
+                assert_eq!(stores.server.current().number(), 0);
+            }
+        }
+    }
+
+    /// Codex review r1 (ruling 5): inputs whose shape differs from the recorded ones keep the
+    /// earlier answer in both profiles, accepted and served as `{}`.
+    #[test]
+    fn off_record_conditions_keep_the_earlier_answer_in_both_profiles() {
+        for expression in [
+            "percent('s') <= 5 ||",
+            "!()",
+            "app.customSignal['k'].matches(['['])",
+            "app.customSignal['k'].matches(['^a', 'b('])",
+            "app.customSignal['k'].matches(['a+'])",
+            "version(app.customSignal['v']) < '2.invalid'",
+            "version(app.customSignal['v']) < '1..2'",
+            "version(app.customSignal['v']) < '1.2.3.4.5.6'",
+            "version(app.customSignal['v']) < ''",
+            // Codex review r2 (ruling 6): a component with a leading zero.
+            "version(app.customSignal['v']) < '02.1.3'",
+            "version(app.customSignal['v']) < '1.00'",
+        ] {
+            for settings in [RemoteConfigSettings::default(), strict()] {
+                let stores = RemoteConfigStores::default();
+                let body =
+                    json!({"conditions": [{"name": "c", "expression": expression}]}).to_string();
+                for query in ["validateOnly=true", ""] {
+                    let reply = request_with(
+                        &stores,
+                        &settings,
+                        SERVER,
+                        "PUT",
+                        query,
+                        body.as_bytes(),
+                        Some("*"),
+                    );
+                    assert_eq!(reply.status, 200, "{expression} {query}");
+                }
+                let data = json_body(&request_with(
+                    &stores, &settings, DATA_PLANE, "GET", "", b"", None,
+                ));
+                assert_eq!(
+                    data["conditions"],
+                    json!([{"name": "c", "condition": {}}]),
+                    "{expression}"
+                );
+            }
+        }
+        // The plain recorded forms still convert: `^ab$`, and versions of one to five parts.
+        for expression in [
+            "app.customSignal['k'].matches(['^ab$'])",
+            "app.customSignal['k'].matches(['a b.c-d_e'])",
+            "version(app.customSignal['v']) < '1'",
+            "version(app.customSignal['v']) < '1.2.3.4.5'",
+            "version(app.customSignal['v']) < '0.10.0'",
+        ] {
+            assert_ne!(
+                crate::remote_config_conditions::structured(expression),
+                json!({}),
+                "{expression}"
+            );
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn a_version_component_with_a_leading_zero_is_never_converted(
+            before in proptest::collection::vec("(0|[1-9][0-9]{0,2})", 0..2),
+            padded in "0[0-9]{1,3}",
+            after in proptest::collection::vec("(0|[1-9][0-9]{0,2})", 0..2),
+        ) {
+            let parts: Vec<String> = before.into_iter().chain([padded]).chain(after).collect();
+            let expression = format!("version(app.customSignal['v']) < '{}'", parts.join("."));
+            proptest::prop_assert_eq!(crate::remote_config_conditions::structured(&expression), json!({}));
+        }
+
+        #[test]
+        fn a_regex_target_outside_the_plain_form_is_never_converted(
+            prefix in "[a-z]{0,3}",
+            special in "[\\[\\]()*+?{}|\\\\/]",
+            suffix in "[a-z]{0,3}",
+        ) {
+            let expression = format!("app.customSignal['k'].matches(['{prefix}{special}{suffix}'])");
+            proptest::prop_assert_eq!(crate::remote_config_conditions::structured(&expression), json!({}));
         }
     }
 }

@@ -8,6 +8,17 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Remote Config: the server-template data plane (`serverRemoteConfig`) now serves every condition form recorded in production on 2026-11-24 in the structured shape the Admin SDK evaluates: percent `<=`, `>` and `between` (with a seed, and `percent <= n` without one), custom-signal string matches (`exactlyMatches`, `contains`, `notContains`, `matches`), numeric and semantic-version comparisons, and `&&` chains. Other expressions still become an empty condition.
+- Remote Config: a new optional `remoteConfig.updateUser` setting reports a configured identity as production reports the calling user: `{email}` on published and read versions and in v1 events, `{email, name: "", imageUrl: ""}` in v2 events, and the email, name and image in version history. Without it `updateUser` stays omitted.
+
+### Changed
+
+- Remote Config: the server data plane lists the parameters of parameter groups next to the top-level parameters and no longer serves `parameterGroups`, as production does.
+- Remote Config: the v1 and the v2 event of one published or rolled-back version now carry the same event id, as recorded in production.
+- Remote Config, strict profile: a server-template publish or validation whose condition is a two-term `||`, a whole `!(...)`, `true` or `false` is refused with production's 400 `INVALID_ARGUMENT` message. The emulator profile keeps accepting these and serves them as empty conditions.
+
 ### Fixed
 
 - Test World retirement on macOS no longer fails with `kill EPERM` when the operating system refuses a process-group signal while the group is exiting; retirement still waits for the process tree to close.

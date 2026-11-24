@@ -915,6 +915,8 @@ mod tests {
                         ("parse_hosting", "h") => "/hosting",
                         ("parse_pubsub", "authentication") => "/pubsub/authentication",
                         ("parse_scheduler", "s") => "/scheduler",
+                        ("parse_remote_config", "section") => "/remoteConfig",
+                        ("parse_remote_config", "user") => "/remoteConfig/updateUser",
                         (
                             "parse_functions"
                             | "parse_task_queue_defaults"
@@ -1089,7 +1091,7 @@ mod tests {
     fn the_loader_s_key_lists_are_the_schema_s_properties() {
         use crate::config::{
             AUTH_KEYS, DAEMON_KEYS, DATABASE_KEYS, EVENTS_KEYS, FUNCTIONS_KEYS, HOSTING_KEYS,
-            KNOWN_TOP_LEVEL, PUBSUB_KEYS, SCHEDULER_KEYS,
+            KNOWN_TOP_LEVEL, PUBSUB_KEYS, REMOTE_CONFIG_KEYS, SCHEDULER_KEYS,
         };
         let schema = schema();
         let declared = |pointer: &str| -> std::collections::BTreeSet<String> {
@@ -1115,6 +1117,7 @@ mod tests {
             ("database", &DATABASE_KEYS[..]),
             ("hosting", &HOSTING_KEYS[..]),
             ("scheduler", &SCHEDULER_KEYS[..]),
+            ("remoteConfig", &REMOTE_CONFIG_KEYS[..]),
         ] {
             assert_eq!(
                 listed(keys),

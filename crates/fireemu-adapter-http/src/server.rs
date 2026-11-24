@@ -429,6 +429,7 @@ async fn remote_config_response(
                         .flatten();
                     remote_config_http::dispatch(
                         store,
+                        &control.remote_config,
                         route,
                         parts.method.as_str(),
                         query,
@@ -674,9 +675,14 @@ async fn serve_inner(
                 RemoteConfigStores::default,
                 |functions| {
                     let functions = functions.clone();
+                    let user = control.remote_config.update_user.clone();
                     RemoteConfigStores {
                         client: TemplateStore::with_reserver(Box::new(move |version: &Version| {
-                            let metadata = remote_config_http::version_fields(version);
+                            let metadata = remote_config_http::version_fields(
+                                version,
+                                user.as_ref(),
+                                remote_config_http::Surface::Version,
+                            );
                             let publication = functions
                                 .reserve_remote_config_version(&metadata)
                                 .map_err(|error| match error {

@@ -49,7 +49,7 @@ App HostingとData Connectは現在未対応です。Firebase Extensionsは対�
 
 ### Cloud Functions
 
-- Fireemuがイベントを配信しないプロダクト（延期中のData Connectなど）のトリガー。ローカルのテンプレート管理でRemote Configのクライアントテンプレートを公開・ロールバックすると、2026-11-21に本番で記録した形のイベントをv1/v2ハンドラーへ配信します。サーバーテンプレートの公開では本番挙動が未記録のためイベントを配信せず、重複配信や順序保証も未記録です。
+- Fireemuがイベントを配信しないプロダクト（延期中のData Connectなど）のトリガー。ローカルのテンプレート管理でRemote Configのクライアントテンプレートを公開・ロールバックすると、2026-11-21に本番で記録した形のイベントをv1/v2ハンドラーへ配信します。サーバーテンプレートの公開ではイベントを配信しません（2026-11-24の本番の記録でも配信されませんでした）。重複配信や順序保証は確かめられていません（範囲を限った1回の記録では、各イベントが1回ずつ順に届きました）。
 - Dartコードベース、およびFirestoreイベント以外のprotobuf CloudEventsの受信（FirestoreイベントはPython SDKへprotobufで、Node第2世代関数へは`strict`下でprotobufで届きます）。
 - Storageアーカイブイベントの正確なペイロード形式は未記録です。
 - PythonコードベースはmacOS/Linux限定で、HTTP・callable・Firestore・Pub/Sub・Storage・Eventarc・Realtime Database・スケジュール・タスクキュー・Authブロッキング関数に対応します。実時間で動作し（仮想時計は非対応）、`venv`とバイトコードキャッシュを除きアプリソースの変更を自動再読み込みします。依存パッケージを変更した場合はFireemuを再起動してください。callableのApp CheckトークンはPython SDKがApp Checkエミュレータの鍵で検証します（限定使用トークンの消費は非対応、明示的なApp Check設定がある場合は起動を拒否）。詳しくは[Cloud Functions（Python）](../../products/functions-python/)を参照してください。

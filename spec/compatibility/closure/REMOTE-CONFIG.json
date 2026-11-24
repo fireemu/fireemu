@@ -26,12 +26,12 @@
     },
     {
       "id": "RC-LOCAL-SERVER-TEMPLATES",
-      "decision": "The loopback control listener serves the firebase-server namespace with its own history and the server-template data plane the Node Admin SDK reads, following shapes recorded in production on 2026-11-21. Only the two recorded condition expression forms are converted to the structured form.",
+      "decision": "The loopback control listener serves the firebase-server namespace with its own history and the server-template data plane the Node Admin SDK reads, following shapes recorded in production on 2026-11-21 and 2026-11-24: the recorded percent, custom-signal string, numeric and semantic-version atoms and their && chains are converted to the structured form, group parameters are listed with the top-level parameters, and the strict profile refuses the recorded two-term OR, NOT, true and false conditions. Other expressions become an empty condition.",
       "status": "ANSWERED"
     },
     {
       "id": "RC-LOCAL-PUBLISH-EVENTS",
-      "decision": "Client-template publishes and rollbacks through the local administration deliver the recorded v1 and v2 event shapes through ordinary Functions delivery. Server-namespace publishes deliver nothing because production did not record them; duplicate delivery and ordering are unrecorded.",
+      "decision": "Client-template publishes and rollbacks through the local administration deliver the recorded v1 and v2 event shapes through ordinary Functions delivery, with one event id per version shared by both generations and an optional configured updateUser in the recorded shapes. Server-namespace publishes deliver nothing, as production delivered none within five minutes on 2026-11-24 while client events arrived; duplicate delivery and ordering were observed once-and-in-order for five chained publishes only.",
       "status": "ANSWERED"
     }
   ],
@@ -91,7 +91,9 @@
       "productionEvidence": [],
       "localEvidence": [
         "crates/fireemu-adapter-http/src/remote_config_http.rs",
-        "npm/scripts/testing-worlds.test.mjs"
+        "npm/scripts/testing-worlds.test.mjs",
+        "crates/fireemu-adapter-http/src/remote_config_conditions.rs",
+        "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_dataplane.json"
       ]
     },
     {
