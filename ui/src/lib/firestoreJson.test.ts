@@ -160,4 +160,18 @@ describe("firestoreJson", () => {
     expect(out.emptyMap).toEqual({ mapValue: { fields: { fresh: { integerValue: "1" } } } });
     expect(out.brandNew).toEqual({ stringValue: "hello" });
   });
+
+  it("keeps a __proto__ field in the plain JSON so the server can refuse its reserved name", () => {
+    // JSON.parse creates an own `__proto__` key, as a REST reply or a form map would.
+    const fields = JSON.parse(
+      '{"__proto__":{"nullValue":null},"m":{"mapValue":{"fields":{"__proto__":{"stringValue":"x"}}}}}',
+    ) as Record<string, never>;
+    const plain = fsFieldsToPlainJson(fields);
+    const text = JSON.stringify(plain);
+    expect(text).toBe('{"__proto__":null,"m":{"__proto__":"x"}}');
+    // Converting the text back keeps the key, so the write reaches the server and is refused there.
+    const back = plainJsonToFsFields(text)._unsafeUnwrap();
+    expect(Object.keys(back)).toEqual(["__proto__", "m"]);
+    expect(Object.getPrototypeOf(plain)).toBe(Object.prototype);
+  });
 });

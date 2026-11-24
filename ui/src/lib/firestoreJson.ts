@@ -48,7 +48,14 @@ export const fsFieldsToPlainJson = (
 ): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields ?? {})) {
-    out[key] = fsValueToPlain(value);
+    // A reserved-looking name such as `__proto__` must stay an own property: assignment would
+    // set the prototype instead and drop the field, hiding the server's refusal of that name.
+    Object.defineProperty(out, key, {
+      value: fsValueToPlain(value),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return out;
 };
