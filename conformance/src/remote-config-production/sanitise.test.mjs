@@ -154,6 +154,13 @@ test("skeletonBytes removes the bytes inside string values and keeps keys, escap
   assert.equal(skeletonBytes('{"a" : "x\\"y"}'), '{"a" : ""}'.length);
   assert.equal(skeletonBytes('["é", 1, {"k":"v"}]'), '["", 1, {"k":""}]'.length);
   assert.throws(() => skeletonBytes('{"a": "x'), /unterminated/);
+  // Whitespace of every JSON kind may stand between a key and its colon.
+  for (const space of [" ", "\n", "\r", "\t"])
+    assert.equal(
+      skeletonBytes(`{"key"${space}: "value"}`),
+      `{"key"${space}: ""}`.length,
+      JSON.stringify(space),
+    );
 });
 
 // A seeded generator of JSON values: the skeleton of any pretty-printed value equals the length of
@@ -288,4 +295,32 @@ test("assertSanitised names every private value it finds", () => {
   assert.doesNotThrow(() =>
     assertSanitised(`${PLACEHOLDERS.email} PROJECT_ID etag-PROJECT_NUMBER-2`, SECRETS),
   );
+});
+
+test("sanitiseRun drops a production request to another host even on a Remote Config path", () => {
+  const fixture = sanitiseRun(
+    run({
+      tamper: ({ journal }) =>
+        void (journal[4].url = journal[4].url.replace(HOST, "https://example.googleapis.com")),
+    }),
+  );
+  assert.deepEqual(
+    fixture.rows.map((r) => r.case),
+    ["a-client"],
+  );
+  assert.equal(fixture.infrastructureRequests, 2);
+});
+
+test("sanitiseRun refuses a run whose private value survives the masking (a JSON number)", () => {
+  const leaked = run({
+    tamper: ({ journal, files }) => {
+      const bytes = Buffer.from(JSON.stringify({ projectNumber: Number(NUMBER) }));
+      files["003.body"] = bytes;
+      Object.assign(journal[5], {
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    },
+  });
+  assert.throws(() => sanitiseRun(leaked), /fixture still carries: project number/);
 });

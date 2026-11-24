@@ -142,6 +142,7 @@ test("compareRuns: MATCH, MATCH_LAYOUT, KNOWN_DIFFERENCE, MISMATCH and UNKNOWN",
   assert.equal(rows.status.status, "MISMATCH");
   assert.deepEqual(rows.status.differences, ["status"]);
   assert.equal(rows.unanswered.status, "UNKNOWN");
+  assert.equal(rows.unanswered.reason, "unanswered");
   assert.equal(rows["only-left"].status, "UNKNOWN");
   assert.equal(rows["only-left"].reason, "missing-row");
   const plain = compareRuns(left, left, { known: [], kind: "production-vs-local" });
@@ -237,6 +238,21 @@ test("eventRows: one row per step and generation, the shared id, duplicates, and
     events: [event(1, "5"), event(2, "6")],
   });
   assert.deepEqual(split.get("event-id:c0").value, { shared: false });
+  const run = (events) => ({
+    baseline: { client: { version: "27" }, server: { version: "6" } },
+    rows: [],
+    versions,
+    events,
+  });
+  const idRow = compareRuns(
+    run([event(1, "5"), event(2, "5")]),
+    run([event(1, "5"), event(2, "6")]),
+    {
+      kind: "production-vs-local",
+    },
+  ).rows.find((r) => r.id === "event-id:c0");
+  assert.equal(idRow.status, "MISMATCH");
+  assert.deepEqual(idRow.differences, ["event.shared:value"]);
   const twice = eventRows({
     baseline: { client: { version: "27" } },
     versions,

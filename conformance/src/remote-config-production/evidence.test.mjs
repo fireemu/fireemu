@@ -125,6 +125,9 @@ test("forgery: re-pinned files still have to be complete, answered, sanitised an
       /a project id other than PROJECT_ID/,
     ],
     [(f) => void (f.target = "local"), /target is not production/],
+    [(f) => void (f.kind = "other"), /wrong kind/],
+    [(f) => void (f.rows[3].phase = "unknown"), /s-validate-00 is not an answered row/],
+    [(f) => void (f.rows[0].body.note = "12345678901"), /a number of 11 or more digits/],
   ];
   for (const [change, message] of cases) {
     const forged = reforge(files, FILES.production, change);
@@ -133,6 +136,16 @@ test("forgery: re-pinned files still have to be complete, answered, sanitised an
       problems.some((p) => message.test(p)),
       `${message}: ${problems.join("; ")}`,
     );
+  }
+});
+
+test("forgery: each re-pinned local fixture is checked as well", () => {
+  const files = headFiles();
+  for (const path of [FILES.localStrict, FILES.localEmulator]) {
+    const forged = reforge(files, path, (f) => void (f.complete = false));
+    assert.deepEqual(verifyEvidence({ ...readers(forged.files), pins: forged.pins }), [
+      `${path}: the run was not complete`,
+    ]);
   }
 });
 
