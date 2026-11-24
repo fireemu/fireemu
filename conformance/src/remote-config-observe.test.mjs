@@ -973,6 +973,10 @@ test("the A2 read-back reads both templates, both names, the list and IAM, and s
     ).length,
     0,
   );
+  const leftover = productionContext({ rc });
+  const name = `projects/${PROJECT}/locations/us-central1/functions/${N.gen2}`;
+  leftover.cloud.fns.set(name, { name, generation: 2, status: "ACTIVE", labels: N.label });
+  assert.equal((await readBack(leftover.ctx)).atBaseline, false);
   rc.ns.server.template = { parameters: { a: {} } };
   assert.equal((await readBack(productionContext({ rc }).ctx)).atBaseline, false);
 });
