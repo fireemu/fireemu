@@ -261,6 +261,7 @@ test("eventRows: one row per step and generation, the shared id, duplicates, and
       "event:client:c0:g2",
       "event-ids",
       "event-id:c0",
+      "events-unconsumed",
       "summary:g1",
       "summary:g2",
     ],
@@ -798,5 +799,92 @@ test("forgery r3-4: an escape under a member named like the suffix is never waiv
     const row = compareRuns(run(left), run(right), { known, kind }).rows[0];
     assert.equal(row.status, "MISMATCH", kind);
     assert.deepEqual(row.knownDifferences, [], kind);
+  }
+});
+
+test("eventRows: every event is consumed or counted, and every event time is its publication's", () => {
+  const versions = [
+    {
+      namespace: "client",
+      step: "p1",
+      versionNumber: "28",
+      updateTime: "2026-11-24T23:15:00.120Z",
+    },
+  ];
+  const event = (generation, time, context) => ({
+    generation,
+    eventId: "5",
+    versionNumber: "28",
+    updateTime: time,
+    data: { updateTime: time },
+    context,
+  });
+  const base = { baseline: { client: { version: "27" }, server: { version: "9" } }, versions };
+  const ok = eventRows({
+    ...base,
+    events: [
+      event(1, "2026-11-24T23:15:00.12Z", { timestamp: "2026-11-24T23:15:00.12Z" }),
+      event(2, "2026-11-24T23:15:00.120Z", { time: "2026-11-24T23:15:00.120Z" }),
+    ],
+  });
+  assert.equal(ok.get("event:client:p1:g2").value.instants, "publication");
+  assert.deepEqual(ok.get("events-unconsumed").value, { unconsumed: 0, generations: [1, 2] });
+  // Only the envelope time moves (ruling 14 item 3).
+  const moved = eventRows({
+    ...base,
+    events: [event(2, "2026-11-24T23:15:00.120Z", { time: "2026-11-24T23:15:00.120000001Z" })],
+  });
+  assert.equal(moved.get("event:client:p1:g2").value.instants, "other");
+  // An event of another generation and time is not dropped (ruling 14 item 4).
+  const extra = eventRows({
+    ...base,
+    events: [
+      event(2, "2026-11-24T23:15:00.120Z", { time: "2026-11-24T23:15:00.120Z" }),
+      event(3, "2026-11-24T23:15:00.999Z", { time: "2026-11-24T23:15:00.999Z" }),
+    ],
+  });
+  assert.deepEqual(extra.get("events-unconsumed").value, { unconsumed: 1, generations: [2, 3] });
+});
+
+test("forgery r4-1: a changed escape in a race winner is never waived", async () => {
+  const { escapeMap } = await import("./sanitise.mjs");
+  const left = '{"a:member-order":"\\u0078","b:member-order":"y"}';
+  const right = '{"a:member-order":"x","b:member-order":"\\u0079"}';
+  const winner = (raw) =>
+    answer(
+      "p7-race-a",
+      CLIENT,
+      { ...JSON.parse(raw), version: { versionNumber: "30" } },
+      { escapes: escapeMap(raw) },
+    );
+  const loser = answer(
+    "p7-race-b",
+    CLIENT,
+    { error: { code: 400, status: "FAILED_PRECONDITION", message: "m" } },
+    { status: 412 },
+  );
+  const run = (raw) => runOf({ client: "27", server: "6" }, [winner(raw), loser]);
+  for (const [kind, known] of [
+    ["production-vs-local", [MEMBER_ORDER]],
+    [
+      "production-vs-production",
+      [
+        {
+          ...MEMBER_ORDER,
+          id: "KD-PRODUCTION-MEMBER-ORDER",
+          appliesTo: ["production-vs-production"],
+        },
+      ],
+    ],
+  ]) {
+    const row = compareRuns(run(left), run(right), { known, kind }).rows[0];
+    assert.equal(row.status, "MISMATCH", kind);
+    assert.ok(
+      row.differences.some(
+        (d) =>
+          (d.startsWith("winner.") && d.includes("escapes:")) || d.startsWith("escapes:winner."),
+      ) || row.differences.some((d) => d.includes("escapes:")),
+      JSON.stringify(row.differences),
+    );
   }
 });

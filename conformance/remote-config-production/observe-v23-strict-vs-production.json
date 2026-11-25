@@ -14,7 +14,7 @@
     }
   ],
   "counts": {
-    "MATCH": 14,
+    "MATCH": 15,
     "MATCH_LAYOUT": 0,
     "KNOWN_DIFFERENCE": 46,
     "MISMATCH": 0,
@@ -457,6 +457,12 @@
     },
     {
       "id": "event-id:c4",
+      "status": "MATCH",
+      "differences": [],
+      "knownDifferences": []
+    },
+    {
+      "id": "events-unconsumed",
       "status": "MATCH",
       "differences": [],
       "knownDifferences": []

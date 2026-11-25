@@ -3,8 +3,8 @@
   "comparison": "production-vs-local",
   "profile": "strict",
   "inputs": {
-    "left": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40",
-    "right": "fa53f04e4020aa8491a58332f7a8e401bc9b2ade85936ccb8d43de4361b0a5c0",
+    "left": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058",
+    "right": "e7fe2b3d1dc15defb5fb7bd9ba621a99b200c165582eb04d63da47a6d7b9b3b6",
     "knownDifferences": "3bf385a7271c432a12f54ee767acdc5c56467df7c408eac676d8e81cf7c1cad0"
   },
   "knownDifferences": [
@@ -14,7 +14,7 @@
     }
   ],
   "counts": {
-    "MATCH": 71,
+    "MATCH": 72,
     "MATCH_LAYOUT": 5,
     "KNOWN_DIFFERENCE": 114,
     "MISMATCH": 0,
@@ -1373,6 +1373,12 @@
     },
     {
       "id": "event-id:c9",
+      "status": "MATCH",
+      "differences": [],
+      "knownDifferences": []
+    },
+    {
+      "id": "events-unconsumed",
       "status": "MATCH",
       "differences": [],
       "knownDifferences": []

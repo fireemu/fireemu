@@ -164,12 +164,16 @@ export function etagForm(tag, base) {
   return `${prefix}:${match[2] === "0" ? "0" : `version:${BigInt(match[2]) - BigInt(base)}`}`;
 }
 
-/** Differences between two decoded JSON values, with member order, as field paths. */
-export function diffValues(a, b, path = "body") {
+/**
+ * Differences between two decoded JSON values as typed records `{ path, kind }`: `value`,
+ * `length`, `missing-left`, `missing-right` and `member-order`. The kind is set here, where the
+ * difference is found, and a waiver is decided by it, never by the path's text (ruling 14 item 1).
+ */
+export function diffTyped(a, b, path = "body") {
   if (Array.isArray(a) && Array.isArray(b)) {
-    const out = a.length === b.length ? [] : [`${path}:length`];
+    const out = a.length === b.length ? [] : [{ path, kind: "length" }];
     for (let i = 0; i < Math.min(a.length, b.length); i += 1)
-      out.push(...diffValues(a[i], b[i], `${path}[${i}]`));
+      out.push(...diffTyped(a[i], b[i], `${path}[${i}]`));
     return out;
   }
   const isObject = (v) => v && typeof v === "object" && !Array.isArray(v);
@@ -177,15 +181,29 @@ export function diffValues(a, b, path = "body") {
     const out = [];
     const ka = Object.keys(a);
     const kb = Object.keys(b);
-    for (const k of ka) if (!Object.hasOwn(b, k)) out.push(`${path}.${k}:missing-right`);
-    for (const k of kb) if (!Object.hasOwn(a, k)) out.push(`${path}.${k}:missing-left`);
+    for (const k of ka)
+      if (!Object.hasOwn(b, k)) out.push({ path: `${path}.${k}`, kind: "missing-right" });
+    for (const k of kb)
+      if (!Object.hasOwn(a, k)) out.push({ path: `${path}.${k}`, kind: "missing-left" });
     const shared = ka.filter((k) => Object.hasOwn(b, k));
     if (shared.join("\n") !== kb.filter((k) => Object.hasOwn(a, k)).join("\n"))
-      out.push(`${path}:member-order`);
-    for (const k of shared) out.push(...diffValues(a[k], b[k], `${path}.${k}`));
+      out.push({ path, kind: "member-order" });
+    for (const k of shared) out.push(...diffTyped(a[k], b[k], `${path}.${k}`));
     return out;
   }
-  return Object.is(a, b) ? [] : [`${path}:value`];
+  return Object.is(a, b) ? [] : [{ path, kind: "value" }];
+}
+
+/** A typed difference as the comparison documents write it. */
+export function renderDifference({ path, kind }) {
+  if (kind === "escape") return `escapes:${path}`;
+  if (kind === "answer") return path;
+  return `${path}:${kind}`;
+}
+
+/** Differences between two decoded JSON values, as the comparison documents write them. */
+export function diffValues(a, b, path = "body") {
+  return diffTyped(a, b, path).map(renderDifference);
 }
 
 const historyProjection = (body, base) =>
@@ -199,6 +217,22 @@ export function projectRow(row, baseline) {
   const source = baseline[namespaceOf(row.path)].source ?? null;
   const history = HISTORY.test(row.path);
   const whole = !history && !BASELINE_CASES.has(row.case);
+  // A defaults file is compared as the recorded bytes (its text and length; ruling 14 item 2):
+  // duplicates, order, spacing and escapes all count, and no rule waives a text difference.
+  const defaults = row.path.endsWith(":downloadDefaults") && row.status === 200;
+  if (defaults)
+    return {
+      status: row.status,
+      contentType: row.contentType,
+      contentEncoding: row.contentEncoding,
+      etag: etagForm(row.etag, base),
+      skeletonBytes: null,
+      escapes: {},
+      bodyBytes: row.bodyBytes,
+      body: null,
+      bodyForm: null,
+      text: row.text ?? null,
+    };
   let body = history
     ? historyProjection(row.body, base)
     : (row.body ?? defaultsEntries(row.text, row.contentType));
@@ -265,12 +299,12 @@ const answered = (row) => row?.phase === "response-persisted";
 function compareAnswers(a, b) {
   const fields = [];
   for (const key of ["status", "contentType", "contentEncoding", "etag", "skeletonBytes", "text"])
-    if (a[key] !== b[key]) fields.push(key);
+    if (a[key] !== b[key]) fields.push({ path: key, kind: "answer" });
   for (const path of new Set([...Object.keys(a.escapes), ...Object.keys(b.escapes)]))
     if (JSON.stringify(a.escapes[path] ?? []) !== JSON.stringify(b.escapes[path] ?? []))
-      fields.push(`escapes:${path}`);
-  fields.push(...diffValues(a.bodyForm, b.bodyForm));
-  const layoutOnly = a.bodyBytes !== b.bodyBytes || diffValues(a.body, b.body).length > 0;
+      fields.push({ path, kind: "escape" });
+  fields.push(...diffTyped(a.bodyForm, b.bodyForm));
+  const layoutOnly = a.bodyBytes !== b.bodyBytes || diffTyped(a.body, b.body).length > 0;
   return { fields, layoutOnly };
 }
 
@@ -287,7 +321,19 @@ export function eventRows(run) {
     if (!version) continue;
     const id = `event:${version.namespace}:${version.step}:g${event.generation}`;
     const base = run.baseline[version.namespace].version;
-    const value = { data: event.data, context: event.context };
+    // Every time an event carries names its publication's instant (ruling 14 item 3).
+    const own = instant(version.updateTime);
+    const times = [
+      event.updateTime,
+      event.data?.updateTime,
+      event.context?.timestamp,
+      event.context?.time,
+    ].filter((t) => t !== undefined);
+    const value = {
+      data: event.data,
+      context: event.context,
+      instants: times.every((t) => instant(t) === own) ? "publication" : "other",
+    };
     // Gen1 writes times without trailing zeros, Gen2 as protobuf does (ruling 11 item 1).
     const rule = event.generation === 1 ? "minimal" : "proto";
     rows.set(
@@ -324,6 +370,16 @@ export function eventRows(run) {
   // arrived in publication order, and every delivery that names no version of the run (an extra
   // or unexpected event is a difference, never dropped; ruling 11 item 3).
   const publication = new Map(run.versions.map((v, i) => [v, i]));
+  // Every event is consumed by matching (ruling 14 item 4): the ones that name no version of the
+  // run, whatever their generation or time, and the generations seen, are a row of their own.
+  if (run.events.length) {
+    const unconsumed = run.events.filter((e) => !steps.get(at(e.versionNumber, e.updateTime)));
+    const value = {
+      unconsumed: unconsumed.length,
+      generations: [...new Set(run.events.map((e) => e.generation))].toSorted(),
+    };
+    rows.set("events-unconsumed", { value, valueForm: value });
+  }
   // A run without events (a comparison of answers only) has no delivery summary; otherwise both
   // generations have one, so a generation that received nothing is a difference too.
   for (const generation of run.events.length ? [1, 2] : []) {
@@ -360,20 +416,21 @@ function applyKnown(id, fields, known, kind) {
       (entry.rows.includes("*") || entry.rows.includes(id)) &&
       !(entry.exceptRows ?? []).includes(id),
   );
-  // A suffix waives only a difference the comparison emitted with it (a member-order difference of
-  // a body path), never an escape path, whose pointer can carry any member name (ruling 11 item 4).
-  const covered = (field) =>
+  // A rule waives a difference by its kind (`fieldSuffixes: [":member-order"]` names the kind
+  // member-order), or a body path it names; never an escape, an answer field or a text.
+  const covered = (difference) =>
     entries.find(
       (entry) =>
-        (entry.fields ?? []).some(
-          (f) =>
-            field === f ||
-            field.startsWith(`${f}.`) ||
-            field.startsWith(`${f}[`) ||
-            field.startsWith(`${f}:`),
-        ) ||
-        (!field.startsWith("escapes:") &&
-          (entry.fieldSuffixes ?? []).some((suffix) => field.endsWith(suffix))),
+        (entry.fieldSuffixes ?? []).some((suffix) => difference.kind === suffix.slice(1)) ||
+        (["value", "length", "missing-left", "missing-right", "member-order"].includes(
+          difference.kind,
+        ) &&
+          (entry.fields ?? []).some(
+            (f) =>
+              difference.path === f ||
+              difference.path.startsWith(`${f}.`) ||
+              difference.path.startsWith(`${f}[`),
+          )),
     );
   const remaining = fields.filter((field) => !covered(field));
   const used = [
@@ -447,8 +504,8 @@ export function compareRuns(leftRun, rightRun, { known = [], kind }) {
       });
       continue;
     }
-    const fields = diffValues(va.valueForm, vb.valueForm, "event");
-    rows.push(verdict(id, fields, diffValues(va.value, vb.value, "event").length > 0, known, kind));
+    const fields = diffTyped(va.valueForm, vb.valueForm, "event");
+    rows.push(verdict(id, fields, diffTyped(va.value, vb.value, "event").length > 0, known, kind));
   }
   const counts = Object.fromEntries(
     STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]),
@@ -490,18 +547,18 @@ function raceVerdict(left, right, known, kind) {
     const recorded =
       (loser.status === 400 && error?.code === 400 && error?.status === "INVALID_ARGUMENT") ||
       (loser.status === 412 && error?.code === 400 && error?.status === "FAILED_PRECONDITION");
-    if (!recorded) fields.push("loser");
+    if (!recorded) fields.push({ path: "loser", kind: "answer" });
   }
   const loser = compareAnswers(
     projectRow(sa.loser, left.baseline),
     projectRow(sb.loser, right.baseline),
   );
-  fields.push(...loser.fields.map((field) => `loser.${field}`));
+  fields.push(...loser.fields.map((d) => ({ ...d, path: `loser.${d.path}` })));
   const winner = compareAnswers(
     projectRow(sa.winner, left.baseline),
     projectRow(sb.winner, right.baseline),
   );
-  fields.push(...winner.fields.map((field) => `winner.${field}`));
+  fields.push(...winner.fields.map((d) => ({ ...d, path: `winner.${d.path}` })));
   return verdict(id, fields, winner.layoutOnly, known, kind);
 }
 
@@ -514,5 +571,5 @@ function verdict(id, fields, layoutOnly, known, kind) {
       : layoutOnly
         ? "MATCH_LAYOUT"
         : "MATCH";
-  return { id, status, differences: remaining, knownDifferences: used };
+  return { id, status, differences: remaining.map(renderDifference), knownDifferences: used };
 }

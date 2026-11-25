@@ -46,7 +46,7 @@
   "conditions": [
     {
       "conditionId": "REMOTE-CONFIG/template-read",
-      "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects. Includes the defaults download in JSON, XML and property-list form (coordinator ruling D7).",
+      "description": "As recorded in both passes: current reads of the client template (identity and gzip encodings, If-None-Match, the explicit firebase namespace, the project-number read), version reads (current, snake case, 0, unavailable, invalid), their version and ETag metadata, the defaults downloads in JSON, XML and property-list form and their refusals, the unknown-namespace refusal and the no-credential 401. Not recorded and outside this claim: a project that never published a template, other permission failures and isolation between projects.",
       "status": "VERIFIED",
       "localEvidence": [
         "npm/scripts/testing-worlds.test.mjs",
@@ -59,12 +59,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "evidenceType": "production-parity",
@@ -109,8 +109,7 @@
       "profiles": {
         "strict": "MATCHES_RECORDED_CASES",
         "emulator": "NO_PRODUCTION_CLAIM"
-      },
-      "verifiedScope": "As recorded in both passes: current reads of the client template (identity and gzip encodings, If-None-Match, the explicit firebase namespace, the project-number read), version reads (current, snake case, 0, unavailable, invalid), their version and ETag metadata, the defaults downloads in JSON, XML and property-list form and their refusals, the unknown-namespace refusal and the no-credential 401. Not recorded and outside this claim: a project that never published a template, other permission failures and isolation between projects."
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/template-validation",
@@ -126,12 +125,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "evidenceType": "production-parity",
@@ -190,12 +189,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "evidenceType": "production-parity",
@@ -255,12 +254,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "evidenceType": "production-parity",
@@ -315,18 +314,18 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/server-template-evaluation",
-      "description": "Retrieve the server template through a pinned Admin SDK and compare typed parameters, defaults and evaluation with condition signals in its supported scope.",
+      "description": "As recorded in both passes: the server namespace's 24 validations, publication, wildcard publication, rollback and history, the admin read, and the serverRemoteConfig data-plane body read over HTTP, which matches production except for member order (KD-MEMBER-ORDER). Admin SDK retrieval and evaluation are local evidence only (npm/scripts/testing-worlds.test.mjs, the pinned Admin SDK evaluating a local template); no same-input comparison of evaluated values against production is recorded, so none is claimed (coordinator rulings 11 and 12).",
       "status": "VERIFIED",
       "productionEvidence": [
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "localEvidence": [
@@ -376,8 +375,7 @@
       "profiles": {
         "strict": "MATCHES_RECORDED_CASES",
         "emulator": "NO_PRODUCTION_CLAIM"
-      },
-      "verifiedScope": "As recorded in both passes: the server namespace's 24 validations, publication, wildcard publication, rollback and history, the admin read, and the serverRemoteConfig data-plane body read over HTTP, which matches production except for member order (KD-MEMBER-ORDER). Admin SDK retrieval and evaluation are local evidence only (npm/scripts/testing-worlds.test.mjs, the pinned Admin SDK evaluating a local template); no same-input comparison of evaluated values against production is recorded, so none is claimed (coordinator rulings 11 and 12)."
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
@@ -398,12 +396,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-          "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+          "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-          "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+          "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
         }
       ],
       "evidenceType": "production-parity",
@@ -411,9 +409,9 @@
       "passComparison": "KNOWN_DIFFERENCE",
       "comparisons": {
         "runVsRun": {
-          "rows": 24,
+          "rows": 25,
           "counts": {
-            "MATCH": 10,
+            "MATCH": 11,
             "MATCH_LAYOUT": 0,
             "KNOWN_DIFFERENCE": 14,
             "MISMATCH": 0,
@@ -421,9 +419,9 @@
           }
         },
         "strictVsPass1": {
-          "rows": 24,
+          "rows": 25,
           "counts": {
-            "MATCH": 10,
+            "MATCH": 11,
             "MATCH_LAYOUT": 0,
             "KNOWN_DIFFERENCE": 14,
             "MISMATCH": 0,
@@ -431,9 +429,9 @@
           }
         },
         "strictVsPass2": {
-          "rows": 24,
+          "rows": 25,
           "counts": {
-            "MATCH": 10,
+            "MATCH": 11,
             "MATCH_LAYOUT": 0,
             "KNOWN_DIFFERENCE": 14,
             "MISMATCH": 0,
@@ -471,51 +469,51 @@
       {
         "alias": "pass-1",
         "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
-        "fixtureSha256": "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e"
+        "fixtureSha256": "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac"
       },
       {
         "alias": "pass-2",
         "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
-        "fixtureSha256": "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40"
+        "fixtureSha256": "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058"
       }
     ],
     "localRuns": [
       {
         "profile": "strict",
         "fixturePath": "conformance/remote-config-closure/closure-a-local-strict.json",
-        "fixtureSha256": "fa53f04e4020aa8491a58332f7a8e401bc9b2ade85936ccb8d43de4361b0a5c0"
+        "fixtureSha256": "e7fe2b3d1dc15defb5fb7bd9ba621a99b200c165582eb04d63da47a6d7b9b3b6"
       },
       {
         "profile": "emulator",
         "fixturePath": "conformance/remote-config-closure/closure-a-local-emulator.json",
-        "fixtureSha256": "916d511dfa23e0a55d08ab04ce5f985b97baa899d50a41862d59385741ec5b7d"
+        "fixtureSha256": "6154bce0f589587faa3235bd9c555ab025e08e2646414fb1bc2e05f0cf64a610"
       }
     ],
     "comparisons": [
       {
         "name": "runVsRun",
         "comparisonPath": "conformance/remote-config-closure/closure-a-pass-1-vs-pass-2.json",
-        "comparisonSha256": "226a9fed69f2643d6e640dfc7f4776ba601785e38c54fd9246075777af5bbd06"
+        "comparisonSha256": "7a85bc4626f07b76ae210a38c8736d40c56d16912ced54a5707bc835a17f570e"
       },
       {
         "name": "strictVsPass1",
         "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-1.json",
-        "comparisonSha256": "c2e3dcf4de31a0009268e429dcba09509452f38554a7d5720224e0e015ba7237"
+        "comparisonSha256": "5338c26ec2f9c6813b17825c3c03781e775ff7036eb9bcaa8ed1cc02ccb7ed9e"
       },
       {
         "name": "strictVsPass2",
         "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-2.json",
-        "comparisonSha256": "49200fba319bc07928fbd34a6f1c24d1ef86cd642f8c1dae02668a6c58bdbbef"
+        "comparisonSha256": "4ea5a384ef99809d60e81d8509f3295f1b140112f3737e6ef7a0332668e12533"
       },
       {
         "name": "emulatorVsPass1",
         "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-1.json",
-        "comparisonSha256": "f60081d313ff6c89a0cc37e6b8ec6cb71a5c574c03339fe1e1790bc8020cea1c"
+        "comparisonSha256": "a87681e862bf15deacb4dc9c1655f33fa0270cda0d75a91190338979b34bf837"
       },
       {
         "name": "emulatorVsPass2",
         "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-2.json",
-        "comparisonSha256": "b60e063d7921587bd67c9170601567a94e718fd63acf259ad5d9c03b0c47a0bd"
+        "comparisonSha256": "97eebb86dec26eb592b742ce92137e3ee15106526d7a6a63bbe4eede96525d85"
       }
     ],
     "emulatorProfile": "The emulator profile is compared but carries no production claim: it accepts the client conditions and the four server conditions production refused, so those validations and the server publication that carries the accepted conditions differ (28 rows of each emulator comparison); every other row matches as in strict.",

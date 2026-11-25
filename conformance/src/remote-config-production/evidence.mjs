@@ -44,8 +44,8 @@ export const PINS = {
   [FILES.production]: "2496056c2cbaf085551133fd97cfa9358fd2c5ff22c943724327e194460edc75",
   [FILES.localStrict]: "e9772ab05dea3e57b85e840b8beae8cc9ff819491732a393d354392c30a5c4c4",
   [FILES.localEmulator]: "9d1ce70c40e784e84ef1f624f5d33b181c8fdb83a0b7ffe94d7bef45c624fb64",
-  [FILES.strict]: "fb2473f5b5c6e7d5b9f04984bb84eb9e82e22464ddce2a1f214649ac6d66f046",
-  [FILES.emulator]: "8f4dd17ba81080a3d6e115c42882fc17433d4c851ed7f7ef3a00cc1fd4ed09b6",
+  [FILES.strict]: "f343c37a7bc1943abfe2e0bf25f800fef1d6fe1a1fb4b2f42bc62551f53a9d8d",
+  [FILES.emulator]: "a61f9e069e773a34b6742b2e014bd82f869c247024062ac9433d6cd3f221274f",
   [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
 };
 

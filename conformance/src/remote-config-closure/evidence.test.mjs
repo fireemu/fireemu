@@ -240,9 +240,11 @@ test("forgery r3-3: an extra delivery that names no version of the run", () => {
 
 test("forgery r3-5: the defaults file in sorted order", () => {
   refusedForgery((fixture) => {
+    // The recorded text with its first two entries swapped (the template order of ruling 6).
     const row = rowOf(fixture, "d-json");
-    const { fireemu_source: source, fireemu_count: count, ...rest } = row.body;
-    row.body = { fireemu_count: count, fireemu_source: source, ...rest };
+    const lines = row.text.split("\n");
+    [lines[1], lines[2]] = [lines[2].replace(/,?$/, ","), lines[1].replace(/,?$/, ",")];
+    row.text = lines.join("\n");
   });
 });
 
@@ -254,4 +256,89 @@ test("forgery r3-6: an unrecorded race loser with the recorded error status", ()
     loser.status = 400;
     loser.body = { error: { code: 418, message: "arbitrary", status: "FAILED_PRECONDITION" } };
   });
+});
+
+// The Codex r4 forgeries (ruling 14), through the evidence check with every pin recomputed.
+const reforgeAll = (changes) => {
+  let forged = { files: headFiles(), pins: PINS };
+  for (const [path, change] of changes) forged = reforge(forged.files, path, change);
+  return forged;
+};
+const refusedStrict = (forged) => {
+  const problems = check(forged);
+  assert.ok(
+    problems.some((p) => /closure-a-strict-vs-pass-[12]\.json: [1-9][0-9]* MISMATCH/.test(p)),
+    problems.join("\n"),
+  );
+};
+
+test("forgery r4-1: a changed escape in the race winner, waived by neither member-order rule", () => {
+  const winnerOf = (fixture) =>
+    ["p7-race-a", "p7-race-b"].map((c) => rowOf(fixture, c)).find((r) => r.status === 200);
+  const add = (escaped) => (fixture) => {
+    const winner = winnerOf(fixture);
+    winner.body = { "a:member-order": "x", ...winner.body };
+    if (escaped) winner.escapes = { ...winner.escapes, "value:/a:member-order": [[0, "\\u0078"]] };
+  };
+  refusedStrict(
+    reforgeAll([
+      [FILES.pass1, add(true)],
+      [FILES.pass2, add(true)],
+      [FILES.localStrict, add(false)],
+    ]),
+  );
+});
+
+test("forgery r4-2: a duplicate defaults entry padded to the recorded length", () => {
+  refusedStrict(
+    reforge(headFiles(), FILES.localStrict, (fixture) => {
+      const row = rowOf(fixture, "d-xml");
+      const compact = row.text.replace(/\n\s*/g, "");
+      const extra = "<entry><key>fireemu_count</key><value>12.5</value></entry>";
+      const body = compact.replace("</defaults>", `${extra}</defaults>`);
+      row.text = body.replace(
+        "</defaults>",
+        `${" ".repeat(Math.max(0, row.bodyBytes - body.length))}</defaults>`,
+      );
+    }),
+  );
+});
+
+test("forgery r4-3: only an event's envelope time moves off its publication", () => {
+  refusedStrict(
+    reforge(headFiles(), FILES.localStrict, (fixture) => {
+      const version = rowOf(fixture, "p1-publish").body.version.versionNumber;
+      const event = eventOf(fixture, version, 2);
+      event.context.time = event.context.time.replace(/\.120Z$/, ".120000001Z");
+    }),
+  );
+});
+
+test("forgery r4-4: an extra event of another generation", () => {
+  refusedStrict(
+    reforge(headFiles(), FILES.localStrict, (fixture) => {
+      const version = rowOf(fixture, "p1-publish").body.version.versionNumber;
+      const extra = structuredClone(eventOf(fixture, version, 2));
+      extra.generation = 3;
+      const other = (t) => t.replace(/\.120Z$/, ".999Z");
+      extra.updateTime = other(extra.updateTime);
+      extra.data.updateTime = other(extra.data.updateTime);
+      extra.context.time = other(extra.context.time);
+      fixture.events.push(extra);
+    }),
+  );
+});
+
+test("forgery r4 Should: an unrelated change in an emulator carrier row", () => {
+  const forged = reforge(headFiles(), FILES.localEmulator, (fixture) => {
+    const row = rowOf(fixture, "s2-data-plane");
+    row.body.parameters.fireemu_obs_top.defaultValue.value = "zefault";
+  });
+  const problems = check(forged);
+  assert.ok(
+    problems.some((p) =>
+      p.includes("s2-data-plane differs by more than the accepted server conditions"),
+    ),
+    problems.join("\n"),
+  );
 });

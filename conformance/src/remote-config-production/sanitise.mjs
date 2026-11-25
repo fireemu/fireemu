@@ -256,7 +256,10 @@ export function sanitiseRun({ run, journal, events, result, files }) {
         etag:
           answer.etag === undefined || answer.etag === null ? null : maskText(answer.etag, secrets),
         body: json ? maskValue(parsed, secrets) : null,
-        ...(json ? {} : { text: maskText(text, secrets) }),
+        // A defaults file is also kept as its text, compared as bytes (ruling 14 item 2).
+        ...(json && !row.path.endsWith(":downloadDefaults")
+          ? {}
+          : { text: maskText(text, secrets) }),
       });
     }
     rows.push(row);

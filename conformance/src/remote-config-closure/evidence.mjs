@@ -51,15 +51,15 @@ export const COMPARISONS = [
 
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
-  [FILES.pass1]: "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e",
-  [FILES.pass2]: "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40",
-  [FILES.localStrict]: "fa53f04e4020aa8491a58332f7a8e401bc9b2ade85936ccb8d43de4361b0a5c0",
-  [FILES.localEmulator]: "916d511dfa23e0a55d08ab04ce5f985b97baa899d50a41862d59385741ec5b7d",
-  [FILES.runVsRun]: "226a9fed69f2643d6e640dfc7f4776ba601785e38c54fd9246075777af5bbd06",
-  [FILES.strictVsPass1]: "c2e3dcf4de31a0009268e429dcba09509452f38554a7d5720224e0e015ba7237",
-  [FILES.strictVsPass2]: "49200fba319bc07928fbd34a6f1c24d1ef86cd642f8c1dae02668a6c58bdbbef",
-  [FILES.emulatorVsPass1]: "f60081d313ff6c89a0cc37e6b8ec6cb71a5c574c03339fe1e1790bc8020cea1c",
-  [FILES.emulatorVsPass2]: "b60e063d7921587bd67c9170601567a94e718fd63acf259ad5d9c03b0c47a0bd",
+  [FILES.pass1]: "9abb4ea8c793b25db731f67785cb2f2d055afc3687f7d17178e96ef946e4cdac",
+  [FILES.pass2]: "79d25d013bf9767f9f23b0e292ba272019791c1b254e9bea24e2b81b44549058",
+  [FILES.localStrict]: "e7fe2b3d1dc15defb5fb7bd9ba621a99b200c165582eb04d63da47a6d7b9b3b6",
+  [FILES.localEmulator]: "6154bce0f589587faa3235bd9c555ab025e08e2646414fb1bc2e05f0cf64a610",
+  [FILES.runVsRun]: "7a85bc4626f07b76ae210a38c8736d40c56d16912ced54a5707bc835a17f570e",
+  [FILES.strictVsPass1]: "5338c26ec2f9c6813b17825c3c03781e775ff7036eb9bcaa8ed1cc02ccb7ed9e",
+  [FILES.strictVsPass2]: "4ea5a384ef99809d60e81d8509f3295f1b140112f3737e6ef7a0332668e12533",
+  [FILES.emulatorVsPass1]: "a87681e862bf15deacb4dc9c1655f33fa0270cda0d75a91190338979b34bf837",
+  [FILES.emulatorVsPass2]: "97eebb86dec26eb592b742ce92137e3ee15106526d7a6a63bbe4eede96525d85",
   [KNOWN]: "3bf385a7271c432a12f54ee767acdc5c56467df7c408eac676d8e81cf7c1cad0",
 };
 
@@ -308,6 +308,58 @@ export function comparison({ kind, profile, left, right, known }) {
   };
 }
 
+/** The server rows that carry the four server conditions the emulator profile accepts. */
+export const CARRIERS = ["s1-publish", "s2-data-plane", "s3-server-admin", "s4-wildcard"];
+
+/**
+ * Problems of one emulator comparison (rulings 12 and 14): exactly 28 MISMATCH rows, the 24
+ * validations production refused with 400 that the emulator accepts with 200, each a strict MATCH,
+ * and the four carriers, each differing exactly by the four accepted server conditions.
+ */
+export function emulatorProblems({ name, emulatorDoc, strictDoc, pass, emulator }) {
+  const problems = [];
+  const status = (fixture) => new Map(fixture.rows.map((row) => [row.case, row.status]));
+  const production = status(pass);
+  const local = status(emulator);
+  const strictRows = new Map(strictDoc.rows.map((row) => [row.id, row.status]));
+  const mismatches = emulatorDoc.rows.filter((row) => row.status === "MISMATCH");
+  if (mismatches.length !== 28)
+    problems.push(`${name}: ${mismatches.length} MISMATCH rows, not 28`);
+  if (emulatorDoc.counts.UNKNOWN) problems.push(`${name}: UNKNOWN rows`);
+  const conditions = ["literal_false", "literal_true", "not", "or"].map(
+    (c) => `body.parameters.fireemu_obs_top.conditionalValues.fireemu_obs_${c}:missing-left`,
+  );
+  const escapes = [
+    "escapes:value:/conditions/20/expression",
+    "escapes:value:/conditions/21/expression",
+  ];
+  for (const row of mismatches) {
+    if (CARRIERS.includes(row.id)) {
+      const expected = [
+        "skeletonBytes",
+        ...(row.id === "s2-data-plane" ? [] : escapes),
+        "body.conditions:length",
+        ...conditions,
+      ];
+      if (!isDeepStrictEqual(row.differences, expected) || strictRows.get(row.id) === "MISMATCH")
+        problems.push(`${name}: ${row.id} differs by more than the accepted server conditions`);
+      continue;
+    }
+    const refusal = row.id.startsWith("v-cond-") || /^s-validate-2[0-3]$/.test(row.id);
+    if (
+      !refusal ||
+      production.get(row.id) !== 400 ||
+      local.get(row.id) !== 200 ||
+      strictRows.get(row.id) !== "MATCH"
+    )
+      problems.push(`${name}: ${row.id} is not a strict-only refusal`);
+  }
+  for (const id of CARRIERS)
+    if (!mismatches.some((row) => row.id === id))
+      problems.push(`${name}: ${id} is not a carrier difference`);
+  return problems;
+}
+
 /** Verifies the evidence of one git revision (`list`, `read` as gitReaders). Empty: valid. */
 export function verifyEvidence({ list, read, pins = PINS }) {
   const problems = [];
@@ -390,6 +442,22 @@ export function verifyEvidence({ list, read, pins = PINS }) {
         `${FILES[key]}: ${expected.counts.MISMATCH} MISMATCH, ${expected.counts.UNKNOWN} UNKNOWN`,
       );
   }
+  if (problems.length) return problems;
+  const doc = (key) => JSON.parse(files[FILES[key]].bytes);
+  const fixture = (key) => JSON.parse(files[FILES[key]].bytes);
+  for (const [key, strict, pass] of [
+    ["emulatorVsPass1", "strictVsPass1", "pass1"],
+    ["emulatorVsPass2", "strictVsPass2", "pass2"],
+  ])
+    problems.push(
+      ...emulatorProblems({
+        name: FILES[key],
+        emulatorDoc: doc(key),
+        strictDoc: doc(strict),
+        pass: fixture(pass),
+        emulator: fixture("localEmulator"),
+      }),
+    );
   return problems;
 }
 

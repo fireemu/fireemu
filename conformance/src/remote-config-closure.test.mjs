@@ -14,6 +14,7 @@ import {
   PINS,
   conditionCounts,
   conditionOf,
+  emulatorProblems,
   verifyEvidence,
 } from "./remote-config-closure/evidence.mjs";
 import { gitReaders } from "./remote-config-production/evidence.mjs";
@@ -105,37 +106,19 @@ test("each VERIFIED condition cites both passes and its recomputed counts", () =
 });
 
 test("the emulator comparisons differ exactly by the refusals only strict makes", () => {
-  // 24 validations production refused with 400 that the emulator profile accepts (200), each a
-  // strict MATCH, and the four server reads and writes that carry the four accepted server
-  // conditions (coordinator ruling 12, Should 6).
-  const fixture = (key) => JSON.parse(read(FILES[key]));
-  const status = (key) => new Map(fixture(key).rows.map((row) => [row.case, row.status]));
-  const carriers = ["s1-publish", "s2-data-plane", "s3-server-admin", "s4-wildcard"];
-  for (const [key, pass, strict] of [
-    ["emulatorVsPass1", "pass1", "strictVsPass1"],
-    ["emulatorVsPass2", "pass2", "strictVsPass2"],
-  ]) {
-    const production = status(pass);
-    const emulator = status("localEmulator");
-    const strictRows = new Map(documents[strict].rows.map((row) => [row.id, row.status]));
-    const mismatches = documents[key].rows
-      .filter((row) => row.status === "MISMATCH")
-      .map((r) => r.id);
-    assert.equal(mismatches.length, 28, key);
-    const refusals = mismatches.filter((id) => !carriers.includes(id));
-    assert.equal(refusals.length, 24, key);
-    for (const id of refusals) {
-      assert.ok(id.startsWith("v-cond-") || /^s-validate-2[0-3]$/.test(id), `${key}: ${id}`);
-      assert.equal(production.get(id), 400, `${key}: ${id}`);
-      assert.equal(emulator.get(id), 200, `${key}: ${id}`);
-      assert.equal(strictRows.get(id), "MATCH", `${key}: ${id}`);
-    }
+  // The check is part of the evidence check (rulings 12 and 14); here it reads the committed files.
+  for (const [key, strict, pass] of [
+    ["emulatorVsPass1", "strictVsPass1", "pass1"],
+    ["emulatorVsPass2", "strictVsPass2", "pass2"],
+  ])
     assert.deepEqual(
-      mismatches.filter((id) => carriers.includes(id)),
-      carriers,
-      key,
+      emulatorProblems({
+        name: key,
+        emulatorDoc: documents[key],
+        strictDoc: documents[strict],
+        pass: JSON.parse(read(FILES[pass])),
+        emulator: JSON.parse(read(FILES.localEmulator)),
+      }),
+      [],
     );
-    for (const id of carriers) assert.notEqual(strictRows.get(id), "MISMATCH", `${key}: ${id}`);
-    assert.equal(documents[key].counts.UNKNOWN, 0, key);
-  }
 });

@@ -37897,7 +37897,8 @@
         "fireemu_inapp": "",
         "fireemu_only_conditional": "",
         "fireemu_grouped": "<&\""
-      }
+      },
+      "text": "{\n  \"fireemu_source\": \"first-default\",\n  \"fireemu_count\": \"12.5\",\n  \"fireemu_json\": \"{\\\"synthetic\\\":1}\",\n  \"fireemu_bool\": \"true\",\n  \"fireemu_inapp\": \"\",\n  \"fireemu_only_conditional\": \"\",\n  \"fireemu_grouped\": \"\\u003c\\u0026\\\"\"\n}"
     },
     {
       "seq": 126,
@@ -37983,7 +37984,8 @@
         "fireemu_inapp": "",
         "fireemu_only_conditional": "",
         "fireemu_grouped": "<&\""
-      }
+      },
+      "text": "{\n  \"fireemu_source\": \"first-default\",\n  \"fireemu_count\": \"12.5\",\n  \"fireemu_json\": \"{\\\"synthetic\\\":1}\",\n  \"fireemu_bool\": \"true\",\n  \"fireemu_inapp\": \"\",\n  \"fireemu_only_conditional\": \"\",\n  \"fireemu_grouped\": \"\\u003c\\u0026\\\"\"\n}"
     },
     {
       "seq": 129,
@@ -38006,7 +38008,8 @@
           "message": "[VALIDATION_ERROR]: The message's format field is unspecified or unrecognized.",
           "status": "INVALID_ARGUMENT"
         }
-      }
+      },
+      "text": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"[VALIDATION_ERROR]: The message's format field is unspecified or unrecognized.\",\n    \"status\": \"INVALID_ARGUMENT\"\n  }\n}\n"
     },
     {
       "seq": 130,
@@ -38061,7 +38064,8 @@
             }
           ]
         }
-      }
+      },
+      "text": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid value at 'format' (type.googleapis.com/google.firebase.remoteconfig.v1.DownloadDefaultsRequest.Format), \\\"INVALID\\\"\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.BadRequest\",\n        \"fieldViolations\": [\n          {\n            \"field\": \"format\",\n            \"description\": \"Invalid value at 'format' (type.googleapis.com/google.firebase.remoteconfig.v1.DownloadDefaultsRequest.Format), \\\"INVALID\\\"\"\n          }\n        ]\n      }\n    ]\n  }\n}\n"
     },
     {
       "seq": 131,
