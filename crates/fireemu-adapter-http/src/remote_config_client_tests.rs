@@ -369,3 +369,36 @@ fn custom_signals_compare_by_their_operator_and_type() {
     assert!(!condition_holds("device.os == 'ios'", &signals, "id"));
     assert!(!condition_holds("", &signals, "id"));
 }
+
+#[test]
+fn several_targets_and_nearly_equal_numbers() {
+    let signals: serde_json::Map<String, Value> =
+        serde_json::from_value(json!({"x": "abc", "one": "1"})).unwrap();
+    let atom = |operator: &str, key: &str, targets: &[&str]| {
+        json!({"customSignal": {"customSignalOperator": operator, "customSignalKey": key,
+            "targetCustomSignalValues": targets}})
+    };
+    // Any target is enough to contain; one contained target is enough to refuse "does not contain".
+    assert!(atom_holds(
+        &atom("STRING_CONTAINS", "x", &["b", "zz"]),
+        &signals,
+        "id"
+    ));
+    assert!(!atom_holds(
+        &atom("STRING_DOES_NOT_CONTAIN", "x", &["zz", "b"]),
+        &signals,
+        "id"
+    ));
+    // One step of f64 apart is not equal.
+    let next = "1.0000000000000002";
+    assert!(!atom_holds(
+        &atom("NUMERIC_EQUAL", "one", &[next]),
+        &signals,
+        "id"
+    ));
+    assert!(atom_holds(
+        &atom("NUMERIC_NOT_EQUAL", "one", &[next]),
+        &signals,
+        "id"
+    ));
+}
