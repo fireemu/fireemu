@@ -572,11 +572,23 @@ test(
 );
 
 test("v1.1 item 1: Playwright diagnostics must be off", async () => {
-  await assert.rejects(
-    openBrowser({ port: 47822, cap: 1, env: { DEBUG: "pw:protocol" } }),
-    /diagnostics/,
-  );
-  await assert.rejects(openBrowser({ port: 47822, cap: 1, env: { PWDEBUG: "1" } }), /diagnostics/);
+  for (const env of [
+    { DEBUG: "pw:protocol" },
+    { DEBUG: "*" },
+    { PWDEBUG: "1" },
+    { DEBUG_FILE: "/x" },
+  ]) {
+    let opened = null;
+    try {
+      opened = await openBrowser({ port: 47822, cap: 1, env });
+    } catch (error) {
+      assert.match(error.message, /diagnostics/, JSON.stringify(env));
+      continue;
+    } finally {
+      await opened?.close();
+    }
+    assert.fail(`diagnostics ${JSON.stringify(env)} were accepted`);
+  }
 });
 
 test(
