@@ -5,7 +5,8 @@ use proptest::prelude::*;
 use serde_json::{json, Value};
 
 use super::{
-    client_route, etag, fetch, frame, java_hash, last_known, micro_percentile, ClientAction,
+    atom_holds, client_route, condition_holds, etag, fetch, frame, java_hash, last_known,
+    micro_percentile, ClientAction,
 };
 use crate::remote_config::{TemplateStore, WriteMode};
 use fireemu_core_types::time::LogicalInstant;
@@ -288,4 +289,83 @@ proptest! {
         let reply = fetch(&store.current(), PROJECT, None, &body);
         prop_assert!(serde_json::from_slice::<Value>(&reply.body).is_ok());
     }
+}
+
+#[test]
+fn percent_atoms_hold_at_their_boundaries() {
+    let id = "cAAAAAAAAAAAAAAAAAAAAA";
+    let at = micro_percentile(Some("s"), id);
+    let signals = serde_json::Map::new();
+    let percent = |operator: &str, micro: u64| json!({"percent": {"percentOperator": operator, "microPercent": micro, "seed": "s"}});
+    assert!(atom_holds(&percent("LESS_OR_EQUAL", at), &signals, id));
+    assert!(!atom_holds(&percent("LESS_OR_EQUAL", at - 1), &signals, id));
+    assert!(!atom_holds(&percent("GREATER_THAN", at), &signals, id));
+    assert!(atom_holds(&percent("GREATER_THAN", at - 1), &signals, id));
+    let between = |lower: u64, upper: u64| {
+        json!({"percent": {"percentOperator": "BETWEEN", "seed": "s", "microPercentRange": {
+            "microPercentLowerBound": lower, "microPercentUpperBound": upper}}})
+    };
+    assert!(atom_holds(&between(at - 1, at), &signals, id));
+    assert!(!atom_holds(&between(at, at + 1), &signals, id));
+    assert!(!atom_holds(&between(at - 2, at - 1), &signals, id));
+    assert!(!atom_holds(
+        &json!({"percent": {"percentOperator": "OTHER"}}),
+        &signals,
+        id
+    ));
+    assert!(!atom_holds(&json!({}), &signals, id));
+}
+
+#[test]
+fn custom_signals_compare_by_their_operator_and_type() {
+    let signals: serde_json::Map<String, Value> =
+        serde_json::from_value(json!({"n": 5, "s": "5", "b": true, "x": "abc", "o": {}})).unwrap();
+    let atom = |operator: &str, key: &str, target: &str| {
+        json!({"customSignal": {"customSignalOperator": operator, "customSignalKey": key,
+            "targetCustomSignalValues": [target]}})
+    };
+    for (operator, key, target, holds) in [
+        ("NUMERIC_GREATER_EQUAL", "n", "5", true),
+        ("NUMERIC_GREATER_EQUAL", "n", "6", false),
+        ("NUMERIC_GREATER_THAN", "s", "5", false),
+        ("NUMERIC_GREATER_THAN", "s", "4", true),
+        ("NUMERIC_LESS_EQUAL", "n", "5", true),
+        ("NUMERIC_LESS_EQUAL", "n", "4", false),
+        ("NUMERIC_LESS_THAN", "n", "5", false),
+        ("NUMERIC_LESS_THAN", "n", "6", true),
+        ("NUMERIC_EQUAL", "n", "5", true),
+        ("NUMERIC_EQUAL", "n", "5.5", false),
+        ("NUMERIC_NOT_EQUAL", "n", "5", false),
+        ("NUMERIC_NOT_EQUAL", "n", "6", true),
+        ("NUMERIC_GREATER_EQUAL", "n", "five", false),
+        ("NUMERIC_GREATER_EQUAL", "x", "1", false),
+        ("STRING_EXACTLY_MATCHES", "b", "true", true),
+        ("STRING_EXACTLY_MATCHES", "x", "ab", false),
+        ("STRING_CONTAINS", "x", "b", true),
+        ("STRING_CONTAINS", "x", "d", false),
+        ("STRING_DOES_NOT_CONTAIN", "x", "d", true),
+        ("STRING_DOES_NOT_CONTAIN", "x", "a", false),
+        ("STRING_EXACTLY_MATCHES", "o", "{}", false),
+        ("STRING_EXACTLY_MATCHES", "missing", "x", false),
+        ("SEMANTIC_VERSION_EQUAL", "s", "5", false),
+    ] {
+        assert_eq!(
+            atom_holds(&atom(operator, key, target), &signals, "id"),
+            holds,
+            "{operator} {key} {target}"
+        );
+    }
+    // A condition holds only when every atom of its chain does, and unknown forms never hold.
+    assert!(condition_holds(
+        "app.customSignal['n'] >= 5 && app.customSignal['x'].exactlyMatches(['abc'])",
+        &signals,
+        "id"
+    ));
+    assert!(!condition_holds(
+        "app.customSignal['n'] >= 5 && app.customSignal['x'].exactlyMatches(['ab'])",
+        &signals,
+        "id"
+    ));
+    assert!(!condition_holds("device.os == 'ios'", &signals, "id"));
+    assert!(!condition_holds("", &signals, "id"));
 }

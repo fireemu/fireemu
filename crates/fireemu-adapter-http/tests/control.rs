@@ -5079,6 +5079,28 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         seen.contains(",\r\n{\n  \"latestTemplateVersionNumber\": \"3\"\n}\n"),
         "{seen:?}"
     );
+    // No newer version, no more bytes: a frame is written once per version.
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        stream.read(&mut buffer)
+    )
+    .await
+    .is_err());
+    assert!(exchange(addr, publish_request(addr, "v4"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    while !seen.contains("\"latestTemplateVersionNumber\": \"4\"") {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+    assert!(
+        seen.contains(",\r\n{\n  \"latestTemplateVersionNumber\": \"4\"\n}\n"),
+        "{seen:?}"
+    );
+    assert_eq!(seen.matches('[').count(), 1, "{seen:?}");
     // An older lastKnownVersionNumber gets its first frame at once.
     let late = r#"{"lastKnownVersionNumber":"0"}"#;
     let mut other = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -5087,7 +5109,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         .await
         .unwrap();
     let mut late_seen = String::new();
-    while !late_seen.contains("\"latestTemplateVersionNumber\": \"3\"") {
+    while !late_seen.contains("\"latestTemplateVersionNumber\": \"4\"") {
         let n = tokio::time::timeout(std::time::Duration::from_secs(5), other.read(&mut buffer))
             .await
             .unwrap()
@@ -5095,6 +5117,77 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         assert!(n > 0, "{late_seen:?}");
         late_seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
     }
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn the_realtime_route_is_a_post_of_the_default_project_on_a_local_host_only() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state(Arc::new(AtomicUsize::new(0)))),
+    ));
+    let path = "/v1/projects/demo-app/namespaces/firebase:streamFetchInvalidations";
+    // Not a POST: not the stream (the earlier answer for an unknown route).
+    let get = exchange(
+        addr,
+        format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+    )
+    .await;
+    assert!(get.starts_with("HTTP/1.1 404 "), "{get}");
+    // Another project: refused at once.
+    let other = exchange(addr, format!("POST /v1/projects/other-app/namespaces/firebase:streamFetchInvalidations HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}")).await;
+    assert!(other.starts_with("HTTP/1.1 404 "), "{other}");
+    // Two Host headers: the host guard refuses, as for every other route.
+    let hosts = exchange(addr, format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nHost: evil.example\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}")).await;
+    assert!(hosts.starts_with("HTTP/1.1 403 "), "{hosts}");
+    // A foreign origin: refused.
+    let origin = exchange(addr, format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nOrigin: https://evil.example\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{{}}")).await;
+    assert!(origin.starts_with("HTTP/1.1 403 "), "{origin}");
+    // Before any publication, nothing is answered (no frame for the initial state).
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(
+            format!("POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: 2\r\n\r\n{{}}")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut buffer = vec![0; 1024];
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        stream.read(&mut buffer)
+    )
+    .await
+    .is_err());
+    // A lastKnownVersionNumber at the current version holds as well.
+    assert!(exchange(addr, publish_request(addr, "v1"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    let known = r#"{"lastKnownVersionNumber":"1"}"#;
+    let mut current = tokio::net::TcpStream::connect(addr).await.unwrap();
+    current
+        .write_all(
+            format!(
+                "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\n\r\n{known}",
+                known.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        current.read(&mut buffer)
+    )
+    .await
+    .is_err());
     server.abort();
     let _ = server.await;
 }
