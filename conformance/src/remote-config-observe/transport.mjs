@@ -56,6 +56,7 @@ export class Transport {
       ifNoneMatch,
       textBody = false,
       notModified = false,
+      secret = false,
     } = {},
   ) {
     if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(caseId)) throw new Error(`invalid case id ${caseId}`);
@@ -114,8 +115,10 @@ export class Transport {
     } catch (error) {
       return this.fail(seq, caseId, `transport: ${error?.name ?? "error"}`, response?.status);
     }
-    const file = `${String(seq).padStart(3, "0")}-${caseId}.body`;
-    writeFileSync(join(this.out, file), bytes);
+    // `secret: true` (an API key's value): the body is neither persisted nor digested; the journal
+    // keeps its status and length only, and the caller holds the value in memory.
+    const file = secret ? null : `${String(seq).padStart(3, "0")}-${caseId}.body`;
+    if (file) writeFileSync(join(this.out, file), bytes);
     const etag = response.headers.get("etag");
     const contentType = response.headers.get("content-type");
     this.journal({
@@ -124,7 +127,7 @@ export class Transport {
       phase: "response-persisted",
       status: response.status,
       bytes: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: secret ? null : createHash("sha256").update(bytes).digest("hex"),
       etag,
       contentType,
       contentEncoding: response.headers.get("content-encoding"),
