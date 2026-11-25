@@ -401,6 +401,7 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
             errors: [],
             keys: [],
             requests: 2,
+            ...a2.patch,
           },
         ),
       );
@@ -452,6 +453,10 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
         errors: ["x"],
       },
     },
+    // run.json naming another directory; an a2.json at baseline whose template or key list is not.
+    { meta: { runId, a2Of: "/elsewhere" } },
+    { patch: { clientEmpty: false } },
+    { patch: { keyListComplete: false } },
   ])
     assert.match(
       await verdict(stopped, { a2 }),

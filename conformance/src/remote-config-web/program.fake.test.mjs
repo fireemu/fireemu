@@ -41,6 +41,9 @@ function world({
   project = PROJECT,
   onFetch = null,
   createFails = false,
+  streamAfterPublish = null,
+  fetchGarbage = false,
+  putStatus = 200,
 } = {}) {
   const ADMIN = `https://firebaseremoteconfig.googleapis.com/v1/projects/${project}/remoteConfig`;
   let streamCount = 0;
@@ -65,6 +68,8 @@ function world({
     const method = init.method;
     if (url.href === ADMIN && method === "GET")
       return json(200, doc(), { etag: `etag-${NUMBER}-${version}` });
+    if (url.href === ADMIN && method === "PUT" && putStatus !== 200)
+      return json(putStatus, { error: { code: putStatus } });
     if (url.href === ADMIN && method === "PUT") {
       const tag = init.headers["if-match"];
       if (tag !== `etag-${NUMBER}-${version}` && tag !== "*")
@@ -141,6 +146,8 @@ function world({
         headers: { "content-type": "application/json" },
         body: '{"error":{"code":429}}',
       };
+    if (url.pathname.endsWith(":fetch") && fetchGarbage)
+      return { status: 200, headers: { "content-type": "application/json" }, body: "not json" };
     if (url.pathname.endsWith(":fetch")) {
       onFetch?.();
       const body = JSON.parse(request.postData());
@@ -171,6 +178,16 @@ function world({
     }
     if (url.pathname.endsWith(":streamFetchInvalidations")) {
       const next = await new Promise((resolve) => pending.push(resolve));
+      // `streamAfterPublish`: the stream answers the publication with realtime disabled (a listener
+      // error under a 200) or with a redirect (a failed request with no status).
+      if (streamAfterPublish === "disabled")
+        return {
+          status: 200,
+          headers: { "content-type": "application/json" },
+          body: '[{\n  "featureDisabled": true\n}',
+        };
+      if (streamAfterPublish === "redirect")
+        return { status: 302, headers: { location: "https://elsewhere.example/x" }, body: "" };
       return {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -314,6 +331,7 @@ function productionAdmin(
     keyProject = NUMBER,
     operationName = null,
     servicesNextPage = false,
+    servicesExtra = false,
     listError = false,
     deleteTime = "2026-11-25T00:00:00Z",
     appNumber = NUMBER,
@@ -336,7 +354,10 @@ function productionAdmin(
   return async (url, init) => {
     if (url.host === "serviceusage.googleapis.com")
       return json(200, {
-        services: url.searchParams.getAll("names").map((n) => ({
+        services: [
+          ...url.searchParams.getAll("names"),
+          ...(servicesExtra ? ["projects/x/services/other.googleapis.com"] : []),
+        ].map((n) => ({
           name: `projects/${NUMBER}/services/${n.split("/").at(-1)}`,
           config: { name: n.split("/").at(-1) },
           state: "ENABLED",
@@ -1062,6 +1083,68 @@ test(
     assert.equal(result.complete, false);
     assert.ok(
       result.open.some((item) => /^leak: [0-9]+-g-client\.body held a secret/.test(item)),
+      JSON.stringify(result.open),
+    );
+    const { readdirSync } = await import("node:fs");
+    for (const file of readdirSync(out))
+      assert.ok(!readFileSync(join(out, file), "utf8").includes(KEY), file);
+  },
+);
+
+test(
+  "ruling 18 near misses: a listener error under a 200, a stream that fails without a status, a fetch the SDK cannot read, a fourth service",
+  { timeout: 300_000, skip },
+  async (t) => {
+    for (const [port, options, reason, last] of [
+      [
+        47857,
+        { client: { streamAfterPublish: "disabled" } },
+        /the listener reported/,
+        "r1-changed",
+      ],
+      [
+        47858,
+        { client: { streamAfterPublish: "redirect" } },
+        /request failed \(TypeError\)/,
+        "r1-changed",
+      ],
+      [47859, { client: { fetchGarbage: true } }, /f-one: failure/, "t1-publish"],
+    ]) {
+      const result = await productionPass(t, port, options);
+      assert.match(result.stopped ?? "", reason, String(port));
+      const forward = casesOf(result.out).filter((c) => FORWARD.includes(c));
+      assert.equal(forward.at(-1), last, `${port}: ${forward}`);
+    }
+    const extra = await productionPass(t, 47860, { admin: { servicesExtra: true } });
+    assert.match(extra.stopped, /not ENABLED under the configured project number/);
+  },
+);
+
+test(
+  "ruling 18 item 3: the leak check knows the key even when no page was opened",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const { main, PROJECT: SANDBOX } = await import("./record.mjs");
+    const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-main-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const fake = world({ project: SANDBOX, putStatus: 400 });
+    t.mock.method(console, "log", () => {});
+    await main(
+      ["--send-production", "--out", join(dir, "send-web-1")],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      {
+        token: () => "t",
+        fetchImpl: productionAdmin(fake, { leakKeyInTemplate: true }),
+        openBrowser: (options) => openBrowser({ ...options, fake: fake.client }),
+        timing: TIMING,
+        port: 47861,
+      },
+    );
+    const out = join(dir, "send-web-1");
+    const result = JSON.parse(readFileSync(join(out, "result.json"), "utf8"));
+    assert.match(result.stopped, /t1-publish: 400/);
+    assert.ok(
+      result.open.some((item) => item.startsWith("leak: ")),
       JSON.stringify(result.open),
     );
     const { readdirSync } = await import("node:fs");
