@@ -84,10 +84,59 @@ export const KEY_OPEN =
   "k-create: the key may exist until its deletion is read back (A2 lists keys)";
 const OPERATION = /^operations\/[A-Za-z0-9._-]+$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const isEmpty = (doc) =>
-  !["parameters", "conditions", "parameterGroups"].some(
-    (k) => doc?.[k] && typeof doc[k] === "object" && Object.keys(doc[k]).length > 0,
+const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * The published empty baseline, in the one shape production records for it (send-b-2 g-client):
+ * an object whose only member is `version`, with a decimal versionNumber (ruling 18 item 6). Phase
+ * A, G and A2 accept exactly this; `200 {}` (unpublished) or any content is not the baseline.
+ */
+export function baselineEmpty(doc) {
+  return (
+    isObject(doc) &&
+    Object.keys(doc).every((k) => k === "version") &&
+    isObject(doc.version) &&
+    typeof doc.version.versionNumber === "string" &&
+    /^[1-9][0-9]*$/.test(doc.version.versionNumber)
   );
+}
+
+/** A deletion time as the API Keys service writes it: RFC 3339 in UTC, never empty. */
+export const DELETE_TIME =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$/;
+export const isDeleted = (key) =>
+  typeof key?.deleteTime === "string" && DELETE_TIME.test(key.deleteTime);
+
+/**
+ * A complete read: 200, a JSON object without an `error` member and without a nextPageToken
+ * (ruling 18 item 6). Everything else is refused with `what`.
+ */
+export function completeRead(r, what) {
+  if (r.status !== 200 || !isObject(r.json) || "error" in r.json || "nextPageToken" in r.json)
+    throw new Stop(`${what} not complete (${r.status})`);
+  return r.json;
+}
+
+/**
+ * The page-side statuses a forward step may continue after (ruling 18 item 1): an answer of 200,
+ * a 304 to a fetch, a request not answered yet, and a realtime request the SDK aborted when its
+ * listener closed. Any other status (403, 429 included), any other failed request, and any error
+ * the listener reported stop the forward program.
+ */
+export function pageProblem(wire, updates) {
+  for (const e of wire) {
+    const stream = (e.path ?? "").endsWith(":streamFetchInvalidations");
+    if (e.error !== undefined && !(stream && e.error === "AbortError"))
+      return `${e.host} request failed (${e.error})`;
+    if (e.status === null || e.status === undefined) continue;
+    if (e.status === 200) continue;
+    if (e.status === 304 && (e.path ?? "").endsWith(":fetch")) continue;
+    if (e.status >= 200 && e.status < 300 && e.method === "DELETE") continue;
+    return `${e.host} answered ${e.status}`;
+  }
+  const failed = (updates ?? []).find((u) => u.error !== undefined);
+  return failed ? `the listener reported ${failed.error}` : null;
+}
 
 /**
  * Runs one pass. `ctx`: { transport, urls: {client, services, webApps, keys}, project, number,
@@ -112,6 +161,7 @@ export async function observe(ctx) {
   /** A template write: an unknown answer opens the item and stops the forward program. */
   const write = async (caseId, url, method, body, ifMatch) => {
     await pace();
+    await gate();
     wrote = true;
     try {
       const r = await t.send(caseId, url, { method, body, ifMatch });
@@ -137,26 +187,36 @@ export async function observe(ctx) {
     ctx.grant?.("operation", name);
     for (let i = 0; i < polls; i += 1) {
       const op = await t.send(`${prefix}-poll-${i}`, `${urls.keysApi}${name}`, { secret: true });
-      if (op.status !== 200) throw new Stop(`${prefix}: operation read ${op.status}`);
-      if (op.json.done) return op.json;
+      // The operation's own answer: 200, an object naming the operation read.
+      if (op.status !== 200 || !isObject(op.json) || op.json.name !== name)
+        throw new Stop(`${prefix}: operation read ${op.status}`);
+      if (op.json.done === true) return op.json;
       await wait(timing.pollMs);
     }
     return null;
+  };
+  /**
+   * The forward gate (ruling 18 item 1), before every template write, after every page call and
+   * on every turn of a wait: a stopped hook, or any page-side answer outside `pageProblem`'s
+   * closed set, stops the forward program; G still runs.
+   */
+  const gate = async () => {
+    if (browser.stopped()) throw new Stop(`browser: ${browser.stopped()}`);
+    for (const [name, client] of Object.entries(clients)) {
+      const problem = pageProblem(await client.wire(), await client.updates());
+      if (problem) throw new Stop(`page ${name}: ${problem}`);
+    }
   };
   /** Waits until `done()` or the window ends; returns whether it happened. */
   const until = async (done, ms) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
+      await gate();
       if (await done()) return true;
-      if (browser.stopped()) throw new Stop(`browser: ${browser.stopped()}`);
       await wait(500);
     }
+    await gate();
     return false;
-  };
-  /** A 429 on the page's side stops the forward program as an admin 429 does (ruling 16 item 6). */
-  const throttled = async () => {
-    for (const [name, client] of Object.entries(clients))
-      if ((await client.wire()).some((e) => e.status === 429)) throw new Stop(`page ${name}: 429`);
   };
   const streams = async (client) =>
     (await client.wire()).filter((e) => e.path.endsWith(":streamFetchInvalidations")).length;
@@ -168,11 +228,15 @@ export async function observe(ctx) {
         method: "DELETE",
         secret: true,
       });
-      if (deleted.status !== 200) return `k-delete: ${deleted.status}`;
+      if (deleted.status !== 200 || !isObject(deleted.json)) return `k-delete: ${deleted.status}`;
       const done = await operation("k-delete", deleted.json.name);
       if (!done || done.error) return "k-delete: operation not done without error";
       const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
-      result.key.deleted = back.status === 200 && typeof back.json.deleteTime === "string";
+      result.key.deleted =
+        back.status === 200 &&
+        isObject(back.json) &&
+        back.json.name === name &&
+        isDeleted(back.json);
       return result.key.deleted ? null : "k-readback: no deleteTime";
     } catch (error) {
       result.key.deleted = false;
@@ -194,30 +258,46 @@ export async function observe(ctx) {
   let base = null;
   try {
     // ---- A. baseline and assumptions (read-only) ----
+    // Every read is judged by its shape, not only its status (ruling 18 item 6).
     const a = await t.send("a-client", urls.client);
-    if (a.status !== 200 || !isEmpty(a.json) || !a.json.version?.versionNumber)
+    if (a.status !== 200 || !baselineEmpty(a.json))
       throw new Stop("the client template is not at the published empty baseline");
-    base = { version: String(a.json.version.versionNumber), etag: a.etag };
+    base = { version: a.json.version.versionNumber, etag: a.etag };
     result.baseline.before = { version: base.version, empty: true };
     if (ctx.production) {
-      const services = await t.send("a-services", urls.services);
-      const states = Object.fromEntries(
-        (services.json.services ?? []).map((s) => [s.config?.name ?? s.name, s.state]),
+      // The three APIs, each ENABLED, named under the configured project number: the number is
+      // compared with the provider's before the key is created.
+      const services = completeRead(await t.send("a-services", urls.services), "services");
+      const listed = Array.isArray(services.services) ? services.services : [];
+      const named = new Map(listed.map((x) => [x?.name, x]));
+      result.baseline.services = Object.fromEntries(
+        API_TARGETS.map((x) => [
+          x,
+          named.get(`projects/${ctx.number}/services/${x}`)?.state ?? null,
+        ]),
       );
-      result.baseline.services = states;
-      if (services.status !== 200 || !API_TARGETS.every((s) => states[s] === "ENABLED"))
-        throw new Stop("a required API is not ENABLED");
-      // Every assumption read must be a complete 200 before any write (ruling 16 item 2).
-      const apps = await t.send("a-web-apps", urls.webApps);
-      if (apps.status !== 200 || apps.json.nextPageToken)
-        throw new Stop(`web apps list not complete (${apps.status})`);
-      const app = (apps.json.apps ?? []).find((x) => x.displayName === WEB_APP);
-      if (!app?.appId) throw new Stop(`web app ${WEB_APP} not found`);
-      ctx.appId = app.appId;
-      const keys = await t.send("a-keys", urls.keysList);
-      if (keys.status !== 200 || keys.json.nextPageToken)
-        throw new Stop(`key list not complete (${keys.status})`);
-      if ((keys.json.keys ?? []).some((k) => k.displayName === KEY_ID && !k.deleteTime))
+      if (
+        listed.length !== API_TARGETS.length ||
+        !API_TARGETS.every(
+          (x) => named.get(`projects/${ctx.number}/services/${x}`)?.state === "ENABLED",
+        )
+      )
+        throw new Stop("a required API is not ENABLED under the configured project number");
+      const apps = completeRead(await t.send("a-web-apps", urls.webApps), "web apps list");
+      const matching = (Array.isArray(apps.apps) ? apps.apps : []).filter(
+        (x) => x?.displayName === WEB_APP,
+      );
+      const appNumber = /^1:([0-9]+):web:[0-9a-f]+$/.exec(matching[0]?.appId ?? "")?.[1];
+      if (matching.length !== 1 || !appNumber) throw new Stop(`web app ${WEB_APP} not found`);
+      if (appNumber !== ctx.number)
+        throw new Stop("the configured project number is not the provider's");
+      ctx.appId = matching[0].appId;
+      const keys = completeRead(await t.send("a-keys", urls.keysList), "key list");
+      if (keys.keys !== undefined && !Array.isArray(keys.keys))
+        throw new Stop("key list not complete (200)");
+      if ((keys.keys ?? []).some((k) => !isObject(k) || typeof k.name !== "string"))
+        throw new Stop("key list not complete (200)");
+      if ((keys.keys ?? []).some((k) => k.displayName === KEY_ID && !isDeleted(k)))
         throw new Stop(`a live key named ${KEY_ID} already exists`);
     }
 
@@ -237,7 +317,8 @@ export async function observe(ctx) {
         },
         secret: true,
       });
-      if (created.status !== 200) throw new Stop(`k-create: ${created.status}`);
+      if (created.status !== 200 || !isObject(created.json))
+        throw new Stop(`k-create: ${created.status}`);
       createOperation = created.json.name ?? null;
       const done = await operation("k-create", createOperation);
       if (!done || done.error || !done.response?.name) throw new Stop("key create not settled");
@@ -250,6 +331,8 @@ export async function observe(ctx) {
         throw new Stop("key value unreadable");
       keyValue = value.json.keyString;
     } else keyValue = ctx.fakeKey;
+    // The recorder's leak check holds the value until its outputs are written (ruling 18 item 3).
+    ctx.secrets?.add(keyValue);
     const config = {
       apiKey: keyValue,
       projectId: ctx.project,
@@ -265,23 +348,30 @@ export async function observe(ctx) {
     step("t1", { version: v1.json.version?.versionNumber ?? null });
 
     // ---- F. fetches of both installations ----
-    clients.one = await browser.client(config);
-    clients.two = await browser.client(config);
+    clients.one = await browser.client(config, "one");
+    clients.two = await browser.client(config, "two");
     for (const [name, signals] of [
       ["one", SIGNALS.s1],
       ["two", SIGNALS.s2],
     ]) {
-      const first = await clients[name].call("fetch", signals);
-      const again = await clients[name].call("fetch", signals);
-      result.clients[name] = { fetches: [first, again] };
-      step(`f-${name}`, { first: first.lastFetchStatus, again: again.lastFetchStatus });
-      if ([first, again].some((f) => f.lastFetchStatus === "throttle"))
-        throw new Stop(`f-${name}: throttled`);
-      await throttled();
+      const fetches = [];
+      result.clients[name] = { fetches };
+      for (const _ of [1, 2]) {
+        await gate();
+        const f = await clients[name].call("fetch", signals);
+        fetches.push(f);
+        await gate();
+        // Only a successful fetch lets the forward program go on (a throttle, a failure or an
+        // error the SDK returned instead of throwing stops it).
+        if (f.lastFetchStatus !== "success" || f.error !== null)
+          throw new Stop(`f-${name}: ${f.lastFetchStatus}${f.error ? ` (${f.error})` : ""}`);
+      }
+      step(`f-${name}`, { first: fetches[0].lastFetchStatus, again: fetches[1].lastFetchStatus });
     }
 
     // ---- R. realtime on installation one ----
     const one = clients.one;
+    await gate();
     await one.call("listen");
     const opened = await until(async () => (await streams(one)) >= 1, timing.streamOpenMs);
     step("r-open", { opened });
@@ -328,11 +418,12 @@ export async function observe(ctx) {
       const window = name === "r1-changed" ? timing.updateWindowMs : timing.quietWindowMs;
       const updated = await until(async () => (await one.updates()).length > before, window);
       step(name, { version: r.json.version?.versionNumber ?? null, updated });
-      await throttled();
     }
     // One reconnect: the listener closed and opened again, then one more changed publication.
+    await gate();
     await one.call("unlisten");
     await wait(timing.reconnectGapMs);
+    await gate();
     const streamsBefore = await streams(one);
     await one.call("listen");
     const reopened = await until(
@@ -348,7 +439,6 @@ export async function observe(ctx) {
       timing.updateWindowMs,
     );
     step("r5-changed", { version: v5.json.version?.versionNumber ?? null, updated });
-    await throttled();
     await one.call("unlisten");
   } catch (error) {
     result.stopped =
@@ -370,10 +460,23 @@ export async function observe(ctx) {
         result.open.push(`g-${name}: ${error.message}`);
       }
     }
+    // An installation whose create the hook dispatched is settled only by a DELETE answered 2xx
+    // on the wire (ruling 18 item 5); the SDK's own resolution never settles it.
+    try {
+      for (const proof of await browser.installations()) {
+        result.installations = [...(result.installations ?? []), proof];
+        if (proof.proved !== proof.dispatched)
+          result.open.push(
+            `g-${proof.name}: installation deletion not proved on the wire (${proof.proved} of ${proof.dispatched})`,
+          );
+      }
+    } catch (error) {
+      result.open.push(`g-installations: ${error.message}`);
+    }
     if (base) {
       try {
         let r = await t.send("g-client", urls.client);
-        if (r.status === 200 && !isEmpty(r.json) && wrote) {
+        if (!(r.status === 200 && baselineEmpty(r.json)) && wrote) {
           await pace();
           await t.send("g-restore", `${urls.client}:rollback`, {
             method: "POST",
@@ -384,7 +487,7 @@ export async function observe(ctx) {
         }
         result.baseline.after = {
           status: r.status,
-          empty: r.status === 200 && isEmpty(r.json),
+          empty: r.status === 200 && baselineEmpty(r.json),
           version: r.json?.version?.versionNumber ?? null,
         };
       } catch (error) {
@@ -403,7 +506,7 @@ export async function observe(ctx) {
     if (ctx.production && keyName) {
       const problem = await deleteKey(keyName);
       if (problem) result.open.push(`${problem} (A2 lists keys)`);
-      else result.open.splice(result.open.indexOf(KEY_OPEN), 1);
+      else if (result.open.includes(KEY_OPEN)) result.open.splice(result.open.indexOf(KEY_OPEN), 1);
     } else if (ctx.production && result.key.createRequested && !keyName) result.key.deleted = false;
   }
   keyValue = null;

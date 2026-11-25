@@ -130,19 +130,40 @@ test("the corpus: two signal sets, the template's conditions and value types", (
 
 // ---- RC-CLOSURE-B v1.1 (ruling 16) ----
 
-test("v1.1 item 4: the page's requests by method, host, path and query, bound to the context", async () => {
+test("v1.1 item 4 and ruling 18 item 4: the page's requests, bound to the context's key, app and installations", async () => {
   const { requestPolicy } = await import("./driver.mjs");
-  const own = { project: "p-web", key: "K1", fids: new Set() };
+  const own = { project: "p-web", key: "K1", appId: "1:1:web:ab", fids: new Set() };
   const fid = "cAAAAAAAAAAAAAAAAAAAAA";
+  const other = "cBBBBBBBBBBBBBBBBBBBBB";
   const ask = (method, href, { headers = {}, postData } = {}) =>
-    requestPolicy({ method, href, headers, postData }, own);
+    requestPolicy({ method, href, headers, postData }, own).verdict;
   const inst = "https://firebaseinstallations.googleapis.com/v1/projects/p-web/installations";
   const keyed = { headers: { "x-goog-api-key": "K1" } };
-  // An installation's own requests only after its create named it.
+  const fetchUrl =
+    "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1";
+  const streamUrl =
+    "https://firebaseremoteconfigrealtime.googleapis.com/v1/projects/p-web/namespaces/firebase:streamFetchInvalidations?key=K1";
+  const fetchBody = (f = fid, app = "1:1:web:ab") =>
+    JSON.stringify({ app_instance_id: f, app_id: app, sdk_version: "x" });
+  const streamBody = (f = fid, app = "1:1:web:ab", project = "p-web") =>
+    JSON.stringify({ appInstanceId: f, appId: app, project, namespace: "firebase" });
+  // A create is a create: its id is the context's only once the hook dispatched it (the driver
+  // adds it), so before that nothing may name it.
+  const created = requestPolicy(
+    { method: "POST", href: inst, headers: keyed.headers, postData: JSON.stringify({ fid }) },
+    own,
+  );
+  assert.deepEqual(created, { verdict: "create", fid });
+  assert.equal(own.fids.has(fid), false);
   assert.equal(ask("POST", `${inst}/${fid}/authTokens:generate`, keyed), "path");
-  assert.equal(ask("POST", inst, { ...keyed, postData: JSON.stringify({ fid }) }), "allowed");
+  assert.equal(ask("DELETE", `${inst}/${fid}`, keyed), "path");
+  assert.equal(ask("POST", fetchUrl, { postData: fetchBody() }), "installation id");
+  own.fids.add(fid);
   assert.equal(ask("POST", `${inst}/${fid}/authTokens:generate`, keyed), "allowed");
   assert.equal(ask("DELETE", `${inst}/${fid}`, keyed), "delete");
+  assert.equal(ask("POST", fetchUrl, { postData: fetchBody() }), "allowed");
+  assert.equal(ask("POST", fetchUrl, { ...keyed, postData: fetchBody() }), "allowed");
+  assert.equal(ask("POST", streamUrl, { ...keyed, postData: streamBody() }), "allowed");
   for (const [method, href, options, reason] of [
     [
       "POST",
@@ -150,64 +171,43 @@ test("v1.1 item 4: the page's requests by method, host, path and query, bound to
       { headers: { "x-goog-api-key": "K2" }, postData: JSON.stringify({ fid }) },
       "key",
     ],
+    ["POST", inst, { postData: JSON.stringify({ fid }) }, "key"],
     ["POST", inst, { ...keyed, postData: JSON.stringify({ fid: "short" }) }, "installation id"],
+    ["POST", inst, { ...keyed, postData: "not json" }, "installation id"],
     ["POST", `${inst}?x=1`, { ...keyed, postData: JSON.stringify({ fid }) }, "query"],
     ["GET", `${inst}/${fid}`, keyed, "method"],
-    ["DELETE", `${inst}/cBBBBBBBBBBBBBBBBBBBBB`, keyed, "path"],
+    ["DELETE", `${inst}/${other}`, keyed, "path"],
     ["DELETE", inst.replace("p-web", "other") + `/${fid}`, keyed, "path"],
     ["POST", `${inst}/${fid}/other`, keyed, "path"],
+    // The fetch: another installation, another app, no body, another key, another project.
+    ["POST", fetchUrl, { postData: fetchBody(other) }, "installation id"],
+    ["POST", fetchUrl, { postData: fetchBody(fid, "1:1:web:cd") }, "installation id"],
+    ["POST", fetchUrl, {}, "installation id"],
+    ["POST", fetchUrl, { headers: { "x-goog-api-key": "K2" }, postData: fetchBody() }, "key"],
+    ["POST", fetchUrl.replace("p-web", "other"), { postData: fetchBody() }, "path"],
+    ["POST", fetchUrl.replace("firebase:", "firebase-server:"), { postData: fetchBody() }, "path"],
+    ["POST", fetchUrl.replace("key=K1", "key=K2"), { postData: fetchBody() }, "query"],
+    ["POST", `${fetchUrl}&x=1`, { postData: fetchBody() }, "query"],
+    ["GET", fetchUrl, {}, "method"],
+    // Realtime: the key header is required and must be the context's; the body names it.
+    ["POST", streamUrl, { postData: streamBody() }, "key"],
+    ["POST", streamUrl, { headers: { "x-goog-api-key": "K2" }, postData: streamBody() }, "key"],
+    ["POST", streamUrl, { ...keyed, postData: streamBody(other) }, "installation id"],
+    ["POST", streamUrl, { ...keyed, postData: streamBody(fid, "1:1:web:cd") }, "installation id"],
     [
       "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/other/namespaces/firebase:fetch?key=K1",
-      {},
-      "path",
+      streamUrl,
+      { ...keyed, postData: streamBody(fid, "1:1:web:ab", "x") },
+      "installation id",
     ],
-    [
-      "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase-server:fetch?key=K1",
-      {},
-      "path",
-    ],
-    [
-      "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K2",
-      {},
-      "query",
-    ],
-    [
-      "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1&x=1",
-      {},
-      "query",
-    ],
-    [
-      "GET",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1",
-      {},
-      "method",
-    ],
-    [
-      "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:streamFetchInvalidations?key=K1",
-      {},
-      "path",
-    ],
+    ["POST", streamUrl.replace("key=K1", "key=K2"), { ...keyed, postData: streamBody() }, "query"],
+    ["POST", streamUrl.replace("realtime.", "."), { ...keyed, postData: streamBody() }, "path"],
   ])
-    assert.equal(ask(method, href, options), reason, `${method} ${href}`);
-  assert.equal(
-    ask(
-      "POST",
-      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1",
-    ),
-    "allowed",
-  );
-  assert.equal(
-    ask(
-      "POST",
-      "https://firebaseremoteconfigrealtime.googleapis.com/v1/projects/p-web/namespaces/firebase:streamFetchInvalidations?key=K1",
-    ),
-    "allowed",
-  );
+    assert.equal(
+      ask(method, href, options),
+      reason,
+      `${method} ${href} ${JSON.stringify(options)}`,
+    );
 });
 
 test("v1.1 item 5: a granted name is read only under the full API Keys prefix and in its form", () => {
@@ -269,25 +269,279 @@ test("v1.1 item 7: A2 has its own two read-only forms and fails closed on an inc
   );
 });
 
-test("v1.1 item 7: A2 refuses to read within ten minutes of the pass's last activity", async (t) => {
-  const { writeFileSync, utimesSync } = await import("node:fs");
-  const { lastActivity } = await import("./record.mjs");
+/** A pass directory with run.json (a pid that has exited) and the given files, aged `ageMs`. */
+async function passDir(t, files = {}, { ageMs = 3_600_000, pid } = {}) {
+  const { mkdirSync, writeFileSync, utimesSync } = await import("node:fs");
+  const { spawnSync } = await import("node:child_process");
   const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-a2-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const pass = join(dir, "pass");
-  (await import("node:fs")).mkdirSync(pass);
-  writeFileSync(join(pass, "run.json"), '{"runId":"261125000000abc"}\n');
-  writeFileSync(join(pass, "journal.jsonl"), "{}\n");
+  const pass = join(dir, "send-web-1");
+  mkdirSync(pass);
+  const gone = pid ?? spawnSync(process.execPath, ["-e", ""]).pid;
+  const all = { "run.json": { runId: "261125000000abc", pid: gone }, ...files };
+  const at = (Date.now() - ageMs) / 1000;
+  for (const [name, body] of Object.entries(all)) {
+    writeFileSync(join(pass, name), typeof body === "string" ? body : JSON.stringify(body));
+    utimesSync(join(pass, name), at, at);
+  }
+  return { dir, pass };
+}
+// A2 in these tests can never reach production: no token and no fetch are ever available.
+const offline = {
+  token: () => {
+    throw new Error("test: no token");
+  },
+  fetchImpl: () => {
+    throw new Error("test: no network");
+  },
+};
+
+test("ruling 18 item 7: A2 needs the recorder gone, a checkpoint of the run and ten quiet minutes", async (t) => {
+  const { a2Refusal } = await import("./record.mjs");
+  const result = { "result.json": { runId: "261125000000abc" } };
+  // Admitted: a completion checkpoint, the pid gone, an hour old.
+  assert.equal(a2Refusal((await passDir(t, result)).pass), null);
+  assert.equal(
+    a2Refusal((await passDir(t, { "interrupted.json": { runId: "261125000000abc" } })).pass),
+    null,
+  );
+  for (const [files, options, reason] of [
+    [{}, {}, /no completion or interruption checkpoint/],
+    [{ "result.json": { runId: "other" } }, {}, /no completion or interruption checkpoint/],
+    [{ "result.json": "{" }, {}, /no completion or interruption checkpoint/],
+    [result, { ageMs: 9 * 60_000 }, /10 minutes after the pass's last activity/],
+    [
+      { "run.json": { runId: "261125000000abc" }, ...result },
+      {},
+      /no run.json with its runId and pid/,
+    ],
+    [{ "run.json": "x", ...result }, {}, /no run.json/],
+  ])
+    assert.match(a2Refusal((await passDir(t, files, options)).pass), reason, JSON.stringify(files));
+  // A live recorder (pid and command) refuses; a reused pid with another command does not.
+  const { spawn } = await import("node:child_process");
+  const alive = spawn(process.execPath, [
+    "-e",
+    "setTimeout(() => {}, 60000)",
+    "remote-config-web/record.mjs",
+  ]);
+  t.after(() => alive.kill());
+  assert.match(
+    a2Refusal((await passDir(t, result, { pid: alive.pid })).pass),
+    /recorder is still running/,
+  );
+  assert.equal(a2Refusal((await passDir(t, result, { pid: process.pid })).pass), null);
+});
+
+test("ruling 18 item 7: main refuses A2 before it reads a token or creates anything", async (t) => {
+  const { existsSync } = await import("node:fs");
+  const { dir, pass } = await passDir(
+    t,
+    { "result.json": { runId: "261125000000abc" } },
+    { ageMs: 60_000 },
+  );
+  let asked = 0;
   await assert.rejects(
-    main(["--send-production", "--a2-of", pass, "--out", join(dir, "a2")], {
-      FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER,
-    }),
+    main(
+      ["--send-production", "--a2-of", pass, "--out", join(dir, "a2")],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      {
+        ...offline,
+        token: () => {
+          asked += 1;
+          throw new Error("test: no token");
+        },
+      },
+    ),
     /10 minutes after the pass's last activity/,
   );
-  const old = Date.now() / 1000 - 3600;
-  utimesSync(join(pass, "run.json"), old, old);
-  utimesSync(join(pass, "journal.jsonl"), old, old);
-  assert.ok(Date.now() - lastActivity(pass) > 3_000_000);
+  assert.equal(asked, 0);
+  assert.equal(existsSync(join(dir, "a2")), false);
+  const { pass: early } = await passDir(t, {});
+  await assert.rejects(
+    main(
+      ["--send-production", "--a2-of", early, "--out", join(dir, "a2b")],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      offline,
+    ),
+    /checkpoint/,
+  );
+});
+
+test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of it, or an acceptance record", async (t) => {
+  const { closureRefusal } = await import("./record.mjs");
+  const { mkdirSync, writeFileSync, realpathSync } = await import("node:fs");
+  const runId = "261125000000abc";
+  const complete = { runId, complete: true, stopped: null, open: [], unknown: [], refusals: [] };
+  const verdict = async (result, { a2, acceptance, ledger = "", extra = {} } = {}) => {
+    const { dir, pass } = await passDir(t, {
+      ...(result ? { "result.json": result } : {}),
+      ...extra,
+    });
+    const real = realpathSync(pass);
+    if (a2) {
+      mkdirSync(`${pass}-a2-1`);
+      const meta = a2.meta ?? { runId, a2Of: real };
+      writeFileSync(join(`${pass}-a2-1`, "run.json"), JSON.stringify(meta));
+      writeFileSync(
+        join(`${pass}-a2-1`, "a2.json"),
+        JSON.stringify(
+          a2.back ?? {
+            runId,
+            a2Of: real,
+            atBaseline: true,
+            clientEmpty: true,
+            keyListComplete: true,
+            errors: [],
+            keys: [],
+            requests: 2,
+          },
+        ),
+      );
+    }
+    if (acceptance) writeFileSync(`${pass}-acceptance.json`, JSON.stringify(acceptance));
+    writeFileSync(join(dir, "owner.md"), ledger);
+    return closureRefusal(pass, join(dir, "owner.md"));
+  };
+  assert.equal(await verdict(complete), null);
+  // A complete flag with an item, an unknown answer or a refusal beside it is not complete.
+  for (const bad of [
+    { ...complete, open: ["x"] },
+    { ...complete, unknown: ["t1-publish"] },
+    { ...complete, refusals: [{}] },
+    { ...complete, stopped: "x" },
+    { ...complete, runId: "other" },
+  ])
+    assert.ok(await verdict(bad), JSON.stringify(bad));
+  const stopped = {
+    runId,
+    complete: false,
+    stopped: "x",
+    open: [],
+    unknown: ["a-keys"],
+    refusals: [],
+  };
+  assert.equal(await verdict(stopped, { a2: {} }), null);
+  // An A2 that holds only atBaseline, names another run or directory, or has an error, closes nothing.
+  for (const a2 of [
+    { back: { atBaseline: true } },
+    { meta: { runId: "other", a2Of: "x" } },
+    {
+      back: {
+        runId,
+        a2Of: "/elsewhere",
+        atBaseline: true,
+        clientEmpty: true,
+        keyListComplete: true,
+        errors: [],
+      },
+    },
+    {
+      back: {
+        runId,
+        a2Of: null,
+        atBaseline: true,
+        clientEmpty: true,
+        keyListComplete: true,
+        errors: ["x"],
+      },
+    },
+  ])
+    assert.match(
+      await verdict(stopped, { a2 }),
+      /no A2 of its run at baseline/,
+      JSON.stringify(a2),
+    );
+  // Open items are never closed by an A2 at baseline alone (an unknown create, an installation).
+  const KEY_OPEN = "k-create: the key may exist until its deletion is read back (A2 lists keys)";
+  const open = {
+    ...stopped,
+    open: [KEY_OPEN, "g-one: installation deletion not proved on the wire (0 of 1)"],
+  };
+  assert.match(await verdict(open, { a2: {} }), /no acceptance or recovery record/);
+  const record = { runId, open: open.open, kind: "owner-acceptance", ledgerLine: 2 };
+  const line = `- 2026-11-25 | RC-CLOSURE-B accept ${runId} | owner`;
+  assert.equal(await verdict(open, { a2: {}, acceptance: record, ledger: `x\n${line}\n` }), null);
+  for (const [acceptance, ledger] of [
+    [{ ...record, open: [KEY_OPEN] }, `x\n${line}\n`],
+    [{ ...record, runId: "other" }, `x\n${line}\n`],
+    [{ ...record, kind: "self" }, `x\n${line}\n`],
+    [{ ...record, ledgerLine: 1 }, `x\n${line}\n`],
+    [record, `x\n- 2026-11-25 | RC-CLOSURE-B recovery ${runId}\n`],
+    [record, `x\n- 2026-11-25 | accept ${runId}\n`],
+  ])
+    assert.ok(await verdict(open, { a2: {}, acceptance, ledger }), JSON.stringify(acceptance));
+  assert.match(await verdict(open, { acceptance: record, ledger: `x\n${line}\n` }), /no A2/);
+  // A pass ended by a signal is open as `interrupted`.
+  const interrupted = { "interrupted.json": { runId, signal: "SIGTERM" } };
+  assert.match(await verdict(null, { a2: {}, extra: interrupted }), /no acceptance/);
+  assert.equal(
+    await verdict(null, {
+      a2: {},
+      extra: interrupted,
+      acceptance: { runId, open: ["interrupted"], kind: "recovery", ledgerLine: 1 },
+      ledger: `- RC-CLOSURE-B recovery ${runId} done\n`,
+    }),
+    null,
+  );
+  assert.match(await verdict(null), /no result.json of its run/);
+});
+
+test("ruling 18 item 6: A2 is at baseline only for the baseline's shape and a complete key list", async () => {
+  const { readBack } = await import("./record.mjs");
+  const u = adminUrls(PROJECT);
+  const transport = (client, keys, keysStatus = 200) => ({
+    count: 2,
+    send: async (caseId) =>
+      caseId === "a2-client" ? { status: 200, json: client } : { status: keysStatus, json: keys },
+  });
+  const base = { version: { versionNumber: "46" } };
+  const deleted = { displayName: KEY_ID, name: "k", deleteTime: "2026-11-25T00:00:00.123Z" };
+  const back = await readBack(transport(base, { keys: [deleted] }), u, { runId: "r", a2Of: "/d" });
+  assert.deepEqual([back.atBaseline, back.runId, back.a2Of], [true, "r", "/d"]);
+  assert.equal((await readBack(transport(base, {}), u)).atBaseline, true);
+  for (const [client, keys, status] of [
+    [{}, { keys: [] }],
+    [{ version: { versionNumber: "" } }, { keys: [] }],
+    [{ ...base, parameterGroups: {} }, { keys: [] }],
+    [{ ...base, parameters: { a: {} } }, { keys: [] }],
+    [base, { error: { code: 500 } }],
+    [base, { keys: [], nextPageToken: "" }],
+    [base, { keys: "x" }],
+    [base, { keys: [] }, 403],
+    [base, { keys: [{ ...deleted, deleteTime: "" }] }],
+    [base, { keys: [{ ...deleted, deleteTime: "yesterday" }] }],
+    [base, { keys: [{ displayName: KEY_ID }] }],
+  ])
+    assert.equal(
+      (await readBack(transport(client, keys, status), u)).atBaseline,
+      false,
+      JSON.stringify([client, keys, status]),
+    );
+});
+
+test("ruling 18 item 8: main refuses the variables that would move the browser or its diagnostics", async (t) => {
+  const { REFUSED_ENV } = await import("./record.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-env-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const name of [
+    "SELENIUM_REMOTE_URL",
+    "SELENIUM_REMOTE_HEADERS",
+    "SELENIUM_REMOTE_CAPABILITIES",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "PW_CHROMIUM_ATTACH_TO_OTHER",
+    "DEBUG",
+  ]) {
+    assert.ok(REFUSED_ENV.includes(name));
+    await assert.rejects(
+      main(
+        ["--send-production", "--out", join(dir, "run")],
+        { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER, [name]: "x" },
+        offline,
+      ),
+      new RegExp(`${name} must not be set`),
+    );
+  }
 });
 
 test("v1.1 item 8: the SDK bundles are refused unless they are the pinned bytes and version", async (t) => {
@@ -311,4 +565,42 @@ test("v1.1 item 7: an A2 invocation uses A2's own allow list", async () => {
   assert.equal(a2(new URL(u.keysCreate), "POST"), false);
   assert.ok(a2(new URL(u.keysListDeleted), "GET"));
   assert.ok(pass(new URL(u.client), "PUT"));
+});
+
+test("ruling 18 item 3: the leak check masks every output file holding the key or a page's secret", async (t) => {
+  const { leakCheck } = await import("./record.mjs");
+  const { writeFileSync, readFileSync, mkdirSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-leak-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "journal.jsonl"), '{"etag":"AIzaLEAK"}\n');
+  writeFileSync(join(dir, "wire-one.json"), '{"path":"/installations/cRAWFID000000000000000"}\n');
+  writeFileSync(join(dir, "result.json"), '{"ok":true}\n');
+  mkdirSync(join(dir, "sub"));
+  const browser = { mask: async (text) => text.split("cRAWFID000000000000000").join("FID_1") };
+  const leaked = await leakCheck(dir, new Set(["AIzaLEAK"]), browser);
+  assert.deepEqual(leaked.toSorted(), ["journal.jsonl", "wire-one.json"]);
+  assert.equal(readFileSync(join(dir, "journal.jsonl"), "utf8"), '{"etag":"API_KEY"}\n');
+  assert.ok(readFileSync(join(dir, "wire-one.json"), "utf8").includes("FID_1"));
+  assert.deepEqual(await leakCheck(dir, new Set(["AIzaLEAK"]), browser), []);
+});
+
+test("ruling 18 item 6: the baseline has exactly the recorded empty shape; deletion times are RFC 3339", async () => {
+  const { baselineEmpty, isDeleted } = await import("./program.mjs");
+  assert.equal(baselineEmpty({ version: { versionNumber: "46", description: "x" } }), true);
+  for (const doc of [
+    {},
+    null,
+    [],
+    { version: {} },
+    { version: { versionNumber: "0" } },
+    { version: { versionNumber: 46 } },
+    { version: { versionNumber: "46" }, parameters: {} },
+    { version: { versionNumber: "46" }, conditions: [] },
+    { version: { versionNumber: "46" }, etag: "x" },
+  ])
+    assert.equal(baselineEmpty(doc), false, JSON.stringify(doc));
+  assert.equal(isDeleted({ deleteTime: "2026-11-25T00:00:00Z" }), true);
+  assert.equal(isDeleted({ deleteTime: "2026-11-25T00:00:00.123456789Z" }), true);
+  for (const deleteTime of ["", "2026-11-25", "x", "2026-11-25T00:00:00+09:00", 0, undefined])
+    assert.equal(isDeleted({ deleteTime }), false, String(deleteTime));
 });

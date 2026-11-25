@@ -248,6 +248,27 @@ window.rc = {
         .slice(from)
         .map((entry) => (raw.has(entry) ? { ...entry, text: raw.get(entry) } : entry)),
     ),
+  /**
+   * How many of the installation ids whose create the hook dispatched have a DELETE answered 2xx
+   * on this page's wire (ruling 18 item 5): only that settles an installation, never the SDK's
+   * own resolution. The ids come from the recorder's hook and never leave the page.
+   */
+  deletions(fids, project) {
+    const proved = fids.filter((fid) => {
+      const path = maskText(`/v1/projects/${project}/installations/${fid}`);
+      return wire.some(
+        (e) =>
+          e.host === INSTALLATIONS &&
+          e.method === "DELETE" &&
+          e.path === path &&
+          e.status >= 200 &&
+          e.status < 300,
+      );
+    }).length;
+    return { dispatched: fids.length, proved };
+  },
+  /** A text with every secret this page knows masked (the recorder's leak check). */
+  mask: (text) => maskText(text),
   /** Deletes this context's installation through the SDK (the recorded DELETE). */
   async deleteInstallation() {
     try {

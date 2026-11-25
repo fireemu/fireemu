@@ -120,20 +120,32 @@ export class Transport {
     const file = secret ? null : `${String(seq).padStart(3, "0")}-${caseId}.body`;
     if (file) writeFileSync(join(this.out, file), bytes);
     const etag = response.headers.get("etag");
-    const contentType = response.headers.get("content-type");
-    this.journal({
-      seq,
-      case: caseId,
-      phase: "response-persisted",
-      status: response.status,
-      bytes: bytes.length,
-      sha256: secret ? null : createHash("sha256").update(bytes).digest("hex"),
-      // A secret answer's headers are not journaled either (an ETag can carry anything).
-      etag: secret ? null : etag,
-      contentType,
-      contentEncoding: response.headers.get("content-encoding"),
-      file,
-    });
+    // A secret answer's row is the closed set {seq, case, phase, status, bytes, file, secret}: no
+    // header value of it is journaled (an ETag, a content type or an encoding can carry anything).
+    this.journal(
+      secret
+        ? {
+            seq,
+            case: caseId,
+            phase: "response-persisted",
+            status: response.status,
+            bytes: bytes.length,
+            file,
+            secret: true,
+          }
+        : {
+            seq,
+            case: caseId,
+            phase: "response-persisted",
+            status: response.status,
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            etag,
+            contentType: response.headers.get("content-type"),
+            contentEncoding: response.headers.get("content-encoding"),
+            file,
+          },
+    );
     const status = response.status;
     // `notModified: true` (a conditional read) takes a 304 as a complete answer with no body.
     if (notModified && status === 304)

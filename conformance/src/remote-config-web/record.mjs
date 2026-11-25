@@ -8,7 +8,15 @@
 // credential file or a gcloud override in the environment. Production is sent only with
 // --send-production, which only the packet's launch script passes.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -21,6 +29,8 @@ import {
   MAX_ADMIN_REQUESTS,
   MAX_PAGE_REQUESTS,
   PRODUCTION_TIMING,
+  baselineEmpty,
+  isDeleted,
   observe,
 } from "./program.mjs";
 
@@ -110,24 +120,32 @@ export function a2Allow(project) {
     exact.has(`${method} ${url.href}`);
 }
 
-/** A2: the client template and the key list with deleted keys; never throws. */
-export async function readBack(transport, urls) {
-  const out = { atBaseline: false, errors: [] };
+/**
+ * A2: the client template and the key list with deleted keys; never throws. Its answer names the
+ * run it reads back (`runId`, `a2Of`), and is at baseline only when the template has the baseline's
+ * one shape and the key list is a complete object holding no live key of the pass (ruling 18 item 6).
+ */
+export async function readBack(transport, urls, { runId = null, a2Of = null } = {}) {
+  const out = { runId, a2Of, atBaseline: false, errors: [] };
   try {
     const client = await transport.send("a2-client", urls.client);
-    const doc = client.json ?? {};
-    out.clientEmpty =
-      client.status === 200 &&
-      !["parameters", "conditions", "parameterGroups"].some(
-        (k) => doc[k] && Object.keys(doc[k]).length,
-      );
+    out.clientEmpty = client.status === 200 && baselineEmpty(client.json);
     const keys = await transport.send("a2-keys", urls.keysListDeleted);
-    const ours = (keys.json.keys ?? []).filter((k) => k.displayName === KEY_ID);
-    out.keys = ours.map((k) => ({ deleted: typeof k.deleteTime === "string" }));
-    // An incomplete list (another page) cannot show that no live key is left (ruling 16 item 3).
-    out.keyListComplete = keys.status === 200 && !keys.json.nextPageToken;
-    out.atBaseline =
-      out.clientEmpty && out.keyListComplete && ours.every((k) => typeof k.deleteTime === "string");
+    const list = keys.json;
+    // A complete list: 200, an object with no error member and no further page (ruling 16 item 3).
+    out.keyListComplete =
+      keys.status === 200 &&
+      list !== null &&
+      typeof list === "object" &&
+      !Array.isArray(list) &&
+      !("error" in list) &&
+      !("nextPageToken" in list) &&
+      (list.keys === undefined || Array.isArray(list.keys));
+    const ours = out.keyListComplete
+      ? (list.keys ?? []).filter((k) => k?.displayName === KEY_ID)
+      : [];
+    out.keys = ours.map((k) => ({ deleted: isDeleted(k) }));
+    out.atBaseline = out.clientEmpty && out.keyListComplete && ours.every((k) => isDeleted(k));
   } catch (error) {
     out.errors.push(error.message);
   }
@@ -135,24 +153,185 @@ export async function readBack(transport, urls) {
   return out;
 }
 
-export async function main(argv, env = process.env) {
+const readJson = (file) => {
+  try {
+    return JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+};
+
+/** Whether `pid` is a live recorder process (pid and command checked; a reused pid is not). */
+export function recorderAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+  let args = "";
+  try {
+    args = execFileSync("/bin/ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8" });
+  } catch {
+    return false;
+  }
+  return args.includes("remote-config-web/record.mjs") || args.includes("launch-b12.sh");
+}
+
+/**
+ * Whether A2 may read a pass back (ruling 18 item 7): its run.json names the run and the
+ * recorder's pid, that process is gone, a completion (result.json) or interruption
+ * (interrupted.json) checkpoint of the same run exists, and ten minutes have passed since the
+ * newest file. Returns the refusal, or null.
+ */
+export function a2Refusal(dir, now = Date.now()) {
+  const run = readJson(join(dir, "run.json"));
+  if (!run || typeof run.runId !== "string" || !Number.isInteger(run.pid))
+    return "the pass has no run.json with its runId and pid";
+  if (recorderAlive(run.pid)) return "the pass's recorder is still running";
+  const checkpoint = [readJson(join(dir, "result.json")), readJson(join(dir, "interrupted.json"))];
+  if (!checkpoint.some((c) => c?.runId === run.runId))
+    return "the pass has no completion or interruption checkpoint";
+  if (now - lastActivity(dir) < A2_DELAY_MS)
+    return `A2 needs ${A2_DELAY_MS / 60_000} minutes after the pass's last activity`;
+  return null;
+}
+
+const sameArray = (a, b) =>
+  Array.isArray(a) && Array.isArray(b) && JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Whether a pass is closed so that the next may start (ruling 18 item 2). The closed set:
+ *  - complete: result.json of the run with complete true, stopped null, no open item, no unknown
+ *    answer and no refusal;
+ *  - closed by A2: no open item, and an A2 of this run (its run.json and a2.json naming the run and
+ *    this directory) at baseline with no error, the template empty and the key list complete;
+ *  - accepted: any open item (an interrupted pass counts as `interrupted`), an A2 as above, and an
+ *    acceptance record `<dir>-acceptance.json` { runId, open (exactly the pass's items), kind
+ *    "owner-acceptance" or "recovery", ledgerLine } whose owner-ledger line names the packet, the
+ *    run and the kind.
+ * Returns the reason it is not closed, or null.
+ */
+export function closureRefusal(dir, ownerLedger) {
+  const run = readJson(join(dir, "run.json"));
+  if (!run || typeof run.runId !== "string") return "pass 1 has no run.json";
+  const result = readJson(join(dir, "result.json"));
+  const interrupted = readJson(join(dir, "interrupted.json"));
+  let open;
+  if (result?.runId === run.runId) {
+    if (
+      result.complete === true &&
+      result.stopped === null &&
+      sameArray(result.open, []) &&
+      sameArray(result.unknown, []) &&
+      sameArray(result.refusals, [])
+    )
+      return null;
+    if (!Array.isArray(result.open)) return "pass 1's result has no open list";
+    open = result.open;
+  } else if (interrupted?.runId === run.runId) open = ["interrupted"];
+  else return "pass 1 has no result.json of its run";
+  const real = realpathSync(dir);
+  const a2 = [1, 2].some((k) => {
+    const meta = readJson(join(`${dir}-a2-${k}`, "run.json"));
+    const back = readJson(join(`${dir}-a2-${k}`, "a2.json"));
+    return (
+      meta?.runId === run.runId &&
+      meta?.a2Of === real &&
+      back?.runId === run.runId &&
+      back?.a2Of === real &&
+      back.atBaseline === true &&
+      back.clientEmpty === true &&
+      back.keyListComplete === true &&
+      sameArray(back.errors, [])
+    );
+  });
+  if (!a2) return "pass 1 is not closed (no A2 of its run at baseline)";
+  if (open.length === 0) return null;
+  const record = readJson(`${dir}-acceptance.json`);
+  if (
+    !record ||
+    record.runId !== run.runId ||
+    !sameArray(record.open, open) ||
+    !["owner-acceptance", "recovery"].includes(record.kind) ||
+    !Number.isInteger(record.ledgerLine) ||
+    record.ledgerLine < 1
+  )
+    return "pass 1 has open items and no acceptance or recovery record of them";
+  let line = "";
+  try {
+    line = readFileSync(ownerLedger, "utf8").split("\n")[record.ledgerLine - 1] ?? "";
+  } catch {
+    line = "";
+  }
+  const word = record.kind === "owner-acceptance" ? "accept" : "recovery";
+  if (!(line.includes("RC-CLOSURE-B") && line.includes(run.runId) && line.includes(word)))
+    return "the acceptance record's owner-ledger line does not name the packet, the run and the kind";
+  return null;
+}
+
+/** The variables that would send the browser or its diagnostics elsewhere (ruling 18 item 8). */
+export const REFUSED_ENV = [
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "FIREBASE_TOKEN",
+  "NODE_OPTIONS",
+  "DEBUG",
+  "PWDEBUG",
+  "DEBUG_FILE",
+  "SELENIUM_REMOTE_URL",
+  "SELENIUM_REMOTE_HEADERS",
+  "SELENIUM_REMOTE_CAPABILITIES",
+  "PLAYWRIGHT_BROWSERS_PATH",
+  "PW_CHROMIUM_ATTACH_TO_OTHER",
+];
+
+/** The run in progress, for the interruption checkpoint (the CLI's signal handler). */
+export const current = { out: null, runId: null };
+
+/**
+ * Checks every output file of a run for a secret (ruling 18 item 3): the key's value and anything
+ * the pages know (installation ids and tokens). A file that holds one is replaced by its masked
+ * copy; the files' names are returned.
+ */
+export async function leakCheck(out, secrets, browser) {
+  const leaked = [];
+  for (const name of readdirSync(out)) {
+    const file = join(out, name);
+    if (!statSync(file).isFile()) continue;
+    const text = readFileSync(file, "utf8");
+    let masked = text;
+    for (const secret of secrets) if (secret) masked = masked.split(secret).join("API_KEY");
+    masked = await browser.mask(masked);
+    if (masked !== text) {
+      writeFileSync(file, masked);
+      leaked.push(name);
+    }
+  }
+  return leaked;
+}
+
+/**
+ * `deps` replaces the token source, the admin fetch, the browser and the timing in tests only
+ * (the production write path run offline, ruling 18 item 9); the CLI passes none.
+ */
+export async function main(argv, env = process.env, deps = {}) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--send-production") args.send = true;
-    else if (["--out", "--a2-of"].includes(argv[i])) args[argv[i].slice(2)] = argv[++i];
+    else if (["--out", "--a2-of", "--closed", "--owner-ledger"].includes(argv[i]))
+      args[argv[i].slice(2)] = argv[++i];
     else throw new Error(`unknown argument ${argv[i]}`);
+  }
+  // `--closed <run dir> --owner-ledger <file>`: the launcher's pass-2 gate; reads files only.
+  if (args.closed !== undefined) {
+    if (!args["owner-ledger"]) throw new Error("--closed needs --owner-ledger");
+    const refusal = closureRefusal(resolve(args.closed), resolve(args["owner-ledger"]));
+    console.log(refusal ?? "closed");
+    return refusal ? 2 : 0;
   }
   if (args.send !== true) throw new Error("production needs --send-production");
   if (!args.out) throw new Error("--out is required");
-  for (const name of [
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "FIREBASE_TOKEN",
-    "NODE_OPTIONS",
-    "DEBUG",
-    "PWDEBUG",
-    "DEBUG_FILE",
-  ])
-    if (env[name]) throw new Error(`${name} must not be set`);
+  for (const name of REFUSED_ENV) if (env[name]) throw new Error(`${name} must not be set`);
   if (Object.keys(env).some((name) => name.startsWith("CLOUDSDK_")))
     throw new Error("CLOUDSDK_* must not be set");
   const number = env.FIREEMU_SANDBOX_PROJECT_NUMBER;
@@ -160,18 +339,25 @@ export async function main(argv, env = process.env) {
     throw new Error("FIREEMU_SANDBOX_PROJECT_NUMBER is required");
   const out = resolve(args.out);
   if (existsSync(out)) throw new Error("--out must not exist");
+  // A2 is admitted before anything is created or any token is read (ruling 18 item 7).
+  if (args["a2-of"]) {
+    const refusal = a2Refusal(resolve(args["a2-of"]), deps.now?.() ?? Date.now());
+    if (refusal) throw new Error(refusal);
+  }
   mkdirSync(out, { recursive: false, mode: 0o700 });
   let cached = null;
-  const token = () => {
-    if (!cached || Date.now() - cached.at > 30 * 60_000)
-      cached = {
-        at: Date.now(),
-        value: execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
-          encoding: "utf8",
-        }).trim(),
-      };
-    return cached.value;
-  };
+  const token =
+    deps.token ??
+    (() => {
+      if (!cached || Date.now() - cached.at > 30 * 60_000)
+        cached = {
+          at: Date.now(),
+          value: execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
+            encoding: "utf8",
+          }).trim(),
+        };
+      return cached.value;
+    });
   const grants = { operations: new Set(), key: null };
   const urls = adminUrls(PROJECT);
   const transport = new Transport({
@@ -181,19 +367,13 @@ export async function main(argv, env = process.env) {
     maxRequests: args["a2-of"] ? A2_MAX_REQUESTS : MAX_ADMIN_REQUESTS,
     timeoutMs: 30_000,
     userProject: PROJECT,
+    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   });
   if (args["a2-of"]) {
-    // A2 reads at least ten minutes after the pass's last activity, whatever ended it: the newest
-    // file of its run directory (every request is journaled before it is sent).
-    const quiet = Date.now() - lastActivity(resolve(args["a2-of"]));
-    if (quiet < A2_DELAY_MS)
-      throw new Error(`A2 needs ${A2_DELAY_MS / 60_000} minutes after the pass's last activity`);
-    const runId = JSON.parse(readFileSync(join(resolve(args["a2-of"]), "run.json"), "utf8")).runId;
-    writeFileSync(
-      join(out, "run.json"),
-      JSON.stringify({ runId, a2Of: resolve(args["a2-of"]) }) + "\n",
-    );
-    const back = await readBack(transport, urls);
+    const a2Of = realpathSync(resolve(args["a2-of"]));
+    const { runId } = readJson(join(a2Of, "run.json"));
+    writeFileSync(join(out, "run.json"), JSON.stringify({ runId, a2Of }) + "\n");
+    const back = await readBack(transport, urls, { runId, a2Of });
     writeFileSync(join(out, "a2.json"), JSON.stringify(back, null, 2) + "\n");
     console.log(JSON.stringify(back));
     return back.atBaseline ? 0 : 1;
@@ -201,9 +381,14 @@ export async function main(argv, env = process.env) {
   const runId = newRunId();
   writeFileSync(
     join(out, "run.json"),
-    JSON.stringify({ runId, startedAt: new Date().toISOString() }) + "\n",
+    JSON.stringify({ runId, pid: process.pid, startedAt: new Date().toISOString() }) + "\n",
   );
-  const browser = await openBrowser({ port: 47853, cap: MAX_PAGE_REQUESTS });
+  Object.assign(current, { out, runId });
+  const browser = await (deps.openBrowser ?? openBrowser)({
+    port: deps.port ?? 47853,
+    cap: MAX_PAGE_REQUESTS,
+  });
+  const secrets = new Set();
   let result;
   try {
     result = await observe({
@@ -213,24 +398,33 @@ export async function main(argv, env = process.env) {
       project: PROJECT,
       number,
       runId,
-      timing: PRODUCTION_TIMING,
+      timing: deps.timing ?? PRODUCTION_TIMING,
       production: true,
+      secrets,
       grant: (kind, value) => {
         if (kind === "operation") grants.operations.add(value);
         if (kind === "key") grants.key = value;
       },
     });
+    for (const [name, client] of Object.entries(result.clients)) {
+      writeFileSync(
+        join(out, `wire-${name}.json`),
+        JSON.stringify(client.wire ?? [], null, 2) + "\n",
+      );
+      delete client.wire;
+    }
+    writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
+    // The leak check runs while the key and the pages' secrets are still known (ruling 18 item 3).
+    const leaked = await leakCheck(out, secrets, browser);
+    if (leaked.length) {
+      result.complete = false;
+      for (const name of leaked) result.open.push(`leak: ${name} held a secret (masked copy kept)`);
+      writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
+    }
   } finally {
+    secrets.clear();
     await browser.close();
   }
-  for (const [name, client] of Object.entries(result.clients)) {
-    writeFileSync(
-      join(out, `wire-${name}.json`),
-      JSON.stringify(client.wire ?? [], null, 2) + "\n",
-    );
-    delete client.wire;
-  }
-  writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
   console.log(
     JSON.stringify({
       runId,
@@ -245,7 +439,22 @@ export async function main(argv, env = process.env) {
   return result.complete ? 0 : 1;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href)
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  // The interruption checkpoint (ruling 18 item 7): a pass ended by a signal says so, so that A2
+  // can read it back once the process is gone.
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+    process.on(signal, () => {
+      if (current.out && current.runId)
+        try {
+          writeFileSync(
+            join(current.out, "interrupted.json"),
+            JSON.stringify({ runId: current.runId, signal, at: new Date().toISOString() }) + "\n",
+          );
+        } catch {
+          // the run directory is gone; nothing to record
+        }
+      process.exit(130);
+    });
   main(process.argv.slice(2)).then(
     (code) => {
       process.exitCode = code;
@@ -255,3 +464,4 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href)
       process.exitCode = 2;
     },
   );
+}

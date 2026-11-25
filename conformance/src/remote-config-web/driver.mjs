@@ -75,53 +75,77 @@ export function classify(href, origin) {
 }
 
 const FID = /^[A-Za-z0-9_-]{22}$/;
+const json = (text) => {
+  try {
+    const value = JSON.parse(text ?? "");
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+};
 
 /**
- * The closed set of SDK requests of one context (ruling 16 item 4), by method, host, path and
- * query, bound to the context's project, its API key and the installation ids it created:
- *   POST installations  /v1/projects/<project>/installations                     (no query)
- *   POST installations  /v1/projects/<project>/installations/<fid>/authTokens:generate
- *   DELETE installations /v1/projects/<project>/installations/<fid>               (`delete`)
- *   POST remote config  /v1/projects/<project>/namespaces/firebase:fetch?key=<key>
- *   POST realtime       /v1/projects/<project>/namespaces/firebase:streamFetchInvalidations?key=<key>
- * An Installations request must carry the key in x-goog-api-key. Returns "allowed", "delete"
- * (an installation's deletion, which the cleanup reserve also admits) or the refusal's reason.
- * A create's fid is learned here so the context's later requests can name it.
+ * The closed set of SDK requests of one context (ruling 16 item 4, ruling 18 item 4), by method,
+ * host, path, query, key and body, bound to the context's project, API key, app id and the
+ * installation ids whose create this context's hook dispatched (`own.fids`):
+ *   POST installations   /v1/projects/<project>/installations          no query, key header,
+ *                                                                       body fid of 22 characters
+ *   POST installations   .../installations/<fid>/authTokens:generate    no query, key header
+ *   DELETE installations .../installations/<fid>                        no query, key header
+ *   POST remote config   .../namespaces/firebase:fetch?key=<key>         no key header or the key;
+ *                                                                       body app_instance_id <fid>,
+ *                                                                       app_id <app id>
+ *   POST realtime        .../namespaces/firebase:streamFetchInvalidations?key=<key>
+ *                                                                       key header; body
+ *                                                                       appInstanceId <fid>,
+ *                                                                       appId <app id>, project
+ * Returns { verdict, fid }: verdict "create" (its fid is added to `own.fids` only once the hook
+ * dispatches it), "allowed", "delete" (an installation's deletion, which the cleanup reserve also
+ * admits) or the refusal's reason.
  */
-export function requestPolicy({ method, href, headers, postData }, { project, key, fids }) {
+export function requestPolicy({ method, href, headers, postData }, own) {
+  const { project, key, appId, fids } = own;
   const url = new URL(href);
   const base = `/v1/projects/${project}`;
+  const keyHeader = headers["x-goog-api-key"];
   if (url.host === "firebaseinstallations.googleapis.com") {
-    if (url.search !== "") return "query";
-    if (headers["x-goog-api-key"] !== key) return "key";
+    if (url.search !== "") return { verdict: "query" };
+    if (keyHeader !== key) return { verdict: "key" };
     if (method === "POST" && url.pathname === `${base}/installations`) {
-      let fid = null;
-      try {
-        fid = JSON.parse(postData ?? "").fid ?? null;
-      } catch {
-        fid = null;
-      }
-      if (typeof fid !== "string" || !FID.test(fid)) return "installation id";
-      fids.add(fid);
-      return "allowed";
+      const fid = json(postData)?.fid;
+      if (typeof fid !== "string" || !FID.test(fid)) return { verdict: "installation id" };
+      return { verdict: "create", fid };
     }
     const named = /^\/v1\/projects\/([^/]+)\/installations\/([^/]+?)(\/authTokens:generate)?$/.exec(
       url.pathname,
     );
-    if (!named || named[1] !== project || !fids.has(named[2])) return "path";
-    if (method === "POST" && named[3]) return "allowed";
-    if (method === "DELETE" && !named[3]) return "delete";
-    return "method";
+    if (!named || named[1] !== project || !fids.has(named[2])) return { verdict: "path" };
+    if (method === "POST" && named[3]) return { verdict: "allowed" };
+    if (method === "DELETE" && !named[3]) return { verdict: "delete" };
+    return { verdict: "method" };
   }
-  const paths = {
-    "firebaseremoteconfig.googleapis.com": `${base}/namespaces/firebase:fetch`,
-    "firebaseremoteconfigrealtime.googleapis.com": `${base}/namespaces/firebase:streamFetchInvalidations`,
+  const forms = {
+    "firebaseremoteconfig.googleapis.com": {
+      path: `${base}/namespaces/firebase:fetch`,
+      keyHeader: (value) => value === undefined || value === key,
+      body: (b) => fids.has(b.app_instance_id) && b.app_id === appId,
+    },
+    "firebaseremoteconfigrealtime.googleapis.com": {
+      path: `${base}/namespaces/firebase:streamFetchInvalidations`,
+      keyHeader: (value) => value === key,
+      body: (b) => fids.has(b.appInstanceId) && b.appId === appId && b.project === project,
+    },
   };
-  if (method !== "POST") return "method";
-  if (url.pathname !== paths[url.host]) return "path";
+  const form = forms[url.host];
+  if (!form) return { verdict: "host" };
+  if (method !== "POST") return { verdict: "method" };
+  if (url.pathname !== form.path) return { verdict: "path" };
   if (url.search !== `?key=${encodeURIComponent(key)}` && url.search !== `?key=${key}`)
-    return "query";
-  return "allowed";
+    return { verdict: "query" };
+  if (!form.keyHeader(keyHeader)) return { verdict: "key" };
+  const body = json(postData);
+  if (!body || !form.body(body)) return { verdict: "installation id" };
+  return { verdict: "allowed" };
 }
 
 /** The installation deletions admitted beyond the cap and after a stop, for the cleanup. */
@@ -152,6 +176,7 @@ export async function openBrowser({
   let stopped = null;
   const refusals = [];
   const contexts = [];
+  const handles = [];
   const stop = (reason) => {
     if (!stopped) stopped = reason;
   };
@@ -162,10 +187,15 @@ export async function openBrowser({
     allowedRequests: () => allowed,
     cleanupRequests: () => reserved,
     /** A new context and page with `config`; resolves when the page's SDK is loaded. */
-    async client(config) {
+    async client(config, name = `context-${handles.length + 1}`) {
       const context = await browser.newContext({ serviceWorkers: "block" });
       contexts.push(context);
-      const own = { project: config.projectId, key: config.apiKey, fids: new Set() };
+      const own = {
+        project: config.projectId,
+        key: config.apiKey,
+        appId: config.appId,
+        fids: new Set(),
+      };
       await context.route("**/*", async (route) => {
         const request = route.request();
         const kind = classify(request.url(), origin);
@@ -189,7 +219,7 @@ export async function openBrowser({
             body: bundles[request.url().slice(GSTATIC.length)],
           });
         const host = new URL(request.url()).host;
-        const verdict =
+        const { verdict, fid } =
           kind === "remote"
             ? requestPolicy(
                 {
@@ -200,12 +230,15 @@ export async function openBrowser({
                 },
                 own,
               )
-            : "not allowed";
-        const forward = verdict === "allowed" && !stopped && allowed < cap;
+            : { verdict: "not allowed" };
+        const forwardable = verdict === "allowed" || verdict === "create";
+        const forward = forwardable && !stopped && allowed < cap;
         const cleanup = verdict === "delete" && reserved < CLEANUP_RESERVE;
         if (forward || cleanup) {
           if (forward) allowed += 1;
           else reserved += 1;
+          // A create's id becomes this context's only once its request is dispatched.
+          if (verdict === "create") own.fids.add(fid);
           if (!fake) return route.continue();
           const answer = await fake(request);
           return route.fulfill({
@@ -214,7 +247,7 @@ export async function openBrowser({
             body: answer.body,
           });
         }
-        const reason = verdict === "allowed" ? (stopped ? "after stop" : "request cap") : verdict;
+        const reason = forwardable ? (stopped ? "after stop" : "request cap") : verdict;
         refusals.push({ host, reason });
         if (reason !== "after stop")
           stop(
@@ -244,7 +277,7 @@ export async function openBrowser({
             ).unref?.(),
           ),
         ]);
-      return {
+      const handle = {
         call: (name, ...args) =>
           bounded(
             page.evaluate(([n, a]) => window.rc[n](...a), [name, args]),
@@ -261,8 +294,43 @@ export async function openBrowser({
             page.evaluate(() => window.rc.updates()),
             "updates",
           ),
+        /** The dispatched creates of this context and how many a 2xx DELETE on the wire proves. */
+        installations: () =>
+          bounded(
+            page.evaluate(([f, p]) => window.rc.deletions(f, p), [[...own.fids], own.project]),
+            "installations",
+          ),
         close: () => context.close(),
       };
+      handles.push({ name, page, own, bounded, handle });
+      return handle;
+    },
+    /**
+     * Every context's installation settlement (ruling 18 item 5): { name, dispatched, proved };
+     * a page that cannot answer proves nothing.
+     */
+    async installations() {
+      const out = [];
+      for (const h of handles) {
+        let proof = { dispatched: h.own.fids.size, proved: 0 };
+        try {
+          proof = await h.handle.installations();
+        } catch {
+          // proved stays 0
+        }
+        out.push({ name: h.name, dispatched: h.own.fids.size, proved: proof.proved });
+      }
+      return out;
+    },
+    /** A text with every secret any page knows masked; the text unchanged when none is in it. */
+    async mask(text) {
+      let out = text;
+      for (const h of handles)
+        out = await h.bounded(
+          h.page.evaluate((t) => window.rc.mask(t), out),
+          "mask",
+        );
+      return out;
     },
     async close() {
       for (const context of contexts) await context.close().catch(() => {});

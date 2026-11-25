@@ -37,8 +37,13 @@ function world({
   fetchStatus = 200,
   echoKey = false,
   streamStatus = 200,
-  fetchRedirect = false,
+  streamStatusNow = null,
+  project = PROJECT,
+  onFetch = null,
+  createFails = false,
 } = {}) {
+  const ADMIN = `https://firebaseremoteconfig.googleapis.com/v1/projects/${project}/remoteConfig`;
+  let streamCount = 0;
   const history = new Map([[27, {}]]);
   let version = 27;
   const pending = [];
@@ -116,6 +121,9 @@ function world({
       // Production returns the id the SDK generated (it is a secret as much as the tokens).
       const fid = JSON.parse(request.postData()).fid;
       fids.push(fid);
+      // `createFails`: the create took effect but its answer is lost (a 503 to the SDK).
+      if (createFails)
+        return { status: 503, headers: { "content-type": "application/json" }, body: "{}" };
       return {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -134,6 +142,7 @@ function world({
         body: '{"error":{"code":429}}',
       };
     if (url.pathname.endsWith(":fetch")) {
+      onFetch?.();
       const body = JSON.parse(request.postData());
       // `echoKey`: an answer that carries the key in a value and in its ETag.
       const key = url.searchParams.get("key");
@@ -154,10 +163,12 @@ function world({
         }),
       };
     }
-    if (url.pathname.endsWith(":fetch") && fetchRedirect)
-      return { status: 302, headers: { location: "https://elsewhere.example/v1/fetch" }, body: "" };
-    if (url.pathname.endsWith(":streamFetchInvalidations") && streamStatus !== 200)
-      return { status: streamStatus, headers: { "content-type": "application/json" }, body: "{}" };
+    if (url.pathname.endsWith(":streamFetchInvalidations")) {
+      streamCount += 1;
+      const status = streamStatusNow?.() ?? (streamCount === 1 ? streamStatus : 200);
+      if (status !== 200)
+        return { status, headers: { "content-type": "application/json" }, body: "{}" };
+    }
     if (url.pathname.endsWith(":streamFetchInvalidations")) {
       const next = await new Promise((resolve) => pending.push(resolve));
       return {
@@ -302,6 +313,9 @@ function productionAdmin(
     createLost = false,
     keyProject = NUMBER,
     operationName = null,
+    servicesNextPage = false,
+    listError = false,
+    deleteTime = "2026-11-25T00:00:00Z",
   } = {},
 ) {
   const keys = [];
@@ -318,9 +332,12 @@ function productionAdmin(
   return async (url, init) => {
     if (url.host === "serviceusage.googleapis.com")
       return json(200, {
-        services: url.searchParams
-          .getAll("names")
-          .map((n) => ({ config: { name: n.split("/").at(-1) }, state: "ENABLED" })),
+        services: url.searchParams.getAll("names").map((n) => ({
+          name: `projects/${NUMBER}/services/${n.split("/").at(-1)}`,
+          config: { name: n.split("/").at(-1) },
+          state: "ENABLED",
+        })),
+        ...(servicesNextPage ? { nextPageToken: "more" } : {}),
       });
     if (url.host === "firebase.googleapis.com")
       return json(200, {
@@ -356,7 +373,7 @@ function productionAdmin(
         });
       if (path.endsWith("/keyString")) return keyed(200, { keyString: KEY });
       if (init.method === "DELETE") {
-        if (!keyStaysLive) keys.find((k) => k.name === path).deleteTime = "2026-11-25T00:00:00Z";
+        if (!keyStaysLive) keys.find((k) => k.name === path).deleteTime = deleteTime;
         return keyLost
           ? keyed(500, {})
           : keyed(200, { name: `operations/delete-${keys.length}`, done: false });
@@ -367,6 +384,7 @@ function productionAdmin(
           keys.find((k) => k.name === path),
         );
       if (listStatus !== 200) return json(listStatus, { error: { code: listStatus } });
+      if (listError) return json(200, { error: { code: 500 } });
       return json(200, {
         keys: keys.filter((k) => url.search.includes("showDeleted") || !k.deleteTime),
         ...(listNextPage ? { nextPageToken: "more" } : {}),
@@ -428,8 +446,18 @@ test(
       .filter(Boolean)
       .map((l) => JSON.parse(l))
       .find((r) => r.case === "k-value" && r.phase === "response-persisted");
+    // A secret answer's row is its closed set: no digest and no header value (ruling 18 item 3).
+    assert.deepEqual(Object.keys(valueRow).toSorted(), [
+      "at",
+      "bytes",
+      "case",
+      "file",
+      "phase",
+      "secret",
+      "seq",
+      "status",
+    ]);
     assert.equal(valueRow.file, null);
-    assert.equal(valueRow.sha256, null);
   },
 );
 
@@ -477,10 +505,14 @@ test(
 );
 
 /** One production-path pass with the given world and admin options. */
-async function productionPass(t, port, { admin = {}, client = {}, cap = 80, callTimeoutMs } = {}) {
+async function productionPass(
+  t,
+  port,
+  { admin = {}, client = {}, cap = 80, callTimeoutMs, number = NUMBER, hold } = {},
+) {
   const out = mkdtempSync(join(tmpdir(), "rc-closure-b-fake-"));
   t.after(() => rmSync(out, { recursive: true, force: true }));
-  const fake = world(client);
+  const fake = world(typeof client === "function" ? client(out) : client);
   const grants = { operations: new Set(), key: null };
   const { productionAllow, PROJECT: SANDBOX, adminUrls } = await import("./record.mjs");
   const allow = productionAllow(SANDBOX, grants);
@@ -499,12 +531,13 @@ async function productionPass(t, port, { admin = {}, client = {}, cap = 80, call
     ...(callTimeoutMs ? { callTimeoutMs } : {}),
   });
   t.after(() => browser.close());
+  hold?.(browser);
   const result = await observe({
     transport,
     browser,
     urls: { ...adminUrls(SANDBOX), client: ADMIN },
     project: PROJECT,
-    number: NUMBER,
+    number,
     runId: "261125000000abg",
     timing: TIMING,
     production: true,
@@ -590,7 +623,11 @@ test(
     for (const row of journal.filter(
       (r) => r.case.startsWith("k-") && r.phase === "response-persisted",
     ))
-      assert.deepEqual([row.file, row.sha256, row.etag], [null, null, null], row.case);
+      assert.deepEqual(
+        [row.file, row.secret, "sha256" in row, "etag" in row, "contentType" in row],
+        [null, true, false, false, false],
+        row.case,
+      );
   },
 );
 
@@ -717,17 +754,9 @@ test(
 );
 
 test(
-  "v1.1 survivors: a realtime 429, a malformed operation name, a redirect",
-  { timeout: 180_000, skip },
+  "v1.1 survivors: a malformed operation name is refused before any read",
+  { timeout: 120_000, skip },
   async (t) => {
-    // A 429 the SDK does not report as a fetch status (the realtime stream's) still stops.
-    const stream = await productionPass(t, 47833, { client: { streamStatus: 429 } });
-    assert.match(stream.stopped ?? "", /page one: 429|did not open/);
-    assert.equal(
-      stream.steps.some((s) => s.name === "r2-metadata"),
-      false,
-    );
-    // An operation name outside its form is refused by the recorder itself, before any read.
     const op = await productionPass(t, 47834, {
       admin: { operationName: "projects/x/operations/1" },
     });
@@ -737,12 +766,238 @@ test(
         "k-create: the key may exist until its deletion is read back (A2 lists keys)",
       ),
     );
-    // A redirect is an error in the page: its target never reaches the hook.
-    const moved = await productionPass(t, 47835, { client: { fetchRedirect: true } });
-    assert.equal(
-      moved.refusals.some((r) => r.host === "elsewhere.example"),
-      false,
-      JSON.stringify(moved.refusals),
+  },
+);
+
+// ---- RC-CLOSURE-B v1.2 (ruling 18) ----
+
+/** The journal's cases of one pass, in order. */
+const casesOf = (out) =>
+  readFileSync(join(out, "journal.jsonl"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((r) => r.phase === "before-send")
+    .map((r) => r.case);
+const FORWARD = ["t1-publish", "r1-changed", "r2-metadata", "r3-same", "r4-rollback", "r5-changed"];
+
+test(
+  "ruling 18 item 1: a browser 403 or 429 (fetch, realtime open, reconnect) or a hook stop sends no later publication",
+  { timeout: 300_000, skip },
+  async (t) => {
+    for (const [port, options, reason, last] of [
+      // The realtime stream answers 429 when it opens: r1 is never sent.
+      [47840, { client: { streamStatus: 429 } }, /realtime.*answered 429/, "t1-publish"],
+      [47841, { client: { streamStatus: 403 } }, /realtime.*answered 403/, "t1-publish"],
+      // Every stream after r4 answers 429 (the SDK's own after r4's update and the reconnect's):
+      // r5 is never sent.
+      [
+        47842,
+        {
+          client: (out) => ({
+            streamStatusNow: () => (casesOf(out).includes("r4-rollback") ? 429 : 200),
+          }),
+        },
+        /realtime.*answered 429/,
+        "r4-rollback",
+      ],
+      // A fetch answered 403: nothing after t1.
+      [47843, { client: { fetchStatus: 403 } }, /403|failure/, "t1-publish"],
+    ]) {
+      const result = await productionPass(t, port, options);
+      assert.match(result.stopped ?? "", reason, String(port));
+      const forward = casesOf(result.out).filter((c) => FORWARD.includes(c));
+      assert.equal(forward.at(-1), last, `${port}: ${forward}`);
+      // G still restores and cleans up.
+      assert.equal(result.baseline.after.empty, true);
+      assert.equal(result.key.deleted, true);
+    }
+    // A hook stop that lands after an early update: the next publication is not sent.
+    let browser = null;
+    let fetches = 0;
+    const stopped = await productionPass(t, 47844, {
+      hold: (b) => {
+        browser = b;
+      },
+      client: {
+        onFetch: () => {
+          fetches += 1;
+          // The fifth fetch is the listener's, after r1's update.
+          if (fetches === 5) browser.stop("test: stopped after an update");
+        },
+      },
+    });
+    assert.match(stopped.stopped ?? "", /test: stopped after an update/);
+    const forward = casesOf(stopped.out).filter((c) => FORWARD.includes(c));
+    assert.equal(forward.at(-1), "r1-changed", String(forward));
+  },
+);
+
+test(
+  "ruling 18 item 5: an installation whose create went out is settled only by a DELETE seen on the wire",
+  { timeout: 120_000, skip },
+  async (t) => {
+    // The create took effect but its answer was lost: the SDK deletes its local entry without a
+    // request and reports success; the pass keeps the installation open.
+    const result = await productionPass(t, 47845, { client: { createFails: true } });
+    assert.equal(result.complete, false);
+    assert.ok(
+      result.open.some((item) =>
+        /^g-one: installation deletion not proved on the wire \(0 of [1-9]/.test(item),
+      ),
+      JSON.stringify(result.open),
     );
+    // A normal pass proves both deletions.
+    const normal = await productionPass(t, 47846);
+    assert.deepEqual(
+      normal.installations.map((p) => [p.name, p.proved === p.dispatched, p.dispatched > 0]),
+      [
+        ["one", true, true],
+        ["two", true, true],
+      ],
+    );
+  },
+);
+
+test(
+  "ruling 18 item 6: phase A judges every read by its shape and the provider's project number",
+  { timeout: 300_000, skip },
+  async (t) => {
+    for (const [port, options, reason] of [
+      [47847, { admin: { servicesNextPage: true } }, /services not complete/],
+      [47848, { admin: { listError: true } }, /key list not complete \(200\)/],
+      [47849, { number: "123456789013" }, /not ENABLED under the configured project number/],
+    ]) {
+      const result = await productionPass(t, port, options);
+      assert.match(result.stopped, reason);
+      assert.ok(!casesOf(result.out).includes("k-create"), JSON.stringify(options));
+      assert.deepEqual(result.open, []);
+    }
+    // A deletion read back with an empty deleteTime is not a deletion.
+    const empty = await productionPass(t, 47850, { admin: { deleteTime: "" } });
+    assert.equal(empty.key.deleted, false);
+    assert.ok(
+      empty.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+  },
+);
+
+test(
+  "ruling 18 items 3 and 9: main's production path offline: complete files, no key or installation secret in any of them",
+  { timeout: 180_000, skip },
+  async (t) => {
+    const { main, PROJECT: SANDBOX } = await import("./record.mjs");
+    const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-main-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const fake = world({ project: SANDBOX, echoKey: true });
+    const printed = [];
+    t.mock.method(console, "log", (line) => printed.push(line));
+    const code = await main(
+      ["--send-production", "--out", join(dir, "send-web-1")],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      {
+        token: () => "t",
+        fetchImpl: productionAdmin(fake),
+        openBrowser: (options) => openBrowser({ ...options, fake: fake.client }),
+        timing: TIMING,
+        port: 47851,
+      },
+    );
+    const out = join(dir, "send-web-1");
+    const result = JSON.parse(readFileSync(join(out, "result.json"), "utf8"));
+    assert.equal(code, 0, JSON.stringify([result.stopped, result.open]));
+    assert.equal(result.complete, true);
+    const run = JSON.parse(readFileSync(join(out, "run.json"), "utf8"));
+    assert.equal(run.runId, result.runId);
+    assert.equal(run.pid, process.pid);
+    for (const name of ["one", "two"]) {
+      const wire = JSON.parse(readFileSync(join(out, `wire-${name}.json`), "utf8"));
+      assert.ok(wire.length > 0);
+      assert.equal(result.clients[name].wire, undefined);
+    }
+    const { readdirSync } = await import("node:fs");
+    const secrets = [
+      KEY,
+      ...fake.fids,
+      "fake-refresh-1",
+      "fake-refresh-2",
+      "fake-auth-token-1",
+      "fake-auth-token-2",
+    ];
+    for (const file of readdirSync(out))
+      for (const secret of secrets)
+        assert.ok(!readFileSync(join(out, file), "utf8").includes(secret), `${file}: ${secret}`);
+    for (const secret of secrets) assert.ok(!printed.join("\n").includes(secret));
+    assert.ok(!result.open.some((item) => item.startsWith("leak:")));
+  },
+);
+
+test(
+  "ruling 18 item 9: the page's own requests never follow a redirect (loopback server, no hook on it)",
+  { timeout: 60_000, skip },
+  async (t) => {
+    const { createServer } = await import("node:http");
+    const { pinnedBundles } = await import("./driver.mjs");
+    const { GSTATIC } = await import("./driver.mjs");
+    const bundles = pinnedBundles();
+    const hits = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url);
+      if (req.url === "/") {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end('<!doctype html><script type="module" src="/page.mjs"></script>');
+      } else if (req.url === "/page.mjs") {
+        res.writeHead(200, { "content-type": "text/javascript" });
+        res.end(readFileSync(new URL("./page.mjs", import.meta.url)));
+      } else if (req.url === "/redirect") {
+        res.writeHead(302, { location: "/hop" });
+        res.end();
+      } else {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("hop");
+      }
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => server.close());
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await chromium.launch({ headless: true });
+    t.after(() => browser.close());
+    const context = await browser.newContext({ serviceWorkers: "block" });
+    // Only the bundles are answered by a hook; nothing else leaves the loopback, and the loopback
+    // itself is not intercepted (as production's route.continue, whose hops the hook never sees).
+    await context.route(
+      (url) => !url.href.startsWith(origin),
+      (route) =>
+        route.request().url().startsWith(GSTATIC)
+          ? route.fulfill({
+              status: 200,
+              contentType: "text/javascript",
+              body: bundles[route.request().url().slice(GSTATIC.length)],
+            })
+          : route.abort(),
+    );
+    const page = await context.newPage();
+    await page.addInitScript(
+      (input) => {
+        window.__RC_INPUT = input;
+      },
+      {
+        config: { apiKey: "K", projectId: "p", appId: "1:1:web:ab", messagingSenderId: "1" },
+        sdk: GSTATIC,
+      },
+    );
+    await page.goto(`${origin}/`);
+    await page.waitForFunction(() => window.rcReady === true, null, { timeout: 30_000 });
+    const outcome = await page.evaluate(() =>
+      fetch("/redirect").then(
+        () => "followed",
+        (error) => error.name,
+      ),
+    );
+    assert.equal(outcome, "TypeError");
+    assert.ok(hits.includes("/redirect"), String(hits));
+    assert.equal(hits.includes("/hop"), false, String(hits));
   },
 );
