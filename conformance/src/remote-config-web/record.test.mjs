@@ -300,3 +300,15 @@ test("v1.1 item 8: the SDK bundles are refused unless they are the pinned bytes 
   for (const file of Object.keys(BUNDLE_SHA256)) writeFileSync(join(dir, file), "export {};\n");
   assert.throws(() => pinnedBundles(dir, "12.18.0"), /is not the pinned bundle/);
 });
+
+test("v1.1 item 7: an A2 invocation uses A2's own allow list", async () => {
+  const { allowFor } = await import("./record.mjs");
+  const u = adminUrls(PROJECT);
+  const grants = { operations: new Set(), key: null };
+  const a2 = allowFor({ "a2-of": "/x" }, grants);
+  const pass = allowFor({}, grants);
+  assert.equal(a2(new URL(u.client), "PUT"), false);
+  assert.equal(a2(new URL(u.keysCreate), "POST"), false);
+  assert.ok(a2(new URL(u.keysListDeleted), "GET"));
+  assert.ok(pass(new URL(u.client), "PUT"));
+});

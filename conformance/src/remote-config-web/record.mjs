@@ -92,6 +92,11 @@ export function productionAllow(project, grants) {
 const OPERATION = /^operations\/[A-Za-z0-9._-]+$/;
 const KEY_NAME = /^projects\/[0-9]+\/locations\/global\/keys\/[A-Za-z0-9-]+$/;
 
+/** The admin allow list of an invocation: A2's own for `--a2-of`, the pass's otherwise. */
+export function allowFor(args, grants) {
+  return args["a2-of"] ? a2Allow(PROJECT) : productionAllow(PROJECT, grants);
+}
+
 /** A2's own allow list: its two read-only forms and nothing else (ruling 16 item 7). */
 export function a2Allow(project) {
   const u = adminUrls(project);
@@ -171,7 +176,7 @@ export async function main(argv, env = process.env) {
   const urls = adminUrls(PROJECT);
   const transport = new Transport({
     out,
-    allow: args["a2-of"] ? a2Allow(PROJECT) : productionAllow(PROJECT, grants),
+    allow: allowFor(args, grants),
     token,
     maxRequests: args["a2-of"] ? A2_MAX_REQUESTS : MAX_ADMIN_REQUESTS,
     timeoutMs: 30_000,

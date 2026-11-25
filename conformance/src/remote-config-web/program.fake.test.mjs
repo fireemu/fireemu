@@ -36,6 +36,8 @@ function world({
   deleteHangs = false,
   fetchStatus = 200,
   echoKey = false,
+  streamStatus = 200,
+  fetchRedirect = false,
 } = {}) {
   const history = new Map([[27, {}]]);
   let version = 27;
@@ -144,13 +146,18 @@ function world({
         body: JSON.stringify({
           entries: {
             ...evaluate(history.get(version), body.custom_signals ?? {}),
-            ...(echoKey ? { fireemu_echo: key } : {}),
+            // The key as a value and as a parameter name whose value changes with each version.
+            ...(echoKey ? { fireemu_echo: key, [key]: String(version) } : {}),
           },
           state: "UPDATE",
           templateVersion: String(version),
         }),
       };
     }
+    if (url.pathname.endsWith(":fetch") && fetchRedirect)
+      return { status: 302, headers: { location: "https://elsewhere.example/v1/fetch" }, body: "" };
+    if (url.pathname.endsWith(":streamFetchInvalidations") && streamStatus !== 200)
+      return { status: streamStatus, headers: { "content-type": "application/json" }, body: "{}" };
     if (url.pathname.endsWith(":streamFetchInvalidations")) {
       const next = await new Promise((resolve) => pending.push(resolve));
       return {
@@ -294,12 +301,20 @@ function productionAdmin(
     createPollFailures = 0,
     createLost = false,
     keyProject = NUMBER,
+    operationName = null,
   } = {},
 ) {
   const keys = [];
   let createPolls = 0;
   const json = (status, body) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  // Every API Keys answer but the lists carries the key in an ETag: a secret answer's headers are
+  // never journaled.
+  const keyed = (status, body) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", etag: `"k-${KEY}"` },
+    });
   return async (url, init) => {
     if (url.host === "serviceusage.googleapis.com")
       return json(200, {
@@ -317,34 +332,37 @@ function productionAdmin(
       if (init.method === "POST") {
         const name = `projects/${keyProject}/locations/global/keys/k${keys.length}`;
         keys.push({ name, displayName: JSON.parse(init.body).displayName });
-        if (createLost) return json(500, {});
-        return json(200, { name: `operations/create-${keys.length}`, done: false });
+        if (createLost) return keyed(500, {});
+        return keyed(200, {
+          name: operationName ?? `operations/create-${keys.length}`,
+          done: false,
+        });
       }
       // A done operation carries the created key with its value, as the API Keys service answers.
       if (path.startsWith("operations/create-")) {
         createPolls += 1;
-        if (createPolls <= createPollFailures) return json(503, {});
-        return json(200, {
+        if (createPolls <= createPollFailures) return keyed(503, {});
+        return keyed(200, {
           name: path,
           done: true,
           response: { name: keys.at(-1).name, keyString: KEY, displayName: "rc-closure-b-sdk" },
         });
       }
       if (path.startsWith("operations/delete-"))
-        return json(200, {
+        return keyed(200, {
           name: path,
           done: true,
           response: { name: keys.at(-1).name, keyString: KEY },
         });
-      if (path.endsWith("/keyString")) return json(200, { keyString: KEY });
+      if (path.endsWith("/keyString")) return keyed(200, { keyString: KEY });
       if (init.method === "DELETE") {
         if (!keyStaysLive) keys.find((k) => k.name === path).deleteTime = "2026-11-25T00:00:00Z";
         return keyLost
-          ? json(500, {})
-          : json(200, { name: `operations/delete-${keys.length}`, done: false });
+          ? keyed(500, {})
+          : keyed(200, { name: `operations/delete-${keys.length}`, done: false });
       }
       if (url.search === "" && path.startsWith("projects/") && path.includes("/keys/"))
-        return json(
+        return keyed(
           200,
           keys.find((k) => k.name === path),
         );
@@ -560,6 +578,11 @@ test(
     // The SDK's value and the ETag that carried the key come back masked.
     assert.equal(result.clients.one.fetches[0].values.fireemu_echo.value, "API_KEY");
     assert.ok(result.clients.one.wire.some((e) => e.responseHeaders?.etag?.endsWith("-API_KEY")));
+    // The key as a parameter name reached the listener's update keys, masked.
+    assert.ok(
+      result.clients.one.updates.some((u) => (u.keys ?? []).includes("API_KEY")),
+      JSON.stringify(result.clients.one.updates),
+    );
     const journal = readFileSync(join(result.out, "journal.jsonl"), "utf8")
       .split("\n")
       .filter(Boolean)
@@ -690,5 +713,36 @@ test(
       JSON.stringify(hung.open),
     );
     assert.equal(hung.complete, false);
+  },
+);
+
+test(
+  "v1.1 survivors: a realtime 429, a malformed operation name, a redirect",
+  { timeout: 180_000, skip },
+  async (t) => {
+    // A 429 the SDK does not report as a fetch status (the realtime stream's) still stops.
+    const stream = await productionPass(t, 47833, { client: { streamStatus: 429 } });
+    assert.match(stream.stopped ?? "", /page one: 429|did not open/);
+    assert.equal(
+      stream.steps.some((s) => s.name === "r2-metadata"),
+      false,
+    );
+    // An operation name outside its form is refused by the recorder itself, before any read.
+    const op = await productionPass(t, 47834, {
+      admin: { operationName: "projects/x/operations/1" },
+    });
+    assert.match(op.stopped, /unexpected operation name/);
+    assert.ok(
+      op.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    // A redirect is an error in the page: its target never reaches the hook.
+    const moved = await productionPass(t, 47835, { client: { fetchRedirect: true } });
+    assert.equal(
+      moved.refusals.some((r) => r.host === "elsewhere.example"),
+      false,
+      JSON.stringify(moved.refusals),
+    );
   },
 );
